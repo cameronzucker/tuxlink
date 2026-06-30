@@ -432,6 +432,10 @@ export function AppShell() {
   const [connectAgentOpen, setConnectAgentOpen] = useState(false);
   // tuxlink-13v2l: Elmer agent pane, opened from Tools → Elmer (or ribbon chip).
   const [elmerOpen, setElmerOpen] = useState(false);
+  // tuxlink-1wi5w: when true, open the Model section disclosure on next Elmer
+  // pane mount. Reset to false after opening so a second plain "Elmer" open
+  // does not re-expand (the state flag belongs to the open action, not the pane).
+  const [elmerExpandModel, setElmerExpandModel] = useState(false);
   // tuxlink-a2gd: inline Catalog Builder ("Find a Gateway"), opened from Message → Find a Gateway.
   const [catalogBuilderOpen, setCatalogBuilderOpen] = useState(false);
   // tuxlink-eymu: Request Center overlay. Carries the initial inner view;
@@ -1375,6 +1379,9 @@ export function AppShell() {
     openConnectAgent: () => setConnectAgentOpen(true),
     // tuxlink-13v2l: Tools → Elmer opens the Elmer agent pane.
     openElmer: () => setElmerOpen(true),
+    // tuxlink-1wi5w: Tools → Set up Elmer's model… opens the pane with the
+    // Model section expanded. Does NOT touch ConnectAgentModal.
+    openElmerModel: () => { setElmerExpandModel(true); setElmerOpen(true); },
     // tuxlink-lqw2: Tools → Verify CMS Connection opens the inline probe overlay.
     verifyCms: () => setVerifyCmsOpen(true),
     reportIssue: () => {
@@ -2071,7 +2078,8 @@ export function AppShell() {
             onRearm={(durationSecs) => { void egressArm.rearm(durationSecs); }}
             egressBusy={egressArm.busy}
             egressError={egressArm.error}
-            onClose={() => setElmerOpen(false)}
+            onClose={() => { setElmerOpen(false); setElmerExpandModel(false); }}
+            expandModel={elmerExpandModel}
           />
         </Suspense>
       )}

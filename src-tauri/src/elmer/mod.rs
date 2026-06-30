@@ -11,7 +11,13 @@
 
 pub mod approval;
 pub mod commands;
+pub mod config_commands;
 pub mod events;
 pub mod executor;
+pub mod keyring;
+pub mod model_config_state;
 pub mod provider;
 pub mod session;
+
+#[cfg(test)]
+mod injection_tests;

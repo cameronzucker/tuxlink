@@ -23,6 +23,7 @@ function handlers(): MenuHandlers {
     openUninstallCleanup: vi.fn(),
     openConnectAgent: vi.fn(),
     openElmer: vi.fn(),
+    openElmerModel: vi.fn(),
     openCatalogBuilder: vi.fn(),
     openRequestCenter: vi.fn(),
     quit: vi.fn(),
@@ -215,5 +216,15 @@ describe('dispatchMenuAction', () => {
     const h = handlers();
     dispatchMenuAction('menu:message:grib_request', h);
     expect(h.openRequestCenter).toHaveBeenCalledWith('grib');
+  });
+
+  // tuxlink-1wi5w: Tools → Set up Elmer's model… opens the Elmer pane with the
+  // Model section expanded. connect_agent → openConnectAgent is UNCHANGED.
+  it('routes tools:elmer_model to openElmerModel', () => {
+    const h = handlers();
+    dispatchMenuAction('menu:tools:elmer_model', h);
+    expect(h.openElmerModel).toHaveBeenCalledOnce();
+    // Verify connect_agent is still untouched by this action.
+    expect(h.openConnectAgent).not.toHaveBeenCalled();
   });
 });

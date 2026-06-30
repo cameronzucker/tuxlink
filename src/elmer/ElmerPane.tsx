@@ -25,17 +25,64 @@
  *   - running       → "Elmer is thinking…" indicator.
  */
 
-import { memo, useState, useRef, useEffect, type KeyboardEvent } from 'react';
+import { memo, useState, useRef, useEffect, useCallback, type KeyboardEvent } from 'react';
 import { useElmer, type ElmerItem, type ElmerPhase } from './useElmer';
 import { EgressArmControl } from '../shell/EgressArmControl';
 import type { EgressStatusDto } from '../security/egressTypes';
+import { PRESETS, inferPreset, isLoopback, originOf } from './elmerModelConfig';
+import type { SetKey, KeySource } from './elmerModelConfig';
 import './ElmerPane.css';
+
+// ---------------------------------------------------------------------------
+// Detect remedy mapping (G3, R2.6)
+// ---------------------------------------------------------------------------
+
+/**
+ * Map a detect error reason string (from DetectError::to_reason() on the Rust
+ * side, surfaced as the `Error.message` via invoke rejection) plus the endpoint
+ * loopback/preset context into a user-facing remedy string.
+ *
+ * Reason string prefixes from DetectError::to_reason():
+ *   "no server: could not connect to ..."  → NoServer
+ *   "auth error: check the API key for ..." → Auth
+ *   "no models: ..."                        → ZeroModels
+ *   "network error: ..."                    → Network (treated as transport)
+ *   "server error: HTTP ..."                → non-2xx Status
+ *   "bad URL: ..."                          → BadUrl
+ */
+function detectRemedy(reason: string, endpoint: string): string {
+  const lower = reason.toLowerCase();
+
+  // Auth failure (401/403) → re-enter key, using the preset label if known.
+  if (lower.startsWith('auth error:')) {
+    const presetId = inferPreset(endpoint);
+    const preset = PRESETS.find((p) => p.id === presetId);
+    const providerLabel = preset && preset.id !== 'custom' ? preset.label : 'this provider';
+    return `re-enter the key for ${providerLabel}`;
+  }
+
+  // Zero models found → pull a model.
+  if (lower.startsWith('no models:')) {
+    return 'no models found — pull a model on the server, then Detect again';
+  }
+
+  // Transport / connection failure — differentiate loopback vs remote.
+  if (lower.startsWith('no server:') || lower.startsWith('network error:')) {
+    if (isLoopback(endpoint)) {
+      return 'the local AI server (Ollama) may not be running — start it, then Detect again';
+    }
+    return "check this device's internet connection";
+  }
+
+  // Fallback: return the raw reason so the operator sees something useful.
+  return reason || 'Could not detect models. Check the endpoint and key.';
+}
 
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
 
-/** Renders a single turn or chip item. */
+/** Renders a single turn, chip, or attribution item. */
 function MessageItem({ item }: { item: ElmerItem }) {
   if (item.kind === 'chip') {
     return (
@@ -50,6 +97,20 @@ function MessageItem({ item }: { item: ElmerItem }) {
         <span className="elmer-chip-icon" aria-hidden="true">⚙</span>
         <span className="elmer-chip-tool">{item.tool}</span>
         <span className="elmer-chip-status">{item.status}</span>
+      </div>
+    );
+  }
+
+  // G3: Model attribution marker — rendered like a chip but semantically different.
+  if (item.kind === 'attribution') {
+    return (
+      <div
+        className="elmer-chip elmer-attribution"
+        data-testid="elmer-model-attribution"
+        role="status"
+        aria-label={`Model changed: now using ${item.model}`}
+      >
+        <span className="elmer-chip-status">— now using {item.model} —</span>
       </div>
     );
   }
@@ -119,6 +180,390 @@ function OutcomeCallout({ phase, detail }: { phase: ElmerPhase; detail: string }
 }
 
 // ---------------------------------------------------------------------------
+// ModelForm — the Model form (R2.6, G2)
+// ---------------------------------------------------------------------------
+
+interface ModelFormProps {
+  onSave: (args: { agentEndpoint: string; agentModel: string; key: SetKey }) => Promise<void>;
+  onDetect: (args: { agentEndpoint: string; keySource: KeySource }) => Promise<void>;
+  detectState: import('./useElmer').DetectState;
+  initialEndpoint: string;
+  initialModel: string;
+  initialKeyStatus: import('./elmerModelConfig').KeyStatus;
+}
+
+function ModelForm({
+  onSave,
+  onDetect,
+  detectState,
+  initialEndpoint,
+  initialModel,
+  initialKeyStatus,
+}: ModelFormProps) {
+  const [endpoint, setEndpoint] = useState(initialEndpoint);
+  const [model, setModel] = useState(initialModel);
+
+  // Key affordance state.
+  // - keyStatus 'present': show [Replace] [Remove]; after Remove flag clearPending.
+  //   After Replace, show an empty input. Empty on save → keep; non-empty → set.
+  // - keyStatus 'absent' (non-loopback): show empty input. Non-empty → set; empty → keep.
+  // - keyStatus 'unreadable': show quiet message.
+  // - loopback endpoint: hide key section entirely.
+  const [keyStatus] = useState(initialKeyStatus);
+  const [replaceMode, setReplaceMode] = useState(false);
+  const [newKeyValue, setNewKeyValue] = useState('');
+  const [clearPending, setClearPending] = useState(false);
+
+  // For absent key input.
+  const [absentKeyValue, setAbsentKeyValue] = useState('');
+
+  // BUG 1 FIX — track the origin the key affordance belongs to.
+  // Seeded from the loaded config endpoint's origin. When the live endpoint's
+  // origin diverges from this (operator edits the endpoint to a different host),
+  // we reset all pending key state so a stale action (Remove/Replace) cannot
+  // carry across an origin change and apply to the wrong keyring account.
+  const [keyAffordanceOrigin, setKeyAffordanceOrigin] = useState(
+    () => originOf(initialEndpoint),
+  );
+
+  // Effect: reset key affordance state when the endpoint's origin changes.
+  // This fires whenever `endpoint` changes and the derived origin differs from
+  // the origin the current affordance belongs to. An empty/unparseable endpoint
+  // produces originOf('')==='' which is treated as "unknown" — we reset in that
+  // case too so no stale action survives into a blank-endpoint Save.
+  useEffect(() => {
+    const liveOrigin = originOf(endpoint);
+    if (liveOrigin !== keyAffordanceOrigin) {
+      // Origin changed — drop all pending key state to prevent cross-origin pollution.
+      setClearPending(false);
+      setReplaceMode(false);
+      setNewKeyValue('');
+      setAbsentKeyValue('');
+      setKeyAffordanceOrigin(liveOrigin);
+    }
+  }, [endpoint, keyAffordanceOrigin]);
+
+  // Determine the current provider preset from the endpoint.
+  const currentPreset = inferPreset(endpoint);
+  const endpointIsLoopback = isLoopback(endpoint);
+
+  // BUG 1 FIX (rendering side) — the loaded keyStatus belongs to the saved
+  // config's origin. When the live endpoint's origin has changed (operator
+  // hand-edited it to a different host), we have no stored-key signal for
+  // that new origin until the form is Saved and reloaded. Treat it as
+  // 'absent' so the form shows an empty key input rather than the stale
+  // "Key stored 🔒" label from the old origin.
+  // The useEffect above resets pending state (clearPending/replaceMode/etc.)
+  // and updates keyAffordanceOrigin when origin changes. Because state updates
+  // are batched, we use the already-updated keyAffordanceOrigin to derive the
+  // effective status — if they still differ in the same render cycle (before
+  // the batch lands), we also clamp to 'absent' there.
+  const liveOriginForRender = originOf(endpoint);
+  const originMatchesLoadedConfig =
+    liveOriginForRender !== '' && liveOriginForRender === originOf(initialEndpoint);
+  const effectiveKeyStatus = originMatchesLoadedConfig ? keyStatus : 'absent';
+
+  // Handle provider preset selection.
+  // GUARD: if the endpoint has been hand-edited (its value doesn't match any known
+  // preset's canonical endpoint), confirm before overwriting (R2.6).
+  // "Hand-edited" means: the endpoint differs from what the current inferred preset
+  // would have filled. An endpoint that exactly matches a known preset default is
+  // NOT considered hand-edited — switching presets replaces it freely.
+  const handlePresetChange = useCallback((presetId: string) => {
+    const preset = PRESETS.find((p) => p.id === presetId);
+    if (!preset) return;
+
+    // 'custom' preset has no fixed endpoint — selecting it doesn't overwrite.
+    if (presetId === 'custom') return;
+
+    // Determine if the current endpoint is a known-preset canonical value
+    // (i.e., the user hasn't hand-edited it beyond a preset default).
+    const endpointMatchesAPresetDefault = PRESETS.some(
+      (p) => p.endpoint && p.endpoint === endpoint,
+    );
+    const endpointIsEmpty = !endpoint;
+
+    // Only show the confirm guard if the endpoint is non-empty AND was hand-edited
+    // (i.e., it doesn't exactly match any preset's canonical endpoint).
+    const isDirty = !endpointIsEmpty && !endpointMatchesAPresetDefault;
+
+    if (isDirty) {
+      const proceed = window.confirm(
+        `Replace the current endpoint with the ${preset.label} default?`,
+      );
+      if (!proceed) return;
+    }
+
+    setEndpoint(preset.endpoint);
+  }, [endpoint]);
+
+  // Build the SetKey payload for the Save action.
+  const buildSetKey = useCallback((): SetKey => {
+    if (clearPending) {
+      return { action: 'clear' };
+    }
+    if (keyStatus === 'present') {
+      if (replaceMode && newKeyValue) {
+        return { action: 'set', value: newKeyValue };
+      }
+      // Replace mode with empty value → keep.
+      return { action: 'keep' };
+    }
+    if (keyStatus === 'absent') {
+      if (absentKeyValue) {
+        return { action: 'set', value: absentKeyValue };
+      }
+      return { action: 'keep' };
+    }
+    // unreadable / other → keep.
+    return { action: 'keep' };
+  }, [clearPending, keyStatus, replaceMode, newKeyValue, absentKeyValue]);
+
+  // Build KeySource for detect call.
+  //
+  // BUG 2 FIX — derive KeySource from the CURRENT form state, not from the
+  // loaded keyStatus alone. If the operator has typed a key into the form
+  // (but not yet Saved), Detect must use that inline value so it probes with
+  // the key they actually intend — not the old stored key (or none).
+  //
+  // Priority order:
+  //   1. Loopback endpoint → no key needed.
+  //   2. Pending inline key in the form (Replace mode with a value typed, OR
+  //      absent-state key input with a value typed) → inline.
+  //   3. Stored key present for the same origin (no pending change) → useStored.
+  //   4. Otherwise → none.
+  const buildKeySource = useCallback((): KeySource => {
+    if (endpointIsLoopback) {
+      return { source: 'none' };
+    }
+    // Determine whether the live endpoint's origin still matches the loaded
+    // config origin. If the operator has hand-edited the endpoint to a
+    // different host, the loaded keyStatus no longer describes that host.
+    const liveOrigin = originOf(endpoint);
+    const originMatchesLoaded = liveOrigin !== '' && liveOrigin === keyAffordanceOrigin;
+    // Check for a pending inline key value in the form.
+    const inlineKey =
+      (replaceMode && newKeyValue) ? newKeyValue :
+      (keyStatus === 'absent' && absentKeyValue) ? absentKeyValue :
+      null;
+    if (inlineKey) {
+      return { source: 'inline', value: inlineKey };
+    }
+    // Use the stored key only when origin matches and there is no pending
+    // removal (clearPending) or replace (replaceMode without a typed value
+    // just means "intent to replace but nothing typed yet" — treat as absent).
+    if (keyStatus === 'present' && originMatchesLoaded && !clearPending) {
+      return { source: 'useStored' };
+    }
+    return { source: 'none' };
+  }, [endpointIsLoopback, endpoint, keyAffordanceOrigin, keyStatus, replaceMode, newKeyValue, absentKeyValue, clearPending]);
+
+  const handleSave = useCallback(async () => {
+    await onSave({
+      agentEndpoint: endpoint,
+      agentModel: model,
+      key: buildSetKey(),
+    });
+  }, [onSave, endpoint, model, buildSetKey]);
+
+  const handleDetect = useCallback(async () => {
+    await onDetect({
+      agentEndpoint: endpoint,
+      keySource: buildKeySource(),
+    });
+  }, [onDetect, endpoint, buildKeySource]);
+
+  const handleDetectedModelSelect = useCallback((selectedModel: string) => {
+    setModel(selectedModel);
+  }, []);
+
+  return (
+    <div className="elmer-model-form" data-testid="elmer-model-form">
+      {/* Provider preset select */}
+      <div className="elmer-form-row">
+        <label className="elmer-form-label" htmlFor="elmer-provider-select">
+          Provider
+        </label>
+        <select
+          id="elmer-provider-select"
+          className="elmer-form-select"
+          data-testid="elmer-provider-select"
+          value={currentPreset}
+          onChange={(e) => handlePresetChange(e.target.value)}
+        >
+          {PRESETS.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Endpoint input */}
+      <div className="elmer-form-row">
+        <label className="elmer-form-label" htmlFor="elmer-endpoint-input">
+          Endpoint
+        </label>
+        <input
+          id="elmer-endpoint-input"
+          type="text"
+          className="elmer-form-input elmer-form-input--mono"
+          data-testid="elmer-endpoint-input"
+          value={endpoint}
+          onChange={(e) => setEndpoint(e.target.value)}
+          spellCheck={false}
+          autoComplete="off"
+        />
+      </div>
+
+      {/* API key affordance (hidden for loopback) */}
+      {!endpointIsLoopback && (
+        <div className="elmer-form-row elmer-form-row--key" data-testid="elmer-key-section">
+          <span className="elmer-form-label">API key</span>
+          {/* Use effectiveKeyStatus (not keyStatus) so that when the operator
+              edits the endpoint to a different origin, the stale "Key stored 🔒"
+              label from the old origin is not shown for the new one (Bug 1 fix). */}
+          {effectiveKeyStatus === 'present' && !clearPending ? (
+            <div className="elmer-key-stored">
+              <span className="elmer-key-stored-label">Key stored 🔒</span>
+              {replaceMode ? (
+                <input
+                  type="text"
+                  className="elmer-form-input elmer-form-input--mono elmer-key-replace-input"
+                  data-testid="elmer-key-replace-input"
+                  placeholder="Paste new key…"
+                  value={newKeyValue}
+                  onChange={(e) => setNewKeyValue(e.target.value)}
+                  autoComplete="off"
+                  autoFocus
+                />
+              ) : (
+                <div className="elmer-key-stored-actions">
+                  <button
+                    type="button"
+                    className="elmer-key-action-btn"
+                    data-testid="elmer-key-replace-btn"
+                    onClick={() => setReplaceMode(true)}
+                  >
+                    Replace
+                  </button>
+                  <button
+                    type="button"
+                    className="elmer-key-action-btn elmer-key-action-btn--danger"
+                    data-testid="elmer-key-remove-btn"
+                    onClick={() => setClearPending(true)}
+                  >
+                    Remove
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : effectiveKeyStatus === 'present' && clearPending ? (
+            <div className="elmer-key-clear-pending">
+              <span className="elmer-key-clear-label">Key will be removed on save</span>
+              <button
+                type="button"
+                className="elmer-key-action-btn"
+                data-testid="elmer-key-clear-cancel-btn"
+                onClick={() => setClearPending(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          ) : effectiveKeyStatus === 'absent' ? (
+            <input
+              type="text"
+              className="elmer-form-input elmer-form-input--mono"
+              data-testid="elmer-key-input"
+              placeholder="API key (optional)"
+              value={absentKeyValue}
+              onChange={(e) => setAbsentKeyValue(e.target.value)}
+              autoComplete="off"
+            />
+          ) : effectiveKeyStatus === 'unreadable' ? (
+            <span className="elmer-key-unreadable" data-testid="elmer-key-unreadable">
+              Could not read the saved key (keyring locked)
+            </span>
+          ) : null}
+        </div>
+      )}
+
+      {/* Model input + Detect button */}
+      <div className="elmer-form-row">
+        <label className="elmer-form-label" htmlFor="elmer-model-input">
+          Model
+        </label>
+        <div className="elmer-model-row">
+          <input
+            id="elmer-model-input"
+            type="text"
+            className="elmer-form-input elmer-form-input--mono"
+            data-testid="elmer-model-input"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            spellCheck={false}
+            autoComplete="off"
+          />
+          <button
+            type="button"
+            className="elmer-detect-btn"
+            data-testid="elmer-detect-btn"
+            disabled={detectState.status === 'detecting'}
+            onClick={handleDetect}
+          >
+            {detectState.status === 'detecting' ? 'Detecting…' : 'Detect'}
+          </button>
+        </div>
+      </div>
+
+      {/* Detect results */}
+      {detectState.status === 'success' && detectState.models.length > 0 && (
+        <div className="elmer-detect-results">
+          <span className="elmer-detect-count">
+            ✓ {detectState.models.length} model{detectState.models.length !== 1 ? 's' : ''} detected
+          </span>
+          <select
+            className="elmer-form-select"
+            data-testid="elmer-detected-models-select"
+            value={model}
+            onChange={(e) => handleDetectedModelSelect(e.target.value)}
+          >
+            {detectState.models.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+      {detectState.status === 'success' && detectState.models.length === 0 && (
+        <div className="elmer-detect-zero" data-testid="elmer-detect-zero">
+          No models found at this endpoint.
+        </div>
+      )}
+      {detectState.status === 'error' && (
+        <div className="elmer-detect-error" data-testid="elmer-detect-error">
+          {detectRemedy(detectState.reason, endpoint)}
+        </div>
+      )}
+
+      {/* Save & use */}
+      <div className="elmer-form-save-row">
+        <button
+          type="button"
+          className="elmer-save-btn"
+          data-testid="elmer-save-btn"
+          onClick={() => { void handleSave(); }}
+        >
+          Save &amp; use
+        </button>
+        <span className="elmer-save-hint">Applies to your next message — no restart.</span>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main pane
 // ---------------------------------------------------------------------------
 
@@ -139,6 +584,9 @@ export interface ElmerPaneProps {
   egressError?: string | null;
   /** Close the pane (AppShell sets elmerOpen=false). */
   onClose?: () => void;
+  /** When true on mount, open the Model section disclosure so the operator
+   *  lands directly on the endpoint/model picker (tuxlink-1wi5w). */
+  expandModel?: boolean;
 }
 
 export const ElmerPane = memo(function ElmerPane({
@@ -149,11 +597,38 @@ export const ElmerPane = memo(function ElmerPane({
   egressBusy,
   egressError,
   onClose,
+  expandModel,
 }: ElmerPaneProps) {
-  const { items, phase, lastOutcome, send, stop } = useElmer();
+  const {
+    items,
+    phase,
+    lastOutcome,
+    send,
+    stop,
+    modelConfig,
+    modelConfigState,
+    configRead,
+    configSet,
+    detectModels,
+    detectState,
+  } = useElmer();
   const [input, setInput] = useState('');
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  // tuxlink-1wi5w: when expandModel is true, open the Model section on mount
+  // so the operator lands directly on the endpoint/model picker.
+  const [advancedOpen, setAdvancedOpen] = useState(() => expandModel === true);
   const listEndRef = useRef<HTMLDivElement>(null);
+  // Ref to track whether configRead has been called, so the eager-load
+  // on mount and the disclosure open don't double-call it.
+  const configReadCalledRef = useRef(false);
+
+  // G3: Eagerly load config on mount so the empty-state "Connect a model"
+  // button can be shown without the operator needing to open the disclosure first.
+  useEffect(() => {
+    if (!configReadCalledRef.current) {
+      configReadCalledRef.current = true;
+      void configRead();
+    }
+  }, [configRead]);
 
   // Auto-scroll to the bottom of the message list on each new item.
   // Guard for jsdom (tests) where scrollIntoView is not implemented.
@@ -162,6 +637,20 @@ export const ElmerPane = memo(function ElmerPane({
       listEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [items]);
+
+  // G3: Determine whether no model is configured so the empty-state button shows.
+  // We consider "no model" when config is loaded and the model string is empty.
+  const hasNoModelConfigured =
+    modelConfigState === 'loaded' &&
+    modelConfig !== null &&
+    !modelConfig.agentModel;
+
+  // G3: Handler for the "Connect a model" button — opens the Model section
+  // disclosure in place (not a menu pointer, per R2.6 chicken-and-egg rule).
+  const handleConnectModel = useCallback(() => {
+    setAdvancedOpen(true);
+    // configRead was already called eagerly on mount, so don't re-call it.
+  }, []);
 
   const handleSend = () => {
     const msg = input.trim();
@@ -226,6 +715,22 @@ export const ElmerPane = memo(function ElmerPane({
         {lastOutcome && (
           <OutcomeCallout phase={phase} detail={lastOutcome.detail} />
         )}
+        {/* G3: Empty-state button — shown when no model is configured so the
+            operator can reach the Model section directly from the chat area.
+            NOT a sentence pointing at a menu (R2.6 chicken-and-egg).
+            Expands the Model section disclosure in place. */}
+        {hasNoModelConfigured && items.length === 0 && !isRunning && (
+          <div className="elmer-empty-state">
+            <button
+              type="button"
+              className="elmer-connect-model-btn"
+              data-testid="elmer-connect-model"
+              onClick={handleConnectModel}
+            >
+              Connect a model
+            </button>
+          </div>
+        )}
         <div ref={listEndRef} />
       </div>
 
@@ -282,17 +787,38 @@ export const ElmerPane = memo(function ElmerPane({
           className="elmer-advanced-toggle"
           data-testid="elmer-advanced-toggle"
           aria-expanded={advancedOpen}
-          onClick={() => setAdvancedOpen((o) => !o)}
+          onClick={() => {
+            const next = !advancedOpen;
+            setAdvancedOpen(next);
+            // Load config only if it hasn't been triggered yet (the eager-mount
+            // load may have already initiated it — check the ref, not the state,
+            // to avoid a double-call between mount useEffect and toggle click).
+            if (next && !configReadCalledRef.current) {
+              configReadCalledRef.current = true;
+              void configRead();
+            }
+          }}
         >
           {advancedOpen ? '▴' : '▾'} Endpoint / model
         </button>
         {advancedOpen && (
           <div className="elmer-advanced-body" data-testid="elmer-advanced-body">
-            {/* Endpoint + model configuration lives here (populated when
-                the relevant Tauri commands are wired; placeholder for now). */}
-            <p className="elmer-advanced-placeholder">
-              Endpoint and model settings are configured in Settings → Elmer.
-            </p>
+            {modelConfigState === 'loading' && (
+              <p className="elmer-advanced-loading">Loading…</p>
+            )}
+            {modelConfigState === 'error' && (
+              <p className="elmer-advanced-error">Could not load config.</p>
+            )}
+            {modelConfigState === 'loaded' && modelConfig && (
+              <ModelForm
+                onSave={configSet}
+                onDetect={detectModels}
+                detectState={detectState}
+                initialEndpoint={modelConfig.agentEndpoint}
+                initialModel={modelConfig.agentModel}
+                initialKeyStatus={modelConfig.keyStatus}
+              />
+            )}
           </div>
         )}
       </div>

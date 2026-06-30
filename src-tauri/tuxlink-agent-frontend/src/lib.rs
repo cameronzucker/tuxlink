@@ -5,6 +5,9 @@
 //! agent loop ([`tuxlink_agent_runner::run`]) share three pieces:
 //!
 //! * [`endpoint`] — SEC-5 loopback/metadata enforcement for the model URL.
+//! * [`egress`] — the shared socket-layer SSRF / DNS-rebind guard: the single
+//!   `build_vetted_client` chokepoint that resolves, vets every resolved IP, and
+//!   pins the connection so a named host cannot rebind to a forbidden IP.
 //! * [`provider`] — `OpenAiProvider`: the OpenAI-compatible chat-completions
 //!   adapter that talks to a local llama.cpp / Ollama shim (or, behind
 //!   `--allow-remote`, an actual cloud endpoint).
@@ -16,6 +19,10 @@
 //! modules. The Elmer pane in the Tauri monolith will depend on it for the
 //! same three, supplying its own transport.
 
+pub mod egress;
 pub mod endpoint;
 pub mod mcp_client;
 pub mod provider;
+
+// Convenience re-exports for crate consumers.
+pub use provider::ApiKey;

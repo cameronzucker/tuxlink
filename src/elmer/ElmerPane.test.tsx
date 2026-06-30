@@ -1,5 +1,5 @@
 /**
- * ElmerPane tests — Task 10 (AC-11, AC-12, AC-13, AC-14).
+ * ElmerPane tests — Task 10 (AC-11, AC-12, AC-13, AC-14) + Task G2 (Model form).
  *
  * Mock strategy:
  *   - `@tauri-apps/api/core` invoke: command-gated (vitest calls invoke mocks
@@ -12,6 +12,7 @@
  * AC-12: an elmer-chip event renders a visually distinct chip (not a turn bubble).
  * AC-14: an elmer-outcome kind=offline renders the offline state.
  * Stop: clicking Stop calls elmer_stop.
+ * G2: Model form — preset/endpoint/key-affordance/model+Detect, Save & use.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -20,6 +21,7 @@ import { ElmerPane } from './ElmerPane';
 import type { ElmerChipPayload, ElmerOutcomePayload, ElmerTurnPayload } from './elmerEvents';
 import { EV_CHIP, EV_OUTCOME, EV_TURN } from './elmerEvents';
 import { EGRESS_STATUS_DISARMED } from '../security/egressTypes';
+import { PRESETS } from './elmerModelConfig';
 
 // ---------------------------------------------------------------------------
 // Mock @tauri-apps/api/core (invoke)
@@ -27,9 +29,19 @@ import { EGRESS_STATUS_DISARMED } from '../security/egressTypes';
 
 // Capture invoke calls by command name. Gate on cmd so vitest's no-arg teardown
 // calls don't throw (the teardown invokes mock functions with no args).
+// G2: also handles elmer_config_read, elmer_config_set, elmer_detect_models.
+// The default implementations are "absent" config + empty model list.
+// Individual tests override via mockInvoke.mockImplementationOnce().
 const mockInvoke = vi.fn(async (cmd?: string, _args?: unknown) => {
   if (cmd === 'elmer_send') return undefined;
   if (cmd === 'elmer_stop') return undefined;
+  if (cmd === 'elmer_config_read') return {
+    agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+    agentModel: 'gpt-4o',
+    keyStatus: 'absent',
+  };
+  if (cmd === 'elmer_config_set') return undefined;
+  if (cmd === 'elmer_detect_models') return [];
   return undefined;
 });
 
@@ -326,5 +338,860 @@ describe('<ElmerPane> — relocated agent-send arm control', () => {
     expect(rearmPresets.length).toBeGreaterThan(0);
     fireEvent.click(rearmPresets[0]);
     expect(onRearm).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G2 — Model form: preset/endpoint/key-affordance/model+Detect, Save & use
+// ---------------------------------------------------------------------------
+
+/** Helper: open the advanced disclosure so form fields are visible. */
+function openAdvanced() {
+  fireEvent.click(screen.getByTestId('elmer-advanced-toggle'));
+}
+
+/** Helper: render ElmerPane and open the advanced section. */
+async function renderAndOpen() {
+  render(<ElmerPane />);
+  openAdvanced();
+  // Wait for the form to load config (elmer_config_read is async).
+  await waitFor(() => {
+    expect(screen.getByTestId('elmer-model-form')).toBeTruthy();
+  });
+}
+
+describe('<ElmerPane> G2 — form_renders_fields_from_config_read', () => {
+  it('loads config and renders four fields with values', async () => {
+    // Default mockInvoke returns: endpoint=openai, model=gpt-4o, keyStatus=absent.
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'absent',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    // Provider select — should show 'openai' inferred from endpoint.
+    const providerSelect = screen.getByTestId('elmer-provider-select') as HTMLSelectElement;
+    expect(providerSelect.value).toBe('openai');
+
+    // Endpoint input — should show the endpoint.
+    const endpointInput = screen.getByTestId('elmer-endpoint-input') as HTMLInputElement;
+    expect(endpointInput.value).toBe('https://api.openai.com/v1/chat/completions');
+
+    // Model input — should show gpt-4o.
+    const modelInput = screen.getByTestId('elmer-model-input') as HTMLInputElement;
+    expect(modelInput.value).toBe('gpt-4o');
+
+    // Key field present (absent + non-loopback → empty key input).
+    expect(screen.getByTestId('elmer-key-input')).toBeTruthy();
+  });
+});
+
+describe('<ElmerPane> G2 — preset_fills_endpoint_by_origin', () => {
+  it('selecting OpenAI preset fills endpoint with OpenAI URL', async () => {
+    // Start with localOllama config.
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'http://127.0.0.1:11434/v1/chat/completions',
+        agentModel: 'llama3',
+        keyStatus: 'absent',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    const openaiPreset = PRESETS.find((p) => p.id === 'openai')!;
+    const providerSelect = screen.getByTestId('elmer-provider-select');
+    fireEvent.change(providerSelect, { target: { value: 'openai' } });
+
+    const endpointInput = screen.getByTestId('elmer-endpoint-input') as HTMLInputElement;
+    expect(endpointInput.value).toBe(openaiPreset.endpoint);
+  });
+
+  it('selecting localOllama fills endpoint with Ollama URL', async () => {
+    // Start with openai config.
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'absent',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    const ollamaPreset = PRESETS.find((p) => p.id === 'localOllama')!;
+    const providerSelect = screen.getByTestId('elmer-provider-select');
+    fireEvent.change(providerSelect, { target: { value: 'localOllama' } });
+
+    const endpointInput = screen.getByTestId('elmer-endpoint-input') as HTMLInputElement;
+    expect(endpointInput.value).toBe(ollamaPreset.endpoint);
+  });
+});
+
+describe('<ElmerPane> G2 — key_field_hidden_for_loopback', () => {
+  it('loopback endpoint → key input/affordance not in DOM', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'http://127.0.0.1:11434/v1/chat/completions',
+        agentModel: 'llama3',
+        keyStatus: 'absent',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    // Key section must be entirely absent for loopback.
+    expect(screen.queryByTestId('elmer-key-input')).toBeNull();
+    expect(screen.queryByTestId('elmer-key-replace-btn')).toBeNull();
+    expect(screen.queryByTestId('elmer-key-remove-btn')).toBeNull();
+    expect(screen.queryByTestId('elmer-key-section')).toBeNull();
+  });
+});
+
+describe('<ElmerPane> G2 — key_field_shown_for_remote_absent', () => {
+  it('https endpoint + keyStatus absent → empty key input present', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'absent',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    const keyInput = screen.getByTestId('elmer-key-input') as HTMLInputElement;
+    expect(keyInput).toBeTruthy();
+    expect(keyInput.value).toBe('');
+  });
+});
+
+describe('<ElmerPane> G2 — key_stored_shows_replace_remove_not_password', () => {
+  it('keyStatus present → Replace + Remove present, no <input type=password> seeded with dots', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'present',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    // Replace and Remove buttons must be present.
+    expect(screen.getByTestId('elmer-key-replace-btn')).toBeTruthy();
+    expect(screen.getByTestId('elmer-key-remove-btn')).toBeTruthy();
+
+    // No password input seeded with dots (destruction-never-from-emptiness R2.6).
+    const passwordInputs = document.querySelectorAll<HTMLInputElement>('input[type="password"]');
+    for (const input of passwordInputs) {
+      // If any password input exists, it must NOT be pre-filled with dots.
+      expect(input.value).not.toMatch(/^•+$/);
+      expect(input.value).not.toMatch(/^\*+$/);
+      expect(input.value).not.toMatch(/^\.+$/);
+      // Actually, for this affordance, there should be NO pre-seeded password input at all.
+      // The key-replace input only appears after clicking [Replace].
+    }
+
+    // The replace input should NOT be visible before clicking [Replace].
+    expect(screen.queryByTestId('elmer-key-replace-input')).toBeNull();
+  });
+});
+
+describe('<ElmerPane> G2 — replace_commits_set_only_on_nonempty', () => {
+  it('Replace + leave empty + Save → key:{action:keep}', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'present',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    // Click Replace to reveal the input.
+    fireEvent.click(screen.getByTestId('elmer-key-replace-btn'));
+
+    // The replace input appears — leave it empty.
+    const replaceInput = screen.getByTestId('elmer-key-replace-input') as HTMLInputElement;
+    expect(replaceInput.value).toBe('');
+
+    // Save.
+    mockInvoke.mockClear();
+    fireEvent.click(screen.getByTestId('elmer-save-btn'));
+
+    await waitFor(() => {
+      const calls = mockInvoke.mock.calls;
+      const setCall = calls.find((c) => c[0] === 'elmer_config_set');
+      expect(setCall).toBeTruthy();
+      const args = setCall![1] as { agentEndpoint: string; agentModel: string; key: { action: string } };
+      expect(args.key.action).toBe('keep');
+    });
+  });
+
+  it('Replace + type value + Save → key:{action:set,value}', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'present',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    // Click Replace.
+    fireEvent.click(screen.getByTestId('elmer-key-replace-btn'));
+
+    // Type a key value.
+    const replaceInput = screen.getByTestId('elmer-key-replace-input');
+    fireEvent.change(replaceInput, { target: { value: 'sk-new-key-value' } });
+
+    // Save.
+    mockInvoke.mockClear();
+    fireEvent.click(screen.getByTestId('elmer-save-btn'));
+
+    await waitFor(() => {
+      const calls = mockInvoke.mock.calls;
+      const setCall = calls.find((c) => c[0] === 'elmer_config_set');
+      expect(setCall).toBeTruthy();
+      const args = setCall![1] as { agentEndpoint: string; agentModel: string; key: { action: string; value?: string } };
+      expect(args.key.action).toBe('set');
+      expect(args.key.value).toBe('sk-new-key-value');
+    });
+  });
+});
+
+describe('<ElmerPane> G2 — remove_commits_clear', () => {
+  it('Remove + Save → key:{action:clear}', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'present',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    // Click Remove.
+    fireEvent.click(screen.getByTestId('elmer-key-remove-btn'));
+
+    // Save.
+    mockInvoke.mockClear();
+    fireEvent.click(screen.getByTestId('elmer-save-btn'));
+
+    await waitFor(() => {
+      const calls = mockInvoke.mock.calls;
+      const setCall = calls.find((c) => c[0] === 'elmer_config_set');
+      expect(setCall).toBeTruthy();
+      const args = setCall![1] as { agentEndpoint: string; agentModel: string; key: { action: string } };
+      expect(args.key.action).toBe('clear');
+    });
+  });
+});
+
+describe('<ElmerPane> G2 — detect_populates_dropdown', () => {
+  it('Detect success → model ids selectable + "✓ N models detected"', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'absent',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    // Mock the detect call to return model ids.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (mockInvoke as any).mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_detect_models') return ['gpt-4o', 'gpt-4o-mini'];
+      return undefined;
+    });
+
+    fireEvent.click(screen.getByTestId('elmer-detect-btn'));
+
+    await waitFor(() => {
+      expect(screen.getByText(/✓ 2 models detected/)).toBeTruthy();
+    });
+
+    // Both model ids should appear as selectable options.
+    const modelSelect = screen.getByTestId('elmer-detected-models-select');
+    const options = Array.from((modelSelect as HTMLSelectElement).options).map((o) => o.value);
+    expect(options).toContain('gpt-4o');
+    expect(options).toContain('gpt-4o-mini');
+  });
+});
+
+describe('<ElmerPane> G2 — detect_failure_shows_inline_reason', () => {
+  it('Detect failure → inline error message renders', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'absent',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    // Mock detect to reject.
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_detect_models') throw new Error('connection refused');
+      return undefined;
+    });
+
+    fireEvent.click(screen.getByTestId('elmer-detect-btn'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('elmer-detect-error')).toBeTruthy();
+    });
+  });
+});
+
+describe('<ElmerPane> G2 — save_calls_config_set_with_three_state_key', () => {
+  it('Save & use sends {agentEndpoint, agentModel, key} matching Rust SetKey serde DTO', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'absent',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    // Fill in a key value (keyStatus=absent → direct key input).
+    const keyInput = screen.getByTestId('elmer-key-input');
+    fireEvent.change(keyInput, { target: { value: 'sk-test-key' } });
+
+    // Fill in a model value.
+    const modelInput = screen.getByTestId('elmer-model-input');
+    fireEvent.change(modelInput, { target: { value: 'gpt-4o-mini' } });
+
+    mockInvoke.mockClear();
+    fireEvent.click(screen.getByTestId('elmer-save-btn'));
+
+    await waitFor(() => {
+      const calls = mockInvoke.mock.calls;
+      const setCall = calls.find((c) => c[0] === 'elmer_config_set');
+      expect(setCall).toBeTruthy();
+      const args = setCall![1] as { agentEndpoint: string; agentModel: string; key: { action: string; value?: string } };
+      // Must have all three fields matching Rust DTO.
+      expect(args).toHaveProperty('agentEndpoint');
+      expect(args).toHaveProperty('agentModel', 'gpt-4o-mini');
+      expect(args).toHaveProperty('key');
+      expect(args.key.action).toBe('set');
+      expect(args.key.value).toBe('sk-test-key');
+    });
+  });
+
+  it('absent key, no value entered → key:{action:keep}', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'absent',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    // Do NOT type in the key input — leave empty.
+    mockInvoke.mockClear();
+    fireEvent.click(screen.getByTestId('elmer-save-btn'));
+
+    await waitFor(() => {
+      const calls = mockInvoke.mock.calls;
+      const setCall = calls.find((c) => c[0] === 'elmer_config_set');
+      expect(setCall).toBeTruthy();
+      const args = setCall![1] as { key: { action: string } };
+      // Empty absent input → keep (don't erase existing absence).
+      expect(args.key.action).toBe('keep');
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G3 — Empty-state button, detect remedies, model attribution marker
+// ---------------------------------------------------------------------------
+
+describe('<ElmerPane> G3 — empty_state_button_expands_model_section', () => {
+  it('renders a "Connect a model" button in the chat area when no model is configured', async () => {
+    // Simulate no configured model: empty endpoint and model.
+    // The config_read mock returns empty strings; the button appears immediately
+    // without needing to open the disclosure first.
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: '',
+        agentModel: '',
+        keyStatus: 'absent',
+      };
+      return undefined;
+    });
+
+    render(<ElmerPane />);
+
+    // The button must exist without opening the disclosure first.
+    // It appears in the messages area when no model is configured.
+    const connectBtn = await screen.findByTestId('elmer-connect-model');
+    expect(connectBtn).toBeTruthy();
+    expect(connectBtn.textContent).toContain('Connect a model');
+  });
+
+  it('clicking the Connect a model button opens the Model section disclosure', async () => {
+    // Simulate no configured model.
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: '',
+        agentModel: '',
+        keyStatus: 'absent',
+      };
+      return undefined;
+    });
+
+    render(<ElmerPane />);
+
+    // The advanced body should NOT be open initially.
+    expect(screen.queryByTestId('elmer-advanced-body')).toBeNull();
+
+    const connectBtn = await screen.findByTestId('elmer-connect-model');
+    fireEvent.click(connectBtn);
+
+    // The Model section disclosure should now be open.
+    await waitFor(() => {
+      expect(screen.getByTestId('elmer-advanced-body')).toBeTruthy();
+    });
+  });
+});
+
+describe('<ElmerPane> G3 — detect_remedy_loopback_offline', () => {
+  it('loopback endpoint + transport failure → Ollama offline remedy', async () => {
+    // Config with loopback endpoint.
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'http://127.0.0.1:11434/v1/chat/completions',
+        agentModel: 'llama3',
+        keyStatus: 'absent',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    // Mock detect to fail with a NoServer-style reason (transport failure).
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_detect_models')
+        throw new Error('no server: could not connect to 127.0.0.1:11434: connection refused');
+      return undefined;
+    });
+
+    fireEvent.click(screen.getByTestId('elmer-detect-btn'));
+
+    await waitFor(() => {
+      const errorEl = screen.getByTestId('elmer-detect-error');
+      expect(errorEl.textContent).toContain('Ollama');
+      expect(errorEl.textContent).toContain('start it');
+    });
+  });
+});
+
+describe('<ElmerPane> G3 — detect_remedy_remote_transport', () => {
+  it('remote endpoint + transport failure → internet connection remedy', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'absent',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_detect_models')
+        throw new Error('no server: could not connect to api.openai.com: network unreachable');
+      return undefined;
+    });
+
+    fireEvent.click(screen.getByTestId('elmer-detect-btn'));
+
+    await waitFor(() => {
+      const errorEl = screen.getByTestId('elmer-detect-error');
+      expect(errorEl.textContent).toContain('internet connection');
+    });
+  });
+});
+
+describe('<ElmerPane> G3 — detect_remedy_auth', () => {
+  it('auth error + OpenAI preset → "re-enter the key for OpenAI"', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'present',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_detect_models')
+        throw new Error('auth error: check the API key for api.openai.com');
+      return undefined;
+    });
+
+    fireEvent.click(screen.getByTestId('elmer-detect-btn'));
+
+    await waitFor(() => {
+      const errorEl = screen.getByTestId('elmer-detect-error');
+      expect(errorEl.textContent).toContain('re-enter the key for');
+      expect(errorEl.textContent).toContain('OpenAI');
+    });
+  });
+});
+
+describe('<ElmerPane> G3 — detect_zero_models_remedy', () => {
+  it('zero models reason → pull-a-model remedy, no green check', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'http://127.0.0.1:11434/v1/chat/completions',
+        agentModel: 'llama3',
+        keyStatus: 'absent',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_detect_models')
+        throw new Error('no models: the server returned an empty model list');
+      return undefined;
+    });
+
+    fireEvent.click(screen.getByTestId('elmer-detect-btn'));
+
+    await waitFor(() => {
+      const errorEl = screen.getByTestId('elmer-detect-error');
+      expect(errorEl.textContent).toContain('pull a model');
+    });
+
+    // No green check mark / success count present.
+    expect(screen.queryByText(/✓/)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// H1 — expandModel prop: opens Model section disclosure on mount
+// ---------------------------------------------------------------------------
+
+describe('<ElmerPane> H1 — expand_model_prop_opens_model_section', () => {
+  it('renders with the Model section disclosure open when expandModel=true', async () => {
+    render(<ElmerPane expandModel />);
+    // The advanced body must be present without the operator clicking the toggle.
+    await waitFor(() => {
+      expect(screen.getByTestId('elmer-advanced-body')).toBeTruthy();
+    });
+  });
+
+  it('disclosure is closed by default when expandModel is not set', () => {
+    render(<ElmerPane />);
+    expect(screen.queryByTestId('elmer-advanced-body')).toBeNull();
+  });
+});
+
+describe('<ElmerPane> G3 — model_change_drops_attribution_marker', () => {
+  it('configSet changing model mid-conversation inserts an attribution marker before the next turn', async () => {
+    // Start with llama3 config.
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'http://127.0.0.1:11434/v1/chat/completions',
+        agentModel: 'llama3',
+        keyStatus: 'absent',
+      };
+      return undefined;
+    });
+
+    render(<ElmerPane />);
+
+    // Open the model section and load config.
+    openAdvanced();
+    await waitFor(() => {
+      expect(screen.getByTestId('elmer-model-form')).toBeTruthy();
+    });
+
+    // Change the model to gpt-4o and save.
+    const modelInput = screen.getByTestId('elmer-model-input') as HTMLInputElement;
+    fireEvent.change(modelInput, { target: { value: 'gpt-4o' } });
+
+    mockInvoke.mockClear();
+    fireEvent.click(screen.getByTestId('elmer-save-btn'));
+
+    // Wait for the save to be invoked.
+    await waitFor(() => {
+      const calls = mockInvoke.mock.calls;
+      expect(calls.some((c) => c[0] === 'elmer_config_set')).toBe(true);
+    });
+
+    // Fire a new assistant turn — an attribution marker should appear before it.
+    const payload: ElmerTurnPayload = { kind: 'turn', role: 'assistant', text: 'Hello with gpt-4o' };
+    await fireElmerEvent<ElmerTurnPayload>(EV_TURN, payload);
+
+    await waitFor(() => {
+      const marker = screen.getByTestId('elmer-model-attribution');
+      expect(marker.textContent).toContain('now using gpt-4o');
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Credential-seam regression tests (Bug 1 + Bug 2 fixes)
+// ---------------------------------------------------------------------------
+
+describe('<ElmerPane> credential-seam — editing_endpoint_to_new_origin_resets_pending_key_action', () => {
+  // Bug 1: A Remove or Replace action started for origin A must NOT carry
+  // through to a Save when the endpoint has been changed to a different origin B.
+  // If the reset does not fire, buildSetKey() returns {action:'clear'} and the
+  // backend applies it to origin B (wrong) — clearing B's key while A's survives.
+
+  it('Remove pending then change endpoint to new origin: Save sends key:{action:keep} not clear', async () => {
+    // Load OpenAI config with a stored key.
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'present',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    // Click Remove — sets clearPending=true for OpenAI origin.
+    fireEvent.click(screen.getByTestId('elmer-key-remove-btn'));
+
+    // Verify the pending state is shown.
+    expect(screen.getByTestId('elmer-key-clear-cancel-btn')).toBeTruthy();
+
+    // Now change the endpoint to a completely different origin (OpenRouter).
+    const endpointInput = screen.getByTestId('elmer-endpoint-input');
+    fireEvent.change(endpointInput, {
+      target: { value: 'https://openrouter.ai/api/v1/chat/completions' },
+    });
+
+    // After origin change, the stale clearPending must be reset.
+    // The form should now show an absent-key input (no stored key for OpenRouter).
+    await waitFor(() => {
+      // clearPending was reset → the clear-pending UI is gone.
+      expect(screen.queryByTestId('elmer-key-clear-cancel-btn')).toBeNull();
+      // The form now shows the absent-key input for the new origin.
+      expect(screen.getByTestId('elmer-key-input')).toBeTruthy();
+    });
+
+    // Save — must NOT send action:clear for the new origin.
+    mockInvoke.mockClear();
+    fireEvent.click(screen.getByTestId('elmer-save-btn'));
+
+    await waitFor(() => {
+      const calls = mockInvoke.mock.calls;
+      const setCall = calls.find((c) => c[0] === 'elmer_config_set');
+      expect(setCall).toBeTruthy();
+      const args = setCall![1] as { agentEndpoint: string; key: { action: string } };
+      // The endpoint sent to the backend is the new origin's endpoint.
+      expect(args.agentEndpoint).toContain('openrouter.ai');
+      // The key action must be 'keep' (reset), NOT 'clear' (stale Remove).
+      expect(args.key.action).toBe('keep');
+      expect(args.key.action).not.toBe('clear');
+    });
+  });
+
+  it('Replace+type pending then change endpoint to new origin: Save sends key:{action:keep} not set-for-old-key', async () => {
+    // Load OpenAI config with a stored key.
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'present',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    // Enter Replace mode and type a key intended for OpenAI.
+    fireEvent.click(screen.getByTestId('elmer-key-replace-btn'));
+    const replaceInput = screen.getByTestId('elmer-key-replace-input');
+    fireEvent.change(replaceInput, { target: { value: 'sk-openai-key-typed-for-A' } });
+
+    // Now change endpoint to OpenRouter (different origin).
+    const endpointInput = screen.getByTestId('elmer-endpoint-input');
+    fireEvent.change(endpointInput, {
+      target: { value: 'https://openrouter.ai/api/v1/chat/completions' },
+    });
+
+    // After origin change, replaceMode + newKeyValue must be reset.
+    await waitFor(() => {
+      // The replace input is gone (replaceMode=false).
+      expect(screen.queryByTestId('elmer-key-replace-input')).toBeNull();
+      // The absent-key input is now shown.
+      expect(screen.getByTestId('elmer-key-input')).toBeTruthy();
+    });
+
+    // Save — must NOT send action:set with the OpenAI key.
+    mockInvoke.mockClear();
+    fireEvent.click(screen.getByTestId('elmer-save-btn'));
+
+    await waitFor(() => {
+      const calls = mockInvoke.mock.calls;
+      const setCall = calls.find((c) => c[0] === 'elmer_config_set');
+      expect(setCall).toBeTruthy();
+      const args = setCall![1] as { agentEndpoint: string; key: { action: string; value?: string } };
+      expect(args.agentEndpoint).toContain('openrouter.ai');
+      // The key action must NOT be 'set' with the stale OpenAI key value.
+      expect(args.key.action).not.toBe('set');
+      if (args.key.action === 'set') {
+        // If somehow set, it must not carry the OpenAI key to OpenRouter.
+        expect(args.key.value).not.toBe('sk-openai-key-typed-for-A');
+      }
+      // After reset, no key was typed for the new origin → keep.
+      expect(args.key.action).toBe('keep');
+    });
+  });
+});
+
+describe('<ElmerPane> credential-seam — detect_uses_inline_key_when_typed_not_saved', () => {
+  // Bug 2: Detect must use the key currently typed in the form, not always
+  // 'useStored'. When keyStatus==='absent' and a key has been typed (but not
+  // Saved), Detect should probe with {source:'inline', value:<typed>} so the
+  // operator can validate the key before committing it.
+
+  it('absent key: type a key then click Detect → keySource {source:inline, value}', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'absent',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    // Type a key in the absent-key input (not yet Saved).
+    const keyInput = screen.getByTestId('elmer-key-input');
+    fireEvent.change(keyInput, { target: { value: 'sk-typed-not-saved' } });
+
+    // Mock detect to record what keySource it receives.
+    mockInvoke.mockClear();
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_detect_models') return [];
+      return undefined;
+    });
+
+    fireEvent.click(screen.getByTestId('elmer-detect-btn'));
+
+    await waitFor(() => {
+      const calls = mockInvoke.mock.calls;
+      const detectCall = calls.find((c) => c[0] === 'elmer_detect_models');
+      expect(detectCall).toBeTruthy();
+      const args = detectCall![1] as { agentEndpoint: string; keySource: { source: string; value?: string } };
+      // Must use inline with the typed key, NOT useStored (which would probe
+      // with no key and produce a false auth failure).
+      expect(args.keySource.source).toBe('inline');
+      expect(args.keySource.value).toBe('sk-typed-not-saved');
+    });
+  });
+
+  it('present key + Replace mode: type a key then click Detect → keySource {source:inline, value}', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'present',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    // Enter Replace mode and type a new key (not yet Saved).
+    fireEvent.click(screen.getByTestId('elmer-key-replace-btn'));
+    const replaceInput = screen.getByTestId('elmer-key-replace-input');
+    fireEvent.change(replaceInput, { target: { value: 'sk-replacement-not-saved' } });
+
+    mockInvoke.mockClear();
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_detect_models') return [];
+      return undefined;
+    });
+
+    fireEvent.click(screen.getByTestId('elmer-detect-btn'));
+
+    await waitFor(() => {
+      const calls = mockInvoke.mock.calls;
+      const detectCall = calls.find((c) => c[0] === 'elmer_detect_models');
+      expect(detectCall).toBeTruthy();
+      const args = detectCall![1] as { agentEndpoint: string; keySource: { source: string; value?: string } };
+      expect(args.keySource.source).toBe('inline');
+      expect(args.keySource.value).toBe('sk-replacement-not-saved');
+    });
+  });
+});
+
+describe('<ElmerPane> credential-seam — detect_uses_usestored_when_key_present_and_untouched', () => {
+  // Bug 2 (counter-case): When keyStatus==='present' and no pending change has
+  // been started, Detect should use the stored key ({source:'useStored'}).
+
+  it('present key, no pending input, click Detect → keySource {source:useStored}', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'present',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    // Do NOT click Replace or Remove — leave the stored key untouched.
+
+    mockInvoke.mockClear();
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_detect_models') return [];
+      return undefined;
+    });
+
+    fireEvent.click(screen.getByTestId('elmer-detect-btn'));
+
+    await waitFor(() => {
+      const calls = mockInvoke.mock.calls;
+      const detectCall = calls.find((c) => c[0] === 'elmer_detect_models');
+      expect(detectCall).toBeTruthy();
+      const args = detectCall![1] as { agentEndpoint: string; keySource: { source: string } };
+      expect(args.keySource.source).toBe('useStored');
+    });
   });
 });

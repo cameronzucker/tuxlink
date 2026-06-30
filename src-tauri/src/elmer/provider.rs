@@ -11,18 +11,32 @@
 //!
 //! ## SSRF defence (AC-7)
 //!
-//! The endpoint URL is accepted ONLY from operator config or the hard-coded
-//! loopback default. It is never sourced from a tool result. The
-//! [`tuxlink_agent_frontend::endpoint::LoopbackEndpoint`] wrapper enforces that
-//! the URL is loopback-only (`127.0.0.0/8` / `::1` / `localhost`); any other
-//! host is rejected at construction time.
+//! The endpoint URL is accepted from operator config OR the `elmer_config_set`
+//! Tauri command (an operator UI action) — it is **never** sourced from a tool
+//! result. The egress gate in [`tuxlink_agent_frontend::egress::build_vetted_client`]
+//! enforces IP-policy at connect time; `AgentEndpoint::parse` rejects metadata
+//! literals and credentials-in-URL at config time.
+//!
+//! ## Vetted-client egress (AC-7, Task C2)
+//!
+//! [`ElmerProvider::new_vetted`] is the preferred constructor for operator-configured
+//! endpoints. It routes the model client through
+//! [`tuxlink_agent_frontend::egress::build_vetted_client`] — the same
+//! resolved-IP-pin and DNS-rebind gate used by the tile fetcher — so a named
+//! host that resolves to a forbidden IP (metadata, link-local, loopback without
+//! opt-in) is denied at build time, before any HTTP POST can be issued. The
+//! `LoopbackEndpoint` constructor ([`ElmerProvider::new`]) remains for local
+//! llama.cpp / Ollama shims and for existing tests.
+
+use std::net::SocketAddr;
 
 use async_trait::async_trait;
 use serde_json::Value;
 
 use tuxlink_agent_frontend::{
-    endpoint::LoopbackEndpoint,
-    provider::OpenAiProvider,
+    egress::{build_vetted_client, EgressError},
+    endpoint::{AgentEndpoint, LoopbackEndpoint},
+    provider::{ApiKey, OpenAiProvider},
 };
 use tuxlink_agent_runner::{
     Conversation, Message, ModelTurn, Provider, ProviderError, ToolCall, ToolSpec,
@@ -49,9 +63,76 @@ impl ElmerProvider {
     /// * `api_key` — optional bearer token (usually `None` for local ollama/llama.cpp).
     pub fn new(endpoint: LoopbackEndpoint, model: String, api_key: Option<String>) -> Self {
         let client = reqwest::Client::new();
-        let inner = OpenAiProvider::new(client, endpoint.0, model, api_key);
+        let inner = OpenAiProvider::new(client, endpoint.0, model, api_key.map(ApiKey::new));
         Self { inner }
     }
+
+    /// Build a redacting provider whose inner [`OpenAiProvider`] uses the
+    /// SSRF-guarded vetted client from [`build_vetted_client`].
+    ///
+    /// Calls `build_vetted_client(&endpoint, system_resolver)` to resolve the
+    /// endpoint host (if named), vet every resolved IP against the
+    /// [`tuxlink_agent_frontend::egress::elmer_ip_is_permitted`] policy, and
+    /// pin the connection to the vetted address set — closing the DNS-rebind
+    /// window between config time and connect time.
+    ///
+    /// * `endpoint` — operator-configured endpoint, already validated by
+    ///   [`AgentEndpoint::parse`] (rejects link-local/metadata literals and
+    ///   credentials-in-URL at config time; this constructor adds the
+    ///   fetch-time DNS-rebind gate).
+    /// * `model` — model identifier string (e.g. `"llama3"`, `"gpt-4o"`).
+    /// * `api_key` — optional bearer token (usually `None` for local ollama/llama.cpp).
+    ///
+    /// Returns `Err(EgressError)` if the endpoint's resolved IP is denied by
+    /// the egress policy (e.g. a named host resolving to `169.254.169.254`).
+    pub async fn new_vetted(
+        endpoint: AgentEndpoint,
+        model: String,
+        api_key: Option<ApiKey>,
+    ) -> Result<Self, EgressError> {
+        Self::new_vetted_with_resolver(endpoint, model, api_key, |host, port| async move {
+            system_resolver(&host, port).await
+        })
+        .await
+    }
+
+    /// Core constructor with an injectable resolver seam — mirrors
+    /// `tiles::fetch::fetch_tile_bytes_with_resolver`.
+    ///
+    /// `resolve` maps `(host, port)` to candidate `SocketAddr`s. Production
+    /// callers use [`Self::new_vetted`] which injects the platform resolver;
+    /// tests inject a fake to prove deny-path propagation without real DNS.
+    ///
+    /// The `#[cfg(any(test, …))]` annotation is deliberately absent — the seam
+    /// needs to be reachable from the `#[cfg(test)]` block inside this module,
+    /// and `pub(crate)` suffices for that without requiring a feature flag.
+    pub(crate) async fn new_vetted_with_resolver<R, Fut>(
+        endpoint: AgentEndpoint,
+        model: String,
+        api_key: Option<ApiKey>,
+        resolve: R,
+    ) -> Result<Self, EgressError>
+    where
+        R: Fn(String, u16) -> Fut,
+        Fut: std::future::Future<Output = std::io::Result<Vec<SocketAddr>>>,
+    {
+        let client = build_vetted_client(&endpoint, resolve).await?;
+        let url = endpoint.0;
+        let inner = OpenAiProvider::new(client, url, model, api_key);
+        Ok(Self { inner })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// System resolver (production seam)
+// ---------------------------------------------------------------------------
+
+/// Production resolver: resolve `host:port` to a list of `SocketAddr` via the
+/// platform resolver (Tokio's async DNS lookup). Mirrors
+/// `tiles::fetch::system_resolve`.
+async fn system_resolver(host: &str, port: u16) -> std::io::Result<Vec<SocketAddr>> {
+    let target = format!("{host}:{port}");
+    tokio::net::lookup_host(target).await.map(|it| it.collect())
 }
 
 #[async_trait]
@@ -278,28 +359,17 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // AC-7: LoopbackEndpoint rejects non-loopback hosts
+    // AC-7: LoopbackEndpoint smoke — retained until E2 (LoopbackEndpoint removal)
     // -----------------------------------------------------------------------
 
     /// `LoopbackEndpoint::parse` accepts a local ollama endpoint.
+    ///
+    /// Minimal smoke test retained so `LoopbackEndpoint` stays exercised until
+    /// the E2 constructor migration removes it entirely.
     #[test]
     fn loopback_endpoint_accepts_local_ollama() {
         let ep = LoopbackEndpoint::parse("http://127.0.0.1:11434/v1/chat/completions");
         assert!(ep.is_ok(), "expected Ok, got {ep:?}");
-    }
-
-    /// `LoopbackEndpoint::parse` rejects a LAN address (192.168.x.x).
-    #[test]
-    fn loopback_endpoint_rejects_lan_address() {
-        let ep = LoopbackEndpoint::parse("http://192.168.1.5/v1/chat/completions");
-        assert!(ep.is_err(), "LAN address must be rejected: {ep:?}");
-    }
-
-    /// `LoopbackEndpoint::parse` rejects the cloud metadata address.
-    #[test]
-    fn loopback_endpoint_rejects_metadata_address() {
-        let ep = LoopbackEndpoint::parse("http://169.254.169.254/v1/chat/completions");
-        assert!(ep.is_err(), "metadata address must be rejected: {ep:?}");
     }
 
     /// Verify that `ElmerProvider::new` can be constructed with a valid endpoint
@@ -313,18 +383,62 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // AC-7: agent-writable config key absence test
+    // AC-7: AgentEndpoint contract tests
+    //
+    // The endpoint accepted via `elmer_config_set` (operator UI action) is
+    // validated by `AgentEndpoint::parse` at config time. The parse rules are:
+    //   - metadata-IP literals → rejected
+    //   - public host/IP       → accepted (egress gate covers runtime policy)
+    //   - credentials-in-URL   → rejected
+    //
+    // These tests duplicate A1's AgentEndpoint tests deliberately — they keep
+    // this module self-documenting about the parse contract without requiring a
+    // cross-module import. The enforcement of "endpoint is never set from a tool
+    // result" is verified by R2.4 in injection_tests.rs (task F1).
+    // -----------------------------------------------------------------------
+
+    /// `AgentEndpoint::parse` rejects a metadata-IP literal.
+    ///
+    /// The SSRF guard catches cloud-metadata addresses at config time so they
+    /// never reach the egress gate or `ElmerProvider::new_vetted`.
+    #[test]
+    fn agent_endpoint_rejects_metadata_literal() {
+        let ep = AgentEndpoint::parse("http://169.254.169.254/v1/chat/completions");
+        assert!(ep.is_err(), "metadata-IP literal must be rejected at parse: {ep:?}");
+    }
+
+    /// `AgentEndpoint::parse` accepts a public HTTPS endpoint.
+    ///
+    /// Public cloud API endpoints (api.openai.com, etc.) are legitimate operator
+    /// targets; the egress gate enforces runtime IP policy via `new_vetted`.
+    #[test]
+    fn agent_endpoint_accepts_public_host() {
+        let ep = AgentEndpoint::parse("https://api.openai.com/v1/chat/completions");
+        assert!(ep.is_ok(), "public endpoint must be accepted at parse: {ep:?}");
+    }
+
+    /// `AgentEndpoint::parse` rejects credentials-in-URL (userinfo component).
+    ///
+    /// An endpoint with embedded credentials would let a tool result inject a
+    /// credential-bearing URL into the config; rejecting at parse closes that
+    /// vector even if the caller is operator-sourced.
+    #[test]
+    fn agent_endpoint_rejects_userinfo() {
+        let ep = AgentEndpoint::parse("https://user:pass@api.example.com/v1/chat/completions");
+        assert!(ep.is_err(), "userinfo in URL must be rejected at parse: {ep:?}");
+    }
+
+    // -----------------------------------------------------------------------
+    // AC-7: provider opacity test
     //
     // The endpoint must NEVER be reachable from a tool result. The provider
-    // is constructed only in the lib.rs setup closure from config/default,
-    // not from any command parameter or tool output. This test asserts the
-    // absence of any Tauri command parameter that could deserialize an
-    // endpoint/model from the frontend (a React-supplied endpoint would be
-    // an SSRF vector).
+    // is constructed from operator config OR the `elmer_config_set` Tauri
+    // command — both are operator-side actions, not agent-writable.
     //
-    // Implementation: the grep-gate lives in commands.rs (AC-5 test) which
-    // asserts no Vec<Message>/Conversation command parameter exists. The
-    // endpoint/model config key is an OPERATOR-only field (not agent-writable).
+    // The enforcement boundary (R2.4) lives in injection_tests.rs (task F1):
+    // that test asserts the MCP boundary cannot set the endpoint from a tool
+    // result. This test asserts the structural invariant: ElmerProvider has no
+    // public endpoint setter reachable from Tauri command context.
     // -----------------------------------------------------------------------
 
     /// The ElmerProvider struct is opaque — it has no public setter for the
@@ -333,13 +447,97 @@ mod tests {
     /// Verifies that ElmerProvider can be constructed and used as a dyn Provider.
     #[test]
     fn elmer_provider_new_is_opaque_and_implements_provider() {
-        // The only public constructor is ElmerProvider::new(LoopbackEndpoint, ...).
-        // There is no way to set the endpoint from outside this module; the inner
-        // OpenAiProvider field is private (no pub field, no setter method).
+        // The only public constructors are ElmerProvider::new(LoopbackEndpoint, ...)
+        // and ElmerProvider::new_vetted(AgentEndpoint, ...). Neither exposes a
+        // public endpoint setter; the inner OpenAiProvider field is private
+        // (no pub field, no setter method). An agent calling a Tauri tool has
+        // no path to mutate the endpoint — the structural invariant enforces AC-7.
         let ep = LoopbackEndpoint::parse("http://127.0.0.1:11434/v1/chat/completions")
             .expect("loopback must be accepted");
         let provider = ElmerProvider::new(ep, "test-model".into(), None);
         // If this trait object coercion compiles, the trait is implemented.
         let _: &dyn Provider = &provider;
+    }
+
+    // -----------------------------------------------------------------------
+    // AC-7 / Task C2: new_vetted routes through build_vetted_client
+    // -----------------------------------------------------------------------
+
+    /// A resolver that always returns the given fixed addresses (test seam).
+    /// Mirrors `tiles::fetch::fixed_resolver` and `egress::tests::fixed_resolver`.
+    fn fixed_resolver(
+        addrs: Vec<std::net::SocketAddr>,
+    ) -> impl Fn(String, u16) -> std::future::Ready<std::io::Result<Vec<std::net::SocketAddr>>>
+           + Clone {
+        move |_host, _port| std::future::ready(Ok(addrs.clone()))
+    }
+
+    /// `new_vetted` accepts a loopback IP-literal endpoint and builds a
+    /// provider. No network call is made — `build_vetted_client` takes the
+    /// IP-literal branch (no DNS to rebind) and constructs the client directly.
+    ///
+    /// Mirrors the loopback smoke test for `ElmerProvider::new`, but proves
+    /// that the vetted path reaches the same `Ok(provider)` outcome for the
+    /// canonical local ollama / llama.cpp endpoint.
+    #[tokio::test]
+    async fn new_vetted_builds_for_loopback() {
+        let ep = AgentEndpoint::parse("http://127.0.0.1:11434/v1/chat/completions")
+            .expect("loopback AgentEndpoint must parse");
+        let result = ElmerProvider::new_vetted(ep, "llama3".into(), None).await;
+        assert!(
+            result.is_ok(),
+            "new_vetted must succeed for a loopback IP-literal endpoint (build returned Err)"
+        );
+    }
+
+    /// `new_vetted` accepts a public HTTPS endpoint (api.openai.com) when the
+    /// resolver returns a public IP. Build only — no network I/O. Proves that
+    /// `build_vetted_client` permits public IPs for Elmer (inverted vs tiles).
+    ///
+    /// Uses the resolver seam so no real DNS is required in CI.
+    #[tokio::test]
+    async fn new_vetted_builds_for_public() {
+        let ep = AgentEndpoint::parse("https://api.openai.com/v1/chat/completions")
+            .expect("public AgentEndpoint must parse");
+        // Inject a resolver that returns a public IP — `build_vetted_client`
+        // permits public IPs for model endpoints (INVERTED vs tile egress).
+        let public: std::net::SocketAddr = "104.18.6.192:443".parse().unwrap();
+        let result = ElmerProvider::new_vetted_with_resolver(
+            ep,
+            "gpt-4o".into(),
+            Some(ApiKey::new("sk-x")),
+            fixed_resolver(vec![public]),
+        )
+        .await;
+        assert!(
+            result.is_ok(),
+            "new_vetted must succeed for a public endpoint resolving to a public IP (build returned Err)"
+        );
+    }
+
+    /// `new_vetted` propagates `EgressError::HostDenied` when a named endpoint
+    /// resolves to a forbidden IP (e.g. the cloud-metadata address).
+    ///
+    /// The metadata literal `169.254.169.254` already errors at
+    /// `AgentEndpoint::parse`; to exercise the DNS-rebind gate inside
+    /// `build_vetted_client` we use a NAMED endpoint (parsed fine) and poison
+    /// the resolver to return the forbidden IP. This is the resolver-seam
+    /// deny-path test described in the Task C2 brief.
+    #[tokio::test]
+    async fn new_vetted_denies_named_endpoint_resolving_to_metadata() {
+        let ep = AgentEndpoint::parse("https://api.model.example/v1/chat/completions")
+            .expect("named AgentEndpoint must parse");
+        let metadata: std::net::SocketAddr = "169.254.169.254:443".parse().unwrap();
+        let result = ElmerProvider::new_vetted_with_resolver(
+            ep,
+            "some-model".into(),
+            None,
+            fixed_resolver(vec![metadata]),
+        )
+        .await;
+        assert!(
+            matches!(result, Err(EgressError::HostDenied(_))),
+            "new_vetted must propagate EgressError::HostDenied when the resolver returns a forbidden IP"
+        );
     }
 }
