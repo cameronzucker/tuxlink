@@ -1501,7 +1501,11 @@ pub fn run() {
             //   4. mcp_state_elmer — a second McpState (separate from the UDS router's
             //      McpState; both share the same Arc<EgressGuard> binding)
             //   5. invoker — InProcessMcpInvoker::connect(mcp_state_elmer).await
-            //   6. provider — ElmerProvider from config or default loopback endpoint
+            //   6. provider — warm-default ElmerProvider::new_vetted from config or
+            //      default loopback endpoint (E2; per-turn build is authoritative)
+            //   6b. model_config (ElmerModelConfigState, E1) + keyring (ElmerKeyring,
+            //      B1) — both `app.manage`d as Arc and passed into the session; D3's
+            //      command surface reads the same managed Arcs (no second manage)
             //   7. session — ElmerSession::new(...) — synchronous constructor
             {
                 use tauri::Manager as _;
@@ -1562,36 +1566,123 @@ pub fn run() {
                             .map(|c| c.elmer)
                             .unwrap_or_default();
 
-                        // Build the loopback-validated endpoint.
-                        let endpoint = match tuxlink_agent_frontend::endpoint::LoopbackEndpoint::parse(
+                        // Default loopback endpoint used both as the warm-default
+                        // fallback and as the seed config when the configured
+                        // endpoint is invalid.
+                        const DEFAULT_ENDPOINT: &str =
+                            "http://127.0.0.1:11434/v1/chat/completions";
+
+                        // Validate the configured endpoint with AgentEndpoint
+                        // (accepts loopback AND remote; rejects metadata/userinfo).
+                        // On Err, fall back to the default loopback endpoint —
+                        // NON-FATAL, no panic. The resulting `warm_endpoint` URL is
+                        // the value seeded into the managed ElmerModelConfigState so
+                        // the per-turn build (E2) and live-apply (D1) read the same
+                        // value.
+                        let warm_endpoint = match tuxlink_agent_frontend::endpoint::AgentEndpoint::parse(
                             &elmer_cfg.agent_endpoint,
                         ) {
                             Ok(ep) => ep,
                             Err(e) => {
-                                // Config has an invalid endpoint (e.g. someone set a LAN
-                                // address). Fall back to the default loopback ollama URL.
                                 tracing::warn!(
                                     target: "elmer",
                                     error = %e,
                                     "configured elmer.agent_endpoint is invalid; falling back to default loopback"
                                 );
-                                tuxlink_agent_frontend::endpoint::LoopbackEndpoint::parse(
-                                    "http://127.0.0.1:11434/v1/chat/completions",
-                                )
-                                .expect("default loopback endpoint must be valid")
+                                // The default is a constant loopback URL; parse is
+                                // infeasible to fail, but stay non-fatal regardless.
+                                match tuxlink_agent_frontend::endpoint::AgentEndpoint::parse(
+                                    DEFAULT_ENDPOINT,
+                                ) {
+                                    Ok(ep) => ep,
+                                    Err(e2) => {
+                                        tracing::warn!(
+                                            target: "elmer",
+                                            error = %e2,
+                                            "default loopback endpoint failed to parse; Elmer session not started"
+                                        );
+                                        return Ok(());
+                                    }
+                                }
                             }
                         };
+                        let warm_endpoint_url = warm_endpoint.url().as_str().to_string();
+                        let model_string = elmer_cfg.agent_model.clone();
 
+                        // Construct the keyring helper once; manage it for the D3
+                        // command surface AND pass a clone into the session for the
+                        // per-turn key read. Loopback warm-default never reads it.
+                        let keyring = std::sync::Arc::new(crate::elmer::keyring::ElmerKeyring::new());
+                        app.manage(std::sync::Arc::clone(&keyring));
+
+                        // Manage the atomic {endpoint, model} config guard (E1) so
+                        // the per-turn build (E2) and live-apply (D1) share it.
+                        let model_config = std::sync::Arc::new(
+                            crate::elmer::model_config_state::ElmerModelConfigState::new(
+                                warm_endpoint_url,
+                                model_string.clone(),
+                            ),
+                        );
+                        app.manage(std::sync::Arc::clone(&model_config));
+
+                        // Build the WARM-DEFAULT provider via the vetted client.
+                        // This is a fallback proof-of-construction; the per-turn
+                        // build in `ElmerSession::send` is authoritative. The
+                        // warm default is the configured (or fallback-loopback)
+                        // endpoint with no key (loopback shims need none; a public
+                        // endpoint's key is read fresh at turn time by E2).
                         let provider: std::sync::Arc<dyn tuxlink_agent_runner::Provider> =
-                            std::sync::Arc::new(crate::elmer::provider::ElmerProvider::new(
-                                endpoint,
-                                elmer_cfg.agent_model.clone(),
-                                None, // api_key: read from keyring in a future task
-                            ));
+                            match tauri::async_runtime::block_on(
+                                crate::elmer::provider::ElmerProvider::new_vetted(
+                                    warm_endpoint,
+                                    model_string.clone(),
+                                    None,
+                                ),
+                            ) {
+                                Ok(p) => std::sync::Arc::new(p),
+                                Err(e) => {
+                                    // Warm-default egress vetting failed (e.g. the
+                                    // configured host resolves to a denied IP). The
+                                    // per-turn build re-vets each turn and surfaces
+                                    // NeedsOperator, so a failed warm default is
+                                    // non-fatal — fall back to a guaranteed-valid
+                                    // loopback provider so the session can construct.
+                                    tracing::warn!(
+                                        target: "elmer",
+                                        error = %e,
+                                        "warm-default provider vetting failed; using loopback warm default"
+                                    );
+                                    match tuxlink_agent_frontend::endpoint::AgentEndpoint::parse(
+                                        DEFAULT_ENDPOINT,
+                                    )
+                                    .ok()
+                                    .and_then(|ep| {
+                                        tauri::async_runtime::block_on(
+                                            crate::elmer::provider::ElmerProvider::new_vetted(
+                                                ep,
+                                                model_string.clone(),
+                                                None,
+                                            ),
+                                        )
+                                        .ok()
+                                    }) {
+                                        Some(p) => std::sync::Arc::new(p),
+                                        None => {
+                                            tracing::warn!(
+                                                target: "elmer",
+                                                "loopback warm-default provider build failed; Elmer session not started"
+                                            );
+                                            return Ok(());
+                                        }
+                                    }
+                                }
+                            };
 
                         let session = crate::elmer::session::ElmerSession::new(
                             invoker,
                             provider,
+                            model_config,
+                            keyring,
                             guard_elmer,
                             abort_port,
                             outbox_trait.clone(),

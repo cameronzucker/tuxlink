@@ -23,6 +23,12 @@
 //! 1. `op_lock.try_lock()` — takes `op_lock` (or rejects non-blocking).
 //!    `op_lock` is held for the rest of `send`, but it is a **Tokio** async mutex,
 //!    so the tokio runtime can yield while it is held — no thread deadlock.
+//! 1a. `build_turn_provider().await` (Task E2): takes the **model-config**
+//!    `tokio::sync::Mutex` (a *separate* lock from `inner`), holds it across the
+//!    `{parse endpoint, spawn_blocking key read, new_vetted}` build, then drops
+//!    it.  The `inner` std-`Mutex` is NOT held here — the no-`.await`-under-`inner`
+//!    invariant is untouched.  On `Err` this returns `NeedsOperator` WITHOUT
+//!    spawning, so a bad endpoint / locked keyring never reaches the run task.
 //! 2. Brief `inner.lock()` block A: push user turn, `mem::take` conversation,
 //!    create `cancel_child` token.  No `.await` inside.  Unlock.
 //! 3. `tokio::spawn(...)` — no lock held at spawn time.
@@ -70,8 +76,9 @@ use async_trait::async_trait;
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
+use tuxlink_agent_frontend::endpoint::AgentEndpoint;
 use tuxlink_agent_runner::{
-    run_with_conversation, CallAuthority, Conversation, EgressStatus, Limits, RunOutcome,
+    run_with_conversation, CallAuthority, Conversation, EgressStatus, Limits, Provider, RunOutcome,
     ToolCall, ToolInvoker, ToolOutcome, ToolSpec,
 };
 use tuxlink_mcp_core::ports::{AbortPort, OutboxReadPort};
@@ -79,6 +86,9 @@ use tuxlink_security::EgressGuard;
 
 use crate::elmer::approval::{compute_approval, OutboxApproval};
 use crate::elmer::executor::InProcessMcpInvoker;
+use crate::elmer::keyring::ElmerKeyring;
+use crate::elmer::model_config_state::ElmerModelConfigState;
+use crate::elmer::provider::ElmerProvider;
 use crate::mcp_ports::{approval_gated_flush, FlushError};
 
 // ---------------------------------------------------------------------------
@@ -213,8 +223,19 @@ pub struct ElmerSession {
     op_lock: TokioMutex<()>,
     /// Short-lived mutable state (see [`SessionInner`]).
     inner: StdMutex<SessionInner>,
-    /// The LLM provider.
-    provider: Arc<dyn tuxlink_agent_runner::Provider>,
+    /// The startup **warm-default** LLM provider, built once at session
+    /// construction.  Retained as a fallback proof-of-construction; the per-turn
+    /// build in [`ElmerSession::build_turn_provider`] is authoritative for every
+    /// `send`, so this field is intentionally not read on the hot path.
+    #[allow(dead_code)]
+    provider: Arc<dyn Provider>,
+    /// Atomic `{endpoint, model}` config guard (E1).  Locked across the per-turn
+    /// provider build so the endpoint, model, and keyring read form one
+    /// torn-read-free snapshot.
+    model_config: Arc<ElmerModelConfigState>,
+    /// Origin-keyed OS keyring for the model API key (B1).  Read (via
+    /// `spawn_blocking`, D-Bus is blocking) ONLY for non-loopback endpoints.
+    keyring: Arc<ElmerKeyring>,
     /// Tool invoker with staging-freeze wrapper.
     invoker: FreezableInvoker,
     /// `AtomicBool` shared with `invoker.frozen` so `staging_frozen` can be set
@@ -237,7 +258,10 @@ impl ElmerSession {
     /// Construct a session.
     ///
     /// * `invoker` — in-process MCP invoker (wraps `TuxlinkMcp`).
-    /// * `provider` — LLM provider.
+    /// * `provider` — startup warm-default LLM provider (fallback; the per-turn
+    ///   build is authoritative — see [`Self::build_turn_provider`]).
+    /// * `model_config` — atomic `{endpoint, model}` config guard (E1).
+    /// * `keyring` — origin-keyed API-key keyring (B1).
     /// * `guard` — shared egress guard.
     /// * `abort` — ungated abort port.
     /// * `outbox` — non-tainting outbox read port.
@@ -245,7 +269,9 @@ impl ElmerSession {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         invoker: InProcessMcpInvoker,
-        provider: Arc<dyn tuxlink_agent_runner::Provider>,
+        provider: Arc<dyn Provider>,
+        model_config: Arc<ElmerModelConfigState>,
+        keyring: Arc<ElmerKeyring>,
         guard: Arc<EgressGuard>,
         abort: Arc<dyn AbortPort>,
         outbox: Arc<dyn OutboxReadPort>,
@@ -262,6 +288,8 @@ impl ElmerSession {
                 current: None,
             }),
             provider,
+            model_config,
+            keyring,
             invoker,
             frozen_flag,
             guard,
@@ -270,6 +298,43 @@ impl ElmerSession {
             flush_outbox,
             flush_egress,
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Per-turn provider build (Task E2)
+    // -----------------------------------------------------------------------
+
+    /// Build the per-turn provider from one atomic snapshot under the
+    /// model-config lock.
+    ///
+    /// Returns `Err(reason)` → the caller maps it to
+    /// [`RunOutcome::NeedsOperator`].  **Never panics.**
+    ///
+    /// ## Lock discipline
+    ///
+    /// This runs in `send`'s **pre-spawn** section — BEFORE the brief `inner`
+    /// std-`Mutex` block A and BEFORE `tokio::spawn`.  The lock it takes is the
+    /// model-config **`tokio::sync::Mutex`** (E1), held across the
+    /// `{parse endpoint, read key, new_vetted}` sequence so the three reads form
+    /// one torn-read-free snapshot.  This is sound: the model-config tokio mutex
+    /// is a *separate* lock and the `inner` std-`Mutex` is NOT held anywhere in
+    /// this method — preserving the file-wide invariant "no `.await` while
+    /// `inner` is held."
+    ///
+    /// ## Keyring read
+    ///
+    /// The keyring is read **only when `!endpoint.is_loopback()`** (loopback
+    /// shims — ollama / llama.cpp — never carry a key).  The read is a blocking
+    /// D-Bus round-trip, so it runs inside [`tokio::task::spawn_blocking`].  A
+    /// backend error (locked keyring) maps to a NeedsOperator reason — it is
+    /// NEVER collapsed to a keyless send.
+    async fn build_turn_provider(&self) -> Result<Arc<dyn Provider>, String> {
+        // Hold the model-config tokio mutex across the whole build so the
+        // {endpoint, model, key} triple is atomic w.r.t. a concurrent
+        // `elmer_config_set`.  No `inner` std-Mutex is touched here.
+        let snap = self.model_config.lock().await;
+        build_turn_provider_from_parts(&snap.endpoint, &snap.model, &self.keyring).await
+        // model-config lock RELEASED at end of scope.
     }
 
     // -----------------------------------------------------------------------
@@ -291,6 +356,19 @@ impl ElmerSession {
             Ok(g) => g,
             Err(_) => {
                 return RunOutcome::NeedsOperator("a turn is already running".into());
+            }
+        };
+
+        // ── Per-turn provider build (Task E2) ───────────────────────────────
+        // Build the authoritative provider from one atomic {endpoint, model,
+        // key} snapshot under the model-config tokio lock.  This is the
+        // pre-spawn section: NO `inner` std-Mutex is held, and a build failure
+        // returns NeedsOperator WITHOUT spawning a run task and WITHOUT mutating
+        // the conversation (no dangling user turn).
+        let provider = match self.build_turn_provider().await {
+            Ok(p) => p,
+            Err(reason) => {
+                return RunOutcome::NeedsOperator(reason);
             }
         };
 
@@ -321,12 +399,16 @@ impl ElmerSession {
         // task completion.  It never acquires `op_lock`.
         let session_arc = Arc::clone(self);
         let cancel_for_task = cancel_child.clone();
+        // The per-turn provider (built above under the model-config lock) is the
+        // authoritative provider for THIS turn — NOT the startup warm default
+        // `session_arc.provider`.  Move the `Arc` into the task.
+        let turn_provider = provider;
 
         let handle = tokio::spawn(async move {
             // LOCK-INVARIANT: no `inner` lock is held during `run_with_conversation`.
             let outcome = run_with_conversation(
                 &mut convo,
-                &*session_arc.provider,
+                &*turn_provider,
                 &session_arc.invoker,
                 status,
                 limits,
@@ -586,6 +668,75 @@ async fn poll_until_current_none(inner: &StdMutex<SessionInner>) {
         // inner lock RELEASED before the sleep await.
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
+}
+
+/// Core of [`ElmerSession::build_turn_provider`], factored out as a free
+/// function so it can be exercised by a focused unit test without constructing
+/// a full `ElmerSession` (which needs concrete monolith ports backed by a Tauri
+/// AppHandle).
+///
+/// The caller holds the model-config lock for the duration of this call, so the
+/// `endpoint`/`model` pair passed in is a consistent snapshot; this function
+/// then reads the key under that same hold and builds the vetted provider.
+///
+/// Steps, all NeedsOperator-on-failure (never a panic):
+/// 1. `AgentEndpoint::parse(endpoint)` — invalid URL → operator reason.
+/// 2. Key read — ONLY when `!endpoint.is_loopback()`; a locked/unreadable
+///    keyring → operator reason (NOT a silent keyless send).  A simply-absent
+///    key (`Ok(None)`) is fine: pass `None` (local shims need no key, and a
+///    public endpoint with no key surfaces a clean 401 from the model).
+/// 3. `ElmerProvider::new_vetted(endpoint, model, key)` — egress-denied →
+///    operator reason.
+async fn build_turn_provider_from_parts(
+    endpoint: &str,
+    model: &str,
+    keyring: &Arc<ElmerKeyring>,
+) -> Result<Arc<dyn Provider>, String> {
+    // Step 1 — parse + validate the endpoint (SSRF config-time gate).
+    let endpoint = AgentEndpoint::parse(endpoint)
+        .map_err(|_| "endpoint invalid — check Connect an AI Agent settings".to_string())?;
+
+    // Step 2 — read the key ONLY for non-loopback endpoints.  Loopback shims
+    // (ollama / llama.cpp) never carry a key, so we MUST NOT touch the keyring
+    // for them — a locked keyring must not block a purely-local turn.
+    let key = if endpoint.is_loopback() {
+        None
+    } else {
+        let origin = endpoint.origin();
+        let keyring = Arc::clone(keyring);
+        // The keyring read is a blocking D-Bus round-trip; never run it on the
+        // async reactor thread.  `spawn_blocking` requires `'static`, hence the
+        // owned `origin` + cloned `Arc`.
+        let read = tokio::task::spawn_blocking(move || keyring.read(&origin))
+            .await
+            // JoinError (the blocking task itself panicked) is fail-closed: do
+            // NOT proceed keyless.
+            .map_err(|_| {
+                "couldn't read the saved key (keyring locked) — \
+                 check Connect an AI Agent settings"
+                    .to_string()
+            })?;
+        match read {
+            // Key present.
+            Ok(Some(k)) => Some(k),
+            // No key stored for this origin — fine; let the model 401 cleanly.
+            Ok(None) => None,
+            // Backend error (locked / unavailable keyring) is fail-closed:
+            // KeyStatus::Unreadable semantics → NeedsOperator, never keyless.
+            Err(_) => {
+                return Err("couldn't read the saved key (keyring locked) — \
+                            check Connect an AI Agent settings"
+                    .to_string());
+            }
+        }
+    };
+
+    // Step 3 — build the SSRF-vetted provider (DNS-rebind gate at connect time).
+    let provider = ElmerProvider::new_vetted(endpoint, model.to_string(), key)
+        .await
+        .map_err(|e| format!("couldn't reach the model endpoint policy — {e}"))?;
+
+    Ok(Arc::new(provider) as Arc<dyn Provider>)
 }
 
 /// Current Unix timestamp in seconds.
@@ -1174,6 +1325,154 @@ mod tests {
             !inner.lock().unwrap().staging_frozen,
             "staging_frozen must clear on scope exit"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // build_turn_provider tests (Task E2)
+    //
+    // Exercised through the free function `build_turn_provider_from_parts`
+    // (the core of `ElmerSession::build_turn_provider`), which needs only an
+    // endpoint, a model, and an `Arc<ElmerKeyring>` — no monolith ports, so it
+    // is directly unit-testable.  The model-config lock is exercised separately
+    // in `model_config_state.rs::concurrent_set_and_snapshot_are_atomic`; here
+    // we test the build logic the lock protects.
+    // -----------------------------------------------------------------------
+
+    // `ElmerKeyring` is already in scope via `super::*`.  Pull in the factory
+    // type alias + the entry trait for the test keyring fakes.
+    use crate::elmer::keyring::EntryFactory;
+    use crate::winlink::credentials::EntryLike;
+
+    /// An `EntryLike` whose `get_password` PANICS — used to prove the loopback
+    /// path NEVER touches the keyring.  If the `!is_loopback` guard regressed and
+    /// the build read the key for a loopback endpoint, the panic would surface as
+    /// a `spawn_blocking` JoinError and the test's success assertion would fail.
+    struct PanicEntry;
+    impl EntryLike for PanicEntry {
+        fn get_password(&self) -> Result<String, keyring::Error> {
+            panic!("keyring MUST NOT be read for a loopback endpoint");
+        }
+        fn set_password(&self, _p: &str) -> Result<(), keyring::Error> {
+            panic!("keyring MUST NOT be written by build_turn_provider");
+        }
+        fn delete_password(&self) -> Result<(), keyring::Error> {
+            panic!("keyring MUST NOT be cleared by build_turn_provider");
+        }
+    }
+
+    /// Build an `ElmerKeyring` whose every entry panics on access.
+    fn panicking_keyring() -> Arc<ElmerKeyring> {
+        let factory: EntryFactory =
+            Box::new(|_svc: &str, _account: &str| Box::new(PanicEntry) as Box<dyn EntryLike>);
+        Arc::new(ElmerKeyring::with_factory(factory))
+    }
+
+    /// An `EntryLike` whose `get_password` returns a non-`NoEntry` backend error
+    /// — the "locked keyring" / `Unreadable` condition.
+    struct FailingEntry;
+    impl EntryLike for FailingEntry {
+        fn get_password(&self) -> Result<String, keyring::Error> {
+            Err(keyring::Error::PlatformFailure(Box::new(
+                std::io::Error::other("backend unavailable"),
+            )))
+        }
+        fn set_password(&self, _p: &str) -> Result<(), keyring::Error> {
+            Ok(())
+        }
+        fn delete_password(&self) -> Result<(), keyring::Error> {
+            Ok(())
+        }
+    }
+
+    /// Build an `ElmerKeyring` whose reads always fail with a backend error.
+    fn failing_keyring() -> Arc<ElmerKeyring> {
+        let factory: EntryFactory =
+            Box::new(|_svc: &str, _account: &str| Box::new(FailingEntry) as Box<dyn EntryLike>);
+        Arc::new(ElmerKeyring::with_factory(factory))
+    }
+
+    /// A loopback snapshot + a keyring that PANICS on read → the build STILL
+    /// succeeds, proving the `!is_loopback` guard skips the keyring entirely.
+    #[tokio::test]
+    async fn build_turn_provider_loopback_no_keyring_read() {
+        let keyring = panicking_keyring();
+        let result = build_turn_provider_from_parts(
+            "http://127.0.0.1:11434/v1/chat/completions",
+            "llama3",
+            &keyring,
+        )
+        .await;
+        assert!(
+            result.is_ok(),
+            "loopback build must succeed without reading the keyring; got {:?}",
+            result.err()
+        );
+    }
+
+    /// A non-loopback snapshot + an unreadable (locked) keyring → `Err(reason)`
+    /// mentioning the keyring.  This is NOT a silent keyless send — the caller
+    /// maps it to `RunOutcome::NeedsOperator`.
+    #[tokio::test]
+    async fn build_turn_provider_unreadable_keyring_is_needs_operator() {
+        let keyring = failing_keyring();
+        let result = build_turn_provider_from_parts(
+            "https://api.openai.com/v1/chat/completions",
+            "gpt-4o",
+            &keyring,
+        )
+        .await;
+        let reason = result.expect_err("unreadable keyring must yield Err, not a keyless send");
+        assert!(
+            reason.contains("keyring"),
+            "reason must mention the keyring so the operator can fix it; got {reason:?}"
+        );
+    }
+
+    /// An invalid endpoint string → `Err(reason)` and NO panic.
+    #[tokio::test]
+    async fn build_turn_provider_invalid_endpoint_is_needs_operator() {
+        // A panicking keyring proves the endpoint parse fails BEFORE any key
+        // read (parse is step 1; the read is gated behind a valid endpoint).
+        let keyring = panicking_keyring();
+        let result = build_turn_provider_from_parts("not a url", "gpt-4o", &keyring).await;
+        let reason = result.expect_err("invalid endpoint must yield Err, not a panic");
+        assert!(
+            reason.contains("endpoint invalid"),
+            "reason must flag the invalid endpoint; got {reason:?}"
+        );
+    }
+
+    /// send()-path mirror: a provider-build failure yields
+    /// `RunOutcome::NeedsOperator(_)` and NEVER panics the run task.
+    ///
+    /// `TestSession` cannot construct a real `ElmerSession`, so this test
+    /// composes the exact same control flow `send` uses: try the single-flight
+    /// gate, run the build, and on `Err` return NeedsOperator WITHOUT spawning.
+    /// It uses a failing keyring + a non-loopback endpoint to force the build to
+    /// fail, then asserts the mapped outcome.
+    #[tokio::test]
+    async fn send_path_build_failure_is_needs_operator_no_panic() {
+        let keyring = failing_keyring();
+
+        // Mirror of `send`'s pre-spawn build → NeedsOperator mapping.
+        let outcome: RunOutcome = match build_turn_provider_from_parts(
+            "https://api.openai.com/v1/chat/completions",
+            "gpt-4o",
+            &keyring,
+        )
+        .await
+        {
+            Ok(_provider) => panic!("build was expected to fail in this test"),
+            Err(reason) => RunOutcome::NeedsOperator(reason),
+        };
+
+        match outcome {
+            RunOutcome::NeedsOperator(s) => assert!(
+                s.contains("keyring"),
+                "NeedsOperator reason must explain the keyring failure; got {s:?}"
+            ),
+            other => panic!("expected NeedsOperator, got {other:?}"),
+        }
     }
 
     /// The re-digest (not the freeze flag) is the security boundary: a record
