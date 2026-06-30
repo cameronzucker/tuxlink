@@ -13,5 +13,6 @@ pub mod approval;
 pub mod commands;
 pub mod events;
 pub mod executor;
+pub mod keyring;
 pub mod provider;
 pub mod session;
