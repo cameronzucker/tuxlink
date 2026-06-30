@@ -51,7 +51,7 @@ pub use fakes::{RecordedCall, RecordingInvoker, ScriptedProvider, ScriptedTurn};
 pub use runner::{run, run_with_conversation};
 pub use traits::{EgressStatus, Provider, ProviderError, ToolInvoker};
 pub use types::{
-    CallAuthority, Limits, ModelTurn, RunOutcome, ToolCall, ToolOutcome, ToolSpec,
+    CallAuthority, Limits, ModelTurn, RunEvent, RunOutcome, ToolCall, ToolOutcome, ToolSpec,
 };
 
 // The minimal validator is an implementation detail of COR-3, but exposing it
@@ -630,9 +630,68 @@ mod acceptance_tests {
         convo.push_user("second");
         let provider = ScriptedProvider::from_scripted(vec![ScriptedTurn::Turn(ModelTurn::Text("done".into()))]);
         let invoker = RecordingInvoker::new(vec![], vec![]);
-        let out = run_with_conversation(&mut convo, &provider, &invoker, EgressStatus::default(), Limits::default(), CancellationToken::new()).await;
+        let out = run_with_conversation(&mut convo, &provider, &invoker, EgressStatus::default(), Limits::default(), CancellationToken::new(), &|_| {}).await;
         assert!(matches!(out, RunOutcome::Completed(t) if t == "done"));
         assert!(convo.messages().len() >= 3);
+    }
+
+    // --- RunEvent progress callback ---------------------------------------
+
+    #[tokio::test]
+    async fn on_event_emits_toolcall_then_assistant_text_in_order() {
+        // Drive [ToolCalls(echo), Text("final")] through a recording callback.
+        // The callback must observe a ToolCall{tool:"echo"} BEFORE the final
+        // AssistantText{text:"final"}, and must NOT change the RunOutcome.
+        use std::sync::Mutex;
+        let provider = ScriptedProvider::new(vec![
+            ModelTurn::ToolCalls(vec![ToolCall::new("echo", json!({"msg": "hi"}))]),
+            ModelTurn::Text("final".into()),
+        ]);
+        let invoker = RecordingInvoker::always_ok(vec![echo_tool()]);
+
+        let events: Mutex<Vec<RunEvent>> = Mutex::new(Vec::new());
+        let mut convo = Conversation::new("go");
+        let outcome = run_with_conversation(
+            &mut convo,
+            &provider,
+            &invoker,
+            EgressStatus::default(),
+            fast_limits(),
+            CancellationToken::new(),
+            &|ev| events.lock().unwrap().push(ev),
+        )
+        .await;
+
+        // Callback did not alter the outcome.
+        assert_eq!(outcome, RunOutcome::Completed("final".into()));
+
+        let recorded = events.into_inner().unwrap();
+        assert_eq!(
+            recorded,
+            vec![
+                RunEvent::ToolCall { tool: "echo".into() },
+                RunEvent::AssistantText { text: "final".into() },
+            ],
+            "callback must see ToolCall(echo) then AssistantText(final) in order"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_uses_noop_callback_and_completes() {
+        // The thin `run` wrapper passes a no-op callback internally; existing
+        // `run` callers/tests are unaffected. This documents that contract.
+        let provider = ScriptedProvider::new(vec![ModelTurn::Text("done".into())]);
+        let invoker = RecordingInvoker::always_ok(vec![echo_tool()]);
+        let outcome = run(
+            "go",
+            &provider,
+            &invoker,
+            EgressStatus::default(),
+            fast_limits(),
+            CancellationToken::new(),
+        )
+        .await;
+        assert_eq!(outcome, RunOutcome::Completed("done".into()));
     }
 
     #[tokio::test]
