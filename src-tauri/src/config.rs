@@ -1500,6 +1500,19 @@ pub struct ElmerConfig {
     /// forward-compatible without a `CONFIG_SCHEMA_VERSION` bump.
     #[serde(default = "default_agent_turn_timeout_secs")]
     pub agent_turn_timeout_secs: u32,
+    /// Whether the operator has completed the Elmer model-access onboarding flow
+    /// (tuxlink-wpqwy). `false` on first run (absent from disk → serde default).
+    /// Set to `true` by `config_set_inner` on any successful save. The DTO's
+    /// migration expression `onboarded || !is_default()` means an existing user
+    /// whose config content already differs from factory defaults is treated as
+    /// onboarded even before their first explicit save with this field present.
+    ///
+    /// `#[serde(default)]` deserializes absent-from-disk entries as `false` so
+    /// pre-onboarding configs load cleanly. `ElmerConfig` has no
+    /// `deny_unknown_fields`, so this additive field is backward- AND
+    /// forward-compatible.
+    #[serde(default)]
+    pub onboarded: bool,
 }
 
 /// Serde default for [`ElmerConfig::agent_turn_timeout_secs`]: `900` seconds
@@ -1515,6 +1528,7 @@ impl Default for ElmerConfig {
             agent_endpoint: "http://127.0.0.1:11434/v1/chat/completions".into(),
             agent_model: "llama3".into(),
             agent_turn_timeout_secs: default_agent_turn_timeout_secs(),
+            onboarded: false,
         }
     }
 }
@@ -1523,11 +1537,33 @@ impl ElmerConfig {
     /// Returns `true` when this config is byte-for-byte equivalent to the
     /// default — used by `#[serde(skip_serializing_if)]` to keep the config
     /// file clean for operators who have not customized the Elmer endpoint.
+    ///
+    /// `onboarded` IS included in this check (tuxlink-wpqwy persistence fix).
+    /// When a user saves with default content (e.g. the local Ollama defaults)
+    /// and the picker sets `onboarded = true`, this method must return `false`
+    /// so that `skip_serializing_if` does NOT skip the `elmer` section.  If
+    /// `onboarded` were excluded, `is_default()` would return `true` for that
+    /// case and the whole section would be omitted, losing the `onboarded`
+    /// flag on disk — causing the picker to re-appear on the next launch.
+    ///
+    /// Migration read expression (`onboarded || !is_default()`) still works:
+    /// - Never-touched (flag false, content default): `is_default()` = true
+    ///   (both match their defaults); read yields `false || false = false` →
+    ///   picker shows correctly.
+    /// - Old customized pre-field (content differs, flag absent → false):
+    ///   content mismatch makes `is_default()` = false; read yields
+    ///   `false || true = true` → no picker (migration path).
+    /// - Saved default-content (flag true, content default): flag differs from
+    ///   the default `false`, so `is_default()` = false; section persists;
+    ///   read yields `true || … = true` → no picker (this bug fixed).
+    /// - Saved customized (flag true, content differs): `is_default()` = false;
+    ///   persists; read true → no picker.
     pub fn is_default(&self) -> bool {
         let d = ElmerConfig::default();
         self.agent_endpoint == d.agent_endpoint
             && self.agent_model == d.agent_model
             && self.agent_turn_timeout_secs == d.agent_turn_timeout_secs
+            && self.onboarded == d.onboarded
     }
 }
 
@@ -2938,5 +2974,95 @@ mod tests {
         let s = serde_json::to_string(&c).unwrap();
         let back: AprsConfig = serde_json::from_str(&s).unwrap();
         assert_eq!(back, c);
+    }
+
+    // --- tuxlink-wpqwy: ElmerConfig.onboarded sentinel ---
+
+    /// `ElmerConfig::default()` must have `onboarded == false`.
+    /// Guards the serde `#[serde(default)]` path: absent-from-disk entries must
+    /// deserialize to `false`.
+    #[test]
+    fn elmer_config_default_onboarded_is_false() {
+        assert!(!ElmerConfig::default().onboarded);
+    }
+
+    /// An `ElmerConfig` JSON blob that omits the `onboarded` field (pre-wpqwy
+    /// on-disk format) must deserialize to `onboarded == false`.
+    #[test]
+    fn elmer_config_missing_onboarded_deserializes_to_false() {
+        let json = r#"{
+            "agent_endpoint": "http://127.0.0.1:11434/v1/chat/completions",
+            "agent_model": "llama3",
+            "agent_turn_timeout_secs": 900
+        }"#;
+        let cfg: ElmerConfig = serde_json::from_str(json).expect("deserialize");
+        assert!(!cfg.onboarded, "absent `onboarded` must default to false");
+    }
+
+    /// `ElmerConfig::is_default()` must return `false` when `onboarded` is `true`
+    /// even if all content fields are at their factory defaults.  This is the
+    /// tuxlink-wpqwy persistence fix: when a user saves with default content (e.g.
+    /// loopback Ollama), `config_set_inner` sets `onboarded = true`; `is_default()`
+    /// must return `false` so that `skip_serializing_if` does NOT omit the `elmer`
+    /// section, ensuring `onboarded: true` reaches disk and survives the next launch.
+    #[test]
+    fn elmer_config_is_default_reacts_to_onboarded_flag() {
+        let mut cfg = ElmerConfig::default();
+        cfg.onboarded = true;
+        assert!(
+            !cfg.is_default(),
+            "is_default() must return false when onboarded=true (even with default \
+             content fields) so that skip_serializing_if persists the elmer section"
+        );
+    }
+
+    /// A completely-default `ElmerConfig` (content AND `onboarded == false`) IS
+    /// `is_default()`.  Guards the never-touched first-run path: the `elmer`
+    /// section must be omitted from the config file until the operator saves.
+    #[test]
+    fn elmer_config_fully_default_is_default() {
+        let cfg = ElmerConfig::default();
+        assert!(
+            cfg.is_default(),
+            "ElmerConfig with all factory defaults (including onboarded=false) must \
+             be is_default() so the elmer section is omitted from a fresh config file"
+        );
+    }
+
+    /// Persistence fix round-trip: serializing a `Config` whose `elmer` section has
+    /// default content but `onboarded = true` must INCLUDE the `elmer` key (not skip
+    /// it).  The outer `Config` field uses
+    /// `#[serde(default, skip_serializing_if = "ElmerConfig::is_default")]`; with
+    /// `onboarded` now counted by `is_default()`, the section is not omitted and the
+    /// flag survives a serialize→deserialize cycle.
+    #[test]
+    fn elmer_config_onboarded_true_with_default_content_persists() {
+        // A user who saves with loopback Ollama defaults: content stays default but
+        // onboarded is flipped to true.
+        let cfg = ElmerConfig {
+            onboarded: true,
+            ..ElmerConfig::default()
+        };
+        // is_default() must be false so skip_serializing_if does not drop the section.
+        assert!(!cfg.is_default(), "onboarded=true must make is_default() false");
+
+        // Round-trip the containing Config struct to confirm the `elmer` key appears.
+        // We only need to wrap in a minimal JSON object; we can serialize ElmerConfig
+        // itself here since the skip_serializing_if attr is on the parent Config field.
+        // The important property is already captured by !is_default() above — that is
+        // what skip_serializing_if evaluates.  Additionally verify that a fresh
+        // deserialization of the serialized ElmerConfig recovers onboarded=true.
+        let json = serde_json::to_string(&cfg).expect("serialize ElmerConfig");
+        let back: ElmerConfig = serde_json::from_str(&json).expect("deserialize ElmerConfig");
+        assert!(back.onboarded, "onboarded=true must survive a serde round-trip");
+    }
+
+    /// A config with a non-default endpoint must NOT be `is_default()` regardless
+    /// of the `onboarded` flag value.
+    #[test]
+    fn elmer_config_is_default_false_when_content_differs() {
+        let mut cfg = ElmerConfig::default();
+        cfg.agent_endpoint = "https://api.openai.com/v1/chat/completions".into();
+        assert!(!cfg.is_default(), "non-default endpoint must make is_default() return false");
     }
 }

@@ -240,6 +240,12 @@ pub struct ConfigReadDto {
     /// snapshot, so it reflects any in-session `elmer_config_set` advance
     /// (already clamped to `[30, 3600]`).
     pub agent_turn_timeout_secs: u32,
+    /// Whether the operator has completed onboarding (tuxlink-wpqwy). Serializes
+    /// as `"onboarded"` (camelCase of `onboarded` is `onboarded`). The TS
+    /// `ConfigReadDto.onboarded: boolean` matches this exact key. Value is
+    /// migration-aware: `true` if the stored flag is set OR the config content
+    /// already differs from factory defaults (existing-user migration).
+    pub onboarded: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -341,6 +347,9 @@ pub async fn config_set_inner(
     config.elmer.agent_endpoint = agent_endpoint.clone();
     config.elmer.agent_model = agent_model.clone();
     config.elmer.agent_turn_timeout_secs = turn_timeout_secs;
+    // Mark the operator as onboarded: any successful save through the Elmer
+    // model form means the picker has been presented and acted upon.
+    config.elmer.onboarded = true;
     crate::config::write_config_atomic(&config)
         .map_err(|e| format!("couldn't save config: {e}"))?;
 
@@ -408,11 +417,26 @@ pub async fn config_read_inner(
             .unwrap_or(KeyStatus::Unreadable)
     };
 
+    // Read the on-disk config to obtain the `onboarded` flag and apply the
+    // migration expression.  `config_set_inner` writes `onboarded = true` on
+    // every successful save, so the flag is set for any user who has saved
+    // since tuxlink-wpqwy landed.  For users who customized their config
+    // BEFORE this field existed (flag absent → false via serde default),
+    // `!is_default()` catches them: if content differs from factory defaults,
+    // the operator already went through some form of configuration and the
+    // picker must not re-appear.
+    let onboarded = crate::config::read_config()
+        .map(|c| c.elmer.onboarded || !c.elmer.is_default())
+        // If the config file is unreadable, treat as not-yet-onboarded (fail
+        // safe: show the picker rather than silently hiding it).
+        .unwrap_or(false);
+
     Ok(ConfigReadDto {
         agent_endpoint: snapshot.endpoint,
         agent_model: snapshot.model,
         key_status,
         agent_turn_timeout_secs: snapshot.turn_timeout_secs,
+        onboarded,
     })
 }
 
@@ -1900,6 +1924,206 @@ mod tests {
             "loopback endpoint must yield Absent without consulting the keyring; \
              got {:?} — the loopback guard is missing or the keyring was called",
             dto.key_status,
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // tuxlink-wpqwy: onboarded sentinel tests
+    // -----------------------------------------------------------------------
+
+    /// A fresh `ElmerConfig::default()` has `onboarded == false`.
+    ///
+    /// Guards the serde `#[serde(default)]` path: absent-from-disk configs must
+    /// deserialize to the false sentinel, not silently omit the field.
+    #[test]
+    fn elmer_config_default_onboarded_is_false() {
+        let cfg = crate::config::ElmerConfig::default();
+        assert!(!cfg.onboarded, "fresh ElmerConfig must have onboarded == false");
+    }
+
+    /// The `ConfigReadDto` wire shape for `onboarded` must be exactly the JSON
+    /// key `"onboarded"` (a bool).  This is the cross-language contract the
+    /// TypeScript `ConfigReadDto.onboarded: boolean` relies on.
+    ///
+    /// The serde `rename_all = "camelCase"` on `ConfigReadDto` leaves
+    /// `onboarded` unchanged (camelCase of a single lowercase word is itself),
+    /// but we assert the literal key so CI catches any rename regression.
+    #[test]
+    fn config_read_dto_onboarded_wire_shape() {
+        // --- onboarded: true ---
+        let dto_true = ConfigReadDto {
+            agent_endpoint: "http://127.0.0.1:11434/v1/chat/completions".into(),
+            agent_model: "llama3".into(),
+            key_status: KeyStatus::Absent,
+            agent_turn_timeout_secs: 900,
+            onboarded: true,
+        };
+        let json_true = serde_json::to_string(&dto_true).expect("serialize DTO (true)");
+        assert!(
+            json_true.contains("\"onboarded\":true"),
+            "DTO with onboarded=true must serialize as `\"onboarded\":true`; got: {json_true}"
+        );
+
+        // --- onboarded: false ---
+        let dto_false = ConfigReadDto {
+            agent_endpoint: "http://127.0.0.1:11434/v1/chat/completions".into(),
+            agent_model: "llama3".into(),
+            key_status: KeyStatus::Absent,
+            agent_turn_timeout_secs: 900,
+            onboarded: false,
+        };
+        let json_false = serde_json::to_string(&dto_false).expect("serialize DTO (false)");
+        assert!(
+            json_false.contains("\"onboarded\":false"),
+            "DTO with onboarded=false must serialize as `\"onboarded\":false`; got: {json_false}"
+        );
+    }
+
+    /// Migration test: an on-disk config whose CONTENT already differs from the
+    /// factory default (endpoint customized), but whose stored `onboarded` flag
+    /// is `false` (absent on disk before tuxlink-wpqwy), must yield
+    /// `onboarded == true` in the DTO.
+    ///
+    /// This covers the existing-user path: operator configured their endpoint
+    /// before the `onboarded` field existed; the migration expression
+    /// `onboarded || !is_default()` must catch them so the picker does not
+    /// re-appear.
+    #[tokio::test]
+    #[serial]
+    async fn config_read_inner_migration_customized_unflagged_is_onboarded() {
+        let kr = Arc::new(ElmerKeyring::with_memory_keyring());
+        let tmp = TempConfigDir::new();
+
+        // Write an on-disk config with a NON-default endpoint and onboarded=false.
+        // `ElmerConfig::is_default()` will return false for this endpoint, so the
+        // migration expression (`onboarded || !is_default()`) must yield true.
+        let mut config = minimal_config();
+        config.elmer.agent_endpoint = VALID_ENDPOINT.into();  // non-default
+        config.elmer.agent_model = VALID_MODEL.into();        // non-default
+        config.elmer.onboarded = false;                       // explicitly unflagged
+        let json = serde_json::to_string_pretty(&config).expect("serialize config");
+        std::fs::write(tmp.path().join("config.json"), json).expect("write config.json");
+
+        // In-memory state matches the on-disk non-default endpoint/model.
+        let state = ElmerModelConfigState::new(VALID_ENDPOINT.into(), VALID_MODEL.into(), 900);
+
+        let dir_path = tmp.path().to_str().unwrap().to_string();
+        std::env::set_var("TUXLINK_CONFIG_DIR", &dir_path);
+        let dto = config_read_inner(&state, &kr).await;
+        std::env::remove_var("TUXLINK_CONFIG_DIR");
+
+        let dto = dto.expect("config_read_inner must succeed");
+        assert!(
+            dto.onboarded,
+            "existing user with customized-but-unflagged config must have onboarded==true \
+             (migration: onboarded || !is_default()); got false"
+        );
+    }
+
+    /// After a successful `config_set_inner` with a non-default (cloud) endpoint,
+    /// `config_read_inner` reports `onboarded == true`.
+    ///
+    /// This is the canonical picker use case: the operator chose a cloud endpoint
+    /// and saved. The non-default content makes `ElmerConfig::is_default()` return
+    /// `false`, so the `elmer` section is serialized to disk and `onboarded: true`
+    /// is persisted and read back correctly.
+    #[tokio::test]
+    #[serial]
+    async fn config_set_marks_onboarded_and_read_reflects_it() {
+        let kr = Arc::new(ElmerKeyring::with_memory_keyring());
+        // Use a non-default (cloud) endpoint so that `ElmerConfig::is_default()`
+        // returns false and the `elmer` section is serialized to disk, causing
+        // the `onboarded: true` flag to be persisted.
+        let state = ElmerModelConfigState::new(VALID_ENDPOINT.into(), VALID_MODEL.into(), 900);
+        let tmp = TempConfigDir::new();
+
+        let dir_path = tmp.path().to_str().unwrap().to_string();
+        std::env::set_var("TUXLINK_CONFIG_DIR", &dir_path);
+
+        // Verify that before any save the on-disk config has onboarded=false.
+        let before = crate::config::read_config().expect("read before set");
+        assert!(!before.elmer.onboarded, "onboarded must be false before any save");
+
+        // Perform a save using the cloud endpoint.
+        let set_result = config_set_inner(
+            VALID_ENDPOINT.into(),
+            VALID_MODEL.into(),
+            900,
+            SetKey::Keep,
+            &state,
+            &kr,
+        )
+        .await;
+        assert!(set_result.is_ok(), "config_set_inner must succeed: {set_result:?}");
+
+        // Read the DTO — must report onboarded=true.
+        let dto = config_read_inner(&state, &Arc::clone(&kr))
+            .await
+            .expect("config_read_inner must succeed after set");
+        std::env::remove_var("TUXLINK_CONFIG_DIR");
+
+        assert!(
+            dto.onboarded,
+            "DTO must report onboarded==true after a successful save with non-default endpoint"
+        );
+    }
+
+    /// Persistence fix (tuxlink-wpqwy): after a successful `config_set_inner`
+    /// with ALL-DEFAULT content (loopback Ollama endpoint, default model, default
+    /// timeout), `config_read_inner` must still report `onboarded == true`.
+    ///
+    /// Before the fix, `ElmerConfig::is_default()` compared content fields only
+    /// and ignored `onboarded`.  When content stayed at factory defaults,
+    /// `skip_serializing_if` evaluated `is_default() == true` and omitted the
+    /// entire `elmer` section from disk — losing the `onboarded: true` flag set
+    /// by `config_set_inner`.  On the next launch `config_read_inner` read
+    /// `onboarded = false` (serde default), so the picker re-appeared.
+    ///
+    /// The fix adds `onboarded` to `is_default()`.  When `config_set_inner`
+    /// sets `onboarded = true`, `is_default()` returns `false` even for default
+    /// content, so the section is written to disk and the flag survives restart.
+    #[tokio::test]
+    #[serial]
+    async fn config_set_with_default_content_persists_onboarded_flag() {
+        let kr = Arc::new(ElmerKeyring::with_memory_keyring());
+        // Use ALL-DEFAULT content so that the pre-fix path would have omitted the
+        // `elmer` section via `skip_serializing_if`.
+        let default_endpoint = "http://127.0.0.1:11434/v1/chat/completions";
+        let default_model = "llama3";
+        let default_timeout = 900u32;
+        let state = ElmerModelConfigState::new(
+            default_endpoint.into(),
+            default_model.into(),
+            default_timeout,
+        );
+        let tmp = TempConfigDir::new();
+
+        let dir_path = tmp.path().to_str().unwrap().to_string();
+        std::env::set_var("TUXLINK_CONFIG_DIR", &dir_path);
+
+        // Save with default-content endpoint/model/timeout — this is the user
+        // who accepted loopback Ollama in the picker and clicked Save.
+        let set_result = config_set_inner(
+            default_endpoint.into(),
+            default_model.into(),
+            default_timeout,
+            SetKey::Keep,
+            &state,
+            &kr,
+        )
+        .await;
+        assert!(set_result.is_ok(), "config_set_inner must succeed: {set_result:?}");
+
+        // Read the DTO — must report onboarded=true even though content is default.
+        let dto = config_read_inner(&state, &Arc::clone(&kr))
+            .await
+            .expect("config_read_inner must succeed after set");
+        std::env::remove_var("TUXLINK_CONFIG_DIR");
+
+        assert!(
+            dto.onboarded,
+            "DTO must report onboarded==true after saving with default-content config \
+             (persistence fix: onboarded flag must survive even when content==factory defaults)"
         );
     }
 }
