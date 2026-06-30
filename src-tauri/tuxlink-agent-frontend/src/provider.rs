@@ -214,9 +214,25 @@ When a request depends on the operator's location or station context, CALL the \
 appropriate tool to get it — never ask the operator for information Tuxlink \
 already has (for example, never ask 'what is your location?'; call \
 position_status). \
-Be concise and practical. \
-You cannot transmit or send anything without the operator explicitly arming \
-send in the UI.";
+\
+Sending works in two steps. You STAGE outbound traffic — a Winlink message \
+(message_send), a weather-product request (grib_send_request), a form \
+(send_form) — into the local outbox; staging does NOT transmit. You have NO \
+tool that connects to a gateway or keys a radio (there is no telnet/CMS-connect \
+or radio-connect tool on your surface): transmission is the operator's job, not \
+yours. After you stage something, the operator reviews the outbox and clicks \
+'Arm to send', which is what actually transmits it — that click is their \
+required consent. So once you have staged an item, tell the operator plainly \
+what you staged and that they should review it and 'Arm to send' to transmit \
+it, then stop and wait; do not try to connect or send yourself. \
+\
+Do NOT claim a message has been sent or delivered when you have only staged it. \
+Do NOT tell the operator to wait for, or poll for, a reply to something that \
+has not been transmitted yet. NEVER fabricate data you do not have — if a tool \
+has not returned a real result (for example an actual weather forecast), say so \
+plainly; never invent values, tables, or station lists. \
+\
+Be concise and practical.";
 
 /// Build the chat-completions request body from the transcript + tool surface.
 /// Pure — no IO. Exposed for unit testing the message + tools shaping.
@@ -717,6 +733,14 @@ mod tests {
         assert!(
             system_content.contains("operator"),
             "system prompt must reference the operator; got: {system_content:?}"
+        );
+        // The prompt must teach the stage→Arm-to-send→transmit model so the
+        // model stages + hands off to the operator instead of claiming it sent
+        // (or, worse, fabricating a reply). Anchor on the two load-bearing
+        // tokens: the staging verb and the operator's send-consent affordance.
+        assert!(
+            system_content.contains("STAGE") && system_content.contains("Arm to send"),
+            "system prompt must explain staging + 'Arm to send' so the model doesn't claim it transmitted; got: {system_content:?}"
         );
         // The conversation's first user message is now at index 1.
         assert_eq!(body["messages"][1]["role"], "user");
