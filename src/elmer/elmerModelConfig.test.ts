@@ -21,6 +21,7 @@ import { describe, it, expect } from 'vitest';
 import {
   PRESETS,
   DEFAULT_MODEL_BY_PRESET,
+  nextModelForPreset,
   originOf,
   inferPreset,
   isLoopback,
@@ -133,6 +134,34 @@ describe('PRESETS', () => {
     expect(ids).toContain('openai');
     expect(ids).toContain('openrouter');
     expect(ids).toContain('custom');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// nextModelForPreset — model repopulation on tile switch, preserving hand-edits
+// ---------------------------------------------------------------------------
+
+describe('nextModelForPreset', () => {
+  const OPENAI = 'https://api.openai.com/v1/chat/completions';
+
+  it('untouched model → returns the target preset default', () => {
+    expect(nextModelForPreset(OPENAI, 'gpt-4o-mini', 'anthropic')).toBe('claude-haiku-4-5');
+    expect(nextModelForPreset(OPENAI, 'gpt-4o-mini', 'gemini')).toBe('gemini-2.5-flash');
+  });
+
+  it('hand-edited model → returns null (preserve the operator’s choice)', () => {
+    expect(nextModelForPreset(OPENAI, 'gpt-4o', 'anthropic')).toBeNull();
+    expect(nextModelForPreset(OPENAI, 'o1-preview', 'gemini')).toBeNull();
+  });
+
+  it('target with no default (local/custom/openrouter) → returns null', () => {
+    expect(nextModelForPreset(OPENAI, 'gpt-4o-mini', 'custom')).toBeNull();
+    expect(nextModelForPreset(OPENAI, 'gpt-4o-mini', 'localOllama')).toBeNull();
+    expect(nextModelForPreset(OPENAI, 'gpt-4o-mini', 'openrouter')).toBeNull();
+  });
+
+  it('empty current model (never set) counts as untouched → adopts target default', () => {
+    expect(nextModelForPreset('', '', 'anthropic')).toBe('claude-haiku-4-5');
   });
 });
 

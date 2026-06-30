@@ -29,7 +29,7 @@ import { memo, useState, useRef, useEffect, useCallback, useMemo, type KeyboardE
 import { useElmer, type ElmerItem, type ElmerPhase } from './useElmer';
 import { EgressArmControl } from '../shell/EgressArmControl';
 import type { EgressStatusDto } from '../security/egressTypes';
-import { PRESETS, inferPreset, isLoopback, originOf } from './elmerModelConfig';
+import { PRESETS, inferPreset, isLoopback, originOf, nextModelForPreset } from './elmerModelConfig';
 import type { SetKey, KeySource } from './elmerModelConfig';
 import { renderMarkdown } from '../shell/markdownRender';
 import { sanitizeHtml } from '../shell/sanitizeHtml';
@@ -519,7 +519,15 @@ export function ModelForm({
     }
 
     setEndpoint(preset.endpoint);
-  }, [endpoint]);
+    // Pre-fill the new provider's default model, but only when the current model is
+    // untouched (still the outgoing preset's default) — a hand-edited model is
+    // preserved. Decoupled from the endpoint-dirty confirm above, which is about the
+    // endpoint only. Shared helper so the tile picker can't drift (tuxlink-wpqwy/T7).
+    const nextModel = nextModelForPreset(endpoint, model, presetId);
+    if (nextModel !== null) {
+      setModel(nextModel);
+    }
+  }, [endpoint, model]);
 
   // Build the SetKey payload for the Save action.
   const buildSetKey = useCallback((): SetKey => {

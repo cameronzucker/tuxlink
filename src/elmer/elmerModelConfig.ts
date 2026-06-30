@@ -182,6 +182,29 @@ export const DEFAULT_MODEL_BY_PRESET: Record<string, string> = {
   custom: '',
 };
 
+/**
+ * Decide the model to set when the operator switches to `targetPresetId`.
+ *
+ * Returns the target preset's default model ONLY when the current model is
+ * "untouched" — i.e. it still equals the OUTGOING preset's default (or is empty /
+ * never set). Returns `null` to PRESERVE the current model when the operator has
+ * hand-edited it, or when the target has no default (local / custom / other).
+ *
+ * Shared single source of truth for both `handlePresetChange` (the dense form) and
+ * the tile picker, so the two cannot drift. Pure function — no React, unit-tested.
+ */
+export function nextModelForPreset(
+  currentEndpoint: string,
+  currentModel: string,
+  targetPresetId: string,
+): string | null {
+  const targetDefault = DEFAULT_MODEL_BY_PRESET[targetPresetId] ?? '';
+  if (!targetDefault) return null; // target has no default — leave the model field as-is
+  const outgoingDefault = DEFAULT_MODEL_BY_PRESET[inferPreset(currentEndpoint)] ?? '';
+  const untouched = currentModel === '' || currentModel === outgoingDefault;
+  return untouched ? targetDefault : null;
+}
+
 // ---------------------------------------------------------------------------
 // originOf — mirrors Rust url::Url::origin().ascii_serialization()
 // ---------------------------------------------------------------------------
