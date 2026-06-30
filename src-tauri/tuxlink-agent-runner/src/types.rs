@@ -130,6 +130,34 @@ impl Default for Limits {
     }
 }
 
+/// A structured run-progress event emitted by [`crate::run_with_conversation`]
+/// as the loop advances, so a caller can surface a conversational transcript
+/// (assistant turns + tool-call chips) instead of only the terminal outcome.
+///
+/// This is a deliberately small, transport-agnostic type: the runner does NOT
+/// depend on Elmer's `ElmerEvent` or Tauri. The Elmer session bridges these
+/// into its own event channel (see `src/elmer/session.rs`).
+///
+/// The events are **fire-and-forget**: the callback that receives them must
+/// not gate the loop, change any [`RunOutcome`], or affect cancellation /
+/// timeout / COR invariants. A panicking callback would unwind through the
+/// loop, so callers keep the callback trivial (a channel send / event emit).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunEvent {
+    /// The model produced its final assistant text (emitted just before the
+    /// loop returns [`RunOutcome::Completed`]).
+    AssistantText {
+        /// The assistant's answer text.
+        text: String,
+    },
+    /// The model invoked a tool. Emitted once per tool call, carrying the
+    /// tool's name (the human-facing chip label).
+    ToolCall {
+        /// The tool name as the model addressed it.
+        tool: String,
+    },
+}
+
 /// The terminal result of a `run`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunOutcome {

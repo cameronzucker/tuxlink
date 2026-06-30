@@ -78,8 +78,8 @@ use tokio_util::sync::CancellationToken;
 
 use tuxlink_agent_frontend::endpoint::AgentEndpoint;
 use tuxlink_agent_runner::{
-    run_with_conversation, CallAuthority, Conversation, EgressStatus, Limits, Provider, RunOutcome,
-    ToolCall, ToolInvoker, ToolOutcome, ToolSpec,
+    run_with_conversation, CallAuthority, Conversation, EgressStatus, Limits, Provider, RunEvent,
+    RunOutcome, ToolCall, ToolInvoker, ToolOutcome, ToolSpec,
 };
 use tuxlink_mcp_core::ports::{AbortPort, OutboxReadPort};
 use tuxlink_security::EgressGuard;
@@ -348,8 +348,18 @@ impl ElmerSession {
     /// `RunOutcome::NeedsOperator("a turn is already running")` immediately
     /// without blocking or parking.
     ///
-    /// `_emit` is the [`EventSink`] for streaming events; wired in Task 8b.
-    pub async fn send(self: &Arc<Self>, user_msg: String, _emit: EventSink) -> RunOutcome {
+    /// `emit` is the [`EventSink`] for streaming events. As the run progresses,
+    /// each assistant text turn and each tool call is bridged from the runner's
+    /// [`RunEvent`] into an [`ElmerEvent`] and pushed through this sink so the
+    /// pane accumulates a persistent, conversational transcript (user bubble →
+    /// tool-call chips → assistant answer → …). The terminal [`EV_OUTCOME`]
+    /// event is still emitted by `elmer_send`, not here.
+    ///
+    /// **Lock discipline:** the sink is fire-and-forget and is NEVER called
+    /// while the `inner` std-`Mutex` is held. The bridge closure runs inline on
+    /// the runner's loop (inside the spawned run task), and the run task does
+    /// not hold `inner` during the run — see the file-level proof above.
+    pub async fn send(self: &Arc<Self>, user_msg: String, emit: EventSink) -> RunOutcome {
         // ── Single-flight gate ──────────────────────────────────────────────
         // REJECT (non-blocking): try_lock returns Err if op_lock is taken.
         let _op = match self.op_lock.try_lock() {
@@ -416,8 +426,31 @@ impl ElmerSession {
         // authoritative provider for THIS turn — NOT the startup warm default
         // `session_arc.provider`.  Move the `Arc` into the task.
         let turn_provider = provider;
+        // Move the event sink into the run task so the runner's progress events
+        // (assistant text + tool calls) can be bridged onto the pane's event
+        // channel as the run unfolds.  `EventSink` is `Arc<dyn Fn(..)+Send+Sync>`,
+        // so this clone is a cheap refcount bump and is `Send` for the spawn.
+        let emit_for_task = Arc::clone(&emit);
 
         let handle = tokio::spawn(async move {
+            // Bridge runner RunEvent → ElmerEvent → sink.  Fire-and-forget: this
+            // closure is invoked inline by the runner loop and NEVER holds the
+            // `inner` std-Mutex, preserving the file-wide no-await-under-`inner`
+            // (and no-sink-under-`inner`) invariant.
+            let on_event = |ev: RunEvent| {
+                let elmer_event = match ev {
+                    RunEvent::AssistantText { text } => ElmerEvent::Turn {
+                        role: "assistant".to_string(),
+                        text,
+                    },
+                    RunEvent::ToolCall { tool } => ElmerEvent::Chip {
+                        tool,
+                        status: "calling".to_string(),
+                    },
+                };
+                emit_for_task(elmer_event);
+            };
+
             // LOCK-INVARIANT: no `inner` lock is held during `run_with_conversation`.
             let outcome = run_with_conversation(
                 &mut convo,
@@ -426,6 +459,7 @@ impl ElmerSession {
                 status,
                 limits,
                 cancel_for_task,
+                &on_event,
             )
             .await;
 
@@ -942,6 +976,9 @@ mod tests {
         guard: Arc<EgressGuard>,
         abort: Arc<dyn AbortPort>,
         frozen_flag: Arc<AtomicBool>,
+        /// Records every [`ElmerEvent`] the bridge pushes through the sink during
+        /// a `send`, so a test can assert the conversational stream (Turn/Chip).
+        emitted: Arc<StdMutex<Vec<ElmerEvent>>>,
     }
 
     impl TestSession {
@@ -963,7 +1000,13 @@ mod tests {
                 guard: Arc::new(EgressGuard::new()),
                 abort,
                 frozen_flag: Arc::new(AtomicBool::new(false)),
+                emitted: Arc::new(StdMutex::new(Vec::new())),
             })
+        }
+
+        /// Snapshot of the events bridged through the sink so far.
+        fn emitted(&self) -> Vec<ElmerEvent> {
+            self.emitted.lock().unwrap().clone()
         }
 
         /// Mirror of `ElmerSession::send` with identical lock discipline.
@@ -993,10 +1036,25 @@ mod tests {
 
             let session_arc = Arc::clone(self);
             let cancel_for_task = cancel_child.clone();
+            // Mirror the real bridge: record every ElmerEvent the sink receives.
+            let emitted_for_task = Arc::clone(&self.emitted);
 
             // Spawn run task — owns `convo` by value; NEVER acquires `inner`
             // during the run.
             let handle = tokio::spawn(async move {
+                let on_event = |ev: RunEvent| {
+                    let elmer_event = match ev {
+                        RunEvent::AssistantText { text } => ElmerEvent::Turn {
+                            role: "assistant".to_string(),
+                            text,
+                        },
+                        RunEvent::ToolCall { tool } => ElmerEvent::Chip {
+                            tool,
+                            status: "calling".to_string(),
+                        },
+                    };
+                    emitted_for_task.lock().unwrap().push(elmer_event);
+                };
                 let outcome = run_with_conversation(
                     &mut convo,
                     &*session_arc.provider,
@@ -1004,6 +1062,7 @@ mod tests {
                     status,
                     limits,
                     cancel_for_task,
+                    &on_event,
                 )
                 .await;
                 // Brief inner lock (task): write back + clear current.
@@ -1150,6 +1209,64 @@ mod tests {
 
         session.cancel_and_abort().await;
         let _ = h.await;
+    }
+
+    /// A completed run bridges the assistant text turn through the sink as an
+    /// `ElmerEvent::Turn { role: "assistant", .. }` — the fix for the
+    /// non-conversational chat (assistant responses now persist as chat items).
+    #[tokio::test]
+    async fn send_emits_assistant_turn_via_sink() {
+        let session = fast_session(); // provider scripts a single Text("done").
+        let out = session.send("hi".into()).await;
+        assert_eq!(out, RunOutcome::Completed("done".into()));
+
+        let events = session.emitted();
+        // Exactly one assistant Turn carrying the final text; no chips (no tools).
+        assert_eq!(events.len(), 1, "expected one bridged event, got {events:?}");
+        match &events[0] {
+            ElmerEvent::Turn { role, text } => {
+                assert_eq!(role, "assistant");
+                assert_eq!(text, "done");
+            }
+            other => panic!("expected ElmerEvent::Turn(assistant), got {other:?}"),
+        }
+    }
+
+    /// A run that calls a tool then answers bridges a `Chip` (tool call) BEFORE
+    /// the assistant `Turn`, matching the conversational ordering the pane renders.
+    #[tokio::test]
+    async fn send_emits_chip_then_turn_for_tool_then_text() {
+        let schema = serde_json::json!({ "type": "object" });
+        let spec = ToolSpec::new("noop", schema);
+        let provider = Arc::new(ScriptedProvider::new(vec![
+            ModelTurn::ToolCalls(vec![ToolCall {
+                name: "noop".into(),
+                args: serde_json::json!({}),
+            }]),
+            ModelTurn::Text("answered".into()),
+        ]));
+        let invoker = Box::new(RecordingInvoker::always_ok(vec![spec]));
+        let session = TestSession::new(provider, invoker, Arc::new(NoopAbort));
+
+        let out = session.send("go".into()).await;
+        assert_eq!(out, RunOutcome::Completed("answered".into()));
+
+        let events = session.emitted();
+        assert_eq!(events.len(), 2, "expected chip + turn, got {events:?}");
+        match &events[0] {
+            ElmerEvent::Chip { tool, status } => {
+                assert_eq!(tool, "noop");
+                assert_eq!(status, "calling");
+            }
+            other => panic!("expected first event Chip(noop), got {other:?}"),
+        }
+        match &events[1] {
+            ElmerEvent::Turn { role, text } => {
+                assert_eq!(role, "assistant");
+                assert_eq!(text, "answered");
+            }
+            other => panic!("expected second event Turn(assistant), got {other:?}"),
+        }
     }
 
     /// `rearm` cancels an in-flight run, drops the conversation, and clears taint.

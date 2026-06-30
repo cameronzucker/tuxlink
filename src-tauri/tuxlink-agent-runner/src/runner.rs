@@ -14,7 +14,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::conversation::Conversation;
 use crate::traits::{EgressStatus, Provider, ProviderError, ToolInvoker};
-use crate::types::{CallAuthority, Limits, ModelTurn, RunOutcome, ToolCall, ToolOutcome, ToolSpec};
+use crate::types::{
+    CallAuthority, Limits, ModelTurn, RunEvent, RunOutcome, ToolCall, ToolOutcome, ToolSpec,
+};
 use crate::validate;
 
 /// Run the bounded agent loop to completion, using a pre-built conversation.
@@ -29,6 +31,13 @@ use crate::validate;
 /// * `status` is an observed (read-only) egress snapshot — purely informational.
 /// * `limits` bound turns / per-turn time / malformed retries.
 /// * `cancel` cooperatively aborts the loop (COR-2).
+/// * `on_event` is a **fire-and-forget** progress callback (assistant text +
+///   tool calls) so a caller can render a conversational transcript. It does
+///   NOT gate the loop, change the [`RunOutcome`], or affect cancellation /
+///   timeout / COR invariants — it is called for its side effect and its
+///   return value is ignored. Pass `&|_| {}` to opt out (this is what [`run`]
+///   does). Keep the callback trivial: it is called inline on the loop's task,
+///   so a panic in it would unwind through the run.
 pub async fn run_with_conversation(
     conversation: &mut Conversation,
     provider: &dyn Provider,
@@ -36,6 +45,11 @@ pub async fn run_with_conversation(
     status: EgressStatus,
     limits: Limits,
     cancel: CancellationToken,
+    // `+ Sync` so a `&on_event` held across the loop's `.await`s is `Send` — the
+    // Elmer session drives this loop inside a `tokio::spawn`ed (Send) task, and
+    // `&F: Send` requires `F: Sync`. The no-op `&|_| {}` and the real sink
+    // (which captures only an `Arc<dyn Fn + Send + Sync>`) both satisfy it.
+    on_event: &(dyn Fn(RunEvent) + Sync),
 ) -> RunOutcome {
     // `status` is observed but never used to gate (gating lives below the MCP
     // boundary). Bind it so the read-only contract is explicit and the param is
@@ -83,6 +97,9 @@ pub async fn run_with_conversation(
         match turn {
             ModelTurn::Text(text) => {
                 conversation.push_assistant(&text);
+                // Fire-and-forget: surface the assistant answer as a chat turn
+                // BEFORE returning. Does not affect the outcome.
+                on_event(RunEvent::AssistantText { text: text.clone() });
                 return RunOutcome::Completed(text);
             }
             ModelTurn::ToolCalls(calls) => {
@@ -120,6 +137,9 @@ pub async fn run_with_conversation(
                         return RunOutcome::Cancelled;
                     }
                     conversation.push_tool_call(call.clone());
+                    // Fire-and-forget: surface the tool call as a chat chip.
+                    // Does not affect the outcome or cancellation.
+                    on_event(RunEvent::ToolCall { tool: call.name.clone() });
 
                     // SEC-3: the authority is ALWAYS Agent. There is no code
                     // path here that can construct any other CallAuthority.
@@ -162,7 +182,18 @@ pub async fn run(
     cancel: CancellationToken,
 ) -> RunOutcome {
     let mut conversation = Conversation::new(user_msg);
-    run_with_conversation(&mut conversation, provider, invoker, status, limits, cancel).await
+    // `run` keeps its historical signature by opting out of progress events with
+    // a no-op callback; only `run_with_conversation` exposes the `on_event` hook.
+    run_with_conversation(
+        &mut conversation,
+        provider,
+        invoker,
+        status,
+        limits,
+        cancel,
+        &|_| {},
+    )
+    .await
 }
 
 /// Map a [`ProviderError`] onto a terminal outcome. The loop cannot make
