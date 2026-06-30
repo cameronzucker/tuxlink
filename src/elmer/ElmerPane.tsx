@@ -29,7 +29,7 @@ import { memo, useState, useRef, useEffect, useCallback, type KeyboardEvent } fr
 import { useElmer, type ElmerItem, type ElmerPhase } from './useElmer';
 import { EgressArmControl } from '../shell/EgressArmControl';
 import type { EgressStatusDto } from '../security/egressTypes';
-import { PRESETS, inferPreset, isLoopback } from './elmerModelConfig';
+import { PRESETS, inferPreset, isLoopback, originOf } from './elmerModelConfig';
 import type { SetKey, KeySource } from './elmerModelConfig';
 import './ElmerPane.css';
 
@@ -217,9 +217,51 @@ function ModelForm({
   // For absent key input.
   const [absentKeyValue, setAbsentKeyValue] = useState('');
 
+  // BUG 1 FIX — track the origin the key affordance belongs to.
+  // Seeded from the loaded config endpoint's origin. When the live endpoint's
+  // origin diverges from this (operator edits the endpoint to a different host),
+  // we reset all pending key state so a stale action (Remove/Replace) cannot
+  // carry across an origin change and apply to the wrong keyring account.
+  const [keyAffordanceOrigin, setKeyAffordanceOrigin] = useState(
+    () => originOf(initialEndpoint),
+  );
+
+  // Effect: reset key affordance state when the endpoint's origin changes.
+  // This fires whenever `endpoint` changes and the derived origin differs from
+  // the origin the current affordance belongs to. An empty/unparseable endpoint
+  // produces originOf('')==='' which is treated as "unknown" — we reset in that
+  // case too so no stale action survives into a blank-endpoint Save.
+  useEffect(() => {
+    const liveOrigin = originOf(endpoint);
+    if (liveOrigin !== keyAffordanceOrigin) {
+      // Origin changed — drop all pending key state to prevent cross-origin pollution.
+      setClearPending(false);
+      setReplaceMode(false);
+      setNewKeyValue('');
+      setAbsentKeyValue('');
+      setKeyAffordanceOrigin(liveOrigin);
+    }
+  }, [endpoint, keyAffordanceOrigin]);
+
   // Determine the current provider preset from the endpoint.
   const currentPreset = inferPreset(endpoint);
   const endpointIsLoopback = isLoopback(endpoint);
+
+  // BUG 1 FIX (rendering side) — the loaded keyStatus belongs to the saved
+  // config's origin. When the live endpoint's origin has changed (operator
+  // hand-edited it to a different host), we have no stored-key signal for
+  // that new origin until the form is Saved and reloaded. Treat it as
+  // 'absent' so the form shows an empty key input rather than the stale
+  // "Key stored 🔒" label from the old origin.
+  // The useEffect above resets pending state (clearPending/replaceMode/etc.)
+  // and updates keyAffordanceOrigin when origin changes. Because state updates
+  // are batched, we use the already-updated keyAffordanceOrigin to derive the
+  // effective status — if they still differ in the same render cycle (before
+  // the batch lands), we also clamp to 'absent' there.
+  const liveOriginForRender = originOf(endpoint);
+  const originMatchesLoadedConfig =
+    liveOriginForRender !== '' && liveOriginForRender === originOf(initialEndpoint);
+  const effectiveKeyStatus = originMatchesLoadedConfig ? keyStatus : 'absent';
 
   // Handle provider preset selection.
   // GUARD: if the endpoint has been hand-edited (its value doesn't match any known
@@ -278,15 +320,43 @@ function ModelForm({
   }, [clearPending, keyStatus, replaceMode, newKeyValue, absentKeyValue]);
 
   // Build KeySource for detect call.
+  //
+  // BUG 2 FIX — derive KeySource from the CURRENT form state, not from the
+  // loaded keyStatus alone. If the operator has typed a key into the form
+  // (but not yet Saved), Detect must use that inline value so it probes with
+  // the key they actually intend — not the old stored key (or none).
+  //
+  // Priority order:
+  //   1. Loopback endpoint → no key needed.
+  //   2. Pending inline key in the form (Replace mode with a value typed, OR
+  //      absent-state key input with a value typed) → inline.
+  //   3. Stored key present for the same origin (no pending change) → useStored.
+  //   4. Otherwise → none.
   const buildKeySource = useCallback((): KeySource => {
     if (endpointIsLoopback) {
       return { source: 'none' };
     }
-    if (keyStatus === 'present' || keyStatus === 'absent') {
+    // Determine whether the live endpoint's origin still matches the loaded
+    // config origin. If the operator has hand-edited the endpoint to a
+    // different host, the loaded keyStatus no longer describes that host.
+    const liveOrigin = originOf(endpoint);
+    const originMatchesLoaded = liveOrigin !== '' && liveOrigin === keyAffordanceOrigin;
+    // Check for a pending inline key value in the form.
+    const inlineKey =
+      (replaceMode && newKeyValue) ? newKeyValue :
+      (keyStatus === 'absent' && absentKeyValue) ? absentKeyValue :
+      null;
+    if (inlineKey) {
+      return { source: 'inline', value: inlineKey };
+    }
+    // Use the stored key only when origin matches and there is no pending
+    // removal (clearPending) or replace (replaceMode without a typed value
+    // just means "intent to replace but nothing typed yet" — treat as absent).
+    if (keyStatus === 'present' && originMatchesLoaded && !clearPending) {
       return { source: 'useStored' };
     }
     return { source: 'none' };
-  }, [endpointIsLoopback, keyStatus]);
+  }, [endpointIsLoopback, endpoint, keyAffordanceOrigin, keyStatus, replaceMode, newKeyValue, absentKeyValue, clearPending]);
 
   const handleSave = useCallback(async () => {
     await onSave({
@@ -350,7 +420,10 @@ function ModelForm({
       {!endpointIsLoopback && (
         <div className="elmer-form-row elmer-form-row--key" data-testid="elmer-key-section">
           <span className="elmer-form-label">API key</span>
-          {keyStatus === 'present' && !clearPending ? (
+          {/* Use effectiveKeyStatus (not keyStatus) so that when the operator
+              edits the endpoint to a different origin, the stale "Key stored 🔒"
+              label from the old origin is not shown for the new one (Bug 1 fix). */}
+          {effectiveKeyStatus === 'present' && !clearPending ? (
             <div className="elmer-key-stored">
               <span className="elmer-key-stored-label">Key stored 🔒</span>
               {replaceMode ? (
@@ -385,7 +458,7 @@ function ModelForm({
                 </div>
               )}
             </div>
-          ) : keyStatus === 'present' && clearPending ? (
+          ) : effectiveKeyStatus === 'present' && clearPending ? (
             <div className="elmer-key-clear-pending">
               <span className="elmer-key-clear-label">Key will be removed on save</span>
               <button
@@ -397,7 +470,7 @@ function ModelForm({
                 Cancel
               </button>
             </div>
-          ) : keyStatus === 'absent' ? (
+          ) : effectiveKeyStatus === 'absent' ? (
             <input
               type="text"
               className="elmer-form-input elmer-form-input--mono"
@@ -407,7 +480,7 @@ function ModelForm({
               onChange={(e) => setAbsentKeyValue(e.target.value)}
               autoComplete="off"
             />
-          ) : keyStatus === 'unreadable' ? (
+          ) : effectiveKeyStatus === 'unreadable' ? (
             <span className="elmer-key-unreadable" data-testid="elmer-key-unreadable">
               Could not read the saved key (keyring locked)
             </span>

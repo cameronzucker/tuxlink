@@ -965,3 +965,233 @@ describe('<ElmerPane> G3 — model_change_drops_attribution_marker', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Credential-seam regression tests (Bug 1 + Bug 2 fixes)
+// ---------------------------------------------------------------------------
+
+describe('<ElmerPane> credential-seam — editing_endpoint_to_new_origin_resets_pending_key_action', () => {
+  // Bug 1: A Remove or Replace action started for origin A must NOT carry
+  // through to a Save when the endpoint has been changed to a different origin B.
+  // If the reset does not fire, buildSetKey() returns {action:'clear'} and the
+  // backend applies it to origin B (wrong) — clearing B's key while A's survives.
+
+  it('Remove pending then change endpoint to new origin: Save sends key:{action:keep} not clear', async () => {
+    // Load OpenAI config with a stored key.
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'present',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    // Click Remove — sets clearPending=true for OpenAI origin.
+    fireEvent.click(screen.getByTestId('elmer-key-remove-btn'));
+
+    // Verify the pending state is shown.
+    expect(screen.getByTestId('elmer-key-clear-cancel-btn')).toBeTruthy();
+
+    // Now change the endpoint to a completely different origin (OpenRouter).
+    const endpointInput = screen.getByTestId('elmer-endpoint-input');
+    fireEvent.change(endpointInput, {
+      target: { value: 'https://openrouter.ai/api/v1/chat/completions' },
+    });
+
+    // After origin change, the stale clearPending must be reset.
+    // The form should now show an absent-key input (no stored key for OpenRouter).
+    await waitFor(() => {
+      // clearPending was reset → the clear-pending UI is gone.
+      expect(screen.queryByTestId('elmer-key-clear-cancel-btn')).toBeNull();
+      // The form now shows the absent-key input for the new origin.
+      expect(screen.getByTestId('elmer-key-input')).toBeTruthy();
+    });
+
+    // Save — must NOT send action:clear for the new origin.
+    mockInvoke.mockClear();
+    fireEvent.click(screen.getByTestId('elmer-save-btn'));
+
+    await waitFor(() => {
+      const calls = mockInvoke.mock.calls;
+      const setCall = calls.find((c) => c[0] === 'elmer_config_set');
+      expect(setCall).toBeTruthy();
+      const args = setCall![1] as { agentEndpoint: string; key: { action: string } };
+      // The endpoint sent to the backend is the new origin's endpoint.
+      expect(args.agentEndpoint).toContain('openrouter.ai');
+      // The key action must be 'keep' (reset), NOT 'clear' (stale Remove).
+      expect(args.key.action).toBe('keep');
+      expect(args.key.action).not.toBe('clear');
+    });
+  });
+
+  it('Replace+type pending then change endpoint to new origin: Save sends key:{action:keep} not set-for-old-key', async () => {
+    // Load OpenAI config with a stored key.
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'present',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    // Enter Replace mode and type a key intended for OpenAI.
+    fireEvent.click(screen.getByTestId('elmer-key-replace-btn'));
+    const replaceInput = screen.getByTestId('elmer-key-replace-input');
+    fireEvent.change(replaceInput, { target: { value: 'sk-openai-key-typed-for-A' } });
+
+    // Now change endpoint to OpenRouter (different origin).
+    const endpointInput = screen.getByTestId('elmer-endpoint-input');
+    fireEvent.change(endpointInput, {
+      target: { value: 'https://openrouter.ai/api/v1/chat/completions' },
+    });
+
+    // After origin change, replaceMode + newKeyValue must be reset.
+    await waitFor(() => {
+      // The replace input is gone (replaceMode=false).
+      expect(screen.queryByTestId('elmer-key-replace-input')).toBeNull();
+      // The absent-key input is now shown.
+      expect(screen.getByTestId('elmer-key-input')).toBeTruthy();
+    });
+
+    // Save — must NOT send action:set with the OpenAI key.
+    mockInvoke.mockClear();
+    fireEvent.click(screen.getByTestId('elmer-save-btn'));
+
+    await waitFor(() => {
+      const calls = mockInvoke.mock.calls;
+      const setCall = calls.find((c) => c[0] === 'elmer_config_set');
+      expect(setCall).toBeTruthy();
+      const args = setCall![1] as { agentEndpoint: string; key: { action: string; value?: string } };
+      expect(args.agentEndpoint).toContain('openrouter.ai');
+      // The key action must NOT be 'set' with the stale OpenAI key value.
+      expect(args.key.action).not.toBe('set');
+      if (args.key.action === 'set') {
+        // If somehow set, it must not carry the OpenAI key to OpenRouter.
+        expect(args.key.value).not.toBe('sk-openai-key-typed-for-A');
+      }
+      // After reset, no key was typed for the new origin → keep.
+      expect(args.key.action).toBe('keep');
+    });
+  });
+});
+
+describe('<ElmerPane> credential-seam — detect_uses_inline_key_when_typed_not_saved', () => {
+  // Bug 2: Detect must use the key currently typed in the form, not always
+  // 'useStored'. When keyStatus==='absent' and a key has been typed (but not
+  // Saved), Detect should probe with {source:'inline', value:<typed>} so the
+  // operator can validate the key before committing it.
+
+  it('absent key: type a key then click Detect → keySource {source:inline, value}', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'absent',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    // Type a key in the absent-key input (not yet Saved).
+    const keyInput = screen.getByTestId('elmer-key-input');
+    fireEvent.change(keyInput, { target: { value: 'sk-typed-not-saved' } });
+
+    // Mock detect to record what keySource it receives.
+    mockInvoke.mockClear();
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_detect_models') return [];
+      return undefined;
+    });
+
+    fireEvent.click(screen.getByTestId('elmer-detect-btn'));
+
+    await waitFor(() => {
+      const calls = mockInvoke.mock.calls;
+      const detectCall = calls.find((c) => c[0] === 'elmer_detect_models');
+      expect(detectCall).toBeTruthy();
+      const args = detectCall![1] as { agentEndpoint: string; keySource: { source: string; value?: string } };
+      // Must use inline with the typed key, NOT useStored (which would probe
+      // with no key and produce a false auth failure).
+      expect(args.keySource.source).toBe('inline');
+      expect(args.keySource.value).toBe('sk-typed-not-saved');
+    });
+  });
+
+  it('present key + Replace mode: type a key then click Detect → keySource {source:inline, value}', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'present',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    // Enter Replace mode and type a new key (not yet Saved).
+    fireEvent.click(screen.getByTestId('elmer-key-replace-btn'));
+    const replaceInput = screen.getByTestId('elmer-key-replace-input');
+    fireEvent.change(replaceInput, { target: { value: 'sk-replacement-not-saved' } });
+
+    mockInvoke.mockClear();
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_detect_models') return [];
+      return undefined;
+    });
+
+    fireEvent.click(screen.getByTestId('elmer-detect-btn'));
+
+    await waitFor(() => {
+      const calls = mockInvoke.mock.calls;
+      const detectCall = calls.find((c) => c[0] === 'elmer_detect_models');
+      expect(detectCall).toBeTruthy();
+      const args = detectCall![1] as { agentEndpoint: string; keySource: { source: string; value?: string } };
+      expect(args.keySource.source).toBe('inline');
+      expect(args.keySource.value).toBe('sk-replacement-not-saved');
+    });
+  });
+});
+
+describe('<ElmerPane> credential-seam — detect_uses_usestored_when_key_present_and_untouched', () => {
+  // Bug 2 (counter-case): When keyStatus==='present' and no pending change has
+  // been started, Detect should use the stored key ({source:'useStored'}).
+
+  it('present key, no pending input, click Detect → keySource {source:useStored}', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'present',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    // Do NOT click Replace or Remove — leave the stored key untouched.
+
+    mockInvoke.mockClear();
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_detect_models') return [];
+      return undefined;
+    });
+
+    fireEvent.click(screen.getByTestId('elmer-detect-btn'));
+
+    await waitFor(() => {
+      const calls = mockInvoke.mock.calls;
+      const detectCall = calls.find((c) => c[0] === 'elmer_detect_models');
+      expect(detectCall).toBeTruthy();
+      const args = detectCall![1] as { agentEndpoint: string; keySource: { source: string } };
+      expect(args.keySource.source).toBe('useStored');
+    });
+  });
+});
