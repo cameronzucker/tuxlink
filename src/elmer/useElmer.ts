@@ -108,6 +108,7 @@ export type ElmerPhase =
   | 'needsOperator'
   | 'toolDenied'
   | 'offline'
+  | 'rateLimited'
   | 'error';
 
 function outcomeKindToPhase(outcomeKind: string): ElmerPhase {
@@ -122,6 +123,11 @@ function outcomeKindToPhase(outcomeKind: string): ElmerPhase {
       return 'toolDenied';
     case 'offline':
       return 'offline';
+    // A free-tier daily cap or provider 429. The Rust outcome kind serializes as
+    // `rateLimited` (camelCase, matching needsOperator/toolDenied) — Task 5's serde
+    // wire-shape test pins that literal. Surfaced as a distinct recovery callout.
+    case 'rateLimited':
+      return 'rateLimited';
     default:
       return 'error';
   }
