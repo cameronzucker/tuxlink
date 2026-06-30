@@ -375,6 +375,52 @@ mod acceptance_tests {
     }
 
     #[tokio::test]
+    async fn cor2_cancel_during_in_flight_turn_returns_cancelled_promptly() {
+        // A Stop arriving WHILE a long Provider turn is in flight must interrupt
+        // the in-flight turn and return Cancelled — NOT block until the per-turn
+        // timeout. Regression for the unresponsive-Stop bug: before the select!
+        // race, a cancel during a hanging turn was only observed at the next loop
+        // top, so with a long timeout Stop appeared to do nothing for minutes.
+        struct HangingProvider;
+        #[async_trait::async_trait]
+        impl Provider for HangingProvider {
+            async fn turn(
+                &self,
+                _c: &Conversation,
+                _t: &[ToolSpec],
+            ) -> Result<ModelTurn, ProviderError> {
+                std::future::pending::<()>().await;
+                unreachable!()
+            }
+        }
+        let invoker = RecordingInvoker::always_ok(vec![echo_tool()]);
+        let cancel = CancellationToken::new();
+        let cancel_for_stop = cancel.clone();
+        // Simulate the operator clicking Stop ~20ms after the run starts — the
+        // turn is hanging by then.
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            cancel_for_stop.cancel();
+        });
+        // A LONG per-turn timeout: the test must terminate via the cancel race,
+        // NOT via the timeout (without the fix this test would hang ~1h).
+        let limits = Limits {
+            per_turn_timeout: Duration::from_secs(3600),
+            ..fast_limits()
+        };
+        let outcome = run(
+            "go",
+            &HangingProvider,
+            &invoker,
+            EgressStatus::default(),
+            limits,
+            cancel,
+        )
+        .await;
+        assert_eq!(outcome, RunOutcome::Cancelled);
+    }
+
+    #[tokio::test]
     async fn cor2_cancel_token_reaches_invoke() {
         // The token is propagated into invoke(): an invoker hook observes it.
         use std::sync::atomic::{AtomicBool, Ordering};

@@ -54,20 +54,30 @@ pub async fn run_with_conversation(
         }
 
         // COR-1: a per-turn wall-clock timeout. Exhaustion → NeedsOperator.
-        let turn = match tokio::time::timeout(
-            limits.per_turn_timeout,
-            provider.turn(conversation, &tools),
-        )
-        .await
-        {
-            Err(_elapsed) => {
-                return RunOutcome::NeedsOperator(format!(
-                    "model turn exceeded the {}s per-turn timeout",
-                    limits.per_turn_timeout.as_secs()
-                ));
-            }
-            Ok(Err(err)) => return provider_error_outcome(err),
-            Ok(Ok(turn)) => turn,
+        // COR-2: race the per-turn call against the cancellation token so a Stop
+        // that arrives WHILE a Provider turn is in flight interrupts it
+        // immediately. Without this race the loop would block on `provider.turn()`
+        // (a long model call — minutes for a large local model) until it finished
+        // or the per-turn timeout elapsed, and the cancel would only be observed
+        // at the next loop top — making Stop appear unresponsive. `select!` drops
+        // the in-flight turn future on cancel (cancelling the model HTTP request);
+        // `biased` prefers the cancel branch.
+        let turn = tokio::select! {
+            biased;
+            () = cancel.cancelled() => return RunOutcome::Cancelled,
+            timed = tokio::time::timeout(
+                limits.per_turn_timeout,
+                provider.turn(conversation, &tools),
+            ) => match timed {
+                Err(_elapsed) => {
+                    return RunOutcome::NeedsOperator(format!(
+                        "model turn exceeded the {}s per-turn timeout",
+                        limits.per_turn_timeout.as_secs()
+                    ));
+                }
+                Ok(Err(err)) => return provider_error_outcome(err),
+                Ok(Ok(turn)) => turn,
+            },
         };
 
         match turn {
