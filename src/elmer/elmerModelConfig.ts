@@ -60,7 +60,7 @@ export type KeySource =
 
 /** A named provider preset shown in the endpoint picker. */
 export interface ProviderPreset {
-  /** Machine-readable id. Values: 'localOllama' | 'openai' | 'openrouter' | 'custom'. */
+  /** Machine-readable id. Values: 'localOllama' | 'openai' | 'openrouter' | 'gemini' | 'groq' | 'custom'. */
   id: string;
   /** Human-readable display label. */
   label: string;
@@ -91,6 +91,21 @@ export const PRESETS: ProviderPreset[] = [
     id: 'openrouter',
     label: 'OpenRouter',
     endpoint: 'https://openrouter.ai/api/v1/chat/completions',
+  },
+  {
+    // Free-key cloud option: Google AI Studio issues a free API key (no billing
+    // card) and exposes an OpenAI-compatible endpoint. Capable models like
+    // gemini-2.5-flash. Lowest-friction cloud path for the non-developer audience.
+    id: 'gemini',
+    label: 'Google Gemini (free key)',
+    endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+  },
+  {
+    // Free-key cloud option: Groq issues a free API key, fast inference, OpenAI-
+    // compatible. Models like llama-3.3-70b-versatile.
+    id: 'groq',
+    label: 'Groq (free key)',
+    endpoint: 'https://api.groq.com/openai/v1/chat/completions',
   },
   {
     id: 'custom',

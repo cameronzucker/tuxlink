@@ -579,6 +579,28 @@ describe('<ElmerPane> G2 — preset_fills_endpoint_by_origin', () => {
     const endpointInput = screen.getByTestId('elmer-endpoint-input') as HTMLInputElement;
     expect(endpointInput.value).toBe(ollamaPreset.endpoint);
   });
+
+  it('selecting Google Gemini (free key) fills the OpenAI-compatible endpoint', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    const geminiPreset = PRESETS.find((p) => p.id === 'gemini')!;
+    expect(geminiPreset.endpoint).toContain('generativelanguage.googleapis.com');
+    const providerSelect = screen.getByTestId('elmer-provider-select');
+    fireEvent.change(providerSelect, { target: { value: 'gemini' } });
+
+    const endpointInput = screen.getByTestId('elmer-endpoint-input') as HTMLInputElement;
+    expect(endpointInput.value).toBe(geminiPreset.endpoint);
+  });
 });
 
 describe('<ElmerPane> G2 — key_field_hidden_for_loopback', () => {
