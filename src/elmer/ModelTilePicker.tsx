@@ -44,6 +44,7 @@ import {
   type KeySource,
 } from './elmerModelConfig';
 import { ModelForm } from './ElmerPane';
+import { GetKeyCard } from './GetKeyCard';
 import type { DetectState } from './useElmer';
 import './ElmerPane.css';
 
@@ -158,9 +159,10 @@ export function ModelTilePicker({
         );
       })}
 
-      {/* Editor for the selected tile. The "Other" tier reuses ModelForm
-          verbatim; cloud/local tiles get a lightweight model + Save summary
-          (the rich guided get-a-key flow is Task 9). */}
+      {/* Editor for the selected tile.
+          - "Other" tier (openrouter, custom) reuses ModelForm verbatim.
+          - Cloud/paygo tiles with a keyPageUrl get the guided GetKeyCard flow (Task 9).
+          - Local/other tiles without a keyPageUrl get the lightweight model+Save summary. */}
       <div className="elmer-tile-editor" data-testid="elmer-tile-editor">
         {otherSelected ? (
           <ModelForm
@@ -171,6 +173,13 @@ export function ModelTilePicker({
             initialModel={model}
             initialKeyStatus={initialKeyStatus}
             initialTurnTimeoutSecs={initialTurnTimeoutSecs}
+          />
+        ) : selectedPreset?.keyPageUrl ? (
+          <GetKeyCard
+            preset={selectedPreset}
+            onSave={onSave}
+            agentModel={model}
+            agentTurnTimeoutSecs={initialTurnTimeoutSecs}
           />
         ) : (
           <div className="elmer-tile-summary">

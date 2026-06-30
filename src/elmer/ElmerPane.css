@@ -960,3 +960,62 @@
   font-family: var(--mono, ui-monospace, monospace);
   word-break: break-all;
 }
+
+/* ---------------------------------------------------------------------------
+ * GetKeyCard — guided "get a free key" flow (Task 9, F7/F12)
+ * --------------------------------------------------------------------------- */
+
+.get-key-card {
+  padding: 8px 0 0;
+}
+
+.get-key-steps {
+  margin: 0 0 12px;
+  padding: 0 0 0 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.get-key-step {
+  font-size: var(--type-body, 0.9rem);
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.get-key-open-btn {
+  /* Inherits .elmer-save-btn; no overrides needed. */
+}
+
+.get-key-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.get-key-field {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.get-key-reveal-btn {
+  /* Inherits .elmer-key-action-btn; narrow reveal toggle. */
+  flex: 0 0 auto;
+  min-width: 44px;
+}
+
+.get-key-error {
+  margin: 0;
+  padding: 6px 8px;
+  font-size: var(--type-body, 0.875rem);
+  border-radius: var(--radius-control, 6px);
+}
+
+.get-key-stuck {
+  margin: 8px 0 0;
+  font-size: var(--type-micro, 0.78rem);
+  color: var(--text-dim, var(--text-faint));
+  line-height: 1.4;
+}
