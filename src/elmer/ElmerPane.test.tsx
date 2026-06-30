@@ -1195,3 +1195,30 @@ describe('<ElmerPane> credential-seam — detect_uses_usestored_when_key_present
     });
   });
 });
+
+describe('<ElmerPane> — model selection persists across collapse/re-expand (configSet refresh)', () => {
+  it('after Save, configSet refreshes modelConfig via config_read so a re-expanded form shows the saved model', async () => {
+    render(<ElmerPane />);
+    openAdvanced();
+    await waitFor(() => expect(screen.getByTestId('elmer-model-form')).toBeTruthy());
+
+    // Drop the mount-time config_read so we only observe calls caused by Save.
+    mockInvoke.mockClear();
+
+    fireEvent.change(screen.getByTestId('elmer-model-input'), {
+      target: { value: 'gpt-oss-120b' },
+    });
+    fireEvent.click(screen.getByTestId('elmer-save-btn'));
+
+    // The fix: configSet persists via elmer_config_set AND THEN re-reads via
+    // elmer_config_read, so modelConfig (the form's init props on the next mount)
+    // reflects the save. Without the refresh, modelConfig stays stale and a
+    // collapse + re-expand re-initialises the unmounted/remounted form from the
+    // old value.
+    await waitFor(() => {
+      const cmds = mockInvoke.mock.calls.map((c) => c[0]);
+      expect(cmds).toContain('elmer_config_set');
+      expect(cmds).toContain('elmer_config_read');
+    });
+  });
+});
