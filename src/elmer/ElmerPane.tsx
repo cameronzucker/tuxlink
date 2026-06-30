@@ -404,7 +404,7 @@ interface ModelFormProps {
   initialTurnTimeoutSecs: number;
 }
 
-function ModelForm({
+export function ModelForm({
   onSave,
   onDetect,
   detectState,
