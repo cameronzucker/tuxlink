@@ -25,12 +25,14 @@
  *   - running       → "Elmer is thinking…" indicator.
  */
 
-import { memo, useState, useRef, useEffect, useCallback, type KeyboardEvent } from 'react';
+import { memo, useState, useRef, useEffect, useCallback, useMemo, type KeyboardEvent } from 'react';
 import { useElmer, type ElmerItem, type ElmerPhase } from './useElmer';
 import { EgressArmControl } from '../shell/EgressArmControl';
 import type { EgressStatusDto } from '../security/egressTypes';
 import { PRESETS, inferPreset, isLoopback, originOf } from './elmerModelConfig';
 import type { SetKey, KeySource } from './elmerModelConfig';
+import { renderMarkdown } from '../shell/markdownRender';
+import { sanitizeHtml } from '../shell/sanitizeHtml';
 import './ElmerPane.css';
 
 // ---------------------------------------------------------------------------
@@ -79,8 +81,56 @@ function detectRemedy(reason: string, endpoint: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// ThinkingIndicator constants
+// ---------------------------------------------------------------------------
+
+/** Ham-radio verb phrases cycled by ThinkingIndicator while a run is in progress. */
+export const RADIO_VERBS: readonly string[] = [
+  'tuning the bands',
+  'listening on frequency',
+  'working the pileup',
+  'spinning the VFO',
+  'chasing DX',
+  'checking propagation',
+  'reading the waterfall',
+  'copying your signal',
+  'pulling it out of the noise',
+  'netting in',
+  'keying up',
+  'warming up the tubes',
+  'checking the SWR',
+  'rolling the dial',
+  'squelching the static',
+  'working simplex',
+  'consulting the band plan',
+  'peaking the signal',
+  'calling CQ',
+  'logging the contact',
+];
+
+// ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
+
+/**
+ * Renders the text body of an assistant turn as sanitized markdown.
+ * Memoized on `text` so the parse+sanitize pipeline only re-runs when the
+ * content changes, not on every parent re-render.
+ *
+ * Safe composition: renderMarkdown → sanitizeHtml → dangerouslySetInnerHTML.
+ * The sanitizeHtml layer (DOMPurify) strips all event handlers, <script>,
+ * <iframe>, and other dangerous constructs — model output is UNTRUSTED.
+ */
+function AssistantTurnBody({ text }: { text: string }) {
+  const html = useMemo(() => sanitizeHtml(renderMarkdown(text)), [text]);
+  return (
+    <div
+      className="elmer-turn-md"
+      // eslint-disable-next-line react/no-danger
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
+}
 
 /** Renders a single turn, chip, or attribution item. */
 function MessageItem({ item }: { item: ElmerItem }) {
@@ -123,16 +173,82 @@ function MessageItem({ item }: { item: ElmerItem }) {
       data-role={item.role}
     >
       <span className="elmer-turn-role">{isUser ? 'You' : 'Elmer'}</span>
-      <span className="elmer-turn-text">{item.text}</span>
+      {isUser
+        ? <span className="elmer-turn-text">{item.text}</span>
+        : <AssistantTurnBody text={item.text} />
+      }
     </div>
   );
 }
 
-/** "Elmer is thinking…" indicator shown while a run is in progress. */
+/**
+ * "Elmer is thinking…" indicator shown while a run is in progress.
+ *
+ * Cycles a ham-radio verb phrase every ~3 s and shows an elapsed-time counter.
+ * The pulsing dot (::before pseudo-element) is preserved.
+ *
+ * Accessibility: the outer role="status" carries a stable sr-only label so
+ * screen readers get a single announcement; the cycling verb + elapsed are
+ * aria-hidden so they do not spam the AT with each tick.
+ */
 function ThinkingIndicator() {
+  const [verb, setVerb] = useState<string>(() => RADIO_VERBS[Math.floor(Math.random() * RADIO_VERBS.length)]);
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    // 1-second tick — advances elapsed every tick, advances verb every 3rd tick.
+    let ticks = 0;
+    let lastVerb = verb;
+
+    const id = setInterval(() => {
+      ticks += 1;
+      setElapsed((s) => s + 1);
+
+      if (ticks % 3 === 0) {
+        // Pick a random verb that is not the current one.
+        const pool = RADIO_VERBS.filter((v) => v !== lastVerb);
+        const next = pool[Math.floor(Math.random() * pool.length)];
+        lastVerb = next;
+        setVerb(next);
+      }
+    }, 1000);
+
+    return () => clearInterval(id);
+    // Intentionally exclude `verb` from deps — `lastVerb` is a closure variable
+    // that tracks current without causing a re-register on every verb change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Format: <60s → "12s"; >=60s → "2m 05s"
+  const elapsedLabel =
+    elapsed < 60
+      ? `${elapsed}s`
+      : `${Math.floor(elapsed / 60)}m ${String(elapsed % 60).padStart(2, '0')}s`;
+
   return (
-    <div className="elmer-thinking" data-testid="elmer-thinking" role="status" aria-live="polite">
-      Elmer is thinking…
+    <div
+      className="elmer-thinking"
+      data-testid="elmer-thinking"
+      role="status"
+    >
+      {/* Stable sr-only label — announced once; doesn't change on each tick. */}
+      <span className="elmer-thinking-sr-only">Elmer is working</span>
+      {/* Cycling verb — visual-only, not announced. */}
+      <span
+        className="elmer-thinking-verb"
+        data-testid="elmer-thinking-verb"
+        aria-hidden="true"
+      >
+        Elmer is {verb}…
+      </span>
+      {/* Elapsed counter — visual-only, not announced. */}
+      <span
+        className="elmer-thinking-elapsed"
+        data-testid="elmer-thinking-elapsed"
+        aria-hidden="true"
+      >
+        {elapsedLabel}
+      </span>
     </div>
   );
 }

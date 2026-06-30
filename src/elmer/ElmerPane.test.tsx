@@ -15,9 +15,9 @@
  * G2: Model form — preset/endpoint/key-affordance/model+Detect, Save & use.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import { ElmerPane } from './ElmerPane';
+import { ElmerPane, RADIO_VERBS } from './ElmerPane';
 import type { ElmerChipPayload, ElmerOutcomePayload, ElmerTurnPayload } from './elmerEvents';
 import { EV_CHIP, EV_OUTCOME, EV_TURN } from './elmerEvents';
 import { EGRESS_STATUS_DISARMED } from '../security/egressTypes';
@@ -234,7 +234,7 @@ describe('<ElmerPane> — Stop calls elmer_stop', () => {
 });
 
 describe('<ElmerPane> — thinking indicator', () => {
-  it('shows "Elmer is thinking…" while a run is in progress', async () => {
+  it('shows the thinking indicator (radio-verb form) while a run is in progress', async () => {
     render(<ElmerPane />);
 
     const input = screen.getByTestId('elmer-input');
@@ -244,6 +244,16 @@ describe('<ElmerPane> — thinking indicator', () => {
     await waitFor(() => {
       expect(screen.getByTestId('elmer-thinking')).toBeTruthy();
     });
+
+    // Verb span must be present and show a phrase from the bank.
+    const verbSpan = screen.getByTestId('elmer-thinking-verb');
+    const verbText = verbSpan.textContent ?? '';
+    // Text is "Elmer is <verb>…" — strip the wrapper and check the verb is in the bank.
+    const verbOnly = verbText.replace(/^Elmer is /, '').replace(/…$/, '');
+    expect(RADIO_VERBS).toContain(verbOnly);
+
+    // Elapsed span must be present.
+    expect(screen.getByTestId('elmer-thinking-elapsed')).toBeTruthy();
   });
 
   it('thinking indicator disappears once EV_OUTCOME arrives', async () => {
@@ -259,6 +269,138 @@ describe('<ElmerPane> — thinking indicator', () => {
     await fireElmerEvent<ElmerOutcomePayload>(EV_OUTCOME, payload);
 
     expect(screen.queryByTestId('elmer-thinking')).toBeNull();
+  });
+});
+
+describe('<ElmerPane> — thinking indicator verb cycling', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('verb phrase is from RADIO_VERBS on mount', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    render(<ElmerPane />);
+
+    const input = screen.getByTestId('elmer-input');
+    fireEvent.change(input, { target: { value: 'question' } });
+    fireEvent.click(screen.getByTestId('elmer-send'));
+
+    await waitFor(() => expect(screen.getByTestId('elmer-thinking')).toBeTruthy());
+
+    const verbSpan = screen.getByTestId('elmer-thinking-verb');
+    const verbOnly = (verbSpan.textContent ?? '').replace(/^Elmer is /, '').replace(/…$/, '');
+    expect(RADIO_VERBS).toContain(verbOnly);
+
+    vi.useRealTimers();
+  });
+
+  it('verb phrase changes after ~3s and the new phrase is also from RADIO_VERBS', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    render(<ElmerPane />);
+
+    const input = screen.getByTestId('elmer-input');
+    fireEvent.change(input, { target: { value: 'question' } });
+    fireEvent.click(screen.getByTestId('elmer-send'));
+
+    await waitFor(() => expect(screen.getByTestId('elmer-thinking')).toBeTruthy());
+
+    const before = screen.getByTestId('elmer-thinking-verb').textContent ?? '';
+
+    // Advance 3 ticks of 1s each so the verb advances.
+    act(() => { vi.advanceTimersByTime(3000); });
+
+    const after = screen.getByTestId('elmer-thinking-verb').textContent ?? '';
+
+    // The new phrase must still be from the bank.
+    const verbOnly = after.replace(/^Elmer is /, '').replace(/…$/, '');
+    expect(RADIO_VERBS).toContain(verbOnly);
+
+    // Advance a further 3 ticks to confirm it can change again (cycling is working).
+    act(() => { vi.advanceTimersByTime(3000); });
+    const after2 = screen.getByTestId('elmer-thinking-verb').textContent ?? '';
+    const verbOnly2 = after2.replace(/^Elmer is /, '').replace(/…$/, '');
+    expect(RADIO_VERBS).toContain(verbOnly2);
+
+    // Suppress unused-variable warning — `before` is here to document intent.
+    void before;
+
+    vi.useRealTimers();
+  });
+});
+
+describe('<ElmerPane> — thinking indicator elapsed timer', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('elapsed counter shows "0s" at mount (before any tick)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    render(<ElmerPane />);
+
+    const input = screen.getByTestId('elmer-input');
+    fireEvent.change(input, { target: { value: 'question' } });
+    fireEvent.click(screen.getByTestId('elmer-send'));
+
+    await waitFor(() => expect(screen.getByTestId('elmer-thinking')).toBeTruthy());
+
+    const elapsedEl = screen.getByTestId('elmer-thinking-elapsed');
+    expect(elapsedEl.textContent).toBe('0s');
+
+    vi.useRealTimers();
+  });
+
+  it('elapsed counter shows "5s" after 5 seconds', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    render(<ElmerPane />);
+
+    const input = screen.getByTestId('elmer-input');
+    fireEvent.change(input, { target: { value: 'question' } });
+    fireEvent.click(screen.getByTestId('elmer-send'));
+
+    await waitFor(() => expect(screen.getByTestId('elmer-thinking')).toBeTruthy());
+
+    act(() => { vi.advanceTimersByTime(5000); });
+
+    const elapsedEl = screen.getByTestId('elmer-thinking-elapsed');
+    expect(elapsedEl.textContent).toBe('5s');
+
+    vi.useRealTimers();
+  });
+
+  it('elapsed counter shows "1m 05s" after 65 seconds', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    render(<ElmerPane />);
+
+    const input = screen.getByTestId('elmer-input');
+    fireEvent.change(input, { target: { value: 'question' } });
+    fireEvent.click(screen.getByTestId('elmer-send'));
+
+    await waitFor(() => expect(screen.getByTestId('elmer-thinking')).toBeTruthy());
+
+    act(() => { vi.advanceTimersByTime(65000); });
+
+    const elapsedEl = screen.getByTestId('elmer-thinking-elapsed');
+    expect(elapsedEl.textContent).toBe('1m 05s');
+
+    vi.useRealTimers();
+  });
+
+  it('elapsed counter shows "2m 05s" after 125 seconds', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    render(<ElmerPane />);
+
+    const input = screen.getByTestId('elmer-input');
+    fireEvent.change(input, { target: { value: 'question' } });
+    fireEvent.click(screen.getByTestId('elmer-send'));
+
+    await waitFor(() => expect(screen.getByTestId('elmer-thinking')).toBeTruthy());
+
+    act(() => { vi.advanceTimersByTime(125000); });
+
+    const elapsedEl = screen.getByTestId('elmer-thinking-elapsed');
+    expect(elapsedEl.textContent).toBe('2m 05s');
+
+    vi.useRealTimers();
   });
 });
 
@@ -1219,6 +1361,143 @@ describe('<ElmerPane> credential-seam — detect_uses_usestored_when_key_present
       const args = detectCall![1] as { agentEndpoint: string; keySource: { source: string } };
       expect(args.keySource.source).toBe('useStored');
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Markdown rendering — assistant turns rendered as sanitized HTML (security)
+// ---------------------------------------------------------------------------
+
+describe('<ElmerPane> — assistant turn renders markdown as HTML', () => {
+  it('bold text is rendered as <strong>, not as raw asterisks', async () => {
+    const { container } = render(<ElmerPane />);
+    const payload: ElmerTurnPayload = { kind: 'turn', role: 'assistant', text: '**bold word**' };
+    await fireElmerEvent<ElmerTurnPayload>(EV_TURN, payload);
+
+    const bubble = container.querySelector('[data-testid="elmer-turn-assistant"]');
+    expect(bubble).toBeTruthy();
+    // Should have rendered as <strong>, not the literal ** characters.
+    expect(bubble!.querySelector('strong')).toBeTruthy();
+    expect(bubble!.textContent).not.toContain('**');
+  });
+
+  it('bullet list is rendered as <ul><li> elements', async () => {
+    const { container } = render(<ElmerPane />);
+    const payload: ElmerTurnPayload = {
+      kind: 'turn',
+      role: 'assistant',
+      text: '- Alpha\n- Beta\n- Gamma',
+    };
+    await fireElmerEvent<ElmerTurnPayload>(EV_TURN, payload);
+
+    const bubble = container.querySelector('[data-testid="elmer-turn-assistant"]');
+    expect(bubble!.querySelector('li')).toBeTruthy();
+  });
+
+  it('fenced code block is rendered as <pre><code>', async () => {
+    const { container } = render(<ElmerPane />);
+    const payload: ElmerTurnPayload = {
+      kind: 'turn',
+      role: 'assistant',
+      text: '```\necho hello\n```',
+    };
+    await fireElmerEvent<ElmerTurnPayload>(EV_TURN, payload);
+
+    const bubble = container.querySelector('[data-testid="elmer-turn-assistant"]');
+    expect(bubble!.querySelector('pre')).toBeTruthy();
+    expect(bubble!.querySelector('code')).toBeTruthy();
+  });
+
+  it('GFM table is rendered as a <table> element', async () => {
+    const { container } = render(<ElmerPane />);
+    const payload: ElmerTurnPayload = {
+      kind: 'turn',
+      role: 'assistant',
+      text: '| Col A | Col B |\n|---|---|\n| 1 | 2 |',
+    };
+    await fireElmerEvent<ElmerTurnPayload>(EV_TURN, payload);
+
+    const bubble = container.querySelector('[data-testid="elmer-turn-assistant"]');
+    expect(bubble!.querySelector('table')).toBeTruthy();
+  });
+});
+
+describe('<ElmerPane> — sanitization: dangerous model output is stripped (XSS)', () => {
+  it('onerror attribute on img is stripped — no script execution vector', async () => {
+    const { container } = render(<ElmerPane />);
+    const payload: ElmerTurnPayload = {
+      kind: 'turn',
+      role: 'assistant',
+      // Raw HTML injection attempts in model output.
+      text: '<img src=x onerror="alert(1)"><script>alert(2)</script>',
+    };
+    await fireElmerEvent<ElmerTurnPayload>(EV_TURN, payload);
+
+    const bubble = container.querySelector('[data-testid="elmer-turn-assistant"]');
+    expect(bubble).toBeTruthy();
+
+    // No <script> element must survive.
+    expect(bubble!.querySelector('script')).toBeNull();
+
+    // The onerror attribute must not be present on any element.
+    const allElements = bubble!.querySelectorAll('*');
+    for (const el of allElements) {
+      expect(el.hasAttribute('onerror')).toBe(false);
+    }
+  });
+
+  it('javascript: href is removed/neutralized by sanitizer', async () => {
+    const { container } = render(<ElmerPane />);
+    const payload: ElmerTurnPayload = {
+      kind: 'turn',
+      role: 'assistant',
+      text: '<a href="javascript:alert(1)">click me</a>',
+    };
+    await fireElmerEvent<ElmerTurnPayload>(EV_TURN, payload);
+
+    const bubble = container.querySelector('[data-testid="elmer-turn-assistant"]');
+    const anchors = bubble!.querySelectorAll('a');
+    for (const a of anchors) {
+      const href = a.getAttribute('href') ?? '';
+      expect(href.toLowerCase().startsWith('javascript:')).toBe(false);
+    }
+  });
+
+  it('raw <script> tag in model output does not appear in the DOM', async () => {
+    const { container } = render(<ElmerPane />);
+    const payload: ElmerTurnPayload = {
+      kind: 'turn',
+      role: 'assistant',
+      text: 'Safe text. <script>alert("xss")<\/script> More text.',
+    };
+    await fireElmerEvent<ElmerTurnPayload>(EV_TURN, payload);
+
+    const bubble = container.querySelector('[data-testid="elmer-turn-assistant"]');
+    expect(bubble!.querySelector('script')).toBeNull();
+    // The safe text content is still there.
+    expect(bubble!.textContent).toContain('Safe text.');
+  });
+});
+
+describe('<ElmerPane> — user turn renders as plain text, not markdown', () => {
+  it('markdown-ish user input is not parsed — literal asterisks are preserved', () => {
+    render(<ElmerPane />);
+
+    // Type a message with markdown syntax and send it.
+    const input = screen.getByTestId('elmer-input');
+    fireEvent.change(input, { target: { value: '**not bold**' } });
+    fireEvent.click(screen.getByTestId('elmer-send'));
+
+    // User bubble must exist.
+    const userBubble = screen.getByTestId('elmer-turn-user');
+    expect(userBubble).toBeTruthy();
+
+    // The literal asterisks must be present in the text content (not parsed).
+    expect(userBubble.textContent).toContain('**not bold**');
+
+    // No <strong> element inside the user bubble.
+    const strong = userBubble.querySelector('strong');
+    expect(strong).toBeNull();
   });
 });
 
