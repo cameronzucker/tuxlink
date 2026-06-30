@@ -75,7 +75,7 @@ Rust (Tauri 2.x backend, MSRV 1.75), `reqwest` 0.13, `url` 2, `keyring` 3.6.3 (s
 
 ## SPEC GAPS / CONTRADICTIONS (surfaced for review — do NOT silently paper over)
 
-1. **Menu id collision.** The spec (R2.7 / §Menu) says "add `menu:tools:connect-agent`." But `menu:tools:connect_agent` (underscore) **already exists** in `menuModel.ts:104` and `dispatchMenuAction.ts:115`, wired to a **different** feature — `ConnectAgentModal` (per-agent MCP copy-paste connect commands, tuxlink-l9sq4), with label "Connect an AI agent…". It is in `EXPECTED_IDS` (`menuModel.test.ts:22`) and has its own dispatch test (`dispatchMenuAction.test.ts:186`). Task H1 below proposes a resolution; **the operator/reviewer must pick** before H1 ships. Options: (a) **rename** the existing item to "Connect an external agent (MCP)…" and add a NEW `menu:tools:connect_model` → Elmer-Model; (b) keep ConnectAgentModal on `connect_agent` and add `menu:tools:connect_model` "Connect an AI Agent…" → Elmer (two doors, similar labels — the R2.6 "prefer one door / differentiate by verb" POLISH applies); (c) repoint `connect_agent` at Elmer and relocate ConnectAgentModal to a different id. The plan assumes **(b)** with a distinct verb-led label ("Set up Elmer's model…") as the conservative default; flag for confirmation.
+1. **Menu id collision — RESOLVED (operator, 2026-06-29): keep both, add a distinct entry.** `menu:tools:connect_agent` ("Connect an AI agent…") opens `ConnectAgentModal`, which is a **different feature** (show-and-copy MCP connect commands so an EXTERNAL agent — Claude Code / Codex / Gemini — connects TO Tuxlink's MCP server; "Tuxlink does not write agent config files"). It is NOT the model-endpoint config and is NOT retired. **Operator decision: leave ConnectAgentModal untouched; add a NEW, distinct Tools entry for Elmer's model setup, in the existing Tools AI grouping** (alongside `menu:tools:elmer` + `menu:tools:connect_agent`). New id: `menu:tools:elmer_model`, label **"Set up Elmer's model…"**. This is purely additive — `EXPECTED_IDS` gains one id; nothing is deleted.
 
 2. **`build_vetted_client` is NOT directly reusable from tiles.** The spec (R2.1) says "reuse the `build_vetted_client` IP-gate infra from the tiles fetch path." Verified: `tiles::fetch::build_vetted_client` is keyed on `TileSource` and calls `tiles::host::ip_is_permitted`, which **default-denies public IPs and permits only RFC1918+ULA** — the OPPOSITE of Elmer's required permit-set (permit public + RFC1918). It is a **pattern to copy**, not a function to call. Task A2 writes Elmer's own `egress.rs` with `elmer_ip_is_permitted` (permit public + RFC1918; refuse loopback-unless-literal, link-local/metadata, multicast, unspecified) + its own `build_vetted_client`. This is consistent with the spec's parenthetical "but with Elmer's permit-set, NOT the tiles default-deny-public."
 
@@ -660,30 +660,30 @@ export function isLoopback(endpoint: string): boolean;  // host is 127.0.0.0/8 |
 
 ### Task H1 — Menu door → open Elmer drawer + expand Model section
 
-**BEFORE:** read `.claude/skills/test-driven-development` + `docs/pitfalls/testing-pitfalls.md`; follow TDD. **RESOLVE SPEC GAP #1 first** (the `connect_agent` id collision) — do not invent a resolution; confirm the chosen option with the reviewer/operator. The plan's default is option (b): keep `menu:tools:connect_agent` → ConnectAgentModal, add a NEW `menu:tools:connect_model` labelled "Set up Elmer's model…" → Elmer-with-Model-expanded. **Run-step: `pnpm vitest run src/shell/chrome/menuModel.test.ts src/shell/chrome/dispatchMenuAction.test.ts`.**
+**BEFORE:** read `.claude/skills/test-driven-development` + `docs/pitfalls/testing-pitfalls.md`; follow TDD. **GAP #1 RESOLVED — purely additive:** keep `ConnectAgentModal` + its `menu:tools:connect_agent` untouched; ADD a new `menu:tools:elmer_model` "Set up Elmer's model…" in the Tools AI grouping. **Run-step: `pnpm vitest run src/shell/chrome/menuModel.test.ts src/shell/chrome/dispatchMenuAction.test.ts`.**
 
 **Files:**
-- modify `src/shell/chrome/menuModel.ts` (add the new id + label adjacent to `menu:tools:elmer`)
-- modify `src/shell/chrome/menuModel.test.ts` (add the new id to `EXPECTED_IDS` — the exhaustive vocabulary assertion fails otherwise)
-- modify `src/shell/chrome/dispatchMenuAction.ts` (route the new id to a new handler `openElmerModel`) + `dispatchMenuAction.test.ts`
-- modify `src/shell/AppShell.tsx` (add an `elmerExpandModel` state flag; the handler sets `elmerOpen=true` + `elmerExpandModel=true`; pass `expandModel` to `ElmerPane` so it opens the disclosure)
+- modify `src/shell/chrome/menuModel.ts` — add `{ id: 'menu:tools:elmer_model', label: 'Set up Elmer's model…' }` in the AI grouping, adjacent to `menu:tools:elmer` (which opens the chat) and `menu:tools:connect_agent` (the external-agent helper — leave it alone).
+- modify `src/shell/chrome/menuModel.test.ts` — add `'menu:tools:elmer_model'` to `EXPECTED_IDS` (the exhaustive vocabulary assertion fails until the menu carries it).
+- modify `src/shell/chrome/dispatchMenuAction.ts` + `dispatchMenuAction.test.ts` — route the new id to a new `openElmerModel` handler.
+- modify `src/shell/AppShell.tsx` — add an `elmerExpandModel` state flag; the `openElmerModel` handler sets `elmerOpen=true` + `elmerExpandModel=true`; pass `expandModel` to `ElmerPane`. (Do NOT touch the `ConnectAgentModal` mount.)
 
 **Interfaces:**
-- New menu entry: `{ id: 'menu:tools:connect_model', label: 'Set up Elmer's model…' }` (or the operator-chosen id/label) under Tools, adjacent to `menu:tools:elmer`.
-- `MenuHandlers` gains `openElmerModel: () => void`.
+- New menu entry: `{ id: 'menu:tools:elmer_model', label: 'Set up Elmer's model…' }`.
+- `MenuHandlers` gains `openElmerModel: () => void` (in addition to the existing ConnectAgentModal handler).
 - `ElmerPane` gains an optional `expandModel?: boolean` prop; when true on mount/change, it opens the Model disclosure (reuse the `advancedOpen` state, renamed `modelSectionOpen`).
 
 **TDD steps:**
 - [ ] Write failing tests:
-  - `menuModel.test.ts`: add `'menu:tools:connect_model'` to `EXPECTED_IDS`; the `MENU_ACTION_IDS toEqual EXPECTED_IDS` assertion now requires the menu to carry it (it will fail until `menuModel.ts` adds it).
-  - `dispatchMenuAction.test.ts`: `routes tools:connect_model to openElmerModel` — `dispatchMenuAction('menu:tools:connect_model', h)` calls `h.openElmerModel`.
-  - An `ElmerPane.test.tsx` case: `expand_model_prop_opens_model_section` — `<ElmerPane expandModel />` renders with the Model disclosure open.
+  - `menuModel.test.ts`: add `'menu:tools:elmer_model'` to `EXPECTED_IDS`; the `MENU_ACTION_IDS toEqual EXPECTED_IDS` assertion fails until `menuModel.ts` adds it.
+  - `dispatchMenuAction.test.ts`: `routes tools:elmer_model to openElmerModel` — `dispatchMenuAction('menu:tools:elmer_model', h)` calls `h.openElmerModel`. (The existing `connect_agent` → ConnectAgentModal case is UNCHANGED.)
+  - `ElmerPane.test.tsx`: `expand_model_prop_opens_model_section` — `<ElmerPane expandModel />` renders with the Model disclosure open.
 - [ ] Run-it-fails (vitest).
-- [ ] Implement the id + dispatch + AppShell wiring + the `expandModel` prop.
+- [ ] Implement the new id + dispatch + AppShell wiring + the `expandModel` prop.
 - [ ] Run-it-passes (vitest); `pnpm typecheck`.
-- [ ] Commit: `feat(elmer-ui): Tools menu door opens Elmer with the Model section expanded`.
+- [ ] Commit: `feat(elmer-ui): add "Set up Elmer's model…" Tools entry → opens Elmer with the Model section expanded`.
 
-**BEFORE marking complete:** review vs testing-pitfalls; verify `EXPECTED_IDS` and `menuModel.ts` are in lock-step (the exhaustive assertion is the gate), the new id routes to the Elmer-Model handler (NOT ConnectAgentModal), and the SPEC GAP #1 resolution is the one the operator confirmed. Run vitest + typecheck.
+**BEFORE marking complete:** review vs testing-pitfalls; verify `EXPECTED_IDS` + `menuModel.ts` are in lock-step (the exhaustive assertion is the gate), the new id routes to `openElmerModel` (NOT ConnectAgentModal), `ConnectAgentModal` + its `connect_agent` entry are UNTOUCHED, and the new label sits in the AI grouping. Run vitest + typecheck.
 
 > **3-ROUND REVIEW LOOP — Group 6 + FINAL.** After H1: (1) `superpowers:requesting-code-review` over the full diff; (2) a final Codex round over `git diff origin/main..HEAD` (broad attack angle); (3) **the `wire-walk` skill** (`.claude/skills/wire-walk/`) — the operator supplies the key flows greenfield; trace each to `file:line` (menu door → drawer → form → `elmer_config_set` → next-turn provider build; Detect → `elmer_detect_models`; empty-state button → expanded form). A broken primary flow means NOT shipped. Then run the full local gates (`pnpm typecheck`, `pnpm vitest run`, `pnpm build`) and push for CI (clippy `--all-targets -D warnings` + full `cargo test` on both arches).
 
