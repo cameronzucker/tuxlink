@@ -36,7 +36,7 @@
     "mermaid": "^11.15.0",
     "pbf": "^4.0.2",
     "pmtiles": "^4",
-    "potpack": "^1.0.2",
+    "potpack": "^2.1.0",
     "rbush": "^4.0.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
