@@ -142,7 +142,22 @@ impl Default for Limits {
 /// not gate the loop, change any [`RunOutcome`], or affect cancellation /
 /// timeout / COR invariants. A panicking callback would unwind through the
 /// loop, so callers keep the callback trivial (a channel send / event emit).
+///
+/// `AssistantDelta` / `ReasoningDelta` are **incremental** streaming events a
+/// streaming [`crate::Provider`] MAY emit *during* a turn (token-by-token), so a
+/// caller can show inference progress live. They are additive to — not a
+/// replacement for — `AssistantText`: a streaming turn emits zero-or-more
+/// `ReasoningDelta` / `AssistantDelta` while the answer is produced, and the
+/// loop still emits the single finalizing `AssistantText` before returning
+/// [`RunOutcome::Completed`]. A consumer accumulates the deltas for live
+/// rendering and treats `AssistantText` as the authoritative final answer.
+/// Non-streaming providers emit no deltas, so callers that ignore them keep
+/// working unchanged.
+///
+/// This enum is `#[non_exhaustive]`: future phases may add further streaming
+/// variants, so external matches must carry a catch-all arm.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RunEvent {
     /// The model produced its final assistant text (emitted just before the
     /// loop returns [`RunOutcome::Completed`]).
@@ -155,6 +170,21 @@ pub enum RunEvent {
     ToolCall {
         /// The tool name as the model addressed it.
         tool: String,
+    },
+    /// An incremental piece of the model's final answer, emitted as content
+    /// streams in (before the finalizing [`RunEvent::AssistantText`]). Each
+    /// chunk is a partial fragment, not a complete message — accumulate them.
+    AssistantDelta {
+        /// A partial fragment of the final answer text.
+        chunk: String,
+    },
+    /// An incremental piece of the model's reasoning / "thinking" channel,
+    /// emitted as it streams in. Models such as gpt-oss surface reasoning on a
+    /// channel separate from the answer; this variant carries those fragments
+    /// so a caller can render a live thinking trace distinct from the answer.
+    ReasoningDelta {
+        /// A partial fragment of the model's reasoning text.
+        chunk: String,
     },
 }
 

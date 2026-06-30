@@ -438,6 +438,9 @@ impl ElmerSession {
             // `inner` std-Mutex, preserving the file-wide no-await-under-`inner`
             // (and no-sink-under-`inner`) invariant.
             let on_event = |ev: RunEvent| {
+                // Streaming delta variants (AssistantDelta / ReasoningDelta) are
+                // not yet bridged to the UI — that is a later phase. Skip them
+                // here; only the finalizing turn / chip events are forwarded.
                 let elmer_event = match ev {
                     RunEvent::AssistantText { text } => ElmerEvent::Turn {
                         role: "assistant".to_string(),
@@ -447,6 +450,7 @@ impl ElmerSession {
                         tool,
                         status: "calling".to_string(),
                     },
+                    _ => return,
                 };
                 emit_for_task(elmer_event);
             };
@@ -1043,6 +1047,8 @@ mod tests {
             // during the run.
             let handle = tokio::spawn(async move {
                 let on_event = |ev: RunEvent| {
+                    // Streaming delta variants are not yet bridged to the UI
+                    // (later phase). Skip them; forward only turn / chip events.
                     let elmer_event = match ev {
                         RunEvent::AssistantText { text } => ElmerEvent::Turn {
                             role: "assistant".to_string(),
@@ -1052,6 +1058,7 @@ mod tests {
                             tool,
                             status: "calling".to_string(),
                         },
+                        _ => return,
                     };
                     emitted_for_task.lock().unwrap().push(elmer_event);
                 };

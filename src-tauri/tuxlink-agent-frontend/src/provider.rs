@@ -24,7 +24,7 @@ use serde_json::{json, Value};
 use url::Url;
 
 use tuxlink_agent_runner::{
-    Conversation, Message, ModelTurn, Provider, ProviderError, ToolCall, ToolSpec,
+    Conversation, Message, ModelTurn, Provider, ProviderError, RunEvent, ToolCall, ToolSpec,
 };
 
 // ---------------------------------------------------------------------------
@@ -149,7 +149,13 @@ impl Provider for OpenAiProvider {
         &self,
         conversation: &Conversation,
         tools: &[ToolSpec],
+        on_event: &(dyn Fn(RunEvent) + Sync),
     ) -> Result<ModelTurn, ProviderError> {
+        // streaming wired in phase 1b (tuxlink-e2vw7): this provider still does a
+        // single non-streaming POST and emits no deltas. The finalizing
+        // AssistantText is emitted by the run loop, so callers see the answer.
+        let _ = on_event;
+
         let body = build_request_body(&self.model, conversation, tools);
 
         let mut req = self.client.post(self.endpoint.clone()).json(&body);
