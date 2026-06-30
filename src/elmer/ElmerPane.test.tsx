@@ -1399,6 +1399,56 @@ describe('<ElmerPane> credential-seam — detect_uses_inline_key_when_typed_not_
       expect(args.keySource.value).toBe('sk-replacement-not-saved');
     });
   });
+
+  // tuxlink-wpqwy / Task 6 — Detect-path analog of the #981 buildSetKey fix.
+  // Inter-provider switch: load a provider with a STORED key, then switch the
+  // endpoint to a DIFFERENT origin. effectiveKeyStatus flips to 'absent' (origin
+  // diverged) and the absent-key input renders, but raw keyStatus is still
+  // 'present' for the OLD origin. buildKeySource keyed off raw keyStatus would
+  // drop the freshly-typed key and send {source:'none'} → Detect/Test probes with
+  // no key → false auth failure. The fix makes buildKeySource origin-aware.
+  it('switch provider with stored key, type new key → Detect sends {source:inline, value}', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'present',
+        agentTurnTimeoutSecs: 900,
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    // Switch the endpoint to a DIFFERENT origin (Gemini) — origin diverges from
+    // the loaded OpenAI config, so the absent-key input appears for the new host.
+    const endpointInput = screen.getByTestId('elmer-endpoint-input');
+    fireEvent.change(endpointInput, {
+      target: { value: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions' },
+    });
+
+    // Type the new provider's key into the now-visible absent-key input.
+    const keyInput = screen.getByTestId('elmer-key-input');
+    fireEvent.change(keyInput, { target: { value: 'AIza-new-provider-key' } });
+
+    mockInvoke.mockClear();
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_detect_models') return [];
+      return undefined;
+    });
+
+    fireEvent.click(screen.getByTestId('elmer-detect-btn'));
+
+    await waitFor(() => {
+      const calls = mockInvoke.mock.calls;
+      const detectCall = calls.find((c) => c[0] === 'elmer_detect_models');
+      expect(detectCall).toBeTruthy();
+      const args = detectCall![1] as { agentEndpoint: string; keySource: { source: string; value?: string } };
+      // The typed key must be sent inline — NOT dropped to {source:'none'}.
+      expect(args.keySource.source).toBe('inline');
+      expect(args.keySource.value).toBe('AIza-new-provider-key');
+    });
+  });
 });
 
 describe('<ElmerPane> credential-seam — detect_uses_usestored_when_key_present_and_untouched', () => {

@@ -566,27 +566,34 @@ export function ModelForm({
     if (endpointIsLoopback) {
       return { source: 'none' };
     }
-    // Determine whether the live endpoint's origin still matches the loaded
-    // config origin. If the operator has hand-edited the endpoint to a
-    // different host, the loaded keyStatus no longer describes that host.
+    // Mirror the render-side effectiveKeyStatus (#981): the key affordance is
+    // 'absent' whenever the live origin diverges from the LOADED config's origin
+    // (an inter-provider switch) OR the stored status was already absent. The form
+    // renders the absent-key input off that same condition, so the operator types
+    // their new key into `absentKeyValue`. Keying the inline-key term off the raw
+    // mount-only `keyStatus` dropped that freshly-typed key on a provider switch
+    // (it fell through to 'useStored', probing the OLD origin's key) — so Detect/
+    // Test produced a false auth failure (tuxlink-wpqwy / Task 6, the Detect-path
+    // analog of the #981 buildSetKey fix).
     const liveOrigin = originOf(endpoint);
-    const originMatchesLoaded = liveOrigin !== '' && liveOrigin === keyAffordanceOrigin;
+    const originMatchesLoadedConfig =
+      liveOrigin !== '' && liveOrigin === originOf(initialEndpoint);
+    const effectiveAbsent = !originMatchesLoadedConfig || keyStatus === 'absent';
     // Check for a pending inline key value in the form.
     const inlineKey =
       (replaceMode && newKeyValue) ? newKeyValue :
-      (keyStatus === 'absent' && absentKeyValue) ? absentKeyValue :
+      (effectiveAbsent && absentKeyValue) ? absentKeyValue :
       null;
     if (inlineKey) {
       return { source: 'inline', value: inlineKey };
     }
-    // Use the stored key only when origin matches and there is no pending
-    // removal (clearPending) or replace (replaceMode without a typed value
-    // just means "intent to replace but nothing typed yet" — treat as absent).
-    if (keyStatus === 'present' && originMatchesLoaded && !clearPending) {
+    // Use the stored key only when the live origin still matches the loaded
+    // config's origin and there is no pending removal (clearPending).
+    if (keyStatus === 'present' && originMatchesLoadedConfig && !clearPending) {
       return { source: 'useStored' };
     }
     return { source: 'none' };
-  }, [endpointIsLoopback, endpoint, keyAffordanceOrigin, keyStatus, replaceMode, newKeyValue, absentKeyValue, clearPending]);
+  }, [endpointIsLoopback, endpoint, initialEndpoint, keyStatus, replaceMode, newKeyValue, absentKeyValue, clearPending]);
 
   // Save status — surfaces the result of `elmer_config_set` instead of the
   // previous `void handleSave()` swallow. A rejecting config_set (e.g. an empty
