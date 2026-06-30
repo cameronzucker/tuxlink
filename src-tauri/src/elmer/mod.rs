@@ -11,6 +11,7 @@
 
 pub mod approval;
 pub mod commands;
+pub mod config_commands;
 pub mod events;
 pub mod executor;
 pub mod keyring;
