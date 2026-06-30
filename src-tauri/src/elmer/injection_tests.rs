@@ -44,14 +44,17 @@
 //! - **Config-mutation gate** (tool-list layer) — the injected payload is a
 //!   `ToolCall` name or args; the tool-list has no config command, so the call
 //!   maps to unknown-tool, never a config mutation.
-//! - **Egress withhold** (invoker deny-before-MCP layer) — force-dispatching a
-//!   withheld egress tool with a corpus payload returns `ToolOutcome::Denied`.
-//!   The deny is name-based; payload content is irrelevant.
-//! - **Transmit arm/taint gate** (egress guard layer) — the invoker returns
-//!   `ToolOutcome::Denied` for any withheld tool with a FRESH un-armed
-//!   `EgressGuard`. This is structural: the tool is withheld AND `guarded_egress`
-//!   denies without an arm. The test fails if a future change un-withholds the
-//!   tool or removes the guard check.
+//! - **Egress withhold** (invoker deny-before-MCP layer) — force-dispatching
+//!   EVERY withheld egress tool (all 7 in `WITHHELD_EGRESS_TOOLS`) with each
+//!   corpus payload returns `ToolOutcome::Denied`.  The deny is name-based;
+//!   payload content is irrelevant.  The per-tool × per-payload nested loop
+//!   ensures a change that un-withholds any single tool is caught.
+//! - **Transmit arm/taint gate** (egress guard layer, TWO sub-assertions) —
+//!   (a) `EgressGuard::authorize(Agent)` called DIRECTLY on a fresh un-armed
+//!   guard (bypassing the invoker) returns `Err(EgressDenied::NotArmed)` —
+//!   this isolates the arm gate from the withhold short-circuit; (b) the
+//!   invoker also returns `ToolOutcome::Denied` for a withheld tool dispatched
+//!   against the same fresh un-armed guard (belt-and-suspenders).
 //! - **Redaction layer** — a hostile payload containing a `;PQ:` token fed through
 //!   `crate::winlink::redaction::redact_freeform` (the same function
 //!   `ElmerProvider::turn` invokes for every message) must have the `;PQ:` token
@@ -73,10 +76,12 @@
 //! - F1-T3: `include_str!` pulls the name out of production source.
 //! - F2-T1: corpus payload dispatched as a tool name/args mutates config
 //!   (impossible today; would fire if config were added to the router).
-//! - F2-T2: a payload-carrying `cms_connect` dispatch returns something other
-//!   than `Denied` (fires if the tool is ever un-withheld).
-//! - F2-T3: the invoker returns something other than `Denied` for a withheld
-//!   tool against a fresh un-armed guard (fires on any guard removal).
+//! - F2-T2: ANY withheld tool's force-dispatch returns something other than
+//!   `Denied` (fires if any of the 7 tools is ever un-withheld).
+//! - F2-T3: (a) `EgressGuard::authorize(Agent)` on a fresh guard returns
+//!   `Ok(())` (fires if the guard is default-armed); OR (b) the invoker
+//!   returns something other than `Denied` for the withhold path (fires on
+//!   any guard removal AND withhold removal).
 //! - F2-T4: `;PQ:` token survives redaction, or `ApiKey` leaks the raw secret.
 //!
 //! ## MSRV
@@ -95,7 +100,7 @@ use std::sync::Arc;
 use tuxlink_agent_runner::{CallAuthority, ToolCall, ToolInvoker, ToolOutcome};
 use tuxlink_agent_frontend::ApiKey;
 use tuxlink_mcp_core::{test_support, McpState};
-use tuxlink_security::EgressGuard;
+use tuxlink_security::{EgressAuthority, EgressDenied, EgressGuard};
 use tokio_util::sync::CancellationToken;
 
 use crate::elmer::executor::{InProcessMcpInvoker, WITHHELD_EGRESS_TOOLS};
@@ -372,7 +377,7 @@ async fn injection_cannot_mutate_config() {
 
         // Document: the payload used as a ToolCall `name` field is not a config
         // command, so no corpus injection can dispatch a config mutation.
-        let payload_is_config_cmd = CONFIG_COMMAND_NAMES.iter().any(|n| *n == *payload);
+        let payload_is_config_cmd = CONFIG_COMMAND_NAMES.contains(payload);
         assert!(
             !payload_is_config_cmd,
             "corpus vector `{vector}`: payload text matches a config command name — \
@@ -387,9 +392,10 @@ async fn injection_cannot_mutate_config() {
 
 /// **Injection corpus — egress withhold gate (F2-T2).**
 ///
-/// For every payload in [`INJECTION_CORPUS`], force-dispatch a
-/// `ToolCall { name: "cms_connect", args: { "injection": <payload> } }` through
-/// the in-process invoker and assert `ToolOutcome::Denied`.
+/// For every payload in [`INJECTION_CORPUS`] and EVERY name in
+/// [`WITHHELD_EGRESS_TOOLS`], force-dispatch `ToolCall { name: <tool>,
+/// args: { "injection": <payload> } }` through the in-process invoker and
+/// assert `ToolOutcome::Denied`.
 ///
 /// ### Deterministic layer asserted
 ///
@@ -398,34 +404,46 @@ async fn injection_cannot_mutate_config() {
 /// matches, it returns `ToolOutcome::Denied` immediately.  This check is
 /// name-based; the payload content of `args` is irrelevant.
 ///
+/// ### Why all tools, not just `cms_connect`
+///
+/// The withhold is name-based and applies identically to every entry in
+/// `WITHHELD_EGRESS_TOOLS`.  Testing only one tool leaves the other six tools
+/// unverified: a change that un-withholds, say, `ardop_b2f_exchange` while
+/// keeping `cms_connect` withheld would not be caught by a single-tool loop.
+/// The per-tool × per-payload nested loop ensures every withhold entry is
+/// exercised against the full corpus.
+///
 /// ### What would make this test fail
 ///
-/// If `cms_connect` were removed from `WITHHELD_EGRESS_TOOLS`, the invoker
-/// would forward the call to the MCP channel (and the router would attempt to
-/// handle it), returning something other than `Denied`.  The test would catch
-/// that regression immediately.
+/// If any name in `WITHHELD_EGRESS_TOOLS` were removed from that constant, the
+/// invoker would forward calls for that tool to the MCP channel (returning
+/// something other than `Denied`), and the assertion for that `(tool, vector)`
+/// pair would fail.
 #[tokio::test]
 async fn injection_cannot_reach_withheld_egress() {
     let invoker = connect_invoker().await;
     let cancel = CancellationToken::new();
 
-    for (vector, payload) in INJECTION_CORPUS {
-        // Wrap the corpus payload as a ToolCall argument to cms_connect.
-        // The withhold check is name-based; the payload is present to document
-        // that even a targeted goal-hijack payload is blocked at the withhold.
-        let call = ToolCall {
-            name: "cms_connect".into(),
-            args: serde_json::json!({ "injection": payload }),
-        };
+    for tool_name in WITHHELD_EGRESS_TOOLS {
+        for (vector, payload) in INJECTION_CORPUS {
+            // Use minimally-valid (intentionally-ignored) args: the withhold
+            // check is name-based and fires before any arg is parsed or the
+            // MCP channel is touched.  The payload is present to document that
+            // even a targeted goal-hijack payload is blocked at the withhold.
+            let call = ToolCall {
+                name: (*tool_name).into(),
+                args: serde_json::json!({ "injection": payload }),
+            };
 
-        let outcome = invoker.invoke(&call, CallAuthority::Agent, &cancel).await;
+            let outcome = invoker.invoke(&call, CallAuthority::Agent, &cancel).await;
 
-        assert!(
-            matches!(outcome, ToolOutcome::Denied(_)),
-            "corpus vector `{vector}`: force-dispatching cms_connect with a \
-             hostile payload must return ToolOutcome::Denied (egress-withhold \
-             gate) — got: {outcome:?}"
-        );
+            assert!(
+                matches!(outcome, ToolOutcome::Denied(_)),
+                "corpus vector `{vector}`: force-dispatching withheld tool \
+                 `{tool_name}` with a hostile payload must return \
+                 ToolOutcome::Denied (egress-withhold gate) — got: {outcome:?}"
+            );
+        }
     }
 }
 
@@ -435,36 +453,43 @@ async fn injection_cannot_reach_withheld_egress() {
 
 /// **Injection corpus — egress guard (transmit-without-arm) gate (F2-T3).**
 ///
+/// Asserts two independently-effective layers against a fresh un-armed guard:
+///
+/// ### Layer 1 (withhold invoker path) — belt
+///
 /// For every payload in [`INJECTION_CORPUS`], build a FRESH un-armed invoker
 /// (a new `EgressGuard::new()` — un-armed by construction) and drive a
 /// `cms_connect` dispatch through it.  Assert `ToolOutcome::Denied`.
 ///
-/// ### Deterministic layers asserted (two layers, one test)
+/// ### Layer 2 (arm-gate isolation) — suspenders
 ///
-/// 1. **Invoker deny-before-MCP layer** (same as F2-T2): `cms_connect` is
-///    withheld; the invoker short-circuits to `Denied` before the guard is
-///    ever consulted.
-/// 2. **Egress guard layer** (belt-and-suspenders): even if a future change
-///    un-withholds `cms_connect`, a fresh un-armed guard would block the call
-///    at `guarded_egress` (which `EgressDenied::NotArmed` → `ToolOutcome::Denied`).
-///    By testing against a FRESH un-armed guard (not the shared `connect_invoker`
-///    guard which may have been tainted by prior test invocations), this test
-///    asserts the guard invariant independently.
+/// Call `EgressGuard::authorize(EgressAuthority::Agent)` DIRECTLY on the fresh
+/// un-armed guard — bypassing the invoker entirely — and assert the result is
+/// `Err(EgressDenied::NotArmed)`.  This assertion is independent of the withhold
+/// short-circuit: it fires even if `cms_connect` were removed from
+/// `WITHHELD_EGRESS_TOOLS`, because it never passes through the invoker at all.
 ///
-/// ### Why NOT assert merely "semantics are unchanged"
+/// **Why the withhold path (Layer 1 alone) does NOT prove the arm gate:**
+/// `InProcessMcpInvoker::invoke` checks `WITHHELD_EGRESS_TOOLS` BEFORE
+/// consulting the `EgressGuard`.  A regression that default-arms the guard
+/// while keeping the tool withheld would still pass the Layer-1 assertion — the
+/// tool is denied at the withhold check and the guard is never reached.  The
+/// Layer-2 direct `authorize()` call isolates the arm-gate invariant so such
+/// a regression fails the test.
 ///
-/// The brief explicitly requires asserting the CONCRETE `ToolOutcome::Denied`
-/// outcome, not a weaker "no mutation happened" claim.  If a future change both
-/// un-withholds `cms_connect` AND removes the arm-gate, a "semantics unchanged"
-/// assertion would not catch it.  `Denied` is the concrete structural outcome
-/// that fails the moment either gate weakens.
+/// **Guard seam used:** `EgressGuard::authorize` is a public method on
+/// `tuxlink_security::EgressGuard`.  A fresh `EgressGuard::new()` has
+/// `armed_until = None`, so `authorize(Agent)` returns
+/// `Err(EgressDenied::NotArmed)` deterministically.  No scaffolding is required;
+/// the seam is a direct public method call.
 ///
 /// ### What would make this test fail
 ///
-/// If `cms_connect` is un-withheld AND the arm-gate is removed, the outcome
-/// would be `ToolOutcome::Ok(…)` (or `InvalidArgs` if the args were wrong) and
-/// this test would fail.  Either gate alone catching the call is sufficient for
-/// `Denied`; both are present today, providing depth-of-defence.
+/// - Layer 1: `cms_connect` is un-withheld AND the guard is either armed or
+///   removed → outcome is no longer `Denied`.
+/// - Layer 2: `EgressGuard::new()` starts armed by default, OR `authorize`
+///   returns `Ok(())` for an un-armed guard → the `Err(NotArmed)` assertion
+///   fails.  This catches any future change that default-arms the guard.
 #[tokio::test]
 async fn injection_cannot_transmit_without_arm() {
     // Build a FRESH invoker with its own un-armed guard.  EgressGuard::new()
@@ -476,13 +501,34 @@ async fn injection_cannot_transmit_without_arm() {
         .await
         .expect("fresh invoker must connect");
 
-    // Confirm the guard starts un-armed.
+    // Confirm the guard starts un-armed (armed_remaining == 0 when None or
+    // expired).
     assert_eq!(
         fresh_guard.armed_remaining(),
         0,
         "precondition: fresh EgressGuard must start un-armed"
     );
 
+    // --- Layer 2: arm-gate isolation (direct guard assertion) ---
+    //
+    // Call authorize() directly, bypassing the invoker entirely.  This proves
+    // the arm gate itself (EgressGuard) denies an Agent caller when un-armed,
+    // independent of the WITHHELD_EGRESS_TOOLS short-circuit.  A future change
+    // that default-arms the guard would cause this assertion to fail even if the
+    // withhold remained in place.
+    assert_eq!(
+        fresh_guard.authorize(EgressAuthority::Agent),
+        Err(EgressDenied::NotArmed),
+        "a fresh un-armed EgressGuard must deny an Agent caller with \
+         EgressDenied::NotArmed — if this fails the guard was default-armed, \
+         which would allow agent egress without operator consent"
+    );
+
+    // --- Layer 1: withhold invoker path (belt-and-suspenders) ---
+    //
+    // Drive the corpus through the invoker to confirm that the withhold check
+    // also fires (belt: the invoker's WITHHELD_EGRESS_TOOLS check fires before
+    // the guard is even consulted for withheld tools).
     let cancel = CancellationToken::new();
 
     for (vector, payload) in INJECTION_CORPUS {
