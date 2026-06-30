@@ -39,7 +39,7 @@ use tuxlink_agent_frontend::{
     provider::{ApiKey, OpenAiProvider},
 };
 use tuxlink_agent_runner::{
-    Conversation, Message, ModelTurn, Provider, ProviderError, ToolCall, ToolSpec,
+    Conversation, Message, ModelTurn, Provider, ProviderError, RunEvent, ToolCall, ToolSpec,
 };
 
 // ---------------------------------------------------------------------------
@@ -148,6 +148,7 @@ impl Provider for ElmerProvider {
         &self,
         conversation: &Conversation,
         tools: &[ToolSpec],
+        on_event: &(dyn Fn(RunEvent) + Sync),
     ) -> Result<ModelTurn, ProviderError> {
         // AC-6: build a redacted conversation for the model turn.
         let redacted_messages: Vec<Message> = conversation
@@ -157,7 +158,10 @@ impl Provider for ElmerProvider {
             .collect();
         let redacted = Conversation::from_messages(redacted_messages);
 
-        self.inner.turn(&redacted, tools).await
+        // Pass the streaming sink straight through to the wrapped provider: this
+        // decorator only redacts the conversation, it does not consume events.
+        // (The wrapped OpenAiProvider is non-streaming until phase 1b.)
+        self.inner.turn(&redacted, tools, on_event).await
     }
 }
 

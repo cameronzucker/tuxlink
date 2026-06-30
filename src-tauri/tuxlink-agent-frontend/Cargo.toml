@@ -40,7 +40,21 @@ thiserror = "2"
 url = "2"
 
 # HTTP client for OpenAiProvider (same 0.13 the lockfile already resolves).
-reqwest = { version = "0.13", features = ["json"] }
+# `stream` (tuxlink-e2vw7): `Response::bytes_stream()` is gated behind reqwest's
+# `stream` feature; the streaming provider (phase 1b) reads the SSE body chunk by
+# chunk through it. The monolith (`tuxlink` package) already enables `stream`, so
+# workspace feature-unification would supply it transitively — but declaring it
+# here keeps a standalone `cargo test -p tuxlink-agent-frontend` building too,
+# rather than depending on a sibling crate's feature set. No new lockfile entry:
+# reqwest 0.13's `stream` feature pulls only crates already resolved.
+reqwest = { version = "0.13", features = ["json", "stream"] }
+
+# `StreamExt::next` over `reqwest::Response::bytes_stream()` (tuxlink-e2vw7).
+# futures-util 0.3 is already in the lockfile (reqwest depends on it), so this
+# adds no new resolution; it is MSRV-1.75 compatible (futures 0.3 supports far
+# older toolchains). `default-features = false` keeps it to the `Stream` combinators
+# we need (no executor / io / compat layers).
+futures-util = { version = "0.3", default-features = false }
 
 # rmcp client types: Tool, CallToolResult, RunningService<RoleClient, ()>,
 # ServiceError, ServiceExt.  `client` + `transport-async-rw` match d3zwe's

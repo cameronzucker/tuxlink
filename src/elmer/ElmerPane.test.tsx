@@ -18,8 +18,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { ElmerPane, RADIO_VERBS } from './ElmerPane';
-import type { ElmerChipPayload, ElmerOutcomePayload, ElmerTurnPayload } from './elmerEvents';
-import { EV_CHIP, EV_OUTCOME, EV_TURN } from './elmerEvents';
+import type { ElmerChipPayload, ElmerDeltaPayload, ElmerOutcomePayload, ElmerTurnPayload } from './elmerEvents';
+import { EV_CHIP, EV_DELTA, EV_OUTCOME, EV_TURN } from './elmerEvents';
 import { EGRESS_STATUS_DISARMED } from '../security/egressTypes';
 import { PRESETS } from './elmerModelConfig';
 
@@ -1580,6 +1580,83 @@ describe('<ElmerPane> — save_includes_turn_timeout', () => {
       const args = setCall![1] as { agentTurnTimeoutSecs: number };
       expect(args.agentTurnTimeoutSecs).toBe(1200);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 2b — streaming render: live bubble + cursor, reasoning auto-collapse,
+// committed-item collapsed reasoning toggle
+// ---------------------------------------------------------------------------
+
+describe('<ElmerPane> phase 2b — streaming bubble renders live answer + cursor', () => {
+  it('assistant deltas render as a live bubble with the blinking cursor', async () => {
+    render(<ElmerPane />);
+
+    await fireElmerEvent<ElmerDeltaPayload>(EV_DELTA, { kind: 'delta', deltaKind: 'assistant', chunk: 'Hello ' });
+    await fireElmerEvent<ElmerDeltaPayload>(EV_DELTA, { kind: 'delta', deltaKind: 'assistant', chunk: 'world' });
+
+    const bubble = screen.getByTestId('elmer-streaming-bubble');
+    expect(bubble.textContent).toContain('Hello world');
+    // The blinking cursor is present while streaming.
+    expect(screen.getByTestId('elmer-streaming-cursor')).toBeTruthy();
+  });
+
+  it('the streaming bubble + cursor disappear at finalize (EV_TURN), replaced by the committed item', async () => {
+    render(<ElmerPane />);
+
+    await fireElmerEvent<ElmerDeltaPayload>(EV_DELTA, { kind: 'delta', deltaKind: 'assistant', chunk: 'Streamed answer' });
+    expect(screen.getByTestId('elmer-streaming-bubble')).toBeTruthy();
+
+    await fireElmerEvent<ElmerTurnPayload>(EV_TURN, { kind: 'turn', role: 'assistant', text: 'Streamed answer' });
+
+    // The transient bubble + cursor are gone; the committed markdown item remains.
+    expect(screen.queryByTestId('elmer-streaming-bubble')).toBeNull();
+    expect(screen.queryByTestId('elmer-streaming-cursor')).toBeNull();
+    expect(screen.getByTestId('elmer-turn-assistant').textContent).toContain('Streamed answer');
+  });
+});
+
+describe('<ElmerPane> phase 2b — reasoning auto-collapses when the answer arrives', () => {
+  it('reasoning section is expanded while only reasoning has streamed, then collapses once the answer starts', async () => {
+    render(<ElmerPane />);
+
+    // Only reasoning so far → section expanded (body visible).
+    await fireElmerEvent<ElmerDeltaPayload>(EV_DELTA, { kind: 'delta', deltaKind: 'reasoning', chunk: 'Considering options.' });
+
+    const reasoning = screen.getByTestId('elmer-reasoning');
+    expect(reasoning.getAttribute('data-open')).toBe('true');
+    expect(screen.getByTestId('elmer-reasoning-body').textContent).toContain('Considering options.');
+
+    // Answer starts → reasoning auto-collapses (body hidden).
+    await fireElmerEvent<ElmerDeltaPayload>(EV_DELTA, { kind: 'delta', deltaKind: 'assistant', chunk: 'Here is the answer.' });
+
+    const reasoningAfter = screen.getByTestId('elmer-reasoning');
+    expect(reasoningAfter.getAttribute('data-open')).toBe('false');
+    expect(screen.queryByTestId('elmer-reasoning-body')).toBeNull();
+  });
+});
+
+describe('<ElmerPane> phase 2b — committed item shows a collapsed reasoning toggle that expands', () => {
+  it('a finalized assistant turn that streamed reasoning shows a collapsed Thinking… toggle; clicking expands it', async () => {
+    render(<ElmerPane />);
+
+    // Stream reasoning + answer, then finalize.
+    await fireElmerEvent<ElmerDeltaPayload>(EV_DELTA, { kind: 'delta', deltaKind: 'reasoning', chunk: 'Internal chain of thought.' });
+    await fireElmerEvent<ElmerDeltaPayload>(EV_DELTA, { kind: 'delta', deltaKind: 'assistant', chunk: 'Final answer.' });
+    await fireElmerEvent<ElmerTurnPayload>(EV_TURN, { kind: 'turn', role: 'assistant', text: 'Final answer.' });
+
+    // The committed assistant item carries a reasoning disclosure.
+    const committed = screen.getByTestId('elmer-turn-assistant');
+    expect(committed.textContent).toContain('Final answer.');
+
+    const toggle = screen.getByTestId('elmer-reasoning-toggle');
+    expect(toggle).toBeTruthy();
+    // Collapsed by default — the reasoning body is not shown.
+    expect(screen.queryByTestId('elmer-reasoning-body')).toBeNull();
+
+    // Click to expand → reasoning text becomes visible.
+    fireEvent.click(toggle);
+    expect(screen.getByTestId('elmer-reasoning-body').textContent).toContain('Internal chain of thought.');
   });
 });
 

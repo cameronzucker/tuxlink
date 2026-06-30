@@ -1,13 +1,16 @@
 //! Elmer ↔ TypeScript event contract (Task 8b, tuxlink-13v2l).
 //!
-//! This file is the **single source of truth** for the three Elmer event
+//! This file is the **single source of truth** for the four Elmer event
 //! channels. The TypeScript pane listens on these string constants via
 //! `tauriListen(EV_TURN, ...)` etc.
 //!
 //! ## Serde shape
 //!
-//! All three variants use `#[serde(tag = "kind", rename_all = "camelCase")]`
+//! All variants use `#[serde(tag = "kind", rename_all = "camelCase")]`
 //! so the TS listener receives `{ kind: "turn", role: "...", text: "..." }` etc.
+//! Fields that would collide with the `"kind"` discriminant key are suffixed
+//! `_kind` in Rust (e.g. `outcome_kind` → `"outcomeKind"`, `delta_kind` →
+//! `"deltaKind"`) — see individual variant docs for the exact wire names.
 
 use serde::Serialize;
 
@@ -23,6 +26,12 @@ pub const EV_CHIP: &str = "elmer-chip";
 
 /// The run reached a terminal outcome (kind string + optional detail).
 pub const EV_OUTCOME: &str = "elmer-outcome";
+
+/// An incremental streaming delta from the model (reasoning or answer content).
+///
+/// Emitted before the finalizing [`EV_TURN`] event that carries the complete text.
+/// The frontend accumulates these chunks to render a live typing effect.
+pub const EV_DELTA: &str = "elmer-delta";
 
 // ---------------------------------------------------------------------------
 // Event payload
@@ -61,4 +70,86 @@ pub enum ElmerEvent {
         /// Detail string (operator-facing, already redacted at the session layer).
         detail: String,
     },
+    /// An incremental streaming delta from the model.
+    ///
+    /// Emitted on [`EV_DELTA`] during a streamed provider turn — before the
+    /// finalizing [`ElmerEvent::Turn`] that carries the complete assembled text.
+    ///
+    /// On the wire (`elmer-delta` channel) the payload is:
+    /// `{ "kind": "delta", "deltaKind": "assistant" | "reasoning", "chunk": "..." }`
+    ///
+    /// The `delta_kind` field is named with the `_kind` suffix (matching the
+    /// `outcome_kind` precedent) to avoid collision with the internally-tagged
+    /// enum's `"kind"` discriminant key.  TypeScript receives it as `"deltaKind"`.
+    Delta {
+        /// Sub-type of the delta: `"assistant"` for answer text, `"reasoning"` for
+        /// extended-thinking content.
+        ///
+        /// Named `delta_kind` (not `kind`) to avoid collision with the serde
+        /// `tag = "kind"` discriminant.  TypeScript receives this as `"deltaKind"`.
+        delta_kind: String,
+        /// The incremental text chunk for this delta event.
+        chunk: String,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// Serde shape tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `ElmerEvent::Turn` serializes with the `"kind"` discriminant tag and
+    /// camelCase fields — this is the established contract the frontend already
+    /// depends on; the Delta tests below must not break this shape.
+    #[test]
+    fn turn_serializes_with_kind_discriminant() {
+        let event = ElmerEvent::Turn {
+            role: "assistant".to_string(),
+            text: "hello".to_string(),
+        };
+        let json: serde_json::Value = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["kind"], "turn");
+        assert_eq!(json["role"], "assistant");
+        assert_eq!(json["text"], "hello");
+    }
+
+    /// `ElmerEvent::Delta` serializes to the flat payload the EV_DELTA frontend
+    /// listener will receive:
+    ///   `{ "kind": "delta", "deltaKind": "assistant" | "reasoning", "chunk": "..." }`
+    ///
+    /// Note: `delta_kind` → `"deltaKind"` (camelCase rename) to avoid collision
+    /// with the internally-tagged enum's `"kind"` discriminant.
+    #[test]
+    fn delta_assistant_serializes_flat() {
+        let event = ElmerEvent::Delta {
+            delta_kind: "assistant".to_string(),
+            chunk: "Hello ".to_string(),
+        };
+        let json: serde_json::Value = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["kind"], "delta", "discriminant must be 'delta'");
+        assert_eq!(json["deltaKind"], "assistant", "sub-type must be 'assistant'");
+        assert_eq!(json["chunk"], "Hello ");
+        // The payload must be a flat object — no nested wrapper.
+        assert!(json.is_object(), "payload must be a flat object");
+        assert_eq!(
+            json.as_object().unwrap().len(),
+            3,
+            "expected exactly 3 keys: kind, deltaKind, chunk"
+        );
+    }
+
+    #[test]
+    fn delta_reasoning_serializes_flat() {
+        let event = ElmerEvent::Delta {
+            delta_kind: "reasoning".to_string(),
+            chunk: "thinking…".to_string(),
+        };
+        let json: serde_json::Value = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["kind"], "delta");
+        assert_eq!(json["deltaKind"], "reasoning");
+        assert_eq!(json["chunk"], "thinking…");
+    }
 }

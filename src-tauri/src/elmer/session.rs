@@ -438,6 +438,9 @@ impl ElmerSession {
             // `inner` std-Mutex, preserving the file-wide no-await-under-`inner`
             // (and no-sink-under-`inner`) invariant.
             let on_event = |ev: RunEvent| {
+                // Bridge runner RunEvent variants to ElmerEvent on their respective
+                // channels.  Delta variants (AssistantDelta / ReasoningDelta) are
+                // forwarded to EV_DELTA so the frontend can stream them live.
                 let elmer_event = match ev {
                     RunEvent::AssistantText { text } => ElmerEvent::Turn {
                         role: "assistant".to_string(),
@@ -447,6 +450,15 @@ impl ElmerSession {
                         tool,
                         status: "calling".to_string(),
                     },
+                    RunEvent::AssistantDelta { chunk } => ElmerEvent::Delta {
+                        delta_kind: "assistant".to_string(),
+                        chunk,
+                    },
+                    RunEvent::ReasoningDelta { chunk } => ElmerEvent::Delta {
+                        delta_kind: "reasoning".to_string(),
+                        chunk,
+                    },
+                    _ => return,
                 };
                 emit_for_task(elmer_event);
             };
@@ -813,7 +825,7 @@ mod tests {
 
     use tuxlink_agent_runner::{
         Conversation, EgressStatus, Limits, ModelTurn, RecordingInvoker, RunOutcome,
-        ScriptedProvider, ToolCall, ToolOutcome, ToolSpec,
+        ScriptedProvider, ScriptedTurn, ToolCall, ToolOutcome, ToolSpec,
     };
     use tuxlink_mcp_core::ports::{PortError, StagedRecordDto};
 
@@ -1043,6 +1055,8 @@ mod tests {
             // during the run.
             let handle = tokio::spawn(async move {
                 let on_event = |ev: RunEvent| {
+                    // Mirror the production bridge: forward delta variants to the
+                    // emitted recorder so tests can assert streaming ordering.
                     let elmer_event = match ev {
                         RunEvent::AssistantText { text } => ElmerEvent::Turn {
                             role: "assistant".to_string(),
@@ -1052,6 +1066,15 @@ mod tests {
                             tool,
                             status: "calling".to_string(),
                         },
+                        RunEvent::AssistantDelta { chunk } => ElmerEvent::Delta {
+                            delta_kind: "assistant".to_string(),
+                            chunk,
+                        },
+                        RunEvent::ReasoningDelta { chunk } => ElmerEvent::Delta {
+                            delta_kind: "reasoning".to_string(),
+                            chunk,
+                        },
+                        _ => return,
                     };
                     emitted_for_task.lock().unwrap().push(elmer_event);
                 };
@@ -1642,5 +1665,77 @@ mod tests {
             matches!(result, Err(crate::elmer::approval::ApprovalError::DigestMismatch)),
             "second-client staging must produce DigestMismatch, got {result:?}"
         );
+    }
+
+    /// A streamed turn emits `Delta { delta_kind: "reasoning", .. }` then
+    /// `Delta { delta_kind: "assistant", .. }` events BEFORE the finalizing
+    /// `Turn { role: "assistant", .. }` (phase-2a streaming bridge).
+    ///
+    /// Uses `ScriptedTurn::Streamed` which fires `ReasoningDelta` / `AssistantDelta`
+    /// `RunEvent`s through the runner's `on_event` hook, exactly as a real
+    /// streaming provider would.
+    #[tokio::test]
+    async fn streamed_turn_emits_deltas_before_finalizing_turn() {
+        let provider = Arc::new(ScriptedProvider::from_scripted(vec![
+            ScriptedTurn::Streamed {
+                reasoning: vec!["thinking…".to_string(), "still thinking".to_string()],
+                deltas: vec!["Hello ".to_string(), "world".to_string()],
+                turn: ModelTurn::Text("Hello world".into()),
+            },
+        ]));
+        let invoker = Box::new(RecordingInvoker::always_ok(vec![]));
+        let session = TestSession::new(provider, invoker, Arc::new(NoopAbort));
+
+        let out = session.send("go".into()).await;
+        assert_eq!(out, RunOutcome::Completed("Hello world".into()));
+
+        let events = session.emitted();
+        // Expected ordering: 2 reasoning deltas + 2 assistant deltas + 1 final turn.
+        assert_eq!(
+            events.len(),
+            5,
+            "expected 2 reasoning deltas + 2 assistant deltas + 1 final turn; got {events:?}"
+        );
+
+        // First two events must be reasoning deltas.
+        match &events[0] {
+            ElmerEvent::Delta { delta_kind, chunk } => {
+                assert_eq!(delta_kind, "reasoning", "events[0] must be reasoning delta");
+                assert_eq!(chunk, "thinking…");
+            }
+            other => panic!("expected Delta(reasoning) at events[0], got {other:?}"),
+        }
+        match &events[1] {
+            ElmerEvent::Delta { delta_kind, chunk } => {
+                assert_eq!(delta_kind, "reasoning", "events[1] must be reasoning delta");
+                assert_eq!(chunk, "still thinking");
+            }
+            other => panic!("expected Delta(reasoning) at events[1], got {other:?}"),
+        }
+
+        // Next two events must be assistant deltas.
+        match &events[2] {
+            ElmerEvent::Delta { delta_kind, chunk } => {
+                assert_eq!(delta_kind, "assistant", "events[2] must be assistant delta");
+                assert_eq!(chunk, "Hello ");
+            }
+            other => panic!("expected Delta(assistant) at events[2], got {other:?}"),
+        }
+        match &events[3] {
+            ElmerEvent::Delta { delta_kind, chunk } => {
+                assert_eq!(delta_kind, "assistant", "events[3] must be assistant delta");
+                assert_eq!(chunk, "world");
+            }
+            other => panic!("expected Delta(assistant) at events[3], got {other:?}"),
+        }
+
+        // Last event must be the finalizing assistant Turn.
+        match &events[4] {
+            ElmerEvent::Turn { role, text } => {
+                assert_eq!(role, "assistant");
+                assert_eq!(text, "Hello world");
+            }
+            other => panic!("expected Turn(assistant) at events[4], got {other:?}"),
+        }
     }
 }

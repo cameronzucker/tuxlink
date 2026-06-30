@@ -31,9 +31,11 @@ import { listen } from '@tauri-apps/api/event';
 import type { ConfigReadDto, SetKey, KeySource } from './elmerModelConfig';
 import {
   EV_CHIP,
+  EV_DELTA,
   EV_OUTCOME,
   EV_TURN,
   type ElmerChipPayload,
+  type ElmerDeltaPayload,
   type ElmerOutcomePayload,
   type ElmerTurnPayload,
 } from './elmerEvents';
@@ -48,6 +50,13 @@ export interface ElmerTurnItem {
   id: string;
   role: string;
   text: string;
+  /**
+   * The model's accumulated reasoning trace for this turn, if it streamed any
+   * (phase 2b). Carried onto the committed assistant item at finalize so the
+   * thinking persists (collapsed) alongside the answer. Undefined when the turn
+   * streamed no reasoning (or came from a non-streaming provider).
+   */
+  reasoning?: string;
 }
 
 /** A tool-call chip (distinct from prose — AC-12 ground-truth). */
@@ -139,6 +148,20 @@ export type DetectState =
 export interface UseElmer {
   /** Ordered list of turn/chip/attribution items in this conversation. */
   items: ElmerItem[];
+  /**
+   * Phase 2b — transient live answer buffer for a streamed turn. Accumulates
+   * EV_DELTA chunks with deltaKind:'assistant'. Non-empty only while a streamed
+   * turn is in flight (before EV_TURN finalizes and clears it). Rendered as
+   * PLAIN text with a blinking cursor (NOT markdown — avoids half-parsed flicker).
+   */
+  streamingAnswer: string;
+  /**
+   * Phase 2b — transient live reasoning buffer for a streamed turn. Accumulates
+   * EV_DELTA chunks with deltaKind:'reasoning'. Non-empty only while a streamed
+   * turn is in flight; cleared at finalize (its value is carried onto the
+   * committed item's `reasoning`).
+   */
+  streamingReasoning: string;
   /** Current pane phase (drives UI states). */
   phase: ElmerPhase;
   /** Last terminal outcome, or null if no run has completed yet. */
@@ -176,6 +199,14 @@ export function useElmer(): UseElmer {
   // Guard against launching a second send while one is running.
   const running = useRef(false);
 
+  // Phase 2b — transient streaming buffers for the in-flight turn. Held in
+  // state (so the streaming bubble re-renders on each chunk) AND mirrored in
+  // refs so the once-registered EV_TURN finalize listener can read the latest
+  // accumulated reasoning at commit time without re-registering on every chunk.
+  const [streamingAnswer, setStreamingAnswer] = useState('');
+  const [streamingReasoning, setStreamingReasoning] = useState('');
+  const streamingReasoningRef = useRef('');
+
   // G2: Model-config state.
   const [modelConfig, setModelConfig] = useState<ConfigReadDto | null>(null);
   const [modelConfigState, setModelConfigState] = useState<ModelConfigLoadState>('idle');
@@ -200,12 +231,36 @@ export function useElmer(): UseElmer {
     const unlisteners: (() => void)[] = [];
 
     const setupListeners = async () => {
+      // Phase 2b — EV_DELTA: incremental streamed chunk. Route by deltaKind to
+      // the matching transient buffer. Reasoning chunks mirror into the ref so
+      // the finalize listener (registered once) can carry them onto the
+      // committed item. Non-streaming providers never emit this — the EV_TURN
+      // path below still works with both buffers empty.
+      const unDelta = await listen<ElmerDeltaPayload>(EV_DELTA, (event) => {
+        const payload = event.payload;
+        if (payload.deltaKind === 'reasoning') {
+          streamingReasoningRef.current += payload.chunk;
+          setStreamingReasoning((prev) => prev + payload.chunk);
+        } else {
+          setStreamingAnswer((prev) => prev + payload.chunk);
+        }
+      });
+
       const unTurn = await listen<ElmerTurnPayload>(EV_TURN, (event) => {
         const payload = event.payload;
+        // Finalize: commit the full turn to `items`, carrying any accumulated
+        // streamed reasoning, then CLEAR the transient buffers so the live
+        // streaming bubble is replaced by the committed (markdown) item — no
+        // double render. A non-streamed turn has empty buffers → reasoning
+        // undefined, behaving exactly as before phase 2b (no regression).
+        const reasoning = streamingReasoningRef.current || undefined;
         setItems((prev) => [
           ...prev,
-          { kind: 'turn', id: nextId(), role: payload.role, text: payload.text },
+          { kind: 'turn', id: nextId(), role: payload.role, text: payload.text, reasoning },
         ]);
+        streamingReasoningRef.current = '';
+        setStreamingAnswer('');
+        setStreamingReasoning('');
       });
 
       const unChip = await listen<ElmerChipPayload>(EV_CHIP, (event) => {
@@ -225,17 +280,26 @@ export function useElmer(): UseElmer {
         setLastOutcome(outcome);
         setPhase(outcomeKindToPhase(payload.outcomeKind));
         running.current = false;
+        // A streamed turn that is cancelled, times out, or errors emits NO
+        // finalizing EV_TURN, so the EV_TURN clear above never runs and a partial
+        // live bubble would linger after the run ended. Clear the transient
+        // streaming buffers on every terminal outcome too. On a clean 'done' the
+        // EV_TURN handler already cleared them, so this is a harmless no-op.
+        streamingReasoningRef.current = '';
+        setStreamingAnswer('');
+        setStreamingReasoning('');
       });
 
       if (cancelled) {
         // Cleanup already ran (or is about to) — tear these down now so they
         // don't outlive the effect and double-handle events on the next mount.
+        unDelta();
         unTurn();
         unChip();
         unOutcome();
         return;
       }
-      unlisteners.push(unTurn, unChip, unOutcome);
+      unlisteners.push(unDelta, unTurn, unChip, unOutcome);
     };
 
     void setupListeners();
@@ -252,6 +316,11 @@ export function useElmer(): UseElmer {
     if (running.current) return;
     running.current = true;
     setPhase('running');
+    // Phase 2b — reset transient streaming buffers at the start of each send so
+    // a prior turn's residue can't bleed into the next live bubble.
+    streamingReasoningRef.current = '';
+    setStreamingAnswer('');
+    setStreamingReasoning('');
     // Append the user's message immediately so the pane feels responsive
     // before the first EV_TURN event arrives (the model takes 70-117 s).
     setItems((prev) => [
@@ -340,6 +409,8 @@ export function useElmer(): UseElmer {
 
   return {
     items,
+    streamingAnswer,
+    streamingReasoning,
     phase,
     lastOutcome,
     send,

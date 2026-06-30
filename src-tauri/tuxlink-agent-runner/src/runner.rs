@@ -81,7 +81,13 @@ pub async fn run_with_conversation(
             () = cancel.cancelled() => return RunOutcome::Cancelled,
             timed = tokio::time::timeout(
                 limits.per_turn_timeout,
-                provider.turn(conversation, &tools),
+                // Pass the loop's own fire-and-forget sink so a streaming
+                // provider can emit AssistantDelta / ReasoningDelta as content
+                // arrives. The provider's deltas plus the loop's own finalizing
+                // AssistantText / ToolCall emits all flow through the same
+                // callback; deltas are side-effect-only and never change the
+                // returned ModelTurn or any COR invariant.
+                provider.turn(conversation, &tools, on_event),
             ) => match timed {
                 Err(_elapsed) => {
                     return RunOutcome::NeedsOperator(format!(

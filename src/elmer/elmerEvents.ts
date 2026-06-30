@@ -23,6 +23,17 @@ export const EV_CHIP = 'elmer-chip' as const;
 /** The run reached a terminal outcome (outcomeKind string + optional detail). */
 export const EV_OUTCOME = 'elmer-outcome' as const;
 
+/**
+ * An incremental streamed text chunk during a turn (assistant answer or
+ * reasoning). Emitted zero-or-more times BEFORE the final EV_TURN.
+ *
+ * Streaming providers emit a sequence per turn: zero or more EV_DELTA (reasoning
+ * and/or assistant chunks, reasoning-then-answer ordered) → then EV_TURN (the
+ * FULL final answer) → then EV_OUTCOME. Non-streaming providers emit NO
+ * EV_DELTA — just EV_TURN — so any consumer MUST treat EV_DELTA as optional.
+ */
+export const EV_DELTA = 'elmer-delta' as const;
+
 // ---------------------------------------------------------------------------
 // Payload interfaces (mirror ElmerEvent Rust enum variants, camelCase)
 // ---------------------------------------------------------------------------
@@ -71,5 +82,27 @@ export interface ElmerOutcomePayload {
   detail: string;
 }
 
+/**
+ * An incremental streamed chunk of text during a turn.
+ * Emitted on EV_DELTA.
+ *
+ * IMPORTANT: the discriminant category is `deltaKind`, NOT `kind` — the Rust
+ * serde tag uses `"kind"` as the enum-variant discriminant (always the literal
+ * `"delta"` here), and `delta_kind` (→ camelCase `deltaKind`) carries whether
+ * this chunk is part of the model's reasoning trace or its assistant answer.
+ * Read `payload.deltaKind` to route the chunk; `payload.kind` is the serde tag.
+ */
+export interface ElmerDeltaPayload {
+  kind: 'delta';
+  /** 'assistant' — answer text; 'reasoning' — the model's thinking trace. */
+  deltaKind: 'assistant' | 'reasoning';
+  /** The incremental text fragment to append to the matching buffer. */
+  chunk: string;
+}
+
 /** Union of all Elmer event payloads. Switch on `payload.kind`. */
-export type ElmerPayload = ElmerTurnPayload | ElmerChipPayload | ElmerOutcomePayload;
+export type ElmerPayload =
+  | ElmerTurnPayload
+  | ElmerChipPayload
+  | ElmerOutcomePayload
+  | ElmerDeltaPayload;

@@ -132,6 +132,96 @@ function AssistantTurnBody({ text }: { text: string }) {
   );
 }
 
+/**
+ * Collapsed "Thinking…" disclosure attached to a COMMITTED assistant item that
+ * carried streamed reasoning (phase 2b). Starts collapsed; clicking the toggle
+ * expands the reasoning trace. Plain text (the reasoning is a raw thinking
+ * trace, not markdown). Rendered only when `reasoning` is non-empty.
+ */
+function ReasoningDisclosure({ reasoning }: { reasoning: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="elmer-reasoning" data-testid="elmer-reasoning" data-open={open}>
+      <button
+        type="button"
+        className="elmer-reasoning-toggle"
+        data-testid="elmer-reasoning-toggle"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {open ? '▾' : '▸'} Thinking…
+      </button>
+      {open && (
+        <div className="elmer-reasoning-body" data-testid="elmer-reasoning-body">
+          {reasoning}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Transient streaming bubble (phase 2b) — shown while a streamed turn is in
+ * flight (streamingAnswer or streamingReasoning non-empty), before the EV_TURN
+ * finalize swaps it for the committed markdown item.
+ *
+ *  - The live answer renders as PLAIN text with a blinking cursor (NOT markdown
+ *    — avoids half-parsed flicker mid-stream).
+ *  - Above it, a "Thinking…" section shows the reasoning trace. It is expanded
+ *    while only reasoning has arrived, and AUTO-COLLAPSES once the answer starts
+ *    (streamingAnswer non-empty) — the operator's attention follows the answer.
+ */
+function StreamingBubble({
+  answer,
+  reasoning,
+}: {
+  answer: string;
+  reasoning: string;
+}) {
+  const answerStarted = answer.length > 0;
+  // Auto-collapse the reasoning once the answer starts; expanded before that.
+  const reasoningOpen = !answerStarted;
+  return (
+    <div
+      className="elmer-turn elmer-turn--assistant elmer-streaming-bubble"
+      data-testid="elmer-streaming-bubble"
+      data-role="assistant"
+    >
+      <span className="elmer-turn-role">Elmer</span>
+      {reasoning.length > 0 && (
+        <div
+          className="elmer-reasoning"
+          data-testid="elmer-reasoning"
+          data-open={reasoningOpen}
+        >
+          <span
+            className="elmer-reasoning-toggle elmer-reasoning-toggle--live"
+            data-testid="elmer-reasoning-toggle"
+            aria-hidden="true"
+          >
+            {reasoningOpen ? '▾' : '▸'} Thinking…
+          </span>
+          {reasoningOpen && (
+            <div className="elmer-reasoning-body" data-testid="elmer-reasoning-body">
+              {reasoning}
+            </div>
+          )}
+        </div>
+      )}
+      {answerStarted && (
+        <span className="elmer-streaming-answer">
+          {answer}
+          <span
+            className="elmer-streaming-cursor"
+            data-testid="elmer-streaming-cursor"
+            aria-hidden="true"
+          />
+        </span>
+      )}
+    </div>
+  );
+}
+
 /** Renders a single turn, chip, or attribution item. */
 function MessageItem({ item }: { item: ElmerItem }) {
   if (item.kind === 'chip') {
@@ -175,7 +265,12 @@ function MessageItem({ item }: { item: ElmerItem }) {
       <span className="elmer-turn-role">{isUser ? 'You' : 'Elmer'}</span>
       {isUser
         ? <span className="elmer-turn-text">{item.text}</span>
-        : <AssistantTurnBody text={item.text} />
+        : (
+          <>
+            {item.reasoning && <ReasoningDisclosure reasoning={item.reasoning} />}
+            <AssistantTurnBody text={item.text} />
+          </>
+        )
       }
     </div>
   );
@@ -749,6 +844,8 @@ export const ElmerPane = memo(function ElmerPane({
 }: ElmerPaneProps) {
   const {
     items,
+    streamingAnswer,
+    streamingReasoning,
     phase,
     lastOutcome,
     send,
@@ -778,13 +875,19 @@ export const ElmerPane = memo(function ElmerPane({
     }
   }, [configRead]);
 
-  // Auto-scroll to the bottom of the message list on each new item.
+  // phase 2b — true while a streamed turn is in flight (live buffers non-empty),
+  // before EV_TURN finalizes and clears them. Drives the transient streaming
+  // bubble and suppresses the duplicate pre-first-token ThinkingIndicator.
+  const isStreaming = streamingAnswer.length > 0 || streamingReasoning.length > 0;
+
+  // Auto-scroll to the bottom of the message list on each new item — and as the
+  // live streaming buffers grow, so the cursor stays in view mid-stream.
   // Guard for jsdom (tests) where scrollIntoView is not implemented.
   useEffect(() => {
     if (typeof listEndRef.current?.scrollIntoView === 'function') {
       listEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [items]);
+  }, [items, streamingAnswer, streamingReasoning]);
 
   // G3: Determine whether no model is configured so the empty-state button shows.
   // We consider "no model" when config is loaded and the model string is empty.
@@ -859,7 +962,13 @@ export const ElmerPane = memo(function ElmerPane({
         {items.map((item) => (
           <MessageItem key={item.id} item={item} />
         ))}
-        {isRunning && <ThinkingIndicator />}
+        {/* phase 2b — transient live streaming bubble; carries the liveness once
+            the first token arrives, so the pre-token ThinkingIndicator is hidden
+            while it is shown (no double indicator). */}
+        {isStreaming && (
+          <StreamingBubble answer={streamingAnswer} reasoning={streamingReasoning} />
+        )}
+        {isRunning && !isStreaming && <ThinkingIndicator />}
         {lastOutcome && (
           <OutcomeCallout phase={phase} detail={lastOutcome.detail} />
         )}
