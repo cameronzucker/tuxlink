@@ -33,7 +33,7 @@
     "marked": "^15.0.12",
     "marked-extended-tables": "^2.0.1",
     "marked-footnote": "^1.4.0",
-    "mermaid": "^11.15.0",
+    "mermaid": "^11.16.0",
     "pbf": "^4.0.2",
     "pmtiles": "^4",
     "potpack": "^2.1.0",
