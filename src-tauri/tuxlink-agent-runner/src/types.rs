@@ -204,4 +204,9 @@ pub enum RunOutcome {
     /// A tool invocation was refused by the security layer (relayed). Carries
     /// the refusal reason.
     ToolDenied(String),
+    /// The provider returned HTTP 429 — the endpoint is temporarily throttling
+    /// requests.  Carries an already-redacted detail string.  The frontend maps
+    /// this to the `"rateLimited"` outcome-kind event so the React pane can show
+    /// the rate-limit callout.  No automatic retry is performed.
+    RateLimited(String),
 }

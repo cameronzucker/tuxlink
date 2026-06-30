@@ -20,6 +20,7 @@ pub fn render_outcome(outcome: &RunOutcome) -> String {
         RunOutcome::InvalidAction(detail) => format!("✗ invalid action: {detail}"),
         RunOutcome::Cancelled => "■ cancelled".to_string(),
         RunOutcome::ToolDenied(reason) => format!("⛔ tool denied: {reason}"),
+        RunOutcome::RateLimited(reason) => format!("⏳ rate limited: {reason}"),
     }
 }
 

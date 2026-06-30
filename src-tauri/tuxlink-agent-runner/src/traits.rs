@@ -64,6 +64,12 @@ pub enum ProviderError {
     /// The model response could not be parsed into a [`ModelTurn`].
     #[error("provider returned an unparseable turn: {0}")]
     Unparseable(String),
+    /// The provider returned HTTP 429 — the model endpoint is temporarily
+    /// throttling requests.  Carries the (already-redacted) response snippet.
+    /// The loop maps this to [`crate::types::RunOutcome::RateLimited`]; no retry
+    /// is performed here.
+    #[error("provider rate-limited (HTTP 429): {0}")]
+    RateLimited(String),
 }
 
 /// The tool side of the loop — the single canonical tool path (ARCH-1 / SEC-2).

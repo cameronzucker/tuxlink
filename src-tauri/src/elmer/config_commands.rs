@@ -132,7 +132,11 @@ pub enum DetectError {
     NoServer { host: String },
     /// 401 or 403 — the key was rejected.  Fixed reason; body is NEVER echoed.
     Auth { provider: String },
-    /// An unexpected non-2xx HTTP status (not 401/403).
+    /// HTTP 429 — the provider is temporarily throttling `/v1/models` requests.
+    /// Classified before the generic `Status` branch so callers can distinguish
+    /// rate-limiting from other server errors.
+    RateLimited,
+    /// An unexpected non-2xx HTTP status (not 401/403/429).
     Status(u16),
     /// A transport or network error not caused by "no server".
     Network(String),
@@ -159,6 +163,11 @@ impl DetectError {
             DetectError::Auth { provider } => {
                 // FIXED reason — the body is never read or echoed here.
                 format!("auth error: check the API key for {provider}")
+            }
+            DetectError::RateLimited => {
+                "rate limited: the provider is temporarily throttling requests \
+                 — wait a moment or switch providers"
+                    .into()
             }
             DetectError::Status(code) => format!("server error: HTTP {code}"),
             DetectError::Network(msg) => format!("network error: {msg}"),
@@ -542,6 +551,11 @@ pub fn map_models_response(
         return Err(DetectError::Auth {
             provider: provider.to_string(),
         });
+    }
+    if status == 429 {
+        // Rate-limited: typed variant so callers can distinguish throttling from
+        // other server errors.  Classified BEFORE the generic non-2xx branch.
+        return Err(DetectError::RateLimited);
     }
     if !(200..300).contains(&status) {
         return Err(DetectError::Status(status));
@@ -1709,6 +1723,47 @@ mod tests {
                 matches!(result, Err(DetectError::Status(500))),
                 "500 must map to Status(500), got: {result:?}"
             );
+        }
+
+        /// 429 maps to `DetectError::RateLimited` — NOT `Status(429)`.
+        ///
+        /// Classified before the generic non-2xx branch so callers (and the UI)
+        /// can distinguish throttling from other server errors.
+        #[test]
+        fn map_models_response_429_rate_limited() {
+            let result = map_models_response(429, "Too Many Requests", "api.openai.com", None);
+            assert!(
+                matches!(result, Err(DetectError::RateLimited)),
+                "429 must map to RateLimited (not Status(429)), got: {result:?}"
+            );
+        }
+
+        /// 429 must NOT map to the generic `Status(429)`.
+        ///
+        /// Regression guard: if the 429 branch is accidentally removed (e.g. the
+        /// check order changes), this test fails before the generic Status branch
+        /// silently absorbs it.
+        #[test]
+        fn map_models_response_429_is_not_generic_status() {
+            let result = map_models_response(429, "Too Many Requests", "api.openai.com", None);
+            assert!(
+                !matches!(result, Err(DetectError::Status(429))),
+                "429 must NOT fall through to generic Status(429); got: {result:?}"
+            );
+        }
+
+        /// `DetectError::RateLimited::to_reason` returns a human-readable
+        /// rate-limit message.  The message must mention "rate limit" and
+        /// must not contain the API key.
+        #[test]
+        fn rate_limited_to_reason_is_human_readable() {
+            let reason = DetectError::RateLimited.to_reason();
+            assert!(
+                reason.contains("rate limit"),
+                "to_reason must mention 'rate limit'; got: {reason:?}"
+            );
+            // Sanity: the reason must not be empty.
+            assert!(!reason.is_empty(), "to_reason must not be empty");
         }
 
         // -------------------------------------------------------------------
