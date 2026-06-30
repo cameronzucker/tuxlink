@@ -177,9 +177,14 @@ pub fn elmer_ip_is_permitted(addr: IpAddr, allow_loopback: bool) -> bool {
 ///   (reject a mixed/any-forbidden set — no cherry-pick), and the returned
 ///   client is PINNED to exactly that vetted address set via `resolve_to_addrs`.
 ///   reqwest does not re-resolve a pinned host, closing the TOCTOU rebind window.
-///   `allow_loopback = false` for named hosts: a name must NEVER be granted
-///   loopback (only `localhost`, which `AgentEndpoint` classifies as loopback,
-///   is special — but a named-host resolution to loopback is the rebind attack).
+///   `allow_loopback = endpoint.is_loopback()` for named hosts: the ONLY named
+///   host that is loopback is the reserved literal `localhost` (127.x and ::1
+///   are IP literals that take the other branch). So `localhost` resolving to
+///   `127.0.0.1` / `::1` is permitted (the canonical Ollama/llama.cpp form), while
+///   any other name resolving to loopback remains `is_loopback() == false` and
+///   is denied — that is the DNS-rebind attack. The `169.254.0.0/16`, `fe80::/10`,
+///   multicast, and unspecified denies inside [`elmer_ip_is_permitted`] are
+///   INDEPENDENT of `allow_loopback` and are not relaxed by this change.
 ///
 /// Every returned client carries `redirect::none()`, `.no_proxy()`, and the
 /// connect-timeout UNCONDITIONALLY (Findings: a redirect or a proxy would each
@@ -235,7 +240,7 @@ where
                 )));
             }
             for addr in &resolved {
-                if !elmer_ip_is_permitted(addr.ip(), false) {
+                if !elmer_ip_is_permitted(addr.ip(), endpoint.is_loopback()) {
                     return Err(EgressError::HostDenied(format!(
                         "host {host:?} resolved to forbidden address {}",
                         addr.ip()
@@ -383,5 +388,73 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, EgressError::HostDenied(_)), "got {err:?}");
+    }
+
+    // ---- localhost egress gap fix: named `localhost` resolves to loopback ----
+    //
+    // `localhost` takes the NAMED-host branch (it is not an IP literal), but
+    // `AgentEndpoint::is_loopback()` returns true for it because A1's
+    // `classify_host` matches the reserved literal "localhost" → HostClass::Loopback.
+    // Before the fix, `allow_loopback` was hard-coded to `false` in the named-host
+    // branch, so `localhost:11434` → resolver returns `127.0.0.1` → HostDenied.
+
+    #[tokio::test]
+    async fn build_vetted_client_localhost_named_resolving_to_loopback_allowed() {
+        // The canonical Ollama / llama.cpp form. The endpoint is_loopback() == true,
+        // so endpoint.is_loopback() == true is passed to elmer_ip_is_permitted,
+        // allowing the loopback address the resolver returns.
+        let ep =
+            AgentEndpoint::parse("http://localhost:11434/v1/chat/completions").unwrap();
+        assert!(
+            ep.is_loopback(),
+            "localhost must be classified as loopback by AgentEndpoint::is_loopback()"
+        );
+        let loopback: SocketAddr = "127.0.0.1:11434".parse().unwrap();
+        let client = build_vetted_client(&ep, fixed_resolver(vec![loopback])).await;
+        assert!(
+            client.is_ok(),
+            "localhost resolving to 127.0.0.1 must build a client after the fix: {client:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn build_vetted_client_localhost_resolving_to_metadata_still_denied() {
+        // `allow_loopback = endpoint.is_loopback()` grants loopback ONLY: the
+        // 169.254.0.0/16 deny in elmer_ip_is_permitted is INDEPENDENT of allow_loopback
+        // and is NOT relaxed when allow_loopback is true. A `localhost` endpoint whose
+        // resolver returns the metadata IP must still be HostDenied.
+        let ep =
+            AgentEndpoint::parse("http://localhost:11434/v1/chat/completions").unwrap();
+        assert!(ep.is_loopback());
+        let metadata: SocketAddr = "169.254.169.254:11434".parse().unwrap();
+        let err = build_vetted_client(&ep, fixed_resolver(vec![metadata]))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, EgressError::HostDenied(_)),
+            "localhost resolving to metadata must still be denied: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn build_vetted_client_nonlocalhost_name_resolving_to_loopback_denied() {
+        // A non-localhost name (is_loopback() == false) that the resolver routes to
+        // 127.0.0.1 is the classic DNS-rebind attack. It must remain HostDenied
+        // regardless of the localhost fix: endpoint.is_loopback() is false, so
+        // allow_loopback stays false, so elmer_ip_is_permitted denies 127.0.0.1.
+        let ep =
+            AgentEndpoint::parse("https://api.model.example/v1/chat/completions").unwrap();
+        assert!(
+            !ep.is_loopback(),
+            "api.model.example must not be classified as loopback"
+        );
+        let loopback: SocketAddr = "127.0.0.1:443".parse().unwrap();
+        let err = build_vetted_client(&ep, fixed_resolver(vec![loopback]))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, EgressError::HostDenied(_)),
+            "non-localhost name resolving to loopback must be denied (rebind attack): {err:?}"
+        );
     }
 }
