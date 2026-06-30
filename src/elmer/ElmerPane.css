@@ -97,10 +97,10 @@
   padding: 0 11px;
   background: var(--surface-sunken, var(--surface-2));
   border: 1px solid var(--border-strong, var(--border));
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   color: var(--text);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--type-control);
   cursor: pointer;
 }
 .elmer-arm-strip .dash-egress-chip:hover,
@@ -117,7 +117,7 @@
 }
 .elmer-arm-strip .dash-egress-caret {
   color: var(--text-faint, var(--text-dim));
-  font-size: 10px;
+  font-size: var(--type-micro);
 }
 .elmer-arm-strip .egress-countdown {
   font-family: var(--mono, ui-monospace, monospace);
