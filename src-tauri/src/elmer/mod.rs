@@ -18,3 +18,6 @@ pub mod keyring;
 pub mod model_config_state;
 pub mod provider;
 pub mod session;
+
+#[cfg(test)]
+mod injection_tests;
