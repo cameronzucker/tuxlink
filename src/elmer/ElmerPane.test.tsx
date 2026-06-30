@@ -1965,3 +1965,351 @@ describe('<ElmerPane> T8b — gear reopens picker after mount (F6 reopen)', () =
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// T10 (a) — rateLimited phase: distinct callout + Switch provider → picker at paygo
+// ---------------------------------------------------------------------------
+
+describe('<ElmerPane> T10 — rateLimited: distinct callout with Switch provider button', () => {
+  it('EV_OUTCOME rateLimited renders a distinct callout (data-testid elmer-outcome-rate-limited)', async () => {
+    render(<ElmerPane />);
+
+    const payload: ElmerOutcomePayload = {
+      kind: 'outcome',
+      outcomeKind: 'rateLimited',
+      detail: 'Daily free-tier limit reached.',
+    };
+    await fireElmerEvent<ElmerOutcomePayload>(EV_OUTCOME, payload);
+
+    // Distinct callout must be present.
+    const callout = screen.getByTestId('elmer-outcome-rate-limited');
+    expect(callout).toBeTruthy();
+    // Must mention rate limit in some form.
+    expect(callout.textContent).toMatch(/limit|rate|quota/i);
+  });
+
+  it('rateLimited callout contains a "Switch provider" button', async () => {
+    render(<ElmerPane />);
+
+    const payload: ElmerOutcomePayload = {
+      kind: 'outcome',
+      outcomeKind: 'rateLimited',
+      detail: 'Daily free-tier limit reached.',
+    };
+    await fireElmerEvent<ElmerOutcomePayload>(EV_OUTCOME, payload);
+
+    const switchBtn = screen.getByTestId('elmer-switch-provider-btn');
+    expect(switchBtn).toBeTruthy();
+    expect(switchBtn.textContent).toMatch(/switch provider/i);
+  });
+
+  it('clicking Switch provider opens the model picker (elmer-tile-picker visible)', async () => {
+    // Config must be onboarded=true (so we see the message list + rate-limited callout,
+    // not the first-run picker). Switch provider then transitions to the picker.
+    render(<ElmerPane />);
+
+    const payload: ElmerOutcomePayload = {
+      kind: 'outcome',
+      outcomeKind: 'rateLimited',
+      detail: 'Daily free-tier limit reached.',
+    };
+    await fireElmerEvent<ElmerOutcomePayload>(EV_OUTCOME, payload);
+
+    // Tile picker should not be visible before clicking.
+    expect(screen.queryByTestId('elmer-tile-picker')).toBeNull();
+
+    // Click the Switch provider button.
+    fireEvent.click(screen.getByTestId('elmer-switch-provider-btn'));
+
+    // After clicking, the tile picker must become visible.
+    await waitFor(() => {
+      expect(screen.getByTestId('elmer-tile-picker')).toBeTruthy();
+    });
+  });
+
+  it('clicking Switch provider pre-selects the first paygo tile (aria-checked=true on a paygo tile)', async () => {
+    render(<ElmerPane />);
+
+    const payload: ElmerOutcomePayload = {
+      kind: 'outcome',
+      outcomeKind: 'rateLimited',
+      detail: 'Daily free-tier limit reached.',
+    };
+    await fireElmerEvent<ElmerOutcomePayload>(EV_OUTCOME, payload);
+
+    fireEvent.click(screen.getByTestId('elmer-switch-provider-btn'));
+
+    await waitFor(() => {
+      // At least one paygo tile must be aria-checked=true.
+      const openaiTile = screen.getByTestId('elmer-tile-openai');
+      const anthropicTile = screen.getByTestId('elmer-tile-anthropic');
+      const openaiChecked = openaiTile.getAttribute('aria-checked') === 'true';
+      const anthropicChecked = anthropicTile.getAttribute('aria-checked') === 'true';
+      expect(openaiChecked || anthropicChecked).toBe(true);
+    });
+  });
+
+  it('no auto-retry on rateLimited — only a manual Switch provider action is offered', async () => {
+    render(<ElmerPane />);
+
+    const payload: ElmerOutcomePayload = {
+      kind: 'outcome',
+      outcomeKind: 'rateLimited',
+      detail: 'Daily free-tier limit reached.',
+    };
+    await fireElmerEvent<ElmerOutcomePayload>(EV_OUTCOME, payload);
+
+    const callout = screen.getByTestId('elmer-outcome-rate-limited');
+    // No "Retry" button present.
+    expect(callout.querySelector('[data-testid="elmer-retry-btn"]')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T10 (b) — ModelTilePicker: Test reuses detectState copy, Save reuses saveState
+// ---------------------------------------------------------------------------
+
+describe('ModelTilePicker T10 — Test (Detect) routes through detectState copy (not a thinner reimpl)', () => {
+  // The GetKeyCard (used by cloud tiles with keyPageUrl) delegates its Test action
+  // to the parent's detectState prop — success/auth/network copy comes from detectRemedy
+  // (ElmerPane.tsx). The ModelTilePicker's "Other" path uses ModelForm which has
+  // the Detect button wired to onDetect/detectState directly.
+  it('ModelForm inside the Other tile renders .elmer-detect-error on detectState error, not a separate state machine', async () => {
+    const onDetect = vi.fn(async () => {});
+    const onSave = vi.fn(async () => {});
+    // Start with custom endpoint so the Other tile's ModelForm is shown.
+    const { ModelTilePicker: MTP } = await import('./ModelTilePicker');
+    const { render: r, screen: s, fireEvent: fe, waitFor: wf } = await import('@testing-library/react');
+
+    r(
+      <MTP
+        onSave={onSave}
+        onDetect={onDetect}
+        detectState={{ status: 'error', reason: 'auth error: check the API key' }}
+        keyStatusByOrigin={{}}
+        initialEndpoint=""
+        initialModel=""
+        initialKeyStatus="absent"
+        initialTurnTimeoutSecs={900}
+      />,
+    );
+
+    // Click the custom tile to show ModelForm.
+    fe.click(s.getByTestId('elmer-tile-custom'));
+
+    // detectState.status=error should show .elmer-detect-error via ModelForm
+    // (which reuses the parent-supplied detectState — NOT a separate state machine).
+    await wf(() => {
+      expect(s.getByTestId('elmer-detect-error')).toBeTruthy();
+    });
+  });
+
+  it('ModelForm Save in the Other tile renders .elmer-save-error when onSave rejects', async () => {
+    const onSave = vi.fn(async () => { throw new Error('config write failed'); });
+    const onDetect = vi.fn(async () => {});
+    const { ModelTilePicker: MTP } = await import('./ModelTilePicker');
+    const { render: r, screen: s, fireEvent: fe, waitFor: wf } = await import('@testing-library/react');
+
+    r(
+      <MTP
+        onSave={onSave}
+        onDetect={onDetect}
+        detectState={{ status: 'idle' }}
+        keyStatusByOrigin={{}}
+        initialEndpoint=""
+        initialModel=""
+        initialKeyStatus="absent"
+        initialTurnTimeoutSecs={900}
+      />,
+    );
+
+    fe.click(s.getByTestId('elmer-tile-custom'));
+
+    // The Save button in ModelForm is elmer-save-btn.
+    fe.click(s.getByTestId('elmer-save-btn'));
+
+    await wf(() => {
+      // saveState 'error' renders .elmer-save-error class.
+      expect(s.getByTestId('elmer-save-error')).toBeTruthy();
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T10 (c) — persistent provider-class footer indicator for cloud tiers
+// ---------------------------------------------------------------------------
+
+describe('<ElmerPane> T10 — persistent provider-class footer indicator', () => {
+  it('shows a cloud-provider footer indicator when the configured provider is a cloud tier', async () => {
+    // onboarded=true with a known cloud provider (Google Gemini, free tier).
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+        agentModel: 'gemini-2.5-flash',
+        keyStatus: 'present',
+        agentTurnTimeoutSecs: 900,
+        onboarded: true,
+      };
+      return undefined;
+    });
+
+    render(<ElmerPane />);
+
+    await waitFor(() => {
+      // Footer indicator must be present.
+      const indicator = screen.getByTestId('elmer-provider-indicator');
+      expect(indicator).toBeTruthy();
+      // Must name the provider class.
+      expect(indicator.textContent).toMatch(/google gemini/i);
+    });
+  });
+
+  it('footer indicator for paygo provider (Anthropic) includes "cloud" or provider class label', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.anthropic.com/v1/chat/completions',
+        agentModel: 'claude-haiku-4-5',
+        keyStatus: 'present',
+        agentTurnTimeoutSecs: 900,
+        onboarded: true,
+      };
+      return undefined;
+    });
+
+    render(<ElmerPane />);
+
+    await waitFor(() => {
+      const indicator = screen.getByTestId('elmer-provider-indicator');
+      expect(indicator).toBeTruthy();
+      expect(indicator.textContent).toMatch(/anthropic|claude/i);
+    });
+  });
+
+  it('no provider-class indicator when using local (loopback) provider', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'http://127.0.0.1:11434/v1/chat/completions',
+        agentModel: 'llama3',
+        keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
+        onboarded: true,
+      };
+      return undefined;
+    });
+
+    render(<ElmerPane />);
+
+    // Wait for config to load.
+    await waitFor(() => {
+      // After load, the local provider should NOT show a cloud indicator.
+      expect(screen.queryByTestId('elmer-provider-indicator')).toBeNull();
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T10 (d) — Honest framing copy: free-tier training note + local reframe
+// ---------------------------------------------------------------------------
+
+describe('ModelTilePicker T10 — honest framing copy for free and local tiers', () => {
+  it('free tier (gemini tile selected) shows training-on-data sentence', async () => {
+    const { ModelTilePicker: MTP } = await import('./ModelTilePicker');
+    const { render: r, screen: s } = await import('@testing-library/react');
+
+    r(
+      <MTP
+        onSave={vi.fn(async () => {})}
+        onDetect={vi.fn(async () => {})}
+        detectState={{ status: 'idle' }}
+        keyStatusByOrigin={{}}
+        initialEndpoint="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        initialModel="gemini-2.5-flash"
+        initialKeyStatus="absent"
+        initialTurnTimeoutSecs={900}
+      />,
+    );
+
+    // Gemini tile is selected by default (matches initialEndpoint).
+    // Free-tier framing copy must be present in the editor area.
+    const picker = s.getByTestId('elmer-tile-picker');
+    // Must contain a training-on-data note.
+    expect(picker.textContent).toMatch(/train/i);
+  });
+
+  it('free tier shows a "what gets sent" note', async () => {
+    const { ModelTilePicker: MTP } = await import('./ModelTilePicker');
+    const { render: r, screen: s } = await import('@testing-library/react');
+
+    r(
+      <MTP
+        onSave={vi.fn(async () => {})}
+        onDetect={vi.fn(async () => {})}
+        detectState={{ status: 'idle' }}
+        keyStatusByOrigin={{}}
+        initialEndpoint="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        initialModel="gemini-2.5-flash"
+        initialKeyStatus="absent"
+        initialTurnTimeoutSecs={900}
+      />,
+    );
+
+    const editor = s.getByTestId('elmer-tile-editor');
+    // Must mention what is sent (messages/content).
+    expect(editor.textContent).toMatch(/sent|message|content/i);
+  });
+
+  it('local tier (localOllama) shows the private/offline constructive reframe copy', async () => {
+    const { ModelTilePicker: MTP } = await import('./ModelTilePicker');
+    const { render: r, screen: s } = await import('@testing-library/react');
+
+    r(
+      <MTP
+        onSave={vi.fn(async () => {})}
+        onDetect={vi.fn(async () => {})}
+        detectState={{ status: 'idle' }}
+        keyStatusByOrigin={{}}
+        initialEndpoint="http://127.0.0.1:11434/v1/chat/completions"
+        initialModel="llama3"
+        initialKeyStatus="absent"
+        initialTurnTimeoutSecs={900}
+      />,
+    );
+
+    const editor = s.getByTestId('elmer-tile-editor');
+    // Must contain the constructive offline/private reframe.
+    expect(editor.textContent).toMatch(/private|offline|local/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T10 — ModelTilePicker focusTier prop pre-selects first paygo tile
+// ---------------------------------------------------------------------------
+
+describe('ModelTilePicker T10 — focusTier prop pre-selects first paygo tile', () => {
+  it('focusTier="paygo" pre-selects the first paygo tile (openai tile aria-checked=true)', async () => {
+    const { ModelTilePicker: MTP } = await import('./ModelTilePicker');
+    const { render: r, screen: s } = await import('@testing-library/react');
+
+    r(
+      <MTP
+        onSave={vi.fn(async () => {})}
+        onDetect={vi.fn(async () => {})}
+        detectState={{ status: 'idle' }}
+        keyStatusByOrigin={{}}
+        initialEndpoint=""
+        initialModel=""
+        initialKeyStatus="absent"
+        initialTurnTimeoutSecs={900}
+        focusTier="paygo"
+      />,
+    );
+
+    // First paygo preset (openai) must be aria-checked=true.
+    const openaiTile = s.getByTestId('elmer-tile-openai');
+    expect(openaiTile.getAttribute('aria-checked')).toBe('true');
+
+    // Non-paygo tiles must not be aria-checked.
+    expect(s.getByTestId('elmer-tile-gemini').getAttribute('aria-checked')).toBe('false');
+    expect(s.getByTestId('elmer-tile-localOllama').getAttribute('aria-checked')).toBe('false');
+  });
+});

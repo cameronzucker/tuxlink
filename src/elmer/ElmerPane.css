@@ -1015,3 +1015,63 @@
   color: var(--text-dim, var(--text-faint));
   line-height: 1.4;
 }
+
+/* ---------------------------------------------------------------------------
+ * T10: Rate-limit recovery callout
+ * A 429-style recovery callout with a manual "Switch provider" action.
+ * No auto-retry button is provided (per spec: DO NOT auto-retry on 429).
+ * --------------------------------------------------------------------------- */
+
+.elmer-outcome--rateLimited {
+  border-color: var(--accent-amber, var(--accent));
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.elmer-outcome-rate-limited-msg {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.elmer-outcome-switch-btn {
+  align-self: flex-start;
+  padding: 4px 10px;
+  border: 1px solid var(--accent, var(--border-strong));
+  border-radius: 6px;
+  background: var(--surface-2, var(--surface-1));
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.elmer-outcome-switch-btn:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft, var(--surface-3));
+}
+
+/* ---------------------------------------------------------------------------
+ * T10: Tier framing copy — honest per-tier context note in the tile editor.
+ * Free tier: training-on-data + what-gets-sent note.
+ * Local tier: private/offline reframe.
+ * --------------------------------------------------------------------------- */
+
+.elmer-tier-framing {
+  margin: 8px 0 0;
+  font-size: var(--type-micro, 0.78rem);
+  color: var(--text-dim, var(--text-faint));
+  line-height: 1.4;
+  font-style: italic;
+}
+
+/* ---------------------------------------------------------------------------
+ * T10: Persistent provider-class footer indicator for cloud tiers.
+ * Appended inline to the calibrated footer. Muted so it stays secondary.
+ * --------------------------------------------------------------------------- */
+
+.elmer-provider-indicator {
+  color: var(--text-faint, var(--text-dim));
+  font-size: 10px;
+}

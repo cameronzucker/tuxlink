@@ -63,6 +63,12 @@ export interface ModelTilePickerProps {
   initialModel: string;
   initialKeyStatus: KeyStatus;
   initialTurnTimeoutSecs: number;
+  /**
+   * T10: When set, pre-selects the first tile in the given tier on mount.
+   * Used by the rate-limit recovery "Switch provider" button to land the
+   * operator on the paygo tier (Anthropic/OpenAI) directly.
+   */
+  focusTier?: ProviderTier;
 }
 
 /** Tier section headers, in display order. */
@@ -73,6 +79,40 @@ const TIER_ORDER: { tier: ProviderTier; header: string }[] = [
   { tier: 'other', header: 'Other' },
 ];
 
+// ---------------------------------------------------------------------------
+// T10: Tier framing copy — honest per-tier context shown below the tile editor.
+// Free tier: training-on-data note + what-gets-sent note.
+// Local tier: private/offline constructive reframe.
+// ---------------------------------------------------------------------------
+
+interface TierFramingProps {
+  tier: ProviderTier | undefined;
+}
+
+function TierFramingCopy({ tier }: TierFramingProps) {
+  if (tier === 'free') {
+    return (
+      <p className="elmer-tier-framing" data-testid="elmer-tier-framing-free">
+        Free tiers may train on submitted content. Messages you send to Elmer —
+        including any station callsign, location, or message content — are transmitted
+        to the provider. Review the provider's data policy before sending sensitive
+        operational data.
+      </p>
+    );
+  }
+  if (tier === 'local') {
+    return (
+      <p className="elmer-tier-framing" data-testid="elmer-tier-framing-local">
+        Runs privately on this computer — no data leaves the local network. Model
+        capability is weaker than cloud options but nothing is sent off-device.
+      </p>
+    );
+  }
+  // paygo and other tiers: no additional framing copy (cloud paid tiers have
+  // contractual data handling; users self-selected a bespoke endpoint).
+  return null;
+}
+
 export function ModelTilePicker({
   onSave,
   onDetect,
@@ -82,11 +122,26 @@ export function ModelTilePicker({
   initialModel,
   initialKeyStatus,
   initialTurnTimeoutSecs,
+  focusTier,
 }: ModelTilePickerProps) {
   // Working endpoint + model, seeded from the SAVED config (not a tile default)
   // so the pre-selected tile shows the operator's model.
-  const [endpoint, setEndpoint] = useState(initialEndpoint);
-  const [model, setModel] = useState(initialModel);
+  // T10: when focusTier is set, initialise to the first preset in that tier
+  // so the picker lands on it immediately (used by rate-limit "Switch provider").
+  const [endpoint, setEndpoint] = useState(() => {
+    if (focusTier) {
+      const firstInTier = PRESETS.find((p) => p.tier === focusTier);
+      if (firstInTier) return firstInTier.endpoint;
+    }
+    return initialEndpoint;
+  });
+  const [model, setModel] = useState(() => {
+    if (focusTier) {
+      const firstInTier = PRESETS.find((p) => p.tier === focusTier);
+      if (firstInTier?.defaultModel) return firstInTier.defaultModel;
+    }
+    return initialModel;
+  });
 
   // Which preset id is currently selected, derived from the working endpoint's
   // origin so a hand-edited path on a known origin still maps to its tile.
@@ -162,7 +217,8 @@ export function ModelTilePicker({
       {/* Editor for the selected tile.
           - "Other" tier (openrouter, custom) reuses ModelForm verbatim.
           - Cloud/paygo tiles with a keyPageUrl get the guided GetKeyCard flow (Task 9).
-          - Local/other tiles without a keyPageUrl get the lightweight model+Save summary. */}
+          - Local/other tiles without a keyPageUrl get the lightweight model+Save summary.
+          T10: TierFramingCopy renders honest per-tier context below the editor. */}
       <div className="elmer-tile-editor" data-testid="elmer-tile-editor">
         {otherSelected ? (
           <ModelForm
@@ -175,12 +231,15 @@ export function ModelTilePicker({
             initialTurnTimeoutSecs={initialTurnTimeoutSecs}
           />
         ) : selectedPreset?.keyPageUrl ? (
-          <GetKeyCard
-            preset={selectedPreset}
-            onSave={onSave}
-            agentModel={model}
-            agentTurnTimeoutSecs={initialTurnTimeoutSecs}
-          />
+          <>
+            <GetKeyCard
+              preset={selectedPreset}
+              onSave={onSave}
+              agentModel={model}
+              agentTurnTimeoutSecs={initialTurnTimeoutSecs}
+            />
+            <TierFramingCopy tier={selectedPreset?.tier} />
+          </>
         ) : (
           <div className="elmer-tile-summary">
             <div className="elmer-form-row">
@@ -220,6 +279,7 @@ export function ModelTilePicker({
                 Save &amp; use
               </button>
             </div>
+            <TierFramingCopy tier={selectedPreset?.tier} />
           </div>
         )}
       </div>

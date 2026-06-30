@@ -350,8 +350,42 @@ function ThinkingIndicator() {
 }
 
 /** Renders a terminal-outcome callout. */
-function OutcomeCallout({ phase, detail }: { phase: ElmerPhase; detail: string }) {
+function OutcomeCallout({
+  phase,
+  detail,
+  onSwitchProvider,
+}: {
+  phase: ElmerPhase;
+  detail: string;
+  /** T10: Called when the operator clicks "Switch provider" from a rateLimited callout. */
+  onSwitchProvider?: () => void;
+}) {
   if (phase === 'idle' || phase === 'running' || phase === 'done') return null;
+
+  // T10: rateLimited is handled separately — it has a "Switch provider" action button.
+  if (phase === 'rateLimited') {
+    return (
+      <div
+        className="elmer-outcome elmer-outcome--rateLimited"
+        data-testid="elmer-outcome-rate-limited"
+        role="alert"
+      >
+        <span className="elmer-outcome-rate-limited-msg">
+          {detail || 'The provider has reached its request limit for this period (429 rate-limited). No automatic retry — try again later or switch to a different provider.'}
+        </span>
+        {onSwitchProvider && (
+          <button
+            type="button"
+            className="elmer-outcome-switch-btn"
+            data-testid="elmer-switch-provider-btn"
+            onClick={onSwitchProvider}
+          >
+            Switch provider
+          </button>
+        )}
+      </div>
+    );
+  }
 
   const callouts: Partial<Record<ElmerPhase, { label: string; testId: string }>> = {
     cancelled: {
@@ -917,6 +951,9 @@ export const ElmerPane = memo(function ElmerPane({
     detectState,
   } = useElmer();
   const [input, setInput] = useState('');
+  // T10: When the operator clicks "Switch provider" from a rate-limit callout,
+  // show the tile picker with a paygo pre-selection. Null = normal message list.
+  const [switchProviderFocusTier, setSwitchProviderFocusTier] = useState<import('./elmerModelConfig').ProviderTier | null>(null);
   // tuxlink-1wi5w: when expandModel is true, open the Model section on mount
   // so the operator lands directly on the endpoint/model picker.
   const [advancedOpen, setAdvancedOpen] = useState(() => expandModel === true);
@@ -1043,8 +1080,10 @@ export const ElmerPane = memo(function ElmerPane({
           setup (onboarded=false), render the tile picker IN PLACE of the message
           list. The picker replaces the list entirely; the items.length===0 coupling
           is dropped (state in comment: picker replaces the list). Once onboarded,
-          the normal message list is shown. */}
-      {notOnboarded ? (
+          the normal message list is shown.
+          T10: "Switch provider" from a rate-limit callout also opens the picker
+          in this slot (with focusTier=paygo for paygo pre-selection). */}
+      {notOnboarded || switchProviderFocusTier !== null ? (
         modelConfigState === 'loaded' && modelConfig ? (
           <ModelTilePicker
             onSave={configSet}
@@ -1055,6 +1094,7 @@ export const ElmerPane = memo(function ElmerPane({
             initialModel={modelConfig.agentModel}
             initialKeyStatus={modelConfig.keyStatus}
             initialTurnTimeoutSecs={modelConfig.agentTurnTimeoutSecs ?? 900}
+            focusTier={switchProviderFocusTier ?? undefined}
           />
         ) : null
       ) : (
@@ -1071,7 +1111,11 @@ export const ElmerPane = memo(function ElmerPane({
           )}
           {isRunning && !isStreaming && <ThinkingIndicator />}
           {lastOutcome && (
-            <OutcomeCallout phase={phase} detail={lastOutcome.detail} />
+            <OutcomeCallout
+              phase={phase}
+              detail={lastOutcome.detail}
+              onSwitchProvider={() => { setSwitchProviderFocusTier('paygo'); }}
+            />
           )}
           <div ref={listEndRef} />
         </div>
@@ -1190,6 +1234,23 @@ export const ElmerPane = memo(function ElmerPane({
       {/* ONE calibrated footer (AC-12) */}
       <div className="elmer-footer" data-testid="elmer-footer">
         Elmer can be wrong or misled by message content — check the actual message before you send.
+        {/* T10: Persistent provider-class indicator for cloud tiers. Shows only when
+            onboarded and the active endpoint maps to a known cloud preset. Local
+            (loopback) endpoints do not show a cloud indicator. */}
+        {modelConfigState === 'loaded' && modelConfig && modelConfig.onboarded && (() => {
+          const presetId = inferPreset(modelConfig.agentEndpoint);
+          const preset = PRESETS.find((p) => p.id === presetId);
+          if (!preset || preset.tier === 'local' || preset.tier === 'other') return null;
+          const tierLabel = preset.tier === 'free' ? 'free cloud' : 'cloud';
+          return (
+            <span
+              className="elmer-provider-indicator"
+              data-testid="elmer-provider-indicator"
+            >
+              {' '}· Using {preset.label} ({tierLabel})
+            </span>
+          );
+        })()}
       </div>
     </aside>
   );
