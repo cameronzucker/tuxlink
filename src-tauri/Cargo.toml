@@ -150,7 +150,7 @@ tuxlink-agent-frontend = { path = "tuxlink-agent-frontend" }
 # has rmcp 0.8.5 so this does not introduce a new crate or version.  `server` +
 # `macros` come in transitively via tuxlink-mcp-core; Cargo unifies to a single
 # copy.
-rmcp = { version = "0.8", features = ["client", "transport-async-rw"] }
+rmcp = { version = "2.0", features = ["client", "transport-async-rw"] }
 
 # tuxlink-cumx / G8 — faithful PDF export drives the live form's WebKitGTK view
 # via WebKitPrintOperation. Both crates are already in the build (transitive via

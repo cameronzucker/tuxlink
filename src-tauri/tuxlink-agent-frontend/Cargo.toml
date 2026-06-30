@@ -59,7 +59,7 @@ futures-util = { version = "0.3", default-features = false }
 # rmcp client types: Tool, CallToolResult, RunningService<RoleClient, ()>,
 # ServiceError, ServiceExt.  `client` + `transport-async-rw` match d3zwe's
 # feature set (no new major, same lockfile resolution).
-rmcp = { version = "0.8", features = ["client", "transport-async-rw"] }
+rmcp = { version = "2.0", features = ["client", "transport-async-rw"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
