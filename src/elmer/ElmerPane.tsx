@@ -34,10 +34,55 @@ import type { SetKey, KeySource } from './elmerModelConfig';
 import './ElmerPane.css';
 
 // ---------------------------------------------------------------------------
+// Detect remedy mapping (G3, R2.6)
+// ---------------------------------------------------------------------------
+
+/**
+ * Map a detect error reason string (from DetectError::to_reason() on the Rust
+ * side, surfaced as the `Error.message` via invoke rejection) plus the endpoint
+ * loopback/preset context into a user-facing remedy string.
+ *
+ * Reason string prefixes from DetectError::to_reason():
+ *   "no server: could not connect to ..."  → NoServer
+ *   "auth error: check the API key for ..." → Auth
+ *   "no models: ..."                        → ZeroModels
+ *   "network error: ..."                    → Network (treated as transport)
+ *   "server error: HTTP ..."                → non-2xx Status
+ *   "bad URL: ..."                          → BadUrl
+ */
+function detectRemedy(reason: string, endpoint: string): string {
+  const lower = reason.toLowerCase();
+
+  // Auth failure (401/403) → re-enter key, using the preset label if known.
+  if (lower.startsWith('auth error:')) {
+    const presetId = inferPreset(endpoint);
+    const preset = PRESETS.find((p) => p.id === presetId);
+    const providerLabel = preset && preset.id !== 'custom' ? preset.label : 'this provider';
+    return `re-enter the key for ${providerLabel}`;
+  }
+
+  // Zero models found → pull a model.
+  if (lower.startsWith('no models:')) {
+    return 'no models found — pull a model on the server, then Detect again';
+  }
+
+  // Transport / connection failure — differentiate loopback vs remote.
+  if (lower.startsWith('no server:') || lower.startsWith('network error:')) {
+    if (isLoopback(endpoint)) {
+      return 'the local AI server (Ollama) may not be running — start it, then Detect again';
+    }
+    return "check this device's internet connection";
+  }
+
+  // Fallback: return the raw reason so the operator sees something useful.
+  return reason || 'Could not detect models. Check the endpoint and key.';
+}
+
+// ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
 
-/** Renders a single turn or chip item. */
+/** Renders a single turn, chip, or attribution item. */
 function MessageItem({ item }: { item: ElmerItem }) {
   if (item.kind === 'chip') {
     return (
@@ -52,6 +97,20 @@ function MessageItem({ item }: { item: ElmerItem }) {
         <span className="elmer-chip-icon" aria-hidden="true">⚙</span>
         <span className="elmer-chip-tool">{item.tool}</span>
         <span className="elmer-chip-status">{item.status}</span>
+      </div>
+    );
+  }
+
+  // G3: Model attribution marker — rendered like a chip but semantically different.
+  if (item.kind === 'attribution') {
+    return (
+      <div
+        className="elmer-chip elmer-attribution"
+        data-testid="elmer-model-attribution"
+        role="status"
+        aria-label={`Model changed: now using ${item.model}`}
+      >
+        <span className="elmer-chip-status">— now using {item.model} —</span>
       </div>
     );
   }
@@ -411,7 +470,7 @@ function ModelForm({
       )}
       {detectState.status === 'error' && (
         <div className="elmer-detect-error" data-testid="elmer-detect-error">
-          {detectState.reason || 'Could not detect models. Check the endpoint and key.'}
+          {detectRemedy(detectState.reason, endpoint)}
         </div>
       )}
 
@@ -479,6 +538,18 @@ export const ElmerPane = memo(function ElmerPane({
   const [input, setInput] = useState('');
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const listEndRef = useRef<HTMLDivElement>(null);
+  // Ref to track whether configRead has been called, so the eager-load
+  // on mount and the disclosure open don't double-call it.
+  const configReadCalledRef = useRef(false);
+
+  // G3: Eagerly load config on mount so the empty-state "Connect a model"
+  // button can be shown without the operator needing to open the disclosure first.
+  useEffect(() => {
+    if (!configReadCalledRef.current) {
+      configReadCalledRef.current = true;
+      void configRead();
+    }
+  }, [configRead]);
 
   // Auto-scroll to the bottom of the message list on each new item.
   // Guard for jsdom (tests) where scrollIntoView is not implemented.
@@ -487,6 +558,20 @@ export const ElmerPane = memo(function ElmerPane({
       listEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [items]);
+
+  // G3: Determine whether no model is configured so the empty-state button shows.
+  // We consider "no model" when config is loaded and the model string is empty.
+  const hasNoModelConfigured =
+    modelConfigState === 'loaded' &&
+    modelConfig !== null &&
+    !modelConfig.agentModel;
+
+  // G3: Handler for the "Connect a model" button — opens the Model section
+  // disclosure in place (not a menu pointer, per R2.6 chicken-and-egg rule).
+  const handleConnectModel = useCallback(() => {
+    setAdvancedOpen(true);
+    // configRead was already called eagerly on mount, so don't re-call it.
+  }, []);
 
   const handleSend = () => {
     const msg = input.trim();
@@ -551,6 +636,22 @@ export const ElmerPane = memo(function ElmerPane({
         {lastOutcome && (
           <OutcomeCallout phase={phase} detail={lastOutcome.detail} />
         )}
+        {/* G3: Empty-state button — shown when no model is configured so the
+            operator can reach the Model section directly from the chat area.
+            NOT a sentence pointing at a menu (R2.6 chicken-and-egg).
+            Expands the Model section disclosure in place. */}
+        {hasNoModelConfigured && items.length === 0 && !isRunning && (
+          <div className="elmer-empty-state">
+            <button
+              type="button"
+              className="elmer-connect-model-btn"
+              data-testid="elmer-connect-model"
+              onClick={handleConnectModel}
+            >
+              Connect a model
+            </button>
+          </div>
+        )}
         <div ref={listEndRef} />
       </div>
 
@@ -610,8 +711,11 @@ export const ElmerPane = memo(function ElmerPane({
           onClick={() => {
             const next = !advancedOpen;
             setAdvancedOpen(next);
-            // Load config the first time the disclosure is opened.
-            if (next && modelConfigState === 'idle') {
+            // Load config only if it hasn't been triggered yet (the eager-mount
+            // load may have already initiated it — check the ref, not the state,
+            // to avoid a double-call between mount useEffect and toggle click).
+            if (next && !configReadCalledRef.current) {
+              configReadCalledRef.current = true;
               void configRead();
             }
           }}

@@ -730,3 +730,219 @@ describe('<ElmerPane> G2 — save_calls_config_set_with_three_state_key', () => 
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// G3 — Empty-state button, detect remedies, model attribution marker
+// ---------------------------------------------------------------------------
+
+describe('<ElmerPane> G3 — empty_state_button_expands_model_section', () => {
+  it('renders a "Connect a model" button in the chat area when no model is configured', async () => {
+    // Simulate no configured model: empty endpoint and model.
+    // The config_read mock returns empty strings; the button appears immediately
+    // without needing to open the disclosure first.
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: '',
+        agentModel: '',
+        keyStatus: 'absent',
+      };
+      return undefined;
+    });
+
+    render(<ElmerPane />);
+
+    // The button must exist without opening the disclosure first.
+    // It appears in the messages area when no model is configured.
+    const connectBtn = await screen.findByTestId('elmer-connect-model');
+    expect(connectBtn).toBeTruthy();
+    expect(connectBtn.textContent).toContain('Connect a model');
+  });
+
+  it('clicking the Connect a model button opens the Model section disclosure', async () => {
+    // Simulate no configured model.
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: '',
+        agentModel: '',
+        keyStatus: 'absent',
+      };
+      return undefined;
+    });
+
+    render(<ElmerPane />);
+
+    // The advanced body should NOT be open initially.
+    expect(screen.queryByTestId('elmer-advanced-body')).toBeNull();
+
+    const connectBtn = await screen.findByTestId('elmer-connect-model');
+    fireEvent.click(connectBtn);
+
+    // The Model section disclosure should now be open.
+    await waitFor(() => {
+      expect(screen.getByTestId('elmer-advanced-body')).toBeTruthy();
+    });
+  });
+});
+
+describe('<ElmerPane> G3 — detect_remedy_loopback_offline', () => {
+  it('loopback endpoint + transport failure → Ollama offline remedy', async () => {
+    // Config with loopback endpoint.
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'http://127.0.0.1:11434/v1/chat/completions',
+        agentModel: 'llama3',
+        keyStatus: 'absent',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    // Mock detect to fail with a NoServer-style reason (transport failure).
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_detect_models')
+        throw new Error('no server: could not connect to 127.0.0.1:11434: connection refused');
+      return undefined;
+    });
+
+    fireEvent.click(screen.getByTestId('elmer-detect-btn'));
+
+    await waitFor(() => {
+      const errorEl = screen.getByTestId('elmer-detect-error');
+      expect(errorEl.textContent).toContain('Ollama');
+      expect(errorEl.textContent).toContain('start it');
+    });
+  });
+});
+
+describe('<ElmerPane> G3 — detect_remedy_remote_transport', () => {
+  it('remote endpoint + transport failure → internet connection remedy', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'absent',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_detect_models')
+        throw new Error('no server: could not connect to api.openai.com: network unreachable');
+      return undefined;
+    });
+
+    fireEvent.click(screen.getByTestId('elmer-detect-btn'));
+
+    await waitFor(() => {
+      const errorEl = screen.getByTestId('elmer-detect-error');
+      expect(errorEl.textContent).toContain('internet connection');
+    });
+  });
+});
+
+describe('<ElmerPane> G3 — detect_remedy_auth', () => {
+  it('auth error + OpenAI preset → "re-enter the key for OpenAI"', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'present',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_detect_models')
+        throw new Error('auth error: check the API key for api.openai.com');
+      return undefined;
+    });
+
+    fireEvent.click(screen.getByTestId('elmer-detect-btn'));
+
+    await waitFor(() => {
+      const errorEl = screen.getByTestId('elmer-detect-error');
+      expect(errorEl.textContent).toContain('re-enter the key for');
+      expect(errorEl.textContent).toContain('OpenAI');
+    });
+  });
+});
+
+describe('<ElmerPane> G3 — detect_zero_models_remedy', () => {
+  it('zero models reason → pull-a-model remedy, no green check', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'http://127.0.0.1:11434/v1/chat/completions',
+        agentModel: 'llama3',
+        keyStatus: 'absent',
+      };
+      return undefined;
+    });
+
+    await renderAndOpen();
+
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_detect_models')
+        throw new Error('no models: the server returned an empty model list');
+      return undefined;
+    });
+
+    fireEvent.click(screen.getByTestId('elmer-detect-btn'));
+
+    await waitFor(() => {
+      const errorEl = screen.getByTestId('elmer-detect-error');
+      expect(errorEl.textContent).toContain('pull a model');
+    });
+
+    // No green check mark / success count present.
+    expect(screen.queryByText(/✓/)).toBeNull();
+  });
+});
+
+describe('<ElmerPane> G3 — model_change_drops_attribution_marker', () => {
+  it('configSet changing model mid-conversation inserts an attribution marker before the next turn', async () => {
+    // Start with llama3 config.
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'http://127.0.0.1:11434/v1/chat/completions',
+        agentModel: 'llama3',
+        keyStatus: 'absent',
+      };
+      return undefined;
+    });
+
+    render(<ElmerPane />);
+
+    // Open the model section and load config.
+    openAdvanced();
+    await waitFor(() => {
+      expect(screen.getByTestId('elmer-model-form')).toBeTruthy();
+    });
+
+    // Change the model to gpt-4o and save.
+    const modelInput = screen.getByTestId('elmer-model-input') as HTMLInputElement;
+    fireEvent.change(modelInput, { target: { value: 'gpt-4o' } });
+
+    mockInvoke.mockClear();
+    fireEvent.click(screen.getByTestId('elmer-save-btn'));
+
+    // Wait for the save to be invoked.
+    await waitFor(() => {
+      const calls = mockInvoke.mock.calls;
+      expect(calls.some((c) => c[0] === 'elmer_config_set')).toBe(true);
+    });
+
+    // Fire a new assistant turn — an attribution marker should appear before it.
+    const payload: ElmerTurnPayload = { kind: 'turn', role: 'assistant', text: 'Hello with gpt-4o' };
+    await fireElmerEvent<ElmerTurnPayload>(EV_TURN, payload);
+
+    await waitFor(() => {
+      const marker = screen.getByTestId('elmer-model-attribution');
+      expect(marker.textContent).toContain('now using gpt-4o');
+    });
+  });
+});

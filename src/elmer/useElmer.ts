@@ -58,7 +58,17 @@ export interface ElmerChipItem {
   status: string;
 }
 
-export type ElmerItem = ElmerTurnItem | ElmerChipItem;
+/**
+ * Model attribution marker — inserted mid-conversation when configSet changes
+ * the active model (G3). Styled like a chip but semantically different.
+ */
+export interface ElmerAttributionItem {
+  kind: 'attribution';
+  id: string;
+  model: string;
+}
+
+export type ElmerItem = ElmerTurnItem | ElmerChipItem | ElmerAttributionItem;
 
 // ---------------------------------------------------------------------------
 // Outcome / phase
@@ -127,7 +137,7 @@ export type DetectState =
   | { status: 'error'; reason: string };
 
 export interface UseElmer {
-  /** Ordered list of turn/chip items in this conversation. */
+  /** Ordered list of turn/chip/attribution items in this conversation. */
   items: ElmerItem[];
   /** Current pane phase (drives UI states). */
   phase: ElmerPhase;
@@ -143,12 +153,15 @@ export interface UseElmer {
   modelConfigState: ModelConfigLoadState;
   /** G2: Load the model config from the backend. */
   configRead: () => Promise<void>;
-  /** G2: Save the model config. */
+  /** G2+G3: Save the model config. When agentModel changes mid-conversation,
+   *  drops a model attribution marker into the transcript before the next turn. */
   configSet: (args: { agentEndpoint: string; agentModel: string; key: SetKey }) => Promise<void>;
   /** G2: Detect available models for the given endpoint. */
   detectModels: (args: { agentEndpoint: string; keySource: KeySource }) => Promise<void>;
   /** G2: Current detection state. */
   detectState: DetectState;
+  /** G3: The model name that was active when the last configSet ran (null if never set). */
+  activeModel: string | null;
 }
 
 let _nextId = 0;
@@ -167,6 +180,11 @@ export function useElmer(): UseElmer {
   const [modelConfig, setModelConfig] = useState<ConfigReadDto | null>(null);
   const [modelConfigState, setModelConfigState] = useState<ModelConfigLoadState>('idle');
   const [detectState, setDetectState] = useState<DetectState>({ status: 'idle' });
+
+  // G3: Track the last-used model name so configSet can detect a model change
+  // and insert an attribution marker before the next turn renders.
+  const activeModelRef = useRef<string | null>(null);
+  const [activeModel, setActiveModel] = useState<string | null>(null);
 
   // Subscribe to all three Elmer event channels for the lifetime of the hook.
   // The listeners are set up once on mount and torn down on unmount. Tauri's
@@ -238,20 +256,45 @@ export function useElmer(): UseElmer {
   }, []);
 
   // G2: configRead — load model config from backend.
+  // G3: Initialises activeModel on first load so configSet can detect changes.
   const configRead = useCallback(async () => {
     setModelConfigState('loading');
     try {
       const dto = await invoke<ConfigReadDto>('elmer_config_read');
       setModelConfig(dto);
       setModelConfigState('loaded');
+      // G3: seed activeModel from the loaded config (first read only — don't
+      // overwrite if the operator has already done a mid-conversation model save).
+      if (activeModelRef.current === null && dto.agentModel) {
+        activeModelRef.current = dto.agentModel;
+        setActiveModel(dto.agentModel);
+      }
     } catch {
       setModelConfigState('error');
     }
   }, []);
 
-  // G2: configSet — save model config to backend.
+  // G2+G3: configSet — save model config to backend.
+  // On a model change mid-conversation, inserts an attribution marker into the
+  // transcript so the operator can tell which model produced the next turn (G3).
   const configSet = useCallback(async (args: { agentEndpoint: string; agentModel: string; key: SetKey }) => {
     await invoke('elmer_config_set', args);
+
+    // G3: If the model changed from the last active model, drop a marker.
+    const prev = activeModelRef.current;
+    const next = args.agentModel;
+    if (next && prev !== null && next !== prev) {
+      setItems((prevItems) => [
+        ...prevItems,
+        { kind: 'attribution', id: nextId(), model: next },
+      ]);
+    }
+
+    // Always advance the active model after a successful save.
+    if (next) {
+      activeModelRef.current = next;
+      setActiveModel(next);
+    }
   }, []);
 
   // G2: detectModels — detect available models for the given endpoint.
@@ -278,5 +321,6 @@ export function useElmer(): UseElmer {
     configSet,
     detectModels,
     detectState,
+    activeModel,
   };
 }
