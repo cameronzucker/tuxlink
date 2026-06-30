@@ -295,6 +295,19 @@ export function useElmer(): UseElmer {
       activeModelRef.current = next;
       setActiveModel(next);
     }
+
+    // Refresh modelConfig so the Model form — which re-initialises from these
+    // props every time the disclosure is collapsed and re-expanded (the form is
+    // unmounted on collapse, ElmerPane.tsx) — reflects the just-saved
+    // endpoint/model/keyStatus instead of the stale initial load. Silent (no
+    // loading state) to avoid a flicker on save.
+    try {
+      const refreshed = await invoke<ConfigReadDto>('elmer_config_read');
+      setModelConfig(refreshed);
+    } catch {
+      // The save itself succeeded; keep the prior modelConfig if the refresh
+      // read fails (the form stays usable with the last-known config).
+    }
   }, []);
 
   // G2: detectModels — detect available models for the given endpoint.
