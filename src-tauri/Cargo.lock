@@ -1058,7 +1058,7 @@ dependencies = [
  "rmcp",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
+ "thiserror 1.0.69",
  "tokio",
  "tokio-util",
  "tuxlink-agent-frontend",
@@ -6754,7 +6754,7 @@ dependencies = [
 
 [[package]]
 name = "tuxlink"
-version = "0.79.0"
+version = "0.80.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -6841,7 +6841,7 @@ dependencies = [
  "rmcp",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
+ "thiserror 1.0.69",
  "tokio",
  "tuxlink-agent-runner",
  "url",
@@ -6854,7 +6854,7 @@ dependencies = [
  "async-trait",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
+ "thiserror 1.0.69",
  "tokio",
  "tokio-util",
 ]
@@ -6877,7 +6877,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror 2.0.18",
+ "thiserror 1.0.69",
  "tokio",
  "tuxlink-security",
 ]
