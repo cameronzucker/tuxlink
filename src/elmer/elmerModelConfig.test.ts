@@ -30,8 +30,24 @@ import {
 // ---------------------------------------------------------------------------
 
 describe('PRESETS', () => {
-  it('includes exactly four providers', () => {
-    expect(PRESETS).toHaveLength(4);
+  it('includes the expected providers (Ollama, OpenAI, OpenRouter, Gemini, Groq, Custom)', () => {
+    expect(PRESETS.map((p) => p.id)).toEqual([
+      'localOllama',
+      'openai',
+      'openrouter',
+      'gemini',
+      'groq',
+      'custom',
+    ]);
+  });
+
+  it('the free-key cloud presets use OpenAI-compatible endpoints', () => {
+    const gemini = PRESETS.find((p) => p.id === 'gemini');
+    expect(gemini?.endpoint).toBe(
+      'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+    );
+    const groq = PRESETS.find((p) => p.id === 'groq');
+    expect(groq?.endpoint).toMatch(/^https:\/\/api\.groq\.com\/openai\/v1\//);
   });
 
   it('has localOllama as the first preset', () => {
