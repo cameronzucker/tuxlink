@@ -27,7 +27,7 @@ serde_json = "1"
 # Object-safe async traits (Provider / ToolInvoker), mirroring tuxlink-mcp-core's
 # port traits. Same version the monolith already resolves.
 async-trait = "0.1"
-thiserror = "1"
+thiserror = "2"
 # Cooperative cancellation (COR-2). tokio-util is already in the lockfile
 # (transitive); CancellationToken needs no extra feature flag.
 tokio-util = "0.7"

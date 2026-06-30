@@ -42,7 +42,7 @@ tuxlink-agent-frontend = { path = "../tuxlink-agent-frontend" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 async-trait = "0.1"
-thiserror = "1"
+thiserror = "2"
 
 # Cooperative cancellation token shared with the loop crate (COR-2) and used to
 # wire Ctrl-C → abort. Same 0.7 the lockfile already resolves.
