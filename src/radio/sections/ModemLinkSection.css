@@ -74,7 +74,7 @@
 @media (max-width: 1365px) and (any-pointer: coarse) {
   .radio-panel-segmented button {
     min-height: 44px;
-    font-size: var(--type-control);
+    font-size: 12px;
   }
 }
 

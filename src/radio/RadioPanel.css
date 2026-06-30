@@ -419,14 +419,14 @@ select.radio-panel-input option {
     min-height: 44px;
   }
   .radio-panel-sec h5 {
-    font-size: var(--type-control);
+    font-size: 12px;
   }
   .radio-panel-sec h5 .live {
-    font-size: var(--type-meta);
+    font-size: 11px;
   }
   .radio-panel-chip {
     min-height: 44px;
-    font-size: var(--type-control);
+    font-size: 12px;
   }
   .radio-panel-find-gateway {
     min-height: 44px;
