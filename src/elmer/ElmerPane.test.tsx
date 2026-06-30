@@ -30,7 +30,8 @@ import { PRESETS } from './elmerModelConfig';
 // Capture invoke calls by command name. Gate on cmd so vitest's no-arg teardown
 // calls don't throw (the teardown invokes mock functions with no args).
 // G2: also handles elmer_config_read, elmer_config_set, elmer_detect_models.
-// The default implementations are "absent" config + empty model list.
+// T8b: also handles elmer_key_status_for_origins.
+// The default implementations are onboarded=true config + empty model list.
 // Individual tests override via mockInvoke.mockImplementationOnce().
 const mockInvoke = vi.fn(async (cmd?: string, _args?: unknown) => {
   if (cmd === 'elmer_send') return undefined;
@@ -40,9 +41,11 @@ const mockInvoke = vi.fn(async (cmd?: string, _args?: unknown) => {
     agentModel: 'gpt-4o',
     keyStatus: 'absent',
     agentTurnTimeoutSecs: 900,
+    onboarded: true,
   };
   if (cmd === 'elmer_config_set') return undefined;
   if (cmd === 'elmer_detect_models') return [];
+  if (cmd === 'elmer_key_status_for_origins') return {};
   return undefined;
 });
 
@@ -512,6 +515,7 @@ describe('<ElmerPane> G2 — form_renders_fields_from_config_read', () => {
         agentModel: 'gpt-4o',
         keyStatus: 'absent',
         agentTurnTimeoutSecs: 900,
+        onboarded: true,
       };
       return undefined;
     });
@@ -544,6 +548,7 @@ describe('<ElmerPane> G2 — preset_fills_endpoint_by_origin', () => {
         agentModel: 'llama3',
         keyStatus: 'absent',
         agentTurnTimeoutSecs: 900,
+        onboarded: true,
       };
       return undefined;
     });
@@ -566,6 +571,7 @@ describe('<ElmerPane> G2 — preset_fills_endpoint_by_origin', () => {
         agentModel: 'gpt-4o',
         keyStatus: 'absent',
         agentTurnTimeoutSecs: 900,
+        onboarded: true,
       };
       return undefined;
     });
@@ -587,6 +593,7 @@ describe('<ElmerPane> G2 — preset_fills_endpoint_by_origin', () => {
         agentModel: 'gpt-4o',
         keyStatus: 'absent',
         agentTurnTimeoutSecs: 900,
+        onboarded: true,
       };
       return undefined;
     });
@@ -611,6 +618,7 @@ describe('<ElmerPane> G2 — key_field_hidden_for_loopback', () => {
         agentModel: 'llama3',
         keyStatus: 'absent',
         agentTurnTimeoutSecs: 900,
+        onboarded: true,
       };
       return undefined;
     });
@@ -633,6 +641,7 @@ describe('<ElmerPane> G2 — key_field_shown_for_remote_absent', () => {
         agentModel: 'gpt-4o',
         keyStatus: 'absent',
         agentTurnTimeoutSecs: 900,
+        onboarded: true,
       };
       return undefined;
     });
@@ -653,6 +662,7 @@ describe('<ElmerPane> G2 — key_stored_shows_replace_remove_not_password', () =
         agentModel: 'gpt-4o',
         keyStatus: 'present',
         agentTurnTimeoutSecs: 900,
+        onboarded: true,
       };
       return undefined;
     });
@@ -687,6 +697,7 @@ describe('<ElmerPane> G2 — replace_commits_set_only_on_nonempty', () => {
         agentModel: 'gpt-4o',
         keyStatus: 'present',
         agentTurnTimeoutSecs: 900,
+        onboarded: true,
       };
       return undefined;
     });
@@ -720,6 +731,7 @@ describe('<ElmerPane> G2 — replace_commits_set_only_on_nonempty', () => {
         agentModel: 'gpt-4o',
         keyStatus: 'present',
         agentTurnTimeoutSecs: 900,
+        onboarded: true,
       };
       return undefined;
     });
@@ -748,6 +760,7 @@ describe('<ElmerPane> G2 — replace_commits_set_only_on_nonempty', () => {
         agentModel: 'gpt-4o',
         keyStatus: 'present',
         agentTurnTimeoutSecs: 900,
+        onboarded: true,
       };
       return undefined;
     });
@@ -772,6 +785,7 @@ describe('<ElmerPane> G2 — replace_commits_set_only_on_nonempty', () => {
         agentModel: 'gpt-4o',
         keyStatus: 'present',
         agentTurnTimeoutSecs: 900,
+        onboarded: true,
       };
       return undefined;
     });
@@ -808,6 +822,7 @@ describe('<ElmerPane> G2 — remove_commits_clear', () => {
         agentModel: 'gpt-4o',
         keyStatus: 'present',
         agentTurnTimeoutSecs: 900,
+        onboarded: true,
       };
       return undefined;
     });
@@ -839,6 +854,7 @@ describe('<ElmerPane> G2 — detect_populates_dropdown', () => {
         agentModel: 'gpt-4o',
         keyStatus: 'absent',
         agentTurnTimeoutSecs: 900,
+        onboarded: true,
       };
       return undefined;
     });
@@ -874,6 +890,7 @@ describe('<ElmerPane> G2 — detect_failure_shows_inline_reason', () => {
         agentModel: 'gpt-4o',
         keyStatus: 'absent',
         agentTurnTimeoutSecs: 900,
+        onboarded: true,
       };
       return undefined;
     });
@@ -902,6 +919,7 @@ describe('<ElmerPane> G2 — save_calls_config_set_with_three_state_key', () => 
         agentModel: 'gpt-4o',
         keyStatus: 'absent',
         agentTurnTimeoutSecs: 900,
+        onboarded: true,
       };
       return undefined;
     });
@@ -940,6 +958,7 @@ describe('<ElmerPane> G2 — save_calls_config_set_with_three_state_key', () => 
         agentModel: 'gpt-4o',
         keyStatus: 'absent',
         agentTurnTimeoutSecs: 900,
+        onboarded: true,
       };
       return undefined;
     });
@@ -966,53 +985,44 @@ describe('<ElmerPane> G2 — save_calls_config_set_with_three_state_key', () => 
 // ---------------------------------------------------------------------------
 
 describe('<ElmerPane> G3 — empty_state_button_expands_model_section', () => {
-  it('renders a "Connect a model" button in the chat area when no model is configured', async () => {
-    // Simulate no configured model: empty endpoint and model.
-    // The config_read mock returns empty strings; the button appears immediately
-    // without needing to open the disclosure first.
+  // T8b: The "Connect a model" button is replaced by the ModelTilePicker which
+  // renders in place of the message list when onboarded=false. These tests
+  // verify the new first-run gate (tile picker) rather than the old button.
+  it('renders the tile picker in the chat area when not onboarded (no model configured)', async () => {
+    // Simulate no configured model: onboarded=false.
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
       if (cmd === 'elmer_config_read') return {
         agentEndpoint: '',
         agentModel: '',
         keyStatus: 'absent',
         agentTurnTimeoutSecs: 900,
+        onboarded: false,
       };
+      if (cmd === 'elmer_key_status_for_origins') return {};
       return undefined;
     });
 
     render(<ElmerPane />);
 
-    // The button must exist without opening the disclosure first.
-    // It appears in the messages area when no model is configured.
-    const connectBtn = await screen.findByTestId('elmer-connect-model');
-    expect(connectBtn).toBeTruthy();
-    expect(connectBtn.textContent).toContain('Connect a model');
+    // The tile picker must exist without opening the disclosure first.
+    // It replaces the message list when not onboarded.
+    await waitFor(() => {
+      expect(screen.getByTestId('elmer-tile-picker')).toBeTruthy();
+    });
+    // Old "Connect a model" button is gone — tile picker is the surface now.
+    expect(screen.queryByTestId('elmer-connect-model')).toBeNull();
   });
 
-  it('clicking the Connect a model button opens the Model section disclosure', async () => {
-    // Simulate no configured model.
-    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
-      if (cmd === 'elmer_config_read') return {
-        agentEndpoint: '',
-        agentModel: '',
-        keyStatus: 'absent',
-        agentTurnTimeoutSecs: 900,
-      };
-      return undefined;
-    });
-
+  it('the message list (not the tile picker) is shown when onboarded=true', async () => {
+    // Default mockInvoke returns onboarded=true.
     render(<ElmerPane />);
 
-    // The advanced body should NOT be open initially.
-    expect(screen.queryByTestId('elmer-advanced-body')).toBeNull();
-
-    const connectBtn = await screen.findByTestId('elmer-connect-model');
-    fireEvent.click(connectBtn);
-
-    // The Model section disclosure should now be open.
     await waitFor(() => {
-      expect(screen.getByTestId('elmer-advanced-body')).toBeTruthy();
+      expect(screen.getByTestId('elmer-messages')).toBeTruthy();
     });
+
+    // Tile picker should NOT be shown when already onboarded.
+    expect(screen.queryByTestId('elmer-tile-picker')).toBeNull();
   });
 });
 
@@ -1025,6 +1035,7 @@ describe('<ElmerPane> G3 — detect_remedy_loopback_offline', () => {
         agentModel: 'llama3',
         keyStatus: 'absent',
         agentTurnTimeoutSecs: 900,
+        onboarded: true,
       };
       return undefined;
     });
@@ -1056,6 +1067,7 @@ describe('<ElmerPane> G3 — detect_remedy_remote_transport', () => {
         agentModel: 'gpt-4o',
         keyStatus: 'absent',
         agentTurnTimeoutSecs: 900,
+        onboarded: true,
       };
       return undefined;
     });
@@ -1085,6 +1097,7 @@ describe('<ElmerPane> G3 — detect_remedy_auth', () => {
         agentModel: 'gpt-4o',
         keyStatus: 'present',
         agentTurnTimeoutSecs: 900,
+        onboarded: true,
       };
       return undefined;
     });
@@ -1115,6 +1128,7 @@ describe('<ElmerPane> G3 — detect_zero_models_remedy', () => {
         agentModel: 'llama3',
         keyStatus: 'absent',
         agentTurnTimeoutSecs: 900,
+        onboarded: true,
       };
       return undefined;
     });
@@ -1167,6 +1181,7 @@ describe('<ElmerPane> G3 — model_change_drops_attribution_marker', () => {
         agentModel: 'llama3',
         keyStatus: 'absent',
         agentTurnTimeoutSecs: 900,
+        onboarded: true,
       };
       return undefined;
     });
@@ -1221,6 +1236,7 @@ describe('<ElmerPane> credential-seam — editing_endpoint_to_new_origin_resets_
         agentModel: 'gpt-4o',
         keyStatus: 'present',
         agentTurnTimeoutSecs: 900,
+        onboarded: true,
       };
       return undefined;
     });
@@ -1273,6 +1289,7 @@ describe('<ElmerPane> credential-seam — editing_endpoint_to_new_origin_resets_
         agentModel: 'gpt-4o',
         keyStatus: 'present',
         agentTurnTimeoutSecs: 900,
+        onboarded: true,
       };
       return undefined;
     });
@@ -1333,6 +1350,7 @@ describe('<ElmerPane> credential-seam — detect_uses_inline_key_when_typed_not_
         agentModel: 'gpt-4o',
         keyStatus: 'absent',
         agentTurnTimeoutSecs: 900,
+        onboarded: true,
       };
       return undefined;
     });
@@ -1371,6 +1389,7 @@ describe('<ElmerPane> credential-seam — detect_uses_inline_key_when_typed_not_
         agentModel: 'gpt-4o',
         keyStatus: 'present',
         agentTurnTimeoutSecs: 900,
+        onboarded: true,
       };
       return undefined;
     });
@@ -1414,6 +1433,7 @@ describe('<ElmerPane> credential-seam — detect_uses_inline_key_when_typed_not_
         agentModel: 'gpt-4o',
         keyStatus: 'present',
         agentTurnTimeoutSecs: 900,
+        onboarded: true,
       };
       return undefined;
     });
@@ -1462,6 +1482,7 @@ describe('<ElmerPane> credential-seam — detect_uses_usestored_when_key_present
         agentModel: 'gpt-4o',
         keyStatus: 'present',
         agentTurnTimeoutSecs: 900,
+        onboarded: true,
       };
       return undefined;
     });
@@ -1664,6 +1685,7 @@ describe('<ElmerPane> — turn_timeout_input_renders_from_config', () => {
         agentModel: 'gpt-4o',
         keyStatus: 'absent',
         agentTurnTimeoutSecs: 600,
+        onboarded: true,
       };
       return undefined;
     });
@@ -1684,6 +1706,7 @@ describe('<ElmerPane> — save_includes_turn_timeout', () => {
         agentModel: 'gpt-4o',
         keyStatus: 'absent',
         agentTurnTimeoutSecs: 900,
+        onboarded: true,
       };
       return undefined;
     });
@@ -1792,6 +1815,7 @@ describe('<ElmerPane> — turn_timeout_minutes_hint', () => {
         agentModel: 'gpt-4o',
         keyStatus: 'absent',
         agentTurnTimeoutSecs: 900,
+        onboarded: true,
       };
       return undefined;
     });
@@ -1801,5 +1825,132 @@ describe('<ElmerPane> — turn_timeout_minutes_hint', () => {
     // The hint text should contain "15 min".
     const form = screen.getByTestId('elmer-model-form');
     expect(form.textContent).toContain('15 min');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T8b — onboarding gate: picker replaces message list; gear reopens picker
+// ---------------------------------------------------------------------------
+
+describe('<ElmerPane> T8b — not-onboarded: tile picker renders in place of message list', () => {
+  it('when onboarded=false the tile picker renders and the message list is not shown', async () => {
+    mockInvoke.mockImplementation(async (cmd?: string, _args?: unknown) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: '',
+        keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
+        onboarded: false,
+      };
+      if (cmd === 'elmer_key_status_for_origins') return {};
+      if (cmd === 'elmer_send') return undefined;
+      if (cmd === 'elmer_stop') return undefined;
+      if (cmd === 'elmer_config_set') return undefined;
+      if (cmd === 'elmer_detect_models') return [];
+      return undefined;
+    });
+
+    render(<ElmerPane />);
+
+    // Tile picker should appear once config loads.
+    await waitFor(() => {
+      expect(screen.getByTestId('elmer-tile-picker')).toBeTruthy();
+    });
+
+    // The message list (log area) should NOT be rendered when the picker is shown.
+    expect(screen.queryByTestId('elmer-messages')).toBeNull();
+
+    // Restore the default mock.
+    mockInvoke.mockRestore();
+  });
+});
+
+describe('<ElmerPane> T8b — not-onboarded: chat input is disabled with a hint', () => {
+  it('when onboarded=false the chat input is disabled and shows a hint', async () => {
+    mockInvoke.mockImplementation(async (cmd?: string, _args?: unknown) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: '',
+        keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
+        onboarded: false,
+      };
+      if (cmd === 'elmer_key_status_for_origins') return {};
+      if (cmd === 'elmer_send') return undefined;
+      if (cmd === 'elmer_stop') return undefined;
+      if (cmd === 'elmer_config_set') return undefined;
+      if (cmd === 'elmer_detect_models') return [];
+      return undefined;
+    });
+
+    render(<ElmerPane />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('elmer-tile-picker')).toBeTruthy();
+    });
+
+    // The chat input textarea must be disabled.
+    const input = screen.getByTestId('elmer-input') as HTMLTextAreaElement;
+    expect(input.disabled).toBe(true);
+
+    // A hint should be visible (a note about completing setup).
+    const hint = screen.getByTestId('elmer-onboarding-hint');
+    expect(hint).toBeTruthy();
+
+    mockInvoke.mockRestore();
+  });
+});
+
+describe('<ElmerPane> T8b — onboarded=true: chat renders, picker not shown by default', () => {
+  it('when onboarded=true the message list renders and the tile picker is not shown', async () => {
+    // Default mock already returns onboarded=true.
+    render(<ElmerPane />);
+
+    // Message list (log) must be present.
+    await waitFor(() => {
+      expect(screen.getByTestId('elmer-messages')).toBeTruthy();
+    });
+
+    // Tile picker must NOT be shown.
+    expect(screen.queryByTestId('elmer-tile-picker')).toBeNull();
+  });
+});
+
+describe('<ElmerPane> T8b — gear reopens picker after mount (F6 reopen)', () => {
+  it('opening the model section via the gear after mount shows the tile picker', async () => {
+    mockInvoke.mockImplementation(async (cmd?: string, _args?: unknown) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
+        onboarded: false,
+      };
+      if (cmd === 'elmer_key_status_for_origins') return {};
+      if (cmd === 'elmer_send') return undefined;
+      if (cmd === 'elmer_stop') return undefined;
+      if (cmd === 'elmer_config_set') return undefined;
+      if (cmd === 'elmer_detect_models') return [];
+      return undefined;
+    });
+
+    render(<ElmerPane />);
+
+    // Wait for picker to appear from the initial load.
+    await waitFor(() => {
+      expect(screen.getByTestId('elmer-tile-picker')).toBeTruthy();
+    });
+
+    // Simulate collapsing the advanced section, then reopening (gear click scenario).
+    // The picker should re-render when the section opens again.
+    fireEvent.click(screen.getByTestId('elmer-advanced-toggle')); // close
+    fireEvent.click(screen.getByTestId('elmer-advanced-toggle')); // open
+
+    // Picker should still be shown (re-rendered on open).
+    await waitFor(() => {
+      expect(screen.getByTestId('elmer-tile-picker')).toBeTruthy();
+    });
+
+    mockInvoke.mockRestore();
   });
 });

@@ -26,11 +26,12 @@
  */
 
 import { memo, useState, useRef, useEffect, useCallback, useMemo, type KeyboardEvent } from 'react';
-import { useElmer, type ElmerItem, type ElmerPhase } from './useElmer';
+import { useElmer, keyStatusForOrigins, type ElmerItem, type ElmerPhase } from './useElmer';
 import { EgressArmControl } from '../shell/EgressArmControl';
 import type { EgressStatusDto } from '../security/egressTypes';
 import { PRESETS, inferPreset, isLoopback, originOf, nextModelForPreset } from './elmerModelConfig';
-import type { SetKey, KeySource } from './elmerModelConfig';
+import type { SetKey, KeySource, KeyStatusByOrigin } from './elmerModelConfig';
+import { ModelTilePicker } from './ModelTilePicker';
 import { renderMarkdown } from '../shell/markdownRender';
 import { sanitizeHtml } from '../shell/sanitizeHtml';
 import './ElmerPane.css';
@@ -919,6 +920,13 @@ export const ElmerPane = memo(function ElmerPane({
   // tuxlink-1wi5w: when expandModel is true, open the Model section on mount
   // so the operator lands directly on the endpoint/model picker.
   const [advancedOpen, setAdvancedOpen] = useState(() => expandModel === true);
+  // T8b: Counter that increments each time the model section is opened, so the
+  // picker re-renders (and re-fetches keyStatusByOrigin) on every open — not just
+  // on initial state. This replaces the initial-state-only open path (:906).
+  const [openCounter, setOpenCounter] = useState(() => (expandModel === true ? 1 : 0));
+  // T8b: Per-origin key-status map passed to the tile picker. Populated once
+  // when the picker opens (not per-keystroke).
+  const [keyStatusByOrigin, setKeyStatusByOrigin] = useState<KeyStatusByOrigin>({});
   const listEndRef = useRef<HTMLDivElement>(null);
   // Ref to track whether configRead has been called, so the eager-load
   // on mount and the disclosure open don't double-call it.
@@ -932,6 +940,27 @@ export const ElmerPane = memo(function ElmerPane({
       void configRead();
     }
   }, [configRead]);
+
+  // T8b: When the model section opens (advancedOpen + counter bump), fetch
+  // keyStatusForOrigins ONCE for all known preset origins. This drives the
+  // per-tile "key saved" badge in ModelTilePicker without per-keystroke fetches.
+  // The openCounter ensures that re-opening the section (gear-reopen, F6) re-
+  // fetches fresh status — not just the initial open.
+  useEffect(() => {
+    if (!advancedOpen || openCounter === 0) return;
+    const origins = PRESETS
+      .filter((p) => p.endpoint)
+      .map((p) => {
+        try { return new URL(p.endpoint).origin; } catch { return ''; }
+      })
+      .filter(Boolean);
+    void keyStatusForOrigins(origins).then((map) => {
+      setKeyStatusByOrigin(map);
+    }).catch(() => {
+      // Backend not yet implemented (lands in Task 4) — fall back to empty map.
+      setKeyStatusByOrigin({});
+    });
+  }, [advancedOpen, openCounter]);
 
   // phase 2b — true while a streamed turn is in flight (live buffers non-empty),
   // before EV_TURN finalizes and clears them. Drives the transient streaming
@@ -947,19 +976,14 @@ export const ElmerPane = memo(function ElmerPane({
     }
   }, [items, streamingAnswer, streamingReasoning]);
 
-  // G3: Determine whether no model is configured so the empty-state button shows.
-  // We consider "no model" when config is loaded and the model string is empty.
-  const hasNoModelConfigured =
+  // T8b: Replaces the old `hasNoModelConfigured` derivation (agentModel empty
+  // check). The picker is the first-run surface — shown when config is loaded and
+  // the operator has NOT yet completed setup (onboarded=false). The old
+  // items.length===0 coupling is dropped: the picker replaces the list entirely.
+  const notOnboarded =
     modelConfigState === 'loaded' &&
     modelConfig !== null &&
-    !modelConfig.agentModel;
-
-  // G3: Handler for the "Connect a model" button — opens the Model section
-  // disclosure in place (not a menu pointer, per R2.6 chicken-and-egg rule).
-  const handleConnectModel = useCallback(() => {
-    setAdvancedOpen(true);
-    // configRead was already called eagerly on mount, so don't re-call it.
-  }, []);
+    !modelConfig.onboarded;
 
   const handleSend = () => {
     const msg = input.trim();
@@ -1015,45 +1039,61 @@ export const ElmerPane = memo(function ElmerPane({
         </div>
       )}
 
-      {/* Message list */}
-      <div className="elmer-messages" data-testid="elmer-messages" role="log" aria-live="polite">
-        {items.map((item) => (
-          <MessageItem key={item.id} item={item} />
-        ))}
-        {/* phase 2b — transient live streaming bubble; carries the liveness once
-            the first token arrives, so the pre-token ThinkingIndicator is hidden
-            while it is shown (no double indicator). */}
-        {isStreaming && (
-          <StreamingBubble answer={streamingAnswer} reasoning={streamingReasoning} />
-        )}
-        {isRunning && !isStreaming && <ThinkingIndicator />}
-        {lastOutcome && (
-          <OutcomeCallout phase={phase} detail={lastOutcome.detail} />
-        )}
-        {/* G3: Empty-state button — shown when no model is configured so the
-            operator can reach the Model section directly from the chat area.
-            NOT a sentence pointing at a menu (R2.6 chicken-and-egg).
-            Expands the Model section disclosure in place. */}
-        {hasNoModelConfigured && items.length === 0 && !isRunning && (
-          <div className="elmer-empty-state">
-            <button
-              type="button"
-              className="elmer-connect-model-btn"
-              data-testid="elmer-connect-model"
-              onClick={handleConnectModel}
-            >
-              Connect a model
-            </button>
-          </div>
-        )}
-        <div ref={listEndRef} />
-      </div>
+      {/* T8b: First-run gate — when the operator has not yet completed model
+          setup (onboarded=false), render the tile picker IN PLACE of the message
+          list. The picker replaces the list entirely; the items.length===0 coupling
+          is dropped (state in comment: picker replaces the list). Once onboarded,
+          the normal message list is shown. */}
+      {notOnboarded ? (
+        modelConfigState === 'loaded' && modelConfig ? (
+          <ModelTilePicker
+            onSave={configSet}
+            onDetect={detectModels}
+            detectState={detectState}
+            keyStatusByOrigin={keyStatusByOrigin}
+            initialEndpoint={modelConfig.agentEndpoint}
+            initialModel={modelConfig.agentModel}
+            initialKeyStatus={modelConfig.keyStatus}
+            initialTurnTimeoutSecs={modelConfig.agentTurnTimeoutSecs ?? 900}
+          />
+        ) : null
+      ) : (
+        /* Message list (normal onboarded path) */
+        <div className="elmer-messages" data-testid="elmer-messages" role="log" aria-live="polite">
+          {items.map((item) => (
+            <MessageItem key={item.id} item={item} />
+          ))}
+          {/* phase 2b — transient live streaming bubble; carries the liveness once
+              the first token arrives, so the pre-token ThinkingIndicator is hidden
+              while it is shown (no double indicator). */}
+          {isStreaming && (
+            <StreamingBubble answer={streamingAnswer} reasoning={streamingReasoning} />
+          )}
+          {isRunning && !isStreaming && <ThinkingIndicator />}
+          {lastOutcome && (
+            <OutcomeCallout phase={phase} detail={lastOutcome.detail} />
+          )}
+          <div ref={listEndRef} />
+        </div>
+      )}
 
       {/* Offline-endpoint friendly state (AC-14) */}
       {isOffline && (
         <div className="elmer-offline-banner" data-testid="elmer-offline-banner" role="alert">
           The local Elmer model is not reachable. Verify the endpoint is running.
         </div>
+      )}
+
+      {/* T8b: When not yet onboarded, show a one-line hint above the input area
+          so the operator knows why the input is disabled. Dropped once onboarded. */}
+      {notOnboarded && (
+        <p
+          className="elmer-onboarding-hint"
+          data-testid="elmer-onboarding-hint"
+          role="note"
+        >
+          Choose a model above to start chatting with Elmer.
+        </p>
       )}
 
       {/* Input area + Stop (always visible, AC-11) */}
@@ -1066,7 +1106,7 @@ export const ElmerPane = memo(function ElmerPane({
           onKeyDown={handleKeyDown}
           placeholder="Ask Elmer…"
           rows={3}
-          disabled={isRunning}
+          disabled={isRunning || notOnboarded}
           aria-label="Message to Elmer"
         />
         <div className="elmer-input-actions">
@@ -1074,7 +1114,7 @@ export const ElmerPane = memo(function ElmerPane({
             type="button"
             className="elmer-send-button"
             data-testid="elmer-send"
-            disabled={isRunning || !input.trim()}
+            disabled={isRunning || notOnboarded || !input.trim()}
             onClick={handleSend}
           >
             Send
@@ -1095,7 +1135,10 @@ export const ElmerPane = memo(function ElmerPane({
 
       {/* Secondary: endpoint/model picker behind a disclosure (AC-13).
           The primary field path (chat + Stop + arm chip) stays uncluttered;
-          the endpoint/model setting is rarely changed after initial setup. */}
+          the endpoint/model setting is rarely changed after initial setup.
+          T8b (F6 reopen): the gear toggle bumps openCounter so the picker
+          re-fetches keyStatusByOrigin and re-renders on every open — not just
+          on initial-state open (the :906 initial-state-only path is replaced). */}
       <div className="elmer-advanced" data-testid="elmer-advanced">
         <button
           type="button"
@@ -1105,6 +1148,11 @@ export const ElmerPane = memo(function ElmerPane({
           onClick={() => {
             const next = !advancedOpen;
             setAdvancedOpen(next);
+            // T8b: bump the open-counter every time the section opens, so the
+            // keyStatusForOrigins effect re-runs (gear-reopen / F6).
+            if (next) {
+              setOpenCounter((c) => c + 1);
+            }
             // Load config only if it hasn't been triggered yet (the eager-mount
             // load may have already initiated it — check the ref, not the state,
             // to avoid a double-call between mount useEffect and toggle click).

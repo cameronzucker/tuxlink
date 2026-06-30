@@ -28,7 +28,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import type { ConfigReadDto, SetKey, KeySource } from './elmerModelConfig';
+import type { ConfigReadDto, SetKey, KeySource, KeyStatusByOrigin } from './elmerModelConfig';
 import {
   EV_CHIP,
   EV_DELTA,
@@ -191,6 +191,25 @@ export interface UseElmer {
   detectState: DetectState;
   /** G3: The model name that was active when the last configSet ran (null if never set). */
   activeModel: string | null;
+  /**
+   * T8b: True once the operator has completed model setup at least once. Mirrors
+   * `ConfigReadDto.onboarded`. Null while config is loading or in error state.
+   */
+  onboarded: boolean | null;
+}
+
+/**
+ * keyStatusForOrigins — Task 4-fe frontend wrapper.
+ *
+ * Calls the Tauri `elmer_key_status_for_origins` command and returns a
+ * `KeyStatusByOrigin` map (statuses only, never key values). Designed to be
+ * called once when the tile picker opens, not per-keystroke.
+ *
+ * The Rust producer lands in Task 4 — this frontend shim is the T8b consumer
+ * side. Tests mock `invoke` to return the map directly.
+ */
+export async function keyStatusForOrigins(origins: string[]): Promise<KeyStatusByOrigin> {
+  return invoke<KeyStatusByOrigin>('elmer_key_status_for_origins', { origins });
 }
 
 let _nextId = 0;
@@ -428,5 +447,6 @@ export function useElmer(): UseElmer {
     detectModels,
     detectState,
     activeModel,
+    onboarded: modelConfig !== null ? modelConfig.onboarded : null,
   };
 }
