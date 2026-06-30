@@ -1834,7 +1834,7 @@ describe('<ElmerPane> — turn_timeout_minutes_hint', () => {
 
 describe('<ElmerPane> T8b — not-onboarded: tile picker renders in place of message list', () => {
   it('when onboarded=false the tile picker renders and the message list is not shown', async () => {
-    mockInvoke.mockImplementation(async (cmd?: string, _args?: unknown) => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string, _args?: unknown) => {
       if (cmd === 'elmer_config_read') return {
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
         agentModel: '',
@@ -1859,15 +1859,12 @@ describe('<ElmerPane> T8b — not-onboarded: tile picker renders in place of mes
 
     // The message list (log area) should NOT be rendered when the picker is shown.
     expect(screen.queryByTestId('elmer-messages')).toBeNull();
-
-    // Restore the default mock.
-    mockInvoke.mockRestore();
   });
 });
 
 describe('<ElmerPane> T8b — not-onboarded: chat input is disabled with a hint', () => {
   it('when onboarded=false the chat input is disabled and shows a hint', async () => {
-    mockInvoke.mockImplementation(async (cmd?: string, _args?: unknown) => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string, _args?: unknown) => {
       if (cmd === 'elmer_config_read') return {
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
         agentModel: '',
@@ -1896,8 +1893,6 @@ describe('<ElmerPane> T8b — not-onboarded: chat input is disabled with a hint'
     // A hint should be visible (a note about completing setup).
     const hint = screen.getByTestId('elmer-onboarding-hint');
     expect(hint).toBeTruthy();
-
-    mockInvoke.mockRestore();
   });
 });
 
@@ -1917,14 +1912,19 @@ describe('<ElmerPane> T8b — onboarded=true: chat renders, picker not shown by 
 });
 
 describe('<ElmerPane> T8b — gear reopens picker after mount (F6 reopen)', () => {
-  it('opening the model section via the gear after mount shows the tile picker', async () => {
-    mockInvoke.mockImplementation(async (cmd?: string, _args?: unknown) => {
+  it('re-opening the model section fires elmer_key_status_for_origins a second time via openCounter bump', async () => {
+    // Render with expandModel=true so advancedOpen starts true and openCounter=1
+    // on mount. The keyStatusForOrigins effect fires once immediately (openCounter=1).
+    // The default mock returns onboarded=true config, so we only override config_read
+    // with an onboarded=true response that has a known endpoint (so the PRESETS filter
+    // produces at least one origin and the effect actually calls the command).
+    mockInvoke.mockImplementationOnce(async (cmd?: string, _args?: unknown) => {
       if (cmd === 'elmer_config_read') return {
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
         agentModel: 'gpt-4o',
         keyStatus: 'absent',
         agentTurnTimeoutSecs: 900,
-        onboarded: false,
+        onboarded: true,
       };
       if (cmd === 'elmer_key_status_for_origins') return {};
       if (cmd === 'elmer_send') return undefined;
@@ -1934,23 +1934,34 @@ describe('<ElmerPane> T8b — gear reopens picker after mount (F6 reopen)', () =
       return undefined;
     });
 
-    render(<ElmerPane />);
+    render(<ElmerPane expandModel={true} />);
 
-    // Wait for picker to appear from the initial load.
+    // With expandModel=true the advanced body is open from mount and the
+    // keyStatusForOrigins effect fires once (openCounter=1). Wait for that first call.
     await waitFor(() => {
-      expect(screen.getByTestId('elmer-tile-picker')).toBeTruthy();
+      const calls = mockInvoke.mock.calls.filter((c) => c[0] === 'elmer_key_status_for_origins');
+      expect(calls.length).toBeGreaterThanOrEqual(1);
     });
 
-    // Simulate collapsing the advanced section, then reopening (gear click scenario).
-    // The picker should re-render when the section opens again.
-    fireEvent.click(screen.getByTestId('elmer-advanced-toggle')); // close
-    fireEvent.click(screen.getByTestId('elmer-advanced-toggle')); // open
+    const callsAfterMount = mockInvoke.mock.calls.filter(
+      (c) => c[0] === 'elmer_key_status_for_origins',
+    ).length;
 
-    // Picker should still be shown (re-rendered on open).
+    // Click the toggle to close the advanced section.
+    fireEvent.click(screen.getByTestId('elmer-advanced-toggle')); // close — advancedOpen becomes false
+
+    // Click the toggle again to reopen — this bumps openCounter, which re-triggers
+    // the keyStatusForOrigins effect (the load-bearing F6 mechanism).
+    fireEvent.click(screen.getByTestId('elmer-advanced-toggle')); // open — advancedOpen becomes true, openCounter increments
+
+    // Assert the effect fired again: total elmer_key_status_for_origins calls must
+    // exceed the post-mount count. This assertion FAILS if openCounter were only
+    // set on initial state (the guard against the "initial-state-only" bug).
     await waitFor(() => {
-      expect(screen.getByTestId('elmer-tile-picker')).toBeTruthy();
+      const callsAfterReopen = mockInvoke.mock.calls.filter(
+        (c) => c[0] === 'elmer_key_status_for_origins',
+      ).length;
+      expect(callsAfterReopen).toBeGreaterThan(callsAfterMount);
     });
-
-    mockInvoke.mockRestore();
   });
 });
