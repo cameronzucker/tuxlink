@@ -19,7 +19,7 @@ tuxlink-security = { path = "../tuxlink-security" }
 # `transport-async-rw` is the blanket (R, W) IntoTransport used for the UDS
 # split-stream serve. MSRV-1.75 / clippy-clean of rmcp 0.8.x is CI-verified on
 # the monolith draft PR; this small crate ALSO compiles locally on the Pi.
-rmcp = { version = "0.8", features = ["server", "macros", "transport-async-rw"] }
+rmcp = { version = "1.4", features = ["server", "macros", "transport-async-rw"] }
 # rmcp 0.8's #[tool] macro references schemars 1.0 for JSON Schema generation;
 # a 0.8 pin would resolve a SECOND incompatible schemars and fail the derive.
 schemars = "1.0"
