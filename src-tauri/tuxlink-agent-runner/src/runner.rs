@@ -45,7 +45,11 @@ pub async fn run_with_conversation(
     status: EgressStatus,
     limits: Limits,
     cancel: CancellationToken,
-    on_event: &dyn Fn(RunEvent),
+    // `+ Sync` so a `&on_event` held across the loop's `.await`s is `Send` — the
+    // Elmer session drives this loop inside a `tokio::spawn`ed (Send) task, and
+    // `&F: Send` requires `F: Sync`. The no-op `&|_| {}` and the real sink
+    // (which captures only an `Arc<dyn Fn + Send + Sync>`) both satisfy it.
+    on_event: &(dyn Fn(RunEvent) + Sync),
 ) -> RunOutcome {
     // `status` is observed but never used to gate (gating lives below the MCP
     // boundary). Bind it so the read-only contract is explicit and the param is
