@@ -226,6 +226,7 @@
 }
 .elmer-thinking::before {
   content: '';
+  flex: 0 0 auto;
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -235,6 +236,25 @@
 @keyframes elmer-pulse {
   0%, 100% { opacity: 0.35; transform: scale(0.85); }
   50%      { opacity: 1;    transform: scale(1.15); }
+}
+/* Visually-hidden label for screen readers (stable; not re-announced on tick). */
+.elmer-thinking-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+/* Elapsed timer — dimmer than the verb phrase to stay subtle. */
+.elmer-thinking-elapsed {
+  color: var(--text-faint, var(--text-dim));
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  font-style: normal;
 }
 
 /* Terminal-outcome callouts. */
