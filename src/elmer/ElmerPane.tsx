@@ -391,7 +391,7 @@ function ModelForm({
               <button
                 type="button"
                 className="elmer-key-action-btn"
-                data-testid="elmer-key-remove-btn"
+                data-testid="elmer-key-clear-cancel-btn"
                 onClick={() => setClearPending(false)}
               >
                 Cancel
