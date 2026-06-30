@@ -1075,3 +1075,26 @@
   color: var(--text-faint, var(--text-dim));
   font-size: 10px;
 }
+
+
+/* ---------------------------------------------------------------------------
+ * T10 Fix 1: Back to chat / cancel affordance for the switch-provider flow.
+ * Only rendered when onboarded=true and switchProviderFocusTier is set (i.e.,
+ * the operator opened the picker via "Switch provider", not first-run setup).
+ * --------------------------------------------------------------------------- */
+
+.elmer-back-to-chat-btn {
+  display: block;
+  margin: 8px 12px 0;
+  padding: 4px 10px;
+  font-size: var(--type-micro, 0.78rem);
+  color: var(--text-dim, var(--text-faint));
+  background: transparent;
+  border: 1px solid var(--border-subtle, var(--border-dim));
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.elmer-back-to-chat-btn:hover {
+  background: var(--bg-subtle, var(--bg-dim));
+}

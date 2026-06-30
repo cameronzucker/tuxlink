@@ -1085,17 +1085,40 @@ export const ElmerPane = memo(function ElmerPane({
           in this slot (with focusTier=paygo for paygo pre-selection). */}
       {notOnboarded || switchProviderFocusTier !== null ? (
         modelConfigState === 'loaded' && modelConfig ? (
-          <ModelTilePicker
-            onSave={configSet}
-            onDetect={detectModels}
-            detectState={detectState}
-            keyStatusByOrigin={keyStatusByOrigin}
-            initialEndpoint={modelConfig.agentEndpoint}
-            initialModel={modelConfig.agentModel}
-            initialKeyStatus={modelConfig.keyStatus}
-            initialTurnTimeoutSecs={modelConfig.agentTurnTimeoutSecs ?? 900}
-            focusTier={switchProviderFocusTier ?? undefined}
-          />
+          <>
+            {/* T10 Fix 1: Cancel/back affordance — only when onboarded (switch-provider
+                flow), never during first-run onboarding where the operator must complete
+                setup. Clicking returns to chat without saving. */}
+            {!notOnboarded && switchProviderFocusTier !== null && (
+              <button
+                type="button"
+                className="elmer-back-to-chat-btn"
+                data-testid="elmer-back-to-chat-btn"
+                onClick={() => { setSwitchProviderFocusTier(null); }}
+              >
+                ← Back to chat
+              </button>
+            )}
+            <ModelTilePicker
+              onSave={async (args) => {
+                // T10 Fix 1: After a SUCCESSFUL save in the switch-provider flow,
+                // clear switchProviderFocusTier so the message list reappears.
+                // On failure, remain on the picker so the operator can retry.
+                await configSet(args);
+                if (switchProviderFocusTier !== null) {
+                  setSwitchProviderFocusTier(null);
+                }
+              }}
+              onDetect={detectModels}
+              detectState={detectState}
+              keyStatusByOrigin={keyStatusByOrigin}
+              initialEndpoint={modelConfig.agentEndpoint}
+              initialModel={modelConfig.agentModel}
+              initialKeyStatus={modelConfig.keyStatus}
+              initialTurnTimeoutSecs={modelConfig.agentTurnTimeoutSecs ?? 900}
+              focusTier={switchProviderFocusTier ?? undefined}
+            />
+          </>
         ) : null
       ) : (
         /* Message list (normal onboarded path) */

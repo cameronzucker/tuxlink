@@ -2006,7 +2006,25 @@ describe('<ElmerPane> T10 — rateLimited: distinct callout with Switch provider
   it('clicking Switch provider opens the model picker (elmer-tile-picker visible)', async () => {
     // Config must be onboarded=true (so we see the message list + rate-limited callout,
     // not the first-run picker). Switch provider then transitions to the picker.
+    // Fix 2: explicitly mock onboarded=true so this test genuinely starts from
+    // the chat/message-list path and the Switch action is what opens the picker.
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
+        onboarded: true,
+      };
+      return undefined;
+    });
+
     render(<ElmerPane />);
+
+    // Wait for message list to be visible (confirms we're in the onboarded/chat path).
+    await waitFor(() => {
+      expect(screen.getByTestId('elmer-messages')).toBeTruthy();
+    });
 
     const payload: ElmerOutcomePayload = {
       kind: 'outcome',
@@ -2027,7 +2045,9 @@ describe('<ElmerPane> T10 — rateLimited: distinct callout with Switch provider
     });
   });
 
-  it('clicking Switch provider pre-selects the first paygo tile (aria-checked=true on a paygo tile)', async () => {
+  it('clicking Switch provider pre-selects the first paygo tile (aria-checked=true on elmer-tile-openai)', async () => {
+    // Fix 3: PRESETS ordering — openai is the first paygo preset, so focusTier='paygo'
+    // must select elmer-tile-openai specifically. Assert the exact tile, not an OR.
     render(<ElmerPane />);
 
     const payload: ElmerOutcomePayload = {
@@ -2040,12 +2060,14 @@ describe('<ElmerPane> T10 — rateLimited: distinct callout with Switch provider
     fireEvent.click(screen.getByTestId('elmer-switch-provider-btn'));
 
     await waitFor(() => {
-      // At least one paygo tile must be aria-checked=true.
+      // The OpenAI tile (first paygo preset in PRESETS) must be aria-checked=true.
       const openaiTile = screen.getByTestId('elmer-tile-openai');
-      const anthropicTile = screen.getByTestId('elmer-tile-anthropic');
-      const openaiChecked = openaiTile.getAttribute('aria-checked') === 'true';
-      const anthropicChecked = anthropicTile.getAttribute('aria-checked') === 'true';
-      expect(openaiChecked || anthropicChecked).toBe(true);
+      expect(openaiTile.getAttribute('aria-checked')).toBe('true');
+      // Free/local tiles must NOT be checked.
+      expect(screen.getByTestId('elmer-tile-gemini').getAttribute('aria-checked')).toBe('false');
+      expect(screen.getByTestId('elmer-tile-localOllama').getAttribute('aria-checked')).toBe('false');
+      // Anthropic (second paygo) must not be checked when openai is the target.
+      expect(screen.getByTestId('elmer-tile-anthropic').getAttribute('aria-checked')).toBe('false');
     });
   });
 
@@ -2311,5 +2333,156 @@ describe('ModelTilePicker T10 — focusTier prop pre-selects first paygo tile', 
     // Non-paygo tiles must not be aria-checked.
     expect(s.getByTestId('elmer-tile-gemini').getAttribute('aria-checked')).toBe('false');
     expect(s.getByTestId('elmer-tile-localOllama').getAttribute('aria-checked')).toBe('false');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fix 4 (T10) — return-to-chat coverage: switch-provider save clears picker;
+// cancel/back returns to chat; cancel absent during first-run onboarding.
+// ---------------------------------------------------------------------------
+
+describe('<ElmerPane> T10 Fix 4 — successful switch-provider save returns to chat', () => {
+  it('after opening the picker via Switch provider and completing a SUCCESSFUL save, elmer-messages reappears and the picker is gone', async () => {
+    // Start onboarded=true so the message list is the initial surface.
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
+        onboarded: true,
+      };
+      return undefined;
+    });
+
+    render(<ElmerPane />);
+
+    // Confirm we start in chat (message list visible).
+    await waitFor(() => {
+      expect(screen.getByTestId('elmer-messages')).toBeTruthy();
+    });
+
+    // Drive a rateLimited outcome so the Switch provider button appears.
+    const rateLimitedPayload: ElmerOutcomePayload = {
+      kind: 'outcome',
+      outcomeKind: 'rateLimited',
+      detail: 'Daily free-tier limit reached.',
+    };
+    await fireElmerEvent<ElmerOutcomePayload>(EV_OUTCOME, rateLimitedPayload);
+
+    // Click Switch provider — picker opens.
+    fireEvent.click(screen.getByTestId('elmer-switch-provider-btn'));
+    await waitFor(() => {
+      expect(screen.getByTestId('elmer-tile-picker')).toBeTruthy();
+    });
+    // Message list must be gone while picker is showing.
+    expect(screen.queryByTestId('elmer-messages')).toBeNull();
+
+    // Switch to the localOllama tile — it uses the summary path (no keyPageUrl),
+    // so its save button (elmer-tile-save) is always enabled without key validation.
+    // This avoids the GetKeyCard key-length gate while still testing the save path.
+    await waitFor(() => {
+      expect(screen.getByTestId('elmer-tile-localOllama')).toBeTruthy();
+    });
+    fireEvent.click(screen.getByTestId('elmer-tile-localOllama'));
+
+    // The localOllama tile editor shows elmer-tile-save (always enabled).
+    await waitFor(() => {
+      const saveBtn = screen.getByTestId('elmer-tile-save') as HTMLButtonElement;
+      expect(saveBtn.disabled).toBe(false);
+    });
+
+    fireEvent.click(screen.getByTestId('elmer-tile-save'));
+
+    // After successful save, switchProviderFocusTier is cleared → message list reappears.
+    await waitFor(() => {
+      expect(screen.getByTestId('elmer-messages')).toBeTruthy();
+      expect(screen.queryByTestId('elmer-tile-picker')).toBeNull();
+    });
+  });
+});
+
+describe('<ElmerPane> T10 Fix 4 — cancel/back affordance returns to chat without saving', () => {
+  it('clicking Back to chat from the switch-provider picker returns to chat without a save', async () => {
+    // Start onboarded=true.
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
+        onboarded: true,
+      };
+      return undefined;
+    });
+
+    render(<ElmerPane />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('elmer-messages')).toBeTruthy();
+    });
+
+    // Trigger rateLimited → Switch provider.
+    const rateLimitedPayload: ElmerOutcomePayload = {
+      kind: 'outcome',
+      outcomeKind: 'rateLimited',
+      detail: 'Daily free-tier limit reached.',
+    };
+    await fireElmerEvent<ElmerOutcomePayload>(EV_OUTCOME, rateLimitedPayload);
+
+    fireEvent.click(screen.getByTestId('elmer-switch-provider-btn'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('elmer-tile-picker')).toBeTruthy();
+    });
+
+    // The Back to chat button must be present in the switch-provider flow.
+    const backBtn = screen.getByTestId('elmer-back-to-chat-btn');
+    expect(backBtn).toBeTruthy();
+
+    mockInvoke.mockClear();
+
+    // Click Back to chat — must return to the message list without saving.
+    fireEvent.click(backBtn);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('elmer-messages')).toBeTruthy();
+      expect(screen.queryByTestId('elmer-tile-picker')).toBeNull();
+    });
+
+    // No elmer_config_set must have been called (cancel = no save).
+    const configSetCalls = mockInvoke.mock.calls.filter((c) => c[0] === 'elmer_config_set');
+    expect(configSetCalls.length).toBe(0);
+  });
+});
+
+describe('<ElmerPane> T10 Fix 4 — cancel/back affordance absent during first-run onboarding', () => {
+  it('the Back to chat button is NOT present during first-run onboarding (onboarded=false)', async () => {
+    // First-run: onboarded=false — picker is the initial surface, no cancel affordance.
+    mockInvoke.mockImplementationOnce(async (cmd?: string, _args?: unknown) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: '',
+        agentModel: '',
+        keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
+        onboarded: false,
+      };
+      if (cmd === 'elmer_key_status_for_origins') return {};
+      if (cmd === 'elmer_send') return undefined;
+      if (cmd === 'elmer_stop') return undefined;
+      if (cmd === 'elmer_config_set') return undefined;
+      if (cmd === 'elmer_detect_models') return [];
+      return undefined;
+    });
+
+    render(<ElmerPane />);
+
+    // Tile picker must appear (first-run).
+    await waitFor(() => {
+      expect(screen.getByTestId('elmer-tile-picker')).toBeTruthy();
+    });
+
+    // The Back to chat button must NOT be present during first-run onboarding.
+    expect(screen.queryByTestId('elmer-back-to-chat-btn')).toBeNull();
   });
 });
