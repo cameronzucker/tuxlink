@@ -84,7 +84,7 @@ pub use crate::elmer::keyring::KeyStatus as KeyStatusDto;
 /// `ApiKey` does not implement `Deserialize` (it is intentionally opaque), so
 /// `Inline` carries a plain `String` at the boundary; `detect_inner` wraps it
 /// in `ApiKey::new` at the point of use, mirroring `SetKey::Set`.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(tag = "source", rename_all = "camelCase")]
 pub enum KeySource {
     /// Read the key from the keyring for the derived endpoint origin.
@@ -96,6 +96,26 @@ pub enum KeySource {
     },
     /// No key — probe without authentication.
     None,
+}
+
+/// Manual `Debug` impl that NEVER prints the inline key value.
+///
+/// The `Inline` variant carries a raw `String` at the Tauri boundary.  A
+/// derived `Debug` would format it as `Inline { value: "sk-secret" }`,
+/// leaking the credential to any log subscriber.  This type-level redaction
+/// is the primary guarantee; `#[instrument(skip(key_source, ...))]` on the
+/// Tauri wrapper is defence-in-depth.
+impl std::fmt::Debug for KeySource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            KeySource::UseStored => write!(f, "UseStored"),
+            KeySource::Inline { .. } => f
+                .debug_struct("Inline")
+                .field("value", &"<redacted>")
+                .finish(),
+            KeySource::None => write!(f, "None"),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -155,7 +175,7 @@ impl DetectError {
 /// `ApiKey` does not implement `Deserialize` (it is intentionally opaque), so
 /// `Set` carries a plain `String` at the boundary; `config_set_inner` wraps it
 /// in `ApiKey::new` at the point of use.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "camelCase")]
 pub enum SetKey {
     /// Leave the stored key unchanged.
@@ -167,6 +187,29 @@ pub enum SetKey {
     },
     /// Remove the stored key for this origin.
     Clear,
+}
+
+/// Manual `Debug` impl that NEVER prints the raw key value.
+///
+/// A derived `Debug` on `SetKey` would format `Set { value: "sk-secret" }`,
+/// leaking the credential to any log subscriber — including the tracing span
+/// recorded by `#[instrument]` before the skip list is applied at call time.
+/// Making redaction TYPE-LEVEL ensures the secret cannot appear in `{:?}`
+/// output regardless of how the caller formats or logs this enum.
+///
+/// The `#[instrument(skip(key, ...))]` guard on the Tauri wrapper is
+/// defence-in-depth; this impl is the primary guarantee.
+impl std::fmt::Debug for SetKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SetKey::Keep => write!(f, "Keep"),
+            SetKey::Set { .. } => f
+                .debug_struct("Set")
+                .field("value", &"<redacted>")
+                .finish(),
+            SetKey::Clear => write!(f, "Clear"),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -979,6 +1022,19 @@ mod tests {
     /// `#[tokio::test]` runtime to avoid `block_on`-inside-async panics), then
     /// scan the captured strings for the secret.
     ///
+    /// # Defence layers
+    ///
+    /// The PRIMARY guarantee is now TYPE-LEVEL: `SetKey` and `KeySource` have
+    /// manual `Debug` impls that always emit `<redacted>` for the secret
+    /// `value` field, regardless of the caller's skip list.  See the
+    /// `setkey_debug_redacts_value` and `keysource_debug_redacts_value` tests.
+    ///
+    /// This `instrument_skip_no_key_in_event` test verifies the SECONDARY
+    /// (defence-in-depth) guarantee: even if the `Debug` impl were somehow
+    /// bypassed, the `#[instrument(skip(key, ...))]` guard prevents the key
+    /// from ever entering a tracing span field.  Both layers together ensure
+    /// the secret is never observable in structured logs or debug output.
+    ///
     /// MSRV note: uses `tokio::runtime::Builder::new_current_thread().build()`
     /// which is stable on MSRV 1.75.
     #[test]
@@ -1066,6 +1122,77 @@ mod tests {
                  The #[instrument(skip(key, ...))] guarantee is violated."
             );
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: setkey_debug_redacts_value
+    // -----------------------------------------------------------------------
+
+    /// `SetKey::Set { value }` must NEVER appear in `{:?}` output.
+    ///
+    /// This is the primary type-level guarantee that the secret field value
+    /// cannot leak through Debug formatting, regardless of context or callers.
+    #[test]
+    fn setkey_debug_redacts_value() {
+        // Set variant: value must be redacted, not the literal key string.
+        let set = SetKey::Set { value: "sk-secret123".into() };
+        let formatted = format!("{:?}", set);
+        assert!(
+            !formatted.contains("sk-secret123"),
+            "SetKey::Set Debug must NOT contain the raw key; got: {formatted:?}"
+        );
+        assert!(
+            formatted.contains("<redacted>"),
+            "SetKey::Set Debug must contain '<redacted>'; got: {formatted:?}"
+        );
+
+        // Keep and Clear must still render their variant names.
+        let keep_fmt = format!("{:?}", SetKey::Keep);
+        assert!(
+            keep_fmt.contains("Keep"),
+            "SetKey::Keep Debug must contain 'Keep'; got: {keep_fmt:?}"
+        );
+
+        let clear_fmt = format!("{:?}", SetKey::Clear);
+        assert!(
+            clear_fmt.contains("Clear"),
+            "SetKey::Clear Debug must contain 'Clear'; got: {clear_fmt:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: keysource_debug_redacts_value
+    // -----------------------------------------------------------------------
+
+    /// `KeySource::Inline { value }` must NEVER appear in `{:?}` output.
+    ///
+    /// Mirrors `setkey_debug_redacts_value` for the detect path's key source.
+    #[test]
+    fn keysource_debug_redacts_value() {
+        // Inline variant: value must be redacted, not the literal key string.
+        let inline = KeySource::Inline { value: "sk-secret123".into() };
+        let formatted = format!("{:?}", inline);
+        assert!(
+            !formatted.contains("sk-secret123"),
+            "KeySource::Inline Debug must NOT contain the raw key; got: {formatted:?}"
+        );
+        assert!(
+            formatted.contains("<redacted>"),
+            "KeySource::Inline Debug must contain '<redacted>'; got: {formatted:?}"
+        );
+
+        // UseStored and None must still render their variant names.
+        let use_stored_fmt = format!("{:?}", KeySource::UseStored);
+        assert!(
+            use_stored_fmt.contains("UseStored"),
+            "KeySource::UseStored Debug must contain 'UseStored'; got: {use_stored_fmt:?}"
+        );
+
+        let none_fmt = format!("{:?}", KeySource::None);
+        assert!(
+            none_fmt.contains("None"),
+            "KeySource::None Debug must contain 'None'; got: {none_fmt:?}"
+        );
     }
 
     // =======================================================================
