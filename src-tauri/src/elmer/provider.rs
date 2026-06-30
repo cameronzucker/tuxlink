@@ -11,11 +11,11 @@
 //!
 //! ## SSRF defence (AC-7)
 //!
-//! The endpoint URL is accepted ONLY from operator config or the hard-coded
-//! loopback default. It is never sourced from a tool result. The
-//! [`tuxlink_agent_frontend::endpoint::LoopbackEndpoint`] wrapper enforces that
-//! the URL is loopback-only (`127.0.0.0/8` / `::1` / `localhost`); any other
-//! host is rejected at construction time.
+//! The endpoint URL is accepted from operator config OR the `elmer_config_set`
+//! Tauri command (an operator UI action) — it is **never** sourced from a tool
+//! result. The egress gate in [`tuxlink_agent_frontend::egress::build_vetted_client`]
+//! enforces IP-policy at connect time; `AgentEndpoint::parse` rejects metadata
+//! literals and credentials-in-URL at config time.
 //!
 //! ## Vetted-client egress (AC-7, Task C2)
 //!
@@ -359,28 +359,17 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // AC-7: LoopbackEndpoint rejects non-loopback hosts
+    // AC-7: LoopbackEndpoint smoke — retained until E2 (LoopbackEndpoint removal)
     // -----------------------------------------------------------------------
 
     /// `LoopbackEndpoint::parse` accepts a local ollama endpoint.
+    ///
+    /// Minimal smoke test retained so `LoopbackEndpoint` stays exercised until
+    /// the E2 constructor migration removes it entirely.
     #[test]
     fn loopback_endpoint_accepts_local_ollama() {
         let ep = LoopbackEndpoint::parse("http://127.0.0.1:11434/v1/chat/completions");
         assert!(ep.is_ok(), "expected Ok, got {ep:?}");
-    }
-
-    /// `LoopbackEndpoint::parse` rejects a LAN address (192.168.x.x).
-    #[test]
-    fn loopback_endpoint_rejects_lan_address() {
-        let ep = LoopbackEndpoint::parse("http://192.168.1.5/v1/chat/completions");
-        assert!(ep.is_err(), "LAN address must be rejected: {ep:?}");
-    }
-
-    /// `LoopbackEndpoint::parse` rejects the cloud metadata address.
-    #[test]
-    fn loopback_endpoint_rejects_metadata_address() {
-        let ep = LoopbackEndpoint::parse("http://169.254.169.254/v1/chat/completions");
-        assert!(ep.is_err(), "metadata address must be rejected: {ep:?}");
     }
 
     /// Verify that `ElmerProvider::new` can be constructed with a valid endpoint
@@ -394,18 +383,62 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // AC-7: agent-writable config key absence test
+    // AC-7: AgentEndpoint contract tests
+    //
+    // The endpoint accepted via `elmer_config_set` (operator UI action) is
+    // validated by `AgentEndpoint::parse` at config time. The parse rules are:
+    //   - metadata-IP literals → rejected
+    //   - public host/IP       → accepted (egress gate covers runtime policy)
+    //   - credentials-in-URL   → rejected
+    //
+    // These tests duplicate A1's AgentEndpoint tests deliberately — they keep
+    // this module self-documenting about the parse contract without requiring a
+    // cross-module import. The enforcement of "endpoint is never set from a tool
+    // result" is verified by R2.4 in injection_tests.rs (task F1).
+    // -----------------------------------------------------------------------
+
+    /// `AgentEndpoint::parse` rejects a metadata-IP literal.
+    ///
+    /// The SSRF guard catches cloud-metadata addresses at config time so they
+    /// never reach the egress gate or `ElmerProvider::new_vetted`.
+    #[test]
+    fn agent_endpoint_rejects_metadata_literal() {
+        let ep = AgentEndpoint::parse("http://169.254.169.254/v1/chat/completions");
+        assert!(ep.is_err(), "metadata-IP literal must be rejected at parse: {ep:?}");
+    }
+
+    /// `AgentEndpoint::parse` accepts a public HTTPS endpoint.
+    ///
+    /// Public cloud API endpoints (api.openai.com, etc.) are legitimate operator
+    /// targets; the egress gate enforces runtime IP policy via `new_vetted`.
+    #[test]
+    fn agent_endpoint_accepts_public_host() {
+        let ep = AgentEndpoint::parse("https://api.openai.com/v1/chat/completions");
+        assert!(ep.is_ok(), "public endpoint must be accepted at parse: {ep:?}");
+    }
+
+    /// `AgentEndpoint::parse` rejects credentials-in-URL (userinfo component).
+    ///
+    /// An endpoint with embedded credentials would let a tool result inject a
+    /// credential-bearing URL into the config; rejecting at parse closes that
+    /// vector even if the caller is operator-sourced.
+    #[test]
+    fn agent_endpoint_rejects_userinfo() {
+        let ep = AgentEndpoint::parse("https://user:pass@api.example.com/v1/chat/completions");
+        assert!(ep.is_err(), "userinfo in URL must be rejected at parse: {ep:?}");
+    }
+
+    // -----------------------------------------------------------------------
+    // AC-7: provider opacity test
     //
     // The endpoint must NEVER be reachable from a tool result. The provider
-    // is constructed only in the lib.rs setup closure from config/default,
-    // not from any command parameter or tool output. This test asserts the
-    // absence of any Tauri command parameter that could deserialize an
-    // endpoint/model from the frontend (a React-supplied endpoint would be
-    // an SSRF vector).
+    // is constructed from operator config OR the `elmer_config_set` Tauri
+    // command — both are operator-side actions, not agent-writable.
     //
-    // Implementation: the grep-gate lives in commands.rs (AC-5 test) which
-    // asserts no Vec<Message>/Conversation command parameter exists. The
-    // endpoint/model config key is an OPERATOR-only field (not agent-writable).
+    // The enforcement boundary (R2.4) lives in injection_tests.rs (task F1):
+    // that test asserts the MCP boundary cannot set the endpoint from a tool
+    // result. This test asserts the structural invariant: ElmerProvider has no
+    // public endpoint setter reachable from Tauri command context.
     // -----------------------------------------------------------------------
 
     /// The ElmerProvider struct is opaque — it has no public setter for the
@@ -414,9 +447,11 @@ mod tests {
     /// Verifies that ElmerProvider can be constructed and used as a dyn Provider.
     #[test]
     fn elmer_provider_new_is_opaque_and_implements_provider() {
-        // The only public constructor is ElmerProvider::new(LoopbackEndpoint, ...).
-        // There is no way to set the endpoint from outside this module; the inner
-        // OpenAiProvider field is private (no pub field, no setter method).
+        // The only public constructors are ElmerProvider::new(LoopbackEndpoint, ...)
+        // and ElmerProvider::new_vetted(AgentEndpoint, ...). Neither exposes a
+        // public endpoint setter; the inner OpenAiProvider field is private
+        // (no pub field, no setter method). An agent calling a Tauri tool has
+        // no path to mutate the endpoint — the structural invariant enforces AC-7.
         let ep = LoopbackEndpoint::parse("http://127.0.0.1:11434/v1/chat/completions")
             .expect("loopback must be accepted");
         let provider = ElmerProvider::new(ep, "test-model".into(), None);
