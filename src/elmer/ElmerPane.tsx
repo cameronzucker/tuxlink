@@ -25,12 +25,14 @@
  *   - running       → "Elmer is thinking…" indicator.
  */
 
-import { memo, useState, useRef, useEffect, useCallback, type KeyboardEvent } from 'react';
+import { memo, useState, useRef, useEffect, useCallback, useMemo, type KeyboardEvent } from 'react';
 import { useElmer, type ElmerItem, type ElmerPhase } from './useElmer';
 import { EgressArmControl } from '../shell/EgressArmControl';
 import type { EgressStatusDto } from '../security/egressTypes';
 import { PRESETS, inferPreset, isLoopback, originOf } from './elmerModelConfig';
 import type { SetKey, KeySource } from './elmerModelConfig';
+import { renderMarkdown } from '../shell/markdownRender';
+import { sanitizeHtml } from '../shell/sanitizeHtml';
 import './ElmerPane.css';
 
 // ---------------------------------------------------------------------------
@@ -110,6 +112,26 @@ export const RADIO_VERBS: readonly string[] = [
 // Sub-components
 // ---------------------------------------------------------------------------
 
+/**
+ * Renders the text body of an assistant turn as sanitized markdown.
+ * Memoized on `text` so the parse+sanitize pipeline only re-runs when the
+ * content changes, not on every parent re-render.
+ *
+ * Safe composition: renderMarkdown → sanitizeHtml → dangerouslySetInnerHTML.
+ * The sanitizeHtml layer (DOMPurify) strips all event handlers, <script>,
+ * <iframe>, and other dangerous constructs — model output is UNTRUSTED.
+ */
+function AssistantTurnBody({ text }: { text: string }) {
+  const html = useMemo(() => sanitizeHtml(renderMarkdown(text)), [text]);
+  return (
+    <div
+      className="elmer-turn-md"
+      // eslint-disable-next-line react/no-danger
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
+}
+
 /** Renders a single turn, chip, or attribution item. */
 function MessageItem({ item }: { item: ElmerItem }) {
   if (item.kind === 'chip') {
@@ -151,7 +173,10 @@ function MessageItem({ item }: { item: ElmerItem }) {
       data-role={item.role}
     >
       <span className="elmer-turn-role">{isUser ? 'You' : 'Elmer'}</span>
-      <span className="elmer-turn-text">{item.text}</span>
+      {isUser
+        ? <span className="elmer-turn-text">{item.text}</span>
+        : <AssistantTurnBody text={item.text} />
+      }
     </div>
   );
 }

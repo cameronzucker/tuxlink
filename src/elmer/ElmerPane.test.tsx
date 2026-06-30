@@ -1364,6 +1364,143 @@ describe('<ElmerPane> credential-seam — detect_uses_usestored_when_key_present
   });
 });
 
+// ---------------------------------------------------------------------------
+// Markdown rendering — assistant turns rendered as sanitized HTML (security)
+// ---------------------------------------------------------------------------
+
+describe('<ElmerPane> — assistant turn renders markdown as HTML', () => {
+  it('bold text is rendered as <strong>, not as raw asterisks', async () => {
+    const { container } = render(<ElmerPane />);
+    const payload: ElmerTurnPayload = { kind: 'turn', role: 'assistant', text: '**bold word**' };
+    await fireElmerEvent<ElmerTurnPayload>(EV_TURN, payload);
+
+    const bubble = container.querySelector('[data-testid="elmer-turn-assistant"]');
+    expect(bubble).toBeTruthy();
+    // Should have rendered as <strong>, not the literal ** characters.
+    expect(bubble!.querySelector('strong')).toBeTruthy();
+    expect(bubble!.textContent).not.toContain('**');
+  });
+
+  it('bullet list is rendered as <ul><li> elements', async () => {
+    const { container } = render(<ElmerPane />);
+    const payload: ElmerTurnPayload = {
+      kind: 'turn',
+      role: 'assistant',
+      text: '- Alpha\n- Beta\n- Gamma',
+    };
+    await fireElmerEvent<ElmerTurnPayload>(EV_TURN, payload);
+
+    const bubble = container.querySelector('[data-testid="elmer-turn-assistant"]');
+    expect(bubble!.querySelector('li')).toBeTruthy();
+  });
+
+  it('fenced code block is rendered as <pre><code>', async () => {
+    const { container } = render(<ElmerPane />);
+    const payload: ElmerTurnPayload = {
+      kind: 'turn',
+      role: 'assistant',
+      text: '```\necho hello\n```',
+    };
+    await fireElmerEvent<ElmerTurnPayload>(EV_TURN, payload);
+
+    const bubble = container.querySelector('[data-testid="elmer-turn-assistant"]');
+    expect(bubble!.querySelector('pre')).toBeTruthy();
+    expect(bubble!.querySelector('code')).toBeTruthy();
+  });
+
+  it('GFM table is rendered as a <table> element', async () => {
+    const { container } = render(<ElmerPane />);
+    const payload: ElmerTurnPayload = {
+      kind: 'turn',
+      role: 'assistant',
+      text: '| Col A | Col B |\n|---|---|\n| 1 | 2 |',
+    };
+    await fireElmerEvent<ElmerTurnPayload>(EV_TURN, payload);
+
+    const bubble = container.querySelector('[data-testid="elmer-turn-assistant"]');
+    expect(bubble!.querySelector('table')).toBeTruthy();
+  });
+});
+
+describe('<ElmerPane> — sanitization: dangerous model output is stripped (XSS)', () => {
+  it('onerror attribute on img is stripped — no script execution vector', async () => {
+    const { container } = render(<ElmerPane />);
+    const payload: ElmerTurnPayload = {
+      kind: 'turn',
+      role: 'assistant',
+      // Raw HTML injection attempts in model output.
+      text: '<img src=x onerror="alert(1)"><script>alert(2)</script>',
+    };
+    await fireElmerEvent<ElmerTurnPayload>(EV_TURN, payload);
+
+    const bubble = container.querySelector('[data-testid="elmer-turn-assistant"]');
+    expect(bubble).toBeTruthy();
+
+    // No <script> element must survive.
+    expect(bubble!.querySelector('script')).toBeNull();
+
+    // The onerror attribute must not be present on any element.
+    const allElements = bubble!.querySelectorAll('*');
+    for (const el of allElements) {
+      expect(el.hasAttribute('onerror')).toBe(false);
+    }
+  });
+
+  it('javascript: href is removed/neutralized by sanitizer', async () => {
+    const { container } = render(<ElmerPane />);
+    const payload: ElmerTurnPayload = {
+      kind: 'turn',
+      role: 'assistant',
+      text: '<a href="javascript:alert(1)">click me</a>',
+    };
+    await fireElmerEvent<ElmerTurnPayload>(EV_TURN, payload);
+
+    const bubble = container.querySelector('[data-testid="elmer-turn-assistant"]');
+    const anchors = bubble!.querySelectorAll('a');
+    for (const a of anchors) {
+      const href = a.getAttribute('href') ?? '';
+      expect(href.toLowerCase().startsWith('javascript:')).toBe(false);
+    }
+  });
+
+  it('raw <script> tag in model output does not appear in the DOM', async () => {
+    const { container } = render(<ElmerPane />);
+    const payload: ElmerTurnPayload = {
+      kind: 'turn',
+      role: 'assistant',
+      text: 'Safe text. <script>alert("xss")<\/script> More text.',
+    };
+    await fireElmerEvent<ElmerTurnPayload>(EV_TURN, payload);
+
+    const bubble = container.querySelector('[data-testid="elmer-turn-assistant"]');
+    expect(bubble!.querySelector('script')).toBeNull();
+    // The safe text content is still there.
+    expect(bubble!.textContent).toContain('Safe text.');
+  });
+});
+
+describe('<ElmerPane> — user turn renders as plain text, not markdown', () => {
+  it('markdown-ish user input is not parsed — literal asterisks are preserved', () => {
+    render(<ElmerPane />);
+
+    // Type a message with markdown syntax and send it.
+    const input = screen.getByTestId('elmer-input');
+    fireEvent.change(input, { target: { value: '**not bold**' } });
+    fireEvent.click(screen.getByTestId('elmer-send'));
+
+    // User bubble must exist.
+    const userBubble = screen.getByTestId('elmer-turn-user');
+    expect(userBubble).toBeTruthy();
+
+    // The literal asterisks must be present in the text content (not parsed).
+    expect(userBubble.textContent).toContain('**not bold**');
+
+    // No <strong> element inside the user bubble.
+    const strong = userBubble.querySelector('strong');
+    expect(strong).toBeNull();
+  });
+});
+
 describe('<ElmerPane> — model selection persists across collapse/re-expand (configSet refresh)', () => {
   it('after Save, configSet refreshes modelConfig via config_read so a re-expanded form shows the saved model', async () => {
     render(<ElmerPane />);

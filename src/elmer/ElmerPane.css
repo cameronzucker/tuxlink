@@ -189,6 +189,141 @@
   color: var(--text);
 }
 
+/* ── Assistant turn: rendered markdown body ─────────────────────────────── */
+/* Scoped to .elmer-turn-md so markdown styles don't bleed into other pane
+ * elements. Matches the pane's dark aesthetic and reading-pane width.     */
+.elmer-turn-md {
+  color: var(--text);
+  /* Allow horizontal scroll within the bubble rather than blowing out width. */
+  overflow-x: hidden;
+  word-break: break-word;
+}
+
+/* Paragraphs: tight vertical rhythm for a chat context (not a docs page). */
+.elmer-turn-md p {
+  margin: 0 0 0.5em 0;
+}
+.elmer-turn-md p:last-child {
+  margin-bottom: 0;
+}
+
+/* Lists: compact, left-aligned. */
+.elmer-turn-md ul,
+.elmer-turn-md ol {
+  margin: 0.25em 0 0.5em 0;
+  padding-left: 1.4em;
+}
+.elmer-turn-md li {
+  margin: 0.1em 0;
+}
+.elmer-turn-md li:last-child {
+  margin-bottom: 0;
+}
+
+/* Inline emphasis. */
+.elmer-turn-md strong {
+  font-weight: 600;
+  color: var(--text);
+}
+.elmer-turn-md em {
+  font-style: italic;
+}
+
+/* Inline code: subtle dark pill. */
+.elmer-turn-md code {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.88em;
+  background: var(--surface-sunken, var(--surface-2));
+  border: 1px solid var(--border-soft, var(--border));
+  border-radius: 3px;
+  padding: 0.1em 0.35em;
+  color: var(--text);
+}
+
+/* Code blocks: monospace, scrollable — never break the bubble width. */
+.elmer-turn-md pre {
+  margin: 0.4em 0;
+  padding: 8px 10px;
+  background: var(--surface-sunken, var(--surface-2));
+  border: 1px solid var(--border-soft, var(--border));
+  border-radius: 6px;
+  overflow-x: auto;
+  /* Cap width to the bubble; let pre scroll horizontally, not wrap. */
+  max-width: 100%;
+  white-space: pre;
+}
+.elmer-turn-md pre code {
+  /* Reset the inline-code pill treatment inside a block. */
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  font-size: 0.87em;
+  line-height: 1.5;
+}
+
+/* Tables: bordered, readable on dark. Scroll horizontally if too wide. */
+.elmer-turn-md table {
+  width: 100%;
+  max-width: 100%;
+  border-collapse: collapse;
+  font-size: 0.87em;
+  margin: 0.4em 0;
+  /* Contain wide tables within the bubble. */
+  display: block;
+  overflow-x: auto;
+}
+.elmer-turn-md th,
+.elmer-turn-md td {
+  border: 1px solid var(--border-strong, var(--border));
+  padding: 4px 8px;
+  text-align: left;
+}
+.elmer-turn-md th {
+  background: var(--surface-2, var(--surface-1));
+  font-weight: 600;
+  color: var(--text);
+}
+.elmer-turn-md tr:nth-child(even) td {
+  background: var(--surface-sunken, var(--surface-2));
+}
+
+/* Headings: modest sizes — these are chat replies, not full docs pages. */
+.elmer-turn-md h1,
+.elmer-turn-md h2,
+.elmer-turn-md h3,
+.elmer-turn-md h4 {
+  margin: 0.5em 0 0.25em 0;
+  line-height: 1.3;
+  font-weight: 600;
+  color: var(--text);
+}
+.elmer-turn-md h1 { font-size: 1.15em; }
+.elmer-turn-md h2 { font-size: 1.08em; }
+.elmer-turn-md h3 { font-size: 1.02em; }
+.elmer-turn-md h4 { font-size: 0.97em; font-style: italic; }
+
+/* Links: themed color, no underline until hover. */
+.elmer-turn-md a {
+  color: var(--accent, var(--accent-teal));
+  text-decoration: none;
+}
+.elmer-turn-md a:hover {
+  text-decoration: underline;
+}
+
+/* Blockquote: left-border treatment matching the dark theme. */
+.elmer-turn-md blockquote {
+  margin: 0.4em 0;
+  padding: 0.3em 0.75em;
+  border-left: 3px solid var(--border-strong, var(--border));
+  color: var(--text-2, var(--text-muted));
+  font-style: italic;
+}
+.elmer-turn-md blockquote p {
+  margin: 0;
+}
+
 /* Tool-call chips — GROUND TRUTH (AC-12): visually distinct from model prose so
  * the operator can tell "what Elmer did" from "what Elmer said". */
 .elmer-chip {
