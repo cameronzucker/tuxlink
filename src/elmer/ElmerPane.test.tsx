@@ -691,6 +691,58 @@ describe('<ElmerPane> G2 — replace_commits_set_only_on_nonempty', () => {
     });
   });
 
+  it('a rejecting elmer_config_set SURFACES the error (no silent void-swallow)', async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions',
+        agentModel: 'gpt-4o',
+        keyStatus: 'present',
+        agentTurnTimeoutSecs: 900,
+      };
+      return undefined;
+    });
+    await renderAndOpen();
+
+    // The next config_set call rejects (e.g. an empty key / bad endpoint /
+    // config-write failure). Previously `void handleSave()` swallowed this and
+    // the form silently kept the new selection while the backend never changed.
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_set') throw new Error('API key must not be empty');
+      return undefined;
+    });
+    fireEvent.click(screen.getByTestId('elmer-save-btn'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('elmer-save-error').textContent).toContain('API key must not be empty');
+    });
+    // No false success confirmation when the save failed.
+    expect(screen.queryByTestId('elmer-save-ok')).toBeNull();
+  });
+
+  it("selecting 'Custom…' clears the endpoint and STICKS on Custom (not a no-op)", async () => {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'https://api.openai.com/v1/chat/completions', // OpenAI preset
+        agentModel: 'gpt-4o',
+        keyStatus: 'present',
+        agentTurnTimeoutSecs: 900,
+      };
+      return undefined;
+    });
+    await renderAndOpen();
+
+    const providerSelect = screen.getByTestId('elmer-provider-select') as HTMLSelectElement;
+    const endpointInput = screen.getByTestId('elmer-endpoint-input') as HTMLInputElement;
+    // Starts on the inferred OpenAI preset.
+    expect(providerSelect.value).toBe('openai');
+
+    // Select Custom… — previously a no-op that snapped back; now clears + sticks.
+    fireEvent.change(providerSelect, { target: { value: 'custom' } });
+
+    expect(endpointInput.value).toBe('');
+    expect(providerSelect.value).toBe('custom');
+  });
+
   it('Replace + type value + Save → key:{action:set,value}', async () => {
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
       if (cmd === 'elmer_config_read') return {
