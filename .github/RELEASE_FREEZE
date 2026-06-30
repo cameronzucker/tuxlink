@@ -1,0 +1,10 @@
+Frozen during AI assistant + UI refactor (2026-06-29) — prevents disjointed partial releases.
+
+Reason: the in-flight AI assistant and UI refactor land in small, interdependent pieces.
+Auto-releasing each merge would cut a stream of incoherent partial releases. Hold all
+release-please activity until the refactor lands as a coherent whole.
+
+Unfreeze: delete this file (in a PR) once the AI + UI refactor is complete and the
+operator approves a release cut. See .github/workflows/release-please.yml for the gate.
+
+Frozen-by: agent sage-glade-atoll, at operator request.
