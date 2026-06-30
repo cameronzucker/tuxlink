@@ -101,6 +101,15 @@ pub enum EndpointError {
          (169.254.0.0/16 or fe80::/10) and is ALWAYS refused (SEC-5)"
     )]
     LinkLocalAlwaysRefused { host: String },
+    /// The URL contained a userinfo component (username and/or password).
+    ///
+    /// Credentials in a URL are rejected: they appear in logs, config files,
+    /// and error messages. Use the keyring (Task B1) for secret storage instead.
+    #[error(
+        "endpoint host `{host}` URL contains userinfo (username/password); \
+         credentials in URLs are not allowed — use the keyring instead (SEC-5)"
+    )]
+    UserinfoNotAllowed { host: String },
 }
 
 /// Classify the host of a parsed URL. Pure; no DNS, no I/O.
@@ -208,6 +217,87 @@ impl LoopbackEndpoint {
     /// `allow_remote = false`).
     pub fn parse(raw: &str) -> Result<Self, EndpointError> {
         validate_endpoint(raw, false).map(LoopbackEndpoint)
+    }
+}
+
+/// A pre-validated agent model endpoint URL that permits remote hosts but
+/// rejects link-local/metadata ranges and credentials-in-URL.
+///
+/// Unlike [`LoopbackEndpoint`], this type accepts public internet hosts (e.g.
+/// `api.openai.com`) — because the Elmer agent config explicitly opts the
+/// operator into remote LLM egress. However:
+///
+/// - Link-local / cloud-metadata ranges (`169.254.0.0/16`, `fe80::/10`) are
+///   ALWAYS refused even here (they are never legitimate model endpoints and
+///   are classic SSRF/exfil targets).
+/// - Credentials in the URL (`user:pass@host`) are refused. They appear in
+///   logs and error messages; secrets must go through the keyring (Task B1).
+///
+/// ## Origin contract (cross-language, used as keyring account suffix in Task B1)
+///
+/// `origin()` returns `self.0.origin().ascii_serialization()` — the url
+/// crate's canonical tuple-origin form. This string is used as the keyring
+/// account suffix and as the preset-inference key in the TypeScript frontend
+/// (Task G1). A Rust/TS mismatch silently desyncs the stored credential key
+/// from the endpoint being configured. The following test vectors are the
+/// contract; they MUST hold in both this Rust `origin()` and the TS
+/// `originOf()` function in Task G1:
+///
+/// | URL                                              | origin()                     | notes                              |
+/// |--------------------------------------------------|------------------------------|------------------------------------|
+/// | `https://API.OpenAI.com:443/v1/chat/completions` | `https://api.openai.com`     | 443 is https default → omitted     |
+/// | `http://127.0.0.1:11434/v1/chat/completions`     | `http://127.0.0.1:11434`     | non-default port → kept            |
+/// | `https://openrouter.ai/api/v1/chat/completions`  | `https://openrouter.ai`      | default port, no subdomain         |
+#[derive(Debug, Clone)]
+pub struct AgentEndpoint(pub Url);
+
+impl AgentEndpoint {
+    /// Parse and validate `raw` as an agent model endpoint (SEC-5,
+    /// `allow_remote = true`).
+    ///
+    /// Accepts loopback and remote hosts; rejects link-local/metadata ranges
+    /// and any URL that carries a userinfo component (username or password).
+    /// The userinfo check runs AFTER host classification so that a loopback
+    /// URL with credentials is also refused.
+    pub fn parse(raw: &str) -> Result<Self, EndpointError> {
+        // validate_endpoint with allow_remote=true handles scheme, host
+        // presence, loopback/link-local/remote classification.
+        let url = validate_endpoint(raw, true)?;
+
+        // Userinfo check runs after host-class validation so that
+        // `http://u:p@127.0.0.1/v1` is refused (not silently accepted as
+        // loopback). Use url.username() and url.password() directly — the url
+        // crate populates them only when the authority contains a `@`.
+        if !url.username().is_empty() || url.password().is_some() {
+            let host = url.host_str().unwrap_or_default().to_string();
+            return Err(EndpointError::UserinfoNotAllowed { host });
+        }
+
+        Ok(AgentEndpoint(url))
+    }
+
+    /// Returns `true` if the endpoint host is loopback (`127.0.0.0/8`,
+    /// `::1`, or the literal `localhost`).
+    pub fn is_loopback(&self) -> bool {
+        match self.0.host() {
+            Some(host) => matches!(classify_host(&host), HostClass::Loopback),
+            None => false,
+        }
+    }
+
+    /// Returns the scheme+host+port origin as a canonical ASCII string.
+    ///
+    /// Uses the `url` crate's `Origin::ascii_serialization()` so the result
+    /// is guaranteed lowercase and includes the port only when it differs from
+    /// the scheme default. This string is the keyring account suffix (Task B1)
+    /// and the preset-inference key (Task G1) — do NOT hand-roll it.
+    pub fn origin(&self) -> String {
+        self.0.origin().ascii_serialization()
+    }
+
+    /// Returns a reference to the inner validated [`Url`].
+    pub fn url(&self) -> &Url {
+        &self.0
     }
 }
 
@@ -368,5 +458,153 @@ mod tests {
     fn loopback_endpoint_parse_rejects_remote() {
         let err = LoopbackEndpoint::parse("https://api.openai.com/v1/chat/completions");
         assert!(err.is_err());
+    }
+
+    // ── AgentEndpoint tests ────────────────────────────────────────────────
+    //
+    // These tests were written FIRST (TDD), before the AgentEndpoint
+    // implementation was added, and serve as the contract for the type.
+    // They cannot be run locally on this Pi (cargo won't finish a cold
+    // build on contended hardware); CI verifies them.
+
+    /// Loopback URL is accepted; is_loopback() returns true.
+    #[test]
+    fn agent_endpoint_accepts_loopback() {
+        let ep =
+            AgentEndpoint::parse("http://127.0.0.1:11434/v1/chat/completions").unwrap();
+        assert!(
+            ep.is_loopback(),
+            "127.0.0.1 must classify as loopback"
+        );
+    }
+
+    /// Public HTTPS URL is accepted (allow_remote=true); is_loopback() returns false.
+    #[test]
+    fn agent_endpoint_accepts_public_https() {
+        let ep =
+            AgentEndpoint::parse("https://api.openai.com/v1/chat/completions").unwrap();
+        assert!(
+            !ep.is_loopback(),
+            "public domain must not classify as loopback"
+        );
+    }
+
+    /// RFC-1918 LAN address is accepted; is_loopback() returns false.
+    #[test]
+    fn agent_endpoint_accepts_rfc1918() {
+        let ep =
+            AgentEndpoint::parse("http://192.168.1.50:8080/v1/chat/completions").unwrap();
+        assert!(
+            !ep.is_loopback(),
+            "RFC-1918 address must not classify as loopback"
+        );
+    }
+
+    /// Cloud metadata / link-local address is ALWAYS refused, even with the
+    /// allow_remote=true path that AgentEndpoint uses.
+    #[test]
+    fn agent_endpoint_refuses_metadata() {
+        let err = AgentEndpoint::parse("http://169.254.169.254/v1").unwrap_err();
+        assert!(
+            matches!(err, EndpointError::LinkLocalAlwaysRefused { .. }),
+            "expected LinkLocalAlwaysRefused, got {err:?}"
+        );
+    }
+
+    /// URL with userinfo (user:pass@host) is refused regardless of whether
+    /// the host would otherwise be accepted.
+    #[test]
+    fn agent_endpoint_refuses_userinfo() {
+        let err =
+            AgentEndpoint::parse("http://user:pass@api.openai.com/v1").unwrap_err();
+        assert!(
+            matches!(err, EndpointError::UserinfoNotAllowed { .. }),
+            "expected UserinfoNotAllowed, got {err:?}"
+        );
+    }
+
+    /// Non-http/https scheme is refused (scheme check fires before anything else).
+    #[test]
+    fn agent_endpoint_refuses_ftp() {
+        let err = AgentEndpoint::parse("ftp://127.0.0.1/v1").unwrap_err();
+        assert!(
+            matches!(err, EndpointError::UnsupportedScheme(_)),
+            "expected UnsupportedScheme, got {err:?}"
+        );
+    }
+
+    /// origin() returns the canonical scheme+host+port string with path
+    /// stripped and host lowercased.
+    ///
+    /// These three vectors are the cross-language contract (Rust origin() ↔
+    /// TypeScript originOf() in Task G1) and the keyring account suffix
+    /// (Task B1). Any mismatch silently desyncs stored credentials.
+    ///
+    /// | URL                                              | expected origin          |
+    /// |--------------------------------------------------|--------------------------|
+    /// | https://API.OpenAI.com:443/v1/chat/completions  | https://api.openai.com   |
+    /// | http://127.0.0.1:11434/v1/chat/completions      | http://127.0.0.1:11434   |
+    /// | https://openrouter.ai/api/v1/chat/completions   | https://openrouter.ai    |
+    #[test]
+    fn origin_strips_path_and_lowercases() {
+        // Vector 1: default HTTPS port (443) must be omitted.
+        let ep =
+            AgentEndpoint::parse("https://API.OpenAI.com:443/v1/chat/completions")
+                .unwrap();
+        assert_eq!(
+            ep.origin(),
+            "https://api.openai.com",
+            "443 is the https default — must not appear in origin"
+        );
+
+        // Vector 2: non-default port must be kept.
+        let ep =
+            AgentEndpoint::parse("http://127.0.0.1:11434/v1/chat/completions").unwrap();
+        assert_eq!(
+            ep.origin(),
+            "http://127.0.0.1:11434",
+            "non-default port 11434 must appear in origin"
+        );
+
+        // Vector 3: default HTTPS port implicitly absent, no subdomain.
+        let ep =
+            AgentEndpoint::parse("https://openrouter.ai/api/v1/chat/completions").unwrap();
+        assert_eq!(
+            ep.origin(),
+            "https://openrouter.ai",
+            "no port in origin when using scheme default"
+        );
+    }
+
+    /// Userinfo on a loopback host is still refused — the check is
+    /// unconditional and runs AFTER host classification, not before.
+    /// This guards the ordering invariant in AgentEndpoint::parse.
+    #[test]
+    fn userinfo_check_runs_before_remote_accept() {
+        let err = AgentEndpoint::parse("http://u:p@127.0.0.1/v1").unwrap_err();
+        assert!(
+            matches!(err, EndpointError::UserinfoNotAllowed { .. }),
+            "loopback with credentials must be refused; got {err:?}"
+        );
+    }
+
+    /// url() exposes the inner Url so callers can inspect path, query, etc.
+    #[test]
+    fn agent_endpoint_url_accessor() {
+        let ep =
+            AgentEndpoint::parse("https://api.openai.com/v1/chat/completions").unwrap();
+        assert_eq!(ep.url().host_str(), Some("api.openai.com"));
+        assert_eq!(ep.url().path(), "/v1/chat/completions");
+    }
+
+    /// Username-only (no password) in userinfo is also refused.
+    /// Tests that the `!url.username().is_empty()` branch fires independently.
+    #[test]
+    fn agent_endpoint_refuses_username_only() {
+        let err = AgentEndpoint::parse("http://user@api.openai.com/v1").unwrap_err();
+        assert!(
+            matches!(err, EndpointError::UserinfoNotAllowed { .. }),
+            "username without password must also be refused; got {err:?}"
+        );
     }
 }
