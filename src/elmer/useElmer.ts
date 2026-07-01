@@ -209,7 +209,11 @@ export interface UseElmer {
  * side. Tests mock `invoke` to return the map directly.
  */
 export async function keyStatusForOrigins(origins: string[]): Promise<KeyStatusByOrigin> {
-  return invoke<KeyStatusByOrigin>('elmer_key_status_for_origins', { origins });
+  const map = await invoke<KeyStatusByOrigin>('elmer_key_status_for_origins', { origins });
+  // Fail-closed: if the backend is unavailable and the IPC boundary yields a
+  // nullish value, return an empty map (no "key saved" badges) rather than
+  // letting undefined reach the picker, which would crash on a per-origin read.
+  return map ?? {};
 }
 
 let _nextId = 0;

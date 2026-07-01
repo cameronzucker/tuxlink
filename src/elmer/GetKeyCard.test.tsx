@@ -232,4 +232,83 @@ describe('GetKeyCard', () => {
     // Key creation outcome, not generic button label.
     expect(card.textContent?.toLowerCase()).toMatch(/api key/i);
   });
+
+  // -----------------------------------------------------------------------
+  // (e) keyStatus='present' — settings-path key-saved affordance
+  //
+  // When reopened in the settings-surface path and the key is already stored
+  // for this origin, GetKeyCard must:
+  //   - Show a "Key saved" badge (get-key-saved-badge) instead of the input.
+  //   - Enable Save WITHOUT requiring a new key (sends {action:'keep'}).
+  //   - Offer a "Replace key" button that switches to input mode.
+  //   - After typing a valid new key and clicking Save, send {action:'set', value}.
+  // -----------------------------------------------------------------------
+
+  it('keyStatus=present renders the key-saved badge and hides the key input', () => {
+    const onSave = vi.fn(async () => {});
+    render(<GetKeyCard {...baseProps({ onSave, keyStatus: 'present' })} />);
+    // Badge must be visible.
+    expect(screen.getByTestId('get-key-saved-badge')).toBeTruthy();
+    // Key input must NOT be in the DOM (no forced re-entry in settings path).
+    expect(screen.queryByTestId('get-key-input')).toBeNull();
+  });
+
+  it('keyStatus=present: Save is enabled without typing a key (keep path)', () => {
+    const onSave = vi.fn(async () => {});
+    render(<GetKeyCard {...baseProps({ onSave, keyStatus: 'present' })} />);
+    const saveBtn = screen.getByTestId('get-key-save') as HTMLButtonElement;
+    // Must be enabled — no new key required when one is already stored.
+    expect(saveBtn.disabled).toBe(false);
+  });
+
+  it('keyStatus=present: Save sends {action:"keep"} without typing a new key', async () => {
+    const onSave = vi.fn(async () => {});
+    render(<GetKeyCard {...baseProps({ onSave, keyStatus: 'present' })} />);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('get-key-save'));
+    });
+    expect(onSave).toHaveBeenCalledTimes(1);
+    // Keep path: must NOT clear or overwrite the stored key.
+    // Endpoint is always the preset constant, never a config-derived value.
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: { action: 'keep' },
+        agentEndpoint: geminiPreset.endpoint,
+      }),
+    );
+  });
+
+  it('keyStatus=present: "Replace key" button switches to input mode', () => {
+    render(<GetKeyCard {...baseProps({ keyStatus: 'present' })} />);
+    // Replace button must be present in the saved-key state.
+    const replaceBtn = screen.getByTestId('get-key-replace-btn');
+    expect(replaceBtn).toBeTruthy();
+    fireEvent.click(replaceBtn);
+    // After clicking Replace, the key input appears and the badge disappears.
+    expect(screen.getByTestId('get-key-input')).toBeTruthy();
+    expect(screen.queryByTestId('get-key-saved-badge')).toBeNull();
+  });
+
+  it('keyStatus=present + Replace key + type new key: Save sends {action:"set", value}', async () => {
+    const onSave = vi.fn(async () => {});
+    render(<GetKeyCard {...baseProps({ onSave, keyStatus: 'present' })} />);
+    // Enter replace mode.
+    fireEvent.click(screen.getByTestId('get-key-replace-btn'));
+    // Type a valid new key.
+    const VALID_REPLACEMENT = 'AIzaSy-replacement-key-9876543210';
+    fireEvent.change(screen.getByTestId('get-key-input'), {
+      target: { value: VALID_REPLACEMENT },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('get-key-save'));
+    });
+    expect(onSave).toHaveBeenCalledTimes(1);
+    // Replace path: must send action:'set' with the new key, NOT 'keep'.
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: { action: 'set', value: VALID_REPLACEMENT },
+        agentEndpoint: geminiPreset.endpoint,
+      }),
+    );
+  });
 });

@@ -20,7 +20,7 @@
 
 import { useState } from 'react';
 import { open as shellOpen } from '@tauri-apps/plugin-shell';
-import type { ProviderPreset, SetKey } from './elmerModelConfig';
+import type { ProviderPreset, SetKey, KeyStatus } from './elmerModelConfig';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -36,6 +36,17 @@ export interface GetKeyCardProps {
   }) => Promise<void>;
   agentModel: string;
   agentTurnTimeoutSecs: number;
+  /**
+   * Key status for this tile's origin. When 'present', GetKeyCard shows a
+   * "Key saved" state with a Replace key affordance and enables Save WITHOUT
+   * requiring a new key (sends {action:'keep'}). When absent or omitted,
+   * the original behavior is preserved (must type a valid key to enable Save).
+   *
+   * The 'keep' action means: leave whatever is stored for THIS origin unchanged.
+   * The endpoint stays the hardcoded preset.endpoint, so 'keep' cannot leak
+   * to a different origin.
+   */
+  keyStatus?: KeyStatus;
 }
 
 // ---------------------------------------------------------------------------
@@ -135,14 +146,26 @@ export function GetKeyCard({
   onSave,
   agentModel,
   agentTurnTimeoutSecs,
+  keyStatus,
 }: GetKeyCardProps) {
   const [rawKey, setRawKey] = useState('');
   const [revealed, setRevealed] = useState(false);
   const [saving, setSaving] = useState(false);
+  // When keyStatus='present': track whether the operator has chosen to replace
+  // the stored key. Starts false (showing the "Key saved" affordance). Clicking
+  // "Replace key" sets this true, revealing the key input.
+  const [replaceKeyMode, setReplaceKeyMode] = useState(false);
 
   const copy = getProviderCopy(preset.id);
   const { trimmed, error } = validateKey(rawKey);
-  const canSave = error === null && trimmed.length > 0;
+
+  // Whether we're in the "key already saved" state.
+  const keySaved = keyStatus === 'present' && !replaceKeyMode;
+
+  // Save is enabled when:
+  //   - key already saved (keep path): always enabled, sends {action:'keep'}
+  //   - replace mode or absent: enabled only when a valid new key is typed
+  const canSave = keySaved || (error === null && trimmed.length > 0);
 
   function handleOpenPage() {
     // MUST use the hardcoded constant on the preset — never a constructed or
@@ -156,10 +179,15 @@ export function GetKeyCard({
     if (!canSave) return;
     setSaving(true);
     try {
+      // Keep path: key already saved and operator didn't type a new one.
+      // CRITICAL: 'keep' means "keep whatever is stored for THIS origin" — the
+      // endpoint is always preset.endpoint (a compile-time constant), so 'keep'
+      // can never leak to a different origin.
+      const key: SetKey = keySaved ? { action: 'keep' } : { action: 'set', value: trimmed };
       await onSave({
         agentEndpoint: preset.endpoint,
         agentModel,
-        key: { action: 'set', value: trimmed },
+        key,
         agentTurnTimeoutSecs,
       });
     } finally {
@@ -192,39 +220,63 @@ export function GetKeyCard({
         </div>
       )}
 
-      {/* Masked paste field + reveal toggle */}
-      <div className="elmer-form-row">
-        <label className="elmer-form-label" htmlFor="get-key-input-field">
-          API key
-        </label>
-        <div className="get-key-input-row">
-          <input
-            id="get-key-input-field"
-            type={revealed ? 'text' : 'password'}
-            className="elmer-form-input elmer-form-input--mono get-key-field"
-            data-testid="get-key-input"
-            value={rawKey}
-            onChange={(e) => setRawKey(e.target.value)}
-            placeholder="Paste your key here"
-            spellCheck={false}
-            autoComplete="off"
-            autoCorrect="off"
-            autoCapitalize="off"
-          />
-          <button
-            type="button"
-            className="elmer-key-action-btn get-key-reveal-btn"
-            data-testid="get-key-reveal-toggle"
-            aria-label={revealed ? 'Hide key' : 'Show key'}
-            onClick={() => setRevealed((r) => !r)}
-          >
-            {revealed ? 'Hide' : 'Show'}
-          </button>
+      {/* API key section */}
+      {keySaved ? (
+        /* Key-saved state: show badge + Replace affordance; no input required. */
+        <div className="elmer-form-row" data-testid="get-key-saved-row">
+          <span className="elmer-form-label">API key</span>
+          <div className="elmer-key-stored">
+            <span
+              className="elmer-key-stored-label"
+              data-testid="get-key-saved-badge"
+            >
+              ✓ Key saved
+            </span>
+            <button
+              type="button"
+              className="elmer-key-action-btn"
+              data-testid="get-key-replace-btn"
+              onClick={() => setReplaceKeyMode(true)}
+            >
+              Replace key
+            </button>
+          </div>
         </div>
-      </div>
+      ) : (
+        /* Normal key-entry state: masked paste field + reveal toggle. */
+        <div className="elmer-form-row">
+          <label className="elmer-form-label" htmlFor="get-key-input-field">
+            API key
+          </label>
+          <div className="get-key-input-row">
+            <input
+              id="get-key-input-field"
+              type={revealed ? 'text' : 'password'}
+              className="elmer-form-input elmer-form-input--mono get-key-field"
+              data-testid="get-key-input"
+              value={rawKey}
+              onChange={(e) => setRawKey(e.target.value)}
+              placeholder={replaceKeyMode ? 'Paste new key…' : 'Paste your key here'}
+              spellCheck={false}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+            />
+            <button
+              type="button"
+              className="elmer-key-action-btn get-key-reveal-btn"
+              data-testid="get-key-reveal-toggle"
+              aria-label={revealed ? 'Hide key' : 'Show key'}
+              onClick={() => setRevealed((r) => !r)}
+            >
+              {revealed ? 'Hide' : 'Show'}
+            </button>
+          </div>
+        </div>
+      )}
 
-      {/* Validation error */}
-      {rawKey.length > 0 && error !== null && (
+      {/* Validation error (only shown when in entry mode) */}
+      {!keySaved && rawKey.length > 0 && error !== null && (
         <p className="get-key-error elmer-save-error" data-testid="get-key-error" role="alert">
           {error}
         </p>

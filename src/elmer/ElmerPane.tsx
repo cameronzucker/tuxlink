@@ -1020,9 +1020,10 @@ export const ElmerPane = memo(function ElmerPane({
       })
       .filter(Boolean);
     void keyStatusForOrigins(origins).then((map) => {
-      setKeyStatusByOrigin(map);
+      // Guard against a nullish map over the IPC boundary (fail-closed to no badges).
+      setKeyStatusByOrigin(map ?? {});
     }).catch(() => {
-      // Backend not yet implemented (lands in Task 4) — fall back to empty map.
+      // Backend unavailable / errored — fall back to an empty map (no badges).
       setKeyStatusByOrigin({});
     });
   }, [advancedOpen, openCounter, notOnboarded, switchProviderFocusTier]);
@@ -1101,67 +1102,83 @@ export const ElmerPane = memo(function ElmerPane({
           is dropped (state in comment: picker replaces the list). Once onboarded,
           the normal message list is shown.
           T10: "Switch provider" from a rate-limit callout also opens the picker
-          in this slot (with focusTier=paygo for paygo pre-selection). */}
-      {notOnboarded || switchProviderFocusTier !== null ? (
-        modelConfigState === 'loaded' && modelConfig ? (
-          <>
-            {/* T10 Fix 1: Cancel/back affordance — only when onboarded (switch-provider
-                flow), never during first-run onboarding where the operator must complete
-                setup. Clicking returns to chat without saving. */}
-            {!notOnboarded && switchProviderFocusTier !== null && (
-              <button
-                type="button"
-                className="elmer-back-to-chat-btn"
-                data-testid="elmer-back-to-chat-btn"
-                onClick={() => { setSwitchProviderFocusTier(null); }}
-              >
-                ← Back to chat
-              </button>
-            )}
-            <ModelTilePicker
-              onSave={async (args) => {
-                // T10 Fix 1: After a SUCCESSFUL save in the switch-provider flow,
-                // clear switchProviderFocusTier so the message list reappears.
-                // On failure, remain on the picker so the operator can retry.
-                await configSet(args);
-                if (switchProviderFocusTier !== null) {
-                  setSwitchProviderFocusTier(null);
-                }
-              }}
-              onDetect={detectModels}
-              detectState={detectState}
-              keyStatusByOrigin={keyStatusByOrigin}
-              initialEndpoint={modelConfig.agentEndpoint}
-              initialModel={modelConfig.agentModel}
-              initialKeyStatus={modelConfig.keyStatus}
-              initialTurnTimeoutSecs={modelConfig.agentTurnTimeoutSecs ?? 900}
-              focusTier={switchProviderFocusTier ?? undefined}
-            />
-          </>
-        ) : null
-      ) : (
+          in this slot (with focusTier=paygo for paygo pre-selection).
+          Settings: when the operator opens the gear/disclosure while onboarded,
+          the picker also opens here (settingsPickerOpen) so settings and first-run
+          use the SAME surface — one picker mount covers all three cases. */}
+      {/* settingsPickerOpen: onboarded + gear disclosure open → show picker in main slot. */}
+      {(() => {
+        const settingsPickerOpen = !notOnboarded && advancedOpen;
+        const showPicker = notOnboarded || switchProviderFocusTier !== null || settingsPickerOpen;
+        if (showPicker) {
+          if (!(modelConfigState === 'loaded' && modelConfig)) return null;
+          return (
+            <>
+              {/* Back-to-chat affordance: available in switch-provider flow AND
+                  settings-picker flow, but NOT during first-run onboarding. */}
+              {!notOnboarded && (switchProviderFocusTier !== null || settingsPickerOpen) && (
+                <button
+                  type="button"
+                  className="elmer-back-to-chat-btn"
+                  data-testid="elmer-back-to-chat-btn"
+                  onClick={() => {
+                    setSwitchProviderFocusTier(null);
+                    setAdvancedOpen(false);
+                  }}
+                >
+                  ← Back to chat
+                </button>
+              )}
+              <ModelTilePicker
+                onSave={async (args) => {
+                  // After a SUCCESSFUL save, return to the message list:
+                  //   - switch-provider flow: clear switchProviderFocusTier
+                  //   - settings flow: close the gear disclosure (advancedOpen=false)
+                  // On failure, remain on the picker so the operator can retry.
+                  await configSet(args);
+                  if (switchProviderFocusTier !== null) {
+                    setSwitchProviderFocusTier(null);
+                  }
+                  if (settingsPickerOpen) {
+                    setAdvancedOpen(false);
+                  }
+                }}
+                onDetect={detectModels}
+                detectState={detectState}
+                keyStatusByOrigin={keyStatusByOrigin}
+                initialEndpoint={modelConfig.agentEndpoint}
+                initialModel={modelConfig.agentModel}
+                initialKeyStatus={modelConfig.keyStatus}
+                initialTurnTimeoutSecs={modelConfig.agentTurnTimeoutSecs ?? 900}
+                focusTier={switchProviderFocusTier ?? undefined}
+              />
+            </>
+          );
+        }
         /* Message list (normal onboarded path) */
-        <div className="elmer-messages" data-testid="elmer-messages" role="log" aria-live="polite">
-          {items.map((item) => (
-            <MessageItem key={item.id} item={item} />
-          ))}
-          {/* phase 2b — transient live streaming bubble; carries the liveness once
-              the first token arrives, so the pre-token ThinkingIndicator is hidden
-              while it is shown (no double indicator). */}
-          {isStreaming && (
-            <StreamingBubble answer={streamingAnswer} reasoning={streamingReasoning} />
-          )}
-          {isRunning && !isStreaming && <ThinkingIndicator />}
-          {lastOutcome && (
-            <OutcomeCallout
-              phase={phase}
-              detail={lastOutcome.detail}
-              onSwitchProvider={() => { setSwitchProviderFocusTier('paygo'); }}
-            />
-          )}
-          <div ref={listEndRef} />
-        </div>
-      )}
+        return (
+          <div className="elmer-messages" data-testid="elmer-messages" role="log" aria-live="polite">
+            {items.map((item) => (
+              <MessageItem key={item.id} item={item} />
+            ))}
+            {/* phase 2b — transient live streaming bubble; carries the liveness once
+                the first token arrives, so the pre-token ThinkingIndicator is hidden
+                while it is shown (no double indicator). */}
+            {isStreaming && (
+              <StreamingBubble answer={streamingAnswer} reasoning={streamingReasoning} />
+            )}
+            {isRunning && !isStreaming && <ThinkingIndicator />}
+            {lastOutcome && (
+              <OutcomeCallout
+                phase={phase}
+                detail={lastOutcome.detail}
+                onSwitchProvider={() => { setSwitchProviderFocusTier('paygo'); }}
+              />
+            )}
+            <div ref={listEndRef} />
+          </div>
+        );
+      })()}
 
       {/* Offline-endpoint friendly state (AC-14) */}
       {isOffline && (
@@ -1219,9 +1236,11 @@ export const ElmerPane = memo(function ElmerPane({
         </div>
       </div>
 
-      {/* Secondary: endpoint/model picker behind a disclosure (AC-13).
-          The primary field path (chat + Stop + arm chip) stays uncluttered;
-          the endpoint/model setting is rarely changed after initial setup.
+      {/* Secondary: endpoint/model disclosure toggle (AC-13).
+          When onboarded and the operator opens this, the picker appears in the
+          main slot (settingsPickerOpen path above). The disclosure body only
+          shows loading/error status — the ModelForm is reached via the Other
+          tile in the picker, never mounted directly here while onboarded.
           T8b (F6 reopen): the gear toggle bumps openCounter so the picker
           re-fetches keyStatusByOrigin and re-renders on every open — not just
           on initial-state open (the :906 initial-state-only path is replaced). */}
@@ -1258,17 +1277,10 @@ export const ElmerPane = memo(function ElmerPane({
             {modelConfigState === 'error' && (
               <p className="elmer-advanced-error">Could not load config.</p>
             )}
-            {modelConfigState === 'loaded' && modelConfig && (
-              <ModelForm
-                onSave={configSet}
-                onDetect={detectModels}
-                detectState={detectState}
-                initialEndpoint={modelConfig.agentEndpoint}
-                initialModel={modelConfig.agentModel}
-                initialKeyStatus={modelConfig.keyStatus}
-                initialTurnTimeoutSecs={modelConfig.agentTurnTimeoutSecs ?? 900}
-              />
-            )}
+            {/* When onboarded, the picker renders in the main slot (settingsPickerOpen).
+                The disclosure body intentionally shows no form here — the model picker
+                above is the model-settings surface. ModelForm is reached via the
+                Other tile in the picker (custom/openrouter endpoint path). */}
           </div>
         )}
       </div>

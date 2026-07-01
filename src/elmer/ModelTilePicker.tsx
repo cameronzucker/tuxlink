@@ -117,7 +117,10 @@ export function ModelTilePicker({
   onSave,
   onDetect,
   detectState,
-  keyStatusByOrigin,
+  // Default to {} so a production mount that hasn't resolved key-status yet (or a
+  // backend that returned nullish) renders no badges instead of crashing on a
+  // per-origin read.
+  keyStatusByOrigin = {},
   initialEndpoint,
   initialModel,
   initialKeyStatus,
@@ -238,6 +241,12 @@ export function ModelTilePicker({
               onSave={onSave}
               agentModel={model}
               agentTurnTimeoutSecs={initialTurnTimeoutSecs}
+              keyStatus={(() => {
+                // Thread the per-origin key status to GetKeyCard so it can show
+                // the "Key saved" affordance and skip forced re-entry in settings path.
+                const origin = originOf(selectedPreset.endpoint);
+                return origin !== '' ? (keyStatusByOrigin[origin] ?? 'absent') : 'absent';
+              })()}
             />
             <TierFramingCopy tier={selectedPreset?.tier} />
           </>
