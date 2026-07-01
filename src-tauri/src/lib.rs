@@ -1646,6 +1646,14 @@ pub fn run() {
                                 crate::elmer::provider::ElmerProvider::new_vetted(
                                     warm_endpoint,
                                     model_string.clone(),
+                                    // Advanced fields (tuxlink-65qhn T4): the warm
+                                    // default mirrors the saved config so the
+                                    // proof-of-construction matches the per-turn
+                                    // build. The per-turn build in `send` is
+                                    // authoritative and re-reads these each turn.
+                                    elmer_cfg.num_ctx,
+                                    elmer_cfg.temperature,
+                                    elmer_cfg.system_prompt_override.clone(),
                                     None,
                                 ),
                             ) {
@@ -1671,6 +1679,9 @@ pub fn run() {
                                             crate::elmer::provider::ElmerProvider::new_vetted(
                                                 ep,
                                                 model_string.clone(),
+                                                elmer_cfg.num_ctx,
+                                                elmer_cfg.temperature,
+                                                elmer_cfg.system_prompt_override.clone(),
                                                 None,
                                             ),
                                         )

@@ -103,6 +103,11 @@ pub struct OllamaProvider {
     /// Sampling temperature via `options.temperature`. `None` leaves it at the
     /// server default.
     temperature: Option<f32>,
+    /// Optional operator-supplied system-prompt override (tuxlink-31tbw). When
+    /// `Some`, it replaces [`ELMER_SYSTEM_PROMPT`] as the `role: system` message;
+    /// when `None`, the built-in default is used. Threaded from the model-config
+    /// snapshot by T4 so a stored override reaches the wire.
+    system_prompt: Option<String>,
     /// Optional bearer token. A loopback Ollama needs none; accepted for
     /// symmetry with the sibling adapters. Stored as [`ApiKey`] so it never
     /// leaks through `Debug`/`Display`; only used via `.expose()` at the HTTP
@@ -114,12 +119,17 @@ impl OllamaProvider {
     /// Build the provider. `endpoint` MUST already have passed
     /// [`crate::endpoint::validate_endpoint`] — this constructor does not
     /// re-validate (the SEC-5 gate is the caller's single chokepoint).
+    ///
+    /// `system_prompt` is the operator override (tuxlink-31tbw); `None` uses the
+    /// built-in [`ELMER_SYSTEM_PROMPT`].
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         client: reqwest::Client,
         endpoint: Url,
         model: impl Into<String>,
         num_ctx: Option<u32>,
         temperature: Option<f32>,
+        system_prompt: Option<String>,
         api_key: Option<ApiKey>,
     ) -> Self {
         Self {
@@ -128,6 +138,7 @@ impl OllamaProvider {
             model: model.into(),
             num_ctx,
             temperature,
+            system_prompt,
             api_key,
         }
     }
@@ -151,6 +162,7 @@ impl Provider for OllamaProvider {
             tools,
             self.num_ctx,
             self.temperature,
+            self.system_prompt.as_deref().unwrap_or(ELMER_SYSTEM_PROMPT),
         );
 
         let mut req = self
@@ -234,13 +246,16 @@ pub fn build_ollama_request(
     tools: &[ToolSpec],
     num_ctx: Option<u32>,
     temperature: Option<f32>,
+    system_prompt: &str,
 ) -> Value {
     // The system prompt is a message (role: system) on the native path, same as
     // the OpenAI-compat adapter (Anthropic is the outlier that hoists it to a
-    // top-level field). Prepend it, then render the transcript in order.
+    // top-level field). `system_prompt` is the effective prompt (operator
+    // override or the built-in default, resolved by the caller). Prepend it,
+    // then render the transcript in order.
     let mut messages: Vec<Value> =
         Vec::with_capacity(conversation.messages().len() + 1);
-    messages.push(json!({ "role": "system", "content": ELMER_SYSTEM_PROMPT }));
+    messages.push(json!({ "role": "system", "content": system_prompt }));
     for msg in conversation.messages() {
         messages.push(render_ollama_message(msg));
     }
@@ -475,7 +490,7 @@ mod tests {
     #[test]
     fn request_always_has_keep_alive_zero_stream_false_and_system_prompt() {
         let convo = Conversation::new("where am I?");
-        let body = build_ollama_request("qwen3:8b", &convo, &[], None, None);
+        let body = build_ollama_request("qwen3:8b", &convo, &[], None, None, ELMER_SYSTEM_PROMPT);
 
         // D4: keep_alive is always the integer 0.
         assert_eq!(
@@ -506,11 +521,43 @@ mod tests {
         assert_eq!(body["messages"][1]["content"], "where am I?");
     }
 
+    /// A system-prompt OVERRIDE replaces the built-in default as messages[0]
+    /// (tuxlink-31tbw). This is the end-to-end proof that a stored override
+    /// reaches the wire, not just the config store.
+    #[test]
+    fn request_system_prompt_override_replaces_default() {
+        let convo = Conversation::new("hi");
+        let body = build_ollama_request("m", &convo, &[], None, None, "CUSTOM ELMER PROMPT");
+        assert_eq!(body["messages"][0]["role"], "system");
+        let system = body["messages"][0]["content"].as_str().unwrap_or("");
+        assert_eq!(
+            system, "CUSTOM ELMER PROMPT",
+            "the override must appear verbatim as the system message; got: {system:?}"
+        );
+        assert!(
+            !system.contains("position_status"),
+            "the built-in default must NOT be present when overridden; got: {system:?}"
+        );
+    }
+
+    /// Passing `ELMER_SYSTEM_PROMPT` (the `None` → default resolution) yields the
+    /// built-in prompt, unchanged from the pre-override behavior.
+    #[test]
+    fn request_default_system_prompt_when_not_overridden() {
+        let convo = Conversation::new("hi");
+        let body = build_ollama_request("m", &convo, &[], None, None, ELMER_SYSTEM_PROMPT);
+        let system = body["messages"][0]["content"].as_str().unwrap_or("");
+        assert!(
+            system.contains("position_status") && system.contains("Arm to send"),
+            "the built-in default must be used when not overridden; got: {system:?}"
+        );
+    }
+
     /// When both `num_ctx` and `temperature` are set, `options` carries both.
     #[test]
     fn request_options_carries_num_ctx_and_temperature_when_set() {
         let convo = Conversation::new("hi");
-        let body = build_ollama_request("m", &convo, &[], Some(32_768), Some(0.7));
+        let body = build_ollama_request("m", &convo, &[], Some(32_768), Some(0.7), ELMER_SYSTEM_PROMPT);
         let options = body.get("options").expect("options must be present");
         assert_eq!(
             options.get("num_ctx").and_then(Value::as_u64),
@@ -532,7 +579,7 @@ mod tests {
     #[test]
     fn request_options_omits_unset_key() {
         let convo = Conversation::new("hi");
-        let body = build_ollama_request("m", &convo, &[], Some(8192), None);
+        let body = build_ollama_request("m", &convo, &[], Some(8192), None, ELMER_SYSTEM_PROMPT);
         let options = body.get("options").expect("options must be present");
         assert_eq!(options.get("num_ctx").and_then(Value::as_u64), Some(8192));
         assert!(
@@ -545,7 +592,7 @@ mod tests {
     #[test]
     fn request_omits_options_when_both_none() {
         let convo = Conversation::new("hi");
-        let body = build_ollama_request("m", &convo, &[], None, None);
+        let body = build_ollama_request("m", &convo, &[], None, None, ELMER_SYSTEM_PROMPT);
         assert!(
             body.get("options").is_none(),
             "options must be absent when both num_ctx and temperature are None; got: {body}"
@@ -558,7 +605,7 @@ mod tests {
     #[test]
     fn request_serializes_tools_in_native_shape() {
         let convo = Conversation::new("find a station near DM79");
-        let body = build_ollama_request("m", &convo, &[echo_tool()], None, None);
+        let body = build_ollama_request("m", &convo, &[echo_tool()], None, None, ELMER_SYSTEM_PROMPT);
         let tools = body["tools"].as_array().expect("tools must be an array");
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0]["type"], "function");
@@ -575,7 +622,7 @@ mod tests {
     #[test]
     fn request_omits_tools_when_none() {
         let convo = Conversation::new("hi");
-        let body = build_ollama_request("m", &convo, &[], None, None);
+        let body = build_ollama_request("m", &convo, &[], None, None, ELMER_SYSTEM_PROMPT);
         assert!(body.get("tools").is_none(), "tools should be absent: {body}");
     }
 
@@ -589,7 +636,7 @@ mod tests {
         convo.push_tool_call(ToolCall::new("find_stations", json!({ "grid": "DM79" })));
         convo.push_tool_result("find_stations", r#"{"count":3}"#);
 
-        let body = build_ollama_request("m", &convo, &[echo_tool()], None, None);
+        let body = build_ollama_request("m", &convo, &[echo_tool()], None, None, ELMER_SYSTEM_PROMPT);
         let msgs = body["messages"].as_array().expect("messages array");
 
         // messages[0]=system, [1]=user, [2]=assistant tool_call, [3]=tool result.
@@ -621,7 +668,7 @@ mod tests {
     fn request_tool_error_result_labels_error() {
         let mut convo = Conversation::new("go");
         convo.push_tool_error("message_send", "tool denied: session is tainted");
-        let body = build_ollama_request("m", &convo, &[], None, None);
+        let body = build_ollama_request("m", &convo, &[], None, None, ELMER_SYSTEM_PROMPT);
         let tool_msg = body["messages"]
             .as_array()
             .unwrap()
@@ -639,7 +686,7 @@ mod tests {
     fn request_null_args_become_empty_object() {
         let mut convo = Conversation::new("go");
         convo.push_tool_call(ToolCall::new("noop", Value::Null));
-        let body = build_ollama_request("m", &convo, &[], None, None);
+        let body = build_ollama_request("m", &convo, &[], None, None, ELMER_SYSTEM_PROMPT);
         let asst = body["messages"]
             .as_array()
             .unwrap()

@@ -123,6 +123,11 @@ pub struct OpenAiProvider {
     /// construction; never mutated, and never sourced from a tool result.
     endpoint: Url,
     model: String,
+    /// Optional operator-supplied system-prompt override (tuxlink-31tbw). When
+    /// `Some`, it replaces [`ELMER_SYSTEM_PROMPT`] as the `role: system` message;
+    /// when `None`, the built-in default is used. Threaded from the model-config
+    /// snapshot by T4 so a stored override reaches the wire on the compat path too.
+    system_prompt: Option<String>,
     /// Optional bearer token (a local llama.cpp / Ollama shim usually needs
     /// none; an OpenAI-compatible proxy may). Stored as [`ApiKey`] so it never
     /// leaks through `Debug`/`Display`; only used via `.expose()` at the HTTP
@@ -135,11 +140,21 @@ impl OpenAiProvider {
     /// [`crate::endpoint::validate_endpoint`] — this constructor does not
     /// re-validate (the SEC-5 gate is the caller's single chokepoint), but it is
     /// only reachable from `main` after that gate.
-    pub fn new(client: reqwest::Client, endpoint: Url, model: impl Into<String>, api_key: Option<ApiKey>) -> Self {
+    ///
+    /// `system_prompt` is the operator override (tuxlink-31tbw); `None` uses the
+    /// built-in [`ELMER_SYSTEM_PROMPT`].
+    pub fn new(
+        client: reqwest::Client,
+        endpoint: Url,
+        model: impl Into<String>,
+        system_prompt: Option<String>,
+        api_key: Option<ApiKey>,
+    ) -> Self {
         Self {
             client,
             endpoint,
             model: model.into(),
+            system_prompt,
             api_key,
         }
     }
@@ -160,7 +175,12 @@ impl Provider for OpenAiProvider {
         // We set `stream` on the already-built request value rather than threading
         // a flag through `build_request_body`, whose tests assert the non-stream
         // body shape. The pure assembly stays untouched.
-        let mut body = build_request_body(&self.model, conversation, tools);
+        let mut body = build_request_body(
+            &self.model,
+            conversation,
+            tools,
+            self.system_prompt.as_deref().unwrap_or(ELMER_SYSTEM_PROMPT),
+        );
         body["stream"] = json!(true);
 
         let mut req = self.client.post(self.endpoint.clone()).json(&body);
@@ -635,9 +655,18 @@ Be concise and practical.";
 
 /// Build the chat-completions request body from the transcript + tool surface.
 /// Pure — no IO. Exposed for unit testing the message + tools shaping.
-pub fn build_request_body(model: &str, conversation: &Conversation, tools: &[ToolSpec]) -> Value {
+///
+/// `system_prompt` is the effective system prompt (the operator override or the
+/// built-in [`ELMER_SYSTEM_PROMPT`], resolved by the caller — see
+/// [`OpenAiProvider::turn`]).
+pub fn build_request_body(
+    model: &str,
+    conversation: &Conversation,
+    tools: &[ToolSpec],
+    system_prompt: &str,
+) -> Value {
     let system_message =
-        serde_json::json!({ "role": "system", "content": ELMER_SYSTEM_PROMPT });
+        serde_json::json!({ "role": "system", "content": system_prompt });
     let mut messages: Vec<Value> = Vec::with_capacity(conversation.messages().len() + 1);
     messages.push(system_message);
     // Render the transcript into OpenAI chat messages. Tool calls/results use the
@@ -1165,7 +1194,7 @@ mod tests {
     #[test]
     fn request_body_first_message_is_system_prompt() {
         let convo = Conversation::new("where am I?");
-        let body = build_request_body("local-model", &convo, &[]);
+        let body = build_request_body("local-model", &convo, &[], ELMER_SYSTEM_PROMPT);
         assert_eq!(
             body["messages"][0]["role"], "system",
             "messages[0] must be the system prompt"
@@ -1200,10 +1229,28 @@ mod tests {
         assert_eq!(body["messages"][1]["content"], "where am I?");
     }
 
+    /// A system-prompt OVERRIDE replaces the built-in default as messages[0]
+    /// (tuxlink-31tbw). Proves a stored override reaches the compat wire.
+    #[test]
+    fn request_body_system_prompt_override_replaces_default() {
+        let convo = Conversation::new("hi");
+        let body = build_request_body("m", &convo, &[], "CUSTOM ELMER PROMPT");
+        assert_eq!(body["messages"][0]["role"], "system");
+        let system = body["messages"][0]["content"].as_str().unwrap_or("");
+        assert_eq!(
+            system, "CUSTOM ELMER PROMPT",
+            "the override must appear verbatim as the system message; got: {system:?}"
+        );
+        assert!(
+            !system.contains("position_status"),
+            "the built-in default must NOT be present when overridden; got: {system:?}"
+        );
+    }
+
     #[test]
     fn request_body_includes_model_and_tools() {
         let convo = Conversation::new("find a station near DM79");
-        let body = build_request_body("local-model", &convo, &[echo_tool()]);
+        let body = build_request_body("local-model", &convo, &[echo_tool()], ELMER_SYSTEM_PROMPT);
         assert_eq!(body["model"], "local-model");
         // messages[0] is the system prompt; the first user message is at index 1.
         assert_eq!(body["messages"][0]["role"], "system");
@@ -1218,7 +1265,7 @@ mod tests {
     #[test]
     fn request_body_omits_tools_when_none() {
         let convo = Conversation::new("hi");
-        let body = build_request_body("m", &convo, &[]);
+        let body = build_request_body("m", &convo, &[], ELMER_SYSTEM_PROMPT);
         assert!(body.get("tools").is_none(), "tools should be absent: {body}");
     }
 
@@ -1226,7 +1273,7 @@ mod tests {
     fn tool_result_renders_as_tool_role() {
         let mut convo = Conversation::new("go");
         convo.push_tool_result("find_stations", "{\"count\":3}");
-        let body = build_request_body("m", &convo, &[]);
+        let body = build_request_body("m", &convo, &[], ELMER_SYSTEM_PROMPT);
         let tool_msg = body["messages"]
             .as_array()
             .unwrap()
@@ -1247,7 +1294,7 @@ mod tests {
     fn tool_error_result_labels_error() {
         let mut convo = Conversation::new("go");
         convo.push_tool_error("message_send", "tool denied: session is tainted");
-        let body = build_request_body("m", &convo, &[]);
+        let body = build_request_body("m", &convo, &[], ELMER_SYSTEM_PROMPT);
         let tool_msg = body["messages"]
             .as_array()
             .unwrap()
@@ -1273,7 +1320,7 @@ mod tests {
             args: json!({}),
         });
         convo.push_tool_result("position_status", "{\"grid\":\"CN87\"}");
-        let body = build_request_body("gemini-2.5-flash", &convo, &[]);
+        let body = build_request_body("gemini-2.5-flash", &convo, &[], ELMER_SYSTEM_PROMPT);
         let msgs = body["messages"].as_array().expect("messages array");
 
         // The assistant tool-call message: tool_calls[0] with an id, function name,
