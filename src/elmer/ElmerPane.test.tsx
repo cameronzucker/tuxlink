@@ -1,9 +1,9 @@
 /**
- * ElmerPane tests — Task 10 (AC-11, AC-12, AC-13, AC-14) + Task G2 (Model form).
+ * ElmerPane tests -- Task 10 (AC-11, AC-12, AC-13, AC-14) + Task G2 (Model form).
  *
  * Mock strategy:
  *   - `@tauri-apps/api/core` invoke: command-gated (vitest calls invoke mocks
- *     with NO args at teardown — guard every branch with `if (cmd === ...)` so
+ *     with NO args at teardown -- guard every branch with `if (cmd === ...)` so
  *     a bare `invoke()` call doesn't explode on teardown).
  *   - `@tauri-apps/api/event` listen: returns a no-op unlisten fn by default;
  *     tests that need to fire events capture the listener callback directly.
@@ -12,7 +12,7 @@
  * AC-12: an elmer-chip event renders a visually distinct chip (not a turn bubble).
  * AC-14: an elmer-outcome kind=offline renders the offline state.
  * Stop: clicking Stop calls elmer_stop.
- * G2: Model form — preset/endpoint/key-affordance/model+Detect, Save & use.
+ * G2: Model form -- preset/endpoint/key-affordance/model+Detect, Save & use.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -105,7 +105,7 @@ beforeEach(() => {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('<ElmerPane> — send renders a user bubble (AC-11)', () => {
+describe('<ElmerPane> -- send renders a user bubble (AC-11)', () => {
   it('typing a message and clicking Send renders a user turn bubble', async () => {
     render(<ElmerPane />);
 
@@ -133,7 +133,7 @@ describe('<ElmerPane> — send renders a user bubble (AC-11)', () => {
   });
 });
 
-describe('<ElmerPane> — elmer-chip renders a distinct chip (AC-12)', () => {
+describe('<ElmerPane> -- elmer-chip renders a distinct chip (AC-12)', () => {
   it('an EV_CHIP event renders a chip element, visually distinct from prose bubbles', async () => {
     render(<ElmerPane />);
 
@@ -163,7 +163,7 @@ describe('<ElmerPane> — elmer-chip renders a distinct chip (AC-12)', () => {
   });
 });
 
-describe('<ElmerPane> — offline outcome state (AC-14)', () => {
+describe('<ElmerPane> -- offline outcome state (AC-14)', () => {
   it('an EV_OUTCOME with outcomeKind=offline renders the offline state', async () => {
     render(<ElmerPane />);
 
@@ -198,7 +198,7 @@ describe('<ElmerPane> — offline outcome state (AC-14)', () => {
     const payload: ElmerOutcomePayload = {
       kind: 'outcome',
       outcomeKind: 'needsOperator',
-      detail: 'Egress gated — review required.',
+      detail: 'Egress gated -- review required.',
     };
     await fireElmerEvent<ElmerOutcomePayload>(EV_OUTCOME, payload);
 
@@ -206,7 +206,7 @@ describe('<ElmerPane> — offline outcome state (AC-14)', () => {
   });
 });
 
-describe('<ElmerPane> — Stop calls elmer_stop', () => {
+describe('<ElmerPane> -- Stop calls elmer_stop', () => {
   it('clicking Stop invokes elmer_stop', async () => {
     render(<ElmerPane />);
 
@@ -236,7 +236,7 @@ describe('<ElmerPane> — Stop calls elmer_stop', () => {
   });
 });
 
-describe('<ElmerPane> — thinking indicator', () => {
+describe('<ElmerPane> -- thinking indicator', () => {
   it('shows the thinking indicator (radio-verb form) while a run is in progress', async () => {
     render(<ElmerPane />);
 
@@ -251,7 +251,7 @@ describe('<ElmerPane> — thinking indicator', () => {
     // Verb span must be present and show a phrase from the bank.
     const verbSpan = screen.getByTestId('elmer-thinking-verb');
     const verbText = verbSpan.textContent ?? '';
-    // Text is "Elmer is <verb>…" — strip the wrapper and check the verb is in the bank.
+    // Text is "Elmer is <verb>…" -- strip the wrapper and check the verb is in the bank.
     const verbOnly = verbText.replace(/^Elmer is /, '').replace(/…$/, '');
     expect(RADIO_VERBS).toContain(verbOnly);
 
@@ -275,7 +275,7 @@ describe('<ElmerPane> — thinking indicator', () => {
   });
 });
 
-describe('<ElmerPane> — thinking indicator verb cycling', () => {
+describe('<ElmerPane> -- thinking indicator verb cycling', () => {
   afterEach(() => {
     vi.useRealTimers();
   });
@@ -324,14 +324,14 @@ describe('<ElmerPane> — thinking indicator verb cycling', () => {
     const verbOnly2 = after2.replace(/^Elmer is /, '').replace(/…$/, '');
     expect(RADIO_VERBS).toContain(verbOnly2);
 
-    // Suppress unused-variable warning — `before` is here to document intent.
+    // Suppress unused-variable warning -- `before` is here to document intent.
     void before;
 
     vi.useRealTimers();
   });
 });
 
-describe('<ElmerPane> — thinking indicator elapsed timer', () => {
+describe('<ElmerPane> -- thinking indicator elapsed timer', () => {
   afterEach(() => {
     vi.useRealTimers();
   });
@@ -407,7 +407,7 @@ describe('<ElmerPane> — thinking indicator elapsed timer', () => {
   });
 });
 
-describe('<ElmerPane> — layout discipline (AC-13)', () => {
+describe('<ElmerPane> -- layout discipline (AC-13)', () => {
   it('renders the footer with the calibrated disclaimer', () => {
     render(<ElmerPane />);
     const footer = screen.getByTestId('elmer-footer');
@@ -441,7 +441,7 @@ describe('<ElmerPane> — layout discipline (AC-13)', () => {
 // 2ouqf quarantine_and_rearm path.
 // ---------------------------------------------------------------------------
 
-describe('<ElmerPane> — relocated agent-send arm control', () => {
+describe('<ElmerPane> -- relocated agent-send arm control', () => {
   const TAINTED = { armed: false, armedRemainingSecs: 0, tainted: true };
 
   it('does not render the arm strip when the egress hook is not wired', () => {
@@ -488,7 +488,7 @@ describe('<ElmerPane> — relocated agent-send arm control', () => {
 });
 
 // ---------------------------------------------------------------------------
-// G2 — Model form: preset/endpoint/key-affordance/model+Detect, Save & use
+// G2 -- Model form: preset/endpoint/key-affordance/model+Detect, Save & use
 // ---------------------------------------------------------------------------
 
 /** Helper: open the advanced disclosure so the settings picker appears in the main slot. */
@@ -534,9 +534,9 @@ async function renderAndOpenWithEndpoint(endpoint: string) {
   fireEvent.change(endpointInput, { target: { value: endpoint } });
 }
 
-describe('<ElmerPane> G2 — form_renders_fields_from_config_read', () => {
+describe('<ElmerPane> G2 -- form_renders_fields_from_config_read', () => {
   it('loads config and renders four fields with values', async () => {
-    // Render ModelForm directly — it is an exported component and this test
+    // Render ModelForm directly -- it is an exported component and this test
     // verifies ModelForm field seeding from specific prop values (endpoint,
     // model, keyStatus). Navigation through the settings picker is tested
     // separately in the settings-surface tests.
@@ -554,24 +554,24 @@ describe('<ElmerPane> G2 — form_renders_fields_from_config_read', () => {
       />,
     );
 
-    // Provider select — should show 'openai' inferred from endpoint.
+    // Provider select -- should show 'openai' inferred from endpoint.
     const providerSelect = screen.getByTestId('elmer-provider-select') as HTMLSelectElement;
     expect(providerSelect.value).toBe('openai');
 
-    // Endpoint input — should show the endpoint.
+    // Endpoint input -- should show the endpoint.
     const endpointInput = screen.getByTestId('elmer-endpoint-input') as HTMLInputElement;
     expect(endpointInput.value).toBe('https://api.openai.com/v1/chat/completions');
 
-    // Model input — should show gpt-4o.
+    // Model input -- should show gpt-4o.
     const modelInput = screen.getByTestId('elmer-model-input') as HTMLInputElement;
     expect(modelInput.value).toBe('gpt-4o');
 
-    // Key field present (absent + non-loopback → empty key input).
+    // Key field present (absent + non-loopback -> empty key input).
     expect(screen.getByTestId('elmer-key-input')).toBeTruthy();
   });
 });
 
-describe('<ElmerPane> G2 — preset_fills_endpoint_by_origin', () => {
+describe('<ElmerPane> G2 -- preset_fills_endpoint_by_origin', () => {
   it('selecting OpenAI preset fills endpoint with OpenAI URL', async () => {
     // Start with localOllama config.
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
@@ -642,9 +642,9 @@ describe('<ElmerPane> G2 — preset_fills_endpoint_by_origin', () => {
   });
 });
 
-describe('<ElmerPane> G2 — key_field_hidden_for_loopback', () => {
-  it('loopback endpoint → key input/affordance not in DOM', async () => {
-    // Render ModelForm directly — the settings-picker path always starts with
+describe('<ElmerPane> G2 -- key_field_hidden_for_loopback', () => {
+  it('loopback endpoint -> key input/affordance not in DOM', async () => {
+    // Render ModelForm directly -- the settings-picker path always starts with
     // the openrouter tile (non-loopback), which would mask this test. Render
     // ModelForm directly with a loopback initialEndpoint to verify the key-
     // section hiding behavior of ModelForm itself.
@@ -670,8 +670,8 @@ describe('<ElmerPane> G2 — key_field_hidden_for_loopback', () => {
   });
 });
 
-describe('<ElmerPane> G2 — key_field_shown_for_remote_absent', () => {
-  it('https endpoint + keyStatus absent → empty key input present', async () => {
+describe('<ElmerPane> G2 -- key_field_shown_for_remote_absent', () => {
+  it('https endpoint + keyStatus absent -> empty key input present', async () => {
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
       if (cmd === 'elmer_config_read') return {
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
@@ -691,8 +691,8 @@ describe('<ElmerPane> G2 — key_field_shown_for_remote_absent', () => {
   });
 });
 
-describe('<ElmerPane> G2 — key_stored_shows_replace_remove_not_password', () => {
-  it('keyStatus present → Replace + Remove present, no <input type=password> seeded with dots', async () => {
+describe('<ElmerPane> G2 -- key_stored_shows_replace_remove_not_password', () => {
+  it('keyStatus present -> Replace + Remove present, no <input type=password> seeded with dots', async () => {
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
       if (cmd === 'elmer_config_read') return {
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
@@ -726,8 +726,8 @@ describe('<ElmerPane> G2 — key_stored_shows_replace_remove_not_password', () =
   });
 });
 
-describe('<ElmerPane> G2 — replace_commits_set_only_on_nonempty', () => {
-  it('Replace + leave empty + Save → key:{action:keep}', async () => {
+describe('<ElmerPane> G2 -- replace_commits_set_only_on_nonempty', () => {
+  it('Replace + leave empty + Save -> key:{action:keep}', async () => {
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
       if (cmd === 'elmer_config_read') return {
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
@@ -744,7 +744,7 @@ describe('<ElmerPane> G2 — replace_commits_set_only_on_nonempty', () => {
     // Click Replace to reveal the input.
     fireEvent.click(screen.getByTestId('elmer-key-replace-btn'));
 
-    // The replace input appears — leave it empty.
+    // The replace input appears -- leave it empty.
     const replaceInput = screen.getByTestId('elmer-key-replace-input') as HTMLInputElement;
     expect(replaceInput.value).toBe('');
 
@@ -794,7 +794,7 @@ describe('<ElmerPane> G2 — replace_commits_set_only_on_nonempty', () => {
     // Render ModelForm directly (same pattern as form_renders_fields_from_config_read)
     // so initialEndpoint is the OpenAI URL and providerSelect.value starts as 'openai'.
     // Navigation via the settings picker would land on openrouter, making providerSelect
-    // start on 'openrouter' — not what this test is exercising.
+    // start on 'openrouter' -- not what this test is exercising.
     const onSave = vi.fn(async () => {});
     const onDetect = vi.fn(async () => {});
     render(
@@ -814,14 +814,14 @@ describe('<ElmerPane> G2 — replace_commits_set_only_on_nonempty', () => {
     // Starts on the inferred OpenAI preset.
     expect(providerSelect.value).toBe('openai');
 
-    // Select Custom… — previously a no-op that snapped back; now clears + sticks.
+    // Select Custom… -- previously a no-op that snapped back; now clears + sticks.
     fireEvent.change(providerSelect, { target: { value: 'custom' } });
 
     expect(endpointInput.value).toBe('');
     expect(providerSelect.value).toBe('custom');
   });
 
-  it('Replace + type value + Save → key:{action:set,value}', async () => {
+  it('Replace + type value + Save -> key:{action:set,value}', async () => {
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
       if (cmd === 'elmer_config_read') return {
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
@@ -857,8 +857,8 @@ describe('<ElmerPane> G2 — replace_commits_set_only_on_nonempty', () => {
   });
 });
 
-describe('<ElmerPane> G2 — remove_commits_clear', () => {
-  it('Remove + Save → key:{action:clear}', async () => {
+describe('<ElmerPane> G2 -- remove_commits_clear', () => {
+  it('Remove + Save -> key:{action:clear}', async () => {
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
       if (cmd === 'elmer_config_read') return {
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
@@ -889,8 +889,8 @@ describe('<ElmerPane> G2 — remove_commits_clear', () => {
   });
 });
 
-describe('<ElmerPane> G2 — detect_populates_dropdown', () => {
-  it('Detect success → model ids selectable + "✓ N models detected"', async () => {
+describe('<ElmerPane> G2 -- detect_populates_dropdown', () => {
+  it('Detect success -> model ids selectable + "✓ N models detected"', async () => {
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
       if (cmd === 'elmer_config_read') return {
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
@@ -925,8 +925,8 @@ describe('<ElmerPane> G2 — detect_populates_dropdown', () => {
   });
 });
 
-describe('<ElmerPane> G2 — detect_failure_shows_inline_reason', () => {
-  it('Detect failure → inline error message renders', async () => {
+describe('<ElmerPane> G2 -- detect_failure_shows_inline_reason', () => {
+  it('Detect failure -> inline error message renders', async () => {
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
       if (cmd === 'elmer_config_read') return {
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
@@ -954,7 +954,7 @@ describe('<ElmerPane> G2 — detect_failure_shows_inline_reason', () => {
   });
 });
 
-describe('<ElmerPane> G2 — save_calls_config_set_with_three_state_key', () => {
+describe('<ElmerPane> G2 -- save_calls_config_set_with_three_state_key', () => {
   it('Save & use sends {agentEndpoint, agentModel, key} matching Rust SetKey serde DTO', async () => {
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
       if (cmd === 'elmer_config_read') return {
@@ -969,7 +969,7 @@ describe('<ElmerPane> G2 — save_calls_config_set_with_three_state_key', () => 
 
     await renderAndOpen();
 
-    // Fill in a key value (keyStatus=absent → direct key input).
+    // Fill in a key value (keyStatus=absent -> direct key input).
     const keyInput = screen.getByTestId('elmer-key-input');
     fireEvent.change(keyInput, { target: { value: 'sk-test-key' } });
 
@@ -994,7 +994,7 @@ describe('<ElmerPane> G2 — save_calls_config_set_with_three_state_key', () => 
     });
   });
 
-  it('absent key, no value entered → key:{action:keep}', async () => {
+  it('absent key, no value entered -> key:{action:keep}', async () => {
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
       if (cmd === 'elmer_config_read') return {
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
@@ -1008,7 +1008,7 @@ describe('<ElmerPane> G2 — save_calls_config_set_with_three_state_key', () => 
 
     await renderAndOpen();
 
-    // Do NOT type in the key input — leave empty.
+    // Do NOT type in the key input -- leave empty.
     mockInvoke.mockClear();
     fireEvent.click(screen.getByTestId('elmer-save-btn'));
 
@@ -1017,17 +1017,17 @@ describe('<ElmerPane> G2 — save_calls_config_set_with_three_state_key', () => 
       const setCall = calls.find((c) => c[0] === 'elmer_config_set');
       expect(setCall).toBeTruthy();
       const args = setCall![1] as { key: { action: string } };
-      // Empty absent input → keep (don't erase existing absence).
+      // Empty absent input -> keep (don't erase existing absence).
       expect(args.key.action).toBe('keep');
     });
   });
 });
 
 // ---------------------------------------------------------------------------
-// G3 — Empty-state button, detect remedies, model attribution marker
+// G3 -- Empty-state button, detect remedies, model attribution marker
 // ---------------------------------------------------------------------------
 
-describe('<ElmerPane> G3 — empty_state_button_expands_model_section', () => {
+describe('<ElmerPane> G3 -- empty_state_button_expands_model_section', () => {
   // T8b: The "Connect a model" button is replaced by the ModelTilePicker which
   // renders in place of the message list when onboarded=false. These tests
   // verify the new first-run gate (tile picker) rather than the old button.
@@ -1052,7 +1052,7 @@ describe('<ElmerPane> G3 — empty_state_button_expands_model_section', () => {
     await waitFor(() => {
       expect(screen.getByTestId('elmer-tile-picker')).toBeTruthy();
     });
-    // Old "Connect a model" button is gone — tile picker is the surface now.
+    // Old "Connect a model" button is gone -- tile picker is the surface now.
     expect(screen.queryByTestId('elmer-connect-model')).toBeNull();
   });
 
@@ -1069,8 +1069,8 @@ describe('<ElmerPane> G3 — empty_state_button_expands_model_section', () => {
   });
 });
 
-describe('<ElmerPane> G3 — detect_remedy_loopback_offline', () => {
-  it('loopback endpoint + transport failure → Ollama offline remedy', async () => {
+describe('<ElmerPane> G3 -- detect_remedy_loopback_offline', () => {
+  it('loopback endpoint + transport failure -> Ollama offline remedy', async () => {
     // Config with loopback endpoint. Navigate via settings picker to openrouter
     // tile (ModelForm), then change the endpoint to loopback so detectRemedy
     // fires the Ollama-offline branch (which is gated on isLoopback(endpoint)).
@@ -1104,8 +1104,8 @@ describe('<ElmerPane> G3 — detect_remedy_loopback_offline', () => {
   });
 });
 
-describe('<ElmerPane> G3 — detect_remedy_remote_transport', () => {
-  it('remote endpoint + transport failure → internet connection remedy', async () => {
+describe('<ElmerPane> G3 -- detect_remedy_remote_transport', () => {
+  it('remote endpoint + transport failure -> internet connection remedy', async () => {
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
       if (cmd === 'elmer_config_read') return {
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
@@ -1134,8 +1134,8 @@ describe('<ElmerPane> G3 — detect_remedy_remote_transport', () => {
   });
 });
 
-describe('<ElmerPane> G3 — detect_remedy_auth', () => {
-  it('auth error + OpenAI preset → "re-enter the key for OpenAI"', async () => {
+describe('<ElmerPane> G3 -- detect_remedy_auth', () => {
+  it('auth error + OpenAI preset -> "re-enter the key for OpenAI"', async () => {
     // Config with OpenAI endpoint. Navigate via settings picker to openrouter
     // tile (ModelForm), then set the endpoint to OpenAI so detectRemedy maps
     // the auth error to the "re-enter the key for OpenAI" label.
@@ -1168,8 +1168,8 @@ describe('<ElmerPane> G3 — detect_remedy_auth', () => {
   });
 });
 
-describe('<ElmerPane> G3 — detect_zero_models_remedy', () => {
-  it('zero models reason → pull-a-model remedy, no green check', async () => {
+describe('<ElmerPane> G3 -- detect_zero_models_remedy', () => {
+  it('zero models reason -> pull-a-model remedy, no green check', async () => {
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
       if (cmd === 'elmer_config_read') return {
         agentEndpoint: 'http://127.0.0.1:11434/v1/chat/completions',
@@ -1202,10 +1202,10 @@ describe('<ElmerPane> G3 — detect_zero_models_remedy', () => {
 });
 
 // ---------------------------------------------------------------------------
-// H1 — expandModel prop: opens Model section disclosure on mount
+// H1 -- expandModel prop: opens Model section disclosure on mount
 // ---------------------------------------------------------------------------
 
-describe('<ElmerPane> H1 — expand_model_prop_opens_model_section', () => {
+describe('<ElmerPane> H1 -- expand_model_prop_opens_model_section', () => {
   it('renders with the Model section disclosure open when expandModel=true', async () => {
     render(<ElmerPane expandModel />);
     // The advanced body must be present without the operator clicking the toggle.
@@ -1220,7 +1220,7 @@ describe('<ElmerPane> H1 — expand_model_prop_opens_model_section', () => {
   });
 });
 
-describe('<ElmerPane> G3 — model_change_drops_attribution_marker', () => {
+describe('<ElmerPane> G3 -- model_change_drops_attribution_marker', () => {
   it('configSet changing model mid-conversation inserts an attribution marker before the next turn', async () => {
     // Start with llama3 config.
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
@@ -1260,7 +1260,7 @@ describe('<ElmerPane> G3 — model_change_drops_attribution_marker', () => {
       expect(calls.some((c) => c[0] === 'elmer_config_set')).toBe(true);
     });
 
-    // Fire a new assistant turn — an attribution marker should appear before it.
+    // Fire a new assistant turn -- an attribution marker should appear before it.
     const payload: ElmerTurnPayload = { kind: 'turn', role: 'assistant', text: 'Hello with gpt-4o' };
     await fireElmerEvent<ElmerTurnPayload>(EV_TURN, payload);
 
@@ -1275,14 +1275,14 @@ describe('<ElmerPane> G3 — model_change_drops_attribution_marker', () => {
 // Credential-seam regression tests (Bug 1 + Bug 2 fixes)
 // ---------------------------------------------------------------------------
 
-describe('<ElmerPane> credential-seam — editing_endpoint_to_new_origin_resets_pending_key_action', () => {
+describe('<ElmerPane> credential-seam -- editing_endpoint_to_new_origin_resets_pending_key_action', () => {
   // Bug 1: A Remove or Replace action started for origin A must NOT carry
   // through to a Save when the endpoint has been changed to a different origin B.
   // If the reset does not fire, buildSetKey() returns {action:'clear'} and the
-  // backend applies it to origin B (wrong) — clearing B's key while A's survives.
+  // backend applies it to origin B (wrong) -- clearing B's key while A's survives.
 
   it('Remove pending then change endpoint to new origin: Save sends key:{action:keep} not clear', async () => {
-    // Load config with a stored key. The config endpoint doesn't matter much —
+    // Load config with a stored key. The config endpoint doesn't matter much --
     // after renderAndOpen() navigates to the openrouter tile, ModelForm starts with
     // initialEndpoint='https://openrouter.ai/...' and initialKeyStatus='present'.
     // effectiveKeyStatus='present' because current origin == initial origin (openrouter).
@@ -1299,7 +1299,7 @@ describe('<ElmerPane> credential-seam — editing_endpoint_to_new_origin_resets_
 
     await renderAndOpen();
 
-    // Click Remove — sets clearPending=true for the current origin (openrouter.ai).
+    // Click Remove -- sets clearPending=true for the current origin (openrouter.ai).
     fireEvent.click(screen.getByTestId('elmer-key-remove-btn'));
 
     // Verify the pending state is shown.
@@ -1316,13 +1316,13 @@ describe('<ElmerPane> credential-seam — editing_endpoint_to_new_origin_resets_
     // After origin change, the stale clearPending must be reset.
     // The form should now show an absent-key input (no stored key for new origin).
     await waitFor(() => {
-      // clearPending was reset → the clear-pending UI is gone.
+      // clearPending was reset -> the clear-pending UI is gone.
       expect(screen.queryByTestId('elmer-key-clear-cancel-btn')).toBeNull();
       // The form now shows the absent-key input for the new origin.
       expect(screen.getByTestId('elmer-key-input')).toBeTruthy();
     });
 
-    // Save — must NOT send action:clear for the new origin.
+    // Save -- must NOT send action:clear for the new origin.
     mockInvoke.mockClear();
     fireEvent.click(screen.getByTestId('elmer-save-btn'));
 
@@ -1377,7 +1377,7 @@ describe('<ElmerPane> credential-seam — editing_endpoint_to_new_origin_resets_
       expect(screen.getByTestId('elmer-key-input')).toBeTruthy();
     });
 
-    // Save — must NOT send action:set with the openrouter key typed for origin A.
+    // Save -- must NOT send action:set with the openrouter key typed for origin A.
     mockInvoke.mockClear();
     fireEvent.click(screen.getByTestId('elmer-save-btn'));
 
@@ -1393,19 +1393,19 @@ describe('<ElmerPane> credential-seam — editing_endpoint_to_new_origin_resets_
         // If somehow set, it must not carry the old key to the new origin.
         expect(args.key.value).not.toBe('sk-openai-key-typed-for-A');
       }
-      // After reset, no key was typed for the new origin → keep.
+      // After reset, no key was typed for the new origin -> keep.
       expect(args.key.action).toBe('keep');
     });
   });
 });
 
-describe('<ElmerPane> credential-seam — detect_uses_inline_key_when_typed_not_saved', () => {
+describe('<ElmerPane> credential-seam -- detect_uses_inline_key_when_typed_not_saved', () => {
   // Bug 2: Detect must use the key currently typed in the form, not always
   // 'useStored'. When keyStatus==='absent' and a key has been typed (but not
   // Saved), Detect should probe with {source:'inline', value:<typed>} so the
   // operator can validate the key before committing it.
 
-  it('absent key: type a key then click Detect → keySource {source:inline, value}', async () => {
+  it('absent key: type a key then click Detect -> keySource {source:inline, value}', async () => {
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
       if (cmd === 'elmer_config_read') return {
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
@@ -1444,7 +1444,7 @@ describe('<ElmerPane> credential-seam — detect_uses_inline_key_when_typed_not_
     });
   });
 
-  it('present key + Replace mode: type a key then click Detect → keySource {source:inline, value}', async () => {
+  it('present key + Replace mode: type a key then click Detect -> keySource {source:inline, value}', async () => {
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
       if (cmd === 'elmer_config_read') return {
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
@@ -1481,14 +1481,14 @@ describe('<ElmerPane> credential-seam — detect_uses_inline_key_when_typed_not_
     });
   });
 
-  // tuxlink-wpqwy / Task 6 — Detect-path analog of the #981 buildSetKey fix.
+  // tuxlink-wpqwy / Task 6 -- Detect-path analog of the #981 buildSetKey fix.
   // Inter-provider switch: load a provider with a STORED key, then switch the
   // endpoint to a DIFFERENT origin. effectiveKeyStatus flips to 'absent' (origin
   // diverged) and the absent-key input renders, but raw keyStatus is still
   // 'present' for the OLD origin. buildKeySource keyed off raw keyStatus would
-  // drop the freshly-typed key and send {source:'none'} → Detect/Test probes with
-  // no key → false auth failure. The fix makes buildKeySource origin-aware.
-  it('switch provider with stored key, type new key → Detect sends {source:inline, value}', async () => {
+  // drop the freshly-typed key and send {source:'none'} -> Detect/Test probes with
+  // no key -> false auth failure. The fix makes buildKeySource origin-aware.
+  it('switch provider with stored key, type new key -> Detect sends {source:inline, value}', async () => {
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
       if (cmd === 'elmer_config_read') return {
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
@@ -1502,7 +1502,7 @@ describe('<ElmerPane> credential-seam — detect_uses_inline_key_when_typed_not_
 
     await renderAndOpen();
 
-    // Switch the endpoint to a DIFFERENT origin (Gemini) — origin diverges from
+    // Switch the endpoint to a DIFFERENT origin (Gemini) -- origin diverges from
     // the loaded OpenAI config, so the absent-key input appears for the new host.
     const endpointInput = screen.getByTestId('elmer-endpoint-input');
     fireEvent.change(endpointInput, {
@@ -1526,18 +1526,18 @@ describe('<ElmerPane> credential-seam — detect_uses_inline_key_when_typed_not_
       const detectCall = calls.find((c) => c[0] === 'elmer_detect_models');
       expect(detectCall).toBeTruthy();
       const args = detectCall![1] as { agentEndpoint: string; keySource: { source: string; value?: string } };
-      // The typed key must be sent inline — NOT dropped to {source:'none'}.
+      // The typed key must be sent inline -- NOT dropped to {source:'none'}.
       expect(args.keySource.source).toBe('inline');
       expect(args.keySource.value).toBe('AIza-new-provider-key');
     });
   });
 });
 
-describe('<ElmerPane> credential-seam — detect_uses_usestored_when_key_present_and_untouched', () => {
+describe('<ElmerPane> credential-seam -- detect_uses_usestored_when_key_present_and_untouched', () => {
   // Bug 2 (counter-case): When keyStatus==='present' and no pending change has
   // been started, Detect should use the stored key ({source:'useStored'}).
 
-  it('present key, no pending input, click Detect → keySource {source:useStored}', async () => {
+  it('present key, no pending input, click Detect -> keySource {source:useStored}', async () => {
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
       if (cmd === 'elmer_config_read') return {
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
@@ -1551,7 +1551,7 @@ describe('<ElmerPane> credential-seam — detect_uses_usestored_when_key_present
 
     await renderAndOpen();
 
-    // Do NOT click Replace or Remove — leave the stored key untouched.
+    // Do NOT click Replace or Remove -- leave the stored key untouched.
 
     mockInvoke.mockClear();
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
@@ -1572,10 +1572,10 @@ describe('<ElmerPane> credential-seam — detect_uses_usestored_when_key_present
 });
 
 // ---------------------------------------------------------------------------
-// Markdown rendering — assistant turns rendered as sanitized HTML (security)
+// Markdown rendering -- assistant turns rendered as sanitized HTML (security)
 // ---------------------------------------------------------------------------
 
-describe('<ElmerPane> — assistant turn renders markdown as HTML', () => {
+describe('<ElmerPane> -- assistant turn renders markdown as HTML', () => {
   it('bold text is rendered as <strong>, not as raw asterisks', async () => {
     const { container } = render(<ElmerPane />);
     const payload: ElmerTurnPayload = { kind: 'turn', role: 'assistant', text: '**bold word**' };
@@ -1629,8 +1629,8 @@ describe('<ElmerPane> — assistant turn renders markdown as HTML', () => {
   });
 });
 
-describe('<ElmerPane> — sanitization: dangerous model output is stripped (XSS)', () => {
-  it('onerror attribute on img is stripped — no script execution vector', async () => {
+describe('<ElmerPane> -- sanitization: dangerous model output is stripped (XSS)', () => {
+  it('onerror attribute on img is stripped -- no script execution vector', async () => {
     const { container } = render(<ElmerPane />);
     const payload: ElmerTurnPayload = {
       kind: 'turn',
@@ -1686,8 +1686,8 @@ describe('<ElmerPane> — sanitization: dangerous model output is stripped (XSS)
   });
 });
 
-describe('<ElmerPane> — user turn renders as plain text, not markdown', () => {
-  it('markdown-ish user input is not parsed — literal asterisks are preserved', () => {
+describe('<ElmerPane> -- user turn renders as plain text, not markdown', () => {
+  it('markdown-ish user input is not parsed -- literal asterisks are preserved', () => {
     render(<ElmerPane />);
 
     // Type a message with markdown syntax and send it.
@@ -1708,7 +1708,7 @@ describe('<ElmerPane> — user turn renders as plain text, not markdown', () => 
   });
 });
 
-describe('<ElmerPane> — model selection persists across collapse/re-expand (configSet refresh)', () => {
+describe('<ElmerPane> -- model selection persists across collapse/re-expand (configSet refresh)', () => {
   it('after Save, configSet refreshes modelConfig via config_read so a re-expanded form shows the saved model', async () => {
     render(<ElmerPane />);
     openAdvanced();
@@ -1742,7 +1742,7 @@ describe('<ElmerPane> — model selection persists across collapse/re-expand (co
 // Per-turn timeout input tests
 // ---------------------------------------------------------------------------
 
-describe('<ElmerPane> — turn_timeout_input_renders_from_config', () => {
+describe('<ElmerPane> -- turn_timeout_input_renders_from_config', () => {
   it('config_read returning agentTurnTimeoutSecs=600 seeds the timeout input to 600', async () => {
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
       if (cmd === 'elmer_config_read') return {
@@ -1763,7 +1763,7 @@ describe('<ElmerPane> — turn_timeout_input_renders_from_config', () => {
   });
 });
 
-describe('<ElmerPane> — save_includes_turn_timeout', () => {
+describe('<ElmerPane> -- save_includes_turn_timeout', () => {
   it('changing the timeout input to 1200 and clicking Save sends agentTurnTimeoutSecs: 1200 in the payload', async () => {
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
       if (cmd === 'elmer_config_read') return {
@@ -1796,11 +1796,11 @@ describe('<ElmerPane> — save_includes_turn_timeout', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 2b — streaming render: live bubble + cursor, reasoning auto-collapse,
+// Phase 2b -- streaming render: live bubble + cursor, reasoning auto-collapse,
 // committed-item collapsed reasoning toggle
 // ---------------------------------------------------------------------------
 
-describe('<ElmerPane> phase 2b — streaming bubble renders live answer + cursor', () => {
+describe('<ElmerPane> phase 2b -- streaming bubble renders live answer + cursor', () => {
   it('assistant deltas render as a live bubble with the blinking cursor', async () => {
     render(<ElmerPane />);
 
@@ -1828,18 +1828,18 @@ describe('<ElmerPane> phase 2b — streaming bubble renders live answer + cursor
   });
 });
 
-describe('<ElmerPane> phase 2b — reasoning auto-collapses when the answer arrives', () => {
+describe('<ElmerPane> phase 2b -- reasoning auto-collapses when the answer arrives', () => {
   it('reasoning section is expanded while only reasoning has streamed, then collapses once the answer starts', async () => {
     render(<ElmerPane />);
 
-    // Only reasoning so far → section expanded (body visible).
+    // Only reasoning so far -> section expanded (body visible).
     await fireElmerEvent<ElmerDeltaPayload>(EV_DELTA, { kind: 'delta', deltaKind: 'reasoning', chunk: 'Considering options.' });
 
     const reasoning = screen.getByTestId('elmer-reasoning');
     expect(reasoning.getAttribute('data-open')).toBe('true');
     expect(screen.getByTestId('elmer-reasoning-body').textContent).toContain('Considering options.');
 
-    // Answer starts → reasoning auto-collapses (body hidden).
+    // Answer starts -> reasoning auto-collapses (body hidden).
     await fireElmerEvent<ElmerDeltaPayload>(EV_DELTA, { kind: 'delta', deltaKind: 'assistant', chunk: 'Here is the answer.' });
 
     const reasoningAfter = screen.getByTestId('elmer-reasoning');
@@ -1848,7 +1848,7 @@ describe('<ElmerPane> phase 2b — reasoning auto-collapses when the answer arri
   });
 });
 
-describe('<ElmerPane> phase 2b — committed item shows a collapsed reasoning toggle that expands', () => {
+describe('<ElmerPane> phase 2b -- committed item shows a collapsed reasoning toggle that expands', () => {
   it('a finalized assistant turn that streamed reasoning shows a collapsed Thinking… toggle; clicking expands it', async () => {
     render(<ElmerPane />);
 
@@ -1863,16 +1863,16 @@ describe('<ElmerPane> phase 2b — committed item shows a collapsed reasoning to
 
     const toggle = screen.getByTestId('elmer-reasoning-toggle');
     expect(toggle).toBeTruthy();
-    // Collapsed by default — the reasoning body is not shown.
+    // Collapsed by default -- the reasoning body is not shown.
     expect(screen.queryByTestId('elmer-reasoning-body')).toBeNull();
 
-    // Click to expand → reasoning text becomes visible.
+    // Click to expand -> reasoning text becomes visible.
     fireEvent.click(toggle);
     expect(screen.getByTestId('elmer-reasoning-body').textContent).toContain('Internal chain of thought.');
   });
 });
 
-describe('<ElmerPane> — turn_timeout_minutes_hint', () => {
+describe('<ElmerPane> -- turn_timeout_minutes_hint', () => {
   it('a timeout of 900 seconds shows a "15 min" hint', async () => {
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
       if (cmd === 'elmer_config_read') return {
@@ -1894,10 +1894,10 @@ describe('<ElmerPane> — turn_timeout_minutes_hint', () => {
 });
 
 // ---------------------------------------------------------------------------
-// T8b — onboarding gate: picker replaces message list; gear reopens picker
+// T8b -- onboarding gate: picker replaces message list; gear reopens picker
 // ---------------------------------------------------------------------------
 
-describe('<ElmerPane> T8b — not-onboarded: tile picker renders in place of message list', () => {
+describe('<ElmerPane> T8b -- not-onboarded: tile picker renders in place of message list', () => {
   it('when onboarded=false the tile picker renders and the message list is not shown', async () => {
     mockInvoke.mockImplementationOnce(async (cmd?: string, _args?: unknown) => {
       if (cmd === 'elmer_config_read') return {
@@ -1927,7 +1927,7 @@ describe('<ElmerPane> T8b — not-onboarded: tile picker renders in place of mes
   });
 });
 
-describe('<ElmerPane> T8b — not-onboarded: chat input is disabled with a hint', () => {
+describe('<ElmerPane> T8b -- not-onboarded: chat input is disabled with a hint', () => {
   it('when onboarded=false the chat input is disabled and shows a hint', async () => {
     mockInvoke.mockImplementationOnce(async (cmd?: string, _args?: unknown) => {
       if (cmd === 'elmer_config_read') return {
@@ -1961,7 +1961,7 @@ describe('<ElmerPane> T8b — not-onboarded: chat input is disabled with a hint'
   });
 });
 
-describe('<ElmerPane> T8b — onboarded=true: chat renders, picker not shown by default', () => {
+describe('<ElmerPane> T8b -- onboarded=true: chat renders, picker not shown by default', () => {
   it('when onboarded=true the message list renders and the tile picker is not shown', async () => {
     // Default mock already returns onboarded=true.
     render(<ElmerPane />);
@@ -1976,7 +1976,7 @@ describe('<ElmerPane> T8b — onboarded=true: chat renders, picker not shown by 
   });
 });
 
-describe('<ElmerPane> T8b — gear reopens picker after mount (F6 reopen)', () => {
+describe('<ElmerPane> T8b -- gear reopens picker after mount (F6 reopen)', () => {
   it('re-opening the model section fires elmer_key_status_for_origins a second time via openCounter bump', async () => {
     // Render with expandModel=true so advancedOpen starts true and openCounter=1
     // on mount. The keyStatusForOrigins effect fires once immediately (openCounter=1).
@@ -2013,11 +2013,11 @@ describe('<ElmerPane> T8b — gear reopens picker after mount (F6 reopen)', () =
     ).length;
 
     // Click the toggle to close the advanced section.
-    fireEvent.click(screen.getByTestId('elmer-advanced-toggle')); // close — advancedOpen becomes false
+    fireEvent.click(screen.getByTestId('elmer-advanced-toggle')); // close -- advancedOpen becomes false
 
-    // Click the toggle again to reopen — this bumps openCounter, which re-triggers
+    // Click the toggle again to reopen -- this bumps openCounter, which re-triggers
     // the keyStatusForOrigins effect (the load-bearing F6 mechanism).
-    fireEvent.click(screen.getByTestId('elmer-advanced-toggle')); // open — advancedOpen becomes true, openCounter increments
+    fireEvent.click(screen.getByTestId('elmer-advanced-toggle')); // open -- advancedOpen becomes true, openCounter increments
 
     // Assert the effect fired again: total elmer_key_status_for_origins calls must
     // exceed the post-mount count. This assertion FAILS if openCounter were only
@@ -2032,7 +2032,7 @@ describe('<ElmerPane> T8b — gear reopens picker after mount (F6 reopen)', () =
 });
 
 // ---------------------------------------------------------------------------
-// T8b — Fix: keyStatusForOrigins fires on first-run render (notOnboarded=true)
+// T8b -- Fix: keyStatusForOrigins fires on first-run render (notOnboarded=true)
 // ---------------------------------------------------------------------------
 // Regression guard for the production-seam bug found in codex adversarial review:
 // the original effect gate was `if (!advancedOpen || openCounter === 0) return`
@@ -2040,7 +2040,7 @@ describe('<ElmerPane> T8b — gear reopens picker after mount (F6 reopen)', () =
 // (switchProviderFocusTier !== null) because those flows show the picker WITHOUT
 // opening the gear disclosure.  The fix ORs in notOnboarded and
 // switchProviderFocusTier so the badges populate in those flows too.
-describe('<ElmerPane> T8b — not-onboarded: elmer_key_status_for_origins fires without advancedOpen', () => {
+describe('<ElmerPane> T8b -- not-onboarded: elmer_key_status_for_origins fires without advancedOpen', () => {
   it('first-run render (onboarded=false, advancedOpen=false) still invokes elmer_key_status_for_origins', async () => {
     // Track how many times elmer_key_status_for_origins is called.
     const statusCalls: unknown[][] = [];
@@ -2063,7 +2063,7 @@ describe('<ElmerPane> T8b — not-onboarded: elmer_key_status_for_origins fires 
       return undefined;
     });
 
-    // Render without expandModel — advancedOpen starts false.
+    // Render without expandModel -- advancedOpen starts false.
     render(<ElmerPane />);
 
     // The tile picker renders in the first-run flow (onboarded=false).
@@ -2095,10 +2095,10 @@ describe('<ElmerPane> T8b — not-onboarded: elmer_key_status_for_origins fires 
 });
 
 // ---------------------------------------------------------------------------
-// T10 (a) — rateLimited phase: distinct callout + Switch provider → picker at paygo
+// T10 (a) -- rateLimited phase: distinct callout + Switch provider -> picker at paygo
 // ---------------------------------------------------------------------------
 
-describe('<ElmerPane> T10 — rateLimited: distinct callout with Switch provider button', () => {
+describe('<ElmerPane> T10 -- rateLimited: distinct callout with Switch provider button', () => {
   it('EV_OUTCOME rateLimited renders a distinct callout (data-testid elmer-outcome-rate-limited)', async () => {
     render(<ElmerPane />);
 
@@ -2174,7 +2174,7 @@ describe('<ElmerPane> T10 — rateLimited: distinct callout with Switch provider
   });
 
   it('clicking Switch provider pre-selects the first paygo tile (aria-checked=true on elmer-tile-openai)', async () => {
-    // Fix 3: PRESETS ordering — openai is the first paygo preset, so focusTier='paygo'
+    // Fix 3: PRESETS ordering -- openai is the first paygo preset, so focusTier='paygo'
     // must select elmer-tile-openai specifically. Assert the exact tile, not an OR.
     render(<ElmerPane />);
 
@@ -2199,7 +2199,7 @@ describe('<ElmerPane> T10 — rateLimited: distinct callout with Switch provider
     });
   });
 
-  it('no auto-retry on rateLimited — only a manual Switch provider action is offered', async () => {
+  it('no auto-retry on rateLimited -- only a manual Switch provider action is offered', async () => {
     render(<ElmerPane />);
 
     const payload: ElmerOutcomePayload = {
@@ -2216,12 +2216,12 @@ describe('<ElmerPane> T10 — rateLimited: distinct callout with Switch provider
 });
 
 // ---------------------------------------------------------------------------
-// T10 (b) — ModelTilePicker: Test reuses detectState copy, Save reuses saveState
+// T10 (b) -- ModelTilePicker: Test reuses detectState copy, Save reuses saveState
 // ---------------------------------------------------------------------------
 
-describe('ModelTilePicker T10 — Test (Detect) routes through detectState copy (not a thinner reimpl)', () => {
+describe('ModelTilePicker T10 -- Test (Detect) routes through detectState copy (not a thinner reimpl)', () => {
   // The GetKeyCard (used by cloud tiles with keyPageUrl) delegates its Test action
-  // to the parent's detectState prop — success/auth/network copy comes from detectRemedy
+  // to the parent's detectState prop -- success/auth/network copy comes from detectRemedy
   // (ElmerPane.tsx). The ModelTilePicker's "Other" path uses ModelForm which has
   // the Detect button wired to onDetect/detectState directly.
   it('ModelForm inside the Other tile renders .elmer-detect-error on detectState error, not a separate state machine', async () => {
@@ -2248,7 +2248,7 @@ describe('ModelTilePicker T10 — Test (Detect) routes through detectState copy 
     fe.click(s.getByTestId('elmer-tile-custom'));
 
     // detectState.status=error should show .elmer-detect-error via ModelForm
-    // (which reuses the parent-supplied detectState — NOT a separate state machine).
+    // (which reuses the parent-supplied detectState -- NOT a separate state machine).
     await wf(() => {
       expect(s.getByTestId('elmer-detect-error')).toBeTruthy();
     });
@@ -2286,10 +2286,10 @@ describe('ModelTilePicker T10 — Test (Detect) routes through detectState copy 
 });
 
 // ---------------------------------------------------------------------------
-// T10 (c) — persistent provider-class footer indicator for cloud tiers
+// T10 (c) -- persistent provider-class footer indicator for cloud tiers
 // ---------------------------------------------------------------------------
 
-describe('<ElmerPane> T10 — persistent provider-class footer indicator', () => {
+describe('<ElmerPane> T10 -- persistent provider-class footer indicator', () => {
   it('shows a cloud-provider footer indicator when the configured provider is a cloud tier', async () => {
     // onboarded=true with a known cloud provider (Google Gemini, free tier).
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
@@ -2358,10 +2358,10 @@ describe('<ElmerPane> T10 — persistent provider-class footer indicator', () =>
 });
 
 // ---------------------------------------------------------------------------
-// T10 (d) — Honest framing copy: free-tier training note + local reframe
+// T10 (d) -- Honest framing copy: free-tier training note + local reframe
 // ---------------------------------------------------------------------------
 
-describe('ModelTilePicker T10 — honest framing copy for free and local tiers', () => {
+describe('ModelTilePicker T10 -- honest framing copy for free and local tiers', () => {
   it('free tier (gemini tile selected) shows training-on-data sentence', async () => {
     const { ModelTilePicker: MTP } = await import('./ModelTilePicker');
     const { render: r, screen: s } = await import('@testing-library/react');
@@ -2432,10 +2432,10 @@ describe('ModelTilePicker T10 — honest framing copy for free and local tiers',
 });
 
 // ---------------------------------------------------------------------------
-// T10 — ModelTilePicker focusTier prop pre-selects first paygo tile
+// T10 -- ModelTilePicker focusTier prop pre-selects first paygo tile
 // ---------------------------------------------------------------------------
 
-describe('ModelTilePicker T10 — focusTier prop pre-selects first paygo tile', () => {
+describe('ModelTilePicker T10 -- focusTier prop pre-selects first paygo tile', () => {
   it('focusTier="paygo" pre-selects the first paygo tile (openai tile aria-checked=true)', async () => {
     const { ModelTilePicker: MTP } = await import('./ModelTilePicker');
     const { render: r, screen: s } = await import('@testing-library/react');
@@ -2465,11 +2465,11 @@ describe('ModelTilePicker T10 — focusTier prop pre-selects first paygo tile', 
 });
 
 // ---------------------------------------------------------------------------
-// Fix 4 (T10) — return-to-chat coverage: switch-provider save clears picker;
+// Fix 4 (T10) -- return-to-chat coverage: switch-provider save clears picker;
 // cancel/back returns to chat; cancel absent during first-run onboarding.
 // ---------------------------------------------------------------------------
 
-describe('<ElmerPane> T10 Fix 4 — successful switch-provider save returns to chat', () => {
+describe('<ElmerPane> T10 Fix 4 -- successful switch-provider save returns to chat', () => {
   it('after opening the picker via Switch provider and completing a SUCCESSFUL save, elmer-messages reappears and the picker is gone', async () => {
     // Start onboarded=true so the message list is the initial surface.
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
@@ -2498,7 +2498,7 @@ describe('<ElmerPane> T10 Fix 4 — successful switch-provider save returns to c
     };
     await fireElmerEvent<ElmerOutcomePayload>(EV_OUTCOME, rateLimitedPayload);
 
-    // Click Switch provider — picker opens.
+    // Click Switch provider -- picker opens.
     fireEvent.click(screen.getByTestId('elmer-switch-provider-btn'));
     await waitFor(() => {
       expect(screen.getByTestId('elmer-tile-picker')).toBeTruthy();
@@ -2506,23 +2506,23 @@ describe('<ElmerPane> T10 Fix 4 — successful switch-provider save returns to c
     // Message list must be gone while picker is showing.
     expect(screen.queryByTestId('elmer-messages')).toBeNull();
 
-    // Switch to the localOllama tile — it uses the summary path (no keyPageUrl),
-    // so its save button (elmer-tile-save) is always enabled without key validation.
+    // Switch to the localOllama tile -- it renders ModelForm (no keyPageUrl),
+    // so its save button (elmer-save-btn) is always enabled without key validation.
     // This avoids the GetKeyCard key-length gate while still testing the save path.
     await waitFor(() => {
       expect(screen.getByTestId('elmer-tile-localOllama')).toBeTruthy();
     });
     fireEvent.click(screen.getByTestId('elmer-tile-localOllama'));
 
-    // The localOllama tile editor shows elmer-tile-save (always enabled).
+    // The localOllama tile editor shows ModelForm's elmer-save-btn (always enabled).
     await waitFor(() => {
-      const saveBtn = screen.getByTestId('elmer-tile-save') as HTMLButtonElement;
+      const saveBtn = screen.getByTestId('elmer-save-btn') as HTMLButtonElement;
       expect(saveBtn.disabled).toBe(false);
     });
 
-    fireEvent.click(screen.getByTestId('elmer-tile-save'));
+    fireEvent.click(screen.getByTestId('elmer-save-btn'));
 
-    // After successful save, switchProviderFocusTier is cleared → message list reappears.
+    // After successful save, switchProviderFocusTier is cleared -> message list reappears.
     await waitFor(() => {
       expect(screen.getByTestId('elmer-messages')).toBeTruthy();
       expect(screen.queryByTestId('elmer-tile-picker')).toBeNull();
@@ -2530,7 +2530,7 @@ describe('<ElmerPane> T10 Fix 4 — successful switch-provider save returns to c
   });
 });
 
-describe('<ElmerPane> T10 Fix 4 — cancel/back affordance returns to chat without saving', () => {
+describe('<ElmerPane> T10 Fix 4 -- cancel/back affordance returns to chat without saving', () => {
   it('clicking Back to chat from the switch-provider picker returns to chat without a save', async () => {
     // Start onboarded=true.
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
@@ -2550,7 +2550,7 @@ describe('<ElmerPane> T10 Fix 4 — cancel/back affordance returns to chat witho
       expect(screen.getByTestId('elmer-messages')).toBeTruthy();
     });
 
-    // Trigger rateLimited → Switch provider.
+    // Trigger rateLimited -> Switch provider.
     const rateLimitedPayload: ElmerOutcomePayload = {
       kind: 'outcome',
       outcomeKind: 'rateLimited',
@@ -2570,7 +2570,7 @@ describe('<ElmerPane> T10 Fix 4 — cancel/back affordance returns to chat witho
 
     mockInvoke.mockClear();
 
-    // Click Back to chat — must return to the message list without saving.
+    // Click Back to chat -- must return to the message list without saving.
     fireEvent.click(backBtn);
 
     await waitFor(() => {
@@ -2584,9 +2584,9 @@ describe('<ElmerPane> T10 Fix 4 — cancel/back affordance returns to chat witho
   });
 });
 
-describe('<ElmerPane> T10 Fix 4 — cancel/back affordance absent during first-run onboarding', () => {
+describe('<ElmerPane> T10 Fix 4 -- cancel/back affordance absent during first-run onboarding', () => {
   it('the Back to chat button is NOT present during first-run onboarding (onboarded=false)', async () => {
-    // First-run: onboarded=false — picker is the initial surface, no cancel affordance.
+    // First-run: onboarded=false -- picker is the initial surface, no cancel affordance.
     mockInvoke.mockImplementationOnce(async (cmd?: string, _args?: unknown) => {
       if (cmd === 'elmer_config_read') return {
         agentEndpoint: '',
@@ -2616,14 +2616,14 @@ describe('<ElmerPane> T10 Fix 4 — cancel/back affordance absent during first-r
 });
 
 // ---------------------------------------------------------------------------
-// Settings-surface fold-in — gear-open shows tile picker (Part 1 / Part 3-a)
+// Settings-surface fold-in -- gear-open shows tile picker (Part 1 / Part 3-a)
 // ---------------------------------------------------------------------------
 // When onboarded=true, opening the gear/disclosure (advancedOpen=true) shows
 // the tile picker in the main slot (instead of the message list), pre-selected
 // to the current provider.  Back-to-chat closes the picker without saving.
 // ---------------------------------------------------------------------------
 
-describe('<ElmerPane> settings-surface fold-in — gear-open shows tile picker pre-selected to current provider', () => {
+describe('<ElmerPane> settings-surface fold-in -- gear-open shows tile picker pre-selected to current provider', () => {
   it('opens the tile picker in main slot when the gear disclosure is toggled (onboarded=true)', async () => {
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
       if (cmd === 'elmer_config_read') return {
@@ -2709,7 +2709,7 @@ describe('<ElmerPane> settings-surface fold-in — gear-open shows tile picker p
 });
 
 // ---------------------------------------------------------------------------
-// T11 — Credential-seam regression tests: tile/GetKeyCard flow (port of #981)
+// T11 -- Credential-seam regression tests: tile/GetKeyCard flow (port of #981)
 // ---------------------------------------------------------------------------
 // These tests re-express the three #981 credential-seam scenarios through the
 // tile/GetKeyCard flow for cloud providers (gemini, groq, openai, anthropic).
@@ -2718,16 +2718,16 @@ describe('<ElmerPane> settings-surface fold-in — gear-open shows tile picker p
 //   The tile/GetKeyCard path is structurally distinct from the ModelForm path:
 //   GetKeyCard.handleSave() sends { action:'set', value:<typed-trimmed-key> } when a
 //   key is typed, or { action:'keep' } when the origin already has a saved key and the
-//   operator did not choose "Replace key" (the settings-edit path) — always to
+//   operator did not choose "Replace key" (the settings-edit path) -- always to
 //   preset.endpoint (a compile-time constant on the preset object). This means:
 //
-//   - Bug 1 (stale Remove/Replace crossing origins): structurally impossible — the
+//   - Bug 1 (stale Remove/Replace crossing origins): structurally impossible -- the
 //     GetKeyCard holds no Remove/Replace state; it only has a key input. A key typed
 //     for Gemini and then switching to Groq (a new GetKeyCard render) gives a FRESH
 //     component with an empty input. The stale Gemini key is never carried over.
 //
 //   - Bug 2 (Detect using wrong keySource after inter-provider switch): GetKeyCard
-//     has NO Detect button — detect only exists in ModelForm. Task 6 (detect-inline-
+//     has NO Detect button -- detect only exists in ModelForm. Task 6 (detect-inline-
 //     key-after-switch) is already covered by the existing ModelForm tests and is
 //     inapplicable to the GetKeyCard path.
 //
@@ -2735,7 +2735,7 @@ describe('<ElmerPane> settings-surface fold-in — gear-open shows tile picker p
 //     it always sends {action:'set'} with the explicitly typed value. Not a gap.
 //
 //   The tests below confirm these structural guarantees by driving the actual tile
-//   UI (select tile → GetKeyCard paste/save) and asserting the right credentials
+//   UI (select tile -> GetKeyCard paste/save) and asserting the right credentials
 //   reach elmer_config_set. An Anthropic-origin regression and T6/T7 coexistence
 //   checks are also included.
 // ---------------------------------------------------------------------------
@@ -2771,7 +2771,7 @@ const VALID_GROQ_KEY = 'gsk_validGroqTestKey123456789';
 const VALID_OPENAI_KEY = 'sk-valid-openai-key-12345678';
 const VALID_ANTHROPIC_KEY = 'sk-ant-valid-key-12345678901';
 
-describe('<ElmerPane> T11 credential-seam — tile/GetKeyCard save-path: typed key reaches correct origin', () => {
+describe('<ElmerPane> T11 credential-seam -- tile/GetKeyCard save-path: typed key reaches correct origin', () => {
   // Port of #981 Bug 1 scenario to the tile flow.
   // Selects a cloud tile, pastes a key, and verifies elmer_config_set receives:
   //   agentEndpoint = the tile's hardcoded endpoint (correct origin)
@@ -2812,7 +2812,7 @@ describe('<ElmerPane> T11 credential-seam — tile/GetKeyCard save-path: typed k
       const args = setCall![1] as { agentEndpoint: string; key: { action: string; value?: string } };
       // Must go to Gemini's hardcoded endpoint, not an empty or stale one.
       expect(args.agentEndpoint).toContain('generativelanguage.googleapis.com');
-      // Must send the typed key — NOT 'keep', 'clear', or some other action.
+      // Must send the typed key -- NOT 'keep', 'clear', or some other action.
       expect(args.key.action).toBe('set');
       expect(args.key.value).toBe(VALID_GEMINI_KEY);
     });
@@ -2841,7 +2841,7 @@ describe('<ElmerPane> T11 credential-seam — tile/GetKeyCard save-path: typed k
     await waitFor(() => {
       expect(screen.getByTestId('get-key-card')).toBeTruthy();
     });
-    // Type a Gemini key — intentionally NOT saving it.
+    // Type a Gemini key -- intentionally NOT saving it.
     fireEvent.change(screen.getByTestId('get-key-input'), {
       target: { value: VALID_GEMINI_KEY },
     });
@@ -2868,7 +2868,7 @@ describe('<ElmerPane> T11 credential-seam — tile/GetKeyCard save-path: typed k
       const setCall = mockInvoke.mock.calls.find((c) => c[0] === 'elmer_config_set');
       expect(setCall).toBeTruthy();
       const args = setCall![1] as { agentEndpoint: string; key: { action: string; value?: string } };
-      // The critical guarantee: endpoint is Groq's, not Gemini's — preset.endpoint
+      // The critical guarantee: endpoint is Groq's, not Gemini's -- preset.endpoint
       // on the now-selected Groq tile, not any state carried from Gemini.
       expect(args.agentEndpoint).toContain('groq.com');
       expect(args.agentEndpoint).not.toContain('googleapis.com');
@@ -2880,7 +2880,7 @@ describe('<ElmerPane> T11 credential-seam — tile/GetKeyCard save-path: typed k
   });
 });
 
-describe('<ElmerPane> T11 credential-seam — Anthropic-origin regression: stored OpenAI key does not leak', () => {
+describe('<ElmerPane> T11 credential-seam -- Anthropic-origin regression: stored OpenAI key does not leak', () => {
   // When an operator has a stored key for OpenAI and the config has
   // keyStatus='present', then switches to the Anthropic tile: the stored OpenAI
   // key must NOT be sent to the Anthropic endpoint.
@@ -2888,7 +2888,7 @@ describe('<ElmerPane> T11 credential-seam — Anthropic-origin regression: store
   // In the tile/GetKeyCard flow this is structurally guaranteed:
   //   - Selecting Anthropic renders a fresh GetKeyCard with preset=anthropicPreset.
   //   - GetKeyCard.handleSave() uses preset.endpoint (Anthropic's hardcoded endpoint).
-  //   - key is always {action:'set', value:typedKey} — never {source:'useStored'}.
+  //   - key is always {action:'set', value:typedKey} -- never {source:'useStored'}.
   //   - The stored OpenAI key is never read or forwarded by GetKeyCard.
   //
   // The test confirms these guarantees hold end-to-end through ElmerPane.
@@ -2925,7 +2925,7 @@ describe('<ElmerPane> T11 credential-seam — Anthropic-origin regression: store
       expect(screen.getByTestId('get-key-card')).toBeTruthy();
     });
 
-    // The key input must be empty — the stored OpenAI key is NOT pre-populated.
+    // The key input must be empty -- the stored OpenAI key is NOT pre-populated.
     const keyInput = screen.getByTestId('get-key-input') as HTMLInputElement;
     expect(keyInput.value).toBe('');
 
@@ -2942,10 +2942,10 @@ describe('<ElmerPane> T11 credential-seam — Anthropic-origin regression: store
       const setCall = mockInvoke.mock.calls.find((c) => c[0] === 'elmer_config_set');
       expect(setCall).toBeTruthy();
       const args = setCall![1] as { agentEndpoint: string; key: { action: string; value?: string } };
-      // Must go to Anthropic's endpoint — the stored OpenAI config must not leak.
+      // Must go to Anthropic's endpoint -- the stored OpenAI config must not leak.
       expect(args.agentEndpoint).toContain('anthropic.com');
       expect(args.agentEndpoint).not.toContain('openai.com');
-      // Key must be the typed Anthropic key — not 'keep' (which would silently
+      // Key must be the typed Anthropic key -- not 'keep' (which would silently
       // preserve the stored OpenAI key against the Anthropic origin).
       expect(args.key.action).toBe('set');
       expect(args.key.value).toBe(VALID_ANTHROPIC_KEY);
@@ -2957,7 +2957,7 @@ describe('<ElmerPane> T11 credential-seam — Anthropic-origin regression: store
     // tile path: a 'keep' action for a cloud tile that just switched origins
     // would silently leave the new origin with no key (or worse, if the backend
     // misinterprets it, the stored key for a different origin). GetKeyCard
-    // never sends 'keep' — only 'set' with the typed value.
+    // never sends 'keep' -- only 'set' with the typed value.
     mockInvoke.mockImplementationOnce(async (cmd?: string, _args?: unknown) => {
       if (cmd === 'elmer_config_read') return {
         agentEndpoint: 'https://api.openai.com/v1/chat/completions',
@@ -2997,7 +2997,7 @@ describe('<ElmerPane> T11 credential-seam — Anthropic-origin regression: store
       const setCall = mockInvoke.mock.calls.find((c) => c[0] === 'elmer_config_set');
       expect(setCall).toBeTruthy();
       const args = setCall![1] as { agentEndpoint: string; key: { action: string; value?: string } };
-      // Must NOT be 'keep' — that would silently forward the wrong (OpenAI) key.
+      // Must NOT be 'keep' -- that would silently forward the wrong (OpenAI) key.
       expect(args.key.action).not.toBe('keep');
       expect(args.key.action).not.toBe('clear');
       expect(args.key.action).toBe('set');
@@ -3005,14 +3005,14 @@ describe('<ElmerPane> T11 credential-seam — Anthropic-origin regression: store
   });
 });
 
-describe('<ElmerPane> T11 credential-seam — Task 6 Detect coexistence: detect still uses inline key in ModelForm path', () => {
+describe('<ElmerPane> T11 credential-seam -- Task 6 Detect coexistence: detect still uses inline key in ModelForm path', () => {
   // Task 6 (Detect-path analog of #981 Bug 2): detects uses inline key after
   // an inter-provider endpoint switch in the ModelForm path (advanced disclosure).
-  // GetKeyCard has no Detect button — the Task 6 fix only applies to ModelForm.
+  // GetKeyCard has no Detect button -- the Task 6 fix only applies to ModelForm.
   // This test confirms the existing T6 behavior still holds after T8a–T10 landed,
   // i.e., the tile/GetKeyCard changes did NOT regress the ModelForm detect path.
 
-  it('inter-provider switch in ModelForm (advanced) + type new key → Detect sends {source:inline}', async () => {
+  it('inter-provider switch in ModelForm (advanced) + type new key -> Detect sends {source:inline}', async () => {
     // Identical to the Task 6 test in the existing detect_uses_inline_key describe,
     // re-stated here as a T11 coexistence marker so a future reviewer knows it
     // was explicitly verified with the tile flow in place.
@@ -3022,7 +3022,7 @@ describe('<ElmerPane> T11 credential-seam — Task 6 Detect coexistence: detect 
         agentModel: 'gpt-4o',
         keyStatus: 'present',
         agentTurnTimeoutSecs: 900,
-        onboarded: true,  // onboarded → shows message list + advanced disclosure
+        onboarded: true,  // onboarded -> shows message list + advanced disclosure
       };
       return undefined;
     });
@@ -3052,14 +3052,14 @@ describe('<ElmerPane> T11 credential-seam — Task 6 Detect coexistence: detect 
       const detectCall = mockInvoke.mock.calls.find((c) => c[0] === 'elmer_detect_models');
       expect(detectCall).toBeTruthy();
       const args = detectCall![1] as { agentEndpoint: string; keySource: { source: string; value?: string } };
-      // Task 6 fix: must send the inline typed key — NOT {source:'none'} or 'useStored'.
+      // Task 6 fix: must send the inline typed key -- NOT {source:'none'} or 'useStored'.
       expect(args.keySource.source).toBe('inline');
       expect(args.keySource.value).toBe('sk-ant-typed-for-detect');
     });
   });
 });
 
-describe('<ElmerPane> T11 credential-seam — Task 7 default-model pre-fill coexistence (tile path)', () => {
+describe('<ElmerPane> T11 credential-seam -- Task 7 default-model pre-fill coexistence (tile path)', () => {
   // Confirms nextModelForPreset still fires correctly through the tile path
   // after T8a–T10 changes, so switching to a cloud tile pre-fills the model.
 
@@ -3074,7 +3074,7 @@ describe('<ElmerPane> T11 credential-seam — Task 7 default-model pre-fill coex
     // OpenAI tile is pre-selected (matches initialEndpoint).
     expect(screen.getByTestId('elmer-tile-openai').getAttribute('aria-checked')).toBe('true');
 
-    // Select Anthropic tile — nextModelForPreset sees outgoing model=gpt-4o-mini
+    // Select Anthropic tile -- nextModelForPreset sees outgoing model=gpt-4o-mini
     // (matches OpenAI's default) so it replaces with Anthropic's default.
     fireEvent.click(screen.getByTestId('elmer-tile-anthropic'));
 
