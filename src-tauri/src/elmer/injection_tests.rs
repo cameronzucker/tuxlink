@@ -171,6 +171,29 @@ const INJECTION_CORPUS: &[(&str, &str)] = &[
 ];
 
 // ---------------------------------------------------------------------------
+// Helper: minimal valid args per EGRESS tool (mirrors executor.rs test mod)
+// ---------------------------------------------------------------------------
+
+/// Minimal valid arguments for each EGRESS-marked tool.
+///
+/// rmcp decodes arguments BEFORE the `#[tool]` method body runs, so dispatching
+/// an EGRESS tool with empty `{}` args when the param struct has required fields
+/// returns a decode error — NOT `Denied` — and the arm gate is never exercised.
+/// Pass the result of this helper to guarantee the dispatch reaches
+/// `guarded_egress` and produces a true guard-driven outcome.
+fn minimal_args_for_tool(name: &str) -> serde_json::Value {
+    match name {
+        "cms_connect" | "verify_cms_connection" => serde_json::json!({}),
+        "rig_tune" => serde_json::json!({ "freq_hz": 7_104_000u64 }),
+        "ardop_connect" => serde_json::json!({ "target": "KX4Z-10" }),
+        "ardop_b2f_exchange" => serde_json::json!({ "target": "KX4Z-10" }),
+        "vara_b2f_exchange" => serde_json::json!({ "target": "KX4Z-10" }),
+        "packet_connect" => serde_json::json!({ "call": "KX4Z-10" }),
+        _ => serde_json::json!({}),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Helper: build a minimal in-process invoker (mirrors executor.rs tests)
 // ---------------------------------------------------------------------------
 
@@ -309,15 +332,33 @@ async fn egress_arm_gate_intact_after_feature() {
         );
 
         // Disarmed dispatch must be Denied by the guard.
+        //
+        // Use minimal valid args so the dispatch reaches `guarded_egress` and
+        // produces a true guard denial.  Without valid required args, serde
+        // returns a decode error before the guard runs — and a decode error
+        // does NOT classify as `Denied`, so the assert would simply fail.
         let call = ToolCall {
             name: name.clone(),
-            args: serde_json::json!({}),
+            args: minimal_args_for_tool(name),
         };
         let out = invoker.invoke(&call, CallAuthority::Agent, &cancel).await;
-        assert!(
-            matches!(out, ToolOutcome::Denied(_)),
-            "disarmed egress tool `{name}` must be Denied by the guard; got {out:?}"
-        );
+        match &out {
+            ToolOutcome::Denied(msg) => {
+                // Verify the Denied originates from the arm guard, not from
+                // some other code path that emits a "Denied"-classified message.
+                // The egress_err() helper in the router prefixes all guard
+                // denials with "not authorized to transmit:".
+                assert!(
+                    msg.contains("not authorized"),
+                    "disarmed egress tool `{name}` was Denied but the message \
+                     does not contain the guard's denial wording ('not authorized'): \
+                     {msg:?}"
+                );
+            }
+            _ => panic!(
+                "disarmed egress tool `{name}` must be Denied by the guard; got {out:?}"
+            ),
+        }
     }
 }
 
@@ -507,9 +548,18 @@ async fn injection_egress_is_arm_gated() {
 
     for tool_name in &egress_names {
         for (vector, payload) in INJECTION_CORPUS {
+            // Build args from minimal required fields PLUS the hostile payload
+            // as an extra key.  The minimal fields ensure rmcp's argument decode
+            // succeeds and the dispatch reaches `guarded_egress`; without valid
+            // required args a decode error fires before the guard runs, and
+            // neither Denied branch below would be exercised.  The extra
+            // "injection" key is silently ignored by the router's param struct
+            // (serde's default deny-unknown-fields is NOT set on these structs).
+            let mut args = minimal_args_for_tool(tool_name);
+            args["injection"] = serde_json::Value::String((*payload).to_string());
             let call = ToolCall {
                 name: tool_name.clone(),
-                args: serde_json::json!({ "injection": payload }),
+                args,
             };
 
             // --- Disarmed → Denied(NotArmed-class) ---
@@ -520,11 +570,23 @@ async fn injection_egress_is_arm_gated() {
             .await
             .expect("invoker must connect");
             let out = inv.invoke(&call, CallAuthority::Agent, &cancel).await;
-            assert!(
-                matches!(out, ToolOutcome::Denied(_)),
-                "corpus vector `{vector}`: disarmed `{tool_name}` with hostile \
-                 payload must be Denied; got {out:?}"
-            );
+            match &out {
+                ToolOutcome::Denied(msg) => {
+                    // Guard's NotArmed denial routes through egress_err() which
+                    // prefixes "not authorized to transmit:".  A decode error
+                    // would surface as InvalidArgs, not Denied.
+                    assert!(
+                        msg.contains("not authorized"),
+                        "corpus vector `{vector}`: disarmed `{tool_name}` was \
+                         Denied but message lacks guard wording ('not authorized'): \
+                         {msg:?}"
+                    );
+                }
+                _ => panic!(
+                    "corpus vector `{vector}`: disarmed `{tool_name}` with hostile \
+                     payload must be Denied; got {out:?}"
+                ),
+            }
 
             // --- Armed + tainted → Denied(Tainted-class): taint takes precedence ---
             let g = Arc::new(EgressGuard::new());
@@ -536,11 +598,23 @@ async fn injection_egress_is_arm_gated() {
             .await
             .expect("invoker must connect");
             let out = inv.invoke(&call, CallAuthority::Agent, &cancel).await;
-            assert!(
-                matches!(out, ToolOutcome::Denied(_)),
-                "corpus vector `{vector}`: armed+tainted `{tool_name}` must be \
-                 Denied; got {out:?}"
-            );
+            match &out {
+                ToolOutcome::Denied(msg) => {
+                    // Taint denial: EgressDenied::Tainted Display is
+                    // "session is tainted by untrusted message content; egress
+                    // blocked".  classify_call_error catches it via the
+                    // "tainted" keyword in the lowercased message.
+                    assert!(
+                        msg.contains("not authorized") || msg.contains("tainted"),
+                        "corpus vector `{vector}`: armed+tainted `{tool_name}` was \
+                         Denied but message lacks guard wording: {msg:?}"
+                    );
+                }
+                _ => panic!(
+                    "corpus vector `{vector}`: armed+tainted `{tool_name}` must be \
+                     Denied; got {out:?}"
+                ),
+            }
         }
     }
 }

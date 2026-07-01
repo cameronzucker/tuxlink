@@ -172,6 +172,37 @@ mod tests {
     use tuxlink_mcp_core::{test_support, McpState, TuxlinkMcp};
     use tuxlink_security::EgressGuard;
 
+    /// Minimal valid arguments for each EGRESS-marked tool.
+    ///
+    /// rmcp decodes arguments BEFORE the `#[tool]` method body runs, so
+    /// dispatching a tool with missing required fields returns a decode error —
+    /// NOT `Denied` — and the arm gate is never reached.  Pass these args to
+    /// guarantee the dispatch reaches `guarded_egress` and produces a true
+    /// guard-driven denial (or success on armed+untainted).
+    ///
+    /// Fields marked `#[serde(default)]` in the router param structs
+    /// (`intent`, `path`, `freq_hz` on vara/rig, `qsy`) are omitted
+    /// intentionally — they carry a language-level default and need not be
+    /// present.
+    fn minimal_args_for_tool(name: &str) -> serde_json::Value {
+        match name {
+            // No required args.
+            "cms_connect" | "verify_cms_connection" => serde_json::json!({}),
+            // freq_hz is the one required field (serde NOT default).
+            "rig_tune" => serde_json::json!({ "freq_hz": 7_104_000u64 }),
+            // target is required; freq_hz + qsy are serde(default).
+            "ardop_connect" => serde_json::json!({ "target": "KX4Z-10" }),
+            // target is required; intent is serde(default).
+            "ardop_b2f_exchange" => serde_json::json!({ "target": "KX4Z-10" }),
+            // target is required; freq_hz + qsy are serde(default).
+            "vara_b2f_exchange" => serde_json::json!({ "target": "KX4Z-10" }),
+            // call is required; path is serde(default).
+            "packet_connect" => serde_json::json!({ "call": "KX4Z-10" }),
+            // Unknown / no-arg tools: safe default.
+            _ => serde_json::json!({}),
+        }
+    }
+
     /// A recognisable id that the seeded mock mailbox will echo back.
     const SEEDED_ID: &str = "MSG001";
 
@@ -281,14 +312,42 @@ mod tests {
         }
 
         // Disarmed: each EGRESS tool must be Denied by the guard.
+        //
+        // We pass minimal valid args so that rmcp's argument decode succeeds and
+        // the dispatch actually reaches `guarded_egress`.  Without valid args an
+        // serde decode error arrives before the guard runs, and the test would
+        // pass vacuously (the decode error is not a `Denied`).
+        //
+        // Additionally assert the Denied message contains the guard's own wording
+        // so a future decode error cannot masquerade as a pass.  The egress error
+        // chain is:
+        //   guarded_egress → EgressDenied::NotArmed (Display: "send authority is
+        //   not armed") → EgressPortError::Denied → router egress_err →
+        //   "not authorized to transmit: ..." → classify_call_error →
+        //   ToolOutcome::Denied(message).
         let cancel = CancellationToken::new();
         for name in &egress_names {
-            let call = ToolCall { name: name.clone(), args: serde_json::json!({}) };
+            let call = ToolCall { name: name.clone(), args: minimal_args_for_tool(name) };
             let out = invoker.invoke(&call, CallAuthority::Agent, &cancel).await;
-            assert!(
-                matches!(out, ToolOutcome::Denied(_)),
-                "disarmed EGRESS tool `{name}` must be Denied by the guard, got {out:?}"
-            );
+            match &out {
+                ToolOutcome::Denied(msg) => {
+                    // "not authorized to transmit" is the prefix egress_err() adds
+                    // around the EgressDenied::Display string.  If this sub-assert
+                    // fires, the Denied came from somewhere other than the arm gate
+                    // (e.g. a leftover decode error that somehow classified as
+                    // Denied) — the gate itself was not exercised.
+                    assert!(
+                        msg.contains("not authorized"),
+                        "disarmed EGRESS tool `{name}` was Denied but the message \
+                         does not contain the guard's denial wording ('not authorized'): \
+                         {msg:?}.  Ensure minimal_args_for_tool passes valid required \
+                         fields so the guard — not the serde decoder — produces the Denied."
+                    );
+                }
+                _ => panic!(
+                    "disarmed EGRESS tool `{name}` must be Denied by the guard, got {out:?}"
+                ),
+            }
         }
     }
 
@@ -298,6 +357,10 @@ mod tests {
     /// maps to a success outcome — NOT `Denied`.  We assert not-Denied as the
     /// correct sufficient check (no real modem in CI; connect errors are
     /// `InvalidArgs`, not `Denied`).
+    ///
+    /// Per-tool `op_ran` resets confirm that EACH individual tool's gate opens
+    /// and the mock op runs, not just that at least one tool in the loop set
+    /// the flag.
     #[tokio::test]
     async fn armed_untainted_egress_is_not_denied() {
         use std::sync::atomic::Ordering;
@@ -312,25 +375,34 @@ mod tests {
         let invoker = InProcessMcpInvoker::connect(state).await.unwrap();
         let cancel = CancellationToken::new();
 
-        // One representative tool per transport class (all have minimal required
-        // args — the mock port ignores arguments).
+        // One representative tool per transport class.  Minimal valid args are
+        // required: rmcp decodes arguments before the method body runs, so a
+        // missing required field errors on decode (not on the guard), and the
+        // armed test would pass vacuously (the guard was never reached).
         for name in &["cms_connect", "ardop_connect", "vara_b2f_exchange", "packet_connect"] {
+            // Reset op_ran before EACH tool call so we can assert this specific
+            // tool's gate opened — not just that any previous tool set the flag.
+            op_ran.store(false, Ordering::SeqCst);
+
             let call = ToolCall {
                 name: (*name).into(),
-                args: serde_json::json!({}),
+                args: minimal_args_for_tool(name),
             };
             let out = invoker.invoke(&call, CallAuthority::Agent, &cancel).await;
             assert!(
                 !matches!(out, ToolOutcome::Denied(_)),
                 "armed+untainted `{name}` must NOT be Denied (gate opened), got {out:?}"
             );
-        }
 
-        // The mock EgressPort flips op_ran inside the gated closure, proving the
-        // gate opened and the op actually ran (not just avoided a Denied outcome).
-        assert!(
-            op_ran.load(Ordering::SeqCst),
-            "armed+untainted dispatch must reach the mock egress op (op_ran flag not set)"
-        );
+            // The mock EgressPort flips op_ran inside the gated closure.
+            // Asserting this per-tool proves the gate opened AND the op actually
+            // ran for that specific tool — not merely that a Denied was avoided.
+            assert!(
+                op_ran.load(Ordering::SeqCst),
+                "armed+untainted `{name}` must reach the mock egress op \
+                 (op_ran flag not set after the call — the gate may not have opened \
+                 or the mock port was not called)"
+            );
+        }
     }
 }
