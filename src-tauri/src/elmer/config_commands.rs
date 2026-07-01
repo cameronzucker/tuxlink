@@ -57,6 +57,7 @@ use tauri::State;
 use tracing::instrument;
 
 use tuxlink_agent_frontend::{
+    anthropic_provider::is_anthropic_endpoint,
     egress::{build_vetted_client, EgressError},
     endpoint::AgentEndpoint,
     provider::ApiKey,
@@ -685,9 +686,27 @@ where
     };
 
     // Step 4: issue the GET request.
+    //
+    // Auth-header selection: Anthropic's `/v1/models` endpoint requires
+    // `x-api-key` (NOT `Authorization: Bearer`) plus `anthropic-version`.
+    // All other OpenAI-compatible providers use `Authorization: Bearer`.
+    // We detect Anthropic by the models URL host — the same selector used
+    // by the provider adapter in `ElmerProvider::new_vetted_with_resolver`.
+    let is_anthropic = is_anthropic_endpoint(models_ep.url());
+
     let mut req = client.get(&models_url_str);
     if let Some(ref k) = key {
-        req = req.bearer_auth(k.expose());
+        if is_anthropic {
+            req = req
+                .header("x-api-key", k.expose())
+                .header("anthropic-version", "2023-06-01");
+        } else {
+            req = req.bearer_auth(k.expose());
+        }
+    } else if is_anthropic {
+        // Anthropic requires anthropic-version even for keyless probes (the
+        // API returns a 401 if the header is absent, which we map correctly).
+        req = req.header("anthropic-version", "2023-06-01");
     }
 
     let resp = req.send().await.map_err(|e| {

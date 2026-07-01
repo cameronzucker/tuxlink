@@ -120,12 +120,13 @@ export const PRESETS: ProviderPreset[] = [
     keyPageUrl: 'https://platform.openai.com/api-keys',
   },
   {
-    // OpenAI-compatibility endpoint (base https://api.anthropic.com/v1/ + chat/completions),
-    // bearer auth. Pay-as-you-go (needs a billing card). Default haiku is cheap + a strong
+    // Anthropic native Messages API endpoint. Uses x-api-key auth (not bearer).
+    // The Rust backend selects AnthropicProvider for api.anthropic.com endpoints.
+    // Pay-as-you-go (needs a billing card). Default haiku is cheap + a strong
     // tool-driver; sonnet is the quality step-up.
     id: 'anthropic',
     label: 'Anthropic — Claude',
-    endpoint: 'https://api.anthropic.com/v1/chat/completions',
+    endpoint: 'https://api.anthropic.com/v1/messages',
     tier: 'paygo',
     defaultModel: 'claude-haiku-4-5',
     keyPageUrl: 'https://console.anthropic.com/settings/keys',

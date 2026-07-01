@@ -19,6 +19,7 @@
 //! modules. The Elmer pane in the Tauri monolith will depend on it for the
 //! same three, supplying its own transport.
 
+pub mod anthropic_provider;
 pub mod egress;
 pub mod endpoint;
 pub mod mcp_client;

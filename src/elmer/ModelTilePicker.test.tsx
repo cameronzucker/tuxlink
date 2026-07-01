@@ -112,7 +112,7 @@ describe('ModelTilePicker', () => {
     render(
       <ModelTilePicker
         {...baseProps({
-          initialEndpoint: 'https://api.anthropic.com/v1/chat/completions',
+          initialEndpoint: 'https://api.anthropic.com/v1/messages',
           initialModel: 'claude-sonnet-4-5', // operator's saved model
         })}
       />,
@@ -183,7 +183,7 @@ describe('ModelTilePicker', () => {
     expect(onSave).toHaveBeenCalledTimes(1);
     expect(onSave).toHaveBeenCalledWith(
       expect.objectContaining({
-        agentEndpoint: 'https://api.anthropic.com/v1/chat/completions',
+        agentEndpoint: 'https://api.anthropic.com/v1/messages',
         agentModel: 'claude-haiku-4-5',
         key: { action: 'set', value: 'sk-ant-test-key-12345678' },
       }),
