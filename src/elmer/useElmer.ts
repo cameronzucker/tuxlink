@@ -31,10 +31,12 @@ import { listen } from '@tauri-apps/api/event';
 import type { ConfigReadDto, SetKey, KeySource, KeyStatusByOrigin } from './elmerModelConfig';
 import {
   EV_CHIP,
+  EV_CONTEXT,
   EV_DELTA,
   EV_OUTCOME,
   EV_TURN,
   type ElmerChipPayload,
+  type ElmerContextPayload,
   type ElmerDeltaPayload,
   type ElmerOutcomePayload,
   type ElmerTurnPayload,
@@ -220,6 +222,12 @@ export interface UseElmer {
    * `ConfigReadDto.onboarded`. Null while config is loading or in error state.
    */
   onboarded: boolean | null;
+  /**
+   * T7 — Latest context-usage snapshot from OllamaProvider (null until the
+   * first EV_CONTEXT event arrives). Once non-null, persists across turns so
+   * the meter stays visible. Only the fields needed by <ContextMeter> are kept.
+   */
+  context: { promptTokens: number; numCtx: number } | null;
 }
 
 /**
@@ -269,6 +277,10 @@ export function useElmer(): UseElmer {
   // and insert an attribution marker before the next turn renders.
   const activeModelRef = useRef<string | null>(null);
   const [activeModel, setActiveModel] = useState<string | null>(null);
+
+  // T7: Latest context-usage snapshot from OllamaProvider. Null until the
+  // first EV_CONTEXT event arrives; persists across turns so the meter stays visible.
+  const [context, setContext] = useState<{ promptTokens: number; numCtx: number } | null>(null);
 
   // Subscribe to all three Elmer event channels for the lifetime of the hook.
   // The listeners are set up once on mount and torn down on unmount. Tauri's
@@ -360,6 +372,14 @@ export function useElmer(): UseElmer {
         setStreamingReasoning('');
       });
 
+      // T7: EV_CONTEXT — context-usage snapshot from OllamaProvider. Store the
+      // latest promptTokens + numCtx so <ContextMeter> can render a fill meter.
+      // Once non-null, context persists across turns; the meter never disappears.
+      const unContext = await listen<ElmerContextPayload>(EV_CONTEXT, (event) => {
+        const { promptTokens, numCtx } = event.payload;
+        setContext({ promptTokens, numCtx });
+      });
+
       if (cancelled) {
         // Cleanup already ran (or is about to) — tear these down now so they
         // don't outlive the effect and double-handle events on the next mount.
@@ -367,9 +387,10 @@ export function useElmer(): UseElmer {
         unTurn();
         unChip();
         unOutcome();
+        unContext();
         return;
       }
-      unlisteners.push(unDelta, unTurn, unChip, unOutcome);
+      unlisteners.push(unDelta, unTurn, unChip, unOutcome, unContext);
     };
 
     void setupListeners();
@@ -493,5 +514,6 @@ export function useElmer(): UseElmer {
     detectState,
     activeModel,
     onboarded: modelConfig !== null ? modelConfig.onboarded : null,
+    context,
   };
 }

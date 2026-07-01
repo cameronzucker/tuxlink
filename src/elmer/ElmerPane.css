@@ -539,6 +539,44 @@
   font-size: 12px;
 }
 
+/* ── Context meter (T7) — slim fill bar above the composer input ─────────── */
+/*    Hidden until the first EV_CONTEXT event; shown unconditionally after.   */
+.elmer-context-meter {
+  flex: 0 0 auto;
+  padding: 6px 12px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.elmer-context-meter-labels {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 11px;
+  color: var(--text-faint, var(--text));
+  opacity: 0.8;
+  gap: 8px;
+}
+.elmer-context-meter-left {
+  white-space: nowrap;
+}
+.elmer-context-meter-right {
+  white-space: nowrap;
+  text-align: right;
+}
+.elmer-context-meter-track {
+  width: 100%;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border-soft, var(--border));
+  overflow: hidden;
+}
+.elmer-context-meter-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease, background 0.3s ease;
+}
+
 /* ── Input row (always visible, AC-11) ──────────────────────────────────── */
 .elmer-input-row {
   flex: 0 0 auto;

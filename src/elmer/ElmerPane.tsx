@@ -32,6 +32,7 @@ import type { EgressStatusDto } from '../security/egressTypes';
 import { PRESETS, inferPreset, isLoopback, originOf, nextModelForPreset } from './elmerModelConfig';
 import type { SetKey, KeySource, KeyStatusByOrigin } from './elmerModelConfig';
 import { ModelTilePicker } from './ModelTilePicker';
+import { ContextMeter } from './ContextMeter';
 import { renderMarkdown } from '../shell/markdownRender';
 import { sanitizeHtml } from '../shell/sanitizeHtml';
 import './ElmerPane.css';
@@ -1011,6 +1012,7 @@ export const ElmerPane = memo(function ElmerPane({
     configSet,
     detectModels,
     detectState,
+    context,
   } = useElmer();
   const [input, setInput] = useState('');
   // T10: When the operator clicks "Switch provider" from a rate-limit callout,
@@ -1261,6 +1263,12 @@ export const ElmerPane = memo(function ElmerPane({
         >
           Choose a model above to start chatting with Elmer.
         </p>
+      )}
+
+      {/* T7: Context meter — shown above the composer once the first EV_CONTEXT
+          event arrives; hidden (null guard) until then. Persists forever after. */}
+      {context !== null && (
+        <ContextMeter promptTokens={context.promptTokens} numCtx={context.numCtx} />
       )}
 
       {/* Input area + Stop (always visible, AC-11) */}
