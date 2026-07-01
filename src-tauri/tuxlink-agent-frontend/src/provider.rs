@@ -619,7 +619,61 @@ pub fn build_request_body(model: &str, conversation: &Conversation, tools: &[Too
         serde_json::json!({ "role": "system", "content": ELMER_SYSTEM_PROMPT });
     let mut messages: Vec<Value> = Vec::with_capacity(conversation.messages().len() + 1);
     messages.push(system_message);
-    messages.extend(conversation.messages().iter().map(render_message));
+    // Render the transcript into OpenAI chat messages. Tool calls/results use the
+    // STANDARD OpenAI tool-calling protocol: the assistant message carries a
+    // `tool_calls` array (each with an id and a JSON-STRING `arguments`), and each
+    // tool result is a `tool`-role message that references that call's
+    // `tool_call_id`. Strict OpenAI-compat providers (Gemini's compat endpoint,
+    // OpenAI, ...) reject a `tool` message with no matching `tool_call_id` with an
+    // opaque HTTP 400 INVALID_ARGUMENT; only permissive local servers (Ollama)
+    // tolerated the old lenient text form. The transcript does not carry the
+    // model's original ids, so we mint stable synthetic ones (`call_0`, `call_1`,
+    // …) and pair each result to its call FIFO — the runner appends a ToolCall
+    // immediately followed by its ToolResult, so FIFO order is the call order.
+    let mut next_tool_id: usize = 0;
+    let mut pending_tool_ids: std::collections::VecDeque<String> =
+        std::collections::VecDeque::new();
+    for msg in conversation.messages() {
+        match msg {
+            Message::ToolCall(call) => {
+                let id = format!("call_{next_tool_id}");
+                next_tool_id += 1;
+                pending_tool_ids.push_back(id.clone());
+                // OpenAI requires `arguments` to be a JSON STRING, not an object.
+                let arguments = if call.args.is_null() {
+                    "{}".to_string()
+                } else {
+                    serde_json::to_string(&call.args).unwrap_or_else(|_| "{}".to_string())
+                };
+                messages.push(json!({
+                    "role": "assistant",
+                    "content": Value::Null,
+                    "tool_calls": [{
+                        "id": id,
+                        "type": "function",
+                        "function": { "name": call.name, "arguments": arguments }
+                    }]
+                }));
+            }
+            Message::ToolResult { ok, content, .. } => {
+                // Match this result to the most recent unmatched call. If none
+                // (a result with no preceding call — not produced by the runner,
+                // but keep the message well-formed), mint a standalone id.
+                let id = pending_tool_ids.pop_front().unwrap_or_else(|| {
+                    let orphan = format!("call_{next_tool_id}");
+                    next_tool_id += 1;
+                    orphan
+                });
+                let label = if *ok { "result" } else { "error" };
+                messages.push(json!({
+                    "role": "tool",
+                    "tool_call_id": id,
+                    "content": format!("[{label}] {content}")
+                }));
+            }
+            other => messages.push(render_message(other)),
+        }
+    }
 
     let tool_entries: Vec<ToolEntry> = tools
         .iter()
@@ -656,19 +710,11 @@ fn render_message(msg: &Message) -> Value {
     match msg {
         Message::User(text) => json!({ "role": "user", "content": text }),
         Message::Assistant(text) => json!({ "role": "assistant", "content": text }),
-        Message::ToolCall(call) => json!({
-            // Record the intended call as an assistant note so the model sees its
-            // own prior action in the transcript.
-            "role": "assistant",
-            "content": format!("[called tool `{}` with {}]", call.name, call.args),
-        }),
-        Message::ToolResult { name, ok, content } => {
-            let label = if *ok { "result" } else { "error" };
-            json!({
-                "role": "tool",
-                "name": name,
-                "content": format!("[{label}] {content}"),
-            })
+        // Tool call/result messages are rendered STATEFULLY in build_request_body:
+        // they need paired synthetic tool_call_ids for the OpenAI tool-calling
+        // protocol, which a per-message stateless render cannot produce.
+        Message::ToolCall(_) | Message::ToolResult { .. } => {
+            unreachable!("tool messages are rendered in build_request_body's loop")
         }
     }
 }
@@ -1158,7 +1204,13 @@ mod tests {
             .iter()
             .find(|m| m["role"] == "tool")
             .expect("a tool-role message");
-        assert_eq!(tool_msg["name"], "find_stations");
+        // New OpenAI protocol: the tool message references a `tool_call_id` (not a
+        // `name`). This result has no preceding ToolCall, so it gets a standalone
+        // synthetic id; the key invariant is that a tool_call_id is present.
+        assert!(
+            tool_msg["tool_call_id"].is_string(),
+            "tool message must carry a tool_call_id (strict providers 400 without it)"
+        );
         assert!(tool_msg["content"].as_str().unwrap().contains("result"));
     }
 
@@ -1175,6 +1227,54 @@ mod tests {
             .unwrap();
         assert!(tool_msg["content"].as_str().unwrap().contains("error"));
         assert!(tool_msg["content"].as_str().unwrap().contains("tainted"));
+    }
+
+    /// A tool call + its result render as the STANDARD OpenAI tool-calling
+    /// protocol: an assistant message with a `tool_calls` array (id + JSON-STRING
+    /// arguments) followed by a `tool` message whose `tool_call_id` MATCHES the
+    /// call's id. Verified against Gemini's live OpenAI-compat endpoint: the prior
+    /// lenient form (assistant text note + `tool` role without a tool_call_id)
+    /// produced HTTP 400 INVALID_ARGUMENT; this paired form is accepted. Regression
+    /// guard for tuxlink-2k0gz (Elmer cloud tool-calling).
+    #[test]
+    fn tool_call_and_result_use_openai_protocol_with_matching_ids() {
+        let mut convo = Conversation::new("what is my position?");
+        convo.push_tool_call(ToolCall {
+            name: "position_status".into(),
+            args: json!({}),
+        });
+        convo.push_tool_result("position_status", "{\"grid\":\"CN87\"}");
+        let body = build_request_body("gemini-2.5-flash", &convo, &[]);
+        let msgs = body["messages"].as_array().expect("messages array");
+
+        // The assistant tool-call message: tool_calls[0] with an id, function name,
+        // and arguments as a JSON STRING (not an object).
+        let assistant = msgs
+            .iter()
+            .find(|m| m["role"] == "assistant" && m["tool_calls"].is_array())
+            .expect("an assistant message carrying tool_calls");
+        let tc = &assistant["tool_calls"][0];
+        assert_eq!(tc["type"], "function");
+        assert_eq!(tc["function"]["name"], "position_status");
+        assert!(
+            tc["function"]["arguments"].is_string(),
+            "OpenAI requires function.arguments to be a JSON string; got: {:?}",
+            tc["function"]["arguments"]
+        );
+        let call_id = tc["id"].as_str().expect("tool call must have an id");
+
+        // The tool result message must reference that exact id.
+        let tool_msg = msgs
+            .iter()
+            .find(|m| m["role"] == "tool")
+            .expect("a tool-role result message");
+        assert_eq!(
+            tool_msg["tool_call_id"].as_str(),
+            Some(call_id),
+            "the tool result's tool_call_id MUST match the assistant tool call's id \
+             (Gemini/OpenAI 400 without this linkage)"
+        );
+        assert!(tool_msg["content"].as_str().unwrap().contains("CN87"));
     }
 
     // --- SSE streaming accumulator (no network) ---------------------------
