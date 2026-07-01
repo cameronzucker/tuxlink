@@ -33,6 +33,11 @@ pub const EV_OUTCOME: &str = "elmer-outcome";
 /// The frontend accumulates these chunks to render a live typing effect.
 pub const EV_DELTA: &str = "elmer-delta";
 
+/// Context-window usage from a native local provider, for the fullness meter
+/// above the composer.  Bridged from `RunEvent::ContextUsage` in `session.rs`.
+/// Only emitted on the native Ollama path where `num_ctx` is known.
+pub const EV_CONTEXT: &str = "elmer-context";
+
 // ---------------------------------------------------------------------------
 // Event payload
 // ---------------------------------------------------------------------------
@@ -104,6 +109,39 @@ pub enum ElmerEvent {
         delta_kind: String,
         /// The incremental text chunk for this delta event.
         chunk: String,
+    },
+    /// Context-window usage from a native local provider, for the fullness
+    /// meter above the composer.  Bridged from `RunEvent::ContextUsage`.
+    /// Only emitted on the native Ollama path (known `num_ctx` denominator).
+    ///
+    /// On the wire (`elmer-context` channel) the payload is:
+    /// `{ "kind": "context", "promptTokens": N, "evalTokens": N, "numCtx": N }`
+    ///
+    /// ## Per-field `rename` — REQUIRED (mirrors `outcome_kind` / `delta_kind` precedent)
+    ///
+    /// `#[serde(rename_all = "camelCase")]` on the `ElmerEvent` enum renames
+    /// **variant tags only**, not the fields inside struct variants (that would
+    /// need `rename_all_fields`).  Without explicit per-field renames, multi-word
+    /// fields ship as snake_case (`prompt_tokens`, etc.) and the frontend's
+    /// `payload.promptTokens` is `undefined`.  See the `outcome_kind` → `outcomeKind`
+    /// and `delta_kind` → `deltaKind` precedents for prior instances of this fix.
+    Context {
+        /// Total prompt tokens for this turn (from Ollama `prompt_eval_count`).
+        ///
+        /// Explicit `rename` required — see variant doc.
+        #[serde(rename = "promptTokens")]
+        prompt_tokens: u32,
+        /// Generated tokens for this turn (from Ollama `eval_count`).
+        ///
+        /// Explicit `rename` required — see variant doc.
+        #[serde(rename = "evalTokens")]
+        eval_tokens: u32,
+        /// The context-window size that was set for this request (`options.num_ctx`).
+        /// Used as the denominator for the fullness meter.
+        ///
+        /// Explicit `rename` required — see variant doc.
+        #[serde(rename = "numCtx")]
+        num_ctx: u32,
     },
 }
 
@@ -186,5 +224,55 @@ mod tests {
             "must NOT ship snake_case outcome_kind"
         );
         assert_eq!(json["detail"], "the answer");
+    }
+
+    /// `ElmerEvent::Context` must serialize to the flat payload the EV_CONTEXT
+    /// frontend listener will receive:
+    ///   `{ "kind": "context", "promptTokens": N, "evalTokens": N, "numCtx": N }`
+    ///
+    /// Regression guard for the per-field rename discipline: without explicit
+    /// `#[serde(rename = "...")]` on each multi-word field, `rename_all =
+    /// "camelCase"` on the enum only renames the variant tag, and the fields
+    /// ship as snake_case (`prompt_tokens`, etc.).  The frontend's
+    /// `payload.promptTokens` would then be `undefined`.  This test asserts both
+    /// that the camelCase keys ARE present and that the snake_case keys are ABSENT.
+    #[test]
+    fn context_serializes_with_camelcase_fields() {
+        let event = ElmerEvent::Context {
+            prompt_tokens: 1024,
+            eval_tokens: 256,
+            num_ctx: 32768,
+        };
+        let json: serde_json::Value = serde_json::to_value(&event).unwrap();
+
+        // Discriminant tag
+        assert_eq!(json["kind"], "context", "discriminant must be 'context'");
+
+        // camelCase field names MUST be present (what the frontend reads)
+        assert_eq!(json["promptTokens"], 1024, "frontend reads payload.promptTokens");
+        assert_eq!(json["evalTokens"], 256, "frontend reads payload.evalTokens");
+        assert_eq!(json["numCtx"], 32768, "frontend reads payload.numCtx");
+
+        // snake_case field names MUST be absent (regression guard for missing rename)
+        assert!(
+            json.get("prompt_tokens").is_none(),
+            "must NOT ship snake_case prompt_tokens"
+        );
+        assert!(
+            json.get("eval_tokens").is_none(),
+            "must NOT ship snake_case eval_tokens"
+        );
+        assert!(
+            json.get("num_ctx").is_none(),
+            "must NOT ship snake_case num_ctx"
+        );
+
+        // Payload must be a flat object with exactly 4 keys: kind + 3 fields
+        assert!(json.is_object(), "payload must be a flat object");
+        assert_eq!(
+            json.as_object().unwrap().len(),
+            4,
+            "expected exactly 4 keys: kind, promptTokens, evalTokens, numCtx"
+        );
     }
 }

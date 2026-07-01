@@ -458,6 +458,9 @@ impl ElmerSession {
                         delta_kind: "reasoning".to_string(),
                         chunk,
                     },
+                    RunEvent::ContextUsage { prompt_tokens, eval_tokens, num_ctx } => {
+                        ElmerEvent::Context { prompt_tokens, eval_tokens, num_ctx }
+                    }
                     _ => return,
                 };
                 emit_for_task(elmer_event);
