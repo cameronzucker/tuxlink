@@ -46,6 +46,20 @@ const mockInvoke = vi.fn(async (cmd?: string, _args?: unknown) => {
   if (cmd === 'elmer_config_set') return undefined;
   if (cmd === 'elmer_detect_models') return [];
   if (cmd === 'elmer_key_status_for_origins') return {};
+  // tuxlink-65qhn: the shared AdvancedModelSettings panel calls this on a debounced
+  // model/num_ctx change when num_ctx is shown (local endpoints). Return a valid
+  // MemoryEstimateDto so opening Advanced on a local tile doesn't crash on an
+  // undefined dto. Tests that need fits=false override via mockImplementationOnce.
+  if (cmd === 'elmer_estimate_memory') return {
+    weightsGb: 9.0,
+    kvCacheGb: 3.1,
+    computeHeadroomGb: 0.5,
+    totalGb: 12.6,
+    hostRamGb: 32,
+    fits: true,
+    numCtx: 32768,
+    kvDtypeBytes: 1,
+  };
   return undefined;
 });
 
@@ -3259,5 +3273,169 @@ describe('<ElmerPane> T11 credential-seam -- Task 7 default-model pre-fill coexi
       expect(args.key.action).toBe('set');
       expect(args.key.value).toBe(VALID_OPENAI_KEY);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// tuxlink-65qhn — ModelForm Advanced disclosure reachability fix.
+//
+// The Advanced panel (num_ctx + memory estimate, temperature, system prompt)
+// was previously ONLY in GetKeyCard, which renders only for CLOUD tiles. The
+// local Ollama tile renders ModelForm, so num_ctx had no surface. ModelForm now
+// renders the shared <AdvancedModelSettings> and its Save carries all three
+// fields — which ALSO fixes the "config clobber" (a model-only save no longer
+// wipes saved advanced values).
+// ---------------------------------------------------------------------------
+
+describe('<ElmerPane> tuxlink-65qhn -- ModelForm Advanced disclosure', () => {
+  const LOCAL_ENDPOINT = 'http://127.0.0.1:11434/v1/chat/completions';
+
+  function renderLocalModelForm(
+    overrides: Partial<Parameters<typeof ModelForm>[0]> = {},
+  ) {
+    const onSave = vi.fn(async () => {});
+    const onDetect = vi.fn(async () => {});
+    render(
+      <ModelForm
+        onSave={onSave}
+        onDetect={onDetect}
+        detectState={{ status: 'idle' }}
+        initialEndpoint={LOCAL_ENDPOINT}
+        initialModel="qwen2.5:14b"
+        initialKeyStatus="absent"
+        initialTurnTimeoutSecs={900}
+        {...overrides}
+      />,
+    );
+    return { onSave, onDetect };
+  }
+
+  it('Advanced disclosure is collapsed by default', () => {
+    renderLocalModelForm();
+    expect(screen.getByTestId('model-form-advanced-toggle')).toBeTruthy();
+    expect(screen.queryByTestId('model-form-advanced-body')).toBeNull();
+  });
+
+  it('num_ctx row is SHOWN for a LOCAL (loopback) tile after opening Advanced', () => {
+    renderLocalModelForm();
+    fireEvent.click(screen.getByTestId('model-form-advanced-toggle'));
+    expect(screen.getByTestId('model-form-advanced-num-ctx-row')).toBeTruthy();
+    expect(screen.getByTestId('model-form-advanced-num-ctx')).toBeTruthy();
+  });
+
+  it('num_ctx row is HIDDEN for a REMOTE custom endpoint', () => {
+    renderLocalModelForm({
+      initialEndpoint: 'https://openrouter.ai/api/v1/chat/completions',
+      initialModel: 'anthropic/claude-3.5-sonnet',
+    });
+    fireEvent.click(screen.getByTestId('model-form-advanced-toggle'));
+    expect(screen.queryByTestId('model-form-advanced-num-ctx-row')).toBeNull();
+    // Temperature + system prompt still render for remote endpoints.
+    expect(screen.getByTestId('model-form-advanced-temperature')).toBeTruthy();
+    expect(screen.getByTestId('model-form-advanced-system-prompt')).toBeTruthy();
+  });
+
+  it('initialConfig seeds the Advanced fields', () => {
+    renderLocalModelForm({
+      initialConfig: {
+        numCtx: 8192,
+        temperature: 0.5,
+        systemPromptOverride: 'Seeded prompt.',
+      },
+    });
+    fireEvent.click(screen.getByTestId('model-form-advanced-toggle'));
+    expect((screen.getByTestId('model-form-advanced-num-ctx') as HTMLInputElement).value).toBe('8192');
+    expect((screen.getByTestId('model-form-advanced-temperature') as HTMLInputElement).value).toBe('0.5');
+    expect((screen.getByTestId('model-form-advanced-system-prompt') as HTMLTextAreaElement).value).toBe('Seeded prompt.');
+  });
+
+  it('Save includes numCtx/temperature/systemPromptOverride (local tile)', async () => {
+    const { onSave } = renderLocalModelForm({
+      initialConfig: { numCtx: 16384, temperature: 0.3, systemPromptOverride: 'Custom.' },
+    });
+    fireEvent.click(screen.getByTestId('elmer-save-btn'));
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalledTimes(1);
+    });
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentEndpoint: LOCAL_ENDPOINT,
+        agentModel: 'qwen2.5:14b',
+        numCtx: 16384,
+        temperature: 0.3,
+        systemPromptOverride: 'Custom.',
+      }),
+    );
+  });
+
+  it('Save sends numCtx=null for a REMOTE endpoint (num_ctx is native-only)', async () => {
+    const { onSave } = renderLocalModelForm({
+      initialEndpoint: 'https://openrouter.ai/api/v1/chat/completions',
+      initialModel: 'anthropic/claude-3.5-sonnet',
+      initialConfig: { numCtx: 16384, temperature: 0.3, systemPromptOverride: null },
+    });
+    fireEvent.click(screen.getByTestId('elmer-save-btn'));
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalledTimes(1);
+    });
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ numCtx: null, temperature: 0.3 }),
+    );
+  });
+
+  it('a model-only change PRESERVES the seeded advanced values (config-clobber regression)', async () => {
+    // Regression for Codex P2: a routine model edit used to omit the advanced
+    // fields, wiping saved num_ctx/temperature/system prompt. ModelForm now sends
+    // the full seeded advanced state even when only the model changes.
+    const { onSave } = renderLocalModelForm({
+      initialConfig: { numCtx: 65536, temperature: 0.15, systemPromptOverride: 'Keep me.' },
+    });
+    // Change ONLY the model — do NOT open Advanced.
+    fireEvent.change(screen.getByTestId('elmer-model-input'), {
+      target: { value: 'llama3.1:70b' },
+    });
+    fireEvent.click(screen.getByTestId('elmer-save-btn'));
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalledTimes(1);
+    });
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentModel: 'llama3.1:70b',
+        // Seeded advanced values survive the model-only save.
+        numCtx: 65536,
+        temperature: 0.15,
+        systemPromptOverride: 'Keep me.',
+      }),
+    );
+  });
+
+  it('editing num_ctx then saving sends the edited value', async () => {
+    const { onSave } = renderLocalModelForm({
+      initialConfig: { numCtx: 32768, temperature: 0.2, systemPromptOverride: null },
+    });
+    fireEvent.click(screen.getByTestId('model-form-advanced-toggle'));
+    fireEvent.change(screen.getByTestId('model-form-advanced-num-ctx'), {
+      target: { value: '4096' },
+    });
+    fireEvent.click(screen.getByTestId('elmer-save-btn'));
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalledTimes(1);
+    });
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ numCtx: 4096 }));
+  });
+
+  it('Reset in the disclosure clears system prompt → Save sends systemPromptOverride=null', async () => {
+    const { onSave } = renderLocalModelForm({
+      initialConfig: { numCtx: 32768, temperature: 0.2, systemPromptOverride: 'Erase me.' },
+    });
+    fireEvent.click(screen.getByTestId('model-form-advanced-toggle'));
+    fireEvent.click(screen.getByTestId('model-form-advanced-reset-prompt'));
+    fireEvent.click(screen.getByTestId('elmer-save-btn'));
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalledTimes(1);
+    });
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ systemPromptOverride: null }),
+    );
   });
 });

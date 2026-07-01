@@ -30,9 +30,15 @@ import { useElmer, keyStatusForOrigins, type ElmerItem, type ElmerPhase } from '
 import { EgressArmControl } from '../shell/EgressArmControl';
 import type { EgressStatusDto } from '../security/egressTypes';
 import { PRESETS, inferPreset, isLoopback, originOf, nextModelForPreset } from './elmerModelConfig';
-import type { SetKey, KeySource, KeyStatusByOrigin } from './elmerModelConfig';
+import type { SetKey, KeySource, KeyStatusByOrigin, ConfigReadDto } from './elmerModelConfig';
 import { ModelTilePicker } from './ModelTilePicker';
 import { ContextMeter } from './ContextMeter';
+import {
+  AdvancedModelSettings,
+  type AdvancedModelValues,
+  DEFAULT_NUM_CTX,
+  DEFAULT_SYSTEM_PROMPT_PLACEHOLDER,
+} from './AdvancedModelSettings';
 import { renderMarkdown } from '../shell/markdownRender';
 import { sanitizeHtml } from '../shell/sanitizeHtml';
 import './ElmerPane.css';
@@ -493,13 +499,27 @@ function OutcomeCallout({
 // ---------------------------------------------------------------------------
 
 interface ModelFormProps {
-  onSave: (args: { agentEndpoint: string; agentModel: string; key: SetKey; agentTurnTimeoutSecs: number }) => Promise<void>;
+  onSave: (args: {
+    agentEndpoint: string;
+    agentModel: string;
+    key: SetKey;
+    agentTurnTimeoutSecs: number;
+    numCtx?: number | null;
+    temperature?: number | null;
+    systemPromptOverride?: string | null;
+  }) => Promise<void>;
   onDetect: (args: { agentEndpoint: string; keySource: KeySource }) => Promise<void>;
   detectState: import('./useElmer').DetectState;
   initialEndpoint: string;
   initialModel: string;
   initialKeyStatus: import('./elmerModelConfig').KeyStatus;
   initialTurnTimeoutSecs: number;
+  /**
+   * Operator's SAVED Advanced-panel values (num_ctx / temperature / system-prompt
+   * override). Seeds the Advanced disclosure so a reopened editor pre-fills what
+   * was saved instead of defaults. Optional: absent on first-run before any save.
+   */
+  initialConfig?: Pick<ConfigReadDto, 'numCtx' | 'temperature' | 'systemPromptOverride'>;
 }
 
 export function ModelForm({
@@ -510,12 +530,27 @@ export function ModelForm({
   initialModel,
   initialKeyStatus,
   initialTurnTimeoutSecs,
+  initialConfig,
 }: ModelFormProps) {
   const [endpoint, setEndpoint] = useState(initialEndpoint);
   const [model, setModel] = useState(initialModel);
   // Focused when the operator picks 'Custom…' so they can type their endpoint.
   const endpointInputRef = useRef<HTMLInputElement>(null);
   const [turnTimeoutSecs, setTurnTimeoutSecs] = useState(() => initialTurnTimeoutSecs);
+
+  // Advanced disclosure (tuxlink-65qhn reachability fix). ModelForm renders the
+  // local/custom editor, which previously had NO Advanced panel — so num_ctx (the
+  // epic's core local-config field) was unreachable. Collapsed by default.
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  // Advanced-panel values, seeded from initialConfig (saved values) or sensible
+  // defaults. num_ctx is a string so the number input stays freely editable.
+  const [advanced, setAdvanced] = useState<AdvancedModelValues>(() => ({
+    numCtxStr:
+      initialConfig?.numCtx != null ? String(initialConfig.numCtx) : String(DEFAULT_NUM_CTX),
+    temperature: initialConfig?.temperature != null ? initialConfig.temperature : 0.2,
+    systemPrompt:
+      initialConfig?.systemPromptOverride != null ? initialConfig.systemPromptOverride : '',
+  }));
 
   // Key affordance state.
   // - keyStatus 'present': show [Replace] [Remove]; after Remove flag clearPending.
@@ -714,18 +749,35 @@ export function ModelForm({
   const handleSave = useCallback(async () => {
     const timeout = Number.isFinite(turnTimeoutSecs) ? Math.round(turnTimeoutSecs) : 900;
     setSaveState({ kind: 'idle' });
+    // Advanced fields — send the FULL advanced state on every save so a routine
+    // model/endpoint change no longer wipes saved num_ctx/temperature/system
+    // prompt (Codex P2 "config clobber"). num_ctx is only meaningful on the
+    // native/local path; a custom LOCAL endpoint (isLoopback) still gets it, a
+    // remote endpoint sends null. An empty system prompt sends null (backend
+    // default).
+    const parsedNumCtx = (() => {
+      const n = parseInt(advanced.numCtxStr, 10);
+      return Number.isFinite(n) && n > 0 ? n : DEFAULT_NUM_CTX;
+    })();
+    const numCtxArg: number | null = isLoopback(endpoint) ? parsedNumCtx : null;
+    const systemPromptArg: string | null = advanced.systemPrompt.trim()
+      ? advanced.systemPrompt.trim()
+      : null;
     try {
       await onSave({
         agentEndpoint: endpoint,
         agentModel: model,
         key: buildSetKey(),
         agentTurnTimeoutSecs: timeout,
+        numCtx: numCtxArg,
+        temperature: advanced.temperature,
+        systemPromptOverride: systemPromptArg,
       });
       setSaveState({ kind: 'ok', model });
     } catch (e) {
       setSaveState({ kind: 'error', message: e instanceof Error ? e.message : String(e) });
     }
-  }, [onSave, endpoint, model, buildSetKey, turnTimeoutSecs]);
+  }, [onSave, endpoint, model, buildSetKey, turnTimeoutSecs, advanced]);
 
   const handleDetect = useCallback(async () => {
     await onDetect({
@@ -935,6 +987,34 @@ export function ModelForm({
           {detectRemedy(detectState.reason, endpoint)}
         </div>
       )}
+
+      {/* Advanced disclosure (tuxlink-65qhn) — the shared num_ctx / temperature /
+          system-prompt panel. num_ctx renders only for a LOCAL (loopback)
+          endpoint, so the native Ollama tile gets the field the epic centres on
+          while a custom REMOTE endpoint hides it. Collapsed by default. */}
+      <div className="get-key-advanced" data-testid="model-form-advanced">
+        <button
+          type="button"
+          className="elmer-advanced-toggle"
+          data-testid="model-form-advanced-toggle"
+          aria-expanded={advancedOpen}
+          onClick={() => setAdvancedOpen((o) => !o)}
+        >
+          {advancedOpen ? '▾' : '▸'} Advanced
+          <span className="get-key-advanced-tag"> · power users</span>
+        </button>
+        {advancedOpen && (
+          <AdvancedModelSettings
+            values={advanced}
+            onChange={setAdvanced}
+            showNumCtx={endpointIsLoopback}
+            endpoint={endpoint}
+            model={model}
+            defaultSystemPromptPlaceholder={DEFAULT_SYSTEM_PROMPT_PLACEHOLDER}
+            testIdPrefix="model-form-advanced"
+          />
+        )}
+      </div>
 
       {/* Save & use */}
       <div className="elmer-form-save-row">

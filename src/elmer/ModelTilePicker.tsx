@@ -55,6 +55,10 @@ export interface ModelTilePickerProps {
     agentModel: string;
     key: SetKey;
     agentTurnTimeoutSecs: number;
+    /** T8/tuxlink-65qhn advanced fields — forwarded to elmer_config_set. */
+    numCtx?: number | null;
+    temperature?: number | null;
+    systemPromptOverride?: string | null;
   }) => Promise<void>;
   onDetect: (args: { agentEndpoint: string; keySource: KeySource }) => Promise<void>;
   detectState: DetectState;
@@ -319,6 +323,7 @@ export function ModelTilePicker({
               initialModel={model}
               initialKeyStatus={initialKeyStatus}
               initialTurnTimeoutSecs={initialTurnTimeoutSecs}
+              initialConfig={initialConfig}
             />
             <TierFramingCopy tier={selectedPreset?.tier} />
           </>
