@@ -64,7 +64,11 @@ pub struct ElmerProvider {
     inner: Box<dyn Provider + Send + Sync>,
     /// Which concrete adapter `inner` is, recorded at build time. Used only by
     /// tests to assert the probe-with-fallback selection (D1) picked the right
-    /// adapter without a `dyn`-downcast; carries no behavior.
+    /// adapter without a `dyn`-downcast; carries no behavior. Written on every
+    /// build but READ only by the `#[cfg(test)]` `kind()` accessor, so it is
+    /// genuinely dead in non-test builds — allow it there (in test builds the
+    /// attribute is absent, so there is no unused-allow warning).
+    #[cfg_attr(not(test), allow(dead_code))]
     kind: ProviderKind,
 }
 

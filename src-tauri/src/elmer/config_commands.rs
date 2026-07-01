@@ -321,6 +321,11 @@ pub fn clamp_turn_timeout_secs(requested: u32) -> u32 {
 /// # Errors
 ///
 /// Returns a `String` error on any validation or I/O failure.
+// 9 args after the T3 advanced fields (num_ctx/temperature/system_prompt_override)
+// joined the existing endpoint/model/timeout/key/state/keyring set. A params
+// struct would be the alternative; the flat signature mirrors the command it
+// backs and keeps the call sites explicit.
+#[allow(clippy::too_many_arguments)]
 pub async fn config_set_inner(
     agent_endpoint: String,
     agent_model: String,
@@ -799,6 +804,9 @@ pub async fn elmer_config_read(
 /// Tauri maps a missing JSON field to `None` for `Option<T>` parameters.
 #[instrument(skip(key, keyring, state))]
 #[tauri::command]
+// 9 args after the T3 advanced fields; a params struct is the alternative but the
+// flat command signature is the Tauri-idiomatic shape the renderer invokes against.
+#[allow(clippy::too_many_arguments)]
 pub async fn elmer_config_set(
     agent_endpoint: String,
     agent_model: String,
