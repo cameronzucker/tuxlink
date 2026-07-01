@@ -539,7 +539,7 @@ mod tests {
             "system prompt must mention position_status; got: {system:?}"
         );
         assert!(
-            system.contains("STAGE") && system.contains("Arm to send"),
+            system.contains("STAGE") && system.contains("ARMED send authority"),
             "system prompt must explain staging + Arm-to-send; got: {system:?}"
         );
         assert_eq!(body["messages"][1]["role"], "user");
@@ -573,7 +573,7 @@ mod tests {
         let body = build_ollama_request("m", &convo, &[], None, None, ELMER_SYSTEM_PROMPT);
         let system = body["messages"][0]["content"].as_str().unwrap_or("");
         assert!(
-            system.contains("position_status") && system.contains("Arm to send"),
+            system.contains("position_status") && system.contains("ARMED send authority"),
             "the built-in default must be used when not overridden; got: {system:?}"
         );
     }
