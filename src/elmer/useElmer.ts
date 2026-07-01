@@ -77,7 +77,31 @@ export interface ElmerAttributionItem {
   model: string;
 }
 
-export type ElmerItem = ElmerTurnItem | ElmerChipItem | ElmerAttributionItem;
+/**
+ * A persisted error outcome (tuxlink-pgbox). An errored run emits no finalizing
+ * EV_TURN, so without this the failure would live ONLY in the single-slot
+ * `lastOutcome` and be overwritten by the next run's outcome — which is why an
+ * operator trying to reproduce an error erased the first instance. Appending the
+ * error to the transcript keeps failures in the scrollback: they accumulate, and
+ * they are copyable via the per-reply Copy button, so an exact error can be
+ * captured for troubleshooting. Only the unclassified `error` phase is persisted
+ * here; the actionable recovery states (offline / rateLimited / toolDenied /
+ * needsOperator) keep their purpose-built callouts.
+ */
+export interface ElmerErrorItem {
+  kind: 'error';
+  id: string;
+  /** The raw backend outcome kind (e.g. a provider error class). */
+  outcomeKind: string;
+  /** Human-readable error detail from the backend, if any. */
+  detail?: string;
+}
+
+export type ElmerItem =
+  | ElmerTurnItem
+  | ElmerChipItem
+  | ElmerAttributionItem
+  | ElmerErrorItem;
 
 // ---------------------------------------------------------------------------
 // Outcome / phase
@@ -307,7 +331,24 @@ export function useElmer(): UseElmer {
           detail: payload.detail,
         };
         setLastOutcome(outcome);
-        setPhase(outcomeKindToPhase(payload.outcomeKind));
+        const outcomePhase = outcomeKindToPhase(payload.outcomeKind);
+        setPhase(outcomePhase);
+        // tuxlink-pgbox: persist an unclassified error into the transcript so it
+        // survives the next run (the single-slot lastOutcome would otherwise be
+        // overwritten). An errored run emits no EV_TURN, so this is the only
+        // durable, copyable record of the failure. Actionable states (offline /
+        // rateLimited / toolDenied / needsOperator) keep their callouts instead.
+        if (outcomePhase === 'error') {
+          setItems((prev) => [
+            ...prev,
+            {
+              kind: 'error',
+              id: nextId(),
+              outcomeKind: payload.outcomeKind,
+              detail: payload.detail,
+            },
+          ]);
+        }
         running.current = false;
         // A streamed turn that is cancelled, times out, or errors emits NO
         // finalizing EV_TURN, so the EV_TURN clear above never runs and a partial

@@ -213,6 +213,19 @@
   color: var(--text);
   border-color: var(--accent-edge, var(--border));
 }
+
+/* Persisted error outcome, rendered inline in the transcript (tuxlink-pgbox).
+ * Danger-tinted like the former outcome banner so it reads as a failure. */
+.elmer-turn--error {
+  border-left: 2px solid var(--accent-danger, var(--accent));
+  padding-left: 8px;
+}
+.elmer-turn--error .elmer-turn-role {
+  color: var(--accent-danger, var(--accent));
+}
+.elmer-error-detail {
+  color: var(--text);
+}
 .elmer-turn--user {
   align-items: flex-end;
 }

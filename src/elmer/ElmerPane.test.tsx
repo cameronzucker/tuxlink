@@ -1628,6 +1628,71 @@ describe('<ElmerPane> -- per-reply Copy button', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Error persistence in the transcript (tuxlink-pgbox)
+// ---------------------------------------------------------------------------
+
+describe('<ElmerPane> -- errors persist in the transcript', () => {
+  it('an error outcome is appended to the transcript (not just the single-slot banner)', async () => {
+    const { container } = render(<ElmerPane />);
+    const payload: ElmerOutcomePayload = {
+      kind: 'outcome',
+      outcomeKind: 'error',
+      detail: 'provider error: HTTP 400 Bad Request INVALID_ARGUMENT',
+    };
+    await fireElmerEvent<ElmerOutcomePayload>(EV_OUTCOME, payload);
+
+    const errItem = container.querySelector('[data-testid="elmer-turn-error"]');
+    expect(errItem).toBeTruthy();
+    expect(errItem!.textContent).toContain('HTTP 400 Bad Request');
+    // The 'error' phase no longer renders the transient banner — it lives in the
+    // transcript instead, so it does not double-render.
+    expect(screen.queryByTestId('elmer-outcome-error')).toBeNull();
+  });
+
+  it('successive errors ACCUMULATE — the first is not overwritten (the reported bug)', async () => {
+    const { container } = render(<ElmerPane />);
+    await fireElmerEvent<ElmerOutcomePayload>(EV_OUTCOME, {
+      kind: 'outcome',
+      outcomeKind: 'error',
+      detail: 'first error: 400 on tool call',
+    });
+    await fireElmerEvent<ElmerOutcomePayload>(EV_OUTCOME, {
+      kind: 'outcome',
+      outcomeKind: 'error',
+      detail: 'second error: 429 rate probe',
+    });
+
+    const errors = container.querySelectorAll('[data-testid="elmer-turn-error"]');
+    expect(errors.length).toBe(2);
+    expect(errors[0].textContent).toContain('first error');
+    expect(errors[1].textContent).toContain('second error');
+  });
+
+  it('a persisted error is copyable — Copy writes a self-contained error string', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+
+    const { container } = render(<ElmerPane />);
+    await fireElmerEvent<ElmerOutcomePayload>(EV_OUTCOME, {
+      kind: 'outcome',
+      outcomeKind: 'error',
+      detail: 'provider error: HTTP 400',
+    });
+
+    const copyBtn = container.querySelector(
+      '[data-testid="elmer-turn-error"] [data-testid="elmer-copy-btn"]',
+    ) as HTMLButtonElement;
+    expect(copyBtn).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(copyBtn);
+    });
+    expect(writeText).toHaveBeenCalledWith(
+      'Elmer error [error]: provider error: HTTP 400',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Markdown rendering -- assistant turns rendered as sanitized HTML (security)
 // ---------------------------------------------------------------------------
 

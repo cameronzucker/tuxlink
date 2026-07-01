@@ -296,6 +296,28 @@ function MessageItem({ item }: { item: ElmerItem }) {
     );
   }
 
+  // tuxlink-pgbox: a persisted error outcome. Rendered inline in the transcript
+  // (not as a transient banner) so errors accumulate and survive later runs, with
+  // the Copy button so the operator can capture the exact detail for troubleshooting.
+  if (item.kind === 'error') {
+    const detail =
+      item.detail || 'Something went wrong. Try again or check the session log.';
+    // The copy payload names the outcome kind so a pasted error is self-contained.
+    const copyText = `Elmer error [${item.outcomeKind}]: ${item.detail ?? '(no detail provided)'}`;
+    return (
+      <div
+        className="elmer-turn elmer-turn--error"
+        data-testid="elmer-turn-error"
+        data-outcome-kind={item.outcomeKind}
+        role="alert"
+      >
+        <span className="elmer-turn-role">Error</span>
+        <span className="elmer-turn-text elmer-error-detail">{detail}</span>
+        <CopyButton text={copyText} />
+      </div>
+    );
+  }
+
   const isUser = item.role === 'user';
   return (
     <div
@@ -446,10 +468,9 @@ function OutcomeCallout({
         'The local Elmer model is not reachable. Check that the model endpoint is running, then try again.',
       testId: 'elmer-outcome-offline',
     },
-    error: {
-      label: detail || 'Something went wrong. Try again or check the session log.',
-      testId: 'elmer-outcome-error',
-    },
+    // tuxlink-pgbox: the 'error' phase is no longer a transient banner — it is
+    // persisted into the transcript as an ElmerErrorItem (accumulates, copyable),
+    // so it is intentionally absent here to avoid a duplicate render.
   };
 
   const callout = callouts[phase];
