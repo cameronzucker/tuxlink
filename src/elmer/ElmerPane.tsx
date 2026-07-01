@@ -1216,6 +1216,11 @@ export const ElmerPane = memo(function ElmerPane({
                 initialModel={modelConfig.agentModel}
                 initialKeyStatus={modelConfig.keyStatus}
                 initialTurnTimeoutSecs={modelConfig.agentTurnTimeoutSecs ?? 900}
+                initialConfig={{
+                  numCtx: modelConfig.numCtx,
+                  temperature: modelConfig.temperature,
+                  systemPromptOverride: modelConfig.systemPromptOverride,
+                }}
                 focusTier={switchProviderFocusTier ?? undefined}
               />
             </>

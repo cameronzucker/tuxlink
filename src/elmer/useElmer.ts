@@ -209,8 +209,10 @@ export interface UseElmer {
   /** G2: Load the model config from the backend. */
   configRead: () => Promise<void>;
   /** G2+G3: Save the model config. When agentModel changes mid-conversation,
-   *  drops a model attribution marker into the transcript before the next turn. */
-  configSet: (args: { agentEndpoint: string; agentModel: string; key: SetKey; agentTurnTimeoutSecs: number }) => Promise<void>;
+   *  drops a model attribution marker into the transcript before the next turn.
+   *  T8: optional advanced fields (numCtx, temperature, systemPromptOverride)
+   *  are forwarded to the backend; omitting them leaves the backend values unchanged. */
+  configSet: (args: { agentEndpoint: string; agentModel: string; key: SetKey; agentTurnTimeoutSecs: number; numCtx?: number | null; temperature?: number | null; systemPromptOverride?: string | null }) => Promise<void>;
   /** G2: Detect available models for the given endpoint. */
   detectModels: (args: { agentEndpoint: string; keySource: KeySource }) => Promise<void>;
   /** G2: Current detection state. */
@@ -453,7 +455,8 @@ export function useElmer(): UseElmer {
   // G2+G3: configSet — save model config to backend.
   // On a model change mid-conversation, inserts an attribution marker into the
   // transcript so the operator can tell which model produced the next turn (G3).
-  const configSet = useCallback(async (args: { agentEndpoint: string; agentModel: string; key: SetKey; agentTurnTimeoutSecs: number }) => {
+  // T8: optional advanced fields forwarded to the Tauri command.
+  const configSet = useCallback(async (args: { agentEndpoint: string; agentModel: string; key: SetKey; agentTurnTimeoutSecs: number; numCtx?: number | null; temperature?: number | null; systemPromptOverride?: string | null }) => {
     await invoke('elmer_config_set', args);
 
     // G3: If the model changed from the last active model, drop a marker.

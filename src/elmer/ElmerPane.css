@@ -1174,6 +1174,104 @@
   line-height: 1.4;
 }
 
+/* ── T8: GetKeyCard Advanced disclosure ─────────────────────────────────── */
+.get-key-advanced {
+  margin: 8px 0 0;
+}
+
+.get-key-advanced-tag {
+  color: var(--text-faint, var(--text-dim));
+  font-size: 10px;
+}
+
+.get-key-advanced-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 6px 0 2px;
+}
+
+.get-key-num-ctx-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.get-key-num-ctx-input {
+  width: 90px;
+  flex: 0 0 auto;
+}
+
+.get-key-num-ctx-hint {
+  font-size: 11px;
+  color: var(--text-faint, var(--text-dim));
+  margin: 0;
+}
+
+.get-key-advanced-cpu-hint {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--text-faint, var(--text-dim));
+  font-style: italic;
+}
+
+.get-key-estimate-line {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--text-faint, var(--text-dim));
+  line-height: 1.4;
+}
+
+.get-key-estimate-kv {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.get-key-estimate-fits {
+  color: var(--success, #4caf50);
+}
+
+.get-key-estimate-exceeds {
+  color: var(--danger, #ff6b6b);
+}
+
+.get-key-temperature-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.get-key-temperature-slider {
+  flex: 1 1 auto;
+  min-width: 0;
+  accent-color: var(--accent, var(--accent-teal));
+}
+
+.get-key-temperature-value {
+  font-size: 12px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  min-width: 3ch;
+  text-align: right;
+}
+
+.get-key-system-prompt {
+  resize: vertical;
+  min-height: 72px;
+}
+
+.get-key-reset-prompt {
+  align-self: flex-start;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  color: var(--accent, var(--accent-teal));
+  cursor: pointer;
+  text-decoration: underline;
+}
+
 /* ---------------------------------------------------------------------------
  * T10: Rate-limit recovery callout
  * A 429-style recovery callout with a manual "Switch provider" action.

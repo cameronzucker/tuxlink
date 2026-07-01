@@ -8,6 +8,14 @@
  * /^\S+$/ — no whitespace, any non-space chars including periods for Gemini keys),
  * and a "stuck?" affordance offering an alternate free provider or pay-as-you-go path.
  *
+ * T8 (tuxlink-65qhn): Advanced disclosure section below the model field (collapsed
+ * by default). Contains:
+ *   - num_ctx input (local/native tiles only; hidden for cloud tiles).
+ *   - Live memory estimate line (debounced call to elmer_estimate_memory).
+ *   - CPU-prefill speed cue.
+ *   - Temperature slider (0–1, all tiles).
+ *   - System prompt textarea with Reset-to-default button (all tiles).
+ *
  * Security:
  *   - `open()` is called with `preset.keyPageUrl` ONLY — a compile-time
  *     constant, never a config/endpoint-derived or user-supplied string
@@ -18,9 +26,11 @@
  *     which routes through the existing keyring path on the Rust side.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { open as shellOpen } from '@tauri-apps/plugin-shell';
-import type { ProviderPreset, SetKey, KeyStatus, KeySource } from './elmerModelConfig';
+import type { ProviderPreset, SetKey, KeyStatus, KeySource, ConfigReadDto } from './elmerModelConfig';
+import { isLoopback } from './elmerModelConfig';
 import type { DetectState } from './useElmer';
 
 // ---------------------------------------------------------------------------
@@ -34,6 +44,9 @@ export interface GetKeyCardProps {
     agentModel: string;
     key: SetKey;
     agentTurnTimeoutSecs: number;
+    numCtx?: number | null;
+    temperature?: number | null;
+    systemPromptOverride?: string | null;
   }) => Promise<void>;
   /**
    * Detect callback (mirrors the one on ModelForm). Called with the preset's
@@ -57,6 +70,12 @@ export interface GetKeyCardProps {
    * to a different origin.
    */
   keyStatus?: KeyStatus;
+  /**
+   * T8: Initial advanced config values loaded from elmer_config_read. When
+   * provided, the Advanced disclosure is pre-filled with the saved values.
+   * All fields optional — omitting them leaves defaults in place.
+   */
+  initialConfig?: Pick<ConfigReadDto, 'numCtx' | 'temperature' | 'systemPromptOverride'>;
 }
 
 // ---------------------------------------------------------------------------
@@ -123,6 +142,37 @@ function getProviderCopy(presetId: string): ProviderStepCopy {
 }
 
 // ---------------------------------------------------------------------------
+// Memory estimate DTO (mirrors Rust MemoryEstimateDto camelCase shape)
+// ---------------------------------------------------------------------------
+
+interface MemoryEstimateDto {
+  weightsGb: number;
+  kvCacheGb: number;
+  computeHeadroomGb: number;
+  totalGb: number;
+  hostRamGb: number;
+  fits: boolean;
+  numCtx: number;
+  kvDtypeBytes: number;
+}
+
+// ---------------------------------------------------------------------------
+// Default system prompt displayed as placeholder text in the Advanced panel.
+// This is the text shown when systemPromptOverride is null (backend default).
+// Matches the ELMER_SYSTEM_PROMPT constant in the Rust backend. A Reset clears
+// the override (sends null), restoring backend-default behavior.
+// ---------------------------------------------------------------------------
+
+const DEFAULT_SYSTEM_PROMPT_PLACEHOLDER =
+  'You are Elmer, an AI assistant embedded in Tuxlink — a Winlink and ' +
+  'amateur-radio station application… You can call tools as many times as a ' +
+  'request needs…';
+
+// Default num_ctx for the local Ollama native path (D5: 32k baseline for
+// the 32 GB+ class). Shown as the initial value in the Advanced disclosure.
+const DEFAULT_NUM_CTX = 32768;
+
+// ---------------------------------------------------------------------------
 // No client-side key format validation (operator smoke-walk decision, 2026-06-30)
 // ---------------------------------------------------------------------------
 //
@@ -147,6 +197,7 @@ export function GetKeyCard({
   agentModel,
   agentTurnTimeoutSecs,
   keyStatus,
+  initialConfig,
 }: GetKeyCardProps) {
   const [rawKey, setRawKey] = useState('');
   const [revealed, setRevealed] = useState(false);
@@ -161,6 +212,92 @@ export function GetKeyCard({
   // keyed by preset id in the picker, so switching cloud tiles remounts this with
   // the new preset's default (tuxlink-p46qz).
   const [model, setModel] = useState(agentModel);
+
+  // ---------------------------------------------------------------------------
+  // T8: Advanced disclosure state
+  // ---------------------------------------------------------------------------
+
+  // Collapsed by default per spec.
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+
+  // Whether this tile's endpoint is local/native (determines num_ctx visibility).
+  // Cloud tiles show the disclosure minus num_ctx (per mock annotation).
+  const isLocalTile = isLoopback(preset.endpoint);
+
+  // num_ctx — local-only field. Seeded from initialConfig (saved value) or the
+  // 32k default. Stored as a string so the input is always editable (a number
+  // input with a controlled numeric value rejects typed leading zeros etc.).
+  const [numCtxStr, setNumCtxStr] = useState<string>(
+    () => (initialConfig?.numCtx != null ? String(initialConfig.numCtx) : String(DEFAULT_NUM_CTX)),
+  );
+
+  // Temperature slider — 0.0 to 1.0, step 0.05. Null = unset (use provider default).
+  // Seeded from initialConfig.temperature or a sensible 0.2 default.
+  const [temperature, setTemperature] = useState<number>(
+    () => (initialConfig?.temperature != null ? initialConfig.temperature : 0.2),
+  );
+
+  // System prompt override. Empty string = no override (use backend default).
+  const [systemPrompt, setSystemPrompt] = useState<string>(
+    () => (initialConfig?.systemPromptOverride != null ? initialConfig.systemPromptOverride : ''),
+  );
+
+  // ---------------------------------------------------------------------------
+  // T8: Memory estimate state
+  // ---------------------------------------------------------------------------
+
+  type EstimateState =
+    | { status: 'idle' }
+    | { status: 'loading' }
+    | { status: 'ok'; dto: MemoryEstimateDto }
+    | { status: 'error' };
+
+  const [estimate, setEstimate] = useState<EstimateState>({ status: 'idle' });
+
+  // Debounce timer ref for the estimate call.
+  const estimateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Derived: parsed numCtx as a number. Falls back to DEFAULT_NUM_CTX if the
+  // field is empty or non-numeric so the estimate is always called with a valid
+  // number.
+  const numCtxParsed = (() => {
+    const n = parseInt(numCtxStr, 10);
+    return Number.isFinite(n) && n > 0 ? n : DEFAULT_NUM_CTX;
+  })();
+
+  // Trigger a debounced estimate call whenever model/numCtx changes (local tiles
+  // only, and only when the Advanced section is open).
+  useEffect(() => {
+    if (!isLocalTile || !advancedOpen) return;
+    if (!model.trim()) return;
+
+    if (estimateTimerRef.current !== null) {
+      clearTimeout(estimateTimerRef.current);
+    }
+    setEstimate({ status: 'loading' });
+    estimateTimerRef.current = setTimeout(() => {
+      estimateTimerRef.current = null;
+      invoke<MemoryEstimateDto>('elmer_estimate_memory', {
+        model: model.trim(),
+        numCtx: numCtxParsed,
+        endpoint: preset.endpoint,
+      })
+        .then((dto) => {
+          setEstimate({ status: 'ok', dto });
+        })
+        .catch(() => {
+          setEstimate({ status: 'error' });
+        });
+    }, 600);
+
+    return () => {
+      if (estimateTimerRef.current !== null) {
+        clearTimeout(estimateTimerRef.current);
+        estimateTimerRef.current = null;
+      }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLocalTile, advancedOpen, model, numCtxParsed, preset.endpoint]);
 
   const copy = getProviderCopy(preset.id);
   const trimmed = rawKey.trim();
@@ -220,11 +357,21 @@ export function GetKeyCard({
       // endpoint is always preset.endpoint (a compile-time constant), so 'keep'
       // can never leak to a different origin.
       const key: SetKey = keySaved ? { action: 'keep' } : { action: 'set', value: trimmed };
+
+      // T8: Advanced fields — only include numCtx for local tiles (native Ollama
+      // path). Cloud tiles omit numCtx (undefined → Tauri maps to None on backend).
+      // An empty/unset system prompt sends null so the backend uses its default.
+      const numCtxArg: number | null = isLocalTile ? numCtxParsed : null;
+      const systemPromptArg: string | null = systemPrompt.trim() ? systemPrompt.trim() : null;
+
       await onSave({
         agentEndpoint: preset.endpoint,
         agentModel: model.trim(),
         key,
         agentTurnTimeoutSecs,
+        numCtx: numCtxArg,
+        temperature,
+        systemPromptOverride: systemPromptArg,
       });
     } finally {
       setSaving(false);
@@ -377,6 +524,139 @@ export function GetKeyCard({
           {detectState.reason}
         </div>
       )}
+
+      {/* T8: Advanced disclosure — collapsed by default. Cloud tiles show all
+          fields except num_ctx. Local tiles show the full set including num_ctx
+          and the live memory estimate line. */}
+      <div className="get-key-advanced" data-testid="get-key-advanced">
+        <button
+          type="button"
+          className="elmer-advanced-toggle"
+          data-testid="get-key-advanced-toggle"
+          aria-expanded={advancedOpen}
+          onClick={() => setAdvancedOpen((o) => !o)}
+        >
+          {advancedOpen ? '▾' : '▸'} Advanced
+          <span className="get-key-advanced-tag"> · power users</span>
+        </button>
+
+        {advancedOpen && (
+          <div className="elmer-advanced-body get-key-advanced-body" data-testid="get-key-advanced-body">
+            {/* num_ctx — local/native tiles only */}
+            {isLocalTile && (
+              <div className="elmer-form-row" data-testid="get-key-num-ctx-row">
+                <label className="elmer-form-label" htmlFor="get-key-num-ctx">
+                  Context length (num_ctx)
+                </label>
+                <div className="get-key-num-ctx-row">
+                  <input
+                    id="get-key-num-ctx"
+                    type="number"
+                    min={512}
+                    max={131072}
+                    step={512}
+                    className="elmer-form-input get-key-num-ctx-input"
+                    data-testid="get-key-num-ctx"
+                    value={numCtxStr}
+                    onChange={(e) => setNumCtxStr(e.target.value)}
+                    spellCheck={false}
+                  />
+                  <span className="get-key-num-ctx-hint">
+                    Bigger = more room for tool schemas + history.
+                  </span>
+                </div>
+                {/* CPU-prefill speed cue — the flagged gap in the plan */}
+                <p className="get-key-advanced-cpu-hint" data-testid="get-key-cpu-hint">
+                  Larger context is free to reserve but slow to fill on CPU.
+                </p>
+                {/* Memory estimate line */}
+                {estimate.status === 'loading' && (
+                  <p className="elmer-advanced-loading" data-testid="get-key-estimate-loading">
+                    Estimating memory…
+                  </p>
+                )}
+                {estimate.status === 'ok' && (
+                  <p className="get-key-estimate-line" data-testid="get-key-estimate-line">
+                    <span className="get-key-estimate-kv">
+                      ≈ +{estimate.dto.kvCacheGb.toFixed(1)} GB
+                    </span>
+                    {' '}for this window (KV cache) · {model || '—'} ≈ {estimate.dto.weightsGb.toFixed(1)} GB →
+                    {' '}~{estimate.dto.totalGb.toFixed(1)} GB total ·{' '}
+                    {estimate.dto.fits ? (
+                      <span
+                        className="get-key-estimate-fits"
+                        data-testid="get-key-estimate-fits"
+                      >
+                        fits, {estimate.dto.hostRamGb.toFixed(0)} GB host ✓
+                      </span>
+                    ) : (
+                      <span
+                        className="get-key-estimate-exceeds"
+                        data-testid="get-key-estimate-exceeds"
+                      >
+                        exceeds {estimate.dto.hostRamGb.toFixed(0)} GB host
+                      </span>
+                    )}
+                  </p>
+                )}
+                {estimate.status === 'error' && (
+                  <p className="elmer-advanced-error" data-testid="get-key-estimate-error">
+                    estimate unavailable
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Temperature slider — all tiles */}
+            <div className="elmer-form-row" data-testid="get-key-temperature-row">
+              <label className="elmer-form-label" htmlFor="get-key-temperature">
+                Temperature
+              </label>
+              <div className="get-key-temperature-row">
+                <input
+                  id="get-key-temperature"
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  className="get-key-temperature-slider"
+                  data-testid="get-key-temperature"
+                  value={temperature}
+                  onChange={(e) => setTemperature(parseFloat(e.target.value))}
+                />
+                <span className="get-key-temperature-value" data-testid="get-key-temperature-value">
+                  {temperature.toFixed(2)}
+                </span>
+              </div>
+            </div>
+
+            {/* System prompt — all tiles */}
+            <div className="elmer-form-row" data-testid="get-key-system-prompt-row">
+              <label className="elmer-form-label" htmlFor="get-key-system-prompt">
+                System prompt
+              </label>
+              <textarea
+                id="get-key-system-prompt"
+                className="elmer-form-input get-key-system-prompt"
+                data-testid="get-key-system-prompt"
+                rows={4}
+                value={systemPrompt}
+                onChange={(e) => setSystemPrompt(e.target.value)}
+                placeholder={DEFAULT_SYSTEM_PROMPT_PLACEHOLDER}
+                spellCheck={false}
+              />
+              <button
+                type="button"
+                className="get-key-reset-prompt"
+                data-testid="get-key-reset-prompt"
+                onClick={() => setSystemPrompt('')}
+              >
+                ↺ Reset to default
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Save button */}
       <div className="elmer-form-save-row">
