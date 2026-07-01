@@ -1136,12 +1136,14 @@ export const ElmerPane = memo(function ElmerPane({
                   //   - settings flow: close the gear disclosure (advancedOpen=false)
                   // On failure, remain on the picker so the operator can retry.
                   await configSet(args);
-                  if (switchProviderFocusTier !== null) {
-                    setSwitchProviderFocusTier(null);
-                  }
-                  if (settingsPickerOpen) {
-                    setAdvancedOpen(false);
-                  }
+                  // A successful save from the picker returns to chat regardless of
+                  // which path opened it. Clear both unconditionally rather than
+                  // gating on captured render-time flags — a re-render between the
+                  // click and configSet resolving could otherwise leave a stale
+                  // flag and the picker stuck open. (First-run: onboarded flips
+                  // true on the next config read, so these are harmless no-ops.)
+                  setSwitchProviderFocusTier(null);
+                  setAdvancedOpen(false);
                 }}
                 onDetect={detectModels}
                 detectState={detectState}

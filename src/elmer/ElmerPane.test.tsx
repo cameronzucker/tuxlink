@@ -2716,8 +2716,10 @@ describe('<ElmerPane> settings-surface fold-in — gear-open shows tile picker p
 //
 // Investigation summary (task-11-report.md captures the full file:line trace):
 //   The tile/GetKeyCard path is structurally distinct from the ModelForm path:
-//   GetKeyCard.handleSave() ALWAYS sends { action:'set', value:<typed-trimmed-key> }
-//   to preset.endpoint (a compile-time constant on the preset object). This means:
+//   GetKeyCard.handleSave() sends { action:'set', value:<typed-trimmed-key> } when a
+//   key is typed, or { action:'keep' } when the origin already has a saved key and the
+//   operator did not choose "Replace key" (the settings-edit path) — always to
+//   preset.endpoint (a compile-time constant on the preset object). This means:
 //
 //   - Bug 1 (stale Remove/Replace crossing origins): structurally impossible — the
 //     GetKeyCard holds no Remove/Replace state; it only has a key input. A key typed
@@ -2822,11 +2824,11 @@ describe('<ElmerPane> T11 credential-seam — tile/GetKeyCard save-path: typed k
     // (the tile's compile-time constant), NOT from any mutable state that
     // could carry over from the previously-selected tile.
     //
-    // Note on rawKey carry-over: React reuses the GetKeyCard component instance
-    // when switching between two cloud tiles (same component type, same position
-    // in tree). The rawKey state is thus carried over. This is user-visible (the
-    // old key appears in the input), but the critical guarantee is that
-    // agentEndpoint in the Save call always reflects the CURRENTLY selected tile.
+    // Note on rawKey isolation across tiles: GetKeyCard is keyed on
+    // `selectedPreset.id` in ModelTilePicker, so switching cloud tiles REMOUNTS
+    // it and rawKey resets to empty (no stale key carries into the next tile's
+    // input). The critical seam guarantee remains that agentEndpoint in the Save
+    // call always reflects the CURRENTLY selected tile's compile-time constant.
     mockFirstRunConfig();
     render(<ElmerPane />);
 
