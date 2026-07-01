@@ -211,8 +211,37 @@ fn provider_error_outcome(err: ProviderError) -> RunOutcome {
     }
 }
 
+/// Return the first validation error across a batch of tool calls, or `None`
+/// if every call is well-formed. An unknown tool name is itself a malformed
+/// call (the model addressed a tool that does not exist).
+fn first_validation_error(tools: &[ToolSpec], calls: &[ToolCall]) -> Option<String> {
+    if calls.is_empty() {
+        return Some("model emitted an empty tool-call batch".to_string());
+    }
+    for call in calls {
+        match tools.iter().find(|t| t.name == call.name) {
+            None => {
+                let known: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+                return Some(format!(
+                    "unknown tool `{}`; available tools: {}",
+                    call.name,
+                    known.join(", ")
+                ));
+            }
+            Some(spec) => {
+                if let Err(detail) = validate::validate(&spec.json_schema, &call.args) {
+                    return Some(format!("arguments for `{}` are invalid: {detail}", call.name));
+                }
+            }
+        }
+    }
+    None
+}
+
 // ---------------------------------------------------------------------------
 // provider_error_outcome unit tests
+// (kept at end-of-file: clippy::items_after_test_module denies production items
+// after a #[cfg(test)] mod, so test modules live below all production items.)
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -259,31 +288,4 @@ mod provider_error_outcome_tests {
             "Unparseable must map to NeedsOperator, got: {outcome:?}"
         );
     }
-}
-
-/// Return the first validation error across a batch of tool calls, or `None`
-/// if every call is well-formed. An unknown tool name is itself a malformed
-/// call (the model addressed a tool that does not exist).
-fn first_validation_error(tools: &[ToolSpec], calls: &[ToolCall]) -> Option<String> {
-    if calls.is_empty() {
-        return Some("model emitted an empty tool-call batch".to_string());
-    }
-    for call in calls {
-        match tools.iter().find(|t| t.name == call.name) {
-            None => {
-                let known: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
-                return Some(format!(
-                    "unknown tool `{}`; available tools: {}",
-                    call.name,
-                    known.join(", ")
-                ));
-            }
-            Some(spec) => {
-                if let Err(detail) = validate::validate(&spec.json_schema, &call.args) {
-                    return Some(format!("arguments for `{}` are invalid: {detail}", call.name));
-                }
-            }
-        }
-    }
-    None
 }
