@@ -186,8 +186,6 @@ export function ModelTilePicker({
   // origin so a hand-edited path on a known origin still maps to its tile.
   const selectedId = inferPreset(endpoint);
   const selectedPreset = PRESETS.find((p) => p.id === selectedId);
-  // The "Other" tier (openrouter, custom) edits via the reused ModelForm.
-  const otherSelected = selectedPreset?.tier === 'other';
 
   function handleTileSelect(presetId: string) {
     const preset = PRESETS.find((p) => p.id === presetId);
@@ -197,15 +195,6 @@ export function ModelTilePicker({
     const nextModel = nextModelForPreset(endpoint, model, presetId);
     setEndpoint(preset.endpoint);
     if (nextModel !== null) setModel(nextModel);
-  }
-
-  function handleSave() {
-    void onSave({
-      agentEndpoint: endpoint,
-      agentModel: model,
-      key: { action: 'keep' },
-      agentTurnTimeoutSecs: initialTurnTimeoutSecs,
-    });
   }
 
   return (
@@ -284,22 +273,15 @@ export function ModelTilePicker({
       })}
 
       {/* Editor for the selected tile.
-          - "Other" tier (openrouter, custom) reuses ModelForm verbatim.
-          - Cloud/paygo tiles with a keyPageUrl get the guided GetKeyCard flow (Task 9).
-          - Local/other tiles without a keyPageUrl get the lightweight model+Save summary.
+          - Cloud tiles with a keyPageUrl get the guided GetKeyCard flow (Task 9).
+          - All other tiles (local Ollama + Other tier: openrouter, custom) render
+            ModelForm verbatim so detect + model-select + endpoint editing + the
+            loopback-keyless path are all available. The local tier previously
+            rendered a bare summary (model text input + Save only) which dropped
+            the Detect-models button; that branch is removed.
           T10: TierFramingCopy renders honest per-tier context below the editor. */}
       <div className="elmer-tile-editor" data-testid="elmer-tile-editor">
-        {otherSelected ? (
-          <ModelForm
-            onSave={onSave}
-            onDetect={onDetect}
-            detectState={detectState}
-            initialEndpoint={endpoint}
-            initialModel={model}
-            initialKeyStatus={initialKeyStatus}
-            initialTurnTimeoutSecs={initialTurnTimeoutSecs}
-          />
-        ) : selectedPreset?.keyPageUrl ? (
+        {selectedPreset?.keyPageUrl ? (
           <>
             <GetKeyCard
               key={selectedPreset.id}
@@ -317,46 +299,18 @@ export function ModelTilePicker({
             <TierFramingCopy tier={selectedPreset?.tier} />
           </>
         ) : (
-          <div className="elmer-tile-summary">
-            <div className="elmer-form-row">
-              <label className="elmer-form-label" htmlFor="elmer-tile-endpoint">
-                Endpoint
-              </label>
-              <span
-                id="elmer-tile-endpoint"
-                className="elmer-tile-endpoint elmer-form-input--mono"
-                data-testid="elmer-tile-endpoint"
-              >
-                {endpoint}
-              </span>
-            </div>
-            <div className="elmer-form-row">
-              <label className="elmer-form-label" htmlFor="elmer-tile-model-input">
-                Model
-              </label>
-              <input
-                id="elmer-tile-model-input"
-                type="text"
-                className="elmer-form-input elmer-form-input--mono"
-                data-testid="elmer-tile-model-input"
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                spellCheck={false}
-                autoComplete="off"
-              />
-            </div>
-            <div className="elmer-form-save-row">
-              <button
-                type="button"
-                className="elmer-save-btn"
-                data-testid="elmer-tile-save"
-                onClick={handleSave}
-              >
-                Save &amp; use
-              </button>
-            </div>
+          <>
+            <ModelForm
+              onSave={onSave}
+              onDetect={onDetect}
+              detectState={detectState}
+              initialEndpoint={endpoint}
+              initialModel={model}
+              initialKeyStatus={initialKeyStatus}
+              initialTurnTimeoutSecs={initialTurnTimeoutSecs}
+            />
             <TierFramingCopy tier={selectedPreset?.tier} />
-          </div>
+          </>
         )}
       </div>
     </div>

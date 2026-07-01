@@ -1,25 +1,29 @@
 /**
- * ModelTilePicker tests — Task 8a (updated for Task 9 GetKeyCard integration).
+ * ModelTilePicker tests -- Task 8a (updated for Task 9 + Bug 1/2 fixes).
  *
  * The component takes callbacks + state as PROPS (no hook calls, no Tauri
  * invoke), so tests pass vi.fn()s directly and never mock the invoke boundary.
- * `keyStatusByOrigin` is a prop — never a hook call.
+ * `keyStatusByOrigin` is a prop -- never a hook call.
  *
  * Coverage:
  *   (a) four tier headers render + a tile per preset;
- *   (b) the gemini tile carries a RECOMMENDED badge;
+ *   (b) the gemini tile does NOT carry a RECOMMENDED badge (removed per operator decision);
  *   (c) keyStatusByOrigin -> a per-tile "key saved" badge, NEVER a key value;
  *   (d) initialEndpoint=anthropic -> anthropic tile pre-selected (aria-checked);
- *       for tiles with a keyPageUrl, the GetKeyCard is shown instead of the
- *       plain summary with elmer-tile-model-input;
+ *       for tiles with a keyPageUrl, the GetKeyCard is shown;
  *   (e) selecting the Other/custom tile renders the reused ModelForm;
- *   (f) the plain tile-summary (model input + Save) is shown for local tiles
- *       (localOllama has no keyPageUrl), where the pre-fill and onSave tests run.
+ *   (f) [Bug2 fix] localOllama tile renders ModelForm (not the removed bare summary)
+ *       so Detect + model-select are available;
+ *   (g) [Bug1 fix] local Ollama model does NOT survive a switch to a cloud tile
+ *       (the fatal 404 regression guard);
+ *   (h) GetKeyCard remounts on tile switch (T11 key-isolation fix).
  *
- * Task 9 note: cloud tiles (gemini, groq, openai, anthropic) now render GetKeyCard
- * because they have keyPageUrl. The elmer-tile-model-input and elmer-tile-save
- * data-testids are only present for tiles WITHOUT a keyPageUrl (localOllama).
- * Tests that assert on those elements have been updated to use localOllama.
+ * Task 9 note: cloud tiles (gemini, groq, openai, anthropic) render GetKeyCard
+ * because they have keyPageUrl. Local (localOllama) + Other tier tiles render
+ * ModelForm, which has detect + model-select + endpoint editing + loopback-keyless
+ * handling. The bare-summary branch (elmer-tile-model-input / elmer-tile-save)
+ * has been removed; elmer-save-btn (from ModelForm) is the Save affordance for
+ * local tiles.
  */
 
 // Mock @tauri-apps/plugin-shell since GetKeyCard (imported by ModelTilePicker
@@ -119,7 +123,7 @@ describe('ModelTilePicker', () => {
     // The OpenAI tile is NOT selected.
     expect(screen.getByTestId('elmer-tile-openai').getAttribute('aria-checked')).toBe('false');
 
-    // GetKeyCard is shown for Anthropic (has keyPageUrl) — not the plain summary.
+    // GetKeyCard is shown for Anthropic (has keyPageUrl) -- not the plain summary.
     expect(screen.getByTestId('get-key-card')).toBeTruthy();
     expect(screen.queryByTestId('elmer-tile-model-input')).toBeNull();
   });
@@ -134,11 +138,11 @@ describe('ModelTilePicker', () => {
   });
 
   it('switching to a cloud tile pre-fills the preset defaultModel and GetKeyCard Save carries it through onSave', async () => {
-    // This is the non-vacuous integration test for the handleTileSelect →
-    // nextModelForPreset → GetKeyCard → onSave seam.
+    // This is the non-vacuous integration test for the handleTileSelect ->
+    // nextModelForPreset -> GetKeyCard -> onSave seam.
     //
     // Start on OpenAI (gpt-4o-mini). Switch to Anthropic. nextModelForPreset sees
-    // currentModel === outgoingDefault ('gpt-4o-mini') → returns 'claude-haiku-4-5'.
+    // currentModel === outgoingDefault ('gpt-4o-mini') -> returns 'claude-haiku-4-5'.
     // The picker sets model state to 'claude-haiku-4-5' and renders GetKeyCard with
     // agentModel='claude-haiku-4-5'. When the user saves a valid key, onSave must
     // receive agentEndpoint=Anthropic's endpoint AND agentModel='claude-haiku-4-5'.
@@ -156,7 +160,7 @@ describe('ModelTilePicker', () => {
       />,
     );
 
-    // Select Anthropic tile → triggers handleTileSelect → nextModelForPreset → model='claude-haiku-4-5'
+    // Select Anthropic tile -> triggers handleTileSelect -> nextModelForPreset -> model='claude-haiku-4-5'
     fireEvent.click(screen.getByTestId('elmer-tile-anthropic'));
 
     // GetKeyCard must now be visible (Anthropic has a keyPageUrl).
@@ -186,10 +190,43 @@ describe('ModelTilePicker', () => {
     );
   });
 
-  it('calls onSave with the working endpoint and model via the plain summary (localOllama — no keyPageUrl)', async () => {
-    // Task 9: cloud tiles render GetKeyCard which has its own Save pathway tested in
-    // GetKeyCard.test.tsx. The per-tile plain-summary Save (elmer-tile-save) is still
-    // rendered for local tiles that have no keyPageUrl. localOllama is the test vehicle.
+  // BUG 2 TDD -- these tests FAIL before the fix (local tile renders bare summary,
+  // not ModelForm), and PASS after (local tile uses ModelForm with Detect).
+
+  it('[Bug2] selecting the localOllama tile renders ModelForm (elmer-model-form), not the bare summary', () => {
+    // The bare summary (elmer-tile-model-input + elmer-tile-save) was a stripped-down
+    // editor that dropped the Detect-models button. localOllama MUST render ModelForm
+    // so detect + model-select are available for Ollama operators.
+    render(
+      <ModelTilePicker
+        {...baseProps({
+          initialEndpoint: 'http://127.0.0.1:11434/v1/chat/completions',
+          initialModel: 'llama3',
+        })}
+      />,
+    );
+    expect(screen.getByTestId('elmer-model-form')).toBeTruthy();
+    // The bare-summary-only input must NOT appear as a replacement for ModelForm.
+    expect(screen.queryByTestId('elmer-tile-summary')).toBeNull();
+  });
+
+  it('[Bug2] localOllama tile ModelForm includes the Detect affordance (elmer-detect-btn)', () => {
+    // Detect button is the key operator workflow for pulling local Ollama model lists.
+    // Without ModelForm, it was absent -- operators had no way to pick detected models.
+    render(
+      <ModelTilePicker
+        {...baseProps({
+          initialEndpoint: 'http://127.0.0.1:11434/v1/chat/completions',
+          initialModel: '',
+        })}
+      />,
+    );
+    expect(screen.getByTestId('elmer-detect-btn')).toBeTruthy();
+  });
+
+  it('[Bug2] calls onSave with working endpoint and model via ModelForm Save on localOllama tile', async () => {
+    // Re-express the prior onSave test using ModelForm's Save button (elmer-save-btn)
+    // instead of the removed bare-summary elmer-tile-save button.
     const onSave = vi.fn(async () => {});
     render(
       <ModelTilePicker
@@ -200,12 +237,56 @@ describe('ModelTilePicker', () => {
         })}
       />,
     );
-    fireEvent.click(screen.getByTestId('elmer-tile-save'));
+    // ModelForm's Save button is elmer-save-btn (not the removed elmer-tile-save).
+    fireEvent.click(screen.getByTestId('elmer-save-btn'));
+    await new Promise((r) => setTimeout(r, 0));
     expect(onSave).toHaveBeenCalledTimes(1);
     expect(onSave).toHaveBeenCalledWith(
       expect.objectContaining({
         agentEndpoint: 'http://127.0.0.1:11434/v1/chat/completions',
         agentModel: 'llama3',
+      }),
+    );
+  });
+
+  // COMBINED FIX TEST -- guards the end-to-end fatal regression:
+  // local Ollama model must not survive a switch from localOllama to Gemini tile.
+  it('[Combined] local Ollama model does NOT carry over when operator switches to Gemini tile', () => {
+    // Start on localOllama with a detected model (simulates post-detect state).
+    // Switching to Gemini must set model to gemini-2.5-flash, not the local model.
+    // This is the full component-level guard for the Bug 1 fatal 404 regression.
+    const onSave = vi.fn(async () => {});
+    render(
+      <ModelTilePicker
+        {...baseProps({
+          onSave,
+          initialEndpoint: 'http://127.0.0.1:11434/v1/chat/completions',
+          initialModel: 'gpt-oss:20b',
+        })}
+      />,
+    );
+
+    // Verify localOllama tile is pre-selected.
+    expect(screen.getByTestId('elmer-tile-localOllama').getAttribute('aria-checked')).toBe('true');
+
+    // Switch to Gemini tile.
+    fireEvent.click(screen.getByTestId('elmer-tile-gemini'));
+    expect(screen.getByTestId('elmer-tile-gemini').getAttribute('aria-checked')).toBe('true');
+
+    // GetKeyCard must render (Gemini has keyPageUrl), proving the Gemini branch activated.
+    expect(screen.getByTestId('get-key-card')).toBeTruthy();
+
+    // Type a valid key and save -- the model carried to onSave must be gemini-2.5-flash,
+    // NOT the prior local model.
+    const keyInput = screen.getByTestId('get-key-input') as HTMLInputElement;
+    fireEvent.change(keyInput, { target: { value: 'AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ12' } });
+    fireEvent.click(screen.getByTestId('get-key-save'));
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentEndpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+        agentModel: 'gemini-2.5-flash',
       }),
     );
   });
@@ -222,20 +303,20 @@ describe('ModelTilePicker', () => {
     // This test must FAIL without the key prop and PASS with it.
     render(<ModelTilePicker {...baseProps()} />);
 
-    // Select the Gemini tile — it has a keyPageUrl so GetKeyCard renders.
+    // Select the Gemini tile -- it has a keyPageUrl so GetKeyCard renders.
     fireEvent.click(screen.getByTestId('elmer-tile-gemini'));
     expect(screen.getByTestId('get-key-card')).toBeTruthy();
 
-    // Type a key into the Gemini GetKeyCard input — do NOT save it.
+    // Type a key into the Gemini GetKeyCard input -- do NOT save it.
     const geminiKeyInput = screen.getByTestId('get-key-input') as HTMLInputElement;
     fireEvent.change(geminiKeyInput, { target: { value: 'AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ12' } });
     expect(geminiKeyInput.value).toBe('AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ12');
 
-    // Now switch to the Groq tile — also a cloud tile with a keyPageUrl.
+    // Now switch to the Groq tile -- also a cloud tile with a keyPageUrl.
     fireEvent.click(screen.getByTestId('elmer-tile-groq'));
     expect(screen.getByTestId('get-key-card')).toBeTruthy();
 
-    // The key input must be EMPTY — the stale Gemini key must not carry over.
+    // The key input must be EMPTY -- the stale Gemini key must not carry over.
     const groqKeyInput = screen.getByTestId('get-key-input') as HTMLInputElement;
     expect(groqKeyInput.value).toBe('');
   });

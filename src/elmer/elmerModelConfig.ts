@@ -185,24 +185,39 @@ export const DEFAULT_MODEL_BY_PRESET: Record<string, string> = {
 /**
  * Decide the model to set when the operator switches to `targetPresetId`.
  *
- * Returns the target preset's default model ONLY when the current model is
- * "untouched" — i.e. it still equals the OUTGOING preset's default (or is empty /
- * never set). Returns `null` to PRESERVE the current model when the operator has
- * hand-edited it, or when the target has no default (local / custom / other).
+ * Three cases:
+ *   1. Target has no sensible default (local Ollama, custom, openrouter) -- return null so
+ *      the operator detects/picks their own model. The current model is preserved as-is.
+ *   2. Re-selecting the SAME provider -- return null to preserve whatever is there (it may
+ *      be the default, or it may be hand-edited to a non-default model for that provider).
+ *   3. A real provider switch to a provider WITH a default -- always adopt the target default.
+ *      The outgoing model belongs to a different provider and would 404 against the new
+ *      endpoint (e.g. a detected local Ollama model sent to the Gemini endpoint, or a
+ *      hand-edited OpenAI model sent to Anthropic).
  *
  * Shared single source of truth for both `handlePresetChange` (the dense form) and
- * the tile picker, so the two cannot drift. Pure function — no React, unit-tested.
+ * the tile picker, so the two cannot drift. Pure function -- no React, unit-tested.
  */
 export function nextModelForPreset(
   currentEndpoint: string,
-  currentModel: string,
+  // currentModel is accepted for API stability (callers still pass it) but is no
+  // longer read: the new rule is provider-switch-based, not model-comparison-based.
+  // The old "preserve hand-edited model" heuristic was the root cause of the fatal
+  // 404 bug (a detected local model surviving a switch to Gemini). Prefixed _ to
+  // silence TS6133 while keeping the signature stable.
+  _currentModel: string,
   targetPresetId: string,
 ): string | null {
   const targetDefault = DEFAULT_MODEL_BY_PRESET[targetPresetId] ?? '';
-  if (!targetDefault) return null; // target has no default — leave the model field as-is
-  const outgoingDefault = DEFAULT_MODEL_BY_PRESET[inferPreset(currentEndpoint)] ?? '';
-  const untouched = currentModel === '' || currentModel === outgoingDefault;
-  return untouched ? targetDefault : null;
+  // Target has no sensible default (local Ollama / custom / openrouter) -- leave the model
+  // as-is so the operator detects/picks it.
+  if (!targetDefault) return null;
+  // Re-selecting the SAME provider: keep whatever is there (it may be hand-edited).
+  if (inferPreset(currentEndpoint) === targetPresetId) return null;
+  // A real provider switch to a provider WITH a default: adopt that default. The
+  // outgoing model (a different provider's model, incl. a detected local one) would
+  // 404 against the new endpoint.
+  return targetDefault;
 }
 
 // ---------------------------------------------------------------------------

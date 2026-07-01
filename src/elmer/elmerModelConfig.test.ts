@@ -1,20 +1,20 @@
 /**
- * elmerModelConfig.test.ts — TDD tests for Task G1.
+ * elmerModelConfig.test.ts -- TDD tests for Task G1.
  *
  * Coverage targets (per task brief):
  *   - PRESETS has the four providers: localOllama, openai, openrouter, custom.
  *     Cloud presets use https; localOllama uses loopback http.
  *   - inferPreset matches by origin not exact path (R2.6):
- *     same origin, different path → same preset id; unknown origin → 'custom'.
+ *     same origin, different path -> same preset id; unknown origin -> 'custom'.
  *   - originOf strips path + lowercases host: exact A1 cross-language vector table.
  *   - isLoopback classifies host only: 127.x true, localhost true, RFC1918 false,
  *     public hostname false.
  *
- * A1 cross-language contract (Rust origin() ↔ JS new URL().origin):
- *   https://API.OpenAI.com:443/v1/chat/completions  → https://api.openai.com      (default port omitted)
- *   http://127.0.0.1:11434/v1/chat/completions      → http://127.0.0.1:11434      (non-default port kept)
- *   https://openrouter.ai/api/v1/chat/completions   → https://openrouter.ai
- * A mismatch silently desyncs the keyring account string — this table is the contract.
+ * A1 cross-language contract (Rust origin() <-> JS new URL().origin):
+ *   https://API.OpenAI.com:443/v1/chat/completions  -> https://api.openai.com      (default port omitted)
+ *   http://127.0.0.1:11434/v1/chat/completions      -> http://127.0.0.1:11434      (non-default port kept)
+ *   https://openrouter.ai/api/v1/chat/completions   -> https://openrouter.ai
+ * A mismatch silently desyncs the keyring account string -- this table is the contract.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -138,35 +138,63 @@ describe('PRESETS', () => {
 });
 
 // ---------------------------------------------------------------------------
-// nextModelForPreset — model repopulation on tile switch, preserving hand-edits
+// nextModelForPreset -- model repopulation on tile switch
+//
+// New rule (post-bug-fix): on a real provider switch to a target that HAS a
+// default, always adopt the target default -- the outgoing model belongs to a
+// different provider and would 404. Preserve only when re-selecting the SAME
+// provider. Targets without a default (local/custom/openrouter) always return
+// null (leave for operator to detect/pick).
 // ---------------------------------------------------------------------------
 
 describe('nextModelForPreset', () => {
   const OPENAI = 'https://api.openai.com/v1/chat/completions';
+  const GEMINI_ENDPOINT = PRESETS.find((p) => p.id === 'gemini')!.endpoint;
 
-  it('untouched model → returns the target preset default', () => {
+  // THE REGRESSION TEST -- local detected model must NOT survive switch to cloud.
+  it('local Ollama model does not survive a switch to Gemini (the fatal 404 regression)', () => {
+    expect(
+      nextModelForPreset(
+        'http://127.0.0.1:11434/v1/chat/completions',
+        'gpt-oss:20b',
+        'gemini',
+      ),
+    ).toBe('gemini-2.5-flash');
+  });
+
+  // Hand-edited cloud model on a provider-switch must also adopt target default.
+  it('hand-edited cloud model -> target default when switching providers (cloud->cloud switch)', () => {
+    expect(nextModelForPreset(OPENAI, 'gpt-4-turbo', 'anthropic')).toBe('claude-haiku-4-5');
+  });
+
+  // Re-selecting the SAME provider: null (keep whatever is there).
+  it('same provider re-selected -> null (preserve current model, it may be hand-edited)', () => {
+    expect(nextModelForPreset(GEMINI_ENDPOINT, 'gemini-2.5-flash', 'gemini')).toBeNull();
+  });
+
+  // Target with no default: null (leave for operator to detect/pick).
+  it('target with no default (openrouter) -> null (leave model for operator)', () => {
+    expect(nextModelForPreset(OPENAI, 'gpt-4o-mini', 'openrouter')).toBeNull();
+  });
+
+  // Existing coverage retained with new expected values.
+  it('provider switch with outgoing-default model -> adopts target default', () => {
     expect(nextModelForPreset(OPENAI, 'gpt-4o-mini', 'anthropic')).toBe('claude-haiku-4-5');
     expect(nextModelForPreset(OPENAI, 'gpt-4o-mini', 'gemini')).toBe('gemini-2.5-flash');
   });
 
-  it('hand-edited model → returns null (preserve the operator’s choice)', () => {
-    expect(nextModelForPreset(OPENAI, 'gpt-4o', 'anthropic')).toBeNull();
-    expect(nextModelForPreset(OPENAI, 'o1-preview', 'gemini')).toBeNull();
-  });
-
-  it('target with no default (local/custom/openrouter) → returns null', () => {
+  it('target with no default (local/custom) -> returns null', () => {
     expect(nextModelForPreset(OPENAI, 'gpt-4o-mini', 'custom')).toBeNull();
     expect(nextModelForPreset(OPENAI, 'gpt-4o-mini', 'localOllama')).toBeNull();
-    expect(nextModelForPreset(OPENAI, 'gpt-4o-mini', 'openrouter')).toBeNull();
   });
 
-  it('empty current model (never set) counts as untouched → adopts target default', () => {
+  it('empty current model (never set) -> adopts target default on provider switch', () => {
     expect(nextModelForPreset('', '', 'anthropic')).toBe('claude-haiku-4-5');
   });
 });
 
 // ---------------------------------------------------------------------------
-// originOf — must mirror Rust url::Url::origin().ascii_serialization() exactly.
+// originOf -- must mirror Rust url::Url::origin().ascii_serialization() exactly.
 // Keep these test vectors in lock-step with A1's Rust tests.
 // ---------------------------------------------------------------------------
 
@@ -210,7 +238,7 @@ describe('originOf', () => {
 });
 
 // ---------------------------------------------------------------------------
-// inferPreset — origin-based (R2.6): same origin, any path → same preset id
+// inferPreset -- origin-based (R2.6): same origin, any path -> same preset id
 // ---------------------------------------------------------------------------
 
 describe('inferPreset', () => {
@@ -219,7 +247,7 @@ describe('inferPreset', () => {
   });
 
   it('infers openai for a hand-edited path on the same origin', () => {
-    // Different path, same origin → should still match (R2.6: origin-based, not URL-based)
+    // Different path, same origin -> should still match (R2.6: origin-based, not URL-based)
     expect(inferPreset('https://api.openai.com/some/other/path')).toBe('openai');
   });
 
@@ -248,18 +276,18 @@ describe('inferPreset', () => {
   });
 
   it('returns custom for an empty endpoint', () => {
-    // custom preset has empty endpoint — inferring it should produce 'custom'
+    // custom preset has empty endpoint -- inferring it should produce 'custom'
     expect(inferPreset('')).toBe('custom');
   });
 
   it('is case-insensitive on hostname (upper-cased OpenAI)', () => {
-    // Origin lowercasing means API.OpenAI.com → api.openai.com → matches openai
+    // Origin lowercasing means API.OpenAI.com -> api.openai.com -> matches openai
     expect(inferPreset('https://API.OpenAI.com/v1/chat/completions')).toBe('openai');
   });
 });
 
 // ---------------------------------------------------------------------------
-// isLoopback — string-only host classification; NOT a resolved-IP check
+// isLoopback -- string-only host classification; NOT a resolved-IP check
 // ---------------------------------------------------------------------------
 
 describe('isLoopback', () => {
