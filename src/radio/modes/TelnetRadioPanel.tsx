@@ -16,6 +16,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { Button, Field } from '../../controls';
 import { RadioPanel } from '../RadioPanel';
 import { AuthDiagnosticBanner } from '../sections/AuthDiagnosticBanner';
 import { SessionLogSection } from '../sections/SessionLogSection';
@@ -204,7 +205,7 @@ export function TelnetRadioPanel({ onClose }: TelnetRadioPanelProps) {
               <h5>Server</h5>
               <label className="radio-panel-input-row">
                 <span>Host</span>
-                <input
+                <Field
                   type="text"
                   className="radio-panel-input"
                   data-testid="telnet-host-input"
@@ -268,21 +269,19 @@ export function TelnetRadioPanel({ onClose }: TelnetRadioPanelProps) {
       <SessionLogSection entries={logEntries} onClear={clearLog} />
 
       <section className="radio-panel-sec radio-panel-act">
-        <button
-          type="button"
-          className="radio-panel-btn radio-panel-btn-primary"
+        <Button
+          tone="primary" emphasis="soft" size="md"
           disabled={busy}
           onClick={start}
         >
           {busy ? 'Connecting…' : 'Start'}
-        </button>
-        <button
-          type="button"
-          className="radio-panel-btn radio-panel-btn-bad"
+        </Button>
+        <Button
+          tone="danger" emphasis="soft" size="md"
           onClick={stop}
         >
           Stop
-        </button>
+        </Button>
       </section>
     </RadioPanel>
   );

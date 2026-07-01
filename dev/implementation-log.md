@@ -5,6 +5,26 @@ shipped, bug-hunt cycles, adversarial reviews). Keyed by date + topic.
 
 ---
 
+## 2026-07-01 — Freeze the React Button/Select/Field wrapper API (tuxlink-3m0vx)
+
+Design-system epic: built and froze typed `Button`/`Select`/`Field` wrappers over a
+normalized `controls.css`, adopted on the reviewed ribbon + radio-pane surfaces.
+Subagent-driven execution (10 tasks) from spec → plan, both operator-approved (the
+Hybrid/normalized scale was blessed via a WebKitGTK current-vs-normalized mock).
+
+- **Model:** `tone{neutral,primary,danger} × emphasis{solid,soft,outline} × size{xs,sm,md}`,
+  color via a `--ctl-accent` context-token trio (amber in app chrome, green in `.radio-panel`).
+- **Adoption:** 31 footer buttons + 47 config Select/Field controls across the radio panes,
+  + ribbon Connect/Abort. Doc: [`docs/design/control-wrappers.md`](../docs/design/control-wrappers.md).
+- **Caught in review:** the migration orphaned the compact 44px touch-target a11y floor
+  (retargeted `.radio-panel-btn` → `.radio-panel .tux-btn`, contract tests updated to the live
+  selector); and the render harness never imported `controls.css`, so early visual verifies were
+  on unstyled buttons — fixed the harness (shipped app was always correct; App.tsx loads it).
+- **Verification:** full `pnpm vitest run` (3434 pass) after each CSS change, WebKitGTK re-verify
+  in dark + daylight. Frozen prop enums are the stable control surface going forward.
+
+---
+
 ## 2026-06-30 — Elmer tiered model-access onboarding (tuxlink-wpqwy, PR #984)
 
 Keyless-audience model picker as Elmer's first-run surface, executed via

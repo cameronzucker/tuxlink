@@ -11,6 +11,7 @@
 // minutes is informational only — the backend's arms record is the
 // authoritative TTL.
 
+import { Button } from '../../controls';
 import './ListenSection.css';
 
 export interface ListenArmButtonProps {
@@ -64,25 +65,23 @@ export function ListenArmButton({
         style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}
       >
         {armed ? (
-          <button
-            type="button"
-            className="radio-panel-btn radio-panel-btn-bad"
+          <Button
+            tone="danger" emphasis="soft" size="md"
             data-testid={`${testIdPrefix}-disarm-btn`}
             disabled={busy || disabled}
             onClick={onDisarm}
           >
             {busy ? 'Disarming…' : 'Disarm'}
-          </button>
+          </Button>
         ) : (
-          <button
-            type="button"
-            className="radio-panel-btn radio-panel-btn-primary"
+          <Button
+            tone="primary" emphasis="soft" size="md"
             data-testid={`${testIdPrefix}-arm-btn`}
             disabled={busy || disabled}
             onClick={onArm}
           >
             {busy ? 'Arming…' : 'Arm listener'}
-          </button>
+          </Button>
         )}
         <span
           className={`listen-status ${armed ? 'armed' : 'disarmed'}`}

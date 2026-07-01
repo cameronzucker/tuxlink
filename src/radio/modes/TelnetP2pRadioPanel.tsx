@@ -45,6 +45,7 @@ import { useEffect, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useQueryClient } from '@tanstack/react-query';
+import { Button, Select, Field } from '../../controls';
 import { RadioPanel } from '../RadioPanel';
 import { SessionLogSection } from '../sections/SessionLogSection';
 import { useSessionLog } from '../sections/useSessionLog';
@@ -369,7 +370,7 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
         <h5>Peer Station</h5>
         <label className="radio-panel-input-row">
           <span>Host</span>
-          <input
+          <Field
             type="text"
             className="radio-panel-input"
             data-testid="p2p-host-input"
@@ -385,7 +386,7 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
         </label>
         <label className="radio-panel-input-row">
           <span>Port</span>
-          <input
+          <Field
             type="number"
             className="radio-panel-input"
             data-testid="p2p-port-input"
@@ -401,7 +402,7 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
         </label>
         <label className="radio-panel-input-row">
           <span>Callsign</span>
-          <input
+          <Field
             type="text"
             className="radio-panel-input"
             data-testid="p2p-peer-callsign-input"
@@ -522,7 +523,7 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
           <div className="expander-body">
             <label className="radio-panel-input-row">
               <span>Bind</span>
-              <input
+              <Field
                 type="text"
                 className="radio-panel-input"
                 data-testid="telnet-listen-bind-input"
@@ -540,7 +541,7 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
             </label>
             <label className="radio-panel-input-row">
               <span>Port</span>
-              <input
+              <Field
                 type="number"
                 className="radio-panel-input"
                 data-testid="telnet-listen-port-input"
@@ -557,7 +558,7 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
             </label>
             <label className="radio-panel-input-row">
               <span>TTL</span>
-              <select
+              <Select
                 className="radio-panel-input"
                 data-testid="telnet-listen-ttl-select"
                 value={listenConfig.ttl_secs}
@@ -570,7 +571,7 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
                     {p.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
             <p className="radio-panel-help">
               Loopback binds only on the local machine. LAN binding opens
@@ -661,23 +662,21 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
       {/* Actions — mirrors TelnetRadioPanel's Start/Stop section exactly:
           primary button (Connect / Connecting…) + bad button (Stop). */}
       <section className="radio-panel-sec radio-panel-act">
-        <button
-          type="button"
-          className="radio-panel-btn radio-panel-btn-primary"
+        <Button
+          tone="primary" emphasis="soft" size="md"
           data-testid="p2p-connect-btn"
           disabled={busy}
           onClick={start}
         >
           {busy ? 'Connecting…' : 'Connect'}
-        </button>
-        <button
-          type="button"
-          className="radio-panel-btn radio-panel-btn-bad"
+        </Button>
+        <Button
+          tone="danger" emphasis="soft" size="md"
           data-testid="p2p-stop-btn"
           onClick={stop}
         >
           Stop
-        </button>
+        </Button>
       </section>
     </RadioPanel>
   );

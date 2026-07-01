@@ -29,6 +29,7 @@ import type { ChangeEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { readLastTarget, writeLastTarget } from '../../connections/connectDispatch';
+import { Button, Select, Field } from '../../controls';
 import { RadioPanel } from '../RadioPanel';
 import { SessionLogSection } from '../sections/SessionLogSection';
 import { useSessionLog } from '../sections/useSessionLog';
@@ -451,7 +452,7 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
         <h5>My station</h5>
         <label className="radio-panel-input-row">
           <span>Call</span>
-          <input
+          <Field
             type="text"
             className="radio-panel-input"
             data-testid="packet-base-call"
@@ -461,7 +462,7 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
         </label>
         <label className="radio-panel-input-row">
           <span>SSID</span>
-          <select
+          <Select
             className="radio-panel-input"
             data-testid="packet-ssid-select"
             value={ssid}
@@ -470,7 +471,7 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
             {ssidOptions().map((n) => (
               <option key={n} value={n}>{`-${n}`}</option>
             ))}
-          </select>
+          </Select>
         </label>
         <p
           className="radio-panel-mono"
@@ -486,9 +487,8 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
       {intent === 'p2p' && (
         <section className="radio-panel-sec">
           <h5>Listen</h5>
-          <button
-            type="button"
-            className={`radio-panel-btn ${armed ? 'radio-panel-btn-bad' : 'radio-panel-btn-primary'}`}
+          <Button
+            tone={armed ? 'danger' : 'primary'} emphasis="soft" size="md"
             data-testid="packet-listen-btn"
             aria-pressed={armed}
             onClick={onListen}
@@ -496,7 +496,7 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
             {armed
               ? `Waiting for a call as ${effectiveCall(baseCall, ssid)} — Stop`
               : 'Listen for an incoming call'}
-          </button>
+          </Button>
           {/* listenDefault is a PREFERENCE (auto-arm on startup), distinct
               from the live armed state above — it does not imply live
               listening. Restored 2026-05-31 from the legacy
@@ -564,7 +564,7 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
             <>
               <label className="radio-panel-input-row">
                 <span>To</span>
-                <input
+                <Field
                   type="text"
                   className="radio-panel-input"
                   data-testid="packet-target-input"
@@ -590,7 +590,7 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
                   <label key={i} className="radio-panel-input-row">
                     <span>{`Relay ${i + 1}`}</span>
                     <span style={{ display: 'flex', gap: 4 }}>
-                      <input
+                      <Field
                         type="text"
                         className="radio-panel-input"
                         data-testid={`packet-relay-${i}`}
@@ -637,9 +637,8 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
             data-testid retains a stable hook for tests + grep. Listen is a
             distinct action that stays separate (it's the "armed" state).
             Kept OUTSIDE FavoritesTabs so it stays visible on every tab. */}
-        <button
-          type="button"
-          className="radio-panel-btn radio-panel-btn-primary"
+        <Button
+          tone="primary" emphasis="soft" size="md"
           data-testid="packet-start-btn"
           disabled={connecting}
           onClick={onConnect}
@@ -649,18 +648,17 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
             : target.trim()
             ? `Start (call ${target.trim()})`
             : 'Start'}
-        </button>
+        </Button>
         {/* tuxlink-avu9: operator stop. First press = graceful DISC to the remote;
             second press = hard force-kill. Always available (both are safe no-ops when
             idle) so a runaway/blocked session can always be halted — RADIO-1. */}
-        <button
-          type="button"
-          className="radio-panel-btn radio-panel-btn-bad"
+        <Button
+          tone="danger" emphasis="soft" size="md"
           data-testid="packet-stop-btn"
           onClick={onStop}
         >
           {stopRequested ? 'Force stop' : 'Stop'}
-        </button>
+        </Button>
       </section>
 
       <SessionLogSection entries={logEntries} onClear={clearLog} />

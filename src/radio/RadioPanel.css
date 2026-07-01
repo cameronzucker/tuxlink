@@ -186,6 +186,11 @@
   text-transform: none;
 }
 
+/* Wrapper for labeled Field/Select controls (tuxlink-3m0vx) — mirrors the
+   existing .radio-panel-field row layout. */
+.tux-field-wrap { display: flex; flex-direction: column; gap: 4px; }
+.tux-field-label { font-size: var(--type-meta); color: var(--text-dim); }
+
 /* Readonly field (legacy — kept for backward compatibility with any
  * non-Telnet mode that still mounts a static field. The Telnet panel
  * now uses radio-panel-input-row for the editable Host field. */
@@ -342,74 +347,6 @@ select.radio-panel-input option {
   gap: 6px;
   flex-wrap: wrap;
 }
-.radio-panel-btn {
-  padding: 8px 14px;
-  border-radius: var(--radius-control);
-  font-size: var(--type-body);
-  font-weight: 500;
-  text-align: center;
-  cursor: pointer;
-  border: 1px solid;
-}
-/* Small secondary/ghost button (compact actions: detect device, browse, manage).
-   Used STANDALONE (not with .radio-panel-btn), and was previously defined NOWHERE
-   — so it rendered as a raw browser button, the "Claude Code default" look across
-   the modem panels (ModemLinkSection / ManagedModemSection / ArdopRadioPanel).
-   Now carries the dark-UI ghost style with an accent hover, matching the family. */
-.radio-panel-btn-sm {
-  padding: 4px 10px;
-  border-radius: var(--radius-control);
-  font-size: var(--type-control);
-  font-weight: 500;
-  cursor: pointer;
-  background: transparent;
-  border: 1px solid var(--border-strong, #3a4150);
-  color: var(--text, #cbd5e1);
-}
-.radio-panel-btn-sm:hover:not(:disabled) {
-  border-color: var(--modem-accent, #4ade80);
-  color: var(--modem-accent, #4ade80);
-}
-.radio-panel-btn-sm:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-/* Primary action (Connect, Start, Save). Outlined-with-bright-text —
- * the original radio dock aesthetic that pre-dated PR #217.
- * tuxlink-2ief's first pass used filled-accent (var(--modem-accent) bg
- * + var(--modem-accent-fg) text) for max contrast across themes; operator
- * (tuxlink-vxh8): filled green is too loud against the rest of the dark
- * UI. Restored to outlined-low-alpha-bg + accent text + accent-medium-
- * alpha border via color-mix, reproducing the original literal alphas
- * (12% bg, 35% border) but driven by per-theme --modem-accent so light
- * schemes still get high contrast (deep green text + low-alpha-deep-green
- * tint stays readable on white). */
-.radio-panel-btn-primary {
-  background: var(--modem-accent-soft);
-  border-color: color-mix(in srgb, var(--modem-accent) 35%, transparent);
-  color: var(--modem-accent);
-}
-.radio-panel-btn-primary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--modem-accent) 18%, transparent);
-  border-color: var(--modem-accent);
-}
-/* Danger / Abort action. Mirror the primary outlined pattern so Stop is
- * visible at rest without becoming the only filled action in the row. */
-.radio-panel-btn-bad {
-  background: var(--tux-danger-surface);
-  border-color: color-mix(in srgb, var(--error) 35%, transparent);
-  color: var(--error);
-  flex: 0 0 auto;
-  padding: 8px 14px;
-}
-.radio-panel-btn-bad:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--error) 18%, transparent);
-  border-color: var(--error);
-}
-.radio-panel-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
 
 /* FZ-M1 compact (tuxlink-h7q7 Task 6b): touch targets >=44px + font floors for
    the radio panel interior. Density, not uniform shrink. */
@@ -431,7 +368,7 @@ select.radio-panel-input option {
   .radio-panel-find-gateway {
     min-height: 44px;
   }
-  .radio-panel-btn {
+  .radio-panel .tux-btn {
     min-height: 44px;
   }
   .radio-panel-field input,

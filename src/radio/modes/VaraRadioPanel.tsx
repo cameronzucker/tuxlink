@@ -20,6 +20,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, KeyboardEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { readLastTarget, writeLastTarget } from '../../connections/connectDispatch';
+import { Button, Select, Field } from '../../controls';
 import { RadioPanel, type RadioPanelState } from '../RadioPanel';
 import { SessionLogSection } from '../sections/SessionLogSection';
 import { useSessionLog } from '../sections/useSessionLog';
@@ -506,7 +507,7 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
         <h5>VARA host</h5>
         <label className="radio-panel-input-row">
           <span>Host</span>
-          <input
+          <Field
             type="text"
             className="radio-panel-input"
             data-testid="vara-host-input"
@@ -522,7 +523,7 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
         </label>
         <label className="radio-panel-input-row">
           <span>Cmd port</span>
-          <input
+          <Field
             type="text"
             inputMode="numeric"
             className="radio-panel-input"
@@ -540,7 +541,7 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
         </label>
         <label className="radio-panel-input-row">
           <span>Data port</span>
-          <input
+          <Field
             type="text"
             inputMode="numeric"
             className="radio-panel-input"
@@ -558,7 +559,7 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
         </label>
         <label className="radio-panel-input-row">
           <span>Bandwidth</span>
-          <select
+          <Select
             className="radio-panel-input"
             data-testid="vara-bandwidth-select"
             value={config.bandwidth_hz ?? ''}
@@ -570,7 +571,7 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
                 {opt.label}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
       </section>
 
@@ -608,7 +609,7 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
           manualContent={
             <label className="radio-panel-input-row">
               <span>To</span>
-              <input
+              <Field
                 type="text"
                 className="radio-panel-input"
                 data-testid="vara-target-input"
@@ -647,7 +648,7 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
             when the field is blank (freqHz === null). */}
         <div className="radio-panel-input-row">
           <label htmlFor="vara-freq">Frequency (MHz)</label>
-          <input
+          <Field
             id="vara-freq"
             data-testid="vara-freq"
             className="radio-panel-input radio-panel-mono"
@@ -659,9 +660,8 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
             autoCapitalize="off"
             autoCorrect="off"
           />
-          <button
-            type="button"
-            className="radio-panel-btn radio-panel-btn-sm"
+          <Button
+            tone="neutral" emphasis="outline" size="xs"
             data-testid="vara-tune"
             disabled={freqHz === null}
             onClick={() => {
@@ -669,7 +669,7 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
             }}
           >
             Tune…
-          </button>
+          </Button>
         </div>
         {/* tuxlink-n95sr #3: Send/Receive moved OUT of the Connect section into
             the action row below, mirroring ARDOP's control model exactly — the
@@ -759,9 +759,8 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
           toggle. Operator decision: no UX divergence between ARDOP and VARA. */}
       <section className="radio-panel-sec radio-panel-act">
         {!isOpen && (
-          <button
-            type="button"
-            className="radio-panel-btn radio-panel-btn-primary"
+          <Button
+            tone="primary" emphasis="soft" size="md"
             data-testid="vara-start-btn"
             disabled={busy}
             onClick={onStartClick}
@@ -774,13 +773,12 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
             }
           >
             {busy ? 'Starting…' : 'Start'}
-          </button>
+          </Button>
         )}
         {isOpen && (
           <>
-            <button
-              type="button"
-              className="radio-panel-btn radio-panel-btn-primary"
+            <Button
+              tone="primary" emphasis="soft" size="md"
               data-testid="vara-send-receive-btn"
               disabled={
                 busy ||
@@ -801,16 +799,15 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
               }
             >
               {exchanging ? 'Exchanging…' : 'Send / Receive'}
-            </button>
-            <button
-              type="button"
-              className="radio-panel-btn radio-panel-btn-bad"
+            </Button>
+            <Button
+              tone="danger" emphasis="soft" size="md"
               data-testid="vara-stop-btn"
               disabled={busy}
               onClick={onStopClick}
             >
               {busy ? 'Stopping…' : 'Stop'}
-            </button>
+            </Button>
           </>
         )}
         {actionError && (

@@ -120,6 +120,13 @@ body,
   --type-body: 13px;  --type-heading: 16px;
   --radius-xs: 2px; --radius-control: 3px; --radius-panel: 6px; --radius-pill: 999px;
 
+  /* Control-accent context trio (tuxlink-3m0vx). Resolves to the app accent by
+     default and the modem-dock green inside .radio-panel (rule below). Every
+     theme inherits automatically because these reference the primitives. */
+  --ctl-accent: var(--accent);
+  --ctl-accent-soft: var(--accent-soft);
+  --ctl-accent-fg: var(--tux-accent-fg);
+
   /* Typography base (mock body: 14px / 1.5, --sans) */
   font-family: var(--sans);
   font-size: 14px;
@@ -134,6 +141,14 @@ body,
   -moz-osx-font-smoothing: grayscale;
   -webkit-text-size-adjust: 100%;
   color-scheme: dark;
+}
+
+/* The radio dock keeps its green identity: primary controls inside .radio-panel
+   resolve --ctl-accent to the modem accent (tuxlink-3m0vx / -2ief). */
+.radio-panel {
+  --ctl-accent: var(--modem-accent);
+  --ctl-accent-soft: var(--modem-accent-soft);
+  --ctl-accent-fg: var(--modem-accent-fg);
 }
 
 /* ============================================================================

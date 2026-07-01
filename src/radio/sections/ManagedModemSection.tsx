@@ -28,6 +28,7 @@ import type {
   PttChoice,
   StableAudioId,
 } from '../../packet/packetTypes';
+import { Button } from '../../controls';
 import './ModemLinkSection.css';
 
 export interface ManagedModemSectionProps {
@@ -126,15 +127,14 @@ export function ManagedModemSection({
             No sound card detected. Plug in your interface (DigiRig / DRA-100),
             then Refresh.
           </p>
-          <button
-            type="button"
-            className="radio-panel-btn-sm"
+          <Button
+            tone="neutral" emphasis="outline" size="xs"
             data-testid="managed-refresh"
             onClick={loadDevices}
             aria-label="Refresh sound card list"
           >
             ↻ Refresh
-          </button>
+          </Button>
         </>
       ) : (
         <>
@@ -158,15 +158,14 @@ export function ManagedModemSection({
                 </option>
               ))}
             </select>
-            <button
-              type="button"
-              className="radio-panel-btn-sm"
+            <Button
+              tone="neutral" emphasis="outline" size="xs"
               data-testid="managed-refresh"
               onClick={loadDevices}
               aria-label="Refresh sound card list"
             >
               ↻
-            </button>
+            </Button>
           </label>
 
           <label className="radio-panel-input-row">

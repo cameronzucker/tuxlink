@@ -2,24 +2,41 @@
  * App.css :root. Additive — no markup adopts these yet; they are the reviewable
  * foundation the big-3 React wrappers (Button/Select/Field) will wrap later
  * (deferred until the ribbon + radio panes survive screenshot review). */
+
+/* Button base — content-sized (never flex:1), scale-token radius. */
 .tux-btn {
-  height: var(--ctl-h-sm);
-  padding: 0 var(--ctl-pad-x-md);
-  font-size: var(--type-control);
-  font-weight: 600;
-  border: 1px solid var(--border-strong);
+  display: inline-flex; align-items: center; justify-content: center;
+  width: max-content;
+  border: 1px solid transparent;
   border-radius: var(--radius-control);
-  background: var(--surface-2);
-  color: var(--text);
   cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: max-content;          /* size to content, never stretch (anti flex:1) */
+  text-align: center;
 }
-.tux-btn-sm { height: var(--ctl-h-xs); padding: 0 var(--ctl-pad-x-sm); }
-.tux-btn-primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
 .tux-btn:disabled { opacity: 0.6; cursor: default; }
+
+/* Sizes (font · weight · padding) — the normalized density tiers. */
+.tux-btn--xs { font-size: var(--type-control); font-weight: 500; padding: 4px 10px; }
+.tux-btn--sm { font-size: var(--type-control); font-weight: 600; padding: 6px 14px; }
+.tux-btn--md { font-size: var(--type-body);    font-weight: 500; padding: 8px 14px; }
+
+/* Emphasis × tone. Primary resolves via --ctl-accent (amber app / green dock);
+   danger via --error; neutral via --text/--border-strong. Only the combinations
+   the reviewed surfaces use are defined (YAGNI). */
+.tux-btn--primary.tux-btn--solid   { background: var(--ctl-accent); color: var(--ctl-accent-fg); border-color: var(--ctl-accent); }
+.tux-btn--primary.tux-btn--soft    { background: var(--ctl-accent-soft); color: var(--ctl-accent); border-color: color-mix(in srgb, var(--ctl-accent) 35%, transparent); }
+.tux-btn--primary.tux-btn--outline { background: transparent; color: var(--ctl-accent); border-color: var(--ctl-accent); }
+.tux-btn--danger.tux-btn--soft     { background: var(--tux-danger-surface); color: var(--error); border-color: color-mix(in srgb, var(--error) 35%, transparent); }
+.tux-btn--danger.tux-btn--outline  { background: transparent; color: var(--error); border-color: var(--error); }
+.tux-btn--neutral.tux-btn--outline { background: transparent; color: var(--text); border-color: var(--border-strong); }
+
+/* Hover (reproduce the current per-emphasis feel). */
+.tux-btn--solid:hover:not(:disabled)   { filter: brightness(1.12); }
+.tux-btn--soft:hover:not(:disabled)    { background: color-mix(in srgb, var(--ctl-accent) 18%, transparent); }
+.tux-btn--danger.tux-btn--soft:hover:not(:disabled) { background: color-mix(in srgb, var(--error) 18%, transparent); }
+.tux-btn--neutral.tux-btn--outline:hover:not(:disabled) { border-color: var(--modem-accent); color: var(--modem-accent); }
+.tux-btn--primary.tux-btn--outline:hover:not(:disabled),
+.tux-btn--danger.tux-btn--outline:hover:not(:disabled) { filter: brightness(1.1); }
+
 .tux-field {
   height: var(--ctl-h-sm);
   padding: 0 var(--ctl-pad-x-sm);
@@ -29,14 +46,12 @@
   background: var(--surface-2);
   color: var(--text);
 }
-.tux-select { /* extends .tux-field; custom chevron is added per-surface for now */
-  height: var(--ctl-h-sm);
-  padding: 0 var(--ctl-pad-x-sm);
+.tux-select {
+  height: var(--ctl-h-sm); padding: 0 26px 0 var(--ctl-pad-x-sm);
   font-size: var(--type-body);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-control);
-  background: var(--surface-2);
-  color: var(--text);
-  appearance: none;
-  -webkit-appearance: none;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-control);
+  background: var(--surface-2); color: var(--text);
+  appearance: none; -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23888' fill='none' stroke-width='1.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 9px center;
 }
