@@ -402,7 +402,11 @@ pub(crate) async fn estimate_inner(
     client: &reqwest::Client,
     origin: &str,
     kv_dtype_bytes: u32,
-    read_host_ram: &dyn Fn() -> Result<f64, String>,
+    // MUST be `Send + Sync`: this reference is live across the `.await`s below, so
+    // without the bound the returned future is not `Send` and the #[tauri::command]
+    // `elmer_estimate_memory` fails to compile (Tauri requires a Send future).
+    // Matches the `HostRamReader` type alias, which already carries the bound.
+    read_host_ram: &(dyn Fn() -> Result<f64, String> + Send + Sync),
 ) -> Result<MemoryEstimateDto, String> {
     // --- Step 1: POST /api/show to get model geometry ---
     let show_url = format!("{origin}/api/show");

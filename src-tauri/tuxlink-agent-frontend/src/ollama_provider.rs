@@ -142,16 +142,6 @@ impl OllamaProvider {
             api_key,
         }
     }
-
-    /// Test-only accessor for the wired endpoint URL.
-    ///
-    /// Used by provider.rs tests to assert that Fix B correctly constructs the
-    /// native `/api/chat` URL from the origin, regardless of the operator-configured
-    /// path. Not available in non-test builds (no public surface area to leak).
-    #[cfg(test)]
-    pub fn endpoint_url(&self) -> &Url {
-        &self.endpoint
-    }
 }
 
 #[async_trait]
