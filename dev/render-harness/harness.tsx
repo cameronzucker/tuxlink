@@ -13,6 +13,11 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import '../../src/App.css';
+// controls.css carries the shared `.tux-btn*` / `.tux-field` / `.tux-select` rules the
+// Button/Select/Field wrappers emit (tuxlink-3m0vx). In the real app it loads globally via
+// App.tsx; the harness doesn't mount App.tsx, so import it explicitly or every migrated
+// control renders unstyled.
+import '../../src/styles/controls.css';
 // AppShell.css carries the ribbon's `.layout-b .dashboard .dash-*` rules; without
 // it (and the `.layout-b` wrapper below) DashboardRibbon renders unstyled. Only
 // this file is needed — StatusBar.css has no dash-* rules and compactShell.css is
