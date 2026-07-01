@@ -2152,6 +2152,8 @@ pub fn run() {
             crate::elmer::config_commands::elmer_detect_models,
             // T4: batch key-status query — statuses only, never key values.
             crate::elmer::config_commands::elmer_key_status_for_origins,
+            // T6: memory-fit estimate — Tauri UI command only, NOT an MCP tool.
+            crate::elmer::memory_estimate::elmer_estimate_memory,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
