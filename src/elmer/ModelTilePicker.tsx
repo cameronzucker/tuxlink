@@ -71,13 +71,49 @@ export interface ModelTilePickerProps {
   focusTier?: ProviderTier;
 }
 
-/** Tier section headers, in display order. */
-const TIER_ORDER: { tier: ProviderTier; header: string }[] = [
-  { tier: 'free', header: 'Free · no credit card' },
-  { tier: 'paygo', header: 'Pay-as-you-go · needs a card' },
-  { tier: 'local', header: 'On this computer' },
-  { tier: 'other', header: 'Other' },
+/** Tier section headers + subtitles, in display order. */
+const TIER_ORDER: { tier: ProviderTier; header: string; subtitle: string }[] = [
+  { tier: 'free', header: 'Free · no credit card', subtitle: '' },
+  { tier: 'paygo', header: 'Pay-as-you-go · needs a card', subtitle: '~pennies/turn' },
+  { tier: 'local', header: 'Local · offline · no key', subtitle: '' },
+  { tier: 'other', header: 'Other', subtitle: '' },
 ];
+
+/**
+ * Per-tile copy: description blurb and optional price badge shown inside the card.
+ * The "Get a free key →" / "Get a key →" affordance on cloud tiles opens the key
+ * page inline with the existing GetKeyCard flow when that tile is selected.
+ */
+const TILE_COPY: Record<string, { badge?: string; blurb: string }> = {
+  gemini: {
+    // No badge — RECOMMENDED label removed per operator decision
+    blurb:
+      'Capable cloud model. Free key from Google AI Studio, no billing card. ~2 minutes to set up. Model: gemini-2.5-flash.',
+  },
+  groq: {
+    badge: 'Free',
+    blurb: 'Very fast answers. Free key, no billing card. Model: llama-3.3-70b-versatile.',
+  },
+  anthropic: {
+    badge: 'Paid',
+    blurb:
+      'Strongest tool-driver. Paste a Claude API key (console.anthropic.com). Default: claude-haiku-4-5 (cheap); switch to Sonnet for harder jobs.',
+  },
+  openai: {
+    badge: 'Paid',
+    blurb: 'Paste an OpenAI API key (platform.openai.com). Default: gpt-4o-mini.',
+  },
+  localOllama: {
+    blurb:
+      'Fully private, works with no internet. Needs a capable PC — a Raspberry Pi is too small to run one usefully.',
+  },
+  openrouter: {
+    blurb: 'Any OpenAI-compatible endpoint — paste a URL, key, and model name.',
+  },
+  custom: {
+    blurb: 'Any OpenAI-compatible endpoint — paste a URL, key, and model name.',
+  },
+};
 
 // ---------------------------------------------------------------------------
 // T10: Tier framing copy — honest per-tier context shown below the tile editor.
@@ -174,39 +210,69 @@ export function ModelTilePicker({
 
   return (
     <div className="elmer-tile-picker" data-testid="elmer-tile-picker">
-      {TIER_ORDER.map(({ tier, header }) => {
+      {/* Intro paragraph — briefly explains what Elmer is and prompts model selection. */}
+      <p className="elmer-tile-intro">
+        Elmer is your on-station assistant — it can read your inbox, check the map, and draft
+        messages. It&rsquo;s optional, and you choose what powers it.{' '}
+        <strong>Pick a brain to get started.</strong>
+      </p>
+
+      {TIER_ORDER.map(({ tier, header, subtitle }) => {
         const tilesInTier = PRESETS.filter((p) => p.tier === tier);
         if (tilesInTier.length === 0) return null;
         return (
           <section className="elmer-tier" key={tier} data-tier={tier}>
-            <h3 className="elmer-tier-header">{header}</h3>
+            <h3 className="elmer-tier-header">
+              {header}
+              {subtitle && (
+                <span className="elmer-tier-header-sub"> · {subtitle}</span>
+              )}
+            </h3>
             <div className="elmer-tier-tiles" role="radiogroup" aria-label={header}>
               {tilesInTier.map((preset) => {
                 const isSelected = preset.id === selectedId;
                 const origin = originOf(preset.endpoint);
                 const keySaved = origin !== '' && keyStatusByOrigin[origin] === 'present';
+                const tileCopy = TILE_COPY[preset.id];
                 return (
                   <button
                     key={preset.id}
                     type="button"
                     role="radio"
                     aria-checked={isSelected}
-                    className={`elmer-tile${isSelected ? ' elmer-tile--selected' : ''}`}
+                    className={`elmer-tile${isSelected ? ' elmer-tile--selected' : ''}${preset.id === 'localOllama' ? ' elmer-tile--local' : ''}`}
                     data-testid={`elmer-tile-${preset.id}`}
                     onClick={() => handleTileSelect(preset.id)}
                   >
-                    <span className="elmer-tile-label">{preset.label}</span>
-                    {preset.id === 'gemini' && (
-                      <span className="elmer-tile-badge elmer-tile-badge--recommended">
-                        RECOMMENDED
+                    {/* Top row: label + badges */}
+                    <span className="elmer-tile-top-row">
+                      <span className="elmer-tile-label">{preset.label}</span>
+                      <span className="elmer-tile-badges">
+                        {tileCopy?.badge && (
+                          <span
+                            className={`elmer-tile-badge elmer-tile-badge--tier elmer-tile-badge--${tileCopy.badge.toLowerCase()}`}
+                          >
+                            {tileCopy.badge}
+                          </span>
+                        )}
+                        {keySaved && (
+                          <span
+                            className="elmer-tile-badge elmer-tile-badge--keysaved"
+                            data-testid={`elmer-tile-keysaved-${preset.id}`}
+                          >
+                            ✓ key saved
+                          </span>
+                        )}
                       </span>
+                    </span>
+                    {/* Description blurb */}
+                    {tileCopy?.blurb && (
+                      <span className="elmer-tile-blurb">{tileCopy.blurb}</span>
                     )}
-                    {keySaved && (
-                      <span
-                        className="elmer-tile-badge elmer-tile-badge--keysaved"
-                        data-testid={`elmer-tile-keysaved-${preset.id}`}
-                      >
-                        ✓ key saved
+                    {/* "Get a key →" affordance for cloud tiles */}
+                    {preset.keyPageUrl && (
+                      <span className="elmer-tile-get-key">
+                        {preset.tier === 'free' ? 'Get a free key →' : 'Get a key →'}
                       </span>
                     )}
                   </button>

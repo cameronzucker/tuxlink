@@ -6,8 +6,8 @@
  *       the Gemini constant (https://aistudio.google.com/apikey), never a
  *       constructed or config-derived URL;
  *   (b) key field is type="password" with a reveal toggle that switches to type="text";
- *   (c) trim + sanity-validate: short/bad-charset paste shows error and blocks Save;
- *       valid paste enables Save;
+ *   (c) trim + sanity-validate: short or whitespace-containing paste shows error and blocks Save;
+ *       valid paste enables Save; Gemini-style key with period is accepted (Fix 2 regression);
  *   (d) "stuck?" affordance renders an alternate-provider (Groq) suggestion.
  */
 
@@ -122,57 +122,53 @@ describe('GetKeyCard', () => {
     expect(saveBtn.disabled).toBe(true);
   });
 
-  it('shows validation error and blocks Save for a key shorter than 20 chars', () => {
+  it('a short paste enables Save — no client-side length/format gate (the provider validates)', () => {
     render(<GetKeyCard {...baseProps()} />);
     fireEvent.change(screen.getByTestId('get-key-input'), { target: { value: 'shortkey' } });
-    expect(screen.getByTestId('get-key-error')).toBeTruthy();
-    expect(screen.getByTestId('get-key-error').textContent).toMatch(
-      /that doesn't look like a complete key/i,
-    );
-    const saveBtn = screen.getByTestId('get-key-save') as HTMLButtonElement;
-    expect(saveBtn.disabled).toBe(true);
-  });
-
-  it('trims whitespace before validating — a short key with surrounding spaces still fails', () => {
-    render(<GetKeyCard {...baseProps()} />);
-    fireEvent.change(screen.getByTestId('get-key-input'), {
-      target: { value: '  AIzashort  ' }, // trimmed = "AIzashort" = 9 chars → fails
-    });
-    expect(screen.getByTestId('get-key-error')).toBeTruthy();
-    const saveBtn = screen.getByTestId('get-key-save') as HTMLButtonElement;
-    expect(saveBtn.disabled).toBe(true);
-  });
-
-  it('shows validation error and blocks Save for a key with bad charset (spaces inside)', () => {
-    render(<GetKeyCard {...baseProps()} />);
-    // 20+ chars but contains a space inside (fails /^[A-Za-z0-9_\-]+$/)
-    fireEvent.change(screen.getByTestId('get-key-input'), {
-      target: { value: 'AIza bad charset key1234' },
-    });
-    expect(screen.getByTestId('get-key-error')).toBeTruthy();
-    const saveBtn = screen.getByTestId('get-key-save') as HTMLButtonElement;
-    expect(saveBtn.disabled).toBe(true);
-  });
-
-  it('enables Save and clears error for a valid key (len>=20, charset [A-Za-z0-9_-])', () => {
-    render(<GetKeyCard {...baseProps()} />);
-    // 32-char valid key — typical AIzaSy... style but sanitized for test.
-    fireEvent.change(screen.getByTestId('get-key-input'), {
-      target: { value: 'AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ12' },
-    });
+    // No length gate: the front end never blocks a paste on a guessed format;
+    // the provider accepts/rejects at Test/Save. And no client-side error element.
+    expect((screen.getByTestId('get-key-save') as HTMLButtonElement).disabled).toBe(false);
     expect(screen.queryByTestId('get-key-error')).toBeNull();
-    const saveBtn = screen.getByTestId('get-key-save') as HTMLButtonElement;
-    expect(saveBtn.disabled).toBe(false);
   });
 
-  it('enables Save for a key with hyphens and underscores (valid charset)', () => {
+  it('whitespace-only input leaves Save disabled (trimmed empty)', () => {
+    render(<GetKeyCard {...baseProps()} />);
+    fireEvent.change(screen.getByTestId('get-key-input'), { target: { value: '   ' } });
+    expect((screen.getByTestId('get-key-save') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('surrounding whitespace is trimmed — a non-empty trimmed value enables Save', () => {
+    render(<GetKeyCard {...baseProps()} />);
+    fireEvent.change(screen.getByTestId('get-key-input'), { target: { value: '  AQ.Ab8key  ' } });
+    expect((screen.getByTestId('get-key-save') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('a paste with internal spaces still enables Save — we do not format-gate (provider rejects it)', () => {
     render(<GetKeyCard {...baseProps()} />);
     fireEvent.change(screen.getByTestId('get-key-input'), {
-      target: { value: 'gsk_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123' },
+      target: { value: 'AIza has spaces key1234' },
     });
+    expect((screen.getByTestId('get-key-save') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('REGRESSION: a Gemini-style key containing a period enables Save (no charset gate, Fix 2)', () => {
+    // Real Gemini keys have the shape AQ.Ab8... — the old /^[A-Za-z0-9_-]+$/ regex
+    // hard-blocked them on the period. We now do NO client-side format validation,
+    // so it saves. Synthetic key (not a real credential).
+    render(<GetKeyCard {...baseProps()} />);
+    fireEvent.change(screen.getByTestId('get-key-input'), {
+      target: { value: 'AQ.Ab8SYNTHETICplaceholderKey-1234567890-abcdef' },
+    });
+    expect((screen.getByTestId('get-key-save') as HTMLButtonElement).disabled).toBe(false);
     expect(screen.queryByTestId('get-key-error')).toBeNull();
-    const saveBtn = screen.getByTestId('get-key-save') as HTMLButtonElement;
-    expect(saveBtn.disabled).toBe(false);
+  });
+
+  it('enables Save for a short-ish key with hyphens and underscores (no charset gate)', () => {
+    render(<GetKeyCard {...baseProps()} />);
+    fireEvent.change(screen.getByTestId('get-key-input'), {
+      target: { value: 'gsk_ABC-123' },
+    });
+    expect((screen.getByTestId('get-key-save') as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('trims whitespace before passing to onSave when the trimmed key is valid', async () => {

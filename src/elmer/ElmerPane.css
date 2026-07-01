@@ -857,12 +857,28 @@
  * scroll at 392px.
  * ------------------------------------------------------------------------- */
 
+/* Fix 4: picker replaces .elmer-messages, so it needs the same inset + scroll.
+ * padding matches .elmer-messages (12px); flex:1 1 auto + min-height:0 + overflow-y:auto
+ * ensure long content (all tiers + editor) scrolls within the drawer rather than
+ * overflowing.  No horizontal scroll at 392px — single-column layout enforces this. */
 .elmer-tile-picker {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 16px;
   width: 100%;
   box-sizing: border-box;
+}
+
+/* Intro paragraph above the tiers */
+.elmer-tile-intro {
+  margin: 0 0 4px;
+  font-size: var(--type-body, 0.9rem);
+  line-height: 1.5;
+  color: var(--text);
 }
 
 .elmer-tier {
@@ -880,6 +896,12 @@
   color: var(--text-dim, var(--text-faint));
 }
 
+/* Dimmer subtitle appended inline to the tier header */
+.elmer-tier-header-sub {
+  font-weight: 400;
+  opacity: 0.75;
+}
+
 /* Single column: each tile occupies a full row. */
 .elmer-tier-tiles {
   display: flex;
@@ -887,18 +909,19 @@
   gap: 6px;
 }
 
+/* Rich-card tile: vertical stack layout for icon + name + badge + blurb + affordance */
 .elmer-tile {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
   width: 100%;
   box-sizing: border-box;
-  padding: 10px 12px;
+  padding: 12px 14px;
   text-align: left;
   background: var(--surface-2, var(--surface-1));
   border: 1px solid var(--border-strong, var(--border));
-  border-radius: var(--radius-control, 6px);
+  border-radius: var(--radius-control, 8px);
   color: var(--text);
   font-size: var(--type-control, 0.9rem);
   cursor: pointer;
@@ -919,9 +942,51 @@
   background: var(--accent-soft, var(--surface-3));
 }
 
+/* Local tile: slightly dimmed to signal "works but limited on this hardware" */
+.elmer-tile--local {
+  opacity: 0.82;
+}
+.elmer-tile--local:hover,
+.elmer-tile--local.elmer-tile--selected {
+  opacity: 1;
+}
+
+/* Top row: provider name + tier/key-saved badges side by side */
+.elmer-tile-top-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .elmer-tile-label {
   flex: 1 1 auto;
   min-width: 0;
+  font-weight: 600;
+}
+
+.elmer-tile-badges {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+
+/* Description blurb — dimmed, smaller, below the name row */
+.elmer-tile-blurb {
+  display: block;
+  font-size: var(--type-micro, 0.78rem);
+  line-height: 1.45;
+  color: var(--text-dim, var(--text-faint));
+}
+
+/* "Get a free key →" / "Get a key →" affordance — accent-colored link-style text */
+.elmer-tile-get-key {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--type-micro, 0.78rem);
+  font-weight: 500;
+  color: var(--accent, var(--accent-teal));
 }
 
 .elmer-tile-badge {
@@ -934,9 +999,20 @@
   white-space: nowrap;
 }
 
-.elmer-tile-badge--recommended {
-  color: var(--accent);
-  border: 1px solid var(--accent);
+/* Tier factual badges: FREE (green-tinted) and PAID (muted border) */
+.elmer-tile-badge--tier {
+  border: 1px solid var(--border-strong, var(--border));
+  background: var(--surface-sunken, var(--surface-1));
+  color: var(--text-2, var(--text-muted));
+}
+
+.elmer-tile-badge--free {
+  color: var(--success, var(--text));
+  border-color: color-mix(in srgb, var(--success, green) 50%, transparent);
+}
+
+.elmer-tile-badge--paid {
+  color: var(--text-2, var(--text-muted));
 }
 
 .elmer-tile-badge--keysaved {
@@ -1000,13 +1076,6 @@
   /* Inherits .elmer-key-action-btn; narrow reveal toggle. */
   flex: 0 0 auto;
   min-width: 44px;
-}
-
-.get-key-error {
-  margin: 0;
-  padding: 6px 8px;
-  font-size: var(--type-body, 0.875rem);
-  border-radius: var(--radius-control, 6px);
 }
 
 .get-key-stuck {

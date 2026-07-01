@@ -5,8 +5,8 @@
  * "Open key page" button that opens the hardcoded `preset.keyPageUrl` in the
  * system browser via `@tauri-apps/plugin-shell::open`, a masked paste field
  * with a reveal toggle, client-side sanity validation (trim → len>=20 &&
- * /^[A-Za-z0-9_\-]+$/), and a "stuck?" affordance offering an alternate
- * free provider or pay-as-you-go path.
+ * /^\S+$/ — no whitespace, any non-space chars including periods for Gemini keys),
+ * and a "stuck?" affordance offering an alternate free provider or pay-as-you-go path.
  *
  * Security:
  *   - `open()` is called with `preset.keyPageUrl` ONLY — a compile-time
@@ -113,29 +113,17 @@ function getProviderCopy(presetId: string): ProviderStepCopy {
 }
 
 // ---------------------------------------------------------------------------
-// Validation
+// No client-side key format validation (operator smoke-walk decision, 2026-06-30)
 // ---------------------------------------------------------------------------
-
-/** Validation regex: alphanumeric, hyphen, underscore only. */
-const KEY_CHARSET_RE = /^[A-Za-z0-9_-]+$/;
-
-/**
- * Client-side key sanity check.
- *
- * Trims the raw input first, then requires:
- *   - length >= 20
- *   - charset: /^[A-Za-z0-9_\-]+$/
- *
- * Returns null on pass, or an error message string on failure.
- * No network calls — SSRF-1 prevention.
- */
-function validateKey(raw: string): { trimmed: string; error: string | null } {
-  const trimmed = raw.trim();
-  if (trimmed.length < 20 || !KEY_CHARSET_RE.test(trimmed)) {
-    return { trimmed, error: "That doesn't look like a complete key." };
-  }
-  return { trimmed, error: null };
-}
+//
+// We deliberately do NOT validate a key's FORMAT on the front end. The provider
+// is the sole authority on validity and accepts/rejects the key at Test/Save
+// time. A front-end format check can only GUESS the shape, and when a provider's
+// format varies (e.g. Google's AIza... -> AQ.Ab8... with a period) the guess
+// produces a false negative that hard-blocks a VALID key — a dead-end the user
+// cannot work around. The only client-side condition is non-empty (to enable the
+// Save button); real validation is the Test/Save round-trip. No network calls
+// here (SSRF-1).
 
 // ---------------------------------------------------------------------------
 // Component
@@ -157,15 +145,16 @@ export function GetKeyCard({
   const [replaceKeyMode, setReplaceKeyMode] = useState(false);
 
   const copy = getProviderCopy(preset.id);
-  const { trimmed, error } = validateKey(rawKey);
+  const trimmed = rawKey.trim();
 
   // Whether we're in the "key already saved" state.
   const keySaved = keyStatus === 'present' && !replaceKeyMode;
 
   // Save is enabled when:
   //   - key already saved (keep path): always enabled, sends {action:'keep'}
-  //   - replace mode or absent: enabled only when a valid new key is typed
-  const canSave = keySaved || (error === null && trimmed.length > 0);
+  //   - replace mode or absent: enabled once the field is non-empty. No format
+  //     check — the provider validates at Test/Save; we never block a paste.
+  const canSave = keySaved || trimmed.length > 0;
 
   function handleOpenPage() {
     // MUST use the hardcoded constant on the preset — never a constructed or
@@ -275,12 +264,7 @@ export function GetKeyCard({
         </div>
       )}
 
-      {/* Validation error (only shown when in entry mode) */}
-      {!keySaved && rawKey.length > 0 && error !== null && (
-        <p className="get-key-error elmer-save-error" data-testid="get-key-error" role="alert">
-          {error}
-        </p>
-      )}
+      {/* No client-side format error: the provider validates at Test/Save. */}
 
       {/* Save button */}
       <div className="elmer-form-save-row">
