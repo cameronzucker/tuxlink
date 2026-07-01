@@ -363,6 +363,12 @@ struct OllamaStreamAccumulator {
     /// Tool calls collected across chunks, in arrival order. Native tool calls
     /// are complete per chunk (no fragment reassembly), so this is a plain `Vec`.
     tool_calls: Vec<ToolCall>,
+    /// Running byte tally of accumulated tool calls (name + serialized args),
+    /// folded into [`Self::total_output_len`] so tool-call growth is bounded by
+    /// the same [`MAX_TOTAL_OUTPUT_BYTES`] cap as content/thinking. Without it a
+    /// stream of endless or oversized `tool_calls` (which never touch content or
+    /// thinking) would grow memory unbounded past the caps.
+    tool_calls_bytes: usize,
     /// Set once a line with top-level `done: true` is seen.
     done: bool,
     /// `prompt_eval_count` from the `done` line, when present.
@@ -378,6 +384,7 @@ impl OllamaStreamAccumulator {
             content: String::new(),
             thinking: String::new(),
             tool_calls: Vec::new(),
+            tool_calls_bytes: 0,
             done: false,
             prompt_eval_count: None,
             eval_count: None,
@@ -461,10 +468,12 @@ impl OllamaStreamAccumulator {
         Ok(())
     }
 
-    /// Total accumulated decoded output so far (`content` + `thinking`), in
-    /// bytes. Used to enforce [`MAX_TOTAL_OUTPUT_BYTES`].
+    /// Total accumulated decoded output so far (`content` + `thinking` +
+    /// serialized `tool_calls`), in bytes. Used to enforce
+    /// [`MAX_TOTAL_OUTPUT_BYTES`] across ALL accumulation paths so no single
+    /// channel (including tool calls) can grow memory unbounded.
     fn total_output_len(&self) -> usize {
-        self.content.len() + self.thinking.len()
+        self.content.len() + self.thinking.len() + self.tool_calls_bytes
     }
 
     /// Parse one NDJSON line as a JSON object and apply it: append + emit answer
@@ -524,7 +533,18 @@ impl OllamaStreamAccumulator {
             // parser as chunks bring them.
             if let Some(calls) = message.get("tool_calls").and_then(Value::as_array) {
                 for call in calls {
-                    self.tool_calls.push(parse_ollama_tool_call(call));
+                    let tc = parse_ollama_tool_call(call);
+                    // Bound accumulated tool-call bytes under the same total-output
+                    // cap so an endless/oversized tool_calls stream (which never
+                    // touches content/thinking) cannot grow memory without bound.
+                    let sz = tc.name.len() + tc.args.to_string().len();
+                    if self.total_output_len() + sz > MAX_TOTAL_OUTPUT_BYTES {
+                        return Err(ProviderError::Transport(
+                            "model stream exceeded the maximum accumulated output size".to_string(),
+                        ));
+                    }
+                    self.tool_calls_bytes += sz;
+                    self.tool_calls.push(tc);
                 }
             }
         }
@@ -1691,6 +1711,31 @@ mod tests {
         assert!(
             matches!(err, ProviderError::Transport(_)),
             "exceeding the total-output cap must be a Transport error; got {err:?}"
+        );
+    }
+
+    /// Codex-adrev regression: accumulated tool calls must be bounded by the SAME
+    /// total-output cap as content/thinking. A tool_calls stream that never
+    /// touches content/thinking must still error once its serialized bytes exceed
+    /// the cap, rather than growing memory unbounded.
+    #[test]
+    fn stream_tool_call_bytes_are_capped() {
+        let events = recorder();
+        let sink = recording_sink(&events);
+        let mut acc = OllamaStreamAccumulator::new();
+
+        // One tool call whose serialized arguments alone exceed the total cap.
+        let huge = "z".repeat(MAX_TOTAL_OUTPUT_BYTES + 1);
+        let line = serde_json::json!({
+            "message": { "tool_calls": [ { "function": { "name": "x", "arguments": { "a": huge } } } ] },
+            "done": false
+        })
+        .to_string()
+            + "\n";
+        let err = acc.feed(line.as_bytes(), &sink).unwrap_err();
+        assert!(
+            matches!(err, ProviderError::Transport(_)),
+            "exceeding the total-output cap via tool_calls must be a Transport error; got {err:?}"
         );
     }
 }
