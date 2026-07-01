@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Un-cripple the in-app Elmer agent's egress so an armed, un-tainted agent can actually connect/transmit — starting with the first ready, self-contained unit (bd `sg5zw.1` = C1+C2): delete Elmer's redundant tool-withhold layer, let egress dispatch cross the existing `guarded_egress(Agent)` gate, and replace the withhold-based tests with a mechanical arm-gate trip-wire.
+**Goal:** Un-cripple the in-app Elmer agent's egress so an armed, un-tainted agent can actually connect/transmit — the first mergeable unit is bd `sg5zw.1` (C1+C2) **bundled with `sg5zw.4` (C5)**: delete Elmer's redundant tool-withhold layer, let egress dispatch cross the existing `guarded_egress(Agent)` gate, replace the withhold-based tests with a mechanical arm-gate trip-wire, AND make the system prompt + arm label truthful (so the agent is not told it lacks tools it now has). Ships as one PR (disjoint files).
 
 **Architecture:** The in-app Elmer executor (`src-tauri/src/elmer/executor.rs`) already shares the same `Arc<EgressGuard>` as the MCP router and dispatches tool calls in-process through that router (`InProcessMcpInvoker` → `client.call_tool` → `TuxlinkMcp` → `MonolithEgressPort`, which wraps every egress op in `guarded_egress(Agent)`). Elmer layers a *second*, redundant gate on top: it filters the seven egress tools out of its tool surface and denies them by name at call time. This unit deletes that redundant layer so the single principled gate does the arming, and rewrites the tests that asserted withholding to instead assert arm-gated access.
 
@@ -19,13 +19,12 @@
 
 ---
 
-## Open architecture questions for plan-eng-review (resolve BEFORE executing Task 1)
+## Architecture decisions (resolved in plan-eng-review, 2026-07-01)
 
-These are epic-level sequencing/coupling decisions surfaced by the adversarial review. They gate *which tools* Task 1 un-withholds and are the reason C3 gets its own spec. plan-eng-review must settle them:
-
-1. **Un-withhold set vs. abort readiness.** The seven withheld tools include `packet_connect`. `packet_connect` is *already* live on the external MCP agent surface (un-withheld there, gated by `guarded_egress`), so Elmer parity introduces no exposure the MCP surface lacks. BUT the review found `AbortPort` has no dedicated `packet_abort` and packet `graceful_disconnect` is flag-only. **Decision needed:** does C1 un-withhold all seven on Elmer (matching MCP parity, accepting that packet's hard abort lands in C3), or hold `packet_connect` on Elmer until C3's real `packet_abort`? Recommendation: un-withhold all seven (parity with MCP is not a regression), and prioritize C3c's `packet_abort`. ardop/vara aborts are best-effort ~5s (within operator tolerance for a healthy modem); ardop exchange is bounded by `ARQTimeout` 120s (C3d adds the wedge-backstop for the confirmed wedged-modem bug).
-2. **C3 sub-spec.** `sg5zw.2` (C3) is design-sized (guard-level cancellation, per-frame AX.25 gating, cross-transport hard aborts, packet_listen/telnet_p2p rebuild). It needs its own brainstorm→spec→plan cycle before task-level planning. This plan does NOT cover C3.
-3. **C4/C5/C6/C7** each get their own plan when their predecessor lands (Scope Check: per-subsystem plans).
+1. **Un-withhold set — RESOLVED: all seven now.** Operator chose parity with the external MCP surface (all 7 already live+gated there via `guarded_egress`), so Elmer parity introduces no new exposure class. `AbortPort` still lacks a dedicated `packet_abort` and packet has a residual one-frame-leak / no-serial-BT-shutdown weakness — **C3c hardens the packet abort path for both surfaces next.** The fake-abort defect that must NOT ship is `packet_listen`/`telnet_p2p` (built fresh in C3), not these seven.
+2. **First mergeable unit is C1+C2+C5 — RESOLVED: bundle.** C1 alone is not shipped e2e: after un-withholding, `ELMER_SYSTEM_PROMPT` still tells Elmer it cannot send, so the agent has tools it is told not to use ("Agent send: ON" stays a half-lie). C5 (prompt + label) touches disjoint files (`provider.rs` + `EgressArmControl.tsx`) from C1/C2 (`executor.rs` + `injection_tests.rs`), so they ship in one PR without conflict. This plan now covers C1+C2 in detail and C5 as Tasks 3–4; the exact prompt wording is drafted at build time against the writing-voice rules and reviewed.
+3. **C3 sub-spec.** `sg5zw.2` (C3) is design-sized (guard-level cancellation, per-frame AX.25 gating, cross-transport hard aborts, packet_listen/telnet_p2p rebuild). It needs its own brainstorm→spec→plan cycle before task-level planning. This plan does NOT cover C3.
+4. **C4/C6/C7** each get their own plan when their predecessor lands (Scope Check: per-subsystem plans).
 
 ---
 
@@ -33,8 +32,10 @@ These are epic-level sequencing/coupling decisions surfaced by the adversarial r
 
 - **Modify:** `src-tauri/src/elmer/executor.rs` — delete the `WITHHELD_EGRESS_TOOLS` filter in `connect()` and the call-time deny in `invoke()`; remove or repurpose the `WITHHELD_EGRESS_TOOLS` const; replace the `withheld_set_equals_every_egress_marked_tool` test with the mechanical arm-gate trip-wire; invert the force-dispatch-withheld test.
 - **Modify:** `src-tauri/src/elmer/injection_tests.rs` — invert F2-T2 and F2-T3 Layer 1 to assert arm-gated access; PRESERVE F1-T1, F1-T3, F2-T1, F2-T3 Layer 2, F2-T4 unchanged.
+- **Modify:** `src-tauri/tuxlink-agent-frontend/src/provider.rs` (C5) — rewrite `ELMER_SYSTEM_PROMPT` to state Elmer can send when armed.
+- **Modify:** `src/shell/EgressArmControl.tsx` (C5) — truthful label/help copy.
 
-No new files. No changes to `tuxlink-security`, `router.rs`, `ports.rs`, or `mcp_ports.rs` in this unit (the gate already exists there).
+No new files. No changes to `tuxlink-security`, `router.rs`, `ports.rs`, or `mcp_ports.rs` in this unit (the gate already exists there). The four modified files are disjoint across tasks (Tasks 1-2: `executor.rs`/`injection_tests.rs`; Task 3: `provider.rs`; Task 4: `EgressArmControl.tsx`) — safe for one PR.
 
 ---
 
@@ -86,21 +87,34 @@ async fn every_egress_marked_tool_is_visible_and_arm_gated() {
     }
 }
 
-/// Armed + un-tainted: an egress dispatch is no longer withheld — it reaches the
-/// router (the mock egress op runs / a non-Denied outcome is returned).
+/// Armed + un-tainted: egress dispatch is no longer withheld AND the gate opens —
+/// the op REACHES the instrumented mock egress (not merely a non-Denied outcome,
+/// which a connect-failed Error would also satisfy). Covers one tool per transport.
 #[tokio::test]
-async fn armed_untainted_egress_is_not_withheld() {
+async fn armed_untainted_egress_reaches_the_mock_op() {
+    // test_mcp_state must build McpState over a MOCK EgressPort that records which
+    // ops were reached (mirror the tuxlink-mcp-testserver mock ports / the existing
+    // executor test harness — do NOT dispatch against the real MonolithEgressPort,
+    // which would attempt a live connection). Read the current harness first.
     let guard = Arc::new(EgressGuard::new());
     guard.arm(30); // armed, un-tainted
-    let state = test_mcp_state(guard.clone());
+    let (state, reached) = test_mcp_state_with_egress_probe(guard.clone());
     let invoker = InProcessMcpInvoker::connect(state).await.unwrap();
-
     let cancel = CancellationToken::new();
-    let call = ToolCall { name: "cms_connect".into(), args: serde_json::json!({}) };
-    let out = invoker.invoke(&call, CallAuthority::Agent, &cancel).await;
+
+    // One representative tool per transport class.
+    for name in ["cms_connect", "ardop_connect", "vara_b2f_exchange", "packet_connect"] {
+        let call = ToolCall { name: name.into(), args: serde_json::json!({}) };
+        let out = invoker.invoke(&call, CallAuthority::Agent, &cancel).await;
+        assert!(
+            !matches!(out, ToolOutcome::Denied(_)),
+            "armed+untainted {name} must NOT be Denied (withhold removed), got {out:?}"
+        );
+    }
+    // The gate opened: the mock egress recorded the reached ops.
     assert!(
-        !matches!(out, ToolOutcome::Denied(_)),
-        "armed+untainted cms_connect must NOT be Denied (withhold removed), got {out:?}"
+        reached.contains("cms_connect"),
+        "armed+untainted cms_connect must REACH the egress op (gate opened), not just avoid Denied"
     );
 }
 ```
@@ -273,18 +287,64 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ---
 
-### Task 3: System-prompt guardrail note (Elmer executor scope only)
+### Task 3: Rewrite `ELMER_SYSTEM_PROMPT` to be truthful (C5, bundled)
 
-> Deferred to C5 (`sg5zw.4`): the full `ELMER_SYSTEM_PROMPT` rewrite lives there. Do NOT edit `provider.rs` in this unit — C5 owns it and this unit must not create a cross-task file conflict. This task is a placeholder marker to make the boundary explicit; no action.
+**Files:**
+- Modify: `src-tauri/tuxlink-agent-frontend/src/provider.rs` (the `ELMER_SYSTEM_PROMPT` const, ~L585-640)
+
+**Why bundled with C1:** un-withholding without this ships tools the agent is told it lacks (§Architecture decisions #2). No file conflict with Tasks 1-2.
+
+- [ ] **Step 1: Read the current prompt** (`provider.rs:585-640`). Identify the sentences to remove: the "Sending works in two steps / you STAGE / staging does NOT transmit", "You have NO tool that connects to a gateway or keys a radio", "transmission is the operator's job, not yours", and "do not try to connect or send yourself" language.
+
+- [ ] **Step 2: Rewrite the transmit section.** Replace the staging-only framing with the armed model. Draft against the project writing-voice rules (formal, present-indicative, no first person). The new content must state: Elmer CAN connect/transmit when the operator has ARMED send authority (the arm is time-boxed operator consent = the Part 97 gate); egress is denied when disarmed, expired, or when the session is tainted by untrusted content; the agent may iterate connect attempts (dial → read link result → next station) within the armed window; the operator can abort at any time. Keep the staging tools described (compose is still local/ungated). Do NOT overstate: the agent still cannot change CMS host/credentials (config writes stay excluded).
+
+- [ ] **Step 3: Add/adjust a guardrail test** if `injection_tests.rs` (or a provider test) asserts prompt CONTENT (e.g., a test that the prompt contains "NO tool that connects"). Invert any such assertion to match the truthful prompt. Grep:
+
+```bash
+git -C worktrees/bd-tuxlink-sg5zw-agent-send-egress grep -n "connects to a gateway\|staging does NOT transmit\|transmission is the operator" -- src-tauri/
+```
+
+- [ ] **Step 4: Commit**
+
+```bash
+git -C worktrees/bd-tuxlink-sg5zw-agent-send-egress add src-tauri/tuxlink-agent-frontend/src/provider.rs
+git -C worktrees/bd-tuxlink-sg5zw-agent-send-egress commit -m "feat(elmer): system prompt tells the truth — Elmer can send when armed (tuxlink-sg5zw.4/C5)
+
+Agent: arroyo-canyon-granite
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
+```
+
+### Task 4: Truthful `EgressArmControl` label (C5, bundled)
+
+**Files:**
+- Modify: `src/shell/EgressArmControl.tsx` (the state-label copy)
+
+- [ ] **Step 1: Read the current copy.** The `stateLabel` (`ON`/`OFF`/`LOCKED`) is fine; audit the popover/help copy for any "staging only" / "review and send via the approval dialog" implication that contradicts the agent now being able to send when armed.
+
+- [ ] **Step 2: Update any staging-only copy** so "Agent send: ON" reads truthfully (armed = the agent may connect/transmit within the window). No behavioral change to `useEgressArm` / arm / disarm / taint. If a `.test.tsx` asserts the old copy, update it.
+
+- [ ] **Step 3: Commit** (frontend; conventional commit + trailers as above).
 
 ---
 
 ## Self-Review
 
-- **Spec coverage (C1+C2):** C1 removal of filter (Task 1 Step 2) + deny (Step 3) + const (Step 4) ✓; C1 mechanical trip-wire replacement (Task 1 Step 1) ✓; C2 inversion of F2-T2 (Task 2 Step 2) + F2-T3 Layer 1 (Step 3) ✓; C2 preservation of F1/F2-T1/F2-T3-L2/F2-T4 (Task 2 Step 1) ✓. C3–C7 explicitly out of scope (own plans).
-- **Placeholder scan:** Task 3 is an explicit no-op boundary marker, not a hidden TODO. All test steps carry real code. The one dependency on an existing helper (`test_mcp_state`) is called out with instructions to match the current harness.
+- **Spec coverage (C1+C2+C5):** C1 removal of filter (Task 1 Step 2) + deny (Step 3) + const (Step 4) ✓; C1 mechanical trip-wire (Task 1 Step 1) ✓; C2 inversion of F2-T2 (Task 2 Step 2) + F2-T3 Layer 1 (Step 3) + preservation of F1/F2-T1/F2-T3-L2/F2-T4 (Task 2 Step 1) ✓; C5 prompt (Task 3) + label (Task 4) ✓. C3/C4/C6/C7 explicitly out of scope (own plans).
+- **Placeholder scan:** No hidden TODOs. All test steps carry real code. Two named dependencies on an existing harness (`test_mcp_state`, `test_mcp_state_with_egress_probe`) are called out with explicit instructions to match/extend the current mock-EgressPort harness rather than dispatch against the real port. C5's exact prompt wording is deliberately drafted at build time against the writing-voice rules (content, not structure — not a placeholder).
 - **Type consistency:** `ToolOutcome::Denied`, `CallAuthority::Agent`, `ToolCall { name, args }`, `EgressGuard::{new,arm,taint}`, `EgressDenied::NotArmed`, `InProcessMcpInvoker::{connect,tools,invoke}` match the read origin/main signatures in `executor.rs` and `tuxlink-security/src/lib.rs`.
 
 ## Execution Handoff
 
-Do NOT execute yet. Per the epic and build-robust-features, this plan goes through **plan-eng-review (≥3 rounds)** next — that review must also resolve the two "Open architecture questions" above (un-withhold set vs. packet abort readiness; C3 sub-spec scope) before Task 1 runs. After plan-eng-review clears, execute via superpowers:subagent-driven-development (fresh subagent per task, two-stage review, clippy-armed, cold-cargo → CI).
+**plan-eng-review: CLEARED (2026-07-01).** Decisions recorded above (all-7 un-withhold; C1+C2+C5 bundled; C3 gets its own sub-spec). Test-quality fixes folded in (per-transport armed coverage + mock-reached assertion; harness must use a mock EgressPort). Execute via **superpowers:subagent-driven-development** (fresh subagent per task, two-stage review, clippy-armed, cold-cargo → CI both arches), then a **Codex adversarial round on the build diff** before marking `sg5zw.1`/`sg5zw.4` done. The Codex round on the actual diff is the outside-voice gate for this unit (the spec superset was already Codex-reviewed).
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | — | — |
+| Codex Review | `/codex review` | Independent 2nd opinion | 1 | clean* | *on spec superset (5-round adrev); build-diff round pending |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | CLEAR | 1 arch decision resolved (un-withhold set); 1 e2e finding (bundle C5); 2 test-quality fixes folded |
+| Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | — |
+| DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | — |
+
+**VERDICT:** ENG CLEARED — ready to implement `sg5zw.1`+`sg5zw.4` as one PR. Codex build-diff round required before merge.
