@@ -277,7 +277,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "catalog_list",
-        description = "List the template/form catalog entries. App-owned content; does not taint. Read-only."
+        description = "List the Winlink Request Center query catalog: the on-demand products the operator can request over Winlink. Hundreds of items across categories such as PROPAGATION (HF propagation forecasts), METAR (airport weather), SAT_KEPS (satellite keplerian elements), AURORA, marine/ice forecasts, and ARES/RACES bulletins. Each entry has a category, a filename id (pass these ids to catalog_send_inquiry to stage a request), and a description. This is what to browse to answer 'what can I pull/request from the Request Center'; it is NOT limited to weather/GRIB. App-owned content; does not taint. Read-only."
     )]
     pub async fn catalog_list(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.search.catalog().await.map_err(port_err)?;
@@ -842,7 +842,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "catalog_send_inquiry",
-        description = "Stage a catalog inquiry for the given catalog item ids in the local outbox; returns the staged message id. No transmission occurs until a later gated connect."
+        description = "Stage a Winlink Request Center inquiry for one or more catalog item ids (the filename ids from catalog_list) in the local outbox; returns the staged message id. Use this to request ANY catalog product — propagation forecasts, METAR airport weather, satellite keplerian data, bulletins, marine forecasts, etc., not just GRIB weather. The requested products are delivered to the mailbox after the operator next connects (Arm to send). No transmission occurs here."
     )]
     pub async fn catalog_send_inquiry(
         &self,

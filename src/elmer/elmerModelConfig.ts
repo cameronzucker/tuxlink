@@ -185,15 +185,23 @@ export const DEFAULT_MODEL_BY_PRESET: Record<string, string> = {
 /**
  * Decide the model to set when the operator switches to `targetPresetId`.
  *
- * Three cases:
- *   1. Target has no sensible default (local Ollama, custom, openrouter) -- return null so
- *      the operator detects/picks their own model. The current model is preserved as-is.
- *   2. Re-selecting the SAME provider -- return null to preserve whatever is there (it may
- *      be the default, or it may be hand-edited to a non-default model for that provider).
- *   3. A real provider switch to a provider WITH a default -- always adopt the target default.
+ * Return value semantics: `null` = leave the current model unchanged; `''` =
+ * CLEAR the model field; any other string = set the model to that value.
+ *
+ * Four cases:
+ *   1. Re-selecting the SAME provider -- return null to preserve whatever is there
+ *      (it may be the default, or hand-edited/detected to a non-default model for
+ *      that provider). Checked FIRST so a re-select never clears a good model.
+ *   2. Cross-provider switch to a provider WITH a default -- adopt the target default.
  *      The outgoing model belongs to a different provider and would 404 against the new
- *      endpoint (e.g. a detected local Ollama model sent to the Gemini endpoint, or a
- *      hand-edited OpenAI model sent to Anthropic).
+ *      endpoint (e.g. a hand-edited OpenAI model sent to Anthropic).
+ *   3. Cross-provider switch to a target with NO default (local Ollama / custom /
+ *      openrouter) -- CLEAR the model (return ''). The outgoing provider's model
+ *      (e.g. gemini-2.5-flash) is meaningless against the new endpoint and would 404
+ *      against localhost exactly as a cloud model would against another cloud endpoint.
+ *      An empty field is the "Detect + pick a model" prompt; a stranded foreign model
+ *      looks like a valid selection and silently 404s. This is the symmetric twin of
+ *      the cross-cloud 404 (tuxlink-5cj61) that case 2 already guards against.
  *
  * Shared single source of truth for both `handlePresetChange` (the dense form) and
  * the tile picker, so the two cannot drift. Pure function -- no React, unit-tested.
@@ -208,16 +216,20 @@ export function nextModelForPreset(
   _currentModel: string,
   targetPresetId: string,
 ): string | null {
-  const targetDefault = DEFAULT_MODEL_BY_PRESET[targetPresetId] ?? '';
-  // Target has no sensible default (local Ollama / custom / openrouter) -- leave the model
-  // as-is so the operator detects/picks it.
-  if (!targetDefault) return null;
-  // Re-selecting the SAME provider: keep whatever is there (it may be hand-edited).
+  // Re-selecting the SAME provider: keep whatever is there (default or hand-edited).
+  // Checked first so re-selecting a no-default provider does NOT wipe a picked model.
   if (inferPreset(currentEndpoint) === targetPresetId) return null;
-  // A real provider switch to a provider WITH a default: adopt that default. The
+
+  const targetDefault = DEFAULT_MODEL_BY_PRESET[targetPresetId] ?? '';
+  // Cross-provider switch to a provider WITH a default: adopt that default. The
   // outgoing model (a different provider's model, incl. a detected local one) would
   // 404 against the new endpoint.
-  return targetDefault;
+  if (targetDefault) return targetDefault;
+
+  // Cross-provider switch to a no-default target (local Ollama / custom / openrouter):
+  // CLEAR the model so the stale foreign model can't 404 against the new endpoint and
+  // the empty field prompts Detect + pick.
+  return '';
 }
 
 // ---------------------------------------------------------------------------

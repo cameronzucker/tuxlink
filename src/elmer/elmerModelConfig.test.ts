@@ -143,8 +143,10 @@ describe('PRESETS', () => {
 // New rule (post-bug-fix): on a real provider switch to a target that HAS a
 // default, always adopt the target default -- the outgoing model belongs to a
 // different provider and would 404. Preserve only when re-selecting the SAME
-// provider. Targets without a default (local/custom/openrouter) always return
-// null (leave for operator to detect/pick).
+// provider. A CROSS-provider switch to a target WITHOUT a default
+// (local/custom/openrouter) returns '' to CLEAR the stale foreign model (it
+// would 404 against the new endpoint); re-selecting a no-default provider
+// still returns null so a detected/picked model is preserved (tuxlink-5cj61).
 // ---------------------------------------------------------------------------
 
 describe('nextModelForPreset', () => {
@@ -172,20 +174,32 @@ describe('nextModelForPreset', () => {
     expect(nextModelForPreset(GEMINI_ENDPOINT, 'gemini-2.5-flash', 'gemini')).toBeNull();
   });
 
-  // Target with no default: null (leave for operator to detect/pick).
-  it('target with no default (openrouter) -> null (leave model for operator)', () => {
-    expect(nextModelForPreset(OPENAI, 'gpt-4o-mini', 'openrouter')).toBeNull();
+  // THE OPERATOR-REPORTED BUG (tuxlink-5cj61): switching a cloud model to a
+  // local server must CLEAR the field, not strand gemini-2.5-flash (which would
+  // 404 against localhost). The empty field prompts Detect + pick.
+  it('cloud model does NOT survive a switch to local Ollama -> clears to empty (tuxlink-5cj61)', () => {
+    expect(nextModelForPreset(GEMINI_ENDPOINT, 'gemini-2.5-flash', 'localOllama')).toBe('');
+  });
+
+  // Cross-provider switch to any no-default target clears the stale foreign model.
+  it('cross-provider switch to a no-default target (openrouter/custom/local) -> clears to empty', () => {
+    expect(nextModelForPreset(OPENAI, 'gpt-4o-mini', 'openrouter')).toBe('');
+    expect(nextModelForPreset(OPENAI, 'gpt-4o-mini', 'custom')).toBe('');
+    expect(nextModelForPreset(OPENAI, 'gpt-4o-mini', 'localOllama')).toBe('');
+  });
+
+  // Re-selecting a NO-DEFAULT provider must NOT clear the operator's picked model:
+  // the same-provider branch is checked first and returns null (preserve).
+  it('re-selecting the same no-default provider -> null (preserve the detected/picked model)', () => {
+    expect(
+      nextModelForPreset('http://127.0.0.1:11434/v1/chat/completions', 'qwen2.5:14b', 'localOllama'),
+    ).toBeNull();
   });
 
   // Existing coverage retained with new expected values.
   it('provider switch with outgoing-default model -> adopts target default', () => {
     expect(nextModelForPreset(OPENAI, 'gpt-4o-mini', 'anthropic')).toBe('claude-haiku-4-5');
     expect(nextModelForPreset(OPENAI, 'gpt-4o-mini', 'gemini')).toBe('gemini-2.5-flash');
-  });
-
-  it('target with no default (local/custom) -> returns null', () => {
-    expect(nextModelForPreset(OPENAI, 'gpt-4o-mini', 'custom')).toBeNull();
-    expect(nextModelForPreset(OPENAI, 'gpt-4o-mini', 'localOllama')).toBeNull();
   });
 
   it('empty current model (never set) -> adopts target default on provider switch', () => {
