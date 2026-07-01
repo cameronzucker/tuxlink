@@ -56,14 +56,14 @@ describe('ModelTilePicker', () => {
   it('renders all four tier headers and one tile per preset', () => {
     render(<ModelTilePicker {...baseProps()} />);
 
-    // Tier headers (scoped to the <h3> role so the localOllama tile label
-    // "On this computer (Ollama)" doesn't collide with the "On this computer"
-    // tier header).
-    const headers = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent);
-    expect(headers).toContain('Free · no credit card');
-    expect(headers).toContain('Pay-as-you-go · needs a card');
-    expect(headers).toContain('On this computer');
-    expect(headers).toContain('Other');
+    // Tier headers (scoped to the <h3> role). Match with startsWith/includes
+    // since some headers have a subtitle span appended (e.g. paygo gets
+    // "· ~pennies/turn") and the textContent includes it.
+    const headers = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent ?? '');
+    expect(headers.some((h) => h.startsWith('Free · no credit card'))).toBe(true);
+    expect(headers.some((h) => h.startsWith('Pay-as-you-go · needs a card'))).toBe(true);
+    expect(headers.some((h) => h.startsWith('Local · offline · no key'))).toBe(true);
+    expect(headers.some((h) => h === 'Other')).toBe(true);
 
     // One radio tile per preset.
     const tiles = screen.getAllByRole('radio');
@@ -75,10 +75,13 @@ describe('ModelTilePicker', () => {
     }
   });
 
-  it('shows a RECOMMENDED badge on the gemini tile', () => {
+  it('does NOT show a RECOMMENDED badge on the gemini tile (operator-removed endorsement)', () => {
     render(<ModelTilePicker {...baseProps()} />);
     const tile = screen.getByTestId('elmer-tile-gemini');
-    expect(within(tile).getByText(/RECOMMENDED/i)).toBeTruthy();
+    // The RECOMMENDED / elmer-tile-badge--recommended label was removed per
+    // Fix 3 (unapproved vendor endorsement). Assert it is absent.
+    expect(within(tile).queryByText(/RECOMMENDED/i)).toBeNull();
+    expect(tile.querySelector('.elmer-tile-badge--recommended')).toBeNull();
   });
 
   it('shows a key-saved badge on a tile whose origin has a present key, never a key value', () => {
