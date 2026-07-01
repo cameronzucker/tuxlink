@@ -2,6 +2,14 @@
  *
  * Spec §5.3 — shared sparkline palette. Default-green; warn-amber and
  * bad-red are applied per-sample via `.warn` / `.bad` modifier classes.
+ *
+ * tuxlink-ivzut: bar palettes read the semantic status tokens
+ * (--success / --accent-2 / --error) rather than raw hex, so the trace
+ * tracks each theme's deliberate behavior — notably night-red, which
+ * collapses these to red-luminance for night-vision. The 20%-alpha
+ * bottom stop is reproduced from the token via color-mix (supported in
+ * WebKitGTK; already used across AppShell/Catalog/GRIB/Search). See
+ * docs/superpowers/specs/2026-07-01-sparkline-token-migration-design.md.
  */
 
 .sparkline {
@@ -14,15 +22,27 @@
 
 .sparkline-bar {
   flex: 1;
-  background: linear-gradient(0deg, #4ade80, rgba(74, 222, 128, 0.2));
+  background: linear-gradient(
+    0deg,
+    var(--success),
+    color-mix(in srgb, var(--success) 20%, transparent)
+  );
   border-radius: 1px 1px 0 0;
   min-width: 2px;
 }
 
 .sparkline-bar.warn {
-  background: linear-gradient(0deg, #fbbf24, rgba(251, 191, 36, 0.2));
+  background: linear-gradient(
+    0deg,
+    var(--accent-2),
+    color-mix(in srgb, var(--accent-2) 20%, transparent)
+  );
 }
 
 .sparkline-bar.bad {
-  background: linear-gradient(0deg, #f87171, rgba(248, 113, 113, 0.2));
+  background: linear-gradient(
+    0deg,
+    var(--error),
+    color-mix(in srgb, var(--error) 20%, transparent)
+  );
 }

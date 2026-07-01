@@ -37,6 +37,14 @@ import { TelnetRadioPanel } from '../../src/radio/modes/TelnetRadioPanel';
 // onboarded=false config shim so the ModelTilePicker renders as the first-run
 // surface (tier headers, tiles, GetKeyCard) for the WebKitGTK layout smoke.
 import { ElmerPane } from '../../src/elmer/ElmerPane';
+// Sparkline token-migration comparison (tuxlink-ivzut): render the real
+// <Sparkline> three times under variant-scoped wrappers so the CURRENT raw-hex
+// candy gradient, Option A (token + color-mix subtle fade), and Option B (flat
+// solid token) render side-by-side in the SAME WebKitGTK engine. The real
+// Sparkline.css is untouched here — the variant backgrounds below override
+// `.sparkline-bar` only inside `.spk-*` wrappers, so this stays a pre-approval
+// visual probe, not the implementation.
+import { Sparkline } from '../../src/radio/charts/Sparkline';
 import type { RadioPanelMode } from '../../src/radio/types';
 import type { CatalogEntry } from '../../src/catalog/types';
 import type { StatusBarData } from '../../src/shell/useStatus';
@@ -46,7 +54,7 @@ const grid = params.has('grid') ? params.get('grid') : 'CN87';
 const view = (params.get('view') ?? 'home') as
   | 'home' | 'browse' | 'grib' | 'ribbon'
   | 'radio-ardop' | 'radio-vara' | 'radio-telnet'
-  | 'elmer';
+  | 'elmer' | 'sparkline';
 // ?running=1 drives a connected modem / open VARA transport so the running-state
 // footers render: ARDOP/VARA `Send/Receive` (primary) + the red `Stop`
 // (`radio-panel-btn-bad`) button. Without it the fixture pins state to STOPPED, so
@@ -204,9 +212,67 @@ const VARA_MODE: RadioPanelMode = { kind: 'vara-hf', intent: 'cms' };
 const ribbonConnecting = params.get('connecting') === '1';
 
 document.documentElement.dataset.theme = params.get('theme') ?? '';
+
+// Sparkline regression fixture (tuxlink-ivzut). Renders the real <Sparkline>
+// in both its shipped configurations so the token palette can be snapshot-
+// checked in real WebKitGTK across themes (?theme=night-red exercises the
+// night-vision monochrome collapse the raw-hex version used to punch through):
+//   - S/N trace: warnBelow/badBelow thresholds → good/warn/bad palettes in one
+//     trace, as the Signal section draws it (0–15 dB range).
+//   - Throughput trace: no thresholds → all-good, as the Live section draws it.
+const SN_TRACE = [
+  14, 13, 12, 11, 9, 7, 5, 4, 3, 2, 4, 7, 10, 12, 14, 13, 11, 8, 5, 3, 1, 2, 5,
+  8, 11, 13, 14, 12, 10, 6, 4, 2, 3, 6, 9, 12,
+];
+const THROUGHPUT_TRACE = [
+  120, 180, 240, 300, 280, 340, 420, 480, 460, 380, 300, 260, 320, 400, 440,
+  480, 500, 460, 420, 360, 300, 280, 340, 420,
+];
+const SPARK_FIXTURE_CSS = `
+  .spk-page { padding: 24px; font-family: var(--sans); color: var(--text); }
+  .spk-page h1 { font-size: 15px; margin: 0 0 4px; }
+  .spk-page .sub { font-size: 12px; color: var(--text-dim); margin: 0 0 20px; }
+  .spk-grid { display: grid; grid-template-columns: 150px 1fr; gap: 16px 20px; align-items: center; max-width: 720px; }
+  .spk-grid .label { font-size: 12px; color: var(--text-dim); }
+  .spk-grid .label b { display: block; color: var(--text); font-size: 12.5px; }
+  .spk-card { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; }
+`;
+
+function SparklineFixtureView() {
+  return (
+    <div className="spk-page">
+      <style>{SPARK_FIXTURE_CSS}</style>
+      <h1>Sparkline palette (tuxlink-ivzut)</h1>
+      <p className="sub">
+        Real &lt;Sparkline&gt;, same WebKitGTK engine. Theme:{' '}
+        {params.get('theme') || 'default (cool-slate dark)'}.
+      </p>
+      <div className="spk-grid">
+        <div className="label">
+          <b>S/N trace</b>
+          warnBelow 6 · badBelow 3
+        </div>
+        <div className="spk-card">
+          <Sparkline samples={SN_TRACE} min={0} max={15} warnBelow={6} badBelow={3} height={48} />
+        </div>
+
+        <div className="label">
+          <b>Throughput trace</b>
+          no thresholds (all good)
+        </div>
+        <div className="spk-card">
+          <Sparkline samples={THROUGHPUT_TRACE} min={0} height={48} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 createRoot(document.getElementById('root')!).render(
   <QueryClientProvider client={queryClient}>
-    {view === 'ribbon' ? (
+    {view === 'sparkline' ? (
+      <SparklineFixtureView />
+    ) : view === 'ribbon' ? (
       <div className="layout-b">
         {/* The real app wraps DashboardRibbon in `.ribbon-with-search` beside a
             `.search-zone` (flex 0 1 560px). That wrapper is what gives `.dashboard`
