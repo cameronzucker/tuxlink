@@ -14,10 +14,12 @@
 //! security collapse.  The duplex approach ensures the invoker goes through
 //! `TuxlinkMcp` exactly as the UDS transport does.
 //!
-//! **AC-3 P0-1 — egress-tool withholding.**  The seven gated egress tools are
-//! removed from the tool surface returned by `tools()` and short-circuit to
-//! [`ToolOutcome::Denied`] in `invoke()` before touching the MCP channel.
-//! Transmission is operator-gated via Task 8b's approval flush.
+//! **AC-3 — egress gate via `guarded_egress(Agent)`.**  Every EGRESS-marked router
+//! tool is gated in the port implementation (`mcp_ports.rs` / `MonolithEgressPort`)
+//! through `guarded_egress(&guard, EgressAuthority::Agent, ...)`.  A disarmed,
+//! expired, or tainted session is denied at the operation.  The invoker exposes
+//! the FULL router tool surface; arming is enforced at the operation, not by
+//! hiding tools (spec C1: gate at the operation, not the list).
 //!
 //! ## Lifecycle (P2-D)
 //!
@@ -37,25 +39,6 @@ use rmcp::service::{RoleClient, RunningService, ServiceExt};
 use tuxlink_agent_frontend::mcp_client::{classify_call_error, list_tools_as_specs, map_call_result};
 use tuxlink_agent_runner::{CallAuthority, ToolCall, ToolInvoker, ToolOutcome, ToolSpec};
 use tuxlink_mcp_core::{McpState, TuxlinkMcp};
-
-/// The seven gated egress tools whose descriptions contain "EGRESS" in
-/// `router.rs:451-561`.  These are withheld from the agent's tool surface;
-/// force-dispatching them returns [`ToolOutcome::Denied`].  Task 8b's approval
-/// flush is the only path that fires them (under operator consent).
-///
-/// **DENYLIST LOCK:** the `withheld_set_equals_every_egress_marked_tool` test
-/// asserts this constant equals the set of EGRESS-marked router tools at all
-/// times.  Adding a new egress tool to the router without updating this list
-/// FAILS the test — which is the desired trip-wire.
-pub const WITHHELD_EGRESS_TOOLS: &[&str] = &[
-    "cms_connect",
-    "verify_cms_connection",
-    "rig_tune",
-    "ardop_connect",
-    "ardop_b2f_exchange",
-    "vara_b2f_exchange",
-    "packet_connect",
-];
 
 /// Elmer-local error returned when `InProcessMcpInvoker::connect` fails.
 #[derive(Debug)]
@@ -86,8 +69,9 @@ pub struct InProcessMcpInvoker {
     /// The live rmcp client session.  Wrapped in a Mutex because `call_tool`
     /// takes `&self` on `RunningService` but the method is not `Sync`.
     client: Mutex<RunningService<RoleClient, ()>>,
-    /// Router tools MINUS [`WITHHELD_EGRESS_TOOLS`].  This is the only schema
-    /// source the runner uses; egress tools are absent.
+    /// Full router tool surface, egress tools included.  This is the only schema
+    /// source the runner uses; arming is enforced at each operation via
+    /// `guarded_egress(Agent)` in the port implementations, not by filtering here.
     tools: Vec<ToolSpec>,
     /// Keeps the server task alive.  The task returns when the client transport
     /// drops at session teardown.
@@ -96,7 +80,7 @@ pub struct InProcessMcpInvoker {
 
 impl InProcessMcpInvoker {
     /// Spin up a `TuxlinkMcp` router server over an in-memory duplex, perform
-    /// the rmcp handshake from the client side, and snapshot the (filtered) tool
+    /// the rmcp handshake from the client side, and snapshot the full tool
     /// surface.  The server and client share the same `Arc<McpState>` (and
     /// therefore the same `Arc<EgressGuard>`), so taint set by the router's
     /// `#[tool]` methods is immediately visible to the caller's guard handle.
@@ -125,14 +109,12 @@ impl InProcessMcpInvoker {
             .await
             .map_err(|e| ConnectError::Serve(e.to_string()))?;
 
-        // Snapshot the full tool surface, then filter out the egress tools.
-        let all = list_tools_as_specs(&client)
+        // The full router tool surface, egress tools included. Arming is enforced
+        // at the operation via guarded_egress(Agent) in the router's port impls,
+        // not by hiding tools here (spec C1: gate at the operation, not the list).
+        let tools = list_tools_as_specs(&client)
             .await
             .map_err(|e| ConnectError::ListTools(e.to_string()))?;
-        let tools = all
-            .into_iter()
-            .filter(|t| !WITHHELD_EGRESS_TOOLS.contains(&t.name.as_str()))
-            .collect();
 
         Ok(Self {
             client: Mutex::new(client),
@@ -156,17 +138,6 @@ impl ToolInvoker for InProcessMcpInvoker {
     ) -> ToolOutcome {
         // SEC-3: the runner only ever passes Agent; assert belt-and-suspenders.
         debug_assert_eq!(authority, CallAuthority::Agent);
-
-        // AC-3 P0-1: withheld egress tools are denied before touching the MCP
-        // channel.  Task 8b's approval flush is the only authorised path for
-        // these tools.
-        if WITHHELD_EGRESS_TOOLS.contains(&call.name.as_str()) {
-            return ToolOutcome::Denied(
-                "Transmitting is operator-gated. Stage the message, then ask \
-                 the operator to review and send via the approval dialog."
-                    .into(),
-            );
-        }
 
         let param = CallToolRequestParam {
             name: call.name.clone().into(),
@@ -237,40 +208,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // AC-3 P0-1: egress-tool withholding
-    // -----------------------------------------------------------------------
-
-    /// **Withholding test.**  None of the seven gated egress tools appear in
-    /// `tools()`; force-dispatching one returns `ToolOutcome::Denied`.
-    #[tokio::test]
-    async fn in_proc_invoker_withholds_egress_tools() {
-        let guard = Arc::new(EgressGuard::new());
-        let state = test_support::state_with_seeded_inbox(guard.clone(), SEEDED_ID);
-        let invoker = InProcessMcpInvoker::connect(state).await.unwrap();
-
-        for name in WITHHELD_EGRESS_TOOLS {
-            assert!(
-                !invoker.tools().iter().any(|t| t.name.as_str() == *name),
-                "{name} must be withheld from tools()"
-            );
-        }
-
-        // Force-dispatch a withheld tool → must be Denied.
-        let call = ToolCall {
-            name: "cms_connect".into(),
-            args: serde_json::json!({}),
-        };
-        let out = invoker
-            .invoke(&call, CallAuthority::Agent, &CancellationToken::new())
-            .await;
-        assert!(
-            matches!(out, ToolOutcome::Denied(_)),
-            "force-dispatching a withheld tool must return Denied, got {out:?}"
-        );
-    }
-
-    // -----------------------------------------------------------------------
-    // AC-3 P1-A: denylist equals EGRESS-marked tools (trip-wire)
+    // AC-3: arm-gate trip-wires (C1/C2 — replacing the old withhold tests)
     // -----------------------------------------------------------------------
 
     /// A tool name + description pair extracted from the live router tool list.
@@ -282,8 +220,6 @@ mod tests {
     /// List ALL router tools (including egress ones) with their descriptions by
     /// spinning a short-lived in-process duplex against the real router.
     async fn list_all_router_tools_with_desc(state: Arc<McpState>) -> Vec<RouterToolDesc> {
-        use rmcp::service::ServiceExt;
-
         let (client_io, server_io) = tokio::io::duplex(256 * 1024);
         let (sr, sw) = tokio::io::split(server_io);
         let mcp = TuxlinkMcp::new(state);
@@ -307,31 +243,94 @@ mod tests {
             .collect()
     }
 
-    /// **Denylist-lock test (P1-A).**  The withheld set must EQUAL the set of
-    /// router tools whose description contains the literal "EGRESS".  A new egress
-    /// tool added to the router without updating [`WITHHELD_EGRESS_TOOLS`] will
-    /// fail this test, preventing the security gap from shipping silently.
+    /// **C2 trip-wire (replaces the denylist-lock test):** every EGRESS-marked
+    /// router tool is visible on the surface AND is gated — disarmed dispatch
+    /// returns `Denied`.  Drives off the router's "EGRESS" description marker, so
+    /// a new egress tool auto-joins this assertion and FAILS CI if it is not
+    /// arm-gated.
     #[tokio::test]
-    async fn withheld_set_equals_every_egress_marked_tool() {
-        let guard = Arc::new(EgressGuard::new());
-        let state = test_support::state_with_seeded_inbox(guard, SEEDED_ID);
-        let all = list_all_router_tools_with_desc(state).await;
+    async fn every_egress_marked_tool_is_visible_and_arm_gated() {
+        let guard = Arc::new(EgressGuard::new()); // disarmed, un-tainted
 
-        let egress_marked: std::collections::BTreeSet<String> = all
+        // Discover EGRESS-marked tool names via the raw router tool list (which
+        // includes descriptions — ToolSpec does not carry descriptions).
+        let desc_state = test_support::state_with_seeded_inbox(guard.clone(), SEEDED_ID);
+        let all = list_all_router_tools_with_desc(desc_state).await;
+        let egress_names: Vec<String> = all
             .iter()
             .filter(|t| t.description.contains("EGRESS"))
             .map(|t| t.name.clone())
             .collect();
+        assert!(
+            !egress_names.is_empty(),
+            "EGRESS-marked tools must be present in the router; none found"
+        );
 
-        let withheld: std::collections::BTreeSet<String> = WITHHELD_EGRESS_TOOLS
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        // Build an invoker over the same guard (disarmed).
+        let state = test_support::state_with_seeded_inbox(guard.clone(), SEEDED_ID);
+        let invoker = InProcessMcpInvoker::connect(state).await.unwrap();
 
-        assert_eq!(
-            egress_marked, withheld,
-            "every EGRESS-marked router tool must be withheld and vice-versa; \
-             add new egress tools to WITHHELD_EGRESS_TOOLS"
+        // Every EGRESS tool must be visible on the surface (no longer filtered).
+        let surface_names: std::collections::HashSet<&str> =
+            invoker.tools().iter().map(|t| t.name.as_str()).collect();
+        for name in &egress_names {
+            assert!(
+                surface_names.contains(name.as_str()),
+                "EGRESS tool `{name}` must be visible on the invoker surface (withhold removed)"
+            );
+        }
+
+        // Disarmed: each EGRESS tool must be Denied by the guard.
+        let cancel = CancellationToken::new();
+        for name in &egress_names {
+            let call = ToolCall { name: name.clone(), args: serde_json::json!({}) };
+            let out = invoker.invoke(&call, CallAuthority::Agent, &cancel).await;
+            assert!(
+                matches!(out, ToolOutcome::Denied(_)),
+                "disarmed EGRESS tool `{name}` must be Denied by the guard, got {out:?}"
+            );
+        }
+    }
+
+    /// **Armed + un-tainted: egress dispatch crosses the gate.**  The mock
+    /// `EgressPort` in `test_support` calls the REAL `guarded_egress(Agent)` gate;
+    /// when armed+untainted it returns `Ok(())` (gate opened), which the router
+    /// maps to a success outcome — NOT `Denied`.  We assert not-Denied as the
+    /// correct sufficient check (no real modem in CI; connect errors are
+    /// `InvalidArgs`, not `Denied`).
+    #[tokio::test]
+    async fn armed_untainted_egress_is_not_denied() {
+        use std::sync::atomic::Ordering;
+
+        // Use state_with_all_probes so we can observe op_ran after the call.
+        let (state, op_ran, _aborted, _staged) =
+            test_support::state_with_all_probes(EgressGuard::new());
+        // Arm the guard that was captured into the state.
+        state.guard.arm(30); // armed, un-tainted
+
+        let state = Arc::new(state);
+        let invoker = InProcessMcpInvoker::connect(state).await.unwrap();
+        let cancel = CancellationToken::new();
+
+        // One representative tool per transport class (all have minimal required
+        // args — the mock port ignores arguments).
+        for name in &["cms_connect", "ardop_connect", "vara_b2f_exchange", "packet_connect"] {
+            let call = ToolCall {
+                name: (*name).into(),
+                args: serde_json::json!({}),
+            };
+            let out = invoker.invoke(&call, CallAuthority::Agent, &cancel).await;
+            assert!(
+                !matches!(out, ToolOutcome::Denied(_)),
+                "armed+untainted `{name}` must NOT be Denied (gate opened), got {out:?}"
+            );
+        }
+
+        // The mock EgressPort flips op_ran inside the gated closure, proving the
+        // gate opened and the op actually ran (not just avoided a Denied outcome).
+        assert!(
+            op_ran.load(Ordering::SeqCst),
+            "armed+untainted dispatch must reach the mock egress op (op_ran flag not set)"
         );
     }
 }
