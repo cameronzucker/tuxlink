@@ -31,13 +31,36 @@
 //! }
 //! ```
 //!
-//! `stream` is ALWAYS `false` (D2 — non-streaming v1, mirroring
-//! [`crate::anthropic_provider::AnthropicProvider`]; the meter counts come from
-//! the final response either way). `keep_alive` is ALWAYS `0` (D4). The
-//! `options` object omits any key whose config value is `None`, and is omitted
-//! ENTIRELY when both `num_ctx` and `temperature` are `None` (so the default
-//! request shape stays minimal). `tools` is omitted when the tool surface is
-//! empty (matching the OpenAI + Anthropic adapters).
+//! [`build_ollama_request`] emits `stream: false` (its unit tests assert that
+//! non-stream body shape); [`OllamaProvider::turn`] then overrides
+//! `body["stream"] = true` on the already-built value so the wire request
+//! streams — mirroring how [`crate::provider::OpenAiProvider::turn`] flips
+//! `stream` on its built body without disturbing the pure builder. Streaming is
+//! the STREAMING regression fix (tuxlink-b7tkf): the merged non-streaming path
+//! showed nothing in the pane for minutes on slow CPU-local models, looking
+//! hung; native `/api/chat` streams NDJSON deltas that this adapter emits as
+//! [`RunEvent::AssistantDelta`] / [`RunEvent::ReasoningDelta`] as tokens land.
+//! `keep_alive` is ALWAYS `0` (D4). The `options` object omits any key whose
+//! config value is `None`, and is omitted ENTIRELY when both `num_ctx` and
+//! `temperature` are `None` (so the default request shape stays minimal).
+//! `tools` is omitted when the tool surface is empty (matching the OpenAI +
+//! Anthropic adapters).
+//!
+//! ### Streaming wire format (NDJSON)
+//!
+//! With `stream: true` the server responds `application/x-ndjson`: one complete
+//! JSON object per `\n`-terminated line (NO `data:` prefix, NO `[DONE]`
+//! sentinel, NO blank-line frame delimiter — unlike SSE). A streaming chunk is
+//! `{"message":{"role":"assistant","content":"<delta>","thinking":"<reasoning
+//! delta>"?,"tool_calls":[...]?},"done":false}`; the final chunk is
+//! `{"message":{...},"done":true,"prompt_eval_count":N,"eval_count":N,...}`.
+//! Unlike the OpenAI SSE path, native `tool_calls` arrive COMPLETE per chunk
+//! (`function.arguments` is a JSON object, not fragmented arguments-strings), so
+//! no partial-tool-call reassembly is needed. A server that ignores
+//! `stream: true` and answers a single `application/json` document is handled by
+//! the non-stream fallback in [`OllamaProvider::turn`] via
+//! [`parse_ollama_response`], mirroring the OpenAI adapter's content-type
+//! fallback.
 //!
 //! ### Tool-call protocol (native, NOT OpenAI-compat)
 //!
@@ -77,6 +100,7 @@
 //! bodies are scrubbed via [`redact_and_cap`] before propagation.
 
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use serde_json::{json, Value};
 use url::Url;
 
@@ -152,11 +176,14 @@ impl Provider for OllamaProvider {
         tools: &[ToolSpec],
         on_event: &(dyn Fn(RunEvent) + Sync),
     ) -> Result<ModelTurn, ProviderError> {
-        // Non-streaming (D2): a single JSON document carries both the assistant
-        // turn and the token counts. Unlike the compat path we do NOT emit
-        // AssistantDelta/ReasoningDelta here; the one event this adapter emits is
-        // ContextUsage, AFTER parsing the counts below.
-        let body = build_ollama_request(
+        // Streaming (tuxlink-b7tkf): request a streamed NDJSON completion and
+        // emit RunEvent deltas as tokens arrive. `on_event` is FIRE-AND-FORGET —
+        // what it does never changes which `ModelTurn` this returns. We set
+        // `stream` on the already-built request value rather than threading a
+        // flag through `build_ollama_request`, whose tests assert the non-stream
+        // body shape (mirroring the OpenAI adapter's approach). The pure assembly
+        // stays untouched.
+        let mut body = build_ollama_request(
             &self.model,
             conversation,
             tools,
@@ -164,6 +191,7 @@ impl Provider for OllamaProvider {
             self.temperature,
             self.system_prompt.as_deref().unwrap_or(ELMER_SYSTEM_PROMPT),
         );
+        body["stream"] = json!(true);
 
         let mut req = self
             .client
@@ -198,18 +226,72 @@ impl Provider for OllamaProvider {
             )));
         }
 
-        let value: Value = resp
-            .json()
-            .await
-            .map_err(|e| ProviderError::Unparseable(format!("response was not JSON: {e}")))?;
+        // Non-streaming fallback: some servers (or a llama.cpp shim behind the
+        // same loopback port) ignore `stream: true` and answer with a single
+        // JSON document. Detect that by content-type — a native stream advertises
+        // `application/x-ndjson`; anything else (typically `application/json`) is
+        // a whole response we parse via `parse_ollama_response`, emitting no
+        // deltas. This mirrors the OpenAI adapter's `is_event_stream` fallback.
+        let is_ndjson = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|ct| ct.to_ascii_lowercase().contains("application/x-ndjson"))
+            .unwrap_or(false);
+
+        if !is_ndjson {
+            let value: Value = resp
+                .json()
+                .await
+                .map_err(|e| ProviderError::Unparseable(format!("response was not JSON: {e}")))?;
+
+            // Same ContextUsage emit as the streaming path below: fire-and-forget
+            // when the model reported counts AND this adapter set a known
+            // `num_ctx` (the denominator). Absent counts or a server-default
+            // window simply produces no event — the meter stays hidden (T2).
+            if let (Some((prompt_tokens, eval_tokens)), Some(num_ctx)) =
+                (parse_ollama_counts(&value), self.num_ctx)
+            {
+                on_event(RunEvent::ContextUsage {
+                    prompt_tokens,
+                    eval_tokens,
+                    num_ctx,
+                });
+            }
+
+            return parse_ollama_response(&value).map_err(ProviderError::Unparseable);
+        }
+
+        // Streaming path. The whole read is a SINGLE awaited future inside `turn`
+        // — no detached `tokio::spawn`. The run loop races `turn()` against a
+        // cancel token and DROPS this future on cancel; keeping the byte-stream
+        // read inline means that drop aborts the in-flight reqwest stream rather
+        // than leaking a background task that keeps the connection open.
+        let mut stream = resp.bytes_stream();
+        let mut acc = OllamaStreamAccumulator::new();
+
+        while let Some(item) = stream.next().await {
+            let chunk = item
+                .map_err(|e| ProviderError::Transport(format!("stream read failed: {e}")))?;
+            // `feed` parses every complete NDJSON line currently in the buffer and
+            // invokes `on_event` for each delta. A `done: true` line ends the
+            // stream; otherwise we keep reading until the body closes. It returns
+            // a transport error if the endpoint streams an oversized un-terminated
+            // line or breaches the total-output cap.
+            if acc.feed(&chunk, on_event)? {
+                break;
+            }
+        }
+        // Flush any trailing line the server sent without a terminating newline
+        // before closing the connection (rare, but lenient parsing avoids
+        // dropping the final delta or the counts on the `done` line).
+        acc.finish(on_event)?;
 
         // Emit the context-usage meter event (fire-and-forget) when the model
-        // reported token counts AND this adapter set a known `num_ctx` (the
-        // denominator). A model that omits the counts, or a request that left
-        // `num_ctx` at the server default, simply produces no event — the meter
-        // stays hidden, which is the correct graceful degradation (T2).
+        // reported token counts on the `done` line AND this adapter set a known
+        // `num_ctx` (the denominator) — same contract as the non-stream path.
         if let (Some((prompt_tokens, eval_tokens)), Some(num_ctx)) =
-            (parse_ollama_counts(&value), self.num_ctx)
+            (acc.counts(), self.num_ctx)
         {
             on_event(RunEvent::ContextUsage {
                 prompt_tokens,
@@ -218,7 +300,270 @@ impl Provider for OllamaProvider {
             });
         }
 
-        parse_ollama_response(&value).map_err(ProviderError::Unparseable)
+        Ok(acc.into_turn())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// NDJSON streaming accumulator (pure, unit-testable)
+// ---------------------------------------------------------------------------
+
+/// Maximum size, in bytes, of a single un-terminated NDJSON line held in `buf`
+/// while waiting for its closing `\n`. A legitimate `/api/chat` chunk is one
+/// small JSON object (a token delta or a complete tool call); 1 MiB is orders of
+/// magnitude beyond any real line, so a `buf` that grows past this without a
+/// newline signals a hostile or broken endpoint streaming an unbounded
+/// un-terminated line. Exceeding it is a transport error rather than letting
+/// memory grow until the per-turn timeout. Defined file-local rather than reusing
+/// the OpenAI adapter's private `MAX_PENDING_FRAME_BYTES` (not visible across the
+/// module boundary), with the same rationale.
+const MAX_PENDING_LINE_BYTES: usize = 1024 * 1024; // 1 MiB
+
+/// Maximum total decoded output, in bytes, accumulated across `content` +
+/// `thinking`. A complete answer-plus-reasoning trace for any legitimate model
+/// turn fits comfortably under this; 16 MiB bounds an endpoint that streams
+/// endless small deltas (which individually terminate their lines, so
+/// `MAX_PENDING_LINE_BYTES` would not catch them) from exhausting memory before
+/// the configured timeout. Exceeding it is a transport error. File-local twin of
+/// the OpenAI adapter's private `MAX_TOTAL_OUTPUT_BYTES`.
+const MAX_TOTAL_OUTPUT_BYTES: usize = 16 * 1024 * 1024; // 16 MiB
+
+/// Accumulates a native Ollama `/api/chat` NDJSON stream into a [`ModelTurn`],
+/// emitting [`RunEvent`] deltas through a caller-supplied sink as chunks land.
+///
+/// This is the NDJSON analogue of [`crate::provider`]'s SSE accumulator and the
+/// testable seam: byte chunks from the network are appended via
+/// [`OllamaStreamAccumulator::feed`], which buffers across arbitrary line
+/// boundaries, splits complete `\n`-terminated lines, parses each as a JSON
+/// object, and routes it through [`OllamaStreamAccumulator::apply_line`]. No IO
+/// lives here — tests drive it with hand-built byte slices (including mid-line
+/// and mid-codepoint splits) and a recording sink, with no live server.
+///
+/// Unlike the OpenAI SSE path there is NO partial-tool-call reassembly: native
+/// `tool_calls` arrive COMPLETE per chunk (`function.arguments` is a JSON
+/// object), so each is collected via the shared [`parse_ollama_tool_call`] as
+/// chunks bring it.
+struct OllamaStreamAccumulator {
+    /// Raw bytes received but not yet forming a complete `\n`-terminated line.
+    /// Buffered as BYTES (not a lossy `String`) so a multi-byte UTF-8 codepoint
+    /// split across two network chunks is reassembled intact rather than each
+    /// half decoding to a U+FFFD replacement char.
+    buf: Vec<u8>,
+    /// Accumulated answer content (concatenated `message.content` deltas).
+    content: String,
+    /// Accumulated reasoning (concatenated `message.thinking` deltas). Reasoning
+    /// is emitted to the caller delta-by-delta as it streams; no `ModelTurn`
+    /// variant carries the assembled trace, so in non-test builds this field is
+    /// write-only (read only by the `#[cfg(test)]` `thinking()` accessor that
+    /// asserts the concatenation). Kept because the streaming contract specifies
+    /// accumulating reasoning alongside emitting it, and a future caller may want
+    /// the full trace. Mirrors the SSE accumulator's `reasoning` field exactly.
+    #[cfg_attr(not(test), allow(dead_code))]
+    thinking: String,
+    /// Tool calls collected across chunks, in arrival order. Native tool calls
+    /// are complete per chunk (no fragment reassembly), so this is a plain `Vec`.
+    tool_calls: Vec<ToolCall>,
+    /// Set once a line with top-level `done: true` is seen.
+    done: bool,
+    /// `prompt_eval_count` from the `done` line, when present.
+    prompt_eval_count: Option<u32>,
+    /// `eval_count` from the `done` line, when present.
+    eval_count: Option<u32>,
+}
+
+impl OllamaStreamAccumulator {
+    fn new() -> Self {
+        Self {
+            buf: Vec::new(),
+            content: String::new(),
+            thinking: String::new(),
+            tool_calls: Vec::new(),
+            done: false,
+            prompt_eval_count: None,
+            eval_count: None,
+        }
+    }
+
+    /// Append a network byte chunk and process every COMPLETE `\n`-terminated
+    /// line now in the buffer. Returns `Ok(true)` once the stream has terminated
+    /// (a line with `done: true` was seen) so the caller can stop reading;
+    /// `Ok(false)` while more data is expected.
+    ///
+    /// Bytes are buffered RAW and lines are split at the byte level, so a
+    /// multi-byte UTF-8 codepoint straddling a network-chunk boundary is
+    /// reassembled into a complete line before being decoded — no U+FFFD
+    /// corruption. Each complete line is then decoded with
+    /// [`std::str::from_utf8`]; a line that is genuinely not valid UTF-8 (should
+    /// not happen for a complete line from a conforming server) is skipped rather
+    /// than erroring the turn.
+    ///
+    /// Returns `Err(ProviderError::Transport)` when an un-terminated line in
+    /// `buf` exceeds [`MAX_PENDING_LINE_BYTES`], or when total accumulated output
+    /// exceeds [`MAX_TOTAL_OUTPUT_BYTES`] — bounding memory against a hostile or
+    /// broken endpoint. The error message carries no body/secret content.
+    fn feed(
+        &mut self,
+        bytes: &[u8],
+        on_event: &(dyn Fn(RunEvent) + Sync),
+    ) -> Result<bool, ProviderError> {
+        self.buf.extend_from_slice(bytes);
+
+        // Lines are separated by a single `\n`. Scan the BYTE buffer for the next
+        // newline, taking the line body before it, so the codepoint-reassembly
+        // guarantee holds (we never decode a partial codepoint at a chunk
+        // boundary).
+        while let Some(pos) = self.buf.iter().position(|&b| b == b'\n') {
+            // Move out the line bytes plus its newline; the remainder is a
+            // (possibly partial) next line kept for the following chunk.
+            let line_bytes: Vec<u8> = self.buf.drain(..pos + 1).collect();
+            // Decode only the line body (newline excluded). A complete line is
+            // valid UTF-8 since the only split was at a network-chunk boundary; on
+            // the rare genuine decode error, skip this line rather than panicking.
+            let Ok(line) = std::str::from_utf8(&line_bytes[..pos]) else {
+                continue;
+            };
+            if self.apply_line(line, on_event)? {
+                self.done = true;
+                return Ok(true);
+            }
+        }
+
+        // No complete line remains; what's left is a single pending line. Guard
+        // its size so an endpoint that never sends a newline cannot grow `buf`
+        // without bound.
+        if self.buf.len() > MAX_PENDING_LINE_BYTES {
+            return Err(ProviderError::Transport(
+                "model stream sent an oversized un-terminated line".to_string(),
+            ));
+        }
+        Ok(false)
+    }
+
+    /// Process whatever remains in the buffer as a final line once the network
+    /// stream has closed. A well-behaved server terminates every line with a
+    /// newline, so this is usually a no-op; it exists so a trailing line sent
+    /// without the closing newline (which may be the `done` line carrying the
+    /// counts) is not silently dropped. Returns `Err(ProviderError::Transport)`
+    /// if applying the trailing line breaches [`MAX_TOTAL_OUTPUT_BYTES`].
+    fn finish(&mut self, on_event: &(dyn Fn(RunEvent) + Sync)) -> Result<(), ProviderError> {
+        if self.done {
+            return Ok(());
+        }
+        let line_bytes = std::mem::take(&mut self.buf);
+        // Decode leniently for the trailing-line flush; a malformed tail is
+        // dropped rather than erroring the turn.
+        let Ok(line) = std::str::from_utf8(&line_bytes) else {
+            return Ok(());
+        };
+        if !line.trim().is_empty() {
+            self.apply_line(line, on_event)?;
+        }
+        Ok(())
+    }
+
+    /// Total accumulated decoded output so far (`content` + `thinking`), in
+    /// bytes. Used to enforce [`MAX_TOTAL_OUTPUT_BYTES`].
+    fn total_output_len(&self) -> usize {
+        self.content.len() + self.thinking.len()
+    }
+
+    /// Parse one NDJSON line as a JSON object and apply it: append + emit answer
+    /// content and reasoning deltas, collect any complete tool calls, and capture
+    /// the token counts on the final `done` line. Returns `Ok(true)` if the line
+    /// carried top-level `done: true` (stream terminates); `Err` if appending a
+    /// delta breached [`MAX_TOTAL_OUTPUT_BYTES`].
+    ///
+    /// A blank line or a line that is not parseable JSON is ignored (a
+    /// conforming server sends one complete object per line, but leniency avoids
+    /// failing the whole turn on a stray keep-alive newline).
+    fn apply_line(
+        &mut self,
+        line: &str,
+        on_event: &(dyn Fn(RunEvent) + Sync),
+    ) -> Result<bool, ProviderError> {
+        if line.trim().is_empty() {
+            return Ok(false);
+        }
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            return Ok(false);
+        };
+
+        if let Some(message) = value.get("message") {
+            // Answer content delta.
+            if let Some(text) = message.get("content").and_then(Value::as_str) {
+                if !text.is_empty() {
+                    if self.total_output_len() + text.len() > MAX_TOTAL_OUTPUT_BYTES {
+                        return Err(ProviderError::Transport(
+                            "model stream exceeded the maximum accumulated output size".to_string(),
+                        ));
+                    }
+                    self.content.push_str(text);
+                    on_event(RunEvent::AssistantDelta {
+                        chunk: text.to_string(),
+                    });
+                }
+            }
+
+            // Reasoning / "thinking" delta (qwen3 and other thinking models).
+            if let Some(text) = message.get("thinking").and_then(Value::as_str) {
+                if !text.is_empty() {
+                    if self.total_output_len() + text.len() > MAX_TOTAL_OUTPUT_BYTES {
+                        return Err(ProviderError::Transport(
+                            "model stream exceeded the maximum accumulated output size".to_string(),
+                        ));
+                    }
+                    self.thinking.push_str(text);
+                    on_event(RunEvent::ReasoningDelta {
+                        chunk: text.to_string(),
+                    });
+                }
+            }
+
+            // Native tool calls arrive COMPLETE per chunk (function.arguments is
+            // a JSON object) — no fragment reassembly. Collect each via the shared
+            // parser as chunks bring them.
+            if let Some(calls) = message.get("tool_calls").and_then(Value::as_array) {
+                for call in calls {
+                    self.tool_calls.push(parse_ollama_tool_call(call));
+                }
+            }
+        }
+
+        // Final chunk: capture the token counts and signal termination.
+        if value.get("done").and_then(Value::as_bool) == Some(true) {
+            if let Some((prompt, eval)) = parse_ollama_counts(&value) {
+                self.prompt_eval_count = Some(prompt);
+                self.eval_count = Some(eval);
+            }
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    /// The token counts captured from the `done` line, when both were present.
+    /// Mirrors [`parse_ollama_counts`]'s all-or-nothing contract.
+    fn counts(&self) -> Option<(u32, u32)> {
+        Some((self.prompt_eval_count?, self.eval_count?))
+    }
+
+    /// Finalize into a [`ModelTurn`]. If any tool calls were collected, they win
+    /// (mirroring [`parse_ollama_response`]'s precedence); otherwise the
+    /// concatenated content becomes a `Text` turn.
+    fn into_turn(self) -> ModelTurn {
+        if !self.tool_calls.is_empty() {
+            return ModelTurn::ToolCalls(self.tool_calls);
+        }
+        ModelTurn::Text(self.content)
+    }
+
+    /// The reasoning text accumulated across `ReasoningDelta` fragments. The
+    /// finalized [`ModelTurn`] never carries reasoning (it streams delta-only via
+    /// the sink), but the concatenated trace is retained so a test can assert the
+    /// fragments were concatenated in order. Mirrors the SSE accumulator's
+    /// `reasoning()` accessor.
+    #[cfg(test)]
+    fn thinking(&self) -> &str {
+        &self.thinking
     }
 }
 
@@ -1008,5 +1353,344 @@ mod tests {
     fn is_ollama_endpoint_false_for_remote_compat() {
         assert!(!is_ollama_endpoint("https://api.openai.com/v1/chat/completions"));
         assert!(!is_ollama_endpoint("https://api.anthropic.com/v1/messages"));
+    }
+
+    // -----------------------------------------------------------------------
+    // OllamaStreamAccumulator — NDJSON streaming (recorded bytes, no network)
+    // -----------------------------------------------------------------------
+
+    use std::sync::{Arc, Mutex};
+
+    /// A shared recording buffer the test sink pushes `RunEvent`s into. Wrapped in
+    /// `Arc<Mutex<…>>` so the `Fn(RunEvent) + Sync` sink closure can own a clone
+    /// while the test still asserts on the original — mirroring the SSE
+    /// accumulator's `recorder()` helper (the sink MUST be `Sync`, so a
+    /// single-threaded `RefCell` will not compile against `feed`'s bound).
+    fn recorder() -> Arc<Mutex<Vec<RunEvent>>> {
+        Arc::new(Mutex::new(Vec::new()))
+    }
+
+    /// Build a `Fn(RunEvent) + Sync` sink that records into `events`.
+    fn recording_sink(events: &Arc<Mutex<Vec<RunEvent>>>) -> impl Fn(RunEvent) + Sync {
+        let events = events.clone();
+        move |e: RunEvent| events.lock().unwrap().push(e)
+    }
+
+    /// Every `AssistantDelta` chunk in the recorder, in order.
+    fn assistant_deltas(events: &Arc<Mutex<Vec<RunEvent>>>) -> Vec<String> {
+        events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|e| match e {
+                RunEvent::AssistantDelta { chunk } => Some(chunk.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Every `ReasoningDelta` chunk in the recorder, in order.
+    fn reasoning_deltas(events: &Arc<Mutex<Vec<RunEvent>>>) -> Vec<String> {
+        events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|e| match e {
+                RunEvent::ReasoningDelta { chunk } => Some(chunk.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Multiple content chunks → one `AssistantDelta` per non-empty delta, and
+    /// `into_turn` concatenates them into a `Text` turn.
+    #[test]
+    fn stream_text_deltas_emit_and_concatenate() {
+        let events = recorder();
+        let sink = recording_sink(&events);
+        let mut acc = OllamaStreamAccumulator::new();
+
+        let ndjson = concat!(
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"Hello\"},\"done\":false}\n",
+            "{\"message\":{\"role\":\"assistant\",\"content\":\", \"},\"done\":false}\n",
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"operator\"},\"done\":false}\n",
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true,\"prompt_eval_count\":10,\"eval_count\":3}\n",
+        );
+        let done = acc.feed(ndjson.as_bytes(), &sink).unwrap();
+        assert!(done, "the done:true line must terminate the stream");
+
+        assert_eq!(
+            assistant_deltas(&events),
+            vec!["Hello".to_string(), ", ".to_string(), "operator".to_string()],
+            "one AssistantDelta per non-empty content delta"
+        );
+        assert_eq!(
+            acc.into_turn(),
+            ModelTurn::Text("Hello, operator".into()),
+            "into_turn concatenates the content deltas"
+        );
+    }
+
+    /// The empty final-chunk content ("") must NOT emit an AssistantDelta.
+    #[test]
+    fn stream_skips_empty_content_deltas() {
+        let events = recorder();
+        let sink = recording_sink(&events);
+        let mut acc = OllamaStreamAccumulator::new();
+
+        let ndjson = concat!(
+            "{\"message\":{\"content\":\"\"},\"done\":false}\n",
+            "{\"message\":{\"content\":\"hi\"},\"done\":false}\n",
+            "{\"message\":{\"content\":\"\"},\"done\":true}\n",
+        );
+        acc.feed(ndjson.as_bytes(), &sink).unwrap();
+        assert_eq!(
+            assistant_deltas(&events),
+            vec!["hi".to_string()],
+            "empty content deltas must not emit AssistantDelta"
+        );
+    }
+
+    /// A blank line in the stream is ignored (no panic, no spurious event).
+    #[test]
+    fn stream_ignores_blank_lines() {
+        let events = recorder();
+        let sink = recording_sink(&events);
+        let mut acc = OllamaStreamAccumulator::new();
+
+        let ndjson = concat!(
+            "\n",
+            "{\"message\":{\"content\":\"a\"},\"done\":false}\n",
+            "   \n",
+            "{\"message\":{\"content\":\"b\"},\"done\":true}\n",
+        );
+        acc.feed(ndjson.as_bytes(), &sink).unwrap();
+        assert_eq!(assistant_deltas(&events), vec!["a".to_string(), "b".to_string()]);
+    }
+
+    /// `thinking` deltas emit `ReasoningDelta` and accumulate; content still
+    /// accumulates independently. The `thinking()` accessor sees the concatenation.
+    #[test]
+    fn stream_thinking_deltas_emit_reasoning_and_content_accumulates() {
+        let events = recorder();
+        let sink = recording_sink(&events);
+        let mut acc = OllamaStreamAccumulator::new();
+
+        let ndjson = concat!(
+            "{\"message\":{\"thinking\":\"let me \"},\"done\":false}\n",
+            "{\"message\":{\"thinking\":\"think\",\"content\":\"answer \"},\"done\":false}\n",
+            "{\"message\":{\"content\":\"here\"},\"done\":true}\n",
+        );
+        acc.feed(ndjson.as_bytes(), &sink).unwrap();
+
+        assert_eq!(
+            reasoning_deltas(&events),
+            vec!["let me ".to_string(), "think".to_string()],
+            "one ReasoningDelta per non-empty thinking delta"
+        );
+        assert_eq!(assistant_deltas(&events), vec!["answer ".to_string(), "here".to_string()]);
+        assert_eq!(acc.thinking(), "let me think", "thinking is concatenated");
+        assert_eq!(acc.into_turn(), ModelTurn::Text("answer here".into()));
+    }
+
+    /// A chunk carrying a native tool_call (object arguments) → `into_turn` is
+    /// `ToolCalls` with the correct name + OBJECT args, taking precedence over
+    /// any content.
+    #[test]
+    fn stream_tool_call_object_args_becomes_tool_calls_turn() {
+        let events = recorder();
+        let sink = recording_sink(&events);
+        let mut acc = OllamaStreamAccumulator::new();
+
+        let ndjson = concat!(
+            "{\"message\":{\"content\":\"some chatter\",\"tool_calls\":[{\"function\":{\"name\":\"find_stations\",\"arguments\":{\"grid\":\"DM79\"}}}]},\"done\":false}\n",
+            "{\"message\":{\"content\":\"\"},\"done\":true}\n",
+        );
+        acc.feed(ndjson.as_bytes(), &sink).unwrap();
+
+        match acc.into_turn() {
+            ModelTurn::ToolCalls(calls) => {
+                assert_eq!(calls.len(), 1);
+                assert_eq!(calls[0].name, "find_stations");
+                assert_eq!(calls[0].args, json!({ "grid": "DM79" }));
+            }
+            other => panic!("expected ToolCalls, got {other:?}"),
+        }
+    }
+
+    /// A tool_call whose `arguments` is a JSON STRING is parsed to an object,
+    /// reusing `parse_ollama_tool_call`'s Fix C tolerance.
+    #[test]
+    fn stream_tool_call_string_encoded_args_are_parsed() {
+        let events = recorder();
+        let sink = recording_sink(&events);
+        let mut acc = OllamaStreamAccumulator::new();
+
+        let ndjson = concat!(
+            "{\"message\":{\"tool_calls\":[{\"function\":{\"name\":\"find_stations\",\"arguments\":\"{\\\"grid\\\":\\\"DM79\\\"}\"}}]},\"done\":false}\n",
+            "{\"message\":{\"content\":\"\"},\"done\":true}\n",
+        );
+        acc.feed(ndjson.as_bytes(), &sink).unwrap();
+
+        match acc.into_turn() {
+            ModelTurn::ToolCalls(calls) => {
+                assert_eq!(calls[0].name, "find_stations");
+                assert!(
+                    calls[0].args.is_object(),
+                    "string-encoded args must be parsed to an object; got {:?}",
+                    calls[0].args
+                );
+                assert_eq!(calls[0].args["grid"], "DM79");
+            }
+            other => panic!("expected ToolCalls, got {other:?}"),
+        }
+    }
+
+    /// Tool calls that arrive across SEPARATE chunks are all collected, in order.
+    #[test]
+    fn stream_multiple_tool_calls_across_chunks() {
+        let events = recorder();
+        let sink = recording_sink(&events);
+        let mut acc = OllamaStreamAccumulator::new();
+
+        let ndjson = concat!(
+            "{\"message\":{\"tool_calls\":[{\"function\":{\"name\":\"a\",\"arguments\":{\"x\":1}}}]},\"done\":false}\n",
+            "{\"message\":{\"tool_calls\":[{\"function\":{\"name\":\"b\",\"arguments\":{}}}]},\"done\":false}\n",
+            "{\"message\":{\"content\":\"\"},\"done\":true}\n",
+        );
+        acc.feed(ndjson.as_bytes(), &sink).unwrap();
+
+        match acc.into_turn() {
+            ModelTurn::ToolCalls(calls) => {
+                assert_eq!(calls.len(), 2);
+                assert_eq!(calls[0].name, "a");
+                assert_eq!(calls[0].args, json!({ "x": 1 }));
+                assert_eq!(calls[1].name, "b");
+                assert_eq!(calls[1].args, json!({}));
+            }
+            other => panic!("expected ToolCalls, got {other:?}"),
+        }
+    }
+
+    /// The `done` line's `prompt_eval_count` + `eval_count` are captured and
+    /// exposed via `counts()`.
+    #[test]
+    fn stream_done_line_captures_counts() {
+        let events = recorder();
+        let sink = recording_sink(&events);
+        let mut acc = OllamaStreamAccumulator::new();
+
+        let ndjson = concat!(
+            "{\"message\":{\"content\":\"hi\"},\"done\":false}\n",
+            "{\"message\":{\"content\":\"\"},\"done\":true,\"prompt_eval_count\":1234,\"eval_count\":56}\n",
+        );
+        assert!(acc.feed(ndjson.as_bytes(), &sink).unwrap());
+        assert_eq!(acc.counts(), Some((1234, 56)));
+    }
+
+    /// A `done` line missing the counts yields `None` (meter stays hidden).
+    #[test]
+    fn stream_done_line_without_counts_is_none() {
+        let events = recorder();
+        let sink = recording_sink(&events);
+        let mut acc = OllamaStreamAccumulator::new();
+
+        let ndjson = "{\"message\":{\"content\":\"hi\"},\"done\":true}\n";
+        acc.feed(ndjson.as_bytes(), &sink).unwrap();
+        assert_eq!(acc.counts(), None);
+    }
+
+    /// A single NDJSON line split across TWO feed() calls at an arbitrary byte
+    /// boundary reassembles into one complete line.
+    #[test]
+    fn stream_line_split_across_feeds_reassembles() {
+        let events = recorder();
+        let sink = recording_sink(&events);
+        let mut acc = OllamaStreamAccumulator::new();
+
+        let full = "{\"message\":{\"content\":\"hello operator\"},\"done\":false}\n";
+        let bytes = full.as_bytes();
+        let split = 20; // arbitrary mid-line byte offset
+        // First half carries no complete line yet.
+        assert!(!acc.feed(&bytes[..split], &sink).unwrap());
+        assert!(assistant_deltas(&events).is_empty(), "no delta until the line completes");
+        // Second half completes the line.
+        assert!(!acc.feed(&bytes[split..], &sink).unwrap());
+        assert_eq!(assistant_deltas(&events), vec!["hello operator".to_string()]);
+    }
+
+    /// A multi-byte UTF-8 codepoint split across two feed() calls decodes intact
+    /// (mirrors the SSE mid-codepoint test). The 'é' (U+00E9) is 0xC3 0xA9.
+    #[test]
+    fn stream_multibyte_codepoint_split_across_feeds_decodes_intact() {
+        let events = recorder();
+        let sink = recording_sink(&events);
+        let mut acc = OllamaStreamAccumulator::new();
+
+        let full = "{\"message\":{\"content\":\"café\"},\"done\":false}\n";
+        let bytes = full.as_bytes();
+        // Find the byte index of the first byte of 'é' (0xC3) and split BETWEEN
+        // its two UTF-8 bytes so the boundary bisects the codepoint.
+        let pos = bytes.iter().position(|&b| b == 0xC3).expect("é first byte");
+        assert!(!acc.feed(&bytes[..pos + 1], &sink).unwrap());
+        assert!(!acc.feed(&bytes[pos + 1..], &sink).unwrap());
+        assert_eq!(
+            assistant_deltas(&events),
+            vec!["café".to_string()],
+            "the é must decode intact across the chunk boundary, not as U+FFFD"
+        );
+    }
+
+    /// `finish` flushes a trailing `done` line sent WITHOUT a terminating newline
+    /// so its content delta and counts are not dropped.
+    #[test]
+    fn stream_finish_flushes_unterminated_trailing_line() {
+        let events = recorder();
+        let sink = recording_sink(&events);
+        let mut acc = OllamaStreamAccumulator::new();
+
+        // No trailing newline on the final line.
+        let ndjson = "{\"message\":{\"content\":\"tail\"},\"done\":true,\"prompt_eval_count\":7,\"eval_count\":2}";
+        // feed sees no complete line (no newline) → returns false.
+        assert!(!acc.feed(ndjson.as_bytes(), &sink).unwrap());
+        assert!(assistant_deltas(&events).is_empty(), "nothing flushed until finish()");
+        acc.finish(&sink).unwrap();
+        assert_eq!(assistant_deltas(&events), vec!["tail".to_string()]);
+        assert_eq!(acc.counts(), Some((7, 2)));
+    }
+
+    /// An oversized un-terminated line (no newline, past the pending cap) → a
+    /// Transport error rather than unbounded memory growth.
+    #[test]
+    fn stream_oversized_unterminated_line_errors() {
+        let events = recorder();
+        let sink = recording_sink(&events);
+        let mut acc = OllamaStreamAccumulator::new();
+
+        // A megabyte-plus of non-newline bytes with no line delimiter.
+        let big = vec![b'x'; MAX_PENDING_LINE_BYTES + 1];
+        let err = acc.feed(&big, &sink).unwrap_err();
+        assert!(
+            matches!(err, ProviderError::Transport(_)),
+            "oversized un-terminated line must be a Transport error; got {err:?}"
+        );
+    }
+
+    /// Accumulated output past the total cap → a Transport error. A single
+    /// complete line whose content delta exceeds the cap trips it on apply.
+    #[test]
+    fn stream_total_output_cap_errors() {
+        let events = recorder();
+        let sink = recording_sink(&events);
+        let mut acc = OllamaStreamAccumulator::new();
+
+        // Build one complete line whose content string exceeds the total cap.
+        let huge = "z".repeat(MAX_TOTAL_OUTPUT_BYTES + 1);
+        let line = format!("{{\"message\":{{\"content\":\"{huge}\"}},\"done\":false}}\n");
+        let err = acc.feed(line.as_bytes(), &sink).unwrap_err();
+        assert!(
+            matches!(err, ProviderError::Transport(_)),
+            "exceeding the total-output cap must be a Transport error; got {err:?}"
+        );
     }
 }
