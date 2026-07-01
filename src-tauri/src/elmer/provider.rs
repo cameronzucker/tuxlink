@@ -34,6 +34,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use tuxlink_agent_frontend::{
+    anthropic_provider::{is_anthropic_endpoint, AnthropicProvider},
     egress::{build_vetted_client, EgressError},
     endpoint::{AgentEndpoint, LoopbackEndpoint},
     provider::{ApiKey, OpenAiProvider},
@@ -47,28 +48,44 @@ use tuxlink_agent_runner::{
 // ---------------------------------------------------------------------------
 
 /// A [`Provider`] that redacts every message in the conversation before
-/// forwarding to the inner [`OpenAiProvider`].
+/// forwarding to the inner model provider.
 ///
-/// Construct via [`ElmerProvider::new`]. The inner provider does the actual
-/// HTTP POST; this wrapper is purely a redaction pass.
+/// The inner provider is selected by endpoint host at construction time:
+/// * `api.anthropic.com` → [`AnthropicProvider`] (native Messages API).
+/// * All other endpoints → [`OpenAiProvider`] (OpenAI-compatible `/v1/chat/completions`).
+///
+/// Construct via [`ElmerProvider::new`] (loopback) or [`ElmerProvider::new_vetted`]
+/// (SSRF-guarded vetted client, preferred for remote endpoints). The inner
+/// provider does the actual HTTP POST; this wrapper is purely a redaction pass.
 pub struct ElmerProvider {
-    inner: OpenAiProvider,
+    /// The concrete model adapter, selected by endpoint at build time.
+    inner: Box<dyn Provider + Send + Sync>,
 }
 
 impl ElmerProvider {
-    /// Construct a redacting provider.
+    /// Construct a redacting provider for a loopback endpoint.
+    ///
+    /// Loopback endpoints are always OpenAI-compatible (local llama.cpp / Ollama);
+    /// `AnthropicProvider` is never chosen for loopback.
     ///
     /// * `endpoint` — pre-validated loopback endpoint (SEC-5, AC-7).
     /// * `model` — model identifier string (e.g. `"llama3"`, `"mistral"`).
     /// * `api_key` — optional bearer token (usually `None` for local ollama/llama.cpp).
     pub fn new(endpoint: LoopbackEndpoint, model: String, api_key: Option<String>) -> Self {
         let client = reqwest::Client::new();
-        let inner = OpenAiProvider::new(client, endpoint.0, model, api_key.map(ApiKey::new));
+        let inner: Box<dyn Provider + Send + Sync> = Box::new(
+            OpenAiProvider::new(client, endpoint.0, model, api_key.map(ApiKey::new))
+        );
         Self { inner }
     }
 
-    /// Build a redacting provider whose inner [`OpenAiProvider`] uses the
-    /// SSRF-guarded vetted client from [`build_vetted_client`].
+    /// Build a redacting provider whose inner adapter uses the SSRF-guarded
+    /// vetted client from [`build_vetted_client`].
+    ///
+    /// The inner adapter is selected by endpoint host:
+    /// * `api.anthropic.com` → [`AnthropicProvider`] (native Messages API with
+    ///   `x-api-key` auth and `/v1/messages` wire format).
+    /// * All other endpoints → [`OpenAiProvider`] (OpenAI-compatible).
     ///
     /// Calls `build_vetted_client(&endpoint, system_resolver)` to resolve the
     /// endpoint host (if named), vet every resolved IP against the
@@ -80,8 +97,8 @@ impl ElmerProvider {
     ///   [`AgentEndpoint::parse`] (rejects link-local/metadata literals and
     ///   credentials-in-URL at config time; this constructor adds the
     ///   fetch-time DNS-rebind gate).
-    /// * `model` — model identifier string (e.g. `"llama3"`, `"gpt-4o"`).
-    /// * `api_key` — optional bearer token (usually `None` for local ollama/llama.cpp).
+    /// * `model` — model identifier string (e.g. `"llama3"`, `"gpt-4o"`, `"claude-haiku-4-5"`).
+    /// * `api_key` — optional credential (`x-api-key` for Anthropic; bearer for others).
     ///
     /// Returns `Err(EgressError)` if the endpoint's resolved IP is denied by
     /// the egress policy (e.g. a named host resolving to `169.254.169.254`).
@@ -118,7 +135,16 @@ impl ElmerProvider {
     {
         let client = build_vetted_client(&endpoint, resolve).await?;
         let url = endpoint.0;
-        let inner = OpenAiProvider::new(client, url, model, api_key);
+
+        // Select provider by endpoint host. Both share the SAME vetted client
+        // and go through the SAME egress gate — the selection is purely about
+        // which wire protocol to use.
+        let inner: Box<dyn Provider + Send + Sync> = if is_anthropic_endpoint(url.as_str()) {
+            Box::new(AnthropicProvider::new(client, url, model, api_key))
+        } else {
+            Box::new(OpenAiProvider::new(client, url, model, api_key))
+        };
+
         Ok(Self { inner })
     }
 }
@@ -542,6 +568,51 @@ mod tests {
         assert!(
             matches!(result, Err(EgressError::HostDenied(_))),
             "new_vetted must propagate EgressError::HostDenied when the resolver returns a forbidden IP"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Provider selection: Anthropic vs OpenAI by endpoint host
+    // -----------------------------------------------------------------------
+
+    /// `new_vetted` for an api.anthropic.com endpoint succeeds and builds
+    /// the AnthropicProvider path. Build only — no network I/O (the resolver
+    /// seam returns a public IP; the result is always an ElmerProvider).
+    ///
+    /// We cannot inspect the `inner` field (it is `Box<dyn Provider>`) but we
+    /// CAN assert the build succeeds for the Anthropic endpoint and that it
+    /// also implements `Provider`. The `is_anthropic_endpoint` function (tested
+    /// directly in `tuxlink_agent_frontend::anthropic_provider::tests`) is the
+    /// per-host selector; this test ensures the full `new_vetted_with_resolver`
+    /// path reaches `Ok` for the Anthropic host.
+    #[tokio::test]
+    async fn new_vetted_builds_for_anthropic_endpoint() {
+        use tuxlink_agent_frontend::anthropic_provider::is_anthropic_endpoint;
+
+        // Verify the selector itself first (pure function, no IO).
+        assert!(
+            is_anthropic_endpoint("https://api.anthropic.com/v1/messages"),
+            "api.anthropic.com must be identified as an Anthropic endpoint"
+        );
+        assert!(
+            !is_anthropic_endpoint("https://api.openai.com/v1/chat/completions"),
+            "api.openai.com must NOT be identified as an Anthropic endpoint"
+        );
+
+        // Build through new_vetted_with_resolver — resolver returns a public IP.
+        let ep = AgentEndpoint::parse("https://api.anthropic.com/v1/messages")
+            .expect("Anthropic AgentEndpoint must parse");
+        let public: std::net::SocketAddr = "18.208.0.0:443".parse().unwrap();
+        let result = ElmerProvider::new_vetted_with_resolver(
+            ep,
+            "claude-haiku-4-5".into(),
+            Some(ApiKey::new("sk-ant-x")),
+            fixed_resolver(vec![public]),
+        )
+        .await;
+        assert!(
+            result.is_ok(),
+            "new_vetted must succeed for api.anthropic.com with a public IP (build returned Err)"
         );
     }
 }

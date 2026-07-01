@@ -44,9 +44,11 @@ describe('PRESETS', () => {
     ]);
   });
 
-  it('the anthropic preset targets the OpenAI-compat endpoint with paygo tier', () => {
+  it('the anthropic preset targets the native Messages API endpoint with paygo tier', () => {
     const a = PRESETS.find((p) => p.id === 'anthropic');
-    expect(a?.endpoint).toBe('https://api.anthropic.com/v1/chat/completions');
+    // Anthropic uses its native Messages API, NOT the OpenAI-compat endpoint.
+    // The Rust backend selects AnthropicProvider for api.anthropic.com.
+    expect(a?.endpoint).toBe('https://api.anthropic.com/v1/messages');
     expect(a?.tier).toBe('paygo');
     expect(a?.defaultModel).toBe('claude-haiku-4-5');
     expect(a?.keyPageUrl).toMatch(/^https:\/\/console\.anthropic\.com\//);

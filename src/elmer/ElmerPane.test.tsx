@@ -2317,7 +2317,7 @@ describe('<ElmerPane> T10 -- persistent provider-class footer indicator', () => 
   it('footer indicator for paygo provider (Anthropic) includes "cloud" or provider class label', async () => {
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
       if (cmd === 'elmer_config_read') return {
-        agentEndpoint: 'https://api.anthropic.com/v1/chat/completions',
+        agentEndpoint: 'https://api.anthropic.com/v1/messages',
         agentModel: 'claude-haiku-4-5',
         keyStatus: 'present',
         agentTurnTimeoutSecs: 900,
@@ -3032,7 +3032,7 @@ describe('<ElmerPane> T11 credential-seam -- Task 6 Detect coexistence: detect s
     // Switch the endpoint to Anthropic (different origin from the loaded OpenAI config).
     const endpointInput = screen.getByTestId('elmer-endpoint-input');
     fireEvent.change(endpointInput, {
-      target: { value: 'https://api.anthropic.com/v1/chat/completions' },
+      target: { value: 'https://api.anthropic.com/v1/messages' },
     });
 
     // Type the new provider's key into the now-visible absent-key input
