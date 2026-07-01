@@ -3007,8 +3007,10 @@ mod tests {
     /// section, ensuring `onboarded: true` reaches disk and survives the next launch.
     #[test]
     fn elmer_config_is_default_reacts_to_onboarded_flag() {
-        let mut cfg = ElmerConfig::default();
-        cfg.onboarded = true;
+        let cfg = ElmerConfig {
+            onboarded: true,
+            ..ElmerConfig::default()
+        };
         assert!(
             !cfg.is_default(),
             "is_default() must return false when onboarded=true (even with default \
@@ -3061,8 +3063,10 @@ mod tests {
     /// of the `onboarded` flag value.
     #[test]
     fn elmer_config_is_default_false_when_content_differs() {
-        let mut cfg = ElmerConfig::default();
-        cfg.agent_endpoint = "https://api.openai.com/v1/chat/completions".into();
+        let cfg = ElmerConfig {
+            agent_endpoint: "https://api.openai.com/v1/chat/completions".into(),
+            ..ElmerConfig::default()
+        };
         assert!(!cfg.is_default(), "non-default endpoint must make is_default() return false");
     }
 }
