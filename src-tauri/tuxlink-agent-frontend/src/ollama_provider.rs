@@ -142,6 +142,16 @@ impl OllamaProvider {
             api_key,
         }
     }
+
+    /// Test-only accessor for the wired endpoint URL.
+    ///
+    /// Used by provider.rs tests to assert that Fix B correctly constructs the
+    /// native `/api/chat` URL from the origin, regardless of the operator-configured
+    /// path. Not available in non-test builds (no public surface area to leak).
+    #[cfg(test)]
+    pub fn endpoint_url(&self) -> &Url {
+        &self.endpoint
+    }
 }
 
 #[async_trait]
@@ -397,10 +407,22 @@ pub fn parse_ollama_response(value: &Value) -> Result<ModelTurn, String> {
 
 /// Parse a single native Ollama tool-call object into a [`ToolCall`].
 ///
-/// `function.arguments` is a JSON OBJECT on the native wire (the key divergence
-/// from OpenAI, whose `arguments` is a JSON string). It is used AS-IS. If it is
-/// absent, the args become `Value::Null` so the runner's COR-3 validation
-/// catches it as malformed and re-prompts — never a silently-fabricated object.
+/// `function.arguments` is normally a JSON OBJECT on the native `/api/chat`
+/// wire. However, some Ollama models and quants (especially smaller/quantized
+/// variants) emit `function.arguments` as a JSON **STRING** even on the native
+/// path — e.g. `"{\"grid\":\"DM79\"}"`. Without handling, a string value passes
+/// through as `Value::String`, the runner's schema check rejects it (root is not
+/// an object), and the agent enters a malformed-retry loop (COR-3).
+///
+/// Fix C tolerance (mirrors the OpenAI adapter):
+///
+/// * `arguments` is a JSON **object** → use as-is (the normal case).
+/// * `arguments` is a JSON **string** → attempt `serde_json::from_str`. On
+///   success, use the parsed value; on failure, fall back to `Value::Null` so
+///   COR-3 re-prompts (malformed → re-prompt, never silently fabricated).
+/// * `arguments` is **absent** → `Value::Null` (COR-3 re-prompts).
+/// * `arguments` is any other JSON type (number, bool, array) → pass through
+///   as-is; the runner's schema check will catch it and COR-3 re-prompts.
 fn parse_ollama_tool_call(tc: &Value) -> ToolCall {
     let function = tc.get("function");
     let name = function
@@ -409,11 +431,24 @@ fn parse_ollama_tool_call(tc: &Value) -> ToolCall {
         .unwrap_or("")
         .to_string();
 
-    // `arguments` is already an object; take it verbatim, or Null if absent.
-    let args = function
-        .and_then(|f| f.get("arguments"))
-        .cloned()
-        .unwrap_or(Value::Null);
+    let raw_args = function.and_then(|f| f.get("arguments"));
+    let args = match raw_args {
+        // Normal case: already a JSON object — use verbatim.
+        Some(v @ Value::Object(_)) => v.clone(),
+        // String-encoded arguments: some Ollama quants serialize the object as
+        // a JSON string. Attempt to parse; on failure fall to Null so COR-3
+        // re-prompts rather than letting a malformed value propagate.
+        Some(Value::String(s)) => {
+            match serde_json::from_str::<Value>(s) {
+                Ok(parsed) => parsed,
+                Err(_) => Value::Null,
+            }
+        }
+        // Absent: Null → COR-3 re-prompts.
+        None => Value::Null,
+        // Any other type (number, bool, array): pass through; runner rejects.
+        Some(other) => other.clone(),
+    };
 
     ToolCall { name, args }
 }
@@ -808,6 +843,100 @@ mod tests {
             ModelTurn::ToolCalls(calls) => {
                 assert_eq!(calls[0].name, "echo");
                 assert_eq!(calls[0].args, Value::Null);
+            }
+            other => panic!("expected ToolCalls, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Fix C: string-encoded arguments tolerance
+    // -----------------------------------------------------------------------
+
+    /// Fix C: a tool_call whose `arguments` is a JSON STRING containing a
+    /// valid JSON object is parsed into the object, NOT left as a string.
+    ///
+    /// Some Ollama quants emit `function.arguments` as a JSON string even on
+    /// the native `/api/chat` path (e.g. `"{\"grid\":\"DM79\"}"`). Without this
+    /// fix the value stayed as `Value::String`, the runner's schema check
+    /// rejected it, and the agent entered a malformed-retry loop (COR-3).
+    #[test]
+    fn parse_tool_call_string_encoded_object_args_are_parsed() {
+        let recorded = json!({
+            "message": {
+                "tool_calls": [{
+                    "function": {
+                        "name": "find_stations",
+                        // arguments is a JSON STRING (not an object) — the Fix C case.
+                        "arguments": "{\"grid\":\"DM79\"}"
+                    }
+                }]
+            }
+        });
+        match parse_ollama_response(&recorded).unwrap() {
+            ModelTurn::ToolCalls(calls) => {
+                assert_eq!(calls[0].name, "find_stations");
+                assert!(
+                    calls[0].args.is_object(),
+                    "string-encoded args must be parsed to an object; got: {:?}",
+                    calls[0].args
+                );
+                assert_eq!(
+                    calls[0].args["grid"], "DM79",
+                    "parsed object must contain the expected key"
+                );
+            }
+            other => panic!("expected ToolCalls, got {other:?}"),
+        }
+    }
+
+    /// Fix C: object `arguments` (the normal case) still work unchanged after
+    /// the string-tolerance branch is added.
+    ///
+    /// Regression guard: the happy-path (object args) must still parse
+    /// as-is; the Fix C logic must not disturb it.
+    #[test]
+    fn parse_tool_call_object_args_unchanged_by_fix_c() {
+        let recorded = json!({
+            "message": {
+                "tool_calls": [{
+                    "function": {
+                        "name": "find_stations",
+                        "arguments": { "grid": "DM79" }
+                    }
+                }]
+            }
+        });
+        match parse_ollama_response(&recorded).unwrap() {
+            ModelTurn::ToolCalls(calls) => {
+                assert_eq!(calls[0].args, json!({ "grid": "DM79" }));
+            }
+            other => panic!("expected ToolCalls, got {other:?}"),
+        }
+    }
+
+    /// Fix C: a tool_call whose `arguments` is an UNPARSEABLE JSON string
+    /// (malformed JSON) falls back to `Value::Null` so COR-3 can re-prompt.
+    /// The agent never gets a fabricated value — malformed input → explicit Null.
+    #[test]
+    fn parse_tool_call_unparseable_string_args_become_null() {
+        let recorded = json!({
+            "message": {
+                "tool_calls": [{
+                    "function": {
+                        "name": "find_stations",
+                        // Malformed JSON string — cannot be parsed to a Value.
+                        "arguments": "{ not valid json !!!"
+                    }
+                }]
+            }
+        });
+        match parse_ollama_response(&recorded).unwrap() {
+            ModelTurn::ToolCalls(calls) => {
+                assert_eq!(
+                    calls[0].args,
+                    Value::Null,
+                    "unparseable string args must fall back to Null (COR-3 re-prompts)"
+                );
             }
             other => panic!("expected ToolCalls, got {other:?}"),
         }

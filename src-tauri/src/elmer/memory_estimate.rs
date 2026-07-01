@@ -53,21 +53,24 @@ use crate::elmer::model_config_state::ElmerModelConfigState;
 
 /// Fixed compute-headroom added to every estimate (in GB, f64).
 ///
-/// # Justification (D3 — bias-safe, flash-attention)
+/// # Justification (D3 — bias-safe)
 ///
-/// Ollama with `OLLAMA_FLASH_ATTENTION=1` collapses the prefill peak from a
-/// per-token matrix (ctx × head_dim × heads × layers) to a small rolling
-/// attention buffer — roughly O(head_dim) rather than O(ctx).  This makes the
-/// prefill peak a small constant, NOT a function of `num_ctx`.
+/// Actual runtime footprint exceeds weights + KV by a roughly-constant margin:
+/// the inference graph / prefill compute buffer (with `OLLAMA_FLASH_ATTENTION=1`
+/// this is a small rolling attention buffer, ~O(head_dim), not O(ctx)), llama.cpp
+/// allocator overhead, KV-cache fragmentation, and the Tauri+WebKit host process.
+/// A fixed headroom covers this without trying to model it precisely.
 ///
-/// The R2 crash (gemma4 MoE, 32k ctx, 32 GB host) showed a ~2 GB gap between
-/// the predicted KV-only total and the OOM point.  Other sources (llama.cpp
-/// allocator overhead, KV cache fragmentation, Tauri+WebKit memory) contribute
-/// a small additional constant.
+/// NOTE (2026-07-01): an earlier version of this comment justified the constant
+/// via "the R2 gemma4 crash was a ~2 GB OOM gap." That was WRONG — operator
+/// ground truth established the R2 crash is a deterministic gemma-SPECIFIC fault
+/// (not OOM, not resource exhaustion; heavier non-gemma models run fine). So the
+/// headroom is NOT anchored to that crash; it is a general allocator/compute-graph
+/// safety margin, still valued for the bias-safe reason below.
 ///
 /// We use 3.0 GB:
-/// - It exceeds the observed R2 flash-attn prefill spike (~2 GB).
-/// - It covers allocator overhead and VRAM/GTT headroom on unified-memory Pis.
+/// - It comfortably exceeds a typical flash-attn prefill compute buffer.
+/// - It covers allocator overhead and VRAM/GTT headroom on unified-memory hosts.
 /// - It is large enough that no plausible model/ctx combination will produce a
 ///   spurious "fits=true" when the host is within ~3 GB of the predicted total.
 ///
@@ -158,9 +161,9 @@ pub struct MemoryEstimate {
 /// - `geo` — model geometry from Ollama.
 /// - `num_ctx` — context window in tokens.  Caller-supplied; may exceed
 ///   `geo.trained_max_ctx`.
-/// - `kv_dtype_bytes` — bytes per KV element: 2 for f16, 1 for q8_0.
-///   The R2 default is q8_0 (`OLLAMA_KV_CACHE_TYPE=q8_0`), so callers should
-///   pass `1` unless the operator has set `OLLAMA_KV_CACHE_TYPE=f16`.
+/// - `kv_dtype_bytes` — bytes per KV element: 2 for f16 (conservative default),
+///   1 for q8_0. A stock Ollama uses f16 unless `OLLAMA_KV_CACHE_TYPE=q8_0` is
+///   set; callers should pass `1` only when the operator has confirmed q8_0.
 ///
 /// # Bias safety
 ///
@@ -515,7 +518,8 @@ pub fn derive_ollama_origin(endpoint: &str) -> Result<(AgentEndpoint, String), S
 /// - `num_ctx` — the context window in tokens.
 /// - `endpoint` — the currently configured Elmer endpoint string.  The origin
 ///   is extracted from it to construct the Ollama API URLs.
-/// - `kv_dtype_bytes` — bytes per KV element: 1 for q8_0 (default), 2 for f16.
+/// - `kv_dtype_bytes` — bytes per KV element: 2 for f16 (default, conservative),
+///   1 for q8_0. Omit this field to use the conservative f16 default.
 ///
 /// # Errors
 ///
@@ -539,7 +543,14 @@ pub async fn elmer_estimate_memory(
     kv_dtype_bytes: Option<u32>,
     _state: State<'_, Arc<ElmerModelConfigState>>,
 ) -> Result<MemoryEstimateDto, String> {
-    let kv_bytes = kv_dtype_bytes.unwrap_or(1); // default: q8_0 = 1 byte
+    // Fix E: default to 2 (f16), the conservative choice. A stock Ollama uses
+    // f16 KV cache unless OLLAMA_KV_CACHE_TYPE=q8_0 is set explicitly. The
+    // prior default of 1 (q8_0) under-counted KV by 2× for stock installs,
+    // producing spurious fits=true results (violates the D3 bias-safe goal).
+    // The caller (GetKeyCard T8 frontend) may pass kvDtypeBytes=1 explicitly
+    // when the operator has confirmed q8_0; that override is honored via the
+    // Some(_) path. Absent the field → f16 (safe conservative default).
+    let kv_bytes = kv_dtype_bytes.unwrap_or(2); // default: f16 = 2 bytes (conservative)
 
     // Derive the Ollama origin and build a vetted reqwest client.
     let (ep, origin) = derive_ollama_origin(&endpoint)?;
@@ -736,6 +747,119 @@ mod tests {
             "total {:.4} GB must NOT fit in {:.4} GB usable (over boundary): ctx={}",
             est_over.total_gb, usable, ctx_just_over
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Fix E: default kv_dtype_bytes is f16 (2), not q8_0 (1)
+    // -----------------------------------------------------------------------
+
+    /// Fix E: the Tauri command's default for `kv_dtype_bytes` is 2 (f16),
+    /// the conservative choice. Stock Ollama uses f16 unless
+    /// `OLLAMA_KV_CACHE_TYPE=q8_0` is set explicitly. The prior default of 1
+    /// under-counted KV by 2×, producing spurious fits=true on stock installs.
+    ///
+    /// This test uses estimate_inner with kv_dtype_bytes=2 (the new default)
+    /// and verifies the KV footprint is double what kv_dtype_bytes=1 produces —
+    /// i.e. it exercises the conservative path that was previously skipped by
+    /// the wrong default.
+    #[tokio::test]
+    async fn default_kv_dtype_is_f16_not_q8() {
+        let mut server = mockito::Server::new_async().await;
+
+        let show_body = serde_json::json!({
+            "model_info": {
+                "general.architecture": "llama",
+                "llama.block_count": 32,
+                "llama.attention.head_count": 32,
+                "llama.attention.head_count_kv": 8,
+                "llama.attention.key_length": 128,
+                "llama.context_length": 131072,
+                "llama.embedding_length": 4096
+            }
+        });
+        let tags_body = serde_json::json!({
+            "models": [{ "name": "llama3:8b", "size": 4661000000u64 }]
+        });
+
+        let _m1 = server
+            .mock("POST", "/api/show")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(show_body.to_string())
+            .create_async()
+            .await;
+        let _m2 = server
+            .mock("GET", "/api/tags")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(tags_body.to_string())
+            .create_async()
+            .await;
+        // Second set of mocks for the q8_0 call.
+        let _m3 = server
+            .mock("POST", "/api/show")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(show_body.to_string())
+            .create_async()
+            .await;
+        let _m4 = server
+            .mock("GET", "/api/tags")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(tags_body.to_string())
+            .create_async()
+            .await;
+
+        let client = reqwest::Client::new();
+        let origin = server.url();
+
+        // f16 (new default = 2).
+        let dto_f16 = estimate_inner(
+            "llama3:8b",
+            8192,
+            &client,
+            &origin,
+            2, // f16 — what the Tauri command default now produces
+            &|| Ok(32.0),
+        )
+        .await
+        .expect("estimate_inner with f16 must succeed");
+
+        // q8_0 (old/wrong default = 1) — should be half the KV.
+        let dto_q8 = estimate_inner(
+            "llama3:8b",
+            8192,
+            &client,
+            &origin,
+            1, // q8_0
+            &|| Ok(32.0),
+        )
+        .await
+        .expect("estimate_inner with q8_0 must succeed");
+
+        // f16 KV must be exactly 2× q8_0 KV.
+        let ratio = dto_f16.kv_cache_gb / dto_q8.kv_cache_gb;
+        assert!(
+            (ratio - 2.0).abs() < 1e-9,
+            "f16 KV (new default) must be exactly 2× q8_0 KV; ratio={ratio}"
+        );
+
+        // Weights and headroom are dtype-independent.
+        assert_eq!(
+            dto_f16.weights_gb, dto_q8.weights_gb,
+            "weights must be independent of kv_dtype_bytes"
+        );
+
+        // The new f16 default reports a larger total — conservative, correct.
+        assert!(
+            dto_f16.total_gb > dto_q8.total_gb,
+            "f16 total must exceed q8_0 total (conservative)"
+        );
+
+        // Verify DTO carries the kv_dtype_bytes that was passed in.
+        assert_eq!(dto_f16.kv_dtype_bytes, 2, "DTO must echo back kv_dtype_bytes=2");
+        assert_eq!(dto_q8.kv_dtype_bytes, 1, "DTO must echo back kv_dtype_bytes=1");
     }
 
     // -----------------------------------------------------------------------

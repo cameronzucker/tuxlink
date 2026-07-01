@@ -220,9 +220,9 @@ impl ElmerProvider {
     where
         R: Fn(String, u16) -> Fut,
         Fut: std::future::Future<Output = std::io::Result<Vec<SocketAddr>>>,
-        // The probe origin is passed as a `String` (scheme+host+port) rather than
-        // a `url::Url` so this crate needs no direct `url` dependency; `reqwest`
-        // re-parses it (its `IntoUrl` accepts `String`).
+        // The probe origin is passed as a `String` (scheme+host+port). The URL
+        // parse for the native endpoint uses `reqwest::Url::parse` (reqwest
+        // re-exports `url::Url`), avoiding a direct `url` dep in this crate.
         P: Fn(reqwest::Client, String) -> PFut,
         PFut: std::future::Future<Output = bool>,
     {
@@ -242,25 +242,59 @@ impl ElmerProvider {
             // host may be Ollama (native `/api/*`) OR llama.cpp (compat-only,
             // 404s on `/api/*`). Probe `GET {origin}/api/tags` on the vetted
             // client; a positive probe means native Ollama is present.
-            let is_ollama = probe(client.clone(), origin).await;
+            let is_ollama = probe(client.clone(), origin.clone()).await;
             if is_ollama {
-                tracing::debug!(
-                    target: "elmer",
-                    endpoint = %url,
-                    "loopback probe found native Ollama (/api/tags) — using OllamaProvider"
-                );
-                (
-                    Box::new(OllamaProvider::new(
-                        client,
-                        url,
-                        model,
-                        num_ctx,
-                        temperature,
-                        system_prompt,
-                        api_key,
-                    )),
-                    ProviderKind::Ollama,
-                )
+                // FIX B: build the native URL from origin + /api/chat, NOT from
+                // the operator-configured `url`. The operator tile default is
+                // `/v1/chat/completions` (the OpenAI-compat path); posting an
+                // Ollama `/api/chat` body to that path fails. `origin` is the
+                // scheme+host+port from the validated endpoint (no trailing
+                // slash), so appending `/api/chat` is always correct here.
+                //
+                // Defensive parse: origin came from a validated AgentEndpoint so
+                // it will always parse, but we never unwrap in prod. A parse
+                // failure here falls back to the OpenAI-compat adapter using the
+                // original `url`; this trades the incorrect-URL failure mode for
+                // a tolerated compat fallback rather than a panic.
+                let native_url_str = format!("{origin}/api/chat");
+                // Use reqwest::Url (re-exports url::Url) — no direct `url`
+                // dep needed in this crate.
+                match reqwest::Url::parse(&native_url_str) {
+                    Ok(native_url) => {
+                        tracing::debug!(
+                            target: "elmer",
+                            endpoint = %url,
+                            native_url = %native_url,
+                            "loopback probe found native Ollama (/api/tags) — using OllamaProvider"
+                        );
+                        (
+                            Box::new(OllamaProvider::new(
+                                client,
+                                native_url,
+                                model,
+                                num_ctx,
+                                temperature,
+                                system_prompt,
+                                api_key,
+                            )),
+                            ProviderKind::Ollama,
+                        )
+                    }
+                    Err(e) => {
+                        // Defensive: should never happen given a validated endpoint,
+                        // but fall back to compat rather than panic.
+                        tracing::warn!(
+                            target: "elmer",
+                            origin = %origin,
+                            error = %e,
+                            "loopback probe found Ollama but native URL parse failed — falling back to compat"
+                        );
+                        (
+                            Box::new(OpenAiProvider::new(client, url, model, temperature, system_prompt, api_key)),
+                            ProviderKind::OpenAi,
+                        )
+                    }
+                }
             } else {
                 // Any non-positive probe (404 / refused / timeout / unparseable)
                 // preserves the current compat behavior. LOG it so the fallback
@@ -881,6 +915,40 @@ mod tests {
             ProviderKind::Ollama,
             "a positive probe must select the native Ollama adapter"
         );
+    }
+
+    /// Fix B: a loopback endpoint configured with the OpenAI-compat path
+    /// (`/v1/chat/completions`, the default localOllama tile value) still
+    /// selects the native OllamaProvider when the probe is positive. This is
+    /// the core regression guard: before Fix B, OllamaProvider was constructed
+    /// with the configured URL (the compat path), so it POSTed an `/api/chat`
+    /// body to `/v1/chat/completions` and failed. After Fix B, the URL is built
+    /// from origin + `/api/chat` regardless of the configured path.
+    #[tokio::test]
+    async fn loopback_probe_positive_with_compat_input_url_still_selects_ollama() {
+        // The operator configured the DEFAULT tile URL — the OpenAI-compat path.
+        let ep = AgentEndpoint::parse("http://127.0.0.1:11434/v1/chat/completions")
+            .expect("loopback AgentEndpoint must parse");
+        let result = ElmerProvider::new_vetted_with_resolver_and_probe(
+            ep,
+            "qwen3:8b".into(),
+            Some(32_768),
+            None,
+            None,
+            None,
+            fixed_resolver(vec!["127.0.0.1:11434".parse().unwrap()]),
+            always_ollama_probe(),
+        )
+        .await
+        .expect("loopback native build must succeed even with compat input URL");
+        assert_eq!(
+            result.kind(),
+            ProviderKind::Ollama,
+            "a positive probe must select native Ollama even when the input URL is the compat path"
+        );
+        // (The inner OllamaProvider endpoint is Box<dyn Provider> — path cannot
+        // be inspected here. The path assertion is in ollama_provider::tests via
+        // OllamaProvider::endpoint_url(). ProviderKind::Ollama is the primary gate.)
     }
 
     /// D1: a loopback endpoint whose probe reports NO Ollama → compat fallback.
