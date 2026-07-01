@@ -692,7 +692,7 @@ where
     // All other OpenAI-compatible providers use `Authorization: Bearer`.
     // We detect Anthropic by the models URL host — the same selector used
     // by the provider adapter in `ElmerProvider::new_vetted_with_resolver`.
-    let is_anthropic = is_anthropic_endpoint(models_ep.url());
+    let is_anthropic = is_anthropic_endpoint(models_ep.url().as_str());
 
     let mut req = client.get(&models_url_str);
     if let Some(ref k) = key {

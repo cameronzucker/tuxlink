@@ -367,10 +367,18 @@ pub fn parse_anthropic_models_list(body: &str) -> Result<Vec<String>, String> {
 /// The selector is host-based: any endpoint on `api.anthropic.com` uses the
 /// native Messages API; all other endpoints fall through to `OpenAiProvider`.
 /// Pure — no I/O.
-pub fn is_anthropic_endpoint(endpoint: &Url) -> bool {
-    endpoint
-        .host_str()
-        .map(|h| h.eq_ignore_ascii_case("api.anthropic.com"))
+/// Host-based selector: true iff `endpoint` is the Anthropic Messages API host.
+///
+/// Takes `&str` (not `&Url`) so callers in crates that do not depend on the
+/// `url` crate directly — e.g. the main `tuxlink` crate — can select without
+/// importing `url::Url`. Parsing happens here, in the crate that owns `url`.
+pub fn is_anthropic_endpoint(endpoint: &str) -> bool {
+    Url::parse(endpoint)
+        .ok()
+        .and_then(|u| {
+            u.host_str()
+                .map(|h| h.eq_ignore_ascii_case("api.anthropic.com"))
+        })
         .unwrap_or(false)
 }
 
@@ -627,9 +635,8 @@ mod tests {
     /// Selector returns true for an api.anthropic.com endpoint.
     #[test]
     fn is_anthropic_endpoint_true_for_anthropic() {
-        let url = Url::parse("https://api.anthropic.com/v1/messages").unwrap();
         assert!(
-            is_anthropic_endpoint(&url),
+            is_anthropic_endpoint("https://api.anthropic.com/v1/messages"),
             "api.anthropic.com must be detected as Anthropic"
         );
     }
@@ -637,9 +644,8 @@ mod tests {
     /// Selector returns false for an OpenAI endpoint.
     #[test]
     fn is_anthropic_endpoint_false_for_openai() {
-        let url = Url::parse("https://api.openai.com/v1/chat/completions").unwrap();
         assert!(
-            !is_anthropic_endpoint(&url),
+            !is_anthropic_endpoint("https://api.openai.com/v1/chat/completions"),
             "api.openai.com must NOT be detected as Anthropic"
         );
     }
@@ -647,9 +653,8 @@ mod tests {
     /// Selector returns false for a loopback endpoint.
     #[test]
     fn is_anthropic_endpoint_false_for_loopback() {
-        let url = Url::parse("http://127.0.0.1:11434/v1/chat/completions").unwrap();
         assert!(
-            !is_anthropic_endpoint(&url),
+            !is_anthropic_endpoint("http://127.0.0.1:11434/v1/chat/completions"),
             "loopback must NOT be detected as Anthropic"
         );
     }

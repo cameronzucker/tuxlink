@@ -139,7 +139,7 @@ impl ElmerProvider {
         // Select provider by endpoint host. Both share the SAME vetted client
         // and go through the SAME egress gate — the selection is purely about
         // which wire protocol to use.
-        let inner: Box<dyn Provider + Send + Sync> = if is_anthropic_endpoint(&url) {
+        let inner: Box<dyn Provider + Send + Sync> = if is_anthropic_endpoint(url.as_str()) {
             Box::new(AnthropicProvider::new(client, url, model, api_key))
         } else {
             Box::new(OpenAiProvider::new(client, url, model, api_key))
@@ -588,20 +588,14 @@ mod tests {
     #[tokio::test]
     async fn new_vetted_builds_for_anthropic_endpoint() {
         use tuxlink_agent_frontend::anthropic_provider::is_anthropic_endpoint;
-        use url::Url;
 
         // Verify the selector itself first (pure function, no IO).
-        let anthropic_url =
-            Url::parse("https://api.anthropic.com/v1/messages").unwrap();
         assert!(
-            is_anthropic_endpoint(&anthropic_url),
+            is_anthropic_endpoint("https://api.anthropic.com/v1/messages"),
             "api.anthropic.com must be identified as an Anthropic endpoint"
         );
-
-        let openai_url =
-            Url::parse("https://api.openai.com/v1/chat/completions").unwrap();
         assert!(
-            !is_anthropic_endpoint(&openai_url),
+            !is_anthropic_endpoint("https://api.openai.com/v1/chat/completions"),
             "api.openai.com must NOT be identified as an Anthropic endpoint"
         );
 
