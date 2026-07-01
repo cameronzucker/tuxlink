@@ -18,9 +18,10 @@
  *     which routes through the existing keyring path on the Rust side.
  */
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { open as shellOpen } from '@tauri-apps/plugin-shell';
-import type { ProviderPreset, SetKey, KeyStatus } from './elmerModelConfig';
+import type { ProviderPreset, SetKey, KeyStatus, KeySource } from './elmerModelConfig';
+import type { DetectState } from './useElmer';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -34,6 +35,15 @@ export interface GetKeyCardProps {
     key: SetKey;
     agentTurnTimeoutSecs: number;
   }) => Promise<void>;
+  /**
+   * Detect callback (mirrors the one on ModelForm). Called with the preset's
+   * hardcoded endpoint and a KeySource derived from the current key state.
+   * This is SSRF-safe: the endpoint is always `preset.endpoint`, a compile-time
+   * constant — never a user-supplied or config-derived URL.
+   */
+  onDetect: (args: { agentEndpoint: string; keySource: KeySource }) => Promise<void>;
+  /** Detect result state (mirrors ModelForm's prop). */
+  detectState: DetectState;
   agentModel: string;
   agentTurnTimeoutSecs: number;
   /**
@@ -132,6 +142,8 @@ function getProviderCopy(presetId: string): ProviderStepCopy {
 export function GetKeyCard({
   preset,
   onSave,
+  onDetect,
+  detectState,
   agentModel,
   agentTurnTimeoutSecs,
   keyStatus,
@@ -155,6 +167,33 @@ export function GetKeyCard({
 
   // Whether we're in the "key already saved" state.
   const keySaved = keyStatus === 'present' && !replaceKeyMode;
+
+  // Build a KeySource for the Detect call — mirrors the logic in ModelForm's
+  // buildKeySource / buildSetKey, adapted to GetKeyCard's simpler key state:
+  //   - keySaved (stored key, operator hasn't entered a replacement): useStored.
+  //   - operator typed a new key (trimmed non-empty in replace or absent mode): inline.
+  //   - otherwise: none.
+  // Endpoint is always preset.endpoint (SSRF-safe constant — matches handleSave).
+  const buildKeySource = useCallback((): KeySource => {
+    if (keySaved) {
+      return { source: 'useStored' };
+    }
+    if (trimmed) {
+      return { source: 'inline', value: trimmed };
+    }
+    return { source: 'none' };
+  }, [keySaved, trimmed]);
+
+  const handleDetect = useCallback(async () => {
+    await onDetect({
+      agentEndpoint: preset.endpoint,
+      keySource: buildKeySource(),
+    });
+  }, [onDetect, preset.endpoint, buildKeySource]);
+
+  const handleDetectedModelSelect = useCallback((selectedModel: string) => {
+    setModel(selectedModel);
+  }, []);
 
   // Save is enabled when:
   //   - key already saved (keep path): always enabled, sends {action:'keep'}
@@ -275,25 +314,69 @@ export function GetKeyCard({
       {/* No client-side format error: the provider validates at Test/Save. */}
 
       {/* Model — editable so cloud users aren't locked to the preset default
-          (tuxlink-p46qz). No format check; the provider validates at Save/send. */}
+          (tuxlink-p46qz). No format check; the provider validates at Save/send.
+          Detect button fetches /v1/models from the provider and populates a
+          select so the operator can pick from the actual available list. */}
       <div className="elmer-form-row">
         <label className="elmer-form-label" htmlFor="get-key-model-field">
           Model
         </label>
-        <input
-          id="get-key-model-field"
-          type="text"
-          className="elmer-form-input elmer-form-input--mono"
-          data-testid="get-key-model-input"
-          value={model}
-          onChange={(e) => setModel(e.target.value)}
-          placeholder={agentModel || 'model id (e.g. gpt-4o)'}
-          spellCheck={false}
-          autoComplete="off"
-          autoCorrect="off"
-          autoCapitalize="off"
-        />
+        <div className="elmer-model-row">
+          <input
+            id="get-key-model-field"
+            type="text"
+            className="elmer-form-input elmer-form-input--mono"
+            data-testid="get-key-model-input"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            placeholder={agentModel || 'model id (e.g. gpt-4o)'}
+            spellCheck={false}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+          />
+          <button
+            type="button"
+            className="elmer-detect-btn"
+            data-testid="get-key-detect-btn"
+            disabled={detectState.status === 'detecting'}
+            onClick={() => { void handleDetect(); }}
+          >
+            {detectState.status === 'detecting' ? 'Detecting…' : 'Detect'}
+          </button>
+        </div>
       </div>
+
+      {/* Detect results — mirrors ModelForm's detect-results section */}
+      {detectState.status === 'success' && detectState.models.length > 0 && (
+        <div className="elmer-detect-results">
+          <span className="elmer-detect-count">
+            ✓ {detectState.models.length} model{detectState.models.length !== 1 ? 's' : ''} detected
+          </span>
+          <select
+            className="elmer-form-select"
+            data-testid="get-key-detected-models"
+            value={model}
+            onChange={(e) => handleDetectedModelSelect(e.target.value)}
+          >
+            {detectState.models.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+      {detectState.status === 'success' && detectState.models.length === 0 && (
+        <div className="elmer-detect-zero" data-testid="get-key-detect-zero">
+          No models found at this endpoint.
+        </div>
+      )}
+      {detectState.status === 'error' && (
+        <div className="elmer-detect-error" data-testid="get-key-detect-error">
+          {detectState.reason}
+        </div>
+      )}
 
       {/* Save button */}
       <div className="elmer-form-save-row">
