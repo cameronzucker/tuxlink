@@ -17,7 +17,7 @@
 //! ```json
 //! {
 //!   "model": "claude-haiku-4-5",
-//!   "max_tokens": 4096,
+//!   "max_tokens": 8192,
 //!   "system": "<ELMER_SYSTEM_PROMPT>",
 //!   "messages": [ { "role": "user" | "assistant", "content": ... } ],
 //!   "tools": [ { "name": "...", "description": "...", "input_schema": {...} } ]
@@ -54,11 +54,23 @@ use tuxlink_agent_runner::{Conversation, Message, ModelTurn, Provider, ProviderE
 
 use crate::provider::{ApiKey, redact_and_cap, ELMER_SYSTEM_PROMPT};
 
-/// Required by the Anthropic Messages API — omitting `max_tokens` is an error.
-/// 4096 is a generous default that covers all current Claude model limits for
-/// assistant turns; the operator can override by using a fine-grained config
-/// if we ever expose that surface.
-const ANTHROPIC_MAX_TOKENS: u32 = 4096;
+/// Choose `max_tokens` for the request. The Messages API requires it, and it
+/// bounds the WHOLE assistant turn — INCLUDING extended-thinking tokens, which
+/// count against it on Claude 4.x models. The old flat 4096 truncated
+/// thinking-heavy models (Sonnet 5) mid-thought, before any answer `text` block
+/// was emitted, yielding an empty assistant turn (tuxlink-uig9f). Give generous
+/// headroom for thinking + a multi-step synthesis answer, clamped below each
+/// model's output ceiling: Haiku's max output is smaller than Sonnet/Opus.
+fn anthropic_max_tokens(model: &str) -> u32 {
+    if model.to_ascii_lowercase().contains("haiku") {
+        8192
+    } else {
+        // Sonnet / Opus (and any non-Haiku Claude) support well beyond this;
+        // 16384 covers heavy adaptive thinking plus the answer without risking
+        // a per-model over-limit rejection.
+        16384
+    }
+}
 
 /// Anthropic API version header value. Required on every request.
 const ANTHROPIC_VERSION: &str = "2023-06-01";
@@ -181,7 +193,7 @@ pub fn build_anthropic_request(
 
     let mut body = json!({
         "model": model,
-        "max_tokens": ANTHROPIC_MAX_TOKENS,
+        "max_tokens": anthropic_max_tokens(model),
         "system": ELMER_SYSTEM_PROMPT,
         "messages": messages,
     });
@@ -429,10 +441,20 @@ mod tests {
             "system prompt must contain 'Elmer'"
         );
 
-        // 2. top-level `max_tokens` must be present.
-        assert!(
-            body.get("max_tokens").is_some(),
-            "max_tokens must be present"
+        // 2. top-level `max_tokens` must be present AND generous enough that
+        //    extended-thinking tokens don't truncate the answer (tuxlink-uig9f).
+        //    Haiku gets its smaller ceiling; Sonnet/Opus get more.
+        assert_eq!(
+            body.get("max_tokens").and_then(Value::as_u64),
+            Some(8192),
+            "haiku max_tokens must be 8192 (was built with claude-haiku-4-5)"
+        );
+        assert_eq!(
+            build_anthropic_request("claude-sonnet-5", &convo, &[])
+                .get("max_tokens")
+                .and_then(Value::as_u64),
+            Some(16384),
+            "sonnet/opus max_tokens must be 16384 so thinking + answer fit (Sonnet 5 empty-output bug)"
         );
 
         let msgs = body["messages"].as_array().expect("messages must be array");
