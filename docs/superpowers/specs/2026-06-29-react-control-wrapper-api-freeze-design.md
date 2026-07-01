@@ -42,24 +42,41 @@ foundation, and adopt it on the reviewed surfaces as a pure visual refactor.**
 
 **In scope**
 - Build three React components — `Button`, `Select`, `Field` — over `controls.css`.
-- Reconcile `controls.css`: add the `soft` emphasis, a `danger` tone, and
-  context-resolving color tokens (`--ctl-accent` / `--ctl-accent-fg`); bake the select
-  chevron in one place (resolving the current "chevron per-surface for now" TODO).
+- Reconcile `controls.css` onto one clean scale: the `solid` / `soft` / `outline`
+  emphases, `neutral` / `primary` / `danger` tones, `xs` / `sm` / `md` sizes, and the
+  context-token trio (`--ctl-accent` / `-soft` / `-fg`); bake the select chevron in one
+  place (resolving the "chevron per-surface for now" TODO).
 - Freeze the prop API (the names/enums below become the stable surface).
 - Adopt the wrappers on the **already-reviewed surfaces only**: the radio-pane footer
   button family (`.radio-panel-btn` / `-sm` / `-primary` / `-bad`) and the ribbon
   Connect/Abort buttons, plus the radio-pane config `Select`/`Field` controls. Exact
   call-site list enumerated at plan time.
+- The small, operator-approved normalization deltas (see Reviewed normalization).
 
 **Out of scope**
 - The remaining ~400 hand-rolled `<button>` / `<select>` / `<input>` call-sites (a later
   migration plan).
 - The ribbon segmented controls (GPS/MANUAL, Review/Download) — a distinct
   segmented-control pattern, not a plain `Button`.
-- **Any daylight / high-contrast theme decision.** The daylight theme is unfinished and
-  explicitly parked. This spec must not lock or add to daylight debt (see Theming).
-- New visual treatments. Adoption is a pure refactor; the rendered pixels do not change
-  in any theme.
+- **Any daylight / high-contrast theme redesign.** The daylight theme is unfinished and
+  parked; this freeze does not touch its color decisions (see Theming). The one exception
+  is the solid-fg token fix, which *improves* daylight (near-white → white on fills) and
+  adds no debt — it rode the approved normalization mock.
+
+## Decision: Hybrid (normalize the drift)
+
+Grounding revealed the reviewed buttons are **hand-tuned per instance** — three
+different box models, and `controls.css .tux-btn` (a speculative Phase-0 guess) matched
+none of them. A `current`-vs-`normalized` mock rendered in real WebKitGTK
+(`dev/render-harness/button-compare.html`) showed the divergence is **cosmetically
+negligible**: five of six button roles are indistinguishable normalized-vs-current, and
+the only visible change is quieting the neutral `Open WebGUI` border (`currentColor` →
+`--border-strong`). The operator reviewed that mock and approved the normalized column.
+
+Therefore this freeze **normalizes onto one clean scale** (Hybrid) rather than enshrining
+the drift: `controls.css` becomes a genuine unified foundation, wrappers emit its classes,
+and the small approved deltas ship with it. The mock served as the pre-implementation
+visual review; a final WebKitGTK re-verify on the actual adopted surfaces confirms it.
 
 ## API
 
@@ -67,28 +84,42 @@ foundation, and adopt it on the reviewed surfaces as a pure visual refactor.**
 
 ```ts
 type ButtonTone     = 'neutral' | 'primary' | 'danger';
-type ButtonEmphasis = 'solid' | 'soft';
-type ButtonSize     = 'md' | 'sm';            // --ctl-h-sm (26px) / --ctl-h-xs (22px)
+type ButtonEmphasis = 'solid' | 'soft' | 'outline';
+type ButtonSize     = 'xs' | 'sm' | 'md';
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  tone?: ButtonTone;        // default 'neutral'
-  emphasis?: ButtonEmphasis;// default 'solid'
-  size?: ButtonSize;        // default 'md'
+  tone?: ButtonTone;         // default 'neutral'
+  emphasis?: ButtonEmphasis; // default 'solid'
+  size?: ButtonSize;         // default 'md'
 }
 ```
 
-`tone` and `emphasis` are orthogonal. They map to the real surfaces:
+`tone`, `emphasis`, `size` are orthogonal. The three sizes carry the normalized
+density (font + weight + padding):
+
+| size | font | weight | padding | role |
+|---|---|---|---|---|
+| `xs` | `--type-control` (12px) | 500 | 4px 10px | compact inline (↻ refresh/detect) |
+| `sm` | `--type-control` (12px) | 600 | 6px 14px | dense chrome (ribbon) |
+| `md` | `--type-body` (13px) | 500 | 8px 14px | panel action (dock) |
+
+The three emphases: `solid` (filled), `soft` (tinted bg + color-mix border + colored
+text), `outline` (transparent bg + solid border + colored text). Every reviewed button
+maps cleanly:
 
 | Surface | Wrapper call |
 |---|---|
-| Ribbon Connect | `<Button tone="primary" emphasis="solid">` |
-| Dock Start / Send / Receive | `<Button tone="primary" emphasis="soft">` |
-| Dock Stop / Abort | `<Button tone="danger" emphasis="soft">` |
-| Plain dock action (Open WebGUI, Tune…) | `<Button>` (neutral/solid default) |
+| Ribbon Connect | `<Button tone="primary" emphasis="solid" size="sm">` |
+| Ribbon Abort | `<Button tone="danger" emphasis="outline" size="sm">` |
+| Dock Start / Send/Receive | `<Button tone="primary" emphasis="soft" size="md">` |
+| Dock Stop | `<Button tone="danger" emphasis="soft" size="md">` |
+| Dock Open WebGUI / Tune… | `<Button tone="neutral" emphasis="outline" size="md">` |
+| Dock ↻ detect / browse / manage | `<Button tone="neutral" emphasis="outline" size="xs">` |
 
 Renders `class="tux-btn tux-btn--{tone} tux-btn--{emphasis} tux-btn--{size}"` plus all
 native `<button>` attributes (`onClick`, `disabled`, `type`, `data-testid`, `title`, …)
-forwarded via `...rest`.
+forwarded via `...rest`. Not every tone×emphasis×size combination has a call-site (YAGNI);
+`controls.css` defines only the classes the mapping above needs.
 
 ### `Select` and `Field`
 
@@ -113,32 +144,37 @@ interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> { la
 ```
 
 Then `tone="primary"` resolves to **amber in app chrome and green in the dock
-automatically** — no prop, no per-call-site branching. The two emphasis levels:
+automatically** — no prop, no per-call-site branching. The three emphases (primary tone
+shown; `danger` swaps `--ctl-accent*` → `--error` / `--tux-danger-surface`; `neutral`
+uses `--text` / `--border-strong`):
 
 ```css
-.tux-btn--primary.tux-btn--solid { background: var(--ctl-accent); color: var(--ctl-accent-fg);
-                                   border-color: var(--ctl-accent); }
-.tux-btn--primary.tux-btn--soft  { background: var(--ctl-accent-soft); color: var(--ctl-accent);
-                                   border-color: color-mix(in srgb, var(--ctl-accent) 35%, transparent); }
+.tux-btn--primary.tux-btn--solid   { background: var(--ctl-accent); color: var(--ctl-accent-fg);
+                                     border-color: var(--ctl-accent); }
+.tux-btn--primary.tux-btn--soft    { background: var(--ctl-accent-soft); color: var(--ctl-accent);
+                                     border-color: color-mix(in srgb, var(--ctl-accent) 35%, transparent); }
+.tux-btn--primary.tux-btn--outline { background: transparent; color: var(--ctl-accent);
+                                     border-color: var(--ctl-accent); }
+.tux-btn--neutral.tux-btn--outline { background: transparent; color: var(--text);
+                                     border-color: var(--border-strong); }
+.tux-btn--danger.tux-btn--soft     { background: var(--tux-danger-surface); color: var(--error);
+                                     border-color: color-mix(in srgb, var(--error) 35%, transparent); }
+.tux-btn--danger.tux-btn--outline  { background: transparent; color: var(--error);
+                                     border-color: var(--error); }
 ```
 
-The soft background uses the existing `--ctl-accent-soft` token (= `--modem-accent-soft`
-in the dock), **not** a `color-mix` of `--ctl-accent` — the shipped `*-soft` tokens use a
-different, hand-tuned green base (`#22c55e`) than `--modem-accent` (`#4ade80`), so a
-`color-mix` would *not* reproduce the current pixels. The border *does* use
-`color-mix(--ctl-accent 35%)` because that is exactly what `.radio-panel-btn-primary` does
-today. `tone="danger"` reuses the existing theme-aware `--error` / `--tux-danger-surface`
-/ `--tux-danger-fg` tokens directly (danger is the same red in app and dock, so it needs
-no `--ctl` indirection).
+The `soft` background uses the `--ctl-accent-soft` token (= `--modem-accent-soft` in the
+dock) directly, **not** a `color-mix` of `--ctl-accent` — the shipped `*-soft` tokens use
+a different, hand-tuned green base (`#22c55e`) than `--modem-accent` (`#4ade80`), so a
+`color-mix` would not reproduce the reviewed green. The `soft` border uses
+`color-mix(--ctl-accent 35%)`, matching `.radio-panel-btn-primary`. Exact hover/disabled
+rules per class are captured at plan time against the live values.
 
-Exact class strings and the per-surface current computed styles for every adopted
-call-site are captured during implementation planning; the CSS above is the resolution
-*mechanism*, finalized against the live values then.
-
-This **fixes a latent daylight bug**: `controls.css` today sets solid-primary text to
-`color: var(--bg)`, which is near-white on light themes (fragile on a colored fill).
-Routing solid text through `--ctl-accent-fg` flips it to white in daylight via the
-existing `--tux-accent-fg` / `--modem-accent-fg` mechanism.
+This also **fixes a latent daylight bug**, and does so within the approved normalization:
+today the solid ribbon Connect sets `color: var(--bg)` (near-white on light themes, fragile
+on a colored fill). Routing it through `--ctl-accent-fg` (`= --tux-accent-fg`) flips it to
+white in daylight. In dark this is an imperceptible `#0d1318` → `#1a0e02` shift — visible in
+the approved normalized mock, not a regression.
 
 ## Theming — daylight stays decoupled
 
@@ -160,13 +196,23 @@ The defined `tone`/`emphasis`/`--ctl-accent` vocabulary this spec establishes is
 the missing language that made the prior daylight round a multi-day litigation — this work
 is upstream of fixing daylight, not in tension with it.
 
-## Non-regression guarantee
+## Reviewed normalization (not byte-for-byte)
 
-Adoption is a **pure visual refactor**: each wrapper renders byte-for-byte the same CSS
-the hand-rolled class produces, in every theme. The reconciled `controls.css` classes must
-reproduce the current `.radio-panel-btn*` and ribbon-button computed styles exactly (the
-soft-outlined dock primary, the red danger, the solid amber ribbon Connect). No rendered
-pixel changes in dark *or* daylight.
+Adoption is a **normalization**, not a byte-for-byte refactor: the reconciled `controls.css`
+classes bring the reviewed buttons onto one clean scale, producing the small, operator-
+approved deltas below. Everything not listed is unchanged.
+
+| Button | Approved delta |
+|---|---|
+| Ribbon Connect | padding `6px 16px` → `6px 14px`; solid fg `--bg` → `--ctl-accent-fg` (imperceptible in dark, correct in daylight) |
+| Ribbon Abort | padding `5px 14px` → `6px 14px` |
+| Dock Open WebGUI | border `currentColor` (bright) → `--border-strong` (quiet, matches ghost) |
+| Start/Send, Stop, ↻ ghost | unchanged |
+
+These deltas were rendered current-vs-normalized in real WebKitGTK
+(`dev/render-harness/button-compare.html`) and approved. A final WebKitGTK re-verify on the
+actual adopted surfaces (ribbon + all radio panes, dark theme; plus a `daylight` snapshot to
+confirm the fg fix reads correctly and nothing else moved) closes the loop.
 
 ## Testing & verification
 

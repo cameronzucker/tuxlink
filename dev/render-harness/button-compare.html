@@ -1,0 +1,82 @@
+<!doctype html>
+<!-- tuxlink-3m0vx: current (hand-tuned, = facade/enshrine) vs normalized (= hybrid)
+     button comparison, default-dark tokens, for the fidelity-vs-normalize decision.
+     Dev scratch — not shipped. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --bg:#0d1318; --surface:#141c23; --surface-2:#1a2330; --border-strong:#2c3744;
+    --text:#e4ebf2; --accent:#f59f3c; --accent-soft:rgba(245,159,60,0.12);
+    --tux-accent-fg:#1a0e02; --modem-accent:#4ade80; --modem-accent-soft:rgba(34,197,94,0.10);
+    --error:#ee6b6b; --tux-danger-surface:rgba(238,107,107,0.12);
+    --radius-control:3px; --type-control:12px; --type-body:13px;
+  }
+  body{background:var(--bg);color:var(--text);font-family:Inter,system-ui,sans-serif;margin:0;padding:28px 32px;}
+  h1{font-size:15px;font-weight:600;margin:0 0 4px;}
+  .sub{font-size:12px;color:#8b97a6;margin:0 0 24px;}
+  .grid{display:grid;grid-template-columns:120px 1fr 1fr;gap:0 40px;align-items:center;}
+  .hd{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#8b97a6;padding:0 0 10px;border-bottom:1px solid var(--border-strong);}
+  .rl{font-size:12px;color:#8b97a6;padding:14px 0;}
+  .cell{padding:14px 0;display:flex;gap:10px;align-items:center;}
+  .note{font-size:11px;color:#6b7686;margin-left:8px;}
+  .sec{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#b9c4d0;margin:26px 0 2px;grid-column:1/-1;}
+
+  /* ============ CURRENT (hand-tuned reviewed values = facade/enshrine) ============ */
+  .cur-connect{font-size:var(--type-control);font-weight:600;color:var(--bg);background:var(--accent);border:none;border-radius:var(--radius-control);padding:6px 16px;cursor:pointer;}
+  .cur-abort{font-size:var(--type-control);font-weight:600;color:var(--error);background:transparent;border:1px solid var(--error);border-radius:var(--radius-control);padding:5px 14px;cursor:pointer;}
+  .cur-panelbtn{padding:8px 14px;border-radius:var(--radius-control);font-size:var(--type-body);font-weight:500;border:1px solid;cursor:pointer;}
+  .cur-start{background:var(--modem-accent-soft);border-color:color-mix(in srgb,var(--modem-accent) 35%,transparent);color:var(--modem-accent);}
+  .cur-stop{background:var(--tux-danger-surface);border-color:color-mix(in srgb,var(--error) 35%,transparent);color:var(--error);}
+  .cur-neutral{background:transparent;border-color:currentColor;color:var(--text);}
+  .cur-ghost{padding:4px 10px;border-radius:var(--radius-control);font-size:var(--type-control);font-weight:500;background:transparent;border:1px solid var(--border-strong);color:var(--text);cursor:pointer;}
+
+  /* ============ NORMALIZED (one clean scale = hybrid) ============
+     sm tier: 12px / 600 / pad 6px 14px  ·  md tier: 13px / 500 / pad 8px 14px
+     emphases consistent; ribbon Connect/Abort share sm padding; solid fg = --tux-accent-fg */
+  .n-btn{border-radius:var(--radius-control);cursor:pointer;border:1px solid transparent;}
+  .n-sm{font-size:var(--type-control);font-weight:600;padding:6px 14px;}
+  .n-md{font-size:var(--type-body);font-weight:500;padding:8px 14px;}
+  .n-solid{background:var(--accent);color:var(--tux-accent-fg);border-color:var(--accent);}
+  .n-soft-primary{background:var(--modem-accent-soft);border-color:color-mix(in srgb,var(--modem-accent) 35%,transparent);color:var(--modem-accent);}
+  .n-soft-danger{background:var(--tux-danger-surface);border-color:color-mix(in srgb,var(--error) 35%,transparent);color:var(--error);}
+  .n-outline-danger{background:transparent;border-color:var(--error);color:var(--error);}
+  .n-neutral{background:transparent;border-color:var(--border-strong);color:var(--text);}
+  .n-ghost{font-size:var(--type-control);font-weight:500;padding:4px 10px;border-radius:var(--radius-control);background:transparent;border:1px solid var(--border-strong);color:var(--text);cursor:pointer;}
+</style>
+</head>
+<body>
+  <h1>Button treatment — Current (facade / enshrine) vs Normalized (hybrid)</h1>
+  <p class="sub">Default-dark theme · real reviewed values on the left, one clean scale on the right. Facade &amp; Enshrine both render the left column byte-for-byte; only Hybrid renders the right.</p>
+  <div class="grid">
+    <div class="rl"></div><div class="hd">Current (byte-for-byte)</div><div class="hd">Normalized (hybrid)</div>
+
+    <div class="sec">Ribbon (dense)</div>
+    <div class="rl">Connect<br><span class="note">primary / solid</span></div>
+    <div class="cell"><button class="cur-connect">Connect</button><span class="note">pad 6/16 · fg --bg</span></div>
+    <div class="cell"><button class="n-btn n-sm n-solid">Connect</button><span class="note">pad 6/14 · fg accent-fg</span></div>
+
+    <div class="rl">Abort<br><span class="note">danger / outline</span></div>
+    <div class="cell"><button class="cur-abort">Abort</button><span class="note">pad 5/14</span></div>
+    <div class="cell"><button class="n-btn n-sm n-outline-danger">Abort</button><span class="note">pad 6/14</span></div>
+
+    <div class="sec">Radio dock (action)</div>
+    <div class="rl">Start / Send<br><span class="note">primary / soft</span></div>
+    <div class="cell"><button class="cur-panelbtn cur-start">Send/Receive</button></div>
+    <div class="cell"><button class="n-btn n-md n-soft-primary">Send/Receive</button></div>
+
+    <div class="rl">Stop<br><span class="note">danger / soft</span></div>
+    <div class="cell"><button class="cur-panelbtn cur-stop">Stop</button></div>
+    <div class="cell"><button class="n-btn n-md n-soft-danger">Stop</button></div>
+
+    <div class="rl">Open WebGUI<br><span class="note">neutral</span></div>
+    <div class="cell"><button class="cur-panelbtn cur-neutral">Open WebGUI</button><span class="note">border currentColor</span></div>
+    <div class="cell"><button class="n-btn n-md n-neutral">Open WebGUI</button><span class="note">border --border-strong</span></div>
+
+    <div class="rl">↻ refresh<br><span class="note">ghost / sm</span></div>
+    <div class="cell"><button class="cur-ghost">↻ Detect</button></div>
+    <div class="cell"><button class="n-ghost">↻ Detect</button></div>
+  </div>
+</body>
+</html>
