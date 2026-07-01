@@ -175,6 +175,44 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* Message text must be selectable. Some desktop-shell chrome opts out of
+ * selection with user-select:none; opt message content explicitly back in so
+ * the operator can drag-select as well as use the Copy button (tuxlink-efdpi). */
+.elmer-turn-text,
+.elmer-turn-md {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
+/* Per-reply actions row (Copy, …). Always visible so it is reliably clickable —
+ * the motivating problem is that hand-selecting the text is finicky. */
+.elmer-turn-actions {
+  display: flex;
+  margin-top: 3px;
+}
+.elmer-turn--user .elmer-turn-actions {
+  justify-content: flex-end;
+}
+.elmer-copy-btn {
+  font-size: 10px;
+  line-height: 1.4;
+  padding: 1px 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.elmer-copy-btn:hover,
+.elmer-copy-btn:focus-visible {
+  opacity: 1;
+  color: var(--text);
+  border-color: var(--accent-edge, var(--border));
+}
 .elmer-turn--user {
   align-items: flex-end;
 }

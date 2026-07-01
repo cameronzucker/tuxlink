@@ -1572,6 +1572,62 @@ describe('<ElmerPane> credential-seam -- detect_uses_usestored_when_key_present_
 });
 
 // ---------------------------------------------------------------------------
+// Per-reply Copy button (tuxlink-efdpi)
+// ---------------------------------------------------------------------------
+
+describe('<ElmerPane> -- per-reply Copy button', () => {
+  it('assistant turn exposes a Copy button that writes the RAW source text to the clipboard', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+
+    const { container } = render(<ElmerPane />);
+    // Raw source carries markdown; Copy must yield the source, not rendered HTML.
+    const payload: ElmerTurnPayload = {
+      kind: 'turn',
+      role: 'assistant',
+      text: 'The **sun** is shining.',
+    };
+    await fireElmerEvent<ElmerTurnPayload>(EV_TURN, payload);
+
+    const bubble = container.querySelector('[data-testid="elmer-turn-assistant"]');
+    expect(bubble).toBeTruthy();
+    const copyBtn = bubble!.querySelector('[data-testid="elmer-copy-btn"]') as HTMLButtonElement;
+    expect(copyBtn).toBeTruthy();
+    expect(copyBtn.textContent).toBe('Copy');
+
+    await act(async () => {
+      fireEvent.click(copyBtn);
+    });
+
+    expect(writeText).toHaveBeenCalledWith('The **sun** is shining.');
+    // The click confirms with a transient "Copied" label.
+    await waitFor(() => expect(copyBtn.textContent).toBe('Copied'));
+  });
+
+  it('a clipboard failure is swallowed (no throw) and the label stays "Copy"', async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error('clipboard unavailable'));
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+
+    const { container } = render(<ElmerPane />);
+    await fireElmerEvent<ElmerTurnPayload>(EV_TURN, {
+      kind: 'turn',
+      role: 'assistant',
+      text: 'diagnostic reply',
+    });
+
+    const copyBtn = container.querySelector(
+      '[data-testid="elmer-turn-assistant"] [data-testid="elmer-copy-btn"]',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      fireEvent.click(copyBtn);
+    });
+
+    expect(writeText).toHaveBeenCalledWith('diagnostic reply');
+    expect(copyBtn.textContent).toBe('Copy');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Markdown rendering -- assistant turns rendered as sanitized HTML (security)
 // ---------------------------------------------------------------------------
 

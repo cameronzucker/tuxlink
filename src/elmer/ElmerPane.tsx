@@ -162,6 +162,46 @@ function ReasoningDisclosure({ reasoning }: { reasoning: string }) {
 }
 
 /**
+ * Per-reply Copy button. Copies the RAW turn text (source markdown for an
+ * assistant turn, plain text for a user turn) so a paste lands clean — e.g. to
+ * hand an Elmer reply to another troubleshooting agent (tuxlink-efdpi). Mirrors
+ * the proven `navigator.clipboard.writeText` pattern shipped in ReportIssueModal;
+ * the try/catch tolerates WebKitGTK sandbox configs where the async clipboard
+ * API is unavailable. Rendered always-visible (not hover-only) so it is reliably
+ * clickable — the whole motivation is that selecting/copying by hand is finicky.
+ */
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+    } catch {
+      /* clipboard may be unavailable in some WebKitGTK/sandbox configs */
+    }
+  }, [text]);
+  // Revert the "Copied" confirmation back to "Copy" after a short beat.
+  useEffect(() => {
+    if (!copied) return undefined;
+    const id = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(id);
+  }, [copied]);
+  return (
+    <div className="elmer-turn-actions">
+      <button
+        type="button"
+        className="elmer-copy-btn"
+        data-testid="elmer-copy-btn"
+        aria-label="Copy message"
+        onClick={handleCopy}
+      >
+        {copied ? 'Copied' : 'Copy'}
+      </button>
+    </div>
+  );
+}
+
+/**
  * Transient streaming bubble (phase 2b) — shown while a streamed turn is in
  * flight (streamingAnswer or streamingReasoning non-empty), before the EV_TURN
  * finalize swaps it for the committed markdown item.
@@ -273,6 +313,7 @@ function MessageItem({ item }: { item: ElmerItem }) {
           </>
         )
       }
+      {item.text ? <CopyButton text={item.text} /> : null}
     </div>
   );
 }
