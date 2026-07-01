@@ -1,0 +1,846 @@
+//! `OllamaProvider` — a [`Provider`] backed by Ollama's NATIVE `/api/chat`
+//! endpoint (loopback-only; tuxlink-65qhn).
+//!
+//! The local/loopback Elmer path historically ran Ollama through its
+//! OpenAI-compat shim (`/v1/chat/completions`, [`crate::provider::OpenAiProvider`]).
+//! That shim cannot express three things the local edge needs, all of which live
+//! on the native `/api/chat`:
+//!
+//! * **`num_ctx`** — the compat path leaves the context window at Ollama's
+//!   default (often 2048/4096), silently truncating agentic prompts and dropping
+//!   tool definitions. This adapter sets it via `options.num_ctx`.
+//! * **`keep_alive: 0`** — eager unload of the previous model on switch, to
+//!   relieve memory pressure on edge hosts. Sent on EVERY request (D4).
+//! * **Context-usage meter** — native `/api/chat` returns `prompt_eval_count`
+//!   (full-prompt tokens) + `eval_count` (generated tokens) on the final
+//!   response. Against the `num_ctx` this adapter set, that drives the
+//!   fullness meter ([`RunEvent::ContextUsage`], T2).
+//!
+//! ## Wire format
+//!
+//! POST to the configured endpoint (`http://127.0.0.1:11434/api/chat`):
+//!
+//! ```json
+//! {
+//!   "model": "qwen3:8b",
+//!   "messages": [ { "role": "system" | "user" | "assistant" | "tool", ... } ],
+//!   "tools": [ { "type": "function", "function": { "name", "parameters" } } ],
+//!   "stream": false,
+//!   "keep_alive": 0,
+//!   "options": { "num_ctx": 32768, "temperature": 0.7 }
+//! }
+//! ```
+//!
+//! `stream` is ALWAYS `false` (D2 — non-streaming v1, mirroring
+//! [`crate::anthropic_provider::AnthropicProvider`]; the meter counts come from
+//! the final response either way). `keep_alive` is ALWAYS `0` (D4). The
+//! `options` object omits any key whose config value is `None`, and is omitted
+//! ENTIRELY when both `num_ctx` and `temperature` are `None` (so the default
+//! request shape stays minimal). `tools` is omitted when the tool surface is
+//! empty (matching the OpenAI + Anthropic adapters).
+//!
+//! ### Tool-call protocol (native, NOT OpenAI-compat)
+//!
+//! The two shapes differ from OpenAI in ways this adapter handles:
+//!
+//! * **Assistant tool call → in the transcript**: rendered as an `assistant`
+//!   message carrying a `tool_calls` array whose `function.arguments` is a JSON
+//!   **OBJECT** (OpenAI uses a JSON *string*).
+//! * **Tool result → back to the model**: a `tool`-role message with a
+//!   `tool_name` field naming the tool (OpenAI uses a `tool_call_id`). Ollama
+//!   pairs results to calls by ORDER + name, so — unlike the OpenAI adapter —
+//!   NO synthetic `tool_call_id`s are minted on the wire. The runner appends a
+//!   `ToolCall` immediately followed by its `ToolResult`, so FIFO order on the
+//!   wire IS the call order; rendering each message in transcript order is all
+//!   the pairing Ollama needs.
+//! * **Response tool call**: `message.tool_calls[].function.name` (string) +
+//!   `function.arguments` (an OBJECT — parsed directly, no string-parse; this is
+//!   the key divergence from OpenAI and the failure mode the parser guards).
+//!
+//! ## Response mapping
+//!
+//! * `message.tool_calls` present and non-empty → [`ModelTurn::ToolCalls`].
+//!   `arguments` is already a JSON object; if absent it becomes `Value::Null` so
+//!   the runner's COR-3 schema check treats it as malformed and re-prompts
+//!   (identical to the OpenAI / Anthropic null-args policy — never silently
+//!   fabricated).
+//! * Otherwise `message.content` → [`ModelTurn::Text`] (empty string when the
+//!   model returned an empty/absent content with no tool calls).
+//!
+//! ## Security
+//!
+//! Endpoint vetting (SEC-5 / SSRF-1) is the caller's responsibility — the same
+//! `validate_endpoint` → `build_vetted_client` gate as the sibling adapters. A
+//! loopback Ollama needs no bearer token, but the constructor accepts an optional
+//! [`ApiKey`] for symmetry and sends `Authorization: Bearer …` when present;
+//! the key is stored as [`ApiKey`] and never appears in `Debug`/`Display`. Error
+//! bodies are scrubbed via [`redact_and_cap`] before propagation.
+
+use async_trait::async_trait;
+use serde_json::{json, Value};
+use url::Url;
+
+use tuxlink_agent_runner::{
+    Conversation, Message, ModelTurn, Provider, ProviderError, RunEvent, ToolCall, ToolSpec,
+};
+
+use crate::provider::{redact_and_cap, ApiKey, ELMER_SYSTEM_PROMPT};
+
+/// A [`Provider`] that talks to Ollama's native `/api/chat` endpoint.
+///
+/// Constructed via [`OllamaProvider::new`] after the endpoint has been validated
+/// through `validate_endpoint` / `build_vetted_client` (SEC-5). Only reachable
+/// from the loopback constructor (T4's probe-with-fallback selection).
+pub struct OllamaProvider {
+    client: reqwest::Client,
+    /// Pre-validated (SEC-5) endpoint URL — the `/api/chat` path.
+    endpoint: Url,
+    model: String,
+    /// Context window to request via `options.num_ctx`. `None` leaves it at the
+    /// Ollama server default (and suppresses the context meter, whose denominator
+    /// only exists when this adapter set the window).
+    num_ctx: Option<u32>,
+    /// Sampling temperature via `options.temperature`. `None` leaves it at the
+    /// server default.
+    temperature: Option<f32>,
+    /// Optional bearer token. A loopback Ollama needs none; accepted for
+    /// symmetry with the sibling adapters. Stored as [`ApiKey`] so it never
+    /// leaks through `Debug`/`Display`; only used via `.expose()` at the HTTP
+    /// header boundary.
+    api_key: Option<ApiKey>,
+}
+
+impl OllamaProvider {
+    /// Build the provider. `endpoint` MUST already have passed
+    /// [`crate::endpoint::validate_endpoint`] — this constructor does not
+    /// re-validate (the SEC-5 gate is the caller's single chokepoint).
+    pub fn new(
+        client: reqwest::Client,
+        endpoint: Url,
+        model: impl Into<String>,
+        num_ctx: Option<u32>,
+        temperature: Option<f32>,
+        api_key: Option<ApiKey>,
+    ) -> Self {
+        Self {
+            client,
+            endpoint,
+            model: model.into(),
+            num_ctx,
+            temperature,
+            api_key,
+        }
+    }
+}
+
+#[async_trait]
+impl Provider for OllamaProvider {
+    async fn turn(
+        &self,
+        conversation: &Conversation,
+        tools: &[ToolSpec],
+        on_event: &(dyn Fn(RunEvent) + Sync),
+    ) -> Result<ModelTurn, ProviderError> {
+        // Non-streaming (D2): a single JSON document carries both the assistant
+        // turn and the token counts. Unlike the compat path we do NOT emit
+        // AssistantDelta/ReasoningDelta here; the one event this adapter emits is
+        // ContextUsage, AFTER parsing the counts below.
+        let body = build_ollama_request(
+            &self.model,
+            conversation,
+            tools,
+            self.num_ctx,
+            self.temperature,
+        );
+
+        let mut req = self
+            .client
+            .post(self.endpoint.clone())
+            .header("content-type", "application/json")
+            .json(&body);
+
+        // A loopback Ollama needs no auth; send a bearer only if one is set.
+        if let Some(key) = &self.api_key {
+            req = req.bearer_auth(key.expose());
+        }
+
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| ProviderError::Transport(format!("request failed: {e}")))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            // Scrub any bearer key BEFORE capping (a key straddling the cap
+            // boundary would otherwise leak a prefix); `redact_and_cap` enforces
+            // that order.
+            let text = resp.text().await.unwrap_or_default();
+            let snippet = redact_and_cap(text, self.api_key.as_ref(), 500);
+            if status.as_u16() == 429 {
+                return Err(ProviderError::RateLimited(format!(
+                    "model endpoint returned HTTP 429 (rate limited): {snippet}"
+                )));
+            }
+            return Err(ProviderError::Transport(format!(
+                "model endpoint returned HTTP {status}: {snippet}"
+            )));
+        }
+
+        let value: Value = resp
+            .json()
+            .await
+            .map_err(|e| ProviderError::Unparseable(format!("response was not JSON: {e}")))?;
+
+        // Emit the context-usage meter event (fire-and-forget) when the model
+        // reported token counts AND this adapter set a known `num_ctx` (the
+        // denominator). A model that omits the counts, or a request that left
+        // `num_ctx` at the server default, simply produces no event — the meter
+        // stays hidden, which is the correct graceful degradation (T2).
+        if let (Some((prompt_tokens, eval_tokens)), Some(num_ctx)) =
+            (parse_ollama_counts(&value), self.num_ctx)
+        {
+            on_event(RunEvent::ContextUsage {
+                prompt_tokens,
+                eval_tokens,
+                num_ctx,
+            });
+        }
+
+        parse_ollama_response(&value).map_err(ProviderError::Unparseable)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Pure request assembly
+// ---------------------------------------------------------------------------
+
+/// Build the native Ollama `/api/chat` request body from the transcript + tool
+/// surface + the config-supplied `num_ctx` / `temperature`.
+///
+/// Pure — no IO. Exported so Rust tests can drive it directly.
+///
+/// Invariants:
+/// * `stream` is ALWAYS `false` (D2).
+/// * `keep_alive` is ALWAYS `0` — eager unload of the previous model (D4).
+/// * `options` omits any `None` key, and is omitted ENTIRELY when both
+///   `num_ctx` and `temperature` are `None`.
+/// * `tools` is omitted when the surface is empty (matching the sibling
+///   adapters).
+/// * Tool call/result messages render FIFO in transcript order; Ollama pairs by
+///   order + `tool_name`, so no synthetic ids are needed on the wire.
+pub fn build_ollama_request(
+    model: &str,
+    conversation: &Conversation,
+    tools: &[ToolSpec],
+    num_ctx: Option<u32>,
+    temperature: Option<f32>,
+) -> Value {
+    // The system prompt is a message (role: system) on the native path, same as
+    // the OpenAI-compat adapter (Anthropic is the outlier that hoists it to a
+    // top-level field). Prepend it, then render the transcript in order.
+    let mut messages: Vec<Value> =
+        Vec::with_capacity(conversation.messages().len() + 1);
+    messages.push(json!({ "role": "system", "content": ELMER_SYSTEM_PROMPT }));
+    for msg in conversation.messages() {
+        messages.push(render_ollama_message(msg));
+    }
+
+    let mut body = json!({
+        "model": model,
+        "messages": messages,
+        "stream": false,
+        // D4: always unload the previous model on switch. `0` (an integer) is
+        // Ollama's "unload immediately after this request" sentinel.
+        "keep_alive": 0,
+    });
+
+    // Only include `tools` when there is a surface — an empty array is not
+    // helpful and some servers object to it.
+    if !tools.is_empty() {
+        let tool_entries: Vec<Value> = tools
+            .iter()
+            .map(|t| {
+                // Mirror the OpenAI adapter's `ToolFunction`: `name` + `parameters`
+                // only. `ToolSpec` carries no description, and a synthetic
+                // "Tool: <name>" placeholder is strictly worse than none (burns
+                // tokens, tells the model nothing). Any real description the tool
+                // schema carries rides inside `parameters` (its top-level
+                // `description`), which the model still sees.
+                json!({
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "parameters": t.json_schema,
+                    }
+                })
+            })
+            .collect();
+        body["tools"] = Value::Array(tool_entries);
+    }
+
+    // Assemble `options` from the set knobs; omit the object entirely when both
+    // are None so the default request shape carries no `options` key.
+    let mut options = serde_json::Map::new();
+    if let Some(ctx) = num_ctx {
+        options.insert("num_ctx".to_string(), json!(ctx));
+    }
+    if let Some(temp) = temperature {
+        options.insert("temperature".to_string(), json!(temp));
+    }
+    if !options.is_empty() {
+        body["options"] = Value::Object(options);
+    }
+
+    body
+}
+
+/// Render one transcript [`Message`] into a native `/api/chat` messages-array
+/// entry.
+///
+/// Exhaustive over every [`Message`] variant. Unlike the OpenAI adapter (which
+/// mints synthetic `tool_call_id`s and therefore must render tool messages in a
+/// stateful loop), Ollama pairs tool results to calls by ORDER + `tool_name`, so
+/// each message renders independently and in-order — no counter, no
+/// unreachable arm.
+///
+/// * `User` / `Assistant` → the corresponding role with a plain `content` string.
+/// * `ToolCall` → an `assistant` message carrying a `tool_calls` array whose
+///   `function.arguments` is a JSON **OBJECT** (null args become `{}` so the
+///   wire value is always an object).
+/// * `ToolResult` → a `tool`-role message with `tool_name` naming the tool and
+///   the (ok/error-labelled) result as `content`.
+fn render_ollama_message(msg: &Message) -> Value {
+    match msg {
+        Message::User(text) => json!({ "role": "user", "content": text }),
+        Message::Assistant(text) => json!({ "role": "assistant", "content": text }),
+        Message::ToolCall(call) => {
+            // `arguments` is a JSON OBJECT on the native wire (NOT a string as in
+            // OpenAI). Null / non-object args become an empty object so the shape
+            // stays valid.
+            let arguments = match &call.args {
+                Value::Object(_) => call.args.clone(),
+                Value::Null => json!({}),
+                other => json!({ "value": other }),
+            };
+            json!({
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "function": {
+                        "name": call.name,
+                        "arguments": arguments,
+                    }
+                }]
+            })
+        }
+        Message::ToolResult { name, ok, content } => {
+            let label = if *ok { "result" } else { "error" };
+            json!({
+                "role": "tool",
+                "tool_name": name,
+                "content": format!("[{label}] {content}"),
+            })
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Pure response mapping
+// ---------------------------------------------------------------------------
+
+/// Map a native Ollama `/api/chat` response JSON onto a [`ModelTurn`]. Pure.
+///
+/// Returns `Err(detail)` only when the response is structurally unusable (no
+/// `message` object). A present-but-empty `content` with no tool calls maps to
+/// an empty `Text` turn rather than an error, so the loop can surface it —
+/// mirroring [`crate::provider::parse_completion`]'s contract.
+///
+/// Tool calls take precedence over content. Each call's `function.arguments` is
+/// already a JSON object on the native wire; an absent/missing `arguments`
+/// becomes `Value::Null` so the runner's COR-3 schema check treats it as
+/// malformed and re-prompts (never silently fabricated).
+pub fn parse_ollama_response(value: &Value) -> Result<ModelTurn, String> {
+    let message = value
+        .get("message")
+        .ok_or_else(|| "response had no message object".to_string())?;
+
+    // Tool calls take precedence over content.
+    if let Some(tool_calls) = message.get("tool_calls").and_then(Value::as_array) {
+        if !tool_calls.is_empty() {
+            let calls: Vec<ToolCall> = tool_calls.iter().map(parse_ollama_tool_call).collect();
+            return Ok(ModelTurn::ToolCalls(calls));
+        }
+    }
+
+    let content = message
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    Ok(ModelTurn::Text(content))
+}
+
+/// Parse a single native Ollama tool-call object into a [`ToolCall`].
+///
+/// `function.arguments` is a JSON OBJECT on the native wire (the key divergence
+/// from OpenAI, whose `arguments` is a JSON string). It is used AS-IS. If it is
+/// absent, the args become `Value::Null` so the runner's COR-3 validation
+/// catches it as malformed and re-prompts — never a silently-fabricated object.
+fn parse_ollama_tool_call(tc: &Value) -> ToolCall {
+    let function = tc.get("function");
+    let name = function
+        .and_then(|f| f.get("name"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+
+    // `arguments` is already an object; take it verbatim, or Null if absent.
+    let args = function
+        .and_then(|f| f.get("arguments"))
+        .cloned()
+        .unwrap_or(Value::Null);
+
+    ToolCall { name, args }
+}
+
+/// Extract the context-usage counts from a native `/api/chat` response.
+///
+/// Returns `Some((prompt_eval_count, eval_count))` when BOTH top-level counts
+/// are present as numbers, else `None` (some models / early responses omit them).
+/// Pure — no IO. Exposed so [`OllamaProvider::turn`] and tests share one reader.
+pub fn parse_ollama_counts(value: &Value) -> Option<(u32, u32)> {
+    let prompt = value.get("prompt_eval_count").and_then(Value::as_u64)?;
+    let eval = value.get("eval_count").and_then(Value::as_u64)?;
+    Some((prompt as u32, eval as u32))
+}
+
+// ---------------------------------------------------------------------------
+// Endpoint heuristic (light — the authoritative discrimination is T4's probe)
+// ---------------------------------------------------------------------------
+
+/// A LIGHT heuristic for "does this endpoint look like native Ollama?".
+///
+/// This is NOT the authoritative discriminator. Loopback Ollama-vs-llama.cpp
+/// selection is decided at construction by T4's runtime probe of
+/// `GET {origin}/api/tags` (200 + parseable ⇒ native), because a URL alone
+/// cannot tell an Ollama server from a llama.cpp OpenAI-compat server on the
+/// same loopback port. This helper only answers the cheap textual question —
+/// the path already points at the native chat route, or the host is loopback —
+/// for callers that want a pre-probe hint. Pure — no IO.
+///
+/// Takes `&str` (not `&Url`) so callers in crates that do not depend on the
+/// `url` crate can use it without importing `url::Url`; parsing happens here.
+pub fn is_ollama_endpoint(endpoint: &str) -> bool {
+    // Path explicitly names the native chat route.
+    if endpoint.contains("/api/chat") {
+        return true;
+    }
+    // Otherwise a loopback host is a candidate (the probe decides for real).
+    Url::parse(endpoint)
+        .ok()
+        .and_then(|u| {
+            u.host_str().map(|h| {
+                h.eq_ignore_ascii_case("localhost")
+                    || h == "127.0.0.1"
+                    || h == "::1"
+                    || h == "[::1]"
+            })
+        })
+        .unwrap_or(false)
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use tuxlink_agent_runner::{Conversation, ToolCall, ToolSpec};
+
+    fn echo_tool() -> ToolSpec {
+        ToolSpec::new(
+            "echo",
+            json!({ "type": "object", "properties": { "msg": { "type": "string" } } }),
+        )
+    }
+
+    // -----------------------------------------------------------------------
+    // build_ollama_request — wire shape
+    // -----------------------------------------------------------------------
+
+    /// `keep_alive: 0` and `stream: false` are present on EVERY request, and the
+    /// first message is the Elmer system prompt (D2 + D4).
+    #[test]
+    fn request_always_has_keep_alive_zero_stream_false_and_system_prompt() {
+        let convo = Conversation::new("where am I?");
+        let body = build_ollama_request("qwen3:8b", &convo, &[], None, None);
+
+        // D4: keep_alive is always the integer 0.
+        assert_eq!(
+            body.get("keep_alive").and_then(Value::as_i64),
+            Some(0),
+            "keep_alive must always be 0 (eager unload); got: {body}"
+        );
+        // D2: non-streaming.
+        assert_eq!(
+            body.get("stream").and_then(Value::as_bool),
+            Some(false),
+            "stream must always be false (non-streaming v1); got: {body}"
+        );
+        assert_eq!(body["model"], "qwen3:8b");
+
+        // messages[0] is the system prompt; the first user message follows it.
+        assert_eq!(body["messages"][0]["role"], "system");
+        let system = body["messages"][0]["content"].as_str().unwrap_or("");
+        assert!(
+            system.contains("position_status"),
+            "system prompt must mention position_status; got: {system:?}"
+        );
+        assert!(
+            system.contains("STAGE") && system.contains("Arm to send"),
+            "system prompt must explain staging + Arm-to-send; got: {system:?}"
+        );
+        assert_eq!(body["messages"][1]["role"], "user");
+        assert_eq!(body["messages"][1]["content"], "where am I?");
+    }
+
+    /// When both `num_ctx` and `temperature` are set, `options` carries both.
+    #[test]
+    fn request_options_carries_num_ctx_and_temperature_when_set() {
+        let convo = Conversation::new("hi");
+        let body = build_ollama_request("m", &convo, &[], Some(32_768), Some(0.7));
+        let options = body.get("options").expect("options must be present");
+        assert_eq!(
+            options.get("num_ctx").and_then(Value::as_u64),
+            Some(32_768),
+            "options.num_ctx must be set; got: {options}"
+        );
+        // temperature round-trips as a float ~0.7.
+        let temp = options
+            .get("temperature")
+            .and_then(Value::as_f64)
+            .expect("options.temperature must be present");
+        assert!(
+            (temp - 0.7).abs() < 1e-6,
+            "options.temperature must be ~0.7; got: {temp}"
+        );
+    }
+
+    /// `options` omits `temperature` when only `num_ctx` is set (per-key omit).
+    #[test]
+    fn request_options_omits_unset_key() {
+        let convo = Conversation::new("hi");
+        let body = build_ollama_request("m", &convo, &[], Some(8192), None);
+        let options = body.get("options").expect("options must be present");
+        assert_eq!(options.get("num_ctx").and_then(Value::as_u64), Some(8192));
+        assert!(
+            options.get("temperature").is_none(),
+            "options must omit temperature when it is None; got: {options}"
+        );
+    }
+
+    /// `options` is omitted ENTIRELY when both knobs are None.
+    #[test]
+    fn request_omits_options_when_both_none() {
+        let convo = Conversation::new("hi");
+        let body = build_ollama_request("m", &convo, &[], None, None);
+        assert!(
+            body.get("options").is_none(),
+            "options must be absent when both num_ctx and temperature are None; got: {body}"
+        );
+    }
+
+    /// Tools serialize in the native `{type:function, function:{name,parameters}}`
+    /// shape (name + parameters only, mirroring the OpenAI adapter), and `tools`
+    /// is omitted when the surface is empty.
+    #[test]
+    fn request_serializes_tools_in_native_shape() {
+        let convo = Conversation::new("find a station near DM79");
+        let body = build_ollama_request("m", &convo, &[echo_tool()], None, None);
+        let tools = body["tools"].as_array().expect("tools must be an array");
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["type"], "function");
+        assert_eq!(tools[0]["function"]["name"], "echo");
+        // Schema is passed through verbatim as `parameters` (NOT `input_schema`).
+        assert_eq!(tools[0]["function"]["parameters"]["type"], "object");
+        assert!(
+            tools[0]["function"].get("input_schema").is_none(),
+            "native shape uses `parameters`, not `input_schema`; got: {}",
+            tools[0]
+        );
+    }
+
+    #[test]
+    fn request_omits_tools_when_none() {
+        let convo = Conversation::new("hi");
+        let body = build_ollama_request("m", &convo, &[], None, None);
+        assert!(body.get("tools").is_none(), "tools should be absent: {body}");
+    }
+
+    /// A ToolCall renders as an assistant message whose `function.arguments` is a
+    /// JSON OBJECT (the key divergence from OpenAI's string arguments), and a
+    /// ToolResult renders as a `tool`-role message with a `tool_name` (no
+    /// tool_call_id). FIFO order is transcript order.
+    #[test]
+    fn request_tool_call_and_result_native_fifo_shape() {
+        let mut convo = Conversation::new("find a station near DM79");
+        convo.push_tool_call(ToolCall::new("find_stations", json!({ "grid": "DM79" })));
+        convo.push_tool_result("find_stations", r#"{"count":3}"#);
+
+        let body = build_ollama_request("m", &convo, &[echo_tool()], None, None);
+        let msgs = body["messages"].as_array().expect("messages array");
+
+        // messages[0]=system, [1]=user, [2]=assistant tool_call, [3]=tool result.
+        let asst = &msgs[2];
+        assert_eq!(asst["role"], "assistant");
+        let tc = &asst["tool_calls"][0];
+        assert_eq!(tc["function"]["name"], "find_stations");
+        // arguments MUST be a JSON object (not a string).
+        assert!(
+            tc["function"]["arguments"].is_object(),
+            "native arguments must be a JSON object, not a string; got: {}",
+            tc["function"]["arguments"]
+        );
+        assert_eq!(tc["function"]["arguments"]["grid"], "DM79");
+
+        let result = &msgs[3];
+        assert_eq!(result["role"], "tool");
+        // Native pairing is by tool_name, NOT tool_call_id.
+        assert_eq!(result["tool_name"], "find_stations");
+        assert!(
+            result.get("tool_call_id").is_none(),
+            "native tool result must NOT carry an OpenAI tool_call_id; got: {result}"
+        );
+        assert!(result["content"].as_str().unwrap().contains("result"));
+    }
+
+    /// An error tool result labels its content "error" and preserves the detail.
+    #[test]
+    fn request_tool_error_result_labels_error() {
+        let mut convo = Conversation::new("go");
+        convo.push_tool_error("message_send", "tool denied: session is tainted");
+        let body = build_ollama_request("m", &convo, &[], None, None);
+        let tool_msg = body["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["role"] == "tool")
+            .expect("a tool-role message");
+        let content = tool_msg["content"].as_str().unwrap();
+        assert!(content.contains("error"));
+        assert!(content.contains("tainted"));
+    }
+
+    /// A ToolCall with `Value::Null` args renders `arguments` as `{}` (never a
+    /// null or a string) so the wire value is always an object.
+    #[test]
+    fn request_null_args_become_empty_object() {
+        let mut convo = Conversation::new("go");
+        convo.push_tool_call(ToolCall::new("noop", Value::Null));
+        let body = build_ollama_request("m", &convo, &[], None, None);
+        let asst = body["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["role"] == "assistant" && m["tool_calls"].is_array())
+            .expect("assistant tool_calls message");
+        assert_eq!(
+            asst["tool_calls"][0]["function"]["arguments"],
+            json!({}),
+            "null args must render as an empty object"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // parse_ollama_response
+    // -----------------------------------------------------------------------
+
+    /// A text turn: `message.content` with no tool_calls → `ModelTurn::Text`.
+    #[test]
+    fn parse_text_turn() {
+        let recorded = json!({
+            "model": "qwen3:8b",
+            "message": { "role": "assistant", "content": "hello operator" },
+            "done": true
+        });
+        assert_eq!(
+            parse_ollama_response(&recorded).unwrap(),
+            ModelTurn::Text("hello operator".into())
+        );
+    }
+
+    /// A single tool_call whose `arguments` is a JSON OBJECT parses directly (no
+    /// string-parse) — the critical divergence from the OpenAI shape.
+    #[test]
+    fn parse_single_tool_call_object_args() {
+        let recorded = json!({
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "function": {
+                        "name": "find_stations",
+                        "arguments": { "grid": "DM79" }
+                    }
+                }]
+            }
+        });
+        match parse_ollama_response(&recorded).unwrap() {
+            ModelTurn::ToolCalls(calls) => {
+                assert_eq!(calls.len(), 1);
+                assert_eq!(calls[0].name, "find_stations");
+                // args are the object AS-IS, not a re-parsed string.
+                assert_eq!(calls[0].args, json!({ "grid": "DM79" }));
+            }
+            other => panic!("expected ToolCalls, got {other:?}"),
+        }
+    }
+
+    /// Multiple tool_calls → multiple ToolCalls, in order.
+    #[test]
+    fn parse_multiple_tool_calls() {
+        let recorded = json!({
+            "message": {
+                "role": "assistant",
+                "tool_calls": [
+                    { "function": { "name": "a", "arguments": { "x": 1 } } },
+                    { "function": { "name": "b", "arguments": {} } }
+                ]
+            }
+        });
+        match parse_ollama_response(&recorded).unwrap() {
+            ModelTurn::ToolCalls(calls) => {
+                assert_eq!(calls.len(), 2);
+                assert_eq!(calls[0].name, "a");
+                assert_eq!(calls[0].args, json!({ "x": 1 }));
+                assert_eq!(calls[1].name, "b");
+                assert_eq!(calls[1].args, json!({}));
+            }
+            other => panic!("expected ToolCalls, got {other:?}"),
+        }
+    }
+
+    /// Tool calls take precedence over content (matching the sibling adapters).
+    #[test]
+    fn parse_tool_calls_take_precedence_over_content() {
+        let recorded = json!({
+            "message": {
+                "content": "some chatter",
+                "tool_calls": [{ "function": { "name": "x", "arguments": {} } }]
+            }
+        });
+        assert!(matches!(
+            parse_ollama_response(&recorded).unwrap(),
+            ModelTurn::ToolCalls(_)
+        ));
+    }
+
+    /// An empty tool_calls array falls back to the content text.
+    #[test]
+    fn parse_empty_tool_calls_falls_back_to_text() {
+        let recorded = json!({
+            "message": { "content": "no tools today", "tool_calls": [] }
+        });
+        assert_eq!(
+            parse_ollama_response(&recorded).unwrap(),
+            ModelTurn::Text("no tools today".into())
+        );
+    }
+
+    /// A tool_call with MISSING `arguments` → `Value::Null` args (COR-3 re-prompts).
+    #[test]
+    fn parse_tool_call_missing_args_becomes_null() {
+        let recorded = json!({
+            "message": {
+                "tool_calls": [{ "function": { "name": "echo" } }]
+            }
+        });
+        match parse_ollama_response(&recorded).unwrap() {
+            ModelTurn::ToolCalls(calls) => {
+                assert_eq!(calls[0].name, "echo");
+                assert_eq!(calls[0].args, Value::Null);
+            }
+            other => panic!("expected ToolCalls, got {other:?}"),
+        }
+    }
+
+    /// An empty/absent content with no tool calls → empty `Text` turn (not an error).
+    #[test]
+    fn parse_empty_message_is_empty_text() {
+        let recorded = json!({ "message": { "role": "assistant", "content": "" } });
+        assert_eq!(
+            parse_ollama_response(&recorded).unwrap(),
+            ModelTurn::Text(String::new())
+        );
+        // Absent content too.
+        let no_content = json!({ "message": { "role": "assistant" } });
+        assert_eq!(
+            parse_ollama_response(&no_content).unwrap(),
+            ModelTurn::Text(String::new())
+        );
+    }
+
+    /// Missing `message` object → parse error.
+    #[test]
+    fn parse_missing_message_is_error() {
+        assert!(parse_ollama_response(&json!({})).is_err());
+        assert!(parse_ollama_response(&json!({ "done": true })).is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // parse_ollama_counts
+    // -----------------------------------------------------------------------
+
+    /// Both counts present → `Some((prompt, eval))`.
+    #[test]
+    fn parse_counts_present() {
+        let recorded = json!({
+            "message": { "content": "hi" },
+            "prompt_eval_count": 1234,
+            "eval_count": 56,
+            "done": true
+        });
+        assert_eq!(parse_ollama_counts(&recorded), Some((1234, 56)));
+    }
+
+    /// A response missing either count → `None` (meter stays hidden).
+    #[test]
+    fn parse_counts_absent() {
+        // Neither present.
+        assert_eq!(parse_ollama_counts(&json!({ "message": {} })), None);
+        // Only prompt present.
+        assert_eq!(
+            parse_ollama_counts(&json!({ "prompt_eval_count": 10 })),
+            None
+        );
+        // Only eval present.
+        assert_eq!(parse_ollama_counts(&json!({ "eval_count": 5 })), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // is_ollama_endpoint (light heuristic — probe is authoritative in T4)
+    // -----------------------------------------------------------------------
+
+    /// The `/api/chat` path is recognized regardless of host.
+    #[test]
+    fn is_ollama_endpoint_true_for_api_chat_path() {
+        assert!(is_ollama_endpoint("http://127.0.0.1:11434/api/chat"));
+        assert!(is_ollama_endpoint("http://some-host:11434/api/chat"));
+    }
+
+    /// A loopback host is a candidate even without the native path.
+    #[test]
+    fn is_ollama_endpoint_true_for_loopback_host() {
+        assert!(is_ollama_endpoint("http://127.0.0.1:11434/v1/chat/completions"));
+        assert!(is_ollama_endpoint("http://localhost:11434/"));
+    }
+
+    /// A remote OpenAI/Anthropic host with no native path is not a candidate.
+    #[test]
+    fn is_ollama_endpoint_false_for_remote_compat() {
+        assert!(!is_ollama_endpoint("https://api.openai.com/v1/chat/completions"));
+        assert!(!is_ollama_endpoint("https://api.anthropic.com/v1/messages"));
+    }
+}
