@@ -287,6 +287,8 @@ export function ModelTilePicker({
               key={selectedPreset.id}
               preset={selectedPreset}
               onSave={onSave}
+              onDetect={onDetect}
+              detectState={detectState}
               agentModel={model}
               agentTurnTimeoutSecs={initialTurnTimeoutSecs}
               keyStatus={(() => {

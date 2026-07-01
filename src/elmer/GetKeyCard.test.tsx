@@ -1,5 +1,6 @@
 /**
  * GetKeyCard tests — Task 9: guided get-a-free-key flow (F7, F12).
+ * Updated for tuxlink-6614d: Detect model-list picker on cloud tiles.
  *
  * Coverage:
  *   (a) Open-key-page button calls mocked plugin-shell `open()` with EXACTLY
@@ -8,7 +9,11 @@
  *   (b) key field is type="password" with a reveal toggle that switches to type="text";
  *   (c) trim + sanity-validate: short or whitespace-containing paste shows error and blocks Save;
  *       valid paste enables Save; Gemini-style key with period is accepted (Fix 2 regression);
- *   (d) "stuck?" affordance renders an alternate-provider (Groq) suggestion.
+ *   (d) "stuck?" affordance renders an alternate-provider (Groq) suggestion;
+ *   (e) keyStatus='present' — settings-path key-saved affordance;
+ *   (f) Detect button — tuxlink-6614d: calls onDetect with preset.endpoint and
+ *       correct KeySource; success state renders detected-models select; selecting
+ *       an option updates the model input value.
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
@@ -25,6 +30,7 @@ vi.mock('@tauri-apps/plugin-shell', () => ({
 import { open as shellOpen } from '@tauri-apps/plugin-shell';
 import { GetKeyCard } from './GetKeyCard';
 import { PRESETS } from './elmerModelConfig';
+import type { DetectState } from './useElmer';
 
 afterEach(() => {
   cleanup();
@@ -34,6 +40,9 @@ afterEach(() => {
 const geminiPreset = PRESETS.find((p) => p.id === 'gemini')!;
 const groqPreset = PRESETS.find((p) => p.id === 'groq')!;
 const openaiPreset = PRESETS.find((p) => p.id === 'openai')!;
+const anthropicPreset = PRESETS.find((p) => p.id === 'anthropic')!;
+
+const idleDetect: DetectState = { status: 'idle' };
 
 function baseProps(
   overrides: Partial<ComponentProps<typeof GetKeyCard>> = {},
@@ -41,6 +50,8 @@ function baseProps(
   return {
     preset: geminiPreset,
     onSave: vi.fn(async () => {}),
+    onDetect: vi.fn(async () => {}),
+    detectState: idleDetect,
     agentModel: 'gemini-2.5-flash',
     agentTurnTimeoutSecs: 900,
     ...overrides,
@@ -265,6 +276,182 @@ describe('GetKeyCard', () => {
     expect(card.textContent?.toLowerCase()).toMatch(/sign in|google account/i);
     // Key creation outcome, not generic button label.
     expect(card.textContent?.toLowerCase()).toMatch(/api key/i);
+  });
+
+  // -----------------------------------------------------------------------
+  // (f) Detect button — tuxlink-6614d
+  // -----------------------------------------------------------------------
+
+  it('renders a Detect button on a cloud tile', () => {
+    render(<GetKeyCard {...baseProps()} />);
+    expect(screen.getByTestId('get-key-detect-btn')).toBeTruthy();
+  });
+
+  it('Detect button is enabled when detectState is idle', () => {
+    render(<GetKeyCard {...baseProps({ detectState: { status: 'idle' } })} />);
+    const btn = screen.getByTestId('get-key-detect-btn') as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+    expect(btn.textContent).toBe('Detect');
+  });
+
+  it('Detect button is disabled and shows "Detecting…" when detectState is detecting', () => {
+    render(<GetKeyCard {...baseProps({ detectState: { status: 'detecting' } })} />);
+    const btn = screen.getByTestId('get-key-detect-btn') as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    expect(btn.textContent).toBe('Detecting…');
+  });
+
+  it('clicking Detect calls onDetect with agentEndpoint=preset.endpoint and keySource=none when no key is typed or stored', async () => {
+    const onDetect = vi.fn(async () => {});
+    render(<GetKeyCard {...baseProps({ onDetect })} />);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('get-key-detect-btn'));
+    });
+    expect(onDetect).toHaveBeenCalledTimes(1);
+    expect(onDetect).toHaveBeenCalledWith({
+      agentEndpoint: geminiPreset.endpoint,
+      keySource: { source: 'none' },
+    });
+  });
+
+  it('clicking Detect with a typed key uses keySource=inline with the trimmed key value', async () => {
+    const onDetect = vi.fn(async () => {});
+    render(<GetKeyCard {...baseProps({ onDetect })} />);
+    fireEvent.change(screen.getByTestId('get-key-input'), {
+      target: { value: '  AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ12  ' },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('get-key-detect-btn'));
+    });
+    expect(onDetect).toHaveBeenCalledTimes(1);
+    expect(onDetect).toHaveBeenCalledWith({
+      agentEndpoint: geminiPreset.endpoint,
+      keySource: { source: 'inline', value: 'AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ12' },
+    });
+  });
+
+  it('clicking Detect with keyStatus=present and no replacement key uses keySource=useStored', async () => {
+    const onDetect = vi.fn(async () => {});
+    render(<GetKeyCard {...baseProps({ onDetect, keyStatus: 'present' })} />);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('get-key-detect-btn'));
+    });
+    expect(onDetect).toHaveBeenCalledTimes(1);
+    expect(onDetect).toHaveBeenCalledWith({
+      agentEndpoint: geminiPreset.endpoint,
+      keySource: { source: 'useStored' },
+    });
+  });
+
+  it('clicking Detect with keyStatus=present + Replace mode + typed key uses keySource=inline', async () => {
+    const onDetect = vi.fn(async () => {});
+    render(<GetKeyCard {...baseProps({ onDetect, keyStatus: 'present' })} />);
+    // Enter replace mode.
+    fireEvent.click(screen.getByTestId('get-key-replace-btn'));
+    // Type a new key.
+    fireEvent.change(screen.getByTestId('get-key-input'), {
+      target: { value: 'AIzaSy-new-replacement-key-12345678' },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('get-key-detect-btn'));
+    });
+    expect(onDetect).toHaveBeenCalledTimes(1);
+    expect(onDetect).toHaveBeenCalledWith({
+      agentEndpoint: geminiPreset.endpoint,
+      keySource: { source: 'inline', value: 'AIzaSy-new-replacement-key-12345678' },
+    });
+  });
+
+  it('onDetect is called with Anthropic preset.endpoint when Detect is clicked on the Anthropic tile', async () => {
+    const onDetect = vi.fn(async () => {});
+    render(
+      <GetKeyCard
+        {...baseProps({
+          preset: anthropicPreset,
+          agentModel: 'claude-haiku-4-5',
+          onDetect,
+        })}
+      />,
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('get-key-detect-btn'));
+    });
+    expect(onDetect).toHaveBeenCalledTimes(1);
+    expect(onDetect).toHaveBeenCalledWith(
+      expect.objectContaining({ agentEndpoint: anthropicPreset.endpoint }),
+    );
+  });
+
+  it('detectState=success with models renders the detected-models select', () => {
+    const successDetect: DetectState = {
+      status: 'success',
+      models: ['gemini-2.5-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'],
+    };
+    render(<GetKeyCard {...baseProps({ detectState: successDetect })} />);
+    const select = screen.getByTestId('get-key-detected-models') as HTMLSelectElement;
+    expect(select).toBeTruthy();
+    // All detected models appear as options.
+    expect(select.querySelectorAll('option').length).toBe(3);
+  });
+
+  it('selecting a model from the detected-models select updates the model input value', () => {
+    const successDetect: DetectState = {
+      status: 'success',
+      models: ['gemini-2.5-flash', 'gemini-1.5-pro'],
+    };
+    render(<GetKeyCard {...baseProps({ detectState: successDetect })} />);
+    const select = screen.getByTestId('get-key-detected-models') as HTMLSelectElement;
+    const modelInput = screen.getByTestId('get-key-model-input') as HTMLInputElement;
+    // Pick 'gemini-1.5-pro' from the detected list.
+    fireEvent.change(select, { target: { value: 'gemini-1.5-pro' } });
+    expect(modelInput.value).toBe('gemini-1.5-pro');
+  });
+
+  it('after Detect populates the model, Save sends the detected model', async () => {
+    const onSave = vi.fn(async () => {});
+    const successDetect: DetectState = {
+      status: 'success',
+      models: ['gemini-2.5-flash', 'gemini-1.5-pro'],
+    };
+    render(
+      <GetKeyCard
+        {...baseProps({ onSave, detectState: successDetect, keyStatus: 'present' })}
+      />,
+    );
+    // Pick the second detected model.
+    fireEvent.change(screen.getByTestId('get-key-detected-models'), {
+      target: { value: 'gemini-1.5-pro' },
+    });
+    // Verify the text input now shows the selected model.
+    expect((screen.getByTestId('get-key-model-input') as HTMLInputElement).value).toBe(
+      'gemini-1.5-pro',
+    );
+    // Save (key is already stored so Save is enabled).
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('get-key-save'));
+    });
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ agentModel: 'gemini-1.5-pro' }),
+    );
+  });
+
+  it('detectState=success with empty models array renders "No models found" message, not the select', () => {
+    const emptyDetect: DetectState = { status: 'success', models: [] };
+    render(<GetKeyCard {...baseProps({ detectState: emptyDetect })} />);
+    expect(screen.getByTestId('get-key-detect-zero')).toBeTruthy();
+    expect(screen.queryByTestId('get-key-detected-models')).toBeNull();
+  });
+
+  it('detectState=error renders the error reason text', () => {
+    const errorDetect: DetectState = {
+      status: 'error',
+      reason: 'auth error: check the API key for https://generativelanguage.googleapis.com',
+    };
+    render(<GetKeyCard {...baseProps({ detectState: errorDetect })} />);
+    const errEl = screen.getByTestId('get-key-detect-error');
+    expect(errEl).toBeTruthy();
+    expect(errEl.textContent).toContain('auth error');
   });
 
   // -----------------------------------------------------------------------
