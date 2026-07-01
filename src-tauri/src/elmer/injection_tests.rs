@@ -114,11 +114,15 @@ const SEEDED_ID: &str = "MSG001";
 /// Includes `elmer_key_status_for_origins` (T4, tuxlink-wpqwy) — a read-only
 /// batch key-status query that is also Tauri-only: exposing it as an MCP tool
 /// would let an agent probe which providers the operator has stored keys for.
+/// Includes `elmer_estimate_memory` (T6, tuxlink-65qhn) — exposing this as an
+/// MCP tool would let the agent probe the operator's Ollama endpoint and model
+/// list.
 const CONFIG_COMMAND_NAMES: &[&str] = &[
     "elmer_config_read",
     "elmer_config_set",
     "elmer_detect_models",
     "elmer_key_status_for_origins",
+    "elmer_estimate_memory",
 ];
 
 // ---------------------------------------------------------------------------

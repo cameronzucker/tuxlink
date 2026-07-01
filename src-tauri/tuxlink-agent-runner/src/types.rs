@@ -186,6 +186,27 @@ pub enum RunEvent {
         /// A partial fragment of the model's reasoning text.
         chunk: String,
     },
+    /// The context-window usage reported by a native local provider after a
+    /// turn. Emitted (fire-and-forget) by a `Provider` — currently the native
+    /// Ollama `/api/chat` adapter — once per turn when the model reports token
+    /// counts, so a caller can render a context-fullness meter against the
+    /// `num_ctx` the provider requested.
+    ///
+    /// Like the other variants this is purely informational: the runner relays
+    /// it unchanged and never interprets the counts. It is only meaningful when
+    /// `num_ctx` is known (i.e. the native path where the app sets the window);
+    /// providers that leave the window at the server default do not emit it. A
+    /// model that omits token counts simply causes no emission, so a caller that
+    /// hides its meter until the first event degrades gracefully.
+    ContextUsage {
+        /// Tokens the full prompt occupied this turn (Ollama `prompt_eval_count`).
+        prompt_tokens: u32,
+        /// Tokens the model generated this turn (Ollama `eval_count`).
+        eval_tokens: u32,
+        /// The context window the provider requested (`options.num_ctx`), the
+        /// denominator for the fullness meter.
+        num_ctx: u32,
+    },
 }
 
 /// The terminal result of a `run`.
@@ -209,4 +230,45 @@ pub enum RunOutcome {
     /// this to the `"rateLimited"` outcome-kind event so the React pane can show
     /// the rate-limit callout.  No automatic retry is performed.
     RateLimited(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The `ContextUsage` variant constructs with the documented fields and
+    /// relays its counts unchanged through a fire-and-forget sink (the same
+    /// contract the runner uses for every other `RunEvent`). Guards T2: adding
+    /// the variant must not change how a caller reads the counts back out.
+    #[test]
+    fn context_usage_variant_constructs_and_relays_counts() {
+        let event = RunEvent::ContextUsage {
+            prompt_tokens: 1234,
+            eval_tokens: 56,
+            num_ctx: 32_768,
+        };
+
+        // A fire-and-forget sink records the event verbatim.
+        let mut seen: Vec<RunEvent> = Vec::new();
+        let mut sink = |e: RunEvent| seen.push(e);
+        sink(event.clone());
+
+        assert_eq!(seen.len(), 1);
+        match &seen[0] {
+            RunEvent::ContextUsage {
+                prompt_tokens,
+                eval_tokens,
+                num_ctx,
+            } => {
+                assert_eq!(*prompt_tokens, 1234);
+                assert_eq!(*eval_tokens, 56);
+                assert_eq!(*num_ctx, 32_768);
+            }
+            other => panic!("expected ContextUsage, got {other:?}"),
+        }
+
+        // Equality is field-wise (derived `PartialEq`), so a re-constructed
+        // value with the same fields compares equal — the relay is lossless.
+        assert_eq!(seen[0], event);
+    }
 }

@@ -239,7 +239,7 @@ impl std::fmt::Debug for SetKey {
 ///
 /// **Never contains the key value** — `key_status` is the three-state
 /// [`KeyStatus`] indicator only.
-#[derive(Debug, Serialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigReadDto {
     pub agent_endpoint: String,
@@ -256,6 +256,18 @@ pub struct ConfigReadDto {
     /// migration-aware: `true` if the stored flag is set OR the config content
     /// already differs from factory defaults (existing-user migration).
     pub onboarded: bool,
+    /// Native-Ollama context window size (tuxlink-65qhn T3).
+    /// Serializes as `numCtx` (camelCase). `None` when unset (Ollama uses its
+    /// model default); the T8 Advanced panel shows an empty/disabled field.
+    pub num_ctx: Option<u32>,
+    /// Inference temperature (tuxlink-65qhn T3).
+    /// Serializes as `temperature` (single-word, camelCase is unchanged).
+    /// `None` when unset (provider uses its default).
+    pub temperature: Option<f32>,
+    /// Operator-supplied system-prompt override (tuxlink-31tbw, T3).
+    /// Serializes as `systemPromptOverride`. `None` when unset; the T8 panel
+    /// displays the built-in default prompt as placeholder text.
+    pub system_prompt_override: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -309,10 +321,18 @@ pub fn clamp_turn_timeout_secs(requested: u32) -> u32 {
 /// # Errors
 ///
 /// Returns a `String` error on any validation or I/O failure.
+// 9 args after the T3 advanced fields (num_ctx/temperature/system_prompt_override)
+// joined the existing endpoint/model/timeout/key/state/keyring set. A params
+// struct would be the alternative; the flat signature mirrors the command it
+// backs and keeps the call sites explicit.
+#[allow(clippy::too_many_arguments)]
 pub async fn config_set_inner(
     agent_endpoint: String,
     agent_model: String,
     agent_turn_timeout_secs: u32,
+    num_ctx: Option<u32>,
+    temperature: Option<f32>,
+    system_prompt_override: Option<String>,
     key: SetKey,
     state: &ElmerModelConfigState,
     keyring: &ElmerKeyring,
@@ -360,6 +380,10 @@ pub async fn config_set_inner(
     // Mark the operator as onboarded: any successful save through the Elmer
     // model form means the picker has been presented and acted upon.
     config.elmer.onboarded = true;
+    // Advanced fields (tuxlink-65qhn T3).
+    config.elmer.num_ctx = num_ctx;
+    config.elmer.temperature = temperature;
+    config.elmer.system_prompt_override = system_prompt_override.clone();
     crate::config::write_config_atomic(&config)
         .map_err(|e| format!("couldn't save config: {e}"))?;
 
@@ -367,6 +391,9 @@ pub async fn config_set_inner(
     guard.endpoint = agent_endpoint;
     guard.model = agent_model;
     guard.turn_timeout_secs = turn_timeout_secs;
+    guard.num_ctx = num_ctx;
+    guard.temperature = temperature;
+    guard.system_prompt_override = system_prompt_override;
     // Lock is released here when `guard` drops.
 
     Ok(())
@@ -447,6 +474,9 @@ pub async fn config_read_inner(
         key_status,
         agent_turn_timeout_secs: snapshot.turn_timeout_secs,
         onboarded,
+        num_ctx: snapshot.num_ctx,
+        temperature: snapshot.temperature,
+        system_prompt_override: snapshot.system_prompt_override,
     })
 }
 
@@ -766,12 +796,24 @@ pub async fn elmer_config_read(
 ///
 /// Transactional: endpoint validation → key action → config-file write →
 /// in-memory snapshot advance, all under the model-config lock.
+///
+/// `num_ctx`, `temperature`, and `system_prompt_override` are optional
+/// advanced fields (tuxlink-65qhn T3). Pass `null` / `None` to leave them
+/// unset (provider uses its defaults). T8 supplies them from the Advanced
+/// panel; earlier callers that omit them stay backward-compatible because
+/// Tauri maps a missing JSON field to `None` for `Option<T>` parameters.
 #[instrument(skip(key, keyring, state))]
 #[tauri::command]
+// 9 args after the T3 advanced fields; a params struct is the alternative but the
+// flat command signature is the Tauri-idiomatic shape the renderer invokes against.
+#[allow(clippy::too_many_arguments)]
 pub async fn elmer_config_set(
     agent_endpoint: String,
     agent_model: String,
     agent_turn_timeout_secs: u32,
+    num_ctx: Option<u32>,
+    temperature: Option<f32>,
+    system_prompt_override: Option<String>,
     key: SetKey,
     state: State<'_, Arc<ElmerModelConfigState>>,
     keyring: State<'_, Arc<ElmerKeyring>>,
@@ -780,6 +822,9 @@ pub async fn elmer_config_set(
         agent_endpoint,
         agent_model,
         agent_turn_timeout_secs,
+        num_ctx,
+        temperature,
+        system_prompt_override,
         key,
         &state,
         &keyring,
@@ -944,7 +989,8 @@ mod tests {
 
     fn valid_state() -> ElmerModelConfigState {
         // 900 = the default 15-min per-turn timeout (tuxlink-1wi5w).
-        ElmerModelConfigState::new(VALID_ENDPOINT.into(), VALID_MODEL.into(), 900)
+        // Advanced fields default to None (tuxlink-65qhn T3).
+        ElmerModelConfigState::new(VALID_ENDPOINT.into(), VALID_MODEL.into(), 900, None, None, None)
     }
 
     // -----------------------------------------------------------------------
@@ -1060,6 +1106,9 @@ mod tests {
             VALID_ENDPOINT.into(),
             VALID_MODEL.into(),
             900,
+            None,
+            None,
+            None,
             SetKey::Keep,
             &state,
             &kr,
@@ -1092,6 +1141,9 @@ mod tests {
             VALID_ENDPOINT.into(),
             VALID_MODEL.into(),
             900,
+            None,
+            None,
+            None,
             SetKey::Set { value: "sk-x".into() },
             &state,
             &kr,
@@ -1119,6 +1171,9 @@ mod tests {
             VALID_ENDPOINT.into(),
             VALID_MODEL.into(),
             900,
+            None,
+            None,
+            None,
             SetKey::Set { value: "".into() },
             &state,
             &kr,
@@ -1179,6 +1234,9 @@ mod tests {
                 VALID_ENDPOINT.into(),
                 VALID_MODEL.into(),
                 requested,
+                None,
+                None,
+                None,
                 SetKey::Keep,
                 &state,
                 &kr,
@@ -1224,6 +1282,9 @@ mod tests {
             "http://127.0.0.1:11434/v1/chat/completions".into(),
             "llama3".into(),
             240,
+            None,
+            None,
+            None,
         );
 
         let dto = config_read_inner(&state, &kr)
@@ -1266,6 +1327,9 @@ mod tests {
             VALID_ENDPOINT.into(),
             VALID_MODEL.into(),
             900,
+            None,
+            None,
+            None,
             SetKey::Clear,
             &state,
             &kr,
@@ -1296,6 +1360,9 @@ mod tests {
             "not a url".into(),
             VALID_MODEL.into(),
             900,
+            None,
+            None,
+            None,
             SetKey::Set { value: "sk-injected".into() },
             &state,
             &kr,
@@ -1331,6 +1398,9 @@ mod tests {
             VALID_ENDPOINT.into(),
             "gpt-new".into(),
             900,
+            None,
+            None,
+            None,
             SetKey::Set { value: "sk-never-stored".into() },
             &state,
             &kr,
@@ -1498,6 +1568,9 @@ mod tests {
                     VALID_ENDPOINT.into(),
                     VALID_MODEL.into(),
                     900,
+                    None,
+                    None,
+                    None,
                     SetKey::Set { value: SECRET.into() },
                     &state,
                     &kr,
@@ -2139,7 +2212,7 @@ mod tests {
         // Ollama-style loopback endpoint: no port reachability needed;
         // config_read_inner reads the snapshot only.
         let loopback_ep = "http://127.0.0.1:11434/v1/chat/completions";
-        let state = ElmerModelConfigState::new(loopback_ep.into(), "llama3".into(), 900);
+        let state = ElmerModelConfigState::new(loopback_ep.into(), "llama3".into(), 900, None, None, None);
 
         let dto = config_read_inner(&state, &kr)
             .await
@@ -2184,6 +2257,9 @@ mod tests {
             key_status: KeyStatus::Absent,
             agent_turn_timeout_secs: 900,
             onboarded: true,
+            num_ctx: None,
+            temperature: None,
+            system_prompt_override: None,
         };
         let json_true = serde_json::to_string(&dto_true).expect("serialize DTO (true)");
         assert!(
@@ -2198,6 +2274,9 @@ mod tests {
             key_status: KeyStatus::Absent,
             agent_turn_timeout_secs: 900,
             onboarded: false,
+            num_ctx: None,
+            temperature: None,
+            system_prompt_override: None,
         };
         let json_false = serde_json::to_string(&dto_false).expect("serialize DTO (false)");
         assert!(
@@ -2232,7 +2311,7 @@ mod tests {
         std::fs::write(tmp.path().join("config.json"), json).expect("write config.json");
 
         // In-memory state matches the on-disk non-default endpoint/model.
-        let state = ElmerModelConfigState::new(VALID_ENDPOINT.into(), VALID_MODEL.into(), 900);
+        let state = ElmerModelConfigState::new(VALID_ENDPOINT.into(), VALID_MODEL.into(), 900, None, None, None);
 
         let dir_path = tmp.path().to_str().unwrap().to_string();
         std::env::set_var("TUXLINK_CONFIG_DIR", &dir_path);
@@ -2261,7 +2340,7 @@ mod tests {
         // Use a non-default (cloud) endpoint so that `ElmerConfig::is_default()`
         // returns false and the `elmer` section is serialized to disk, causing
         // the `onboarded: true` flag to be persisted.
-        let state = ElmerModelConfigState::new(VALID_ENDPOINT.into(), VALID_MODEL.into(), 900);
+        let state = ElmerModelConfigState::new(VALID_ENDPOINT.into(), VALID_MODEL.into(), 900, None, None, None);
         let tmp = TempConfigDir::new();
 
         let dir_path = tmp.path().to_str().unwrap().to_string();
@@ -2276,6 +2355,9 @@ mod tests {
             VALID_ENDPOINT.into(),
             VALID_MODEL.into(),
             900,
+            None,
+            None,
+            None,
             SetKey::Keep,
             &state,
             &kr,
@@ -2322,6 +2404,9 @@ mod tests {
             default_endpoint.into(),
             default_model.into(),
             default_timeout,
+            None,
+            None,
+            None,
         );
         let tmp = TempConfigDir::new();
 
@@ -2334,6 +2419,9 @@ mod tests {
             default_endpoint.into(),
             default_model.into(),
             default_timeout,
+            None,
+            None,
+            None,
             SetKey::Keep,
             &state,
             &kr,
@@ -2351,6 +2439,227 @@ mod tests {
             dto.onboarded,
             "DTO must report onboarded==true after saving with default-content config \
              (persistence fix: onboarded flag must survive even when content==factory defaults)"
+        );
+    }
+
+    // =======================================================================
+    // T3 tests — num_ctx / temperature / system_prompt_override round-trip
+    // and backward-compatibility (tuxlink-65qhn)
+    // =======================================================================
+
+    // -----------------------------------------------------------------------
+    // Test: advanced_fields_round_trip_through_set_and_read
+    // -----------------------------------------------------------------------
+
+    /// `config_set_inner` persists the three advanced optional fields and
+    /// `config_read_inner` returns them in the DTO.
+    ///
+    /// Covers:
+    /// - `num_ctx: Some(4096)` persists and round-trips as `numCtx: 4096`.
+    /// - `temperature: Some(0.7)` persists and round-trips as `temperature: 0.7`.
+    /// - `system_prompt_override: Some("Custom.")` persists and round-trips as
+    ///   `systemPromptOverride: "Custom."`.
+    /// - In-memory snapshot is also advanced atomically (not just the disk file).
+    #[tokio::test]
+    #[serial]
+    async fn advanced_fields_round_trip_through_set_and_read() {
+        let kr = Arc::new(ElmerKeyring::with_memory_keyring());
+        // Use a loopback endpoint so config_read_inner skips the keyring.
+        let loopback_ep = "http://127.0.0.1:11434/v1/chat/completions";
+        let state = ElmerModelConfigState::new(
+            loopback_ep.into(),
+            "llama3".into(),
+            900,
+            None,
+            None,
+            None,
+        );
+        let tmp = TempConfigDir::new();
+
+        let dir_path = tmp.path().to_str().unwrap().to_string();
+        std::env::set_var("TUXLINK_CONFIG_DIR", &dir_path);
+
+        // Write with all three advanced fields set.
+        let set_result = config_set_inner(
+            loopback_ep.into(),
+            "llama3".into(),
+            900,
+            Some(4096),
+            Some(0.7),
+            Some("Custom.".into()),
+            SetKey::Keep,
+            &state,
+            &kr,
+        )
+        .await;
+        assert!(set_result.is_ok(), "config_set_inner must succeed: {set_result:?}");
+
+        // Read the DTO and verify field values.
+        let dto = config_read_inner(&state, &Arc::clone(&kr))
+            .await
+            .expect("config_read_inner must succeed");
+        std::env::remove_var("TUXLINK_CONFIG_DIR");
+
+        assert_eq!(dto.num_ctx, Some(4096), "num_ctx must round-trip");
+        // f32 comparison: allow small tolerance; 0.7f32 as JSON should round-trip
+        // exactly since serde_json uses the shortest representation.
+        assert!(
+            dto.temperature.map(|t| (t - 0.7f32).abs() < 1e-6).unwrap_or(false),
+            "temperature must round-trip close to 0.7; got {:?}", dto.temperature
+        );
+        assert_eq!(
+            dto.system_prompt_override.as_deref(),
+            Some("Custom."),
+            "system_prompt_override must round-trip"
+        );
+
+        // Also verify in-memory snapshot was advanced.
+        let snap = state.snapshot().await;
+        assert_eq!(snap.num_ctx, Some(4096), "snapshot num_ctx must be advanced");
+        assert_eq!(
+            snap.system_prompt_override.as_deref(),
+            Some("Custom."),
+            "snapshot system_prompt_override must be advanced"
+        );
+
+        // Verify wire-shape camelCase keys in the serialized DTO.
+        let json = serde_json::to_value(&dto).expect("serialize DTO");
+        assert_eq!(
+            json.get("numCtx").and_then(|v| v.as_u64()),
+            Some(4096),
+            "DTO must serialize num_ctx as `numCtx`; got: {json}"
+        );
+        assert!(
+            json.get("temperature").and_then(|v| v.as_f64()).is_some(),
+            "DTO must serialize temperature; got: {json}"
+        );
+        assert_eq!(
+            json.get("systemPromptOverride").and_then(|v| v.as_str()),
+            Some("Custom."),
+            "DTO must serialize system_prompt_override as `systemPromptOverride`; got: {json}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: advanced_fields_none_when_not_set
+    // -----------------------------------------------------------------------
+
+    /// When the advanced fields are never written, `config_read_inner` returns
+    /// `None` for all three — the DTO must not fabricate defaults.
+    #[tokio::test]
+    async fn advanced_fields_none_when_not_set() {
+        let kr = Arc::new(ElmerKeyring::with_memory_keyring());
+        let loopback_ep = "http://127.0.0.1:11434/v1/chat/completions";
+        let state = ElmerModelConfigState::new(
+            loopback_ep.into(),
+            "llama3".into(),
+            900,
+            None,
+            None,
+            None,
+        );
+
+        let dto = config_read_inner(&state, &kr)
+            .await
+            .expect("config_read_inner must succeed");
+
+        assert_eq!(dto.num_ctx, None, "num_ctx must be None when unset");
+        assert_eq!(dto.temperature, None, "temperature must be None when unset");
+        assert_eq!(
+            dto.system_prompt_override, None,
+            "system_prompt_override must be None when unset"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: advanced_fields_backward_compat_absent_from_disk
+    // -----------------------------------------------------------------------
+
+    /// A config file that predates T3 (no `num_ctx`, `temperature`, or
+    /// `system_prompt_override` keys) must deserialize to `None` for all three
+    /// — no schema-version bump required, no error.
+    ///
+    /// This is the core backward-compatibility guarantee: `#[serde(default)]`
+    /// on the three new `ElmerConfig` fields means absent-from-disk → `None`.
+    #[test]
+    fn advanced_fields_backward_compat_absent_from_disk() {
+        // A pre-T3 on-disk JSON with only the pre-existing ElmerConfig fields.
+        let pre_t3_json = serde_json::json!({
+            "agent_endpoint": "http://127.0.0.1:11434/v1/chat/completions",
+            "agent_model": "llama3",
+            "agent_turn_timeout_secs": 900,
+            "onboarded": false
+        });
+
+        let cfg: crate::config::ElmerConfig =
+            serde_json::from_value(pre_t3_json).expect("pre-T3 config must deserialize");
+
+        assert_eq!(cfg.num_ctx, None, "pre-T3 config must yield num_ctx=None");
+        assert_eq!(cfg.temperature, None, "pre-T3 config must yield temperature=None");
+        assert_eq!(
+            cfg.system_prompt_override, None,
+            "pre-T3 config must yield system_prompt_override=None"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: advanced_fields_clear_when_set_to_none
+    // -----------------------------------------------------------------------
+
+    /// Writing `None` for a previously-set advanced field clears it — both in
+    /// the in-memory snapshot and on disk.
+    #[tokio::test]
+    #[serial]
+    async fn advanced_fields_clear_when_set_to_none() {
+        let kr = Arc::new(ElmerKeyring::with_memory_keyring());
+        let loopback_ep = "http://127.0.0.1:11434/v1/chat/completions";
+        // Seed the state WITH values.
+        let state = ElmerModelConfigState::new(
+            loopback_ep.into(),
+            "llama3".into(),
+            900,
+            Some(4096),
+            Some(0.5),
+            Some("Existing prompt".into()),
+        );
+        let tmp = TempConfigDir::new();
+
+        let dir_path = tmp.path().to_str().unwrap().to_string();
+        std::env::set_var("TUXLINK_CONFIG_DIR", &dir_path);
+
+        // Now write with all three set to None.
+        let set_result = config_set_inner(
+            loopback_ep.into(),
+            "llama3".into(),
+            900,
+            None,
+            None,
+            None,
+            SetKey::Keep,
+            &state,
+            &kr,
+        )
+        .await;
+        assert!(set_result.is_ok(), "config_set_inner must succeed: {set_result:?}");
+
+        let dto = config_read_inner(&state, &Arc::clone(&kr))
+            .await
+            .expect("config_read_inner must succeed");
+        std::env::remove_var("TUXLINK_CONFIG_DIR");
+
+        assert_eq!(dto.num_ctx, None, "num_ctx must be cleared to None");
+        assert_eq!(dto.temperature, None, "temperature must be cleared to None");
+        assert_eq!(
+            dto.system_prompt_override, None,
+            "system_prompt_override must be cleared to None"
+        );
+
+        // Snapshot must also reflect the cleared values.
+        let snap = state.snapshot().await;
+        assert_eq!(snap.num_ctx, None, "snapshot num_ctx must be cleared");
+        assert_eq!(
+            snap.system_prompt_override, None,
+            "snapshot system_prompt_override must be cleared"
         );
     }
 

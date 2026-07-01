@@ -42,6 +42,7 @@ import {
   type KeyStatus,
   type SetKey,
   type KeySource,
+  type ConfigReadDto,
 } from './elmerModelConfig';
 import { ModelForm } from './ElmerPane';
 import { GetKeyCard } from './GetKeyCard';
@@ -54,6 +55,10 @@ export interface ModelTilePickerProps {
     agentModel: string;
     key: SetKey;
     agentTurnTimeoutSecs: number;
+    /** T8/tuxlink-65qhn advanced fields — forwarded to elmer_config_set. */
+    numCtx?: number | null;
+    temperature?: number | null;
+    systemPromptOverride?: string | null;
   }) => Promise<void>;
   onDetect: (args: { agentEndpoint: string; keySource: KeySource }) => Promise<void>;
   detectState: DetectState;
@@ -63,6 +68,12 @@ export interface ModelTilePickerProps {
   initialModel: string;
   initialKeyStatus: KeyStatus;
   initialTurnTimeoutSecs: number;
+  /**
+   * Operator's SAVED Advanced-panel values (num_ctx / temperature / system-prompt
+   * override), forwarded to GetKeyCard so a reopened disclosure pre-fills what was
+   * saved instead of defaults. Optional: absent on first-run before any save.
+   */
+  initialConfig?: Pick<ConfigReadDto, 'numCtx' | 'temperature' | 'systemPromptOverride'>;
   /**
    * T10: When set, pre-selects the first tile in the given tier on mount.
    * Used by the rate-limit recovery "Switch provider" button to land the
@@ -161,6 +172,7 @@ export function ModelTilePicker({
   initialModel,
   initialKeyStatus,
   initialTurnTimeoutSecs,
+  initialConfig,
   focusTier,
 }: ModelTilePickerProps) {
   // Working endpoint + model, seeded from the SAVED config (not a tile default)
@@ -291,6 +303,7 @@ export function ModelTilePicker({
               detectState={detectState}
               agentModel={model}
               agentTurnTimeoutSecs={initialTurnTimeoutSecs}
+              initialConfig={initialConfig}
               keyStatus={(() => {
                 // Thread the per-origin key status to GetKeyCard so it can show
                 // the "Key saved" affordance and skip forced re-entry in settings path.
@@ -310,6 +323,7 @@ export function ModelTilePicker({
               initialModel={model}
               initialKeyStatus={initialKeyStatus}
               initialTurnTimeoutSecs={initialTurnTimeoutSecs}
+              initialConfig={initialConfig}
             />
             <TierFramingCopy tier={selectedPreset?.tier} />
           </>

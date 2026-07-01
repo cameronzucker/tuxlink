@@ -23,6 +23,7 @@ pub mod anthropic_provider;
 pub mod egress;
 pub mod endpoint;
 pub mod mcp_client;
+pub mod ollama_provider;
 pub mod provider;
 
 // Convenience re-exports for crate consumers.

@@ -73,7 +73,7 @@ async fn real_main(args: Args) -> Result<(), String> {
     let http = reqwest::Client::builder()
         .build()
         .map_err(|e| format!("could not build HTTP client: {e}"))?;
-    let provider = OpenAiProvider::new(http, endpoint, args.model.clone(), api_key);
+    let provider = OpenAiProvider::new(http, endpoint, args.model.clone(), None, None, api_key);
 
     // The tool adapter: connect the rmcp client over the Tuxlink MCP UDS.
     let socket_path = match &args.socket {

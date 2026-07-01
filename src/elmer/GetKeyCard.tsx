@@ -8,6 +8,14 @@
  * /^\S+$/ — no whitespace, any non-space chars including periods for Gemini keys),
  * and a "stuck?" affordance offering an alternate free provider or pay-as-you-go path.
  *
+ * T8 (tuxlink-65qhn): Advanced disclosure section below the model field (collapsed
+ * by default). Contains:
+ *   - num_ctx input (local/native tiles only; hidden for cloud tiles).
+ *   - Live memory estimate line (debounced call to elmer_estimate_memory).
+ *   - CPU-prefill speed cue.
+ *   - Temperature slider (0–1, all tiles).
+ *   - System prompt textarea with Reset-to-default button (all tiles).
+ *
  * Security:
  *   - `open()` is called with `preset.keyPageUrl` ONLY — a compile-time
  *     constant, never a config/endpoint-derived or user-supplied string
@@ -20,8 +28,15 @@
 
 import { useState, useCallback } from 'react';
 import { open as shellOpen } from '@tauri-apps/plugin-shell';
-import type { ProviderPreset, SetKey, KeyStatus, KeySource } from './elmerModelConfig';
+import type { ProviderPreset, SetKey, KeyStatus, KeySource, ConfigReadDto } from './elmerModelConfig';
+import { isLoopback } from './elmerModelConfig';
 import type { DetectState } from './useElmer';
+import {
+  AdvancedModelSettings,
+  type AdvancedModelValues,
+  DEFAULT_NUM_CTX,
+  DEFAULT_SYSTEM_PROMPT_PLACEHOLDER,
+} from './AdvancedModelSettings';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -34,6 +49,9 @@ export interface GetKeyCardProps {
     agentModel: string;
     key: SetKey;
     agentTurnTimeoutSecs: number;
+    numCtx?: number | null;
+    temperature?: number | null;
+    systemPromptOverride?: string | null;
   }) => Promise<void>;
   /**
    * Detect callback (mirrors the one on ModelForm). Called with the preset's
@@ -57,6 +75,12 @@ export interface GetKeyCardProps {
    * to a different origin.
    */
   keyStatus?: KeyStatus;
+  /**
+   * T8: Initial advanced config values loaded from elmer_config_read. When
+   * provided, the Advanced disclosure is pre-filled with the saved values.
+   * All fields optional — omitting them leaves defaults in place.
+   */
+  initialConfig?: Pick<ConfigReadDto, 'numCtx' | 'temperature' | 'systemPromptOverride'>;
 }
 
 // ---------------------------------------------------------------------------
@@ -147,6 +171,7 @@ export function GetKeyCard({
   agentModel,
   agentTurnTimeoutSecs,
   keyStatus,
+  initialConfig,
 }: GetKeyCardProps) {
   const [rawKey, setRawKey] = useState('');
   const [revealed, setRevealed] = useState(false);
@@ -161,6 +186,34 @@ export function GetKeyCard({
   // keyed by preset id in the picker, so switching cloud tiles remounts this with
   // the new preset's default (tuxlink-p46qz).
   const [model, setModel] = useState(agentModel);
+
+  // ---------------------------------------------------------------------------
+  // T8: Advanced disclosure state
+  // ---------------------------------------------------------------------------
+
+  // Collapsed by default per spec.
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+
+  // Whether this tile's endpoint is local/native (determines num_ctx visibility).
+  // Cloud tiles show the disclosure minus num_ctx (per mock annotation).
+  const isLocalTile = isLoopback(preset.endpoint);
+
+  // T8: Advanced-panel values, seeded from initialConfig (saved values) or
+  // sensible defaults. num_ctx is a string so the number input stays freely
+  // editable; temperature defaults to 0.2; system prompt empty = no override.
+  const [advanced, setAdvanced] = useState<AdvancedModelValues>(() => ({
+    numCtxStr:
+      initialConfig?.numCtx != null ? String(initialConfig.numCtx) : String(DEFAULT_NUM_CTX),
+    temperature: initialConfig?.temperature != null ? initialConfig.temperature : 0.2,
+    systemPrompt:
+      initialConfig?.systemPromptOverride != null ? initialConfig.systemPromptOverride : '',
+  }));
+
+  // Parsed numCtx for the Save payload (falls back to the default if cleared).
+  const numCtxParsed = (() => {
+    const n = parseInt(advanced.numCtxStr, 10);
+    return Number.isFinite(n) && n > 0 ? n : DEFAULT_NUM_CTX;
+  })();
 
   const copy = getProviderCopy(preset.id);
   const trimmed = rawKey.trim();
@@ -220,11 +273,23 @@ export function GetKeyCard({
       // endpoint is always preset.endpoint (a compile-time constant), so 'keep'
       // can never leak to a different origin.
       const key: SetKey = keySaved ? { action: 'keep' } : { action: 'set', value: trimmed };
+
+      // T8: Advanced fields — only include numCtx for local tiles (native Ollama
+      // path). Cloud tiles omit numCtx (undefined → Tauri maps to None on backend).
+      // An empty/unset system prompt sends null so the backend uses its default.
+      const numCtxArg: number | null = isLocalTile ? numCtxParsed : null;
+      const systemPromptArg: string | null = advanced.systemPrompt.trim()
+        ? advanced.systemPrompt.trim()
+        : null;
+
       await onSave({
         agentEndpoint: preset.endpoint,
         agentModel: model.trim(),
         key,
         agentTurnTimeoutSecs,
+        numCtx: numCtxArg,
+        temperature: advanced.temperature,
+        systemPromptOverride: systemPromptArg,
       });
     } finally {
       setSaving(false);
@@ -377,6 +442,36 @@ export function GetKeyCard({
           {detectState.reason}
         </div>
       )}
+
+      {/* T8: Advanced disclosure — collapsed by default. Cloud tiles show all
+          fields except num_ctx. Local tiles show the full set including num_ctx
+          and the live memory estimate line. */}
+      <div className="get-key-advanced" data-testid="get-key-advanced">
+        <button
+          type="button"
+          className="elmer-advanced-toggle"
+          data-testid="get-key-advanced-toggle"
+          aria-expanded={advancedOpen}
+          onClick={() => setAdvancedOpen((o) => !o)}
+        >
+          {advancedOpen ? '▾' : '▸'} Advanced
+          <span className="get-key-advanced-tag"> · power users</span>
+        </button>
+
+        {advancedOpen && (
+          <div data-testid="get-key-advanced-body">
+            <AdvancedModelSettings
+              values={advanced}
+              onChange={setAdvanced}
+              showNumCtx={isLocalTile}
+              endpoint={preset.endpoint}
+              model={model}
+              defaultSystemPromptPlaceholder={DEFAULT_SYSTEM_PROMPT_PLACEHOLDER}
+              testIdPrefix="get-key"
+            />
+          </div>
+        )}
+      </div>
 
       {/* Save button */}
       <div className="elmer-form-save-row">

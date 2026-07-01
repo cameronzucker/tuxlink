@@ -333,7 +333,15 @@ impl ElmerSession {
         // {endpoint, model, key} triple is atomic w.r.t. a concurrent
         // `elmer_config_set`.  No `inner` std-Mutex is touched here.
         let snap = self.model_config.lock().await;
-        build_turn_provider_from_parts(&snap.endpoint, &snap.model, &self.keyring).await
+        build_turn_provider_from_parts(
+            &snap.endpoint,
+            &snap.model,
+            snap.num_ctx,
+            snap.temperature,
+            snap.system_prompt_override.clone(),
+            &self.keyring,
+        )
+        .await
         // model-config lock RELEASED at end of scope.
     }
 
@@ -458,6 +466,9 @@ impl ElmerSession {
                         delta_kind: "reasoning".to_string(),
                         chunk,
                     },
+                    RunEvent::ContextUsage { prompt_tokens, eval_tokens, num_ctx } => {
+                        ElmerEvent::Context { prompt_tokens, eval_tokens, num_ctx }
+                    }
                     _ => return,
                 };
                 emit_for_task(elmer_event);
@@ -744,11 +755,18 @@ async fn poll_until_current_none(inner: &StdMutex<SessionInner>) {
 ///    keyring → operator reason (NOT a silent keyless send).  A simply-absent
 ///    key (`Ok(None)`) is fine: pass `None` (local shims need no key, and a
 ///    public endpoint with no key surfaces a clean 401 from the model).
-/// 3. `ElmerProvider::new_vetted(endpoint, model, key)` — egress-denied →
-///    operator reason.
+/// 3. `ElmerProvider::new_vetted(endpoint, model, num_ctx, temperature,
+///    system_prompt, key)` — egress-denied → operator reason. The advanced
+///    fields (`num_ctx`, `temperature`, `system_prompt_override`) are threaded
+///    straight through from the snapshot so a stored operator override reaches
+///    the provider (and, for a native-Ollama loopback, the wire).
+#[allow(clippy::too_many_arguments)]
 async fn build_turn_provider_from_parts(
     endpoint: &str,
     model: &str,
+    num_ctx: Option<u32>,
+    temperature: Option<f32>,
+    system_prompt: Option<String>,
     keyring: &Arc<ElmerKeyring>,
 ) -> Result<Arc<dyn Provider>, String> {
     // Step 1 — parse + validate the endpoint (SSRF config-time gate).
@@ -791,9 +809,19 @@ async fn build_turn_provider_from_parts(
     };
 
     // Step 3 — build the SSRF-vetted provider (DNS-rebind gate at connect time).
-    let provider = ElmerProvider::new_vetted(endpoint, model.to_string(), key)
-        .await
-        .map_err(|e| format!("couldn't reach the model endpoint policy — {e}"))?;
+    // The advanced fields ride through: `num_ctx`/`temperature` reach the native
+    // Ollama adapter when the loopback probe selects it; `system_prompt` applies
+    // to whichever adapter is built (tuxlink-31tbw).
+    let provider = ElmerProvider::new_vetted(
+        endpoint,
+        model.to_string(),
+        num_ctx,
+        temperature,
+        system_prompt,
+        key,
+    )
+    .await
+    .map_err(|e| format!("couldn't reach the model endpoint policy — {e}"))?;
 
     Ok(Arc::new(provider) as Arc<dyn Provider>)
 }
@@ -1552,6 +1580,9 @@ mod tests {
         let result = build_turn_provider_from_parts(
             "http://127.0.0.1:11434/v1/chat/completions",
             "llama3",
+            None,
+            None,
+            None,
             &keyring,
         )
         .await;
@@ -1571,6 +1602,9 @@ mod tests {
         let result = build_turn_provider_from_parts(
             "https://api.openai.com/v1/chat/completions",
             "gpt-4o",
+            None,
+            None,
+            None,
             &keyring,
         )
         .await;
@@ -1592,7 +1626,8 @@ mod tests {
         // A panicking keyring proves the endpoint parse fails BEFORE any key
         // read (parse is step 1; the read is gated behind a valid endpoint).
         let keyring = panicking_keyring();
-        let result = build_turn_provider_from_parts("not a url", "gpt-4o", &keyring).await;
+        let result =
+            build_turn_provider_from_parts("not a url", "gpt-4o", None, None, None, &keyring).await;
         // Match rather than `expect_err` (Ok type `Arc<dyn Provider>` is not `Debug`).
         let reason = match result {
             Ok(_) => panic!("invalid endpoint must yield Err, not a panic"),
@@ -1620,6 +1655,9 @@ mod tests {
         let outcome: RunOutcome = match build_turn_provider_from_parts(
             "https://api.openai.com/v1/chat/completions",
             "gpt-4o",
+            None,
+            None,
+            None,
             &keyring,
         )
         .await

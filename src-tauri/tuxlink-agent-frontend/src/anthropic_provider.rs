@@ -85,6 +85,15 @@ pub struct AnthropicProvider {
     /// Pre-validated (SEC-5) endpoint URL — the `/v1/messages` path.
     endpoint: Url,
     model: String,
+    /// Sampling temperature forwarded to the request body as top-level
+    /// `"temperature"` when `Some`; omitted entirely when `None` so the server
+    /// default applies.
+    temperature: Option<f32>,
+    /// Optional operator-supplied system-prompt override (tuxlink-31tbw). When
+    /// `Some`, it replaces [`ELMER_SYSTEM_PROMPT`] in the top-level `system`
+    /// field; when `None`, the built-in default is used. Threaded from the
+    /// model-config snapshot by T4 so a stored override reaches the wire.
+    system_prompt: Option<String>,
     /// The `x-api-key` credential. Stored as [`ApiKey`] so it never leaks
     /// through `Debug`/`Display`; accessed via `.expose()` only at the HTTP
     /// header boundary.
@@ -95,16 +104,26 @@ impl AnthropicProvider {
     /// Build the provider. `endpoint` MUST already have passed
     /// [`crate::endpoint::validate_endpoint`] — this constructor does not
     /// re-validate. The same SEC-5 gate as `OpenAiProvider::new` applies.
+    ///
+    /// `temperature` is the sampling temperature forwarded as a top-level
+    /// `"temperature"` field; `None` leaves the server default unchanged.
+    ///
+    /// `system_prompt` is the operator override (tuxlink-31tbw); `None` uses the
+    /// built-in [`ELMER_SYSTEM_PROMPT`].
     pub fn new(
         client: reqwest::Client,
         endpoint: Url,
         model: impl Into<String>,
+        temperature: Option<f32>,
+        system_prompt: Option<String>,
         api_key: Option<ApiKey>,
     ) -> Self {
         Self {
             client,
             endpoint,
             model: model.into(),
+            temperature,
+            system_prompt,
             api_key,
         }
     }
@@ -124,7 +143,13 @@ impl Provider for AnthropicProvider {
         // OpenAI SSE; a streaming path is a follow-up).
         let _ = on_event;
 
-        let body = build_anthropic_request(&self.model, conversation, tools);
+        let body = build_anthropic_request(
+            &self.model,
+            conversation,
+            tools,
+            self.temperature,
+            self.system_prompt.as_deref().unwrap_or(ELMER_SYSTEM_PROMPT),
+        );
 
         let mut req = self
             .client
@@ -172,10 +197,21 @@ impl Provider for AnthropicProvider {
 /// Build the Anthropic Messages API request body.
 ///
 /// Pure — no IO. Exported so Rust tests can drive it directly.
+///
+/// `temperature` is forwarded as a top-level `"temperature"` field when `Some`;
+/// omitted entirely when `None` so the server default applies. The Anthropic
+/// Messages API accepts `temperature` as a top-level key (not nested).
+///
+/// `system_prompt` is the effective system prompt (the operator override or the
+/// built-in [`ELMER_SYSTEM_PROMPT`], resolved by the caller — see
+/// [`AnthropicProvider::turn`]). It is hoisted to the top-level `system` field
+/// (Anthropic's Messages API places the system prompt there, not as a message).
 pub fn build_anthropic_request(
     model: &str,
     conversation: &Conversation,
     tools: &[ToolSpec],
+    temperature: Option<f32>,
+    system_prompt: &str,
 ) -> Value {
     // Assign synthetic tool_use ids by FIFO position: the first ToolCall in
     // the conversation gets `toolu_0`, the second `toulu_1`, etc.
@@ -194,9 +230,15 @@ pub fn build_anthropic_request(
     let mut body = json!({
         "model": model,
         "max_tokens": anthropic_max_tokens(model),
-        "system": ELMER_SYSTEM_PROMPT,
+        "system": system_prompt,
         "messages": messages,
     });
+
+    // `temperature` is omitted entirely when `None` (server default); present
+    // as a top-level JSON number when `Some` (Anthropic Messages API placement).
+    if let Some(t) = temperature {
+        body["temperature"] = json!(t);
+    }
 
     // Only include `tools` when there is a surface (empty array is allowed but
     // not helpful; some providers object to it).
@@ -428,7 +470,7 @@ mod tests {
             json!({ "type": "object", "properties": { "grid": { "type": "string" } } }),
         );
 
-        let body = build_anthropic_request("claude-haiku-4-5", &convo, &[spec]);
+        let body = build_anthropic_request("claude-haiku-4-5", &convo, &[spec], None, ELMER_SYSTEM_PROMPT);
 
         // 1. Top-level `system` must be a string (not a message object).
         assert!(
@@ -450,7 +492,7 @@ mod tests {
             "haiku max_tokens must be 8192 (was built with claude-haiku-4-5)"
         );
         assert_eq!(
-            build_anthropic_request("claude-sonnet-5", &convo, &[])
+            build_anthropic_request("claude-sonnet-5", &convo, &[], None, ELMER_SYSTEM_PROMPT)
                 .get("max_tokens")
                 .and_then(Value::as_u64),
             Some(16384),
@@ -725,7 +767,7 @@ mod tests {
     fn null_args_become_empty_object_in_input() {
         let mut convo = Conversation::new("go");
         convo.push_tool_call(ToolCall::new("noop", Value::Null));
-        let body = build_anthropic_request("claude-haiku-4-5", &convo, &[]);
+        let body = build_anthropic_request("claude-haiku-4-5", &convo, &[], None, ELMER_SYSTEM_PROMPT);
         let msgs = body["messages"].as_array().unwrap();
         let asst = &msgs[1];
         let content = asst["content"].as_array().unwrap();
@@ -745,11 +787,60 @@ mod tests {
     #[test]
     fn system_prompt_contains_key_anchors() {
         let convo = Conversation::new("where am I?");
-        let body = build_anthropic_request("claude-haiku-4-5", &convo, &[]);
+        let body = build_anthropic_request("claude-haiku-4-5", &convo, &[], None, ELMER_SYSTEM_PROMPT);
         let system = body["system"].as_str().unwrap_or("");
         assert!(system.contains("position_status"), "system must mention position_status");
         assert!(system.contains("operator"), "system must reference operator");
         assert!(system.contains("STAGE") && system.contains("Arm to send"),
             "system must explain staging + Arm-to-send");
+    }
+
+    /// A system-prompt OVERRIDE replaces the built-in default in the top-level
+    /// `system` field (tuxlink-31tbw). Proves a stored override reaches the wire.
+    #[test]
+    fn system_prompt_override_replaces_default() {
+        let convo = Conversation::new("where am I?");
+        let body = build_anthropic_request("claude-haiku-4-5", &convo, &[], None, "CUSTOM ELMER PROMPT");
+        let system = body["system"].as_str().unwrap_or("");
+        assert_eq!(
+            system, "CUSTOM ELMER PROMPT",
+            "the override must appear verbatim in the system field; got: {system:?}"
+        );
+        assert!(
+            !system.contains("position_status"),
+            "the built-in default must NOT be present when overridden; got: {system:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Temperature forwarding
+    // -----------------------------------------------------------------------
+
+    /// `temperature: Some(0.6)` must appear as a top-level JSON number in the
+    /// Anthropic request body (Messages API placement).
+    #[test]
+    fn request_body_includes_temperature_when_some() {
+        let convo = Conversation::new("hi");
+        let body = build_anthropic_request("claude-haiku-4-5", &convo, &[], Some(0.6_f32), ELMER_SYSTEM_PROMPT);
+        let temp = body
+            .get("temperature")
+            .and_then(Value::as_f64)
+            .expect("temperature must be present when Some");
+        assert!(
+            (temp - 0.6).abs() < 1e-6,
+            "temperature must be ~0.6; got: {temp}"
+        );
+    }
+
+    /// `temperature: None` must NOT add a `temperature` key to the body, so the
+    /// Anthropic server default is left unchanged.
+    #[test]
+    fn request_body_omits_temperature_when_none() {
+        let convo = Conversation::new("hi");
+        let body = build_anthropic_request("claude-haiku-4-5", &convo, &[], None, ELMER_SYSTEM_PROMPT);
+        assert!(
+            body.get("temperature").is_none(),
+            "temperature must be absent when None; got: {body}"
+        );
     }
 }

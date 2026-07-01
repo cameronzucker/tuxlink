@@ -31,10 +31,12 @@ import { listen } from '@tauri-apps/api/event';
 import type { ConfigReadDto, SetKey, KeySource, KeyStatusByOrigin } from './elmerModelConfig';
 import {
   EV_CHIP,
+  EV_CONTEXT,
   EV_DELTA,
   EV_OUTCOME,
   EV_TURN,
   type ElmerChipPayload,
+  type ElmerContextPayload,
   type ElmerDeltaPayload,
   type ElmerOutcomePayload,
   type ElmerTurnPayload,
@@ -207,8 +209,10 @@ export interface UseElmer {
   /** G2: Load the model config from the backend. */
   configRead: () => Promise<void>;
   /** G2+G3: Save the model config. When agentModel changes mid-conversation,
-   *  drops a model attribution marker into the transcript before the next turn. */
-  configSet: (args: { agentEndpoint: string; agentModel: string; key: SetKey; agentTurnTimeoutSecs: number }) => Promise<void>;
+   *  drops a model attribution marker into the transcript before the next turn.
+   *  T8: optional advanced fields (numCtx, temperature, systemPromptOverride)
+   *  are forwarded to the backend; omitting them leaves the backend values unchanged. */
+  configSet: (args: { agentEndpoint: string; agentModel: string; key: SetKey; agentTurnTimeoutSecs: number; numCtx?: number | null; temperature?: number | null; systemPromptOverride?: string | null }) => Promise<void>;
   /** G2: Detect available models for the given endpoint. */
   detectModels: (args: { agentEndpoint: string; keySource: KeySource }) => Promise<void>;
   /** G2: Current detection state. */
@@ -220,6 +224,12 @@ export interface UseElmer {
    * `ConfigReadDto.onboarded`. Null while config is loading or in error state.
    */
   onboarded: boolean | null;
+  /**
+   * T7 — Latest context-usage snapshot from OllamaProvider (null until the
+   * first EV_CONTEXT event arrives). Once non-null, persists across turns so
+   * the meter stays visible. Only the fields needed by <ContextMeter> are kept.
+   */
+  context: { promptTokens: number; numCtx: number } | null;
 }
 
 /**
@@ -269,6 +279,10 @@ export function useElmer(): UseElmer {
   // and insert an attribution marker before the next turn renders.
   const activeModelRef = useRef<string | null>(null);
   const [activeModel, setActiveModel] = useState<string | null>(null);
+
+  // T7: Latest context-usage snapshot from OllamaProvider. Null until the
+  // first EV_CONTEXT event arrives; persists across turns so the meter stays visible.
+  const [context, setContext] = useState<{ promptTokens: number; numCtx: number } | null>(null);
 
   // Subscribe to all three Elmer event channels for the lifetime of the hook.
   // The listeners are set up once on mount and torn down on unmount. Tauri's
@@ -360,6 +374,14 @@ export function useElmer(): UseElmer {
         setStreamingReasoning('');
       });
 
+      // T7: EV_CONTEXT — context-usage snapshot from OllamaProvider. Store the
+      // latest promptTokens + numCtx so <ContextMeter> can render a fill meter.
+      // Once non-null, context persists across turns; the meter never disappears.
+      const unContext = await listen<ElmerContextPayload>(EV_CONTEXT, (event) => {
+        const { promptTokens, numCtx } = event.payload;
+        setContext({ promptTokens, numCtx });
+      });
+
       if (cancelled) {
         // Cleanup already ran (or is about to) — tear these down now so they
         // don't outlive the effect and double-handle events on the next mount.
@@ -367,9 +389,10 @@ export function useElmer(): UseElmer {
         unTurn();
         unChip();
         unOutcome();
+        unContext();
         return;
       }
-      unlisteners.push(unDelta, unTurn, unChip, unOutcome);
+      unlisteners.push(unDelta, unTurn, unChip, unOutcome, unContext);
     };
 
     void setupListeners();
@@ -432,7 +455,8 @@ export function useElmer(): UseElmer {
   // G2+G3: configSet — save model config to backend.
   // On a model change mid-conversation, inserts an attribution marker into the
   // transcript so the operator can tell which model produced the next turn (G3).
-  const configSet = useCallback(async (args: { agentEndpoint: string; agentModel: string; key: SetKey; agentTurnTimeoutSecs: number }) => {
+  // T8: optional advanced fields forwarded to the Tauri command.
+  const configSet = useCallback(async (args: { agentEndpoint: string; agentModel: string; key: SetKey; agentTurnTimeoutSecs: number; numCtx?: number | null; temperature?: number | null; systemPromptOverride?: string | null }) => {
     await invoke('elmer_config_set', args);
 
     // G3: If the model changed from the last active model, drop a marker.
@@ -493,5 +517,6 @@ export function useElmer(): UseElmer {
     detectState,
     activeModel,
     onboarded: modelConfig !== null ? modelConfig.onboarded : null,
+    context,
   };
 }

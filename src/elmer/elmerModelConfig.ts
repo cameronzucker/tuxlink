@@ -37,6 +37,23 @@ export interface ConfigReadDto {
    * (camelCase) — keep the Rust ConfigReadDto field in lock-step.
    */
   onboarded: boolean;
+  /**
+   * Native-Ollama context window size (tuxlink-65qhn T3). Null when unset
+   * (Ollama uses its model default). Only applied on the native Ollama path;
+   * the Advanced panel hides this field for cloud/remote tiles.
+   */
+  numCtx: number | null;
+  /**
+   * Inference temperature (tuxlink-65qhn T3). Null when unset (provider uses
+   * its default). Applies to all providers.
+   */
+  temperature: number | null;
+  /**
+   * Operator-supplied system-prompt override (tuxlink-31tbw, T3). Null when
+   * unset; the Advanced panel shows the built-in default prompt as placeholder
+   * text and offers a Reset button that sends null to restore the default.
+   */
+  systemPromptOverride: string | null;
 }
 
 /**

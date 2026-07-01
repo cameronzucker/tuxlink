@@ -40,8 +40,8 @@ vi.mock('@tauri-apps/api/event', () => ({
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(() => Promise.resolve()) }));
 
 import { useElmer, keyStatusForOrigins } from './useElmer';
-import { EV_DELTA, EV_OUTCOME, EV_TURN } from './elmerEvents';
-import type { ElmerDeltaPayload, ElmerOutcomePayload, ElmerTurnPayload } from './elmerEvents';
+import { EV_CONTEXT, EV_DELTA, EV_OUTCOME, EV_TURN } from './elmerEvents';
+import type { ElmerContextPayload, ElmerDeltaPayload, ElmerOutcomePayload, ElmerTurnPayload } from './elmerEvents';
 import { invoke } from '@tauri-apps/api/core';
 
 // setupListeners() awaits each listen() sequentially, so resolving the pending
@@ -68,16 +68,16 @@ describe('useElmer listener cleanup (tuxlink-hn5k6)', () => {
   it('tears down listeners that resolve AFTER the effect is cleaned up (no leak)', async () => {
     const { unmount } = renderHook(() => useElmer());
 
-    // The three listen() promises are still pending. Tear the effect down
-    // first (StrictMode/HMR/fast-close), THEN let listen() resolve.
+    // The listen() promises are still pending. Tear the effect down first
+    // (StrictMode/HMR/fast-close), THEN let listen() resolve.
     unmount();
     await resolveAllListens();
 
-    // All four listeners (EV_DELTA + EV_TURN + EV_CHIP + EV_OUTCOME) registered
-    // post-cleanup must be unlistened exactly once — proving none leaked to
-    // double-handle future events. (Pre-fix, the cleanup ran on an empty array
-    // and these were never called.)
-    expect(h.unlistens).toHaveLength(4);
+    // All five listeners (EV_DELTA + EV_TURN + EV_CHIP + EV_OUTCOME + EV_CONTEXT)
+    // registered post-cleanup must be unlistened exactly once — proving none
+    // leaked to double-handle future events. (Pre-fix, the cleanup ran on an
+    // empty array and these were never called.)
+    expect(h.unlistens).toHaveLength(5);
     for (const u of h.unlistens) expect(u).toHaveBeenCalledTimes(1);
   });
 
@@ -86,7 +86,7 @@ describe('useElmer listener cleanup (tuxlink-hn5k6)', () => {
 
     // Resolve while still mounted → listeners register and are NOT torn down yet.
     await resolveAllListens();
-    expect(h.unlistens).toHaveLength(4);
+    expect(h.unlistens).toHaveLength(5);
     for (const u of h.unlistens) expect(u).not.toHaveBeenCalled();
 
     // Unmount → cleanup tears each down exactly once.
@@ -225,5 +225,95 @@ describe('keyStatusForOrigins (T8b Task 4-fe wrapper)', () => {
     const realCall = calls.find((c) => c[0] === 'elmer_key_status_for_origins');
     expect(realCall).toBeTruthy();
     expect(realCall![1]).toEqual({ origins: testOrigins });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T7 — EV_CONTEXT updates context state; cleanup unsubscribes (tuxlink-65qhn)
+// ---------------------------------------------------------------------------
+
+describe('useElmer EV_CONTEXT (T7)', () => {
+  beforeEach(() => {
+    h.unlistens.length = 0;
+    h.resolvers.length = 0;
+    h.handlers.clear();
+  });
+
+  const dispatch = async <T,>(channel: string, payload: T) => {
+    await act(async () => {
+      const handler = h.handlers.get(channel);
+      if (handler) handler({ payload });
+      await Promise.resolve();
+    });
+  };
+
+  it('context is null before any EV_CONTEXT event', async () => {
+    const { result } = renderHook(() => useElmer());
+    await resolveAllListens();
+    expect(result.current.context).toBeNull();
+  });
+
+  it('EV_CONTEXT event sets context with promptTokens + numCtx', async () => {
+    const { result } = renderHook(() => useElmer());
+    await resolveAllListens();
+
+    await dispatch<ElmerContextPayload>(EV_CONTEXT, {
+      kind: 'context',
+      promptTokens: 12000,
+      evalTokens: 512,
+      numCtx: 32768,
+    });
+
+    expect(result.current.context).not.toBeNull();
+    expect(result.current.context!.promptTokens).toBe(12000);
+    expect(result.current.context!.numCtx).toBe(32768);
+  });
+
+  it('context is updated on subsequent EV_CONTEXT events (latest wins)', async () => {
+    const { result } = renderHook(() => useElmer());
+    await resolveAllListens();
+
+    await dispatch<ElmerContextPayload>(EV_CONTEXT, {
+      kind: 'context',
+      promptTokens: 12000,
+      evalTokens: 512,
+      numCtx: 32768,
+    });
+    expect(result.current.context!.promptTokens).toBe(12000);
+
+    await dispatch<ElmerContextPayload>(EV_CONTEXT, {
+      kind: 'context',
+      promptTokens: 20000,
+      evalTokens: 768,
+      numCtx: 32768,
+    });
+    expect(result.current.context!.promptTokens).toBe(20000);
+    expect(result.current.context!.numCtx).toBe(32768);
+  });
+
+  it('EV_CONTEXT listener is included in the cleanup set (unlistened on unmount)', async () => {
+    const { unmount } = renderHook(() => useElmer());
+    await resolveAllListens();
+
+    // All 5 listeners registered: EV_DELTA, EV_TURN, EV_CHIP, EV_OUTCOME, EV_CONTEXT.
+    expect(h.unlistens).toHaveLength(5);
+    for (const u of h.unlistens) expect(u).not.toHaveBeenCalled();
+
+    unmount();
+
+    // All five must be torn down exactly once — including the EV_CONTEXT unlisten.
+    for (const u of h.unlistens) expect(u).toHaveBeenCalledTimes(1);
+  });
+
+  it('EV_CONTEXT listener resolving post-cleanup is torn down immediately (no leak)', async () => {
+    const { unmount } = renderHook(() => useElmer());
+
+    // Unmount before listen() promises resolve — same pattern as hn5k6 cleanup test.
+    unmount();
+    await resolveAllListens();
+
+    // All five (including EV_CONTEXT) resolved post-cleanup must be unlistened once.
+    expect(h.unlistens).toHaveLength(5);
+    for (const u of h.unlistens) expect(u).toHaveBeenCalledTimes(1);
   });
 });

@@ -32,7 +32,7 @@ use tuxlink_agent_runner::RunOutcome;
 use tuxlink_mcp_core::ports::{OutboxReadPort, StagedRecordDto};
 
 use crate::elmer::approval::OutboxApproval;
-use crate::elmer::events::{ElmerEvent, EV_CHIP, EV_DELTA, EV_OUTCOME, EV_TURN};
+use crate::elmer::events::{ElmerEvent, EV_CHIP, EV_CONTEXT, EV_DELTA, EV_OUTCOME, EV_TURN};
 use crate::elmer::session::ElmerSession;
 use crate::mcp_ports::FlushError;
 use crate::session_log::SessionLogState;
@@ -125,6 +125,7 @@ fn make_event_sink(app: AppHandle) -> crate::elmer::session::EventSink {
             ElmerEvent::Chip { .. } => EV_CHIP,
             ElmerEvent::Outcome { .. } => EV_OUTCOME,
             ElmerEvent::Delta { .. } => EV_DELTA,
+            ElmerEvent::Context { .. } => EV_CONTEXT,
         };
         let _ = app.emit(channel, &event);
     })

@@ -1615,7 +1615,7 @@ pub fn run() {
                         let keyring = std::sync::Arc::new(crate::elmer::keyring::ElmerKeyring::new());
                         app.manage(std::sync::Arc::clone(&keyring));
 
-                        // Manage the atomic {endpoint, model} config guard (E1) so
+                        // Manage the atomic {endpoint, model, …} config guard (E1) so
                         // the per-turn build (E2) and live-apply (D1) share it.
                         let model_config = std::sync::Arc::new(
                             crate::elmer::model_config_state::ElmerModelConfigState::new(
@@ -1625,6 +1625,12 @@ pub fn run() {
                                 // (or default 900) config so the first turn uses
                                 // the operator's value (tuxlink-1wi5w).
                                 elmer_cfg.agent_turn_timeout_secs,
+                                // Advanced fields (tuxlink-65qhn T3): seed from
+                                // the saved config so the first turn uses the
+                                // operator's choices.
+                                elmer_cfg.num_ctx,
+                                elmer_cfg.temperature,
+                                elmer_cfg.system_prompt_override.clone(),
                             ),
                         );
                         app.manage(std::sync::Arc::clone(&model_config));
@@ -1640,6 +1646,14 @@ pub fn run() {
                                 crate::elmer::provider::ElmerProvider::new_vetted(
                                     warm_endpoint,
                                     model_string.clone(),
+                                    // Advanced fields (tuxlink-65qhn T4): the warm
+                                    // default mirrors the saved config so the
+                                    // proof-of-construction matches the per-turn
+                                    // build. The per-turn build in `send` is
+                                    // authoritative and re-reads these each turn.
+                                    elmer_cfg.num_ctx,
+                                    elmer_cfg.temperature,
+                                    elmer_cfg.system_prompt_override.clone(),
                                     None,
                                 ),
                             ) {
@@ -1665,6 +1679,9 @@ pub fn run() {
                                             crate::elmer::provider::ElmerProvider::new_vetted(
                                                 ep,
                                                 model_string.clone(),
+                                                elmer_cfg.num_ctx,
+                                                elmer_cfg.temperature,
+                                                elmer_cfg.system_prompt_override.clone(),
                                                 None,
                                             ),
                                         )
@@ -2152,6 +2169,8 @@ pub fn run() {
             crate::elmer::config_commands::elmer_detect_models,
             // T4: batch key-status query — statuses only, never key values.
             crate::elmer::config_commands::elmer_key_status_for_origins,
+            // T6: memory-fit estimate — Tauri UI command only, NOT an MCP tool.
+            crate::elmer::memory_estimate::elmer_estimate_memory,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

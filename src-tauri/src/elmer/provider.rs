@@ -29,6 +29,7 @@
 //! llama.cpp / Ollama shims and for existing tests.
 
 use std::net::SocketAddr;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -37,6 +38,7 @@ use tuxlink_agent_frontend::{
     anthropic_provider::{is_anthropic_endpoint, AnthropicProvider},
     egress::{build_vetted_client, EgressError},
     endpoint::{AgentEndpoint, LoopbackEndpoint},
+    ollama_provider::OllamaProvider,
     provider::{ApiKey, OpenAiProvider},
 };
 use tuxlink_agent_runner::{
@@ -60,6 +62,28 @@ use tuxlink_agent_runner::{
 pub struct ElmerProvider {
     /// The concrete model adapter, selected by endpoint at build time.
     inner: Box<dyn Provider + Send + Sync>,
+    /// Which concrete adapter `inner` is, recorded at build time. Used only by
+    /// tests to assert the probe-with-fallback selection (D1) picked the right
+    /// adapter without a `dyn`-downcast; carries no behavior. Written on every
+    /// build but READ only by the `#[cfg(test)]` `kind()` accessor, so it is
+    /// genuinely dead in non-test builds — allow it there (in test builds the
+    /// attribute is absent, so there is no unused-allow warning).
+    #[cfg_attr(not(test), allow(dead_code))]
+    kind: ProviderKind,
+}
+
+/// The concrete adapter an [`ElmerProvider`] wraps. Recorded so tests can assert
+/// the probe-with-fallback selection (D1) without downcasting `dyn Provider`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderKind {
+    /// Native Ollama `/api/chat` — chosen when a loopback probe of `/api/tags`
+    /// succeeds (200 + `{"models": [...]}`).
+    Ollama,
+    /// OpenAI-compatible `/v1/chat/completions` — the loopback fallback (llama.cpp
+    /// or any non-Ollama compat server) and the default remote adapter.
+    OpenAi,
+    /// Anthropic Messages API — chosen for the `api.anthropic.com` remote host.
+    Anthropic,
 }
 
 impl ElmerProvider {
@@ -74,9 +98,9 @@ impl ElmerProvider {
     pub fn new(endpoint: LoopbackEndpoint, model: String, api_key: Option<String>) -> Self {
         let client = reqwest::Client::new();
         let inner: Box<dyn Provider + Send + Sync> = Box::new(
-            OpenAiProvider::new(client, endpoint.0, model, api_key.map(ApiKey::new))
+            OpenAiProvider::new(client, endpoint.0, model, None, None, api_key.map(ApiKey::new))
         );
-        Self { inner }
+        Self { inner, kind: ProviderKind::OpenAi }
     }
 
     /// Build a redacting provider whose inner adapter uses the SSRF-guarded
@@ -98,6 +122,13 @@ impl ElmerProvider {
     ///   credentials-in-URL at config time; this constructor adds the
     ///   fetch-time DNS-rebind gate).
     /// * `model` — model identifier string (e.g. `"llama3"`, `"gpt-4o"`, `"claude-haiku-4-5"`).
+    /// * `num_ctx` — native-Ollama context window (`options.num_ctx`); ignored by
+    ///   the compat / Anthropic adapters. `None` = server default (T3/T4).
+    /// * `temperature` — sampling temperature threaded to ALL three adapters
+    ///   (Ollama `options.temperature`; OpenAI / Anthropic top-level
+    ///   `"temperature"`). `None` leaves the server default unchanged (T9).
+    /// * `system_prompt` — operator override applied to EVERY adapter
+    ///   (tuxlink-31tbw); `None` = the built-in `ELMER_SYSTEM_PROMPT`.
     /// * `api_key` — optional credential (`x-api-key` for Anthropic; bearer for others).
     ///
     /// Returns `Err(EgressError)` if the endpoint's resolved IP is denied by
@@ -105,27 +136,48 @@ impl ElmerProvider {
     pub async fn new_vetted(
         endpoint: AgentEndpoint,
         model: String,
+        num_ctx: Option<u32>,
+        temperature: Option<f32>,
+        system_prompt: Option<String>,
         api_key: Option<ApiKey>,
     ) -> Result<Self, EgressError> {
-        Self::new_vetted_with_resolver(endpoint, model, api_key, |host, port| async move {
-            system_resolver(&host, port).await
-        })
+        Self::new_vetted_with_resolver(
+            endpoint,
+            model,
+            num_ctx,
+            temperature,
+            system_prompt,
+            api_key,
+            |host, port| async move { system_resolver(&host, port).await },
+        )
         .await
     }
 
     /// Core constructor with an injectable resolver seam — mirrors
-    /// `tiles::fetch::fetch_tile_bytes_with_resolver`.
+    /// `tiles::fetch::fetch_tile_bytes_with_resolver`. Uses the PRODUCTION probe
+    /// ([`probe_ollama`]) for the loopback native-vs-compat selection (D1).
     ///
     /// `resolve` maps `(host, port)` to candidate `SocketAddr`s. Production
     /// callers use [`Self::new_vetted`] which injects the platform resolver;
     /// tests inject a fake to prove deny-path propagation without real DNS.
     ///
+    /// ### Temperature scope (T9)
+    ///
+    /// `temperature` is threaded to all three adapters: the native Ollama adapter
+    /// (`options.temperature`), the OpenAI-compat adapter (top-level
+    /// `"temperature"`), and the Anthropic adapter (top-level `"temperature"`).
+    /// `None` leaves each server's default unchanged.
+    ///
     /// The `#[cfg(any(test, …))]` annotation is deliberately absent — the seam
     /// needs to be reachable from the `#[cfg(test)]` block inside this module,
     /// and `pub(crate)` suffices for that without requiring a feature flag.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn new_vetted_with_resolver<R, Fut>(
         endpoint: AgentEndpoint,
         model: String,
+        num_ctx: Option<u32>,
+        temperature: Option<f32>,
+        system_prompt: Option<String>,
         api_key: Option<ApiKey>,
         resolve: R,
     ) -> Result<Self, EgressError>
@@ -133,19 +185,198 @@ impl ElmerProvider {
         R: Fn(String, u16) -> Fut,
         Fut: std::future::Future<Output = std::io::Result<Vec<SocketAddr>>>,
     {
+        Self::new_vetted_with_resolver_and_probe(
+            endpoint,
+            model,
+            num_ctx,
+            temperature,
+            system_prompt,
+            api_key,
+            resolve,
+            |client, origin| async move { probe_ollama(&client, origin).await },
+        )
+        .await
+    }
+
+    /// Full constructor seam: injectable resolver AND injectable Ollama probe.
+    ///
+    /// This is the D1 probe-with-fallback core. The `probe` closure decides, for
+    /// a LOOPBACK endpoint, whether a native Ollama server is present:
+    /// `true` ⇒ build [`OllamaProvider`] (native `/api/chat`); `false` ⇒ fall back
+    /// to [`OpenAiProvider`] (compat `/v1/chat/completions`, the pre-T4 behavior).
+    /// The probe REUSES the same vetted client (SSRF-1 / SEC-5 gate) — it is never
+    /// a fresh client. NON-loopback endpoints are never probed: they take the
+    /// existing `is_anthropic_endpoint` host-based selection unchanged.
+    ///
+    /// Tests inject a probe that returns a forced result so the selection is
+    /// exercised without a real server; production injects [`probe_ollama`].
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn new_vetted_with_resolver_and_probe<R, Fut, P, PFut>(
+        endpoint: AgentEndpoint,
+        model: String,
+        num_ctx: Option<u32>,
+        temperature: Option<f32>,
+        system_prompt: Option<String>,
+        api_key: Option<ApiKey>,
+        resolve: R,
+        probe: P,
+    ) -> Result<Self, EgressError>
+    where
+        R: Fn(String, u16) -> Fut,
+        Fut: std::future::Future<Output = std::io::Result<Vec<SocketAddr>>>,
+        // The probe origin is passed as a `String` (scheme+host+port). The URL
+        // parse for the native endpoint uses `reqwest::Url::parse` (reqwest
+        // re-exports `url::Url`), avoiding a direct `url` dep in this crate.
+        P: Fn(reqwest::Client, String) -> PFut,
+        PFut: std::future::Future<Output = bool>,
+    {
+        // ONE vetted client, built through the SSRF/DNS-rebind gate. Both the
+        // probe and the eventual provider use THIS client — never a fresh one.
         let client = build_vetted_client(&endpoint, resolve).await?;
+        let is_loopback = endpoint.is_loopback();
+        // The canonical scheme+host+port origin (path/query stripped). Derived
+        // from the validated endpoint via A1's `origin()` so the probe targets
+        // the right host+port regardless of the configured path (`/api/chat` vs
+        // `/v1/chat/completions`).
+        let origin = endpoint.origin();
         let url = endpoint.0;
 
-        // Select provider by endpoint host. Both share the SAME vetted client
-        // and go through the SAME egress gate — the selection is purely about
-        // which wire protocol to use.
-        let inner: Box<dyn Provider + Send + Sync> = if is_anthropic_endpoint(url.as_str()) {
-            Box::new(AnthropicProvider::new(client, url, model, api_key))
+        let (inner, kind): (Box<dyn Provider + Send + Sync>, ProviderKind) = if is_loopback {
+            // D1 — loopback discrimination via probe-with-fallback. A loopback
+            // host may be Ollama (native `/api/*`) OR llama.cpp (compat-only,
+            // 404s on `/api/*`). Probe `GET {origin}/api/tags` on the vetted
+            // client; a positive probe means native Ollama is present.
+            let is_ollama = probe(client.clone(), origin.clone()).await;
+            if is_ollama {
+                // FIX B: build the native URL from origin + /api/chat, NOT from
+                // the operator-configured `url`. The operator tile default is
+                // `/v1/chat/completions` (the OpenAI-compat path); posting an
+                // Ollama `/api/chat` body to that path fails. `origin` is the
+                // scheme+host+port from the validated endpoint (no trailing
+                // slash), so appending `/api/chat` is always correct here.
+                //
+                // Defensive parse: origin came from a validated AgentEndpoint so
+                // it will always parse, but we never unwrap in prod. A parse
+                // failure here falls back to the OpenAI-compat adapter using the
+                // original `url`; this trades the incorrect-URL failure mode for
+                // a tolerated compat fallback rather than a panic.
+                let native_url_str = format!("{origin}/api/chat");
+                // Use reqwest::Url (re-exports url::Url) — no direct `url`
+                // dep needed in this crate.
+                match reqwest::Url::parse(&native_url_str) {
+                    Ok(native_url) => {
+                        tracing::debug!(
+                            target: "elmer",
+                            endpoint = %url,
+                            native_url = %native_url,
+                            "loopback probe found native Ollama (/api/tags) — using OllamaProvider"
+                        );
+                        (
+                            Box::new(OllamaProvider::new(
+                                client,
+                                native_url,
+                                model,
+                                num_ctx,
+                                temperature,
+                                system_prompt,
+                                api_key,
+                            )),
+                            ProviderKind::Ollama,
+                        )
+                    }
+                    Err(e) => {
+                        // Defensive: should never happen given a validated endpoint,
+                        // but fall back to compat rather than panic.
+                        tracing::warn!(
+                            target: "elmer",
+                            origin = %origin,
+                            error = %e,
+                            "loopback probe found Ollama but native URL parse failed — falling back to compat"
+                        );
+                        (
+                            Box::new(OpenAiProvider::new(client, url, model, temperature, system_prompt, api_key)),
+                            ProviderKind::OpenAi,
+                        )
+                    }
+                }
+            } else {
+                // Any non-positive probe (404 / refused / timeout / unparseable)
+                // preserves the current compat behavior. LOG it so the fallback
+                // is not silent (a user who expected native num_ctx to apply can
+                // see why it didn't).
+                tracing::info!(
+                    target: "elmer",
+                    endpoint = %url,
+                    "loopback probe did not find native Ollama — falling back to OpenAI-compat (num_ctx not applied)"
+                );
+                (
+                    Box::new(OpenAiProvider::new(client, url, model, temperature, system_prompt, api_key)),
+                    ProviderKind::OpenAi,
+                )
+            }
+        } else if is_anthropic_endpoint(url.as_str()) {
+            // Remote: host-based selection, UNCHANGED from the pre-T4 behavior.
+            (
+                Box::new(AnthropicProvider::new(client, url, model, temperature, system_prompt, api_key)),
+                ProviderKind::Anthropic,
+            )
         } else {
-            Box::new(OpenAiProvider::new(client, url, model, api_key))
+            (
+                Box::new(OpenAiProvider::new(client, url, model, temperature, system_prompt, api_key)),
+                ProviderKind::OpenAi,
+            )
         };
 
-        Ok(Self { inner })
+        Ok(Self { inner, kind })
+    }
+
+    /// The concrete adapter this provider wraps — test-only accessor for the D1
+    /// probe-with-fallback selection assertions.
+    #[cfg(test)]
+    pub(crate) fn kind(&self) -> ProviderKind {
+        self.kind
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Ollama loopback probe (D1) — production default for the probe seam
+// ---------------------------------------------------------------------------
+
+/// Short timeout for the loopback `/api/tags` probe. A local Ollama answers this
+/// in single-digit milliseconds; 2s tolerates a cold-but-running server while
+/// still failing fast to the compat fallback when nothing is listening.
+const OLLAMA_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Production probe: is a native Ollama server present at `origin`?
+///
+/// `origin` is the canonical scheme+host+port string from
+/// [`AgentEndpoint::origin`] (no trailing slash, e.g. `http://127.0.0.1:11434`).
+/// Issues `GET {origin}/api/tags` on the ALREADY-VETTED `client` (SSRF-1 / SEC-5
+/// gate is upstream; this reuses that client, never a fresh one) with a short
+/// timeout. Returns `true` ONLY when the response is 200 AND the body parses as
+/// JSON containing a `"models"` array — Ollama's `/api/tags` shape. Any other
+/// outcome (404 from llama.cpp, connection refused, timeout, non-JSON) returns
+/// `false`, driving the compat fallback. Never panics; all errors → `false`.
+///
+/// `reqwest`'s `IntoUrl` re-parses the `String` URL, so this crate needs no
+/// direct `url` dependency.
+async fn probe_ollama(client: &reqwest::Client, origin: String) -> bool {
+    let tags_url = format!("{origin}/api/tags");
+    let resp = match client
+        .get(tags_url)
+        .timeout(OLLAMA_PROBE_TIMEOUT)
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(_) => return false,
+    };
+    if !resp.status().is_success() {
+        return false;
+    }
+    match resp.json::<Value>().await {
+        Ok(body) => body.get("models").map(Value::is_array).unwrap_or(false),
+        Err(_) => false,
     }
 }
 
@@ -513,10 +744,28 @@ mod tests {
     async fn new_vetted_builds_for_loopback() {
         let ep = AgentEndpoint::parse("http://127.0.0.1:11434/v1/chat/completions")
             .expect("loopback AgentEndpoint must parse");
-        let result = ElmerProvider::new_vetted(ep, "llama3".into(), None).await;
+        // Force the probe to report NO Ollama so this build takes the compat
+        // fallback deterministically (no real server on this Pi). The point of
+        // this test is that the loopback build reaches `Ok`, not which adapter.
+        let result = ElmerProvider::new_vetted_with_resolver_and_probe(
+            ep,
+            "llama3".into(),
+            None,
+            None,
+            None,
+            None,
+            fixed_resolver(vec!["127.0.0.1:11434".parse().unwrap()]),
+            never_ollama_probe(),
+        )
+        .await;
         assert!(
             result.is_ok(),
             "new_vetted must succeed for a loopback IP-literal endpoint (build returned Err)"
+        );
+        assert_eq!(
+            result.unwrap().kind(),
+            ProviderKind::OpenAi,
+            "a negative probe must fall back to the compat adapter"
         );
     }
 
@@ -535,6 +784,9 @@ mod tests {
         let result = ElmerProvider::new_vetted_with_resolver(
             ep,
             "gpt-4o".into(),
+            None,
+            None,
+            None,
             Some(ApiKey::new("sk-x")),
             fixed_resolver(vec![public]),
         )
@@ -542,6 +794,11 @@ mod tests {
         assert!(
             result.is_ok(),
             "new_vetted must succeed for a public endpoint resolving to a public IP (build returned Err)"
+        );
+        assert_eq!(
+            result.unwrap().kind(),
+            ProviderKind::OpenAi,
+            "a non-anthropic public endpoint must select the compat adapter"
         );
     }
 
@@ -561,6 +818,9 @@ mod tests {
         let result = ElmerProvider::new_vetted_with_resolver(
             ep,
             "some-model".into(),
+            None,
+            None,
+            None,
             None,
             fixed_resolver(vec![metadata]),
         )
@@ -606,13 +866,173 @@ mod tests {
         let result = ElmerProvider::new_vetted_with_resolver(
             ep,
             "claude-haiku-4-5".into(),
+            None,
+            None,
+            None,
             Some(ApiKey::new("sk-ant-x")),
             fixed_resolver(vec![public]),
         )
         .await;
+        let provider = result.expect("new_vetted must succeed for api.anthropic.com with a public IP");
+        assert_eq!(
+            provider.kind(),
+            ProviderKind::Anthropic,
+            "the api.anthropic.com host must select the AnthropicProvider (remote selection unchanged)"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // D1: probe-with-fallback loopback selection (native Ollama vs compat)
+    // -----------------------------------------------------------------------
+
+    /// A probe that ALWAYS reports native Ollama present (forces the native path).
+    fn always_ollama_probe(
+    ) -> impl Fn(reqwest::Client, String) -> std::future::Ready<bool> + Clone {
+        move |_client, _origin| std::future::ready(true)
+    }
+
+    /// A probe that NEVER reports Ollama (forces the compat fallback).
+    fn never_ollama_probe(
+    ) -> impl Fn(reqwest::Client, String) -> std::future::Ready<bool> + Clone {
+        move |_client, _origin| std::future::ready(false)
+    }
+
+    /// D1: a loopback endpoint whose probe reports Ollama → native OllamaProvider.
+    #[tokio::test]
+    async fn loopback_probe_positive_selects_ollama() {
+        let ep = AgentEndpoint::parse("http://127.0.0.1:11434/api/chat")
+            .expect("loopback AgentEndpoint must parse");
+        let result = ElmerProvider::new_vetted_with_resolver_and_probe(
+            ep,
+            "qwen3:8b".into(),
+            Some(32_768),
+            Some(0.7),
+            None,
+            None,
+            fixed_resolver(vec!["127.0.0.1:11434".parse().unwrap()]),
+            always_ollama_probe(),
+        )
+        .await
+        .expect("loopback native build must succeed");
+        assert_eq!(
+            result.kind(),
+            ProviderKind::Ollama,
+            "a positive probe must select the native Ollama adapter"
+        );
+    }
+
+    /// Fix B: a loopback endpoint configured with the OpenAI-compat path
+    /// (`/v1/chat/completions`, the default localOllama tile value) still
+    /// selects the native OllamaProvider when the probe is positive. This is
+    /// the core regression guard: before Fix B, OllamaProvider was constructed
+    /// with the configured URL (the compat path), so it POSTed an `/api/chat`
+    /// body to `/v1/chat/completions` and failed. After Fix B, the URL is built
+    /// from origin + `/api/chat` regardless of the configured path.
+    #[tokio::test]
+    async fn loopback_probe_positive_with_compat_input_url_still_selects_ollama() {
+        // The operator configured the DEFAULT tile URL — the OpenAI-compat path.
+        let ep = AgentEndpoint::parse("http://127.0.0.1:11434/v1/chat/completions")
+            .expect("loopback AgentEndpoint must parse");
+        let result = ElmerProvider::new_vetted_with_resolver_and_probe(
+            ep,
+            "qwen3:8b".into(),
+            Some(32_768),
+            None,
+            None,
+            None,
+            fixed_resolver(vec!["127.0.0.1:11434".parse().unwrap()]),
+            always_ollama_probe(),
+        )
+        .await
+        .expect("loopback native build must succeed even with compat input URL");
+        assert_eq!(
+            result.kind(),
+            ProviderKind::Ollama,
+            "a positive probe must select native Ollama even when the input URL is the compat path"
+        );
+        // (The inner OllamaProvider endpoint is Box<dyn Provider> — path cannot
+        // be inspected here. The path assertion is in ollama_provider::tests via
+        // OllamaProvider::endpoint_url(). ProviderKind::Ollama is the primary gate.)
+    }
+
+    /// D1: a loopback endpoint whose probe reports NO Ollama → compat fallback.
+    /// This preserves the pre-T4 llama.cpp behavior.
+    #[tokio::test]
+    async fn loopback_probe_negative_falls_back_to_compat() {
+        let ep = AgentEndpoint::parse("http://127.0.0.1:8080/v1/chat/completions")
+            .expect("loopback AgentEndpoint must parse");
+        let result = ElmerProvider::new_vetted_with_resolver_and_probe(
+            ep,
+            "some-local-model".into(),
+            Some(8192),
+            None,
+            None,
+            None,
+            fixed_resolver(vec!["127.0.0.1:8080".parse().unwrap()]),
+            never_ollama_probe(),
+        )
+        .await
+        .expect("loopback compat build must succeed");
+        assert_eq!(
+            result.kind(),
+            ProviderKind::OpenAi,
+            "a negative probe must fall back to the OpenAI-compat adapter"
+        );
+    }
+
+    /// D1: a REMOTE endpoint is NEVER probed — even a probe that would report
+    /// Ollama does not divert a remote host to the native adapter. The remote
+    /// host-based selection is unchanged.
+    #[tokio::test]
+    async fn remote_endpoint_is_not_probed() {
+        let ep = AgentEndpoint::parse("https://api.openai.com/v1/chat/completions")
+            .expect("public AgentEndpoint must parse");
+        let public: std::net::SocketAddr = "104.18.6.192:443".parse().unwrap();
+        let result = ElmerProvider::new_vetted_with_resolver_and_probe(
+            ep,
+            "gpt-4o".into(),
+            None,
+            None,
+            None,
+            Some(ApiKey::new("sk-x")),
+            fixed_resolver(vec![public]),
+            // Even a probe that WOULD say "Ollama present" must be ignored for a
+            // remote host — remote endpoints are not probed at all.
+            always_ollama_probe(),
+        )
+        .await
+        .expect("remote build must succeed");
+        assert_eq!(
+            result.kind(),
+            ProviderKind::OpenAi,
+            "a remote endpoint must NOT be diverted to Ollama by the probe"
+        );
+    }
+
+    /// D1: the egress deny-path still propagates on the loopback probe path — a
+    /// forbidden resolved IP fails BEFORE the probe runs (the vetted-client build
+    /// is the first step).
+    #[tokio::test]
+    async fn loopback_probe_path_still_propagates_egress_deny() {
+        // A NAMED loopback (`localhost`) whose resolver is poisoned to a metadata
+        // IP must be denied by build_vetted_client before any probe.
+        let ep = AgentEndpoint::parse("http://localhost:11434/api/chat")
+            .expect("localhost AgentEndpoint must parse");
+        let metadata: std::net::SocketAddr = "169.254.169.254:11434".parse().unwrap();
+        let result = ElmerProvider::new_vetted_with_resolver_and_probe(
+            ep,
+            "qwen3:8b".into(),
+            None,
+            None,
+            None,
+            None,
+            fixed_resolver(vec![metadata]),
+            always_ollama_probe(),
+        )
+        .await;
         assert!(
-            result.is_ok(),
-            "new_vetted must succeed for api.anthropic.com with a public IP (build returned Err)"
+            matches!(result, Err(EgressError::HostDenied(_))),
+            "a poisoned loopback name must be HostDenied before the probe runs"
         );
     }
 }
