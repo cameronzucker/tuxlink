@@ -1615,7 +1615,7 @@ pub fn run() {
                         let keyring = std::sync::Arc::new(crate::elmer::keyring::ElmerKeyring::new());
                         app.manage(std::sync::Arc::clone(&keyring));
 
-                        // Manage the atomic {endpoint, model} config guard (E1) so
+                        // Manage the atomic {endpoint, model, …} config guard (E1) so
                         // the per-turn build (E2) and live-apply (D1) share it.
                         let model_config = std::sync::Arc::new(
                             crate::elmer::model_config_state::ElmerModelConfigState::new(
@@ -1625,6 +1625,12 @@ pub fn run() {
                                 // (or default 900) config so the first turn uses
                                 // the operator's value (tuxlink-1wi5w).
                                 elmer_cfg.agent_turn_timeout_secs,
+                                // Advanced fields (tuxlink-65qhn T3): seed from
+                                // the saved config so the first turn uses the
+                                // operator's choices.
+                                elmer_cfg.num_ctx,
+                                elmer_cfg.temperature,
+                                elmer_cfg.system_prompt_override.clone(),
                             ),
                         );
                         app.manage(std::sync::Arc::clone(&model_config));

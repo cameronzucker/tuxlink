@@ -1513,6 +1513,23 @@ pub struct ElmerConfig {
     /// forward-compatible.
     #[serde(default)]
     pub onboarded: bool,
+    /// Native-Ollama context window size (tuxlink-65qhn T3).
+    /// `None` = let Ollama use its model default.
+    /// `#[serde(default)]` so configs without this field (all existing configs)
+    /// deserialize as `None` with no version bump required.
+    #[serde(default)]
+    pub num_ctx: Option<u32>,
+    /// Inference temperature (tuxlink-65qhn T3).
+    /// `None` = let the provider use its default.
+    /// `#[serde(default)]` for backward compatibility.
+    #[serde(default)]
+    pub temperature: Option<f32>,
+    /// Optional operator-supplied system-prompt override (tuxlink-31tbw, T3).
+    /// `None` = use the built-in `ELMER_SYSTEM_PROMPT`.
+    /// NOT a secret — stored in the config file as plain text.
+    /// `#[serde(default)]` for backward compatibility.
+    #[serde(default)]
+    pub system_prompt_override: Option<String>,
 }
 
 /// Serde default for [`ElmerConfig::agent_turn_timeout_secs`]: `900` seconds
@@ -1529,6 +1546,9 @@ impl Default for ElmerConfig {
             agent_model: "llama3".into(),
             agent_turn_timeout_secs: default_agent_turn_timeout_secs(),
             onboarded: false,
+            num_ctx: None,
+            temperature: None,
+            system_prompt_override: None,
         }
     }
 }
@@ -1564,6 +1584,9 @@ impl ElmerConfig {
             && self.agent_model == d.agent_model
             && self.agent_turn_timeout_secs == d.agent_turn_timeout_secs
             && self.onboarded == d.onboarded
+            && self.num_ctx == d.num_ctx
+            && self.temperature == d.temperature
+            && self.system_prompt_override == d.system_prompt_override
     }
 }
 
