@@ -20,7 +20,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, KeyboardEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { readLastTarget, writeLastTarget } from '../../connections/connectDispatch';
-import { Button } from '../../controls';
+import { Button, Select, Field } from '../../controls';
 import { RadioPanel, type RadioPanelState } from '../RadioPanel';
 import { SessionLogSection } from '../sections/SessionLogSection';
 import { useSessionLog } from '../sections/useSessionLog';
@@ -507,7 +507,7 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
         <h5>VARA host</h5>
         <label className="radio-panel-input-row">
           <span>Host</span>
-          <input
+          <Field
             type="text"
             className="radio-panel-input"
             data-testid="vara-host-input"
@@ -523,7 +523,7 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
         </label>
         <label className="radio-panel-input-row">
           <span>Cmd port</span>
-          <input
+          <Field
             type="text"
             inputMode="numeric"
             className="radio-panel-input"
@@ -541,7 +541,7 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
         </label>
         <label className="radio-panel-input-row">
           <span>Data port</span>
-          <input
+          <Field
             type="text"
             inputMode="numeric"
             className="radio-panel-input"
@@ -559,7 +559,7 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
         </label>
         <label className="radio-panel-input-row">
           <span>Bandwidth</span>
-          <select
+          <Select
             className="radio-panel-input"
             data-testid="vara-bandwidth-select"
             value={config.bandwidth_hz ?? ''}
@@ -571,7 +571,7 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
                 {opt.label}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
       </section>
 
@@ -609,7 +609,7 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
           manualContent={
             <label className="radio-panel-input-row">
               <span>To</span>
-              <input
+              <Field
                 type="text"
                 className="radio-panel-input"
                 data-testid="vara-target-input"
@@ -648,7 +648,7 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
             when the field is blank (freqHz === null). */}
         <div className="radio-panel-input-row">
           <label htmlFor="vara-freq">Frequency (MHz)</label>
-          <input
+          <Field
             id="vara-freq"
             data-testid="vara-freq"
             className="radio-panel-input radio-panel-mono"

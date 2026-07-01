@@ -28,7 +28,7 @@ import type { ChangeEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as shellOpen } from '@tauri-apps/plugin-shell';
 import { readLastTarget, writeLastTarget } from '../../connections/connectDispatch';
-import { Button } from '../../controls';
+import { Button, Select, Field } from '../../controls';
 import { RadioPanel, type RadioPanelState } from '../RadioPanel';
 import { SessionLogSection } from '../sections/SessionLogSection';
 import { useSessionLog } from '../sections/useSessionLog';
@@ -945,7 +945,7 @@ export function ArdopRadioPanel({
               <h5>Connect</h5>
               <label className="radio-panel-input-row">
                 <span>Target</span>
-                <input
+                <Field
                   type="text"
                   className="radio-panel-input"
                   data-testid="ardop-target-input"
@@ -959,7 +959,7 @@ export function ArdopRadioPanel({
               </label>
               <label className="radio-panel-input-row">
                 <span>Bandwidth</span>
-                <select
+                <Select
                   className="radio-panel-input"
                   data-testid="ardop-bandwidth-select"
                   value={bandwidth ?? ''}
@@ -970,7 +970,7 @@ export function ArdopRadioPanel({
                       {opt.label}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
               {/* tuxlink-8fkkk: frequency + Tune affordance. Operator types the
                   gateway frequency in MHz; the panel parses it to Hz and passes it
@@ -979,7 +979,7 @@ export function ArdopRadioPanel({
                   paths are no-ops when the field is blank (freqHz === null). */}
               <div className="radio-panel-input-row">
                 <label htmlFor="ardop-freq">Frequency (MHz)</label>
-                <input
+                <Field
                   id="ardop-freq"
                   data-testid="ardop-freq"
                   className="radio-panel-input radio-panel-mono"
@@ -1006,7 +1006,7 @@ export function ArdopRadioPanel({
                   derived self-terminate backstop deadline. */}
               <label className="radio-panel-input-row">
                 <span>Retries</span>
-                <input
+                <Field
                   type="number"
                   min={2}
                   max={30}
@@ -1059,7 +1059,7 @@ export function ArdopRadioPanel({
               kind ardopcf actually wants. */}
           <label className="radio-panel-input-row">
             <span>Capture</span>
-            <select
+            <Select
               className="radio-panel-input"
               data-testid="ardop-capture-select"
               value={captureOptions.some((o) => o.value === captureInput) ? captureInput : ''}
@@ -1075,7 +1075,7 @@ export function ArdopRadioPanel({
                   : 'No USB audio interfaces found — plug one in and Refresh'}
               </option>
               {renderDeviceOptions(captureOptions)}
-            </select>
+            </Select>
             <Button
               tone="neutral" emphasis="outline" size="xs"
               data-testid="ardop-capture-refresh"
@@ -1087,7 +1087,7 @@ export function ArdopRadioPanel({
           </label>
           <label className="radio-panel-input-row">
             <span>Manual</span>
-            <input
+            <Field
               type="text"
               className="radio-panel-input"
               data-testid="ardop-capture-input"
@@ -1102,7 +1102,7 @@ export function ArdopRadioPanel({
           </label>
           <label className="radio-panel-input-row">
             <span>Playback</span>
-            <select
+            <Select
               className="radio-panel-input"
               data-testid="ardop-playback-select"
               value={playbackOptions.some((o) => o.value === playbackInput) ? playbackInput : ''}
@@ -1118,7 +1118,7 @@ export function ArdopRadioPanel({
                   : 'No USB audio interfaces found — plug one in and Refresh'}
               </option>
               {renderDeviceOptions(playbackOptions)}
-            </select>
+            </Select>
             <Button
               tone="neutral" emphasis="outline" size="xs"
               data-testid="ardop-playback-refresh"
@@ -1130,7 +1130,7 @@ export function ArdopRadioPanel({
           </label>
           <label className="radio-panel-input-row">
             <span>Manual</span>
-            <input
+            <Field
               type="text"
               className="radio-panel-input"
               data-testid="ardop-playback-input"
@@ -1150,7 +1150,7 @@ export function ArdopRadioPanel({
               resets if the serial port is held open during audio). */}
           <label className="radio-panel-input-row">
             <span>PTT method</span>
-            <select
+            <Select
               className="radio-panel-input"
               data-testid="ardop-ptt-method-select"
               value={pttMethod}
@@ -1159,13 +1159,13 @@ export function ArdopRadioPanel({
               <option value="vox">VOX (no PTT line)</option>
               <option value="serial_rts">Serial RTS</option>
               <option value="cat_command">CAT command (TX1;/TX0;)</option>
-            </select>
+            </Select>
           </label>
           {pttMethod === 'serial_rts' && (
             <>
               <label className="radio-panel-input-row">
                 <span>PTT serial</span>
-                <select
+                <Select
                   className="radio-panel-input"
                   data-testid="ardop-ptt-select"
                   // A persisted path not in the enumerated list falls back to
@@ -1185,7 +1185,7 @@ export function ArdopRadioPanel({
                         {d.path} — {d.label}
                       </option>
                     ))}
-                </select>
+                </Select>
                 <Button
                   tone="neutral" emphasis="outline" size="xs"
                   data-testid="ardop-ptt-refresh"
@@ -1197,7 +1197,7 @@ export function ArdopRadioPanel({
               </label>
               <label className="radio-panel-input-row">
                 <span>Manual</span>
-                <input
+                <Field
                   type="text"
                   className="radio-panel-input"
                   data-testid="ardop-ptt-input"
@@ -1223,7 +1223,7 @@ export function ArdopRadioPanel({
               </p>
               <label className="radio-panel-input-row">
                 <span>Key cmd</span>
-                <input
+                <Field
                   type="text"
                   className="radio-panel-input"
                   data-testid="ardop-cat-key-input"
@@ -1238,7 +1238,7 @@ export function ArdopRadioPanel({
               </label>
               <label className="radio-panel-input-row">
                 <span>Unkey cmd</span>
-                <input
+                <Field
                   type="text"
                   className="radio-panel-input"
                   data-testid="ardop-cat-unkey-input"
@@ -1261,7 +1261,7 @@ export function ArdopRadioPanel({
               never drifts from where ardopcf is actually listening. */}
           <label className="radio-panel-input-row">
             <span>WebGUI</span>
-            <input
+            <Field
               type="text"
               inputMode="numeric"
               className="radio-panel-input"
@@ -1284,7 +1284,7 @@ export function ArdopRadioPanel({
               operator would have no UI surface to edit either control. */}
           <label className="radio-panel-input-row">
             <span>Cmd port</span>
-            <input
+            <Field
               type="text"
               inputMode="numeric"
               className="radio-panel-input"
@@ -1300,7 +1300,7 @@ export function ArdopRadioPanel({
           </label>
           <label className="radio-panel-input-row">
             <span>Binary</span>
-            <input
+            <Field
               type="text"
               className="radio-panel-input"
               data-testid="ardop-binary-input"
@@ -1411,7 +1411,7 @@ Up     ${fmtUptime(status.uptimeSec)}`}
           style={{ display: 'block', marginTop: '0.5rem' }}
         >
           Arm duration (minutes){' '}
-          <input
+          <Field
             type="number"
             min={0}
             inputMode="numeric"

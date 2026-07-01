@@ -29,7 +29,7 @@ import type { ChangeEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { readLastTarget, writeLastTarget } from '../../connections/connectDispatch';
-import { Button } from '../../controls';
+import { Button, Select, Field } from '../../controls';
 import { RadioPanel } from '../RadioPanel';
 import { SessionLogSection } from '../sections/SessionLogSection';
 import { useSessionLog } from '../sections/useSessionLog';
@@ -452,7 +452,7 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
         <h5>My station</h5>
         <label className="radio-panel-input-row">
           <span>Call</span>
-          <input
+          <Field
             type="text"
             className="radio-panel-input"
             data-testid="packet-base-call"
@@ -462,7 +462,7 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
         </label>
         <label className="radio-panel-input-row">
           <span>SSID</span>
-          <select
+          <Select
             className="radio-panel-input"
             data-testid="packet-ssid-select"
             value={ssid}
@@ -471,7 +471,7 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
             {ssidOptions().map((n) => (
               <option key={n} value={n}>{`-${n}`}</option>
             ))}
-          </select>
+          </Select>
         </label>
         <p
           className="radio-panel-mono"
@@ -564,7 +564,7 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
             <>
               <label className="radio-panel-input-row">
                 <span>To</span>
-                <input
+                <Field
                   type="text"
                   className="radio-panel-input"
                   data-testid="packet-target-input"
@@ -590,7 +590,7 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
                   <label key={i} className="radio-panel-input-row">
                     <span>{`Relay ${i + 1}`}</span>
                     <span style={{ display: 'flex', gap: 4 }}>
-                      <input
+                      <Field
                         type="text"
                         className="radio-panel-input"
                         data-testid={`packet-relay-${i}`}

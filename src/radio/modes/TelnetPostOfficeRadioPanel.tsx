@@ -35,7 +35,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useQueryClient } from '@tanstack/react-query';
-import { Button } from '../../controls';
+import { Button, Field } from '../../controls';
 import { RadioPanel } from '../RadioPanel';
 import { SessionLogSection } from '../sections/SessionLogSection';
 import { useSessionLog } from '../sections/useSessionLog';
@@ -490,7 +490,7 @@ export function TelnetPostOfficeRadioPanel({
         <h5>Relay</h5>
         <label className="radio-panel-input-row">
           <span>Host</span>
-          <input
+          <Field
             type="text"
             className="radio-panel-input"
             data-testid="po-host-input"
@@ -506,7 +506,7 @@ export function TelnetPostOfficeRadioPanel({
         </label>
         <label className="radio-panel-input-row">
           <span>Port</span>
-          <input
+          <Field
             type="number"
             className="radio-panel-input"
             data-testid="po-port-input"
@@ -591,7 +591,7 @@ export function TelnetPostOfficeRadioPanel({
             >
               <label className="radio-panel-input-row">
                 <span>Callsign</span>
-                <input
+                <Field
                   type="text"
                   className="radio-panel-input"
                   data-testid={`po-favorite-edit-callsign-${editingFavKey}`}
@@ -604,7 +604,7 @@ export function TelnetPostOfficeRadioPanel({
               </label>
               <label className="radio-panel-input-row">
                 <span>Label</span>
-                <input
+                <Field
                   type="text"
                   className="radio-panel-input"
                   data-testid={`po-favorite-edit-label-${editingFavKey}`}
@@ -614,7 +614,7 @@ export function TelnetPostOfficeRadioPanel({
               </label>
               <label className="radio-panel-input-row">
                 <span>Host</span>
-                <input
+                <Field
                   type="text"
                   className="radio-panel-input"
                   data-testid={`po-favorite-edit-host-${editingFavKey}`}
@@ -627,7 +627,7 @@ export function TelnetPostOfficeRadioPanel({
               </label>
               <label className="radio-panel-input-row">
                 <span>Port</span>
-                <input
+                <Field
                   type="text"
                   inputMode="numeric"
                   className="radio-panel-input"
@@ -659,7 +659,7 @@ export function TelnetPostOfficeRadioPanel({
               as the endpoint. */}
           <label className="radio-panel-input-row">
             <span>Callsign</span>
-            <input
+            <Field
               type="text"
               className="radio-panel-input"
               data-testid="po-favorite-callsign-input"
@@ -673,7 +673,7 @@ export function TelnetPostOfficeRadioPanel({
           </label>
           <label className="radio-panel-input-row">
             <span>Label</span>
-            <input
+            <Field
               type="text"
               className="radio-panel-input"
               data-testid="po-favorite-label-input"
@@ -707,7 +707,7 @@ export function TelnetPostOfficeRadioPanel({
           <div className="po-mesh-discovery" data-testid="po-mesh-discovery">
             <label className="radio-panel-input-row">
               <span>Mesh node</span>
-              <input
+              <Field
                 type="text"
                 className="radio-panel-input"
                 data-testid="po-mesh-host-input"

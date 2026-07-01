@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Button } from '../../controls';
+import { Button, Select, Field } from '../../controls';
 import { getRigProfile } from './rigProfiles';
 
 /** TypeScript mirror of Rust's `RigUiConfig`. Field names are snake_case to
@@ -229,7 +229,7 @@ export function RigControlSection({ storageKeyPrefix, variant = 'expander', onRa
       <label className="radio-panel-input-row">
         <span>Radio</span>
         {models.length > 0 ? (
-          <select
+          <Select
             className="radio-panel-input"
             data-testid="rig-model"
             value={rigConfig?.rig_hamlib_model ?? ''}
@@ -248,9 +248,9 @@ export function RigControlSection({ storageKeyPrefix, variant = 'expander', onRa
                 ))}
               </optgroup>
             ))}
-          </select>
+          </Select>
         ) : (
-          <input
+          <Field
             type="text"
             inputMode="numeric"
             className="radio-panel-input"
@@ -278,7 +278,7 @@ export function RigControlSection({ storageKeyPrefix, variant = 'expander', onRa
           the AX.25/PTT enumeration). Manual row covers an unlisted device. */}
       <label className="radio-panel-input-row">
         <span>CAT port</span>
-        <select
+        <Select
           className="radio-panel-input"
           data-testid="rig-cat-port"
           value={serialPorts.some((d) => d.path === catSerialInput) ? catSerialInput : ''}
@@ -294,7 +294,7 @@ export function RigControlSection({ storageKeyPrefix, variant = 'expander', onRa
               {d.path} — {d.label}
             </option>
           ))}
-        </select>
+        </Select>
         <Button
           tone="neutral" emphasis="outline" size="xs"
           data-testid="rig-cat-port-refresh"
@@ -306,7 +306,7 @@ export function RigControlSection({ storageKeyPrefix, variant = 'expander', onRa
       </label>
       <label className="radio-panel-input-row">
         <span>Manual</span>
-        <input
+        <Field
           type="text"
           className="radio-panel-input"
           data-testid="rig-cat-port-manual"
@@ -323,7 +323,7 @@ export function RigControlSection({ storageKeyPrefix, variant = 'expander', onRa
       {/* CAT baud rate — 38400 matches the FT-710's Enhanced port default. */}
       <label className="radio-panel-input-row">
         <span>CAT baud</span>
-        <input
+        <Field
           type="text"
           inputMode="numeric"
           className="radio-panel-input"
@@ -341,7 +341,7 @@ export function RigControlSection({ storageKeyPrefix, variant = 'expander', onRa
       {/* Data mode — the token rigctld sets on tune (Mode::rigctl_str). */}
       <label className="radio-panel-input-row">
         <span>Mode</span>
-        <select
+        <Select
           className="radio-panel-input"
           data-testid="rig-data-mode"
           value={rigConfig?.data_mode ?? 'PKTUSB'}
@@ -353,7 +353,7 @@ export function RigControlSection({ storageKeyPrefix, variant = 'expander', onRa
           <option value="LSB-D">LSB-D</option>
           <option value="USB">USB</option>
           <option value="LSB">LSB</option>
-        </select>
+        </Select>
       </label>
 
       {/* Close-serial sequencing — required for radios (e.g. FT-710) that

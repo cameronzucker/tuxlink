@@ -41,25 +41,8 @@
   border-color: rgba(34, 197, 94, 0.35);
 }
 
-/* tuxlink-mqu3: compact Refresh button next to the device-dropdown
- * select. Inline with the input row, narrow so the dropdown keeps most
- * of the row width. */
-.radio-panel-btn-sm {
-  flex: 0 0 auto;
-  margin-left: 4px;
-  padding: 2px 8px;
-  border-radius: var(--radius-control);
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.7);
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  font-size: var(--type-control);
-  line-height: 1.4;
-  cursor: pointer;
-}
-.radio-panel-btn-sm:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.95);
-}
+/* tuxlink-3m0vx Task 9: .radio-panel-btn-sm removed — Refresh buttons
+ * migrated to .tux-btn--xs (Button wrapper); rule matched no element. */
 
 .modem-link-help {
   margin: -2px 0 8px 80px;

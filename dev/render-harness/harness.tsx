@@ -187,6 +187,7 @@ const VARA_MODE: RadioPanelMode = { kind: 'vara-hf', intent: 'cms' };
 // (rendered only while connecting) can be snapshotted for the token diff.
 const ribbonConnecting = params.get('connecting') === '1';
 
+document.documentElement.dataset.theme = params.get('theme') ?? '';
 createRoot(document.getElementById('root')!).render(
   <QueryClientProvider client={queryClient}>
     {view === 'ribbon' ? (
