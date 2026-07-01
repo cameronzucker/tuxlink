@@ -22,6 +22,7 @@ import {
   formatEgressRemaining,
   type EgressStatusDto,
 } from '../security/egressTypes';
+import { Button } from '../controls';
 
 /**
  * Self-contained clock cell (tuxlink-sndh). Lives in its own subtree so the
@@ -434,24 +435,28 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
         <>
           <div className="dash-divider" />
           <div className="dash-item dash-connect">
-            <button
-              type="button"
+            <Button
+              tone="primary"
+              emphasis="solid"
+              size="sm"
               className="connect-button"
               onClick={onConnect}
               disabled={connecting}
               data-testid="connect-button"
             >
               {connecting ? 'Connecting…' : 'Connect'}
-            </button>
+            </Button>
             {connecting && onAbort && (
-              <button
-                type="button"
+              <Button
+                tone="danger"
+                emphasis="outline"
+                size="sm"
                 className="abort-button"
                 onClick={onAbort}
                 data-testid="abort-button"
               >
                 Abort
-              </button>
+              </Button>
             )}
           </div>
         </>
