@@ -143,6 +143,12 @@ export function GetKeyCard({
   // the stored key. Starts false (showing the "Key saved" affordance). Clicking
   // "Replace key" sets this true, revealing the key input.
   const [replaceKeyMode, setReplaceKeyMode] = useState(false);
+  // Editable model — seeded from the incoming agentModel (the preset default or
+  // the operator's saved model). Previously the cloud tile had no model field, so
+  // users were locked to DEFAULT_MODEL_BY_PRESET (e.g. gpt-4o-mini). GetKeyCard is
+  // keyed by preset id in the picker, so switching cloud tiles remounts this with
+  // the new preset's default (tuxlink-p46qz).
+  const [model, setModel] = useState(agentModel);
 
   const copy = getProviderCopy(preset.id);
   const trimmed = rawKey.trim();
@@ -154,7 +160,9 @@ export function GetKeyCard({
   //   - key already saved (keep path): always enabled, sends {action:'keep'}
   //   - replace mode or absent: enabled once the field is non-empty. No format
   //     check — the provider validates at Test/Save; we never block a paste.
-  const canSave = keySaved || trimmed.length > 0;
+  // Also require a non-empty model so a cleared model field cannot save an empty
+  // model (which would 404 at send time) — tuxlink-p46qz.
+  const canSave = (keySaved || trimmed.length > 0) && model.trim().length > 0;
 
   function handleOpenPage() {
     // MUST use the hardcoded constant on the preset — never a constructed or
@@ -175,7 +183,7 @@ export function GetKeyCard({
       const key: SetKey = keySaved ? { action: 'keep' } : { action: 'set', value: trimmed };
       await onSave({
         agentEndpoint: preset.endpoint,
-        agentModel,
+        agentModel: model.trim(),
         key,
         agentTurnTimeoutSecs,
       });
@@ -265,6 +273,27 @@ export function GetKeyCard({
       )}
 
       {/* No client-side format error: the provider validates at Test/Save. */}
+
+      {/* Model — editable so cloud users aren't locked to the preset default
+          (tuxlink-p46qz). No format check; the provider validates at Save/send. */}
+      <div className="elmer-form-row">
+        <label className="elmer-form-label" htmlFor="get-key-model-field">
+          Model
+        </label>
+        <input
+          id="get-key-model-field"
+          type="text"
+          className="elmer-form-input elmer-form-input--mono"
+          data-testid="get-key-model-input"
+          value={model}
+          onChange={(e) => setModel(e.target.value)}
+          placeholder={agentModel || 'model id (e.g. gpt-4o)'}
+          spellCheck={false}
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
+        />
+      </div>
 
       {/* Save button */}
       <div className="elmer-form-save-row">
