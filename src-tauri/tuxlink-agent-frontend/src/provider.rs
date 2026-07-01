@@ -602,25 +602,32 @@ NOT refuse a multi-step task, cap how many tool calls you will make, or tell the
 operator to run the tools themselves. Building a ranked list, table, or summary \
 FROM real tool results is exactly your job and is NOT fabrication. \
 \
-Sending works in two steps, and you should be proactive about the first step. \
 You STAGE outbound traffic — a Winlink message (message_send), a Request Center \
 inquiry (catalog_send_inquiry), a GRIB weather-product request \
-(grib_send_request), a form (send_form) — into the local outbox; staging does \
-NOT transmit. The Winlink Request Center is a large on-demand catalog: call \
-catalog_list to see everything the operator can request — propagation forecasts, \
-METAR airport weather, satellite keplerian data, aurora and marine forecasts, \
-ARES/RACES bulletins, and much more — then stage the matching item(s) with \
-catalog_send_inquiry. Do NOT tell the operator the Request Center only offers \
-GRIB or weather; it offers hundreds of products. When the operator asks for \
-something a staged request would deliver, stage the appropriate request rather \
-than just saying you cannot fetch it live. You have NO tool that connects to a gateway or keys a \
-radio (there is no telnet/CMS-connect or radio-connect tool on your surface): \
-transmission is the operator's job, not yours. After you stage something, the \
-operator reviews the outbox and clicks 'Arm to send', which is what actually \
-transmits it — that click is their required consent. So once you have staged an \
-item, tell the operator plainly what you staged and that they should review it \
-and 'Arm to send' to transmit it, then stop and wait; do not try to connect or \
-send yourself. \
+(grib_send_request), a form (send_form) — into the local outbox. Staging is \
+local and always available regardless of send authority. The Winlink Request \
+Center is a large on-demand catalog: call catalog_list to see everything the \
+operator can request — propagation forecasts, METAR airport weather, satellite \
+keplerian data, aurora and marine forecasts, ARES/RACES bulletins, and much \
+more — then stage the matching item(s) with catalog_send_inquiry. Do NOT tell \
+the operator the Request Center only offers GRIB or weather; it offers hundreds \
+of products. When the operator asks for something a staged request would \
+deliver, stage the appropriate request rather than just saying you cannot fetch \
+it live. \
+\
+Sending authority: you can connect and transmit when the operator has ARMED \
+send authority. The arm is a time-boxed grant — it IS the operator's Part 97 \
+consent for that window. While armed, you may iterate connect attempts \
+autonomously: dial a station, read the link result, try the next station or \
+band, until a link establishes or options are exhausted; no per-attempt \
+approval dialog is required. Egress is DENIED when send authority is disarmed, \
+has expired, or when the session is TAINTED (reading an untrusted inbound \
+message taints the session and blocks sending until the operator starts a fresh \
+authorized session). Do not treat a denial as an error to route around — it \
+means you are not currently authorized to transmit. The operator can abort at \
+any time; an abort halts transmission immediately. You cannot change the CMS \
+host, credentials, or other protected configuration — those tools are not on \
+your surface. \
 \
 Do NOT claim a message has been sent or delivered when you have only staged it. \
 Do NOT tell the operator to wait for, or poll for, a reply to something that \
@@ -1179,13 +1186,14 @@ mod tests {
             system_content.contains("operator"),
             "system prompt must reference the operator; got: {system_content:?}"
         );
-        // The prompt must teach the stage→Arm-to-send→transmit model so the
-        // model stages + hands off to the operator instead of claiming it sent
-        // (or, worse, fabricating a reply). Anchor on the two load-bearing
-        // tokens: the staging verb and the operator's send-consent affordance.
+        // The prompt must teach the armed-send model: staging is always
+        // available, transmission requires ARMED authority, tainted sessions
+        // block egress. Anchor on the three load-bearing tokens.
         assert!(
-            system_content.contains("STAGE") && system_content.contains("Arm to send"),
-            "system prompt must explain staging + 'Arm to send' so the model doesn't claim it transmitted; got: {system_content:?}"
+            system_content.contains("STAGE")
+                && system_content.contains("ARMED")
+                && system_content.contains("TAINTED"),
+            "system prompt must explain staging + armed send-authority + taint gate; got: {system_content:?}"
         );
         // The prompt must authorize iterative, multi-step tool use so the model
         // does not refuse tasks like 'rank the top-5 stations by predicted path'

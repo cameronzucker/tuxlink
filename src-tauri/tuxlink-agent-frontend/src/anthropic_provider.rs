@@ -749,7 +749,9 @@ mod tests {
         let system = body["system"].as_str().unwrap_or("");
         assert!(system.contains("position_status"), "system must mention position_status");
         assert!(system.contains("operator"), "system must reference operator");
-        assert!(system.contains("STAGE") && system.contains("Arm to send"),
-            "system must explain staging + Arm-to-send");
+        assert!(
+            system.contains("STAGE") && system.contains("ARMED") && system.contains("TAINTED"),
+            "system must explain staging + armed send-authority + taint gate"
+        );
     }
 }

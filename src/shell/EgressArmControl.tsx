@@ -229,7 +229,7 @@ export const EgressArmControl = memo(function EgressArmControl({
                   ))}
                 </div>
                 <div className="egress-pop-help">
-                  While armed, an MCP agent may transmit or change settings. Disarms automatically
+                  While armed, Elmer may connect to a gateway and transmit. Disarms automatically
                   when the timer ends.
                 </div>
               </>
