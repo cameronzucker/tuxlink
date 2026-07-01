@@ -123,6 +123,9 @@ pub struct OpenAiProvider {
     /// construction; never mutated, and never sourced from a tool result.
     endpoint: Url,
     model: String,
+    /// Sampling temperature forwarded to the request body as `"temperature"` when
+    /// `Some`; omitted entirely when `None` so the server default applies.
+    temperature: Option<f32>,
     /// Optional operator-supplied system-prompt override (tuxlink-31tbw). When
     /// `Some`, it replaces [`ELMER_SYSTEM_PROMPT`] as the `role: system` message;
     /// when `None`, the built-in default is used. Threaded from the model-config
@@ -141,12 +144,16 @@ impl OpenAiProvider {
     /// re-validate (the SEC-5 gate is the caller's single chokepoint), but it is
     /// only reachable from `main` after that gate.
     ///
+    /// `temperature` is the sampling temperature forwarded to the request body;
+    /// `None` leaves the server default unchanged.
+    ///
     /// `system_prompt` is the operator override (tuxlink-31tbw); `None` uses the
     /// built-in [`ELMER_SYSTEM_PROMPT`].
     pub fn new(
         client: reqwest::Client,
         endpoint: Url,
         model: impl Into<String>,
+        temperature: Option<f32>,
         system_prompt: Option<String>,
         api_key: Option<ApiKey>,
     ) -> Self {
@@ -154,6 +161,7 @@ impl OpenAiProvider {
             client,
             endpoint,
             model: model.into(),
+            temperature,
             system_prompt,
             api_key,
         }
@@ -179,6 +187,7 @@ impl Provider for OpenAiProvider {
             &self.model,
             conversation,
             tools,
+            self.temperature,
             self.system_prompt.as_deref().unwrap_or(ELMER_SYSTEM_PROMPT),
         );
         body["stream"] = json!(true);
@@ -656,6 +665,9 @@ Be concise and practical.";
 /// Build the chat-completions request body from the transcript + tool surface.
 /// Pure — no IO. Exposed for unit testing the message + tools shaping.
 ///
+/// `temperature` is forwarded to the request body as `"temperature"` when
+/// `Some`; omitted entirely when `None` so the server default applies.
+///
 /// `system_prompt` is the effective system prompt (the operator override or the
 /// built-in [`ELMER_SYSTEM_PROMPT`], resolved by the caller — see
 /// [`OpenAiProvider::turn`]).
@@ -663,6 +675,7 @@ pub fn build_request_body(
     model: &str,
     conversation: &Conversation,
     tools: &[ToolSpec],
+    temperature: Option<f32>,
     system_prompt: &str,
 ) -> Value {
     let system_message =
@@ -740,6 +753,12 @@ pub fn build_request_body(
         "model": model,
         "messages": messages,
     });
+
+    // `temperature` is omitted entirely when `None` (server default); present
+    // and typed as a JSON number when `Some`.
+    if let Some(t) = temperature {
+        body["temperature"] = json!(t);
+    }
 
     // Only include `tools` when there is a tool surface — an empty array makes
     // some servers reject `tool_choice` defaults.
@@ -1194,7 +1213,7 @@ mod tests {
     #[test]
     fn request_body_first_message_is_system_prompt() {
         let convo = Conversation::new("where am I?");
-        let body = build_request_body("local-model", &convo, &[], ELMER_SYSTEM_PROMPT);
+        let body = build_request_body("local-model", &convo, &[], None, ELMER_SYSTEM_PROMPT);
         assert_eq!(
             body["messages"][0]["role"], "system",
             "messages[0] must be the system prompt"
@@ -1234,7 +1253,7 @@ mod tests {
     #[test]
     fn request_body_system_prompt_override_replaces_default() {
         let convo = Conversation::new("hi");
-        let body = build_request_body("m", &convo, &[], "CUSTOM ELMER PROMPT");
+        let body = build_request_body("m", &convo, &[], None, "CUSTOM ELMER PROMPT");
         assert_eq!(body["messages"][0]["role"], "system");
         let system = body["messages"][0]["content"].as_str().unwrap_or("");
         assert_eq!(
@@ -1250,7 +1269,7 @@ mod tests {
     #[test]
     fn request_body_includes_model_and_tools() {
         let convo = Conversation::new("find a station near DM79");
-        let body = build_request_body("local-model", &convo, &[echo_tool()], ELMER_SYSTEM_PROMPT);
+        let body = build_request_body("local-model", &convo, &[echo_tool()], None, ELMER_SYSTEM_PROMPT);
         assert_eq!(body["model"], "local-model");
         // messages[0] is the system prompt; the first user message is at index 1.
         assert_eq!(body["messages"][0]["role"], "system");
@@ -1265,7 +1284,7 @@ mod tests {
     #[test]
     fn request_body_omits_tools_when_none() {
         let convo = Conversation::new("hi");
-        let body = build_request_body("m", &convo, &[], ELMER_SYSTEM_PROMPT);
+        let body = build_request_body("m", &convo, &[], None, ELMER_SYSTEM_PROMPT);
         assert!(body.get("tools").is_none(), "tools should be absent: {body}");
     }
 
@@ -1273,7 +1292,7 @@ mod tests {
     fn tool_result_renders_as_tool_role() {
         let mut convo = Conversation::new("go");
         convo.push_tool_result("find_stations", "{\"count\":3}");
-        let body = build_request_body("m", &convo, &[], ELMER_SYSTEM_PROMPT);
+        let body = build_request_body("m", &convo, &[], None, ELMER_SYSTEM_PROMPT);
         let tool_msg = body["messages"]
             .as_array()
             .unwrap()
@@ -1294,7 +1313,7 @@ mod tests {
     fn tool_error_result_labels_error() {
         let mut convo = Conversation::new("go");
         convo.push_tool_error("message_send", "tool denied: session is tainted");
-        let body = build_request_body("m", &convo, &[], ELMER_SYSTEM_PROMPT);
+        let body = build_request_body("m", &convo, &[], None, ELMER_SYSTEM_PROMPT);
         let tool_msg = body["messages"]
             .as_array()
             .unwrap()
@@ -1320,7 +1339,7 @@ mod tests {
             args: json!({}),
         });
         convo.push_tool_result("position_status", "{\"grid\":\"CN87\"}");
-        let body = build_request_body("gemini-2.5-flash", &convo, &[], ELMER_SYSTEM_PROMPT);
+        let body = build_request_body("gemini-2.5-flash", &convo, &[], None, ELMER_SYSTEM_PROMPT);
         let msgs = body["messages"].as_array().expect("messages array");
 
         // The assistant tool-call message: tool_calls[0] with an id, function name,
@@ -1351,6 +1370,35 @@ mod tests {
              (Gemini/OpenAI 400 without this linkage)"
         );
         assert!(tool_msg["content"].as_str().unwrap().contains("CN87"));
+    }
+
+    // --- temperature forwarding -------------------------------------------
+
+    /// `temperature: Some(0.8)` must appear in the body as a JSON number.
+    #[test]
+    fn request_body_includes_temperature_when_some() {
+        let convo = Conversation::new("hi");
+        let body = build_request_body("m", &convo, &[], Some(0.8_f32), ELMER_SYSTEM_PROMPT);
+        let temp = body
+            .get("temperature")
+            .and_then(Value::as_f64)
+            .expect("temperature must be present when Some");
+        assert!(
+            (temp - 0.8).abs() < 1e-6,
+            "temperature must be ~0.8; got: {temp}"
+        );
+    }
+
+    /// `temperature: None` must NOT add a `temperature` key to the body, so the
+    /// server default is left unchanged.
+    #[test]
+    fn request_body_omits_temperature_when_none() {
+        let convo = Conversation::new("hi");
+        let body = build_request_body("m", &convo, &[], None, ELMER_SYSTEM_PROMPT);
+        assert!(
+            body.get("temperature").is_none(),
+            "temperature must be absent when None; got: {body}"
+        );
     }
 
     // --- SSE streaming accumulator (no network) ---------------------------

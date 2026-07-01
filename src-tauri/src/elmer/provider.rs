@@ -94,7 +94,7 @@ impl ElmerProvider {
     pub fn new(endpoint: LoopbackEndpoint, model: String, api_key: Option<String>) -> Self {
         let client = reqwest::Client::new();
         let inner: Box<dyn Provider + Send + Sync> = Box::new(
-            OpenAiProvider::new(client, endpoint.0, model, None, api_key.map(ApiKey::new))
+            OpenAiProvider::new(client, endpoint.0, model, None, None, api_key.map(ApiKey::new))
         );
         Self { inner, kind: ProviderKind::OpenAi }
     }
@@ -120,9 +120,9 @@ impl ElmerProvider {
     /// * `model` — model identifier string (e.g. `"llama3"`, `"gpt-4o"`, `"claude-haiku-4-5"`).
     /// * `num_ctx` — native-Ollama context window (`options.num_ctx`); ignored by
     ///   the compat / Anthropic adapters. `None` = server default (T3/T4).
-    /// * `temperature` — sampling temperature. Threaded to the Ollama adapter's
-    ///   `options.temperature`. Scoped to Ollama for v1 (see note on
-    ///   [`Self::new_vetted_with_resolver`]).
+    /// * `temperature` — sampling temperature threaded to ALL three adapters
+    ///   (Ollama `options.temperature`; OpenAI / Anthropic top-level
+    ///   `"temperature"`). `None` leaves the server default unchanged (T9).
     /// * `system_prompt` — operator override applied to EVERY adapter
     ///   (tuxlink-31tbw); `None` = the built-in `ELMER_SYSTEM_PROMPT`.
     /// * `api_key` — optional credential (`x-api-key` for Anthropic; bearer for others).
@@ -157,14 +157,12 @@ impl ElmerProvider {
     /// callers use [`Self::new_vetted`] which injects the platform resolver;
     /// tests inject a fake to prove deny-path propagation without real DNS.
     ///
-    /// ### Temperature scope (v1 decision)
+    /// ### Temperature scope (T9)
     ///
-    /// `temperature` is threaded to the native Ollama adapter (`options.temperature`)
-    /// only. The compat [`OpenAiProvider`] does not currently accept a temperature
-    /// knob (its `new` takes only endpoint/model/system_prompt/key), and the
-    /// [`AnthropicProvider`] likewise. Rather than widen two more constructors in
-    /// this integration change, temperature is scoped to Ollama for v1; a
-    /// follow-up can thread it into the compat/Anthropic request bodies.
+    /// `temperature` is threaded to all three adapters: the native Ollama adapter
+    /// (`options.temperature`), the OpenAI-compat adapter (top-level
+    /// `"temperature"`), and the Anthropic adapter (top-level `"temperature"`).
+    /// `None` leaves each server's default unchanged.
     ///
     /// The `#[cfg(any(test, …))]` annotation is deliberately absent — the seam
     /// needs to be reachable from the `#[cfg(test)]` block inside this module,
@@ -274,19 +272,19 @@ impl ElmerProvider {
                     "loopback probe did not find native Ollama — falling back to OpenAI-compat (num_ctx not applied)"
                 );
                 (
-                    Box::new(OpenAiProvider::new(client, url, model, system_prompt, api_key)),
+                    Box::new(OpenAiProvider::new(client, url, model, temperature, system_prompt, api_key)),
                     ProviderKind::OpenAi,
                 )
             }
         } else if is_anthropic_endpoint(url.as_str()) {
             // Remote: host-based selection, UNCHANGED from the pre-T4 behavior.
             (
-                Box::new(AnthropicProvider::new(client, url, model, system_prompt, api_key)),
+                Box::new(AnthropicProvider::new(client, url, model, temperature, system_prompt, api_key)),
                 ProviderKind::Anthropic,
             )
         } else {
             (
-                Box::new(OpenAiProvider::new(client, url, model, system_prompt, api_key)),
+                Box::new(OpenAiProvider::new(client, url, model, temperature, system_prompt, api_key)),
                 ProviderKind::OpenAi,
             )
         };
