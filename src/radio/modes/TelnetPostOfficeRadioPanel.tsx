@@ -35,6 +35,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useQueryClient } from '@tanstack/react-query';
+import { Button } from '../../controls';
 import { RadioPanel } from '../RadioPanel';
 import { SessionLogSection } from '../sections/SessionLogSection';
 import { useSessionLog } from '../sections/useSessionLog';
@@ -637,22 +638,20 @@ export function TelnetPostOfficeRadioPanel({
                 />
               </label>
               <div className="radio-panel-chip-row">
-                <button
-                  type="button"
-                  className="radio-panel-btn radio-panel-btn-primary"
+                <Button
+                  tone="primary" emphasis="soft" size="md"
                   data-testid={`po-favorite-edit-save-${editingFavKey}`}
                   onClick={() => void saveEditFavorite()}
                 >
                   Save
-                </button>
-                <button
-                  type="button"
-                  className="radio-panel-btn"
+                </Button>
+                <Button
+                  tone="neutral" emphasis="outline" size="md"
                   data-testid={`po-favorite-edit-cancel-${editingFavKey}`}
                   onClick={() => setEditingFavKey(null)}
                 >
                   Cancel
-                </button>
+                </Button>
               </div>
             </div>
           )}
@@ -899,23 +898,21 @@ export function TelnetPostOfficeRadioPanel({
           — design §4.3). Label reflects the selection count. NO consent modal:
           Post Office is pure TCP, outside RADIO-1. */}
       <section className="radio-panel-sec radio-panel-act">
-        <button
-          type="button"
-          className="radio-panel-btn radio-panel-btn-primary"
+        <Button
+          tone="primary" emphasis="soft" size="md"
           data-testid="po-connect-btn"
           disabled={busy}
           onClick={start}
         >
           {connectLabel}
-        </button>
-        <button
-          type="button"
-          className="radio-panel-btn radio-panel-btn-bad"
+        </Button>
+        <Button
+          tone="danger" emphasis="soft" size="md"
           data-testid="po-stop-btn"
           onClick={stop}
         >
           Stop
-        </button>
+        </Button>
       </section>
     </RadioPanel>
   );

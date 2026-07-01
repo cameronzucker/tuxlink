@@ -45,6 +45,7 @@ import { useEffect, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useQueryClient } from '@tanstack/react-query';
+import { Button } from '../../controls';
 import { RadioPanel } from '../RadioPanel';
 import { SessionLogSection } from '../sections/SessionLogSection';
 import { useSessionLog } from '../sections/useSessionLog';
@@ -661,23 +662,21 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
       {/* Actions — mirrors TelnetRadioPanel's Start/Stop section exactly:
           primary button (Connect / Connecting…) + bad button (Stop). */}
       <section className="radio-panel-sec radio-panel-act">
-        <button
-          type="button"
-          className="radio-panel-btn radio-panel-btn-primary"
+        <Button
+          tone="primary" emphasis="soft" size="md"
           data-testid="p2p-connect-btn"
           disabled={busy}
           onClick={start}
         >
           {busy ? 'Connecting…' : 'Connect'}
-        </button>
-        <button
-          type="button"
-          className="radio-panel-btn radio-panel-btn-bad"
+        </Button>
+        <Button
+          tone="danger" emphasis="soft" size="md"
           data-testid="p2p-stop-btn"
           onClick={stop}
         >
           Stop
-        </button>
+        </Button>
       </section>
     </RadioPanel>
   );

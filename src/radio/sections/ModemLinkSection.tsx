@@ -20,6 +20,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { Button } from '../../controls';
 import './ModemLinkSection.css';
 
 /** UI-segment identity. Each maps to a distinct wire `linkKind`: TCP →
@@ -324,15 +325,14 @@ export function ModemLinkSection({
                 </option>
               ))}
             </select>
-            <button
-              type="button"
-              className="radio-panel-btn-sm"
+            <Button
+              tone="neutral" emphasis="outline" size="xs"
               data-testid="modem-usb-refresh"
               onClick={loadSerialDevices}
               aria-label="Refresh USB device list"
             >
               ↻
-            </button>
+            </Button>
           </label>
           <label className="radio-panel-input-row">
             <span>Manual</span>
@@ -394,15 +394,14 @@ export function ModemLinkSection({
                 </option>
               ))}
             </select>
-            <button
-              type="button"
-              className="radio-panel-btn-sm"
+            <Button
+              tone="neutral" emphasis="outline" size="xs"
               data-testid="modem-bt-refresh"
               onClick={loadBluetoothDevices}
               aria-label="Refresh Bluetooth device list"
             >
               ↻
-            </button>
+            </Button>
           </label>
           <label className="radio-panel-input-row">
             <span>Manual</span>

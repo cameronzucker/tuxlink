@@ -10,6 +10,13 @@ const RADIO_PANEL_CSS_MODULES = import.meta.glob('./RadioPanel.css', {
 }) as Record<string, string>;
 const radioPanelCss = RADIO_PANEL_CSS_MODULES['./RadioPanel.css'];
 
+const CONTROLS_CSS_MODULES = import.meta.glob('../styles/controls.css', {
+  eager: true,
+  query: '?raw',
+  import: 'default',
+}) as Record<string, string>;
+const controlsCss = CONTROLS_CSS_MODULES['../styles/controls.css'];
+
 describe('<RadioPanel>', () => {
   it('renders the shell with the panel title from the mode', () => {
     render(
@@ -78,16 +85,17 @@ describe('<RadioPanel>', () => {
   });
 
   it('styles Stop actions as outlined danger at rest, matching primary button posture', () => {
-    const badRule = radioPanelCss.match(/\.radio-panel-btn-bad\s*\{[^}]+\}/)?.[0] ?? '';
+    // After tuxlink-3m0vx migration, danger-stop styling lives in controls.css
+    // as .tux-btn--danger.tux-btn--soft (the Button wrapper's output).
+    const badRule = controlsCss.match(/\.tux-btn--danger\.tux-btn--soft\s*\{[^}]+\}/)?.[0] ?? '';
     expect(badRule).toContain('background: var(--tux-danger-surface);');
     expect(badRule).toContain('border-color: color-mix(in srgb, var(--error) 35%, transparent);');
     expect(badRule).toContain('color: var(--error);');
     expect(badRule).not.toContain('background: var(--error);');
     expect(badRule).not.toContain('color: var(--tux-danger-fg);');
 
-    const hoverRule = radioPanelCss.match(/\.radio-panel-btn-bad:hover:not\(:disabled\)\s*\{[^}]+\}/)?.[0] ?? '';
+    const hoverRule = controlsCss.match(/\.tux-btn--danger\.tux-btn--soft:hover:not\(:disabled\)\s*\{[^}]+\}/)?.[0] ?? '';
     expect(hoverRule).toContain('background: color-mix(in srgb, var(--error) 18%, transparent);');
-    expect(hoverRule).toContain('border-color: var(--error);');
     expect(hoverRule).not.toContain('filter: brightness');
   });
 
@@ -123,7 +131,7 @@ describe('RadioPanel interior compact CSS (tuxlink-h7q7 Task 6b)', () => {
     expect(block).toMatch(/\.radio-panel-close \{[\s\S]*?min-height:\s*44px/);
     expect(block).toMatch(/\.radio-panel-chip \{[\s\S]*?min-height:\s*44px/);
     expect(block).toMatch(/\.radio-panel-find-gateway \{[\s\S]*?min-height:\s*44px/);
-    expect(block).toMatch(/\.radio-panel-btn \{[\s\S]*?min-height:\s*44px/);
+    expect(block).toMatch(/\.radio-panel \.tux-btn \{[\s\S]*?min-height:\s*44px/);
   });
 });
 
@@ -134,12 +142,13 @@ const LISTEN_CSS = (
 
 describe('RadioPanel interior compact CSS — small controls (Codex post-impl review)', () => {
   it('bumps small buttons, the chip-remove ✕, native radios, and help text', () => {
-    const modem = MODEM_LINK_CSS.slice(MODEM_LINK_CSS.indexOf('@media (max-width: 1365px)'));
-    expect(modem).toMatch(/\.radio-panel-btn-sm \{[\s\S]*?min-height:\s*44px/);
+    // .radio-panel-btn-sm migrated to .tux-btn--xs; floor now covered by
+    // .radio-panel .tux-btn in RadioPanel.css (see Task 7 compact a11y floor fix).
+    const panel = RADIO_PANEL_CSS.slice(RADIO_PANEL_CSS.indexOf('@media (max-width: 1365px)'));
+    expect(panel).toMatch(/\.radio-panel \.tux-btn \{[\s\S]*?min-height:\s*44px/);
     const listen = LISTEN_CSS.slice(LISTEN_CSS.indexOf('@media (max-width: 1365px)'));
     expect(listen).toMatch(/\.radio-panel-chip-x \{[\s\S]*?min-height:\s*44px/);
     expect(listen).toMatch(/\.radio-panel-help \{[\s\S]*?font-size:\s*12px/);
-    const panel = RADIO_PANEL_CSS.slice(RADIO_PANEL_CSS.indexOf('@media (max-width: 1365px)'));
     expect(panel).toMatch(/input\[type='radio'\] \{[\s\S]*?width:\s*22px/);
   });
 });

@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { Button } from '../../controls';
 import { getRigProfile } from './rigProfiles';
 
 /** TypeScript mirror of Rust's `RigUiConfig`. Field names are snake_case to
@@ -263,15 +264,14 @@ export function RigControlSection({ storageKeyPrefix, variant = 'expander', onRa
             }}
           />
         )}
-        <button
-          type="button"
-          className="radio-panel-btn-sm"
+        <Button
+          tone="neutral" emphasis="outline" size="xs"
           data-testid="rig-model-refresh"
           onClick={loadModels}
           aria-label="Refresh radio model list"
         >
           ↻
-        </button>
+        </Button>
       </label>
 
       {/* CAT port — detected serial ports (reuses packet_list_serial_devices,
@@ -295,15 +295,14 @@ export function RigControlSection({ storageKeyPrefix, variant = 'expander', onRa
             </option>
           ))}
         </select>
-        <button
-          type="button"
-          className="radio-panel-btn-sm"
+        <Button
+          tone="neutral" emphasis="outline" size="xs"
           data-testid="rig-cat-port-refresh"
           onClick={loadSerialPorts}
           aria-label="Refresh CAT serial port list"
         >
           ↻
-        </button>
+        </Button>
       </label>
       <label className="radio-panel-input-row">
         <span>Manual</span>

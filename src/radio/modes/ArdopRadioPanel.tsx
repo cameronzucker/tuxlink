@@ -28,6 +28,7 @@ import type { ChangeEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as shellOpen } from '@tauri-apps/plugin-shell';
 import { readLastTarget, writeLastTarget } from '../../connections/connectDispatch';
+import { Button } from '../../controls';
 import { RadioPanel, type RadioPanelState } from '../RadioPanel';
 import { SessionLogSection } from '../sections/SessionLogSection';
 import { useSessionLog } from '../sections/useSessionLog';
@@ -990,9 +991,8 @@ export function ArdopRadioPanel({
                   autoCapitalize="off"
                   autoCorrect="off"
                 />
-                <button
-                  type="button"
-                  className="radio-panel-btn radio-panel-btn-sm"
+                <Button
+                  tone="neutral" emphasis="outline" size="xs"
                   data-testid="ardop-tune"
                   disabled={freqHz === null}
                   onClick={() => {
@@ -1000,7 +1000,7 @@ export function ArdopRadioPanel({
                   }}
                 >
                   Tune…
-                </button>
+                </Button>
               </div>
               {/* tuxlink-5xxq: connect retries (ConReq repeats) — feeds the
                   derived self-terminate backstop deadline. */}
@@ -1076,15 +1076,14 @@ export function ArdopRadioPanel({
               </option>
               {renderDeviceOptions(captureOptions)}
             </select>
-            <button
-              type="button"
-              className="radio-panel-btn-sm"
+            <Button
+              tone="neutral" emphasis="outline" size="xs"
               data-testid="ardop-capture-refresh"
               onClick={loadAudioDevices}
               aria-label="Refresh capture device list"
             >
               ↻
-            </button>
+            </Button>
           </label>
           <label className="radio-panel-input-row">
             <span>Manual</span>
@@ -1120,15 +1119,14 @@ export function ArdopRadioPanel({
               </option>
               {renderDeviceOptions(playbackOptions)}
             </select>
-            <button
-              type="button"
-              className="radio-panel-btn-sm"
+            <Button
+              tone="neutral" emphasis="outline" size="xs"
               data-testid="ardop-playback-refresh"
               onClick={loadAudioDevices}
               aria-label="Refresh playback device list"
             >
               ↻
-            </button>
+            </Button>
           </label>
           <label className="radio-panel-input-row">
             <span>Manual</span>
@@ -1188,15 +1186,14 @@ export function ArdopRadioPanel({
                       </option>
                     ))}
                 </select>
-                <button
-                  type="button"
-                  className="radio-panel-btn-sm"
+                <Button
+                  tone="neutral" emphasis="outline" size="xs"
                   data-testid="ardop-ptt-refresh"
                   onClick={loadPttDevices}
                   aria-label="Refresh PTT serial device list"
                 >
                   ↻
-                </button>
+                </Button>
               </label>
               <label className="radio-panel-input-row">
                 <span>Manual</span>
@@ -1467,41 +1464,37 @@ Up     ${fmtUptime(status.uptimeSec)}`}
 
       <section className="radio-panel-sec radio-panel-act">
         {isStopped && (
-          <button
-            type="button"
-            className="radio-panel-btn radio-panel-btn-primary"
+          <Button
+            tone="primary" emphasis="soft" size="md"
             data-testid="ardop-start-btn"
             disabled={target.trim() === '' || connecting}
             onClick={onStartClick}
           >
             {connecting ? 'Connecting…' : 'Start'}
-          </button>
+          </Button>
         )}
         {!isStopped && (
           <>
-            <button
-              type="button"
-              className="radio-panel-btn radio-panel-btn-primary"
+            <Button
+              tone="primary" emphasis="soft" size="md"
               data-testid="ardop-send-receive-btn"
               disabled={!isExchangeReady || exchanging || effectiveTarget === null}
               onClick={onSendReceiveClick}
             >
               {exchanging ? 'Exchanging…' : 'Send/Receive'}
-            </button>
-            <button
-              type="button"
-              className="radio-panel-btn radio-panel-btn-bad"
+            </Button>
+            <Button
+              tone="danger" emphasis="soft" size="md"
               data-testid="ardop-stop-btn"
               disabled={disconnecting}
               onClick={onStopClick}
             >
               {disconnecting ? 'Stopping…' : 'Stop'}
-            </button>
+            </Button>
           </>
         )}
-        <button
-          type="button"
-          className="radio-panel-btn"
+        <Button
+          tone="neutral" emphasis="outline" size="md"
           data-testid="ardop-open-webgui-btn"
           onClick={onOpenWebGuiClick}
           disabled={isStopped}
@@ -1512,7 +1505,7 @@ Up     ${fmtUptime(status.uptimeSec)}`}
           }
         >
           Open WebGUI
-        </button>
+        </Button>
         {connectError !== null && (
           <p className="radio-panel-error" role="alert">{connectError}</p>
         )}
