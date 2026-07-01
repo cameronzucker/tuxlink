@@ -548,15 +548,21 @@ async fn injection_egress_is_arm_gated() {
 
     for tool_name in &egress_names {
         for (vector, payload) in INJECTION_CORPUS {
-            // Build args from minimal required fields PLUS the hostile payload
-            // as an extra key.  The minimal fields ensure rmcp's argument decode
-            // succeeds and the dispatch reaches `guarded_egress`; without valid
-            // required args a decode error fires before the guard runs, and
-            // neither Denied branch below would be exercised.  The extra
-            // "injection" key is silently ignored by the router's param struct
-            // (serde's default deny-unknown-fields is NOT set on these structs).
+            // Build args from minimal required fields, carrying the hostile
+            // payload IN a valid string field (`target`/`call`) rather than as an
+            // extra key.  Rationale: `ExchangeParams` (ardop_b2f_exchange) sets
+            // `#[serde(deny_unknown_fields)]`, so an unknown "injection" key fails
+            // rmcp decode with InvalidArgs BEFORE `guarded_egress` runs — neither
+            // Denied branch below would then be exercised (CI caught exactly this).
+            // Embedding the payload in the target/call value decodes cleanly and
+            // still reaches the guard (the port crosses `guarded_egress` before it
+            // touches the target), proving a hostile-content dispatch is arm-gated.
             let mut args = minimal_args_for_tool(tool_name);
-            args["injection"] = serde_json::Value::String((*payload).to_string());
+            if args.get("target").is_some() {
+                args["target"] = serde_json::Value::String((*payload).to_string());
+            } else if args.get("call").is_some() {
+                args["call"] = serde_json::Value::String((*payload).to_string());
+            }
             let call = ToolCall {
                 name: tool_name.clone(),
                 args,
