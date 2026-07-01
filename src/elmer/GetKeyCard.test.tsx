@@ -191,6 +191,44 @@ describe('GetKeyCard', () => {
   });
 
   // -----------------------------------------------------------------------
+  // (c2) editable model field (tuxlink-p46qz)
+  // -----------------------------------------------------------------------
+
+  it('renders an editable model input seeded from agentModel', () => {
+    render(<GetKeyCard {...baseProps({ preset: openaiPreset, agentModel: 'gpt-4o-mini' })} />);
+    const modelInput = screen.getByTestId('get-key-model-input') as HTMLInputElement;
+    expect(modelInput).toBeTruthy();
+    expect(modelInput.value).toBe('gpt-4o-mini');
+  });
+
+  it('saves the EDITED model, not the default (the "stuck on gpt-4o-mini" fix)', async () => {
+    const onSave = vi.fn(async () => {});
+    render(<GetKeyCard {...baseProps({ preset: openaiPreset, agentModel: 'gpt-4o-mini', onSave })} />);
+    fireEvent.change(screen.getByTestId('get-key-model-input'), { target: { value: 'gpt-4o' } });
+    fireEvent.change(screen.getByTestId('get-key-input'), {
+      target: { value: 'sk-abcdefghijklmnopqrstuvwxyz' },
+    });
+    const saveBtn = screen.getByTestId('get-key-save') as HTMLButtonElement;
+    expect(saveBtn.disabled).toBe(false);
+    await act(async () => {
+      fireEvent.click(saveBtn);
+    });
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ agentModel: 'gpt-4o' }),
+    );
+  });
+
+  it('disables Save when the model field is cleared (cannot save an empty model)', () => {
+    render(<GetKeyCard {...baseProps({ preset: openaiPreset, agentModel: 'gpt-4o-mini' })} />);
+    fireEvent.change(screen.getByTestId('get-key-input'), {
+      target: { value: 'sk-abcdefghijklmnopqrstuvwxyz' },
+    });
+    // With a valid key but an empty model, Save must be disabled.
+    fireEvent.change(screen.getByTestId('get-key-model-input'), { target: { value: '  ' } });
+    expect((screen.getByTestId('get-key-save') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  // -----------------------------------------------------------------------
   // (d) "stuck?" affordance
   // -----------------------------------------------------------------------
 
