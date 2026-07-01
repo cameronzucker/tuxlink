@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::conversation::Conversation;
 use crate::traits::{Provider, ProviderError, ToolInvoker};
-use crate::types::{CallAuthority, ModelTurn, ToolCall, ToolOutcome, ToolSpec};
+use crate::types::{CallAuthority, ModelTurn, RunEvent, ToolCall, ToolOutcome, ToolSpec};
 
 /// A side-effect hook run at the start of every scripted `turn`.
 type OnTurnHook = Box<dyn Fn() + Send + Sync>;
@@ -39,10 +39,24 @@ pub struct ScriptedProvider {
 /// One scripted model turn, or an injected provider error.
 #[derive(Debug, Clone)]
 pub enum ScriptedTurn {
-    /// Yield a model turn.
+    /// Yield a model turn (no streaming deltas emitted).
     Turn(ModelTurn),
     /// Yield a transport error.
     Error(String),
+    /// Yield a model turn, but first stream reasoning + answer deltas through
+    /// `on_event` to simulate a streaming provider. The fake emits one
+    /// [`RunEvent::ReasoningDelta`] per `reasoning` entry, then one
+    /// [`RunEvent::AssistantDelta`] per `deltas` entry, then returns `turn`.
+    /// The deltas are side-effect-only — they do not alter the returned turn,
+    /// exactly as a real streaming provider behaves.
+    Streamed {
+        /// Reasoning fragments, emitted first (in order).
+        reasoning: Vec<String>,
+        /// Answer fragments, emitted after the reasoning (in order).
+        deltas: Vec<String>,
+        /// The model turn returned once the deltas have been emitted.
+        turn: ModelTurn,
+    },
 }
 
 impl ScriptedProvider {
@@ -80,6 +94,7 @@ impl Provider for ScriptedProvider {
         &self,
         _conversation: &Conversation,
         _tools: &[ToolSpec],
+        on_event: &(dyn Fn(RunEvent) + Sync),
     ) -> Result<ModelTurn, ProviderError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         if let Some(hook) = &self.on_turn {
@@ -89,6 +104,22 @@ impl Provider for ScriptedProvider {
         match next {
             Some(ScriptedTurn::Turn(t)) => Ok(t),
             Some(ScriptedTurn::Error(e)) => Err(ProviderError::Transport(e)),
+            Some(ScriptedTurn::Streamed {
+                reasoning,
+                deltas,
+                turn,
+            }) => {
+                // Stream reasoning first, then the answer deltas — mirroring a
+                // real streaming provider's two channels. Fire-and-forget: the
+                // returned `turn` is unaffected by these emits.
+                for chunk in reasoning {
+                    on_event(RunEvent::ReasoningDelta { chunk });
+                }
+                for chunk in deltas {
+                    on_event(RunEvent::AssistantDelta { chunk });
+                }
+                Ok(turn)
+            }
             None => Err(ProviderError::Transport(
                 "ScriptedProvider exhausted: the test script supplied too few turns".to_string(),
             )),
@@ -216,9 +247,10 @@ mod tests {
         let convo = Conversation::new("go");
         let tools = vec![echo_tool()];
 
-        let t1 = provider.turn(&convo, &tools).await.unwrap();
+        let noop = |_: RunEvent| {};
+        let t1 = provider.turn(&convo, &tools, &noop).await.unwrap();
         assert!(matches!(t1, ModelTurn::ToolCalls(_)));
-        let t2 = provider.turn(&convo, &tools).await.unwrap();
+        let t2 = provider.turn(&convo, &tools, &noop).await.unwrap();
         assert_eq!(t2, ModelTurn::Text("done".into()));
         assert_eq!(provider.call_count(), 2);
     }
@@ -227,7 +259,8 @@ mod tests {
     async fn scripted_provider_errors_when_exhausted() {
         let provider = ScriptedProvider::new(vec![]);
         let convo = Conversation::new("go");
-        let err = provider.turn(&convo, &[]).await.unwrap_err();
+        let noop = |_: RunEvent| {};
+        let err = provider.turn(&convo, &[], &noop).await.unwrap_err();
         assert!(matches!(err, ProviderError::Transport(_)));
     }
 
@@ -236,8 +269,39 @@ mod tests {
         let provider =
             ScriptedProvider::from_scripted(vec![ScriptedTurn::Error("boom".into())]);
         let convo = Conversation::new("go");
-        let err = provider.turn(&convo, &[]).await.unwrap_err();
+        let noop = |_: RunEvent| {};
+        let err = provider.turn(&convo, &[], &noop).await.unwrap_err();
         assert!(matches!(err, ProviderError::Transport(_)));
+    }
+
+    #[tokio::test]
+    async fn scripted_provider_streams_reasoning_then_deltas_then_returns_turn() {
+        // A Streamed turn emits its reasoning fragments, then its answer
+        // fragments, then returns the model turn — and the recorded event order
+        // matches that. The returned turn is unaffected by the emitted deltas.
+        let provider = ScriptedProvider::from_scripted(vec![ScriptedTurn::Streamed {
+            reasoning: vec!["think-a".into(), "think-b".into()],
+            deltas: vec!["ans-1".into(), "ans-2".into()],
+            turn: ModelTurn::Text("final".into()),
+        }]);
+        let convo = Conversation::new("go");
+        let events: Mutex<Vec<RunEvent>> = Mutex::new(Vec::new());
+        let sink = |ev: RunEvent| events.lock().unwrap().push(ev);
+
+        let turn = provider.turn(&convo, &[], &sink).await.unwrap();
+        assert_eq!(turn, ModelTurn::Text("final".into()));
+
+        let recorded = events.into_inner().unwrap();
+        assert_eq!(
+            recorded,
+            vec![
+                RunEvent::ReasoningDelta { chunk: "think-a".into() },
+                RunEvent::ReasoningDelta { chunk: "think-b".into() },
+                RunEvent::AssistantDelta { chunk: "ans-1".into() },
+                RunEvent::AssistantDelta { chunk: "ans-2".into() },
+            ],
+            "streamed turn must emit reasoning deltas then answer deltas in order"
+        );
     }
 
     #[tokio::test]

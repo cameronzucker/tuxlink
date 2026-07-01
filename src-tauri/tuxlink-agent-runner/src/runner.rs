@@ -14,7 +14,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::conversation::Conversation;
 use crate::traits::{EgressStatus, Provider, ProviderError, ToolInvoker};
-use crate::types::{CallAuthority, Limits, ModelTurn, RunOutcome, ToolCall, ToolOutcome, ToolSpec};
+use crate::types::{
+    CallAuthority, Limits, ModelTurn, RunEvent, RunOutcome, ToolCall, ToolOutcome, ToolSpec,
+};
 use crate::validate;
 
 /// Run the bounded agent loop to completion, using a pre-built conversation.
@@ -29,6 +31,13 @@ use crate::validate;
 /// * `status` is an observed (read-only) egress snapshot — purely informational.
 /// * `limits` bound turns / per-turn time / malformed retries.
 /// * `cancel` cooperatively aborts the loop (COR-2).
+/// * `on_event` is a **fire-and-forget** progress callback (assistant text +
+///   tool calls) so a caller can render a conversational transcript. It does
+///   NOT gate the loop, change the [`RunOutcome`], or affect cancellation /
+///   timeout / COR invariants — it is called for its side effect and its
+///   return value is ignored. Pass `&|_| {}` to opt out (this is what [`run`]
+///   does). Keep the callback trivial: it is called inline on the loop's task,
+///   so a panic in it would unwind through the run.
 pub async fn run_with_conversation(
     conversation: &mut Conversation,
     provider: &dyn Provider,
@@ -36,6 +45,11 @@ pub async fn run_with_conversation(
     status: EgressStatus,
     limits: Limits,
     cancel: CancellationToken,
+    // `+ Sync` so a `&on_event` held across the loop's `.await`s is `Send` — the
+    // Elmer session drives this loop inside a `tokio::spawn`ed (Send) task, and
+    // `&F: Send` requires `F: Sync`. The no-op `&|_| {}` and the real sink
+    // (which captures only an `Arc<dyn Fn + Send + Sync>`) both satisfy it.
+    on_event: &(dyn Fn(RunEvent) + Sync),
 ) -> RunOutcome {
     // `status` is observed but never used to gate (gating lives below the MCP
     // boundary). Bind it so the read-only contract is explicit and the param is
@@ -67,7 +81,13 @@ pub async fn run_with_conversation(
             () = cancel.cancelled() => return RunOutcome::Cancelled,
             timed = tokio::time::timeout(
                 limits.per_turn_timeout,
-                provider.turn(conversation, &tools),
+                // Pass the loop's own fire-and-forget sink so a streaming
+                // provider can emit AssistantDelta / ReasoningDelta as content
+                // arrives. The provider's deltas plus the loop's own finalizing
+                // AssistantText / ToolCall emits all flow through the same
+                // callback; deltas are side-effect-only and never change the
+                // returned ModelTurn or any COR invariant.
+                provider.turn(conversation, &tools, on_event),
             ) => match timed {
                 Err(_elapsed) => {
                     return RunOutcome::NeedsOperator(format!(
@@ -83,6 +103,9 @@ pub async fn run_with_conversation(
         match turn {
             ModelTurn::Text(text) => {
                 conversation.push_assistant(&text);
+                // Fire-and-forget: surface the assistant answer as a chat turn
+                // BEFORE returning. Does not affect the outcome.
+                on_event(RunEvent::AssistantText { text: text.clone() });
                 return RunOutcome::Completed(text);
             }
             ModelTurn::ToolCalls(calls) => {
@@ -120,6 +143,9 @@ pub async fn run_with_conversation(
                         return RunOutcome::Cancelled;
                     }
                     conversation.push_tool_call(call.clone());
+                    // Fire-and-forget: surface the tool call as a chat chip.
+                    // Does not affect the outcome or cancellation.
+                    on_event(RunEvent::ToolCall { tool: call.name.clone() });
 
                     // SEC-3: the authority is ALWAYS Agent. There is no code
                     // path here that can construct any other CallAuthority.
@@ -162,13 +188,27 @@ pub async fn run(
     cancel: CancellationToken,
 ) -> RunOutcome {
     let mut conversation = Conversation::new(user_msg);
-    run_with_conversation(&mut conversation, provider, invoker, status, limits, cancel).await
+    // `run` keeps its historical signature by opting out of progress events with
+    // a no-op callback; only `run_with_conversation` exposes the `on_event` hook.
+    run_with_conversation(
+        &mut conversation,
+        provider,
+        invoker,
+        status,
+        limits,
+        cancel,
+        &|_| {},
+    )
+    .await
 }
 
 /// Map a [`ProviderError`] onto a terminal outcome. The loop cannot make
 /// progress without the model, so any provider failure surfaces to the operator.
 fn provider_error_outcome(err: ProviderError) -> RunOutcome {
-    RunOutcome::NeedsOperator(format!("provider error: {err}"))
+    match err {
+        ProviderError::RateLimited(msg) => RunOutcome::RateLimited(msg),
+        other => RunOutcome::NeedsOperator(format!("provider error: {other}")),
+    }
 }
 
 /// Return the first validation error across a batch of tool calls, or `None`
@@ -196,4 +236,56 @@ fn first_validation_error(tools: &[ToolSpec], calls: &[ToolCall]) -> Option<Stri
         }
     }
     None
+}
+
+// ---------------------------------------------------------------------------
+// provider_error_outcome unit tests
+// (kept at end-of-file: clippy::items_after_test_module denies production items
+// after a #[cfg(test)] mod, so test modules live below all production items.)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod provider_error_outcome_tests {
+    use super::*;
+
+    /// `ProviderError::RateLimited` maps to `RunOutcome::RateLimited`, NOT
+    /// `NeedsOperator`.  This ensures a 429 from the model surfaces the
+    /// rate-limit callout rather than the generic operator-nudge.
+    #[test]
+    fn rate_limited_error_maps_to_rate_limited_outcome() {
+        let err = ProviderError::RateLimited("HTTP 429: quota exceeded".to_string());
+        let outcome = provider_error_outcome(err);
+        match &outcome {
+            RunOutcome::RateLimited(msg) => {
+                assert!(
+                    msg.contains("429"),
+                    "detail must carry the 429 snippet; got: {msg:?}"
+                );
+            }
+            other => panic!("expected RunOutcome::RateLimited, got {other:?}"),
+        }
+    }
+
+    /// `ProviderError::Transport` still maps to `NeedsOperator` — the
+    /// `RateLimited` arm must not have broken the existing error path.
+    #[test]
+    fn transport_error_still_maps_to_needs_operator() {
+        let err = ProviderError::Transport("connection refused".to_string());
+        let outcome = provider_error_outcome(err);
+        assert!(
+            matches!(outcome, RunOutcome::NeedsOperator(_)),
+            "Transport must map to NeedsOperator, got: {outcome:?}"
+        );
+    }
+
+    /// `ProviderError::Unparseable` still maps to `NeedsOperator`.
+    #[test]
+    fn unparseable_error_still_maps_to_needs_operator() {
+        let err = ProviderError::Unparseable("bad JSON".to_string());
+        let outcome = provider_error_outcome(err);
+        assert!(
+            matches!(outcome, RunOutcome::NeedsOperator(_)),
+            "Unparseable must map to NeedsOperator, got: {outcome:?}"
+        );
+    }
 }

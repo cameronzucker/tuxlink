@@ -51,7 +51,7 @@ pub use fakes::{RecordedCall, RecordingInvoker, ScriptedProvider, ScriptedTurn};
 pub use runner::{run, run_with_conversation};
 pub use traits::{EgressStatus, Provider, ProviderError, ToolInvoker};
 pub use types::{
-    CallAuthority, Limits, ModelTurn, RunOutcome, ToolCall, ToolOutcome, ToolSpec,
+    CallAuthority, Limits, ModelTurn, RunEvent, RunOutcome, ToolCall, ToolOutcome, ToolSpec,
 };
 
 // The minimal validator is an implementation detail of COR-3, but exposing it
@@ -297,6 +297,7 @@ mod acceptance_tests {
                 &self,
                 _c: &Conversation,
                 _t: &[ToolSpec],
+                _on_event: &(dyn Fn(RunEvent) + Sync),
             ) -> Result<ModelTurn, ProviderError> {
                 // Never completes within the timeout window.
                 std::future::pending::<()>().await;
@@ -388,6 +389,7 @@ mod acceptance_tests {
                 &self,
                 _c: &Conversation,
                 _t: &[ToolSpec],
+                _on_event: &(dyn Fn(RunEvent) + Sync),
             ) -> Result<ModelTurn, ProviderError> {
                 std::future::pending::<()>().await;
                 unreachable!()
@@ -630,9 +632,150 @@ mod acceptance_tests {
         convo.push_user("second");
         let provider = ScriptedProvider::from_scripted(vec![ScriptedTurn::Turn(ModelTurn::Text("done".into()))]);
         let invoker = RecordingInvoker::new(vec![], vec![]);
-        let out = run_with_conversation(&mut convo, &provider, &invoker, EgressStatus::default(), Limits::default(), CancellationToken::new()).await;
+        let out = run_with_conversation(&mut convo, &provider, &invoker, EgressStatus::default(), Limits::default(), CancellationToken::new(), &|_| {}).await;
         assert!(matches!(out, RunOutcome::Completed(t) if t == "done"));
         assert!(convo.messages().len() >= 3);
+    }
+
+    // --- RunEvent progress callback ---------------------------------------
+
+    #[tokio::test]
+    async fn on_event_emits_toolcall_then_assistant_text_in_order() {
+        // Drive [ToolCalls(echo), Text("final")] through a recording callback.
+        // The callback must observe a ToolCall{tool:"echo"} BEFORE the final
+        // AssistantText{text:"final"}, and must NOT change the RunOutcome.
+        use std::sync::Mutex;
+        let provider = ScriptedProvider::new(vec![
+            ModelTurn::ToolCalls(vec![ToolCall::new("echo", json!({"msg": "hi"}))]),
+            ModelTurn::Text("final".into()),
+        ]);
+        let invoker = RecordingInvoker::always_ok(vec![echo_tool()]);
+
+        let events: Mutex<Vec<RunEvent>> = Mutex::new(Vec::new());
+        let mut convo = Conversation::new("go");
+        let outcome = run_with_conversation(
+            &mut convo,
+            &provider,
+            &invoker,
+            EgressStatus::default(),
+            fast_limits(),
+            CancellationToken::new(),
+            &|ev| events.lock().unwrap().push(ev),
+        )
+        .await;
+
+        // Callback did not alter the outcome.
+        assert_eq!(outcome, RunOutcome::Completed("final".into()));
+
+        let recorded = events.into_inner().unwrap();
+        assert_eq!(
+            recorded,
+            vec![
+                RunEvent::ToolCall { tool: "echo".into() },
+                RunEvent::AssistantText { text: "final".into() },
+            ],
+            "callback must see ToolCall(echo) then AssistantText(final) in order"
+        );
+    }
+
+    #[tokio::test]
+    async fn streaming_provider_emits_deltas_before_finalize_without_changing_outcome() {
+        // A ScriptedProvider scripted with a `Streamed` turn (reasoning + answer
+        // deltas + a final Text turn) is driven through `run_with_conversation`
+        // with a recording callback. The recorded sequence must be:
+        //   ReasoningDelta(s) → AssistantDelta(s) → AssistantText(final)
+        // and the RunOutcome must be unchanged (Completed(final)). This proves
+        // deltas stream BEFORE the loop's finalize emit without altering the
+        // outcome — the fire-and-forget contract.
+        use std::sync::Mutex;
+        let provider = ScriptedProvider::from_scripted(vec![ScriptedTurn::Streamed {
+            reasoning: vec!["weighing options".into(), "deciding".into()],
+            deltas: vec!["The ".into(), "answer".into()],
+            turn: ModelTurn::Text("The answer".into()),
+        }]);
+        let invoker = RecordingInvoker::always_ok(vec![echo_tool()]);
+
+        let events: Mutex<Vec<RunEvent>> = Mutex::new(Vec::new());
+        let mut convo = Conversation::new("go");
+        let outcome = run_with_conversation(
+            &mut convo,
+            &provider,
+            &invoker,
+            EgressStatus::default(),
+            fast_limits(),
+            CancellationToken::new(),
+            &|ev| events.lock().unwrap().push(ev),
+        )
+        .await;
+
+        // The deltas did not alter the terminal outcome.
+        assert_eq!(outcome, RunOutcome::Completed("The answer".into()));
+
+        let recorded = events.into_inner().unwrap();
+        assert_eq!(
+            recorded,
+            vec![
+                RunEvent::ReasoningDelta { chunk: "weighing options".into() },
+                RunEvent::ReasoningDelta { chunk: "deciding".into() },
+                RunEvent::AssistantDelta { chunk: "The ".into() },
+                RunEvent::AssistantDelta { chunk: "answer".into() },
+                RunEvent::AssistantText { text: "The answer".into() },
+            ],
+            "deltas must stream (reasoning then answer) before the finalize AssistantText"
+        );
+        // No tools were called: a pure text streaming turn.
+        assert_eq!(invoker.call_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn non_streaming_turn_emits_no_deltas_and_outcome_unchanged() {
+        // Guard against regressing the non-streaming path: a plain
+        // ScriptedTurn::Turn(Text) emits NO deltas — only the loop's finalizing
+        // AssistantText — and the outcome is unchanged.
+        use std::sync::Mutex;
+        let provider = ScriptedProvider::from_scripted(vec![ScriptedTurn::Turn(
+            ModelTurn::Text("plain".into()),
+        )]);
+        let invoker = RecordingInvoker::always_ok(vec![echo_tool()]);
+
+        let events: Mutex<Vec<RunEvent>> = Mutex::new(Vec::new());
+        let mut convo = Conversation::new("go");
+        let outcome = run_with_conversation(
+            &mut convo,
+            &provider,
+            &invoker,
+            EgressStatus::default(),
+            fast_limits(),
+            CancellationToken::new(),
+            &|ev| events.lock().unwrap().push(ev),
+        )
+        .await;
+
+        assert_eq!(outcome, RunOutcome::Completed("plain".into()));
+        let recorded = events.into_inner().unwrap();
+        assert_eq!(
+            recorded,
+            vec![RunEvent::AssistantText { text: "plain".into() }],
+            "a non-streaming turn emits only the finalizing AssistantText"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_uses_noop_callback_and_completes() {
+        // The thin `run` wrapper passes a no-op callback internally; existing
+        // `run` callers/tests are unaffected. This documents that contract.
+        let provider = ScriptedProvider::new(vec![ModelTurn::Text("done".into())]);
+        let invoker = RecordingInvoker::always_ok(vec![echo_tool()]);
+        let outcome = run(
+            "go",
+            &provider,
+            &invoker,
+            EgressStatus::default(),
+            fast_limits(),
+            CancellationToken::new(),
+        )
+        .await;
+        assert_eq!(outcome, RunOutcome::Completed("done".into()));
     }
 
     #[tokio::test]

@@ -17,7 +17,7 @@ use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 use crate::conversation::Conversation;
-use crate::types::{CallAuthority, ModelTurn, ToolCall, ToolOutcome, ToolSpec};
+use crate::types::{CallAuthority, ModelTurn, RunEvent, ToolCall, ToolOutcome, ToolSpec};
 
 /// A read-only snapshot of egress status the loop may *observe* but never
 /// mutate (SEC-4). It carries no handle that could arm or clear taint — it is a
@@ -36,10 +36,21 @@ pub trait Provider: Send + Sync {
     /// Produce the next [`ModelTurn`] given the running transcript and the tools
     /// the model may call. Implementations must be cancellation-friendly via the
     /// timeout the loop wraps around this call.
+    ///
+    /// `on_event` is the loop's **fire-and-forget** progress sink. A *streaming*
+    /// implementation MAY call it with [`RunEvent::ReasoningDelta`] and
+    /// [`RunEvent::AssistantDelta`] as reasoning / answer content arrives
+    /// token-by-token, so a caller can show live inference progress. Emitting
+    /// deltas is purely a side effect: it MUST NOT change the returned
+    /// [`ModelTurn`], and the loop still emits the finalizing
+    /// [`RunEvent::AssistantText`] itself. A non-streaming implementation simply
+    /// ignores `on_event`. The same `+ Sync` rationale as `run_with_conversation`
+    /// applies (the loop drives this inside a `tokio::spawn`ed `Send` task).
     async fn turn(
         &self,
         conversation: &Conversation,
         tools: &[ToolSpec],
+        on_event: &(dyn Fn(RunEvent) + Sync),
     ) -> Result<ModelTurn, ProviderError>;
 }
 
@@ -53,6 +64,12 @@ pub enum ProviderError {
     /// The model response could not be parsed into a [`ModelTurn`].
     #[error("provider returned an unparseable turn: {0}")]
     Unparseable(String),
+    /// The provider returned HTTP 429 — the model endpoint is temporarily
+    /// throttling requests.  Carries the (already-redacted) response snippet.
+    /// The loop maps this to [`crate::types::RunOutcome::RateLimited`]; no retry
+    /// is performed here.
+    #[error("provider rate-limited (HTTP 429): {0}")]
+    RateLimited(String),
 }
 
 /// The tool side of the loop — the single canonical tool path (ARCH-1 / SEC-2).

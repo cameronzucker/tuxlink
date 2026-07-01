@@ -28,12 +28,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import type { ConfigReadDto, SetKey, KeySource } from './elmerModelConfig';
+import type { ConfigReadDto, SetKey, KeySource, KeyStatusByOrigin } from './elmerModelConfig';
 import {
   EV_CHIP,
+  EV_DELTA,
   EV_OUTCOME,
   EV_TURN,
   type ElmerChipPayload,
+  type ElmerDeltaPayload,
   type ElmerOutcomePayload,
   type ElmerTurnPayload,
 } from './elmerEvents';
@@ -48,6 +50,13 @@ export interface ElmerTurnItem {
   id: string;
   role: string;
   text: string;
+  /**
+   * The model's accumulated reasoning trace for this turn, if it streamed any
+   * (phase 2b). Carried onto the committed assistant item at finalize so the
+   * thinking persists (collapsed) alongside the answer. Undefined when the turn
+   * streamed no reasoning (or came from a non-streaming provider).
+   */
+  reasoning?: string;
 }
 
 /** A tool-call chip (distinct from prose — AC-12 ground-truth). */
@@ -68,7 +77,31 @@ export interface ElmerAttributionItem {
   model: string;
 }
 
-export type ElmerItem = ElmerTurnItem | ElmerChipItem | ElmerAttributionItem;
+/**
+ * A persisted error outcome (tuxlink-pgbox). An errored run emits no finalizing
+ * EV_TURN, so without this the failure would live ONLY in the single-slot
+ * `lastOutcome` and be overwritten by the next run's outcome — which is why an
+ * operator trying to reproduce an error erased the first instance. Appending the
+ * error to the transcript keeps failures in the scrollback: they accumulate, and
+ * they are copyable via the per-reply Copy button, so an exact error can be
+ * captured for troubleshooting. Only the unclassified `error` phase is persisted
+ * here; the actionable recovery states (offline / rateLimited / toolDenied /
+ * needsOperator) keep their purpose-built callouts.
+ */
+export interface ElmerErrorItem {
+  kind: 'error';
+  id: string;
+  /** The raw backend outcome kind (e.g. a provider error class). */
+  outcomeKind: string;
+  /** Human-readable error detail from the backend, if any. */
+  detail?: string;
+}
+
+export type ElmerItem =
+  | ElmerTurnItem
+  | ElmerChipItem
+  | ElmerAttributionItem
+  | ElmerErrorItem;
 
 // ---------------------------------------------------------------------------
 // Outcome / phase
@@ -99,6 +132,7 @@ export type ElmerPhase =
   | 'needsOperator'
   | 'toolDenied'
   | 'offline'
+  | 'rateLimited'
   | 'error';
 
 function outcomeKindToPhase(outcomeKind: string): ElmerPhase {
@@ -113,6 +147,11 @@ function outcomeKindToPhase(outcomeKind: string): ElmerPhase {
       return 'toolDenied';
     case 'offline':
       return 'offline';
+    // A free-tier daily cap or provider 429. The Rust outcome kind serializes as
+    // `rateLimited` (camelCase, matching needsOperator/toolDenied) — Task 5's serde
+    // wire-shape test pins that literal. Surfaced as a distinct recovery callout.
+    case 'rateLimited':
+      return 'rateLimited';
     default:
       return 'error';
   }
@@ -139,6 +178,20 @@ export type DetectState =
 export interface UseElmer {
   /** Ordered list of turn/chip/attribution items in this conversation. */
   items: ElmerItem[];
+  /**
+   * Phase 2b — transient live answer buffer for a streamed turn. Accumulates
+   * EV_DELTA chunks with deltaKind:'assistant'. Non-empty only while a streamed
+   * turn is in flight (before EV_TURN finalizes and clears it). Rendered as
+   * PLAIN text with a blinking cursor (NOT markdown — avoids half-parsed flicker).
+   */
+  streamingAnswer: string;
+  /**
+   * Phase 2b — transient live reasoning buffer for a streamed turn. Accumulates
+   * EV_DELTA chunks with deltaKind:'reasoning'. Non-empty only while a streamed
+   * turn is in flight; cleared at finalize (its value is carried onto the
+   * committed item's `reasoning`).
+   */
+  streamingReasoning: string;
   /** Current pane phase (drives UI states). */
   phase: ElmerPhase;
   /** Last terminal outcome, or null if no run has completed yet. */
@@ -162,6 +215,29 @@ export interface UseElmer {
   detectState: DetectState;
   /** G3: The model name that was active when the last configSet ran (null if never set). */
   activeModel: string | null;
+  /**
+   * T8b: True once the operator has completed model setup at least once. Mirrors
+   * `ConfigReadDto.onboarded`. Null while config is loading or in error state.
+   */
+  onboarded: boolean | null;
+}
+
+/**
+ * keyStatusForOrigins — Task 4-fe frontend wrapper.
+ *
+ * Calls the Tauri `elmer_key_status_for_origins` command and returns a
+ * `KeyStatusByOrigin` map (statuses only, never key values). Designed to be
+ * called once when the tile picker opens, not per-keystroke.
+ *
+ * The Rust producer lands in Task 4 — this frontend shim is the T8b consumer
+ * side. Tests mock `invoke` to return the map directly.
+ */
+export async function keyStatusForOrigins(origins: string[]): Promise<KeyStatusByOrigin> {
+  const map = await invoke<KeyStatusByOrigin>('elmer_key_status_for_origins', { origins });
+  // Fail-closed: if the backend is unavailable and the IPC boundary yields a
+  // nullish value, return an empty map (no "key saved" badges) rather than
+  // letting undefined reach the picker, which would crash on a per-origin read.
+  return map ?? {};
 }
 
 let _nextId = 0;
@@ -175,6 +251,14 @@ export function useElmer(): UseElmer {
   const [lastOutcome, setLastOutcome] = useState<ElmerOutcome | null>(null);
   // Guard against launching a second send while one is running.
   const running = useRef(false);
+
+  // Phase 2b — transient streaming buffers for the in-flight turn. Held in
+  // state (so the streaming bubble re-renders on each chunk) AND mirrored in
+  // refs so the once-registered EV_TURN finalize listener can read the latest
+  // accumulated reasoning at commit time without re-registering on every chunk.
+  const [streamingAnswer, setStreamingAnswer] = useState('');
+  const [streamingReasoning, setStreamingReasoning] = useState('');
+  const streamingReasoningRef = useRef('');
 
   // G2: Model-config state.
   const [modelConfig, setModelConfig] = useState<ConfigReadDto | null>(null);
@@ -190,15 +274,46 @@ export function useElmer(): UseElmer {
   // The listeners are set up once on mount and torn down on unmount. Tauri's
   // `listen` returns an `UnlistenFn`; we collect them and call all on cleanup.
   useEffect(() => {
+    // `cancelled` guards the async listener setup against the effect being torn
+    // down before the `listen()` promises resolve (React StrictMode's
+    // mount→unmount→mount, a Vite HMR re-run, or a fast unmount). Without it the
+    // cleanup runs while `unlisteners` is still empty, the handlers register
+    // AFTER cleanup, and a listener set leaks every cycle — so each EV_TURN /
+    // EV_CHIP fires N times and the response renders N times (tuxlink-hn5k6).
+    let cancelled = false;
     const unlisteners: (() => void)[] = [];
 
     const setupListeners = async () => {
+      // Phase 2b — EV_DELTA: incremental streamed chunk. Route by deltaKind to
+      // the matching transient buffer. Reasoning chunks mirror into the ref so
+      // the finalize listener (registered once) can carry them onto the
+      // committed item. Non-streaming providers never emit this — the EV_TURN
+      // path below still works with both buffers empty.
+      const unDelta = await listen<ElmerDeltaPayload>(EV_DELTA, (event) => {
+        const payload = event.payload;
+        if (payload.deltaKind === 'reasoning') {
+          streamingReasoningRef.current += payload.chunk;
+          setStreamingReasoning((prev) => prev + payload.chunk);
+        } else {
+          setStreamingAnswer((prev) => prev + payload.chunk);
+        }
+      });
+
       const unTurn = await listen<ElmerTurnPayload>(EV_TURN, (event) => {
         const payload = event.payload;
+        // Finalize: commit the full turn to `items`, carrying any accumulated
+        // streamed reasoning, then CLEAR the transient buffers so the live
+        // streaming bubble is replaced by the committed (markdown) item — no
+        // double render. A non-streamed turn has empty buffers → reasoning
+        // undefined, behaving exactly as before phase 2b (no regression).
+        const reasoning = streamingReasoningRef.current || undefined;
         setItems((prev) => [
           ...prev,
-          { kind: 'turn', id: nextId(), role: payload.role, text: payload.text },
+          { kind: 'turn', id: nextId(), role: payload.role, text: payload.text, reasoning },
         ]);
+        streamingReasoningRef.current = '';
+        setStreamingAnswer('');
+        setStreamingReasoning('');
       });
 
       const unChip = await listen<ElmerChipPayload>(EV_CHIP, (event) => {
@@ -216,16 +331,51 @@ export function useElmer(): UseElmer {
           detail: payload.detail,
         };
         setLastOutcome(outcome);
-        setPhase(outcomeKindToPhase(payload.outcomeKind));
+        const outcomePhase = outcomeKindToPhase(payload.outcomeKind);
+        setPhase(outcomePhase);
+        // tuxlink-pgbox: persist an unclassified error into the transcript so it
+        // survives the next run (the single-slot lastOutcome would otherwise be
+        // overwritten). An errored run emits no EV_TURN, so this is the only
+        // durable, copyable record of the failure. Actionable states (offline /
+        // rateLimited / toolDenied / needsOperator) keep their callouts instead.
+        if (outcomePhase === 'error') {
+          setItems((prev) => [
+            ...prev,
+            {
+              kind: 'error',
+              id: nextId(),
+              outcomeKind: payload.outcomeKind,
+              detail: payload.detail,
+            },
+          ]);
+        }
         running.current = false;
+        // A streamed turn that is cancelled, times out, or errors emits NO
+        // finalizing EV_TURN, so the EV_TURN clear above never runs and a partial
+        // live bubble would linger after the run ended. Clear the transient
+        // streaming buffers on every terminal outcome too. On a clean 'done' the
+        // EV_TURN handler already cleared them, so this is a harmless no-op.
+        streamingReasoningRef.current = '';
+        setStreamingAnswer('');
+        setStreamingReasoning('');
       });
 
-      unlisteners.push(unTurn, unChip, unOutcome);
+      if (cancelled) {
+        // Cleanup already ran (or is about to) — tear these down now so they
+        // don't outlive the effect and double-handle events on the next mount.
+        unDelta();
+        unTurn();
+        unChip();
+        unOutcome();
+        return;
+      }
+      unlisteners.push(unDelta, unTurn, unChip, unOutcome);
     };
 
     void setupListeners();
 
     return () => {
+      cancelled = true;
       for (const unlisten of unlisteners) {
         unlisten();
       }
@@ -236,6 +386,11 @@ export function useElmer(): UseElmer {
     if (running.current) return;
     running.current = true;
     setPhase('running');
+    // Phase 2b — reset transient streaming buffers at the start of each send so
+    // a prior turn's residue can't bleed into the next live bubble.
+    streamingReasoningRef.current = '';
+    setStreamingAnswer('');
+    setStreamingReasoning('');
     // Append the user's message immediately so the pane feels responsive
     // before the first EV_TURN event arrives (the model takes 70-117 s).
     setItems((prev) => [
@@ -324,6 +479,8 @@ export function useElmer(): UseElmer {
 
   return {
     items,
+    streamingAnswer,
+    streamingReasoning,
     phase,
     lastOutcome,
     send,
@@ -335,5 +492,6 @@ export function useElmer(): UseElmer {
     detectModels,
     detectState,
     activeModel,
+    onboarded: modelConfig !== null ? modelConfig.onboarded : null,
   };
 }

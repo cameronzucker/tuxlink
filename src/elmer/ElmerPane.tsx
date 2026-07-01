@@ -25,12 +25,15 @@
  *   - running       → "Elmer is thinking…" indicator.
  */
 
-import { memo, useState, useRef, useEffect, useCallback, type KeyboardEvent } from 'react';
-import { useElmer, type ElmerItem, type ElmerPhase } from './useElmer';
+import { memo, useState, useRef, useEffect, useCallback, useMemo, type KeyboardEvent } from 'react';
+import { useElmer, keyStatusForOrigins, type ElmerItem, type ElmerPhase } from './useElmer';
 import { EgressArmControl } from '../shell/EgressArmControl';
 import type { EgressStatusDto } from '../security/egressTypes';
-import { PRESETS, inferPreset, isLoopback, originOf } from './elmerModelConfig';
-import type { SetKey, KeySource } from './elmerModelConfig';
+import { PRESETS, inferPreset, isLoopback, originOf, nextModelForPreset } from './elmerModelConfig';
+import type { SetKey, KeySource, KeyStatusByOrigin } from './elmerModelConfig';
+import { ModelTilePicker } from './ModelTilePicker';
+import { renderMarkdown } from '../shell/markdownRender';
+import { sanitizeHtml } from '../shell/sanitizeHtml';
 import './ElmerPane.css';
 
 // ---------------------------------------------------------------------------
@@ -79,8 +82,186 @@ function detectRemedy(reason: string, endpoint: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// ThinkingIndicator constants
+// ---------------------------------------------------------------------------
+
+/** Ham-radio verb phrases cycled by ThinkingIndicator while a run is in progress. */
+export const RADIO_VERBS: readonly string[] = [
+  'tuning the bands',
+  'listening on frequency',
+  'working the pileup',
+  'spinning the VFO',
+  'chasing DX',
+  'checking propagation',
+  'reading the waterfall',
+  'copying your signal',
+  'pulling it out of the noise',
+  'netting in',
+  'keying up',
+  'warming up the tubes',
+  'checking the SWR',
+  'rolling the dial',
+  'squelching the static',
+  'working simplex',
+  'consulting the band plan',
+  'peaking the signal',
+  'calling CQ',
+  'logging the contact',
+];
+
+// ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
+
+/**
+ * Renders the text body of an assistant turn as sanitized markdown.
+ * Memoized on `text` so the parse+sanitize pipeline only re-runs when the
+ * content changes, not on every parent re-render.
+ *
+ * Safe composition: renderMarkdown → sanitizeHtml → dangerouslySetInnerHTML.
+ * The sanitizeHtml layer (DOMPurify) strips all event handlers, <script>,
+ * <iframe>, and other dangerous constructs — model output is UNTRUSTED.
+ */
+function AssistantTurnBody({ text }: { text: string }) {
+  const html = useMemo(() => sanitizeHtml(renderMarkdown(text)), [text]);
+  return (
+    <div
+      className="elmer-turn-md"
+      // eslint-disable-next-line react/no-danger
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
+}
+
+/**
+ * Collapsed "Thinking…" disclosure attached to a COMMITTED assistant item that
+ * carried streamed reasoning (phase 2b). Starts collapsed; clicking the toggle
+ * expands the reasoning trace. Plain text (the reasoning is a raw thinking
+ * trace, not markdown). Rendered only when `reasoning` is non-empty.
+ */
+function ReasoningDisclosure({ reasoning }: { reasoning: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="elmer-reasoning" data-testid="elmer-reasoning" data-open={open}>
+      <button
+        type="button"
+        className="elmer-reasoning-toggle"
+        data-testid="elmer-reasoning-toggle"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {open ? '▾' : '▸'} Thinking…
+      </button>
+      {open && (
+        <div className="elmer-reasoning-body" data-testid="elmer-reasoning-body">
+          {reasoning}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Per-reply Copy button. Copies the RAW turn text (source markdown for an
+ * assistant turn, plain text for a user turn) so a paste lands clean — e.g. to
+ * hand an Elmer reply to another troubleshooting agent (tuxlink-efdpi). Mirrors
+ * the proven `navigator.clipboard.writeText` pattern shipped in ReportIssueModal;
+ * the try/catch tolerates WebKitGTK sandbox configs where the async clipboard
+ * API is unavailable. Rendered always-visible (not hover-only) so it is reliably
+ * clickable — the whole motivation is that selecting/copying by hand is finicky.
+ */
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+    } catch {
+      /* clipboard may be unavailable in some WebKitGTK/sandbox configs */
+    }
+  }, [text]);
+  // Revert the "Copied" confirmation back to "Copy" after a short beat.
+  useEffect(() => {
+    if (!copied) return undefined;
+    const id = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(id);
+  }, [copied]);
+  return (
+    <div className="elmer-turn-actions">
+      <button
+        type="button"
+        className="elmer-copy-btn"
+        data-testid="elmer-copy-btn"
+        aria-label="Copy message"
+        onClick={handleCopy}
+      >
+        {copied ? 'Copied' : 'Copy'}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Transient streaming bubble (phase 2b) — shown while a streamed turn is in
+ * flight (streamingAnswer or streamingReasoning non-empty), before the EV_TURN
+ * finalize swaps it for the committed markdown item.
+ *
+ *  - The live answer renders as PLAIN text with a blinking cursor (NOT markdown
+ *    — avoids half-parsed flicker mid-stream).
+ *  - Above it, a "Thinking…" section shows the reasoning trace. It is expanded
+ *    while only reasoning has arrived, and AUTO-COLLAPSES once the answer starts
+ *    (streamingAnswer non-empty) — the operator's attention follows the answer.
+ */
+function StreamingBubble({
+  answer,
+  reasoning,
+}: {
+  answer: string;
+  reasoning: string;
+}) {
+  const answerStarted = answer.length > 0;
+  // Auto-collapse the reasoning once the answer starts; expanded before that.
+  const reasoningOpen = !answerStarted;
+  return (
+    <div
+      className="elmer-turn elmer-turn--assistant elmer-streaming-bubble"
+      data-testid="elmer-streaming-bubble"
+      data-role="assistant"
+    >
+      <span className="elmer-turn-role">Elmer</span>
+      {reasoning.length > 0 && (
+        <div
+          className="elmer-reasoning"
+          data-testid="elmer-reasoning"
+          data-open={reasoningOpen}
+        >
+          <span
+            className="elmer-reasoning-toggle elmer-reasoning-toggle--live"
+            data-testid="elmer-reasoning-toggle"
+            aria-hidden="true"
+          >
+            {reasoningOpen ? '▾' : '▸'} Thinking…
+          </span>
+          {reasoningOpen && (
+            <div className="elmer-reasoning-body" data-testid="elmer-reasoning-body">
+              {reasoning}
+            </div>
+          )}
+        </div>
+      )}
+      {answerStarted && (
+        <span className="elmer-streaming-answer">
+          {answer}
+          <span
+            className="elmer-streaming-cursor"
+            data-testid="elmer-streaming-cursor"
+            aria-hidden="true"
+          />
+        </span>
+      )}
+    </div>
+  );
+}
 
 /** Renders a single turn, chip, or attribution item. */
 function MessageItem({ item }: { item: ElmerItem }) {
@@ -115,6 +296,28 @@ function MessageItem({ item }: { item: ElmerItem }) {
     );
   }
 
+  // tuxlink-pgbox: a persisted error outcome. Rendered inline in the transcript
+  // (not as a transient banner) so errors accumulate and survive later runs, with
+  // the Copy button so the operator can capture the exact detail for troubleshooting.
+  if (item.kind === 'error') {
+    const detail =
+      item.detail || 'Something went wrong. Try again or check the session log.';
+    // The copy payload names the outcome kind so a pasted error is self-contained.
+    const copyText = `Elmer error [${item.outcomeKind}]: ${item.detail ?? '(no detail provided)'}`;
+    return (
+      <div
+        className="elmer-turn elmer-turn--error"
+        data-testid="elmer-turn-error"
+        data-outcome-kind={item.outcomeKind}
+        role="alert"
+      >
+        <span className="elmer-turn-role">Error</span>
+        <span className="elmer-turn-text elmer-error-detail">{detail}</span>
+        <CopyButton text={copyText} />
+      </div>
+    );
+  }
+
   const isUser = item.role === 'user';
   return (
     <div
@@ -123,23 +326,129 @@ function MessageItem({ item }: { item: ElmerItem }) {
       data-role={item.role}
     >
       <span className="elmer-turn-role">{isUser ? 'You' : 'Elmer'}</span>
-      <span className="elmer-turn-text">{item.text}</span>
+      {isUser
+        ? <span className="elmer-turn-text">{item.text}</span>
+        : (
+          <>
+            {item.reasoning && <ReasoningDisclosure reasoning={item.reasoning} />}
+            <AssistantTurnBody text={item.text} />
+          </>
+        )
+      }
+      {item.text ? <CopyButton text={item.text} /> : null}
     </div>
   );
 }
 
-/** "Elmer is thinking…" indicator shown while a run is in progress. */
+/**
+ * "Elmer is thinking…" indicator shown while a run is in progress.
+ *
+ * Cycles a ham-radio verb phrase every ~3 s and shows an elapsed-time counter.
+ * The pulsing dot (::before pseudo-element) is preserved.
+ *
+ * Accessibility: the outer role="status" carries a stable sr-only label so
+ * screen readers get a single announcement; the cycling verb + elapsed are
+ * aria-hidden so they do not spam the AT with each tick.
+ */
 function ThinkingIndicator() {
+  const [verb, setVerb] = useState<string>(() => RADIO_VERBS[Math.floor(Math.random() * RADIO_VERBS.length)]);
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    // 1-second tick — advances elapsed every tick, advances verb every 3rd tick.
+    let ticks = 0;
+    let lastVerb = verb;
+
+    const id = setInterval(() => {
+      ticks += 1;
+      setElapsed((s) => s + 1);
+
+      if (ticks % 3 === 0) {
+        // Pick a random verb that is not the current one.
+        const pool = RADIO_VERBS.filter((v) => v !== lastVerb);
+        const next = pool[Math.floor(Math.random() * pool.length)];
+        lastVerb = next;
+        setVerb(next);
+      }
+    }, 1000);
+
+    return () => clearInterval(id);
+    // Intentionally exclude `verb` from deps — `lastVerb` is a closure variable
+    // that tracks current without causing a re-register on every verb change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Format: <60s → "12s"; >=60s → "2m 05s"
+  const elapsedLabel =
+    elapsed < 60
+      ? `${elapsed}s`
+      : `${Math.floor(elapsed / 60)}m ${String(elapsed % 60).padStart(2, '0')}s`;
+
   return (
-    <div className="elmer-thinking" data-testid="elmer-thinking" role="status" aria-live="polite">
-      Elmer is thinking…
+    <div
+      className="elmer-thinking"
+      data-testid="elmer-thinking"
+      role="status"
+    >
+      {/* Stable sr-only label — announced once; doesn't change on each tick. */}
+      <span className="elmer-thinking-sr-only">Elmer is working</span>
+      {/* Cycling verb — visual-only, not announced. */}
+      <span
+        className="elmer-thinking-verb"
+        data-testid="elmer-thinking-verb"
+        aria-hidden="true"
+      >
+        Elmer is {verb}…
+      </span>
+      {/* Elapsed counter — visual-only, not announced. */}
+      <span
+        className="elmer-thinking-elapsed"
+        data-testid="elmer-thinking-elapsed"
+        aria-hidden="true"
+      >
+        {elapsedLabel}
+      </span>
     </div>
   );
 }
 
 /** Renders a terminal-outcome callout. */
-function OutcomeCallout({ phase, detail }: { phase: ElmerPhase; detail: string }) {
+function OutcomeCallout({
+  phase,
+  detail,
+  onSwitchProvider,
+}: {
+  phase: ElmerPhase;
+  detail: string;
+  /** T10: Called when the operator clicks "Switch provider" from a rateLimited callout. */
+  onSwitchProvider?: () => void;
+}) {
   if (phase === 'idle' || phase === 'running' || phase === 'done') return null;
+
+  // T10: rateLimited is handled separately — it has a "Switch provider" action button.
+  if (phase === 'rateLimited') {
+    return (
+      <div
+        className="elmer-outcome elmer-outcome--rateLimited"
+        data-testid="elmer-outcome-rate-limited"
+        role="alert"
+      >
+        <span className="elmer-outcome-rate-limited-msg">
+          {detail || 'The provider has reached its request limit for this period (429 rate-limited). No automatic retry — try again later or switch to a different provider.'}
+        </span>
+        {onSwitchProvider && (
+          <button
+            type="button"
+            className="elmer-outcome-switch-btn"
+            data-testid="elmer-switch-provider-btn"
+            onClick={onSwitchProvider}
+          >
+            Switch provider
+          </button>
+        )}
+      </div>
+    );
+  }
 
   const callouts: Partial<Record<ElmerPhase, { label: string; testId: string }>> = {
     cancelled: {
@@ -159,10 +468,9 @@ function OutcomeCallout({ phase, detail }: { phase: ElmerPhase; detail: string }
         'The local Elmer model is not reachable. Check that the model endpoint is running, then try again.',
       testId: 'elmer-outcome-offline',
     },
-    error: {
-      label: detail || 'Something went wrong. Try again or check the session log.',
-      testId: 'elmer-outcome-error',
-    },
+    // tuxlink-pgbox: the 'error' phase is no longer a transient banner — it is
+    // persisted into the transcript as an ElmerErrorItem (accumulates, copyable),
+    // so it is intentionally absent here to avoid a duplicate render.
   };
 
   const callout = callouts[phase];
@@ -193,7 +501,7 @@ interface ModelFormProps {
   initialTurnTimeoutSecs: number;
 }
 
-function ModelForm({
+export function ModelForm({
   onSave,
   onDetect,
   detectState,
@@ -204,6 +512,8 @@ function ModelForm({
 }: ModelFormProps) {
   const [endpoint, setEndpoint] = useState(initialEndpoint);
   const [model, setModel] = useState(initialModel);
+  // Focused when the operator picks 'Custom…' so they can type their endpoint.
+  const endpointInputRef = useRef<HTMLInputElement>(null);
   const [turnTimeoutSecs, setTurnTimeoutSecs] = useState(() => initialTurnTimeoutSecs);
 
   // Key affordance state.
@@ -276,8 +586,16 @@ function ModelForm({
     const preset = PRESETS.find((p) => p.id === presetId);
     if (!preset) return;
 
-    // 'custom' preset has no fixed endpoint — selecting it doesn't overwrite.
-    if (presetId === 'custom') return;
+    // 'Custom…' means "I'll enter my own endpoint." Clear the preset endpoint so
+    // inferPreset('') resolves to 'custom' (the controlled <select> sticks on
+    // Custom instead of snapping back to the inferred preset) and focus the
+    // endpoint input so the operator can type. Previously this early-returned,
+    // leaving the select to snap back — so Custom looked unselectable/broken.
+    if (presetId === 'custom') {
+      setEndpoint('');
+      endpointInputRef.current?.focus();
+      return;
+    }
 
     // Determine if the current endpoint is a known-preset canonical value
     // (i.e., the user hasn't hand-edited it beyond a preset default).
@@ -298,21 +616,35 @@ function ModelForm({
     }
 
     setEndpoint(preset.endpoint);
-  }, [endpoint]);
+    // Pre-fill the new provider's default model, but only when the current model is
+    // untouched (still the outgoing preset's default) — a hand-edited model is
+    // preserved. Decoupled from the endpoint-dirty confirm above, which is about the
+    // endpoint only. Shared helper so the tile picker can't drift (tuxlink-wpqwy/T7).
+    const nextModel = nextModelForPreset(endpoint, model, presetId);
+    if (nextModel !== null) {
+      setModel(nextModel);
+    }
+  }, [endpoint, model]);
 
   // Build the SetKey payload for the Save action.
   const buildSetKey = useCallback((): SetKey => {
     if (clearPending) {
       return { action: 'clear' };
     }
-    if (keyStatus === 'present') {
+    // Use effectiveKeyStatus (origin-aware), NOT the stale mount-only keyStatus.
+    // On an inter-provider switch the form renders the 'absent' key input off
+    // effectiveKeyStatus, so the operator types their new key into
+    // `absentKeyValue`. Reading raw keyStatus here would take the 'present'
+    // branch, IGNORE that value, and send `keep` — leaving the new provider with
+    // NO key → 401 on the next message (the reported inter-provider bug).
+    if (effectiveKeyStatus === 'present') {
       if (replaceMode && newKeyValue) {
         return { action: 'set', value: newKeyValue };
       }
       // Replace mode with empty value → keep.
       return { action: 'keep' };
     }
-    if (keyStatus === 'absent') {
+    if (effectiveKeyStatus === 'absent') {
       if (absentKeyValue) {
         return { action: 'set', value: absentKeyValue };
       }
@@ -320,7 +652,7 @@ function ModelForm({
     }
     // unreadable / other → keep.
     return { action: 'keep' };
-  }, [clearPending, keyStatus, replaceMode, newKeyValue, absentKeyValue]);
+  }, [clearPending, effectiveKeyStatus, replaceMode, newKeyValue, absentKeyValue]);
 
   // Build KeySource for detect call.
   //
@@ -339,36 +671,59 @@ function ModelForm({
     if (endpointIsLoopback) {
       return { source: 'none' };
     }
-    // Determine whether the live endpoint's origin still matches the loaded
-    // config origin. If the operator has hand-edited the endpoint to a
-    // different host, the loaded keyStatus no longer describes that host.
+    // Mirror the render-side effectiveKeyStatus (#981): the key affordance is
+    // 'absent' whenever the live origin diverges from the LOADED config's origin
+    // (an inter-provider switch) OR the stored status was already absent. The form
+    // renders the absent-key input off that same condition, so the operator types
+    // their new key into `absentKeyValue`. Keying the inline-key term off the raw
+    // mount-only `keyStatus` dropped that freshly-typed key on a provider switch
+    // (it fell through to 'useStored', probing the OLD origin's key) — so Detect/
+    // Test produced a false auth failure (tuxlink-wpqwy / Task 6, the Detect-path
+    // analog of the #981 buildSetKey fix).
     const liveOrigin = originOf(endpoint);
-    const originMatchesLoaded = liveOrigin !== '' && liveOrigin === keyAffordanceOrigin;
+    const originMatchesLoadedConfig =
+      liveOrigin !== '' && liveOrigin === originOf(initialEndpoint);
+    const effectiveAbsent = !originMatchesLoadedConfig || keyStatus === 'absent';
     // Check for a pending inline key value in the form.
     const inlineKey =
       (replaceMode && newKeyValue) ? newKeyValue :
-      (keyStatus === 'absent' && absentKeyValue) ? absentKeyValue :
+      (effectiveAbsent && absentKeyValue) ? absentKeyValue :
       null;
     if (inlineKey) {
       return { source: 'inline', value: inlineKey };
     }
-    // Use the stored key only when origin matches and there is no pending
-    // removal (clearPending) or replace (replaceMode without a typed value
-    // just means "intent to replace but nothing typed yet" — treat as absent).
-    if (keyStatus === 'present' && originMatchesLoaded && !clearPending) {
+    // Use the stored key only when the live origin still matches the loaded
+    // config's origin and there is no pending removal (clearPending).
+    if (keyStatus === 'present' && originMatchesLoadedConfig && !clearPending) {
       return { source: 'useStored' };
     }
     return { source: 'none' };
-  }, [endpointIsLoopback, endpoint, keyAffordanceOrigin, keyStatus, replaceMode, newKeyValue, absentKeyValue, clearPending]);
+  }, [endpointIsLoopback, endpoint, initialEndpoint, keyStatus, replaceMode, newKeyValue, absentKeyValue, clearPending]);
+
+  // Save status — surfaces the result of `elmer_config_set` instead of the
+  // previous `void handleSave()` swallow. A rejecting config_set (e.g. an empty
+  // key, an unparseable endpoint, a keyring/config-write failure) used to fail
+  // SILENTLY: the form kept showing the new selection while the backend never
+  // changed, so the next message ran the old model with no error. Now the
+  // operator sees why a save failed, and gets a confirmation when it succeeds.
+  const [saveState, setSaveState] = useState<{ kind: 'idle' } | { kind: 'ok'; model: string } | { kind: 'error'; message: string }>(
+    { kind: 'idle' },
+  );
 
   const handleSave = useCallback(async () => {
     const timeout = Number.isFinite(turnTimeoutSecs) ? Math.round(turnTimeoutSecs) : 900;
-    await onSave({
-      agentEndpoint: endpoint,
-      agentModel: model,
-      key: buildSetKey(),
-      agentTurnTimeoutSecs: timeout,
-    });
+    setSaveState({ kind: 'idle' });
+    try {
+      await onSave({
+        agentEndpoint: endpoint,
+        agentModel: model,
+        key: buildSetKey(),
+        agentTurnTimeoutSecs: timeout,
+      });
+      setSaveState({ kind: 'ok', model });
+    } catch (e) {
+      setSaveState({ kind: 'error', message: e instanceof Error ? e.message : String(e) });
+    }
   }, [onSave, endpoint, model, buildSetKey, turnTimeoutSecs]);
 
   const handleDetect = useCallback(async () => {
@@ -411,6 +766,7 @@ function ModelForm({
         </label>
         <input
           id="elmer-endpoint-input"
+          ref={endpointInputRef}
           type="text"
           className="elmer-form-input elmer-form-input--mono"
           data-testid="elmer-endpoint-input"
@@ -591,6 +947,16 @@ function ModelForm({
         </button>
         <span className="elmer-save-hint">Applies to your next message — no restart.</span>
       </div>
+      {saveState.kind === 'error' && (
+        <div className="elmer-save-error" data-testid="elmer-save-error" role="alert">
+          Couldn’t save: {saveState.message}
+        </div>
+      )}
+      {saveState.kind === 'ok' && (
+        <div className="elmer-save-ok" data-testid="elmer-save-ok" role="status">
+          Saved — Elmer will use <strong>{saveState.model}</strong> on your next message.
+        </div>
+      )}
     </div>
   );
 }
@@ -633,6 +999,8 @@ export const ElmerPane = memo(function ElmerPane({
 }: ElmerPaneProps) {
   const {
     items,
+    streamingAnswer,
+    streamingReasoning,
     phase,
     lastOutcome,
     send,
@@ -645,13 +1013,33 @@ export const ElmerPane = memo(function ElmerPane({
     detectState,
   } = useElmer();
   const [input, setInput] = useState('');
+  // T10: When the operator clicks "Switch provider" from a rate-limit callout,
+  // show the tile picker with a paygo pre-selection. Null = normal message list.
+  const [switchProviderFocusTier, setSwitchProviderFocusTier] = useState<import('./elmerModelConfig').ProviderTier | null>(null);
   // tuxlink-1wi5w: when expandModel is true, open the Model section on mount
   // so the operator lands directly on the endpoint/model picker.
   const [advancedOpen, setAdvancedOpen] = useState(() => expandModel === true);
+  // T8b: Counter that increments each time the model section is opened, so the
+  // picker re-renders (and re-fetches keyStatusByOrigin) on every open — not just
+  // on initial state. This replaces the initial-state-only open path (:906).
+  const [openCounter, setOpenCounter] = useState(() => (expandModel === true ? 1 : 0));
+  // T8b: Per-origin key-status map passed to the tile picker. Populated once
+  // when the picker opens (not per-keystroke).
+  const [keyStatusByOrigin, setKeyStatusByOrigin] = useState<KeyStatusByOrigin>({});
   const listEndRef = useRef<HTMLDivElement>(null);
   // Ref to track whether configRead has been called, so the eager-load
   // on mount and the disclosure open don't double-call it.
   const configReadCalledRef = useRef(false);
+
+  // Derived: true when the operator has NOT yet completed setup (onboarded=false).
+  // Declared here (before any useEffect that closes over it) so it is in-scope in
+  // the deps arrays below.  The original declaration lived later in the component;
+  // this hoist does not change semantics — modelConfig and modelConfigState are both
+  // available from useElmer() above.
+  const notOnboarded =
+    modelConfigState === 'loaded' &&
+    modelConfig !== null &&
+    !modelConfig.onboarded;
 
   // G3: Eagerly load config on mount so the empty-state "Connect a model"
   // button can be shown without the operator needing to open the disclosure first.
@@ -662,27 +1050,59 @@ export const ElmerPane = memo(function ElmerPane({
     }
   }, [configRead]);
 
-  // Auto-scroll to the bottom of the message list on each new item.
+  // T8b: Fetch keyStatusForOrigins whenever the tile picker is visible.
+  //
+  // Original gate: only when advancedOpen + openCounter > 0 (gear disclosure open).
+  // Fix (tuxlink-wpqwy codex-adrev): the picker is ALSO shown during first-run
+  // (notOnboarded=true) and 429-recovery (switchProviderFocusTier !== null) — both
+  // render ModelTilePicker WITHOUT opening the advanced disclosure.  Without this
+  // broadened gate, keyStatusByOrigin stays {} and the per-tile "key saved" badges
+  // never populate during onboarding or 429-switch, defeating T4.
+  //
+  // OR-condition: fire whenever the picker is visible for any reason.
+  //   advancedOpen          → gear disclosure (existing F6-reopen path, openCounter)
+  //   notOnboarded          → first-run tile picker in the chat area
+  //   switchProviderFocusTier !== null → 429-recovery picker
+  //
+  // The openCounter dependency is kept so that gear-reopen (F6) re-fetches on
+  // every toggle, and the existing F6 reopen test (renders with expandModel=true
+  // + onboarded=true, asserts fetch fires on advancedOpen toggle) still passes.
+  useEffect(() => {
+    const pickerVisible = advancedOpen || notOnboarded || switchProviderFocusTier !== null;
+    if (!pickerVisible) return;
+    // For the advancedOpen path, maintain the openCounter guard so that the effect
+    // is not triggered before the counter is bumped (initial mount with the
+    // disclosure closed produces openCounter=0 and advancedOpen=false, so the
+    // pickerVisible check above already short-circuits in that case).
+    if (advancedOpen && openCounter === 0) return;
+    const origins = PRESETS
+      .filter((p) => p.endpoint)
+      .map((p) => {
+        try { return new URL(p.endpoint).origin; } catch { return ''; }
+      })
+      .filter(Boolean);
+    void keyStatusForOrigins(origins).then((map) => {
+      // Guard against a nullish map over the IPC boundary (fail-closed to no badges).
+      setKeyStatusByOrigin(map ?? {});
+    }).catch(() => {
+      // Backend unavailable / errored — fall back to an empty map (no badges).
+      setKeyStatusByOrigin({});
+    });
+  }, [advancedOpen, openCounter, notOnboarded, switchProviderFocusTier]);
+
+  // phase 2b — true while a streamed turn is in flight (live buffers non-empty),
+  // before EV_TURN finalizes and clears them. Drives the transient streaming
+  // bubble and suppresses the duplicate pre-first-token ThinkingIndicator.
+  const isStreaming = streamingAnswer.length > 0 || streamingReasoning.length > 0;
+
+  // Auto-scroll to the bottom of the message list on each new item — and as the
+  // live streaming buffers grow, so the cursor stays in view mid-stream.
   // Guard for jsdom (tests) where scrollIntoView is not implemented.
   useEffect(() => {
     if (typeof listEndRef.current?.scrollIntoView === 'function') {
       listEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [items]);
-
-  // G3: Determine whether no model is configured so the empty-state button shows.
-  // We consider "no model" when config is loaded and the model string is empty.
-  const hasNoModelConfigured =
-    modelConfigState === 'loaded' &&
-    modelConfig !== null &&
-    !modelConfig.agentModel;
-
-  // G3: Handler for the "Connect a model" button — opens the Model section
-  // disclosure in place (not a menu pointer, per R2.6 chicken-and-egg rule).
-  const handleConnectModel = useCallback(() => {
-    setAdvancedOpen(true);
-    // configRead was already called eagerly on mount, so don't re-call it.
-  }, []);
+  }, [items, streamingAnswer, streamingReasoning]);
 
   const handleSend = () => {
     const msg = input.trim();
@@ -738,39 +1158,109 @@ export const ElmerPane = memo(function ElmerPane({
         </div>
       )}
 
-      {/* Message list */}
-      <div className="elmer-messages" data-testid="elmer-messages" role="log" aria-live="polite">
-        {items.map((item) => (
-          <MessageItem key={item.id} item={item} />
-        ))}
-        {isRunning && <ThinkingIndicator />}
-        {lastOutcome && (
-          <OutcomeCallout phase={phase} detail={lastOutcome.detail} />
-        )}
-        {/* G3: Empty-state button — shown when no model is configured so the
-            operator can reach the Model section directly from the chat area.
-            NOT a sentence pointing at a menu (R2.6 chicken-and-egg).
-            Expands the Model section disclosure in place. */}
-        {hasNoModelConfigured && items.length === 0 && !isRunning && (
-          <div className="elmer-empty-state">
-            <button
-              type="button"
-              className="elmer-connect-model-btn"
-              data-testid="elmer-connect-model"
-              onClick={handleConnectModel}
-            >
-              Connect a model
-            </button>
+      {/* T8b: First-run gate — when the operator has not yet completed model
+          setup (onboarded=false), render the tile picker IN PLACE of the message
+          list. The picker replaces the list entirely; the items.length===0 coupling
+          is dropped (state in comment: picker replaces the list). Once onboarded,
+          the normal message list is shown.
+          T10: "Switch provider" from a rate-limit callout also opens the picker
+          in this slot (with focusTier=paygo for paygo pre-selection).
+          Settings: when the operator opens the gear/disclosure while onboarded,
+          the picker also opens here (settingsPickerOpen) so settings and first-run
+          use the SAME surface — one picker mount covers all three cases. */}
+      {/* settingsPickerOpen: onboarded + gear disclosure open → show picker in main slot. */}
+      {(() => {
+        const settingsPickerOpen = !notOnboarded && advancedOpen;
+        const showPicker = notOnboarded || switchProviderFocusTier !== null || settingsPickerOpen;
+        if (showPicker) {
+          if (!(modelConfigState === 'loaded' && modelConfig)) return null;
+          return (
+            <>
+              {/* Back-to-chat affordance: available in switch-provider flow AND
+                  settings-picker flow, but NOT during first-run onboarding. */}
+              {!notOnboarded && (switchProviderFocusTier !== null || settingsPickerOpen) && (
+                <button
+                  type="button"
+                  className="elmer-back-to-chat-btn"
+                  data-testid="elmer-back-to-chat-btn"
+                  onClick={() => {
+                    setSwitchProviderFocusTier(null);
+                    setAdvancedOpen(false);
+                  }}
+                >
+                  ← Back to chat
+                </button>
+              )}
+              <ModelTilePicker
+                onSave={async (args) => {
+                  // After a SUCCESSFUL save, return to the message list:
+                  //   - switch-provider flow: clear switchProviderFocusTier
+                  //   - settings flow: close the gear disclosure (advancedOpen=false)
+                  // On failure, remain on the picker so the operator can retry.
+                  await configSet(args);
+                  // A successful save from the picker returns to chat regardless of
+                  // which path opened it. Clear both unconditionally rather than
+                  // gating on captured render-time flags — a re-render between the
+                  // click and configSet resolving could otherwise leave a stale
+                  // flag and the picker stuck open. (First-run: onboarded flips
+                  // true on the next config read, so these are harmless no-ops.)
+                  setSwitchProviderFocusTier(null);
+                  setAdvancedOpen(false);
+                }}
+                onDetect={detectModels}
+                detectState={detectState}
+                keyStatusByOrigin={keyStatusByOrigin}
+                initialEndpoint={modelConfig.agentEndpoint}
+                initialModel={modelConfig.agentModel}
+                initialKeyStatus={modelConfig.keyStatus}
+                initialTurnTimeoutSecs={modelConfig.agentTurnTimeoutSecs ?? 900}
+                focusTier={switchProviderFocusTier ?? undefined}
+              />
+            </>
+          );
+        }
+        /* Message list (normal onboarded path) */
+        return (
+          <div className="elmer-messages" data-testid="elmer-messages" role="log" aria-live="polite">
+            {items.map((item) => (
+              <MessageItem key={item.id} item={item} />
+            ))}
+            {/* phase 2b — transient live streaming bubble; carries the liveness once
+                the first token arrives, so the pre-token ThinkingIndicator is hidden
+                while it is shown (no double indicator). */}
+            {isStreaming && (
+              <StreamingBubble answer={streamingAnswer} reasoning={streamingReasoning} />
+            )}
+            {isRunning && !isStreaming && <ThinkingIndicator />}
+            {lastOutcome && (
+              <OutcomeCallout
+                phase={phase}
+                detail={lastOutcome.detail}
+                onSwitchProvider={() => { setSwitchProviderFocusTier('paygo'); }}
+              />
+            )}
+            <div ref={listEndRef} />
           </div>
-        )}
-        <div ref={listEndRef} />
-      </div>
+        );
+      })()}
 
       {/* Offline-endpoint friendly state (AC-14) */}
       {isOffline && (
         <div className="elmer-offline-banner" data-testid="elmer-offline-banner" role="alert">
           The local Elmer model is not reachable. Verify the endpoint is running.
         </div>
+      )}
+
+      {/* T8b: When not yet onboarded, show a one-line hint above the input area
+          so the operator knows why the input is disabled. Dropped once onboarded. */}
+      {notOnboarded && (
+        <p
+          className="elmer-onboarding-hint"
+          data-testid="elmer-onboarding-hint"
+          role="note"
+        >
+          Choose a model above to start chatting with Elmer.
+        </p>
       )}
 
       {/* Input area + Stop (always visible, AC-11) */}
@@ -783,7 +1273,7 @@ export const ElmerPane = memo(function ElmerPane({
           onKeyDown={handleKeyDown}
           placeholder="Ask Elmer…"
           rows={3}
-          disabled={isRunning}
+          disabled={isRunning || notOnboarded}
           aria-label="Message to Elmer"
         />
         <div className="elmer-input-actions">
@@ -791,7 +1281,7 @@ export const ElmerPane = memo(function ElmerPane({
             type="button"
             className="elmer-send-button"
             data-testid="elmer-send"
-            disabled={isRunning || !input.trim()}
+            disabled={isRunning || notOnboarded || !input.trim()}
             onClick={handleSend}
           >
             Send
@@ -810,9 +1300,14 @@ export const ElmerPane = memo(function ElmerPane({
         </div>
       </div>
 
-      {/* Secondary: endpoint/model picker behind a disclosure (AC-13).
-          The primary field path (chat + Stop + arm chip) stays uncluttered;
-          the endpoint/model setting is rarely changed after initial setup. */}
+      {/* Secondary: endpoint/model disclosure toggle (AC-13).
+          When onboarded and the operator opens this, the picker appears in the
+          main slot (settingsPickerOpen path above). The disclosure body only
+          shows loading/error status — the ModelForm is reached via the Other
+          tile in the picker, never mounted directly here while onboarded.
+          T8b (F6 reopen): the gear toggle bumps openCounter so the picker
+          re-fetches keyStatusByOrigin and re-renders on every open — not just
+          on initial-state open (the :906 initial-state-only path is replaced). */}
       <div className="elmer-advanced" data-testid="elmer-advanced">
         <button
           type="button"
@@ -822,6 +1317,11 @@ export const ElmerPane = memo(function ElmerPane({
           onClick={() => {
             const next = !advancedOpen;
             setAdvancedOpen(next);
+            // T8b: bump the open-counter every time the section opens, so the
+            // keyStatusForOrigins effect re-runs (gear-reopen / F6).
+            if (next) {
+              setOpenCounter((c) => c + 1);
+            }
             // Load config only if it hasn't been triggered yet (the eager-mount
             // load may have already initiated it — check the ref, not the state,
             // to avoid a double-call between mount useEffect and toggle click).
@@ -841,17 +1341,10 @@ export const ElmerPane = memo(function ElmerPane({
             {modelConfigState === 'error' && (
               <p className="elmer-advanced-error">Could not load config.</p>
             )}
-            {modelConfigState === 'loaded' && modelConfig && (
-              <ModelForm
-                onSave={configSet}
-                onDetect={detectModels}
-                detectState={detectState}
-                initialEndpoint={modelConfig.agentEndpoint}
-                initialModel={modelConfig.agentModel}
-                initialKeyStatus={modelConfig.keyStatus}
-                initialTurnTimeoutSecs={modelConfig.agentTurnTimeoutSecs ?? 900}
-              />
-            )}
+            {/* When onboarded, the picker renders in the main slot (settingsPickerOpen).
+                The disclosure body intentionally shows no form here — the model picker
+                above is the model-settings surface. ModelForm is reached via the
+                Other tile in the picker (custom/openrouter endpoint path). */}
           </div>
         )}
       </div>
@@ -859,6 +1352,23 @@ export const ElmerPane = memo(function ElmerPane({
       {/* ONE calibrated footer (AC-12) */}
       <div className="elmer-footer" data-testid="elmer-footer">
         Elmer can be wrong or misled by message content — check the actual message before you send.
+        {/* T10: Persistent provider-class indicator for cloud tiers. Shows only when
+            onboarded and the active endpoint maps to a known cloud preset. Local
+            (loopback) endpoints do not show a cloud indicator. */}
+        {modelConfigState === 'loaded' && modelConfig && modelConfig.onboarded && (() => {
+          const presetId = inferPreset(modelConfig.agentEndpoint);
+          const preset = PRESETS.find((p) => p.id === presetId);
+          if (!preset || preset.tier === 'local' || preset.tier === 'other') return null;
+          const tierLabel = preset.tier === 'free' ? 'free cloud' : 'cloud';
+          return (
+            <span
+              className="elmer-provider-indicator"
+              data-testid="elmer-provider-indicator"
+            >
+              {' '}· Using {preset.label} ({tierLabel})
+            </span>
+          );
+        })()}
       </div>
     </aside>
   );

@@ -6837,6 +6837,7 @@ name = "tuxlink-agent-frontend"
 version = "0.0.0"
 dependencies = [
  "async-trait",
+ "futures-util",
  "reqwest",
  "rmcp",
  "serde",

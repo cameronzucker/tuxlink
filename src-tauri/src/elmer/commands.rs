@@ -32,7 +32,7 @@ use tuxlink_agent_runner::RunOutcome;
 use tuxlink_mcp_core::ports::{OutboxReadPort, StagedRecordDto};
 
 use crate::elmer::approval::OutboxApproval;
-use crate::elmer::events::{ElmerEvent, EV_CHIP, EV_OUTCOME, EV_TURN};
+use crate::elmer::events::{ElmerEvent, EV_CHIP, EV_DELTA, EV_OUTCOME, EV_TURN};
 use crate::elmer::session::ElmerSession;
 use crate::mcp_ports::FlushError;
 use crate::session_log::SessionLogState;
@@ -124,6 +124,7 @@ fn make_event_sink(app: AppHandle) -> crate::elmer::session::EventSink {
             ElmerEvent::Turn { .. } => EV_TURN,
             ElmerEvent::Chip { .. } => EV_CHIP,
             ElmerEvent::Outcome { .. } => EV_OUTCOME,
+            ElmerEvent::Delta { .. } => EV_DELTA,
         };
         let _ = app.emit(channel, &event);
     })
@@ -140,6 +141,7 @@ fn outcome_to_event(outcome: &RunOutcome) -> ElmerEvent {
         RunOutcome::NeedsOperator(msg) => ("needsOperator".into(), msg.clone()),
         RunOutcome::InvalidAction(msg) => ("invalidAction".into(), msg.clone()),
         RunOutcome::ToolDenied(msg) => ("toolDenied".into(), msg.clone()),
+        RunOutcome::RateLimited(msg) => ("rateLimited".into(), msg.clone()),
     };
     ElmerEvent::Outcome { outcome_kind, detail }
 }
@@ -408,5 +410,98 @@ mod security_gate_tests {
             !production_src(commands_src).contains(": Conversation)") && !production_src(commands_src).contains(": Conversation,"),
             "`Conversation` found as a command parameter type in commands.rs — AC-5 violation"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// outcome_to_event tests — turn-path rate-limit classification
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod outcome_event_tests {
+    use super::*;
+    use tuxlink_agent_runner::RunOutcome;
+
+    /// `RunOutcome::RateLimited` maps to `outcome_kind = "rateLimited"` (camelCase).
+    ///
+    /// This is the exact literal the shipped TypeScript `case 'rateLimited':` in
+    /// `useElmer.ts` `outcomeKindToPhase` matches.  If this test fails, the 429
+    /// response will silently never surface the rate-limit callout.
+    #[test]
+    fn rate_limited_outcome_maps_to_camel_case_kind() {
+        let outcome = RunOutcome::RateLimited("HTTP 429: too many requests".to_string());
+        let event = outcome_to_event(&outcome);
+
+        match &event {
+            ElmerEvent::Outcome { outcome_kind, detail } => {
+                assert_eq!(
+                    outcome_kind, "rateLimited",
+                    "outcome_kind must be camelCase 'rateLimited' (matches TS case)"
+                );
+                assert!(
+                    detail.contains("429"),
+                    "detail must carry the 429 message; got: {detail:?}"
+                );
+            }
+            other => panic!("expected ElmerEvent::Outcome, got {other:?}"),
+        }
+    }
+
+    /// Serde wire-shape guard: the JSON payload for a rate-limited outcome MUST
+    /// contain `"outcomeKind":"rateLimited"` — the exact string the TypeScript
+    /// `case 'rateLimited':` branch in `outcomeKindToPhase` matches.
+    ///
+    /// Also asserts it is NOT `"rate_limited"` (snake_case would silently fall
+    /// through to the `'error'` phase, never showing the rate-limit callout).
+    #[test]
+    fn rate_limited_outcome_serde_wire_shape() {
+        let outcome = RunOutcome::RateLimited("rate limit detail".to_string());
+        let event = outcome_to_event(&outcome);
+        let json: serde_json::Value = serde_json::to_value(&event)
+            .expect("ElmerEvent must serialize");
+
+        // The payload must be a flat JSON object (no nesting).
+        assert!(json.is_object(), "event must serialize to a flat object");
+
+        // Discriminant field must be "outcome".
+        assert_eq!(json["kind"], "outcome", "discriminant must be 'outcome'");
+
+        // Load-bearing wire-shape assertion: must match what TS reads.
+        assert_eq!(
+            json["outcomeKind"], "rateLimited",
+            "wire field must be camelCase outcomeKind='rateLimited'; got: {json}"
+        );
+
+        // Regression guard: must NOT ship snake_case.
+        assert!(
+            json.get("outcome_kind").is_none(),
+            "snake_case outcome_kind must NOT appear in the wire payload"
+        );
+        assert_ne!(
+            json["outcomeKind"], "rate_limited",
+            "wire value must NOT be snake_case 'rate_limited' — TS case would miss it"
+        );
+    }
+
+    /// Non-rate-limit outcomes are NOT affected by the new variant — regression
+    /// guard for the existing NeedsOperator / ToolDenied / done paths.
+    #[test]
+    fn existing_outcomes_unaffected() {
+        let cases: &[(&RunOutcome, &str)] = &[
+            (&RunOutcome::Completed("ans".into()), "done"),
+            (&RunOutcome::Cancelled, "cancelled"),
+            (&RunOutcome::NeedsOperator("msg".into()), "needsOperator"),
+            (&RunOutcome::InvalidAction("msg".into()), "invalidAction"),
+            (&RunOutcome::ToolDenied("msg".into()), "toolDenied"),
+        ];
+        for (outcome, expected_kind) in cases {
+            let event = outcome_to_event(outcome);
+            let json: serde_json::Value = serde_json::to_value(&event)
+                .expect("serialize");
+            assert_eq!(
+                json["outcomeKind"], *expected_kind,
+                "outcome {outcome:?} must map to kind={expected_kind}"
+            );
+        }
     }
 }

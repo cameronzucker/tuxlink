@@ -19,12 +19,14 @@
 //!   if the model returned a null content with no tool calls).
 
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use serde::Serialize;
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use url::Url;
 
 use tuxlink_agent_runner::{
-    Conversation, Message, ModelTurn, Provider, ProviderError, ToolCall, ToolSpec,
+    Conversation, Message, ModelTurn, Provider, ProviderError, RunEvent, ToolCall, ToolSpec,
 };
 
 // ---------------------------------------------------------------------------
@@ -149,8 +151,17 @@ impl Provider for OpenAiProvider {
         &self,
         conversation: &Conversation,
         tools: &[ToolSpec],
+        on_event: &(dyn Fn(RunEvent) + Sync),
     ) -> Result<ModelTurn, ProviderError> {
-        let body = build_request_body(&self.model, conversation, tools);
+        // Phase 1b (tuxlink-e2vw7): request a streamed completion and emit
+        // RunEvent deltas as tokens arrive. `on_event` is FIRE-AND-FORGET — what
+        // it does never changes which `ModelTurn` this returns.
+        //
+        // We set `stream` on the already-built request value rather than threading
+        // a flag through `build_request_body`, whose tests assert the non-stream
+        // body shape. The pure assembly stays untouched.
+        let mut body = build_request_body(&self.model, conversation, tools);
+        body["stream"] = json!(true);
 
         let mut req = self.client.post(self.endpoint.clone()).json(&body);
         if let Some(key) = &self.api_key {
@@ -171,17 +182,384 @@ impl Provider for OpenAiProvider {
             // `redact_and_cap` enforces scrub-then-cap in the correct order.
             let text = resp.text().await.unwrap_or_default();
             let snippet = redact_and_cap(text, self.api_key.as_ref(), 500);
+            // HTTP 429 is classified separately so the frontend can surface the
+            // rate-limit callout (rateLimited outcome-kind) rather than the
+            // generic NeedsOperator path.  No automatic retry is performed here.
+            if status.as_u16() == 429 {
+                return Err(ProviderError::RateLimited(format!(
+                    "model endpoint returned HTTP 429 (rate limited): {snippet}"
+                )));
+            }
             return Err(ProviderError::Transport(format!(
                 "model endpoint returned HTTP {status}: {snippet}"
             )));
         }
 
-        let value: Value = resp
-            .json()
-            .await
-            .map_err(|e| ProviderError::Unparseable(format!("response was not JSON: {e}")))?;
+        // Non-streaming fallback: some OpenAI-compatible endpoints ignore
+        // `stream: true` and answer with a single JSON document. Detect that by
+        // content-type — an event-stream advertises `text/event-stream`; anything
+        // else (typically `application/json`) is a whole completion we parse via
+        // the existing `parse_completion` path, emitting no deltas.
+        let is_event_stream = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|ct| ct.to_ascii_lowercase().contains("text/event-stream"))
+            .unwrap_or(false);
 
-        parse_completion(&value).map_err(ProviderError::Unparseable)
+        if !is_event_stream {
+            let value: Value = resp.json().await.map_err(|e| {
+                ProviderError::Unparseable(format!("response was not JSON: {e}"))
+            })?;
+            return parse_completion(&value).map_err(ProviderError::Unparseable);
+        }
+
+        // Streaming path. The whole read is a SINGLE awaited future inside `turn`
+        // — no detached `tokio::spawn`. The run loop races `turn()` against a
+        // cancel token and DROPS this future on cancel; keeping the byte-stream
+        // read inline means that drop aborts the in-flight reqwest stream rather
+        // than leaking a background task that keeps the connection open.
+        let mut stream = resp.bytes_stream();
+        let mut acc = SseAccumulator::new();
+
+        while let Some(item) = stream.next().await {
+            let chunk = item
+                .map_err(|e| ProviderError::Transport(format!("stream read failed: {e}")))?;
+            // `feed` parses every complete SSE frame currently in the buffer and
+            // invokes `on_event` for each delta. A `[DONE]` sentinel ends the
+            // stream early; otherwise we keep reading until the body closes. It
+            // returns a transport error if the endpoint streams an oversized
+            // un-terminated frame or breaches the total-output cap.
+            if acc.feed(&chunk, on_event)? {
+                break;
+            }
+        }
+        // Flush any trailing frame the server sent without a terminating blank
+        // line before closing the connection (rare, but lenient parsing avoids
+        // dropping the final delta).
+        acc.finish(on_event)?;
+
+        Ok(acc.into_turn())
+    }
+}
+
+// --- SSE streaming accumulator (pure, unit-testable) ------------------------
+
+/// One in-flight tool call being assembled from streamed `delta.tool_calls`
+/// fragments. The `name` arrives once (on the first fragment for an index); the
+/// `arguments` string streams in pieces that must be concatenated in order.
+#[derive(Default)]
+struct PartialToolCall {
+    name: String,
+    arguments: String,
+}
+
+/// Maximum size, in bytes, of a single un-terminated SSE frame held in `buf`
+/// while waiting for its closing blank line. A legitimate chat-completions frame
+/// is one small JSON object (a token or tool-call fragment); 1 MiB is orders of
+/// magnitude beyond any real frame, so a `buf` that grows past this without a
+/// frame delimiter signals a hostile or broken endpoint streaming an unbounded
+/// un-terminated frame. Exceeding it is treated as a transport error rather than
+/// letting memory grow until the per-turn timeout.
+const MAX_PENDING_FRAME_BYTES: usize = 1024 * 1024; // 1 MiB
+
+/// Maximum total decoded output, in bytes, accumulated across `content` +
+/// `reasoning`. A complete answer-plus-reasoning trace for any legitimate model
+/// turn fits comfortably under this; 16 MiB bounds an endpoint that streams
+/// endless small deltas (which individually terminate their frames, so
+/// `MAX_PENDING_FRAME_BYTES` would not catch them) from exhausting memory before
+/// the configured timeout. Exceeding it is a transport error.
+const MAX_TOTAL_OUTPUT_BYTES: usize = 16 * 1024 * 1024; // 16 MiB
+
+/// Accumulates an OpenAI-style SSE chat-completions stream into a [`ModelTurn`],
+/// emitting [`RunEvent`] deltas through a caller-supplied sink as fragments land.
+///
+/// This is the testable seam: byte chunks from the network are appended via
+/// [`SseAccumulator::feed`], which buffers across arbitrary frame boundaries,
+/// splits complete blank-line-delimited events, extracts each `data:` payload,
+/// and routes the parsed JSON through [`apply_chunk`]. No IO lives here — tests
+/// drive it with hand-built byte slices (including mid-frame and mid-codepoint
+/// splits) and a recording sink, with no live server.
+struct SseAccumulator {
+    /// Raw bytes received but not yet forming a complete blank-line-delimited
+    /// frame. Buffered as BYTES (not a lossy `String`) so a multi-byte UTF-8
+    /// codepoint split across two network chunks is reassembled intact rather
+    /// than each half decoding to a U+FFFD replacement char.
+    buf: Vec<u8>,
+    /// Accumulated answer content (concatenated `delta.content`).
+    content: String,
+    /// Accumulated reasoning (concatenated `delta.reasoning` / `reasoning_content`).
+    /// Reasoning is emitted to the caller delta-by-delta as it streams; no
+    /// `ModelTurn` variant carries the assembled trace, so in non-test builds this
+    /// field is write-only (read only by the `#[cfg(test)]` `reasoning()` accessor
+    /// that asserts the concatenation). Kept because the streaming contract
+    /// specifies accumulating reasoning alongside emitting it, and a future caller
+    /// may want the full trace.
+    #[cfg_attr(not(test), allow(dead_code))]
+    reasoning: String,
+    /// Tool calls keyed by their stream `index`, assembled across fragments.
+    /// `BTreeMap` so the final `ModelTurn::ToolCalls` is ordered by index.
+    tool_calls: BTreeMap<i64, PartialToolCall>,
+    /// Set once a `data: [DONE]` sentinel is seen.
+    done: bool,
+}
+
+/// Find the first SSE frame delimiter in `buf` at the BYTE level, returning
+/// `Some((start, len))` where `start` is the byte offset of the blank line and
+/// `len` is the delimiter width (2 for `\n\n`, 4 for `\r\n\r\n`). Whichever
+/// delimiter appears at the earliest offset wins, so a CRLF stream and an LF
+/// stream split identically. `None` means no complete frame is buffered yet.
+///
+/// Scanning at the byte level (rather than decoding to a `String` first) is what
+/// lets a multi-byte UTF-8 codepoint split across two network chunks be
+/// reassembled into a complete frame before any decode happens.
+fn find_frame_delimiter(buf: &[u8]) -> Option<(usize, usize)> {
+    let lf = buf.windows(2).position(|w| w == b"\n\n");
+    let crlf = buf.windows(4).position(|w| w == b"\r\n\r\n");
+    match (lf, crlf) {
+        (Some(l), Some(c)) => {
+            if l <= c {
+                Some((l, 2))
+            } else {
+                Some((c, 4))
+            }
+        }
+        (Some(l), None) => Some((l, 2)),
+        (None, Some(c)) => Some((c, 4)),
+        (None, None) => None,
+    }
+}
+
+impl SseAccumulator {
+    fn new() -> Self {
+        Self {
+            buf: Vec::new(),
+            content: String::new(),
+            reasoning: String::new(),
+            tool_calls: BTreeMap::new(),
+            done: false,
+        }
+    }
+
+    /// Append a network byte chunk and process every COMPLETE SSE frame now in
+    /// the buffer. Returns `Ok(true)` once the stream has terminated (a `[DONE]`
+    /// sentinel was seen) so the caller can stop reading; `Ok(false)` while more
+    /// data is expected.
+    ///
+    /// Bytes are buffered RAW and frames are split at the byte level, so a
+    /// multi-byte UTF-8 codepoint straddling a network-chunk boundary is
+    /// reassembled into a complete frame before being decoded — no U+FFFD
+    /// corruption. Each complete frame is then decoded with [`std::str::from_utf8`];
+    /// a frame that is genuinely not valid UTF-8 (should not happen for a complete
+    /// frame from a conforming server) is skipped rather than erroring the turn.
+    ///
+    /// Returns `Err(ProviderError::Transport)` when an un-terminated frame in
+    /// `buf` exceeds [`MAX_PENDING_FRAME_BYTES`], or when total accumulated output
+    /// exceeds [`MAX_TOTAL_OUTPUT_BYTES`] — bounding memory against a hostile or
+    /// broken endpoint. The error message carries no body/secret content.
+    fn feed(
+        &mut self,
+        bytes: &[u8],
+        on_event: &(dyn Fn(RunEvent) + Sync),
+    ) -> Result<bool, ProviderError> {
+        self.buf.extend_from_slice(bytes);
+
+        // Frames are separated by a blank line: `\n\n` (LF) or `\r\n\r\n` (CRLF).
+        // Scan the BYTE buffer for either delimiter, taking whichever appears
+        // first, so the codepoint-reassembly guarantee holds (we never decode a
+        // partial codepoint at a chunk boundary).
+        while let Some((start, len)) = find_frame_delimiter(&self.buf) {
+            // Move out the frame bytes plus its delimiter; the remainder is a
+            // (possibly partial) next frame kept for the following chunk.
+            let frame_bytes: Vec<u8> = self.buf.drain(..start + len).collect();
+            // Decode only the frame body (delimiter excluded). A complete frame is
+            // valid UTF-8 since the only split was at a network-chunk boundary; on
+            // the rare genuine decode error, skip this frame rather than panicking.
+            let Ok(frame) = std::str::from_utf8(&frame_bytes[..start]) else {
+                continue;
+            };
+            if self.process_frame(frame, on_event)? {
+                self.done = true;
+                return Ok(true);
+            }
+        }
+
+        // No complete frame remains; what's left is a single pending frame. Guard
+        // its size so an endpoint that never sends a blank line cannot grow `buf`
+        // without bound.
+        if self.buf.len() > MAX_PENDING_FRAME_BYTES {
+            return Err(ProviderError::Transport(
+                "model stream sent an oversized un-terminated frame".to_string(),
+            ));
+        }
+        Ok(false)
+    }
+
+    /// Process whatever remains in the buffer as a final frame once the network
+    /// stream has closed. A well-behaved server terminates every frame with a
+    /// blank line, so this is usually a no-op; it exists so a trailing frame sent
+    /// without the closing blank line is not silently dropped. Returns
+    /// `Err(ProviderError::Transport)` if applying the trailing frame breaches
+    /// [`MAX_TOTAL_OUTPUT_BYTES`].
+    fn finish(&mut self, on_event: &(dyn Fn(RunEvent) + Sync)) -> Result<(), ProviderError> {
+        if self.done {
+            return Ok(());
+        }
+        let frame_bytes = std::mem::take(&mut self.buf);
+        // Decode leniently for the trailing-frame flush; a malformed tail is
+        // dropped rather than erroring the turn.
+        let Ok(frame) = std::str::from_utf8(&frame_bytes) else {
+            return Ok(());
+        };
+        if !frame.trim().is_empty() {
+            self.process_frame(frame, on_event)?;
+        }
+        Ok(())
+    }
+
+    /// Parse one SSE frame (which may carry multiple `data:` lines per the SSE
+    /// spec) and apply each payload. Returns `Ok(true)` if a `[DONE]` sentinel was
+    /// seen in this frame; `Err` if applying a payload breached the output cap.
+    fn process_frame(
+        &mut self,
+        frame: &str,
+        on_event: &(dyn Fn(RunEvent) + Sync),
+    ) -> Result<bool, ProviderError> {
+        for line in frame.lines() {
+            // SSE allows `data:foo` and `data: foo`; strip the field name and one
+            // optional leading space. Lines that are not `data:` (e.g. `event:`,
+            // comments beginning `:`) are ignored.
+            let payload = match line.strip_prefix("data:") {
+                Some(rest) => rest.strip_prefix(' ').unwrap_or(rest),
+                None => continue,
+            };
+
+            if payload.trim() == "[DONE]" {
+                return Ok(true);
+            }
+
+            // A malformed / partial JSON payload is skipped rather than failing the
+            // whole turn — a later frame may still complete the answer.
+            if let Ok(value) = serde_json::from_str::<Value>(payload) {
+                self.apply_chunk(&value, on_event)?;
+            }
+        }
+        Ok(false)
+    }
+
+    /// Total accumulated decoded output so far (`content` + `reasoning`), in
+    /// bytes. Used to enforce [`MAX_TOTAL_OUTPUT_BYTES`].
+    fn total_output_len(&self) -> usize {
+        self.content.len() + self.reasoning.len()
+    }
+
+    /// Apply a single parsed chunk's `choices[0].delta` to the accumulators and
+    /// emit the corresponding deltas. Aside from the `on_event` sink, the only
+    /// fallible path is the [`MAX_TOTAL_OUTPUT_BYTES`] cap: appending a delta that
+    /// would push `content` + `reasoning` past the cap returns
+    /// `Err(ProviderError::Transport)` (no body/secret content in the message).
+    fn apply_chunk(
+        &mut self,
+        chunk: &Value,
+        on_event: &(dyn Fn(RunEvent) + Sync),
+    ) -> Result<(), ProviderError> {
+        let delta = match chunk
+            .get("choices")
+            .and_then(Value::as_array)
+            .and_then(|c| c.first())
+            .and_then(|c| c.get("delta"))
+        {
+            Some(d) => d,
+            None => return Ok(()),
+        };
+
+        // Answer content.
+        if let Some(text) = delta.get("content").and_then(Value::as_str) {
+            if !text.is_empty() {
+                if self.total_output_len() + text.len() > MAX_TOTAL_OUTPUT_BYTES {
+                    return Err(ProviderError::Transport(
+                        "model stream exceeded the maximum accumulated output size".to_string(),
+                    ));
+                }
+                self.content.push_str(text);
+                on_event(RunEvent::AssistantDelta {
+                    chunk: text.to_string(),
+                });
+            }
+        }
+
+        // Reasoning channel — models spell it `reasoning` OR `reasoning_content`.
+        let reasoning = delta
+            .get("reasoning")
+            .and_then(Value::as_str)
+            .or_else(|| delta.get("reasoning_content").and_then(Value::as_str));
+        if let Some(text) = reasoning {
+            if !text.is_empty() {
+                if self.total_output_len() + text.len() > MAX_TOTAL_OUTPUT_BYTES {
+                    return Err(ProviderError::Transport(
+                        "model stream exceeded the maximum accumulated output size".to_string(),
+                    ));
+                }
+                self.reasoning.push_str(text);
+                on_event(RunEvent::ReasoningDelta {
+                    chunk: text.to_string(),
+                });
+            }
+        }
+
+        // Tool-call fragments, accumulated by `index`. The `function.name` is sent
+        // once; `function.arguments` streams in pieces we concatenate per index.
+        if let Some(calls) = delta.get("tool_calls").and_then(Value::as_array) {
+            for call in calls {
+                // Fall back to index 0 when the server omits `index` on a
+                // single-tool stream.
+                let index = call.get("index").and_then(Value::as_i64).unwrap_or(0);
+                let entry = self.tool_calls.entry(index).or_default();
+
+                if let Some(function) = call.get("function") {
+                    if let Some(name) = function.get("name").and_then(Value::as_str) {
+                        if !name.is_empty() {
+                            entry.name = name.to_string();
+                        }
+                    }
+                    if let Some(args) = function.get("arguments").and_then(Value::as_str) {
+                        entry.arguments.push_str(args);
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Finalize into a [`ModelTurn`]. If any tool calls accumulated, they win
+    /// (mirroring `parse_completion`'s precedence): each accumulated `arguments`
+    /// string is parsed to a `Value`, with an unparseable/empty string becoming
+    /// `Value::Null` so the runner's COR-3 re-prompts (identical to the
+    /// non-stream contract). Otherwise the concatenated content becomes a `Text`
+    /// turn.
+    fn into_turn(self) -> ModelTurn {
+        if !self.tool_calls.is_empty() {
+            let calls = self
+                .tool_calls
+                .into_values()
+                .map(|p| ToolCall {
+                    name: p.name,
+                    args: serde_json::from_str::<Value>(&p.arguments).unwrap_or(Value::Null),
+                })
+                .collect();
+            return ModelTurn::ToolCalls(calls);
+        }
+        ModelTurn::Text(self.content)
+    }
+
+    /// The reasoning text accumulated across `ReasoningDelta` fragments. The
+    /// finalized [`ModelTurn`] never carries reasoning (it streams delta-only via
+    /// the sink), but the concatenated trace is retained so a test can assert the
+    /// fragments were concatenated in order.
+    #[cfg(test)]
+    fn reasoning(&self) -> &str {
+        &self.reasoning
     }
 }
 
@@ -201,10 +579,122 @@ struct ToolFunction<'a> {
     parameters: &'a Value,
 }
 
+/// System prompt injected at the front of every Elmer request. Provides
+/// station-context framing so the model never asks the operator for information
+/// (such as location) that Tuxlink already exposes through its tools.
+pub(crate) const ELMER_SYSTEM_PROMPT: &str = "\
+You are Elmer, an AI assistant embedded in Tuxlink — a Winlink and amateur-radio \
+station application — helping the licensed operator who is running this app. \
+You have read-only tools that report the operator's OWN station state: their \
+location/grid (position_status), rig, modem, mailbox, nearby stations, \
+propagation and solar/space-weather. \
+When a request depends on the operator's location or station context, CALL the \
+appropriate tool to get it — never ask the operator for information Tuxlink \
+already has (for example, never ask 'what is your location?'; call \
+position_status). \
+\
+You can call tools as many times as a request needs, and call several in \
+sequence, within one reply. Many useful requests require exactly this: to \
+answer 'which nearby VARA stations have the best predicted path', call \
+find_stations to get the candidates, then call predict_path for each candidate, \
+then rank and present the real results. Work the request with the tools — do \
+NOT refuse a multi-step task, cap how many tool calls you will make, or tell the \
+operator to run the tools themselves. Building a ranked list, table, or summary \
+FROM real tool results is exactly your job and is NOT fabrication. \
+\
+Sending works in two steps, and you should be proactive about the first step. \
+You STAGE outbound traffic — a Winlink message (message_send), a Request Center \
+inquiry (catalog_send_inquiry), a GRIB weather-product request \
+(grib_send_request), a form (send_form) — into the local outbox; staging does \
+NOT transmit. The Winlink Request Center is a large on-demand catalog: call \
+catalog_list to see everything the operator can request — propagation forecasts, \
+METAR airport weather, satellite keplerian data, aurora and marine forecasts, \
+ARES/RACES bulletins, and much more — then stage the matching item(s) with \
+catalog_send_inquiry. Do NOT tell the operator the Request Center only offers \
+GRIB or weather; it offers hundreds of products. When the operator asks for \
+something a staged request would deliver, stage the appropriate request rather \
+than just saying you cannot fetch it live. You have NO tool that connects to a gateway or keys a \
+radio (there is no telnet/CMS-connect or radio-connect tool on your surface): \
+transmission is the operator's job, not yours. After you stage something, the \
+operator reviews the outbox and clicks 'Arm to send', which is what actually \
+transmits it — that click is their required consent. So once you have staged an \
+item, tell the operator plainly what you staged and that they should review it \
+and 'Arm to send' to transmit it, then stop and wait; do not try to connect or \
+send yourself. \
+\
+Do NOT claim a message has been sent or delivered when you have only staged it. \
+Do NOT tell the operator to wait for, or poll for, a reply to something that \
+has not been transmitted yet. NEVER fabricate data a tool did not return — if a \
+tool has not run or returned no real result (for example an actual weather \
+forecast that only arrives after the operator transmits a GRIB request), say so \
+plainly and never invent values, tables, or station lists out of thin air. This \
+rule is about inventing data you do not have; it does NOT mean avoiding tables or \
+rankings built from real tool output, which you should produce freely. \
+\
+Be concise and practical.";
+
 /// Build the chat-completions request body from the transcript + tool surface.
 /// Pure — no IO. Exposed for unit testing the message + tools shaping.
 pub fn build_request_body(model: &str, conversation: &Conversation, tools: &[ToolSpec]) -> Value {
-    let messages: Vec<Value> = conversation.messages().iter().map(render_message).collect();
+    let system_message =
+        serde_json::json!({ "role": "system", "content": ELMER_SYSTEM_PROMPT });
+    let mut messages: Vec<Value> = Vec::with_capacity(conversation.messages().len() + 1);
+    messages.push(system_message);
+    // Render the transcript into OpenAI chat messages. Tool calls/results use the
+    // STANDARD OpenAI tool-calling protocol: the assistant message carries a
+    // `tool_calls` array (each with an id and a JSON-STRING `arguments`), and each
+    // tool result is a `tool`-role message that references that call's
+    // `tool_call_id`. Strict OpenAI-compat providers (Gemini's compat endpoint,
+    // OpenAI, ...) reject a `tool` message with no matching `tool_call_id` with an
+    // opaque HTTP 400 INVALID_ARGUMENT; only permissive local servers (Ollama)
+    // tolerated the old lenient text form. The transcript does not carry the
+    // model's original ids, so we mint stable synthetic ones (`call_0`, `call_1`,
+    // …) and pair each result to its call FIFO — the runner appends a ToolCall
+    // immediately followed by its ToolResult, so FIFO order is the call order.
+    let mut next_tool_id: usize = 0;
+    let mut pending_tool_ids: std::collections::VecDeque<String> =
+        std::collections::VecDeque::new();
+    for msg in conversation.messages() {
+        match msg {
+            Message::ToolCall(call) => {
+                let id = format!("call_{next_tool_id}");
+                next_tool_id += 1;
+                pending_tool_ids.push_back(id.clone());
+                // OpenAI requires `arguments` to be a JSON STRING, not an object.
+                let arguments = if call.args.is_null() {
+                    "{}".to_string()
+                } else {
+                    serde_json::to_string(&call.args).unwrap_or_else(|_| "{}".to_string())
+                };
+                messages.push(json!({
+                    "role": "assistant",
+                    "content": Value::Null,
+                    "tool_calls": [{
+                        "id": id,
+                        "type": "function",
+                        "function": { "name": call.name, "arguments": arguments }
+                    }]
+                }));
+            }
+            Message::ToolResult { ok, content, .. } => {
+                // Match this result to the most recent unmatched call. If none
+                // (a result with no preceding call — not produced by the runner,
+                // but keep the message well-formed), mint a standalone id.
+                let id = pending_tool_ids.pop_front().unwrap_or_else(|| {
+                    let orphan = format!("call_{next_tool_id}");
+                    next_tool_id += 1;
+                    orphan
+                });
+                let label = if *ok { "result" } else { "error" };
+                messages.push(json!({
+                    "role": "tool",
+                    "tool_call_id": id,
+                    "content": format!("[{label}] {content}")
+                }));
+            }
+            other => messages.push(render_message(other)),
+        }
+    }
 
     let tool_entries: Vec<ToolEntry> = tools
         .iter()
@@ -241,19 +731,11 @@ fn render_message(msg: &Message) -> Value {
     match msg {
         Message::User(text) => json!({ "role": "user", "content": text }),
         Message::Assistant(text) => json!({ "role": "assistant", "content": text }),
-        Message::ToolCall(call) => json!({
-            // Record the intended call as an assistant note so the model sees its
-            // own prior action in the transcript.
-            "role": "assistant",
-            "content": format!("[called tool `{}` with {}]", call.name, call.args),
-        }),
-        Message::ToolResult { name, ok, content } => {
-            let label = if *ok { "result" } else { "error" };
-            json!({
-                "role": "tool",
-                "name": name,
-                "content": format!("[{label}] {content}"),
-            })
+        // Tool call/result messages are rendered STATEFULLY in build_request_body:
+        // they need paired synthetic tool_call_ids for the OpenAI tool-calling
+        // protocol, which a per-message stateless render cannot produce.
+        Message::ToolCall(_) | Message::ToolResult { .. } => {
+            unreachable!("tool messages are rendered in build_request_body's loop")
         }
     }
 }
@@ -678,13 +1160,55 @@ mod tests {
 
     // --- request assembly -------------------------------------------------
 
+    /// The first message in every request MUST be the Elmer system prompt.
+    /// The conversation messages follow it, shifted by one index.
+    #[test]
+    fn request_body_first_message_is_system_prompt() {
+        let convo = Conversation::new("where am I?");
+        let body = build_request_body("local-model", &convo, &[]);
+        assert_eq!(
+            body["messages"][0]["role"], "system",
+            "messages[0] must be the system prompt"
+        );
+        let system_content = body["messages"][0]["content"].as_str().unwrap_or("");
+        assert!(
+            system_content.contains("position_status"),
+            "system prompt must mention position_status so the model calls it for location questions; got: {system_content:?}"
+        );
+        assert!(
+            system_content.contains("operator"),
+            "system prompt must reference the operator; got: {system_content:?}"
+        );
+        // The prompt must teach the stage→Arm-to-send→transmit model so the
+        // model stages + hands off to the operator instead of claiming it sent
+        // (or, worse, fabricating a reply). Anchor on the two load-bearing
+        // tokens: the staging verb and the operator's send-consent affordance.
+        assert!(
+            system_content.contains("STAGE") && system_content.contains("Arm to send"),
+            "system prompt must explain staging + 'Arm to send' so the model doesn't claim it transmitted; got: {system_content:?}"
+        );
+        // The prompt must authorize iterative, multi-step tool use so the model
+        // does not refuse tasks like 'rank the top-5 stations by predicted path'
+        // (tuxlink-5cj61). Anchor on the worked example (predict_path) plus the
+        // explicit not-a-refusal directive.
+        assert!(
+            system_content.contains("predict_path") && system_content.contains("multi-step"),
+            "system prompt must authorize iterative multi-step tool use (predict_path example + 'multi-step'); got: {system_content:?}"
+        );
+        // The conversation's first user message is now at index 1.
+        assert_eq!(body["messages"][1]["role"], "user");
+        assert_eq!(body["messages"][1]["content"], "where am I?");
+    }
+
     #[test]
     fn request_body_includes_model_and_tools() {
         let convo = Conversation::new("find a station near DM79");
         let body = build_request_body("local-model", &convo, &[echo_tool()]);
         assert_eq!(body["model"], "local-model");
-        assert_eq!(body["messages"][0]["role"], "user");
-        assert_eq!(body["messages"][0]["content"], "find a station near DM79");
+        // messages[0] is the system prompt; the first user message is at index 1.
+        assert_eq!(body["messages"][0]["role"], "system");
+        assert_eq!(body["messages"][1]["role"], "user");
+        assert_eq!(body["messages"][1]["content"], "find a station near DM79");
         assert_eq!(body["tools"][0]["type"], "function");
         assert_eq!(body["tools"][0]["function"]["name"], "echo");
         // The schema is passed through verbatim as `parameters`.
@@ -709,7 +1233,13 @@ mod tests {
             .iter()
             .find(|m| m["role"] == "tool")
             .expect("a tool-role message");
-        assert_eq!(tool_msg["name"], "find_stations");
+        // New OpenAI protocol: the tool message references a `tool_call_id` (not a
+        // `name`). This result has no preceding ToolCall, so it gets a standalone
+        // synthetic id; the key invariant is that a tool_call_id is present.
+        assert!(
+            tool_msg["tool_call_id"].is_string(),
+            "tool message must carry a tool_call_id (strict providers 400 without it)"
+        );
         assert!(tool_msg["content"].as_str().unwrap().contains("result"));
     }
 
@@ -726,5 +1256,480 @@ mod tests {
             .unwrap();
         assert!(tool_msg["content"].as_str().unwrap().contains("error"));
         assert!(tool_msg["content"].as_str().unwrap().contains("tainted"));
+    }
+
+    /// A tool call + its result render as the STANDARD OpenAI tool-calling
+    /// protocol: an assistant message with a `tool_calls` array (id + JSON-STRING
+    /// arguments) followed by a `tool` message whose `tool_call_id` MATCHES the
+    /// call's id. Verified against Gemini's live OpenAI-compat endpoint: the prior
+    /// lenient form (assistant text note + `tool` role without a tool_call_id)
+    /// produced HTTP 400 INVALID_ARGUMENT; this paired form is accepted. Regression
+    /// guard for tuxlink-2k0gz (Elmer cloud tool-calling).
+    #[test]
+    fn tool_call_and_result_use_openai_protocol_with_matching_ids() {
+        let mut convo = Conversation::new("what is my position?");
+        convo.push_tool_call(ToolCall {
+            name: "position_status".into(),
+            args: json!({}),
+        });
+        convo.push_tool_result("position_status", "{\"grid\":\"CN87\"}");
+        let body = build_request_body("gemini-2.5-flash", &convo, &[]);
+        let msgs = body["messages"].as_array().expect("messages array");
+
+        // The assistant tool-call message: tool_calls[0] with an id, function name,
+        // and arguments as a JSON STRING (not an object).
+        let assistant = msgs
+            .iter()
+            .find(|m| m["role"] == "assistant" && m["tool_calls"].is_array())
+            .expect("an assistant message carrying tool_calls");
+        let tc = &assistant["tool_calls"][0];
+        assert_eq!(tc["type"], "function");
+        assert_eq!(tc["function"]["name"], "position_status");
+        assert!(
+            tc["function"]["arguments"].is_string(),
+            "OpenAI requires function.arguments to be a JSON string; got: {:?}",
+            tc["function"]["arguments"]
+        );
+        let call_id = tc["id"].as_str().expect("tool call must have an id");
+
+        // The tool result message must reference that exact id.
+        let tool_msg = msgs
+            .iter()
+            .find(|m| m["role"] == "tool")
+            .expect("a tool-role result message");
+        assert_eq!(
+            tool_msg["tool_call_id"].as_str(),
+            Some(call_id),
+            "the tool result's tool_call_id MUST match the assistant tool call's id \
+             (Gemini/OpenAI 400 without this linkage)"
+        );
+        assert!(tool_msg["content"].as_str().unwrap().contains("CN87"));
+    }
+
+    // --- SSE streaming accumulator (no network) ---------------------------
+
+    use std::sync::Mutex;
+
+    /// A shared recording buffer the test sink pushes `RunEvent`s into. Wrapped in
+    /// `Arc<Mutex<…>>` so the `Fn(RunEvent) + Sync` sink closure can own a clone
+    /// while the test still asserts on the original.
+    fn recorder() -> std::sync::Arc<Mutex<Vec<RunEvent>>> {
+        std::sync::Arc::new(Mutex::new(Vec::new()))
+    }
+
+    /// Wrap one OpenAI streaming chunk object as an `data: {json}\n\n` SSE frame.
+    fn sse_frame(chunk: Value) -> String {
+        format!("data: {chunk}\n\n")
+    }
+
+    /// Content deltas accumulate in order, each emits an `AssistantDelta`, and the
+    /// finalized turn is the concatenation.
+    #[test]
+    fn stream_content_deltas_accumulate_and_emit_in_order() {
+        let events = recorder();
+        let sink = {
+            let events = events.clone();
+            move |e: RunEvent| events.lock().unwrap().push(e)
+        };
+
+        let mut acc = SseAccumulator::new();
+        let body = format!(
+            "{}{}{}",
+            sse_frame(json!({ "choices": [{ "delta": { "content": "Hello" } }] })),
+            sse_frame(json!({ "choices": [{ "delta": { "content": ", " } }] })),
+            sse_frame(json!({ "choices": [{ "delta": { "content": "world" } }] })),
+        );
+        let done = acc.feed(body.as_bytes(), &sink).unwrap();
+        assert!(!done, "no [DONE] sentinel yet");
+
+        let turn = acc.into_turn();
+        assert_eq!(turn, ModelTurn::Text("Hello, world".into()));
+
+        let recorded = events.lock().unwrap();
+        assert_eq!(
+            *recorded,
+            vec![
+                RunEvent::AssistantDelta { chunk: "Hello".into() },
+                RunEvent::AssistantDelta { chunk: ", ".into() },
+                RunEvent::AssistantDelta { chunk: "world".into() },
+            ],
+            "AssistantDelta events must arrive in stream order"
+        );
+    }
+
+    /// `reasoning` spelling: reasoning fragments emit `ReasoningDelta` and never
+    /// pollute the answer content.
+    #[test]
+    fn stream_reasoning_spelling_emits_reasoning_delta() {
+        let events = recorder();
+        let sink = {
+            let events = events.clone();
+            move |e: RunEvent| events.lock().unwrap().push(e)
+        };
+
+        let mut acc = SseAccumulator::new();
+        let body = format!(
+            "{}{}{}",
+            sse_frame(json!({ "choices": [{ "delta": { "reasoning": "weigh " } }] })),
+            sse_frame(json!({ "choices": [{ "delta": { "reasoning": "options" } }] })),
+            sse_frame(json!({ "choices": [{ "delta": { "content": "Answer" } }] })),
+        );
+        acc.feed(body.as_bytes(), &sink).unwrap();
+        // The reasoning trace is concatenated in order and kept distinct from the
+        // answer content.
+        assert_eq!(acc.reasoning(), "weigh options");
+        assert_eq!(acc.into_turn(), ModelTurn::Text("Answer".into()));
+
+        let recorded = events.lock().unwrap();
+        assert_eq!(
+            *recorded,
+            vec![
+                RunEvent::ReasoningDelta { chunk: "weigh ".into() },
+                RunEvent::ReasoningDelta { chunk: "options".into() },
+                RunEvent::AssistantDelta { chunk: "Answer".into() },
+            ],
+            "reasoning fragments must emit ReasoningDelta, separate from the answer"
+        );
+    }
+
+    /// `reasoning_content` spelling (gpt-oss-style): same behaviour as `reasoning`.
+    #[test]
+    fn stream_reasoning_content_spelling_emits_reasoning_delta() {
+        let events = recorder();
+        let sink = {
+            let events = events.clone();
+            move |e: RunEvent| events.lock().unwrap().push(e)
+        };
+
+        let mut acc = SseAccumulator::new();
+        let body = sse_frame(
+            json!({ "choices": [{ "delta": { "reasoning_content": "thinking..." } }] }),
+        );
+        acc.feed(body.as_bytes(), &sink).unwrap();
+
+        let recorded = events.lock().unwrap();
+        assert_eq!(
+            *recorded,
+            vec![RunEvent::ReasoningDelta { chunk: "thinking...".into() }],
+            "the `reasoning_content` spelling must also emit ReasoningDelta"
+        );
+    }
+
+    /// Tool calls streamed in fragments — name once, arguments in 2+ pieces, keyed
+    /// by index — accumulate into `ModelTurn::ToolCalls` with the parsed args.
+    #[test]
+    fn stream_tool_call_fragments_accumulate_into_tool_calls() {
+        let events = recorder();
+        let sink = {
+            let events = events.clone();
+            move |e: RunEvent| events.lock().unwrap().push(e)
+        };
+
+        let mut acc = SseAccumulator::new();
+        let body = format!(
+            "{}{}{}",
+            // Fragment 1: name + first slice of arguments.
+            sse_frame(json!({ "choices": [{ "delta": { "tool_calls": [
+                { "index": 0, "function": { "name": "find_stations", "arguments": "{\"gr" } }
+            ] } }] })),
+            // Fragment 2: more arguments (no name re-sent).
+            sse_frame(json!({ "choices": [{ "delta": { "tool_calls": [
+                { "index": 0, "function": { "arguments": "id\":\"DM" } }
+            ] } }] })),
+            // Fragment 3: final arguments slice.
+            sse_frame(json!({ "choices": [{ "delta": { "tool_calls": [
+                { "index": 0, "function": { "arguments": "79\"}" } }
+            ] } }] })),
+        );
+        acc.feed(body.as_bytes(), &sink).unwrap();
+
+        match acc.into_turn() {
+            ModelTurn::ToolCalls(calls) => {
+                assert_eq!(calls.len(), 1);
+                assert_eq!(calls[0].name, "find_stations");
+                assert_eq!(calls[0].args, json!({ "grid": "DM79" }));
+            }
+            other => panic!("expected ToolCalls, got {other:?}"),
+        }
+        // Tool-call fragments emit no deltas (only content/reasoning do).
+        assert!(
+            events.lock().unwrap().is_empty(),
+            "tool-call fragments must not emit Assistant/Reasoning deltas"
+        );
+    }
+
+    /// Two concurrent tool calls (distinct indices) each assemble independently
+    /// and come out ordered by index.
+    #[test]
+    fn stream_multiple_tool_calls_by_index() {
+        let sink = |_e: RunEvent| {};
+        let mut acc = SseAccumulator::new();
+        let body = format!(
+            "{}{}",
+            sse_frame(json!({ "choices": [{ "delta": { "tool_calls": [
+                { "index": 0, "function": { "name": "a", "arguments": "{\"x\":" } },
+                { "index": 1, "function": { "name": "b", "arguments": "{}" } }
+            ] } }] })),
+            sse_frame(json!({ "choices": [{ "delta": { "tool_calls": [
+                { "index": 0, "function": { "arguments": "1}" } }
+            ] } }] })),
+        );
+        acc.feed(body.as_bytes(), &sink).unwrap();
+
+        match acc.into_turn() {
+            ModelTurn::ToolCalls(calls) => {
+                assert_eq!(calls.len(), 2);
+                assert_eq!(calls[0].name, "a");
+                assert_eq!(calls[0].args, json!({ "x": 1 }));
+                assert_eq!(calls[1].name, "b");
+                assert_eq!(calls[1].args, json!({}));
+            }
+            other => panic!("expected ToolCalls, got {other:?}"),
+        }
+    }
+
+    /// An unparseable / empty accumulated arguments string becomes `Value::Null`,
+    /// matching the non-stream `parse_completion` contract (runner COR-3 reprompts).
+    #[test]
+    fn stream_tool_call_unparseable_args_become_null() {
+        let sink = |_e: RunEvent| {};
+        let mut acc = SseAccumulator::new();
+        let body = sse_frame(json!({ "choices": [{ "delta": { "tool_calls": [
+            { "index": 0, "function": { "name": "echo", "arguments": "{not json" } }
+        ] } }] }));
+        acc.feed(body.as_bytes(), &sink).unwrap();
+
+        match acc.into_turn() {
+            ModelTurn::ToolCalls(calls) => {
+                assert_eq!(calls[0].name, "echo");
+                assert_eq!(calls[0].args, Value::Null);
+            }
+            other => panic!("expected ToolCalls, got {other:?}"),
+        }
+    }
+
+    /// `[DONE]` terminates: `feed` returns `true` and any frames AFTER the
+    /// sentinel in the same byte chunk are not processed.
+    #[test]
+    fn stream_done_sentinel_terminates() {
+        let events = recorder();
+        let sink = {
+            let events = events.clone();
+            move |e: RunEvent| events.lock().unwrap().push(e)
+        };
+
+        let mut acc = SseAccumulator::new();
+        let body = format!(
+            "{}{}{}",
+            sse_frame(json!({ "choices": [{ "delta": { "content": "kept" } }] })),
+            "data: [DONE]\n\n",
+            sse_frame(json!({ "choices": [{ "delta": { "content": "dropped" } }] })),
+        );
+        let done = acc.feed(body.as_bytes(), &sink).unwrap();
+        assert!(done, "feed must report termination once [DONE] is seen");
+
+        assert_eq!(acc.into_turn(), ModelTurn::Text("kept".into()));
+        assert_eq!(
+            *events.lock().unwrap(),
+            vec![RunEvent::AssistantDelta { chunk: "kept".into() }],
+            "frames after [DONE] in the same chunk must not be processed"
+        );
+    }
+
+    /// A frame split across two byte chunks (mid-JSON boundary) is buffered and
+    /// parsed once the remainder arrives — the buffer/split logic must not drop or
+    /// double-emit the delta.
+    #[test]
+    fn stream_frame_split_across_chunks_is_buffered() {
+        let events = recorder();
+        let sink = {
+            let events = events.clone();
+            move |e: RunEvent| events.lock().unwrap().push(e)
+        };
+
+        let mut acc = SseAccumulator::new();
+        let full = sse_frame(json!({ "choices": [{ "delta": { "content": "split-token" } }] }));
+        // Cut the frame in the MIDDLE of the JSON payload (not on a frame
+        // boundary) so the first chunk has no complete `\n\n` frame.
+        let cut = full.len() / 2;
+        let (first, second) = full.split_at(cut);
+
+        let done_a = acc.feed(first.as_bytes(), &sink).unwrap();
+        assert!(!done_a, "partial frame must not terminate");
+        assert!(
+            events.lock().unwrap().is_empty(),
+            "no delta should emit while the frame is still incomplete"
+        );
+
+        acc.feed(second.as_bytes(), &sink).unwrap();
+        assert_eq!(acc.into_turn(), ModelTurn::Text("split-token".into()));
+        assert_eq!(
+            *events.lock().unwrap(),
+            vec![RunEvent::AssistantDelta { chunk: "split-token".into() }],
+            "the buffered frame must emit exactly one delta once completed"
+        );
+    }
+
+    /// CRLF frame delimiters (`\r\n\r\n`) are normalised and parsed identically to
+    /// `\n\n`, and a trailing frame without a closing blank line is flushed by
+    /// `finish`.
+    #[test]
+    fn stream_crlf_and_trailing_frame_without_blank_line() {
+        let events = recorder();
+        let sink = {
+            let events = events.clone();
+            move |e: RunEvent| events.lock().unwrap().push(e)
+        };
+
+        let mut acc = SseAccumulator::new();
+        // First frame CRLF-terminated; second frame has NO trailing blank line.
+        let body = format!(
+            "data: {}\r\n\r\ndata: {}",
+            json!({ "choices": [{ "delta": { "content": "a" } }] }),
+            json!({ "choices": [{ "delta": { "content": "b" } }] }),
+        );
+        acc.feed(body.as_bytes(), &sink).unwrap();
+        // The second frame is still buffered (no blank line yet).
+        assert_eq!(
+            *events.lock().unwrap(),
+            vec![RunEvent::AssistantDelta { chunk: "a".into() }]
+        );
+        // Stream closes: finish() flushes the trailing frame.
+        acc.finish(&sink).unwrap();
+        assert_eq!(acc.into_turn(), ModelTurn::Text("ab".into()));
+        assert_eq!(
+            *events.lock().unwrap(),
+            vec![
+                RunEvent::AssistantDelta { chunk: "a".into() },
+                RunEvent::AssistantDelta { chunk: "b".into() },
+            ]
+        );
+    }
+
+    /// Empty content deltas (some servers send `{"content":""}` keep-alive-ish
+    /// frames) emit nothing and contribute nothing.
+    #[test]
+    fn stream_empty_content_delta_emits_nothing() {
+        let events = recorder();
+        let sink = {
+            let events = events.clone();
+            move |e: RunEvent| events.lock().unwrap().push(e)
+        };
+        let mut acc = SseAccumulator::new();
+        let body = sse_frame(json!({ "choices": [{ "delta": { "content": "" } }] }));
+        acc.feed(body.as_bytes(), &sink).unwrap();
+        assert!(events.lock().unwrap().is_empty(), "empty content must emit no delta");
+        assert_eq!(acc.into_turn(), ModelTurn::Text(String::new()));
+    }
+
+    /// REGRESSION GUARD — UTF-8 codepoint split across two `feed()` calls.
+    ///
+    /// A multi-byte UTF-8 codepoint whose bytes straddle a network-chunk boundary
+    /// must be reassembled into a complete frame and decoded intact — the old
+    /// lossy-`String` buffer decoded each half separately, turning the split byte
+    /// into U+FFFD replacement chars and corrupting non-ASCII tokens (emoji, CJK,
+    /// smart punctuation). Here the frame carries "héllo 🌍"; the byte buffer is
+    /// cut in the MIDDLE of the emoji (a 4-byte codepoint) so neither half is
+    /// valid UTF-8 on its own.
+    #[test]
+    fn stream_multibyte_codepoint_split_across_feeds_is_not_corrupted() {
+        let events = recorder();
+        let sink = {
+            let events = events.clone();
+            move |e: RunEvent| events.lock().unwrap().push(e)
+        };
+
+        let mut acc = SseAccumulator::new();
+        // "héllo 🌍" — 'é' is 2 bytes (0xC3 0xA9), '🌍' is 4 bytes (0xF0 0x9F 0x8C 0x8D).
+        let payload = "héllo 🌍";
+        let full = sse_frame(json!({ "choices": [{ "delta": { "content": payload } }] }));
+        let full_bytes = full.as_bytes();
+
+        // Find a cut point INSIDE the emoji's 4-byte sequence so the split lands
+        // mid-codepoint (neither half is valid UTF-8 alone).
+        let emoji_start = full.find('🌍').expect("emoji present in frame");
+        let cut = emoji_start + 2; // 2 bytes into the 4-byte emoji
+        let (first, second) = full_bytes.split_at(cut);
+        assert!(
+            std::str::from_utf8(first).is_err(),
+            "test precondition: the first chunk must end mid-codepoint (invalid UTF-8 alone)"
+        );
+
+        let done_a = acc.feed(first, &sink).unwrap();
+        assert!(!done_a, "partial frame must not terminate");
+        assert!(
+            events.lock().unwrap().is_empty(),
+            "no delta should emit while the frame (and its codepoint) is incomplete"
+        );
+
+        acc.feed(second, &sink).unwrap();
+        // The reassembled content must be byte-for-byte the original string — no
+        // U+FFFD replacement chars anywhere.
+        assert_eq!(acc.into_turn(), ModelTurn::Text(payload.into()));
+        assert_eq!(
+            *events.lock().unwrap(),
+            vec![RunEvent::AssistantDelta { chunk: payload.into() }],
+            "the reassembled multi-byte content must decode intact (no U+FFFD)"
+        );
+    }
+
+    /// An un-terminated frame (no blank line) larger than `MAX_PENDING_FRAME_BYTES`
+    /// must surface a `ProviderError::Transport` rather than growing `buf`
+    /// unbounded. The error message must carry no body content.
+    #[test]
+    fn stream_oversized_pending_frame_errors() {
+        let sink = |_e: RunEvent| {};
+        let mut acc = SseAccumulator::new();
+        // A single `data:` line with no terminating blank line, longer than the cap.
+        let mut oversized = b"data: ".to_vec();
+        oversized.extend(vec![b'x'; MAX_PENDING_FRAME_BYTES + 16]);
+
+        let err = acc
+            .feed(&oversized, &sink)
+            .expect_err("an oversized un-terminated frame must error");
+        match err {
+            ProviderError::Transport(msg) => {
+                assert!(
+                    msg.contains("oversized"),
+                    "expected an oversized-frame transport error; got: {msg:?}"
+                );
+                assert!(
+                    !msg.contains('x'),
+                    "the error message must not echo any frame body content; got: {msg:?}"
+                );
+            }
+            other => panic!("expected ProviderError::Transport, got {other:?}"),
+        }
+    }
+
+    /// A stream of terminated frames whose decoded content totals more than
+    /// `MAX_TOTAL_OUTPUT_BYTES` must surface a `ProviderError::Transport` — this is
+    /// the abuse vector that `MAX_PENDING_FRAME_BYTES` alone does not catch (each
+    /// frame terminates, but the accumulator grows without bound). To keep the
+    /// test fast we drive `apply_chunk` directly with a single over-cap delta
+    /// rather than streaming millions of small frames.
+    #[test]
+    fn stream_total_output_cap_errors() {
+        let sink = |_e: RunEvent| {};
+        let mut acc = SseAccumulator::new();
+        let big = "y".repeat(MAX_TOTAL_OUTPUT_BYTES + 1);
+        let chunk = json!({ "choices": [{ "delta": { "content": big } }] });
+
+        let err = acc
+            .apply_chunk(&chunk, &sink)
+            .expect_err("output past the total cap must error");
+        match err {
+            ProviderError::Transport(msg) => {
+                assert!(
+                    msg.contains("accumulated output"),
+                    "expected a total-output transport error; got: {msg:?}"
+                );
+                assert!(
+                    !msg.contains('y'),
+                    "the error message must not echo accumulated content; got: {msg:?}"
+                );
+            }
+            other => panic!("expected ProviderError::Transport, got {other:?}"),
+        }
     }
 }

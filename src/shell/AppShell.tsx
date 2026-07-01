@@ -432,6 +432,13 @@ export function AppShell() {
   const [connectAgentOpen, setConnectAgentOpen] = useState(false);
   // tuxlink-13v2l: Elmer agent pane, opened from Tools → Elmer (or ribbon chip).
   const [elmerOpen, setElmerOpen] = useState(false);
+  // tuxlink-9uat6: tracks whether the pane has ever been opened this session so
+  // we can keep it MOUNTED (hidden) after close rather than unmounting it. This
+  // preserves useElmer's event-listener + conversation state across close→reopen
+  // and prevents orphaning a running inference. The pane still does not mount
+  // until the first open (lazy-load discipline is intact — elmerEverOpened stays
+  // false until the operator first opens the pane).
+  const [elmerEverOpened, setElmerEverOpened] = useState(false);
   // tuxlink-1wi5w: when true, open the Model section disclosure on next Elmer
   // pane mount. Reset to false after opening so a second plain "Elmer" open
   // does not re-expand (the state flag belongs to the open action, not the pane).
@@ -1378,10 +1385,10 @@ export function AppShell() {
     // tuxlink-l9sq4: Tools → Connect an AI agent opens the modal.
     openConnectAgent: () => setConnectAgentOpen(true),
     // tuxlink-13v2l: Tools → Elmer opens the Elmer agent pane.
-    openElmer: () => setElmerOpen(true),
+    openElmer: () => { setElmerEverOpened(true); setElmerOpen(true); },
     // tuxlink-1wi5w: Tools → Set up Elmer's model… opens the pane with the
     // Model section expanded. Does NOT touch ConnectAgentModal.
-    openElmerModel: () => { setElmerExpandModel(true); setElmerOpen(true); },
+    openElmerModel: () => { setElmerEverOpened(true); setElmerExpandModel(true); setElmerOpen(true); },
     // tuxlink-lqw2: Tools → Verify CMS Connection opens the inline probe overlay.
     verifyCms: () => setVerifyCmsOpen(true),
     reportIssue: () => {
@@ -1701,7 +1708,7 @@ export function AppShell() {
             busy: egressArm.busy,
             error: egressArm.error,
           }}
-          onOpenElmer={() => setElmerOpen((o) => !o)}
+          onOpenElmer={() => { setElmerEverOpened(true); setElmerOpen((o) => !o); }}
           elmerOpen={elmerOpen}
         />
       </div>
@@ -2068,20 +2075,29 @@ export function AppShell() {
       {/* tuxlink-13v2l: Elmer agent pane — lazy-loaded; only fetches on first
           open (cold-start discipline). The pane manages its own useElmer state;
           AppShell provides the egress-arm context so the arm chip is consistent
-          with the ribbon chip (AC-13). */}
-      {elmerOpen && (
-        <Suspense fallback={null}>
-          <ElmerPane
-            egressStatus={egressArm.status}
-            onArm={(durationSecs) => { void egressArm.arm(durationSecs); }}
-            onDisarm={() => { void egressArm.disarm(); }}
-            onRearm={(durationSecs) => { void egressArm.rearm(durationSecs); }}
-            egressBusy={egressArm.busy}
-            egressError={egressArm.error}
-            onClose={() => { setElmerOpen(false); setElmerExpandModel(false); }}
-            expandModel={elmerExpandModel}
-          />
-        </Suspense>
+          with the ribbon chip (AC-13).
+          tuxlink-9uat6: Mount is gated on elmerEverOpened (not elmerOpen) so the
+          pane stays MOUNTED when closed, preserving useElmer event-listeners,
+          conversation history, and any in-flight inference run. Visibility is
+          controlled via the HTML `hidden` attribute on the wrapper div, which
+          produces display:none — identical visually to unmounting, no animation
+          lost. ElmerPane's position:fixed root escapes the wrapper's flow; the
+          display:none on the wrapper still hides the fixed child. */}
+      {elmerEverOpened && (
+        <div hidden={!elmerOpen}>
+          <Suspense fallback={null}>
+            <ElmerPane
+              egressStatus={egressArm.status}
+              onArm={(durationSecs) => { void egressArm.arm(durationSecs); }}
+              onDisarm={() => { void egressArm.disarm(); }}
+              onRearm={(durationSecs) => { void egressArm.rearm(durationSecs); }}
+              egressBusy={egressArm.busy}
+              egressError={egressArm.error}
+              onClose={() => { setElmerOpen(false); setElmerExpandModel(false); }}
+              expandModel={elmerExpandModel}
+            />
+          </Suspense>
+        </div>
       )}
 
       {/* tuxlink-5rvp / #882: one-time close-behavior explainer. Self-manages

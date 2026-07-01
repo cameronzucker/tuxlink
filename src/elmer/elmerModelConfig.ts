@@ -30,7 +30,21 @@ export interface ConfigReadDto {
   keyStatus: KeyStatus;
   /** Per-turn timeout in seconds. Valid range [30, 3600]; default 900 (15 min). */
   agentTurnTimeoutSecs: number;
+  /**
+   * True once the operator has completed model setup at least once. Distinguishes
+   * a never-configured install (which should land on the tile picker) from one
+   * running the implicit local default. Backend serializes this as `onboarded`
+   * (camelCase) — keep the Rust ConfigReadDto field in lock-step.
+   */
+  onboarded: boolean;
 }
+
+/**
+ * Keyring key-status per endpoint origin, returned by `elmer_key_status_for_origins`.
+ * Statuses only — never key values. Used by the tile picker to show which providers
+ * already have a stored key. The keys are origins (e.g. `https://api.openai.com`).
+ */
+export type KeyStatusByOrigin = Record<string, KeyStatus>;
 
 /**
  * How to handle the stored keyring key when saving config.
@@ -58,14 +72,27 @@ export type KeySource =
 // Provider presets
 // ---------------------------------------------------------------------------
 
-/** A named provider preset shown in the endpoint picker. */
+/** Pricing/commitment tier a provider falls into — drives the tile picker grouping. */
+export type ProviderTier = 'free' | 'paygo' | 'local' | 'other';
+
+/** A named provider preset shown in the model picker. */
 export interface ProviderPreset {
-  /** Machine-readable id. Values: 'localOllama' | 'openai' | 'openrouter' | 'custom'. */
+  /** Machine-readable id: 'localOllama' | 'openai' | 'anthropic' | 'openrouter' | 'gemini' | 'groq' | 'custom'. */
   id: string;
   /** Human-readable display label. */
   label: string;
   /** Default endpoint URL for this provider. Empty for 'custom'. */
   endpoint: string;
+  /** Pricing/commitment tier — groups tiles into Free / Pay-as-you-go / Local / Other. */
+  tier: ProviderTier;
+  /** Default model id pre-filled when this tile is selected. Empty = leave/auto-detect. */
+  defaultModel?: string;
+  /**
+   * Hardcoded provider key-page URL opened by the "get a key" button. Present only
+   * for free/paygo cloud providers. MUST be a constant (never config/endpoint-derived)
+   * and MUST be on the `shell:allow-open` allowlist in capabilities/default.json.
+   */
+  keyPageUrl?: string;
 }
 
 /**
@@ -79,25 +106,132 @@ export interface ProviderPreset {
 export const PRESETS: ProviderPreset[] = [
   {
     id: 'localOllama',
-    label: 'Local Ollama',
+    label: 'On this computer (Ollama)',
     endpoint: 'http://127.0.0.1:11434/v1/chat/completions',
+    tier: 'local',
+    // No defaultModel: local model is whatever the operator has pulled (auto-detect).
   },
   {
     id: 'openai',
     label: 'OpenAI',
     endpoint: 'https://api.openai.com/v1/chat/completions',
+    tier: 'paygo',
+    defaultModel: 'gpt-4o-mini',
+    keyPageUrl: 'https://platform.openai.com/api-keys',
+  },
+  {
+    // Anthropic native Messages API endpoint. Uses x-api-key auth (not bearer).
+    // The Rust backend selects AnthropicProvider for api.anthropic.com endpoints.
+    // Pay-as-you-go (needs a billing card). Default haiku is cheap + a strong
+    // tool-driver; sonnet is the quality step-up.
+    id: 'anthropic',
+    label: 'Anthropic — Claude',
+    endpoint: 'https://api.anthropic.com/v1/messages',
+    tier: 'paygo',
+    defaultModel: 'claude-haiku-4-5',
+    keyPageUrl: 'https://console.anthropic.com/settings/keys',
   },
   {
     id: 'openrouter',
-    label: 'OpenRouter',
+    label: 'OpenRouter / custom endpoint',
     endpoint: 'https://openrouter.ai/api/v1/chat/completions',
+    tier: 'other',
+    // No keyPageUrl: OpenRouter's key flow is less beginner-friendly; it lives in "Other".
+  },
+  {
+    // Free-key cloud option: Google AI Studio issues a free API key (no billing
+    // card) and exposes an OpenAI-compatible endpoint. Capable models like
+    // gemini-2.5-flash. Lowest-friction cloud path for the non-developer audience.
+    id: 'gemini',
+    label: 'Google Gemini',
+    endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+    tier: 'free',
+    defaultModel: 'gemini-2.5-flash',
+    keyPageUrl: 'https://aistudio.google.com/apikey',
+  },
+  {
+    // Free-key cloud option: Groq issues a free API key, fast inference, OpenAI-
+    // compatible. Models like llama-3.3-70b-versatile.
+    id: 'groq',
+    label: 'Groq',
+    endpoint: 'https://api.groq.com/openai/v1/chat/completions',
+    tier: 'free',
+    defaultModel: 'llama-3.3-70b-versatile',
+    keyPageUrl: 'https://console.groq.com/keys',
   },
   {
     id: 'custom',
     label: 'Custom…',
     endpoint: '',
+    tier: 'other',
   },
 ];
+
+/**
+ * Default model id pre-filled when a provider tile is selected. Single source of
+ * truth, keyed by preset id (mirrors each preset's `defaultModel`; kept as a flat
+ * map for the `nextModelForPreset` helper + tile-selection logic). Empty string
+ * means "leave the model field as-is / rely on detect" (local + custom + other).
+ */
+export const DEFAULT_MODEL_BY_PRESET: Record<string, string> = {
+  localOllama: '',
+  openai: 'gpt-4o-mini',
+  anthropic: 'claude-haiku-4-5',
+  openrouter: '',
+  gemini: 'gemini-2.5-flash',
+  groq: 'llama-3.3-70b-versatile',
+  custom: '',
+};
+
+/**
+ * Decide the model to set when the operator switches to `targetPresetId`.
+ *
+ * Return value semantics: `null` = leave the current model unchanged; `''` =
+ * CLEAR the model field; any other string = set the model to that value.
+ *
+ * Four cases:
+ *   1. Re-selecting the SAME provider -- return null to preserve whatever is there
+ *      (it may be the default, or hand-edited/detected to a non-default model for
+ *      that provider). Checked FIRST so a re-select never clears a good model.
+ *   2. Cross-provider switch to a provider WITH a default -- adopt the target default.
+ *      The outgoing model belongs to a different provider and would 404 against the new
+ *      endpoint (e.g. a hand-edited OpenAI model sent to Anthropic).
+ *   3. Cross-provider switch to a target with NO default (local Ollama / custom /
+ *      openrouter) -- CLEAR the model (return ''). The outgoing provider's model
+ *      (e.g. gemini-2.5-flash) is meaningless against the new endpoint and would 404
+ *      against localhost exactly as a cloud model would against another cloud endpoint.
+ *      An empty field is the "Detect + pick a model" prompt; a stranded foreign model
+ *      looks like a valid selection and silently 404s. This is the symmetric twin of
+ *      the cross-cloud 404 (tuxlink-5cj61) that case 2 already guards against.
+ *
+ * Shared single source of truth for both `handlePresetChange` (the dense form) and
+ * the tile picker, so the two cannot drift. Pure function -- no React, unit-tested.
+ */
+export function nextModelForPreset(
+  currentEndpoint: string,
+  // currentModel is accepted for API stability (callers still pass it) but is no
+  // longer read: the new rule is provider-switch-based, not model-comparison-based.
+  // The old "preserve hand-edited model" heuristic was the root cause of the fatal
+  // 404 bug (a detected local model surviving a switch to Gemini). Prefixed _ to
+  // silence TS6133 while keeping the signature stable.
+  _currentModel: string,
+  targetPresetId: string,
+): string | null {
+  // Re-selecting the SAME provider: keep whatever is there (default or hand-edited).
+  // Checked first so re-selecting a no-default provider does NOT wipe a picked model.
+  if (inferPreset(currentEndpoint) === targetPresetId) return null;
+
+  const targetDefault = DEFAULT_MODEL_BY_PRESET[targetPresetId] ?? '';
+  // Cross-provider switch to a provider WITH a default: adopt that default. The
+  // outgoing model (a different provider's model, incl. a detected local one) would
+  // 404 against the new endpoint.
+  if (targetDefault) return targetDefault;
+
+  // Cross-provider switch to a no-default target (local Ollama / custom / openrouter):
+  // CLEAR the model so the stale foreign model can't 404 against the new endpoint and
+  // the empty field prompts Detect + pick.
+  return '';
+}
 
 // ---------------------------------------------------------------------------
 // originOf — mirrors Rust url::Url::origin().ascii_serialization()
