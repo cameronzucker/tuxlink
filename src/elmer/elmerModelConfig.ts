@@ -30,7 +30,21 @@ export interface ConfigReadDto {
   keyStatus: KeyStatus;
   /** Per-turn timeout in seconds. Valid range [30, 3600]; default 900 (15 min). */
   agentTurnTimeoutSecs: number;
+  /**
+   * True once the operator has completed model setup at least once. Distinguishes
+   * a never-configured install (which should land on the tile picker) from one
+   * running the implicit local default. Backend serializes this as `onboarded`
+   * (camelCase) — keep the Rust ConfigReadDto field in lock-step.
+   */
+  onboarded: boolean;
 }
+
+/**
+ * Keyring key-status per endpoint origin, returned by `elmer_key_status_for_origins`.
+ * Statuses only — never key values. Used by the tile picker to show which providers
+ * already have a stored key. The keys are origins (e.g. `https://api.openai.com`).
+ */
+export type KeyStatusByOrigin = Record<string, KeyStatus>;
 
 /**
  * How to handle the stored keyring key when saving config.
@@ -58,14 +72,27 @@ export type KeySource =
 // Provider presets
 // ---------------------------------------------------------------------------
 
-/** A named provider preset shown in the endpoint picker. */
+/** Pricing/commitment tier a provider falls into — drives the tile picker grouping. */
+export type ProviderTier = 'free' | 'paygo' | 'local' | 'other';
+
+/** A named provider preset shown in the model picker. */
 export interface ProviderPreset {
-  /** Machine-readable id. Values: 'localOllama' | 'openai' | 'openrouter' | 'gemini' | 'groq' | 'custom'. */
+  /** Machine-readable id: 'localOllama' | 'openai' | 'anthropic' | 'openrouter' | 'gemini' | 'groq' | 'custom'. */
   id: string;
   /** Human-readable display label. */
   label: string;
   /** Default endpoint URL for this provider. Empty for 'custom'. */
   endpoint: string;
+  /** Pricing/commitment tier — groups tiles into Free / Pay-as-you-go / Local / Other. */
+  tier: ProviderTier;
+  /** Default model id pre-filled when this tile is selected. Empty = leave/auto-detect. */
+  defaultModel?: string;
+  /**
+   * Hardcoded provider key-page URL opened by the "get a key" button. Present only
+   * for free/paygo cloud providers. MUST be a constant (never config/endpoint-derived)
+   * and MUST be on the `shell:allow-open` allowlist in capabilities/default.json.
+   */
+  keyPageUrl?: string;
 }
 
 /**
@@ -79,40 +106,104 @@ export interface ProviderPreset {
 export const PRESETS: ProviderPreset[] = [
   {
     id: 'localOllama',
-    label: 'Local Ollama',
+    label: 'On this computer (Ollama)',
     endpoint: 'http://127.0.0.1:11434/v1/chat/completions',
+    tier: 'local',
+    // No defaultModel: local model is whatever the operator has pulled (auto-detect).
   },
   {
     id: 'openai',
     label: 'OpenAI',
     endpoint: 'https://api.openai.com/v1/chat/completions',
+    tier: 'paygo',
+    defaultModel: 'gpt-4o-mini',
+    keyPageUrl: 'https://platform.openai.com/api-keys',
+  },
+  {
+    // OpenAI-compatibility endpoint (base https://api.anthropic.com/v1/ + chat/completions),
+    // bearer auth. Pay-as-you-go (needs a billing card). Default haiku is cheap + a strong
+    // tool-driver; sonnet is the quality step-up.
+    id: 'anthropic',
+    label: 'Anthropic — Claude',
+    endpoint: 'https://api.anthropic.com/v1/chat/completions',
+    tier: 'paygo',
+    defaultModel: 'claude-haiku-4-5',
+    keyPageUrl: 'https://console.anthropic.com/settings/keys',
   },
   {
     id: 'openrouter',
-    label: 'OpenRouter',
+    label: 'OpenRouter / custom endpoint',
     endpoint: 'https://openrouter.ai/api/v1/chat/completions',
+    tier: 'other',
+    // No keyPageUrl: OpenRouter's key flow is less beginner-friendly; it lives in "Other".
   },
   {
     // Free-key cloud option: Google AI Studio issues a free API key (no billing
     // card) and exposes an OpenAI-compatible endpoint. Capable models like
     // gemini-2.5-flash. Lowest-friction cloud path for the non-developer audience.
     id: 'gemini',
-    label: 'Google Gemini (free key)',
+    label: 'Google Gemini',
     endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+    tier: 'free',
+    defaultModel: 'gemini-2.5-flash',
+    keyPageUrl: 'https://aistudio.google.com/apikey',
   },
   {
     // Free-key cloud option: Groq issues a free API key, fast inference, OpenAI-
     // compatible. Models like llama-3.3-70b-versatile.
     id: 'groq',
-    label: 'Groq (free key)',
+    label: 'Groq',
     endpoint: 'https://api.groq.com/openai/v1/chat/completions',
+    tier: 'free',
+    defaultModel: 'llama-3.3-70b-versatile',
+    keyPageUrl: 'https://console.groq.com/keys',
   },
   {
     id: 'custom',
     label: 'Custom…',
     endpoint: '',
+    tier: 'other',
   },
 ];
+
+/**
+ * Default model id pre-filled when a provider tile is selected. Single source of
+ * truth, keyed by preset id (mirrors each preset's `defaultModel`; kept as a flat
+ * map for the `nextModelForPreset` helper + tile-selection logic). Empty string
+ * means "leave the model field as-is / rely on detect" (local + custom + other).
+ */
+export const DEFAULT_MODEL_BY_PRESET: Record<string, string> = {
+  localOllama: '',
+  openai: 'gpt-4o-mini',
+  anthropic: 'claude-haiku-4-5',
+  openrouter: '',
+  gemini: 'gemini-2.5-flash',
+  groq: 'llama-3.3-70b-versatile',
+  custom: '',
+};
+
+/**
+ * Decide the model to set when the operator switches to `targetPresetId`.
+ *
+ * Returns the target preset's default model ONLY when the current model is
+ * "untouched" — i.e. it still equals the OUTGOING preset's default (or is empty /
+ * never set). Returns `null` to PRESERVE the current model when the operator has
+ * hand-edited it, or when the target has no default (local / custom / other).
+ *
+ * Shared single source of truth for both `handlePresetChange` (the dense form) and
+ * the tile picker, so the two cannot drift. Pure function — no React, unit-tested.
+ */
+export function nextModelForPreset(
+  currentEndpoint: string,
+  currentModel: string,
+  targetPresetId: string,
+): string | null {
+  const targetDefault = DEFAULT_MODEL_BY_PRESET[targetPresetId] ?? '';
+  if (!targetDefault) return null; // target has no default — leave the model field as-is
+  const outgoingDefault = DEFAULT_MODEL_BY_PRESET[inferPreset(currentEndpoint)] ?? '';
+  const untouched = currentModel === '' || currentModel === outgoingDefault;
+  return untouched ? targetDefault : null;
+}
 
 // ---------------------------------------------------------------------------
 // originOf — mirrors Rust url::Url::origin().ascii_serialization()

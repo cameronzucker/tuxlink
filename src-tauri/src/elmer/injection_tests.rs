@@ -109,12 +109,16 @@ use crate::elmer::executor::{InProcessMcpInvoker, WITHHELD_EGRESS_TOOLS};
 /// valid `McpState` via `test_support::state_with_seeded_inbox`.
 const SEEDED_ID: &str = "MSG001";
 
-/// The three Elmer model-config Tauri commands.  These are registered ONLY in
+/// The Elmer model-config Tauri commands.  These are registered ONLY in
 /// `lib.rs`'s `invoke_handler`; they must NEVER appear in the MCP router.
+/// Includes `elmer_key_status_for_origins` (T4, tuxlink-wpqwy) — a read-only
+/// batch key-status query that is also Tauri-only: exposing it as an MCP tool
+/// would let an agent probe which providers the operator has stored keys for.
 const CONFIG_COMMAND_NAMES: &[&str] = &[
     "elmer_config_read",
     "elmer_config_set",
     "elmer_detect_models",
+    "elmer_key_status_for_origins",
 ];
 
 // ---------------------------------------------------------------------------

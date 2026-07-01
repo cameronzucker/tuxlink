@@ -20,6 +20,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   PRESETS,
+  DEFAULT_MODEL_BY_PRESET,
+  nextModelForPreset,
   originOf,
   inferPreset,
   isLoopback,
@@ -30,15 +32,51 @@ import {
 // ---------------------------------------------------------------------------
 
 describe('PRESETS', () => {
-  it('includes the expected providers (Ollama, OpenAI, OpenRouter, Gemini, Groq, Custom)', () => {
+  it('includes the expected providers (Ollama, OpenAI, Anthropic, OpenRouter, Gemini, Groq, Custom)', () => {
     expect(PRESETS.map((p) => p.id)).toEqual([
       'localOllama',
       'openai',
+      'anthropic',
       'openrouter',
       'gemini',
       'groq',
       'custom',
     ]);
+  });
+
+  it('the anthropic preset targets the OpenAI-compat endpoint with paygo tier', () => {
+    const a = PRESETS.find((p) => p.id === 'anthropic');
+    expect(a?.endpoint).toBe('https://api.anthropic.com/v1/chat/completions');
+    expect(a?.tier).toBe('paygo');
+    expect(a?.defaultModel).toBe('claude-haiku-4-5');
+    expect(a?.keyPageUrl).toMatch(/^https:\/\/console\.anthropic\.com\//);
+  });
+
+  it('maps every preset id to a default-model entry', () => {
+    for (const p of PRESETS) {
+      expect(DEFAULT_MODEL_BY_PRESET).toHaveProperty(p.id);
+    }
+  });
+
+  it('every preset has a valid tier; free/paygo carry a https keyPageUrl', () => {
+    for (const p of PRESETS) {
+      expect(['free', 'paygo', 'local', 'other']).toContain(p.tier);
+      if (p.tier === 'free' || p.tier === 'paygo') {
+        expect(p.keyPageUrl).toMatch(/^https:\/\//);
+      }
+    }
+  });
+
+  it('gemini is the recommended free tier with its default model', () => {
+    const g = PRESETS.find((p) => p.id === 'gemini');
+    expect(g?.tier).toBe('free');
+    expect(DEFAULT_MODEL_BY_PRESET.gemini).toBe('gemini-2.5-flash');
+    expect(DEFAULT_MODEL_BY_PRESET.groq).toBe('llama-3.3-70b-versatile');
+    expect(DEFAULT_MODEL_BY_PRESET.openai).toBe('gpt-4o-mini');
+  });
+
+  it('infers the anthropic preset from its origin', () => {
+    expect(inferPreset('https://api.anthropic.com/v1/chat/completions')).toBe('anthropic');
   });
 
   it('the free-key cloud presets use OpenAI-compatible endpoints', () => {
@@ -96,6 +134,34 @@ describe('PRESETS', () => {
     expect(ids).toContain('openai');
     expect(ids).toContain('openrouter');
     expect(ids).toContain('custom');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// nextModelForPreset — model repopulation on tile switch, preserving hand-edits
+// ---------------------------------------------------------------------------
+
+describe('nextModelForPreset', () => {
+  const OPENAI = 'https://api.openai.com/v1/chat/completions';
+
+  it('untouched model → returns the target preset default', () => {
+    expect(nextModelForPreset(OPENAI, 'gpt-4o-mini', 'anthropic')).toBe('claude-haiku-4-5');
+    expect(nextModelForPreset(OPENAI, 'gpt-4o-mini', 'gemini')).toBe('gemini-2.5-flash');
+  });
+
+  it('hand-edited model → returns null (preserve the operator’s choice)', () => {
+    expect(nextModelForPreset(OPENAI, 'gpt-4o', 'anthropic')).toBeNull();
+    expect(nextModelForPreset(OPENAI, 'o1-preview', 'gemini')).toBeNull();
+  });
+
+  it('target with no default (local/custom/openrouter) → returns null', () => {
+    expect(nextModelForPreset(OPENAI, 'gpt-4o-mini', 'custom')).toBeNull();
+    expect(nextModelForPreset(OPENAI, 'gpt-4o-mini', 'localOllama')).toBeNull();
+    expect(nextModelForPreset(OPENAI, 'gpt-4o-mini', 'openrouter')).toBeNull();
+  });
+
+  it('empty current model (never set) counts as untouched → adopts target default', () => {
+    expect(nextModelForPreset('', '', 'anthropic')).toBe('claude-haiku-4-5');
   });
 });
 

@@ -182,6 +182,14 @@ impl Provider for OpenAiProvider {
             // `redact_and_cap` enforces scrub-then-cap in the correct order.
             let text = resp.text().await.unwrap_or_default();
             let snippet = redact_and_cap(text, self.api_key.as_ref(), 500);
+            // HTTP 429 is classified separately so the frontend can surface the
+            // rate-limit callout (rateLimited outcome-kind) rather than the
+            // generic NeedsOperator path.  No automatic retry is performed here.
+            if status.as_u16() == 429 {
+                return Err(ProviderError::RateLimited(format!(
+                    "model endpoint returned HTTP 429 (rate limited): {snippet}"
+                )));
+            }
             return Err(ProviderError::Transport(format!(
                 "model endpoint returned HTTP {status}: {snippet}"
             )));

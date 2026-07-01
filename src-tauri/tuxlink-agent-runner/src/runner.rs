@@ -205,7 +205,10 @@ pub async fn run(
 /// Map a [`ProviderError`] onto a terminal outcome. The loop cannot make
 /// progress without the model, so any provider failure surfaces to the operator.
 fn provider_error_outcome(err: ProviderError) -> RunOutcome {
-    RunOutcome::NeedsOperator(format!("provider error: {err}"))
+    match err {
+        ProviderError::RateLimited(msg) => RunOutcome::RateLimited(msg),
+        other => RunOutcome::NeedsOperator(format!("provider error: {other}")),
+    }
 }
 
 /// Return the first validation error across a batch of tool calls, or `None`
@@ -233,4 +236,56 @@ fn first_validation_error(tools: &[ToolSpec], calls: &[ToolCall]) -> Option<Stri
         }
     }
     None
+}
+
+// ---------------------------------------------------------------------------
+// provider_error_outcome unit tests
+// (kept at end-of-file: clippy::items_after_test_module denies production items
+// after a #[cfg(test)] mod, so test modules live below all production items.)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod provider_error_outcome_tests {
+    use super::*;
+
+    /// `ProviderError::RateLimited` maps to `RunOutcome::RateLimited`, NOT
+    /// `NeedsOperator`.  This ensures a 429 from the model surfaces the
+    /// rate-limit callout rather than the generic operator-nudge.
+    #[test]
+    fn rate_limited_error_maps_to_rate_limited_outcome() {
+        let err = ProviderError::RateLimited("HTTP 429: quota exceeded".to_string());
+        let outcome = provider_error_outcome(err);
+        match &outcome {
+            RunOutcome::RateLimited(msg) => {
+                assert!(
+                    msg.contains("429"),
+                    "detail must carry the 429 snippet; got: {msg:?}"
+                );
+            }
+            other => panic!("expected RunOutcome::RateLimited, got {other:?}"),
+        }
+    }
+
+    /// `ProviderError::Transport` still maps to `NeedsOperator` — the
+    /// `RateLimited` arm must not have broken the existing error path.
+    #[test]
+    fn transport_error_still_maps_to_needs_operator() {
+        let err = ProviderError::Transport("connection refused".to_string());
+        let outcome = provider_error_outcome(err);
+        assert!(
+            matches!(outcome, RunOutcome::NeedsOperator(_)),
+            "Transport must map to NeedsOperator, got: {outcome:?}"
+        );
+    }
+
+    /// `ProviderError::Unparseable` still maps to `NeedsOperator`.
+    #[test]
+    fn unparseable_error_still_maps_to_needs_operator() {
+        let err = ProviderError::Unparseable("bad JSON".to_string());
+        let outcome = provider_error_outcome(err);
+        assert!(
+            matches!(outcome, RunOutcome::NeedsOperator(_)),
+            "Unparseable must map to NeedsOperator, got: {outcome:?}"
+        );
+    }
 }

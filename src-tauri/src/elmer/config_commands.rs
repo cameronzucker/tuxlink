@@ -132,7 +132,11 @@ pub enum DetectError {
     NoServer { host: String },
     /// 401 or 403 — the key was rejected.  Fixed reason; body is NEVER echoed.
     Auth { provider: String },
-    /// An unexpected non-2xx HTTP status (not 401/403).
+    /// HTTP 429 — the provider is temporarily throttling `/v1/models` requests.
+    /// Classified before the generic `Status` branch so callers can distinguish
+    /// rate-limiting from other server errors.
+    RateLimited,
+    /// An unexpected non-2xx HTTP status (not 401/403/429).
     Status(u16),
     /// A transport or network error not caused by "no server".
     Network(String),
@@ -159,6 +163,11 @@ impl DetectError {
             DetectError::Auth { provider } => {
                 // FIXED reason — the body is never read or echoed here.
                 format!("auth error: check the API key for {provider}")
+            }
+            DetectError::RateLimited => {
+                "rate limited: the provider is temporarily throttling requests \
+                 — wait a moment or switch providers"
+                    .into()
             }
             DetectError::Status(code) => format!("server error: HTTP {code}"),
             DetectError::Network(msg) => format!("network error: {msg}"),
@@ -240,6 +249,12 @@ pub struct ConfigReadDto {
     /// snapshot, so it reflects any in-session `elmer_config_set` advance
     /// (already clamped to `[30, 3600]`).
     pub agent_turn_timeout_secs: u32,
+    /// Whether the operator has completed onboarding (tuxlink-wpqwy). Serializes
+    /// as `"onboarded"` (camelCase of `onboarded` is `onboarded`). The TS
+    /// `ConfigReadDto.onboarded: boolean` matches this exact key. Value is
+    /// migration-aware: `true` if the stored flag is set OR the config content
+    /// already differs from factory defaults (existing-user migration).
+    pub onboarded: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -341,6 +356,9 @@ pub async fn config_set_inner(
     config.elmer.agent_endpoint = agent_endpoint.clone();
     config.elmer.agent_model = agent_model.clone();
     config.elmer.agent_turn_timeout_secs = turn_timeout_secs;
+    // Mark the operator as onboarded: any successful save through the Elmer
+    // model form means the picker has been presented and acted upon.
+    config.elmer.onboarded = true;
     crate::config::write_config_atomic(&config)
         .map_err(|e| format!("couldn't save config: {e}"))?;
 
@@ -408,11 +426,26 @@ pub async fn config_read_inner(
             .unwrap_or(KeyStatus::Unreadable)
     };
 
+    // Read the on-disk config to obtain the `onboarded` flag and apply the
+    // migration expression.  `config_set_inner` writes `onboarded = true` on
+    // every successful save, so the flag is set for any user who has saved
+    // since tuxlink-wpqwy landed.  For users who customized their config
+    // BEFORE this field existed (flag absent → false via serde default),
+    // `!is_default()` catches them: if content differs from factory defaults,
+    // the operator already went through some form of configuration and the
+    // picker must not re-appear.
+    let onboarded = crate::config::read_config()
+        .map(|c| c.elmer.onboarded || !c.elmer.is_default())
+        // If the config file is unreadable, treat as not-yet-onboarded (fail
+        // safe: show the picker rather than silently hiding it).
+        .unwrap_or(false);
+
     Ok(ConfigReadDto {
         agent_endpoint: snapshot.endpoint,
         agent_model: snapshot.model,
         key_status,
         agent_turn_timeout_secs: snapshot.turn_timeout_secs,
+        onboarded,
     })
 }
 
@@ -518,6 +551,11 @@ pub fn map_models_response(
         return Err(DetectError::Auth {
             provider: provider.to_string(),
         });
+    }
+    if status == 429 {
+        // Rate-limited: typed variant so callers can distinguish throttling from
+        // other server errors.  Classified BEFORE the generic non-2xx branch.
+        return Err(DetectError::RateLimited);
     }
     if !(200..300).contains(&status) {
         return Err(DetectError::Status(status));
@@ -667,6 +705,16 @@ where
         return Err(DetectError::Auth { provider: models_host });
     }
 
+    // 429 — provider is temporarily throttling; typed variant so callers can
+    // distinguish rate-limiting from other server errors.  Classified here in
+    // detect_inner BEFORE the generic non-2xx branch so a real HTTP 429 during
+    // Detect surfaces as RateLimited, not "server error: HTTP 429".
+    // map_models_response carries the same check as belt-and-suspenders for
+    // callers that go through the pure mapping function directly.
+    if status == 429 {
+        return Err(DetectError::RateLimited);
+    }
+
     // Other non-2xx — do NOT echo the body.
     if !(200u16..300).contains(&status) {
         return Err(DetectError::Status(status));
@@ -754,6 +802,103 @@ pub async fn elmer_detect_models(
     )
     .await
     .map_err(|e| e.to_reason())
+}
+
+// ---------------------------------------------------------------------------
+// elmer_key_status_for_origins — batch key-status query (T4, tuxlink-wpqwy)
+// ---------------------------------------------------------------------------
+
+/// Type alias for the per-origin key-status map.
+///
+/// Serialises as `Record<string, KeyStatus>` on the Tauri boundary — exactly
+/// the `KeyStatusByOrigin` TypeScript type the tile picker reads.
+///
+/// Keys are origin strings in `scheme://host[:port]` form (no trailing slash,
+/// no path), matching what `AgentEndpoint::origin()` / `new URL(e).origin`
+/// produce.  See the origin-matching note in [`key_status_for_origins_inner`].
+pub type KeyStatusByOrigin = std::collections::HashMap<String, KeyStatus>;
+
+/// Pure inner implementation of `elmer_key_status_for_origins`.
+///
+/// Iterates `origins`, calls [`ElmerKeyring::status`] for each, and returns a
+/// [`KeyStatusByOrigin`] map.  The keyring's fail-closed contract applies:
+/// `Unreadable` is NEVER collapsed to `Absent` — a backend error (locked keyring,
+/// unavailable daemon) must not cause the tile picker to hide a "key saved" badge
+/// that should be shown.
+///
+/// # Origin-matching contract
+///
+/// The keyring stores keys under an account derived via
+/// `elmer_key_account(origin)` where `origin` comes from
+/// `AgentEndpoint::parse(endpoint).origin()`.  On the TypeScript side,
+/// `ElmerPane` derives the same origins via `new URL(preset.endpoint).origin`.
+///
+/// Both the Rust `url` crate's `Url::origin().ascii_serialization()` and the
+/// Web URL API's `URL.prototype.origin` apply the SAME normalisation:
+///   - default ports (http:80, https:443) are omitted.
+///   - the host is lowercased.
+///   - path, query, fragment are stripped.
+///
+/// The frontend therefore sends origin strings that are ALREADY in the same
+/// normalised form the keyring stores under, so no re-normalisation is needed
+/// here.  If that invariant ever breaks (new frontend code that hand-rolls
+/// origins), this inner function is the place to add a parse + `.origin()` step.
+///
+/// This inner function is `pub(crate)` so that it is directly callable from tests
+/// without Tauri `State` machinery.
+pub(crate) fn key_status_for_origins_inner(
+    keyring: &ElmerKeyring,
+    origins: &[String],
+) -> KeyStatusByOrigin {
+    origins
+        .iter()
+        .map(|origin| (origin.clone(), keyring.status(origin)))
+        .collect()
+}
+
+/// Batch key-status query for multiple endpoint origins.
+///
+/// Returns a `HashMap<String, KeyStatus>` (serialises to `Record<string,
+/// KeyStatus>` — the `KeyStatusByOrigin` TS type) with one entry per supplied
+/// origin.  Status values are the three-state fail-closed result from
+/// [`ElmerKeyring::status`]: `"present"`, `"absent"`, or `"unreadable"`.
+///
+/// **Never returns key values.**  The origin strings in the request are used
+/// solely to locate keyring entries; the values are thrown away and only the
+/// three-state status is returned.
+///
+/// # Wire contract
+///
+/// Command name:   `elmer_key_status_for_origins`
+/// Argument key:   `origins` (array of origin strings)
+/// Return value:   `Record<string, KeyStatus>` (`KeyStatusByOrigin`)
+///
+/// The TS wrapper in `useElmer.ts`:
+/// ```ts
+/// invoke<KeyStatusByOrigin>('elmer_key_status_for_origins', { origins })
+/// ```
+///
+/// # Blocking I/O
+///
+/// `ElmerKeyring::status` is a blocking D-Bus round-trip (one per origin).  All
+/// status calls are moved to a `tokio::task::spawn_blocking` closure so the async
+/// reactor thread is not parked during the keyring calls.  This mirrors the
+/// pattern in [`config_read_inner`].
+///
+/// # Errors
+///
+/// Returns `Err(String)` if the `spawn_blocking` task panics.  In that case the
+/// command returns an error to the renderer rather than a partial map.
+#[tauri::command]
+pub async fn elmer_key_status_for_origins(
+    origins: Vec<String>,
+    keyring: State<'_, Arc<ElmerKeyring>>,
+) -> Result<KeyStatusByOrigin, String> {
+    let kr = Arc::clone(&keyring);
+    tokio::task::spawn_blocking(move || key_status_for_origins_inner(&kr, &origins))
+        .await
+        // JoinError (the blocking task panicked) → surface as Err.
+        .map_err(|e| format!("key_status_for_origins panicked: {e}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -1590,6 +1735,47 @@ mod tests {
             );
         }
 
+        /// 429 maps to `DetectError::RateLimited` — NOT `Status(429)`.
+        ///
+        /// Classified before the generic non-2xx branch so callers (and the UI)
+        /// can distinguish throttling from other server errors.
+        #[test]
+        fn map_models_response_429_rate_limited() {
+            let result = map_models_response(429, "Too Many Requests", "api.openai.com", None);
+            assert!(
+                matches!(result, Err(DetectError::RateLimited)),
+                "429 must map to RateLimited (not Status(429)), got: {result:?}"
+            );
+        }
+
+        /// 429 must NOT map to the generic `Status(429)`.
+        ///
+        /// Regression guard: if the 429 branch is accidentally removed (e.g. the
+        /// check order changes), this test fails before the generic Status branch
+        /// silently absorbs it.
+        #[test]
+        fn map_models_response_429_is_not_generic_status() {
+            let result = map_models_response(429, "Too Many Requests", "api.openai.com", None);
+            assert!(
+                !matches!(result, Err(DetectError::Status(429))),
+                "429 must NOT fall through to generic Status(429); got: {result:?}"
+            );
+        }
+
+        /// `DetectError::RateLimited::to_reason` returns a human-readable
+        /// rate-limit message.  The message must mention "rate limit" and
+        /// must not contain the API key.
+        #[test]
+        fn rate_limited_to_reason_is_human_readable() {
+            let reason = DetectError::RateLimited.to_reason();
+            assert!(
+                reason.contains("rate limit"),
+                "to_reason must mention 'rate limit'; got: {reason:?}"
+            );
+            // Sanity: the reason must not be empty.
+            assert!(!reason.is_empty(), "to_reason must not be empty");
+        }
+
         // -------------------------------------------------------------------
         // Key-source resolution via detect_inner
         //
@@ -1727,6 +1913,52 @@ mod tests {
                 }
                 other => panic!("expected Auth, got: {other:?}"),
             }
+        }
+
+        /// 429 from the server maps to `DetectError::RateLimited` via the
+        /// production detect_inner path (Step 5), NOT to the generic
+        /// `Status(429)`.
+        ///
+        /// This covers the production seam: detect_inner classifies non-2xx
+        /// responses BEFORE delegating to map_models_response (which only sees
+        /// 2xx bodies).  Without the 429 branch in detect_inner a real HTTP
+        /// 429 would fall through to `Status(429)` and surface as
+        /// "server error: HTTP 429" — an untyped error — instead of the
+        /// dedicated RateLimited variant the UI uses to offer the
+        /// "Switch provider" flow.
+        #[tokio::test]
+        async fn detect_maps_429_to_rate_limited() {
+            let mut server = mockito::Server::new_async().await;
+            let server_url = server.url();
+
+            let _m = server
+                .mock("GET", "/v1/models")
+                .with_status(429)
+                .with_body("Too Many Requests")
+                .create_async()
+                .await;
+
+            let kr = Arc::new(ElmerKeyring::with_memory_keyring());
+            let endpoint_str = format!("{server_url}/v1/chat/completions");
+
+            let result = detect_inner(
+                endpoint_str,
+                KeySource::None,
+                &kr,
+                no_dns_resolver(),
+            )
+            .await;
+
+            _m.assert_async().await;
+            assert!(
+                matches!(result, Err(DetectError::RateLimited)),
+                "detect_inner: 429 must map to RateLimited (not Status(429)); got: {result:?}"
+            );
+            // Belt-and-suspenders: must NOT fall through to generic Status(429).
+            assert!(
+                !matches!(result, Err(DetectError::Status(429))),
+                "detect_inner: 429 must NOT produce Status(429); got: {result:?}"
+            );
         }
 
         /// A connection-refused (dead loopback port) maps to NoServer.
@@ -1900,6 +2132,359 @@ mod tests {
             "loopback endpoint must yield Absent without consulting the keyring; \
              got {:?} — the loopback guard is missing or the keyring was called",
             dto.key_status,
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // tuxlink-wpqwy: onboarded sentinel tests
+    // -----------------------------------------------------------------------
+
+    /// A fresh `ElmerConfig::default()` has `onboarded == false`.
+    ///
+    /// Guards the serde `#[serde(default)]` path: absent-from-disk configs must
+    /// deserialize to the false sentinel, not silently omit the field.
+    #[test]
+    fn elmer_config_default_onboarded_is_false() {
+        let cfg = crate::config::ElmerConfig::default();
+        assert!(!cfg.onboarded, "fresh ElmerConfig must have onboarded == false");
+    }
+
+    /// The `ConfigReadDto` wire shape for `onboarded` must be exactly the JSON
+    /// key `"onboarded"` (a bool).  This is the cross-language contract the
+    /// TypeScript `ConfigReadDto.onboarded: boolean` relies on.
+    ///
+    /// The serde `rename_all = "camelCase"` on `ConfigReadDto` leaves
+    /// `onboarded` unchanged (camelCase of a single lowercase word is itself),
+    /// but we assert the literal key so CI catches any rename regression.
+    #[test]
+    fn config_read_dto_onboarded_wire_shape() {
+        // --- onboarded: true ---
+        let dto_true = ConfigReadDto {
+            agent_endpoint: "http://127.0.0.1:11434/v1/chat/completions".into(),
+            agent_model: "llama3".into(),
+            key_status: KeyStatus::Absent,
+            agent_turn_timeout_secs: 900,
+            onboarded: true,
+        };
+        let json_true = serde_json::to_string(&dto_true).expect("serialize DTO (true)");
+        assert!(
+            json_true.contains("\"onboarded\":true"),
+            "DTO with onboarded=true must serialize as `\"onboarded\":true`; got: {json_true}"
+        );
+
+        // --- onboarded: false ---
+        let dto_false = ConfigReadDto {
+            agent_endpoint: "http://127.0.0.1:11434/v1/chat/completions".into(),
+            agent_model: "llama3".into(),
+            key_status: KeyStatus::Absent,
+            agent_turn_timeout_secs: 900,
+            onboarded: false,
+        };
+        let json_false = serde_json::to_string(&dto_false).expect("serialize DTO (false)");
+        assert!(
+            json_false.contains("\"onboarded\":false"),
+            "DTO with onboarded=false must serialize as `\"onboarded\":false`; got: {json_false}"
+        );
+    }
+
+    /// Migration test: an on-disk config whose CONTENT already differs from the
+    /// factory default (endpoint customized), but whose stored `onboarded` flag
+    /// is `false` (absent on disk before tuxlink-wpqwy), must yield
+    /// `onboarded == true` in the DTO.
+    ///
+    /// This covers the existing-user path: operator configured their endpoint
+    /// before the `onboarded` field existed; the migration expression
+    /// `onboarded || !is_default()` must catch them so the picker does not
+    /// re-appear.
+    #[tokio::test]
+    #[serial]
+    async fn config_read_inner_migration_customized_unflagged_is_onboarded() {
+        let kr = Arc::new(ElmerKeyring::with_memory_keyring());
+        let tmp = TempConfigDir::new();
+
+        // Write an on-disk config with a NON-default endpoint and onboarded=false.
+        // `ElmerConfig::is_default()` will return false for this endpoint, so the
+        // migration expression (`onboarded || !is_default()`) must yield true.
+        let mut config = minimal_config();
+        config.elmer.agent_endpoint = VALID_ENDPOINT.into();  // non-default
+        config.elmer.agent_model = VALID_MODEL.into();        // non-default
+        config.elmer.onboarded = false;                       // explicitly unflagged
+        let json = serde_json::to_string_pretty(&config).expect("serialize config");
+        std::fs::write(tmp.path().join("config.json"), json).expect("write config.json");
+
+        // In-memory state matches the on-disk non-default endpoint/model.
+        let state = ElmerModelConfigState::new(VALID_ENDPOINT.into(), VALID_MODEL.into(), 900);
+
+        let dir_path = tmp.path().to_str().unwrap().to_string();
+        std::env::set_var("TUXLINK_CONFIG_DIR", &dir_path);
+        let dto = config_read_inner(&state, &kr).await;
+        std::env::remove_var("TUXLINK_CONFIG_DIR");
+
+        let dto = dto.expect("config_read_inner must succeed");
+        assert!(
+            dto.onboarded,
+            "existing user with customized-but-unflagged config must have onboarded==true \
+             (migration: onboarded || !is_default()); got false"
+        );
+    }
+
+    /// After a successful `config_set_inner` with a non-default (cloud) endpoint,
+    /// `config_read_inner` reports `onboarded == true`.
+    ///
+    /// This is the canonical picker use case: the operator chose a cloud endpoint
+    /// and saved. The non-default content makes `ElmerConfig::is_default()` return
+    /// `false`, so the `elmer` section is serialized to disk and `onboarded: true`
+    /// is persisted and read back correctly.
+    #[tokio::test]
+    #[serial]
+    async fn config_set_marks_onboarded_and_read_reflects_it() {
+        let kr = Arc::new(ElmerKeyring::with_memory_keyring());
+        // Use a non-default (cloud) endpoint so that `ElmerConfig::is_default()`
+        // returns false and the `elmer` section is serialized to disk, causing
+        // the `onboarded: true` flag to be persisted.
+        let state = ElmerModelConfigState::new(VALID_ENDPOINT.into(), VALID_MODEL.into(), 900);
+        let tmp = TempConfigDir::new();
+
+        let dir_path = tmp.path().to_str().unwrap().to_string();
+        std::env::set_var("TUXLINK_CONFIG_DIR", &dir_path);
+
+        // Verify that before any save the on-disk config has onboarded=false.
+        let before = crate::config::read_config().expect("read before set");
+        assert!(!before.elmer.onboarded, "onboarded must be false before any save");
+
+        // Perform a save using the cloud endpoint.
+        let set_result = config_set_inner(
+            VALID_ENDPOINT.into(),
+            VALID_MODEL.into(),
+            900,
+            SetKey::Keep,
+            &state,
+            &kr,
+        )
+        .await;
+        assert!(set_result.is_ok(), "config_set_inner must succeed: {set_result:?}");
+
+        // Read the DTO — must report onboarded=true.
+        let dto = config_read_inner(&state, &Arc::clone(&kr))
+            .await
+            .expect("config_read_inner must succeed after set");
+        std::env::remove_var("TUXLINK_CONFIG_DIR");
+
+        assert!(
+            dto.onboarded,
+            "DTO must report onboarded==true after a successful save with non-default endpoint"
+        );
+    }
+
+    /// Persistence fix (tuxlink-wpqwy): after a successful `config_set_inner`
+    /// with ALL-DEFAULT content (loopback Ollama endpoint, default model, default
+    /// timeout), `config_read_inner` must still report `onboarded == true`.
+    ///
+    /// Before the fix, `ElmerConfig::is_default()` compared content fields only
+    /// and ignored `onboarded`.  When content stayed at factory defaults,
+    /// `skip_serializing_if` evaluated `is_default() == true` and omitted the
+    /// entire `elmer` section from disk — losing the `onboarded: true` flag set
+    /// by `config_set_inner`.  On the next launch `config_read_inner` read
+    /// `onboarded = false` (serde default), so the picker re-appeared.
+    ///
+    /// The fix adds `onboarded` to `is_default()`.  When `config_set_inner`
+    /// sets `onboarded = true`, `is_default()` returns `false` even for default
+    /// content, so the section is written to disk and the flag survives restart.
+    #[tokio::test]
+    #[serial]
+    async fn config_set_with_default_content_persists_onboarded_flag() {
+        let kr = Arc::new(ElmerKeyring::with_memory_keyring());
+        // Use ALL-DEFAULT content so that the pre-fix path would have omitted the
+        // `elmer` section via `skip_serializing_if`.
+        let default_endpoint = "http://127.0.0.1:11434/v1/chat/completions";
+        let default_model = "llama3";
+        let default_timeout = 900u32;
+        let state = ElmerModelConfigState::new(
+            default_endpoint.into(),
+            default_model.into(),
+            default_timeout,
+        );
+        let tmp = TempConfigDir::new();
+
+        let dir_path = tmp.path().to_str().unwrap().to_string();
+        std::env::set_var("TUXLINK_CONFIG_DIR", &dir_path);
+
+        // Save with default-content endpoint/model/timeout — this is the user
+        // who accepted loopback Ollama in the picker and clicked Save.
+        let set_result = config_set_inner(
+            default_endpoint.into(),
+            default_model.into(),
+            default_timeout,
+            SetKey::Keep,
+            &state,
+            &kr,
+        )
+        .await;
+        assert!(set_result.is_ok(), "config_set_inner must succeed: {set_result:?}");
+
+        // Read the DTO — must report onboarded=true even though content is default.
+        let dto = config_read_inner(&state, &Arc::clone(&kr))
+            .await
+            .expect("config_read_inner must succeed after set");
+        std::env::remove_var("TUXLINK_CONFIG_DIR");
+
+        assert!(
+            dto.onboarded,
+            "DTO must report onboarded==true after saving with default-content config \
+             (persistence fix: onboarded flag must survive even when content==factory defaults)"
+        );
+    }
+
+    // =======================================================================
+    // T4 tests — elmer_key_status_for_origins / key_status_for_origins_inner
+    // =======================================================================
+
+    // -----------------------------------------------------------------------
+    // Test: key_status_present_and_absent
+    // -----------------------------------------------------------------------
+
+    /// Seeding a key for origin A and nothing for origin B produces Present for
+    /// A and Absent for B.  The VALUE of the key is never included in the
+    /// returned map (only the status — Present, not the secret string).
+    #[test]
+    fn key_status_present_and_absent() {
+        let kr = ElmerKeyring::with_memory_keyring();
+        let origin_a = "https://api.openai.com".to_string();
+        let origin_b = "https://api.anthropic.com".to_string();
+
+        // Seed a key for origin A only.
+        kr.set(&origin_a, &ApiKey::new("sk-test"))
+            .expect("set key for origin A");
+
+        let origins = vec![origin_a.clone(), origin_b.clone()];
+        let result = key_status_for_origins_inner(&kr, &origins);
+
+        assert_eq!(
+            result.get(&origin_a),
+            Some(&KeyStatus::Present),
+            "origin A must be Present after setting a key"
+        );
+        assert_eq!(
+            result.get(&origin_b),
+            Some(&KeyStatus::Absent),
+            "origin B must be Absent (no key was set)"
+        );
+
+        // Confirm neither entry carries a value — the map contains KeyStatus, not strings.
+        // This is guaranteed by the type: HashMap<String, KeyStatus>.
+        assert_eq!(result.len(), 2, "result must have one entry per origin");
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: key_status_unreadable_on_backend_error
+    // -----------------------------------------------------------------------
+
+    /// A failing (locked / unavailable) keyring must yield Unreadable for every
+    /// origin — NEVER Absent.  This is the fail-closed guarantee: a false Absent
+    /// would hide the "key saved" badge on a tile whose key is actually stored.
+    #[test]
+    fn key_status_unreadable_on_backend_error() {
+        let kr = failing_keyring();
+        let origins = vec![
+            "https://api.openai.com".to_string(),
+            "https://api.anthropic.com".to_string(),
+        ];
+
+        let result = key_status_for_origins_inner(&kr, &origins);
+
+        for origin in &origins {
+            assert_eq!(
+                result.get(origin),
+                Some(&KeyStatus::Unreadable),
+                "a backend error MUST be Unreadable for {origin:?}, never Absent — \
+                 false Absent would silently hide a stored key's badge"
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: key_status_empty_origins
+    // -----------------------------------------------------------------------
+
+    /// An empty origins slice returns an empty map without error.
+    #[test]
+    fn key_status_empty_origins() {
+        let kr = ElmerKeyring::with_memory_keyring();
+        let result = key_status_for_origins_inner(&kr, &[]);
+        assert!(
+            result.is_empty(),
+            "empty origins must produce an empty map; got: {result:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: key_status_serde_wire_shape (raw-box guard)
+    // -----------------------------------------------------------------------
+
+    /// Asserts the EXACT serde literals for each `KeyStatus` variant AND for a
+    /// `HashMap<String, KeyStatus>` (the `KeyStatusByOrigin` wire shape the TS
+    /// side reads).
+    ///
+    /// This is the cross-language contract guard: the TypeScript `KeyStatus` union
+    /// is `'present' | 'absent' | 'unreadable'` and `KeyStatusByOrigin` is
+    /// `Record<string, KeyStatus>`.  If the serde rename ever drifts, the tile
+    /// picker silently stops showing badges.
+    ///
+    /// `KeyStatus` uses `#[serde(rename_all = "camelCase")]`.  For single-word
+    /// PascalCase variants (`Present`, `Absent`, `Unreadable`) camelCase
+    /// serialization yields the SAME string as lowercase (`present`, `absent`,
+    /// `unreadable`), which is what the TS union expects.
+    #[test]
+    fn key_status_serde_wire_shape() {
+        // --- Per-variant literal assertions ---
+        assert_eq!(
+            serde_json::to_string(&KeyStatus::Present).expect("serialize Present"),
+            r#""present""#,
+            "KeyStatus::Present must serialize to the exact literal \"present\""
+        );
+        assert_eq!(
+            serde_json::to_string(&KeyStatus::Absent).expect("serialize Absent"),
+            r#""absent""#,
+            "KeyStatus::Absent must serialize to the exact literal \"absent\""
+        );
+        assert_eq!(
+            serde_json::to_string(&KeyStatus::Unreadable).expect("serialize Unreadable"),
+            r#""unreadable""#,
+            "KeyStatus::Unreadable must serialize to the exact literal \"unreadable\""
+        );
+
+        // --- KeyStatusByOrigin map wire shape ---
+        //
+        // A HashMap<String, KeyStatus> must serialize as a JSON object keyed by
+        // origin with lowercase-literal values — the `Record<string, KeyStatus>`
+        // that the TS tile picker reads.
+        let mut map = std::collections::HashMap::new();
+        map.insert("https://api.openai.com".to_string(), KeyStatus::Present);
+        map.insert("https://api.anthropic.com".to_string(), KeyStatus::Absent);
+        map.insert("https://generativelanguage.googleapis.com".to_string(), KeyStatus::Unreadable);
+
+        let json_value =
+            serde_json::to_value(&map).expect("serialize KeyStatusByOrigin map");
+
+        assert!(
+            json_value.is_object(),
+            "KeyStatusByOrigin must serialize as a JSON object; got: {json_value}"
+        );
+
+        assert_eq!(
+            json_value.get("https://api.openai.com").and_then(|v| v.as_str()),
+            Some("present"),
+            "openai origin must map to literal \"present\""
+        );
+        assert_eq!(
+            json_value.get("https://api.anthropic.com").and_then(|v| v.as_str()),
+            Some("absent"),
+            "anthropic origin must map to literal \"absent\""
+        );
+        assert_eq!(
+            json_value.get("https://generativelanguage.googleapis.com").and_then(|v| v.as_str()),
+            Some("unreadable"),
+            "gemini origin must map to literal \"unreadable\""
         );
     }
 }

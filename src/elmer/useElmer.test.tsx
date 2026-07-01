@@ -39,9 +39,10 @@ vi.mock('@tauri-apps/api/event', () => ({
 // useElmer doesn't invoke() on mount, but mock it so nothing throws if it ever does.
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(() => Promise.resolve()) }));
 
-import { useElmer } from './useElmer';
+import { useElmer, keyStatusForOrigins } from './useElmer';
 import { EV_DELTA, EV_OUTCOME, EV_TURN } from './elmerEvents';
 import type { ElmerDeltaPayload, ElmerOutcomePayload, ElmerTurnPayload } from './elmerEvents';
+import { invoke } from '@tauri-apps/api/core';
 
 // setupListeners() awaits each listen() sequentially, so resolving the pending
 // batch only unblocks the NEXT listen() call. Loop, draining + flushing
@@ -179,5 +180,50 @@ describe('useElmer streaming (phase 2b)', () => {
     expect(result.current.streamingReasoning).toBe('');
     // No partial item was committed (the answer never finalized).
     expect(result.current.items.filter((i) => i.kind === 'turn')).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T8b — keyStatusForOrigins wrapper (Task 4-fe frontend shim)
+// ---------------------------------------------------------------------------
+
+describe('keyStatusForOrigins (T8b Task 4-fe wrapper)', () => {
+  const mockInvoke = invoke as ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mockInvoke.mockClear();
+  });
+
+  it('calls elmer_key_status_for_origins with the provided origins and returns the map', async () => {
+    const expectedMap = {
+      'https://api.openai.com': 'present' as const,
+      'https://generativelanguage.googleapis.com': 'absent' as const,
+    };
+    // mockImplementationOnce so the teardown no-arg call doesn't interfere.
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_key_status_for_origins') return expectedMap;
+      return undefined;
+    });
+
+    const origins = ['https://api.openai.com', 'https://generativelanguage.googleapis.com'];
+    const result = await keyStatusForOrigins(origins);
+
+    // The correct command was called.
+    expect(mockInvoke).toHaveBeenCalledWith('elmer_key_status_for_origins', { origins });
+    // The map is returned verbatim.
+    expect(result).toEqual(expectedMap);
+  });
+
+  it('passes the origins array through to the invoke call unchanged', async () => {
+    const testOrigins = ['https://api.groq.com', 'https://api.anthropic.com'];
+    mockInvoke.mockImplementationOnce(async (_cmd?: string) => ({}));
+
+    await keyStatusForOrigins(testOrigins);
+
+    // Teardown no-arg call from vitest: the mock was called at least once with the origins.
+    const calls = mockInvoke.mock.calls;
+    const realCall = calls.find((c) => c[0] === 'elmer_key_status_for_origins');
+    expect(realCall).toBeTruthy();
+    expect(realCall![1]).toEqual({ origins: testOrigins });
   });
 });
