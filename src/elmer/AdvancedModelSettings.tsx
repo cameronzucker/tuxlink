@@ -146,6 +146,13 @@ export function AdvancedModelSettings({
     if (!showNumCtx) return;
     if (!model.trim()) return;
 
+    // `cancelled` guards against a stale-response race: the debounced timer may
+    // already have fired and an `invoke` be in-flight when the inputs change.
+    // Clearing the timer (below) only cancels a NOT-yet-fired call; an in-flight
+    // promise from a superseded input could otherwise resolve after the newer
+    // one and overwrite the estimate with a stale fits/exceeds result. The
+    // cleanup sets `cancelled`, so a superseded response is ignored.
+    let cancelled = false;
     if (estimateTimerRef.current !== null) {
       clearTimeout(estimateTimerRef.current);
     }
@@ -158,14 +165,15 @@ export function AdvancedModelSettings({
         endpoint,
       })
         .then((dto) => {
-          setEstimate({ status: 'ok', dto });
+          if (!cancelled) setEstimate({ status: 'ok', dto });
         })
         .catch(() => {
-          setEstimate({ status: 'error' });
+          if (!cancelled) setEstimate({ status: 'error' });
         });
     }, 600);
 
     return () => {
+      cancelled = true;
       if (estimateTimerRef.current !== null) {
         clearTimeout(estimateTimerRef.current);
         estimateTimerRef.current = null;
