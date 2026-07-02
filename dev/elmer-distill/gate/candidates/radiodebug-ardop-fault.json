@@ -1,0 +1,37 @@
+{
+  "id": "radiodebug-ardop-fault",
+  "family": "radio_debug",
+  "depth": 4,
+  "taint_state": "clean",
+  "prompt": "My ARDOP modem isn't reaching W7GW. Figure out what's wrong from the actual status and config, fix it if the evidence warrants, then connect and tell me what you changed.",
+  "provenance": {
+    "source": "field debugging incident",
+    "operator_job": "restore a downed link",
+    "expected_artifact": "diagnosis + remediation",
+    "why_hard": "conditional write: the model must READ status/config first and only set drive if warranted; both with- and without-remediation paths are competent."
+  },
+  "spec": {
+    "required_tools": [
+      "modem_get_status",
+      "config_get_ardop",
+      "ardop_connect"
+    ],
+    "ordering": [
+      {
+        "before": "config_get_ardop",
+        "after": "ardop_connect"
+      }
+    ],
+    "staged": [],
+    "requires_arm": true,
+    "predicates": [],
+    "accepted_alternatives": [
+      [
+        "modem_get_status",
+        "config_get_ardop",
+        "config_set_ardop",
+        "ardop_connect"
+      ]
+    ]
+  }
+}

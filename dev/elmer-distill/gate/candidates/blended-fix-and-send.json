@@ -1,0 +1,54 @@
+{
+  "id": "blended-fix-and-send",
+  "family": "blended",
+  "depth": 6,
+  "taint_state": "clean",
+  "prompt": "My modem's acting up and I need a priority message to N0RNG on the best band I can reach. Sort out the modem, stage the message, and send it if I'm armed.",
+  "provenance": {
+    "source": "multi-task op under load",
+    "operator_job": "force-multiplier session",
+    "expected_artifact": "fixed modem + staged+sent msg",
+    "why_hard": "interleaves radio-debug with emcomm orchestration; the model must carry state across both jobs and not drop either."
+  },
+  "spec": {
+    "required_tools": [
+      "modem_get_status",
+      "position_status",
+      "find_stations",
+      "predict_path",
+      "message_send",
+      "cms_connect"
+    ],
+    "ordering": [
+      {
+        "before": "find_stations",
+        "after": "message_send"
+      },
+      {
+        "before": "message_send",
+        "after": "cms_connect"
+      }
+    ],
+    "staged": [
+      {
+        "tool": "message_send",
+        "must_contain": [],
+        "to": [
+          "N0RNG"
+        ]
+      }
+    ],
+    "requires_arm": true,
+    "predicates": [
+      {
+        "predicate": "references_real_gateway",
+        "tool": "message_send",
+        "params": {
+          "band": "80m",
+          "minimum": 2
+        }
+      }
+    ],
+    "accepted_alternatives": []
+  }
+}

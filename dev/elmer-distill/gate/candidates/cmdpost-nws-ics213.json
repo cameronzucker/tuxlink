@@ -1,0 +1,39 @@
+{
+  "id": "cmdpost-nws-ics213",
+  "family": "emcomm",
+  "depth": 6,
+  "taint_state": "clean",
+  "prompt": "Get me set up: pull the NWS forecast and a propagation forecast from the request center, and stage an ICS-213 to Logistics requesting 200 gallons of unleaded for the generators.",
+  "provenance": {
+    "source": "Helene-class logistics",
+    "operator_job": "command post logistics",
+    "expected_artifact": "2 catalog requests + ICS-213",
+    "why_hard": "multi-artifact: browse the catalog, stage two distinct inquiries, and a form with a real quantity and recipient \u2014 content-checked, not tool-firing."
+  },
+  "spec": {
+    "required_tools": [
+      "catalog_list",
+      "catalog_send_inquiry",
+      "send_form"
+    ],
+    "ordering": [
+      {
+        "before": "catalog_list",
+        "after": "catalog_send_inquiry"
+      }
+    ],
+    "staged": [
+      {
+        "tool": "send_form",
+        "must_contain": [
+          "ICS-213",
+          "gasoline",
+          "Logistics"
+        ],
+        "to": null
+      }
+    ],
+    "predicates": [],
+    "accepted_alternatives": []
+  }
+}
