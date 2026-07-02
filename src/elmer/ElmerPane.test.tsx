@@ -1742,6 +1742,31 @@ describe('<ElmerPane> -- errors persist in the transcript', () => {
       'Elmer error [error]: provider error: HTTP 400',
     );
   });
+
+  it('offline (404) failures persist AND accumulate in the transcript, keeping the callout (tuxlink-6ompo)', async () => {
+    const { container } = render(<ElmerPane />);
+    // A 404 for an uninstalled model serializes as outcomeKind=offline. Before
+    // tuxlink-6ompo only the unclassified 'error' phase persisted, so iterating
+    // on a 404 erased the previous one (the operator could not capture it).
+    await fireElmerEvent<ElmerOutcomePayload>(EV_OUTCOME, {
+      kind: 'outcome',
+      outcomeKind: 'offline',
+      detail: 'model not found: nemotron-3-nano:ctx65536',
+    });
+    await fireElmerEvent<ElmerOutcomePayload>(EV_OUTCOME, {
+      kind: 'outcome',
+      outcomeKind: 'offline',
+      detail: 'model not found: gpt-oss-20b',
+    });
+
+    const errors = container.querySelectorAll('[data-testid="elmer-turn-error"]');
+    expect(errors.length).toBe(2);
+    expect(errors[0].textContent).toContain('nemotron-3-nano');
+    expect(errors[1].textContent).toContain('gpt-oss-20b');
+    // The actionable offline recovery callout still renders for the latest
+    // outcome — persistence to the transcript does NOT remove the callouts.
+    expect(screen.getByTestId('elmer-outcome-offline')).toBeTruthy();
+  });
 });
 
 // ---------------------------------------------------------------------------
