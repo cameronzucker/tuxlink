@@ -137,17 +137,30 @@ under the memory-limit cgroup loaded successfully on the iGPU, because the GPU's
 allocations are accounted differently than CPU process memory. On this host the
 iGPU is what lets the higher-quality models run at all.
 
-One operational cost accompanies the offload. On the version tested, GPU memory
-is not released when a model unloads: it persists as non-reclaimable shared memory
-(`Shmem` in `/proc/meminfo`, the `shared` column in `free`) after the model is
-dropped and `/api/ps` reports nothing loaded. It is held at the DRM/i915 driver
-level, not by the Ollama process, so **restarting the Ollama service does not
-reclaim it**. It reduces `MemAvailable` below what the next large model needs,
-so a subsequent load fails even though no model is resident and the bulk of
-`cached` is reclaimable page cache. Watch `Shmem` / the `shared` column as the
-signal. Reclaiming it requires dropping the i915 GEM caches
-(`/sys/kernel/debug/dri/0/i915_drop_caches`, root) or a reboot; on this class of
-hardware, budget for a periodic reboot when swapping models on the iGPU path.
+One operational cost accompanies the offload, and it is significant. On the
+version tested, the iGPU compute path **leaks GPU memory at the driver level**.
+When a model's inference process exits, its i915 GEM buffer objects are not
+reclaimed: they persist as non-reclaimable shared memory (`Shmem` in
+`/proc/meminfo`, the `shared` column in `free`) as orphan objects with **no owning
+process** — the inference subprocess is gone, no client holds them, yet the pages
+remain. They accumulate across runs, reducing `MemAvailable` below what the next
+model needs, so a subsequent load fails even though nothing is resident and the
+bulk of `cached` is ordinary reclaimable page cache.
+
+None of the gentle remedies reclaim it: an Ollama service restart does not (the
+leak is below the process, in the driver); the i915 GEM shrinker
+(`/sys/kernel/debug/dri/N/i915_gem_drop_caches`) retires the object handles but
+frees no pages, because the orphan objects are marked in-use with no client to
+release them. A GPU reset or reloading the i915 module would reclaim it but takes
+the display session down. In practice the only reliable clear on a desktop system
+is a **reboot**.
+
+The signal to watch is `Shmem` climbing with nothing in `/api/ps`. Budget for a
+reboot when swapping models on the iGPU path, and prefer a **headless**
+configuration: running compute on the same iGPU that drives a live desktop
+compositor and remote-desktop server multiplies the GPU clients and the leak
+surface. This cost is the counterweight to the prefill speedup — real, and to be
+planned around, not a reason to forgo the iGPU.
 
 ## Quantization is a speed dial, not just a quality dial
 
