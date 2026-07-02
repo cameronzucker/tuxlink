@@ -137,6 +137,15 @@ under the memory-limit cgroup loaded successfully on the iGPU, because the GPU's
 allocations are accounted differently than CPU process memory. On this host the
 iGPU is what lets the higher-quality models run at all.
 
+One operational cost accompanies the offload. On the Ollama version tested, the
+Vulkan backend does not release GPU memory when a model unloads: the shared/GPU
+allocation persists after the model is dropped, visible as a large and growing
+`shared` column in `free` while `/api/ps` reports nothing loaded. It accumulates
+across model switches until a subsequent large model fails to load for want of
+free memory, even though no model is resident. Restarting the Ollama service
+reclaims it. On the iGPU path, restart the service between model swaps, or
+periodically, and watch the `shared` figure as the signal.
+
 ## Quantization is a speed dial, not just a quality dial
 
 Higher quantization improves output quality at a direct speed cost. An 8-bit
