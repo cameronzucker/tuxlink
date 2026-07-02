@@ -1,0 +1,17 @@
+# Training-path deps for the micro-LoRA smoke (Codex E). Pod: A100 SXM, CUDA 12.4, torch 2.4.1.
+#
+# NOTE: gpt-oss is MXFP4; MXFP4 *training* is unsupported by frameworks — Unsloth
+# works around it (BnB NF4 + converting params to nn.Linear). Resolve the exact
+# known-good versions on the pod during the first run and RECORD the resolved
+# pins here (replace the >= with ==<resolved>) so the run is reproducible.
+#
+# Version floors known to support gpt-oss LoRA + GGUF export as of 2026-07:
+unsloth>=2026.6
+unsloth_zoo>=2026.6
+transformers>=4.55
+peft>=0.13
+trl>=0.20
+datasets>=2.20
+accelerate>=0.34
+bitsandbytes>=0.43
+# GGUF conversion is handled by unsloth's save_pretrained_gguf (bundles llama.cpp).
