@@ -939,6 +939,44 @@ describe('<ElmerPane> G2 -- detect_populates_dropdown', () => {
   });
 });
 
+describe('<ElmerPane> ModelForm -- cleared model auto-adopts a detected id (tuxlink-erqzx)', () => {
+  it('a cleared model + successful Detect persists the detected id on Save, not empty', async () => {
+    // Repro of the reported "config does not write" on the local path: a provider
+    // switch cleared the model to '' (nextModelForPreset), then Detect populated
+    // the dropdown with the Framework's sole model. The detected-models <select>
+    // is controlled by value={model}; with model='' matching no option, the
+    // browser DISPLAYS gpt-oss:20b while React state stays '', so a Save WITHOUT
+    // an explicit re-pick persisted an EMPTY model → ollama 404. The fix adopts
+    // the first detected id when the model is empty so state == what's shown.
+    const onSave = vi.fn(async () => {});
+    const onDetect = vi.fn(async () => {});
+    render(
+      <ModelForm
+        onSave={onSave}
+        onDetect={onDetect}
+        detectState={{ status: 'success', models: ['gpt-oss:20b'] }}
+        initialEndpoint="http://100.83.168.37:11434/v1/chat/completions"
+        initialModel=""
+        initialKeyStatus="absent"
+        initialTurnTimeoutSecs={900}
+      />,
+    );
+
+    // The model field auto-adopts the sole detected id (state now matches the
+    // <select>'s displayed value).
+    const modelInput = screen.getByTestId('elmer-model-input') as HTMLInputElement;
+    await waitFor(() => expect(modelInput.value).toBe('gpt-oss:20b'));
+
+    // Save WITHOUT touching the detected-models <select>.
+    fireEvent.click(screen.getByTestId('elmer-save-btn'));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ agentModel: 'gpt-oss:20b' }),
+    );
+  });
+});
+
 describe('<ElmerPane> G2 -- detect_failure_shows_inline_reason', () => {
   it('Detect failure -> inline error message renders', async () => {
     mockInvoke.mockImplementationOnce(async (cmd?: string) => {
