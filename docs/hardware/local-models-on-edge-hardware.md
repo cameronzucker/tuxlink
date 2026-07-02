@@ -25,7 +25,7 @@ hardware, including several results that contradict first-instinct assumptions.
 | SoC | Intel Core i3-N305 (Alder Lake-N, 8 Gracemont E-cores, ~15 W, AVX2, no AVX-512) |
 | RAM | ~46 GiB usable DDR5 (single dual-rank module) |
 | iGPU | Intel UHD Graphics (ADL-N), Xe-LP, 32 EUs, shares system RAM |
-| Serving | Ollama with `OLLAMA_FLASH_ATTENTION=1`, `OLLAMA_KV_CACHE_TYPE=q8_0` |
+| Serving | Ollama 0.30.11 with `OLLAMA_FLASH_ATTENTION=1`, `OLLAMA_KV_CACHE_TYPE=q8_0` |
 | Power | USB-C PD → barrel, 15 V (board nominal 12 V) |
 
 An i3-N305 with ~46 GiB is a generous member of the edge class. Smaller boards
@@ -84,23 +84,32 @@ an agentic assistant with a large tool surface the prefill dominates, because th
 model re-reads a large prompt every turn.
 
 Elmer's prompt is tool-rich by design: a compact system prompt plus the JSON
-schemas for its full tool surface, totalling on the order of 19,000 tokens per
-turn (the schemas are the overwhelming majority). That is a deliberate product
-choice, not a defect to trim. It does, however, set the prefill bill.
+schemas for its full tool surface. Measured at runtime (Ollama's
+`task.n_tokens`), a single-turn tool call runs on the order of 5,000 tokens, and
+a representative tool-heavy turn lands near 8,000; a multi-turn agentic session
+climbs past 20,000 as tool results accumulate in context. The tool schemas are
+the overwhelming majority of the fixed cost. That surface is a deliberate product
+choice, not a defect to trim. It does, however, set the prefill bill, which grows
+with the conversation rather than sitting at a flat per-turn figure.
 
 Prefill throughput measured on the reference host (tokens/second; higher is
-faster):
+faster), with the first-token latency estimated for a representative ~8k turn:
 
-| Model | Quant | Prefill (CPU) | Prefill (iGPU) | Est. 19k prefill (iGPU) |
+| Model | Quant | Prefill (CPU) | Prefill (iGPU) | Est. ~8k prefill (iGPU) |
 |---|---|---:|---:|---:|
-| qwen3:30b-a3b | q8 | *did not load* | 19.4 | ~16 min |
-| nemotron-3-nano:30b | q8 | *did not load* | 26.0 | ~12 min |
-| nemotron-3-nano:30b | q4 | 18.3 | 45.7 | ~7 min |
-| gpt-oss:20b | — | 13.5 | 50.6 | ~6 min |
-| qwen2.5:14b | q4 | 3.7 | 50.5 | ~6 min |
+| qwen3:30b-a3b | q8 | *did not load* | 19.4 | ~7 min |
+| nemotron-3-nano:30b | q8 | *did not load* | 26.0 | ~5 min |
+| nemotron-3-nano:30b | q4 | 18.3 | 45.7 | ~3 min |
+| gpt-oss:20b | — | 13.5 | 50.6 | ~2.5 min |
+| qwen2.5:14b | q4 | 3.7 | 50.5 | ~2.5 min |
 
-On CPU alone, a 19,000-token prefill runs from roughly 17 minutes (fastest model)
-to well over an hour, before a single token of output. That is not interactive.
+On CPU alone, an 8k prefill runs from roughly 7 minutes (fastest loading model)
+to over half an hour (slowest), before a single token of output. That is not
+interactive. Note that the two 30B MoE rows (qwen3-a3b, nemotron-a3b) report
+iGPU figures from runs that *happened* to complete: those models crash
+intermittently on the iGPU (see "MoE models crash on the Vulkan iGPU path"
+below), so their iGPU numbers are indicative of a path that is not currently
+reliable.
 
 ## iGPU offload
 
@@ -162,6 +171,53 @@ compositor and remote-desktop server multiplies the GPU clients and the leak
 surface. This cost is the counterweight to the prefill speedup — real, and to be
 planned around, not a reason to forgo the iGPU.
 
+## MoE models crash on the Vulkan iGPU path
+
+This is the sharpest constraint found, and it cuts against the models that are
+otherwise the best fit for edge hardware. Mixture-of-Experts (MoE) models —
+those that activate only a few billion of their total parameters per token — are
+exactly what makes a 30B model viable on a 15 W chip. On the reference host, every
+MoE model tested **aborts on the Vulkan iGPU backend** with:
+
+```
+GGML_ASSERT(id >= 0 && id < n_expert) failed
+```
+
+The process core-dumps; the request returns an HTTP 500. It reproduced across two
+different MoE architectures (a Mamba-hybrid MoE and a standard-attention MoE),
+which is the tell that it is a **backend bug, not a model bug** — `n_expert` only
+exists in MoE models, so a dense model cannot trip this assert and none did. The
+crash is intermittent because expert routing is input-dependent: one prompt
+completes, the next aborts mid-generation, often right as the model goes to emit a
+tool call.
+
+This is a known upstream defect
+([ggml-org/llama.cpp#18786](https://github.com/ggml-org/llama.cpp/issues/18786)),
+a regression the reporter also observed only on Vulkan with MoE models while dense
+models ran fine. One instance was fixed upstream in January 2026
+([PR #18945](https://github.com/ggml-org/llama.cpp/pull/18945)) — but the Ollama
+build tested here (0.30.11, released June 2026, five months after that fix) still
+aborts, and the current release (0.31.1) advertises no Vulkan MoE fix. So an
+Ollama upgrade is not a confirmed remedy; either its vendored GGML fork does not
+carry the fix, or this is a distinct live variant of a cluster of Vulkan-on-Intel
+MoE issues.
+
+The consequence is severe: the fast path (iGPU) and the capable-at-low-memory
+architecture (MoE) do not currently work together in this stack. The paths that
+*do* work:
+
+- **Dense models on the iGPU** — no experts, no assert. Fast prefill, crash-free.
+  The trade is capability: a dense 14B is less able than a 30B-A3B MoE, and a
+  dense 32B is heavy.
+- **MoE models on CPU** (`num_gpu: 0`) — slow, but stable; the CPU backend does
+  not hit the bug.
+- **Vanilla upstream llama.cpp** rather than Ollama — it carries the #18945 fix,
+  and `--n-cpu-moe` can keep expert matrices on the CPU while attention runs on
+  the GPU, sidestepping the crashing kernel.
+
+Until the backend is fixed, treat MoE-on-iGPU as unavailable and plan around dense
+models or the CPU fallback.
+
 ## Quantization is a speed dial, not just a quality dial
 
 Higher quantization improves output quality at a direct speed cost. An 8-bit
@@ -190,11 +246,15 @@ and memory; no single setting wins all three.
 ## Where local fits
 
 The honest conclusion from the measurements: on low-power edge hardware, a local
-model behind a large tool surface is a **non-interactive tier**. Even with the
-iGPU accelerating prefill, a 30B q8 model spends roughly 12–16 minutes reading a
-tool-rich prompt before answering. That suits deferred work — a task set running
-while the operator is away, an offline query answered in its own time — where
-privacy or the absence of a network is worth the wait.
+model behind a large tool surface is a **non-interactive tier**. On the iGPU, a
+single-turn tool call against a 30B q8 model takes several minutes of prefill
+before the first token, and a multi-turn agentic session lengthens as context
+grows. And the 30B models worth running are MoE, which currently crash on the
+iGPU (above), so the practical working combinations are narrower still: dense
+models on the iGPU (fast, less capable) or MoE on the CPU (capable, slow). Either
+way the latency suits deferred work — a task set running while the operator is
+away, an offline query answered in its own time — where privacy or the absence of
+a network is worth the wait.
 
 Interactive, conversational use of an agentic assistant remains the cloud path.
 Local edge hardware earns its place for offline and privacy-sensitive work that
