@@ -13,10 +13,17 @@ it filters for `functions.*` recipients (tool calls) and the `final` channel
 (the answer), which is robust to how the completion parser labels other roles.
 """
 import json
+import re
 from functools import lru_cache
 
 from openai_harmony import (load_harmony_encoding, HarmonyEncodingName,
                             Conversation, Message, Role, Author)
+
+# One Harmony segment: <|start|>{header}<|message|>{content}{terminator}
+_SEGMENT_RE = re.compile(
+    r"<\|start\|>(?P<header>.*?)<\|message\|>(?P<content>.*?)(?:<\|end\|>|<\|call\|>|<\|return\|>)",
+    re.DOTALL,
+)
 
 
 @lru_cache(maxsize=1)
@@ -67,6 +74,21 @@ def render_training_tokens(system, traj):
 def render_trajectory(system, traj):
     """Return the decoded Harmony training text for a full trajectory."""
     return _enc().decode_utf8(render_training_tokens(system, traj))
+
+
+def assistant_loss_spans(text):
+    """Character spans of assistant-generated message content in Harmony text.
+
+    Marks the analysis/commentary(tool-call)/final content the trainer should
+    compute loss on — i.e. assistant-authored segments (header starts with
+    "assistant"), excluding user/system/tool segments. The trainer refines these
+    char spans to token spans at tokenization time.
+    """
+    spans = []
+    for m in _SEGMENT_RE.finditer(text):
+        if m.group("header").lstrip().startswith("assistant"):
+            spans.append((m.start("content"), m.end("content")))
+    return spans
 
 
 def _text_of(msg_dict):
