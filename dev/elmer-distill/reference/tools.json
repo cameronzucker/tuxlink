@@ -1,0 +1,661 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "server_info",
+      "description": "Report the Tuxlink app name/version and the live egress-authority state (armed, tainted). Read-only; does not transmit or change any state.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "backend_status",
+      "description": "Report the Winlink backend (CMS engine) connection status: connected, transport, and state. Read-only.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "modem_get_status",
+      "description": "Report the current modem (ARDOP/VARA/packet) status: kind, connected, and state. Read-only.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "vara_status",
+      "description": "Report VARA modem status: connected, bandwidth, and state. Read-only.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "position_status",
+      "description": "Report THE OPERATOR'S current station location \u00e2\u0080\u0094 their Maidenhead grid square (precision-reduced to ~4 chars for privacy) and GPS fix status. Call this to answer 'where am I', 'what's near me', or any location-relative question \u00e2\u0080\u0094 do NOT ask the operator for their location; Tuxlink already knows it. Read-only.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "platform_info",
+      "description": "Report host platform info (OS, arch, app version) for diagnostics. Read-only.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "rig_status",
+      "description": "Report the rig's configured state and, best-effort, its live VFO frequency/mode/PTT via a transient rigctld read (never transmits; may report nulls if the rig is unconfigured or its serial is busy with an active session). Read-only.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_wizard_completed",
+      "description": "Report whether the first-run setup wizard has been completed. Read-only.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "p2p_peer_password_status",
+      "description": "Report whether a P2P peer password is Set (true) or NotSet (false) for the given callsign. Never returns the password itself. Read-only.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "mailbox_list",
+      "description": "List message metadata in a mailbox folder. Returns untrusted message senders/subjects, so calling this taints the session (send authority is locked until the operator re-arms).",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "message_read",
+      "description": "Read a parsed message (headers, body, attachment metadata) by folder + id. Returns untrusted content, so calling this taints the session.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "user_folders_list",
+      "description": "Enumerate mailbox folders and their message counts. Structural metadata; does not taint. Read-only.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tauri_search_run",
+      "description": "Search mailbox messages by query, optionally scoped to a folder and limited. Returns untrusted message content, so calling this taints the session.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "docs_search",
+      "description": "Search the in-app documentation by query. App-owned content; does not taint. Read-only.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "catalog_list",
+      "description": "List the Winlink Request Center query catalog: the on-demand products the operator can request over Winlink. Hundreds of items across categories such as PROPAGATION (HF propagation forecasts), METAR (airport weather), SAT_KEPS (satellite keplerian elements), AURORA, marine/ice forecasts, and ARES/RACES bulletins. Each entry has a category, a filename id (pass these ids to catalog_send_inquiry to stage a request), and a description. This is what to browse to answer 'what can I pull/request from the Request Center'; it is NOT limited to weather/GRIB. App-owned content; does not taint. Read-only.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "config_read",
+      "description": "Read the curated, non-secret top-level config (CMS connect flag, transport, host, callsign, 4-char grid). Read-only; no passwords.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "config_get_ardop",
+      "description": "Read the non-secret ARDOP modem config (host, port, drive level, bandwidth). Read-only.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "config_get_vara",
+      "description": "Read the non-secret VARA modem config (host, port, bandwidth, drive level). Read-only; no VARA license secrets.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "packet_config_get",
+      "description": "Read the non-secret packet (AX.25/KISS) config (KISS host/port, baud, TX delay). Read-only.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "config_get_rig",
+      "description": "Read the non-secret radio-level rig config (hamlib model, rigctld endpoint, CAT serial, close-serial/live-vfo/qsy flags). Read-only; no secrets.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "packet_list_serial_devices",
+      "description": "Enumerate serial devices available for a TNC/CAT connection. Read-only.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "packet_list_bluetooth_devices",
+      "description": "Enumerate Bluetooth devices (names + minimized MACs). Read-only.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "ardop_list_audio_devices",
+      "description": "Enumerate capture + playback audio devices for modem audio selection. Read-only.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "session_log_snapshot",
+      "description": "Snapshot the current session log. May contain untrusted wire content, so calling this taints the session.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "find_stations",
+      "description": "List Winlink RMS gateways for the given transports/bands (callsign, frequencies, grid, last-heard). Public directory data, cached. Read-only; does not transmit.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "modes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "vara-hf",
+                "vara-fm",
+                "ardop",
+                "telnet",
+                "packet"
+              ]
+            },
+            "description": "Restrict to these transports; empty = all."
+          },
+          "bands": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Restrict to these amateur bands e.g. \"40m\"; empty = all."
+          },
+          "history_hours": {
+            "type": "integer",
+            "description": "Only gateways heard within this many hours."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "predict_path",
+      "description": "Predict HF path reliability/SNR/MUFday by UTC hour from your station to a target grid across the given dials. Offline VOACAP. Read-only.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "rx_grid": {
+            "type": "string",
+            "description": "Target station's Maidenhead grid."
+          },
+          "frequencies_khz": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "description": "Candidate dial frequencies in kHz."
+          },
+          "gateway_antenna": {
+            "type": "string",
+            "enum": [
+              "vertical",
+              "dipole",
+              "yagi",
+              "unknown"
+            ],
+            "description": "Target gateway antenna type, if known."
+          }
+        },
+        "required": [
+          "rx_grid",
+          "frequencies_khz"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "solar_conditions",
+      "description": "Report current space-weather indices (SFI/A/K) + the sunspot number used for predictions. Public data. Read-only.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "cms_connect",
+      "description": "Connect to the configured CMS (Winlink common message server). EGRESS: requires armed send-authority and an un-tainted session; denied otherwise.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "verify_cms_connection",
+      "description": "Verify the live CMS connection with a network round-trip. EGRESS: requires armed send-authority and an un-tainted session; denied otherwise.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "rig_tune",
+      "description": "Tune the rig to a frequency (set VFO + data mode) over CAT. EGRESS (commands the radio \u00e2\u0080\u0094 same authority class as a transmit): requires armed send-authority and an un-tainted session; denied otherwise.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "ardop_connect",
+      "description": "Connect the ARDOP modem to a target station. Optional freq_hz pre-tunes the rig over CAT for the dial; optional qsy_candidates supplies an ordered frequency walk (operator-gated). EGRESS (keys the transmitter): requires armed send-authority and an un-tainted session; denied otherwise.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string"
+          },
+          "freq_hz": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "target"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "ardop_b2f_exchange",
+      "description": "Run an ARDOP B2F message exchange with a target for the given routing intent (cms/radio-only/post-office/mesh/p2p; defaults to cms). The ARDOP link is tuned at connect, so this carries no frequency/QSY params. EGRESS (keys the transmitter): requires armed send-authority and an un-tainted session; denied otherwise.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "vara_b2f_exchange",
+      "description": "Run a VARA B2F message exchange with a target for the given routing intent (cms/radio-only/post-office/mesh/p2p; defaults to cms). Optional freq_hz / qsy_candidates pre-tune + QSY-walk the dial (VARA connects + tunes + exchanges in one call). EGRESS (keys the transmitter): requires armed send-authority and an un-tainted session; denied otherwise.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string"
+          },
+          "intent": {
+            "type": "string"
+          },
+          "freq_hz": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "target"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "packet_connect",
+      "description": "Connect an AX.25 packet session to a callsign over an optional digipeater path. EGRESS (keys the transmitter): requires armed send-authority and an un-tainted session; denied otherwise.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "cms_abort",
+      "description": "Abort/disconnect the CMS connection. Stopping is always allowed (never gated).",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "modem_ardop_disconnect",
+      "description": "Disconnect the ARDOP modem. Stopping is always allowed (never gated).",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "vara_stop_session",
+      "description": "Stop the active VARA session. Stopping is always allowed (never gated).",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "config_set_ardop",
+      "description": "Set the ARDOP drive level (0..=100). WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise. An out-of-range value is rejected as invalid even when disarmed.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "config_set_vara",
+      "description": "Set the VARA bandwidth in Hz (500/2300/2750). WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise. An out-of-range value is rejected as invalid even when disarmed.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "packet_config_set",
+      "description": "Set the packet (AX.25/KISS) connection params (ssid, tcp host/port, tx delay). WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "config_set_grid",
+      "description": "Set the station grid square (Maidenhead locator). WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "position_set_source",
+      "description": "Set the position source (e.g. gps/manual). WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "config_set_privacy",
+      "description": "Set the GPS privacy: broadcast state + position precision. WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "packet_set_listen",
+      "description": "Enable or disable packet listen mode. WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "mailbox_move",
+      "description": "Move a message between mailbox folders. WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "message_attachment_save",
+      "description": "Save a message attachment to a destination path (validated to stay inside the attachment base; absolute/parent-traversal/escaping paths are rejected as invalid). WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "message_send",
+      "description": "Stage a composed message in the local outbox; returns the staged message id. No transmission occurs until a later gated connect. Validates recipients/subject/body; a malformed value (e.g. a CR/LF in an address) is rejected as invalid.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "to": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cc": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "subject": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "to",
+          "subject",
+          "body"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "send_form",
+      "description": "Stage a form submission in the local outbox; returns the staged message id. No transmission occurs until a later gated connect. Validates recipients and headers.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "catalog_send_inquiry",
+      "description": "Stage a Winlink Request Center inquiry for one or more catalog item ids (the filename ids from catalog_list) in the local outbox; returns the staged message id. Use this to request ANY catalog product \u00e2\u0080\u0094 propagation forecasts, METAR airport weather, satellite keplerian data, bulletins, marine forecasts, etc., not just GRIB weather. The requested products are delivered to the mailbox after the operator next connects (Arm to send). No transmission occurs here.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "item_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "item_ids"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "grib_send_request",
+      "description": "Stage a GRIB weather-product request in the local outbox; returns the staged message id. No transmission occurs until a later gated connect. Validates the subject header.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  }
+]
