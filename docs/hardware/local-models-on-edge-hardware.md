@@ -137,14 +137,17 @@ under the memory-limit cgroup loaded successfully on the iGPU, because the GPU's
 allocations are accounted differently than CPU process memory. On this host the
 iGPU is what lets the higher-quality models run at all.
 
-One operational cost accompanies the offload. On the Ollama version tested, the
-Vulkan backend does not release GPU memory when a model unloads: the shared/GPU
-allocation persists after the model is dropped, visible as a large and growing
-`shared` column in `free` while `/api/ps` reports nothing loaded. It accumulates
-across model switches until a subsequent large model fails to load for want of
-free memory, even though no model is resident. Restarting the Ollama service
-reclaims it. On the iGPU path, restart the service between model swaps, or
-periodically, and watch the `shared` figure as the signal.
+One operational cost accompanies the offload. On the version tested, GPU memory
+is not released when a model unloads: it persists as non-reclaimable shared memory
+(`Shmem` in `/proc/meminfo`, the `shared` column in `free`) after the model is
+dropped and `/api/ps` reports nothing loaded. It is held at the DRM/i915 driver
+level, not by the Ollama process, so **restarting the Ollama service does not
+reclaim it**. It reduces `MemAvailable` below what the next large model needs,
+so a subsequent load fails even though no model is resident and the bulk of
+`cached` is reclaimable page cache. Watch `Shmem` / the `shared` column as the
+signal. Reclaiming it requires dropping the i915 GEM caches
+(`/sys/kernel/debug/dri/0/i915_drop_caches`, root) or a reboot; on this class of
+hardware, budget for a periodic reboot when swapping models on the iGPU path.
 
 ## Quantization is a speed dial, not just a quality dial
 
