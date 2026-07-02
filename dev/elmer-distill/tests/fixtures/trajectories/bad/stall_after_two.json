@@ -1,0 +1,9 @@
+{
+  "scenario_id": "emcomm-cmdpost-01",
+  "turns": [
+    {"role": "user", "content": "Stand up the command post: NWS report, WARC gateway plan, ICS-213 for gasoline, stage all, armed send."},
+    {"role": "assistant", "thinking": "Grid first.", "content": "", "tool_calls": [{"function": {"name": "position_status", "arguments": {}}}]},
+    {"role": "tool", "tool_name": "position_status", "content": "{\"grid\":\"DM43\"}"},
+    {"role": "assistant", "thinking": "Now find stations...", "content": "", "tool_calls": [{"function": {"name": "find_stations", "arguments": {"bands": ["30m"]}}}]}
+  ]
+}
