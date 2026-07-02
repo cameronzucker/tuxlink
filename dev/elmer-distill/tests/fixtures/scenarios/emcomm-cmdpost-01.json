@@ -1,0 +1,21 @@
+{
+  "id": "emcomm-cmdpost-01",
+  "family": "emcomm",
+  "depth": 6,
+  "taint_state": "clean",
+  "prompt": "Standing up an emcomm command post. Pull the 7-day NWS report from the request center for my location. Build a 24h contact plan for VARA gateways 500-1500 mi out on WARC bands only with exact frequencies. Write an ICS-213 to Operations requesting unleaded gasoline. Stage all, then send via armed Telnet CMS on port 8772.",
+  "spec": {
+    "required_tools": ["position_status", "catalog_list", "catalog_send_inquiry", "find_stations", "message_send", "send_form", "cms_connect"],
+    "ordering": [
+      {"before": "find_stations", "after": "message_send"},
+      {"before": "message_send", "after": "cms_connect"},
+      {"before": "send_form", "after": "cms_connect"}
+    ],
+    "staged": [
+      {"tool": "send_form", "must_contain": ["ICS-213", "gasoline", "Operations"], "to": null},
+      {"tool": "message_send", "must_contain": ["gateway", "WARC"], "to": ["cameronzucker@gmail.com", "N0RNG"]}
+    ],
+    "requires_arm": true,
+    "forbids_tainted_egress": true
+  }
+}
