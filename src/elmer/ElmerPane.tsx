@@ -592,6 +592,24 @@ export function ModelForm({
     }
   }, [endpoint, keyAffordanceOrigin]);
 
+  // tuxlink-erqzx: when a Detect succeeds and the model has been cleared to ''
+  // (a provider switch runs nextModelForPreset, which blanks a no-default local
+  // model), adopt the first detected id. The detected-models <select> is
+  // controlled by `value={model}`; with model='' matching no <option>, the
+  // browser DISPLAYS the first model while React state stays '', so a Save
+  // WITHOUT an explicit re-pick persisted an EMPTY model and the endpoint 404'd
+  // ("config does not write"). Only fires while `model` is exactly empty, so a
+  // hand-typed custom model (not in the detected list) is never clobbered.
+  useEffect(() => {
+    if (
+      detectState.status === 'success' &&
+      detectState.models.length > 0 &&
+      model === ''
+    ) {
+      setModel(detectState.models[0]);
+    }
+  }, [detectState, model]);
+
   // Determine the current provider preset from the endpoint.
   const currentPreset = inferPreset(endpoint);
   const endpointIsLoopback = isLoopback(endpoint);

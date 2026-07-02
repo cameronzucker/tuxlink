@@ -137,6 +137,19 @@ export type ElmerPhase =
   | 'rateLimited'
   | 'error';
 
+// tuxlink-6ompo: terminal phases that represent a FAILED attempt the operator
+// may need to capture verbatim. Each is appended to the transcript so failures
+// ACCUMULATE in the scrollback (like a normal chat front-end) instead of a
+// single-slot callout that the next run silently overwrites — the reported bug
+// where iterating on an error erased the previous one. 'done' is success and
+// 'cancelled' is an operator abort, so neither persists; 'needsOperator' /
+// 'toolDenied' are policy gates (not failures) and keep their callouts only.
+const PERSISTED_FAILURE_PHASES: ReadonlySet<ElmerPhase> = new Set<ElmerPhase>([
+  'error',
+  'offline',
+  'rateLimited',
+]);
+
 function outcomeKindToPhase(outcomeKind: string): ElmerPhase {
   switch (outcomeKind) {
     case 'done':
@@ -347,12 +360,15 @@ export function useElmer(): UseElmer {
         setLastOutcome(outcome);
         const outcomePhase = outcomeKindToPhase(payload.outcomeKind);
         setPhase(outcomePhase);
-        // tuxlink-pgbox: persist an unclassified error into the transcript so it
-        // survives the next run (the single-slot lastOutcome would otherwise be
-        // overwritten). An errored run emits no EV_TURN, so this is the only
-        // durable, copyable record of the failure. Actionable states (offline /
-        // rateLimited / toolDenied / needsOperator) keep their callouts instead.
-        if (outcomePhase === 'error') {
+        // tuxlink-pgbox + tuxlink-6ompo: persist EVERY failed attempt (error /
+        // offline / rateLimited) into the transcript so it survives the next run
+        // (the single-slot lastOutcome would otherwise be overwritten — the
+        // reported "previous errors swallowed" bug). A failed run emits no
+        // EV_TURN, so this is the only durable, copyable record of the failure,
+        // and failures now accumulate in the scrollback. The actionable callouts
+        // (offline / rateLimited recovery, needsOperator / toolDenied gates)
+        // still render for the CURRENT outcome; this ALSO drops a history entry.
+        if (PERSISTED_FAILURE_PHASES.has(outcomePhase)) {
           setItems((prev) => [
             ...prev,
             {

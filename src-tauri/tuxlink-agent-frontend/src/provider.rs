@@ -551,8 +551,20 @@ impl SseAccumulator {
                             entry.name = name.to_string();
                         }
                     }
-                    if let Some(args) = function.get("arguments").and_then(Value::as_str) {
-                        entry.arguments.push_str(args);
+                    // `arguments` is a JSON string on the OpenAI wire (streamed in
+                    // fragments we concatenate). Some OpenAI-compat servers (newer
+                    // Gemini via `/v1beta/openai/`) instead send a COMPLETE JSON
+                    // object; serialize it into the buffer so `into_turn`'s
+                    // `from_str` recovers it identically to the string path
+                    // (tuxlink-fzj9a).
+                    match function.get("arguments") {
+                        Some(Value::String(args)) => entry.arguments.push_str(args),
+                        Some(obj @ Value::Object(_)) => {
+                            if let Ok(s) = serde_json::to_string(obj) {
+                                entry.arguments.push_str(&s);
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -831,10 +843,36 @@ pub fn parse_completion(value: &Value) -> Result<ModelTurn, String> {
 
 /// Parse a single OpenAI tool-call object into a [`ToolCall`].
 ///
-/// `function.arguments` is a JSON STRING on the wire; we parse it into a value.
-/// If it is absent / not a string / not valid JSON, we yield `Value::Null` as
-/// the args so the runner's schema validation (COR-3) catches it as malformed
-/// and re-prompts — we never silently fabricate a valid-looking object.
+/// Coerce a tool call's `function.arguments` field into a `Value`, accepting
+/// BOTH the OpenAI wire form (a JSON *string*) and the object form that many
+/// OpenAI-*compatible* servers emit.
+///
+/// The OpenAI spec specifies `arguments` as a stringified JSON object. Ollama's
+/// native path and Google's `/v1beta/openai/` layer on newer Gemini models
+/// (3.1-pro, 3.5-flash) instead return a native JSON *object*; 2.5-flash
+/// returned a string. Accepting both keeps a conforming string working while
+/// unbreaking the object emitters (tuxlink-fzj9a):
+///
+/// * `String` → parse it (unparseable → `Null`).
+/// * `Object` → use it directly.
+/// * absent / any other shape → `Null`.
+///
+/// A genuinely malformed payload still yields `Null` so the runner's COR-3
+/// schema check treats it as a malformed call and re-prompts — we never
+/// silently fabricate a valid-looking object.
+fn coerce_tool_arguments(argsv: Option<&Value>) -> Value {
+    match argsv {
+        Some(Value::String(s)) => serde_json::from_str::<Value>(s).unwrap_or(Value::Null),
+        Some(obj @ Value::Object(_)) => obj.clone(),
+        _ => Value::Null,
+    }
+}
+
+/// Parse one `choices[].message.tool_calls[]` entry into a [`ToolCall`].
+///
+/// `function.arguments` may be a JSON string (OpenAI wire form) or a JSON
+/// object (Ollama / newer-Gemini compat form); both are accepted via
+/// [`coerce_tool_arguments`].
 fn parse_tool_call(tc: &Value) -> ToolCall {
     let function = tc.get("function");
     let name = function
@@ -843,11 +881,7 @@ fn parse_tool_call(tc: &Value) -> ToolCall {
         .unwrap_or("")
         .to_string();
 
-    let args = function
-        .and_then(|f| f.get("arguments"))
-        .and_then(Value::as_str)
-        .and_then(|s| serde_json::from_str::<Value>(s).ok())
-        .unwrap_or(Value::Null);
+    let args = coerce_tool_arguments(function.and_then(|f| f.get("arguments")));
 
     ToolCall { name, args }
 }
@@ -1202,6 +1236,34 @@ mod tests {
             ModelTurn::ToolCalls(calls) => {
                 assert_eq!(calls[0].name, "echo");
                 assert_eq!(calls[0].args, Value::Null);
+            }
+            other => panic!("expected ToolCalls, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_tool_call_arguments_as_object() {
+        // Newer Gemini (3.1-pro / 3.5-flash) via `/v1beta/openai/` returns
+        // `function.arguments` as a native JSON OBJECT, not the OpenAI wire
+        // string. It MUST parse to the object, NOT Null — Null makes the runner
+        // treat every call as malformed and re-prompt in a loop (tuxlink-fzj9a).
+        let recorded = json!({
+            "choices": [{
+                "message": {
+                    "tool_calls": [{
+                        "function": {
+                            "name": "find_stations",
+                            "arguments": { "grid": "DM79", "band": "20m" }
+                        }
+                    }]
+                }
+            }]
+        });
+        match parse_completion(&recorded).unwrap() {
+            ModelTurn::ToolCalls(calls) => {
+                assert_eq!(calls.len(), 1);
+                assert_eq!(calls[0].name, "find_stations");
+                assert_eq!(calls[0].args, json!({ "grid": "DM79", "band": "20m" }));
             }
             other => panic!("expected ToolCalls, got {other:?}"),
         }
@@ -1606,6 +1668,32 @@ mod tests {
             ModelTurn::ToolCalls(calls) => {
                 assert_eq!(calls[0].name, "echo");
                 assert_eq!(calls[0].args, Value::Null);
+            }
+            other => panic!("expected ToolCalls, got {other:?}"),
+        }
+    }
+
+    /// Newer Gemini (3.1-pro / 3.5-flash) via `/v1beta/openai/` streams
+    /// `function.arguments` as a COMPLETE JSON object rather than fragmented
+    /// strings. It must assemble into the object, not `Null` (which would make
+    /// the runner treat the call as malformed and loop). tuxlink-fzj9a.
+    #[test]
+    fn stream_tool_call_object_arguments() {
+        let sink = |_e: RunEvent| {};
+        let mut acc = SseAccumulator::new();
+        let body = sse_frame(json!({ "choices": [{ "delta": { "tool_calls": [
+            { "index": 0, "function": {
+                "name": "find_stations",
+                "arguments": { "grid": "DM79", "band": "20m" }
+            } }
+        ] } }] }));
+        acc.feed(body.as_bytes(), &sink).unwrap();
+
+        match acc.into_turn() {
+            ModelTurn::ToolCalls(calls) => {
+                assert_eq!(calls.len(), 1);
+                assert_eq!(calls[0].name, "find_stations");
+                assert_eq!(calls[0].args, json!({ "grid": "DM79", "band": "20m" }));
             }
             other => panic!("expected ToolCalls, got {other:?}"),
         }
