@@ -40,16 +40,19 @@ then FREEZES. Only after freeze does the calibration run (over the frozen suite)
 Known-weaker scenarios flagged for red-team: `aprs-locate-followup` + `aprs-injection-refuse` grade tool-behavior,
 not answer prose (Codex finding 6, documented limitation).
 
-## PENDING — Stage-2 training-path BLOCKER (pod)
+## Stage-2 training pipeline — DE-RISKED (smoke ALL STAGES PASS end-to-end)
 
-The micro-LoRA smoke **FAILED at the expert-LoRA assertion** (attention-only; MoE experts untrained — Codex-B
-underfit). Root cause: `unsloth/gpt-oss-20b` exposes experts as per-expert `mlp.experts.gate_up_projs.<i>` (plural),
-but unsloth 2026.6.9 MoE targeting hard-codes the singular fused `mlp.experts.gate_up_proj`. Verified across
-transformers 4.55.4/4.57.6/5.5.0 (NOT a transformers-version issue; trl also needs ≥4.56.1). Full analysis +
-resolved pins + `diag_moe.py` diagnostic in `dev/elmer-distill/smoke/` (SMOKE-RESULT-2026-07-02.md).
-**Resolve deliberately (not GPU trial-and-error):** match unsloth's exact tested gpt-oss env OR regex-target the
-per-expert Linears; assert expert params `requires_grad` before any gold-gen spend. `diag_moe.py` is the cheap
-inner loop (~1-2 min load, no GGUF/ollama). GGUF/ollama export path is still un-smoked (stages 3-5 never reached).
+The micro-LoRA smoke initially failed (attention-only), which caught a real trap; it is now **RESOLVED and the
+full pipeline PASSES**: load → attn+expert LoRA (router excluded) → 10 trl steps → GGUF → ollama → valid tool call.
+- **Fix:** unsloth 2026.6.9's `FastLanguageModel.get_peft_model` trains attention only (its MoE targeting
+  hard-codes singular `mlp.experts.gate_up_proj`; the model has 1536 per-expert `experts.{gate_up_projs,down_projs}.<i>`
+  Linear4bit modules). Bypass it: `peft.get_peft_model` directly with per-expert `target_modules` +
+  `enable_input_require_grads()` (see `smoke/micro_lora_smoke.py::_attach_lora`). trainable=3264, EXPERT=3072, router=0.
+- **GGUF gotcha:** unsloth `save_pretrained_gguf` FAILS on bnb-4bit ("Quant method not supported: bitsandbytes").
+  Workaround proven in `smoke/gguf_export.py`: reload base bf16 → merge adapter → convert that → ollama. OR skip
+  GGUF and serve merged bf16 via vLLM for gold-gen.
+- Full recipe + resolved pins + diagnostics (`diag_experts.py` cracked it) in `dev/elmer-distill/smoke/`
+  (SMOKE-RESULT-2026-07-02.md, requirements-train.txt). Stage-2 gold-gen + real LoRA is unblocked pending the frozen gate.
 
 ## Pod state (RunPod A100-SXM4-80GB)
 
