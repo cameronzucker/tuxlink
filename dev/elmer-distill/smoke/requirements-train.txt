@@ -1,14 +1,46 @@
-# Training-path deps for the micro-LoRA smoke (Codex E). Pod: A100 SXM, CUDA 12.4, torch 2.4.1.
+# Training-path deps for the micro-LoRA smoke (Codex E).
+# Pod: RunPod A100-SXM4-80GB. Base image torch 2.4.1+cu124; the unsloth install
+# below UPGRADES the CUDA stack to torch 2.10.0+cu128 (CUDA still available, GPU OK).
 #
 # NOTE: gpt-oss is MXFP4; MXFP4 *training* is unsupported by frameworks — Unsloth
-# works around it (BnB NF4 + converting params to nn.Linear). Resolve the exact
-# known-good versions on the pod during the first run and RECORD the resolved
-# pins here (replace the >= with ==<resolved>) so the run is reproducible.
+# works around it (BnB NF4 + converting expert params to nn.Linear).
 #
-# Version floors known to support gpt-oss LoRA + GGUF export as of 2026-07:
+# =========================== RESOLVED PINS (2026-07-02, vetch-sage-oak) =========
+# What `pip install` resolved on the pod from the floors below. NOT yet proven
+# end-to-end — see the BLOCKER note; the smoke FAILED at the expert-LoRA assertion.
+#   unsloth==2026.6.9    unsloth_zoo==2026.6.7   peft==0.19.1     trl==0.24.0
+#   transformers==4.57.6 (also tested 4.55.4 and 5.5.0 — see blocker)
+#   datasets==4.3.0      accelerate==1.14.0      bitsandbytes==0.49.2
+#   torch==2.10.0+cu128  triton==3.6.0           xformers==0.0.35  tokenizers==0.21.4
+#
+# ============================ !! STAGE-2 BLOCKER !! =============================
+# The micro-LoRA smoke FAILED at stage 2 (target-param assertion): only attention
+# q/k/v/o got trainable LoRA; the MoE EXPERTS did NOT (attention-only underfits —
+# exactly the Codex-B failure the smoke exists to catch).
+#
+# ROOT CAUSE (verified across transformers 4.55.4 / 4.57.6 / 5.5.0):
+# `unsloth/gpt-oss-20b` exposes experts as PER-EXPERT params
+#   model.layers.N.mlp.experts.gate_up_projs.<i>.weight   (plural "gate_up_projs")
+# but unsloth 2026.6.9's internal MoE-LoRA targeting hard-codes the SINGULAR fused
+# name `mlp.experts.gate_up_proj`, so PEFT logs "set target_parameters but found no
+# matching parameters" and attaches nothing to the experts. It is NOT a transformers
+# version issue (all three exposed the plural layout). trl 0.24.0 also requires
+# transformers>=4.56.1, so 4.55.x is not viable regardless.
+#
+# TO RESOLVE (next session, deliberate — NOT GPU trial-and-error):
+#   1. Match unsloth's EXACT tested gpt-oss environment (their official Colab pins)
+#      where the nn.Parameter->nn.Linear expert conversion fires; OR
+#   2. Manually regex target the per-expert Linears, e.g. target_modules matching
+#      r".*mlp\.experts\.(gate_up_projs|down_projs)\.\d+$" (+ the attention projs),
+#      bypassing unsloth's singular-name mapping; verify expert params become
+#      requires_grad before spending on gold-gen.
+#   Diagnostic used: smoke/diag_moe.py (prints expert param names + trainable counts).
+# ================================================================================
+#
+# Version floors (unchanged; the resolved pins above are what these produced):
 unsloth>=2026.6
 unsloth_zoo>=2026.6
-transformers>=4.55
+transformers>=4.56.1,<5      # trl needs >=4.56.1; <5 avoids the 5.x churn (layout is identical either way)
 peft>=0.13
 trl>=0.20
 datasets>=2.20
