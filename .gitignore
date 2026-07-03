@@ -98,3 +98,6 @@ src-tauri/gen/
 
 # Phase 1 antenna pattern generator (dev tool) build output
 tools/pattern-gen/target/
+
+# Elmer eval run outputs — per-run local artifacts (large, regenerable, per-machine)
+dev/elmer-distill/eval-runs/
