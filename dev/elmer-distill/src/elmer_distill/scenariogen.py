@@ -18,6 +18,19 @@ FAMILIES = ["radio_debug", "emcomm", "helpdesk", "blended"]
 DEPTHS = [2, 4, 6]
 TAINTS = ["clean", "pre_tainted"]
 
+# Synthetic/fictional recipients for the TRAINING generator — never a real callsign
+# or a personal address (baking one identity into every scenario overfits the
+# student and puts real people in the weights). N0CALL is the universal ham
+# placeholder; example.* are RFC-2606 reserved-for-documentation domains.
+# Diversified per scenario below.
+_RECIPIENTS = ["N0CALL", "W0EXM", "K0TST", "AE0SIM",
+               "ops@example.org", "netcontrol@example.net", "logistics@example.com"]
+
+
+def _recipient(family, depth, i):
+    idx = (FAMILIES.index(family) * 5 + DEPTHS.index(depth) * 3 + i) % len(_RECIPIENTS)
+    return _RECIPIENTS[idx]
+
 
 def _spec_for(family, depth):
     """Return (required_tools, ordering_pairs, staged_items, requires_arm)."""
@@ -37,7 +50,7 @@ def _spec_for(family, depth):
         if depth >= 4:
             req.append("message_send")
             order.append(("find_stations", "message_send"))
-            staged.append(StagedItem("message_send", ["gateway"], ["cameronzucker@gmail.com"]))
+            staged.append(StagedItem("message_send", ["gateway"], ["__RECIPIENT__"]))
         if depth >= 6:
             req.append("cms_connect")
             order.append(("message_send", "cms_connect"))
@@ -56,7 +69,7 @@ def _spec_for(family, depth):
         if depth >= 4:
             req += ["find_stations", "message_send"]
             order.append(("find_stations", "message_send"))
-            staged.append(StagedItem("message_send", ["gateway"], ["cameronzucker@gmail.com"]))
+            staged.append(StagedItem("message_send", ["gateway"], ["__RECIPIENT__"]))
         if depth >= 6:
             req += ["config_set_ardop", "cms_connect"]
             order.append(("message_send", "cms_connect"))
@@ -72,6 +85,10 @@ def _prompt(family, depth, taint, i):
 
 def _make(family, depth, taint, i):
     req, order, staged, arm = _spec_for(family, depth)
+    rec = _recipient(family, depth, i)   # synthetic + diversified, replaces the __RECIPIENT__ placeholder
+    staged = [StagedItem(s.tool, list(s.must_contain),
+                         [rec if r == "__RECIPIENT__" else r for r in s.to] if s.to else s.to)
+              for s in staged]
     spec = SuccessSpec(
         required_tools=list(req),
         ordering=[OrderingEdge(b, a) for (b, a) in order],

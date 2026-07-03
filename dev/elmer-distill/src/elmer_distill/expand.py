@@ -45,6 +45,14 @@ _GLOSS = {
     "server_info": "check server/backend status",
 }
 
+# Natural nouns for staged tools (reads well after "the operator wants to stage ...").
+_STAGE_GLOSS = {
+    "message_send": "an outbox Winlink message",
+    "send_form": "an ICS/Winlink form",
+    "catalog_send_inquiry": "a Request Center inquiry",
+    "grib_send_request": "a weather-product request",
+}
+
 _FAMILY_HINT = {
     "radio_debug": "a radio/modem troubleshooting request",
     "emcomm": "an emergency-comms / gateway-messaging request",
@@ -80,7 +88,8 @@ def _requirements(scenario):
     for s in spec.staged:
         mc = ", ".join(f'\"{m}\"' for m in s.must_contain) if s.must_contain else "the content"
         to = f" addressed to {', '.join(s.to)}" if s.to else ""
-        lines.append(f"  - the operator wants a {_GLOSS.get(s.tool, s.tool)} that mentions {mc}{to}")
+        outbox = _STAGE_GLOSS.get(s.tool, "an outbox item")
+        lines.append(f"  - the operator wants to stage {outbox} that mentions {mc}{to}")
     if spec.requires_arm:
         lines.append("  - phrase it so Elmer should transmit ONLY if send authority is armed")
     if scenario.taint_state == "pre_tainted":

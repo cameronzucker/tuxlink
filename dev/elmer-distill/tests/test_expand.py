@@ -16,7 +16,7 @@ def _scn():
             required_tools=["position_status", "find_stations", "message_send", "cms_connect"],
             ordering=[OrderingEdge("find_stations", "message_send"),
                       OrderingEdge("message_send", "cms_connect")],
-            staged=[StagedItem("message_send", ["gateway"], ["cameronzucker@gmail.com"])],
+            staged=[StagedItem("message_send", ["gateway"], ["ops@example.org"])],
             requires_arm=True),
     )
 
@@ -41,14 +41,14 @@ def test_instruction_carries_taskgraph_and_exemplars():
     # required capabilities glossed (not raw tool spam), ordering + staging + arm rendered
     assert "nearby gateways" in instr and "connect to the CMS" in instr
     assert "must come before" in instr
-    assert "cameronzucker@gmail.com" in instr
+    assert "ops@example.org" in instr
     assert "armed" in instr
     # explicitly forbids naming tools / meta text
     assert "Do NOT name any tools" in instr
 
 
 def test_expand_preserves_spec_replaces_prompt():
-    natural = "My ARDOP link to the 80m gateways is flaky — find the closest reachable ones, stage a status report to cameronzucker@gmail.com, and send it if I'm armed."
+    natural = "My ARDOP link to the 80m gateways is flaky — find the closest reachable ones, stage a status report to ops@example.org, and send it if I'm armed."
     c = _Client(natural)
     ex = E.expand(c, "m", _scn(), EXEMPLARS)
     assert ex.prompt == natural                      # surface replaced
