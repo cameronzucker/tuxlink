@@ -1,8 +1,38 @@
 # Handoff — Elmer discriminating-eval: grader hardening, calibration, multi-model council
 
 **Agent:** gulch-vale-marten · **Date:** 2026-07-03 · **bd:** tuxlink-6zkb6
-**Branch:** `bd-tuxlink-6zkb6/discriminating-eval` · **HEAD:** `f63e835c` · **all pushed** · **141 tests green**
+**Branch:** `bd-tuxlink-6zkb6/discriminating-eval` · **all pushed** · **142 tests green**
 **Worktree:** `worktrees/bd-tuxlink-6zkb6-discriminating-eval/` (bd-owned)
+
+## COUNCIL RESULT (final) — union 14/16, diversity ROI ≈ 0 beyond gpt-oss+qwen
+
+Full 5-model best-of-5 council over the 16-gate. Gold is union-claimed (first model to cover a
+scenario owns it):
+
+| model | new scenarios covered |
+|---|---|
+| **gpt-oss:120b** | **13/16** (the workhorse) |
+| **qwen2.5:72b** | **+1** (`taint-refuse-inbox-send` — clean-before-taint, 1/5) |
+| llama3.3:70b | +0 |
+| nemotron:70b | +0 — **0/16 overall, unusable here** (heavy CoT → no clean tool trajectories) |
+| gemma3:27b | +0 — **can't tool-call in ollama** (known Gemma limitation; all cells 0/5) |
+
+**Union: 14/16. Uncovered (hard tail): `blended-fix-and-send`, `cmdpost-rotation-80m`.**
+
+- **Diversity ROI finding:** the whole committee's coverage = gpt-oss-120b + one diverse backup (qwen).
+  llama/nemotron/gemma added nothing. **Gold-gen over the generator pool needs only a LEAN gpt-oss:120b
+  (+ optional qwen:72b) teacher, not 5** — big cost/time simplification. Nemotron/gemma are net-negative
+  here; drop them.
+- **`cmdpost-rotation-80m` verdict = GENUINE HARD (stretch marker), NOT a defect.** Both teacher-120b and
+  base-20b skip `predict_path` + `cms_connect` (stage a plan from find_stations alone), so the required
+  5-tool orchestration is the real wall. Secondary nuance: `references_real_gateway` doesn't credit
+  bare-decimal MHz (`3.585` without unit) — but that's defensible strictness (`3.585 MHz`/`3585 kHz`
+  would count), not why it's uncovered. No fix needed; it's a legitimate frontier scenario. (Same class as
+  `blended-fix-and-send`: evidence-grounding under load.)
+- Per operator decision: uncovered = stretch markers, NO frontier gold. These 2 become slice-2's target band.
+- Council gold (14 scenarios) pulled to `eval-runs/council/gold/`. Crashed-run-1 partial preserved.
+
+## Prior-session in-flight (now superseded by the result above)
 
 ## One-paragraph frame
 
