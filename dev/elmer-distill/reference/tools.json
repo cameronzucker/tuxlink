@@ -619,10 +619,27 @@
     "type": "function",
     "function": {
       "name": "send_form",
-      "description": "Stage a form submission in the local outbox; returns the staged message id. No transmission occurs until a later gated connect. Validates recipients and headers.",
+      "description": "Stage a standard ICS/Winlink form (e.g. ICS-213) into the local outbox. form = form type (e.g. \"ICS-213\"); to = recipient/role (e.g. \"Logistics\"); body = the message/request text (include quantities, resource names, and details). Staging is local and always available regardless of send authority.",
       "parameters": {
         "type": "object",
-        "properties": {}
+        "properties": {
+          "form": {
+            "type": "string",
+            "description": "Form type, e.g. \"ICS-213\"."
+          },
+          "to": {
+            "type": "string",
+            "description": "Recipient or role, e.g. \"Logistics\"."
+          },
+          "body": {
+            "type": "string",
+            "description": "The request/message text (quantities, resources, details)."
+          }
+        },
+        "required": [
+          "form",
+          "body"
+        ]
       }
     }
   },
@@ -728,7 +745,7 @@
     "type": "function",
     "function": {
       "name": "aprs_send_message",
-      "description": "Send a message over APRS. With `to` set, sends an addressed APRS message to that station; with `to` omitted, broadcasts to the open tactical-chat channel (all stations). Payload is capped at 67 characters (APRS limit) — an over-length text is rejected as invalid even when disarmed. EGRESS (keys the transmitter): the actual send requires armed send-authority and an un-tainted session; denied otherwise.",
+      "description": "Send a message over APRS. With `to` set, sends an addressed APRS message to that station; with `to` omitted, broadcasts to the open tactical-chat channel (all stations). Payload is capped at 67 characters (APRS limit) \u2014 an over-length text is rejected as invalid even when disarmed. EGRESS (keys the transmitter): the actual send requires armed send-authority and an un-tainted session; denied otherwise.",
       "parameters": {
         "type": "object",
         "properties": {

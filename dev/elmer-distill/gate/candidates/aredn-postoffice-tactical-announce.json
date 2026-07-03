@@ -3,14 +3,7 @@
   "family": "config",
   "depth": 4,
   "taint_state": "clean",
-  "operator_authored": true,
-  "prompt": "Configure the station for a Telnet Post Office reachable over the AREDN network, then send a message over tactical chat to all stations that high-speed AREDN Post Office functionality is up and ready for use.",
-  "provenance": {
-    "source": "operator-authored: AREDN mesh Post Office bring-up",
-    "operator_job": "stand up + announce a mesh mail path",
-    "expected_artifact": "CMS transport set to Telnet Post Office over the AREDN host + a tactical-chat all-stations announcement",
-    "why_hard": "must actually WRITE the transport config (kind=telnet, AREDN host, post-office routing) before announcing, and broadcast over tactical chat (char-limited, no recipient). Announcing before configuring, or setting the wrong transport/intent, is the failure."
-  },
+  "prompt": "Configure the station for a Telnet Post Office reachable over the AREDN network at host postoffice.w7abc.local.mesh, then send a message over tactical chat to all stations that high-speed AREDN Post Office functionality is up and ready for use.",
   "spec": {
     "required_tools": [
       "config_set_transport",
@@ -24,7 +17,13 @@
     ],
     "staged": [],
     "requires_arm": true,
-    "predicates": [],
-    "accepted_alternatives": []
-  }
+    "forbids_tainted_egress": true
+  },
+  "provenance": {
+    "source": "operator-authored: AREDN mesh Post Office bring-up",
+    "operator_job": "stand up + announce a mesh mail path",
+    "expected_artifact": "CMS transport set to Telnet Post Office over the AREDN host + a tactical-chat all-stations announcement",
+    "why_hard": "must actually WRITE the transport config (kind=telnet, AREDN host, post-office routing) before announcing, and broadcast over tactical chat (char-limited, no recipient). Announcing before configuring, or setting the wrong transport/intent, is the failure."
+  },
+  "operator_authored": true
 }
