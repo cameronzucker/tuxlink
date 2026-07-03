@@ -13,28 +13,27 @@
 #   datasets==4.3.0      accelerate==1.14.0      bitsandbytes==0.49.2
 #   torch==2.10.0+cu128  triton==3.6.0           xformers==0.0.35  tokenizers==0.21.4
 #
-# ============================ !! STAGE-2 BLOCKER !! =============================
-# The micro-LoRA smoke FAILED at stage 2 (target-param assertion): only attention
-# q/k/v/o got trainable LoRA; the MoE EXPERTS did NOT (attention-only underfits —
-# exactly the Codex-B failure the smoke exists to catch).
+# ===================== STAGE-2 MoE-LoRA BLOCKER — RESOLVED ======================
+# The micro-LoRA smoke initially FAILED at stage 2: only attention got LoRA; the MoE
+# EXPERTS did not (attention-only underfits — Codex-B). RESOLVED 2026-07-02: the
+# TRAINING PATH now PASSES (load + attn/expert LoRA + 10 backprop steps).
 #
-# ROOT CAUSE (verified across transformers 4.55.4 / 4.57.6 / 5.5.0):
-# `unsloth/gpt-oss-20b` exposes experts as PER-EXPERT params
-#   model.layers.N.mlp.experts.gate_up_projs.<i>.weight   (plural "gate_up_projs")
-# but unsloth 2026.6.9's internal MoE-LoRA targeting hard-codes the SINGULAR fused
-# name `mlp.experts.gate_up_proj`, so PEFT logs "set target_parameters but found no
-# matching parameters" and attaches nothing to the experts. It is NOT a transformers
-# version issue (all three exposed the plural layout). trl 0.24.0 also requires
-# transformers>=4.56.1, so 4.55.x is not viable regardless.
+# ROOT CAUSE: `unsloth/gpt-oss-20b` exposes experts as 1536 per-expert Linear4bit
+# modules `model.layers.N.mlp.experts.{gate_up_projs,down_projs}.<i>`, but unsloth
+# 2026.6.9's FastLanguageModel.get_peft_model MoE handling hard-codes the singular
+# fused `mlp.experts.gate_up_proj` and its finetune-filters strip explicit expert
+# targets -> attaches nothing. NOT a transformers-version issue (identical layout on
+# 4.55.4 / 4.57.6 / 5.5.0).
 #
-# TO RESOLVE (next session, deliberate — NOT GPU trial-and-error):
-#   1. Match unsloth's EXACT tested gpt-oss environment (their official Colab pins)
-#      where the nn.Parameter->nn.Linear expert conversion fires; OR
-#   2. Manually regex target the per-expert Linears, e.g. target_modules matching
-#      r".*mlp\.experts\.(gate_up_projs|down_projs)\.\d+$" (+ the attention projs),
-#      bypassing unsloth's singular-name mapping; verify expert params become
-#      requires_grad before spending on gold-gen.
-#   Diagnostic used: smoke/diag_moe.py (prints expert param names + trainable counts).
+# FIX (see smoke/micro_lora_smoke.py::_attach_lora + SMOKE-RESULT-2026-07-02.md):
+# bypass the unsloth wrapper; drive peft.get_peft_model directly with target_modules =
+# attention projs + discovered per-expert suffixes (gate_up_projs.<i>, down_projs.<i>),
+# then enable_input_require_grads(). Yields trainable=3264 (EXPERT=3072, attn=96,
+# router=0). Diagnostic that cracked it: smoke/diag_experts.py.
+#
+# RESIDUAL (serving path, not training): GGUF export via unsloth fails on bnb-4bit
+# ("Quant method not yet supported: 'bitsandbytes'"). Workaround in smoke/gguf_export.py:
+# reload base in bf16, merge adapter, convert THAT to GGUF. Or serve merged via vLLM.
 # ================================================================================
 #
 # Version floors (unchanged; the resolved pins above are what these produced):

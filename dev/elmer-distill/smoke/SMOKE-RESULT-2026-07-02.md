@@ -1,46 +1,51 @@
 # micro-LoRA smoke result — 2026-07-02 (vetch-sage-oak)
 
-**Verdict: FAIL at stage 2 (expected/useful failure).** The training-path de-risker
-did its job — it caught that the resolved environment trains **attention only**, not
-the MoE experts, which would silently underfit Stage-2 (Codex-B failure mode).
+**TRAINING PATH: PASS.** After root-causing + fixing the MoE-targeting blocker, the
+de-risker's core purpose is met: gpt-oss-20b loads, LoRA attaches to **attention +
+all 32 experts (router excluded)**, and **10 training steps backprop cleanly**.
+GGUF/ollama export (serving path) has a separate residual — see below.
 
-## Pod / environment
+## The fix (MoE expert LoRA targeting)
 
-- RunPod A100-SXM4-80GB. Base image torch 2.4.1+cu124; unsloth install upgraded to
-  **torch 2.10.0+cu128** (CUDA still available, GPU visible: "CUDA: 8.0, Toolkit 12.8").
-- ollama 0.31.1 installed (needed `zstd`) + serving on :11434.
-- Resolved pins recorded in `requirements-train.txt`.
+`unsloth/gpt-oss-20b` exposes experts as **1536 per-expert `Linear4bit` modules**
+(`model.layers.N.mlp.experts.{gate_up_projs,down_projs}.<i>`), but unsloth 2026.6.9's
+`FastLanguageModel.get_peft_model` MoE handling hard-codes the singular fused name
+`mlp.experts.gate_up_proj` and its finetune-filters strip explicit expert targets — so
+it silently trained **attention only** (Codex-B underfit).
 
-## What passed
+**Fix (in `micro_lora_smoke.py::_attach_lora`):** bypass the unsloth wrapper and drive
+`peft.get_peft_model` directly with `target_modules` = attention projs + the discovered
+per-expert suffixes (`gate_up_projs.<i>`, `down_projs.<i>`), then `enable_input_require_grads()`.
+Result: `trainable=3264, EXPERT=3072 (1536 modules × lora_A/B), attn=96, router=0`.
 
-- Stage 1: `unsloth/gpt-oss-20b` downloaded (4 files) + loaded 4-bit via Unsloth. ✅
-- Attention LoRA attaches: q/k/v/o trainable (96 attn tensors, 192 total). ✅
+## Stages
 
-## What failed (the finding)
+- Stage 1 (load 4-bit): PASS ✅
+- Stage 2 (assert attn+expert trainable, router excluded): PASS ✅ (was the failure before the fix)
+- Stage 3 (10 training steps, trl SFTTrainer): PASS ✅ — `[SMOKE] TRAINING PATH PASS`
+- Stage 4 (GGUF export): **FAIL (separate, downstream)** — unsloth's gpt-oss llama.cpp
+  converter raises `NotImplementedError: Quant method is not yet supported: 'bitsandbytes'`;
+  it can't dequant a bnb-4bit model to GGUF.
+- Stage 5 (ollama tool-call): not reached (needs stage 4).
 
-- Stage 2 assertion `hit_expert`: **0 expert params trainable.** Only attention got LoRA.
-- Root cause (verified across transformers **4.55.4 / 4.57.6 / 5.5.0** — all identical):
-  the model exposes experts as per-expert params
-  `model.layers.N.mlp.experts.gate_up_projs.<i>.weight` (plural `gate_up_projs`),
-  but unsloth 2026.6.9's internal MoE-LoRA targeting hard-codes the singular fused
-  name `mlp.experts.gate_up_proj` → PEFT logs *"set target_parameters but found no
-  matching parameters"* and attaches nothing to the experts.
-- Not a transformers-version issue; all three exposed the plural layout. trl 0.24.0
-  also pins transformers>=4.56.1, so 4.55.x isn't viable anyway.
+## GGUF/ollama export residual + resolution
 
-## Resolution path (next session — deliberate, NOT GPU trial-and-error)
+`save_pretrained_gguf` on the bnb-4bit model fails because unsloth's gpt-oss GGUF path
+doesn't dequant `bitsandbytes`. This is a **serving/export** issue, orthogonal to whether
+training works (it does). Resolution path (for the real Stage-2 pipeline, not a training gate):
+1. Reload the base in **bf16** (not 4-bit), apply the trained adapter, `merge_and_unload()`,
+   save a plain bf16 model, then run `unsloth_convert_hf_to_gguf.py --outtype bf16` on that
+   (no bnb quant to dequant). `smoke/gguf_export.py` prototypes this. OR
+2. Serve the merged model directly via vLLM / transformers (skip GGUF/ollama) — gold-gen
+   and acceptance-eval only need inference, not specifically ollama.
 
-1. Reproduce unsloth's EXACT tested gpt-oss env (their official Colab pins) where the
-   `nn.Parameter -> nn.Linear` expert conversion fires; OR
-2. Manually regex-target the per-expert Linears
-   (`r".*mlp\.experts\.(gate_up_projs|down_projs)\.\d+$"` + attention projs), bypassing
-   unsloth's singular-name mapping; assert `requires_grad` on expert params before spend.
+## Resolved environment (pod, what actually ran the PASS)
 
-`smoke/diag_moe.py` is the standalone diagnostic (prints expert param names + trainable
-counts per targeting approach) — run it first each attempt; it loads in ~1-2 min from
-the HF cache and needs no GGUF/ollama, so it's the cheap inner loop.
+A100-SXM4-80GB. torch 2.10.0+cu128, unsloth 2026.6.9, unsloth_zoo 2026.6.7, peft 0.19.1,
+trl 0.24.0, transformers **4.55.4** (training passed; trl warns it wants >=4.56.1 but it ran —
+4.57.6 also fine; the per-expert layout is identical across 4.55/4.57/5.5, so the version is
+NOT the expert issue), bitsandbytes 0.49.2, accelerate 1.14.0, datasets 4.3.0, triton 3.6.0,
+xformers 0.0.35. ollama 0.31.1.
 
-## Not reached
-
-Stages 3-5 (10 training steps, GGUF export, ollama load, tool-call) were never run —
-no point training a crippled adapter. GGUF/ollama path is therefore still un-smoked.
+Diagnostics kept in `smoke/`: `diag_experts.py` (module discovery — the one that cracked it),
+`diag_moe.py` / `diag_peft.py` (targeting attempts).

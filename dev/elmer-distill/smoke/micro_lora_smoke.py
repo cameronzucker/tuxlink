@@ -29,6 +29,31 @@ TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj"
 ROUTER_FORBIDDEN = ("router", "gate.weight", "mlp.gate")   # must NOT be trainable
 
 
+def _attach_lora(model):
+    """Attach LoRA to attention + ALL MoE experts, router excluded.
+
+    unsloth 2026.6.9's FastLanguageModel.get_peft_model silently drops the gpt-oss
+    experts: its MoE targeting hard-codes the singular fused name `mlp.experts.gate_up_proj`,
+    but the model exposes per-expert `experts.gate_up_projs.<i>` Linear4bit modules, so
+    nothing matches (attention-only -> underfits, Codex-B). Drive PEFT directly with
+    explicit per-expert target_modules instead. (tuxlink-6zkb6, 2026-07-02.)
+    """
+    import re
+    from peft import LoraConfig, get_peft_model
+    mods = [n for n, _ in model.named_modules()]
+    expert_suffixes = sorted(set(
+        re.search(r"(gate_up_projs|down_projs)\.\d+$", n).group(0)
+        for n in mods if re.search(r"experts\.(gate_up_projs|down_projs)\.\d+$", n)))
+    if not expert_suffixes:
+        raise RuntimeError("no per-expert modules found — model layout changed; re-check diag_experts.py")
+    cfg = LoraConfig(
+        r=16, lora_alpha=32, lora_dropout=0.0, bias="none", task_type="CAUSAL_LM",
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj"] + expert_suffixes)
+    peft_model = get_peft_model(model, cfg)
+    peft_model.enable_input_require_grads()   # backprop through the frozen 4-bit base
+    return peft_model
+
+
 def stage(msg):
     print(f"[SMOKE] {msg}", flush=True)
 
@@ -44,10 +69,9 @@ def main():
     from unsloth import FastLanguageModel
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=MODEL_ID, max_seq_length=4096, load_in_4bit=True, dtype=None)
-    model = FastLanguageModel.get_peft_model(
-        model, r=16, lora_alpha=32, target_modules=TARGET_MODULES,
-        use_gradient_checkpointing="unsloth", random_state=0)
-    stage("model + LoRA adapter loaded")
+    model.gradient_checkpointing_enable()
+    model = _attach_lora(model)   # raw PEFT, per-expert MoE targeting (unsloth wrapper drops experts)
+    stage("model + LoRA adapter loaded (attention + all experts, router excluded)")
 
     # --- Stage 2: assert trainable param names ---
     trainable = [n for n, p in model.named_parameters() if p.requires_grad]
@@ -78,8 +102,16 @@ def main():
     model.save_pretrained(OUT_ADAPTER)
     stage("10 steps done; adapter saved")
 
+    print("[SMOKE] TRAINING PATH PASS (load + attn/expert LoRA targeting + 10 steps)", flush=True)
+
     # --- Stage 4: merge -> GGUF -> Ollama ---
     stage("merging + exporting GGUF ...")
+    if not hasattr(model, "save_pretrained_gguf"):
+        # unsloth patches save_pretrained_gguf onto its own model; a raw PEFT wrapper
+        # may not expose it. The core training-path de-risk (stages 1-3) has PASSED;
+        # the GGUF/ollama export is a separate integration to resolve, not a training risk.
+        fail("save_pretrained_gguf unavailable on raw-PEFT model — export path is a "
+             "separate integration (training path already PASSED above). See SMOKE-RESULT.")
     model.save_pretrained_gguf("/root/elmer-smoke/gguf", tokenizer, quantization_method="q8_0")
     modelfile = f"FROM {OUT_GGUF}\n"
     with open("/root/elmer-smoke/Modelfile", "w") as f:
