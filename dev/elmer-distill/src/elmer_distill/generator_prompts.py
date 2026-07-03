@@ -47,8 +47,12 @@ AUTHORED = {
         "How do I set up a reusable Winlink template message in this app?"
     ),
     ("helpdesk", 4): (
-        "I'm getting a 'password rejected' error connecting to the CMS. Walk me through "
-        "the fix from the app's own docs, and check my actual configuration so the steps "
+        # Deliberately NOT the CMS-password topic (that is the frozen gate scenario "
+        # helpdesk-cms-password); a distinct grounded-support task on the same
+        # docs+config shape, so training gold never paraphrases the gate (Codex adrev
+        # HIGH 2026-07-03).
+        "How do I change which audio device the app uses for the modem? Walk me through "
+        "it from the app's own docs, and check my current configuration so the steps "
         "match my setup."
     ),
     ("helpdesk", 6): (
