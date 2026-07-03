@@ -55,3 +55,19 @@ _BLOCK_RE = re.compile(r"\b(?:[01]?\d|2[0-3]):[0-5]\d\b")
 def schedule_has_blocks(text, n):
     """True iff the text contains >= n distinct HH:MM time blocks."""
     return len(set(_BLOCK_RE.findall(text))) >= n
+
+
+def aprs_positions_cited(staged_args_json, records, callsigns, minimum=None):
+    """True iff the staged text cites the REAL current grid for >= `minimum` of the
+    named callsigns, bound to `aprs_list_stations` records. A hit requires BOTH the
+    callsign AND that station's own real grid to appear in the text, so fabricated
+    or omitted positions fail. `minimum` defaults to all named callsigns.
+    """
+    by_call = {r["callsign"].upper(): r for r in records}
+    hits = 0
+    for cs in callsigns:
+        rec = by_call.get(cs.upper())
+        if rec and cs in staged_args_json and str(rec["grid"]) in staged_args_json:
+            hits += 1
+    need = len(callsigns) if minimum is None else minimum
+    return hits >= need

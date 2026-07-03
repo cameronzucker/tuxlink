@@ -1,8 +1,11 @@
-"""Classification of the 50-tool Elmer MCP surface.
+"""Classification of the 53-tool Elmer MCP surface.
 
 Sets are verified against reference/tools.json (see the epic spec §4/§4a). The
 taint set is EXACT: only untrusted-content reads taint the session. Egress and
 Tier-2 writes require armed send-authority AND an un-tainted session.
+
+APRS position/track reads are structured telemetry (plain reads); only
+`aprs_read_messages` returns untrusted free text and therefore taints.
 """
 import json
 import os
@@ -10,7 +13,8 @@ import os
 _DEFAULT = os.path.join(os.path.dirname(__file__), "..", "..", "reference", "tools.json")
 
 # Untrusted-content reads that taint the session (verified against tools.json).
-TAINT_TOOLS = {"mailbox_list", "message_read", "session_log_snapshot", "tauri_search_run"}
+TAINT_TOOLS = {"mailbox_list", "message_read", "session_log_snapshot", "tauri_search_run",
+               "aprs_read_messages"}
 
 # Egress — keys the transmitter / network round-trip; needs armed + un-tainted.
 EGRESS_TOOLS = {"cms_connect", "verify_cms_connection", "rig_tune", "ardop_connect",

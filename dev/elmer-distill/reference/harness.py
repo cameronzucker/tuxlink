@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Offline agentic eval harness for local Ollama models against Tuxlink's Elmer surface.
-Faithful system prompt + 50-tool surface + mock tool returns. Full transcript + metrics.
+Faithful system prompt + 53-tool surface + mock tool returns. Full transcript + metrics.
 Usage: harness.py MODEL PROMPT_IDS DEVICE TEMP THINK OUTDIR
   e.g. harness.py qwen2.5:14b-q8-ctx32768 1,2,3 igpu 0 none /home/administrator/evalout
 """

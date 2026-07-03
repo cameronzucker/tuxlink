@@ -9,7 +9,7 @@ bd: `tuxlink-ct08v`.
 
 | Module | Role |
 |---|---|
-| `tool_surface.py` | Classify the 50-tool surface (taint / egress / tier2 / staging / stop). |
+| `tool_surface.py` | Classify the 53-tool surface (taint / egress / tier2 / staging / stop). Includes the 3 eval-proposed APRS read tools (`aprs_list_stations` / `aprs_station_track` / `aprs_read_messages`) that lead the real router.rs surface. |
 | `scenario.py` | `Scenario` + machine-readable `SuccessSpec`. |
 | `simulator.py` | `StatefulSimulator`: armed-authority + taint + outbox state machine. |
 | `judge.py` | Score a trajectory vs a `SuccessSpec` (order / staging / egress replay). |

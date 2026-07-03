@@ -12,7 +12,8 @@ from elmer_distill.scenario import Scenario
 from elmer_distill.tool_surface import load_tool_names
 
 CANDIDATES = sorted(glob.glob(os.path.join(os.path.dirname(__file__), "..", "gate", "candidates", "*.json")))
-KNOWN_PREDICATES = {"references_real_gateway", "schedule_has_blocks", "freq_in_band", "distance_band"}
+KNOWN_PREDICATES = {"references_real_gateway", "schedule_has_blocks", "freq_in_band", "distance_band",
+                    "aprs_positions_cited"}
 _TOOLS = load_tool_names()
 
 

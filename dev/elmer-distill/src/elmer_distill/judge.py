@@ -80,6 +80,9 @@ def _eval_predicate(check, staged_json, tool_results):
     if p == "distance_band":
         recs = (tool_results.get("find_stations") or {}).get("stations", [])
         return bool(recs) and all(P.distance_band(r["distance_km"], params["lo"], params["hi"]) for r in recs)
+    if p == "aprs_positions_cited":
+        recs = (tool_results.get("aprs_list_stations") or {}).get("stations", [])
+        return P.aprs_positions_cited(staged_json, recs, params["callsigns"], params.get("minimum"))
     return False
 
 

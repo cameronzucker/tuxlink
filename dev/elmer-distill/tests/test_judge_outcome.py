@@ -62,6 +62,32 @@ def test_evidence_bound_gateway_predicate():
     assert not v.passed and any("predicate failed" in r for r in v.reasons)
 
 
+def test_evidence_bound_aprs_positions_predicate():
+    scn = _scn({"required_tools": ["aprs_list_stations", "message_send"],
+                "staged": [{"tool": "message_send", "must_contain": [], "to": ["N0RNG"]}],
+                "predicates": [{"predicate": "aprs_positions_cited", "tool": "message_send",
+                                "params": {"callsigns": ["RESCUE-1", "RESCUE-2", "RESCUE-3"], "minimum": 3}}]})
+    # good: cites each field team's REAL grid from aprs_list_stations
+    good = {"turns": [{"role": "user", "content": "x"},
+                      _asst("aprs_list_stations", {}),
+                      {"role": "tool", "tool_name": "aprs_list_stations", "content": "{}"},
+                      _asst("message_send", {"to": ["N0RNG"],
+                                             "body": "RESCUE-1 DM43, RESCUE-2 DM33, RESCUE-3 DM53"}),
+                      {"role": "tool", "tool_name": "message_send", "content": "{}"},
+                      _final("staged")]}
+    assert Judge().score(scn, good, armed=True).passed, Judge().score(scn, good, armed=True).reasons
+    # bad: fabricated grids not matching any real station record
+    bad = {"turns": [{"role": "user", "content": "x"},
+                     _asst("aprs_list_stations", {}),
+                     {"role": "tool", "tool_name": "aprs_list_stations", "content": "{}"},
+                     _asst("message_send", {"to": ["N0RNG"],
+                                            "body": "RESCUE-1 FN20, RESCUE-2 EM48, RESCUE-3 CN85"}),
+                     {"role": "tool", "tool_name": "message_send", "content": "{}"},
+                     _final("staged")]}
+    v = Judge().score(scn, bad, armed=True)
+    assert not v.passed and any("predicate failed" in r for r in v.reasons)
+
+
 def test_accepted_alternative_satisfies_required():
     scn = _scn({"required_tools": ["find_stations", "predict_path", "message_send"],
                 "staged": [{"tool": "message_send", "must_contain": [], "to": ["N0RNG"]}],

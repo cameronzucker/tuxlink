@@ -1,5 +1,6 @@
 from elmer_distill.predicates import (freq_in_band, distance_band, parse_freqs_khz,
-                                      references_real_gateway, schedule_has_blocks, BANDS)
+                                      references_real_gateway, schedule_has_blocks, BANDS,
+                                      aprs_positions_cited)
 
 
 def test_freq_in_band():
@@ -33,3 +34,25 @@ def test_schedule_blocks():
 def test_bands_cover_warc():
     for b in ("30m", "17m", "12m", "80m", "40m", "20m"):
         assert b in BANDS
+
+
+def test_aprs_positions_cited_binds_to_records():
+    records = [{"callsign": "RESCUE-1", "grid": "DM43"},
+               {"callsign": "RESCUE-2", "grid": "DM33"},
+               {"callsign": "RESCUE-3", "grid": "DM53"}]
+    calls = ["RESCUE-1", "RESCUE-2", "RESCUE-3"]
+    good = '{"body":"RESCUE-1 at DM43; RESCUE-2 at DM33; RESCUE-3 at DM53"}'
+    fabricated = '{"body":"RESCUE-1 at FN20; RESCUE-2 at EM48; RESCUE-3 at CN85"}'  # wrong grids
+    partial = '{"body":"RESCUE-1 at DM43 only"}'
+    assert aprs_positions_cited(good, records, calls, 3)
+    assert not aprs_positions_cited(fabricated, records, calls, 3)   # fabricated locations fail
+    assert not aprs_positions_cited(partial, records, calls, 3)      # missing 2 of 3 fails
+    assert aprs_positions_cited(partial, records, calls, 1)          # minimum=1 satisfied
+
+
+def test_aprs_positions_cited_requires_callsign_and_its_own_grid():
+    records = [{"callsign": "RESCUE-1", "grid": "DM43"},
+               {"callsign": "RESCUE-3", "grid": "DM53"}]
+    # RESCUE-1 cited with RESCUE-3's grid must NOT count as a hit for RESCUE-1.
+    mismatched = '{"body":"RESCUE-1 at DM53"}'
+    assert not aprs_positions_cited(mismatched, records, ["RESCUE-1"], 1)
