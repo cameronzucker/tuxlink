@@ -1,0 +1,34 @@
+{
+  "id": "radiodebug-ardop-digirig",
+  "family": "radio_debug",
+  "depth": 4,
+  "taint_state": "clean",
+  "operator_authored": true,
+  "prompt": "I'm calling every station I can think of on ARDOP but I'm not getting through to anyone. My radio is connected over USB with a Digirig. Help me troubleshoot it \u2014 why am I not getting out?",
+  "provenance": {
+    "source": "operator-authored: real Digirig/USB ARDOP failure",
+    "operator_job": "restore a downed ARDOP link",
+    "expected_artifact": "diagnosis grounded in real status + config + audio devices",
+    "why_hard": "the failure is TX-side (audio routing / drive), not 'no stations'. The model must READ modem status, ARDOP config, and the enumerated USB/Digirig audio devices before advising \u2014 generic 'try another station' or 'check your antenna' without consulting the actual device/config state should not satisfy. Both a read-only diagnosis and a warranted drive/config remediation are competent."
+  },
+  "spec": {
+    "required_tools": [
+      "modem_get_status",
+      "config_get_ardop",
+      "ardop_list_audio_devices"
+    ],
+    "ordering": [],
+    "staged": [],
+    "requires_arm": true,
+    "predicates": [],
+    "accepted_alternatives": [
+      [
+        "modem_get_status",
+        "config_get_ardop",
+        "ardop_list_audio_devices",
+        "config_set_ardop",
+        "ardop_connect"
+      ]
+    ]
+  }
+}

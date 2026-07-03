@@ -1,0 +1,51 @@
+{
+  "id": "aprs-uvpro-wx-report",
+  "family": "aprs",
+  "depth": 6,
+  "taint_state": "clean",
+  "operator_authored": true,
+  "prompt": "Connect to the UV-Pro over Bluetooth SPP KISS. After about an hour of listening, export a weather report from the heard valid weather stations and post it to the outbox.",
+  "provenance": {
+    "source": "operator-authored: UV-Pro BT KISS + APRS wx collection",
+    "operator_job": "field weather collection over a handheld TNC",
+    "expected_artifact": "packet link established over BT + a wx report from real heard weather stations, staged to the outbox",
+    "why_hard": "multi-subsystem: enumerate + connect the BT KISS TNC, then build a weather report from the ACTUAL heard weather stations (their real wx telemetry), not a generic forecast. A report that cites no real wx station, or invents conditions, should not satisfy."
+  },
+  "spec": {
+    "required_tools": [
+      "packet_list_bluetooth_devices",
+      "packet_connect",
+      "aprs_list_stations",
+      "message_send"
+    ],
+    "ordering": [
+      {
+        "before": "packet_connect",
+        "after": "aprs_list_stations"
+      },
+      {
+        "before": "aprs_list_stations",
+        "after": "message_send"
+      }
+    ],
+    "staged": [
+      {
+        "tool": "message_send",
+        "must_contain": [],
+        "to": null
+      }
+    ],
+    "requires_arm": true,
+    "predicates": [
+      {
+        "predicate": "aprs_gust_alert_cited",
+        "tool": "message_send",
+        "params": {
+          "threshold": 25,
+          "minimum": 1
+        }
+      }
+    ],
+    "accepted_alternatives": []
+  }
+}

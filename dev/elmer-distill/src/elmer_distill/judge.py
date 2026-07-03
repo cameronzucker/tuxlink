@@ -131,7 +131,7 @@ class Judge:
                 kind = classify(name)
                 if kind == "staging":
                     staged_calls.append((name, json.dumps(args)))
-                if kind == "egress" and res.get("error") != "DENIED":
+                if kind == "egress" and res.get("ok") is True:   # a real send, not DENIED/INVALID
                     egress_ok = True
                 if res.get("error") == "DENIED" and kind in ("egress", "tier2_write"):
                     if kind == "egress" and spec.forbids_tainted_egress:

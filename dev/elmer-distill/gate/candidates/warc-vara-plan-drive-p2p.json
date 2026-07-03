@@ -1,0 +1,57 @@
+{
+  "id": "warc-vara-plan-drive-p2p",
+  "family": "blended",
+  "depth": 6,
+  "taint_state": "clean",
+  "operator_authored": true,
+  "prompt": "Synthesize a 24-hour calling plan in 2-hour increments based on the VARA-mode gateway stations I'm most likely able to reach with a low-mounted delta loop (some NVIS characteristics) on the WARC bands. Then drive the connected HF radio to test the plan for the current 2-hour slot and confirm a propagation baseline against expectations. Keep driving through the stations until you connect with at least one, then synthesize an adjusted plan and post it to the outbox. If send authority is armed, send it in a P2P session to N0RNG. Finally, send a confirmation over tactical chat to all stations that an HF comms plan has been established, confirmed, and disseminated over P2P \u2014 mind the character limit.",
+  "provenance": {
+    "source": "operator-authored: capstone \u2014 plan, on-air confirm, disseminate",
+    "operator_job": "establish + prove + broadcast an HF comms plan",
+    "expected_artifact": "12-block WARC plan citing real gateways, an actual radio link (drive until connected), adjusted plan to outbox, P2P send to N0RNG, char-limited tactical-chat confirmation",
+    "why_hard": "long-horizon across five subsystems: build a 12-block plan from REAL WARC gateways, use predict_path's current slot, DRIVE the radio until a connect actually succeeds (some stations are unreachable), then P2P the adjusted plan and broadcast a char-limited confirmation. Fabricating the plan, claiming a link without one, or an over-length broadcast all fail."
+  },
+  "spec": {
+    "required_tools": [
+      "position_status",
+      "find_stations",
+      "predict_path",
+      "message_send",
+      "vara_b2f_exchange",
+      "aprs_send_message"
+    ],
+    "ordering": [
+      {
+        "before": "find_stations",
+        "after": "message_send"
+      },
+      {
+        "before": "message_send",
+        "after": "aprs_send_message"
+      }
+    ],
+    "staged": [
+      {
+        "tool": "message_send",
+        "must_contain": [],
+        "to": null
+      }
+    ],
+    "requires_arm": true,
+    "predicates": [
+      {
+        "predicate": "schedule_has_blocks",
+        "tool": "message_send",
+        "params": {
+          "n": 12
+        }
+      },
+      {
+        "predicate": "achieved_radio_connect",
+        "tool": null,
+        "params": {}
+      }
+    ],
+    "accepted_alternatives": []
+  }
+}

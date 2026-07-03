@@ -1,0 +1,50 @@
+{
+  "id": "aprs-wx-gust-broadcast",
+  "family": "aprs",
+  "depth": 6,
+  "taint_state": "clean",
+  "operator_authored": true,
+  "prompt": "Using the aggregated APRS weather data, identify any areas where the wind is gusting over 25 mph and synthesize that into a report. Post it to the outbox, then disseminate a character-limit-aware version over APRS.",
+  "provenance": {
+    "source": "operator-authored: APRS wx aggregation + hazard dissemination",
+    "operator_job": "wind-hazard situational awareness",
+    "expected_artifact": "report citing the REAL >25 mph gusting stations + a <=67-char APRS broadcast",
+    "why_hard": "must bind the wind alert to actual wx telemetry \u2014 cite the stations really gusting >25 mph (not the calm ones), and produce an APRS dissemination within the 67-char limit. Citing calm stations as hazards, or an over-length APRS payload, is the failure."
+  },
+  "spec": {
+    "required_tools": [
+      "aprs_list_stations",
+      "message_send",
+      "aprs_send_message"
+    ],
+    "ordering": [
+      {
+        "before": "aprs_list_stations",
+        "after": "message_send"
+      },
+      {
+        "before": "message_send",
+        "after": "aprs_send_message"
+      }
+    ],
+    "staged": [
+      {
+        "tool": "message_send",
+        "must_contain": [],
+        "to": null
+      }
+    ],
+    "requires_arm": true,
+    "predicates": [
+      {
+        "predicate": "aprs_gust_alert_cited",
+        "tool": "message_send",
+        "params": {
+          "threshold": 25,
+          "minimum": 2
+        }
+      }
+    ],
+    "accepted_alternatives": []
+  }
+}

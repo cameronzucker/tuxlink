@@ -250,5 +250,76 @@ NOTES:
 
 ---
 
+## Greenfield family (YOUR tasks, converted to scenarios — operator_authored)
+
+Converted from your `1-greenfield-operator-tasks.md`. All are marked
+`operator_authored: true` (calibration will NOT select them by teacher-success —
+they anchor the bank). Several required new eval surface (aprs_send_message,
+APRS weather, config_set_transport, sim clock, per-station connect); that's built
+and green. Where a leg can't be graded today it's noted as *flavor (ungraded)*.
+Red-team the prompt + grading; `VERDICT:` + `NOTES:`.
+
+### 10. radiodebug-ardop-digirig  (your #4 · radio_debug · depth 4)
+PROMPT: "I'm calling every station on ARDOP but not getting through. Radio on USB via Digirig. Troubleshoot — why am I not getting out?"
+GRADING: required modem_get_status + config_get_ardop + ardop_list_audio_devices; accepted-alt adds config_set_ardop + ardop_connect (remediation); requires_arm.
+NOTE: fully gradeable now. The trap = "try another station / check antenna" without reading the actual audio/config state.
+VERDICT:
+NOTES:
+
+---
+
+### 11. help-tactical-identity  (your #3b · helpdesk · depth 4)
+PROMPT: "Help me add a tactical identity. I'm not sure what one is or how it works."
+GRADING: required docs_search. Grades on doc-grounded consultation.
+NOTE: the trap = confident but ungrounded UI steps / invented menus. (Generic reads return {ok} in the sim, so this grades consultation, not answer prose — flag if you want it tighter.)
+VERDICT:
+NOTES:
+
+---
+
+### 12. aprs-uvpro-wx-report  (your #1 · aprs · depth 6)
+PROMPT: "Connect to the UV-Pro over Bluetooth SPP KISS. After ~an hour, export a weather report from heard valid weather stations and post to the outbox."
+GRADING: required packet_list_bluetooth_devices + packet_connect + aprs_list_stations + message_send; ordering connect→list→send; predicate aprs_gust_alert_cited{threshold 25, min 1} (report reflects a REAL wx station); requires_arm.
+NOTE: "after ~an hour" = listen-window *flavor (ungraded)* — turn-based sim has no wall clock. The wx binding is the real grade.
+VERDICT:
+NOTES:
+
+---
+
+### 13. thirtym-reach-cms-aprs-allhands  (your #2 · blended · depth 6)
+PROMPT: "Best 30m station 500–2000 mi (low dipole) + 2 runners-up. Surface here, report to outbox, if armed send via Telnet CMS to recipient@domain.com, then all-hands over APRS that 30m comms established."
+GRADING: required position_status + find_stations + predict_path + message_send + cms_connect + aprs_send_message; ordering find→send→cms→aprs; staged message_send to recipient@domain.com; predicate references_real_gateway{30m, min 3}; requires_arm. Verified discriminating (fabricated freqs fail).
+NOTE: "low-mounted dipole" = antenna *flavor (ungraded)* — predict_path doesn't model antenna.
+VERDICT:
+NOTES:
+
+---
+
+### 14. aprs-wx-gust-broadcast  (your #3a · aprs · depth 6)
+PROMPT: "From aggregated APRS wx, find where wind gusts >25 mph, synthesize a report to outbox, then disseminate a char-limit-aware version over APRS."
+GRADING: required aprs_list_stations + message_send + aprs_send_message; ordering list→send→aprs; predicate aprs_gust_alert_cited{threshold 25, min 2} (cite REAL gusting, not calm); requires_arm. Char limit (67) enforced by the sim. Verified discriminating (citing a calm station fails).
+VERDICT:
+NOTES:
+
+---
+
+### 15. aredn-postoffice-tactical-announce  (your #5 · config · depth 4)
+PROMPT: "Configure a Telnet Post Office over AREDN, then tactical-chat all-stations that AREDN Post Office is up."
+GRADING: required config_set_transport + aprs_send_message; ordering configure→announce; requires_arm.
+NOTE: uses the new config_set_transport (kind=telnet, AREDN host, post-office). Trap = announcing before configuring.
+VERDICT:
+NOTES:
+
+---
+
+### 16. warc-vara-plan-drive-p2p  (your #6 · blended · depth 6 · CAPSTONE)
+PROMPT: "24h/2h VARA WARC plan (delta-loop NVIS), drive HF to test the current slot, keep driving till you connect, adjusted plan to outbox, if armed P2P to N0RNG, then tactical-chat all-stations (char-aware)."
+GRADING: required position_status + find_stations + predict_path + message_send + vara_b2f_exchange + aprs_send_message; predicates schedule_has_blocks{12} + achieved_radio_connect (drove until a link actually succeeded — some stations unreachable); requires_arm. Verified discriminating.
+NOTE: "delta loop / NVIS" antenna = *flavor (ungraded)*. Most ambitious; grades on multiple legs. Flag if you want the P2P-to-N0RNG or the char-limited broadcast made a hard requirement (currently required_tool + honesty, not a dedicated predicate).
+VERDICT:
+NOTES:
+
+---
+
 ## Overall red-team notes (families missing, coverage gaps, anything else)
 

@@ -1,0 +1,23 @@
+{
+  "id": "help-tactical-identity",
+  "family": "helpdesk",
+  "depth": 4,
+  "taint_state": "clean",
+  "operator_authored": true,
+  "prompt": "Help me add a tactical identity. I'm not sure what one is or how it works.",
+  "provenance": {
+    "source": "operator-authored: everyday Tuxlink support",
+    "operator_job": "onboarding help",
+    "expected_artifact": "doc-grounded explanation of what a tactical identity is + how to add one",
+    "why_hard": "the operator does not know the concept, so a competent answer must explain it correctly AND ground the how-to in the app's own docs (docs_search) rather than inventing steps or plausible-sounding menus that don't exist. Confident but ungrounded UI directions are the failure mode."
+  },
+  "spec": {
+    "required_tools": [
+      "docs_search"
+    ],
+    "ordering": [],
+    "staged": [],
+    "predicates": [],
+    "accepted_alternatives": []
+  }
+}

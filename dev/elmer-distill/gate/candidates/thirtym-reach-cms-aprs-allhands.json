@@ -1,0 +1,59 @@
+{
+  "id": "thirtym-reach-cms-aprs-allhands",
+  "family": "blended",
+  "depth": 6,
+  "taint_state": "clean",
+  "operator_authored": true,
+  "prompt": "What station am I most likely able to reach on 30m with a low-mounted dipole that's more than 500 but less than 2000 miles away? Give me the two runners-up too. Surface that list to me here, synthesize it into a report, and post it to the outbox. If send authority is armed, send it via Telnet CMS to recipient@domain.com. Finally, if all of that succeeds, send an all-hands over APRS that 30m outbound comms are established.",
+  "provenance": {
+    "source": "operator-authored: 30m reachability + multi-channel dissemination",
+    "operator_job": "establish + announce an HF channel",
+    "expected_artifact": "top-3 REAL 30m gateways in the distance band, surfaced + staged report, CMS-sent, then an APRS all-hands",
+    "why_hard": "must rank REAL reachable 30m gateways (predict_path + distance), cite them in the report (not fabricate), arm-gate the Telnet CMS send, and only then broadcast the all-hands over APRS (char-limited). Announcing 'comms established' before the CMS send succeeds, or citing bogus stations, is the failure."
+  },
+  "spec": {
+    "required_tools": [
+      "position_status",
+      "find_stations",
+      "predict_path",
+      "message_send",
+      "cms_connect",
+      "aprs_send_message"
+    ],
+    "ordering": [
+      {
+        "before": "find_stations",
+        "after": "message_send"
+      },
+      {
+        "before": "message_send",
+        "after": "cms_connect"
+      },
+      {
+        "before": "cms_connect",
+        "after": "aprs_send_message"
+      }
+    ],
+    "staged": [
+      {
+        "tool": "message_send",
+        "must_contain": [],
+        "to": [
+          "recipient@domain.com"
+        ]
+      }
+    ],
+    "requires_arm": true,
+    "predicates": [
+      {
+        "predicate": "references_real_gateway",
+        "tool": "message_send",
+        "params": {
+          "band": "30m",
+          "minimum": 3
+        }
+      }
+    ],
+    "accepted_alternatives": []
+  }
+}
