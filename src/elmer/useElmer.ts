@@ -215,6 +215,13 @@ export interface UseElmer {
   send: (msg: string) => void;
   /** Stop the in-flight run (abort-first cancel). */
   stop: () => void;
+  /**
+   * tuxlink-vbv2k — Start a fresh conversation. Clears the transcript, streaming
+   * buffers, and context meter, and resets the backend conversation so the next
+   * message begins with empty context (reclaims a local model's small window).
+   * Cancels any in-flight run first; keeps model/endpoint config.
+   */
+  newConversation: () => void;
   /** G2: Loaded model config (null while loading/error). */
   modelConfig: ConfigReadDto | null;
   /** G2: Load state for model config. */
@@ -449,6 +456,29 @@ export function useElmer(): UseElmer {
     void invoke('elmer_stop');
   }, []);
 
+  // tuxlink-vbv2k: newConversation — start fresh. Clears the transcript +
+  // streaming buffers + context meter immediately (responsive), resets phase and
+  // the last-outcome callout, and tells the backend to reset ITS conversation so
+  // the next turn begins with empty context (the load-bearing part for local
+  // models). Model/endpoint config is kept. Cancels any in-flight run backend-side.
+  const newConversation = useCallback(() => {
+    setItems([]);
+    streamingReasoningRef.current = '';
+    setStreamingAnswer('');
+    setStreamingReasoning('');
+    // Reset the context meter to empty (keep the last numCtx so it renders 0%,
+    // rather than disappearing) — the fresh conversation has used no context yet.
+    setContext((prev) => (prev ? { promptTokens: 0, numCtx: prev.numCtx } : null));
+    setLastOutcome(null);
+    setPhase('idle');
+    running.current = false;
+    // Backend conversation reset (cancels any in-flight run; infallible there).
+    // Log any transport error for debugging only.
+    void invoke('elmer_new_conversation').catch((err: unknown) => {
+      console.error('[useElmer] elmer_new_conversation failed:', err);
+    });
+  }, []);
+
   // G2: configRead — load model config from backend.
   // G3: Initialises activeModel on first load so configSet can detect changes.
   const configRead = useCallback(async () => {
@@ -525,6 +555,7 @@ export function useElmer(): UseElmer {
     lastOutcome,
     send,
     stop,
+    newConversation,
     modelConfig,
     modelConfigState,
     configRead,

@@ -194,6 +194,21 @@ pub async fn elmer_stop(session: State<'_, Arc<ElmerSession>>) -> Result<(), Str
     Ok(())
 }
 
+/// Start a fresh Elmer conversation ("New conversation" — tuxlink-vbv2k).
+///
+/// Cancels any in-flight run, then clears the accumulated conversation so the
+/// next message begins with empty context — reclaiming a local model's small
+/// context window. Does NOT touch the egress guard, model config, or keyring
+/// (see [`crate::elmer::session::ElmerSession::new_conversation`]). The reset is
+/// infallible; surface Ok.
+#[tauri::command]
+pub async fn elmer_new_conversation(
+    session: State<'_, Arc<ElmerSession>>,
+) -> Result<(), String> {
+    session.new_conversation().await;
+    Ok(())
+}
+
 /// Rearm the egress guard and reset the session (AC-10).
 ///
 /// Cancels any in-flight run, clears taint, arms the egress guard for
