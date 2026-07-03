@@ -27,8 +27,13 @@ def best_of_n(make_client, model, scenario, system, tools, n, judge=None,
     gold = None
     for i in range(n):
         client = make_client(temperature=(0.0 if i == 0 else temperature), seed=i)
-        traj = run_g0(client, model, scenario, system, tools, exemplars=[],
-                      max_reprompts=max_reprompts, max_turns=max_turns)
+        try:
+            traj = run_g0(client, model, scenario, system, tools, exemplars=[],
+                          max_reprompts=max_reprompts, max_turns=max_turns)
+        except Exception:
+            # a failed attempt (exhausted retries, a malformed response) is just a
+            # non-pass — never abort the run over one attempt.
+            continue
         if judge.score(scenario, traj, armed=scenario.spec.requires_arm).passed:
             n_pass += 1
             if gold is None:
@@ -70,9 +75,12 @@ def run_council(make_client, models, scenarios, system, tools, n=5,
         rep.per_scenario[s.id] = {}
     for m in models:
         for s in scenarios:
-            n_pass, gold = best_of_n(make_client, m, s, system, tools, n, judge=judge,
-                                     max_turns=max_turns, max_reprompts=max_reprompts,
-                                     temperature=temperature)
+            try:
+                n_pass, gold = best_of_n(make_client, m, s, system, tools, n, judge=judge,
+                                         max_turns=max_turns, max_reprompts=max_reprompts,
+                                         temperature=temperature)
+            except Exception:
+                n_pass, gold = 0, None   # a whole-cell failure is 0 coverage, not a crash
             rep.per_scenario[s.id][m] = n_pass
             if gold is not None and s.id not in rep.gold:
                 rep.gold[s.id] = {"model": m, "traj": gold}

@@ -42,6 +42,22 @@ def test_best_of_n_counts_and_gold():
     assert n_pass2 == 0 and gold2 is None
 
 
+class _RaisingClient:
+    temperature = 0
+    seed = None
+
+    def chat(self, model, messages, tools, temperature=None):
+        raise RuntimeError("simulated ollama 500")
+
+
+def test_best_of_n_survives_client_errors():
+    # a model that errors every attempt yields 0 passes, NOT a crash (a transient
+    # ollama 500 must not kill a multi-hour council run).
+    n_pass, gold = council.best_of_n(lambda temperature, seed: _RaisingClient(),
+                                     "m", _scn("s1"), "SYS", [], n=3, max_turns=3)
+    assert n_pass == 0 and gold is None
+
+
 def test_council_union_covers_if_any_model_passes():
     scns = [_scn("s1"), _scn("s2")]
     # model A wins s1 only; model B wins s2 only -> union covers both

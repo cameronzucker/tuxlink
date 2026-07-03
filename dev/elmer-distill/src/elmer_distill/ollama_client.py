@@ -5,16 +5,21 @@ Mirrors the request/response shape used by the reference eval harness
 gpt-oss:20b (student, G0) on the staged pod.
 """
 import json
+import time
+import urllib.error
 import urllib.request
 
 
 class OllamaClient:
     def __init__(self, base_url="http://127.0.0.1:11434", num_ctx=32768,
-                 temperature=0, seed=None):
+                 temperature=0, seed=None, retries=4, backoff=2.0, timeout=3600):
         self.base_url = base_url.rstrip("/")
         self.num_ctx = num_ctx
         self.temperature = temperature   # >0 + varied seed = best-of-N diversity
         self.seed = seed
+        self.retries = retries           # transient ollama 500/502/503 + timeouts are retried
+        self.backoff = backoff
+        self.timeout = timeout
 
     def chat(self, model, messages, tools, temperature=None):
         opts = {"temperature": self.temperature if temperature is None else temperature,
@@ -28,10 +33,19 @@ class OllamaClient:
             "tools": tools,
             "options": opts,
         }
-        req = urllib.request.Request(
-            self.base_url + "/api/chat",
-            data=json.dumps(body).encode(),
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=3600) as resp:
-            return json.loads(resp.read())
+        data = json.dumps(body).encode()
+        last = None
+        for attempt in range(self.retries + 1):
+            try:
+                req = urllib.request.Request(
+                    self.base_url + "/api/chat", data=data,
+                    headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    return json.loads(resp.read())
+            except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError) as e:
+                # transient ollama hiccup (a 500 during model load, a dropped socket).
+                # Do NOT let one bad request kill a multi-hour council run.
+                last = e
+                if attempt < self.retries:
+                    time.sleep(self.backoff * (2 ** attempt))
+        raise last
