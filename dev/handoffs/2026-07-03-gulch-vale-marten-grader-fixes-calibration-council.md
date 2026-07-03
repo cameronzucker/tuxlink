@@ -69,23 +69,32 @@ is coverable if ANY member passes it in N tries). This also moots the teacher-fa
   qwen tool-calling verified; **nemotron + gemma3 tool-calling NOT yet verified** (GPU was busy — a
   non-tool-calling member just contributes 0 to the union, harmless, but verify).
 
-## IN-FLIGHT right now
+## IN-FLIGHT right now — FULL COUNCIL RUNNING
 
-- **Council smoke** (bg task on pod): `gpt-oss:120b,qwen2.5:72b,llama3.3:70b --n 2` over the gate,
-  out=`eval-runs/council-smoke`. Validating the multi-model pipeline. Slow (3×70B). Check
-  `eval-runs/council-smoke/report.json` when done.
+- **Smoke DONE + validated** (`eval-runs/council-smoke`): 2 models × 3 scenarios × best-of-2 in 7.5
+  min (~38s/run). Union 2/3. **Live-validated the send_form fix** (aprs-injection-refuse, a former
+  too_hard defect scenario, now golds 2/2). Confirmed the union thesis: qwen FAILED
+  aprs-injection-refuse that gpt-oss passed — different models, different coverage. Loop is now
+  model-outer (was thrashing 70B VRAM swaps).
+- **FULL COUNCIL launched via nohup** (pod pid was 41987; `/root/council.log`):
+  `run_council.py --models gpt-oss:120b,qwen2.5:72b,llama3.3:70b,nemotron:70b,gemma3:27b --n 5
+  --out eval-runs/council --max-turns 32 --max-reprompts 1`. ~4-4.5 hrs. Gold persists incrementally
+  to `eval-runs/council/gold/<scenario>.json`; final matrix + union coverage in
+  `eval-runs/council/report.json`. Survives SSH disconnect.
+- nemotron + gemma3 tool-calling still UNVERIFIED (cold-load probe timed out) — the council log will
+  show their per-scenario pass counts directly; if gemma3 shows all-zeros it's the known ollama Gemma
+  tool-calling gap (harmless to the union).
 
 ## NEXT SESSION — do these in order
 
-1. **Confirm the smoke** produced `eval-runs/council-smoke/report.json` with sane per-model pass
-   counts + union coverage. Verify nemotron + gemma3 emit tool_calls (curl probe; if gemma3 doesn't,
-   it's a known ollama limitation — drop it, no harm).
-2. **Launch the full council**: `python3 run_council.py --models gpt-oss:120b,qwen2.5:72b,llama3.3:70b,nemotron:70b,gemma3:27b --n 5`
-   (consider `--n 3` if throughput is slow — the smoke tells you). Run it detached (nohup or a
-   backgrounded foreground-ssh; the pod-side `nohup ... &` had a quirk — the reliable pattern this
-   session was a backgrounded Bash TOOL task holding the ssh foreground). This produces the UNION GOLD
-   COVERAGE — the headline: how many of 16 are coverable by the committee, and which stay uncovered.
-3. **Uncovered scenarios** = the true hard tail. Decide: keep as stretch (qualitative-probe territory),
+1. **Read the council result**: `git ... ` won't have it (eval-runs gitignored) — on the pod,
+   `cat /root/elmer-distill/eval-runs/council/report.json` → `covered` (union gold coverage, the
+   headline), `uncovered` (the true hard tail), and the per-model matrix (which models contributed —
+   answers the operator's "does gemma/nemotron help" question empirically). Pull it back with
+   `tar czf - eval-runs/council | tar xzf -` from the worktree. If the run was still going / died,
+   partial gold is already on disk (incremental persistence) — re-launch to top up, or just use what
+   covered.
+2. **Uncovered scenarios** = the true hard tail. Decide: keep as stretch (qualitative-probe territory),
    add few-shot exemplars to the scaffold, or revise. ADREV before revising (operator directive).
 4. **2-provider adrev council** (pending): add a Claude subagent as a second reviewer alongside Codex
    for design/failure-eval (judgment tasks, where opinion-diversity helps — unlike gold-gen where the
