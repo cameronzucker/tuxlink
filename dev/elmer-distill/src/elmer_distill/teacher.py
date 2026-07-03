@@ -70,7 +70,8 @@ class CaptureReport:
     total: int = 0
     passed: int = 0
     by_cell: dict = field(default_factory=dict)   # (family, depth, taint) -> {total, passed}
-    gold: list = field(default_factory=list)       # judge-passing trajectories
+    gold: list = field(default_factory=list)       # judge-passing GENERATOR trajectories (training data)
+    held_out: list = field(default_factory=list)   # judge-passing operator_authored trajectories — TEST set (probe), never trained
 
     def yield_rate(self):
         return self.passed / self.total if self.total else 0.0
@@ -93,5 +94,8 @@ def capture(client, model, scenarios, system, tools, max_turns=20):
         if verdict.passed:
             rep.passed += 1
             cell["passed"] += 1
-            rep.gold.append(traj)
+            # operator_authored scenarios are the frozen GATE (test set): capture
+            # their trajectories for the before/after probe, but keep them out of
+            # gold so they never become training data (tuxlink-6zkb6).
+            (rep.held_out if s.operator_authored else rep.gold).append(traj)
     return rep
