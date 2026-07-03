@@ -35,26 +35,37 @@ def main():
     ap.add_argument("--max-turns", type=int, default=40)
     ap.add_argument("--max-reprompts", type=int, default=2)
     ap.add_argument("--temperature", type=float, default=0.7)
+    ap.add_argument("--limit", type=int, default=0, help="only the first N scenarios (0 = all; smoke sizing)")
     a = ap.parse_args()
 
     models = [m.strip() for m in a.models.split(",") if m.strip()]
     scns = [Scenario.from_json(json.load(open(p)))
             for p in sorted(glob.glob(os.path.join(a.candidates, "*.json")))]
+    if a.limit:
+        scns = scns[:a.limit]
 
     def make_client(temperature, seed):
         return OllamaClient(base_url=a.base_url, num_ctx=a.num_ctx, temperature=temperature, seed=seed)
 
-    print(f"[council] {len(scns)} scenarios x {len(models)} models x best-of-{a.n} "
-          f"(scaffold+{a.max_reprompts} reprompts)")
-    rep = run_council(make_client, models, scns, SYSTEM_PROMPT, load_tools(), n=a.n,
-                      max_turns=a.max_turns, max_reprompts=a.max_reprompts, temperature=a.temperature)
-
-    # persist union gold + report
     gdir = os.path.join(a.out, "gold")
     os.makedirs(gdir, exist_ok=True)
-    for sid, g in rep.gold.items():
-        with open(os.path.join(gdir, f"{sid}.json"), "w") as f:
-            json.dump({"scenario_id": sid, "gold_model": g["model"], **g["traj"]}, f, indent=2)
+
+    def progress(model, sid, n_pass, gold, rep):
+        # persist gold immediately (survives interruption) + log the cell
+        if gold is not None and rep.gold.get(sid, {}).get("model") == model:
+            with open(os.path.join(gdir, f"{sid}.json"), "w") as f:
+                json.dump({"scenario_id": sid, "gold_model": model, **gold}, f, indent=2)
+        cov = len(rep.covered())
+        print(f"  [{model.split(':')[0]:<8} {sid:<34}] {n_pass}/{a.n} pass"
+              f"{' GOLD' if (gold is not None and rep.gold.get(sid,{}).get('model')==model) else ''}"
+              f"  (union {cov}/{len(scns)})", flush=True)
+
+    print(f"[council] {len(scns)} scenarios x {len(models)} models x best-of-{a.n} "
+          f"(scaffold+{a.max_reprompts} reprompts, model-outer)", flush=True)
+    rep = run_council(make_client, models, scns, SYSTEM_PROMPT, load_tools(), n=a.n,
+                      max_turns=a.max_turns, max_reprompts=a.max_reprompts,
+                      temperature=a.temperature, progress=progress)
+
     with open(os.path.join(a.out, "report.json"), "w") as f:
         json.dump({"n": rep.n, "models": rep.models, "per_scenario": rep.per_scenario,
                    "covered": rep.covered(), "uncovered": rep.uncovered(),

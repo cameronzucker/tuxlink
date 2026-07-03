@@ -52,20 +52,30 @@ class CouncilReport:
 
 
 def run_council(make_client, models, scenarios, system, tools, n=5,
-                max_turns=40, max_reprompts=2, temperature=0.7):
+                max_turns=40, max_reprompts=2, temperature=0.7, progress=None):
     """make_client(temperature, seed) -> a client on the (shared) ollama endpoint;
     the model name is passed per attempt. Returns a CouncilReport: per-model
     per-scenario pass counts + the union gold set (first model to yield per
-    scenario)."""
+    scenario).
+
+    Loop is MODEL-OUTER, scenario-inner: on a single-GPU pod that can't hold
+    multiple 70B models resident, this loads each model ONCE (vs a swap on every
+    step). `progress(model, sid, n_pass, gold, rep)` fires after each cell so the
+    caller can persist gold incrementally + log — a long run's partial results
+    survive an interruption.
+    """
     judge = Judge()
     rep = CouncilReport(n=n, models=list(models))
     for s in scenarios:
         rep.per_scenario[s.id] = {}
-        for m in models:
+    for m in models:
+        for s in scenarios:
             n_pass, gold = best_of_n(make_client, m, s, system, tools, n, judge=judge,
                                      max_turns=max_turns, max_reprompts=max_reprompts,
                                      temperature=temperature)
             rep.per_scenario[s.id][m] = n_pass
             if gold is not None and s.id not in rep.gold:
                 rep.gold[s.id] = {"model": m, "traj": gold}
+            if progress is not None:
+                progress(m, s.id, n_pass, gold, rep)
     return rep
