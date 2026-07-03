@@ -68,3 +68,27 @@ def evaluate(client, model, scenarios, system, tools, out_dir, label, max_turns=
             "results": summ.results,
         }, f, indent=2)
     return summ
+
+
+def bucketize(base, teacher):
+    """Calibration buckets from two results.json dicts (base + teacher):
+
+      too_hard       — teacher FAILS (even the strong model can't → over-strict /
+                       broken scenario; a 12x-too-hard gate can't measure lift)
+      too_easy       — base PASSES (no headroom to show training improvement)
+      discriminating — base fails, teacher passes (the useful zone)
+
+    A well-formed gate is mostly `discriminating`. Returns per-scenario buckets +
+    the three id lists.
+    """
+    bp = {r["id"]: r["passed"] for r in base["results"]}
+    tp = {r["id"]: r["passed"] for r in teacher["results"]}
+    op = {r["id"]: r.get("operator_authored", False) for r in base["results"]}
+    out = {"per_scenario": [], "discriminating": [], "too_easy": [], "too_hard": []}
+    for sid in bp:
+        b, t = bp[sid], tp.get(sid, False)
+        bucket = "too_hard" if not t else ("too_easy" if b else "discriminating")
+        out["per_scenario"].append({"id": sid, "base_pass": b, "teacher_pass": t,
+                                    "operator_authored": op.get(sid, False), "bucket": bucket})
+        out[bucket].append(sid)
+    return out
