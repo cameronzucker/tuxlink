@@ -82,13 +82,15 @@ _BLOCK_RE = re.compile(r"\b(?:[01]?\d|2[0-3]):[0-5]\d\b")
 # (base-20B adrev 2026-07-02, confirmed defect: warc-vara staged a real 12-block
 # plan in "0-1 UTC" form and was false-failed).
 _HOUR = r"(?:[01]?\d|2[0-3])"
+_HOUR_END = r"(?:[01]?\d|2[0-4])"   # a range END may be 24 (midnight / end-of-day): "22-24"
 _DASH = r"[-‐‑‒–—]"
-_HOURRANGE_RE = re.compile(r"\b(" + _HOUR + r")" + _DASH + r"(" + _HOUR + r")\b")
+_HOURRANGE_RE = re.compile(r"\b(" + _HOUR + r")" + _DASH + r"(" + _HOUR_END + r")\b")
 
 
 def schedule_has_blocks(text, n):
     """True iff the text contains >= n distinct time blocks — either HH:MM points
-    or hour ranges ('0-1', '00-01', '22-23'; plain or unicode dash)."""
+    or hour ranges ('0-1', '00-01', '22-24'; plain or unicode dash). The range end
+    may be 24 for the final end-of-day slot."""
     blocks = set(_BLOCK_RE.findall(text))
     for a, b in _HOURRANGE_RE.findall(text):
         blocks.add(f"{int(a):02d}-{int(b):02d}")
