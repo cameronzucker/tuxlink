@@ -34,3 +34,14 @@ def test_verifier_loop_reprompts():
     assert any(tc["function"]["name"] == "message_send"
                for t in traj["turns"] if t["role"] == "assistant"
                for tc in (t.get("tool_calls") or []))
+
+
+def test_verifier_is_generic_not_oracle():
+    """De-circularized (tuxlink-vvdii): re-prompts must NOT leak the answer key."""
+    traj = run_g0(TwoPhaseClient(), "gpt-oss:20b", _scenario(), "SYS", tools=[], exemplars=[], max_reprompts=2)
+    injected = [t["content"] for t in traj["turns"][1:] if t["role"] == "user"]
+    assert injected, "expected at least one injected self-review turn"
+    for msg in injected:
+        assert "You have not yet" not in msg          # old oracle phrasing
+        # must not name specific required tools from the spec
+        assert "cms_connect" not in msg and "position_status" not in msg and "find_stations" not in msg

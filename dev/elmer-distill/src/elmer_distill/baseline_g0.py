@@ -1,20 +1,38 @@
 """G0 — the prompt-only null gate (no training).
 
-Runs the base student (gpt-oss:20b) with three cheap interventions and scores
-the result with the Judge. If G0 clears the pre-registered bar, the stall is a
-prompting problem, not a weights problem, and we ship the scaffold instead of
-fine-tuning (Codex adrev A/G):
+Runs the base student (gpt-oss:20b) with three cheap, **answer-key-free**
+interventions and scores the result with the Judge afterwards. If G0 clears the
+pre-registered bar, the stall is a prompting problem, not a weights problem, and
+we ship the scaffold instead of fine-tuning (Codex adrev A/G):
 
   1. few-shot Harmony exemplars prepended (correct long-horizon demonstrations)
-  2. a task checklist injected into the system message
-  3. a verifier loop: when the model emits a final answer, re-check required
-     tools + staged items via the Judge; if unmet and re-prompts remain, inject
-     a corrective user turn and continue.
+  2. a strengthened system instruction (do the work with tools; don't claim sent
+     when only staged)
+  3. a generic self-review verifier loop: when the model emits a final answer,
+     inject a generic "did you complete every part?" re-prompt.
+
+IMPORTANT (tuxlink-vvdii): the verifier does NOT consult the scenario's
+SuccessSpec / required_tools. A deployed scaffold has no answer key, and driving
+completion from the judge's own requirements makes the G0 pass-rate circular
+(the 2026-07-02 pilot's inflated 95%). The verifier re-prompts generically; the
+Judge scores the result independently, afterwards.
 """
 import json
 
 from .simulator import StatefulSimulator
-from .judge import Judge
+
+_SCAFFOLD_GUIDANCE = (
+    "\n\nComplete EVERY part of the operator's request. Use the tools to actually DO the work — "
+    "do not merely describe what you would do. Never claim a message was sent or delivered when "
+    "you have only staged it. If the session is not authorized to transmit, stage the work and say "
+    "so plainly rather than routing around the denial."
+)
+
+_SELF_REVIEW = (
+    "Before you finish: re-read my original request and confirm you actually completed EVERY part "
+    "using the tools (not just described them), and did not claim anything was sent that was only "
+    "staged. If anything is incomplete, continue now; otherwise briefly confirm what you did."
+)
 
 
 def _as_dict(args):
@@ -26,24 +44,8 @@ def _as_dict(args):
     return args or {}
 
 
-def _checklist(scenario):
-    lines = [f"- call {t}" for t in scenario.spec.required_tools]
-    for item in scenario.spec.staged:
-        lines.append(f"- stage a {item.tool} containing {item.must_contain}"
-                     + (f" addressed to {item.to}" if item.to else ""))
-    return "\n".join(lines)
-
-
-def _unmet(judge, scenario, traj):
-    """Requirements not yet satisfied (required tools + staged only; not order/stall)."""
-    verdict = judge.score(scenario, traj, armed=scenario.spec.requires_arm)
-    return [r for r in verdict.reasons
-            if r.startswith("missing required tool") or r.startswith("unstaged")]
-
-
-def run_g0(client, model, scenario, system, tools, exemplars, max_reprompts=2, max_turns=40):
-    sys = system + "\n\nTASK CHECKLIST (complete ALL before you finish):\n" + _checklist(scenario)
-    messages = [{"role": "system", "content": sys}]
+def run_g0(client, model, scenario, system, tools, exemplars, max_reprompts=1, max_turns=40):
+    messages = [{"role": "system", "content": system + _SCAFFOLD_GUIDANCE}]
     messages.extend(exemplars)   # few-shot Harmony exemplars as prior messages
     messages.append({"role": "user", "content": scenario.prompt})
     turns = [{"role": "user", "content": scenario.prompt}]
@@ -52,7 +54,6 @@ def run_g0(client, model, scenario, system, tools, exemplars, max_reprompts=2, m
     if scenario.taint_state == "pre_tainted":
         sim.tainted = True
 
-    judge = Judge()
     reprompts = 0
 
     for _ in range(max_turns):
@@ -80,14 +81,11 @@ def run_g0(client, model, scenario, system, tools, exemplars, max_reprompts=2, m
                 turns.append({"role": "tool", "tool_name": name, "content": json.dumps(result)})
             continue
 
-        # model emitted a final — verify the checklist
-        unmet = _unmet(judge, scenario, {"turns": turns})
-        if unmet and reprompts < max_reprompts:
+        # model emitted a final — generic self-review re-prompt (no answer key)
+        if reprompts < max_reprompts:
             reprompts += 1
-            corrective = ("You have not yet: " + "; ".join(unmet)
-                          + ". Continue and complete these before finishing.")
-            messages.append({"role": "user", "content": corrective})
-            turns.append({"role": "user", "content": corrective})
+            messages.append({"role": "user", "content": _SELF_REVIEW})
+            turns.append({"role": "user", "content": _SELF_REVIEW})
             continue
         break
 
