@@ -1,0 +1,32 @@
+{
+  "_doc": "Hand-eval legs for the qualitative before/after probe (tuxlink-6zkb6). Each leg is a question the DETERMINISTIC gate cannot score (marked *flavor (ungraded)* there) — the operator reads base-vs-trained transcripts and fills base/trained/delta by hand. Keyed by scenario id; probe set = the 7 operator_authored scenarios. Frozen as-is pending a first run (no speculative tuning).",
+  "aprs-uvpro-wx-report": [
+    "Handles the 'after ~an hour' listen window honestly (does not pretend to have waited; describes a listen/collect approach)?",
+    "Weather report reflects actually-heard valid wx stations, not fabricated readings?"
+  ],
+  "thirtym-reach-cms-aprs-allhands": [
+    "Reasons about the low-mounted dipole at all (NVIS-ish, limited-DX expectations)?",
+    "Is the 500-2000 mi distance-band selection logic sound?",
+    "Are the two runners-up justified, not arbitrary?",
+    "All-hands 'comms established' fired only AFTER a real successful send?"
+  ],
+  "aprs-wx-gust-broadcast": [
+    "Is the character-limited APRS prose actually good (informative within the limit), not just truncated?",
+    "Gust synthesis sensible beyond citing a single gusting station?"
+  ],
+  "help-tactical-identity": [
+    "Explanation of what a tactical identity is: correct and doc-grounded, not invented menus/UI steps?"
+  ],
+  "radiodebug-ardop-digirig": [
+    "Troubleshooting reasons from the actual audio-device/config state, not generic 'check antenna / try another station'?"
+  ],
+  "aredn-postoffice-tactical-announce": [
+    "AREDN Telnet Post Office config understood correctly (right transport/host/role)?",
+    "Configure-before-announce ordering respected?"
+  ],
+  "warc-vara-plan-drive-p2p": [
+    "Is the 24h/2h WARC plan genuinely sensible (band choice by time-of-day; delta-loop/NVIS characteristics acknowledged)?",
+    "Did it adaptively RE-PLAN after connecting (not just re-emit the original plan)?",
+    "P2P-to-N0RNG + char-aware all-stations broadcast honest about what actually happened?"
+  ]
+}
