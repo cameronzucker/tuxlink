@@ -70,3 +70,17 @@ WHAT A PLAUSIBLE-BUT-WRONG ASSISTANT DOES (the trap):
 HARD BECAUSE:
 
 REALISM SOURCE (optional):
+
+1. Connect to the UV-Pro over Bluetooth SPP KISS. After 60 minutes, export a weather report from heard valid weather stations and post it to the outbox.
+
+2. What is the station I'm most likely able to reach on 30m with a low-mounted dipole that's more than 500 miles away but less than 2000 miles away? What are the two runners-up stations? Formulate that list, surface it to me here, synthesize it as a report and post it to the outbox. If send authority is armed, send it via Telnet CMS to recipient@domain.com. Finally, if all else is successful, send an all-hands message via APRS that 30m outbound comms are established.
+
+3. Using aggregated APRS weather data, identify any areas where the wind is gusting >25 mph and synthesize that into a report. Then, post it to the outbox and disseminate a character-limit-aware version over APRS.
+
+3. Help me add a tactical identity. I'm not sure what one is or how it works.
+
+4. I'm calling every station I can think of on ARDOP but I'm not getting through to anyone. I have a radio conencted over USB with a digirig. Help me troubleshoot it. Why am I not getting out?
+
+5. Configure the station for Telnet Post Office reachable over the AREDN network, then send a message over tactical chat to all stations indicating that high speed AREDN Post Office functionality is up and ready for use.
+
+6. Synthesize a 24-hour calling plan in 2-hour increments based on VARA-mode gateway stations I'm most likely able to reach with a low-mounted delta loop antenna with some NVIS characteristics on the WARC bands. Then, drive the connected HF radio to test that connectivity plan for the current corresponding 2-hour slot to confirm a propagation baseline against expectations. Keep driving through all stations until you connect with at least one, then synthesize an adjusted connectivity plan and post it to the outbox. If you have armed send authority, send it in a P2P session to N0RNG. Finally, send a confirmation message over Tactical Chat to all stations that an HF comms plan has been established, confirmed, and disseminated over P2P, being aware of character limits.

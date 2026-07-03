@@ -18,12 +18,13 @@ TAINT_TOOLS = {"mailbox_list", "message_read", "session_log_snapshot", "tauri_se
 
 # Egress — keys the transmitter / network round-trip; needs armed + un-tainted.
 EGRESS_TOOLS = {"cms_connect", "verify_cms_connection", "rig_tune", "ardop_connect",
-                "ardop_b2f_exchange", "vara_b2f_exchange", "packet_connect"}
+                "ardop_b2f_exchange", "vara_b2f_exchange", "packet_connect",
+                "aprs_send_message"}
 
 # Tier-2 config writes — also need armed + un-tainted.
 TIER2_WRITE_TOOLS = {"config_set_ardop", "config_set_vara", "packet_config_set",
                      "config_set_grid", "position_set_source", "config_set_privacy",
-                     "packet_set_listen", "mailbox_move"}
+                     "packet_set_listen", "mailbox_move", "config_set_transport"}
 
 # Staging into the local outbox — ALWAYS available (no authority required).
 STAGING_TOOLS = {"message_send", "send_form", "catalog_send_inquiry", "grib_send_request"}

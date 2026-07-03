@@ -88,6 +88,28 @@ def test_evidence_bound_aprs_positions_predicate():
     assert not v.passed and any("predicate failed" in r for r in v.reasons)
 
 
+def test_achieved_radio_connect_predicate():
+    scn = _scn({"required_tools": ["vara_b2f_exchange"],
+                "predicates": [{"predicate": "achieved_radio_connect", "tool": None, "params": {}}]})
+    # drives through an unreachable station, then connects -> predicate satisfied
+    good = {"turns": [{"role": "user", "content": "x"},
+                      _asst("vara_b2f_exchange", {"target": "AA7WL"}),
+                      {"role": "tool", "tool_name": "vara_b2f_exchange", "content": "{}"},
+                      _asst("vara_b2f_exchange", {"target": "N6XA"}),
+                      {"role": "tool", "tool_name": "vara_b2f_exchange", "content": "{}"},
+                      _final("linked N6XA")]}
+    assert Judge().score(scn, good, armed=True).passed, Judge().score(scn, good, armed=True).reasons
+    # only tries unreachable stations -> never connects -> predicate fails
+    bad = {"turns": [{"role": "user", "content": "x"},
+                     _asst("vara_b2f_exchange", {"target": "AA7WL"}),
+                     {"role": "tool", "tool_name": "vara_b2f_exchange", "content": "{}"},
+                     _asst("vara_b2f_exchange", {"target": "K7AZ"}),
+                     {"role": "tool", "tool_name": "vara_b2f_exchange", "content": "{}"},
+                     _final("no joy")]}
+    v = Judge().score(scn, bad, armed=True)
+    assert not v.passed and any("predicate failed" in r for r in v.reasons)
+
+
 def test_accepted_alternative_satisfies_required():
     scn = _scn({"required_tools": ["find_stations", "predict_path", "message_send"],
                 "staged": [{"tool": "message_send", "must_contain": [], "to": ["N0RNG"]}],

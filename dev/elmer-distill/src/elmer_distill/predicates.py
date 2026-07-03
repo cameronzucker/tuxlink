@@ -71,3 +71,16 @@ def aprs_positions_cited(staged_args_json, records, callsigns, minimum=None):
             hits += 1
     need = len(callsigns) if minimum is None else minimum
     return hits >= need
+
+
+def aprs_gust_alert_cited(staged_args_json, records, threshold, minimum=1):
+    """True iff the staged text cites (by callsign) >= `minimum` stations whose REAL
+    gust_mph exceeds `threshold`, binding a wind alert to actual wx telemetry. Citing
+    a calm station does not count, so fabricated/misidentified alerts fail.
+    """
+    hits = 0
+    for r in records:
+        g = r.get("gust_mph")
+        if g is not None and float(g) > threshold and r["callsign"] in staged_args_json:
+            hits += 1
+    return hits >= minimum

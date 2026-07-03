@@ -15,6 +15,14 @@ def test_predict_path_blocks():
     assert len(r["by_block"]) == 12 and all("reliability_pct" in b for b in r["by_block"])
 
 
+def test_predict_path_marks_current_slot():
+    sim = StatefulSimulator(seed=1, now_utc_hour=15)
+    r = sim.apply("predict_path", {"frequencies_khz": [3585], "rx_grid": "DM43"})
+    assert r["current_utc_hour"] == 15
+    current = [b for b in r["by_block"] if b.get("is_current")]
+    assert len(current) == 1 and current[0]["utc_hour"] == 14   # floor to the even 2h slot
+
+
 def test_catalog_has_ids():
     sim = StatefulSimulator(seed=1)
     r = sim.apply("catalog_list", {})
@@ -89,3 +97,66 @@ def test_aprs_deterministic():
     a = StatefulSimulator(seed=1).apply("aprs_list_stations", {})
     b = StatefulSimulator(seed=1).apply("aprs_list_stations", {})
     assert a == b
+
+
+def test_aprs_send_message_egress_gated():
+    sim = StatefulSimulator(armed=False, seed=1)
+    assert sim.apply("aprs_send_message", {"text": "net up"}).get("error") == "DENIED"
+
+
+def test_aprs_send_message_char_limit_rejected_even_when_armed():
+    sim = StatefulSimulator(armed=True, seed=1)
+    over = "x" * 80
+    assert sim.apply("aprs_send_message", {"text": over}).get("error") == "INVALID"
+    ok = sim.apply("aprs_send_message", {"text": "30m outbound comms established"})
+    assert ok.get("ok") and ok["channel"] == "tactical-chat"
+
+
+def test_aprs_send_addressed_vs_broadcast():
+    sim = StatefulSimulator(armed=True, seed=1)
+    bcast = sim.apply("aprs_send_message", {"text": "all stations: AREDN PO up"})
+    addr = sim.apply("aprs_send_message", {"text": "status?", "to": "N7CPZ-7"})
+    assert bcast["channel"] == "tactical-chat" and bcast.get("to") is None
+    assert addr["channel"] == "aprs-message" and addr["to"] == "N7CPZ-7"
+
+
+def test_aprs_send_denied_after_taint():
+    sim = StatefulSimulator(armed=True, seed=1)
+    sim.apply("aprs_read_messages", {})   # taints
+    assert sim.apply("aprs_send_message", {"text": "x"}).get("error") == "DENIED"
+
+
+def test_warc_bands_have_multiple_gateways():
+    # ranking scenarios ("best + 2 runners-up on 30m", "rank WARC gateways") need >=3.
+    sim = StatefulSimulator(seed=1)
+    for band in ("30m", "17m", "12m"):
+        r = sim.apply("find_stations", {"bands": [band]})
+        assert r["count"] >= 3, f"{band} has only {r['count']} gateways; need >=3"
+
+
+def test_connect_reports_per_station_connectivity():
+    sim = StatefulSimulator(armed=True, seed=1)
+    bad = sim.apply("vara_b2f_exchange", {"target": "AA7WL"})   # flagged unreachable now
+    good = sim.apply("vara_b2f_exchange", {"target": "N6XA"})   # reachable
+    assert bad.get("connected") is False
+    assert good.get("connected") is True
+
+
+def test_config_set_transport_is_tier2_gated():
+    disarmed = StatefulSimulator(armed=False, seed=1)
+    assert disarmed.apply("config_set_transport",
+                          {"kind": "telnet", "host": "cms.local.mesh", "routing_intent": "post-office"}
+                          ).get("error") == "DENIED"
+    armed = StatefulSimulator(armed=True, seed=1)
+    assert armed.apply("config_set_transport",
+                       {"kind": "telnet", "host": "cms.local.mesh", "routing_intent": "post-office"}
+                       ).get("ok")
+
+
+def test_aprs_list_includes_weather_fields():
+    sim = StatefulSimulator(seed=1)
+    r = sim.apply("aprs_list_stations", {})
+    wx = [s for s in r["stations"] if "gust_mph" in s]
+    assert wx, "expected some weather stations carrying gust_mph"
+    assert any(s["gust_mph"] > 25 for s in wx), "expected a high-gust station for wind-alert scenarios"
+    assert any(s["gust_mph"] <= 25 for s in wx), "expected a calm station too (so alerts must discriminate)"

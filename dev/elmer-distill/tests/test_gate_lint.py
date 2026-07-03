@@ -13,7 +13,7 @@ from elmer_distill.tool_surface import load_tool_names
 
 CANDIDATES = sorted(glob.glob(os.path.join(os.path.dirname(__file__), "..", "gate", "candidates", "*.json")))
 KNOWN_PREDICATES = {"references_real_gateway", "schedule_has_blocks", "freq_in_band", "distance_band",
-                    "aprs_positions_cited"}
+                    "aprs_positions_cited", "aprs_gust_alert_cited", "achieved_radio_connect"}
 _TOOLS = load_tool_names()
 
 
@@ -27,7 +27,8 @@ def test_candidate_is_valid(path):
     assert s.provenance is not None and s.provenance.why_hard.strip(), f"{s.id}: missing provenance/why_hard"
     for chk in s.spec.predicates:
         assert chk.predicate in KNOWN_PREDICATES, f"{s.id}: unknown predicate {chk.predicate}"
-        assert chk.tool in _TOOLS, f"{s.id}: predicate tool {chk.tool} not a real tool"
+        # some predicates (e.g. achieved_radio_connect) are not bound to a staged tool.
+        assert chk.tool is None or chk.tool in _TOOLS, f"{s.id}: predicate tool {chk.tool} not a real tool"
     for t in s.spec.required_tools:
         assert t in _TOOLS, f"{s.id}: required tool {t} not real"
     for alt in s.spec.accepted_alternatives:

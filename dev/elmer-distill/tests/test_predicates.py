@@ -1,6 +1,6 @@
 from elmer_distill.predicates import (freq_in_band, distance_band, parse_freqs_khz,
                                       references_real_gateway, schedule_has_blocks, BANDS,
-                                      aprs_positions_cited)
+                                      aprs_positions_cited, aprs_gust_alert_cited)
 
 
 def test_freq_in_band():
@@ -56,3 +56,15 @@ def test_aprs_positions_cited_requires_callsign_and_its_own_grid():
     # RESCUE-1 cited with RESCUE-3's grid must NOT count as a hit for RESCUE-1.
     mismatched = '{"body":"RESCUE-1 at DM53"}'
     assert not aprs_positions_cited(mismatched, records, ["RESCUE-1"], 1)
+
+
+def test_aprs_gust_alert_cited_binds_to_wx():
+    records = [{"callsign": "WX-CAVE", "gust_mph": 41},
+               {"callsign": "WX-MESA", "gust_mph": 18},
+               {"callsign": "WX-RIM", "gust_mph": 28}]
+    good = '{"body":"Wind alert: WX-CAVE gusting 41 mph; WX-RIM 28 mph"}'
+    missed = '{"body":"conditions generally calm"}'
+    false_alert = '{"body":"Wind alert: WX-MESA gusting"}'   # WX-MESA is calm (18)
+    assert aprs_gust_alert_cited(good, records, 25, 2)
+    assert not aprs_gust_alert_cited(missed, records, 25, 2)
+    assert not aprs_gust_alert_cited(false_alert, records, 25, 1)  # citing a calm station is not a real alert

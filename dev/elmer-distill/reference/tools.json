@@ -723,5 +723,67 @@
         }
       }
     }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "aprs_send_message",
+      "description": "Send a message over APRS. With `to` set, sends an addressed APRS message to that station; with `to` omitted, broadcasts to the open tactical-chat channel (all stations). Payload is capped at 67 characters (APRS limit) — an over-length text is rejected as invalid even when disarmed. EGRESS (keys the transmitter): the actual send requires armed send-authority and an un-tainted session; denied otherwise.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Message body (<= 67 chars)."
+          },
+          "to": {
+            "type": "string",
+            "description": "Destination callsign for an addressed APRS message; omit to broadcast to tactical chat."
+          }
+        },
+        "required": [
+          "text"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "config_set_transport",
+      "description": "Set the CMS transport and endpoint: kind (telnet / cms-ssl / packet / vara / ardop), host (e.g. an AREDN mesh hostname for a Telnet Post Office), and routing_intent (cms / post-office / radio-only / p2p / mesh). WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "telnet",
+              "cms-ssl",
+              "packet",
+              "vara",
+              "ardop"
+            ]
+          },
+          "host": {
+            "type": "string",
+            "description": "Endpoint host (hostname or IP); e.g. an AREDN mesh address."
+          },
+          "routing_intent": {
+            "type": "string",
+            "enum": [
+              "cms",
+              "post-office",
+              "radio-only",
+              "p2p",
+              "mesh"
+            ]
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      }
+    }
   }
 ]

@@ -83,6 +83,11 @@ def _eval_predicate(check, staged_json, tool_results):
     if p == "aprs_positions_cited":
         recs = (tool_results.get("aprs_list_stations") or {}).get("stations", [])
         return P.aprs_positions_cited(staged_json, recs, params["callsigns"], params.get("minimum"))
+    if p == "aprs_gust_alert_cited":
+        recs = (tool_results.get("aprs_list_stations") or {}).get("stations", [])
+        return P.aprs_gust_alert_cited(staged_json, recs, params["threshold"], params.get("minimum", 1))
+    if p == "achieved_radio_connect":
+        return bool(tool_results.get("__radio_connected__"))
     return False
 
 
@@ -112,6 +117,7 @@ class Judge:
         staged_calls = []          # (tool, args_json)
         tool_results = {}          # name -> last result
         egress_ok = False
+        radio_connected = False    # any connect/exchange returned connected=True
         for turn in traj["turns"]:
             if turn["role"] != "assistant":
                 continue
@@ -120,6 +126,8 @@ class Judge:
                 args = _as_dict(tc["function"].get("arguments"))
                 res = sim.apply(name, args)
                 tool_results[name] = res
+                if isinstance(res, dict) and res.get("connected") is True:
+                    radio_connected = True
                 kind = classify(name)
                 if kind == "staging":
                     staged_calls.append((name, json.dumps(args)))
@@ -143,6 +151,7 @@ class Judge:
                 reasons.append(f"unstaged/incomplete item: {item.tool} {item.must_contain}")
 
         # (g) evidence-bound predicates
+        tool_results["__radio_connected__"] = radio_connected   # surfaced to achieved_radio_connect
         for chk in spec.predicates:
             staged_json = next((argj for nm, argj in staged_calls if nm == chk.tool), "")
             if not _eval_predicate(chk, staged_json, tool_results):
