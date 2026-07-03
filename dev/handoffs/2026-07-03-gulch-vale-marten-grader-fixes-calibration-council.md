@@ -4,6 +4,91 @@
 **Branch:** `bd-tuxlink-6zkb6/discriminating-eval` · **all pushed** · **142 tests green**
 **Worktree:** `worktrees/bd-tuxlink-6zkb6-discriminating-eval/` (bd-owned)
 
+## PHASE-A LoRA — FIRST RUN RESULT (flat / no lift) — 2026-07-03
+
+**The full slice-1 pipeline ran end-to-end on the H200, clean on the first real attempt.** The
+distillation did NOT lift the model on the gate. Honest acceptance numbers (same pod + FIXED grader):
+
+| model | gate | note |
+|---|---|---|
+| base gpt-oss-20b | **4/16** | the FAIR baseline. (The "1/16" cited earlier was the OLD buggy grader — the 6 grader fixes were false-failing base too.) |
+| **elmer-20b** (LoRA, 24-example seed) | **3/16** | flat/no-lift (within noise on 16 scenarios); passes DIFFERENT scenarios than base → training shifted behavior sideways, not up |
+
+**Diagnosis (empirical confirmation of "data is king"):**
+1. **Too little data** — 24 examples. The LoRA fit them (train loss 0.37→0.05) but fitting 24 examples
+   doesn't generalize to 16 unseen, structurally-different gate scenarios.
+2. **Train/test DISTRIBUTION GAP** — the generator emits SIMPLE task-graphs (2-4 tools, NO predicates,
+   e.g. "check modem + get grid"); the gate is 5-6-tool chains + evidence predicates + taint discipline.
+   The model learned the easy patterns; they don't transfer to the hard test. (Drilling arithmetic,
+   tested on word problems.)
+
+**The pipeline itself is the deliverable — every stage executed first-try:** pod_bootstrap → gold-gen
+(100% yield, 24/24) → run_assemble (loss-masked Harmony JSONL, spans validated) → run_train (per-expert
+MoE LoRA, 3264 tensors, router frozen — the hardest prior blocker held) → run_serve (bf16-merge → 41.8G
+GGUF → ollama) → run_eval. We now have a WORKING, ITERABLE distillation loop; the first data point is
+"24 simple examples → no lift," which precisely specifies the next run.
+
+**Config used (to change next run):** 4-bit base, LoRA r=16, 5 epochs, lr 2e-4, grad-accum 2, loss-masked.
+All pod artifacts (adapter, GGUF, elmer-20b ollama tag) were LOST when the pod stopped — regenerate.
+
+## NEXT RUN — full iteration (fresh session; the operator asked for this on fresh context)
+
+Priority-ordered. The engineering is built + validated; this is a data + config iteration, then re-measure.
+
+1. **HARDEN THE GENERATOR (dominant lever — closes the train/test gap).** Edit
+   `src/elmer_distill/scenariogen.py::_spec_for` to emit GATE-SHAPED scenarios: add **evidence
+   predicates** (`references_real_gateway`, `schedule_has_blocks`, `aprs_positions_cited` — import
+   PredicateCheck), **5-6-tool chains**, **taint-discipline** scenarios (clean-before-taint egress), and an
+   **aprs family**. Keep task-graphs DISTINCT from the 16 gate candidates (contamination guard enforces
+   it) but match their DIFFICULTY/STRUCTURE. Author matching natural prompts (extend
+   `generator_prompts.py`, or let gpt-oss:120b author via `run_expand.py` anchored by the 12 Claude
+   exemplars). This is the biggest lever — a model trained on gate-shaped gold should transfer.
+2. **SCALE the pool 10-40×** — `run_expand.py --n-per-cell 6+` (gpt-oss:120b authors i>0 variants,
+   recipient-matched) → hundreds of gold trajectories, not 24.
+3. **QUALITY KNOBS** (the operator's "use the hardware" point): **bf16 base** (add `--precision bf16` to
+   run_train → `load_in_4bit=False, dtype=torch.bfloat16`; the H200's 144GB fits it easily and it's
+   strictly better than 4-bit — but NEVER full fine-tuning, which overfits/forgets on this data size),
+   **r=32**, more epochs. These are SECONDARY to the data.
+4. **RE-RUN the loop & re-measure** — beat base's 4/16 on the frozen gate + hand-read the before/after
+   qualitative probe (`probe.py` + `gate/probe/rubric.json`, the 7 operator scenarios).
+5. **DIAGNOSTIC** — diff base vs elmer transcripts on the FLIPPED scenarios (base-passed/elmer-failed and
+   vice-versa) to see HOW training changed behavior (transcripts on the pod are ephemeral — re-run to
+   capture, or add transcript-pull to the eval).
+
+### Exact runbook (fresh session, fresh H200)
+```
+# 1. bootstrap (lean models) + training deps
+./pod_bootstrap.sh <host> <port> --models gpt-oss:120b,gpt-oss:20b
+ssh ... 'cd /root/elmer-distill && pip install -q openai_harmony -r smoke/requirements-train.txt'
+# 2. (after hardening scenariogen + committing) build/scale the pool
+ssh ... 'cd /root/elmer-distill && python3 run_expand.py --n-per-cell 6 --model gpt-oss:120b --out eval-runs/genpool'
+# 3. gold-gen (lean teacher, judge-filtered) -> assemble
+ssh ... 'cd /root/elmer-distill && nohup python3 run_council.py --models gpt-oss:120b --n 5 --candidates eval-runs/genpool --out eval-runs/gold --max-turns 32 --max-reprompts 1 > /root/gold.log 2>&1 &'
+ssh ... 'cd /root/elmer-distill && python3 run_assemble.py --gold eval-runs/gold/gold --out eval-runs/train.jsonl'
+# 4. train (bf16, r32) -> serve -> eval  (see run_train/run_serve/run_eval; set --max-seq-length from assemble p95)
+ssh ... 'cd /root/elmer-distill && nohup python3 run_train.py --data eval-runs/train.jsonl --out /root/elmer-train/adapter --epochs 3 --r 32 > /root/train.log 2>&1 &'
+ssh ... 'cd /root/elmer-distill && python3 run_serve.py --adapter /root/elmer-train/adapter --tag elmer-20b'
+ssh ... 'cd /root/elmer-distill && python3 run_eval.py --model gpt-oss:20b --label base && python3 run_eval.py --model elmer-20b --label elmer-20b'
+```
+
+### Pipeline scripts (all committed, 150 tests green) — reference
+- `pod_bootstrap.sh` — one-command fresh-pod setup (validated on the H200 first-try).
+- `run_expand.py` (+ `expand.py`, `generator_prompts.py`) — placeholder→natural prompts; `--authored-only`
+  builds the 24 seed locally; `--n-per-cell N` scales via gpt-oss author.
+- `run_council.py` — gold-gen engine (best-of-N, judge-filtered union). Council finding: **lean
+  gpt-oss:120b teacher suffices** (qwen +1, llama/nemotron/gemma +0; nemotron weak; gemma no tool-call).
+- `run_assemble.py` — gold → loss-masked Harmony JSONL (contamination-guarded on gate ids).
+- `run_train.py` — Phase-A LoRA (per-expert MoE targeting, loss-masked). **ADD `--precision bf16`.**
+- `run_serve.py` — bf16-merge → GGUF → ollama (llama.cpp converter fallback built in).
+- `run_eval.py` — model over the gate → per-scenario pass/fail.
+
+### Locked decisions / durable facts (memories)
+- NO frontier gold ([[project-elmer-no-frontier-gold-scope-20b]]); uncovered gate scenarios = stretch markers.
+- Slice-2 roadmap = 120b student on 128GB AI-PC hw ([[project-elmer-slice2-120b-roadmap]]); MoE-on-RDNA3 is fine
+  (the crash memory is Intel-N305-only).
+- gpt-oss-120b is the whole gold committee at this tier; drop the other 4 council models.
+- 2 gate scenarios (blended-fix-and-send, cmdpost-rotation-80m) are genuine hard tail, NOT defects.
+
 ## COUNCIL RESULT (final) — union 14/16, diversity ROI ≈ 0 beyond gpt-oss+qwen
 
 Full 5-model best-of-5 council over the 16-gate. Gold is union-claimed (first model to cover a
