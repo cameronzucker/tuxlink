@@ -1104,6 +1104,7 @@ export const ElmerPane = memo(function ElmerPane({
     lastOutcome,
     send,
     stop,
+    newConversation,
     modelConfig,
     modelConfigState,
     configRead,
@@ -1222,13 +1223,54 @@ export const ElmerPane = memo(function ElmerPane({
   const isRunning = phase === 'running';
   const isOffline = phase === 'offline';
 
+  // tuxlink-vbv2k: context pressure — when a (local) model's context window is
+  // ≥85% full, the "New conversation" icon self-emphasizes so starting fresh is
+  // the obvious move before replies degrade. Guarded on a positive numCtx.
+  const contextPressure =
+    context !== null && context.numCtx > 0 && context.promptTokens / context.numCtx >= 0.85;
+
   return (
     <aside className="elmer-pane" data-testid="elmer-pane" aria-label="Elmer assistant">
-      {/* Header: title + close */}
+      {/* Header: title + new-conversation + close */}
       <div className="elmer-header">
         <span className="elmer-header-title">Elmer</span>
         <span className="elmer-header-sub">AI assistant</span>
         <span className="elmer-header-spacer" />
+        {/* tuxlink-vbv2k: industry-standard "new chat" glyph (speech bubble + plus).
+            Resets the transcript AND the backend conversation so the next message
+            starts with fresh context. Self-emphasizes (amber) under context pressure. */}
+        {!notOnboarded && (
+          <button
+            type="button"
+            className={
+              'elmer-newconv-button' +
+              (contextPressure ? ' elmer-newconv-button--emph' : '')
+            }
+            data-testid="elmer-new-conversation"
+            aria-label="New conversation"
+            title={
+              contextPressure
+                ? 'Context nearly full — start a new conversation'
+                : 'New conversation'
+            }
+            onClick={() => newConversation()}
+          >
+            <svg
+              width="17"
+              height="17"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.7"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M20 4H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h3v3l4-3h9a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z" />
+              <path d="M12 8.5v5M9.5 11h5" />
+            </svg>
+          </button>
+        )}
         <button
           type="button"
           className="elmer-close-button"

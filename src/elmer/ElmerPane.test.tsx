@@ -18,8 +18,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { ElmerPane, ModelForm, RADIO_VERBS } from './ElmerPane';
-import type { ElmerChipPayload, ElmerDeltaPayload, ElmerOutcomePayload, ElmerTurnPayload } from './elmerEvents';
-import { EV_CHIP, EV_DELTA, EV_OUTCOME, EV_TURN } from './elmerEvents';
+import type { ElmerChipPayload, ElmerContextPayload, ElmerDeltaPayload, ElmerOutcomePayload, ElmerTurnPayload } from './elmerEvents';
+import { EV_CHIP, EV_CONTEXT, EV_DELTA, EV_OUTCOME, EV_TURN } from './elmerEvents';
 import { EGRESS_STATUS_DISARMED } from '../security/egressTypes';
 import { PRESETS } from './elmerModelConfig';
 
@@ -174,6 +174,64 @@ describe('<ElmerPane> -- elmer-chip renders a distinct chip (AC-12)', () => {
     const chip = screen.getByTestId('elmer-chip');
     expect(chip.getAttribute('data-tool')).toBe('mailbox_list');
     expect(chip.getAttribute('data-status')).toBe('ok');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// New conversation (tuxlink-vbv2k)
+// ---------------------------------------------------------------------------
+
+describe('<ElmerPane> -- New conversation reset', () => {
+  it('clicking the new-conversation icon clears the transcript AND invokes elmer_new_conversation', async () => {
+    render(<ElmerPane />);
+
+    // Seed an assistant turn into the transcript.
+    await fireElmerEvent<ElmerTurnPayload>(EV_TURN, {
+      kind: 'turn',
+      role: 'assistant',
+      text: 'Nearest gateway is W7ABC.',
+    });
+    expect(screen.getByTestId('elmer-messages').textContent).toContain('W7ABC');
+
+    // Click the header "new conversation" icon.
+    const btn = screen.getByTestId('elmer-new-conversation');
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+
+    // Transcript is cleared...
+    expect(screen.getByTestId('elmer-messages').textContent).not.toContain('W7ABC');
+    // ...and the backend conversation reset was invoked (the load-bearing part
+    // that actually reclaims a local model's context).
+    expect(
+      mockInvoke.mock.calls.some((c) => c[0] === 'elmer_new_conversation'),
+    ).toBe(true);
+  });
+
+  it('the new-conversation icon self-emphasizes when the context window is nearly full', async () => {
+    render(<ElmerPane />);
+
+    // Below the 85% threshold → no emphasis.
+    await fireElmerEvent<ElmerContextPayload>(EV_CONTEXT, {
+      kind: 'context',
+      promptTokens: 4000,
+      evalTokens: 0,
+      numCtx: 10000,
+    });
+    expect(screen.getByTestId('elmer-new-conversation').className).not.toContain(
+      'elmer-newconv-button--emph',
+    );
+
+    // At/above 85% → emphasis (local-model context pressure).
+    await fireElmerEvent<ElmerContextPayload>(EV_CONTEXT, {
+      kind: 'context',
+      promptTokens: 9200,
+      evalTokens: 0,
+      numCtx: 10000,
+    });
+    expect(screen.getByTestId('elmer-new-conversation').className).toContain(
+      'elmer-newconv-button--emph',
+    );
   });
 });
 

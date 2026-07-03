@@ -618,6 +618,48 @@ impl ElmerSession {
         deadline
     }
 
+    /// Start a fresh conversation ("New conversation" — tuxlink-vbv2k).
+    ///
+    /// Clears the accumulated conversation history so the next `send` begins with
+    /// an empty context.  This is the load-bearing half of the operator's "New
+    /// conversation" affordance: a local model's small context window fills up over
+    /// a long thread, and clearing only the UI transcript would leave the backend
+    /// `conversation` — and therefore the model's context — untouched.
+    ///
+    /// Mirrors [`Self::rearm`]'s state reset EXCEPT it does **not** touch the
+    /// egress guard.  Starting a fresh conversation is orthogonal to egress
+    /// arm/taint state (tuxlink-2ouqf): re-arming is a Part-97 consent action, and
+    /// resetting the chat must not silently clear a taint or mint a new armed
+    /// window.  Model config, keyring, and the egress guard are all preserved.
+    ///
+    /// **Cancel-then-reset:** any in-flight run is cancelled first (so calling this
+    /// mid-turn is safe — the running turn is aborted and its result discarded),
+    /// then `generation` is bumped so a late-returning run task cannot write its
+    /// conversation back over the freshly-reset one.
+    pub async fn new_conversation(&self) {
+        // Step 1 — signal + await the in-flight run's termination.
+        self.cancel_and_abort().await;
+
+        // Step 2 — acquire op_lock.  The cancelled `send` releases it once its run
+        // task returns; the run task never holds `inner`, so the cancel signal is
+        // sufficient to unblock it.
+        let _op = self.op_lock.lock().await;
+
+        // Step 3 — briefly lock inner and atomically reset the conversation state.
+        // No `.await` inside this block.  NB: the egress guard is intentionally NOT
+        // touched here (unlike `rearm`) — see the doc comment above.
+        {
+            let mut g = self.inner.lock().unwrap();
+            g.conversation = Conversation::new("");
+            g.generation = g.generation.wrapping_add(1);
+            g.current = None;
+            g.staging_frozen = false;
+            self.frozen_flag
+                .store(false, std::sync::atomic::Ordering::Release);
+        }
+        // inner lock RELEASED.  `_op` (op_lock) drops at function end. ────
+    }
+
     /// Snapshot the staged outbox and compute a one-shot [`OutboxApproval`]
     /// token.  Sets `staging_frozen = true` so the Elmer agent cannot stage
     /// further records while the operator is reviewing.
@@ -1188,6 +1230,21 @@ mod tests {
             deadline
         }
 
+        /// Mirror of `ElmerSession::new_conversation` (resets the conversation but
+        /// does NOT touch the egress guard — no `quarantine_and_rearm`).
+        async fn new_conversation(&self) {
+            self.cancel_and_abort().await;
+            let _op = self.op_lock.lock().await;
+            {
+                let mut g = self.inner.lock().unwrap();
+                g.conversation = Conversation::new("");
+                g.generation = g.generation.wrapping_add(1);
+                g.current = None;
+                g.staging_frozen = false;
+                self.frozen_flag.store(false, Ordering::Release);
+            }
+        }
+
         fn is_running(&self) -> bool {
             self.inner.lock().unwrap().current.is_some()
         }
@@ -1344,6 +1401,46 @@ mod tests {
         );
         assert_eq!(session.generation(), 1, "generation must increment on rearm");
         assert!(!session.is_running(), "no run should be active after rearm");
+    }
+
+    /// `new_conversation` cancels an in-flight run and drops the conversation, but
+    /// (unlike `rearm`) does NOT touch the egress guard — taint is PRESERVED.
+    /// tuxlink-vbv2k.
+    #[tokio::test]
+    async fn new_conversation_drops_convo_bumps_generation_preserves_taint() {
+        let probes = Probes::new();
+        let session = parking_session(Arc::clone(&probes));
+
+        // Taint the guard so we can prove new_conversation leaves egress state alone.
+        session.guard.taint();
+        assert!(session.guard.is_tainted());
+
+        let sess = Arc::clone(&session);
+        let _h = tokio::spawn(async move { sess.send("go".into()).await });
+        wait_until(|| probes.in_transmit()).await;
+
+        session.new_conversation().await;
+
+        // `Conversation::new("")` seeds 1 User("") message — a fresh conversation.
+        assert_eq!(
+            session.conversation_len(),
+            1,
+            "new_conversation must reset the conversation to the seeded state"
+        );
+        assert_eq!(
+            session.generation(),
+            1,
+            "generation must increment so a late run task can't write stale convo back"
+        );
+        assert!(
+            !session.is_running(),
+            "the in-flight run must be cancelled (cancel-then-reset)"
+        );
+        // The load-bearing distinction from rearm: egress arm/taint is untouched.
+        assert!(
+            session.guard.is_tainted(),
+            "new_conversation must NOT clear egress taint (that is rearm's job)"
+        );
     }
 
     /// `rearm` does not deadlock against a parked run (proves the run task never

@@ -2159,6 +2159,7 @@ pub fn run() {
             // tuxlink-13v2l Task 8b: Elmer agent pane commands.
             crate::elmer::commands::elmer_send,
             crate::elmer::commands::elmer_stop,
+            crate::elmer::commands::elmer_new_conversation,
             crate::elmer::commands::egress_rearm,
             crate::elmer::commands::outbox_staged_list,
             crate::elmer::commands::elmer_prepare_outbox_approval,

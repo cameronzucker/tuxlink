@@ -72,6 +72,33 @@
   color: var(--text);
 }
 
+/* tuxlink-vbv2k: "New conversation" icon button (speech bubble + plus). Same
+ * quiet weight as the close button; sits just left of it in the header. */
+.elmer-newconv-button {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2, var(--text-muted));
+  cursor: pointer;
+}
+.elmer-newconv-button:hover {
+  background: var(--surface-hover, var(--surface-3));
+  color: var(--text);
+}
+/* Context-pressure emphasis: a local model's window is nearly full, so starting
+ * fresh is the obvious next move. Amber, matching the accent-warn family. */
+.elmer-newconv-button--emph {
+  color: var(--accent, #f59f3c);
+  border-color: var(--accent-edge, rgba(245, 159, 60, 0.55));
+  background: var(--accent-soft, rgba(245, 159, 60, 0.12));
+}
+
 /* ── Agent-send arm strip (relocated EgressArmControl) ──────────────────────
  * The merged ribbon chip shows arm/taint state + opens this drawer; the actual
  * arm / disarm / re-arm controls live here. The popover is portaled to <body>
