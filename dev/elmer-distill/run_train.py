@@ -69,11 +69,24 @@ def main():
     ap.add_argument("--batch", type=int, default=1)
     ap.add_argument("--grad-accum", type=int, default=8)
     ap.add_argument("--r", type=int, default=16)
+    ap.add_argument("--precision", choices=["4bit", "bf16"], default="4bit",
+                    help="base-weight precision. 4bit = QLoRA (proven, low VRAM). "
+                         "bf16 = full-precision frozen base + LoRA (strictly better "
+                         "adapter quality, ~40GB+ VRAM — the H200's 144GB fits it "
+                         "easily). NOT full fine-tuning either way: only the LoRA "
+                         "adapter trains; the base stays frozen.")
     a = ap.parse_args()
 
     from unsloth import FastLanguageModel
+    if a.precision == "bf16":
+        import torch
+        load_in_4bit, dtype = False, torch.bfloat16
+    else:
+        load_in_4bit, dtype = True, None
+    print(f"[train] base precision={a.precision} (load_in_4bit={load_in_4bit}) r={a.r}")
     model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=MODEL_ID, max_seq_length=a.max_seq_length, load_in_4bit=True, dtype=None)
+        model_name=MODEL_ID, max_seq_length=a.max_seq_length,
+        load_in_4bit=load_in_4bit, dtype=dtype)
     model.gradient_checkpointing_enable()
     model = _attach_lora(model, r=a.r)
 
