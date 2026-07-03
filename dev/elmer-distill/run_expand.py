@@ -21,8 +21,16 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "src"))
 
 from elmer_distill import scenariogen                 # noqa: E402
+from elmer_distill import generator_prompts            # noqa: E402
+from elmer_distill.scenario import Scenario            # noqa: E402
 from elmer_distill.expand import load_exemplars, expand  # noqa: E402
 from elmer_distill.ollama_client import OllamaClient   # noqa: E402
+
+
+def _authored(scenario, prompt):
+    return Scenario(scenario.id, scenario.family, scenario.depth, scenario.taint_state,
+                    prompt, scenario.spec, provenance=scenario.provenance,
+                    operator_authored=scenario.operator_authored)
 
 
 def main():
@@ -34,23 +42,36 @@ def main():
     ap.add_argument("--candidates", default=os.path.join(HERE, "gate", "candidates"))
     ap.add_argument("--out", default=os.path.join(HERE, "eval-runs", "generator-expanded"))
     ap.add_argument("--temperature", type=float, default=0.8)
+    ap.add_argument("--authored-only", action="store_true",
+                    help="use ONLY the hand-authored cell prompts (no model, no pod)")
     a = ap.parse_args()
 
     scns = scenariogen.generate(seed=a.seed, n_per_cell=a.n_per_cell)
     exemplars = load_exemplars(a.candidates)
-    client = OllamaClient(base_url=a.base_url, temperature=a.temperature)
+    client = None if a.authored_only else OllamaClient(base_url=a.base_url, temperature=a.temperature)
     os.makedirs(a.out, exist_ok=True)
-    print(f"[expand] {len(scns)} generator scenarios · author={a.model}", flush=True)
+    print(f"[expand] {len(scns)} generator scenarios · "
+          f"{'authored-only' if a.authored_only else 'author=' + a.model}", flush=True)
 
+    n_auth = n_model = 0
     for i, s in enumerate(scns):
-        try:
-            ex = expand(client, a.model, s, exemplars, temperature=a.temperature)
-        except Exception as e:
-            print(f"  [{i+1}/{len(scns)}] {s.id}  EXPAND-FAIL {e}", flush=True)
-            continue
+        authored = generator_prompts.apply(s)
+        if authored is not None:
+            ex, src = _authored(s, authored), "authored"
+            n_auth += 1
+        elif a.authored_only:
+            continue                       # skip un-authored cells in authored-only mode
+        else:
+            try:
+                ex, src = expand(client, a.model, s, exemplars, temperature=a.temperature), "model"
+                n_model += 1
+            except Exception as e:
+                print(f"  [{i+1}/{len(scns)}] {s.id}  EXPAND-FAIL {e}", flush=True)
+                continue
         with open(os.path.join(a.out, f"{s.id}.json"), "w") as f:
             json.dump(ex.to_json(), f, indent=2)
-        print(f"  [{i+1}/{len(scns)}] {s.id}: {ex.prompt[:90]!r}", flush=True)
+        print(f"  [{i+1}/{len(scns)}] {s.id} ({src}): {ex.prompt[:80]!r}", flush=True)
+    print(f"\n  authored={n_auth} model={n_model}", flush=True)
 
     print(f"\n  expanded pool -> {a.out}/  ({len(os.listdir(a.out))} scenarios)")
     print("  next: gold-gen ->  python3 run_council.py --models gpt-oss:120b --n 5 "
