@@ -1,9 +1,14 @@
 # micro-LoRA smoke result — 2026-07-02 (vetch-sage-oak)
 
-**TRAINING PATH: PASS.** After root-causing + fixing the MoE-targeting blocker, the
-de-risker's core purpose is met: gpt-oss-20b loads, LoRA attaches to **attention +
-all 32 experts (router excluded)**, and **10 training steps backprop cleanly**.
-GGUF/ollama export (serving path) has a separate residual — see below.
+**ALL STAGES PASS (end-to-end).** After root-causing + fixing the MoE-targeting
+blocker, the full pipeline is green: gpt-oss-20b loads, LoRA attaches to **attention +
+all 32 experts (router excluded)**, 10 training steps backprop, the tuned adapter
+exports to GGUF (via a bf16-merge workaround), loads in ollama, and **the tuned model
+emits a valid tool call** (`position_status`). The Stage-2 distillation pipeline is
+de-risked end to end.
+
+Run as two scripts on the pod: `micro_lora_smoke.py` (stages 1-3, training path) then
+`gguf_export.py` (stage 4-5, export + tool-call serve).
 
 ## The fix (MoE expert LoRA targeting)
 
@@ -23,21 +28,19 @@ Result: `trainable=3264, EXPERT=3072 (1536 modules × lora_A/B), attn=96, router
 - Stage 1 (load 4-bit): PASS ✅
 - Stage 2 (assert attn+expert trainable, router excluded): PASS ✅ (was the failure before the fix)
 - Stage 3 (10 training steps, trl SFTTrainer): PASS ✅ — `[SMOKE] TRAINING PATH PASS`
-- Stage 4 (GGUF export): **FAIL (separate, downstream)** — unsloth's gpt-oss llama.cpp
-  converter raises `NotImplementedError: Quant method is not yet supported: 'bitsandbytes'`;
-  it can't dequant a bnb-4bit model to GGUF.
-- Stage 5 (ollama tool-call): not reached (needs stage 4).
+- Stage 4 (GGUF export): PASS ✅ via the bf16-merge workaround (`smoke/gguf_export.py`).
+  unsloth's direct `save_pretrained_gguf` on the bnb-4bit model FAILS
+  (`NotImplementedError: Quant method not yet supported: 'bitsandbytes'`), so instead:
+  reload base in bf16 (MXFP4 auto-dequants) -> apply adapter -> `merge_and_unload()` ->
+  save plain bf16 -> `unsloth_convert_hf_to_gguf.py --outtype bf16` -> ollama create. Works.
+- Stage 5 (ollama tool-call): PASS ✅ — tuned `elmer-smoke-20b` returned tool call `position_status`.
 
-## GGUF/ollama export residual + resolution
+## GGUF export note (for the real Stage-2 pipeline)
 
-`save_pretrained_gguf` on the bnb-4bit model fails because unsloth's gpt-oss GGUF path
-doesn't dequant `bitsandbytes`. This is a **serving/export** issue, orthogonal to whether
-training works (it does). Resolution path (for the real Stage-2 pipeline, not a training gate):
-1. Reload the base in **bf16** (not 4-bit), apply the trained adapter, `merge_and_unload()`,
-   save a plain bf16 model, then run `unsloth_convert_hf_to_gguf.py --outtype bf16` on that
-   (no bnb quant to dequant). `smoke/gguf_export.py` prototypes this. OR
-2. Serve the merged model directly via vLLM / transformers (skip GGUF/ollama) — gold-gen
-   and acceptance-eval only need inference, not specifically ollama.
+Do NOT use unsloth's `save_pretrained_gguf` directly on the 4-bit model (bnb dequant
+unsupported for gpt-oss). Use the bf16-merge path in `smoke/gguf_export.py`, OR skip
+GGUF entirely and serve the merged bf16 model via vLLM/transformers — gold-gen +
+acceptance-eval only need inference, not ollama specifically.
 
 ## Resolved environment (pod, what actually ran the PASS)
 
