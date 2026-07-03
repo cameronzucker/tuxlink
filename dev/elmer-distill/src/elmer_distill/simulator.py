@@ -92,7 +92,8 @@ _CONNECT_TOOLS = {"ardop_connect", "ardop_b2f_exchange", "vara_b2f_exchange", "p
 
 
 def _connect_ok(callsign):
-    return not callsign or str(callsign).upper() not in _UNREACHABLE
+    # a connect with no/empty target is NOT a real link (Codex adrev finding 5).
+    return bool(callsign) and str(callsign).upper() not in _UNREACHABLE
 
 
 def _band_of(khz):
