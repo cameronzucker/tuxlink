@@ -56,7 +56,7 @@ def run_g0(client, model, scenario, system, tools, exemplars, max_reprompts=2, m
     reprompts = 0
 
     for _ in range(max_turns):
-        d = client.chat(model, messages, tools, temperature=0)
+        d = client.chat(model, messages, tools)   # client governs sampling (best-of-N: temp>0 + seed)
         msg = d.get("message", {}) or {}
         thinking = msg.get("thinking") or ""
         content = msg.get("content") or ""

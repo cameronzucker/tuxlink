@@ -36,7 +36,7 @@ def run_scenario(client, model, scenario, system, tools, max_turns=20):
         sim.tainted = True
 
     for _ in range(max_turns):
-        d = client.chat(model, messages, tools, temperature=0)
+        d = client.chat(model, messages, tools)   # sampling governed by the client (best-of-N uses temp>0 + seed)
         msg = d.get("message", {}) or {}
         thinking = msg.get("thinking") or ""
         content = msg.get("content") or ""

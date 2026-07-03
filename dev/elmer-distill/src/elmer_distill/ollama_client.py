@@ -9,17 +9,24 @@ import urllib.request
 
 
 class OllamaClient:
-    def __init__(self, base_url="http://127.0.0.1:11434", num_ctx=32768):
+    def __init__(self, base_url="http://127.0.0.1:11434", num_ctx=32768,
+                 temperature=0, seed=None):
         self.base_url = base_url.rstrip("/")
         self.num_ctx = num_ctx
+        self.temperature = temperature   # >0 + varied seed = best-of-N diversity
+        self.seed = seed
 
-    def chat(self, model, messages, tools, temperature=0):
+    def chat(self, model, messages, tools, temperature=None):
+        opts = {"temperature": self.temperature if temperature is None else temperature,
+                "num_ctx": self.num_ctx}
+        if self.seed is not None:
+            opts["seed"] = self.seed
         body = {
             "model": model,
             "stream": False,
             "messages": messages,
             "tools": tools,
-            "options": {"temperature": temperature, "num_ctx": self.num_ctx},
+            "options": opts,
         }
         req = urllib.request.Request(
             self.base_url + "/api/chat",
