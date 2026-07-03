@@ -34,13 +34,19 @@ class EvalSummary:
     results: list = field(default_factory=list)
 
 
-def evaluate(client, model, scenarios, system, tools, out_dir, label, max_turns=20):
+def evaluate(client, model, scenarios, system, tools, out_dir, label, max_turns=20,
+             runner=None):
+    """Run each scenario through `runner` (default: the raw agentic loop), persist
+    transcripts, judge. Pass a scaffolded runner (e.g. baseline_g0.run_g0 with a
+    checklist) to measure gold-yield: can the teacher produce a passing trajectory
+    when told which tools to call?"""
+    runner = runner or run_scenario
     judge = Judge()
     tdir = os.path.join(out_dir, label)
     os.makedirs(tdir, exist_ok=True)
     summ = EvalSummary(label=label, model=model)
     for s in scenarios:
-        traj = run_scenario(client, model, s, system, tools, max_turns)
+        traj = runner(client, model, s, system, tools, max_turns)
         v = judge.score(s, traj, armed=s.spec.requires_arm)
         path = os.path.join(tdir, f"{s.id}.json")
         with open(path, "w") as f:
