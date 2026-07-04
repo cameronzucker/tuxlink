@@ -51,28 +51,38 @@ proved the gate has false positives (passed `warc-vara` with a bare-timestamp "p
 `PYTHONPATH=src python3 -m pytest tests/ -q`. (cwd reverts in worktree sessions — `cd` to elmer-distill
 explicitly; the repo-root `tests/converge_build_fixtures_test.py` failures are pre-existing + unrelated.)
 
-## NEXT SESSION — the 120b build is now CODE-COMPLETE; what remains is pod-gated
-The first 120b cold-transfer run is fully wired end-to-end (all unit-tested with fakes; no GPU used):
+## NEXT SESSION — the 120b build is CODE-COMPLETE; what remains is pod execution
+Fully wired end-to-end + unit-tested with fakes (no GPU used). On a FRESH pod it is two commands:
 
 ```
-# on the pod (both gpt-oss:120b AND gpt-oss:20b loaded in ollama):
-python3 run_rebaseline.py --repeats 5 --out prereg/rebaseline-2026-07-XX-repaired-gate.json  # FIRST: re-baseline on the REPAIRED gate
-python3 run_gold.py --model gpt-oss:120b --restraint-model gpt-oss:20b --expand-prompts --out eval-runs/gold-120b
-python3 run_assemble.py --gold eval-runs/gold-120b/gold --out eval-runs/train-120b.jsonl
-python3 run_train.py --model-id unsloth/gpt-oss-120b --data eval-runs/train-120b.jsonl --out /root/elmer-train/adapter-120b --precision 4bit --r 32
-# ^ 4bit is MANDATORY: bf16 is blocked (tuxlink-5tfkm — MXFP4 experts only unpack to per-expert
-#   Linear4bit in the 4bit path; bf16 keeps them fused so the expert-LoRA regex finds nothing) AND
-#   a bf16 120b base (~240GB) won't fit one 144GB H200 anyway.
+# from THIS machine, in dev/elmer-distill/ — provision the fresh instance (idempotent; prints the
+# exact authorized_keys paste command if RunPod injected the wrong key — the #1 failure):
+./pod_bootstrap.sh <host> <port> --models gpt-oss:120b,gpt-oss:20b     # ~150GB disk; ~65+13GB pulls
+
+# then on the pod, the whole resumable build in one detached command:
+ssh <...> 'cd /root/elmer-distill && python3 smoke/micro_lora_smoke.py && \
+  nohup bash run_120b.sh > /root/120b.log 2>&1 & echo PID $!'
 ```
 
-**OPEN (unbuilt) — serving + eval-ing the trained 120b.** `run_serve.py` / `smoke/gguf_export.py`
-are hardcoded to the 20b and reload the base in **bf16 to merge the adapter** before GGUF export —
-for a 120b that is ~240GB and will NOT fit one H200. So the 20b's serve→ollama→run_eval acceptance
-path does NOT transfer. Options to decide before the run: (a) 2×H200 pod for the bf16 merge; (b) an
-in-process peft eval (load base-4bit + adapter via transformers/peft, drive the agentic loop COLD,
-judge) — fits one H200, avoids the merge wall entirely, and directly measures cold-transfer; (c) a
-4bit-quantized GGUF export path. (b) is the cleanest but is a new ~run_eval-sized module. Everything
-UP TO the trained adapter (re-baseline → gold → assemble → train) is wired + fits one H200 at 4bit.
+`run_120b.sh` = re-baseline (repaired gate, n≥5) → mixed-source gold (120b quality + 20b restraint +
+expand) → assemble → train (4-bit r32, `--model-id gpt-oss-120b`) → `peft_eval` acceptance (smoke-
+gated). Run `micro_lora_smoke.py` first as the GPU go/no-go — and on an MI300X it is the **ROCm**
+go/no-go: the MXFP4 per-expert unpack is CUDA/bitsandbytes-native, so if it fails there `_attach_lora`
+finds no experts (same signature as tuxlink-5tfkm). 4-bit is mandatory (bf16 blocked + won't fit).
+
+**Serving + eval-ing the trained 120b — BUILT (option b, `peft_eval.py` + `hf_client.py`).**
+`run_serve.py` / `gguf_export.py` reload the base in bf16 to merge the adapter (~240GB for a 120b →
+won't fit one H200), so that path does NOT transfer. Instead `peft_eval.py` evals IN-PROCESS on the
+4-bit base + adapter (the training smoke's layout minus backprop) — fits one H200, runs on any
+≥80GB box (Spark included), no merge. `hf_client.PeftHFClient` wraps the HF model in the OllamaClient
+`.chat()` contract (tokenizer Harmony chat-template render + openai_harmony completion parse); the
+parse aggregation is pure + unit-tested, the GPU glue is **pod-smoke-gated** (`peft_eval --limit 1`,
+which `run_120b.sh` step 5 enforces before the full gate).
+
+**The whole build is one script: `run_120b.sh`** (bootstrap-assumed, resumable) — re-baseline on the
+repaired gate (n≥5) → mixed-source gold (120b quality + 20b restraint + expand) → assemble → train
+(4-bit r32, `--model-id gpt-oss-120b`) → peft acceptance (smoke-gated). Everything fits one H200 at
+4-bit. VRAM: train ~90–110GB peak, eval ~70–80GB, bf16-merge ~240GB (avoided).
 
 1. **Re-baseline FIRST on the repaired gate** (`run_rebaseline --repeats 5`) — the gate changed this
    session (schedule false-positive killed), so the old 13.2/13.8 numbers are stale. Do NOT train
