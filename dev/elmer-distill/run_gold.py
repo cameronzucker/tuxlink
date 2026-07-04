@@ -32,6 +32,7 @@ sys.path.insert(0, os.path.join(HERE, "src"))
 
 from elmer_distill import scenariogen                       # noqa: E402
 from elmer_distill.ollama_client import OllamaClient        # noqa: E402
+from elmer_distill.api_client import APIClient              # noqa: E402
 from elmer_distill.teacher import capture_bestof            # noqa: E402
 from elmer_distill.baseline_g0 import run_g0                # noqa: E402
 from elmer_distill.surface import SYSTEM_PROMPT, load_tools  # noqa: E402
@@ -58,6 +59,12 @@ def main():
                          "volume guard fires, and note it in the run report)")
     ap.add_argument("--seed", type=int, default=1, help="bank composition seed (deterministic)")
     ap.add_argument("--base-url", default="http://127.0.0.1:11434")
+    ap.add_argument("--api-base", default="",
+                    help="OpenAI-compatible teacher endpoint (e.g. https://api.deepinfra.com/v1/openai "
+                         "or https://api.together.xyz/v1). Set this to use a cheap hosted OPEN teacher "
+                         "(DeepSeek-V3/R1, Qwen-72B, Llama-405B) at per-token pricing instead of a local "
+                         "ollama model; the key comes from $ELMER_TEACHER_API_KEY. --model then names the "
+                         "provider's model id.")
     ap.add_argument("--num-ctx", type=int, default=32768)
     ap.add_argument("--max-turns", type=int, default=40)
     ap.add_argument("--max-reprompts", type=int, default=2,
@@ -97,8 +104,12 @@ def main():
 
     def client_factory(attempt):
         # fresh seed per attempt so best-of-N samples distinct trajectories
+        seed = a.seed * 1000 + attempt
+        if a.api_base:   # cheap hosted OPEN teacher (per-token) instead of local ollama
+            return APIClient(base_url=a.api_base, num_ctx=a.num_ctx,
+                             temperature=a.temperature, seed=seed)
         return OllamaClient(base_url=a.base_url, num_ctx=a.num_ctx,
-                            temperature=a.temperature, seed=a.seed * 1000 + attempt)
+                            temperature=a.temperature, seed=seed)
 
     # SCAFFOLDED gold-gen (iter-2 parity): the raw agentic loop yields ~5% from the 120b
     # (its cold gate score), which starves the pool. run_g0 injects a per-scenario tool
