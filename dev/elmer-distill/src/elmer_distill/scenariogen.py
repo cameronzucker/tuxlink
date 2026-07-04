@@ -219,13 +219,26 @@ BALANCED_WEIGHTS = {
 
 
 def _is_restraint_cell(family, depth):
-    """A pre_tainted cell that carries real restraint value: a predicate family at
-    depth>=4. At d6 the taint DROPS the gated egress (cms_connect / aprs_send_message)
-    so the correct behavior is stage + honest refusal; at d4 it keeps the staged
-    send but the session is tainted, so the target is stage + honest 'not transmitted'
-    (require_final_honesty) — both halves of the taint discipline the student unlearns.
-    At d2 the chain has no staging/egress, so the taint is inert and teaches nothing."""
+    """A pre_tainted cell that carries real taint-discipline value: a predicate family
+    at depth>=4. Two tiers (Codex adrev 2026-07-03 P1 — do NOT conflate them):
+      - depth 6 -> EGRESS-REFUSAL: the clean spec carries a gated egress (cms_connect /
+        aprs_send_message) that `_apply_taint` DROPS, so the graded-correct behavior is
+        stage + REFUSE the doomed send (see `_drops_gated_egress`).
+      - depth 4 -> TAINT-HONESTY: the same `message_send` staging path survives (nothing
+        gated to drop), but the session is tainted, so the target is stage + honest
+        'not transmitted' (require_final_honesty). The honesty half of the discipline,
+        not the refusal half.
+    Both are directive-named restraint behaviors (stage + refuse + honestly-decline) and
+    both yield ~100% from the teacher; the volume floor counts them as a YIELD class, not
+    as an egress-refusal count. At d2 the chain has no staging/egress -> taint inert."""
     return family in ("emcomm", "blended", "aprs") and depth >= 4
+
+
+def _drops_gated_egress(family, depth):
+    """True iff `_apply_taint` on this cell DROPS a gated egress -> a genuine
+    egress-REFUSAL trajectory (the strong half of taint discipline). Only the d6
+    predicate cells qualify; d4 keeps its staging path (Codex adrev 2026-07-03 P1)."""
+    return bool(set(_clean_spec(family, depth)[0]) & _GATED)
 
 
 def _balanced_count(family, depth, taint, weights):

@@ -38,14 +38,23 @@ from elmer_distill.surface import SYSTEM_PROMPT, load_tools  # noqa: E402
 PREDICATE_FAMILIES = {"emcomm", "blended", "aprs"}
 
 
-def _is_restraint(sid_family, depth, taint):
-    return taint == "pre_tainted" and sid_family in PREDICATE_FAMILIES and depth >= 4
+def _is_restraint(family, depth, taint):
+    """Any taint-discipline cell (egress-refusal d6 OR taint-honesty d4)."""
+    return taint == "pre_tainted" and family in PREDICATE_FAMILIES and depth >= 4
+
+
+def _is_egress_refusal(family, depth, taint):
+    """The strong half: taint drops a gated egress (only the d6 predicate cells)."""
+    return taint == "pre_tainted" and scenariogen._drops_gated_egress(family, depth)
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="gpt-oss:120b")
-    ap.add_argument("--n", type=int, default=3, help="best-of-N attempts per scenario")
+    ap.add_argument("--n", type=int, default=2,
+                    help="best-of-N attempts per scenario (default 2 = iter-2 parity, so "
+                         "composition stays the single changed variable; raise only if the "
+                         "volume guard fires, and note it in the run report)")
     ap.add_argument("--seed", type=int, default=1, help="bank composition seed (deterministic)")
     ap.add_argument("--base-url", default="http://127.0.0.1:11434")
     ap.add_argument("--num-ctx", type=int, default=32768)
@@ -58,10 +67,19 @@ def main():
 
     bank = scenariogen.generate_balanced(seed=a.seed)
     biting = sum(1 for s in bank if _is_restraint(s.family, s.depth, s.taint_state))
-    print(f"[gold] bank={len(bank)}  restraint-biting={biting} ({biting/len(bank):.0%})  "
-          f"model={a.model}  best-of-{a.n}", flush=True)
+    refusal = sum(1 for s in bank if _is_egress_refusal(s.family, s.depth, s.taint_state))
+    print(f"[gold] bank={len(bank)}  taint-discipline={biting} ({biting/len(bank):.0%}, "
+          f"egress-refusal={refusal})  model={a.model}  best-of-{a.n}", flush=True)
 
     gdir = os.path.join(a.out, "gold")
+    # Refuse a non-empty gold dir (Codex adrev 2026-07-03 P1): stale trajectories from a
+    # prior run would survive an under-yielding rerun and be globbed by run_assemble,
+    # silently bypassing this run's --min-volume / composition guarantee.
+    import glob as _glob
+    if _glob.glob(os.path.join(gdir, "*.json")):
+        sys.exit(f"[gold] REFUSING to write into non-empty gold dir {gdir}: it holds gold "
+                 f"from a prior run that run_assemble would mix in. Choose a fresh --out "
+                 f"(or remove {gdir} yourself) so the volume/composition guard is authoritative.")
     os.makedirs(gdir, exist_ok=True)
 
     def client_factory(attempt):
@@ -81,18 +99,23 @@ def main():
         taint = "pre_tainted" if "pre_tainted" in (sid or "") else "clean"
         return fam, depth, taint
 
-    gold_restraint = 0
+    gold_restraint = gold_egress_refusal = 0
     for t in rep.gold:
         with open(os.path.join(gdir, f"{t['scenario_id']}.json"), "w") as f:
             json.dump(t, f, indent=2)
         fam, depth, taint = _parts(t["scenario_id"])
         if _is_restraint(fam, depth, taint):
             gold_restraint += 1
+        if _is_egress_refusal(fam, depth, taint):
+            gold_egress_refusal += 1
 
     n_gold = len(rep.gold)
     report = {
-        "bank": len(bank), "bank_restraint_biting": biting,
+        "n_attempts": a.n, "temperature": a.temperature, "seed": a.seed, "model": a.model,
+        "bank": len(bank), "bank_restraint": biting,
         "gold": n_gold, "gold_restraint": gold_restraint,
+        "gold_egress_refusal": gold_egress_refusal,               # the strong d6-drop half
+        "gold_taint_honesty": gold_restraint - gold_egress_refusal,  # the d4 honesty half
         "gold_restraint_frac": (gold_restraint / n_gold) if n_gold else 0.0,
         "yield_rate": rep.yield_rate(),
         "by_cell": {f"{k[0]}-d{k[1]}-{k[2]}": v for k, v in sorted(rep.by_cell.items())},
@@ -101,8 +124,9 @@ def main():
     with open(os.path.join(a.out, "report.json"), "w") as f:
         json.dump(report, f, indent=2)
 
-    print(f"[gold] {n_gold} gold trajectories  (restraint {gold_restraint} = "
-          f"{report['gold_restraint_frac']:.0%})  yield={rep.yield_rate():.0%}", flush=True)
+    print(f"[gold] {n_gold} gold  (restraint {gold_restraint} = {report['gold_restraint_frac']:.0%}: "
+          f"egress-refusal {gold_egress_refusal} + taint-honesty {gold_restraint - gold_egress_refusal})  "
+          f"yield={rep.yield_rate():.0%}  n={a.n} temp={a.temperature}", flush=True)
     print(f"       family_counts={report['family_counts']}")
     print(f"       gold + report -> {a.out}/")
 

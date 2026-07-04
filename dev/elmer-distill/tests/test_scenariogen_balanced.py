@@ -2,37 +2,42 @@
 
 Iter-2 proved the distillation trades RESTRAINT for ACTION: three LoRA runs all
 regressed below base (4->3->2 on the frozen gate) because the surviving gold is
-action-dominated. Meaningful restraint gold (stage + honest refusal) exists ONLY
-in the predicate families (emcomm/blended/aprs) at depth>=4 pre_tainted — where
-`_apply_taint` actually DROPS a gated egress and forces the refusal — and those
-are exactly the low-yield families, so restraint gold is doubly starved while the
-easy non-predicate families (helpdesk/radio_debug) flood gold at ~100% yield.
+action-dominated. Taint-discipline gold (stage + refuse + honestly decline) exists
+ONLY in the predicate families (emcomm/blended/aprs) at depth>=4 pre_tainted, and
+those are exactly the low-yield families, so it is doubly starved while the easy
+non-predicate families (helpdesk/radio_debug) flood gold at ~100% yield.
 
-`generate_balanced` reweights the SAME proven-satisfiable cell grid so the
-restraint-biting cells are a large, high-quality fraction while KEEPING volume
-(iter-2's v2 destabilized by cutting 118->59 gold — volume matters). It does NOT
-chase the teacher-limited depth-6 clean evidence-action cells (emcomm/blended d6
-were 0/12 at best-of-6): those get near-zero weight.
+`generate_balanced` reweights the SAME proven-satisfiable cell grid so taint cells
+are a large, high-quality fraction while KEEPING volume (iter-2's v2 destabilized by
+cutting 118->59 gold). It does NOT chase the teacher-limited depth-6 clean evidence-
+action cells (emcomm/blended d6 were 0/12 at best-of-6): those get near-zero weight.
 
-These invariants are on the deterministic BANK (pre-teacher). The actual gold
-volume is a yield property measured on the pod; the defaults are sized so the
-NEAR-CERTAIN-yield cells (restraint-biting + easy-action, both ~100% yield) alone
-clear the 118 floor, so volume survives even if every hard cell yields nothing.
+TWO RESTRAINT TIERS (Codex adrev 2026-07-03 P1 — kept distinct, not conflated):
+  - EGRESS-REFUSAL (d6): `_apply_taint` drops the gated egress -> stage + refuse.
+  - TAINT-HONESTY (d4): staging path survives, session tainted -> stage + honest
+    'not transmitted'. Both are directive restraint behaviors; only d6 drops an egress.
+
+Invariants are on the deterministic BANK (pre-teacher). The 118 floor is a YIELD
+guarantee: restraint (d4+d6, both ~100% yield) + easy-action cells alone clear it,
+so volume survives even if every hard-action cell yields nothing.
 """
-from collections import Counter
-
 from elmer_distill import scenariogen
 
 PREDICATE_FAMILIES = {"emcomm", "blended", "aprs"}
 
 
-def _is_biting(s):
-    """Restraint-biting: a pre_tainted scenario whose CLEAN counterpart carried a
-    gated egress (predicate family, depth>=4) — so the taint actually dropped a
-    gated call and the graded-correct behavior is stage + honest refusal."""
+def _is_taint_cell(s):
+    """Any pre_tainted predicate-family scenario at depth>=4 (egress-refusal OR
+    taint-honesty) — the full taint-discipline set."""
     return (s.taint_state == "pre_tainted"
             and s.family in PREDICATE_FAMILIES
             and s.depth >= 4)
+
+
+def _is_egress_refusal(s):
+    """The strong half: taint DROPS a gated egress (only the d6 predicate cells)."""
+    return (s.taint_state == "pre_tainted"
+            and scenariogen._drops_gated_egress(s.family, s.depth))
 
 
 def _bank():
@@ -40,24 +45,34 @@ def _bank():
 
 
 def test_near_certain_yield_clears_the_118_volume_floor():
-    """Restraint-biting + easy non-predicate cells both yield ~100%; their combined
-    count alone must clear the 118 gold floor so volume survives yield (the iter-2
-    v2 lesson: 59 gold destabilized the model)."""
+    """A YIELD guarantee, not a restraint-strength claim (Codex adrev P1): taint cells
+    (d4+d6, stage/refuse/honest -> ~100% yield) plus easy non-predicate cells (~100%
+    yield) alone clear the 118 gold floor, so volume survives even if every hard-action
+    cell yields nothing (the iter-2 v2 lesson: 59 gold destabilized the model)."""
     bank = _bank()
     near_certain = [s for s in bank
-                    if _is_biting(s)
+                    if _is_taint_cell(s)
                     or (s.taint_state == "clean" and s.family in {"helpdesk", "radio_debug"})]
     assert len(near_certain) >= 118, (
         f"only {len(near_certain)} near-certain-yield scenarios; volume floor at risk")
 
 
-def test_restraint_biting_is_a_large_fraction_of_the_bank():
-    """The rebalance target: taint/refusal trajectories are a large fraction, not the
-    ~small share iter-1/2 surviving gold had."""
+def test_taint_discipline_is_a_large_fraction_of_the_bank():
+    """The rebalance target: taint/refusal/honest-decline trajectories are a large
+    fraction, not the ~small share iter-1/2 surviving gold had."""
     bank = _bank()
-    biting = [s for s in bank if _is_biting(s)]
-    frac = len(biting) / len(bank)
-    assert frac >= 0.40, f"restraint-biting only {frac:.0%} of bank (target: large fraction)"
+    frac = len([s for s in bank if _is_taint_cell(s)]) / len(bank)
+    assert frac >= 0.40, f"taint-discipline only {frac:.0%} of bank (target: large fraction)"
+
+
+def test_egress_refusal_signal_is_not_diluted_away():
+    """The STRONG half of restraint — actually refusing a dropped gated egress — must be
+    present in force, not swamped by the honesty-only d4 cells (Codex adrev P1). Only the
+    d6 predicate pre_tainted cells drop an egress."""
+    bank = _bank()
+    refusal = [s for s in bank if _is_egress_refusal(s)]
+    assert all(s.depth == 6 for s in refusal), "egress-refusal must be the d6 drop cells only"
+    assert len(refusal) >= 30, f"only {len(refusal)} egress-refusal scenarios (strong signal too thin)"
 
 
 def test_action_capability_retained_across_all_families():
