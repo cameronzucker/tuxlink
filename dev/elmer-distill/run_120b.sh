@@ -18,6 +18,15 @@ say() { printf '\n=== %s ===\n' "$1"; }
 # 0. Train stack (identical to iter-3: unsloth resolves CUDA torch, then FORCE cu128 so a
 #    cpu-torch never sneaks in — tuxlink-xutv1 pollution class).
 say "0 train stack"
+# Accelerator guard: this stack is CUDA-only. On an AMD/ROCm box (MI300X) the cu128 wheel is
+# wrong and unsloth/bitsandbytes need ROCm builds — run the go/no-go probe first, do NOT bet a
+# full build on an unverified ROCm 4-bit path (tuxlink-5tfkm class).
+if command -v rocminfo >/dev/null 2>&1 || [[ -e /dev/kfd ]]; then
+  echo "ROCm/AMD detected — the CUDA train stack does NOT apply here."
+  echo "Run:  python3 smoke/rocm_probe.py   (go/no-go for bitsandbytes-4bit MXFP4 on ROCm)."
+  echo "If it PASSES, install the ROCm stack from its header, then re-run this script."
+  exit 2
+fi
 if ! python3 -c "import unsloth" 2>/dev/null; then
   pip install -q "unsloth>=2026.6" "unsloth_zoo>=2026.6" "transformers>=4.56.1,<5" \
                  "peft>=0.13" "trl>=0.20" "datasets>=2.20" "accelerate>=0.34" "bitsandbytes>=0.43"
