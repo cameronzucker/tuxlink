@@ -31,18 +31,19 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "src"))
 
 from elmer_distill import scenariogen                       # noqa: E402
+from elmer_distill import gold_pipeline                      # noqa: E402
 from elmer_distill.ollama_client import OllamaClient        # noqa: E402
 from elmer_distill.api_client import APIClient              # noqa: E402
 from elmer_distill.teacher import capture_bestof            # noqa: E402
 from elmer_distill.baseline_g0 import run_g0                # noqa: E402
+from elmer_distill.expand import load_exemplars             # noqa: E402
 from elmer_distill.surface import SYSTEM_PROMPT, load_tools  # noqa: E402
-
-PREDICATE_FAMILIES = {"emcomm", "blended", "aprs"}
 
 
 def _is_restraint(family, depth, taint):
-    """Any taint-discipline cell (egress-refusal d6 OR taint-honesty d4)."""
-    return taint == "pre_tainted" and family in PREDICATE_FAMILIES and depth >= 4
+    """Any taint-discipline cell (egress-refusal d6 OR taint-honesty d4). Canonical
+    definition lives in gold_pipeline (shared with capture_mixed's routing)."""
+    return gold_pipeline.is_restraint_cell(family, depth, taint)
 
 
 def _is_egress_refusal(family, depth, taint):
@@ -52,7 +53,23 @@ def _is_egress_refusal(family, depth, taint):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", default="gpt-oss:120b")
+    ap.add_argument("--model", default="gpt-oss:120b",
+                    help="the QUALITY teacher (drafts the grounded reports). For the 120b "
+                         "cold-transfer build this is gpt-oss:120b.")
+    ap.add_argument("--restraint-model", default="",
+                    help="OPTIONAL separate teacher for the taint/restraint cells. The 120b "
+                         "fails taint (1/5), so the 120b build borrows those cells from the 20b "
+                         "(5/5): --restraint-model gpt-oss:20b. '' = use --model for all cells "
+                         "(iter-3 single-teacher behavior). Same endpoint as --model/--api-base.")
+    ap.add_argument("--expand-prompts", action="store_true",
+                    help="rewrite each scenario's templated prompt into a NATURAL operator "
+                         "request (expand.py) before capture — required for TRAINING data (Fable "
+                         "precondition; placeholders can't teach prompt->tool-graph transfer). Off "
+                         "by default to preserve run_gold's composition-isolation for iter compares.")
+    ap.add_argument("--expand-model", default="",
+                    help="prompt-author model for --expand-prompts ('' = --model). Authoring the "
+                         "request is exempt from the no-frontier-gold rule (it is not the gold "
+                         "trajectory the student imitates).")
     ap.add_argument("--n", type=int, default=2,
                     help="best-of-N attempts per scenario (default 2 = iter-2 parity, so "
                          "composition stays the single changed variable; raise only if the "
@@ -86,6 +103,17 @@ def main():
         bank = [s for s in bank if s.family in keep]   # probe subset (e.g. evidence families)
     if a.limit:
         bank = bank[:a.limit]                          # fast probe: sample the first N (bank is shuffled)
+
+    if a.expand_prompts:
+        exemplars = load_exemplars(os.path.join(HERE, "gate", "candidates"))
+        expand_model = a.expand_model or a.model
+        expand_client = (APIClient(base_url=a.api_base, num_ctx=a.num_ctx, temperature=a.temperature)
+                         if a.api_base else
+                         OllamaClient(base_url=a.base_url, num_ctx=a.num_ctx, temperature=a.temperature))
+        bank = gold_pipeline.expand_bank(expand_client, expand_model, bank, exemplars,
+                                         temperature=max(a.temperature, 0.7))
+        print(f"[gold] expanded {len(bank)} prompts to natural operator language "
+              f"(author={expand_model})", flush=True)
     biting = sum(1 for s in bank if _is_restraint(s.family, s.depth, s.taint_state))
     refusal = sum(1 for s in bank if _is_egress_refusal(s.family, s.depth, s.taint_state))
     print(f"[gold] bank={len(bank)}  taint-discipline={biting} ({biting/len(bank):.0%}, "
@@ -119,8 +147,22 @@ def main():
         return run_g0(client, model, s, system, tools, exemplars=[],
                       max_reprompts=a.max_reprompts, max_turns=max_turns)
 
-    rep = capture_bestof(client_factory, a.model, bank, SYSTEM_PROMPT, load_tools(),
-                         n_attempts=a.n, max_turns=a.max_turns, runner=scaffolded)
+    mix_prov = None
+    if a.restraint_model:
+        # borrow the restraint cells from a stronger-restraint teacher (the 20b) while the
+        # quality teacher (the 120b) drafts everything else. Same endpoint/factory; only the
+        # model name differs, so capture_mixed reuses client_factory for both sources.
+        rep, mix_prov = gold_pipeline.capture_mixed(
+            client_factory, a.model, client_factory, a.restraint_model,
+            bank, SYSTEM_PROMPT, load_tools(), n_attempts=a.n, max_turns=a.max_turns,
+            runner=scaffolded)
+        print(f"[gold] mixed teachers: quality={mix_prov['quality_model']} "
+              f"({mix_prov['quality_gold']}/{mix_prov['quality_cells']} cells) + "
+              f"restraint={mix_prov['restraint_model']} "
+              f"({mix_prov['restraint_gold']}/{mix_prov['restraint_cells']} cells)", flush=True)
+    else:
+        rep = capture_bestof(client_factory, a.model, bank, SYSTEM_PROMPT, load_tools(),
+                             n_attempts=a.n, max_turns=a.max_turns, runner=scaffolded)
 
     # persist gold + count restraint fraction of the SURVIVING gold (what trains)
     fam_of = lambda t: (t.get("scenario_id") or "").split("-")[0]
@@ -152,6 +194,8 @@ def main():
         "yield_rate": rep.yield_rate(),
         "by_cell": {f"{k[0]}-d{k[1]}-{k[2]}": v for k, v in sorted(rep.by_cell.items())},
         "family_counts": dict(Counter(fam_of(t) for t in rep.gold)),
+        "expanded_prompts": a.expand_prompts,
+        "mixed_teachers": mix_prov,   # None unless --restraint-model set
     }
     with open(os.path.join(a.out, "report.json"), "w") as f:
         json.dump(report, f, indent=2)
