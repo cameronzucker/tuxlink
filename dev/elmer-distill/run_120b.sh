@@ -42,6 +42,11 @@ fi
 python3 -c "import torch,sys; sys.exit(0 if torch.cuda.is_available() else 1)" || \
   pip install -q --index-url https://download.pytorch.org/whl/cu128 torch torchvision
 python3 -c "import torch; assert torch.cuda.is_available(), 'CUDA torch missing (pollution)'; print('[torch]', torch.__version__)"
+# openai_harmony (+ its o200k vocab, downloaded on first use) is needed by assemble (step 3) and
+# peft_eval (step 5); the base image + train stack don't include it, and pod_bootstrap doesn't
+# install requirements.txt. Install it here so the whole pipeline runs end-to-end.
+python3 -c "import openai_harmony" 2>/dev/null || pip install -q openai_harmony requests
+python3 -c "import openai_harmony; print('[openai_harmony] ok')"
 
 # 1. Re-baseline on the REPAIRED gate FIRST (n>=5). The gate changed (schedule false-positive
 #    killed); the old 13.2/13.8 numbers are stale. Do NOT train against stale numbers.
