@@ -59,11 +59,13 @@ if [[ -f eval-runs/train-120b.jsonl ]]; then echo "train-120b.jsonl exists — s
   python3 run_assemble.py --gold eval-runs/gold-120b/gold --out eval-runs/train-120b.jsonl
 fi
 
-# 4. Train — 120b, 4-bit QLoRA, attn+all-experts LoRA (router frozen), r32, 3 epochs.
-say "4 train (120b 4-bit r32)"
+# 4. Train — 120b, 4-bit QLoRA, attn+all-experts LoRA (router frozen), 3 epochs.
+#    r16 + the default paged_adamw_8bit optimizer fit the 120b on a 96GB card (RTX PRO 6000);
+#    on an H200/144GB you may bump --r 32 for a touch more adapter capacity.
+say "4 train (120b 4-bit r16, paged 8-bit optim)"
 if [[ -f /root/elmer-train/adapter-120b/adapter_config.json ]]; then echo "adapter-120b exists — skipping"; else
   python3 run_train.py --model-id unsloth/gpt-oss-120b --data eval-runs/train-120b.jsonl \
-                       --out /root/elmer-train/adapter-120b --precision 4bit --r 32 --epochs 3
+                       --out /root/elmer-train/adapter-120b --precision 4bit --r 16 --epochs 3
 fi
 
 # 5. Acceptance — in-process peft eval (base 4-bit + adapter), no bf16 merge. SMOKE (--limit 1)

@@ -88,6 +88,12 @@ def main():
     ap.add_argument("--batch", type=int, default=1)
     ap.add_argument("--grad-accum", type=int, default=8)
     ap.add_argument("--r", type=int, default=16)
+    ap.add_argument("--optim", default="paged_adamw_8bit",
+                    help="optimizer. Default paged_adamw_8bit (bitsandbytes) keeps 8-bit optimizer "
+                         "states + pages spikes to CPU RAM — the QLoRA-standard lever that fits the "
+                         "120b (~1.7B LoRA params across 128 experts) on a 96GB card (RTX PRO 6000) "
+                         "instead of ~14GB of fp32 AdamW state. Use adamw_torch only on a card with "
+                         "ample headroom (H200) if you want to match a prior fp32-optimizer run.")
     ap.add_argument("--precision", choices=["4bit", "bf16"], default="4bit",
                     help="base-weight precision. 4bit = QLoRA (proven, low VRAM). "
                          "bf16 = full-precision frozen base + LoRA (strictly better "
@@ -125,7 +131,8 @@ def main():
         output_dir="/root/elmer-train/run", num_train_epochs=a.epochs,
         per_device_train_batch_size=a.batch, gradient_accumulation_steps=a.grad_accum,
         learning_rate=a.lr, warmup_ratio=0.05, lr_scheduler_type="cosine",
-        logging_steps=2, save_strategy="no", bf16=True, report_to=[])
+        optim=a.optim, logging_steps=2, save_strategy="no", bf16=True, report_to=[])
+    print(f"[train] optimizer={a.optim} (paged 8-bit = fits the 120b on a 96GB card)")
     collator = DataCollatorForSeq2Seq(tokenizer, padding=True, label_pad_token_id=-100)
     trainer = Trainer(model=model, args=args, train_dataset=ds, data_collator=collator)
     trainer.train()
