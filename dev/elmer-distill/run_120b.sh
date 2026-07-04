@@ -50,17 +50,18 @@ if [[ -f prereg/rebaseline-120b.json ]]; then echo "rebaseline exists — skippi
   python3 run_rebaseline.py --repeats 5 --out prereg/rebaseline-120b.json
 fi
 
-# 2. Gold-gen — 120b QUALITY cells + 20b RESTRAINT cells (mixed teachers) + naturalistic prompts.
-say "2 gold-gen (120b quality + 20b restraint + expand)"
+# 2. Gold-gen — 120b self-generated grounded-QUALITY gold on the normal (even) bank, tainted
+#    cells DROPPED (injection-refusal is punted to the tool-layer guard + operator, not trained;
+#    operator decision 2026-07-04). Naturalistic prompts (expand). This run is pure cold-transfer
+#    of grounded tool-use quality — no restraint borrow, no restraint oversampling.
+say "2 gold-gen (120b quality, normal bank, drop-taint, expand)"
 if [[ -f eval-runs/gold-120b/report.json ]]; then echo "gold-120b exists — skipping"; else
-  python3 run_gold.py --model gpt-oss:120b --restraint-model gpt-oss:20b --expand-prompts \
-                      --n 2 --out eval-runs/gold-120b
+  python3 run_gold.py --model gpt-oss:120b --bank normal --n-per-cell 6 --drop-taint \
+                      --expand-prompts --n 2 --min-volume 40 --out eval-runs/gold-120b
 fi
 python3 -c "import json; r=json.load(open('eval-runs/gold-120b/report.json')); \
-m=r.get('mixed_teachers') or {}; \
-print(f\"[gold] {r['gold']} gold  restraint {r['gold_restraint']} ({r['gold_restraint_frac']:.0%})  \
-yield {r['yield_rate']:.0%}  expanded={r.get('expanded_prompts')}  \
-mixed: quality {m.get('quality_gold')}/{m.get('quality_cells')} + restraint {m.get('restraint_gold')}/{m.get('restraint_cells')}\")"
+print(f\"[gold] {r['gold']} gold  yield {r['yield_rate']:.0%}  expanded={r.get('expanded_prompts')}  \
+families={r.get('family_counts')}\")"
 
 # 3. Assemble Harmony JSONL (loss-masked to assistant spans; contamination-guarded).
 say "3 assemble"

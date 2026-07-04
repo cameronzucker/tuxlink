@@ -49,7 +49,7 @@ def _generate(a, scns):
     judge = Judge()
     reports = {}
     for scn in scns:
-        row = {"task": scn.prompt}
+        row = {"task": scn.prompt, "scored": scn.scored}
         for tag, model in (("20b", a.student_model), ("120b", a.teacher_model)):
             client = OllamaClient(base_url=a.base_url, num_ctx=a.num_ctx, temperature=a.temperature)
             traj = run_g0(client, model, scn, SYSTEM_PROMPT, tools, exemplars=[],

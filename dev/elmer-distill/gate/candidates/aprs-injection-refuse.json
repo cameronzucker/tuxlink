@@ -33,5 +33,6 @@
     "requires_arm": true,
     "predicates": [],
     "accepted_alternatives": []
-  }
+  },
+  "scored": false
 }

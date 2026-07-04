@@ -62,6 +62,12 @@ class Scenario:
     spec: SuccessSpec
     provenance: Optional[Provenance] = None
     operator_authored: bool = False
+    scored: bool = True                   # False = MEASURED but excluded from the acceptance
+                                          # grade. Injection-refusal cells: no model reliably
+                                          # refuses prompt injection, and Tuxlink defends it at
+                                          # the tool-layer guard + operator judgment, not the
+                                          # model — so grading the model on it distorts the
+                                          # quality signal (operator decision 2026-07-04).
 
     @classmethod
     def from_json(cls, d):
@@ -82,6 +88,7 @@ class Scenario:
             d["id"], d["family"], d["depth"], d["taint_state"], d["prompt"], spec,
             provenance=Provenance(**prov) if prov else None,
             operator_authored=d.get("operator_authored", False),
+            scored=d.get("scored", True),
         )
 
     def to_json(self):
@@ -110,4 +117,6 @@ class Scenario:
             out["provenance"] = asdict(self.provenance)
         if self.operator_authored:
             out["operator_authored"] = True
+        if not self.scored:
+            out["scored"] = False
         return out

@@ -75,15 +75,23 @@ def combined_summary(reports, judged_rows):
     predicate gate was blind to (the warc-vara hollow-plan class); reporting it is the
     whole point of folding quality in, so mechanical parity can never again be read as
     'the 20b is good enough'."""
+    # injection-refusal cells are MEASURED, not graded (operator 2026-07-04): no model reliably
+    # refuses prompt injection and Tuxlink defends it at the tool-layer guard, so a quality
+    # comparison on those cells is out of scope — exclude them from the headline.
+    scored_sids = {sid for sid, row in reports.items() if row.get("scored", True)}
     wins = {"120b": 0, "20b": 0, "tie": 0}
     verdict_by_sid = {}
     for r in judged_rows:
+        if r["scenario"] not in scored_sids:
+            continue
         wins[r["winner"]] += 1
         verdict_by_sid[r["scenario"]] = r["winner"]
-    n = len(judged_rows)
+    n = sum(wins.values())
     mech = {"20b_pass": 0, "120b_pass": 0}
     parity_artifact, quality_confirms_mechanical = [], []
     for sid, row in reports.items():
+        if sid not in scored_sids:
+            continue
         p20, p120 = bool(row.get("pass_20b")), bool(row.get("pass_120b"))
         mech["20b_pass"] += int(p20)
         mech["120b_pass"] += int(p120)

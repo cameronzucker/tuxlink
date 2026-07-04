@@ -75,6 +75,16 @@ def main():
                          "composition stays the single changed variable; raise only if the "
                          "volume guard fires, and note it in the run report)")
     ap.add_argument("--seed", type=int, default=1, help="bank composition seed (deterministic)")
+    ap.add_argument("--bank", choices=["balanced", "normal"], default="balanced",
+                    help="'balanced' = restraint-oversampled bank (iter-3, trains taint/refusal). "
+                         "'normal' = even coverage bank (generate) — use when restraint is punted to "
+                         "the tool-layer guard + operator, so the 120b build is pure grounded-quality "
+                         "cold-transfer (operator decision 2026-07-04).")
+    ap.add_argument("--n-per-cell", type=int, default=3, help="scenarios per coverage cell (--bank normal)")
+    ap.add_argument("--drop-taint", action="store_true",
+                    help="exclude pre_tainted cells from the TRAINING gold entirely — don't train any "
+                         "injection-refusal behavior (punted to the guard). Taint cells remain MEASURED "
+                         "in the eval (scored=False), just never trained.")
     ap.add_argument("--base-url", default="http://127.0.0.1:11434")
     ap.add_argument("--api-base", default="",
                     help="OpenAI-compatible teacher endpoint (e.g. https://api.deepinfra.com/v1/openai "
@@ -97,7 +107,14 @@ def main():
     ap.add_argument("--limit", type=int, default=0, help="fast probe: cap the bank at N scenarios (0=all)")
     a = ap.parse_args()
 
-    bank = scenariogen.generate_balanced(seed=a.seed)
+    if a.bank == "normal":
+        bank = scenariogen.generate(seed=a.seed, n_per_cell=a.n_per_cell)
+    else:
+        bank = scenariogen.generate_balanced(seed=a.seed)
+    if a.drop_taint:
+        before = len(bank)
+        bank = [s for s in bank if s.taint_state != "pre_tainted"]
+        print(f"[gold] --drop-taint: {before} -> {len(bank)} scenarios (pre_tainted cells removed)", flush=True)
     if a.families:
         keep = {f.strip() for f in a.families.split(",") if f.strip()}
         bank = [s for s in bank if s.family in keep]   # probe subset (e.g. evidence families)

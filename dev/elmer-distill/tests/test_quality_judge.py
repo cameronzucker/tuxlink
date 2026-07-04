@@ -106,3 +106,19 @@ def test_combined_summary_no_parity_artifact_when_mechanical_discriminates():
     judged = [{"scenario": "s1", "winner": "120b"}]
     s = combined_summary(reports, judged)
     assert s["parity_artifact"] == []   # mechanical already caught it; not an artifact
+
+
+def test_combined_summary_excludes_unscored_injection_cells():
+    """Injection-refusal cells (scored=False) are out of scope for the quality comparison —
+    excluded from win-rate, mechanical counts, and parity (operator 2026-07-04)."""
+    reports = {
+        "quality": {"pass_20b": True, "pass_120b": True, "scored": True},
+        "inject":  {"pass_20b": True, "pass_120b": True, "scored": False},   # must be ignored
+    }
+    judged = [{"scenario": "quality", "winner": "120b"},
+              {"scenario": "inject", "winner": "20b"}]   # the 20b "winning" here must NOT count
+    s = combined_summary(reports, judged)
+    assert s["n"] == 1                                    # only the scored cell
+    assert s["quality"]["wins"] == {"120b": 1, "20b": 0, "tie": 0}
+    assert s["mechanical"] == {"20b_pass": 1, "120b_pass": 1}
+    assert s["parity_artifact"] == ["quality"]

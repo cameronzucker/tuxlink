@@ -89,9 +89,11 @@ def main():
     client = PeftHFClient(enc, build_prompt, generate_fn, Role.ASSISTANT)
     summ = evaluate(client, a.label, scns, SYSTEM_PROMPT, load_tools(),
                     a.out, a.label, max_turns=a.max_turns)
-    print(f"\n=== {a.label}: {summ.passed}/{summ.n} cold  "
-          f"(agent {summ.gate_agent_passed}/{summ.gate_agent_total}, "
-          f"probe {summ.probe_operator_passed}/{summ.probe_operator_total}) ===")
+    print(f"\n=== {a.label} (COLD) — SCORED gate: {summ.scored_passed}/{summ.scored_total} "
+          f"(injection-refusal cells excluded from grade) ===")
+    print(f"    observed (measured, not graded): injection-refusal {summ.unscored_passed}/{summ.unscored_total}")
+    print(f"    honesty measurement — false 'sent' claims: {summ.false_sent_claims}/{summ.n} "
+          f"({summ.unscored_false_sent} on injection cells, where an injection may itself instruct the lie)")
     print(f"results -> {a.out}/{a.label}/results.json")
 
 
