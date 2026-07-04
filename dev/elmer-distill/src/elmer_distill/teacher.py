@@ -102,15 +102,22 @@ def capture(client, model, scenarios, system, tools, max_turns=20):
 
 
 def capture_bestof(client_factory, model, scenarios, system, tools,
-                   n_attempts=3, max_turns=20):
+                   n_attempts=3, max_turns=20, runner=None):
     """Best-of-N teacher capture (tuxlink-grg1i): retry each scenario up to
     n_attempts with a fresh client per attempt (client_factory(attempt) returns a
     seeded client so sampling varies), keeping the FIRST judge-passing trajectory.
 
+    `runner(client, model, scenario, system, tools, max_turns)` selects the agentic
+    loop. Default = the RAW loop (run_scenario). For GOLD generation pass a SCAFFOLDED
+    runner (baseline_g0.run_g0 wrapped with a checklist + verifier reprompts): cold,
+    even the 120b teacher passes the judge only ~5% of the time, so the raw loop yields
+    almost no gold — the checklist scaffold is what produced iter-2's 118 gold. The
+    scaffold lives only in the teacher's prompt; the saved trajectory (and assemble's
+    SYSTEM_PROMPT render) is clean, so the student never sees the checklist.
+
     At most one gold per scenario, so gold volume is bounded by the bank and cannot
-    runaway-inflate from the restraint oversample. Raising yield on the restraint
-    cells protects the 118 volume floor without adding cells or chasing the
-    teacher-limited hard-action cells (the bank weighting already declines those)."""
+    runaway-inflate from the restraint oversample."""
+    runner = runner or run_scenario
     rep = CaptureReport()
     judge = Judge()
     for s in scenarios:
@@ -119,7 +126,7 @@ def capture_bestof(client_factory, model, scenarios, system, tools,
         cell["total"] += 1
         for attempt in range(n_attempts):
             client = client_factory(attempt)
-            traj = run_scenario(client, model, s, system, tools, max_turns)
+            traj = runner(client, model, s, system, tools, max_turns)
             if judge.score(s, traj, armed=s.spec.requires_arm).passed:
                 rep.passed += 1
                 cell["passed"] += 1

@@ -63,6 +63,28 @@ def test_stops_after_n_attempts_when_never_passing():
     assert rep.total == 1 and rep.by_cell[("helpdesk", 2, "clean")]["total"] == 1
 
 
+def test_uses_injected_scaffolded_runner():
+    """Gold-gen must be able to swap the raw agentic loop for a scaffolded runner
+    (run_g0) — the raw loop yields ~5% from the 120b (its cold gate score), which
+    starved the iter-3 pool. The runner receives (client, model, scenario, system,
+    tools, max_turns) and its trajectory is what gets judged."""
+    seen = []
+
+    def my_runner(client, model, scenario, system, tools, max_turns):
+        seen.append(scenario.id)
+        # emit the passing docs_search trajectory regardless of client scripting
+        return {"scenario_id": scenario.id, "turns": [
+            {"role": "user", "content": "x"},
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"function": {"name": "docs_search", "arguments": {}}}]},
+            {"role": "assistant", "content": "done"}]}
+
+    rep = capture_bestof(lambda a: _Client(pass_now=False), "m", [_trivial_scenario()],
+                         "SYS", tools=[], n_attempts=3, runner=my_runner)
+    assert seen == ["helpdesk-d2-clean-0"], "injected runner was not used"
+    assert rep.passed == 1 and len(rep.gold) == 1
+
+
 def test_keeps_at_most_one_gold_per_scenario():
     """Even if every attempt would pass, only the first is kept — gold volume is
     bounded by the bank, so the restraint oversample can't runaway-inflate."""
