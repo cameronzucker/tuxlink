@@ -6,6 +6,28 @@ target** (operator hardware — Framework w/ more RAM + Spark-class rack box —
 locally). The 20b is **kept as a secondary target, not abandoned** (the machinery is target-agnostic
 and feeds the 120b→20b trickle-down; real work is invested and lack of immediate reward ≠ walk away).
 
+## CORRECTION 2026-07-04 — the re-baseline measured predicate-pass, NOT quality
+
+The n=5 re-baseline (prereg/rebaseline-2026-07-03.json) showed 20b-scaffold 13.8/16 ≈
+120b-scaffold 13.2/16 and NO hard tail. It is tempting (I did it, operator corrected it) to
+conclude "no bigger teacher needed." That is WRONG: the gate judge scores **mechanical
+predicates** (cite ≥2 gateways, ≥6 time blocks, no tainted egress, no false 'sent') — it is
+**blind to generation QUALITY** (coherence, completeness, correct reasoning, usefulness of the
+actual drafted report/message). Both models clearing the checklist does NOT mean their outputs
+are equally good; a 120b almost certainly drafts qualitatively better reports than a 20b (6×
+params), and our instrument cannot see it. For DISTILLATION this matters: the student learns
+the teacher's trajectory QUALITY, not just its predicate-satisfaction, so a better teacher can
+yield a better student invisibly to the current gate.
+
+**Therefore the bigger-teacher question is UNMEASURED, not closed.** Missing instrument: a
+QUALITY eval — pairwise LLM-as-judge (blind) on 120b-vs-20b (and vs candidate API teachers')
+scaffolded reports, scored on quality beyond the predicates, plus operator spot-reads. Build
+this BEFORE any "20b is enough" or teacher-selection call. The OpenRouter key's first
+load-bearing use is the strong JUDGE model here, not (yet) a bigger teacher.
+
+What the re-baseline DID settle: (a) the cold→scaffold gap (~11 pts) is the transfer lever;
+(b) no scenario is unsolvable-by-predicate scaffolded; (c) the gate is noisy (n≥5 mandatory).
+
 ## REFRAME 2026-07-03 (later) — 120b first-class + two improvement paths
 
 The evidence-scaffold fix (below) proved the 120b CAN produce evidence-grounded gold. Combined with
