@@ -99,3 +99,30 @@ def capture(client, model, scenarios, system, tools, max_turns=20):
             # gold so they never become training data (tuxlink-6zkb6).
             (rep.held_out if s.operator_authored else rep.gold).append(traj)
     return rep
+
+
+def capture_bestof(client_factory, model, scenarios, system, tools,
+                   n_attempts=3, max_turns=20):
+    """Best-of-N teacher capture (tuxlink-grg1i): retry each scenario up to
+    n_attempts with a fresh client per attempt (client_factory(attempt) returns a
+    seeded client so sampling varies), keeping the FIRST judge-passing trajectory.
+
+    At most one gold per scenario, so gold volume is bounded by the bank and cannot
+    runaway-inflate from the restraint oversample. Raising yield on the restraint
+    cells protects the 118 volume floor without adding cells or chasing the
+    teacher-limited hard-action cells (the bank weighting already declines those)."""
+    rep = CaptureReport()
+    judge = Judge()
+    for s in scenarios:
+        rep.total += 1
+        cell = rep.by_cell.setdefault(_cell(s), {"total": 0, "passed": 0})
+        cell["total"] += 1
+        for attempt in range(n_attempts):
+            client = client_factory(attempt)
+            traj = run_scenario(client, model, s, system, tools, max_turns)
+            if judge.score(s, traj, armed=s.spec.requires_arm).passed:
+                rep.passed += 1
+                cell["passed"] += 1
+                (rep.held_out if s.operator_authored else rep.gold).append(traj)
+                break
+    return rep

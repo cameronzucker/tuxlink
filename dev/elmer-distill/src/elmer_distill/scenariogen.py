@@ -199,6 +199,64 @@ def generate(seed, n_per_cell):
     return scenarios
 
 
+# Restraint-rebalanced composition (tuxlink-grg1i, iter-3). The uniform grid
+# `generate()` emits 50% pre_tainted cells, but the taint only BITES (drops a gated
+# egress -> forces stage + honest refusal) for the predicate families at depth>=4;
+# for helpdesk/radio_debug the "taint" is inert (no egress to deny). So meaningful
+# restraint gold lives ONLY in {emcomm,blended,aprs} x {d4,d6} x pre_tainted, which
+# are also the low-yield families -> restraint gold is doubly starved and the student
+# unlearns taint discipline. This weighting oversamples the restraint-biting cells,
+# trims (but keeps) the high-yield easy families as the volume floor, and gives the
+# teacher-limited depth-6 clean evidence cells (emcomm/blended, 0/12 at best-of-6)
+# near-zero weight — do NOT chase them. Defaults are sized so the near-certain-yield
+# cells alone clear the 118 gold floor (iter-2's v2 destabilized at 59 gold).
+BALANCED_WEIGHTS = {
+    "biting": 12,           # predicate family, depth>=4, pre_tainted (restraint) — 6 cells -> 72
+    "easy_action": 8,       # helpdesk/radio_debug clean (high yield volume floor) — 6 cells -> 48
+    "moderate_action": 4,   # predicate family clean d2/d4 + aprs-d6 clean (evidence action)
+    "hard_action": 2,       # emcomm/blended d6 clean (teacher-limited) — minimal, not chased
+}
+
+
+def _is_restraint_cell(family, depth):
+    """A pre_tainted cell that carries real restraint value: a predicate family at
+    depth>=4. At d6 the taint DROPS the gated egress (cms_connect / aprs_send_message)
+    so the correct behavior is stage + honest refusal; at d4 it keeps the staged
+    send but the session is tainted, so the target is stage + honest 'not transmitted'
+    (require_final_honesty) — both halves of the taint discipline the student unlearns.
+    At d2 the chain has no staging/egress, so the taint is inert and teaches nothing."""
+    return family in ("emcomm", "blended", "aprs") and depth >= 4
+
+
+def _balanced_count(family, depth, taint, weights):
+    """How many scenarios to emit for one coverage cell under the restraint rebalance."""
+    if taint == "pre_tainted":
+        # only restraint-bearing cells carry taint-discipline value; inert pre_tainted
+        # (non-predicate families, or d2 with no staging/egress) teaches nothing -> drop.
+        return weights["biting"] if _is_restraint_cell(family, depth) else 0
+    # clean (action) cells
+    if family not in ("emcomm", "blended", "aprs"):
+        return weights["easy_action"]                     # non-predicate, high yield
+    if depth == 6 and family in ("emcomm", "blended"):
+        return weights["hard_action"]                     # teacher-limited dual/evidence cell
+    return weights["moderate_action"]                     # predicate action we can actually get
+
+
+def generate_balanced(seed, weights=None):
+    """Restraint-rebalanced scenario bank (tuxlink-grg1i): same proven-satisfiable
+    cell grid as `generate`, reweighted so taint/refusal trajectories are a large,
+    high-quality fraction while keeping volume. Deterministic given seed."""
+    weights = weights or BALANCED_WEIGHTS
+    scenarios = []
+    for family in FAMILIES:
+        for depth in DEPTHS:
+            for taint in TAINTS:
+                for i in range(_balanced_count(family, depth, taint, weights)):
+                    scenarios.append(_make(family, depth, taint, i))
+    random.Random(seed).shuffle(scenarios)
+    return scenarios
+
+
 def task_graph_signature(scenario):
     return (
         tuple(sorted(scenario.spec.required_tools)),
