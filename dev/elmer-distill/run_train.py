@@ -16,24 +16,39 @@ import argparse
 import json
 import re
 
-MODEL_ID = "unsloth/gpt-oss-20b"
+DEFAULT_MODEL_ID = "unsloth/gpt-oss-20b"   # 120b: --model-id unsloth/gpt-oss-120b
 ROUTER_FORBIDDEN = ("router", "gate.weight", "mlp.gate")
+ATTENTION_TARGETS = ["q_proj", "k_proj", "v_proj", "o_proj"]
+
+_EXPERT_SUFFIX_RE = re.compile(r"experts\.(gate_up_projs|down_projs)\.\d+$")
+
+
+def expert_suffixes(module_names):
+    """The per-expert LoRA target suffixes discovered from a model's module names —
+    MODEL-AGNOSTIC (same gpt-oss MoE layout for 20b and 120b; only the expert COUNT
+    differs, and every index is captured). unsloth's wrapper hard-codes the fused
+    expert name and drops the per-expert Linear4bit modules, so PEFT is driven with
+    these discovered suffixes directly (de-risked smoke recipe)."""
+    return sorted(set(
+        re.search(r"(gate_up_projs|down_projs)\.\d+$", n).group(0)
+        for n in module_names if _EXPERT_SUFFIX_RE.search(n)))
+
+
+def is_router_param(name):
+    """True iff a parameter name belongs to the MoE router/gate (must stay FROZEN —
+    training it destabilizes expert routing; Codex-B)."""
+    return any(f in name for f in ROUTER_FORBIDDEN)
 
 
 def _attach_lora(model, r=16, alpha=32):
-    """LoRA on attention + every MoE expert; router frozen. unsloth's wrapper
-    hard-codes the fused expert name and drops the per-expert Linear4bit modules,
-    so drive PEFT directly with the discovered per-expert suffixes (smoke recipe)."""
+    """LoRA on attention + every MoE expert; router frozen."""
     from peft import LoraConfig, get_peft_model
-    mods = [n for n, _ in model.named_modules()]
-    expert_suffixes = sorted(set(
-        re.search(r"(gate_up_projs|down_projs)\.\d+$", n).group(0)
-        for n in mods if re.search(r"experts\.(gate_up_projs|down_projs)\.\d+$", n)))
-    if not expert_suffixes:
+    suffixes = expert_suffixes([n for n, _ in model.named_modules()])
+    if not suffixes:
         raise RuntimeError("no per-expert modules — layout changed; see smoke/diag_experts.py")
     cfg = LoraConfig(r=r, lora_alpha=alpha, lora_dropout=0.0, bias="none",
                      task_type="CAUSAL_LM",
-                     target_modules=["q_proj", "k_proj", "v_proj", "o_proj"] + expert_suffixes)
+                     target_modules=ATTENTION_TARGETS + suffixes)
     m = get_peft_model(model, cfg)
     m.enable_input_require_grads()   # backprop through the frozen 4-bit base
     return m
@@ -61,6 +76,10 @@ def build_dataset(path, tokenizer, max_len):
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--model-id", default=DEFAULT_MODEL_ID,
+                    help="base model to LoRA. Default 20b; pass unsloth/gpt-oss-120b for the "
+                         "120b cold-transfer build (per-expert targeting is discovered "
+                         "dynamically, so no other flag changes between the two).")
     ap.add_argument("--data", required=True)
     ap.add_argument("--out", default="/root/elmer-train/adapter")
     ap.add_argument("--epochs", type=float, default=3)
@@ -83,9 +102,10 @@ def main():
         load_in_4bit, dtype = False, torch.bfloat16
     else:
         load_in_4bit, dtype = True, None
-    print(f"[train] base precision={a.precision} (load_in_4bit={load_in_4bit}) r={a.r}")
+    print(f"[train] model={a.model_id} base precision={a.precision} "
+          f"(load_in_4bit={load_in_4bit}) r={a.r}")
     model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=MODEL_ID, max_seq_length=a.max_seq_length,
+        model_name=a.model_id, max_seq_length=a.max_seq_length,
         load_in_4bit=load_in_4bit, dtype=dtype)
     model.gradient_checkpointing_enable()
     model = _attach_lora(model, r=a.r)
@@ -93,7 +113,7 @@ def main():
     tr = [n for n, p in model.named_parameters() if p.requires_grad]
     assert any("q_proj" in n for n in tr), "attention not trainable"
     assert any(("down_projs" in n or "gate_up_projs" in n) for n in tr), "experts not trainable (Codex-B)"
-    assert not any(any(f in n for f in ROUTER_FORBIDDEN) for n in tr), "router is trainable!"
+    assert not any(is_router_param(n) for n in tr), "router is trainable!"
     print(f"[train] trainable tensors={len(tr)} (attn+experts, router frozen)")
 
     ds = build_dataset(a.data, tokenizer, a.max_seq_length)
