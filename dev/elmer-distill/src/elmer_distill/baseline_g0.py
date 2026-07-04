@@ -26,11 +26,33 @@ def _as_dict(args):
     return args or {}
 
 
+def _predicate_line(chk):
+    """Surface an evidence predicate as an explicit teacher instruction (tuxlink-grg1i).
+    The predicate is the GRADING requirement but was invisible to the teacher — the
+    checklist only listed tools, so the 120b staged generic bodies and evidence cells
+    yielded 0%. Telling it exactly what to cite is the handoff's untested cheap lever."""
+    p, prm, tool = chk.predicate, chk.params, chk.tool or "the staged message"
+    if p == "references_real_gateway":
+        return (f"- in {tool}, cite at least {prm['minimum']} REAL {prm['band']} gateways "
+                f"by callsign AND frequency in kHz, taken from the find_stations results")
+    if p == "schedule_has_blocks":
+        return (f"- in {tool}, include a schedule of at least {prm['n']} distinct time "
+                f"blocks written as HH:00 (e.g. 00:00 01:00 ...)")
+    if p == "aprs_gust_alert_cited":
+        return (f"- in {tool}, cite at least {prm['minimum']} stations reporting gusts over "
+                f"{prm['threshold']} mph, by callsign and gust value, from the APRS data")
+    if p == "aprs_positions_cited":
+        return (f"- in {tool}, cite at least {prm['minimum']} of these stations with their "
+                f"grid positions from the APRS data: {', '.join(prm['callsigns'])}")
+    return f"- satisfy the {p} requirement in {tool}"
+
+
 def _checklist(scenario):
     lines = [f"- call {t}" for t in scenario.spec.required_tools]
     for item in scenario.spec.staged:
         lines.append(f"- stage a {item.tool} containing {item.must_contain}"
                      + (f" addressed to {item.to}" if item.to else ""))
+    lines += [_predicate_line(c) for c in scenario.spec.predicates]
     return "\n".join(lines)
 
 

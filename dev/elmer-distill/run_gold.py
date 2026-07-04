@@ -67,9 +67,18 @@ def main():
     ap.add_argument("--min-volume", type=int, default=118,
                     help="fail if fewer gold than this survive (the iter-2 volume floor)")
     ap.add_argument("--out", default=os.path.join(HERE, "eval-runs", "gold-v3"))
+    ap.add_argument("--families", default="",
+                    help="comma-sep families to restrict the bank to (probe subset, e.g. "
+                         "'emcomm,blended,aprs' to measure evidence-cell yield); '' = all")
+    ap.add_argument("--limit", type=int, default=0, help="fast probe: cap the bank at N scenarios (0=all)")
     a = ap.parse_args()
 
     bank = scenariogen.generate_balanced(seed=a.seed)
+    if a.families:
+        keep = {f.strip() for f in a.families.split(",") if f.strip()}
+        bank = [s for s in bank if s.family in keep]   # probe subset (e.g. evidence families)
+    if a.limit:
+        bank = bank[:a.limit]                          # fast probe: sample the first N (bank is shuffled)
     biting = sum(1 for s in bank if _is_restraint(s.family, s.depth, s.taint_state))
     refusal = sum(1 for s in bank if _is_egress_refusal(s.family, s.depth, s.taint_state))
     print(f"[gold] bank={len(bank)}  taint-discipline={biting} ({biting/len(bank):.0%}, "
