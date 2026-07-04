@@ -68,6 +68,19 @@ if [[ -f eval-runs/train-120b.jsonl ]]; then echo "train-120b.jsonl exists — s
   python3 run_assemble.py --gold eval-runs/gold-120b/gold --out eval-runs/train-120b.jsonl
 fi
 
+# 3.5 Release ollama VRAM before training. ollama holds the 120b (~63GB) resident from
+#     rebaseline/gold; training needs ~90GB, so 63+90 > 96GB would OOM on the RTX PRO 6000.
+#     Steps 4-5 don't use ollama (train=unsloth, peft_eval=in-process transformers).
+say "3.5 release ollama VRAM"
+ollama stop gpt-oss:120b 2>/dev/null || true
+ollama stop gpt-oss:20b 2>/dev/null || true
+curl -s http://127.0.0.1:11434/api/chat -d '{"model":"gpt-oss:120b","keep_alive":0,"messages":[]}' >/dev/null 2>&1 || true
+curl -s http://127.0.0.1:11434/api/chat -d '{"model":"gpt-oss:20b","keep_alive":0,"messages":[]}' >/dev/null 2>&1 || true
+for _ in 1 2 3 4 5 6; do
+  used=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | head -1)
+  echo "  VRAM used=${used}MiB"; [ "${used:-99999}" -lt 8000 ] && break; sleep 5
+done
+
 # 4. Train — 120b, 4-bit QLoRA, attn+all-experts LoRA (router frozen), 3 epochs.
 #    r16 + the default paged_adamw_8bit optimizer fit the 120b on a 96GB card (RTX PRO 6000);
 #    on an H200/144GB you may bump --r 32 for a touch more adapter capacity.
