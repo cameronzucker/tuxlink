@@ -3,17 +3,23 @@ logic is tested offline; the GPU generate glue is pod-smoke-gated (no GPU/vocab 
 from elmer_distill.hf_client import aggregate_completion, PeftHFClient, tools_for_gpt_oss_template
 
 
-def test_tools_unwrapped_for_gpt_oss_template():
-    """gpt-oss's chat template reads tool.name/description/parameters directly, so the OpenAI
-    {'type':'function','function':{...}} wrapper must be unwrapped (pod bring-up 2026-07-04)."""
-    wrapped = [{"type": "function", "function": {"name": "server_info", "description": "d",
-                                                 "parameters": {"type": "object", "properties": {}}}}]
-    out = tools_for_gpt_oss_template(wrapped)
-    assert out == [{"name": "server_info", "description": "d",
-                    "parameters": {"type": "object", "properties": {}}}]
-    # already-unwrapped tools pass through unchanged
-    bare = [{"name": "x", "description": "y", "parameters": {}}]
-    assert tools_for_gpt_oss_template(bare) == bare
+def test_tools_kept_wrapped_with_descriptions_for_gpt_oss_template():
+    """gpt-oss's template unwraps the wrapper itself (set tool = tool.function) and reads
+    description under a strict undefined — so KEEP the wrapper and guarantee a description on
+    every function + parameter property (pod bring-up 2026-07-04)."""
+    # a function with NO description and a param property with NO description (both would raise)
+    tools = [{"type": "function", "function": {
+        "name": "find_stations",
+        "parameters": {"type": "object", "properties": {"bands": {"type": "array"}}}}}]
+    out = tools_for_gpt_oss_template(tools)
+    fn = out[0]["function"]
+    assert out[0]["type"] == "function"                      # wrapper preserved
+    assert fn["description"] == "find_stations"              # filled from name
+    assert fn["parameters"]["properties"]["bands"]["description"] == ""   # param desc filled
+    # an already-complete tool is preserved (description untouched)
+    good = [{"type": "function", "function": {"name": "x", "description": "keep me",
+                                              "parameters": {"type": "object", "properties": {}}}}]
+    assert tools_for_gpt_oss_template(good)[0]["function"]["description"] == "keep me"
 
 
 def _msg(channel=None, recipient=None, text=""):

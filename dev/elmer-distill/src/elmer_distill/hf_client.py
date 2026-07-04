@@ -19,12 +19,29 @@ offline (it is where the real bugs hide); the glue around it is thin.
 
 
 def tools_for_gpt_oss_template(tools):
-    """The gpt-oss Harmony chat template's `render_tool_namespace` iterates `tools` and reads
-    `tool.description` / `tool.name` / `tool.parameters` DIRECTLY — i.e. it expects each tool to
-    be the FUNCTION object, not the OpenAI `{"type":"function","function":{...}}` wrapper that
-    load_tools()/ollama use. Unwrap so apply_chat_template renders instead of raising
-    UndefinedError: 'dict object' has no attribute 'description' (pod bring-up 2026-07-04)."""
-    return [t.get("function", t) if isinstance(t, dict) else t for t in tools]
+    """Make `tools` safe for the gpt-oss Harmony chat template (pod bring-up 2026-07-04).
+
+    The template's `render_tool_namespace` unwraps the OpenAI wrapper ITSELF (`set tool =
+    tool.function`), so it wants the WRAPPED `{"type":"function","function":{...}}` form that
+    load_tools() already produces — do NOT unwrap. But it then reads `tool.description` and each
+    `param_spec.description` under a STRICT jinja undefined that RAISES on a missing key
+    (UndefinedError: 'dict object' has no attribute 'description'). So guarantee a `description`
+    on every function AND every parameter property; leave the wrapper intact."""
+    out = []
+    for t in tools:
+        fn = dict(t.get("function", t) if isinstance(t, dict) else {})
+        fn.setdefault("description", fn.get("name", ""))
+        params = fn.get("parameters")
+        if isinstance(params, dict) and isinstance(params.get("properties"), dict):
+            props = {}
+            for name, spec in params["properties"].items():
+                if isinstance(spec, dict):
+                    spec = {**spec}
+                    spec.setdefault("description", "")
+                props[name] = spec
+            fn["parameters"] = {**params, "properties": props}
+        out.append({"type": "function", "function": fn})
+    return out
 
 
 def _text_of(msg_dict):
