@@ -65,6 +65,43 @@ def parse_verdict(text):
     return m.group(1).upper() if m else None
 
 
+def combined_summary(reports, judged_rows):
+    """Fold quality in as a FIRST-CLASS metric alongside the mechanical gate (operator
+    2026-07-04). `reports[sid]` carries per-model mechanical pass (`pass_20b`/`pass_120b`,
+    written by the generate phase); `judged_rows` are the pairwise verdicts.
+
+    The decision-bearing output is `parity_artifact` — scenarios BOTH models pass
+    mechanically yet the 120b wins on quality. That cell is exactly what the 16-item
+    predicate gate was blind to (the warc-vara hollow-plan class); reporting it is the
+    whole point of folding quality in, so mechanical parity can never again be read as
+    'the 20b is good enough'."""
+    wins = {"120b": 0, "20b": 0, "tie": 0}
+    verdict_by_sid = {}
+    for r in judged_rows:
+        wins[r["winner"]] += 1
+        verdict_by_sid[r["scenario"]] = r["winner"]
+    n = len(judged_rows)
+    mech = {"20b_pass": 0, "120b_pass": 0}
+    parity_artifact, quality_confirms_mechanical = [], []
+    for sid, row in reports.items():
+        p20, p120 = bool(row.get("pass_20b")), bool(row.get("pass_120b"))
+        mech["20b_pass"] += int(p20)
+        mech["120b_pass"] += int(p120)
+        w = verdict_by_sid.get(sid)
+        if p20 and p120 and w == "120b":
+            parity_artifact.append(sid)        # mechanically tied, quality favors 120b
+        elif not p20 and p120 and w == "120b":
+            quality_confirms_mechanical.append(sid)
+    return {
+        "n": n,
+        "mechanical": mech,
+        "quality": {"wins": wins,
+                    "win_rate_120b": round(wins["120b"] / n, 2) if n else 0.0},
+        "parity_artifact": sorted(parity_artifact),
+        "quality_confirms_mechanical": sorted(quality_confirms_mechanical),
+    }
+
+
 def judge_pair(client, model, task, report_20b, report_120b, seed=0):
     """Blind pairwise judge. seed parity chooses which model is slot A vs B; the winning
     slot is mapped back to its model so position bias cannot favor either systematically."""

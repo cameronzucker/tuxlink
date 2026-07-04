@@ -10,7 +10,7 @@ anchors the judge.
 import json
 
 from elmer_distill.quality_judge import (
-    extract_report, build_judge_prompt, parse_verdict, judge_pair)
+    extract_report, build_judge_prompt, parse_verdict, judge_pair, combined_summary)
 
 
 def _traj(body, final):
@@ -74,3 +74,35 @@ def test_judge_pair_unshuffles_ab_back_to_model():
                     report_120b="ONETWENTY text", seed=1)
     assert v0["winner"] == "120b" and v1["winner"] == "120b"
     assert v0["order"] != v1["order"]   # seed parity actually swapped the slots
+
+
+def test_combined_summary_folds_mechanical_and_quality():
+    """Quality is first-class alongside the mechanical gate, and the parity-artifact cell
+    (both pass mechanically, 120b wins quality) is surfaced — the thing the 16-item
+    predicate gate was blind to (operator 2026-07-04)."""
+    reports = {
+        # both pass mechanically, 120b wins quality -> PARITY ARTIFACT (warc-vara class)
+        "warc-vara": {"pass_20b": True, "pass_120b": True},
+        # 20b fails mechanically, 120b passes + wins quality -> quality confirms mechanical
+        "aprs-wx-gust": {"pass_20b": False, "pass_120b": True},
+        # genuinely indistinguishable
+        "helpdesk": {"pass_20b": True, "pass_120b": True},
+    }
+    judged = [
+        {"scenario": "warc-vara", "winner": "120b"},
+        {"scenario": "aprs-wx-gust", "winner": "120b"},
+        {"scenario": "helpdesk", "winner": "tie"},
+    ]
+    s = combined_summary(reports, judged)
+    assert s["mechanical"] == {"20b_pass": 2, "120b_pass": 3}
+    assert s["quality"]["wins"] == {"120b": 2, "20b": 0, "tie": 1}
+    assert s["quality"]["win_rate_120b"] == round(2 / 3, 2)
+    assert s["parity_artifact"] == ["warc-vara"]              # the blind-spot cell
+    assert s["quality_confirms_mechanical"] == ["aprs-wx-gust"]
+
+
+def test_combined_summary_no_parity_artifact_when_mechanical_discriminates():
+    reports = {"s1": {"pass_20b": False, "pass_120b": True}}
+    judged = [{"scenario": "s1", "winner": "120b"}]
+    s = combined_summary(reports, judged)
+    assert s["parity_artifact"] == []   # mechanical already caught it; not an artifact

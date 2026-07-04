@@ -62,8 +62,11 @@ def test_wx_gust_broadcast_discriminates():
 
 def test_warc_capstone_discriminates():
     s = _load("warc-vara-plan-drive-p2p")
-    plan = ("Plan 00:00 30m,02:00 30m,04:00 17m,06:00 17m,08:00 12m,10:00 12m,"
-            "12:00 30m,14:00 17m,16:00 12m,18:00 30m,20:00 17m,22:00 12m")
+    # a GROUNDED 12-block plan: each slot names a real WARC gateway + its own freq
+    # (from find_stations), across 30m/17m/12m. Bare band labels are no longer a plan.
+    plan = ("00:00 AA7WL 10125; 02:00 K7AZ 10118; 04:00 KB0RFC 18105; 06:00 W7GW 18110; "
+            "08:00 KM7N 24915; 10:00 W5RMS 24920; 12:00 N6XA 10132; 14:00 W5RMS 10140; "
+            "16:00 N6XA 18130; 18:00 K7AZ 24905; 20:00 AA7WL 10125; 22:00 KM7N 24915")
     good = {"turns": [{"role": "user", "content": "x"},
                       _a("position_status", {}), _a("find_stations", {"bands": ["30m", "17m", "12m"]}),
                       _a("predict_path", {"frequencies_khz": [10125]}),

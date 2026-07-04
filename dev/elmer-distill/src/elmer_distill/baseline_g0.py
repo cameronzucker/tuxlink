@@ -34,10 +34,12 @@ def _predicate_line(chk):
     p, prm, tool = chk.predicate, chk.params, chk.tool or "the staged message"
     if p == "references_real_gateway":
         return (f"- in {tool}, cite at least {prm['minimum']} REAL {prm['band']} gateways "
-                f"by callsign AND frequency in kHz, taken from the find_stations results")
+                f"by callsign AND frequency (in kHz or MHz), taken from the find_stations results")
     if p == "schedule_has_blocks":
-        return (f"- in {tool}, include a schedule of at least {prm['n']} distinct time "
-                f"blocks written as HH:00 (e.g. 00:00 01:00 ...)")
+        return (f"- in {tool}, lay out a rotation of at least {prm['n']} distinct time "
+                f"blocks (e.g. 00:00, 02:00, ...) and for EACH block name the REAL gateway "
+                f"to call and its frequency (in kHz or MHz), taken from the find_stations "
+                f"results (a bare list of times is not a plan)")
     if p == "aprs_gust_alert_cited":
         return (f"- in {tool}, cite at least {prm['minimum']} stations reporting gusts over "
                 f"{prm['threshold']} mph, by callsign and gust value, from the APRS data")

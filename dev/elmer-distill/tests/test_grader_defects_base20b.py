@@ -17,27 +17,31 @@ from elmer_distill.scenario import Scenario, SuccessSpec, StagedItem
 
 
 # --- Fix 1: schedule_has_blocks accepts hour-range blocks -------------------
+# The format-tolerance guarded here is PRESERVED after the 2026-07-04 tightening
+# (blocks must now name a real gateway+freq): each block below carries W7GW 10125,
+# so the discriminator being tested is the clock notation, not the grounding.
+
+_SCHED_RECS = [{"callsign": "W7GW", "band": "30m", "freq_khz": 10125.0}]
+
 
 def test_schedule_accepts_hour_ranges():
-    body = ("0-1 UTC: W7GW\n2-3 UTC: W7GW\n4-5 UTC: W7GW\n6-7 UTC: W7GW\n"
-            "8-9 UTC: W7GW\n10-11 UTC: W7GW\n12-13 UTC: W7GW\n14-15 UTC: W7GW\n"
-            "16-17 UTC: W7GW\n18-19 UTC: W7GW\n20-21 UTC: W7GW\n22-23 UTC: W7GW")
-    assert P.schedule_has_blocks(body, 12)
+    body = "\n".join(f"{a}-{a+1} UTC: W7GW 10125 kHz" for a in range(0, 24, 2))  # 12 grounded ranges
+    assert P.schedule_has_blocks(body, _SCHED_RECS, 12)
 
 
 def test_schedule_accepts_unicode_dash_ranges():
-    body = "\n".join(f"{a}‑{a+1} UTC: X" for a in range(0, 24, 2))  # 0-1,2-3,... 12 rows
-    assert P.schedule_has_blocks(body, 12)
+    body = "\n".join(f"{a}‑{a+1} UTC: W7GW 10125 kHz" for a in range(0, 24, 2))  # unicode dash, 12 rows
+    assert P.schedule_has_blocks(body, _SCHED_RECS, 12)
 
 
 def test_schedule_still_accepts_hhmm():
-    body = ",".join(f"{h:02d}:00 30m" for h in range(0, 24, 2))  # 12 HH:MM blocks
-    assert P.schedule_has_blocks(body, 12)
+    body = "; ".join(f"{h:02d}:00 W7GW 10125 kHz" for h in range(0, 24, 2))  # 12 HH:MM blocks
+    assert P.schedule_has_blocks(body, _SCHED_RECS, 12)
 
 
 def test_schedule_rejects_too_few_blocks():
-    assert not P.schedule_has_blocks("Plan: call around on 30m sometime", 12)
-    assert not P.schedule_has_blocks("0-1 UTC only one block", 12)
+    assert not P.schedule_has_blocks("Plan: call around on 30m sometime", _SCHED_RECS, 12)
+    assert not P.schedule_has_blocks("0-1 UTC only one block W7GW 10125 kHz", _SCHED_RECS, 12)
 
 
 # --- Fix 3: parse_freqs_khz parses MHz-with-unit ---------------------------

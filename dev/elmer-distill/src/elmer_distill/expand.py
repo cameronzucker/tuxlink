@@ -56,7 +56,9 @@ _GLOSS = {
 _PRED_GLOSS = {
     "references_real_gateway": "the report must name specific reachable gateways "
                                "(real callsign + frequency), not vague claims",
-    "schedule_has_blocks": "the report must lay out a time-blocked rotation schedule",
+    "schedule_has_blocks": "the report must lay out a time-blocked rotation schedule that "
+                           "names the specific gateway (real callsign + frequency) to call "
+                           "in each block, not just a list of times",
     "aprs_positions_cited": "the report must cite the field teams' actual positions "
                             "(callsign + grid)",
     "aprs_gust_alert_cited": "the alert must name the specific stations actually "

@@ -26,12 +26,14 @@ def _final(text):
 # --- Fix: ensure_ascii=False so predicates see real unicode --------------------
 
 def test_schedule_predicate_survives_unicode_dashes_and_narrow_space():
-    body = "\n".join(f"{a:02d}‑{a+2:02d}: W7GW @ 30m 10.125 MHz" for a in range(0, 24, 2))
+    body = "\n".join(f"{a:02d}‑{a+2:02d}: AA7WL @ 30m 10.125 MHz" for a in range(0, 24, 2))
     s = Scenario(id="sched-unicode", family="blended", depth=6, taint_state="clean", prompt="x",
-                 spec=SuccessSpec(required_tools=["message_send"], ordering=[], staged=[],
+                 spec=SuccessSpec(required_tools=["find_stations", "message_send"], ordering=[],
+                                  staged=[],
                                   predicates=[PredicateCheck("schedule_has_blocks",
                                                              tool="message_send", params={"n": 12})]))
     traj = {"turns": [{"role": "user", "content": "x"},
+                      _a("find_stations", {"bands": ["30m"]}),
                       _a("message_send", {"body": body}), _final("done")]}
     reasons = Judge().score(s, traj, armed=False).reasons
     assert "predicate failed: schedule_has_blocks on message_send" not in reasons, reasons

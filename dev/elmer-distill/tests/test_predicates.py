@@ -27,8 +27,13 @@ def test_references_real_gateway_binds_to_records():
 
 
 def test_schedule_blocks():
-    assert schedule_has_blocks("00:00 80m; 02:00 40m; 04:00 20m", 3)
-    assert not schedule_has_blocks("sometime later", 3)
+    recs = [{"callsign": "AA7WL", "band": "30m", "freq_khz": 10125.0},
+            {"callsign": "K7AZ", "band": "30m", "freq_khz": 10118.0},
+            {"callsign": "N6XA", "band": "30m", "freq_khz": 10132.0}]
+    good = "00:00 AA7WL 10125; 02:00 K7AZ 10118; 04:00 N6XA 10132"   # gateway+freq per block
+    assert schedule_has_blocks(good, recs, 3)
+    assert not schedule_has_blocks("00:00; 02:00; 04:00", recs, 3)   # bare times, no gateway
+    assert not schedule_has_blocks("sometime later", recs, 3)
 
 
 def test_bands_cover_warc():

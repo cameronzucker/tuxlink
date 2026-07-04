@@ -53,7 +53,14 @@ def _staged_body_for(tool, spec):
             for r in recs[: params["minimum"]]:
                 clauses.append(f"{r['callsign']} {int(r['freq_khz'])} kHz")
         elif p == "schedule_has_blocks":
-            clauses.append(" ".join(f"{h:02d}:00" for h in range(params["n"])))
+            # a GROUNDED plan: each block names a real gateway + its freq (not bare times).
+            # Reuse the co-located references_real_gateway band if present, else 30m.
+            band = next((c.params["band"] for c in spec.predicates
+                         if c.predicate == "references_real_gateway"), "30m")
+            recs = [r for r in _band_records(band) if r["band"] == band] or _band_records("30m")
+            blocks = [f"{2*i:02d}:00 {recs[i % len(recs)]['callsign']} "
+                      f"{int(recs[i % len(recs)]['freq_khz'])} kHz" for i in range(params["n"])]
+            clauses.append("; ".join(blocks))
         elif p == "aprs_positions_cited":
             recs = {r["callsign"].upper(): r for r in _aprs_records()}
             for cs in params["callsigns"]:

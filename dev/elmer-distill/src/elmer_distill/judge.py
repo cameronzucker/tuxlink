@@ -138,7 +138,8 @@ def _eval_predicate(check, staged_json, tool_results):
         recs = (tool_results.get("find_stations") or {}).get("stations", [])
         return P.references_real_gateway(staged_json, recs, params["band"], params["minimum"])
     if p == "schedule_has_blocks":
-        return P.schedule_has_blocks(staged_json, params["n"])
+        recs = (tool_results.get("find_stations") or {}).get("stations", [])
+        return P.schedule_has_blocks(staged_json, recs, params["n"])
     if p == "freq_in_band":
         freqs = P.parse_freqs_khz(staged_json)
         return bool(freqs) and all(P.freq_in_band(f, params["band"]) for f in freqs)

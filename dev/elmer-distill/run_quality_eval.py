@@ -39,12 +39,14 @@ from elmer_distill.scenario import Scenario                 # noqa: E402
 from elmer_distill.ollama_client import OllamaClient        # noqa: E402
 from elmer_distill.api_client import APIClient              # noqa: E402
 from elmer_distill.baseline_g0 import run_g0                # noqa: E402
+from elmer_distill.judge import Judge                       # noqa: E402
 from elmer_distill.surface import SYSTEM_PROMPT, load_tools  # noqa: E402
-from elmer_distill.quality_judge import extract_report, judge_pair  # noqa: E402
+from elmer_distill.quality_judge import extract_report, judge_pair, combined_summary  # noqa: E402
 
 
 def _generate(a, scns):
     tools = load_tools()
+    judge = Judge()
     reports = {}
     for scn in scns:
         row = {"task": scn.prompt}
@@ -53,7 +55,11 @@ def _generate(a, scns):
             traj = run_g0(client, model, scn, SYSTEM_PROMPT, tools, exemplars=[],
                           max_reprompts=a.max_reprompts, max_turns=a.max_turns)
             row[f"report_{tag}"] = extract_report(traj)
-            print(f"  [generate {tag:<4} {scn.id:<34}] {len(row[f'report_{tag}'])} chars", flush=True)
+            # fold the MECHANICAL gate in on the same trajectory, so one run yields both
+            # signals and the judge phase can flag mechanical-parity-but-quality-gap cells.
+            row[f"pass_{tag}"] = judge.score(scn, traj, armed=scn.spec.requires_arm).passed
+            print(f"  [generate {tag:<4} {scn.id:<34}] {len(row[f'report_{tag}'])} chars "
+                  f"mech={'PASS' if row[f'pass_{tag}'] else 'fail'}", flush=True)
         reports[scn.id] = row
     path = os.path.join(a.out, "reports.json")
     os.makedirs(a.out, exist_ok=True)
@@ -76,8 +82,12 @@ def _judge(a, reports):
                       f"**B:** {(row['report_120b'] if v['order']=='20b-first' else row['report_20b'])[:600]}\n\n"
                       f"_judge: {v['reason'][:300]}_\n")
     n = len(rows)
+    combined = combined_summary(reports, rows)   # first-class: mechanical gate + quality together
     summary = {"judge_model": a.judge_model, "n": n, "wins": wins,
                "win_rate_120b": round(wins["120b"] / n, 2) if n else 0.0,
+               "mechanical": combined["mechanical"],
+               "parity_artifact": combined["parity_artifact"],
+               "quality_confirms_mechanical": combined["quality_confirms_mechanical"],
                "per_scenario": rows}
     with open(os.path.join(a.out, "quality-summary.json"), "w") as f:
         json.dump(summary, f, indent=2)
@@ -85,8 +95,13 @@ def _judge(a, reports):
     with open(os.path.join(a.out, "spot-read.md"), "w") as f:
         f.write("# Quality spot-read — A vs B blind (which is the better operator report?)\n\n"
                 + "\n".join(sample))
-    print(f"\n=== QUALITY: 120b {wins['120b']} / 20b {wins['20b']} / tie {wins['tie']}  "
+    mech = combined["mechanical"]
+    print(f"\n=== MECHANICAL gate: 20b {mech['20b_pass']}/{n}  120b {mech['120b_pass']}/{n} ===")
+    print(f"=== QUALITY: 120b {wins['120b']} / 20b {wins['20b']} / tie {wins['tie']}  "
           f"(120b win-rate {summary['win_rate_120b']:.0%}, judge={a.judge_model}) ===")
+    if combined["parity_artifact"]:
+        print(f"=== PARITY ARTIFACT ({len(combined['parity_artifact'])}): both pass mechanically, "
+              f"120b wins on quality -> {', '.join(combined['parity_artifact'])} ===")
     print(f"summary -> {a.out}/quality-summary.json ; blind sample -> {a.out}/spot-read.md")
 
 
