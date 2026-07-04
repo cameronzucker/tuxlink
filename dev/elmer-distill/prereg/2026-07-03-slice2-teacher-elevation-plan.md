@@ -1,8 +1,52 @@
 # Slice-2 Teacher-Elevation Plan — motivation, hypothesis, decision gates
 
 **Author:** crag-juniper-sorrel · **Date:** 2026-07-03 · **bd:** tuxlink-grg1i (spawns a slice-2 issue)
-**Status:** DRAFT for operator review. Scoped in parallel with the iter-3 20b run per the
-operator's 2026-07-03 call ("focus effort on 120b with a larger model, then trickle down").
+**Status:** ADOPTED 2026-07-03, reframed same day (below). **The 120b is now the FIRST-CLASS
+target** (operator hardware — Framework w/ more RAM + Spark-class rack box — can run/own 120b-class
+locally). The 20b is **kept as a secondary target, not abandoned** (the machinery is target-agnostic
+and feeds the 120b→20b trickle-down; real work is invested and lack of immediate reward ≠ walk away).
+
+## REFRAME 2026-07-03 (later) — 120b first-class + two improvement paths
+
+The evidence-scaffold fix (below) proved the 120b CAN produce evidence-grounded gold. Combined with
+the 120b becoming the primary target, there are now **two ways to improve the 120b**, cheapest first:
+
+1. **Self rejection-sampling / STaR (CHEAP, runs on the CURRENT single H200 — no bigger teacher).**
+   The 120b generates scaffolded (checklist-forced) evidence-grounded gold → the Judge filters to
+   correct trajectories → LoRA the 120b on the CLEAN-prompt render (assemble uses SYSTEM_PROMPT, the
+   checklist is dropped). This teaches the 120b to produce grounded trajectories COLD, without the
+   scaffold — i.e. it lifts the 120b's own gate/discriminating score using only itself. Needs a small
+   run_train change (MODEL_ID is hardcoded to gpt-oss-20b; add --model-id + the 120b per-expert LoRA
+   targeting). This is the natural next experiment after the rescued iter-3.
+2. **Bigger-teacher distillation (HIGHER CEILING, multi-GPU spend).** 405B/671B teacher → grounded
+   gold → LoRA the 120b. Cracks the hardest dual-predicate tail (blended-d6 schedule_has_blocks) and
+   raises the ceiling beyond what self-RFT can reach. Cloud multi-GPU (2× H200 ~$7-9/hr for 405B-4bit;
+   4× H200 ~$14-18/hr for 671B-4bit; peak RunPod avail ~1-4 AM AZT). Does NOT fit the 128GB Spark box.
+
+Recommended order: rescued iter-3 (20b, running) → 120b self-RFT (path 1, cheap) → measure the 120b's
+lifted gate score → only then decide if the bigger teacher (path 2) is worth the multi-GPU spend.
+
+## UPDATE 2026-07-03 — pivot confirmed by iter-3 pod evidence + new hardware
+
+The iter-3 gold-gen run on the H200 gave a **cell-level proof** of the teacher-ceiling, which
+made the pivot decisive:
+
+- Scaffolded (checklist + reprompt) best-of-2 over the restraint-rebalanced bank. Yield by cell:
+  non-predicate families (helpdesk/radio_debug) **100%**; but **every cell carrying the
+  `references_real_gateway` evidence predicate (emcomm/blended d4+d6, clean AND tainted) yielded
+  0%.** The gpt-oss:120b teacher cannot cite the simulator's real gateways+frequencies — evidence-
+  grounding is the wall, and it starved the restraint cells (which inherited the predicate). Gold
+  came out 8 then 77 (< the 118 floor); the volume guard correctly refused to train under-volume.
+- **Conclusion:** the 20b ceiling is teacher-bound. You cannot distill evidence-grounded behavior
+  from a teacher that cannot produce it. iter-3 (tuxlink-grg1i) is concluded *inconclusive-with-
+  finding* — the rebalance was never fairly tested because the teacher couldn't make the gold.
+- **New hardware:** Cameron ordered **DGX Spark-class hardware** (GB10 Grace-Blackwell, ~128GB
+  unified memory) that runs 120b-class models locally — the slice-2/3 substrate. MoE is fine on
+  unified memory (NOT a Vulkan iGPU [[project_moe_crash_vulkan_igpu]]). This removes the "128GB
+  AI-PC is future hardware" blocker from the original roadmap [[project_elmer_slice2_120b_roadmap]].
+
+This supersedes the "run the cheap 20b levers first" ordering: the cheap levers are exhausted
+(3 runs, no lift; teacher can't produce the gold), so the effort moves to the teacher.
 
 ## The evidence that motivates this (from the frozen gate calibration)
 
