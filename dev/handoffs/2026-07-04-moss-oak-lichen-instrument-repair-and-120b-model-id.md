@@ -32,31 +32,51 @@ proved the gate has false positives (passed `warc-vara` with a bare-timestamp "p
   - **Accepted residuals (documented + pinned by tests):** F2 coincidental-number (must also name the
     real gateway → basically doing the task), F5 continuation-line (rare; scaffold steers away from it).
 
-### Commit `1155964e` — 120b build, mechanical first step
+### Commit `1155964e` — run_train `--model-id`
 - `run_train.py --model-id` (default 20b; `unsloth/gpt-oss-120b` for the build). Per-expert LoRA
   targeting was ALREADY model-agnostic (dynamic regex discovery), so nothing else changes 20b→120b.
 - Extracted `expert_suffixes` / `is_router_param` as pure helpers + GPU-free tests: every expert index
   captured at 20b (32) AND 120b (128) scale, router stays frozen, empty-discovery is a hard error.
 
-**Tests:** 202 passed, 3 skipped (elmer-distill suite). Run from `dev/elmer-distill/` with
+### Commit `3b4fe72e` — mixed-source gold + naturalistic prompts (the "plus taint gold" half)
+- **`gold_pipeline.capture_mixed`** routes the taint/restraint cells to a SEPARATE teacher (the 20b,
+  5/5) and every other cell to the quality teacher (the 120b), merging gold with per-source
+  `_teacher_model` provenance — the operator's "borrow the 20b's better restraint trajectories."
+- **`run_gold --restraint-model gpt-oss:20b`** (borrow restraint) + **`--expand-prompts`** (apply
+  expand.py so training PROMPTS are natural operator language). Both default OFF (preserves the iter
+  composition-isolation); the 120b build turns them on. The clean-render for cold-transfer already
+  existed (run_g0 scaffolds the teacher's context only; saved trajectory is clean).
+
+**Tests:** 206 passed, 3 skipped (elmer-distill suite). Run from `dev/elmer-distill/` with
 `PYTHONPATH=src python3 -m pytest tests/ -q`. (cwd reverts in worktree sessions — `cd` to elmer-distill
 explicitly; the repo-root `tests/converge_build_fixtures_test.py` failures are pre-existing + unrelated.)
 
-## NEXT SESSION — the substantive 120b build (pod-gated + needs a design pass)
-This is the real remaining work in tuxlink-48nyh. It is NOT mechanical — design it before coding:
-1. **Cold transfer via self-RFT / STaR:** generate the 120b's own judge-PASSING scaffolded gold
-   (it's ~13/16 scaffolded), render it CLEAN (strip the checklist scaffolding), train the 120b to
-   produce cold what it does scaffolded. Closes the ~9-pt cold→scaffold gap. Machinery exists:
-   `baseline_g0.run_g0` (scaffolded gen), `judge` (filter), `dataset.assemble` (loss-masked Harmony),
-   `run_train --model-id unsloth/gpt-oss-120b`. Missing: the STaR data-gen driver that ties them.
-2. **Taint / restraint gold:** the ONE axis the 120b loses (taint-refuse 1/5 vs 20b 5/5) and it's
-   trainable. Curate refusal exemplars for the taint scenarios (or borrow the 20b's better restraint
-   trajectories for those cells).
-3. Apply `expand.py` naturalistic prompts to any training data (info-free placeholders can't teach
-   transfer — Fable B2). Keep n≥5 gate rates.
-4. **The pod is DOWN** (`213.181.111.130:14521` was the single-H200 job pod; operator stops/re-provisions;
-   agents can't). Re-provision when ready to train. All eval-runs/ artifacts on it are gitignored +
-   distilled into committed docs — safe to lose.
+## NEXT SESSION — the 120b build is now CODE-COMPLETE; what remains is pod-gated
+The first 120b cold-transfer run is fully wired end-to-end (all unit-tested with fakes; no GPU used):
+
+```
+# on the pod (both gpt-oss:120b AND gpt-oss:20b loaded in ollama):
+python3 run_rebaseline.py --repeats 5 --out prereg/rebaseline-2026-07-XX-repaired-gate.json  # FIRST: re-baseline on the REPAIRED gate
+python3 run_gold.py --model gpt-oss:120b --restraint-model gpt-oss:20b --expand-prompts --out eval-runs/gold-120b
+python3 run_assemble.py --gold eval-runs/gold-120b/gold --out eval-runs/train-120b.jsonl
+python3 run_train.py --model-id unsloth/gpt-oss-120b --data eval-runs/train-120b.jsonl --out /root/elmer-train/adapter-120b --precision bf16
+# then smoke/gguf_export.py (adapter -> GGUF -> ollama) + run_eval on the frozen gate + run_quality_eval
+```
+
+1. **Re-baseline FIRST on the repaired gate** (`run_rebaseline --repeats 5`) — the gate changed this
+   session (schedule false-positive killed), so the old 13.2/13.8 numbers are stale. Do NOT train
+   against stale numbers (the mistake Fable caught). n≥5 mandatory (gate is noisy).
+2. **Run the pipeline above.** Watch `run_gold`'s report: `mixed_teachers` provenance + the
+   `--min-volume 118` floor + `gold_restraint_frac`. If the 120b's quality-cell yield or the 20b's
+   restraint-cell yield underfills, raise `--n` (note it in the report).
+3. **Acceptance:** run_eval on the frozen gate + `run_quality_eval` — check the NEW `parity_artifact`
+   field shrinks (the 120b, post-train, should stop losing quality where it mechanically ties).
+4. **Optional future:** the ITERATIVE STaR outer loop (train → re-generate with the improved 120b →
+   refilter → retrain) is not built — single-round self-RFT is what's wired. Add only if one round
+   underperforms.
+5. **The pod is DOWN** (`213.181.111.130:14521` was the single-H200 pod; operator stops/re-provisions;
+   agents can't). All eval-runs/ artifacts on it are gitignored + distilled into committed docs — safe
+   to lose. Re-provision before any train.
 
 ## State
 - **Working tree / branch:** clean, pushed (tip `1155964e`). One untracked dir on disk:
