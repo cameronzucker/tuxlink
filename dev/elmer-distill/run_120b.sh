@@ -18,6 +18,10 @@ say() { printf '\n=== %s ===\n' "$1"; }
 # 0. Train stack (identical to iter-3: unsloth resolves CUDA torch, then FORCE cu128 so a
 #    cpu-torch never sneaks in — tuxlink-xutv1 pollution class).
 say "0 train stack"
+# Fresh RunPod base images (Ubuntu 24.04) mark the system Python externally-managed (PEP 668);
+# pip SILENTLY refuses to install without this, leaving unsloth/bitsandbytes absent (verified on
+# the RTX PRO 6000 pod 2026-07-04). Ephemeral container -> safe to override.
+export PIP_BREAK_SYSTEM_PACKAGES=1
 # Accelerator guard: this stack is CUDA-only. On an AMD/ROCm box (MI300X) the cu128 wheel is
 # wrong and unsloth/bitsandbytes need ROCm builds — run the go/no-go probe first, do NOT bet a
 # full build on an unverified ROCm 4-bit path (tuxlink-5tfkm class).
@@ -28,10 +32,15 @@ if command -v rocminfo >/dev/null 2>&1 || [[ -e /dev/kfd ]]; then
   exit 2
 fi
 if ! python3 -c "import unsloth" 2>/dev/null; then
+  # unsloth resolves the matching torch (2.10.0+cu128, Blackwell-capable) itself — verified on
+  # the RTX PRO 6000 (sm_120) 2026-07-04, so do NOT pin torch/torchvision versions here.
   pip install -q "unsloth>=2026.6" "unsloth_zoo>=2026.6" "transformers>=4.56.1,<5" \
                  "peft>=0.13" "trl>=0.20" "datasets>=2.20" "accelerate>=0.34" "bitsandbytes>=0.43"
 fi
-pip install -q --index-url https://download.pytorch.org/whl/cu128 torch==2.10.0 torchvision==0.25.0
+# Only force a cu128 torch if the install left a NON-CUDA torch (the cpu-torch pollution class);
+# don't fight a working CUDA install with exact-version pins.
+python3 -c "import torch,sys; sys.exit(0 if torch.cuda.is_available() else 1)" || \
+  pip install -q --index-url https://download.pytorch.org/whl/cu128 torch torchvision
 python3 -c "import torch; assert torch.cuda.is_available(), 'CUDA torch missing (pollution)'; print('[torch]', torch.__version__)"
 
 # 1. Re-baseline on the REPAIRED gate FIRST (n>=5). The gate changed (schedule false-positive
