@@ -27,6 +27,10 @@ import json
 import os
 import sys
 
+# Reduce allocator fragmentation on the 96GB card (the KV cache grows across the multi-turn loop);
+# must be set before torch is imported (lazily, in main()).
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "src"))
 
@@ -80,12 +84,18 @@ def main():
         return tokenizer.apply_chat_template(
             messages, tools=tools_for_gpt_oss_template(tools), add_generation_prompt=True)
 
+    # Stop at end-of-turn: <|return|> (final) OR <|call|> (tool call). tok.eos_token_id is ONLY
+    # <|return|>, so a tool-calling turn otherwise runs to max_new_tokens of garbage and OOMs the
+    # KV cache across the multi-turn loop (pod bring-up 2026-07-04).
+    stop_ids = enc.stop_tokens_for_assistant_actions()   # [200002, 200012]
+    pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else stop_ids[0]
+
     def generate_fn(prompt_ids):
         input_ids = torch.tensor([prompt_ids], device=model.device)
-        out = model.generate(input_ids, max_new_tokens=a.max_new_tokens,
-                             do_sample=a.temperature > 0,
-                             temperature=max(a.temperature, 1e-5),
-                             pad_token_id=tokenizer.eos_token_id)
+        attn = torch.ones_like(input_ids)                # silence the missing-attention-mask warning
+        out = model.generate(input_ids, attention_mask=attn, max_new_tokens=a.max_new_tokens,
+                             do_sample=a.temperature > 0, temperature=max(a.temperature, 1e-5),
+                             eos_token_id=stop_ids, pad_token_id=pad_id)
         return out[0][len(prompt_ids):].tolist()             # completion ids only
 
     client = PeftHFClient(enc, build_prompt, generate_fn, Role.ASSISTANT)
