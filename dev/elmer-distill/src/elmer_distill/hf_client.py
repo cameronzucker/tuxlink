@@ -18,6 +18,15 @@ offline (it is where the real bugs hide); the glue around it is thin.
 """
 
 
+def tools_for_gpt_oss_template(tools):
+    """The gpt-oss Harmony chat template's `render_tool_namespace` iterates `tools` and reads
+    `tool.description` / `tool.name` / `tool.parameters` DIRECTLY — i.e. it expects each tool to
+    be the FUNCTION object, not the OpenAI `{"type":"function","function":{...}}` wrapper that
+    load_tools()/ollama use. Unwrap so apply_chat_template renders instead of raising
+    UndefinedError: 'dict object' has no attribute 'description' (pod bring-up 2026-07-04)."""
+    return [t.get("function", t) if isinstance(t, dict) else t for t in tools]
+
+
 def _text_of(msg_dict):
     return "".join(c.get("text", "") for c in (msg_dict.get("content") or [])
                    if isinstance(c, dict))

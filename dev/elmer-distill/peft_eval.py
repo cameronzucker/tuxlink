@@ -31,7 +31,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "src"))
 
 from elmer_distill.scenario import Scenario                 # noqa: E402
-from elmer_distill.hf_client import PeftHFClient            # noqa: E402
+from elmer_distill.hf_client import PeftHFClient, tools_for_gpt_oss_template  # noqa: E402
 from elmer_distill.surface import SYSTEM_PROMPT, load_tools  # noqa: E402
 from elmer_distill.eval_run import evaluate                 # noqa: E402
 # harmony (openai_harmony) + torch + unsloth are imported lazily in main() so this CLI stays
@@ -75,8 +75,10 @@ def main():
     enc = _enc()
 
     def build_prompt(messages, tools):
-        # tokenizer's Harmony chat template injects the tool schemas the model was trained on
-        return tokenizer.apply_chat_template(messages, tools=tools, add_generation_prompt=True)
+        # tokenizer's Harmony chat template injects the tool schemas the model was trained on;
+        # it wants the function objects (not the OpenAI wrapper) — see tools_for_gpt_oss_template
+        return tokenizer.apply_chat_template(
+            messages, tools=tools_for_gpt_oss_template(tools), add_generation_prompt=True)
 
     def generate_fn(prompt_ids):
         input_ids = torch.tensor([prompt_ids], device=model.device)

@@ -1,6 +1,19 @@
 """In-process peft-eval client (tuxlink-48nyh, 120b build). The pure completion-aggregation
 logic is tested offline; the GPU generate glue is pod-smoke-gated (no GPU/vocab on the Pi)."""
-from elmer_distill.hf_client import aggregate_completion, PeftHFClient
+from elmer_distill.hf_client import aggregate_completion, PeftHFClient, tools_for_gpt_oss_template
+
+
+def test_tools_unwrapped_for_gpt_oss_template():
+    """gpt-oss's chat template reads tool.name/description/parameters directly, so the OpenAI
+    {'type':'function','function':{...}} wrapper must be unwrapped (pod bring-up 2026-07-04)."""
+    wrapped = [{"type": "function", "function": {"name": "server_info", "description": "d",
+                                                 "parameters": {"type": "object", "properties": {}}}}]
+    out = tools_for_gpt_oss_template(wrapped)
+    assert out == [{"name": "server_info", "description": "d",
+                    "parameters": {"type": "object", "properties": {}}}]
+    # already-unwrapped tools pass through unchanged
+    bare = [{"name": "x", "description": "y", "parameters": {}}]
+    assert tools_for_gpt_oss_template(bare) == bare
 
 
 def _msg(channel=None, recipient=None, text=""):
