@@ -15,6 +15,16 @@ run where the access is:
 checklist) and saves the drafted reports. `judge` blind-pairwise-judges them, randomizing
 A/B per scenario, and writes a win-rate summary + an anonymized sample for the operator
 spot-read (the human anchor for the LLM judge).
+
+JUDGE CHOICE (do not default to a weak/cheap judge for fidelity): for a ONE-OFF read, the
+highest-fidelity judge is the most capable model on hand — the operator + the in-loop
+frontier assistant — since neither is a candidate (no self-grading bias). This scriptable
+`judge` phase exists ONLY for what a human/in-loop judge can't do: a REPEATABLE, headless
+instrument to score candidate teachers, re-score post-training students, and run n times
+unattended. When used that way, set --judge-model to the MOST capable model available
+(a frontier model via OpenRouter — anthropic/claude-*, openai/gpt-*, google/gemini-*),
+and CALIBRATE it against the human + in-loop verdicts on the first sample before trusting
+it to scale. Cheap open judges (deepseek/*) are a scale/cost option only after calibration.
 """
 import argparse
 import glob
@@ -91,9 +101,11 @@ def main():
     ap.add_argument("--max-turns", type=int, default=40)
     ap.add_argument("--max-reprompts", type=int, default=2)
     ap.add_argument("--api-base", default="https://openrouter.ai/api/v1")
-    ap.add_argument("--judge-model", default="deepseek/deepseek-r1",
-                    help="strong judge (must out-class both candidates); deepseek/deepseek-chat "
-                         "is the non-reasoning fallback if R1 truncates before the verdict")
+    ap.add_argument("--judge-model", default="anthropic/claude-opus-4.8",
+                    help="MOST capable model available (frontier via OpenRouter). For a one-off "
+                         "read prefer the in-loop assistant + human anchor directly; this scriptable "
+                         "path is for headless SCALE (candidate teachers, post-train re-eval, n-repeats) "
+                         "and must be calibrated to the human/in-loop verdicts before it is trusted.")
     ap.add_argument("--judge-max-tokens", type=int, default=16000)
     ap.add_argument("--candidates", default=os.path.join(HERE, "gate", "candidates"))
     ap.add_argument("--out", default=os.path.join(HERE, "eval-runs", "quality"))
