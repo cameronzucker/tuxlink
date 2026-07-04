@@ -59,9 +59,20 @@ The first 120b cold-transfer run is fully wired end-to-end (all unit-tested with
 python3 run_rebaseline.py --repeats 5 --out prereg/rebaseline-2026-07-XX-repaired-gate.json  # FIRST: re-baseline on the REPAIRED gate
 python3 run_gold.py --model gpt-oss:120b --restraint-model gpt-oss:20b --expand-prompts --out eval-runs/gold-120b
 python3 run_assemble.py --gold eval-runs/gold-120b/gold --out eval-runs/train-120b.jsonl
-python3 run_train.py --model-id unsloth/gpt-oss-120b --data eval-runs/train-120b.jsonl --out /root/elmer-train/adapter-120b --precision bf16
-# then smoke/gguf_export.py (adapter -> GGUF -> ollama) + run_eval on the frozen gate + run_quality_eval
+python3 run_train.py --model-id unsloth/gpt-oss-120b --data eval-runs/train-120b.jsonl --out /root/elmer-train/adapter-120b --precision 4bit --r 32
+# ^ 4bit is MANDATORY: bf16 is blocked (tuxlink-5tfkm — MXFP4 experts only unpack to per-expert
+#   Linear4bit in the 4bit path; bf16 keeps them fused so the expert-LoRA regex finds nothing) AND
+#   a bf16 120b base (~240GB) won't fit one 144GB H200 anyway.
 ```
+
+**OPEN (unbuilt) — serving + eval-ing the trained 120b.** `run_serve.py` / `smoke/gguf_export.py`
+are hardcoded to the 20b and reload the base in **bf16 to merge the adapter** before GGUF export —
+for a 120b that is ~240GB and will NOT fit one H200. So the 20b's serve→ollama→run_eval acceptance
+path does NOT transfer. Options to decide before the run: (a) 2×H200 pod for the bf16 merge; (b) an
+in-process peft eval (load base-4bit + adapter via transformers/peft, drive the agentic loop COLD,
+judge) — fits one H200, avoids the merge wall entirely, and directly measures cold-transfer; (c) a
+4bit-quantized GGUF export path. (b) is the cleanest but is a new ~run_eval-sized module. Everything
+UP TO the trained adapter (re-baseline → gold → assemble → train) is wired + fits one H200 at 4bit.
 
 1. **Re-baseline FIRST on the repaired gate** (`run_rebaseline --repeats 5`) — the gate changed this
    session (schedule false-positive killed), so the old 13.2/13.8 numbers are stale. Do NOT train
