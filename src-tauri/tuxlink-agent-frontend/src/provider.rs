@@ -80,6 +80,31 @@ impl std::fmt::Display for ApiKey {
 }
 
 // ---------------------------------------------------------------------------
+// redacted_url — credential-safe request URL for error/log messages
+// ---------------------------------------------------------------------------
+
+/// Render a request URL as `scheme://host[:port]/path` for an error message,
+/// dropping any userinfo and query string so a credential-in-URL can never leak
+/// into a transport error or the session log.
+///
+/// This is the instrumentation that turns an opaque "HTTP 404" into an
+/// actionable one: the operator sees the exact path that was requested, so a
+/// base URL missing `/chat/completions` is obvious at a glance instead of a
+/// recurring mystery. `AgentEndpoint` validation already rejects
+/// credentials-in-URL, so the userinfo strip is defense-in-depth.
+pub(crate) fn redacted_url(u: &Url) -> String {
+    let mut s = format!("{}://", u.scheme());
+    if let Some(host) = u.host_str() {
+        s.push_str(host);
+    }
+    if let Some(port) = u.port() {
+        s.push_str(&format!(":{port}"));
+    }
+    s.push_str(u.path());
+    s
+}
+
+// ---------------------------------------------------------------------------
 // scrub_key — pure helper for value-scrubbing a key out of an error snippet
 // ---------------------------------------------------------------------------
 
@@ -197,10 +222,12 @@ impl Provider for OpenAiProvider {
             req = req.bearer_auth(key.expose());
         }
 
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| ProviderError::Transport(format!("request failed: {e}")))?;
+        let resp = req.send().await.map_err(|e| {
+            ProviderError::Transport(format!(
+                "request to {} failed: {e}",
+                redacted_url(&self.endpoint)
+            ))
+        })?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -216,11 +243,13 @@ impl Provider for OpenAiProvider {
             // generic NeedsOperator path.  No automatic retry is performed here.
             if status.as_u16() == 429 {
                 return Err(ProviderError::RateLimited(format!(
-                    "model endpoint returned HTTP 429 (rate limited): {snippet}"
+                    "model endpoint {} returned HTTP 429 (rate limited): {snippet}",
+                    redacted_url(&self.endpoint)
                 )));
             }
             return Err(ProviderError::Transport(format!(
-                "model endpoint returned HTTP {status}: {snippet}"
+                "model endpoint {} returned HTTP {status}: {snippet}",
+                redacted_url(&self.endpoint)
             )));
         }
 
@@ -1029,6 +1058,28 @@ mod tests {
             scrubbed.contains("<redacted>"),
             "ProviderError::Transport must contain '<redacted>'; got: {scrubbed:?}"
         );
+    }
+
+    // --- redacted_url: credential-safe request URL for error/log lines -------
+
+    /// The transport error must name the URL that was requested (so a base URL
+    /// missing `/chat/completions` is obvious), but must NEVER leak userinfo or a
+    /// query string into the message. This is the instrumentation fix for the
+    /// recurring custom-endpoint 404 (tuxlink-1hv4j).
+    #[test]
+    fn redacted_url_shows_path_but_hides_credentials() {
+        // A base URL (the exact misconfiguration that 404s) — the path must show.
+        let base = Url::parse("https://elmer-pod.example.ts.net/v1").unwrap();
+        assert_eq!(redacted_url(&base), "https://elmer-pod.example.ts.net/v1");
+
+        // Port is preserved; userinfo and query are stripped.
+        let with_creds =
+            Url::parse("https://user:sk-secret@host.example:8443/v1/chat/completions?token=abc")
+                .unwrap();
+        let shown = redacted_url(&with_creds);
+        assert_eq!(shown, "https://host.example:8443/v1/chat/completions");
+        assert!(!shown.contains("sk-secret"), "must not leak userinfo: {shown}");
+        assert!(!shown.contains("token=abc"), "must not leak query: {shown}");
     }
 
     // --- redact_and_cap: scrub-before-cap order-dependency tests -------------

@@ -344,7 +344,12 @@ pub async fn config_set_inner(
     // Step 1: acquire lock — held across the whole transaction.
     let mut guard = state.lock().await;
 
-    // Step 2: validate endpoint.
+    // Step 2: normalize + validate endpoint.
+    // Normalize a base URL to the canonical chat route BEFORE storing, so the chat
+    // POST (which posts the stored endpoint verbatim) targets a real path. A base
+    // URL like `.../v1` was previously posted as-is and 404'd (tuxlink-1hv4j).
+    // Symmetric to `derive_models_url`; explicit chat routes are left untouched.
+    let agent_endpoint = normalize_chat_endpoint(&agent_endpoint).map_err(|e| e.to_reason())?;
     let endpoint = AgentEndpoint::parse(&agent_endpoint)
         .map_err(|e| e.to_string())?;
     let origin = endpoint.origin();
@@ -524,6 +529,56 @@ pub fn derive_models_url(agent_endpoint: &str) -> Result<AgentEndpoint, DetectEr
     // Step 3: re-validate through the egress gate.
     AgentEndpoint::parse(&models_url)
         .map_err(|e| DetectError::BadUrl(format!("derived models URL rejected: {e}")))
+}
+
+// ---------------------------------------------------------------------------
+// normalize_chat_endpoint — store-time canonicalization of the chat URL
+// ---------------------------------------------------------------------------
+
+/// Normalize an operator-entered endpoint to a canonical chat route so the chat
+/// POST hits a real path.
+///
+/// # Why
+///
+/// The chat request posts to the stored endpoint **verbatim**
+/// (`OpenAiProvider::turn` → `client.post(self.endpoint)`), while the detect path
+/// *derives* its `/models` URL via [`derive_models_url`]. So an operator who
+/// enters a *base* URL (the OpenAI-SDK convention, e.g. `https://host/v1` or a
+/// bare origin) gets a working model list but a **404 on chat** — the endpoint is
+/// posted as `.../v1` with no `/chat/completions`. This is the recurring
+/// custom-endpoint bug (tuxlink-1hv4j). Normalizing at store time makes the chat
+/// POST and the models derivation symmetric.
+///
+/// # Convention (mirror of `derive_models_url`)
+///
+/// - **Anthropic host** → host-routed to the native Messages API by the adapter;
+///   its path is never rewritten to an OpenAI chat route.
+/// - **Explicit chat route** (`.../chat/completions` OpenAI-compat, or
+///   `.../api/chat` native Ollama) → already correct; left unchanged.
+/// - **Anything else** (bare origin, trailing `/`, or `.../v1`) →
+///   `<origin>/v1/chat/completions`, the OpenAI-standard route (symmetric to
+///   `derive_models_url`'s `<origin>/v1/models` fallback).
+///
+/// Pure and idempotent: a normalized URL ends in `/chat/completions`, so a second
+/// pass returns it unchanged. Unit-tested in `tests::detect`.
+pub fn normalize_chat_endpoint(agent_endpoint: &str) -> Result<String, DetectError> {
+    // Anthropic is host-routed to `/v1/messages`; do not rewrite its path.
+    if is_anthropic_endpoint(agent_endpoint) {
+        return Ok(agent_endpoint.to_string());
+    }
+    let ep = AgentEndpoint::parse(agent_endpoint)
+        .map_err(|e| DetectError::BadUrl(e.to_string()))?;
+    let path = ep.url().path();
+    // An explicit chat route (OpenAI-compat or native Ollama) is already correct.
+    if path.ends_with("/chat/completions") || path.ends_with("/api/chat") {
+        return Ok(agent_endpoint.to_string());
+    }
+    // Base URL: canonicalize to the OpenAI-standard chat route, then re-validate
+    // through the egress gate like any other endpoint.
+    let normalized = format!("{}/v1/chat/completions", ep.origin());
+    AgentEndpoint::parse(&normalized)
+        .map_err(|e| DetectError::BadUrl(format!("normalized chat URL rejected: {e}")))?;
+    Ok(normalized)
 }
 
 // ---------------------------------------------------------------------------
@@ -1745,6 +1800,85 @@ mod tests {
                 matches!(err, Err(DetectError::BadUrl(_))),
                 "invalid endpoint must yield BadUrl, got: {err:?}"
             );
+        }
+
+        // --- normalize_chat_endpoint (tuxlink-1hv4j) --------------------------
+
+        /// THE REGRESSION GUARD for the recurring custom-endpoint 404: a base URL
+        /// (`.../v1` or a bare origin) must normalize to `<origin>/v1/chat/completions`
+        /// so the chat POST targets a real route instead of `.../v1` → 404.
+        #[test]
+        fn normalize_base_url_gets_chat_completions() {
+            assert_eq!(
+                normalize_chat_endpoint("https://elmer-pod.example.ts.net/v1").unwrap(),
+                "https://elmer-pod.example.ts.net/v1/chat/completions",
+                "a `.../v1` base URL must gain the chat-completions path"
+            );
+            assert_eq!(
+                normalize_chat_endpoint("https://host.example").unwrap(),
+                "https://host.example/v1/chat/completions",
+                "a bare origin must map to the OpenAI-standard chat route"
+            );
+            assert_eq!(
+                normalize_chat_endpoint("http://127.0.0.1:8080/").unwrap(),
+                "http://127.0.0.1:8080/v1/chat/completions",
+                "a trailing-slash origin must map to the OpenAI-standard chat route"
+            );
+        }
+
+        /// An explicit chat route (OpenAI-compat or native Ollama) is already
+        /// correct and must be left untouched.
+        #[test]
+        fn normalize_leaves_explicit_chat_routes_untouched() {
+            for ep in [
+                "https://host.example/v1/chat/completions",
+                "https://host.example/api/v1/chat/completions",
+                "http://127.0.0.1:11434/api/chat",
+            ] {
+                assert_eq!(
+                    normalize_chat_endpoint(ep).unwrap(),
+                    ep,
+                    "explicit chat route must be preserved: {ep}"
+                );
+            }
+        }
+
+        /// Anthropic is host-routed to the native Messages API; its path must NOT
+        /// be rewritten to an OpenAI chat route.
+        #[test]
+        fn normalize_leaves_anthropic_untouched() {
+            let ep = "https://api.anthropic.com/v1/messages";
+            assert_eq!(normalize_chat_endpoint(ep).unwrap(), ep);
+            // Even a bare anthropic origin must not gain /v1/chat/completions.
+            let bare = "https://api.anthropic.com";
+            assert_eq!(normalize_chat_endpoint(bare).unwrap(), bare);
+        }
+
+        /// Idempotent: normalizing a normalized URL is a no-op.
+        #[test]
+        fn normalize_is_idempotent() {
+            let once = normalize_chat_endpoint("https://host.example/v1").unwrap();
+            let twice = normalize_chat_endpoint(&once).unwrap();
+            assert_eq!(once, twice);
+        }
+
+        /// Symmetry with derive_models_url: after normalization, the models URL
+        /// still derives to `<origin>/v1/models`.
+        #[test]
+        fn normalize_then_derive_models_is_consistent() {
+            let chat = normalize_chat_endpoint("https://host.example/v1").unwrap();
+            let models = derive_models_url(&chat).unwrap();
+            assert_eq!(models.url().path(), "/v1/models");
+            assert_eq!(models.origin(), "https://host.example");
+        }
+
+        /// Invalid endpoint strings are rejected (not silently passed through).
+        #[test]
+        fn normalize_rejects_invalid() {
+            assert!(matches!(
+                normalize_chat_endpoint("not a url"),
+                Err(DetectError::BadUrl(_))
+            ));
         }
 
         // -------------------------------------------------------------------
