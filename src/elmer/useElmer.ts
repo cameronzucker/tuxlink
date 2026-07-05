@@ -167,6 +167,13 @@ function outcomeKindToPhase(outcomeKind: string): ElmerPhase {
     // wire-shape test pins that literal. Surfaced as a distinct recovery callout.
     case 'rateLimited':
       return 'rateLimited';
+    // A genuine provider failure (transport error, non-2xx, unparseable) — the Rust
+    // `RunOutcome::ProviderError` serializes as `"error"` and PERSISTS to the
+    // transcript so the operator can capture a model error verbatim (tuxlink-a1xwx).
+    // Before this, provider errors were folded into `needsOperator` (a callout-only
+    // gate) and were lost on the next run.
+    case 'error':
+      return 'error';
     default:
       return 'error';
   }

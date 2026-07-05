@@ -207,7 +207,10 @@ pub async fn run(
 fn provider_error_outcome(err: ProviderError) -> RunOutcome {
     match err {
         ProviderError::RateLimited(msg) => RunOutcome::RateLimited(msg),
-        other => RunOutcome::NeedsOperator(format!("provider error: {other}")),
+        // Transport / non-2xx / unparseable are genuine FAILURES the operator must be
+        // able to capture verbatim — surface them as ProviderError (persisted as the
+        // "error" outcome), NOT the soft NeedsOperator gate (tuxlink-a1xwx).
+        other => RunOutcome::ProviderError(format!("provider error: {other}")),
     }
 }
 
@@ -266,26 +269,28 @@ mod provider_error_outcome_tests {
         }
     }
 
-    /// `ProviderError::Transport` still maps to `NeedsOperator` — the
-    /// `RateLimited` arm must not have broken the existing error path.
+    /// `ProviderError::Transport` maps to `RunOutcome::ProviderError` — a genuine
+    /// failure the operator can capture (persisted), NOT the soft `NeedsOperator`
+    /// gate (tuxlink-a1xwx). This is the regression that hid the Gemini tool-call
+    /// 400 in a single-slot callout the next run overwrote.
     #[test]
-    fn transport_error_still_maps_to_needs_operator() {
+    fn transport_error_maps_to_provider_error() {
         let err = ProviderError::Transport("connection refused".to_string());
         let outcome = provider_error_outcome(err);
         assert!(
-            matches!(outcome, RunOutcome::NeedsOperator(_)),
-            "Transport must map to NeedsOperator, got: {outcome:?}"
+            matches!(outcome, RunOutcome::ProviderError(_)),
+            "Transport must map to ProviderError, got: {outcome:?}"
         );
     }
 
-    /// `ProviderError::Unparseable` still maps to `NeedsOperator`.
+    /// `ProviderError::Unparseable` maps to `RunOutcome::ProviderError`.
     #[test]
-    fn unparseable_error_still_maps_to_needs_operator() {
+    fn unparseable_error_maps_to_provider_error() {
         let err = ProviderError::Unparseable("bad JSON".to_string());
         let outcome = provider_error_outcome(err);
         assert!(
-            matches!(outcome, RunOutcome::NeedsOperator(_)),
-            "Unparseable must map to NeedsOperator, got: {outcome:?}"
+            matches!(outcome, RunOutcome::ProviderError(_)),
+            "Unparseable must map to ProviderError, got: {outcome:?}"
         );
     }
 }

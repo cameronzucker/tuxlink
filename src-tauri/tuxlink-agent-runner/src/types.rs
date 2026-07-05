@@ -253,6 +253,14 @@ pub enum RunOutcome {
     /// this to the `"rateLimited"` outcome-kind event so the React pane can show
     /// the rate-limit callout.  No automatic retry is performed.
     RateLimited(String),
+    /// The provider call FAILED (transport error, non-2xx HTTP other than 429, or
+    /// an unparseable response) — distinct from [`RunOutcome::NeedsOperator`], which
+    /// is a soft "you hit a bound, continue?" gate. Carries an already-redacted
+    /// detail string. The frontend maps this to the persisted `"error"` outcome-kind
+    /// so a model error (a Gemini tool-call 400, a 404/500, a dead endpoint) lands in
+    /// the transcript verbatim instead of a single-slot callout the next run
+    /// overwrites (tuxlink-a1xwx).
+    ProviderError(String),
 }
 
 #[cfg(test)]

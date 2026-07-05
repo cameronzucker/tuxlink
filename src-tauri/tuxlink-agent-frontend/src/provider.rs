@@ -137,6 +137,26 @@ pub(crate) fn redact_and_cap(text: String, key: Option<&ApiKey>, max: usize) -> 
     scrub_key(text, key).chars().take(max).collect()
 }
 
+/// Format an error together with its `source()` cause chain as
+/// `"outer: cause: root-cause"`. A bare `format!("{e}")` on a `reqwest::Error`
+/// shows only the outermost wrapper (e.g. "error sending request") and hides the
+/// real reason (e.g. "connection refused", "certificate verify failed", "dns
+/// error") one level down — the "one-deep" error the operator could not diagnose
+/// (tuxlink-a1xwx). Walk the chain so the actual cause is surfaced.
+///
+/// Callers pass a URL-stripped error (`reqwest::Error::without_url()`), so no cause
+/// in the chain carries the request URL / a query credential.
+pub(crate) fn error_cause_chain(err: &dyn std::error::Error) -> String {
+    use std::fmt::Write as _;
+    let mut out = err.to_string();
+    let mut src = err.source();
+    while let Some(e) = src {
+        let _ = write!(out, ": {e}");
+        src = e.source();
+    }
+    out
+}
+
 // ---------------------------------------------------------------------------
 // OpenAiProvider
 // ---------------------------------------------------------------------------
@@ -261,7 +281,7 @@ impl Provider for OpenAiProvider {
             ProviderError::Transport(format!(
                 "request to {} failed: {}",
                 redacted_url(&self.endpoint),
-                e.without_url()
+                error_cause_chain(&e.without_url())
             ))
         })?;
 
@@ -1389,6 +1409,45 @@ mod tests {
         assert_eq!(shown, "https://host.example:8443/v1/chat/completions");
         assert!(!shown.contains("sk-secret"), "must not leak userinfo: {shown}");
         assert!(!shown.contains("token=abc"), "must not leak query: {shown}");
+    }
+
+    // --- error_cause_chain: surface the real transport cause (tuxlink-a1xwx) ---
+
+    /// A reqwest-style wrapper ("error sending request") must not hide its real
+    /// cause ("connection refused") — the chain is walked and joined.
+    #[test]
+    fn error_cause_chain_walks_source_chain() {
+        #[derive(Debug)]
+        struct Inner;
+        impl std::fmt::Display for Inner {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "connection refused")
+            }
+        }
+        impl std::error::Error for Inner {}
+        #[derive(Debug)]
+        struct Outer(Inner);
+        impl std::fmt::Display for Outer {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "error sending request")
+            }
+        }
+        impl std::error::Error for Outer {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+        assert_eq!(
+            error_cause_chain(&Outer(Inner)),
+            "error sending request: connection refused"
+        );
+    }
+
+    /// A single error with no `source()` renders as just its own message.
+    #[test]
+    fn error_cause_chain_single_error_has_no_suffix() {
+        let e = std::io::Error::new(std::io::ErrorKind::Other, "boom");
+        assert_eq!(error_cause_chain(&e), "boom");
     }
 
     // --- redact_and_cap: scrub-before-cap order-dependency tests -------------
