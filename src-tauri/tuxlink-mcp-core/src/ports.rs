@@ -368,6 +368,16 @@ pub struct GatewayDto {
     pub frequencies_khz: Vec<f64>,
     /// Gateway antenna type, when known.
     pub antenna: Option<GatewayAntennaDto>,
+    /// Great-circle distance in km from the operator's grid to this gateway. `None` when the
+    /// gateway grid is absent/invalid OR the operator grid is unresolved.
+    pub distance_km: Option<f64>,
+    /// Same distance in statute miles (km * 0.621371). Served alongside km so the agent never
+    /// does unit math (US/miles-preferred audience; global toggle tracked in tuxlink-25l40).
+    pub distance_mi: Option<f64>,
+    /// Great-circle initial bearing in degrees [0,360) from the operator to this gateway.
+    /// `None` when distance is unknown OR zero. (Sibling `PathPredictionDto`'s `bearing_deg`
+    /// is non-optional; the asymmetry is intentional — gateway grids can be absent.)
+    pub bearing_deg: Option<f64>,
 }
 
 /// Output of [`StationPort::find_stations`]: the matched gateways plus a fetch
@@ -379,6 +389,9 @@ pub struct StationListDto {
     /// reasons freshness directly from this stamp; there is no separate
     /// cache-provenance flag.
     pub fetched_at_ms: Option<u64>,
+    /// The operator's own 4-char grid used to compute per-gateway distances (provenance).
+    /// `None` when unresolved — lets the agent explain why all distances are null.
+    pub operator_grid: Option<String>,
 }
 
 /// Agent-supplied request for [`PredictionPort::predict_path`]. Carries NO

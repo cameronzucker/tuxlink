@@ -1989,6 +1989,9 @@ fn curate_gateway(
         grid,
         frequencies_khz: g.frequencies_khz.clone(),
         antenna: g.antenna.map(map_gateway_antenna_out),
+        distance_km: None,
+        distance_mi: None,
+        bearing_deg: None,
         // DROPPED on purpose: sysop_name, email, homepage, location, last_update.
     })
 }
@@ -2074,6 +2077,7 @@ impl StationPort for MonolithStationPort {
         Ok(StationListDto {
             gateways,
             fetched_at_ms,
+            operator_grid: None,
         })
     }
 }
