@@ -224,10 +224,10 @@ mod tests {
 
         assert!(!guard.is_tainted(), "guard must start un-tainted");
 
-        let call = ToolCall {
-            name: "message_read".into(),
-            args: serde_json::json!({ "folder": "inbox", "id": SEEDED_ID }),
-        };
+        let call = ToolCall::new(
+            "message_read",
+            serde_json::json!({ "folder": "inbox", "id": SEEDED_ID }),
+        );
         let _ = invoker
             .invoke(&call, CallAuthority::Agent, &CancellationToken::new())
             .await;
@@ -327,7 +327,7 @@ mod tests {
         //   ToolOutcome::Denied(message).
         let cancel = CancellationToken::new();
         for name in &egress_names {
-            let call = ToolCall { name: name.clone(), args: minimal_args_for_tool(name) };
+            let call = ToolCall::new(name.clone(), minimal_args_for_tool(name));
             let out = invoker.invoke(&call, CallAuthority::Agent, &cancel).await;
             match &out {
                 ToolOutcome::Denied(msg) => {
@@ -384,10 +384,7 @@ mod tests {
             // tool's gate opened — not just that any previous tool set the flag.
             op_ran.store(false, Ordering::SeqCst);
 
-            let call = ToolCall {
-                name: (*name).into(),
-                args: minimal_args_for_tool(name),
-            };
+            let call = ToolCall::new((*name).to_string(), minimal_args_for_tool(name));
             let out = invoker.invoke(&call, CallAuthority::Agent, &cancel).await;
             assert!(
                 !matches!(out, ToolOutcome::Denied(_)),

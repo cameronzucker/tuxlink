@@ -805,7 +805,13 @@ fn parse_ollama_tool_call(tc: &Value) -> ToolCall {
         Some(other) => other.clone(),
     };
 
-    ToolCall { name, args }
+    // Native Ollama has no per-call round-trip signature (thought_signature is
+    // Gemini-compat-specific, tuxlink-0tuc3).
+    ToolCall {
+        name,
+        args,
+        provider_meta: None,
+    }
 }
 
 /// Extract the context-usage counts from a native `/api/chat` response.

@@ -1281,10 +1281,7 @@ mod tests {
     fn parking_session(probes: Arc<Probes>) -> Arc<TestSession> {
         let in_transmit = Arc::clone(&probes.in_transmit);
         let provider = Arc::new(ScriptedProvider::new(vec![
-            ModelTurn::ToolCalls(vec![ToolCall {
-                name: "park".into(),
-                args: serde_json::json!({}),
-            }]),
+            ModelTurn::ToolCalls(vec![ToolCall::new("park", serde_json::json!({}))]),
             // Unreachable — only reached if the tool completes (it never does
             // without a cancel).
             ModelTurn::Text("unreachable".into()),
@@ -1347,10 +1344,7 @@ mod tests {
         let schema = serde_json::json!({ "type": "object" });
         let spec = ToolSpec::new("noop", schema);
         let provider = Arc::new(ScriptedProvider::new(vec![
-            ModelTurn::ToolCalls(vec![ToolCall {
-                name: "noop".into(),
-                args: serde_json::json!({}),
-            }]),
+            ModelTurn::ToolCalls(vec![ToolCall::new("noop", serde_json::json!({}))]),
             ModelTurn::Text("answered".into()),
         ]));
         let invoker = Box::new(RecordingInvoker::always_ok(vec![spec]));
@@ -1525,10 +1519,10 @@ mod tests {
 
         let mut script = Vec::new();
         for _ in 0..15usize {
-            script.push(ModelTurn::ToolCalls(vec![ToolCall {
-                name: "noop".into(),
-                args: serde_json::json!({}),
-            }]));
+            script.push(ModelTurn::ToolCalls(vec![ToolCall::new(
+                "noop",
+                serde_json::json!({}),
+            )]));
         }
         script.push(ModelTurn::Text("done".into()));
 
