@@ -1460,7 +1460,7 @@ mod tests {
     /// A single error with no `source()` renders as just its own message.
     #[test]
     fn error_cause_chain_single_error_has_no_suffix() {
-        let e = std::io::Error::new(std::io::ErrorKind::Other, "boom");
+        let e = std::io::Error::other("boom");
         assert_eq!(error_cause_chain(&e), "boom");
     }
 
