@@ -79,6 +79,14 @@ def main():
             keys.append(name + ".weight")
             if isinstance(getattr(m, "bias", None), torch.nn.Parameter):
                 keys.append(name + ".bias")
+    # straggler pass: catch bare float Parameters the module-walk misses — notably gpt-oss
+    # attention `sinks` (self_attn.sinks, not a .weight), which llama.cpp/vLLM require. Generic
+    # so any future bare param is preserved too. (4-bit packed weights are uint8 -> skipped.)
+    have = set(keys)
+    for name, p in model.named_parameters():
+        if name not in have and p.is_floating_point():
+            keys.append(name)
+            have.add(name)
 
     plan = plan_fusion(keys)
     hidden = model.config.hidden_size
