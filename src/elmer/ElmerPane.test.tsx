@@ -16,7 +16,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import { ElmerPane, ModelForm, RADIO_VERBS } from './ElmerPane';
 import type { ElmerChipPayload, ElmerContextPayload, ElmerDeltaPayload, ElmerOutcomePayload, ElmerTurnPayload } from './elmerEvents';
 import { EV_CHIP, EV_CONTEXT, EV_DELTA, EV_OUTCOME, EV_TURN } from './elmerEvents';
@@ -989,9 +989,9 @@ describe('<ElmerPane> G2 -- detect_populates_dropdown', () => {
       expect(screen.getByText(/✓ 2 models detected/)).toBeTruthy();
     });
 
-    // Both model ids should appear as selectable options.
-    const modelSelect = screen.getByTestId('elmer-detected-models-select');
-    const options = Array.from((modelSelect as HTMLSelectElement).options).map((o) => o.value);
+    // Both model ids should appear as selectable options in the combobox listbox.
+    const list = screen.getByTestId('elmer-detected-models-select');
+    const options = within(list).getAllByRole('option').map((o) => o.textContent);
     expect(options).toContain('gpt-4o');
     expect(options).toContain('gpt-4o-mini');
   });

@@ -31,6 +31,7 @@ import { open as shellOpen } from '@tauri-apps/plugin-shell';
 import type { ProviderPreset, SetKey, KeyStatus, KeySource, ConfigReadDto } from './elmerModelConfig';
 import { isLoopback } from './elmerModelConfig';
 import type { DetectState } from './useElmer';
+import { DetectedModelCombobox } from './DetectedModelCombobox';
 import {
   AdvancedModelSettings,
   type AdvancedModelValues,
@@ -418,18 +419,12 @@ export function GetKeyCard({
           <span className="elmer-detect-count">
             ✓ {detectState.models.length} model{detectState.models.length !== 1 ? 's' : ''} detected
           </span>
-          <select
-            className="elmer-form-select"
-            data-testid="get-key-detected-models"
+          <DetectedModelCombobox
+            testId="get-key-detected-models"
+            models={detectState.models}
             value={model}
-            onChange={(e) => handleDetectedModelSelect(e.target.value)}
-          >
-            {detectState.models.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
+            onSelect={handleDetectedModelSelect}
+          />
         </div>
       )}
       {detectState.status === 'success' && detectState.models.length === 0 && (

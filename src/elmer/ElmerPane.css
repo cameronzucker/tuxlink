@@ -745,6 +745,56 @@
   font-size: 11px;
 }
 
+/* Detected-model combobox (tuxlink-qhe8n) — a filter input + a height-capped,
+   scrollable listbox so a long provider list (OpenRouter returns ~300 models)
+   never runs off the bottom of the viewport under WebKitGTK, which left lower
+   models unselectable with the old native <select>. Every var() carries a literal
+   fallback so an undefined theme token can't invalidate the rule (the invisible
+   "new conversation" button regression). */
+.elmer-combobox {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.elmer-combobox-list {
+  margin: 0;
+  padding: 2px;
+  list-style: none;
+  max-height: 168px; /* ~7 rows — bounded so it never exceeds the panel */
+  overflow-y: auto;
+  border: 1px solid var(--border-strong, var(--border, #3a3a3a));
+  border-radius: 6px;
+  background: var(--surface-sunken, var(--bg, #1c1c1c));
+}
+
+.elmer-combobox-option {
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text, #e6e6e6);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.elmer-combobox-option.is-active {
+  background: var(--surface-hover, rgba(255, 255, 255, 0.07));
+}
+
+.elmer-combobox-option.is-selected {
+  color: var(--accent, var(--accent-teal, #2dd4bf));
+  font-weight: 600;
+}
+
+.elmer-combobox-empty {
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--text-dim, var(--text-muted, #9a9a9a));
+}
+
 /* Key affordance row */
 .elmer-form-row--key {
   gap: 4px;
