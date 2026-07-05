@@ -22,7 +22,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, act, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, act, waitFor, within } from '@testing-library/react';
 import type { ComponentProps } from 'react';
 
 // Mock @tauri-apps/plugin-shell BEFORE any component import so the module is
@@ -415,28 +415,27 @@ describe('GetKeyCard', () => {
     );
   });
 
-  it('detectState=success with models renders the detected-models select', () => {
+  it('detectState=success with models renders the detected-models combobox', () => {
     const successDetect: DetectState = {
       status: 'success',
       models: ['gemini-2.5-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'],
     };
     render(<GetKeyCard {...baseProps({ detectState: successDetect })} />);
-    const select = screen.getByTestId('get-key-detected-models') as HTMLSelectElement;
-    expect(select).toBeTruthy();
-    // All detected models appear as options.
-    expect(select.querySelectorAll('option').length).toBe(3);
+    const list = screen.getByTestId('get-key-detected-models');
+    expect(list).toBeTruthy();
+    // All detected models appear as options in the (scrollable, capped) listbox.
+    expect(within(list).getAllByRole('option').length).toBe(3);
   });
 
-  it('selecting a model from the detected-models select updates the model input value', () => {
+  it('selecting a model from the detected-models combobox updates the model input value', () => {
     const successDetect: DetectState = {
       status: 'success',
       models: ['gemini-2.5-flash', 'gemini-1.5-pro'],
     };
     render(<GetKeyCard {...baseProps({ detectState: successDetect })} />);
-    const select = screen.getByTestId('get-key-detected-models') as HTMLSelectElement;
     const modelInput = screen.getByTestId('get-key-model-input') as HTMLInputElement;
     // Pick 'gemini-1.5-pro' from the detected list.
-    fireEvent.change(select, { target: { value: 'gemini-1.5-pro' } });
+    fireEvent.click(screen.getByText('gemini-1.5-pro'));
     expect(modelInput.value).toBe('gemini-1.5-pro');
   });
 
@@ -452,9 +451,7 @@ describe('GetKeyCard', () => {
       />,
     );
     // Pick the second detected model.
-    fireEvent.change(screen.getByTestId('get-key-detected-models'), {
-      target: { value: 'gemini-1.5-pro' },
-    });
+    fireEvent.click(screen.getByText('gemini-1.5-pro'));
     // Verify the text input now shows the selected model.
     expect((screen.getByTestId('get-key-model-input') as HTMLInputElement).value).toBe(
       'gemini-1.5-pro',

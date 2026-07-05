@@ -32,6 +32,7 @@ import type { EgressStatusDto } from '../security/egressTypes';
 import { PRESETS, inferPreset, isLoopback, originOf, nextModelForPreset } from './elmerModelConfig';
 import type { SetKey, KeySource, KeyStatusByOrigin, ConfigReadDto } from './elmerModelConfig';
 import { ModelTilePicker } from './ModelTilePicker';
+import { DetectedModelCombobox } from './DetectedModelCombobox';
 import { ContextMeter } from './ContextMeter';
 import {
   AdvancedModelSettings,
@@ -981,18 +982,12 @@ export function ModelForm({
           <span className="elmer-detect-count">
             ✓ {detectState.models.length} model{detectState.models.length !== 1 ? 's' : ''} detected
           </span>
-          <select
-            className="elmer-form-select"
-            data-testid="elmer-detected-models-select"
+          <DetectedModelCombobox
+            testId="elmer-detected-models-select"
+            models={detectState.models}
             value={model}
-            onChange={(e) => handleDetectedModelSelect(e.target.value)}
-          >
-            {detectState.models.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
+            onSelect={handleDetectedModelSelect}
+          />
         </div>
       )}
       {detectState.status === 'success' && detectState.models.length === 0 && (
