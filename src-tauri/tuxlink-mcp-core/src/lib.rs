@@ -102,6 +102,9 @@ pub struct ServerInfoDto {
     pub version: String,
     /// True when send authority is currently armed (grant not expired).
     pub armed: bool,
+    /// Seconds remaining in the current armed grant (0 when disarmed/expired) — so
+    /// an agent can tell the operator how much of the transmit window is left.
+    pub armed_remaining_secs: u64,
     /// True when the session is tainted by untrusted content.
     pub tainted: bool,
 }
@@ -113,10 +116,12 @@ pub struct ServerInfoDto {
 /// `armed_remaining() > 0` (a live, un-expired grant); `tainted` mirrors the
 /// guard's taint flag.
 pub fn server_info_view(state: &McpState) -> ServerInfoDto {
+    let remaining = state.guard.armed_remaining();
     ServerInfoDto {
         name: state.name.clone(),
         version: state.version.clone(),
-        armed: state.guard.armed_remaining() > 0,
+        armed: remaining > 0,
+        armed_remaining_secs: remaining,
         tainted: state.guard.is_tainted(),
     }
 }
@@ -821,6 +826,18 @@ mod tests {
         let dto = server_info_view(&state);
         assert!(dto.armed, "after arm(30) the view must report armed=true");
         assert!(!dto.tainted);
+    }
+
+    #[test]
+    fn view_reports_armed_remaining_secs() {
+        let state = state_with(EgressGuard::with_clock(fixed_1000));
+        // Disarmed → 0s.
+        assert_eq!(server_info_view(&state).armed_remaining_secs, 0);
+        // Armed for 30s → the window is surfaced so the agent can report it.
+        state.guard.arm(30); // deadline 1030, now 1000 -> 30s remaining
+        let dto = server_info_view(&state);
+        assert_eq!(dto.armed_remaining_secs, 30);
+        assert!(dto.armed);
     }
 
     #[test]
