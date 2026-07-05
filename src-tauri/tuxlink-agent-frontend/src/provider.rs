@@ -161,6 +161,15 @@ pub struct OpenAiProvider {
     /// leaks through `Debug`/`Display`; only used via `.expose()` at the HTTP
     /// header boundary.
     api_key: Option<ApiKey>,
+    /// Operator-configured context-window budget (tuxlink-evucv). The OpenAI Chat
+    /// Completions API has no context-size field (unlike Ollama's
+    /// `options.num_ctx`), so this drives a CLIENT-SIDE transcript trim before the
+    /// POST: if the estimated prompt exceeds the budget, the oldest turns are
+    /// dropped so the request cannot overflow the server context (the 400
+    /// `exceed_context_size_error`). `None` = no trim (unbounded, prior behavior).
+    /// Set via [`OpenAiProvider::with_num_ctx`] so existing constructors/tests are
+    /// unaffected.
+    num_ctx: Option<u32>,
 }
 
 impl OpenAiProvider {
@@ -189,7 +198,17 @@ impl OpenAiProvider {
             temperature,
             system_prompt,
             api_key,
+            num_ctx: None,
         }
+    }
+
+    /// Set the client-side context-window budget (tuxlink-evucv). Builder form so
+    /// the 6-arg `new` and its many callers/tests stay unchanged; only the
+    /// operator-configured construction sites opt in. `None` disables trimming.
+    #[must_use]
+    pub fn with_num_ctx(mut self, num_ctx: Option<u32>) -> Self {
+        self.num_ctx = num_ctx;
+        self
     }
 }
 
@@ -208,12 +227,24 @@ impl Provider for OpenAiProvider {
         // We set `stream` on the already-built request value rather than threading
         // a flag through `build_request_body`, whose tests assert the non-stream
         // body shape. The pure assembly stays untouched.
+        let system_prompt = self.system_prompt.as_deref().unwrap_or(ELMER_SYSTEM_PROMPT);
+        // tuxlink-evucv: client-side context trim. The OpenAI API has no
+        // context-size field, so when the operator configured a window, drop the
+        // oldest turns that don't fit rather than letting the request overflow the
+        // server context (HTTP 400 exceed_context_size_error). No-op when num_ctx
+        // is None (unbounded) or the transcript already fits.
+        let trimmed = transcript_budget(self.num_ctx, system_prompt, tools).and_then(|budget| {
+            let kept = trim_messages_to_budget(conversation.messages(), budget);
+            (kept.len() < conversation.messages().len()).then(|| Conversation::from_messages(kept))
+        });
+        let conversation = trimmed.as_ref().unwrap_or(conversation);
+
         let mut body = build_request_body(
             &self.model,
             conversation,
             tools,
             self.temperature,
-            self.system_prompt.as_deref().unwrap_or(ELMER_SYSTEM_PROMPT),
+            system_prompt,
         );
         body["stream"] = json!(true);
 
@@ -715,6 +746,74 @@ rankings built from real tool output, which you should produce freely. \
 \
 Be concise and practical.";
 
+/// Reserve, in estimated tokens, held back from the context budget for the
+/// model's response. gpt-oss emits a Harmony reasoning channel on top of the
+/// final answer, so this is generous.
+const RESPONSE_RESERVE_TOKENS: usize = 4096;
+
+/// Conservative token estimate for a byte string. Real BPE is ~4 chars/token for
+/// English and ~3 for dense JSON; dividing by 3 OVER-estimates on purpose so the
+/// trim errs toward sending less, never overflowing. `+8` covers per-message
+/// role/framing overhead.
+fn estimate_text_tokens(s: &str) -> usize {
+    s.len() / 3 + 8
+}
+
+/// Conservative token estimate for one transcript message.
+fn estimate_message_tokens(msg: &Message) -> usize {
+    let len = match msg {
+        Message::User(t) | Message::Assistant(t) => t.len(),
+        Message::ToolResult { name, content, .. } => name.len() + content.len(),
+        Message::ToolCall(c) => {
+            c.name.len() + serde_json::to_string(&c.args).map(|s| s.len()).unwrap_or(0)
+        }
+    };
+    len / 3 + 8
+}
+
+/// Trim the transcript to fit `budget_tokens`, keeping the MOST RECENT turns.
+///
+/// The system prompt + tool schemas are counted separately by the caller and are
+/// NOT part of `budget_tokens`; this only bounds the transcript messages.
+///
+/// Tool-pairing safety: [`build_request_body`] pairs each `ToolCall` to the next
+/// `ToolResult` FIFO, so a kept `ToolResult` whose `ToolCall` was trimmed away
+/// would have no `tool_call_id` and the server rejects it with a 400. This walks
+/// newest→oldest accumulating within budget (always keeping at least the most
+/// recent message), then drops any leading orphan `ToolResult`(s) at the cut
+/// edge. Returns the kept messages in chronological order.
+pub fn trim_messages_to_budget(messages: &[Message], budget_tokens: usize) -> Vec<Message> {
+    let mut kept_rev: Vec<&Message> = Vec::new();
+    let mut used = 0usize;
+    for msg in messages.iter().rev() {
+        let t = estimate_message_tokens(msg);
+        // Always keep at least the newest message, even if it alone exceeds budget
+        // (the server, now sized generously, is the final backstop).
+        if !kept_rev.is_empty() && used + t > budget_tokens {
+            break;
+        }
+        used += t;
+        kept_rev.push(msg);
+    }
+    kept_rev.reverse();
+    // Drop a leading orphan ToolResult whose ToolCall fell outside the window.
+    let mut start = 0;
+    while start < kept_rev.len() && matches!(kept_rev[start], Message::ToolResult { .. }) {
+        start += 1;
+    }
+    kept_rev[start..].iter().map(|m| (*m).clone()).collect()
+}
+
+/// Compute the transcript token budget for a context window, or `None` when no
+/// window is configured (no trim). `overhead` = system prompt + tool schemas +
+/// response reserve; the transcript gets whatever remains.
+fn transcript_budget(num_ctx: Option<u32>, system_prompt: &str, tools: &[ToolSpec]) -> Option<usize> {
+    let nctx = num_ctx? as usize;
+    // ~200 tokens/tool is a generous upper bound on a JSON-schema tool spec.
+    let overhead = estimate_text_tokens(system_prompt) + tools.len() * 200 + RESPONSE_RESERVE_TOKENS;
+    Some(nctx.saturating_sub(overhead))
+}
+
 /// Build the chat-completions request body from the transcript + tool surface.
 /// Pure — no IO. Exposed for unit testing the message + tools shaping.
 ///
@@ -1063,6 +1162,99 @@ mod tests {
             scrubbed.contains("<redacted>"),
             "ProviderError::Transport must contain '<redacted>'; got: {scrubbed:?}"
         );
+    }
+
+    // --- trim_messages_to_budget: client-side context trim (tuxlink-evucv) ---
+
+    fn user(s: &str) -> Message {
+        Message::User(s.to_string())
+    }
+    fn asst(s: &str) -> Message {
+        Message::Assistant(s.to_string())
+    }
+    fn tcall(name: &str) -> Message {
+        Message::ToolCall(ToolCall {
+            name: name.to_string(),
+            args: serde_json::json!({}),
+        })
+    }
+    fn tresult(name: &str, content: &str) -> Message {
+        Message::ToolResult {
+            name: name.to_string(),
+            ok: true,
+            content: content.to_string(),
+        }
+    }
+
+    /// A generous budget keeps the whole transcript (no trim).
+    #[test]
+    fn trim_keeps_everything_under_budget() {
+        let msgs = vec![user("hi"), asst("hello"), user("more")];
+        let kept = trim_messages_to_budget(&msgs, 100_000);
+        assert_eq!(kept, msgs, "nothing should be dropped under a large budget");
+    }
+
+    /// A tiny budget keeps at least the most recent message (never returns empty).
+    #[test]
+    fn trim_always_keeps_latest() {
+        let msgs = vec![user("old"), asst("mid"), user("newest")];
+        let kept = trim_messages_to_budget(&msgs, 1);
+        assert_eq!(kept, vec![user("newest")], "must keep the newest turn even over budget");
+    }
+
+    /// Trimming keeps the newest turns and drops the oldest.
+    #[test]
+    fn trim_drops_oldest_first() {
+        // Each message ~ len/3 + 8 tokens. Use long strings so budget bites.
+        let msgs = vec![
+            user(&"a".repeat(300)), // ~108 tokens
+            asst(&"b".repeat(300)), // ~108
+            user(&"c".repeat(300)), // ~108
+        ];
+        let kept = trim_messages_to_budget(&msgs, 150); // room for ~1 msg
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0], msgs[2], "the newest message is kept");
+    }
+
+    /// A ToolResult whose ToolCall was trimmed off must NOT survive alone — an
+    /// orphan `tool` message has no `tool_call_id` and the server 400s it.
+    #[test]
+    fn trim_drops_orphan_leading_tool_result() {
+        let msgs = vec![
+            user(&"q".repeat(600)),      // old, will be dropped
+            tcall("find_stations"),      // old, dropped
+            tresult("find_stations", &"r".repeat(600)), // would be the oldest kept -> orphan
+            asst("here you go"),
+        ];
+        // Budget large enough to keep the last ~2 messages but not the tcall.
+        let kept = trim_messages_to_budget(&msgs, 230);
+        assert!(
+            !matches!(kept.first(), Some(Message::ToolResult { .. })),
+            "a leading orphan ToolResult must be dropped, got: {kept:?}"
+        );
+        assert_eq!(kept.last(), Some(&asst("here you go")));
+    }
+
+    /// A paired ToolCall+ToolResult that both fit are kept together and in order.
+    #[test]
+    fn trim_keeps_intact_tool_pair() {
+        let msgs = vec![user("do it"), tcall("t"), tresult("t", "ok"), asst("done")];
+        let kept = trim_messages_to_budget(&msgs, 100_000);
+        assert_eq!(kept, msgs);
+    }
+
+    /// No budget configured => transcript_budget is None => caller does not trim.
+    #[test]
+    fn transcript_budget_none_when_num_ctx_unset() {
+        assert_eq!(transcript_budget(None, "sys", &[]), None);
+    }
+
+    /// A configured window subtracts system-prompt + response-reserve overhead.
+    #[test]
+    fn transcript_budget_subtracts_overhead() {
+        let b = transcript_budget(Some(32_768), "short system", &[]).unwrap();
+        assert!(b < 32_768 && b > 32_768 - RESPONSE_RESERVE_TOKENS - 100,
+                "budget {b} should be nctx minus a small overhead");
     }
 
     // --- redacted_url: credential-safe request URL for error/log lines -------

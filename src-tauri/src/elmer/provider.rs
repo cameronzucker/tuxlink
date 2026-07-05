@@ -122,8 +122,10 @@ impl ElmerProvider {
     ///   credentials-in-URL at config time; this constructor adds the
     ///   fetch-time DNS-rebind gate).
     /// * `model` — model identifier string (e.g. `"llama3"`, `"gpt-4o"`, `"claude-haiku-4-5"`).
-    /// * `num_ctx` — native-Ollama context window (`options.num_ctx`); ignored by
-    ///   the compat / Anthropic adapters. `None` = server default (T3/T4).
+    /// * `num_ctx` — context window. Native Ollama requests it via
+    ///   `options.num_ctx`; the OpenAI-compat adapter has no wire field for it so
+    ///   it drives a CLIENT-SIDE transcript trim instead (tuxlink-evucv); the
+    ///   Anthropic adapter ignores it. `None` = server default / no trim (T3/T4).
     /// * `temperature` — sampling temperature threaded to ALL three adapters
     ///   (Ollama `options.temperature`; OpenAI / Anthropic top-level
     ///   `"temperature"`). `None` leaves the server default unchanged (T9).
@@ -294,7 +296,8 @@ impl ElmerProvider {
                             "loopback probe found Ollama but native URL parse failed — falling back to compat"
                         );
                         (
-                            Box::new(OpenAiProvider::new(client, url, model, temperature, system_prompt, api_key)),
+                            Box::new(OpenAiProvider::new(client, url, model, temperature, system_prompt, api_key)
+                    .with_num_ctx(num_ctx)),
                             ProviderKind::OpenAi,
                         )
                     }
@@ -307,10 +310,11 @@ impl ElmerProvider {
                 tracing::info!(
                     target: "elmer",
                     endpoint = %url,
-                    "loopback probe did not find native Ollama — falling back to OpenAI-compat (num_ctx not applied)"
+                    "loopback probe did not find native Ollama — using OpenAI-compat (num_ctx drives a client-side transcript trim)"
                 );
                 (
-                    Box::new(OpenAiProvider::new(client, url, model, temperature, system_prompt, api_key)),
+                    Box::new(OpenAiProvider::new(client, url, model, temperature, system_prompt, api_key)
+                    .with_num_ctx(num_ctx)),
                     ProviderKind::OpenAi,
                 )
             }
@@ -322,7 +326,8 @@ impl ElmerProvider {
             )
         } else {
             (
-                Box::new(OpenAiProvider::new(client, url, model, temperature, system_prompt, api_key)),
+                Box::new(OpenAiProvider::new(client, url, model, temperature, system_prompt, api_key)
+                    .with_num_ctx(num_ctx)),
                 ProviderKind::OpenAi,
             )
         };
