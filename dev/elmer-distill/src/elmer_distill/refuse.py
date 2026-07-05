@@ -143,13 +143,21 @@ def stack_expert_biases(per_expert: list, *, stack: Callable[[list], Any]) -> An
 # --- pod-side disk driver (torch + safetensors, imported lazily) ---
 
 def refuse_checkpoint(in_dir: str, out_dir: str, *, hidden_size: int | None = None,
-                      intermediate_size: int | None = None, log=print) -> dict:
+                      intermediate_size: int | None = None,
+                      max_shard_bytes: int = 5_000_000_000, log=print) -> dict:
     """Read a per-expert merged gpt-oss checkpoint from `in_dir`, write a fused one to `out_dir`.
 
-    Derives the transpose convention from the (non-square) gate_up_proj against the target slice
-    shape (hidden, 2*intermediate); applies it consistently to down_proj. Reads sizes from
-    config.json if not given. Returns a small report dict. Run `run_gate.py out_dir` after this;
-    then the content-oracle diff is the go/no-go.
+    STREAMING: tensors are loaded one fused-key at a time (via `safe_open`, never the whole
+    checkpoint) and written to sharded output as it goes, so peak memory is ~one fused expert
+    tensor (~4 GB for 120b), not the full ~230 GB. Derives the transpose convention from the
+    (non-square) gate_up_proj against the target slice (hidden, 2*intermediate) and applies it
+    consistently to the (possibly square) down_proj. Reads sizes from config.json if not given.
+
+    Guards against a still-quantized merge: if the per-expert weights are not a float dtype, the
+    merge left bnb-4bit packed tensors — those are not fusable; dequantize the merge to bf16 first.
+
+    Returns a small report. Run `run_gate.py out_dir` after this; the content-oracle diff
+    (`refuse_oracle.py verify`) is the go/no-go.
     """
     import glob
     import json
@@ -157,7 +165,8 @@ def refuse_checkpoint(in_dir: str, out_dir: str, *, hidden_size: int | None = No
     import shutil
 
     import torch
-    from safetensors.torch import load_file, save_file
+    from safetensors import safe_open
+    from safetensors.torch import save_file
 
     os.makedirs(out_dir, exist_ok=True)
     cfg_path = os.path.join(in_dir, "config.json")
@@ -167,44 +176,89 @@ def refuse_checkpoint(in_dir: str, out_dir: str, *, hidden_size: int | None = No
     if not hidden or not inter:
         raise ValueError("hidden_size/intermediate_size unknown — pass explicitly or provide config.json")
 
-    tensors: dict[str, Any] = {}
-    for shard in sorted(glob.glob(os.path.join(in_dir, "*.safetensors"))):
-        tensors.update(load_file(shard))
-    log(f"[refuse] loaded {len(tensors)} tensors from {in_dir}")
+    # index every tensor key -> its shard, WITHOUT loading weights
+    shards = sorted(glob.glob(os.path.join(in_dir, "*.safetensors")))
+    if not shards:
+        raise FileNotFoundError(f"{in_dir}: no *.safetensors shards")
+    key_to_shard: dict[str, str] = {}
+    open_files: dict[str, Any] = {}
+    for sp in shards:
+        f = safe_open(sp, framework="pt")
+        open_files[sp] = f
+        for k in f.keys():
+            key_to_shard[k] = sp
+    log(f"[refuse] indexed {len(key_to_shard)} tensors across {len(shards)} shards")
 
-    plan = plan_fusion(tensors.keys())
+    def get(k):  # lazy single-tensor load from the right shard
+        return open_files[key_to_shard[k]].get_tensor(k)
+
+    plan = plan_fusion(key_to_shard.keys())
     log(f"[refuse] plan: {plan.num_experts} experts, {len(plan.expert_stacks)} fused expert tensors, "
         f"{len(plan.router_renames)} router renames, {len(plan.passthrough)} passthrough")
 
-    # derive transpose once from a gate_up weight stack vs its target slice (hidden, 2*inter)
-    gate_up_w = next(k for k in plan.expert_stacks if k.endswith(".gate_up_proj"))
-    sample = tensors[plan.expert_stacks[gate_up_w][0]]
+    # derive transpose once from a gate_up source vs its target slice (hidden, 2*inter)
+    gate_up_key = next(k for k in plan.expert_stacks if k.endswith(".gate_up_proj"))
+    sample = get(plan.expert_stacks[gate_up_key][0])
+    if sample.dtype not in (torch.bfloat16, torch.float16, torch.float32):
+        raise ValueError(f"per-expert weights are {sample.dtype}, not float — the merge is still "
+                         "quantized (bnb-4bit) and is NOT fusable; dequantize to bf16 first")
     transpose = decide_transpose(sample.shape, (hidden, 2 * inter))
-    log(f"[refuse] gate_up per-expert {tuple(sample.shape)} vs slice {(hidden, 2 * inter)} "
-        f"-> transpose={transpose}")
+    log(f"[refuse] gate_up per-expert {tuple(sample.shape)} {sample.dtype} vs slice "
+        f"{(hidden, 2 * inter)} -> transpose={transpose}")
 
-    out: dict[str, Any] = {}
-    for fused_key, src_keys in plan.expert_stacks.items():
-        parts = [tensors[k] for k in src_keys]
+    # sharded streaming writer (HF loads any shard names as long as the index weight_map matches)
+    weight_map: dict[str, str] = {}
+    buf: dict[str, Any] = {}
+    state = {"bytes": 0, "shard": 0, "total": 0}
+
+    def flush():
+        if not buf:
+            return
+        state["shard"] += 1
+        fname = f"model-{state['shard']:05d}.safetensors"
+        save_file(buf, os.path.join(out_dir, fname), metadata={"format": "pt"})
+        for k in buf:
+            weight_map[k] = fname
+        log(f"[refuse]   wrote {fname} ({state['bytes'] / 1e9:.1f} GB, {len(buf)} tensors)")
+        buf.clear()
+        state["bytes"] = 0
+
+    def emit(key, t):
+        t = t.contiguous()
+        nbytes = t.numel() * t.element_size()
+        buf[key] = t
+        state["bytes"] += nbytes
+        state["total"] += nbytes
+        if state["bytes"] >= max_shard_bytes:
+            flush()
+
+    n = len(plan.expert_stacks)
+    for i, fused_key in enumerate(sorted(plan.expert_stacks)):
+        src_keys = plan.expert_stacks[fused_key]
+        parts = [get(k) for k in src_keys]
         if fused_key.endswith("_bias"):
-            out[fused_key] = stack_expert_biases(parts, stack=torch.stack).contiguous()
+            emit(fused_key, stack_expert_biases(parts, stack=torch.stack))
         else:
             slice_shape = (hidden, 2 * inter) if fused_key.endswith(".gate_up_proj") else (inter, hidden)
-            out[fused_key] = stack_expert_weights(parts, slice_shape, transpose=transpose,
-                                                  stack=torch.stack).contiguous()
+            emit(fused_key, stack_expert_weights(parts, slice_shape, transpose=transpose, stack=torch.stack))
+        del parts
+        if (i + 1) % 12 == 0 or i + 1 == n:
+            log(f"[refuse]   fused {i + 1}/{n} expert tensors")
     for src, dst in plan.router_renames.items():
-        out[dst] = tensors[src].contiguous()
+        emit(dst, get(src))
     for k in plan.passthrough:
-        out[k] = tensors[k].contiguous()
+        emit(k, get(k))
+    flush()
 
-    # single-shard write is fine for the sizes we serve; keeps the driver simple
-    save_file(out, os.path.join(out_dir, "model.safetensors"), metadata={"format": "pt"})
+    with open(os.path.join(out_dir, "model.safetensors.index.json"), "w") as f:
+        json.dump({"metadata": {"total_size": state["total"]}, "weight_map": weight_map}, f, indent=2)
     for fname in ("config.json", "generation_config.json", "tokenizer.json",
-                  "tokenizer_config.json", "special_tokens_map.json"):
+                  "tokenizer_config.json", "special_tokens_map.json", "chat_template.jinja"):
         src = os.path.join(in_dir, fname)
         if os.path.exists(src):
             shutil.copy2(src, os.path.join(out_dir, fname))
     report = {"num_experts": plan.num_experts, "transpose": transpose,
-              "out_tensors": len(out), "fused_expert_tensors": len(plan.expert_stacks)}
-    log(f"[refuse] wrote {len(out)} tensors -> {out_dir}  {report}")
+              "shards": state["shard"], "total_gb": round(state["total"] / 1e9, 1),
+              "fused_expert_tensors": len(plan.expert_stacks)}
+    log(f"[refuse] done -> {out_dir}  {report}")
     return report
