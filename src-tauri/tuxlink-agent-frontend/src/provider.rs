@@ -894,6 +894,15 @@ fn transcript_budget(num_ctx: Option<u32>, system_prompt: &str, tools: &[ToolSpe
 /// `system_prompt` is the effective system prompt (the operator override or the
 /// built-in [`ELMER_SYSTEM_PROMPT`], resolved by the caller — see
 /// [`OpenAiProvider::turn`]).
+///
+/// Heuristic: does `model` name a Gemini model? Used to gate echoing Gemini's
+/// `extra_content` (thought_signature) back — only a Gemini destination expects it.
+/// Covers both the direct id (`gemini-3.5-flash`) and namespaced routes
+/// (`google/gemini-3.5-flash`, e.g. via OpenRouter).
+fn is_gemini_model(model: &str) -> bool {
+    model.to_ascii_lowercase().contains("gemini")
+}
+
 pub fn build_request_body(
     model: &str,
     conversation: &Conversation,
@@ -935,16 +944,21 @@ pub fn build_request_body(
                 // `extra_content` (carrying `google.thought_signature`) echoed back
                 // verbatim on the assistant `tool_calls[]`, or the NEXT turn is
                 // rejected with HTTP 400 INVALID_ARGUMENT (tuxlink-0tuc3). We stored
-                // it in `provider_meta` when parsing the response; re-emit it here.
-                // Emitted ONLY when present so non-Gemini endpoints never receive an
-                // unexpected field.
+                // it in `provider_meta` when parsing the response; re-emit it here —
+                // but ONLY to a Gemini destination. If the operator switches Elmer to
+                // another OpenAI-compat provider mid-conversation, the persisted
+                // provider_meta from an earlier Gemini turn must NOT be echoed to the
+                // new endpoint (strict endpoints reject unknown fields, and it is
+                // meaningless there) — Codex adrev 2026-07-05 P2.
                 let mut tool_call = json!({
                     "id": id,
                     "type": "function",
                     "function": { "name": call.name, "arguments": arguments }
                 });
-                if let Some(meta) = &call.provider_meta {
-                    tool_call["extra_content"] = meta.clone();
+                if is_gemini_model(model) {
+                    if let Some(meta) = &call.provider_meta {
+                        tool_call["extra_content"] = meta.clone();
+                    }
                 }
                 messages.push(json!({
                     "role": "assistant",
@@ -1648,6 +1662,32 @@ mod tests {
         assert_eq!(tc["function"]["name"], json!("find_stations"), "wrong message indexed");
         assert!(tc.get("extra_content").is_none(),
             "non-Gemini tool calls must not carry an extra_content field");
+    }
+
+    #[test]
+    fn build_request_body_does_not_leak_provider_meta_to_non_gemini_destination() {
+        // A conversation that HAS a Gemini thought_signature, then the operator
+        // switches Elmer to a non-Gemini OpenAI-compat endpoint mid-conversation:
+        // the signature must NOT be echoed to the new provider (Codex adrev P2).
+        let extra = json!({ "google": { "thought_signature": "SIG_LEAK" } });
+        let mut convo = Conversation::new("go");
+        convo.push_tool_call(
+            ToolCall::new("find_stations", json!({})).with_provider_meta(Some(extra)),
+        );
+        let body = build_request_body("gpt-4o", &convo, &[], None, ELMER_SYSTEM_PROMPT);
+        let tc = &body["messages"][2]["tool_calls"][0];
+        assert_eq!(tc["function"]["name"], json!("find_stations"), "wrong message indexed");
+        assert!(tc.get("extra_content").is_none(),
+            "provider_meta must NOT leak to a non-Gemini endpoint after a provider switch");
+    }
+
+    #[test]
+    fn is_gemini_model_matches_direct_and_namespaced_ids() {
+        assert!(is_gemini_model("gemini-3.5-flash"));
+        assert!(is_gemini_model("google/gemini-3.5-flash")); // OpenRouter-style route
+        assert!(is_gemini_model("GEMINI-3-PRO")); // case-insensitive
+        assert!(!is_gemini_model("gpt-4o"));
+        assert!(!is_gemini_model("claude-haiku-4-5"));
     }
 
     #[test]
