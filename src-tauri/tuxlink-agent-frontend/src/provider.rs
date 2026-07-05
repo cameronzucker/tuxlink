@@ -759,49 +759,80 @@ fn estimate_text_tokens(s: &str) -> usize {
     s.len() / 3 + 8
 }
 
-/// Conservative token estimate for one transcript message.
+/// Conservative token estimate for one transcript message. Errs HIGH so the trim
+/// sends less rather than overflowing; a `ToolCall` also carries the rendered
+/// `tool_calls` JSON envelope (id / type / function wrapper + escaped arguments),
+/// so it is charged extra overhead beyond its raw args (Codex P2).
 fn estimate_message_tokens(msg: &Message) -> usize {
-    let len = match msg {
-        Message::User(t) | Message::Assistant(t) => t.len(),
-        Message::ToolResult { name, content, .. } => name.len() + content.len(),
+    match msg {
+        Message::User(t) | Message::Assistant(t) => t.len() / 3 + 8,
+        Message::ToolResult { name, content, .. } => (name.len() + content.len()) / 3 + 12,
         Message::ToolCall(c) => {
-            c.name.len() + serde_json::to_string(&c.args).map(|s| s.len()).unwrap_or(0)
+            let args = serde_json::to_string(&c.args).map(|s| s.len()).unwrap_or(0);
+            // +40: the assistant tool_calls object (id, "type":"function", nesting,
+            // JSON-string-escaped arguments) is materially larger than raw args.
+            (c.name.len() + args) / 3 + 40
         }
-    };
-    len / 3 + 8
+    }
 }
 
-/// Trim the transcript to fit `budget_tokens`, keeping the MOST RECENT turns.
+/// Split the transcript into ATOMIC trim units. A text turn (User/Assistant) is a
+/// singleton; a contiguous run of tool-activity messages (ToolCall/ToolResult) is
+/// ONE unit. Units are kept or dropped whole, so a tool block is never split —
+/// which would leave a `ToolResult` with no matching `ToolCall` (FIFO-paired in
+/// [`build_request_body`]) and the server 400s it (Codex P1). Returns half-open
+/// ranges over `messages`, in order.
+fn group_trim_units(messages: &[Message]) -> Vec<std::ops::Range<usize>> {
+    let mut units = Vec::new();
+    let mut i = 0;
+    while i < messages.len() {
+        if matches!(messages[i], Message::ToolCall(_) | Message::ToolResult { .. }) {
+            let start = i;
+            while i < messages.len()
+                && matches!(messages[i], Message::ToolCall(_) | Message::ToolResult { .. })
+            {
+                i += 1;
+            }
+            units.push(start..i);
+        } else {
+            units.push(i..i + 1);
+            i += 1;
+        }
+    }
+    units
+}
+
+/// Trim the transcript to fit `budget_tokens`, keeping the MOST RECENT complete
+/// units. The system prompt + tool schemas are counted separately by the caller
+/// and are NOT part of `budget_tokens`; this only bounds the transcript.
 ///
-/// The system prompt + tool schemas are counted separately by the caller and are
-/// NOT part of `budget_tokens`; this only bounds the transcript messages.
-///
-/// Tool-pairing safety: [`build_request_body`] pairs each `ToolCall` to the next
-/// `ToolResult` FIFO, so a kept `ToolResult` whose `ToolCall` was trimmed away
-/// would have no `tool_call_id` and the server rejects it with a 400. This walks
-/// newest→oldest accumulating within budget (always keeping at least the most
-/// recent message), then drops any leading orphan `ToolResult`(s) at the cut
-/// edge. Returns the kept messages in chronological order.
+/// Correctness invariants (Codex P1):
+/// * NEVER splits a tool-activity block — no orphan `ToolResult` can reach the
+///   wire (which would 400 on a missing `tool_call_id`).
+/// * NEVER returns empty for a non-empty transcript — the newest unit is always
+///   kept even if it alone exceeds the budget. A single over-budget unit is a
+///   pathological case the (generously sized) server context backstops.
 pub fn trim_messages_to_budget(messages: &[Message], budget_tokens: usize) -> Vec<Message> {
-    let mut kept_rev: Vec<&Message> = Vec::new();
-    let mut used = 0usize;
-    for msg in messages.iter().rev() {
-        let t = estimate_message_tokens(msg);
-        // Always keep at least the newest message, even if it alone exceeds budget
-        // (the server, now sized generously, is the final backstop).
-        if !kept_rev.is_empty() && used + t > budget_tokens {
+    if messages.is_empty() {
+        return Vec::new();
+    }
+    let units = group_trim_units(messages);
+    let unit_tokens = |r: &std::ops::Range<usize>| -> usize {
+        messages[r.clone()].iter().map(estimate_message_tokens).sum()
+    };
+    // Always keep the newest unit; then extend backward one whole unit at a time
+    // while it fits.
+    let mut keep_from = units.len() - 1;
+    let mut used = unit_tokens(&units[keep_from]);
+    while keep_from > 0 {
+        let t = unit_tokens(&units[keep_from - 1]);
+        if used + t > budget_tokens {
             break;
         }
         used += t;
-        kept_rev.push(msg);
+        keep_from -= 1;
     }
-    kept_rev.reverse();
-    // Drop a leading orphan ToolResult whose ToolCall fell outside the window.
-    let mut start = 0;
-    while start < kept_rev.len() && matches!(kept_rev[start], Message::ToolResult { .. }) {
-        start += 1;
-    }
-    kept_rev[start..].iter().map(|m| (*m).clone()).collect()
+    messages[units[keep_from].start..].to_vec()
 }
 
 /// Compute the transcript token budget for a context window, or `None` when no
@@ -809,8 +840,13 @@ pub fn trim_messages_to_budget(messages: &[Message], budget_tokens: usize) -> Ve
 /// response reserve; the transcript gets whatever remains.
 fn transcript_budget(num_ctx: Option<u32>, system_prompt: &str, tools: &[ToolSpec]) -> Option<usize> {
     let nctx = num_ctx? as usize;
-    // ~200 tokens/tool is a generous upper bound on a JSON-schema tool spec.
-    let overhead = estimate_text_tokens(system_prompt) + tools.len() * 200 + RESPONSE_RESERVE_TOKENS;
+    // Estimate the ACTUAL serialized tool JSON (MCP schemas vary widely — a flat
+    // per-tool guess is wrong in both directions; Codex P2). Fall back to a
+    // generous per-tool constant only if the specs somehow fail to serialize.
+    let tools_tokens = serde_json::to_string(tools)
+        .map(|s| s.len() / 3)
+        .unwrap_or(tools.len() * 300);
+    let overhead = estimate_text_tokens(system_prompt) + tools_tokens + RESPONSE_RESERVE_TOKENS;
     Some(nctx.saturating_sub(overhead))
 }
 
@@ -1255,6 +1291,50 @@ mod tests {
         let b = transcript_budget(Some(32_768), "short system", &[]).unwrap();
         assert!(b < 32_768 && b > 32_768 - RESPONSE_RESERVE_TOKENS - 100,
                 "budget {b} should be nctx minus a small overhead");
+    }
+
+    /// Codex P1: even a zero budget never yields an empty transcript, and never a
+    /// leading orphan ToolResult (the newest whole unit is kept).
+    #[test]
+    fn trim_never_returns_empty_or_orphan() {
+        let msgs = vec![user("q"), tcall("t"), tresult("t", "r")];
+        let kept = trim_messages_to_budget(&msgs, 0);
+        assert!(!kept.is_empty(), "must never send an empty transcript");
+        assert!(
+            !matches!(kept.first(), Some(Message::ToolResult { .. })),
+            "must never start with an orphan ToolResult, got: {kept:?}"
+        );
+    }
+
+    /// Codex P1: a tool-activity block is atomic — trimming keeps it whole (both
+    /// call and result) or drops it whole, never splitting to orphan a result.
+    /// Even back-to-back calls (parallel tool use) stay together.
+    #[test]
+    fn trim_never_splits_a_tool_block() {
+        let msgs = vec![
+            user("old"),
+            tcall("a"),
+            tcall("b"),
+            tresult("a", "ra"),
+            tresult("b", "rb"),
+            asst("done"),
+        ];
+        // Budget that fits the tail but pressures the tool block.
+        for budget in [0, 20, 60, 200, 100_000] {
+            let kept = trim_messages_to_budget(&msgs, budget);
+            // If any ToolResult is kept, its whole block (starting at a ToolCall) is kept.
+            let has_result = kept.iter().any(|m| matches!(m, Message::ToolResult { .. }));
+            if has_result {
+                let first_tool = kept.iter().position(|m| {
+                    matches!(m, Message::ToolCall(_) | Message::ToolResult { .. })
+                });
+                assert!(
+                    matches!(kept[first_tool.unwrap()], Message::ToolCall(_)),
+                    "a kept tool block must begin with a ToolCall (budget={budget}): {kept:?}"
+                );
+            }
+            assert!(!kept.is_empty());
+        }
     }
 
     // --- redacted_url: credential-safe request URL for error/log lines -------
