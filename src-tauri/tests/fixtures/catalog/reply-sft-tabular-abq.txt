@@ -1,0 +1,267 @@
+FPUS65 KABQ 020631
+SFTABQ
+NMZ201>241-030600-
+
+Tabular State Forecast for North and Central New Mexico
+National Weather Service Albuquerque NM
+1231 AM MDT Thu Jul 2 2026
+
+Rows Include...
+   Daily predominant daytime weather 6AM-6PM
+   Forecast temperatures...early morning low/daytime high
+   Probability of precipitation nighttime 6PM-6AM/daytime 6AM-6PM
+          - indicates temperatures below zero
+         MM indicates missing data
+
+
+   FCST     FCST     FCST     FCST     FCST     FCST     FCST     
+   Today    Fri      Sat      Sun      Mon      Tue      Wed      
+   Jul 02   Jul 03   Jul 04   Jul 05   Jul 06   Jul 07   Jul 08   
+
+...NORTHWEST NEW MEXICO...
+   Farmington
+   Sunny    Smoke    Sunny    Sunny    Ptcldy   Sunny    Sunny    
+     /90    53/92    56/94    60/94    63/95    63/96    63/97    
+      /00    00/00    00/00    00/00    00/00    00/00    00/00   
+
+   Dulce
+   Sunny    Smoke    Sunny    Sunny    Ptcldy   Ptcldy   Ptcldy   
+     /87    40/89    42/92    45/92    48/92    48/93    49/94    
+      /00    00/00    00/00    00/00    00/00    10/20    10/20   
+
+   Cuba
+   Sunny    Smoke    Sunny    Sunny    Ptcldy   Sunny    Sunny    
+     /87    52/88    54/89    57/89    57/88    57/90    57/91    
+      /00    00/00    00/00    00/00    00/10    00/10    10/20   
+
+...WEST CENTRAL NEW MEXICO...
+   Gallup
+   Sunny    Ptcldy   Sunny    Ptcldy   Ptcldy   Sunny    Sunny    
+     /86    44/88    47/90    53/90    54/90    55/91    56/93    
+      /00    00/00    00/00    00/00    00/10    00/10    10/10   
+
+   El Morro
+   Sunny    Ptcldy   Sunny    Ptcldy   Ptcldy   Ptcldy   Sunny    
+     /85    49/86    53/87    55/87    56/86    55/88    56/89    
+      /00    00/00    00/00    00/10    00/20    10/20    10/20   
+
+   Grants
+   Sunny    Ptcldy   Sunny    Ptcldy   Ptcldy   Ptcldy   Sunny    
+     /90    49/91    53/92    56/91    56/90    56/91    57/93    
+      /00    00/00    00/00    00/10    00/20    10/20    10/20   
+
+   Quemado
+   Sunny    Ptcldy   Sunny    Ptcldy   Ptcldy   Sunny    Sunny    
+     /88    51/88    57/87    59/87    58/88    58/88    59/90    
+      /00    00/00    00/00    00/00    00/10    00/20    10/20   
+
+   Datil
+   Smoke    Ptcldy   Ptcldy   Ptcldy   Ptcldy   Ptcldy   Ptcldy   
+     /85    53/87    59/86    61/86    60/85    59/86    60/87    
+      /00    00/00    00/00    00/10    00/20    20/30    10/30   
+
+   Glenwood
+   Sunny    Ptcldy   Ptcldy   Ptcldy   Ptcldy   Ptcldy   Ptcldy   
+     /95    53/98    58/98    60/98    59/98    59/98    59/99    
+      /00    00/00    00/00    00/00    00/40    20/40    10/40   
+
+...NORTH CENTRAL NEW MEXICO...
+   Chama
+   Sunny    Smoke    Sunny    Sunny    Ptcldy   Ptcldy   Ptcldy   
+     /81    42/83    45/85    46/85    47/84    47/85    48/86    
+      /00    00/00    00/00    00/10    00/20    20/40    20/30   
+
+   Los Alamos
+   Sunny    Sunny    Sunny    Sunny    Ptcldy   Ptcldy   Ptcldy   
+     /87    60/88    61/90    64/88    62/86    62/87    63/88    
+      /00    00/00    00/00    00/10    00/30    20/30    20/30   
+
+   Pecos
+   Sunny    Sunny    Sunny    Ptcldy   Ptcldy   Ptcldy   Ptcldy   
+     /86    53/88    54/90    57/87    55/87    55/88    56/89    
+      /00    00/00    00/00    00/30    10/40    20/40    20/30   
+
+   Cerro/Questa
+   Sunny    Ptcldy   Ptcldy   Ptcldy   Ptcldy   Ptcldy   Ptcldy   
+     /84    52/86    53/87    54/85    54/85    55/86    56/87    
+      /00    00/00    00/00    00/30    10/20    20/30    20/30   
+
+   Red River
+   Sunny    Smoke    Ptcldy   Ptcldy   Ptcldy   Ptcldy   Ptcldy   
+     /81    40/81    41/81    43/80    46/76    48/77    49/78    
+      /00    00/00    00/00    00/40    10/30    20/40    20/40   
+
+   Angel Fire
+   Sunny    Ptcldy   Sunny    Ptcldy   Ptcldy   Ptcldy   Ptcldy   
+     /79    34/81    36/82    39/80    42/80    43/81    45/82    
+      /00    00/00    00/00    00/40    20/40    30/50    20/40   
+
+   Taos
+   Sunny    Ptcldy   Sunny    Sunny    Sunny    Ptcldy   Ptcldy   
+     /86    48/88    49/89    52/87    51/87    51/88    52/89    
+      /00    00/00    00/00    00/20    20/20    20/20    20/30   
+
+   Mora
+   Sunny    Ptcldy   Ptcldy   Ptcldy   Ptcldy   Ptcldy   Ptcldy   
+     /85    51/88    52/88    55/84    52/84    53/84    53/87    
+      /00    00/00    00/00    00/40    10/50    20/60    20/50   
+
+   Espanola
+   Sunny    Ptcldy   Ptcldy   Sunny    Ptcldy   Sunny    Sunny    
+     /93    55/95    56/95    60/94    59/94    59/94    60/96    
+      /00    00/00    00/00    00/10    10/20    20/20    10/20   
+
+   Santa Fe
+   Sunny    Sunny    Sunny    Sunny    Ptcldy   Sunny    Sunny    
+     /86    59/88    60/90    62/88    61/88    61/88    62/90    
+      /00    00/00    00/00    00/10    10/20    20/20    20/20   
+
+...CENTRAL NEW MEXICO...
+   Albuquerque
+   Sunny    Smoke    Sunny    Sunny    Sunny    Sunny    Sunny    
+     /94    64/95    65/96    67/95    63/95    64/96    65/98    
+      /00    00/00    00/00    00/00    00/10    20/00    20/00   
+
+   Los Lunas
+   Smoke    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    
+     /96    59/97    61/98    63/97    62/96    62/97    63/99    
+      /00    00/00    00/00    00/00    00/20    20/00    20/00   
+
+   Rio Rancho
+   Sunny    Smoke    Sunny    Sunny    Sunny    Sunny    Sunny    
+     /95    62/96    63/97    66/96    64/96    65/97    66/99    
+      /00    00/00    00/00    00/00    00/00    20/00    20/00   
+
+   Socorro
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    
+     /99    65/100   68/100   70/99    69/98    69/99    70/100   
+      /00    00/00    00/00    00/00    00/20    10/10    20/20   
+
+   Sandia Park/Cedar Crest
+   Sunny    Ptcldy   Sunny    Ptcldy   Sunny    Sunny    Sunny    
+     /87    60/89    61/90    63/88    60/89    61/90    62/91    
+      /00    00/00    00/00    00/10    00/20    10/10    20/00   
+
+   Tijeras
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    
+     /91    58/92    59/94    61/92    60/90    61/91    62/92    
+      /00    00/00    00/00    00/10    00/20    20/20    20/00   
+
+   Moriarty/Estancia
+   Sunny    Ptcldy   Sunny    Ptcldy   Ptcldy   Ptcldy   Sunny    
+     /91    51/93    52/94    55/92    53/92    53/93    54/94    
+      /00    00/00    00/00    00/10    20/30    20/20    30/10   
+
+   Clines Corners
+   Sunny    Sunny    Sunny    Sunny    Ptcldy   Ptcldy   Sunny    
+     /86    54/88    56/89    57/86    55/86    56/87    56/89    
+      /00    00/00    00/00    00/20    30/30    20/40    30/20   
+
+   Gran Quivira
+   Sunny    Sunny    Sunny    Ptcldy   Ptcldy   Ptcldy   Sunny    
+     /89    57/90    60/91    60/89    58/88    58/89    60/90    
+      /00    00/00    00/00    00/10    20/20    40/20    30/10   
+
+   Carrizozo
+   Sunny    Sunny    Ptcldy   Ptcldy   Ptcldy   Ptcldy   Ptcldy   
+     /92    62/93    64/94    65/92    63/91    63/91    64/92    
+      /00    00/00    00/10    00/30    20/20    20/30    20/20   
+
+   Ruidoso
+   Sunny    Ptcldy   Ptcldy   Ptcldy   Ptcldy   Ptcldy   Ptcldy   
+     /85    57/86    59/85    60/85    58/83    58/83    59/85    
+      /20    10/20    00/40    00/50    20/60    20/50    20/40   
+
+...NORTHEAST NEW MEXICO...
+   Capulin
+   Sunny    Smoke    Sunny    Ptcldy   Ptcldy   Ptcldy   Ptcldy   
+     /88    53/90    54/88    53/84    52/85    53/86    54/87    
+      /00    00/00    00/00    10/60    20/30    20/50    20/40   
+
+   Raton
+   Sunny    Sunny    Sunny    Ptcldy   Ptcldy   Ptcldy   Ptcldy   
+     /91    51/93    51/92    53/88    52/89    53/90    54/91    
+      /00    00/00    00/00    00/50    20/40    00/40    20/40   
+
+   Springer
+   Sunny    Sunny    Sunny    Ptcldy   Ptcldy   Ptcldy   Ptcldy   
+     /93    52/95    53/94    55/89    53/90    55/91    55/92    
+      /00    00/00    00/00    00/40    10/30    00/30    10/20   
+
+   Las Vegas
+   Sunny    Sunny    Sunny    Ptcldy   Ptcldy   Ptcldy   Ptcldy   
+     /88    54/90    54/91    58/86    55/86    56/87    57/89    
+      /00    00/00    00/00    00/40    20/50    20/50    20/40   
+
+   Clayton
+   Sunny    Sunny    Sunny    Ptcldy   Sunny    Sunny    Sunny    
+     /95    63/98    64/97    61/91    60/92    62/93    63/95    
+      /00    00/00    00/00    20/30    20/20    20/20    20/20   
+
+   Roy
+   Sunny    Sunny    Sunny    Ptcldy   Ptcldy   Ptcldy   Sunny    
+     /91    58/93    58/93    59/87    56/87    58/88    59/90    
+      /00    00/00    00/00    00/40    20/20    20/20    10/20   
+
+   Conchas
+   Sunny    Sunny    Sunny    Ptcldy   Sunny    Sunny    Sunny    
+     /99    64/101   64/101   64/95    61/95    63/96    64/98    
+      /00    00/00    00/00    10/30    30/20    20/20    20/20   
+
+...EAST CENTRAL NEW MEXICO...
+   Santa Rosa
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    
+     /94    61/96    62/96    63/91    60/91    62/92    62/94    
+      /00    00/00    00/00    00/20    30/20    30/20    20/20   
+
+   Tucumcari
+   Sunny    Sunny    Sunny    Ptcldy   Sunny    Sunny    Sunny    
+     /98    67/100   68/100   67/96    63/95    66/96    67/98    
+      /10    10/00    00/00    20/30    30/20    10/10    20/10   
+
+   Clovis
+   Ptcldy   Sunny    Ptcldy   Sunny    Sunny    Sunny    Sunny    
+     /93    66/96    67/98    67/95    63/94    65/95    67/97    
+      /20    20/00    00/00    10/10    30/00    20/20    20/10   
+
+   Portales
+   Ptcldy   Sunny    Ptcldy   Sunny    Sunny    Sunny    Sunny    
+     /94    66/97    67/99    67/96    64/95    66/96    67/98    
+      /20    20/00    00/00    10/10    30/10    20/20    10/10   
+
+   Fort Sumner
+   Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    Sunny    
+     /95    65/98    67/99    66/95    63/94    65/95    66/97    
+      /10    10/00    00/00    10/20    20/00    30/10    00/00   
+
+...SOUTHEAST NEW MEXICO...
+   Roswell
+   Ptcldy   Sunny    Ptcldy   Sunny    Sunny    Sunny    Sunny    
+     /96    68/99    70/101   71/98    67/97    68/97    69/99    
+      /20    10/00    00/00    00/10    10/00    00/20    00/00   
+
+   Picacho
+   Ptcldy   Sunny    Ptcldy   Sunny    Ptcldy   Ptcldy   Ptcldy   
+     /92    60/94    63/96    64/93    62/92    63/92    64/94    
+      /20    10/10    00/10    00/10    20/30    20/30    00/20   
+
+   Elk
+   Ptcldy   Ptcldy   Ptcldy   Ptcldy   Ptcldy   Ptcldy   Ptcldy   
+     /90    58/91    60/93    61/91    58/89    59/89    60/91    
+      /30    10/20    00/30    00/20    10/40    10/40    00/30   
+
+$$
+
+
+
+
+
+=====
+Thanks for using Winlink, an Amateur Radio Safety Foundation 
+sponsored project. For information about Winlink or to manage
+your Winlink account please visit: 
+https://www.winlink.org
+
+For information on how you can help support Winlink and other
+Amateur Radio Safety Foundation projects please visit:
+https://www.arsfi.org

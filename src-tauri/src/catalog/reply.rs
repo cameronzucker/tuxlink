@@ -232,8 +232,17 @@ fn is_slash_row(tokens: &[&str]) -> bool {
         })
 }
 
+/// A single temp/PoP value inside a slash pair. Accepts:
+/// * `""` — MISSING (the "Today" column carries no overnight low and no
+///   nighttime PoP when the product is issued in the morning, so its cells are
+///   `/104` and `/00`; `ForecastCell.low`/`.pop_night` are documented as "may be ''").
+/// * `"MM"` / `"-"` — NWS missing-data / below-zero markers.
+/// * a run of ASCII digits.
+///
+/// Empty was previously rejected (`!s.is_empty()`), which made every real
+/// morning-issued SFT fail-closed to `Forecast::None` → blank report (tuxlink-kfcwc).
 fn is_value_cell(s: &str) -> bool {
-    s == "MM" || s == "-" || (!s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))
+    s.is_empty() || s == "MM" || s == "-" || s.chars().all(|c| c.is_ascii_digit())
 }
 
 fn split2(tok: &str) -> (&str, &str) {
@@ -496,6 +505,72 @@ mod tests {
         // Region names captured.
         assert!(t.regions.iter().any(|r| r.name.contains("SOUTH-CENTRAL ARIZONA")));
         assert!(t.regions.iter().any(|r| r.name.contains("SOUTHEAST CALIFORNIA")));
+    }
+
+    /// tuxlink-kfcwc regression: a REAL morning-issued SFT (operator's N7CPZ
+    /// inbox, KPSR 2026-07-02 0301 MST). The "Today" column has NO overnight low
+    /// and NO nighttime PoP, so its cells are `/104` and `/00`. Before the fix,
+    /// `is_value_cell("")` rejected the empty half, `is_slash_row` failed, and
+    /// `parse_tabular` returned `Forecast::None` for EVERY location → the whole
+    /// report rendered blank ("Show full text" only). This fixture parses to
+    /// `Forecast::Tabular` with empty low/pop_night on the first column.
+    #[test]
+    fn sft_tabular_morning_issue_empty_today_low_still_parses() {
+        let subject = "INQUIRY - https://tgftp.nws.noaa.gov/data/raw/fp/fpus65.kpsr.sft.az.txt";
+        let body = include_str!("../../tests/fixtures/catalog/reply-sft-tabular-psr-am.txt");
+        let w = area(parse_reply(subject, body));
+        assert!(w.title.to_lowercase().contains("tabular"), "title {:?}", w.title);
+
+        let t = match w.forecast {
+            Forecast::Tabular(t) => t,
+            // The bug manifested here: pre-fix this was Forecast::None.
+            other => panic!("expected Tabular (regression: empty Today low), got {other:?}"),
+        };
+        assert_eq!(t.days.len(), 7, "7 day columns");
+        assert_eq!(t.days[0].dow, "Today");
+
+        // First location of the first region: the "Today" cell has an empty low
+        // and empty nighttime PoP, a present high and daytime PoP.
+        let first = t
+            .regions
+            .iter()
+            .flat_map(|r| &r.locations)
+            .find(|l| l.name == "Lake Havasu City Airport")
+            .expect("first location present");
+        assert_eq!(first.cells.len(), 7);
+        assert_eq!(first.cells[0].condition, "Sunny");
+        assert_eq!(first.cells[0].low, "", "Today has no overnight low");
+        assert_eq!(first.cells[0].high, "104");
+        assert_eq!(first.cells[0].pop_night, "", "Today has no nighttime PoP");
+        assert_eq!(first.cells[0].pop_day, "00");
+        // A later column carries a normal low.
+        assert_eq!(first.cells[1].low, "79");
+        assert_eq!(first.cells[1].high, "107");
+    }
+
+    /// tuxlink-kfcwc: a second real morning-issued SFT from a different office
+    /// (KABQ, 7 regions / ~45 locations) — same empty-Today-low pattern. Guards
+    /// against a second fail-closed trigger hiding in a larger product; asserts
+    /// the whole grid parses rather than degrading to a blank report.
+    #[test]
+    fn sft_tabular_multi_region_morning_issue_parses() {
+        let subject = "INQUIRY - https://tgftp.nws.noaa.gov/data/raw/fp/fpus65.kabq.sft.abq.txt";
+        let body = include_str!("../../tests/fixtures/catalog/reply-sft-tabular-abq.txt");
+        let w = area(parse_reply(subject, body));
+        let t = match w.forecast {
+            Forecast::Tabular(t) => t,
+            other => panic!("expected Tabular (7-region KABQ), got {other:?}"),
+        };
+        assert_eq!(t.days.len(), 7, "7 day columns");
+        assert!(t.regions.len() >= 5, "many regions, got {}", t.regions.len());
+        assert!(
+            t.regions.iter().any(|r| r.name.contains("NORTHWEST NEW MEXICO")),
+            "first region captured"
+        );
+        // Every location fully parsed (no silent drops): the first column low is
+        // empty on the morning issue; a later column is a real digit run.
+        let locs: usize = t.regions.iter().map(|r| r.locations.len()).sum();
+        assert!(locs >= 20, "many locations parsed, got {locs}");
     }
 
     #[test]
