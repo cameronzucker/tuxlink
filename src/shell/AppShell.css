@@ -506,7 +506,8 @@
   color: var(--text-dim);
   margin-bottom: 7px;
 }
-.egress-arm-popover .egress-presets {
+.egress-arm-popover .egress-presets,
+.egress-arm-popover .egress-rearm-presets {
   display: flex;
   gap: 7px;
 }
@@ -547,10 +548,44 @@
   line-height: 1.45;
   margin-top: 10px;
 }
+/* Tainted → re-arm popover (tuxlink-7durx). The locked branch stacks a primary
+   "start a fresh session" action, a duration-preset row, and consequence copy. It
+   is a flex column with gap so the three groups are spaced like the disarmed
+   branch — before, the container had no layout and the preset row had no flex
+   rule, so the buttons mashed together and the primary button (which lacks the
+   base `egress-arm-button` class) rendered unstyled. */
 .egress-arm-popover .dash-egress-locked {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
   font-size: var(--type-control);
-  color: var(--error);
   line-height: 1.4;
+}
+/* Primary action — full width, accent-outlined (mirrors the disarm button's shape
+   but reads as the go-forward action rather than a destructive one). */
+.egress-arm-popover .egress-rearm-button {
+  width: 100%;
+  text-align: center;
+  font-size: var(--type-control);
+  font-weight: 600;
+  padding: 8px 0;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-panel);
+  background: transparent;
+  color: var(--accent-2);
+  cursor: pointer;
+}
+.egress-arm-popover .egress-rearm-button:hover:not(:disabled) {
+  background: var(--surface);
+}
+.egress-arm-popover .egress-rearm-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.egress-arm-popover .egress-rearm-consequence {
+  font-size: var(--type-meta);
+  color: var(--text-faint);
+  line-height: 1.45;
 }
 .egress-arm-popover .dash-egress-error {
   margin-top: 10px;
