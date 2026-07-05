@@ -568,7 +568,10 @@ pub fn normalize_chat_endpoint(agent_endpoint: &str) -> Result<String, DetectErr
     }
     let ep = AgentEndpoint::parse(agent_endpoint)
         .map_err(|e| DetectError::BadUrl(e.to_string()))?;
-    let path = ep.url().path();
+    // Trim trailing slashes before the suffix check so an explicit route with a
+    // trailing slash (e.g. `/api/v1/chat/completions/`) is recognized and left
+    // untouched, not rewritten to `<origin>/v1/chat/completions` (Codex P2).
+    let path = ep.url().path().trim_end_matches('/');
     // An explicit chat route (OpenAI-compat or native Ollama) is already correct.
     if path.ends_with("/chat/completions") || path.ends_with("/api/chat") {
         return Ok(agent_endpoint.to_string());
@@ -1834,6 +1837,11 @@ mod tests {
                 "https://host.example/v1/chat/completions",
                 "https://host.example/api/v1/chat/completions",
                 "http://127.0.0.1:11434/api/chat",
+                // Trailing-slash variants must ALSO be recognized as explicit
+                // routes and left byte-for-byte unchanged (Codex P2): rewriting
+                // them would drop a required path prefix and 404 a working config.
+                "https://host.example/api/v1/chat/completions/",
+                "http://127.0.0.1:11434/api/chat/",
             ] {
                 assert_eq!(
                     normalize_chat_endpoint(ep).unwrap(),

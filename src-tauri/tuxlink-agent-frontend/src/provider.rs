@@ -223,9 +223,14 @@ impl Provider for OpenAiProvider {
         }
 
         let resp = req.send().await.map_err(|e| {
+            // `reqwest::Error`'s Display re-embeds the full request URL ("for url
+            // (...)") — which can carry a query credential. Strip it with
+            // `without_url()` and use our own credential-safe `redacted_url`
+            // instead, so a secret never reaches the error / session log (Codex P1).
             ProviderError::Transport(format!(
-                "request to {} failed: {e}",
-                redacted_url(&self.endpoint)
+                "request to {} failed: {}",
+                redacted_url(&self.endpoint),
+                e.without_url()
             ))
         })?;
 
