@@ -62,13 +62,13 @@
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
-  color: var(--text-2, var(--text-muted));
+  color: var(--text-dim, #94a0ad);
   font-size: 16px;
   line-height: 1;
   cursor: pointer;
 }
 .elmer-close-button:hover {
-  background: var(--surface-hover, var(--surface-3));
+  background: color-mix(in srgb, var(--text) 10%, transparent);
   color: var(--text);
 }
 
@@ -84,11 +84,11 @@
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
-  color: var(--text-2, var(--text-muted));
+  color: var(--text-dim, #94a0ad);
   cursor: pointer;
 }
 .elmer-newconv-button:hover {
-  background: var(--surface-hover, var(--surface-3));
+  background: color-mix(in srgb, var(--text) 10%, transparent);
   color: var(--text);
 }
 /* Context-pressure emphasis: a local model's window is nearly full, so starting
@@ -395,7 +395,7 @@
   margin: 0.4em 0;
   padding: 0.3em 0.75em;
   border-left: 3px solid var(--border-strong, var(--border));
-  color: var(--text-2, var(--text-muted));
+  color: var(--text-dim, #94a0ad);
   font-style: italic;
 }
 .elmer-turn-md blockquote p {
@@ -415,7 +415,7 @@
   border: 1px solid var(--border-soft, var(--border));
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: 11px;
-  color: var(--text-2, var(--text-muted));
+  color: var(--text-dim, #94a0ad);
 }
 .elmer-chip-icon {
   opacity: 0.8;
@@ -433,7 +433,7 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: var(--text-2, var(--text-muted));
+  color: var(--text-dim, #94a0ad);
   font-style: italic;
   font-size: 12px;
 }
@@ -514,7 +514,7 @@
   cursor: pointer;
 }
 .elmer-reasoning-toggle:hover {
-  color: var(--text-2, var(--text-muted));
+  color: var(--text-dim, #94a0ad);
 }
 /* Live (streaming) toggle is a non-interactive label — no hover affordance. */
 .elmer-reasoning-toggle--live {
@@ -527,7 +527,7 @@
   border-left: 2px solid var(--border-strong, var(--border));
   background: var(--surface-sunken, var(--surface-2));
   border-radius: 0 4px 4px 0;
-  color: var(--text-2, var(--text-muted));
+  color: var(--text-dim, #94a0ad);
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: 11px;
   line-height: 1.45;
@@ -551,7 +551,7 @@
 }
 .elmer-outcome--offline,
 .elmer-outcome--cancelled {
-  color: var(--text-2, var(--text-muted));
+  color: var(--text-dim, #94a0ad);
 }
 
 /* Offline-endpoint banner (AC-14). */
@@ -672,7 +672,7 @@
   background: transparent;
   border: 0;
   padding: 4px 0;
-  color: var(--text-2, var(--text-muted));
+  color: var(--text-dim, #94a0ad);
   font: inherit;
   font-size: 11px;
   cursor: pointer;
@@ -957,7 +957,7 @@
 .elmer-save-ok {
   margin-top: 6px;
   font-size: 0.85em;
-  color: var(--text-2, var(--text-muted));
+  color: var(--text-dim, #94a0ad);
 }
 
 /* ---------------------------------------------------------------------------
@@ -1119,7 +1119,7 @@
 .elmer-tile-badge--tier {
   border: 1px solid var(--border-strong, var(--border));
   background: var(--surface-sunken, var(--surface-1));
-  color: var(--text-2, var(--text-muted));
+  color: var(--text-dim, #94a0ad);
 }
 
 .elmer-tile-badge--free {
@@ -1128,7 +1128,7 @@
 }
 
 .elmer-tile-badge--paid {
-  color: var(--text-2, var(--text-muted));
+  color: var(--text-dim, #94a0ad);
 }
 
 .elmer-tile-badge--keysaved {
