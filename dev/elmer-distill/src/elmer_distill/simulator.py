@@ -62,14 +62,18 @@ def grid_to_lat_lon(grid):
 
 
 def lat_lon_to_grid(lat, lon):
-    """WGS-84 lat/lon -> 4-char Maidenhead locator. Clamped so it never raises."""
+    """WGS-84 lat/lon -> full 6-char Maidenhead locator (field/square/subsquare),
+    faithful to the Rust `lat_lon_to_grid`. Clamped so it never raises."""
     lon = (min(max(lon, -180.0), 179.999) + 180.0) / 20.0
     lat = (min(max(lat, -90.0), 89.999) + 90.0) / 10.0
     lon_field, lat_field = math.floor(lon), math.floor(lat)
     lon_sq = math.floor((lon - lon_field) * 10.0)
     lat_sq = math.floor((lat - lat_field) * 10.0)
+    lon_sub = math.floor((lon - lon_field - lon_sq / 10.0) * 240.0)
+    lat_sub = math.floor((lat - lat_field - lat_sq / 10.0) * 240.0)
     return (chr(ord("A") + int(lon_field)) + chr(ord("A") + int(lat_field))
-            + chr(ord("0") + int(lon_sq)) + chr(ord("0") + int(lat_sq)))
+            + chr(ord("0") + int(lon_sq)) + chr(ord("0") + int(lat_sq))
+            + chr(ord("a") + int(lon_sub)) + chr(ord("a") + int(lat_sub)))
 
 
 def haversine_km(lat1, lon1, lat2, lon2):
@@ -132,7 +136,7 @@ def _synth_grid(rng, op_lat, op_lon):
     for _ in range(60):
         lat = op_lat + rng.uniform(-14.0, 14.0)
         lon = op_lon + rng.uniform(-16.0, 16.0)
-        grid = lat_lon_to_grid(lat, lon)
+        grid = lat_lon_to_grid(lat, lon)[:4]   # gateways advertised at 4-char field/square
         clat, clon = grid_to_lat_lon(grid)
         dist = haversine_km(op_lat, op_lon, clat, clon)
         if 150.0 <= dist <= 1600.0:

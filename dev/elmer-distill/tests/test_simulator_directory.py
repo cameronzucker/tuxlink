@@ -16,6 +16,7 @@ from elmer_distill.simulator import (
     build_gateways,
     grid_to_lat_lon,
     haversine_km,
+    lat_lon_to_grid,
     seed_for_scenario,
 )
 from elmer_distill.predicates import BANDS
@@ -35,6 +36,19 @@ def test_grid_to_lat_lon_matches_rust_known_reference():
 def test_grid_to_lat_lon_rejects_malformed():
     assert grid_to_lat_lon("ZZ99") is None    # field letters only go A-R
     assert grid_to_lat_lon("J") is None        # too short
+
+
+def test_lat_lon_to_grid_is_faithful_six_char_mirror_of_rust():
+    """Faithful to src-tauri/src/position/maidenhead.rs: full 6-char locator incl.
+    subsquare (the Rust test pins these exact references)."""
+    assert lat_lon_to_grid(48.143, 11.608) == "JN58td"    # Munich
+    assert lat_lon_to_grid(-34.91, -56.21) == "GF15vc"    # Montevideo
+    assert lat_lon_to_grid(0.0, 0.0) == "JJ00aa"          # origin corner
+
+
+def test_lat_lon_to_grid_round_trips_through_grid_to_lat_lon():
+    (lat, lon) = grid_to_lat_lon("JN58td")
+    assert lat_lon_to_grid(lat, lon) == "JN58td"
 
 
 def test_haversine_zero_and_known_distance():
