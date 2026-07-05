@@ -78,12 +78,27 @@ def lat_lon_to_grid(lat, lon):
 
 def haversine_km(lat1, lon1, lat2, lon2):
     """Great-circle distance (km) between two lat/lon points."""
-    R = 6371.0088
+    # R aligned to the shipped app (src/catalog/distance.ts, and the Rust
+    # position::geo helper) so sim distances match what find_stations serves. The
+    # change from 6371.0088 is cosmetic (~1.4 ppm, rounded away) and does NOT affect
+    # replay determinism — seeds are SHA-256, constant-independent.
+    R = 6371.0
     p1, p2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
     dlam = math.radians(lon2 - lon1)
     a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlam / 2) ** 2
     return 2 * R * math.asin(math.sqrt(a))
+
+
+def bearing_deg(lat1, lon1, lat2, lon2):
+    """Initial great-circle bearing lat1/lon1 -> lat2/lon2 in degrees [0,360) (0=N, 90=E).
+    Mirrors the Rust `position::geo::bearing_deg` atan2 convention so gold-gen teaches the
+    same bearing the app's find_stations serves (parity gate for tuxlink-e7z7d)."""
+    r1, r2 = math.radians(lat1), math.radians(lat2)
+    dlam = math.radians(lon2 - lon1)
+    y = math.sin(dlam) * math.cos(r2)
+    x = math.cos(r1) * math.sin(r2) - math.sin(r1) * math.cos(r2) * math.cos(dlam)
+    return (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
 
 
 def seed_for_scenario(scenario_id):
@@ -166,9 +181,16 @@ def build_gateways(seed, operator_grid=_OPERATOR_GRID):
             freq = float(lo + 4 + i * 6 + rng.randint(0, 2))   # in-band, >2 kHz apart
             fresh = rng.random() < 0.6
             last_heard = rng.randint(1, 8) if fresh else rng.randint(20, 45)
+            # Mirror find_stations' agent surface: distance in miles (US default) + bearing
+            # from the operator grid. bearing is None at zero distance (co-located), matching
+            # the Rust helper; synth grids are >=150 km out so this is defensive.
+            glat, glon = grid_to_lat_lon(grid)
+            bearing = None if dist == 0 else round(bearing_deg(op_lat, op_lon, glat, glon))
             gateways.append({
                 "callsign": cs, "grid": grid, "band": band, "freq_khz": freq,
-                "last_heard_h": last_heard, "distance_km": dist, "reachable": True,
+                "last_heard_h": last_heard, "distance_km": dist,
+                "distance_mi": round(dist * 0.621371), "bearing_deg": bearing,
+                "reachable": True,
             })
     # Mark two stations unreachable (busy / poor path) so connect/exchange loops have a
     # real "keep driving until you connect" target on every seed.

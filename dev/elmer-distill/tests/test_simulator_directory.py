@@ -13,6 +13,7 @@ import math
 
 from elmer_distill.simulator import (
     StatefulSimulator,
+    bearing_deg,
     build_gateways,
     grid_to_lat_lon,
     haversine_km,
@@ -56,6 +57,39 @@ def test_haversine_zero_and_known_distance():
     # ~1 degree of latitude is ~111 km.
     d = haversine_km(33.0, -111.0, 34.0, -111.0)
     assert 105 <= d <= 116, d
+
+
+def test_haversine_matches_shipped_fixture_r6371():
+    # The DM43->DM34 fixture the Rust geo.rs and TS distance.parity.test.ts both assert
+    # (215.28 km). Pins the R=6371.0 alignment with the shipped find_stations surface.
+    dm43 = grid_to_lat_lon("DM43")
+    dm34 = grid_to_lat_lon("DM34")
+    km = haversine_km(dm43[0], dm43[1], dm34[0], dm34[1])
+    assert abs(km - 215.28) < 0.5, km
+
+
+def test_bearing_deg_cardinals_and_range():
+    assert abs(bearing_deg(0.0, 0.0, 1.0, 0.0)) < 1e-6            # due north -> 0
+    assert abs(bearing_deg(0.0, 0.0, 0.0, 1.0) - 90.0) < 1e-6     # due east  -> 90
+    assert abs(bearing_deg(0.0, 0.0, -1.0, 0.0) - 180.0) < 1e-6   # due south -> 180
+
+
+def test_bearing_matches_rust_fixture():
+    # DM43->DM34 bearing ~= 301.5 deg — mirrors the Rust geo.rs bearing_fixture so the sim
+    # teaches the same convention find_stations serves (parity gate for tuxlink-e7z7d).
+    dm43 = grid_to_lat_lon("DM43")
+    dm34 = grid_to_lat_lon("DM34")
+    b = bearing_deg(dm43[0], dm43[1], dm34[0], dm34[1])
+    assert abs(b - 301.5) < 1.0, b
+
+
+def test_build_gateways_carries_distance_mi_and_bearing():
+    # Mirror of the find_stations agent surface: every synthetic gateway carries
+    # distance_mi (km*0.621371, rounded) + a bearing in [0,360) (or None at zero distance).
+    for seed in range(20):
+        for g in build_gateways(seed):
+            assert g["distance_mi"] == round(g["distance_km"] * 0.621371)
+            assert g["bearing_deg"] is None or 0.0 <= g["bearing_deg"] < 360.0
 
 
 # ---- build_gateways: determinism + un-memorizability ----
