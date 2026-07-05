@@ -31,6 +31,32 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.81.0](https://github.com/cameronzucker/tuxlink/compare/v0.80.0...v0.81.0) (2026-07-05)
+
+
+### Features
+
+* **elmer:** client-side context trim for the OpenAI-compat path (tuxlink-evucv) ([86e19b5](https://github.com/cameronzucker/tuxlink/commit/86e19b5705e488efbc833e7c7747c1a069fd7c4a))
+* **mcp:** add distance_km/distance_mi/bearing_deg to GatewayDto + operator_grid to StationListDto ([efbce09](https://github.com/cameronzucker/tuxlink/commit/efbce0995bea61c76c9f4aaebf56d3b27845a862))
+* **mcp:** find_stations returns distance/bearing from the operator grid, sorted ([31b7098](https://github.com/cameronzucker/tuxlink/commit/31b70987e86be84b38fc2d51c80b91cdde6a2454))
+* **position:** great-circle geo helper (haversine + bearing) for station distance ([db852bf](https://github.com/cameronzucker/tuxlink/commit/db852bf1747bf4bd0346faf32ae96a45b6dece03))
+
+
+### Bug Fixes
+
+* **catalog:** render morning-issued NWS SFT forecasts instead of blanking them ([e994150](https://github.com/cameronzucker/tuxlink/commit/e99415075b8f857da26f424c4e1b9fcfe7ec59dc))
+* **elmer:** address Codex adrev — strip reqwest URL from transport error; trailing-slash chat routes (tuxlink-1hv4j) ([c77a213](https://github.com/cameronzucker/tuxlink/commit/c77a213a55061e0be7d82efe0de9e604c7dab0dc))
+* **elmer:** address Codex adrev on context trim — unit-based, never empty/orphaned (tuxlink-evucv) ([af76466](https://github.com/cameronzucker/tuxlink/commit/af7646620b29783860bdef7bc39bd4e213b790c3))
+* **elmer:** custom endpoint 404 — normalize base URL + name the URL in transport errors (tuxlink-1hv4j) ([7e8e766](https://github.com/cameronzucker/tuxlink/commit/7e8e766f0de58153cf9209f227a0306c522e6bb5))
+* **elmer:** fold Codex adrev — d3zwe RunOutcome match + provider_meta leak guard ([054f069](https://github.com/cameronzucker/tuxlink/commit/054f069655552e3e7e5da423a34a27eda5f12d3b))
+* **elmer:** header buttons reference undefined tokens — invisible new-conversation icon ([76bc219](https://github.com/cameronzucker/tuxlink/commit/76bc219682a5f2e4248da786f0aa3db7d05f04ce))
+* **elmer:** make armed send-authority discoverable to agents (tuxlink-8f1yv) ([eac5999](https://github.com/cameronzucker/tuxlink/commit/eac59998d93f9aef8dbb5161618980f7899d4be8))
+* **elmer:** preserve Gemini 3.x thought_signature across tool-call turns (tuxlink-0tuc3) ([96494c0](https://github.com/cameronzucker/tuxlink/commit/96494c0db41745399c3fb876584fcb8f9967db4c))
+* **elmer:** replace detected-models native &lt;select&gt; with a filter combobox (tuxlink-qhe8n) ([b2b98fa](https://github.com/cameronzucker/tuxlink/commit/b2b98fa9892ced10538c12316dcf013d85afafcb))
+* **elmer:** style the tainted send-authority re-arm popover to match the arm dropdown (tuxlink-7durx) ([b2a0213](https://github.com/cameronzucker/tuxlink/commit/b2a0213cc63718fb25c97c1db52db1163ae3908f))
+* **elmer:** surface provider failures in the transcript + full error cause (tuxlink-a1xwx) ([d8a9529](https://github.com/cameronzucker/tuxlink/commit/d8a9529604a0500d4e45ab53aadbd8b72769d1c3))
+* **elmer:** use std::io::Error::other in a test (clippy::io_other_error) ([3ca8b89](https://github.com/cameronzucker/tuxlink/commit/3ca8b890a974e37a96966ffc99babe338d72292c))
+
 ## [0.80.0](https://github.com/cameronzucker/tuxlink/compare/v0.79.0...v0.80.0) (2026-07-03)
 
 
