@@ -50,17 +50,24 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Harden apt against mirror flakiness
-        run: echo 'Acquire::Retries "3";' | sudo tee /etc/apt/apt.conf.d/99retries
+      - name: Harden apt + refresh the package index
+        # tuxlink-84vzn: apt-get update before the deps action (same stale-index
+        # 404 fix as ci.yml — a superseded transitive .deb 404s and aborts the
+        # whole install). This is the "build-linux" job that failed on 2026-07-05.
+        run: |
+          echo 'Acquire::Retries "3";' | sudo tee /etc/apt/apt.conf.d/99retries
+          sudo apt-get update
 
       - name: Install system dependencies (cached)
         # tuxlink-4est: same webkit/gtk dev closure as ci.yml's verify job,
         # cached so a slow Ubuntu mirror can't stall the release build. gfortran
         # (the voacapl Fortran toolchain) stays in its own later step.
+        # tuxlink-84vzn: list the glib/gtk .pc providers explicitly (transitive of
+        # libwebkit2gtk-4.1-dev); salt v1 -> v2 discards the poisoned closure.
         uses: awalsh128/cache-apt-pkgs-action@v1
         with:
-          packages: libax25-dev libudev-dev libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libheif-dev libde265-dev libwebp-dev
-          version: tuxlink-release-${{ matrix.arch }}-v1
+          packages: libax25-dev libudev-dev libwebkit2gtk-4.1-dev libglib2.0-dev libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libheif-dev libde265-dev libwebp-dev
+          version: tuxlink-release-${{ matrix.arch }}-v2
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
