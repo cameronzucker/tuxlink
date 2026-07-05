@@ -55,3 +55,37 @@ SYSTEM_PROMPT = (
 def load_tools(path=_TOOLS_PATH):
     with open(path) as f:
         return json.load(f)
+
+
+def tool_name(tool):
+    """A tool schema's name, robust to OpenAI shape ({"function": {"name": ...}}) or a
+    flat {"name": ...}."""
+    fn = tool.get("function")
+    if isinstance(fn, dict) and "name" in fn:
+        return fn["name"]
+    return tool.get("name", "")
+
+
+def required_tool_names(scenarios):
+    """Union of every scenario's `required_tools` + `accepted_alternatives` — the minimal
+    tool set under which the whole battery is, in principle, still passable. This is the
+    'pruned' arm of the tool-count sensitivity probe (Probe 0): full 55-tool surface vs
+    exactly-what's-needed. NOTE: a scenario may need a *connective* tool (e.g.
+    position_status to resolve the grid) that its judge-facing `required_tools` does not
+    list; if the pruned run then fails a scenario with a "missing required tool" judge
+    reason, widen the subset — that failure is an artifact of pruning, not tool-count
+    confusion."""
+    names = set()
+    for s in scenarios:
+        sp = s.spec
+        names.update(sp.required_tools)
+        for alt in getattr(sp, "accepted_alternatives", None) or []:
+            names.update(alt)
+    return names
+
+
+def subset_tools(tools, keep_names):
+    """The tools whose name is in `keep_names`, original order preserved. Names in
+    `keep_names` with no matching schema are ignored (simply not served)."""
+    keep = set(keep_names)
+    return [t for t in tools if tool_name(t) in keep]

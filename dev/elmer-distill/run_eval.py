@@ -23,8 +23,11 @@ sys.path.insert(0, os.path.join(HERE, "src"))
 
 from elmer_distill.scenario import Scenario          # noqa: E402
 from elmer_distill.ollama_client import OllamaClient  # noqa: E402
+from elmer_distill.api_client import APIClient        # noqa: E402
 from elmer_distill.eval_run import evaluate           # noqa: E402
-from elmer_distill.surface import SYSTEM_PROMPT, load_tools  # noqa: E402
+from elmer_distill.surface import (                   # noqa: E402
+    SYSTEM_PROMPT, load_tools, required_tool_names, subset_tools,
+)
 
 TOOLS = load_tools()
 
@@ -41,7 +44,17 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="gpt-oss:20b")
     ap.add_argument("--label", required=True)
-    ap.add_argument("--base-url", default="http://127.0.0.1:11434")
+    ap.add_argument("--provider", choices=["ollama", "openai"], default="ollama",
+                    help="ollama = local /api/chat; openai = any OpenAI-compatible endpoint "
+                         "(OpenRouter/Together/etc.) via APIClient.")
+    ap.add_argument("--base-url", default="http://127.0.0.1:11434",
+                    help="ollama: http://127.0.0.1:11434 · openai: e.g. https://openrouter.ai/api/v1")
+    ap.add_argument("--api-key-env", default="ELMER_TEACHER_API_KEY",
+                    help="env var holding the bearer token for --provider openai.")
+    ap.add_argument("--tools", default="all",
+                    help="'all' (full 55-tool surface), 'required' (union of every scenario's "
+                         "required_tools + accepted_alternatives — the pruned arm for the "
+                         "tool-count sensitivity probe), or a path to a JSON list of tool names.")
     ap.add_argument("--candidates", default=os.path.join(HERE, "gate", "candidates"))
     ap.add_argument("--out", default=os.path.join(HERE, "eval-runs"))
     ap.add_argument("--num-ctx", type=int, default=32768)
@@ -49,9 +62,29 @@ def main():
     a = ap.parse_args()
 
     scns = load_bank(a.candidates)
-    client = OllamaClient(base_url=a.base_url, num_ctx=a.num_ctx)
-    print(f"[run_eval] {len(scns)} scenarios · model={a.model} · label={a.label} · {a.base_url}")
-    summ = evaluate(client, a.model, scns, SYSTEM_PROMPT, TOOLS, a.out, a.label,
+
+    # Tool surface: full, the required-union (pruned), or an explicit allowlist file.
+    if a.tools == "all":
+        tools = TOOLS
+    elif a.tools == "required":
+        tools = subset_tools(TOOLS, required_tool_names(scns))
+    else:
+        with open(a.tools) as f:
+            tools = subset_tools(TOOLS, json.load(f))
+
+    # Client: local ollama, or an OpenAI-compatible endpoint (OpenRouter Qwen) — APIClient
+    # is a drop-in with an identical .chat() contract, so evaluate() is unchanged.
+    if a.provider == "openai":
+        api_key = os.environ.get(a.api_key_env, "")
+        if not api_key:
+            sys.exit(f"[run_eval] --provider openai needs ${a.api_key_env} set (bearer token).")
+        client = APIClient(base_url=a.base_url, api_key=api_key, num_ctx=a.num_ctx)
+    else:
+        client = OllamaClient(base_url=a.base_url, num_ctx=a.num_ctx)
+
+    print(f"[run_eval] {len(scns)} scenarios · model={a.model} · label={a.label} · "
+          f"provider={a.provider} · {a.base_url} · tools={a.tools}({len(tools)}/{len(TOOLS)})")
+    summ = evaluate(client, a.model, scns, SYSTEM_PROMPT, tools, a.out, a.label,
                     max_turns=a.max_turns)
 
     print("\n  pass  scenario                              family      op?")
