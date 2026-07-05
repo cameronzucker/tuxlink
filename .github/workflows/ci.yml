@@ -53,7 +53,7 @@ jobs:
         uses: awalsh128/cache-apt-pkgs-action@v1
         with:
           packages: libax25-dev libudev-dev libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libheif-dev libde265-dev libwebp-dev
-          version: tuxlink-ci-${{ matrix.arch }}-v1
+          version: tuxlink-ci-${{ matrix.arch }}-v2
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
