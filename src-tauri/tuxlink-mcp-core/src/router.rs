@@ -381,7 +381,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "find_stations",
-        description = "List Winlink RMS gateways for the given transports/bands (callsign, frequencies, grid, last-heard). Public directory data, cached. Read-only; does not transmit."
+        description = "List Winlink RMS gateways for the given transports/bands (callsign, frequencies, grid). Each gateway also carries distance_km, distance_mi, and bearing_deg from your station's grid (all null when your grid is unset — see operator_grid on the result); gateways are sorted nearest-first, unknown-distance last. Public directory data, cached. Read-only; does not transmit."
     )]
     pub async fn find_stations(
         &self,
