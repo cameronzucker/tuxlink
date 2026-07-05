@@ -136,8 +136,10 @@ def test_warc_bands_have_multiple_gateways():
 
 def test_connect_reports_per_station_connectivity():
     sim = StatefulSimulator(armed=True, seed=1)
-    bad = sim.apply("vara_b2f_exchange", {"target": "AA7WL"})   # flagged unreachable now
-    good = sim.apply("vara_b2f_exchange", {"target": "N6XA"})   # reachable
+    unreachable = sorted(sim._unreachable)[0]
+    reachable = next(g["callsign"] for g in sim._gateways if g["reachable"])
+    bad = sim.apply("vara_b2f_exchange", {"target": unreachable})
+    good = sim.apply("vara_b2f_exchange", {"target": reachable})
     assert bad.get("connected") is False
     assert good.get("connected") is True
 

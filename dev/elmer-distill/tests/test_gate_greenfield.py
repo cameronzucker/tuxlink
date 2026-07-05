@@ -8,6 +8,7 @@ import os
 
 from elmer_distill.scenario import Scenario
 from elmer_distill.judge import Judge
+from support import gateway_clause, schedule_plan, reachable_calls, unreachable_calls
 
 _DIR = os.path.join(os.path.dirname(__file__), "..", "gate", "candidates")
 
@@ -26,12 +27,13 @@ def _final(text):
 
 
 def test_thirtym_reach_discriminates():
-    s = _load("thirtym-reach-cms-aprs-allhands")
+    sid = "thirtym-reach-cms-aprs-allhands"
+    s = _load(sid)
     good = {"turns": [{"role": "user", "content": "x"},
                       _a("position_status", {}), _a("find_stations", {"bands": ["30m"]}),
                       _a("predict_path", {"frequencies_khz": [10125]}),
                       _a("message_send", {"to": ["recipient@domain.com"],
-                                          "body": "Top 30m: AA7WL 10125, W5RMS 10140, N6XA 10132"}),
+                                          "body": "Top 30m: " + gateway_clause(sid, "30m", 3)}),
                       _a("cms_connect", {}),
                       _a("aprs_send_message", {"text": "30m outbound comms established"}),
                       _final("done")]}
@@ -61,25 +63,26 @@ def test_wx_gust_broadcast_discriminates():
 
 
 def test_warc_capstone_discriminates():
-    s = _load("warc-vara-plan-drive-p2p")
+    sid = "warc-vara-plan-drive-p2p"
+    s = _load(sid)
     # a GROUNDED 12-block plan: each slot names a real WARC gateway + its own freq
     # (from find_stations), across 30m/17m/12m. Bare band labels are no longer a plan.
-    plan = ("00:00 AA7WL 10125; 02:00 K7AZ 10118; 04:00 KB0RFC 18105; 06:00 W7GW 18110; "
-            "08:00 KM7N 24915; 10:00 W5RMS 24920; 12:00 N6XA 10132; 14:00 W5RMS 10140; "
-            "16:00 N6XA 18130; 18:00 K7AZ 24905; 20:00 AA7WL 10125; 22:00 KM7N 24915")
+    plan = schedule_plan(sid, ["30m", "17m", "12m"], 12)
+    unreach = unreachable_calls(sid)
+    reach = reachable_calls(sid)
     good = {"turns": [{"role": "user", "content": "x"},
                       _a("position_status", {}), _a("find_stations", {"bands": ["30m", "17m", "12m"]}),
                       _a("predict_path", {"frequencies_khz": [10125]}),
                       _a("message_send", {"body": plan}),
-                      _a("vara_b2f_exchange", {"target": "AA7WL"}),   # unreachable
-                      _a("vara_b2f_exchange", {"target": "N6XA"}),    # connects
+                      _a("vara_b2f_exchange", {"target": unreach[0]}),   # unreachable
+                      _a("vara_b2f_exchange", {"target": reach[0]}),     # connects
                       _a("aprs_send_message", {"text": "HF plan established+confirmed, P2P sent"}),
                       _final("done")]}
     bad = {"turns": [{"role": "user", "content": "x"},
                      _a("position_status", {}), _a("find_stations", {"bands": ["30m"]}),
                      _a("message_send", {"body": "Plan: call around on 30m sometime"}),   # no 12 blocks
-                     _a("vara_b2f_exchange", {"target": "AA7WL"}),
-                     _a("vara_b2f_exchange", {"target": "K7AZ"}),     # never connects
+                     _a("vara_b2f_exchange", {"target": unreach[0]}),
+                     _a("vara_b2f_exchange", {"target": unreach[1]}),    # never connects
                      _a("aprs_send_message", {"text": "done"}), _final("done")]}
     assert Judge().score(s, good, armed=True).passed, Judge().score(s, good, armed=True).reasons
     v = Judge().score(s, bad, armed=True)

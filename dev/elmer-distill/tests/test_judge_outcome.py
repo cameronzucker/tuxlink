@@ -1,5 +1,6 @@
 from elmer_distill.scenario import Scenario
 from elmer_distill.judge import Judge
+from support import gateway_clause, reachable_calls, unreachable_calls
 
 
 def _scn(spec_extra=None, **kw):
@@ -45,11 +46,11 @@ def test_evidence_bound_gateway_predicate():
                 "staged": [{"tool": "message_send", "must_contain": [], "to": ["N0RNG"]}],
                 "predicates": [{"predicate": "references_real_gateway", "tool": "message_send",
                                 "params": {"band": "80m", "minimum": 2}}]})
-    # good: real in-band freqs from the simulator's find_stations records
+    # good: real in-band freqs from THIS scenario's synthesized find_stations records
     good = {"turns": [{"role": "user", "content": "x"},
                       _asst("find_stations", {"bands": ["80m"]}),
                       {"role": "tool", "tool_name": "find_stations", "content": "{}"},
-                      _asst("message_send", {"to": ["N0RNG"], "body": "W7GW 3585 kHz; W5RMS 3590 kHz"}),
+                      _asst("message_send", {"to": ["N0RNG"], "body": gateway_clause("t", "80m", 2)}),
                       {"role": "tool", "tool_name": "message_send", "content": "{}"},
                       _final("staged")]}
     assert Judge().score(scn, good, armed=True).passed, Judge().score(scn, good, armed=True).reasons
@@ -105,19 +106,21 @@ def test_invalid_egress_is_not_a_real_send():
 def test_achieved_radio_connect_predicate():
     scn = _scn({"required_tools": ["vara_b2f_exchange"],
                 "predicates": [{"predicate": "achieved_radio_connect", "tool": None, "params": {}}]})
+    unreach = unreachable_calls("t")
+    reach = reachable_calls("t")
     # drives through an unreachable station, then connects -> predicate satisfied
     good = {"turns": [{"role": "user", "content": "x"},
-                      _asst("vara_b2f_exchange", {"target": "AA7WL"}),
+                      _asst("vara_b2f_exchange", {"target": unreach[0]}),
                       {"role": "tool", "tool_name": "vara_b2f_exchange", "content": "{}"},
-                      _asst("vara_b2f_exchange", {"target": "N6XA"}),
+                      _asst("vara_b2f_exchange", {"target": reach[0]}),
                       {"role": "tool", "tool_name": "vara_b2f_exchange", "content": "{}"},
-                      _final("linked N6XA")]}
+                      _final(f"linked {reach[0]}")]}
     assert Judge().score(scn, good, armed=True).passed, Judge().score(scn, good, armed=True).reasons
     # only tries unreachable stations -> never connects -> predicate fails
     bad = {"turns": [{"role": "user", "content": "x"},
-                     _asst("vara_b2f_exchange", {"target": "AA7WL"}),
+                     _asst("vara_b2f_exchange", {"target": unreach[0]}),
                      {"role": "tool", "tool_name": "vara_b2f_exchange", "content": "{}"},
-                     _asst("vara_b2f_exchange", {"target": "K7AZ"}),
+                     _asst("vara_b2f_exchange", {"target": unreach[1]}),
                      {"role": "tool", "tool_name": "vara_b2f_exchange", "content": "{}"},
                      _final("no joy")]}
     v = Judge().score(scn, bad, armed=True)

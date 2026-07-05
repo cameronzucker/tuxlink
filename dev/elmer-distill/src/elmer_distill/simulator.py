@@ -14,33 +14,163 @@ records with `last_heard_h`/`freq_khz`/`distance_km`; `predict_path` returns
 per-2h-block reliability; `catalog_list` real product ids; inbox reads return an
 address AND taint.
 """
+import hashlib
+import math
+import random
+
 from .tool_surface import classify
 
-# Fixed gateway table (deterministic). Mix of in/out of the 500-1500mi band and
-# recent/stale last-heard, so scenarios can require "reachable now" filtering.
-_GATEWAYS = [
-    {"callsign": "W7GW", "grid": "DM43", "band": "80m", "freq_khz": 3585.0, "last_heard_h": 2, "distance_km": 640},
-    {"callsign": "K7AZ", "grid": "DM33", "band": "80m", "freq_khz": 3592.0, "last_heard_h": 9, "distance_km": 880},
-    {"callsign": "N6XA", "grid": "DM34", "band": "80m", "freq_khz": 3578.0, "last_heard_h": 30, "distance_km": 1500},
-    {"callsign": "W5RMS", "grid": "DM53", "band": "80m", "freq_khz": 3590.0, "last_heard_h": 5, "distance_km": 1180},
-    {"callsign": "KE7QRP", "grid": "DM42", "band": "80m", "freq_khz": 3583.0, "last_heard_h": 40, "distance_km": 260},
-    {"callsign": "NX7U", "grid": "DM41", "band": "40m", "freq_khz": 7101.0, "last_heard_h": 4, "distance_km": 950},
-    {"callsign": "W5RMS", "grid": "DM53", "band": "40m", "freq_khz": 7103.0, "last_heard_h": 8, "distance_km": 1180},
-    {"callsign": "KI7XYZ", "grid": "DM09", "band": "40m", "freq_khz": 7107.0, "last_heard_h": 14, "distance_km": 720},
-    {"callsign": "W7GW", "grid": "DM43", "band": "20m", "freq_khz": 14105.0, "last_heard_h": 1, "distance_km": 640},
-    {"callsign": "N6XA", "grid": "DM34", "band": "20m", "freq_khz": 14109.0, "last_heard_h": 6, "distance_km": 1500},
-    # WARC bands (30/17/12m) — >=3 each so "best + runners-up" ranking scenarios work.
-    {"callsign": "AA7WL", "grid": "DM26", "band": "30m", "freq_khz": 10125.0, "last_heard_h": 3, "distance_km": 1100},
-    {"callsign": "K7AZ", "grid": "DM33", "band": "30m", "freq_khz": 10118.0, "last_heard_h": 6, "distance_km": 900},
-    {"callsign": "N6XA", "grid": "DM34", "band": "30m", "freq_khz": 10132.0, "last_heard_h": 12, "distance_km": 1500},
-    {"callsign": "W5RMS", "grid": "DM53", "band": "30m", "freq_khz": 10140.0, "last_heard_h": 8, "distance_km": 1180},
-    {"callsign": "KB0RFC", "grid": "DM97", "band": "17m", "freq_khz": 18105.0, "last_heard_h": 7, "distance_km": 1350},
-    {"callsign": "W7GW", "grid": "DM43", "band": "17m", "freq_khz": 18110.0, "last_heard_h": 2, "distance_km": 640},
-    {"callsign": "N6XA", "grid": "DM34", "band": "17m", "freq_khz": 18130.0, "last_heard_h": 9, "distance_km": 1500},
-    {"callsign": "KM7N", "grid": "DM41", "band": "12m", "freq_khz": 24915.0, "last_heard_h": 10, "distance_km": 900},
-    {"callsign": "W5RMS", "grid": "DM53", "band": "12m", "freq_khz": 24920.0, "last_heard_h": 5, "distance_km": 1180},
-    {"callsign": "K7AZ", "grid": "DM33", "band": "12m", "freq_khz": 24905.0, "last_heard_h": 11, "distance_km": 880},
+# ---- Maidenhead geometry (Python mirror of src-tauri/src/position/maidenhead.rs) ----
+# Kept here (no external crate; no cross-language FFI) so gold-gen can compute grid
+# geometry offline. Field (A-R) / square (0-9) / subsquare (a-x); lon 20/2/5' steps,
+# lat 10/1/2.5'. Returns the CENTER of the square, matching the Rust convention.
+
+
+def grid_to_lat_lon(grid):
+    """4- or 6-char Maidenhead -> (lat, lon) at the square center. None if malformed."""
+    if grid is None:
+        return None
+    g = str(grid).strip()
+    if len(g) not in (4, 6):
+        return None
+
+    def field(c):
+        c = c.upper()
+        return (ord(c) - ord("A")) if "A" <= c <= "R" else None
+
+    def digit(c):
+        return (ord(c) - ord("0")) if c.isdigit() else None
+
+    f0, f1, d2, d3 = field(g[0]), field(g[1]), digit(g[2]), digit(g[3])
+    if None in (f0, f1, d2, d3):
+        return None
+    lon = f0 * 20.0 - 180.0 + d2 * 2.0
+    lat = f1 * 10.0 - 90.0 + d3 * 1.0
+    if len(g) == 6:
+        def sub(c):
+            c = c.lower()
+            return (ord(c) - ord("a")) if "a" <= c <= "x" else None
+        s4, s5 = sub(g[4]), sub(g[5])
+        if None in (s4, s5):
+            return None
+        lon += s4 * 5.0 / 60.0 + 2.5 / 60.0        # center of subsquare
+        lat += s5 * 2.5 / 60.0 + 1.25 / 60.0
+    else:
+        lon += 1.0                                  # center of square
+        lat += 0.5
+    return (lat, lon)
+
+
+def lat_lon_to_grid(lat, lon):
+    """WGS-84 lat/lon -> 4-char Maidenhead locator. Clamped so it never raises."""
+    lon = (min(max(lon, -180.0), 179.999) + 180.0) / 20.0
+    lat = (min(max(lat, -90.0), 89.999) + 90.0) / 10.0
+    lon_field, lat_field = math.floor(lon), math.floor(lat)
+    lon_sq = math.floor((lon - lon_field) * 10.0)
+    lat_sq = math.floor((lat - lat_field) * 10.0)
+    return (chr(ord("A") + int(lon_field)) + chr(ord("A") + int(lat_field))
+            + chr(ord("0") + int(lon_sq)) + chr(ord("0") + int(lat_sq)))
+
+
+def haversine_km(lat1, lon1, lat2, lon2):
+    """Great-circle distance (km) between two lat/lon points."""
+    R = 6371.0088
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlam = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlam / 2) ** 2
+    return 2 * R * math.asin(math.sqrt(a))
+
+
+def seed_for_scenario(scenario_id):
+    """Deterministic, PROCESS-STABLE seed derived from a scenario id.
+
+    MUST NOT use Python's built-in hash(): it is salted per process, so the teacher
+    (generation) and the judge (replay) — which may run in different processes or
+    sessions — would derive different directories and false-fail every grounded
+    gateway citation. SHA-256 is stable across runs.
+    """
+    h = hashlib.sha256(str(scenario_id).encode("utf-8")).digest()
+    return int.from_bytes(h[:8], "big")
+
+
+# ---- Per-scenario gateway directory synthesis (tuxlink-74at8) --------------------
+# A FIXED table served every scenario is memorizable -> gold-gen distills it and the
+# model recalls the list instead of calling find_stations. Synthesizing the directory
+# per scenario (synthetic callsigns, valid random grids, haversine-computed distances)
+# makes recall impossible: grounded tool-use becomes the only winning strategy.
+
+_CALL_PREFIX = "AKNW"
+_CALL_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+_OPERATOR_GRID = "DM43"
+
+# (band, allocation kHz lo, min_count, max_count). WARC + predicate bands carry >=3 so
+# ranking ("best + 2 runners-up") and references_real_gateway(minimum=2) always satisfy.
+_BAND_PLAN = [
+    ("80m", 3500, 3, 5),
+    ("40m", 7000, 3, 5),
+    ("30m", 10100, 3, 4),
+    ("20m", 14000, 3, 5),
+    ("17m", 18068, 3, 4),
+    ("12m", 24890, 3, 4),
 ]
+
+
+def _synth_callsign(rng):
+    """A fictional US-style amateur callsign (1x2 or 2x3): random by construction, so
+    it names no real operator and cannot be recalled from pretraining."""
+    p = rng.choice(_CALL_PREFIX)
+    second = rng.choice(_CALL_LETTERS) if rng.random() < 0.5 else ""
+    digit = str(rng.randint(0, 9))
+    suffix = "".join(rng.choice(_CALL_LETTERS) for _ in range(rng.randint(2, 3)))
+    return f"{p}{second}{digit}{suffix}"
+
+
+def _synth_grid(rng, op_lat, op_lon):
+    """A valid random 4-char grid within radio range of the operator, with the
+    haversine distance from its OWN center. Retries keep the spread realistic."""
+    for _ in range(60):
+        lat = op_lat + rng.uniform(-14.0, 14.0)
+        lon = op_lon + rng.uniform(-16.0, 16.0)
+        grid = lat_lon_to_grid(lat, lon)
+        clat, clon = grid_to_lat_lon(grid)
+        dist = haversine_km(op_lat, op_lon, clat, clon)
+        if 150.0 <= dist <= 1600.0:
+            return grid, round(dist)
+    return grid, round(dist)
+
+
+def build_gateways(seed, operator_grid=_OPERATOR_GRID):
+    """Synthesize a deterministic, un-memorizable gateway directory for one scenario.
+
+    Invariants (pinned in tests/test_simulator_directory.py) — the directory stays
+    SATISFIABLE for the frozen gate no matter the seed: >=3 gateways per band, >=2
+    distinct (callsign, freq) pairs per predicate band, every freq in its allocation,
+    every grid valid Maidenhead, distances haversine-computed from the operator grid,
+    and at least one reachable AND one unreachable station.
+    """
+    rng = random.Random(seed)
+    op_lat, op_lon = grid_to_lat_lon(operator_grid)
+    gateways, seen_calls = [], set()
+    for band, lo, min_c, max_c in _BAND_PLAN:
+        for i in range(rng.randint(min_c, max_c)):
+            cs = _synth_callsign(rng)
+            while cs in seen_calls:
+                cs = _synth_callsign(rng)
+            seen_calls.add(cs)
+            grid, dist = _synth_grid(rng, op_lat, op_lon)
+            freq = float(lo + 4 + i * 6 + rng.randint(0, 2))   # in-band, >2 kHz apart
+            fresh = rng.random() < 0.6
+            last_heard = rng.randint(1, 8) if fresh else rng.randint(20, 45)
+            gateways.append({
+                "callsign": cs, "grid": grid, "band": band, "freq_khz": freq,
+                "last_heard_h": last_heard, "distance_km": dist, "reachable": True,
+            })
+    # Mark two stations unreachable (busy / poor path) so connect/exchange loops have a
+    # real "keep driving until you connect" target on every seed.
+    for g in rng.sample(gateways, min(2, len(gateways))):
+        g["reachable"] = False
+    return gateways
 
 _CATALOG = [
     {"id": "NWS_FORECAST.txt", "category": "WEATHER"},
@@ -84,16 +214,11 @@ _APRS_MESSAGES = [
 ]
 
 
-# Stations currently unreachable (busy / poor path) — a connect/exchange to these
-# returns connected=False, so "keep driving until you connect" scenarios have a
-# real loop to work. Consistent per callsign across bands.
-_UNREACHABLE = {"AA7WL", "K7AZ"}
+# A connect/exchange to an unreachable station (busy / poor path) returns
+# connected=False, so "keep driving until you connect" scenarios have a real loop to
+# work. The unreachable set is per-directory (synthesized in build_gateways), so it is
+# consistent within a session and identical between generation and judge replay.
 _CONNECT_TOOLS = {"ardop_connect", "ardop_b2f_exchange", "vara_b2f_exchange", "packet_connect"}
-
-
-def _connect_ok(callsign):
-    # a connect with no/empty target is NOT a real link (Codex adrev finding 5).
-    return bool(callsign) and str(callsign).upper() not in _UNREACHABLE
 
 
 def _band_of(khz):
@@ -124,13 +249,26 @@ def _reliability(band, utc_hour):
 
 
 class StatefulSimulator:
-    def __init__(self, armed=False, seed=0, now_utc_hour=14):
+    def __init__(self, armed=False, seed=0, now_utc_hour=14, station_seed=None,
+                 operator_grid=_OPERATOR_GRID):
         self.armed = armed
         self.tainted = False
         self.staged = []
         self.seed = seed
         self.now_utc_hour = now_utc_hour   # fixed sim clock (turn-based; no wall time)
         self._n = 0
+        # Per-scenario gateway directory (tuxlink-74at8). station_seed is derived from
+        # the scenario id at the call sites so generation and judge replay agree; a bare
+        # simulator (no scenario) gets a valid default directory.
+        self.operator_grid = operator_grid
+        self._gateways = build_gateways(0 if station_seed is None else station_seed,
+                                        operator_grid)
+        self._unreachable = {g["callsign"].upper() for g in self._gateways
+                             if not g["reachable"]}
+
+    def _connect_ok(self, callsign):
+        # a connect with no/empty target is NOT a real link (Codex adrev finding 5).
+        return bool(callsign) and str(callsign).upper() not in self._unreachable
 
     def arm(self):
         self.armed = True
@@ -143,11 +281,17 @@ class StatefulSimulator:
         return {"error": "DENIED", "reason": reason}
 
     # ---- rich mock results -------------------------------------------------
+    @staticmethod
+    def _public_gateway(g):
+        # `reachable` is hidden connectivity state discovered by attempting a connect,
+        # not a field the directory listing exposes.
+        return {k: v for k, v in g.items() if k != "reachable"}
+
     def _find_stations(self, args):
         bands = [b.lower() for b in (args.get("bands") or [])]
-        rows = [g for g in _GATEWAYS if not bands or g["band"] in bands]
+        rows = [g for g in self._gateways if not bands or g["band"] in bands]
         rows = sorted(rows, key=lambda g: g["distance_km"])
-        return {"count": len(rows), "stations": [dict(g) for g in rows]}
+        return {"count": len(rows), "stations": [self._public_gateway(g) for g in rows]}
 
     def _predict_path(self, args):
         freqs = args.get("frequencies_khz") or []
@@ -234,7 +378,7 @@ class StatefulSimulator:
                 return self._denied("session tainted; egress denied until a clean session")
             if name in _CONNECT_TOOLS:
                 tgt = args.get("target") or args.get("callsign")
-                return {"ok": True, "action": name, "target": tgt, "connected": _connect_ok(tgt)}
+                return {"ok": True, "action": name, "target": tgt, "connected": self._connect_ok(tgt)}
             return {"ok": True, "action": name}
         if kind == "taint_read":
             self.tainted = True

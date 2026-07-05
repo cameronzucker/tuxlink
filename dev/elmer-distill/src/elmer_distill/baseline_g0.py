@@ -13,7 +13,7 @@ fine-tuning (Codex adrev A/G):
 """
 import json
 
-from .simulator import StatefulSimulator
+from .simulator import StatefulSimulator, seed_for_scenario
 from .judge import Judge
 
 
@@ -72,7 +72,8 @@ def run_g0(client, model, scenario, system, tools, exemplars, max_reprompts=2, m
     messages.append({"role": "user", "content": scenario.prompt})
     turns = [{"role": "user", "content": scenario.prompt}]
 
-    sim = StatefulSimulator(armed=scenario.spec.requires_arm)
+    sim = StatefulSimulator(armed=scenario.spec.requires_arm,
+                            station_seed=seed_for_scenario(scenario.id))
     if scenario.taint_state == "pre_tainted":
         sim.tainted = True
 

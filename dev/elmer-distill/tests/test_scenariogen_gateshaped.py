@@ -20,23 +20,32 @@ on a $/hr H200.
 """
 from elmer_distill import scenariogen
 from elmer_distill.judge import Judge
-from elmer_distill.simulator import StatefulSimulator
+from elmer_distill.simulator import StatefulSimulator, seed_for_scenario
 from elmer_distill.tool_surface import classify, EGRESS_TOOLS, TIER2_WRITE_TOOLS, TAINT_TOOLS
+from support import reachable_calls
 
 _APRS_MSG_MAX = 67
 
 
-def _band_records(band):
-    return StatefulSimulator()._find_stations({"bands": [band]})["stations"]
+def _sim_for(scenario):
+    # The SAME per-scenario directory the judge will replay (tuxlink-74at8): the oracle
+    # must cite this scenario's synthesized gateways, not a default table, or a perfect
+    # trajectory would false-fail the evidence predicate.
+    return StatefulSimulator(station_seed=seed_for_scenario(scenario.id))
+
+
+def _band_records(scenario, band):
+    return _sim_for(scenario)._find_stations({"bands": [band]})["stations"]
 
 
 def _aprs_records():
     return StatefulSimulator()._aprs_list_stations({})["stations"]
 
 
-def _staged_body_for(tool, spec):
+def _staged_body_for(scenario, tool):
     """Build a message body that satisfies every predicate bound to `tool` plus the
-    staged must_contain, drawing on the simulator's real fixtures."""
+    staged must_contain, drawing on THIS scenario's synthesized fixtures."""
+    spec = scenario.spec
     clauses = []
     # staged must_contain (each element: substring, or list = any-of synonym group)
     for item in spec.staged:
@@ -49,7 +58,7 @@ def _staged_body_for(tool, spec):
             continue
         p, params = chk.predicate, chk.params
         if p == "references_real_gateway":
-            recs = [r for r in _band_records(params["band"]) if r["band"] == params["band"]]
+            recs = [r for r in _band_records(scenario, params["band"]) if r["band"] == params["band"]]
             for r in recs[: params["minimum"]]:
                 clauses.append(f"{r['callsign']} {int(r['freq_khz'])} kHz")
         elif p == "schedule_has_blocks":
@@ -57,7 +66,8 @@ def _staged_body_for(tool, spec):
             # Reuse the co-located references_real_gateway band if present, else 30m.
             band = next((c.params["band"] for c in spec.predicates
                          if c.predicate == "references_real_gateway"), "30m")
-            recs = [r for r in _band_records(band) if r["band"] == band] or _band_records("30m")
+            recs = ([r for r in _band_records(scenario, band) if r["band"] == band]
+                    or _band_records(scenario, "30m"))
             blocks = [f"{2*i:02d}:00 {recs[i % len(recs)]['callsign']} "
                       f"{int(recs[i % len(recs)]['freq_khz'])} kHz" for i in range(params["n"])]
             clauses.append("; ".join(blocks))
@@ -83,7 +93,7 @@ def _oracle_trajectory(scenario):
     for tool in spec.required_tools:
         kind = classify(tool)
         if kind == "staging":
-            body = _staged_body_for(tool, spec)
+            body = _staged_body_for(scenario, tool)
             to = next((it.to for it in spec.staged if it.tool == tool and it.to), None)
             args = {"body": body}
             if to:
@@ -95,7 +105,9 @@ def _oracle_trajectory(scenario):
         elif tool == "aprs_send_message":
             args = {"text": "OPS: comms up"}          # <= 67 chars
         elif tool in ("ardop_connect",):
-            args = {"target": "W7GW"}                  # a reachable station
+            # a reachable station from THIS scenario's directory (a hard-coded call could
+            # randomly be the one marked unreachable this seed).
+            args = {"target": reachable_calls(scenario.id)[0]}
         else:
             args = {}
         turns.append({"role": "assistant", "content": None,
@@ -180,7 +192,7 @@ def test_pretainted_front_run_egress_is_caught():
     tainted for pre_tainted, so the early cms_connect is DENIED — without that seed the
     clean replay let the egress succeed and the taint violation passed."""
     s = _by_id()["emcomm-d6-pre_tainted-0"]
-    body = _staged_body_for("message_send", s.spec)
+    body = _staged_body_for(s, "message_send")
     traj = _traj_from(s.id, [
         ("cms_connect", {}),                                    # front-run the egress
         ("message_read", {}),
@@ -199,7 +211,7 @@ def test_pretainted_false_sent_claim_is_caught():
     when no egress succeeded (require_final_honesty) — the other half of taint
     discipline the training target rewards."""
     s = _by_id()["aprs-d6-pre_tainted-0"]
-    body = _staged_body_for("message_send", s.spec)
+    body = _staged_body_for(s, "message_send")
     traj = _traj_from(s.id, [
         ("aprs_read_messages", {}),
         ("aprs_list_stations", {}),

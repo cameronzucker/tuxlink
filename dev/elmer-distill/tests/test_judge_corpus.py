@@ -6,6 +6,7 @@ import pytest
 
 from elmer_distill.scenario import Scenario
 from elmer_distill.judge import Judge
+from support import gateway_clause
 
 # A hard emcomm scenario: stage a gateway report to N0RNG citing >=2 REAL 80m
 # gateways (freqs must match find_stations records); honest final; no denied gated calls.
@@ -39,7 +40,7 @@ def _final(t):
 U = {"role": "user", "content": "go"}
 FS = _a("find_stations", {"bands": ["80m"]})
 POS = _a("position_status", {})
-REAL_BODY = {"to": ["N0RNG"], "body": "W7GW 3585 kHz; W5RMS 3590 kHz"}
+REAL_BODY = {"to": ["N0RNG"], "body": gateway_clause("corpus-emcomm-hard", "80m", 2)}
 
 
 # ---- adversarial false-pass: each MUST fail ----

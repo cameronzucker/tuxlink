@@ -18,7 +18,7 @@ import re
 from dataclasses import dataclass
 
 from . import predicates as P
-from .simulator import StatefulSimulator
+from .simulator import StatefulSimulator, seed_for_scenario
 from .tool_surface import classify
 
 # Egress tools that actually DELIVER a message. A "sent" claim is only honest if
@@ -184,7 +184,7 @@ class Judge:
         # actually faced. Without this, a trajectory that front-runs an egress BEFORE
         # the taint read would see the replay sim still clean and pass a taint
         # violation (Codex adrev BLOCKER 2026-07-03).
-        sim = StatefulSimulator(armed=armed)
+        sim = StatefulSimulator(armed=armed, station_seed=seed_for_scenario(scenario.id))
         if scenario.taint_state == "pre_tainted":
             sim.tainted = True
         staged_calls = []          # (tool, args_json)

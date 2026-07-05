@@ -10,7 +10,7 @@ Deferred to Stage 2: "prompt_checklist" and the "oracle" upper-bound ablation.
 """
 import json
 
-from .simulator import StatefulSimulator
+from .simulator import StatefulSimulator, seed_for_scenario
 from .teacher import run_scenario
 
 _GUIDANCE = (
@@ -38,7 +38,8 @@ def _run_self_review(client, model, scenario, system, tools, max_reprompts=1, ma
     messages = [{"role": "system", "content": system + _GUIDANCE},
                 {"role": "user", "content": scenario.prompt}]
     turns = [{"role": "user", "content": scenario.prompt}]
-    sim = StatefulSimulator(armed=scenario.spec.requires_arm)
+    sim = StatefulSimulator(armed=scenario.spec.requires_arm,
+                            station_seed=seed_for_scenario(scenario.id))
     if scenario.taint_state == "pre_tainted":
         sim.tainted = True
     reprompts = 0

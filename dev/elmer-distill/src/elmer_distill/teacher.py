@@ -12,7 +12,7 @@ agentic loop is exercised network-free.
 import json
 from dataclasses import dataclass, field
 
-from .simulator import StatefulSimulator
+from .simulator import StatefulSimulator, seed_for_scenario
 from .judge import Judge
 
 
@@ -31,7 +31,8 @@ def run_scenario(client, model, scenario, system, tools, max_turns=20):
                 {"role": "user", "content": scenario.prompt}]
     turns = [{"role": "user", "content": scenario.prompt}]
 
-    sim = StatefulSimulator(armed=scenario.spec.requires_arm)
+    sim = StatefulSimulator(armed=scenario.spec.requires_arm,
+                            station_seed=seed_for_scenario(scenario.id))
     if scenario.taint_state == "pre_tainted":
         sim.tainted = True
 
