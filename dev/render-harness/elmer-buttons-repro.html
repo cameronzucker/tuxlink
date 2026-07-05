@@ -1,0 +1,83 @@
+<!doctype html>
+<!-- tuxlink-1hv4j: WebKitGTK ground-truth repro for the Elmer header "new conversation"
+     icon button that renders invisible until hover. Dev scratch — not shipped, gitignored PNG. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  /* Real default-dark theme tokens (src/App.css :root). Deliberately OMITS
+     --text-2, --text-muted, --surface-hover, --surface-3, --accent-edge because
+     the app never defines them either — reproduce reality. */
+  :root {
+    --bg:#0d1318; --surface:#141c23; --surface-2:#1a2330; --border:#1f2832;
+    --text:#e4ebf2; --accent:#f59f3c; --accent-soft:rgba(245,159,60,0.12);
+    --text-dim:#94a0ad; --text-faint:#5d6975;
+  }
+  body{background:var(--bg);color:var(--text);font-family:Inter,system-ui,sans-serif;margin:0;padding:24px;}
+  h1{font-size:14px;margin:0 0 16px;}
+  .row{display:flex;align-items:center;gap:24px;margin:0 0 20px;}
+  .lbl{width:230px;font-size:12px;color:#9aa6b3;}
+  /* the pane sets the inherited color the buttons fall back to */
+  .elmer-pane{color:var(--text);}
+  .elmer-header{display:inline-flex;align-items:center;gap:8px;padding:9px 13px;
+    border-bottom:1px solid var(--border);background:var(--surface-2);border:1px solid #33404d;}
+
+  /* ==== EXACT current rules from ElmerPane.css ==== */
+  .elmer-close-button{flex:0 0 auto;width:24px;height:24px;display:inline-flex;align-items:center;
+    justify-content:center;border:1px solid transparent;border-radius:6px;background:transparent;
+    color:var(--text-2, var(--text-muted));font-size:16px;line-height:1;cursor:pointer;}
+  .elmer-newconv-button{flex:0 0 auto;width:26px;height:26px;display:inline-flex;align-items:center;
+    justify-content:center;border:1px solid transparent;border-radius:6px;background:transparent;
+    color:var(--text-2, var(--text-muted));cursor:pointer;}
+  .force-hover .elmer-newconv-button{background:var(--surface-hover, var(--surface-3));color:var(--text);}
+
+  /* ==== CANDIDATE FIX: use a defined token with a literal fallback ==== */
+  .fix .elmer-newconv-button{color:var(--text-dim, #94a0ad);}
+  .fix .elmer-close-button{color:var(--text-dim, #94a0ad);}
+</style>
+</head>
+<body>
+  <h1>Elmer header buttons — WebKitGTK ground truth (tuxlink-1hv4j)</h1>
+
+  <div class="row"><div class="lbl">A. CURRENT (as shipped) — default</div>
+    <div class="elmer-pane"><div class="elmer-header">
+      <span style="font-weight:600">Elmer</span>
+      <span style="color:var(--text-faint);font-size:11px">AI assistant</span>
+      <span style="width:60px"></span>
+      <button class="elmer-newconv-button" aria-label="New conversation">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M20 4H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h3v3l4-3h9a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"/>
+          <path d="M12 8.5v5M9.5 11h5"/>
+        </svg>
+      </button>
+      <button class="elmer-close-button" aria-label="Close">&#215;</button>
+    </div></div>
+  </div>
+
+  <div class="row force-hover"><div class="lbl">B. CURRENT — forced :hover state</div>
+    <div class="elmer-pane"><div class="elmer-header">
+      <span style="font-weight:600">Elmer</span><span style="width:60px"></span>
+      <button class="elmer-newconv-button" aria-label="New conversation">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20 4H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h3v3l4-3h9a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"/>
+          <path d="M12 8.5v5M9.5 11h5"/>
+        </svg>
+      </button>
+      <button class="elmer-close-button">&#215;</button>
+    </div></div>
+  </div>
+
+  <div class="row fix"><div class="lbl">C. FIX (color:var(--text-dim,#94a0ad))</div>
+    <div class="elmer-pane"><div class="elmer-header">
+      <span style="font-weight:600">Elmer</span><span style="width:60px"></span>
+      <button class="elmer-newconv-button" aria-label="New conversation">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20 4H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h3v3l4-3h9a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"/>
+          <path d="M12 8.5v5M9.5 11h5"/>
+        </svg>
+      </button>
+      <button class="elmer-close-button">&#215;</button>
+    </div></div>
+  </div>
+</body>
+</html>
