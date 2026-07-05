@@ -99,7 +99,7 @@ impl TuxlinkMcp {
     /// into an rmcp tool result.
     #[tool(
         name = "server_info",
-        description = "Report the Tuxlink app name/version and the live egress-authority state (armed, tainted). Read-only; does not transmit or change any state."
+        description = "Report the operator's SEND-AUTHORITY state — whether send authority is currently ARMED (armed=true means you MAY transmit; false means you may only stage), how many seconds of the armed window remain, and whether the session is TAINTED (which locks sending) — plus the Tuxlink app name/version. Call this to check whether you are authorized to transmit right now, e.g. before deciding whether to connect+send or to stage-and-report. Read-only; does not transmit or change any state."
     )]
     pub async fn server_info(&self) -> Result<CallToolResult, ErrorData> {
         let dto = server_info_view(&self.state);
@@ -110,7 +110,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "backend_status",
-        description = "Report the Winlink backend (CMS engine) connection status: connected, transport, and state. Read-only."
+        description = "Report the Winlink backend (CMS engine) connection status: connected, transport, and state. Read-only. Does NOT report send authority — call server_info to check whether transmitting is currently armed."
     )]
     pub async fn backend_status(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.status.backend_status().await.map_err(port_err)?;

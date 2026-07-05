@@ -730,7 +730,11 @@ approval dialog is required. Egress is DENIED when send authority is disarmed, \
 has expired, or when the session is TAINTED (reading an untrusted inbound \
 message taints the session and blocks sending until the operator starts a fresh \
 authorized session). Do not treat a denial as an error to route around — it \
-means you are not currently authorized to transmit. The operator can abort at \
+means you are not currently authorized to transmit. To check whether send \
+authority is armed right now — and how much of the window remains — call \
+server_info; use it to decide between transmitting and staging (for example when \
+the operator conditions a send on being armed) rather than attempting a send just \
+to discover the state. The operator can abort at \
 any time; an abort request is sent immediately and stops the active session. You cannot change the CMS \
 host, credentials, or other protected configuration — those tools are not on \
 your surface. \
