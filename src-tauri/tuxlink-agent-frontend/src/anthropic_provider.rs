@@ -352,7 +352,13 @@ pub fn parse_messages_response(value: &Value) -> Result<ModelTurn, String> {
                 .get("input")
                 .cloned()
                 .unwrap_or(Value::Null);
-            ToolCall { name, args }
+            // Anthropic has no per-call round-trip signature (the thought_signature
+            // concept is Gemini-specific, tuxlink-0tuc3).
+            ToolCall {
+                name,
+                args,
+                provider_meta: None,
+            }
         })
         .collect();
 

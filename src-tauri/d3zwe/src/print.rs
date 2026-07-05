@@ -21,6 +21,7 @@ pub fn render_outcome(outcome: &RunOutcome) -> String {
         RunOutcome::Cancelled => "■ cancelled".to_string(),
         RunOutcome::ToolDenied(reason) => format!("⛔ tool denied: {reason}"),
         RunOutcome::RateLimited(reason) => format!("⏳ rate limited: {reason}"),
+        RunOutcome::ProviderError(detail) => format!("✗ provider error: {detail}"),
     }
 }
 
@@ -35,5 +36,6 @@ mod tests {
         assert!(render_outcome(&RunOutcome::InvalidAction("bad".into())).contains("invalid action"));
         assert!(render_outcome(&RunOutcome::Cancelled).contains("cancelled"));
         assert!(render_outcome(&RunOutcome::ToolDenied("tainted".into())).contains("denied"));
+        assert!(render_outcome(&RunOutcome::ProviderError("HTTP 400".into())).contains("provider error"));
     }
 }

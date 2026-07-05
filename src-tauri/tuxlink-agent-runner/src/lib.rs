@@ -608,7 +608,9 @@ mod acceptance_tests {
     }
 
     #[tokio::test]
-    async fn provider_error_yields_needs_operator() {
+    async fn provider_error_yields_provider_error_outcome() {
+        // A failed model call surfaces as ProviderError (a capturable failure), not
+        // the soft NeedsOperator gate (tuxlink-a1xwx).
         let provider =
             ScriptedProvider::from_scripted(vec![ScriptedTurn::Error("upstream 503".into())]);
         let invoker = RecordingInvoker::always_ok(vec![echo_tool()]);
@@ -621,7 +623,7 @@ mod acceptance_tests {
             CancellationToken::new(),
         )
         .await;
-        assert!(matches!(outcome, RunOutcome::NeedsOperator(_)));
+        assert!(matches!(outcome, RunOutcome::ProviderError(_)));
     }
 
     // --- run_with_conversation / ToolOutcome::Cancelled -------------------
@@ -780,7 +782,7 @@ mod acceptance_tests {
 
     #[tokio::test]
     async fn cancelled_tool_outcome_terminates_run_as_cancelled() {
-        let provider = ScriptedProvider::from_scripted(vec![ScriptedTurn::Turn(ModelTurn::ToolCalls(vec![ToolCall{name:"x".into(),args:serde_json::json!({})}]))]);
+        let provider = ScriptedProvider::from_scripted(vec![ScriptedTurn::Turn(ModelTurn::ToolCalls(vec![ToolCall::new("x", serde_json::json!({}))]))]);
         let invoker = RecordingInvoker::new(
             vec![ToolSpec{name:"x".into(),json_schema:serde_json::json!({"type":"object"})}],
             vec![ToolOutcome::Cancelled("aborted".into())]);

@@ -58,15 +58,38 @@ pub struct ToolCall {
     /// Raw arguments the model produced, validated against the matching
     /// [`ToolSpec::json_schema`] before dispatch.
     pub args: serde_json::Value,
+    /// Opaque, provider-supplied metadata that MUST be echoed back verbatim on
+    /// the next request for a multi-turn tool loop to succeed. The runner never
+    /// interprets it — it only carries it through the conversation so the
+    /// provider adapter can round-trip it.
+    ///
+    /// This exists for Gemini 3.x "thinking" models, whose OpenAI-compat layer
+    /// returns a per-tool-call `extra_content.google.thought_signature` and
+    /// rejects any follow-up turn whose assistant `tool_calls[]` omit it (HTTP
+    /// 400 INVALID_ARGUMENT). The adapter stores the whole `extra_content` object
+    /// here on the way in and re-emits it on the way out; other providers leave
+    /// it `None`. Kept provider-neutral (a raw `Value`) so the transport-agnostic
+    /// runner never grows a Gemini-specific concept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_meta: Option<serde_json::Value>,
 }
 
 impl ToolCall {
-    /// Convenience constructor.
+    /// Convenience constructor. `provider_meta` defaults to `None`; use
+    /// [`ToolCall::with_provider_meta`] to attach round-trip metadata.
     pub fn new(name: impl Into<String>, args: serde_json::Value) -> Self {
         Self {
             name: name.into(),
             args,
+            provider_meta: None,
         }
+    }
+
+    /// Attach opaque provider round-trip metadata (see [`ToolCall::provider_meta`]).
+    #[must_use]
+    pub fn with_provider_meta(mut self, provider_meta: Option<serde_json::Value>) -> Self {
+        self.provider_meta = provider_meta;
+        self
     }
 }
 
@@ -230,11 +253,47 @@ pub enum RunOutcome {
     /// this to the `"rateLimited"` outcome-kind event so the React pane can show
     /// the rate-limit callout.  No automatic retry is performed.
     RateLimited(String),
+    /// The provider call FAILED (transport error, non-2xx HTTP other than 429, or
+    /// an unparseable response) — distinct from [`RunOutcome::NeedsOperator`], which
+    /// is a soft "you hit a bound, continue?" gate. Carries an already-redacted
+    /// detail string. The frontend maps this to the persisted `"error"` outcome-kind
+    /// so a model error (a Gemini tool-call 400, a 404/500, a dead endpoint) lands in
+    /// the transcript verbatim instead of a single-slot callout the next run
+    /// overwrites (tuxlink-a1xwx).
+    ProviderError(String),
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `provider_meta` (Gemini thought_signature carrier, tuxlink-0tuc3) is skipped
+    /// on serialization when `None` — so existing persisted conversations and
+    /// non-Gemini turns round-trip byte-identically — and round-trips when present.
+    #[test]
+    fn tool_call_provider_meta_serde_round_trips() {
+        // Absent: the field must NOT appear in the serialized form.
+        let plain = ToolCall::new("find_stations", serde_json::json!({ "grid": "DM79" }));
+        let plain_json = serde_json::to_value(&plain).unwrap();
+        assert!(
+            plain_json.get("provider_meta").is_none(),
+            "provider_meta=None must skip serialization; got {plain_json}"
+        );
+        // A serialized form WITHOUT the field still deserializes (serde default).
+        let decoded: ToolCall = serde_json::from_value(
+            serde_json::json!({ "name": "x", "args": {} }),
+        )
+        .unwrap();
+        assert_eq!(decoded.provider_meta, None);
+
+        // Present: round-trips verbatim.
+        let meta = serde_json::json!({ "google": { "thought_signature": "SIG" } });
+        let withmeta = ToolCall::new("x", serde_json::json!({}))
+            .with_provider_meta(Some(meta.clone()));
+        let round: ToolCall =
+            serde_json::from_value(serde_json::to_value(&withmeta).unwrap()).unwrap();
+        assert_eq!(round.provider_meta, Some(meta));
+    }
 
     /// The `ContextUsage` variant constructs with the documented fields and
     /// relays its counts unchanged through a fire-and-forget sink (the same

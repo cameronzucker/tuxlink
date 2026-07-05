@@ -341,10 +341,7 @@ async fn egress_arm_gate_intact_after_feature() {
         // produces a true guard denial.  Without valid required args, serde
         // returns a decode error before the guard runs — and a decode error
         // does NOT classify as `Denied`, so the assert would simply fail.
-        let call = ToolCall {
-            name: name.clone(),
-            args: minimal_args_for_tool(name),
-        };
+        let call = ToolCall::new(name.clone(), minimal_args_for_tool(name));
         let out = invoker.invoke(&call, CallAuthority::Agent, &cancel).await;
         match &out {
             ToolOutcome::Denied(msg) => {
@@ -567,10 +564,7 @@ async fn injection_egress_is_arm_gated() {
             } else if args.get("call").is_some() {
                 args["call"] = serde_json::Value::String((*payload).to_string());
             }
-            let call = ToolCall {
-                name: tool_name.clone(),
-                args,
-            };
+            let call = ToolCall::new(tool_name.clone(), args);
 
             // --- Disarmed → Denied(NotArmed-class) ---
             let g = Arc::new(EgressGuard::new());
@@ -718,10 +712,7 @@ async fn injection_cannot_transmit_without_arm() {
     let cancel = CancellationToken::new();
 
     for (vector, payload) in INJECTION_CORPUS {
-        let call = ToolCall {
-            name: "cms_connect".into(),
-            args: serde_json::json!({ "goal_hijack": payload }),
-        };
+        let call = ToolCall::new("cms_connect", serde_json::json!({ "goal_hijack": payload }));
 
         let outcome = invoker.invoke(&call, CallAuthority::Agent, &cancel).await;
 

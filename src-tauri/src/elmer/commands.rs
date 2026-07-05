@@ -143,6 +143,9 @@ fn outcome_to_event(outcome: &RunOutcome) -> ElmerEvent {
         RunOutcome::InvalidAction(msg) => ("invalidAction".into(), msg.clone()),
         RunOutcome::ToolDenied(msg) => ("toolDenied".into(), msg.clone()),
         RunOutcome::RateLimited(msg) => ("rateLimited".into(), msg.clone()),
+        // A genuine provider failure — the "error" kind is persisted to the chat
+        // transcript (tuxlink-a1xwx) so the operator can capture it verbatim.
+        RunOutcome::ProviderError(msg) => ("error".into(), msg.clone()),
     };
     ElmerEvent::Outcome { outcome_kind, detail }
 }
@@ -173,11 +176,13 @@ pub async fn elmer_send(
     // Always emit the terminal outcome event so the pane can update its state.
     let _ = app.emit(EV_OUTCOME, outcome_to_event(&outcome));
 
-    // NeedsOperator is the single-flight reject ("a turn is already running") and
-    // bound/provider-error path — surface it as a command error. All other terminal
-    // outcomes are reported via the EV_OUTCOME event the pane already consumes.
+    // NeedsOperator (single-flight reject / bound) and ProviderError (a failed model
+    // call) both surface as a command error, unchanged from before a1xwx — the ONLY
+    // difference is that ProviderError's EV_OUTCOME kind is now the persisted "error"
+    // (above) instead of the callout-only "needsOperator". All other terminal outcomes
+    // are reported via the EV_OUTCOME event the pane already consumes.
     match outcome {
-        RunOutcome::NeedsOperator(msg) => Err(msg),
+        RunOutcome::NeedsOperator(msg) | RunOutcome::ProviderError(msg) => Err(msg),
         _ => Ok(()),
     }
 }
@@ -509,6 +514,9 @@ mod outcome_event_tests {
             (&RunOutcome::NeedsOperator("msg".into()), "needsOperator"),
             (&RunOutcome::InvalidAction("msg".into()), "invalidAction"),
             (&RunOutcome::ToolDenied("msg".into()), "toolDenied"),
+            // tuxlink-a1xwx: a provider failure serializes as the persisted "error"
+            // kind (the exact string the TS `case 'error':` matches → transcript).
+            (&RunOutcome::ProviderError("provider error: HTTP 400".into()), "error"),
         ];
         for (outcome, expected_kind) in cases {
             let event = outcome_to_event(outcome);

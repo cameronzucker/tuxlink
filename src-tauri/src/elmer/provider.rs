@@ -447,9 +447,14 @@ fn redact_message(msg: &Message) -> Message {
         Message::ToolCall(call) => {
             // Redact the serialized args string leaves (AC-6: a secret echoed
             // back in a tool-call argument must not leak to the model endpoint).
+            // `provider_meta` (Gemini's opaque thought_signature, tuxlink-0tuc3) is
+            // an opaque base64 reasoning token with no credential payload and MUST
+            // survive verbatim, or the model endpoint rejects the next turn (HTTP
+            // 400); carry it through unredacted.
             Message::ToolCall(ToolCall {
                 name: call.name.clone(),
                 args: redact_json_value(&call.args),
+                provider_meta: call.provider_meta.clone(),
             })
         }
         Message::ToolResult { name, ok, content } => {
@@ -565,13 +570,13 @@ mod tests {
     /// `ToolCall` args JSON string leaves are redacted.
     #[test]
     fn tool_call_args_string_leaves_are_redacted() {
-        let msg = Message::ToolCall(ToolCall {
-            name: "message_send".into(),
-            args: json!({
+        let msg = Message::ToolCall(ToolCall::new(
+            "message_send",
+            json!({
                 "to": "W1AW@winlink.org",
                 "body": "Password is ;PQ: 98765432"
             }),
-        });
+        ));
         let redacted = redact_message(&msg);
         match redacted {
             Message::ToolCall(call) => {
@@ -588,16 +593,29 @@ mod tests {
     /// `ToolCall` name is preserved unchanged (only args are redacted).
     #[test]
     fn tool_call_name_preserved_after_redaction() {
-        let msg = Message::ToolCall(ToolCall {
-            name: "find_stations".into(),
-            args: json!({ "grid": "DM79" }),
-        });
+        let msg = Message::ToolCall(ToolCall::new("find_stations", json!({ "grid": "DM79" })));
         let redacted = redact_message(&msg);
         match redacted {
             Message::ToolCall(call) => {
                 assert_eq!(call.name, "find_stations");
                 assert_eq!(call.args, json!({ "grid": "DM79" }));
             }
+            _ => panic!("variant changed"),
+        }
+    }
+
+    /// `provider_meta` (Gemini thought_signature) MUST survive redaction verbatim —
+    /// stripping it would make the model endpoint reject the next turn (HTTP 400,
+    /// tuxlink-0tuc3). It is an opaque reasoning token with no credential payload.
+    #[test]
+    fn tool_call_provider_meta_preserved_through_redaction() {
+        let meta = json!({ "google": { "thought_signature": "SIG_REDACT" } });
+        let msg = Message::ToolCall(
+            ToolCall::new("find_stations", json!({ "grid": "DM79" }))
+                .with_provider_meta(Some(meta.clone())),
+        );
+        match redact_message(&msg) {
+            Message::ToolCall(call) => assert_eq!(call.provider_meta, Some(meta)),
             _ => panic!("variant changed"),
         }
     }

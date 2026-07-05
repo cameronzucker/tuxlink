@@ -137,6 +137,26 @@ pub(crate) fn redact_and_cap(text: String, key: Option<&ApiKey>, max: usize) -> 
     scrub_key(text, key).chars().take(max).collect()
 }
 
+/// Format an error together with its `source()` cause chain as
+/// `"outer: cause: root-cause"`. A bare `format!("{e}")` on a `reqwest::Error`
+/// shows only the outermost wrapper (e.g. "error sending request") and hides the
+/// real reason (e.g. "connection refused", "certificate verify failed", "dns
+/// error") one level down — the "one-deep" error the operator could not diagnose
+/// (tuxlink-a1xwx). Walk the chain so the actual cause is surfaced.
+///
+/// Callers pass a URL-stripped error (`reqwest::Error::without_url()`), so no cause
+/// in the chain carries the request URL / a query credential.
+pub(crate) fn error_cause_chain(err: &dyn std::error::Error) -> String {
+    use std::fmt::Write as _;
+    let mut out = err.to_string();
+    let mut src = err.source();
+    while let Some(e) = src {
+        let _ = write!(out, ": {e}");
+        src = e.source();
+    }
+    out
+}
+
 // ---------------------------------------------------------------------------
 // OpenAiProvider
 // ---------------------------------------------------------------------------
@@ -261,7 +281,7 @@ impl Provider for OpenAiProvider {
             ProviderError::Transport(format!(
                 "request to {} failed: {}",
                 redacted_url(&self.endpoint),
-                e.without_url()
+                error_cause_chain(&e.without_url())
             ))
         })?;
 
@@ -346,6 +366,10 @@ impl Provider for OpenAiProvider {
 struct PartialToolCall {
     name: String,
     arguments: String,
+    /// Gemini's opaque per-call `extra_content` (carrying
+    /// `google.thought_signature`), captured from whichever streamed fragment
+    /// carries it so it can be echoed back on the next request (tuxlink-0tuc3).
+    extra_content: Option<Value>,
 }
 
 /// Maximum size, in bytes, of a single un-terminated SSE frame held in `buf`
@@ -610,6 +634,16 @@ impl SseAccumulator {
                 let index = call.get("index").and_then(Value::as_i64).unwrap_or(0);
                 let entry = self.tool_calls.entry(index).or_default();
 
+                // Gemini streams the opaque `extra_content` (thought_signature) on
+                // the tool_call fragment (a sibling of `function`); capture it from
+                // whichever fragment carries it so it survives to `into_turn`
+                // (tuxlink-0tuc3). Last non-null wins if repeated.
+                if let Some(meta) = call.get("extra_content") {
+                    if !meta.is_null() {
+                        entry.extra_content = Some(meta.clone());
+                    }
+                }
+
                 if let Some(function) = call.get("function") {
                     if let Some(name) = function.get("name").and_then(Value::as_str) {
                         if !name.is_empty() {
@@ -652,6 +686,7 @@ impl SseAccumulator {
                 .map(|p| ToolCall {
                     name: p.name,
                     args: serde_json::from_str::<Value>(&p.arguments).unwrap_or(Value::Null),
+                    provider_meta: p.extra_content,
                 })
                 .collect();
             return ModelTurn::ToolCalls(calls);
@@ -859,6 +894,15 @@ fn transcript_budget(num_ctx: Option<u32>, system_prompt: &str, tools: &[ToolSpe
 /// `system_prompt` is the effective system prompt (the operator override or the
 /// built-in [`ELMER_SYSTEM_PROMPT`], resolved by the caller — see
 /// [`OpenAiProvider::turn`]).
+///
+/// Heuristic: does `model` name a Gemini model? Used to gate echoing Gemini's
+/// `extra_content` (thought_signature) back — only a Gemini destination expects it.
+/// Covers both the direct id (`gemini-3.5-flash`) and namespaced routes
+/// (`google/gemini-3.5-flash`, e.g. via OpenRouter).
+fn is_gemini_model(model: &str) -> bool {
+    model.to_ascii_lowercase().contains("gemini")
+}
+
 pub fn build_request_body(
     model: &str,
     conversation: &Conversation,
@@ -896,14 +940,30 @@ pub fn build_request_body(
                 } else {
                     serde_json::to_string(&call.args).unwrap_or_else(|_| "{}".to_string())
                 };
+                // Gemini 3.x "thinking" models require their per-tool-call
+                // `extra_content` (carrying `google.thought_signature`) echoed back
+                // verbatim on the assistant `tool_calls[]`, or the NEXT turn is
+                // rejected with HTTP 400 INVALID_ARGUMENT (tuxlink-0tuc3). We stored
+                // it in `provider_meta` when parsing the response; re-emit it here —
+                // but ONLY to a Gemini destination. If the operator switches Elmer to
+                // another OpenAI-compat provider mid-conversation, the persisted
+                // provider_meta from an earlier Gemini turn must NOT be echoed to the
+                // new endpoint (strict endpoints reject unknown fields, and it is
+                // meaningless there) — Codex adrev 2026-07-05 P2.
+                let mut tool_call = json!({
+                    "id": id,
+                    "type": "function",
+                    "function": { "name": call.name, "arguments": arguments }
+                });
+                if is_gemini_model(model) {
+                    if let Some(meta) = &call.provider_meta {
+                        tool_call["extra_content"] = meta.clone();
+                    }
+                }
                 messages.push(json!({
                     "role": "assistant",
                     "content": Value::Null,
-                    "tool_calls": [{
-                        "id": id,
-                        "type": "function",
-                        "function": { "name": call.name, "arguments": arguments }
-                    }]
+                    "tool_calls": [tool_call]
                 }));
             }
             Message::ToolResult { ok, content, .. } => {
@@ -1052,7 +1112,16 @@ fn parse_tool_call(tc: &Value) -> ToolCall {
 
     let args = coerce_tool_arguments(function.and_then(|f| f.get("arguments")));
 
-    ToolCall { name, args }
+    // Preserve Gemini's opaque per-call `extra_content` (carries
+    // `google.thought_signature`) so it can be echoed back on the next request
+    // (tuxlink-0tuc3). Any provider that omits the field leaves this `None`.
+    let provider_meta = tc.get("extra_content").cloned();
+
+    ToolCall {
+        name,
+        args,
+        provider_meta,
+    }
 }
 
 #[cfg(test)]
@@ -1209,10 +1278,7 @@ mod tests {
         Message::Assistant(s.to_string())
     }
     fn tcall(name: &str) -> Message {
-        Message::ToolCall(ToolCall {
-            name: name.to_string(),
-            args: serde_json::json!({}),
-        })
+        Message::ToolCall(ToolCall::new(name, serde_json::json!({})))
     }
     fn tresult(name: &str, content: &str) -> Message {
         Message::ToolResult {
@@ -1359,6 +1425,45 @@ mod tests {
         assert!(!shown.contains("token=abc"), "must not leak query: {shown}");
     }
 
+    // --- error_cause_chain: surface the real transport cause (tuxlink-a1xwx) ---
+
+    /// A reqwest-style wrapper ("error sending request") must not hide its real
+    /// cause ("connection refused") — the chain is walked and joined.
+    #[test]
+    fn error_cause_chain_walks_source_chain() {
+        #[derive(Debug)]
+        struct Inner;
+        impl std::fmt::Display for Inner {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "connection refused")
+            }
+        }
+        impl std::error::Error for Inner {}
+        #[derive(Debug)]
+        struct Outer(Inner);
+        impl std::fmt::Display for Outer {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "error sending request")
+            }
+        }
+        impl std::error::Error for Outer {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+        assert_eq!(
+            error_cause_chain(&Outer(Inner)),
+            "error sending request: connection refused"
+        );
+    }
+
+    /// A single error with no `source()` renders as just its own message.
+    #[test]
+    fn error_cause_chain_single_error_has_no_suffix() {
+        let e = std::io::Error::other("boom");
+        assert_eq!(error_cause_chain(&e), "boom");
+    }
+
     // --- redact_and_cap: scrub-before-cap order-dependency tests -------------
 
     /// THE BOUNDARY-STRADDLE REGRESSION GUARD.
@@ -1482,6 +1587,129 @@ mod tests {
                 assert_eq!(calls.len(), 1);
                 assert_eq!(calls[0].name, "find_stations");
                 assert_eq!(calls[0].args, json!({ "grid": "DM79" }));
+            }
+            other => panic!("expected ToolCalls, got {other:?}"),
+        }
+    }
+
+    // --- Gemini 3.x thought_signature round-trip (tuxlink-0tuc3) -------------
+    // Gemini's OpenAI-compat layer returns a per-tool-call
+    // `extra_content.google.thought_signature` and REJECTS the next turn (HTTP 400)
+    // unless it is echoed back verbatim on the assistant `tool_calls[]`. The
+    // transport must (a) capture it into `provider_meta` when parsing, and (b)
+    // re-emit it when building the next request.
+
+    #[test]
+    fn parses_gemini_extra_content_into_provider_meta() {
+        let extra = json!({ "google": { "thought_signature": "SIG_ABC123" } });
+        let recorded = json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": { "name": "find_stations", "arguments": "{}" },
+                        "extra_content": extra,
+                    }]
+                }
+            }]
+        });
+        match parse_completion(&recorded).unwrap() {
+            ModelTurn::ToolCalls(calls) => {
+                assert_eq!(calls[0].provider_meta.as_ref(), Some(&extra),
+                    "the tool_call's extra_content must be captured into provider_meta");
+            }
+            other => panic!("expected ToolCalls, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_leaves_provider_meta_none_when_extra_content_absent() {
+        let recorded = json!({
+            "choices": [{ "message": { "role": "assistant", "tool_calls": [
+                { "function": { "name": "a", "arguments": "{}" } }
+            ] } }]
+        });
+        match parse_completion(&recorded).unwrap() {
+            ModelTurn::ToolCalls(calls) => assert!(calls[0].provider_meta.is_none()),
+            other => panic!("expected ToolCalls, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_request_body_echoes_provider_meta_as_extra_content() {
+        let extra = json!({ "google": { "thought_signature": "SIG_XYZ" } });
+        let mut convo = Conversation::new("go");
+        convo.push_tool_call(
+            ToolCall::new("find_stations", json!({})).with_provider_meta(Some(extra.clone())),
+        );
+        let body = build_request_body("gemini-3.5-flash", &convo, &[], None, ELMER_SYSTEM_PROMPT);
+        // messages[0]=system, [1]=user "go", [2]=the assistant tool_call.
+        let tc = &body["messages"][2]["tool_calls"][0];
+        assert_eq!(tc["function"]["name"], json!("find_stations"), "wrong message indexed");
+        assert_eq!(tc["extra_content"], extra,
+            "provider_meta must be echoed back verbatim as tool_calls[].extra_content");
+    }
+
+    #[test]
+    fn build_request_body_omits_extra_content_when_provider_meta_none() {
+        let mut convo = Conversation::new("go");
+        convo.push_tool_call(ToolCall::new("find_stations", json!({})));
+        let body = build_request_body("gpt-4o", &convo, &[], None, ELMER_SYSTEM_PROMPT);
+        let tc = &body["messages"][2]["tool_calls"][0];
+        assert_eq!(tc["function"]["name"], json!("find_stations"), "wrong message indexed");
+        assert!(tc.get("extra_content").is_none(),
+            "non-Gemini tool calls must not carry an extra_content field");
+    }
+
+    #[test]
+    fn build_request_body_does_not_leak_provider_meta_to_non_gemini_destination() {
+        // A conversation that HAS a Gemini thought_signature, then the operator
+        // switches Elmer to a non-Gemini OpenAI-compat endpoint mid-conversation:
+        // the signature must NOT be echoed to the new provider (Codex adrev P2).
+        let extra = json!({ "google": { "thought_signature": "SIG_LEAK" } });
+        let mut convo = Conversation::new("go");
+        convo.push_tool_call(
+            ToolCall::new("find_stations", json!({})).with_provider_meta(Some(extra)),
+        );
+        let body = build_request_body("gpt-4o", &convo, &[], None, ELMER_SYSTEM_PROMPT);
+        let tc = &body["messages"][2]["tool_calls"][0];
+        assert_eq!(tc["function"]["name"], json!("find_stations"), "wrong message indexed");
+        assert!(tc.get("extra_content").is_none(),
+            "provider_meta must NOT leak to a non-Gemini endpoint after a provider switch");
+    }
+
+    #[test]
+    fn is_gemini_model_matches_direct_and_namespaced_ids() {
+        assert!(is_gemini_model("gemini-3.5-flash"));
+        assert!(is_gemini_model("google/gemini-3.5-flash")); // OpenRouter-style route
+        assert!(is_gemini_model("GEMINI-3-PRO")); // case-insensitive
+        assert!(!is_gemini_model("gpt-4o"));
+        assert!(!is_gemini_model("claude-haiku-4-5"));
+    }
+
+    #[test]
+    fn stream_captures_gemini_extra_content_into_provider_meta() {
+        let extra = json!({ "google": { "thought_signature": "SIG_STREAM" } });
+        let sink = |_e: RunEvent| {};
+        let mut acc = SseAccumulator::new();
+        // Gemini streams extra_content alongside the tool_call fragment (sibling of
+        // `function`); the signature may land on any fragment for the index.
+        let body = format!(
+            "{}{}",
+            sse_frame(json!({ "choices": [{ "delta": { "tool_calls": [
+                { "index": 0, "function": { "name": "find_stations", "arguments": "{}" },
+                  "extra_content": extra }
+            ] } }] })),
+            sse_frame(json!({ "choices": [{ "delta": {}, "finish_reason": "tool_calls" }] })),
+        );
+        acc.feed(body.as_bytes(), &sink).unwrap();
+        match acc.into_turn() {
+            ModelTurn::ToolCalls(calls) => {
+                assert_eq!(calls[0].provider_meta.as_ref(), Some(&extra),
+                    "streamed extra_content must survive into provider_meta");
             }
             other => panic!("expected ToolCalls, got {other:?}"),
         }
@@ -1732,10 +1960,7 @@ mod tests {
     #[test]
     fn tool_call_and_result_use_openai_protocol_with_matching_ids() {
         let mut convo = Conversation::new("what is my position?");
-        convo.push_tool_call(ToolCall {
-            name: "position_status".into(),
-            args: json!({}),
-        });
+        convo.push_tool_call(ToolCall::new("position_status", json!({})));
         convo.push_tool_result("position_status", "{\"grid\":\"CN87\"}");
         let body = build_request_body("gemini-2.5-flash", &convo, &[], None, ELMER_SYSTEM_PROMPT);
         let msgs = body["messages"].as_array().expect("messages array");
