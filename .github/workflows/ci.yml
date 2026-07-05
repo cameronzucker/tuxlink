@@ -36,8 +36,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Harden apt against mirror flakiness
-        run: echo 'Acquire::Retries "3";' | sudo tee /etc/apt/apt.conf.d/99retries
+      - name: Harden apt + refresh the package index
+        # tuxlink-84vzn: refresh the apt index BEFORE the deps action. The runner
+        # image bakes a package index that goes stale when Ubuntu ships a
+        # point-release: the old .deb (e.g. libnghttp2-dev=…ubuntu0.3, a curl dep)
+        # is pulled from the mirror while the index still pins it, so the fetch
+        # 404s and the WHOLE apt install aborts ("No packages to install") — which
+        # is what broke every build on 2026-07-05. `apt-get update` re-resolves
+        # against the current mirror so the fetch succeeds.
+        run: |
+          echo 'Acquire::Retries "3";' | sudo tee /etc/apt/apt.conf.d/99retries
+          sudo apt-get update
 
       # libsecret-1-dev intentionally omitted: src-tauri/Cargo.toml configures
       # keyring 3.6.3 with default-features = false and features =
@@ -52,8 +61,16 @@ jobs:
         # caches separate and lets a bump force a refresh.
         uses: awalsh128/cache-apt-pkgs-action@v1
         with:
-          packages: libax25-dev libudev-dev libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libheif-dev libde265-dev libwebp-dev
-          version: tuxlink-ci-${{ matrix.arch }}-v1
+          # tuxlink-84vzn: list the GTK/glib dev closure EXPLICITLY. These are only
+          # transitive Depends of libwebkit2gtk-4.1-dev, and the 2026-07-05 runner
+          # image no longer ships them preinstalled — the cache action did not
+          # restore the transitive `.pc` providers, so `pkg-config glib-2.0` failed
+          # ("Package glib-2.0 was not found") and every Rust build (glib-sys) broke.
+          # libgtk-3-dev pulls the cairo/pango/gdk-pixbuf/atk/glib dev stack.
+          packages: libax25-dev libudev-dev libwebkit2gtk-4.1-dev libglib2.0-dev libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libheif-dev libde265-dev libwebp-dev
+          # Salt bump forces a fresh apt closure. v3: v2 cached an EMPTY result
+          # after the 404-aborted install, so it must be discarded too (tuxlink-84vzn).
+          version: tuxlink-ci-${{ matrix.arch }}-v3
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
