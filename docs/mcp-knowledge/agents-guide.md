@@ -43,8 +43,11 @@ arm/taint model below).
 
 ### Station intelligence — reads, no taint, no authorization
 
-- `find_stations` — Winlink RMS gateway directory (callsign, frequencies, grid,
-  last-heard), filterable by transport/band/history. Cached public data.
+- `find_stations` — Winlink RMS gateway directory (callsign, frequencies, grid),
+  filterable by transport/band/history. Cached public data. Each gateway also carries
+  `distance_km`, `distance_mi`, and `bearing_deg` from the operator's grid (null when the
+  operator grid is unset — the result echoes it as `operator_grid`); gateways are sorted
+  nearest-first, unknown-distance last.
 - `predict_path` — offline VOACAP HF path reliability/SNR/MUF-day by UTC hour from
   the operator's own grid to a target grid across candidate dial frequencies.
 - `solar_conditions` — current space-weather indices (SFI/A/K) and the sunspot

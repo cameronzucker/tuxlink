@@ -538,8 +538,12 @@ impl StationPort for MockStation {
                 grid: Some(SEED_GW_GRID.into()),
                 frequencies_khz: vec![SEED_GW_FREQ_KHZ],
                 antenna: Some(GatewayAntennaDto::Dipole),
+                distance_km: None,
+                distance_mi: None,
+                bearing_deg: None,
             }],
             fetched_at_ms: Some(0),
+            operator_grid: None,
         })
     }
 }
