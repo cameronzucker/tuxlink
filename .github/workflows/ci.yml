@@ -52,8 +52,16 @@ jobs:
         # caches separate and lets a bump force a refresh.
         uses: awalsh128/cache-apt-pkgs-action@v1
         with:
-          packages: libax25-dev libudev-dev libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libheif-dev libde265-dev libwebp-dev
-          version: tuxlink-ci-${{ matrix.arch }}-v1
+          # tuxlink-84vzn: list the GTK/glib dev closure EXPLICITLY. These are only
+          # transitive Depends of libwebkit2gtk-4.1-dev, and the 2026-07-05 runner
+          # image no longer ships them preinstalled — the cache action did not
+          # restore the transitive `.pc` providers, so `pkg-config glib-2.0` failed
+          # ("Package glib-2.0 was not found") and every Rust build (glib-sys) broke.
+          # libgtk-3-dev pulls the cairo/pango/gdk-pixbuf/atk/glib dev stack.
+          packages: libax25-dev libudev-dev libwebkit2gtk-4.1-dev libglib2.0-dev libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libheif-dev libde265-dev libwebp-dev
+          # Salt bump (v1 → v2) forces a fresh apt closure, discarding the stale
+          # cache that was missing glib/gtk (tuxlink-84vzn).
+          version: tuxlink-ci-${{ matrix.arch }}-v2
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
