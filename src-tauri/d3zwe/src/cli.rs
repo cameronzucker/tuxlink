@@ -23,6 +23,10 @@ pub struct Args {
     /// SEC-5 opt-in: permit a non-loopback (but never link-local/metadata)
     /// endpoint.
     pub allow_remote: bool,
+    /// tuxlink-cnz5o Task 6: emit a single-line machine-readable
+    /// `{"kind","text"}` outcome (for the Python grounding judge / A/B harness)
+    /// instead of the human summary line.
+    pub json: bool,
 }
 
 impl Default for Args {
@@ -34,6 +38,7 @@ impl Default for Args {
             socket: None,
             prompt: None,
             allow_remote: false,
+            json: false,
         }
     }
 }
@@ -64,6 +69,8 @@ OPTIONS:
     --socket <PATH>    Tuxlink MCP Unix-domain socket
                        (default: the #939 descriptor location).
     --prompt <TEXT>    Run one prompt and exit. Omit for an interactive REPL.
+    --json             Emit a single-line machine-readable {\"kind\",\"text\"}
+                       outcome per run instead of the human summary line.
     --allow-remote     Permit a non-loopback endpoint (advanced; the endpoint
                        becomes a data sink). Link-local / cloud-metadata ranges
                        are ALWAYS refused regardless of this flag.
@@ -97,6 +104,7 @@ where
         match arg.as_str() {
             "-h" | "--help" => return ParseOutcome::Help,
             "--allow-remote" => out.allow_remote = true,
+            "--json" => out.json = true,
             "--endpoint" => match take_value("--endpoint", &mut iter) {
                 Ok(v) => out.endpoint = v,
                 Err(e) => return ParseOutcome::Error(e),
@@ -188,6 +196,24 @@ mod tests {
         assert!(matches!(parse(["--frobnicate"]), ParseOutcome::Error(_)));
         // A bare positional is also an error (no positionals are accepted).
         assert!(matches!(parse(["hello"]), ParseOutcome::Error(_)));
+    }
+
+    #[test]
+    fn json_flag_parses() {
+        let out = parse(["--json"]);
+        match out {
+            ParseOutcome::Run(args) => assert!(args.json),
+            other => panic!("expected Run, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn json_defaults_false() {
+        let out = parse(Vec::<String>::new());
+        match out {
+            ParseOutcome::Run(args) => assert!(!args.json),
+            other => panic!("expected Run, got {other:?}"),
+        }
     }
 
     #[test]

@@ -25,6 +25,27 @@ pub fn render_outcome(outcome: &RunOutcome) -> String {
     }
 }
 
+/// Render the terminal [`RunOutcome`] as a single-line machine-readable JSON
+/// object `{"kind","text"}` (tuxlink-cnz5o, Task 6). The Python grounding judge
+/// grades the `text` of a `"completed"` outcome as the agent's final answer; the
+/// other kinds carry their reason/detail as `text` so a non-completed run is
+/// still classifiable. `kind` is a stable lowercase tag, one per `RunOutcome`
+/// variant.
+pub fn render_outcome_json(outcome: &RunOutcome) -> String {
+    let (kind, text): (&str, &str) = match outcome {
+        RunOutcome::Completed(text) => ("completed", text),
+        RunOutcome::NeedsOperator(reason) => ("needs_operator", reason),
+        RunOutcome::InvalidAction(detail) => ("invalid_action", detail),
+        RunOutcome::Cancelled => ("cancelled", ""),
+        RunOutcome::ToolDenied(reason) => ("denied", reason),
+        RunOutcome::RateLimited(reason) => ("rate_limited", reason),
+        RunOutcome::ProviderError(detail) => ("provider_error", detail),
+    };
+    // serde_json handles the escaping; a compact single-line object is emitted so
+    // one run = one greppable line.
+    serde_json::json!({ "kind": kind, "text": text }).to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -37,5 +58,41 @@ mod tests {
         assert!(render_outcome(&RunOutcome::Cancelled).contains("cancelled"));
         assert!(render_outcome(&RunOutcome::ToolDenied("tainted".into())).contains("denied"));
         assert!(render_outcome(&RunOutcome::ProviderError("HTTP 400".into())).contains("provider error"));
+    }
+
+    #[test]
+    fn json_outcome_is_parseable_with_kind_and_text() {
+        let line = render_outcome_json(&RunOutcome::Completed("W1AW is on 7104".into()));
+        // Single line — no embedded newline.
+        assert!(!line.contains('\n'));
+        let v: serde_json::Value = serde_json::from_str(&line).expect("valid JSON");
+        assert_eq!(v["kind"], "completed");
+        assert_eq!(v["text"], "W1AW is on 7104");
+    }
+
+    #[test]
+    fn json_outcome_tags_denied() {
+        let line = render_outcome_json(&RunOutcome::ToolDenied("not armed".into()));
+        let v: serde_json::Value = serde_json::from_str(&line).expect("valid JSON");
+        assert_eq!(v["kind"], "denied");
+        assert_eq!(v["text"], "not armed");
+    }
+
+    #[test]
+    fn json_outcome_covers_every_variant() {
+        for outcome in [
+            RunOutcome::Completed("a".into()),
+            RunOutcome::NeedsOperator("b".into()),
+            RunOutcome::InvalidAction("c".into()),
+            RunOutcome::Cancelled,
+            RunOutcome::ToolDenied("d".into()),
+            RunOutcome::RateLimited("e".into()),
+            RunOutcome::ProviderError("f".into()),
+        ] {
+            let line = render_outcome_json(&outcome);
+            let v: serde_json::Value = serde_json::from_str(&line).expect("valid JSON");
+            assert!(v.get("kind").and_then(|k| k.as_str()).is_some());
+            assert!(v.get("text").is_some());
+        }
     }
 }
