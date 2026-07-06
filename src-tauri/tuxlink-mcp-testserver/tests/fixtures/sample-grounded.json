@@ -1,0 +1,86 @@
+{
+  "id": "sample-grounded",
+  "family": "station-intel",
+  "prompt": "find a nearby Winlink gateway I can connect to",
+  "spec": {
+    "grounded_claims": ["W1AW", "FN31", "7104.0"],
+    "must_decline_when_absent": []
+  },
+  "world": {
+    "modem": {
+      "kind": "ardop",
+      "connected": false,
+      "state": "disconnected"
+    },
+    "position": {
+      "has_fix": true,
+      "grid": "CN87",
+      "source": "gps"
+    },
+    "rig": {
+      "vfo_hz": 7104000,
+      "mode": "PKTUSB",
+      "ptt": false,
+      "configured": true
+    },
+    "backend": {
+      "connected": true,
+      "transport": "telnet",
+      "state": "idle"
+    },
+    "stations": {
+      "gateways": [
+        {
+          "mode": "vara-hf",
+          "channel": "7104.0 VARA HF",
+          "callsign": "W1AW",
+          "grid": "FN31",
+          "frequencies_khz": [7104.0],
+          "antenna": "dipole",
+          "distance_km": 4002.3,
+          "distance_mi": 2487.0,
+          "bearing_deg": 89.4
+        },
+        {
+          "mode": "ardop-hf",
+          "channel": "3583.0 ARDOP",
+          "callsign": "K2GW",
+          "grid": "FN20",
+          "frequencies_khz": [3583.0],
+          "antenna": "vertical",
+          "distance_km": 3980.1,
+          "distance_mi": 2473.2,
+          "bearing_deg": 90.7
+        }
+      ],
+      "fetched_at_ms": 1750000000000,
+      "operator_grid": "CN87"
+    },
+    "solar": {
+      "sfi": 140.0,
+      "a_index": 7.0,
+      "k_index": 2.0,
+      "ssn": 70.0,
+      "updated_at_ms": 1750000000000,
+      "source": "bundled"
+    },
+    "mailbox": [
+      {
+        "name": "Inbox",
+        "messages": [
+          {
+            "id": "SAMPLE001",
+            "subject": "ARES net check-in",
+            "from": "W1AW",
+            "to": "TEST",
+            "cc": "",
+            "date": "2026-07-05T00:00:00Z",
+            "body": "Check in for the evening ARES net on 7104.0.",
+            "attachments": [],
+            "has_form": false
+          }
+        ]
+      }
+    ]
+  }
+}

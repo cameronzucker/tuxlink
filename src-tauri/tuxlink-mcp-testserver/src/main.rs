@@ -32,10 +32,16 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use tuxlink_mcp_core::ports::{
+    ConfigPort, DevicePort, LogPort, MailboxPort, PredictionPort, SearchPort, StationPort,
+    StatusPort,
+};
 use tuxlink_mcp_core::{McpState, TuxlinkMcp};
 use tuxlink_security::EgressGuard;
 
+mod fixture;
 mod mocks;
+mod scenario_ports;
 
 const SOCK_ENV: &str = "TUXLINK_MCP_SOCK";
 const ARM_ENV: &str = "TUXLINK_TEST_ARM";
@@ -109,16 +115,74 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let attach_base = std::env::temp_dir().join(format!("tuxlink-mcp-attach-{}", std::process::id()));
     std::fs::create_dir_all(&attach_base)?;
 
+    // TUXLINK_TEST_SCENARIO (OPTIONAL): when set, load the scenario world and
+    // serve the REAL DTOs it seeds through the scenario read ports instead of the
+    // recognizable mock stubs. Absent/empty ⇒ keep the mock ports (current
+    // behavior). A bad path fails LOUDLY (non-zero exit) rather than degrading.
+    let scenario = match fixture::load_scenario_from_env() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::exit(2);
+        }
+    };
+    if let Some(world) = &scenario {
+        let gw = world
+            .stations
+            .as_ref()
+            .map(|s| s.gateways.len())
+            .unwrap_or(0);
+        eprintln!("scenario loaded ({gw} gateways)");
+    }
+
+    // Read ports: branch to the scenario impls (real seeded DTOs) when a scenario
+    // is loaded, else the mock stubs. The egress/abort/write/compose ports —
+    // which hold the REAL EgressGuard — are UNCHANGED in both branches so the
+    // gate still runs for real; the harness measures the read-tier fabrication,
+    // not the guard.
+    #[allow(clippy::type_complexity)]
+    let (status, mailbox, search, config, devices, logs, stations, prediction): (
+        Arc<dyn StatusPort>,
+        Arc<dyn MailboxPort>,
+        Arc<dyn SearchPort>,
+        Arc<dyn ConfigPort>,
+        Arc<dyn DevicePort>,
+        Arc<dyn LogPort>,
+        Arc<dyn StationPort>,
+        Arc<dyn PredictionPort>,
+    ) = match &scenario {
+        Some(world) => (
+            Arc::new(scenario_ports::ScenarioStatus(Arc::clone(world))),
+            Arc::new(scenario_ports::ScenarioMailbox(Arc::clone(world))),
+            Arc::new(scenario_ports::ScenarioSearch(Arc::clone(world))),
+            Arc::new(scenario_ports::ScenarioConfig(Arc::clone(world))),
+            Arc::new(scenario_ports::ScenarioDevice(Arc::clone(world))),
+            Arc::new(scenario_ports::ScenarioLog(Arc::clone(world))),
+            Arc::new(scenario_ports::ScenarioStation(Arc::clone(world))),
+            Arc::new(scenario_ports::ScenarioPrediction(Arc::clone(world))),
+        ),
+        None => (
+            Arc::new(mocks::MockStatus),
+            Arc::new(mocks::MockMailbox),
+            Arc::new(mocks::MockSearch),
+            Arc::new(mocks::MockConfig),
+            Arc::new(mocks::MockDevice),
+            Arc::new(mocks::MockLog),
+            Arc::new(mocks::MockStation),
+            Arc::new(mocks::MockPrediction),
+        ),
+    };
+
     let state = McpState {
         guard: Arc::clone(&guard),
         name: name.clone(),
         version: version.clone(),
-        status: Arc::new(mocks::MockStatus),
-        mailbox: Arc::new(mocks::MockMailbox),
-        search: Arc::new(mocks::MockSearch),
-        config: Arc::new(mocks::MockConfig),
-        devices: Arc::new(mocks::MockDevice),
-        logs: Arc::new(mocks::MockLog),
+        status,
+        mailbox,
+        search,
+        config,
+        devices,
+        logs,
         egress: Arc::new(mocks::MockEgress::new(
             Arc::clone(&guard),
             Arc::clone(&egress_op_ran),
@@ -130,8 +194,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             attach_base,
         )),
         compose: Arc::new(mocks::MockCompose::new(Arc::clone(&staged))),
-        stations: Arc::new(mocks::MockStation),
-        prediction: Arc::new(mocks::MockPrediction),
+        stations,
+        prediction,
     };
     let router = TuxlinkMcp::new(Arc::new(state));
 

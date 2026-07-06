@@ -90,14 +90,22 @@ async fn real_main(args: Args) -> Result<(), String> {
         invoker.tools().len()
     );
 
-    let limits = Limits::default();
+    // Per-turn wall-clock cap (COR-1). Default 120s; overridable via
+    // D3ZWE_TURN_TIMEOUT_SECS so slower local models (large tool schemas on
+    // modest hardware) can complete a turn instead of tripping NeedsOperator.
+    let mut limits = Limits::default();
+    if let Ok(v) = std::env::var("D3ZWE_TURN_TIMEOUT_SECS") {
+        if let Ok(secs) = v.trim().parse::<u64>() {
+            limits.per_turn_timeout = std::time::Duration::from_secs(secs);
+        }
+    }
 
     if let Some(prompt) = args.prompt.clone() {
         // One-shot.
-        run_one(&provider, &invoker, &prompt, limits).await;
+        run_one(&provider, &invoker, &prompt, limits, args.json).await;
     } else {
         // REPL.
-        repl(&provider, &invoker, limits).await;
+        repl(&provider, &invoker, limits, args.json).await;
     }
 
     // Release the single MCP session slot on the way out.
@@ -113,6 +121,7 @@ async fn run_one(
     invoker: &Arc<UdsToolInvoker>,
     prompt: &str,
     limits: Limits,
+    json: bool,
 ) {
     let cancel = CancellationToken::new();
 
@@ -157,12 +166,18 @@ async fn run_one(
         }
     }
 
-    println!("{}", print::render_outcome(&outcome));
+    if json {
+        // Machine-readable single line for the Python grounding judge / A/B
+        // harness (tuxlink-cnz5o Task 6).
+        println!("{}", print::render_outcome_json(&outcome));
+    } else {
+        println!("{}", print::render_outcome(&outcome));
+    }
 }
 
 /// A minimal interactive REPL: read a line, run it, print the outcome, repeat.
 /// Blank lines are ignored; EOF (Ctrl-D) or `:quit` exits.
-async fn repl(provider: &OpenAiProvider, invoker: &Arc<UdsToolInvoker>, limits: Limits) {
+async fn repl(provider: &OpenAiProvider, invoker: &Arc<UdsToolInvoker>, limits: Limits, json: bool) {
     eprintln!("d3zwe REPL — type a prompt, `:quit` or Ctrl-D to exit.");
     let stdin = io::stdin();
     loop {
@@ -189,6 +204,6 @@ async fn repl(provider: &OpenAiProvider, invoker: &Arc<UdsToolInvoker>, limits: 
             break;
         }
 
-        run_one(provider, invoker, prompt, limits).await;
+        run_one(provider, invoker, prompt, limits, json).await;
     }
 }

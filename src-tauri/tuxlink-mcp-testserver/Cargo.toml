@@ -28,3 +28,16 @@ tuxlink-security = { path = "../tuxlink-security" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "signal"] }
 # Phase 3.2: the canned mock ports implement the async-trait port traits.
 async-trait = "0.1"
+# tuxlink-cnz5o sim-harness: scenario Fixture/World deserialization over the real
+# DTOs, loud FixtureError, and a hand-built JSON Schema (no schemars — the
+# contract is a small {id, world} envelope). serde/serde_json/thiserror match
+# tuxlink-mcp-core's single-lockfile resolution (serde 1, serde_json 1,
+# thiserror 2).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[dev-dependencies]
+# Not currently used by inline tests (they write to std::env::temp_dir()), but
+# reserved by the plan for fixture temp-dir hygiene; matches the workspace pin.
+tempfile = "3"
