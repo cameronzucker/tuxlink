@@ -57,6 +57,17 @@
 //! deliberately disclosed-accepted remote egress for this run; the flag is the
 //! consent boundary. If d3zwe ever accepts a non-operator endpoint source, this
 //! must be upgraded to the SSRF-1 fetch-time resolved-IP gate.
+//!
+//! ## qe6ie: TLS required for non-loopback hosts
+//!
+//! A non-loopback model endpoint is refused unless the scheme is `https`
+//! (`EndpointError::PlaintextRemoteRefused`). The model is an
+//! untrusted-instruction channel — Tuxlink executes the tool-calls it returns —
+//! so a plaintext, MITM-rewritable channel to a non-loopback host is refused by
+//! default. "Valid TLS" itself is reqwest's default certificate validation at
+//! request time (see `egress::build_vetted_client`); this module only forbids the
+//! plaintext scheme and never judges host form (named vs bare IP). Loopback is
+//! exempt (same trust domain, the OAuth-2.1 loopback carve-out).
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
@@ -95,6 +106,20 @@ pub enum EndpointError {
          non-loopback connection (advanced — the endpoint becomes a data sink)."
     )]
     RemoteNotAllowed { host: String },
+    /// A non-loopback host reached over plain `http` (qe6ie trust boundary). A
+    /// remote model endpoint is an untrusted-instruction channel: Tuxlink
+    /// executes the tool-calls the model returns, so over plaintext an on-path
+    /// device can rewrite them. Require TLS for any non-loopback host. reqwest's
+    /// default validation enforces a *valid* certificate at request time; this
+    /// variant only refuses the plaintext scheme. Host form (named vs bare IP) is
+    /// not judged here — cert matching is reqwest's job.
+    #[error(
+        "endpoint host `{host}` uses plain http; a remote (non-loopback) model \
+         endpoint must use https. Point Tuxlink at an https:// URL backed by a \
+         valid TLS certificate, or use a local (loopback) or cloud endpoint. \
+         See Help > Settings > 'AI agent model endpoint'."
+    )]
+    PlaintextRemoteRefused { host: String },
     /// A link-local / metadata host, rejected even with `--allow-remote`.
     #[error(
         "endpoint host `{host}` is in the link-local / cloud-metadata range \
@@ -172,15 +197,20 @@ fn classify_ipv6(addr: Ipv6Addr) -> HostClass {
 /// * Loopback hosts are accepted regardless of `allow_remote`.
 /// * Link-local / metadata hosts are ALWAYS rejected (even with `allow_remote`).
 /// * Any other host is accepted ONLY when `allow_remote` is `true`.
+/// * A non-loopback host over plain `http` is refused (`PlaintextRemoteRefused`);
+///   remote endpoints must use `https`. Loopback is exempt.
 ///
 /// Returns the parsed [`Url`] on success so the caller does not re-parse.
 pub fn validate_endpoint(raw: &str, allow_remote: bool) -> Result<Url, EndpointError> {
     let url = Url::parse(raw).map_err(|e| EndpointError::Unparseable(format!("{raw}: {e}")))?;
 
-    match url.scheme() {
-        "http" | "https" => {}
+    // Validate scheme and remember whether it is TLS. The scheme is constrained
+    // to http|https here; the TLS rule below applies only to non-loopback hosts.
+    let is_https = match url.scheme() {
+        "https" => true,
+        "http" => false,
         other => return Err(EndpointError::UnsupportedScheme(other.to_string())),
-    }
+    };
 
     let host = url
         .host()
@@ -192,13 +222,25 @@ pub fn validate_endpoint(raw: &str, allow_remote: bool) -> Result<Url, EndpointE
             host: host.to_string(),
         }),
         HostClass::Remote => {
-            if allow_remote {
-                Ok(url)
-            } else {
-                Err(EndpointError::RemoteNotAllowed {
+            if !allow_remote {
+                return Err(EndpointError::RemoteNotAllowed {
                     host: host.to_string(),
-                })
+                });
             }
+            // qe6ie trust boundary: a non-loopback model endpoint is an
+            // untrusted-instruction channel, so it MUST use TLS. Loopback is
+            // exempt (handled above): same trust domain, the OAuth-2.1 loopback
+            // carve-out. Host form is deliberately not judged — reqwest decides
+            // whether the cert validates at request time. NOTE precedence: this
+            // fires before AgentEndpoint::parse's userinfo check, so a remote
+            // `http://creds@host` reports plaintext refusal first (fails closed;
+            // the message names only the host, never the credentials).
+            if !is_https {
+                return Err(EndpointError::PlaintextRemoteRefused {
+                    host: host.to_string(),
+                });
+            }
+            Ok(url)
         }
     }
 }
@@ -343,8 +385,92 @@ mod tests {
     }
 
     #[test]
-    fn lan_accepted_with_flag() {
-        assert!(validate_endpoint("http://192.168.1.50:8080/v1", true).is_ok());
+    fn lan_http_refused_with_flag() {
+        // The hole this issue closes: a non-loopback host over plain http was
+        // accepted with the remote opt-in. It is now refused for want of TLS.
+        let err = validate_endpoint("http://192.168.1.50:8080/v1", true).unwrap_err();
+        assert!(
+            matches!(err, EndpointError::PlaintextRemoteRefused { .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn lan_https_accepted_with_flag() {
+        // Same host over TLS is accepted (reqwest validates the cert at request
+        // time; the validator only gates the scheme). Bare-IP TLS is not
+        // special-cased.
+        assert!(validate_endpoint("https://192.168.1.50:8080/v1", true).is_ok());
+    }
+
+    #[test]
+    fn remote_named_http_refused_with_flag() {
+        // A named non-loopback host over http is refused just like a bare IP.
+        let err = validate_endpoint("http://model.internal.example/v1", true).unwrap_err();
+        assert!(
+            matches!(err, EndpointError::PlaintextRemoteRefused { .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn remote_named_https_accepted_with_flag() {
+        assert!(validate_endpoint("https://model.internal.example/v1", true).is_ok());
+    }
+
+    #[test]
+    fn loopback_http_still_accepted_after_tls_rule() {
+        // Loopback is exempt from the TLS rule (same trust domain). Regression
+        // lock for first-class local operation.
+        assert!(validate_endpoint("http://127.0.0.1:11434/v1", false).is_ok());
+        assert!(validate_endpoint("http://localhost:11434/v1", false).is_ok());
+        assert!(validate_endpoint("http://[::1]:11434/v1", false).is_ok());
+    }
+
+    #[test]
+    fn link_local_https_still_refused() {
+        // The TLS rule does NOT relax the always-refuse link-local/metadata rule.
+        let err = validate_endpoint("https://169.254.169.254/v1", true).unwrap_err();
+        assert!(
+            matches!(err, EndpointError::LinkLocalAlwaysRefused { .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn plaintext_remote_refusal_is_distinct() {
+        // PlaintextRemoteRefused (remote + http + allow_remote) must not be
+        // confused with RemoteNotAllowed (remote + !allow_remote) or
+        // UnsupportedScheme (neither http nor https).
+        let plaintext = validate_endpoint("http://192.168.1.50/v1", true).unwrap_err();
+        let not_allowed = validate_endpoint("http://192.168.1.50/v1", false).unwrap_err();
+        let bad_scheme = validate_endpoint("ftp://192.168.1.50/v1", true).unwrap_err();
+        assert!(matches!(plaintext, EndpointError::PlaintextRemoteRefused { .. }));
+        assert!(matches!(not_allowed, EndpointError::RemoteNotAllowed { .. }));
+        assert!(matches!(bad_scheme, EndpointError::UnsupportedScheme(_)));
+        // The operator-facing message names the offending host and mentions https.
+        let msg = plaintext.to_string();
+        assert!(msg.contains("192.168.1.50"), "message must name the host: {msg}");
+        assert!(msg.contains("https"), "message must point at https: {msg}");
+    }
+
+    #[test]
+    fn loopback_lookalikes_refused_over_http() {
+        // Hosts that superficially resemble loopback but are NOT must classify as
+        // Remote and be refused over plain http — they cannot ride the loopback
+        // plaintext exemption. Locks the boundary against future url-parser drift.
+        for raw in [
+            "http://localhost./v1",         // trailing dot: not literal "localhost"
+            "http://127.0.0.1.evil.com/v1", // loopback IP as a subdomain label
+            "http://0.0.0.0:8080/v1",       // unspecified v4, not loopback
+            "http://[::]:8080/v1",          // unspecified v6, not loopback
+        ] {
+            let err = validate_endpoint(raw, true).unwrap_err();
+            assert!(
+                matches!(err, EndpointError::PlaintextRemoteRefused { .. }),
+                "{raw} must be refused as plaintext remote; got {err:?}"
+            );
+        }
     }
 
     #[test]
@@ -489,14 +615,26 @@ mod tests {
         );
     }
 
-    /// RFC-1918 LAN address is accepted; is_loopback() returns false.
+    /// RFC-1918 LAN address over TLS is accepted; is_loopback() returns false.
+    /// Bare-IP TLS is permitted, not special-cased — reqwest is the cert arbiter.
     #[test]
-    fn agent_endpoint_accepts_rfc1918() {
+    fn agent_endpoint_accepts_rfc1918_https() {
         let ep =
-            AgentEndpoint::parse("http://192.168.1.50:8080/v1/chat/completions").unwrap();
+            AgentEndpoint::parse("https://192.168.1.50:8080/v1/chat/completions").unwrap();
         assert!(
             !ep.is_loopback(),
             "RFC-1918 address must not classify as loopback"
+        );
+    }
+
+    /// RFC-1918 LAN address over plain http is refused (qe6ie TLS rule).
+    #[test]
+    fn agent_endpoint_refuses_plaintext_rfc1918() {
+        let err =
+            AgentEndpoint::parse("http://192.168.1.50:8080/v1/chat/completions").unwrap_err();
+        assert!(
+            matches!(err, EndpointError::PlaintextRemoteRefused { .. }),
+            "expected PlaintextRemoteRefused, got {err:?}"
         );
     }
 
@@ -511,16 +649,33 @@ mod tests {
         );
     }
 
-    /// URL with userinfo (user:pass@host) is refused regardless of whether
-    /// the host would otherwise be accepted.
+    /// URL with userinfo (user:pass@host) is refused. Uses https so the endpoint
+    /// clears the TLS gate and reaches the userinfo check. (A remote *http*
+    /// endpoint is refused as plaintext BEFORE userinfo is examined — see
+    /// `agent_endpoint_plaintext_refused_before_userinfo`.)
     #[test]
     fn agent_endpoint_refuses_userinfo() {
         let err =
-            AgentEndpoint::parse("http://user:pass@api.openai.com/v1").unwrap_err();
+            AgentEndpoint::parse("https://user:pass@api.openai.com/v1").unwrap_err();
         assert!(
             matches!(err, EndpointError::UserinfoNotAllowed { .. }),
             "expected UserinfoNotAllowed, got {err:?}"
         );
+    }
+
+    /// Deliberate precedence: a remote http endpoint WITH userinfo reports the
+    /// plaintext refusal first (validate_endpoint runs before the userinfo check
+    /// in AgentEndpoint::parse). Still fails closed; the message names only the
+    /// host, never the credentials.
+    #[test]
+    fn agent_endpoint_plaintext_refused_before_userinfo() {
+        let err =
+            AgentEndpoint::parse("http://user:pass@192.168.1.50/v1").unwrap_err();
+        assert!(
+            matches!(err, EndpointError::PlaintextRemoteRefused { .. }),
+            "remote http+creds must report plaintext refusal first; got {err:?}"
+        );
+        assert!(!err.to_string().contains("pass"), "creds must not leak: {err}");
     }
 
     /// Non-http/https scheme is refused (scheme check fires before anything else).
@@ -597,11 +752,12 @@ mod tests {
         assert_eq!(ep.url().path(), "/v1/chat/completions");
     }
 
-    /// Username-only (no password) in userinfo is also refused.
+    /// Username-only (no password) in userinfo is also refused. https so it
+    /// reaches the userinfo check (an http remote would refuse as plaintext first).
     /// Tests that the `!url.username().is_empty()` branch fires independently.
     #[test]
     fn agent_endpoint_refuses_username_only() {
-        let err = AgentEndpoint::parse("http://user@api.openai.com/v1").unwrap_err();
+        let err = AgentEndpoint::parse("https://user@api.openai.com/v1").unwrap_err();
         assert!(
             matches!(err, EndpointError::UserinfoNotAllowed { .. }),
             "username without password must also be refused; got {err:?}"

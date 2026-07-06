@@ -1475,8 +1475,11 @@ impl Default for AprsConfig {
 /// to their pre-elmer shape.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ElmerConfig {
-    /// The chat-completions endpoint URL. Must resolve to a loopback address
-    /// (`127.0.0.0/8` / `::1` / `localhost`) — see `LoopbackEndpoint::parse`.
+    /// The chat-completions endpoint URL. Operator-configured endpoints are
+    /// validated by `AgentEndpoint::parse`: a loopback host (`127.0.0.0/8` /
+    /// `::1` / `localhost`) may use `http`; a non-loopback host MUST use `https`
+    /// (qe6ie trust boundary); link-local/metadata ranges and credentials-in-URL
+    /// are always refused. The default is loopback.
     ///
     /// Default: local Ollama (`http://127.0.0.1:11434/v1/chat/completions`).
     pub agent_endpoint: String,
