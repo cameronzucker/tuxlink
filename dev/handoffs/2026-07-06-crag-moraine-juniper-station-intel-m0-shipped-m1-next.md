@@ -92,3 +92,10 @@ zero-false-decode oracle for M3/M4. (Receive-only capture; no transmit.)
 - **Only follow-up:** 20m was quiet at capture (≤4 decodes/slot), so the crowded-band
   arm (multi-pass subtraction stress, ~20–40 overlapping sigs) is lightly exercised.
   When 20m/40m are busy, re-grab a denser slot with the README recipe and add it.
+- **RX-888 MkII was evaluated as a better capture source and DROPPED** — bandwidth-boxed
+  on a Pi: at the Pi-safe 16 Msps its wideband HF input aliases (only RTL-SDR-class, 5 vs
+  7 decodes); the cleaner 32 Msps OOMs the demod (~4 GB). Its 16-bit/all-HF edge needs
+  more ingest than a Pi has. **Do NOT re-attempt the RX-888 on this Pi** for narrowband
+  FT-8. The full pipeline does work (built streamer `rhgndf/rx888_stream` + FX3 firmware +
+  `dev/scratch/rx888_demod.py` offline USB-demod + udev rule, all left on disk) — usable
+  on a beefier host. Details in bd `tuxlink-b026z.1` notes. The RTL-SDR set is the oracle.
