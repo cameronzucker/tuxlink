@@ -31,6 +31,45 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.82.0](https://github.com/cameronzucker/tuxlink/compare/v0.81.0...v0.82.0) (2026-07-06)
+
+
+### ⚠ BREAKING CHANGES
+
+* **elmer:** An Elmer/agent endpoint set to http://<non-loopback> (e.g. http://192.168.1.50:11434/...) is now refused. Use an https:// URL backed by a valid certificate, a loopback endpoint, or a cloud endpoint. See the user guide "Settings > AI agent model endpoint".
+
+### Features
+
+* **d3zwe:** --json emits a gradeable machine-readable outcome (cnz5o task 6) ([a15f4ee](https://github.com/cameronzucker/tuxlink/commit/a15f4eeeea18f4790b798eaefe9b4312d069b138))
+* **d3zwe:** configurable per-turn timeout via D3ZWE_TURN_TIMEOUT_SECS ([a0eb793](https://github.com/cameronzucker/tuxlink/commit/a0eb79318ab8279596de65379053acd3e8b23189))
+* **elmer:** behavioral A/B divergence harness driving d3zwe ([2d0135b](https://github.com/cameronzucker/tuxlink/commit/2d0135b9eff9fba37eec989365bf81daf690ee20))
+* **elmer:** carry opaque world + grounding predicates on Scenario ([0cba0f8](https://github.com/cameronzucker/tuxlink/commit/0cba0f80f4bd89542c7851630a9204a5c8b5e5d2))
+* **elmer:** content-grounding judge capability ([6a60dc4](https://github.com/cameronzucker/tuxlink/commit/6a60dc4d7039e6951b23284439cec5d7d306c081))
+* **elmer:** model-free tool-return contract diff ([19879c0](https://github.com/cameronzucker/tuxlink/commit/19879c078db5d56a6c62758c275eb6370d3400c3))
+* **elmer:** optional reference arm for sim fabrication rate ([31ade02](https://github.com/cameronzucker/tuxlink/commit/31ade028a051363096942f428e3a7e86f4dd8955))
+* **elmer:** validate fixture world against a JSON Schema by path ([61bf223](https://github.com/cameronzucker/tuxlink/commit/61bf2238fad2e0577b9a6c58b63e5075b1c48c06))
+* **ft8:** CRC-14 + Gray/Costas 174↔79 symbol mapping (T0.3, T0.4) ([746fbdb](https://github.com/cameronzucker/tuxlink/commit/746fbdb88a2bcef80d219c677edc55cdfd2fae25))
+* **ft8:** LDPC(174,91) encode + syndrome (T0.5) — M0 foundation complete ([a90b4fc](https://github.com/cameronzucker/tuxlink/commit/a90b4fc44fc4e5f889911d60e2765594b46935dc))
+* **ft8:** message pack/unpack — std/free-text/telemetry + callsign hash (T0.2) ([97bdc53](https://github.com/cameronzucker/tuxlink/commit/97bdc532b8d644329456004be1a5d5abe54e1d93))
+* **ft8:** scaffold tuxlink-ft8 clean-room FT-8 decoder crate + L0 plan ([aa77570](https://github.com/cameronzucker/tuxlink/commit/aa7757092df74606d1fa702dca03e8e164e16bcf))
+* **testserver:** scenario-driven ports over the real MCP router (cnz5o tasks 1-5,7) ([81c1c7b](https://github.com/cameronzucker/tuxlink/commit/81c1c7bba849202d5a9aec1e7aa7eadce486f220))
+
+
+### Bug Fixes
+
+* **elmer:** New-conversation button invisible until hover — hide pane via opacity, not display:none ([72a199b](https://github.com/cameronzucker/tuxlink/commit/72a199b9d6bfc579be1f29d547397664ba40345c))
+* **elmer:** New-conversation glyph invisible — SVG collapses to width:0 in flex button (revert opacity misdiagnosis) ([30da7c0](https://github.com/cameronzucker/tuxlink/commit/30da7c07f9410d74fdebd460bff9b7286ff779fb))
+* **elmer:** remount ModelForm on tile switch so fields don't carry over stale ([97a1838](https://github.com/cameronzucker/tuxlink/commit/97a183861fa065a6323918532ad41a76086bf2cb))
+* **elmer:** require valid TLS for non-loopback model endpoints ([3f5c983](https://github.com/cameronzucker/tuxlink/commit/3f5c983a3e8461598a1680f6234128e1bae91a82))
+* **ft8:** clippy needless_range_loop in ldpc.rs syndrome + test (T0.5) ([5ebbe15](https://github.com/cameronzucker/tuxlink/commit/5ebbe15230675b61ee325af8215b566e53a51828))
+* **ft8:** satisfy clippy -D warnings in message.rs (T0.2 follow-up) ([b33f25c](https://github.com/cameronzucker/tuxlink/commit/b33f25c8215b18a90de89b1cafb5a4cb2c0e7788))
+* **testserver:** clippy-clean under --all-targets -D warnings ([1f694fd](https://github.com/cameronzucker/tuxlink/commit/1f694fd61154c093c3a86afea7e25a15be0ffeb1))
+
+
+### Refactors
+
+* **testserver:** hand-build fixture schema, drop schemars dep ([ce5a512](https://github.com/cameronzucker/tuxlink/commit/ce5a5122fd44df2d4fb9db96f5c2c7c164d3c0d7))
+
 ## [0.81.0](https://github.com/cameronzucker/tuxlink/compare/v0.80.0...v0.81.0) (2026-07-05)
 
 
