@@ -32,7 +32,9 @@ the GPL `.dat` matrix files.
 | CRC-14 input length | 82 bits (77 payload + 5 zero) | QEX 2020 §3; `ft8_lib` `ftx_add_crc` (`96-14`) (MIT) |
 | Gray map (bits→tone) | `kFT8_Gray_map = {0,1,3,2,5,6,4,7}`; `gray_decode` is its inverse (QEX Table 3 tone→bits) | `ft8_lib` `constants.c` `kFT8_Gray_map` + `encode.c` (MIT); QEX 2020 Table 3 |
 | Costas block offsets | sync groups at symbol indices `0, 36, 72` (7 symbols each); info fills `7..36` & `43..72` | `ft8_lib` `constants.h` `FT8_SYNC_OFFSET=36`, `FT8_NUM_SYNC=3` + `encode.c` (MIT); QEX 2020 §4 |
-| LDPC(174,91) parity matrix + generator | TBD (T0.5) — from MIT `ft8_lib`, **NOT** WSJT-X | `ft8_lib` (MIT) |
+| LDPC(174,91) generator matrix | `kFTX_LDPC_generator[83][12]` — 83 rows × 91 bits (12 bytes, MSB-first, low 5 bits of byte 11 unused); parity bit `i` = GF(2) dot-product of row `i` with the 91-bit msg+CRC | `ft8_lib` `constants.c` `kFTX_LDPC_generator` + `encode.c` `encode174` (MIT), **NOT** WSJT-X `generator.dat`; QEX 2020 §3 |
+| LDPC(174,91) parity-check incidence | `kFTX_LDPC_Nm[83][7]` (per-check incident codeword bits, 1-origin, `0` sentinel on 6-bit checks) + `kFTX_LDPC_Num_rows[83]`; syndrome = XOR of incident bits per check | `ft8_lib` `constants.c` `kFTX_LDPC_Nm`/`kFTX_LDPC_Num_rows` + `ldpc.c` `ldpc_check` (MIT), **NOT** WSJT-X `parity.dat`; QEX 2020 §3 |
+| LDPC codeword ordering | systematic-first: bits `0..91` = msg+CRC verbatim, `91..174` = 83 parity bits (parity-check order); 22-byte MSB-first pack, checksum starts at bit 91 | `ft8_lib` `encode.c` `encode174` byte layout + `constants.h` `FTX_LDPC_{N,K,M,N_BYTES,K_BYTES}` (MIT) |
 | Soft-demapper LLR scale | TBD (T1.1) | `ft8_lib` decode (MIT) |
 | Callsign hash (10/12/22-bit) | multiplier `47055833459` (`0xAF5A2E6F3`); n12=n22>>10, n10=n22>>12 | `ft8_lib` `message.c` `save_callsign` (MIT); QEX Table 2 `h22/h12/h10` |
 | Payload byte length | 10 bytes (77 bits, top 3 unused) | `ft8_lib` `message.h` `FTX_PAYLOAD_LENGTH_BYTES` (MIT) |

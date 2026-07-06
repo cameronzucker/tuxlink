@@ -61,6 +61,14 @@ pub mod crc;
 /// `symbols` module docs.
 pub mod symbols;
 
+/// FT-8 LDPC(174,91) forward error correction: systematic encode (append 83
+/// parity bits to the 91 message+CRC bits) and syndrome / codeword validity.
+/// The belief-propagation decoder is a later task (T1.1) and is not here.
+/// Provenance: QEX 2020 §3 + MIT `ft8_lib` `constants.c` (generator + `Nm`
+/// tables) / `encode.c` (`encode174`) / `ldpc.c` (`ldpc_check`); see `ldpc`
+/// module docs.
+pub mod ldpc;
+
 #[cfg(test)]
 mod tests {
     use super::consts;
