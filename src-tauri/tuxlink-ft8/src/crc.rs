@@ -245,8 +245,10 @@ mod tests {
     // ── A wrong poly / bit order MUST fail the KATs ─────────────────────────
     #[test]
     fn wrong_poly_fails_kat() {
-        // Re-run the division with the full 0x6757 poly (bug: includes x^14) and
-        // confirm it does NOT match the pinned KAT, proving the KAT discriminates.
+        // Prove the KAT discriminates the polynomial. Note 0x6757 (QEX) and 0x2757
+        // (ft8_lib) are the SAME 14-bit poly — 0x6757 & 0x3FFF == 0x2757 — since the
+        // x^14 term is implicit and masked in a 14-bit CRC. So a genuinely wrong poly
+        // must differ in the LOW 14 bits to change the result.
         fn crc_with_poly(message: &[u8], num_bits: usize, poly: u16) -> u16 {
             let mut rem: u16 = 0;
             let mut ib = 0;
@@ -264,7 +266,10 @@ mod tests {
             rem & CRC_MASK
         }
         assert_eq!(crc_with_poly(&[0x80], 8, CRC_POLYNOMIAL), 0x2f7e);
-        assert_ne!(crc_with_poly(&[0x80], 8, 0x6757), 0x2f7e);
+        // QEX's 0x6757 is the SAME poly (bit 14 masked) → identical CRC.
+        assert_eq!(crc_with_poly(&[0x80], 8, 0x6757), 0x2f7e);
+        // A poly differing in the low 14 bits (here bit 0) MUST change the CRC.
+        assert_ne!(crc_with_poly(&[0x80], 8, 0x2756), 0x2f7e);
     }
 
     // ── add_crc / extract_crc / check_crc round-trip ────────────────────────
