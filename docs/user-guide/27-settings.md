@@ -139,6 +139,35 @@ Open a VARA HF or VARA FM connection panel. VARA runs as a separate modem
 application, so Tuxlink stores the TCP host, command port, data port, and
 bandwidth used to talk to that modem.
 
+## AI agent model endpoint
+
+Tuxlink's optional AI agent (Elmer) talks to a model over an HTTP endpoint set in
+**Tools → Connect an AI Agent…**. The agent is the model: Tuxlink sends the
+conversation to the endpoint and then executes the tool-calls the model returns.
+The endpoint is therefore a trusted control channel, and its transport is gated
+accordingly.
+
+- **Local (default, recommended).** A loopback endpoint such as
+  `http://127.0.0.1:11434/v1/chat/completions` (a local Ollama or llama.cpp
+  server) runs in the same trust domain as Tuxlink and is accepted over plain
+  HTTP. This is the first-class path; most operators need nothing else.
+- **Cloud.** A provider endpoint such as `https://api.openai.com/v1/chat/completions`
+  is reached over TLS. An API key (stored in the OS keyring, never in the URL)
+  authorizes usage; TLS authenticates the provider.
+- **Remote self-hosted.** A model on another machine on the network **must** be
+  reached over `https` with a certificate the running machine already trusts.
+  Plain `http` to a non-loopback host is refused: an on-path device could rewrite
+  the tool-calls Tuxlink executes. Front the model with a TLS terminator (Caddy,
+  nginx, Traefik) or run a server that serves its own certificate (vLLM,
+  `llama-server` with `--ssl-cert-file`), issued by an internal CA the client
+  machine trusts. Tuxlink does not issue or install certificates and does not
+  accept self-signed certificates that no trusted CA vouches for. An operator who
+  has not secured the channel uses a local or cloud endpoint instead.
+
+A refused endpoint reports why (unsupported scheme, non-loopback over plain HTTP,
+link-local/metadata range, or credentials in the URL). Correct the endpoint and
+retry.
+
 ## Pending inbound review
 
 The dashboard ribbon's **On connect** control sets what happens when CMS offers
