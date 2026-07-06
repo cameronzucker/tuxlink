@@ -608,7 +608,7 @@ pub fn pack_free_text(text: &str) -> Result<Payload, PackError> {
     for idx in 0..13 {
         let c = if idx < bytes.len() { bytes[idx] } else { b' ' };
         let cid = nchar(c, T_FULL).ok_or(PackError::FreeText)?;
-        let mut rem = cid as u32;
+        let mut rem = cid;
         for i in (0..9).rev() {
             rem += b71[i] as u32 * 42;
             b71[i] = (rem & 0xff) as u8;
@@ -664,9 +664,9 @@ fn telemetry_payload_from_b71(b71: &[u8; 9]) -> Payload {
 fn b71_from_payload(p: &Payload) -> [u8; 9] {
     let mut b71 = [0u8; 9];
     let mut carry = 0u8;
-    for i in 0..9 {
-        b71[i] = (carry << 7) | (p.bytes[i] >> 1);
-        carry = p.bytes[i] & 0x01;
+    for (dst, &src) in b71.iter_mut().zip(p.bytes.iter()) {
+        *dst = (carry << 7) | (src >> 1);
+        carry = src & 0x01;
     }
     b71
 }
