@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "PLACEHOLDER schema for the fixture `world` object. The canonical schema is Rust-generated (testserver Task 2) and written to src-tauri/tuxlink-mcp-testserver/tests/fixtures/world.schema.json; point validation at it via TUXLINK_WORLD_SCHEMA or an explicit path once that artifact lands. This placeholder enforces only the cross-half contract invariant: the non-optional `modem` + `position` DTOs must be present.",
+  "type": "object",
+  "required": ["modem", "position"],
+  "properties": {
+    "stations": {
+      "type": "object",
+      "properties": {
+        "gateways": { "type": "array" },
+        "fetched_at_ms": { "type": ["integer", "null"] },
+        "operator_grid": { "type": ["string", "null"] }
+      }
+    },
+    "rig": {
+      "type": ["object", "null"]
+    },
+    "modem": {
+      "type": "object",
+      "required": ["kind", "connected", "state"],
+      "properties": {
+        "kind": { "type": "string" },
+        "connected": { "type": "boolean" },
+        "state": { "type": "string" }
+      }
+    },
+    "position": {
+      "type": "object",
+      "required": ["has_fix", "grid", "source"],
+      "properties": {
+        "has_fix": { "type": "boolean" },
+        "grid": { "type": "string" },
+        "source": { "type": "string" }
+      }
+    },
+    "solar": {
+      "type": ["object", "null"]
+    }
+  }
+}

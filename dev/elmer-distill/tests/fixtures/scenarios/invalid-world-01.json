@@ -1,0 +1,20 @@
+{
+  "id": "invalid-world-01",
+  "family": "stations",
+  "depth": 1,
+  "taint_state": "clean",
+  "prompt": "A world missing the required non-optional DTOs (modem + position).",
+  "spec": {
+    "required_tools": [],
+    "ordering": [],
+    "staged": [],
+    "requires_arm": false,
+    "forbids_tainted_egress": true
+  },
+  "world": {
+    "stations": {
+      "gateways": [],
+      "operator_grid": "CN85"
+    }
+  }
+}
