@@ -25,7 +25,7 @@ use thiserror::Error;
 
 use tuxlink_mcp_core::ports::{
     ArdopConfigDto, AudioDevicesDto, BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto,
-    ConfigViewDto, DocsHitDto, FolderDto, LogLineDto, ModemStatusDto, PacketConfigDto,
+    ConfigViewDto, DocsHitDto, LogLineDto, ModemStatusDto, PacketConfigDto,
     ParsedMessageDto, PathPredictionDto, PositionStatusDto, RigConfigDto, RigStatusDto,
     SerialDeviceDto, SolarSnapshotDto, StationListDto, VaraConfigDto,
 };
@@ -184,6 +184,7 @@ pub fn resolve_scenario(raw: Option<String>) -> Result<Option<Arc<World>>, Fixtu
     match raw {
         Some(p) if !p.trim().is_empty() => {
             let fixture = load_fixture(Path::new(p.trim()))?;
+            eprintln!("{SCENARIO_ENV}: loaded scenario '{}'", fixture.id);
             Ok(Some(Arc::new(fixture.world)))
         }
         _ => Ok(None),
@@ -209,6 +210,11 @@ pub fn load_scenario_from_env() -> Result<Option<Arc<World>>, FixtureError> {
 // and an API-surface risk) for a contract this simple.
 // ---------------------------------------------------------------------------
 
+// Test-support only: the schema + field list are consumed by the drift tests
+// below and by the Python half's own committed schema, not by the running
+// binary — so gate them behind `cfg(test)` to stay clippy-clean under
+// `--all-targets -D warnings`.
+#[cfg(test)]
 pub mod schema {
     use serde_json::{json, Value};
 
@@ -261,6 +267,7 @@ pub mod schema {
     }
 }
 
+#[cfg(test)]
 pub use schema::fixture_json_schema;
 
 #[cfg(test)]

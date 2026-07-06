@@ -140,6 +140,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // which hold the REAL EgressGuard — are UNCHANGED in both branches so the
     // gate still runs for real; the harness measures the read-tier fabrication,
     // not the guard.
+    #[allow(clippy::type_complexity)]
     let (status, mailbox, search, config, devices, logs, stations, prediction): (
         Arc<dyn StatusPort>,
         Arc<dyn MailboxPort>,
