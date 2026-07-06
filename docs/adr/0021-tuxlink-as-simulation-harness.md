@@ -2,150 +2,226 @@
 
 Date: 2026-07-05
 
-Status: Proposed (full build gated on the PoC fidelity result)
+Status: Accepted (operator-directed full build, 2026-07-05). The fidelity
+contract-diff and A/B measurement are validation outputs of the harness and
+inform whether to later invest in below-seam logic parity; they do not gate
+building the harness.
 
 Deciders: Cameron Zucker (operator), delta-basil-fen (agent)
+
+Reviewers: five-round Codex adversarial review, 2026-07-05 (agents
+granite-ivy-sequoia, arroyo-poplar-sandbar, glade-opossum-basalt, and two
+unnamed rounds). Findings are folded into the decision and the watched failure
+modes below.
 
 ## Context
 
 Elmer distillation trains and evaluates an agent against a Python simulator
-(`dev/elmer-distill/src/elmer_distill/simulator.py`) that reimplements the
-Tuxlink MCP router's read-path logic in a second language: deterministic gateway
-synthesis, position and rig state, catalog and search returns, session state. A
-second, legacy driver (`dev/elmer-distill/reference/harness.py`) returns a bare
-success marker (`{"ok": true, "note": "... stub"}`) for any tool it does not
-model.
+(`dev/elmer-distill/src/elmer_distill/simulator.py`) and a legacy reference
+driver (`dev/elmer-distill/reference/harness.py`). The active training/eval path
+(`teacher.py` → `StatefulSimulator.apply`) returns `{"ok": true, "tool": name}`
+for every unmodeled read tool — `find_stations`, `rig_status`, `modem_get_status`,
+`position_status`, `solar_conditions`, `predict_path`. The model reasons over
+these empty success markers and learns to invent structured domain data
+(gateway lists, radio state, solar indices, path reliability) because the
+environment rewards invention. Grounded station data exists only in the *legacy*
+reference harness, not the active path.
 
-Maintaining a parallel simulator carries two costs:
+Two costs follow from a separate simulator:
 
-1. **Drift.** Any behavior the reimplementation gets subtly wrong, or fails to
-   track as the Rust router evolves, teaches the student a distribution the real
-   application never produces. The student then confabulates against the real
-   tool surface it meets at inference time. Parity is a manual, unenforced
-   obligation.
-2. **Fabrication at the tool boundary.** Where the simulator lacks a real model
-   for a tool, it returns a success marker or a memorizable constant instead of
-   a structured domain return. The agent reasons over fake station lists and
-   fake radio state and learns to invent, because the environment rewards
-   invention. This class of artifact (fabrication, stall, false-sent) is the
-   suspected dominant driver of the distillation failures observed through
-   iter-3.
+1. **Fabrication at the tool boundary.** Every `{ok:true}` return is a data void
+   the model fills by confabulating. This is the suspected dominant driver of the
+   distillation failures observed through iter-3.
+2. **Drift.** Any behavior the simulator models is a second implementation that
+   must be hand-kept in parity with the evolving Rust router.
 
-The router already exposes a clean dependency-injection seam. Each MCP tool in
+The router already exposes a dependency-injection seam. Each MCP tool in
 `src-tauri/tuxlink-mcp-core/src/router.rs` dispatches to a port trait method
-(`src-tauri/tuxlink-mcp-core/src/ports.rs`, roughly twelve `Arc<dyn Port>`
-traits held in `McpState`) and JSON-encodes the returned DTO. A separate
-`tuxlink-mcp-testserver` binary already wires `McpState` with hard-coded `Mock*`
-ports while constructing the real `EgressGuard`. The production monolith never
-links the testserver or its mocks.
+(`src-tauri/tuxlink-mcp-core/src/ports.rs`) held as `Arc<dyn Port>` in
+`McpState`. A separate `tuxlink-mcp-testserver` binary wires `McpState` with
+hard-coded `Mock*` ports (`mocks.rs`) while constructing the real `EgressGuard`.
+The production monolith wires the same slots with `Monolith*Port` adapters
+(`src-tauri/src/mcp_ports.rs`, `src-tauri/src/lib.rs:1406`) and never links the
+testserver.
+
+A separate headless agent frontend already exists: `src-tauri/d3zwe` drives the
+real bounded agent loop (`tuxlink-agent-runner`, shared with the Elmer pane)
+against the MCP server over an rmcp Unix-domain-socket client
+(`UdsToolInvoker`), using an OpenAI-compatible provider (`OpenAiProvider`, key
+from `D3ZWE_API_KEY`), and prints the transcript and outcome.
 
 Refusal and restraint training are out of scope for this and every Elmer work
-item. Injection resistance is owned by engineering and administrative controls
-(the egress guard, operator arm), per the operator decision that closed
-tuxlink-grg1i and rescoped tuxlink-0mudm. This ADR does not train, reward, or
-grade refusal behavior.
+item; injection resistance is owned by the egress guard and the operator (the
+closed tuxlink-grg1i, the rescoped tuxlink-0mudm). This ADR does not train,
+reward, or grade refusal.
+
+## What runs for real, and what does not (parity, precisely)
+
+The adversarial review established that the business logic for data-return tools
+lives in `Monolith*Port` (`src-tauri/src/mcp_ports.rs`), *below* the port seam:
+`MonolithStationPort` runs `curate_gateway`, distance/bearing, and nearest-first
+sorting; `MonolithStatusPort` derives backend/modem state and applies rig-safety
+policy; `MonolithComposePort` performs real staging. A fixture-backed mock port
+returns synthetic data and does **not** execute that logic.
+
+Therefore the harness delivers, by construction:
+
+- **Router and tool-schema parity** — the real MCP router dispatch, argument
+  validation, tool schema, DTO serialization, and error mapping.
+- **Real guard and taint** — the testserver constructs the real `EgressGuard`;
+  arm/taint/egress decisions and post-read taint are genuine.
+- **Data-shape and serialization fidelity** — the agent receives results in the
+  exact real DTO wire shape (`GatewayDto`, `RigStatusDto`, …) instead of
+  `{ok:true}`. This is the whole anti-fabrication property: what the agent sees
+  and learns from is the shipped result shape, populated with scenario data.
+
+It does **not** deliver, at the mock-port seam:
+
+- **Business-logic parity** — `curate_gateway`, distance computation, status
+  derivation, and staging do not execute; the fixture supplies their outputs
+  directly. Whether the real function computed a distance or the fixture stated
+  it makes no difference to what the agent observes, but it means the mock is
+  still a (thin) second implementation of each port's *output*, not its *logic*.
+
+Full logic parity would require injecting synthetic raw data *below* the real
+`Monolith*Port` implementations (a synthetic station cache, a synthetic rig data
+source), which requires linking the Tauri monolith or refactoring every
+`Monolith*Port` to accept an injectable source. That is a separate, larger
+effort recorded under Future work. It changes nothing the agent observes, so it
+is not required for the anti-fabrication goal.
 
 ## Decision
 
 **1. The real Rust MCP router is the training and evaluation environment.** The
-router's own curation, distance, staging, and state logic runs for real against
-synthetic inputs. Parity with the shipped application becomes tautological
-because there is no second implementation of that logic to drift.
+harness drives the real MCP router and the real guard; only the data a port
+returns is synthetic.
 
 **2. Synthetic state is injected at the tool-result port boundary, not at the
-transport or protocol layer.** Agentic behavior is a function of tool results,
-not modem internals. The hard-coded `Mock*` ports in `tuxlink-mcp-testserver`
-evolve into scenario-driven fixtures: a mock port returns values loaded from a
-scenario fixture instead of constants. No code is added to `router.rs`, and no
-Cargo feature is toggled in the production monolith.
+transport or protocol layer.** The hard-coded `Mock*` ports in
+`tuxlink-mcp-testserver` become scenario-driven fixtures loaded from a file named
+by a new `TUXLINK_TEST_SCENARIO` environment variable. Coverage spans every
+read-path data port the simulator stubs: `StatusPort`, `StationPort`,
+`PredictionPort`, `SearchPort`, `MailboxPort`, `ConfigPort`, `DevicePort`,
+`LogPort`. Fixtures carry data in the **exact real DTO wire shapes**; a JSON
+Schema generated from the Rust fixture types is the single source of truth and
+validates the Python-side fixtures.
 
-**3. The mechanism is additive and test-mode-gated by construction.** The
-testserver is a distinct binary. A single new environment variable,
-`TUXLINK_TEST_SCENARIO`, points the testserver at a fixture file. Absence of the
-variable preserves the current hard-coded mock behavior. Production transmit
-paths are never touched.
+**3. The mechanism is additive and test-mode-gated, enforced mechanically.** The
+testserver is a distinct binary; absence of `TUXLINK_TEST_SCENARIO` preserves
+current behavior. A CI grep-gate asserts that `TUXLINK_TEST_SCENARIO` and the
+fixture loader/types never appear under `src-tauri/src` or
+`src-tauri/tuxlink-mcp-core` (the production-linked crates, one of which carries
+a `test-support` mock feature that is an attractive wrong home for this code).
 
-**4. One scenario artifact serves four uses** — train the student, gate
+**4. The agent is driven by the existing `d3zwe` frontend, not a new client.**
+`d3zwe` runs the real agent loop against the testserver socket with an
+OpenRouter-configured `OpenAiProvider`. No Python MCP client is built. The
+`harness_oai.py` OpenRouter-readiness gap is moot.
+
+**5. The fidelity measurement is a controlled A/B through one transport.** Both
+arms run the same model, the same agent loop (`d3zwe`), and the same MCP
+transport; only the port return differs — Arm A returns `{ok:true}`-equivalent
+stubs (reproducing the active simulator's fabrication surface), Arm B returns
+scenario fixtures in real DTO shapes. This eliminates the loop, transport, and
+schema confounds a "Python-sim vs real-MCP" comparison would carry. A separate
+tool-return contract diff enumerates, per tool, the stub return versus the real
+DTO shape — the direct map of the fabrication void.
+
+**6. Answer grounding is graded, and the decision rule is pre-committed.** The
+judge gains a content-grounding capability: a final answer that cites a
+callsign, frequency, grid, distance, or solar index absent from the scenario
+`world` is fabrication; declining when `world` lacks a datum is correct. The
+harness emits a divergence report and applies a pre-registered rule: **GO** when
+Arm A fabricates in at least two of three samples and Arm B eliminates at least
+two of those with no control regression; **AMBIGUOUS** when the delta is a single
+sample, a control diverges, or cause tags are stochastic or shape-mismatch;
+**NO-GO** when Arm B shows no fabrication reduction.
+
+**7. One scenario artifact serves four uses** — train the student, gate
 regressions per build, reproduce field agentic bugs end to end, observe a live
-agent. The fixture that seeds a port also supplies the judge's ground-truth, so
-environment and grader cannot disagree on the same run. This unification is the
-long-term aim; it is not delivered by the proof-of-concept.
-
-**5. The full build is gated on a proof-of-concept fidelity measurement.** The
-PoC (design: `docs/superpowers/specs/2026-07-05-tuxlink-as-sim-harness-poc-design.md`)
-drives the same OpenRouter model and the same two scenarios through both the
-active Python simulator and the real-MCP testserver, grades both with the same
-judge, and reports where the two environments diverge. A material,
-fabrication-class divergence eliminated by the real-MCP arm validates the full
-build. A negligible divergence indicates the Python simulator was already
-faithful on the measured axes and lowers the priority of the full build. The
-experiment succeeds as a measurement regardless of which verdict it produces.
+agent. The fixture that seeds a port also supplies the judge's ground truth, so
+environment and grader cannot disagree on a run.
 
 ## Alternatives considered
 
 ### A. Keep maintaining the Python simulator (status quo)
 
-Rejected as the standing cost this ADR exists to remove. The simulator must be
-hand-kept in parity with an evolving Rust router, and it fabricates where it
-lacks a model. The status quo is the source of the drift and fabrication
-described in Context.
+Rejected. It fabricates via `{ok:true}` and is a drift-prone second
+implementation.
 
 ### B. Deep transport or protocol simulation
 
-Rejected. Simulating the modem, TNC, or CMS wire protocol would be a large build
-and would not change what determines agentic behavior. The agent reacts to tool
-results, not to modem internals. Injecting at the result boundary reproduces the
-training-relevant behavior at a fraction of the cost.
+Rejected. Agent behavior is a function of tool results, not modem internals.
+Injecting at the result boundary reproduces the training-relevant behavior at a
+fraction of the cost.
 
 ### C. Tool-level injection inside the router (`#[cfg(test)]` in `router.rs`)
 
-Rejected. Adding a per-tool test-mode branch inside each tool method would
-pollute the production tool implementations, require rebuilding the monolith
-with test configuration to activate, and scale poorly (one environment variable
-per tool). The port-boundary seam already isolates the substitution to the
-testserver crate, which the production binary never links.
+Rejected. It would pollute production tool methods, require a test-configured
+monolith rebuild, and scale poorly. The port seam already isolates the
+substitution to the testserver crate.
+
+### D. Below-seam injection for full logic parity (in this build)
+
+Deferred, not rejected. Running `curate_gateway`/distance/status logic on
+synthetic inputs is the only way to make parity truly tautological, but it
+requires linking the monolith or refactoring every `Monolith*Port`. It changes
+nothing the agent observes, so it is Future work, not part of the harness.
+
+### E. Build a Python MCP-over-UDS client and OpenRouter loop
+
+Rejected. `d3zwe` already drives the real agent loop over rmcp/UDS with an
+OpenAI-compatible provider. Reimplementing it in Python would be lower fidelity
+(a second agent loop) and net-new transport work.
 
 ## Watched failure modes
 
-- **Confounded comparison.** If the two arms do not share the same scenario
-  `world`, a divergence conflates a difference in underlying data with a
-  difference in backend fidelity. The same fixture must seed both arms; this
-  requires a small change so the Python simulator reads fixture data rather than
-  its native generator for a scenario carrying a `world`.
-- **Cross-language schema drift.** The Rust fixture types and the Python fixture
-  types describe the same JSON. A round-trip test asserts agreement so the two
-  sides cannot silently diverge on field names or shapes — the very drift this
-  ADR removes for router logic must not reappear in the fixture schema.
-- **Testserver environment sprawl.** Adding one control variable per concept
-  recreates the per-tool-flag problem of alternative C. Scenario state travels in
-  the fixture file, not in a growing set of environment variables.
-- **Overreading the PoC.** Two scenarios establish a method and a first data
-  point. They do not settle what fraction of scenario space is reproducible at
-  the port boundary. That question remains open and is answered by breadth added
-  after the PoC, not by the PoC.
+- **False-green judge (highest risk).** Both arms run and the grader cannot tell
+  fabricated final content from grounded content. The current judge scores
+  tool-call choreography only; without the content-grounding capability of
+  Decision 6, the measurement is meaningless. This capability is load-bearing,
+  not optional.
+- **Confounded comparison.** Avoided by construction: both arms share model,
+  loop, and transport (Decision 5). The only variable is the port return.
+- **Cross-language schema drift.** Fixtures use real DTO shapes; a JSON Schema
+  generated from the Rust types validates the Python fixtures. A single-sample
+  round-trip is insufficient and is not the mechanism.
+- **Production leakage.** The fixture loader must stay in the testserver crate; a
+  CI grep-gate enforces it against the tempting `tuxlink-mcp-core` `test-support`
+  path.
+- **Non-optional DTO fields.** `ModemStatusDto` and `PositionStatusDto` fields
+  are non-optional; only `RigStatusDto` has nullable live fields. "Genuine null"
+  scenarios are constrained to genuinely optional fields; forcing nulls elsewhere
+  would require a production DTO change and is out of scope.
+- **Statistical noise.** With small N a one-sample swing is large; the
+  pre-registered decision rule (Decision 6) governs interpretation, and runs are
+  fixed-temperature with a recorded sample count.
 
 ## Consequences
 
-- Parity is tautological for any port covered by a scenario fixture: the real
-  router logic runs, so the simulated result matches the shipped result by
-  construction.
-- The Python simulator retires incrementally. Each port converted to a
-  scenario-driven fixture removes a slice of reimplemented logic that could
-  drift.
-- The fixture schema becomes the shared contract across training, regression,
-  bug-repro, and observation. A bug report, a training scenario, and a
-  regression fixture converge on one artifact type.
-- The testserver is Rust and the Raspberry Pi does not compile Rust comfortably.
-  Builds and verification run on R2. The plan states the build target explicitly.
-- The egress guard, taint machinery, and transmit paths are unchanged. The
-  testserver constructs the real guard; the fidelity comparison excludes the
-  guard path by operator direction and targets data-return fabrication only.
+- Parity is delivered at the shape/schema/guard level for every covered port; the
+  agent never again sees `{ok:true}` where the shipped app returns structured
+  data.
+- The Python simulator's read-path stubs are superseded by the real router plus
+  fixtures; the drift surface shrinks to the fixture schema, which is
+  contract-checked against the Rust types.
+- The fixture schema becomes the shared artifact across training, regression,
+  bug-repro, and observation.
+- The testserver is Rust; builds and verification run on R2 (`r2-poe`,
+  x86_64, currently rustc 1.75.0 — the workspace MSRV is 1.75, so the toolchain
+  is verified at build time and updated via `rustup` if a dependency demands it).
+- Guard, taint, and transmit paths are unchanged.
+
+## Future work
+
+- **Below-seam logic parity** (Alternative D): inject synthetic raw data beneath
+  the real `Monolith*Port` implementations so `curate_gateway`, distance, status
+  derivation, and staging execute against scenario inputs. Makes parity
+  tautological for logic, not only shape. Large; scoped separately.
 
 ## Propagation
 
 Per the documentation propagation contract, the canonical sources are this ADR
-(the decision) and the PoC design spec
-(`docs/superpowers/specs/2026-07-05-tuxlink-as-sim-harness-poc-design.md`, the
-detailed slice design). The work is tracked on bd issue tuxlink-cnz5o. No
-parallel restatement in CLAUDE.md is warranted until the approach is accepted
-past the PoC gate.
+(the decision) and the PoC/build design spec
+(`docs/superpowers/specs/2026-07-05-tuxlink-as-sim-harness-poc-design.md`). The
+work is tracked on bd issue tuxlink-cnz5o. No parallel restatement in CLAUDE.md.
