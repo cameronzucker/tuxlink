@@ -316,6 +316,17 @@ export function ModelTilePicker({
         ) : (
           <>
             <ModelForm
+              // Remount on tile switch so the form re-seeds from the new tile's
+              // props. ModelForm seeds its endpoint/model/advanced/key state from
+              // props once at mount (useState initializers) and never re-inits on
+              // prop change, so without this key React reconciles the SAME instance
+              // across the no-keyPageUrl tiles (localOllama/openrouter/custom) and
+              // the endpoint/model/num_ctx fields carry over stale — the tile chip
+              // updates (derived from the parent) but the fields lie. Mirrors the
+              // GetKeyCard remount at the top of this branch. selectedPreset.id is
+              // stable while editing (the parent endpoint only moves on tile SELECT,
+              // not on in-form typing), so this does not remount mid-edit.
+              key={selectedPreset?.id ?? 'custom'}
               onSave={onSave}
               onDetect={onDetect}
               detectState={detectState}
