@@ -28,8 +28,19 @@
   - Add the TLS rule in `validate_endpoint` (~line 177-204).
   - Update the module-level doc (top of file) and the `validate_endpoint` doc comment to state the rule.
   - Flip two existing tests that encode the closed hole; add new table tests. All in the `#[cfg(test)] mod tests` block (~line 304-610).
+- **Modify:** `src-tauri/src/config.rs` — fix the stale `ElmerConfig.agent_endpoint` doc comment (~line 1478-1479) that says the endpoint "Must resolve to a loopback address" and points at `LoopbackEndpoint::parse`. Operator endpoints are validated by `AgentEndpoint::parse` (remote-https allowed). (Codex adrev NIT, 2026-07-06.)
 - **Modify:** `docs/user-guide/27-settings.md` — add an "AI agent model endpoint" section documenting local / cloud / remote-self-hosted and the valid-TLS requirement.
 - **Check (likely no change):** `AGENTS.md` — parity check per CLAUDE.md's AGENTS.md contract.
+
+## Adversarial review dispositions (Codex, 2026-07-06)
+
+A Codex round on the spec+plan found **no TLS-gate bypass and no validation bypass** (every model request goes through `egress::build_vetted_client` with default TLS validation; every operator endpoint string is parsed before use). Verdict `DO-NOT-SHIP-AS-IS` for three fixable items, all folded in below:
+
+- **MED — userinfo ordering.** The new plaintext check sits inside `validate_endpoint`, which runs *before* `AgentEndpoint::parse`'s userinfo check. So `http://user:pass@<remote>` now returns `PlaintextRemoteRefused` instead of `UserinfoNotAllowed`, breaking two existing tests (`agent_endpoint_refuses_userinfo`, `agent_endpoint_refuses_username_only`). **Fix (contained):** flip both tests to `https://` (so they reach the userinfo check), add a precedence-doc test for the `http`+creds+remote case, and comment the deliberate ordering. Not moving userinfo into `validate_endpoint` (that would change `LoopbackEndpoint` behavior — scope creep). Fails closed either way; the message names only the host (no credential leak).
+- **LOW — parser-edge tests.** Add a lock test for loopback lookalikes (`localhost.`, `127.0.0.1.evil.com`, `0.0.0.0`, `[::]`) → all `PlaintextRemoteRefused` over http (they are Remote, not Loopback). Guards against future `url`-parser drift.
+- **NIT — stale config comment.** Fixed in `config.rs` (File Structure above).
+
+`bare-IP TLS` claim (angle 6) confirmed correct for this repo's native-tls/OpenSSL backend (iPAddress SAN required; textual-IP dNSName SAN insufficient). Spec updated with that precision.
 
 No other call site changes: the production callers in `src-tauri/src/elmer/config_commands.rs` (`AgentEndpoint::parse` at lines 353, 442, 513) already surface `EndpointError` as a string to the UI via `.map_err(|e| e.to_string())`, so the new variant's message reaches the operator with no wiring change. `egress.rs` parses only loopback/https endpoints in its tests, so it is unaffected.
 
@@ -161,6 +172,72 @@ In `endpoint.rs`, **replace** the existing `lan_accepted_with_flag` test (curren
     }
 ```
 
+**Also flip the two existing userinfo tests (Codex MED)** — they currently use `http://user:pass@…` (remote http), which now returns `PlaintextRemoteRefused` before the userinfo check. Replace `agent_endpoint_refuses_userinfo` (~line 516-524) and `agent_endpoint_refuses_username_only` (~line 602-609) with:
+
+```rust
+    /// Userinfo (user:pass@host) is refused. Uses https so the endpoint clears
+    /// the TLS gate and reaches the userinfo check. (A remote *http* endpoint is
+    /// refused as plaintext BEFORE userinfo is examined — see
+    /// agent_endpoint_plaintext_refused_before_userinfo.)
+    #[test]
+    fn agent_endpoint_refuses_userinfo() {
+        let err = AgentEndpoint::parse("https://user:pass@api.openai.com/v1").unwrap_err();
+        assert!(
+            matches!(err, EndpointError::UserinfoNotAllowed { .. }),
+            "expected UserinfoNotAllowed, got {err:?}"
+        );
+    }
+
+    /// Username-only (no password) is also refused. https so it reaches the check.
+    #[test]
+    fn agent_endpoint_refuses_username_only() {
+        let err = AgentEndpoint::parse("https://user@api.openai.com/v1").unwrap_err();
+        assert!(
+            matches!(err, EndpointError::UserinfoNotAllowed { .. }),
+            "username without password must also be refused; got {err:?}"
+        );
+    }
+```
+
+**Add the precedence-doc test and the loopback-lookalike lock test (Codex MED + LOW)** — place in the `mod tests` block:
+
+```rust
+    /// Deliberate precedence: a remote http endpoint WITH userinfo reports the
+    /// plaintext refusal first (validate_endpoint runs before the userinfo check
+    /// in AgentEndpoint::parse). Still fails closed; the message names only the
+    /// host, never the credentials.
+    #[test]
+    fn agent_endpoint_plaintext_refused_before_userinfo() {
+        let err = AgentEndpoint::parse("http://user:pass@192.168.1.50/v1").unwrap_err();
+        assert!(
+            matches!(err, EndpointError::PlaintextRemoteRefused { .. }),
+            "remote http+creds must report plaintext refusal first; got {err:?}"
+        );
+        assert!(!err.to_string().contains("pass"), "creds must not leak: {err}");
+    }
+
+    /// Hosts that superficially resemble loopback but are NOT must classify as
+    /// Remote and be refused over plain http — they cannot ride the loopback
+    /// plaintext exemption. Locks the boundary against future url-parser drift.
+    #[test]
+    fn loopback_lookalikes_refused_over_http() {
+        for raw in [
+            "http://localhost./v1",         // trailing dot: not literal "localhost"
+            "http://127.0.0.1.evil.com/v1", // loopback IP as a subdomain label
+            "http://0.0.0.0:8080/v1",       // unspecified v4, not loopback
+            "http://[::]:8080/v1",          // unspecified v6, not loopback
+        ] {
+            let err = validate_endpoint(raw, true).unwrap_err();
+            assert!(
+                matches!(err, EndpointError::PlaintextRemoteRefused { .. }),
+                "{raw} must be refused as plaintext remote; got {err:?}"
+            );
+        }
+    }
+```
+
+Note: the existing `userinfo_check_runs_before_remote_accept` test (~line 582) uses a **loopback** creds URL (`http://u:p@127.0.0.1`), which is exempt from the TLS rule, so it still returns `UserinfoNotAllowed` — leave it unchanged.
+
 - [ ] **Step 2: Add the `PlaintextRemoteRefused` variant.**
 
 In the `EndpointError` enum, immediately after the `RemoteNotAllowed` variant (after ~line 97), add:
@@ -251,6 +328,21 @@ In the `validate_endpoint` doc comment (the `///` block ~line 170-176), add one 
 ///   remote endpoints must use `https`. Loopback is exempt.
 ```
 
+- [ ] **Step 4b: Fix the stale `ElmerConfig` doc comment (Codex NIT).**
+
+In `src-tauri/src/config.rs`, replace the `agent_endpoint` doc comment (~line 1478-1479):
+
+```rust
+    /// The chat-completions endpoint URL. Operator-configured endpoints are
+    /// validated by `AgentEndpoint::parse`: a loopback host (`127.0.0.0/8` /
+    /// `::1` / `localhost`) may use `http`; a non-loopback host MUST use `https`
+    /// (qe6ie trust boundary); link-local/metadata ranges and credentials-in-URL
+    /// are always refused. The default is loopback.
+    ///
+    /// Default: local Ollama (`http://127.0.0.1:11434/v1/chat/completions`).
+    pub agent_endpoint: String,
+```
+
 - [ ] **Step 5: Verify in CI (the Pi cannot cold-build cargo).**
 
 Commit (Step 6) and push, then confirm the `verify` job for the pushed `headSha` is green on both arches. Do not run `cargo test` locally — it will not finish on this Pi. Expected: `clippy` clean (no MSRV-1.76 idioms introduced; the change uses only `match`, `!=`, and struct construction), and all `endpoint.rs` tests pass, including the flipped `lan_http_refused_with_flag` / `agent_endpoint_refuses_plaintext_rfc1918` and the new table tests.
@@ -265,7 +357,7 @@ gh run list --branch bd-tuxlink-qe6ie/remote-model-rce-reframe --limit 5 \
 - [ ] **Step 6: Commit.**
 
 ```bash
-git add src-tauri/tuxlink-agent-frontend/src/endpoint.rs
+git add src-tauri/tuxlink-agent-frontend/src/endpoint.rs src-tauri/src/config.rs
 git commit -F - <<'EOF'
 fix(elmer)!: require valid TLS for non-loopback model endpoints
 

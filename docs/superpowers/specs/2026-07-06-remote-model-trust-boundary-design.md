@@ -142,6 +142,14 @@ Two consequences for the endpoint operators will actually enter:
    is refused *only* when no valid cert backs it, which is the same rule applied to
    everything. (People really do run IP-SAN TLS in prod; we neither bless nor block
    the host form — only the transport.)
+
+   **Backend precision (verified against `src-tauri/Cargo.toml:70`, confirmed by the
+   2026-07-06 Codex adversarial round):** this build uses reqwest's default TLS =
+   **native-tls / OpenSSL** (no `rustls-tls` feature). On that backend a bare-IP
+   `https://` URL validates when the cert carries a matching **`iPAddress` SAN**
+   trusted by the OS; a cert that only lists the textual IP as a `dNSName` SAN does
+   **not** match. This is a compatibility detail, not a security property — the
+   security property is that plaintext-to-remote is refused regardless of host form.
 2. **The port is arbitrary** — whatever the terminator listens on (commonly 443).
    `:11434` in an endpoint URL implies raw Ollama and therefore cleartext; it is not
    the TLS port.
