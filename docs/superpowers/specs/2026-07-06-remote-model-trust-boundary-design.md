@@ -113,6 +113,42 @@ No TLS code changes: `https` acceptance here relies on reqwest's existing defaul
 validation in `build_vetted_client`. The design's job is purely to *stop allowing
 `http` to a remote host*.
 
+### What presents the cert (Ollama does not — this is deployment, not a Tuxlink feature)
+
+Ollama serves **plain HTTP on `:11434` and has no TLS support**; `https://<host>:11434`
+against *raw* Ollama is impossible. For a remote endpoint to present valid TLS,
+some process the operator runs must own the TLS listener and bind the cert:
+
+- **A reverse proxy / TLS terminator in front of Ollama** — Caddy (auto-HTTPS),
+  nginx + certbot, Traefik, or a TLS-terminating tunnel. It listens on a TLS port
+  with a cert and forwards cleartext to `127.0.0.1:11434` on the model box; Ollama
+  itself stays on loopback. This is the Ollama path.
+- **A TLS-capable inference server** — `llama-server` (`--ssl-cert-file` /
+  `--ssl-key-file`) or vLLM (`--ssl-certfile` / `--ssl-keyfile`) bind the cert
+  themselves. Ollama is not in this group.
+
+Two consequences for the endpoint operators will actually enter:
+
+1. **Usually a *named* host — but bare-IP TLS is permitted, not special-cased.**
+   Standard TLS validation matches the cert SAN against whatever you connected to.
+   Public CAs will not issue for private IPs, so the *common* realistic endpoint is
+   `https://ollama.internal.example/…` (internal DNS + a cert whose SAN matches that
+   name — the "internal domain CA" path in decision 3). **But a bare-IP endpoint is
+   allowed to work:** a server that presents a cert with a matching **IP-SAN**
+   (issued by a CA the operator's OS trusts — an internal CA, or a self-signed root
+   they installed) validates fine, and `https://192.168.x.y/…` is then accepted. The
+   design does **not** discourage or refuse bare IPs — the pure scheme rule passes
+   them through and **reqwest's standard validation is the sole arbiter**. A bare IP
+   is refused *only* when no valid cert backs it, which is the same rule applied to
+   everything. (People really do run IP-SAN TLS in prod; we neither bless nor block
+   the host form — only the transport.)
+2. **The port is arbitrary** — whatever the terminator listens on (commonly 443).
+   `:11434` in an endpoint URL implies raw Ollama and therefore cleartext; it is not
+   the TLS port.
+
+None of this is Tuxlink's to build or facilitate — it is the documented operator
+deployment. Tuxlink's contribution remains: require valid TLS, refuse otherwise.
+
 ### Error surface
 
 Add `EndpointError::PlaintextRemoteRefused { host }` (or equivalently-named
@@ -170,12 +206,18 @@ those who do can present a real cert), this is acceptable, but the spec commits 
 Pure-function table tests in `endpoint.rs` (the accept/reject table is already the
 CI-tested unit surface — extend it):
 
-- `http://192.168.1.50:11434/...` (non-loopback + http) → **refused**
-  (`PlaintextRemoteRefused`), where today it is accepted. This is the regression
-  lock for the hole.
-- `https://192.168.1.50:11434/...` (non-loopback + https) → accepted.
-- `https://model.internal.example/...` (named non-loopback + https) → accepted.
+- `http://192.168.1.50:11434/...` (non-loopback IP + http — the raw-Ollama case)
+  → **refused** (`PlaintextRemoteRefused`), where today it is accepted. This is the
+  regression lock for the hole.
+- `https://model.internal.example/...` (named non-loopback + https — the realistic
+  proxy-fronted endpoint) → accepted.
 - `http://model.internal.example/...` (named non-loopback + http) → **refused**.
+- `https://192.168.1.50/...` (bare-IP + https) → accepted by *this* pure rule (host
+  is non-loopback, scheme is https). Whether the request then succeeds is **reqwest's**
+  call at connect time: it succeeds if the server presents a valid **IP-SAN** cert
+  the OS trusts (a real non-rev-proxy pattern — vLLM / `llama-server` with an internal
+  CA), and fails otherwise. The validator enforces the scheme rule *only*; it must not
+  special-case, discourage, or block bare IPs — cert matching is reqwest's job.
 - `http://127.0.0.1:11434/...`, `http://localhost:8080/...`, `http://[::1]/...`
   (loopback + http) → accepted (unchanged — regression lock for first-class local).
 - `https://127.0.0.1/...` (loopback + https) → accepted (unchanged).
