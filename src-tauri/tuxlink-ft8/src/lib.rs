@@ -82,6 +82,15 @@ pub mod llr;
 /// Correction" + textbook normalized min-sum; see `decode` module docs.
 pub mod decode;
 
+/// T1.2 AWGN-vs-SNR go/no-go harness (test-only): the noncoherent 8-FSK AWGN
+/// tone model, the SNR-in-2500-Hz conversion, a dependency-free deterministic
+/// PRNG, the self-verifying calibration against closed-form FSK theory, and the
+/// coded decode-probability sweep. Compiled only under `cfg(test)`. Provenance:
+/// QEX 2020 §4/§6/§8 + Table 5/6; Proakis noncoherent-MFSK Pe; SplitMix64 +
+/// Box–Muller (public domain); see `awgn` module docs + `PROVENANCE.md`.
+#[cfg(test)]
+mod awgn;
+
 #[cfg(test)]
 mod tests {
     use super::consts;
