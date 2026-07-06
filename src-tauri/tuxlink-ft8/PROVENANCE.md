@@ -28,8 +28,10 @@ the GPL `.dat` matrix files.
 | Info symbols | 58 (× 3 bits = 174) | QEX 2020 §4 |
 | Payload / codeword / msg+CRC | 77 / 174 / 91 | QEX 2020 §2–3 |
 | Tone spacing / symbol time | 6.25 Hz / 0.160 s | QEX 2020 §4, Table 4 |
-| CRC-14 polynomial | TBD (T0.3) — `0x6757` per QEX §3, `0x2757` low-14 in `ft8_lib` `crc.c`; pin by KAT | QEX 2020 §3 / `ft8_lib` (MIT) |
-| Gray map (symbol↔bits) | TBD (T0.4) | QEX 2020 Table 3 |
+| CRC-14 polynomial | `0x2757` (low-14, leading `x^14` dropped) = `0x6757 & 0x3FFF`; MSB-first, 14-bit register; computed over 77 payload bits **zero-extended to 82** | `ft8_lib` `constants.h` `FT8_CRC_POLYNOMIAL=0x2757` + `crc.c` `ftx_compute_crc`/`ftx_add_crc` (MIT); QEX 2020 §3 (`0x6757` incl. `x^14`) |
+| CRC-14 input length | 82 bits (77 payload + 5 zero) | QEX 2020 §3; `ft8_lib` `ftx_add_crc` (`96-14`) (MIT) |
+| Gray map (bits→tone) | `kFT8_Gray_map = {0,1,3,2,5,6,4,7}`; `gray_decode` is its inverse (QEX Table 3 tone→bits) | `ft8_lib` `constants.c` `kFT8_Gray_map` + `encode.c` (MIT); QEX 2020 Table 3 |
+| Costas block offsets | sync groups at symbol indices `0, 36, 72` (7 symbols each); info fills `7..36` & `43..72` | `ft8_lib` `constants.h` `FT8_SYNC_OFFSET=36`, `FT8_NUM_SYNC=3` + `encode.c` (MIT); QEX 2020 §4 |
 | LDPC(174,91) parity matrix + generator | TBD (T0.5) — from MIT `ft8_lib`, **NOT** WSJT-X | `ft8_lib` (MIT) |
 | Soft-demapper LLR scale | TBD (T1.1) | `ft8_lib` decode (MIT) |
 | Callsign hash (10/12/22-bit) | multiplier `47055833459` (`0xAF5A2E6F3`); n12=n22>>10, n10=n22>>12 | `ft8_lib` `message.c` `save_callsign` (MIT); QEX Table 2 `h22/h12/h10` |

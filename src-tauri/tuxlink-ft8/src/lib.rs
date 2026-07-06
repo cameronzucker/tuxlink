@@ -49,6 +49,18 @@ pub mod consts {
 /// Table 1/2 + MIT `ft8_lib` `message.c`/`text.c` (see `message` module docs).
 pub mod message;
 
+/// FT-8 CRC-14 over the source-encoded message (77 bits zero-extended to 82,
+/// forming the 91-bit message+CRC). Provenance: QEX 2020 §3 + MIT `ft8_lib`
+/// `crc.c`/`constants.h` (poly `0x2757` low-14 / `0x6757` with `x^14`); see
+/// `crc` module docs.
+pub mod crc;
+
+/// FT-8 codeword-bit <-> channel-symbol mapping: the Gray code (QEX 2020 Table 3)
+/// and Costas framing (`{Costas, 29 info, Costas, 29 info, Costas}` = 79 symbols).
+/// Provenance: QEX 2020 §4/Table 3 + MIT `ft8_lib` `constants.c`/`encode.c`; see
+/// `symbols` module docs.
+pub mod symbols;
+
 #[cfg(test)]
 mod tests {
     use super::consts;
