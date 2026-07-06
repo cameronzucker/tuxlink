@@ -45,6 +45,10 @@ pub mod consts {
     pub const SAMPLE_RATE_HZ: u32 = 12_000;
 }
 
+/// FT-8 77-bit message pack/unpack (source encoding). Provenance: QEX 2020
+/// Table 1/2 + MIT `ft8_lib` `message.c`/`text.c` (see `message` module docs).
+pub mod message;
+
 #[cfg(test)]
 mod tests {
     use super::consts;

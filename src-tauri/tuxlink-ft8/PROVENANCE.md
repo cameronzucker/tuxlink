@@ -32,6 +32,19 @@ the GPL `.dat` matrix files.
 | Gray map (symbol↔bits) | TBD (T0.4) | QEX 2020 Table 3 |
 | LDPC(174,91) parity matrix + generator | TBD (T0.5) — from MIT `ft8_lib`, **NOT** WSJT-X | `ft8_lib` (MIT) |
 | Soft-demapper LLR scale | TBD (T1.1) | `ft8_lib` decode (MIT) |
-| Callsign hash (10/12/22-bit) | TBD (T0.2) | `ft8_lib` `pack.c` (MIT) |
+| Callsign hash (10/12/22-bit) | multiplier `47055833459` (`0xAF5A2E6F3`); n12=n22>>10, n10=n22>>12 | `ft8_lib` `message.c` `save_callsign` (MIT); QEX Table 2 `h22/h12/h10` |
+| Payload byte length | 10 bytes (77 bits, top 3 unused) | `ft8_lib` `message.h` `FTX_PAYLOAD_LENGTH_BYTES` (MIT) |
+| Special-token limits | `MAX22=4194304`, `NTOKENS=2063592`, `MAXGRID4=32400` | `ft8_lib` `message.c` (MIT) |
+| Char tables | FULL(42) `" 0-9A-Z+-./?"`, ALNUM_SPACE_SLASH(38), ALNUM_SPACE(37), LETTERS_SPACE(27), ALNUM(36), NUMERIC(10) | `ft8_lib` `text.h` table comments (MIT); QEX Table 2 |
+| Basecall mixed-radix | `37·36·10·27·27·27` | `ft8_lib` `message.c` `pack_basecall` (MIT); QEX Table 2 `c28` |
+| Special c28 tokens | `DE=0, QRZ=1, CQ=2` | `ft8_lib` `message.c` `pack28`/`unpack28` (MIT) |
+| Grid/report sentinels | grid=g15; blank=`MAXGRID4+1`; RRR/RR73/73=`+2/+3/+4`; report=`MAXGRID4+35+dd` | `ft8_lib` `message.c` `packgrid`/`unpackgrid` (MIT); QEX Table 2 `g15/R1/r2` |
+| Free-text / telemetry pack | base-42 over 13 chars (f71) / 71-bit hex (t71), left-shift-by-1 into 10-byte payload | `ft8_lib` `message.c` `ftx_message_encode_free`/`_telemetry` (MIT); QEX Table 1 rows `0.0`/`0.5` |
+| Std message bit layout | `c28 r1 c28 r1 R1 g15`, `i3` at bits 74..76, `n3` at 71..73 | `ft8_lib` `message.c` `ftx_message_encode_std`/`ftx_message_get_i3`/`_get_n3` (MIT); QEX Table 1 |
+
+**Deferred to T0.2-follow-up** (marked `TODO(T0.2-follow-up)` in `message.rs`,
+not half-implemented): EU VHF (`i3=2`), RTTY RU (`i3=3`), full nonstandard-call
+type-4 packing (`pack58`/`unpack58`), DXpedition (`n3=1`), Field Day (`n3=3/4`),
+`CQ nnn`/`CQ a[bcd]` modifiers, and the `3DA0`/`3X` prefix work-arounds.
 
 Update this table in the same commit that introduces each constant.
