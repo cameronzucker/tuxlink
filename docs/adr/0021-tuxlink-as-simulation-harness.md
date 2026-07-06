@@ -118,24 +118,41 @@ a `test-support` mock feature that is an attractive wrong home for this code).
 OpenRouter-configured `OpenAiProvider`. No Python MCP client is built. The
 `harness_oai.py` OpenRouter-readiness gap is moot.
 
-**5. The fidelity measurement is a controlled A/B through one transport.** Both
-arms run the same model, the same agent loop (`d3zwe`), and the same MCP
-transport; only the port return differs — Arm A returns `{ok:true}`-equivalent
-stubs (reproducing the active simulator's fabrication surface), Arm B returns
-scenario fixtures in real DTO shapes. This eliminates the loop, transport, and
-schema confounds a "Python-sim vs real-MCP" comparison would carry. A separate
-tool-return contract diff enumerates, per tool, the stub return versus the real
-DTO shape — the direct map of the fabrication void.
+**5. Two complementary measurements.** The real MCP router always serializes a
+typed DTO, so a port cannot emit the simulator's literal `{ok:true}` non-answer
+through the router. The literal sim-vs-real comparison therefore lives in a
+model-free contract diff, and the confound-free A/B compares two real-DTO worlds.
+
+- **(A) Tool-return contract diff (no model).** For each covered tool, call the
+  active Python sim (returns `{ok:true}`) and the fixture-seeded testserver
+  (returns a populated real DTO) and diff the results. This is the complete,
+  direct map of the fabrication void and the primary evidence.
+- **(B) Behavioral A/B through one transport (with model).** Both arms run the
+  same model, the same agent loop (`d3zwe`), and the same MCP transport; only the
+  scenario `world` differs. **Arm GROUNDED** seeds a populated `world` (real
+  DTOs); **Arm VOID** seeds a data-void `world` in the real wire shape — empty
+  collections (`gateways`, search hits) and absent optional fields
+  (`RigStatusDto` all-`None`). Arm VOID is the router-faithful, in-distribution
+  analog of the sim's non-answer (the shipped app can return empty). The test:
+  does the agent fabricate data the tool did not provide. For DTOs with no void
+  representation (non-optional `ModemStatusDto`/`PositionStatusDto`), Arm VOID
+  supplies a minimal concrete state and Arm GROUNDED a specific one, testing
+  whether the model reports the provided state or invents a different one.
+- **Optional reference arm.** The active Python sim (`{ok:true}`) run on the
+  existing Python harness as a third data point, to confirm Arm VOID's
+  fabrication rate tracks the sim's. It does not use `d3zwe` (the sim is not an
+  MCP server), so its loop/transport difference is acknowledged, not confounding
+  the primary A/B.
 
 **6. Answer grounding is graded, and the decision rule is pre-committed.** The
 judge gains a content-grounding capability: a final answer that cites a
 callsign, frequency, grid, distance, or solar index absent from the scenario
 `world` is fabrication; declining when `world` lacks a datum is correct. The
 harness emits a divergence report and applies a pre-registered rule: **GO** when
-Arm A fabricates in at least two of three samples and Arm B eliminates at least
-two of those with no control regression; **AMBIGUOUS** when the delta is a single
-sample, a control diverges, or cause tags are stochastic or shape-mismatch;
-**NO-GO** when Arm B shows no fabrication reduction.
+Arm VOID fabricates in at least two of three samples and Arm GROUNDED eliminates
+at least two of those with no regression; **AMBIGUOUS** when the delta is a single
+sample or cause tags are stochastic or shape-mismatch; **NO-GO** when Arm GROUNDED
+shows no fabrication reduction.
 
 **7. One scenario artifact serves four uses** — train the student, gate
 regressions per build, reproduce field agentic bugs end to end, observe a live

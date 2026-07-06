@@ -46,18 +46,21 @@ transmit-path or production-crate change.
 ### Injection seam (Rust, testserver only)
 
 The `Mock*` ports in `src-tauri/tuxlink-mcp-testserver/src/mocks.rs` become
-scenario-driven. On startup the testserver reads `TUXLINK_TEST_SCENARIO` (a
-fixture path); absent, current hard-coded behavior is preserved. Each covered
-mock port returns:
+scenario-driven (implemented in a new `scenario_ports.rs` module to avoid
+contention on `mocks.rs`). On startup the testserver reads `TUXLINK_TEST_SCENARIO`
+(a fixture path); absent, current hard-coded behavior is preserved. A covered
+scenario port **always returns a real, typed DTO** built from the loaded `world`
+— the router cannot emit the simulator's `{ok:true}`, so there is no "stub mode."
+The A/B is two *fixtures*, not two code paths:
 
-- **fixture mode** — the scenario `world` value for that tool, serialized as the
-  real DTO;
-- **stub mode** — a `{"ok": true}`-equivalent, reproducing the active
-  simulator's fabrication surface for Arm A.
+- **grounded `world`** — populated data, yielding fully-populated DTOs;
+- **void `world`** — the data-void in the real wire shape: empty collections
+  (`gateways`, search hits) and absent optional fields (`RigStatusDto` all-`None`).
+  For DTOs with non-optional fields (`ModemStatusDto`, `PositionStatusDto`) the
+  void fixture supplies a minimal concrete state, since those cannot be null.
 
-Mode is selected per run (a fixture-level flag or a second env var; resolved in
-the plan). The real router and real `EgressGuard` are untouched. A CI grep-gate
-asserts `TUXLINK_TEST_SCENARIO` and the fixture loader/types never appear under
+The real router and real `EgressGuard` are untouched. A CI grep-gate asserts
+`TUXLINK_TEST_SCENARIO` and the fixture loader/types never appear under
 `src-tauri/src` or `src-tauri/tuxlink-mcp-core`.
 
 ### Fixture schema (cross-language, real DTO shapes)
@@ -97,20 +100,26 @@ datum is correct. This is net-new judgment, not wiring, and is load-bearing (ADR
 
 ### Measurement
 
-**Contract diff (per tool):** enumerate, for every covered tool, the stub return
-versus the real DTO fixture return. This is the direct map of the fabrication
-void and is produced without a model.
+**Contract diff (per tool, no model):** for every covered tool, call the active
+Python sim (`{ok:true}`) and the fixture-seeded testserver (populated real DTO)
+and diff the returns. The direct, complete map of the fabrication void; the
+primary evidence. Produced without a model.
 
-**Behavioral A/B (per scenario):** same model, same `d3zwe` loop, same UDS
-transport; Arm A = stub mode, Arm B = fixture mode. Grade both with the grounding
+**Behavioral A/B (per scenario, with model):** same model, same `d3zwe` loop,
+same UDS transport; only the seeded `world` differs — **Arm GROUNDED** = populated
+world, **Arm VOID** = data-void world (empty collections / `None` optionals /
+minimal concrete state for non-optional DTOs). Grade both with the grounding
 judge. Emit a divergence report: verdict delta, per-claim fabrication delta,
 tool-sequence delta, cause tag (fabricated-data, honest-decline, shape, noise).
-Runs are fixed-temperature with a recorded sample count N.
+Runs are fixed-temperature with a recorded sample count N. An optional reference
+arm runs the active Python sim (`{ok:true}`) on the existing Python harness to
+confirm Arm VOID tracks the sim's fabrication rate (its loop/transport difference
+is acknowledged, not part of the primary A/B).
 
-**Decision rule (pre-committed):** GO when Arm A fabricates in ≥2/3 samples and
-Arm B eliminates ≥2 of those with no control regression; AMBIGUOUS when the delta
-is a single sample, a control diverges, or cause tags are stochastic/shape;
-NO-GO when Arm B shows no fabrication reduction.
+**Decision rule (pre-committed):** GO when Arm VOID fabricates in ≥2/3 samples
+and Arm GROUNDED eliminates ≥2 with no regression; AMBIGUOUS when the delta is a
+single sample or cause tags are stochastic/shape; NO-GO when Arm GROUNDED shows
+no fabrication reduction.
 
 ## Scenarios
 
