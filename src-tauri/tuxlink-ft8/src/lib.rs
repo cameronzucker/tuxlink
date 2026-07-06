@@ -69,6 +69,19 @@ pub mod symbols;
 /// module docs.
 pub mod ldpc;
 
+/// FT-8 soft-demapper: 8 per-symbol FSK tone powers -> 174 variance-normalized
+/// codeword-bit LLRs (`log(P1/P0)` convention, positive => bit 1). Provenance:
+/// QEX 2020 §6 (soft-symbol metric) + MIT `ft8_lib` `decode.c`
+/// (`ft8_extract_symbol` max-log demap + `ftx_normalize_logl`); see `llr`
+/// module docs.
+pub mod llr;
+
+/// FT-8 LDPC(174,91) belief-propagation (normalized min-sum) decoder: 174 LLRs
+/// -> corrected 174-bit codeword. Provenance: QEX 2020 §3 + MIT `ft8_lib`
+/// `ldpc.c` (`ldpc_decode`/`bp_decode`) + S. Johnson "Iterative Error
+/// Correction" + textbook normalized min-sum; see `decode` module docs.
+pub mod decode;
+
 #[cfg(test)]
 mod tests {
     use super::consts;
