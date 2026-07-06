@@ -16,8 +16,11 @@ test oracle (feed a WAV, read the stdout decode list). Never:
 - copy WSJT-X's `generator.dat` / `parity.dat` (the LDPC matrix comes from MIT
   `ft8_lib`, or is regenerated from the spec).
 
-A CI grep-guard fails the build if any crate file references `wsjtr` internals or
-the GPL `.dat` matrix files.
+A CI grep-guard **should be added** (tracked follow-up) to fail the build if any
+crate file *includes* GPL source (WSJT-X's `generator.dat` / `parity.dat`, or
+`wsjtr` internals). It must match inclusion patterns, not the bare strings — the
+strings appear here and in `ldpc.rs`/`lib.rs` only as **negative citations**
+("NOT the source"), which a naive grep would false-positive on.
 
 ## Ledger
 
