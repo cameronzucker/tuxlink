@@ -2078,13 +2078,24 @@ export function AppShell() {
           with the ribbon chip (AC-13).
           tuxlink-9uat6: Mount is gated on elmerEverOpened (not elmerOpen) so the
           pane stays MOUNTED when closed, preserving useElmer event-listeners,
-          conversation history, and any in-flight inference run. Visibility is
-          controlled via the HTML `hidden` attribute on the wrapper div, which
-          produces display:none — identical visually to unmounting, no animation
-          lost. ElmerPane's position:fixed root escapes the wrapper's flow; the
-          display:none on the wrapper still hides the fixed child. */}
+          conversation history, and any in-flight inference run.
+
+          WebKitGTK repaint fix (conversation "New conversation" button rendered
+          invisible until hover): the wrapper is hidden via opacity + pointer-events,
+          NOT the HTML `hidden` attribute (display:none). WebKitGTK does not repaint
+          ElmerPane's position:fixed root when an ancestor flips display:none ->
+          visible, so freshly shown content stayed unpainted until a hover forced a
+          style invalidation. Keeping the wrapper displayed (opacity:0 when closed)
+          keeps the fixed child painted, so re-showing is a composited opacity change
+          WebKitGTK repaints reliably. When OPEN the wrapper carries no opacity/
+          transform, so it creates no containing block and ElmerPane stays viewport-
+          fixed. `aria-hidden` preserves the accessibility-hidden semantics the old
+          `hidden` attribute provided. */}
       {elmerEverOpened && (
-        <div hidden={!elmerOpen}>
+        <div
+          style={elmerOpen ? undefined : { opacity: 0, pointerEvents: 'none' }}
+          aria-hidden={!elmerOpen || undefined}
+        >
           <Suspense fallback={null}>
             <ElmerPane
               egressStatus={egressArm.status}
