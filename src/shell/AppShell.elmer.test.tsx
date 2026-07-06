@@ -19,11 +19,8 @@
  *
  * The KEY assertion (tuxlink-9uat6 proof): after clicking close, query
  * data-testid="elmer-pane" — if it returns null the pane was unmounted and
- * useElmer state was lost. It must be non-null AND have an ancestor hidden via
- * `aria-hidden` (the opacity:0 wrapper in AppShell), and must NOT use the
- * `hidden` attribute — display:none is the WebKitGTK no-repaint trigger that left
- * the "New conversation" button invisible until hover; the wrapper now hides via
- * opacity + pointer-events to keep ElmerPane's position:fixed root painted.
+ * useElmer state was lost. It must be non-null AND have an ancestor with the
+ * `hidden` attribute (the <div hidden={!elmerOpen}> wrapper in AppShell).
  */
 
 import type { ReactNode } from 'react';
@@ -180,25 +177,22 @@ describe('ElmerPane lazy-load on real AppShell (tuxlink-9uat6)', () => {
     const paneAfterClose = screen.queryByTestId('elmer-pane');
     expect(paneAfterClose).not.toBeNull();
 
-    // Step 5 (regression lock for the conversation-button-invisible WebKitGTK
-    // bug): an ancestor must hide the pane via `aria-hidden` (the opacity:0
-    // wrapper), and NO ancestor may use the `hidden` attribute. `hidden` produces
-    // display:none, which is the exact trigger WebKitGTK fails to repaint when the
-    // wrapper is re-shown over ElmerPane's position:fixed root — reverting to it
-    // must fail this test.
+    // Step 5: an ancestor of the pane must carry the `hidden` attribute,
+    // confirming the <div hidden={!elmerOpen}> wrapper in AppShell is hiding
+    // the pane (display:none) — NOT destroying it.
     let el: HTMLElement | null = paneAfterClose;
-    let ariaHiddenAncestorFound = false;
-    let displayNoneHiddenFound = false;
+    let hiddenAncestorFound = false;
     while (el) {
-      if (el.getAttribute('aria-hidden') === 'true') ariaHiddenAncestorFound = true;
-      if (el.hasAttribute('hidden')) displayNoneHiddenFound = true;
+      if (el.hasAttribute('hidden')) {
+        hiddenAncestorFound = true;
+        break;
+      }
       el = el.parentElement;
     }
-    expect(ariaHiddenAncestorFound).toBe(true);
-    expect(displayNoneHiddenFound).toBe(false);
+    expect(hiddenAncestorFound).toBe(true);
   });
 
-  it('reopening a closed pane reveals it (opacity/aria-hidden wrapper toggles, never `hidden`/display:none)', async () => {
+  it('reopening a closed pane reveals it (hidden attribute removed from the wrapper)', async () => {
     renderShell();
 
     // Open → close → reopen cycle on the REAL AppShell.
@@ -207,40 +201,33 @@ describe('ElmerPane lazy-load on real AppShell (tuxlink-9uat6)', () => {
 
     fireEvent.click(screen.getByTestId('elmer-close'));
 
-    // After close: pane still mounted, hidden via aria-hidden — never `hidden`
-    // (display:none is the WebKitGTK no-repaint trigger this fix removed).
+    // After close: pane is still mounted but hidden.
     await waitFor(() => {
       const pane = screen.queryByTestId('elmer-pane');
       expect(pane).not.toBeNull();
       let el: HTMLElement | null = pane;
-      let ariaHidden = false;
-      let displayNone = false;
+      let found = false;
       while (el) {
-        if (el.getAttribute('aria-hidden') === 'true') ariaHidden = true;
-        if (el.hasAttribute('hidden')) displayNone = true;
+        if (el.hasAttribute('hidden')) { found = true; break; }
         el = el.parentElement;
       }
-      expect(ariaHidden).toBe(true);
-      expect(displayNone).toBe(false);
+      expect(found).toBe(true);
     });
 
     // Reopen via the ribbon launcher again (toggle: closed→open).
     fireEvent.click(screen.getByTestId('ribbon-elmer-launcher'));
 
-    // After reopen: the wrapper is fully visible — no aria-hidden, no `hidden`.
+    // After reopen: the wrapper's hidden attribute is gone — pane is visible.
     await waitFor(() => {
       const pane = screen.queryByTestId('elmer-pane');
       expect(pane).not.toBeNull();
       let el: HTMLElement | null = pane;
-      let ariaHidden = false;
-      let displayNone = false;
+      let found = false;
       while (el) {
-        if (el.getAttribute('aria-hidden') === 'true') ariaHidden = true;
-        if (el.hasAttribute('hidden')) displayNone = true;
+        if (el.hasAttribute('hidden')) { found = true; break; }
         el = el.parentElement;
       }
-      expect(ariaHidden).toBe(false);
-      expect(displayNone).toBe(false);
+      expect(found).toBe(false);
     });
   });
 });
