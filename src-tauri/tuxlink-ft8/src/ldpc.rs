@@ -315,9 +315,9 @@ pub fn ldpc_syndrome(codeword: &[bool; CODEWORD_BITS]) -> [bool; PARITY_BITS] {
     let mut syndrome = [false; PARITY_BITS];
     for m in 0..PARITY_BITS {
         let mut x = false;
-        for k in 0..(NUM_ROWS[m] as usize) {
+        for &nm in &NM[m][..NUM_ROWS[m] as usize] {
             // NM entries are 1-origin codeword-bit indices.
-            let bit = NM[m][k] as usize - 1;
+            let bit = nm as usize - 1;
             x ^= codeword[bit];
         }
         syndrome[m] = x;
@@ -410,8 +410,8 @@ mod tests {
     fn parity_structure_covers_all_variables() {
         let mut seen = [0u32; CODEWORD_BITS];
         for m in 0..PARITY_BITS {
-            for k in 0..(NUM_ROWS[m] as usize) {
-                seen[NM[m][k] as usize - 1] += 1;
+            for &nm in &NM[m][..NUM_ROWS[m] as usize] {
+                seen[nm as usize - 1] += 1;
             }
         }
         // Every variable is covered, and (regular code) exactly 3 times.
