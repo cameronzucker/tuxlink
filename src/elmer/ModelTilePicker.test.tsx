@@ -224,6 +224,30 @@ describe('ModelTilePicker', () => {
     expect(screen.getByTestId('elmer-detect-btn')).toBeTruthy();
   });
 
+  it('[tuxlink-lubim] switching between ModelForm tiles updates the endpoint field (no stale carryover)', () => {
+    // Regression: ModelForm seeds its endpoint/model state from props once at
+    // mount (useState initializers) and never re-inits on prop change. Without a
+    // per-tile key it is reconciled (not remounted) across the no-keyPageUrl
+    // tiles (localOllama / openrouter / custom), so the endpoint field kept
+    // showing the PREVIOUS tile's value while the tile chip updated — "the tile
+    // looks selected but the endpoint field lies." This walks the exact operator
+    // repro (ollama-local -> openrouter -> custom) and asserts the field tracks.
+    const ep = (id: string) => PRESETS.find((p) => p.id === id)!.endpoint;
+    render(
+      <ModelTilePicker {...baseProps({ initialEndpoint: ep('localOllama'), initialModel: '' })} />,
+    );
+    const endpointInput = () => screen.getByTestId('elmer-endpoint-input') as HTMLInputElement;
+    // Starts on the localOllama tile -> ModelForm shows the loopback endpoint.
+    expect(endpointInput().value).toBe(ep('localOllama'));
+    // Switch to the openrouter tile (also a ModelForm tile): the endpoint field
+    // MUST update — before the key fix it kept the stale localOllama endpoint.
+    fireEvent.click(screen.getByTestId('elmer-tile-openrouter'));
+    expect(endpointInput().value).toBe(ep('openrouter'));
+    // On to the custom tile (empty endpoint): must clear, not keep openrouter's.
+    fireEvent.click(screen.getByTestId('elmer-tile-custom'));
+    expect(endpointInput().value).toBe(ep('custom'));
+  });
+
   it('[Bug2] calls onSave with working endpoint and model via ModelForm Save on localOllama tile', async () => {
     // Re-express the prior onSave test using ModelForm's Save button (elmer-save-btn)
     // instead of the removed bare-summary elmer-tile-save button.
