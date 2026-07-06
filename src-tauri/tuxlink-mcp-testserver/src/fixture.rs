@@ -198,53 +198,24 @@ pub fn load_scenario_from_env() -> Result<Option<Arc<World>>, FixtureError> {
 }
 
 // ---------------------------------------------------------------------------
-// JSON Schema generation (Task 2).
+// JSON Schema for cross-language fixture validation (Task 2).
 //
-// The production DTOs in `tuxlink_mcp_core::ports` deliberately do NOT all derive
-// `schemars::JsonSchema` (adding it is a forbidden prod-crate change), so we
-// cannot generate a schema off `World` directly. Instead a SHADOW `WorldSchema`
-// mirrors `World`'s field NAMES with permissive `serde_json::Value` sub-shapes,
-// and `FixtureSchema` mirrors `Fixture`. A drift test ties the shadow field set
-// to `World`'s so a future `World` field addition that is not mirrored fails CI.
-// The contract Python consumes is stable: top-level `id` + `world`, and a
-// `world` object whose property set == `World`'s field set.
+// Hand-built (no `schemars`): the top-level contract is small and stable —
+// `{id, world}` where `world` is an object whose property set is
+// `WORLD_SCHEMA_FIELDS`. The per-port sub-object shapes are NOT re-encoded here;
+// they are validated structurally on the Python side and, decisively, by
+// `World`'s own serde deserialization (a wrong field fails `load_fixture`). This
+// avoids a `schemars` dependency (a new major version vs the workspace's 0.8/0.9
+// and an API-surface risk) for a contract this simple.
 // ---------------------------------------------------------------------------
 
 pub mod schema {
-    use schemars::JsonSchema;
-    use serde_json::Value;
+    use serde_json::{json, Value};
 
-    /// Shadow of [`super::World`]: same field NAMES, permissive value shapes.
-    /// `modem` + `position` are required (no `Option`); everything else is
-    /// `Option`/`Vec` mirroring `World`'s `#[serde(default)]` fields.
-    #[allow(dead_code)]
-    #[derive(JsonSchema)]
-    pub struct WorldSchema {
-        pub modem: Value,
-        pub position: Value,
-        pub rig: Option<Value>,
-        pub backend: Option<Value>,
-        pub stations: Option<Value>,
-        pub prediction: Option<Value>,
-        pub solar: Option<Value>,
-        pub docs: Vec<Value>,
-        pub catalog: Vec<Value>,
-        pub mailbox: Vec<Value>,
-        pub log: Vec<Value>,
-        pub config: Option<Value>,
-        pub devices: Option<Value>,
-    }
-
-    /// Shadow of [`super::Fixture`]: `{id, world}`.
-    #[allow(dead_code)]
-    #[derive(JsonSchema)]
-    pub struct FixtureSchema {
-        pub id: String,
-        pub world: WorldSchema,
-    }
-
-    /// The field NAMES a `WorldSchema` mirrors, kept next to the struct so the
-    /// drift test can compare against `World`'s actual field set.
+    /// The field NAMES `World` exposes. Kept beside `World`; the
+    /// `schema_world_properties_match_fields` test ties this list to the schema
+    /// generator, and `World`'s own deserialization ties fixtures to the real
+    /// fields (a wrong field fails `load_fixture`).
     pub const WORLD_SCHEMA_FIELDS: &[&str] = &[
         "modem",
         "position",
@@ -261,15 +232,32 @@ pub mod schema {
         "devices",
     ];
 
-    /// Generate the draft-2020-12 JSON Schema for a scenario fixture as a
-    /// `serde_json::Value`. Consumed by the committed
-    /// `tests/fixtures/world.schema.json` (Task 2) and the Python schema
-    /// validator (Python Task 9).
+    /// A minimal draft-07 JSON Schema for a scenario fixture, built by hand from
+    /// [`WORLD_SCHEMA_FIELDS`] (no `schemars` dependency). The top-level contract
+    /// is `{id, world}`; per-port sub-object shapes are permissive here and are
+    /// validated structurally on the Python side and, decisively, by `World`'s
+    /// serde deserialization. `additionalProperties` stays open so a scenario
+    /// file may also carry the Python `Scenario` keys `Fixture` ignores.
     pub fn fixture_json_schema() -> Value {
-        schemars::generate::SchemaSettings::draft2020_12()
-            .into_generator()
-            .into_root_schema_for::<FixtureSchema>()
-            .to_value()
+        let mut world_props = serde_json::Map::new();
+        for f in WORLD_SCHEMA_FIELDS {
+            world_props.insert((*f).to_string(), json!({}));
+        }
+        json!({
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "title": "TuxlinkScenarioFixture",
+            "type": "object",
+            "properties": {
+                "id": { "type": "string" },
+                "world": {
+                    "type": "object",
+                    "properties": Value::Object(world_props),
+                    "additionalProperties": true
+                }
+            },
+            "required": ["id", "world"],
+            "additionalProperties": true
+        })
     }
 }
 
@@ -464,27 +452,20 @@ mod tests {
     }
 
     #[test]
-    fn schema_written_to_committed_file() {
-        // Serialize the schema to the committed artifact the Python half consumes.
+    fn schema_world_properties_match_fields() {
+        // The generated schema's `world` property set must equal
+        // WORLD_SCHEMA_FIELDS, so schema and struct-field list cannot silently
+        // disagree. No file is written (the Python half validates against its own
+        // committed schema); this stays a pure in-memory check.
         let schema = fixture_json_schema();
-        let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests")
-            .join("fixtures")
-            .join("world.schema.json");
-        std::fs::create_dir_all(out.parent().unwrap()).unwrap();
-        let pretty = serde_json::to_string_pretty(&schema).unwrap();
-        std::fs::write(&out, pretty).unwrap();
-
-        // Re-read + assert it parses and carries properties.world.
-        let raw = std::fs::read_to_string(&out).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert!(
-            parsed
-                .get("properties")
-                .and_then(|p| p.get("world"))
-                .is_some(),
-            "committed schema has properties.world"
-        );
+        let props = schema["properties"]["world"]["properties"]
+            .as_object()
+            .expect("schema has properties.world.properties");
+        let got: std::collections::BTreeSet<&str> =
+            props.keys().map(|k| k.as_str()).collect();
+        let want: std::collections::BTreeSet<&str> =
+            schema::WORLD_SCHEMA_FIELDS.iter().copied().collect();
+        assert_eq!(got, want, "schema world props must equal WORLD_SCHEMA_FIELDS");
     }
 
     // ---- Task 7: committed sample fixture -------------------------------

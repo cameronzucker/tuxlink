@@ -6888,6 +6888,10 @@ name = "tuxlink-mcp-testserver"
 version = "0.0.0"
 dependencies = [
  "async-trait",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
  "tokio",
  "tuxlink-mcp-core",
  "tuxlink-security",
