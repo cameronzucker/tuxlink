@@ -325,30 +325,41 @@ mod tests {
         }
     }
 
-    /// A non-decodable input (all-zero LLRs ⇒ no information) returns
-    /// best-effort with `converged == false`, and does not panic.
+    /// Edge: all-zero LLRs carry no information; the hard decision is all-false,
+    /// which is the (valid) zero codeword of a linear code, so this input
+    /// legitimately converges. Documents that boundary rather than asserting a
+    /// non-converging path (see `unrecoverable_input_reports_not_converged` for
+    /// that). No panic; the flag matches the syndrome.
     #[test]
-    fn non_converging_returns_best_effort() {
-        let llr = [0.0f32; CODEWORD_BITS];
-        let res = ldpc_decode_ms(&llr, 5);
-        // All-zero LLR ⇒ hard decision all-false ⇒ the zero codeword, which is
-        // actually valid (linear code). So this specific input converges to zero.
-        // Assert we return SOME finite result without panicking, and that the
-        // codeword matches its own converged flag.
+    fn zero_llr_converges_to_zero_codeword() {
+        let res = ldpc_decode_ms(&[0.0f32; CODEWORD_BITS], 5);
+        assert!(res.converged, "all-zero LLR ⇒ valid zero codeword");
+        assert_eq!(res.codeword, [false; CODEWORD_BITS]);
         assert_eq!(res.converged, is_valid_codeword(&res.codeword));
     }
 
-    /// A genuinely corrupt LLR beyond correction returns best-effort without
-    /// panicking, with `converged` reflecting the syndrome honestly.
+    /// Pins the best-effort / `converged == false` return branch (decode.rs
+    /// non-converging path). Inverting ~half the LLR signs is ~50% BER — zero
+    /// mutual information, unrecoverable by ANY decoder (no α / iteration tuning
+    /// could change this), so the result is deterministically non-converged. The
+    /// decoder must report `converged == false`, still return a best-effort
+    /// codeword without panicking, and keep the flag consistent with the syndrome.
     #[test]
-    fn heavy_corruption_returns_honest_flag() {
+    fn unrecoverable_input_reports_not_converged() {
         let cw = kat_codewords()[0];
-        // Flip nearly half the LLRs — far past correction capability.
         let mut llr = ideal_llr(&cw, 8.0);
         for i in (0..CODEWORD_BITS).step_by(2) {
-            llr[i] = -llr[i];
+            llr[i] = -llr[i]; // ~87 confident sign inversions ⇒ ~50% BER
         }
         let res = ldpc_decode_ms(&llr, DEFAULT_MAX_ITERS);
+        assert!(
+            !res.converged,
+            "~50%-flipped input must not converge (zero mutual information)"
+        );
+        assert!(
+            !is_valid_codeword(&res.codeword),
+            "non-converged best-effort word must have a non-zero syndrome"
+        );
         assert_eq!(
             res.converged,
             is_valid_codeword(&res.codeword),
