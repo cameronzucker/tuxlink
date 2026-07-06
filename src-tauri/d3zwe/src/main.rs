@@ -90,7 +90,15 @@ async fn real_main(args: Args) -> Result<(), String> {
         invoker.tools().len()
     );
 
-    let limits = Limits::default();
+    // Per-turn wall-clock cap (COR-1). Default 120s; overridable via
+    // D3ZWE_TURN_TIMEOUT_SECS so slower local models (large tool schemas on
+    // modest hardware) can complete a turn instead of tripping NeedsOperator.
+    let mut limits = Limits::default();
+    if let Ok(v) = std::env::var("D3ZWE_TURN_TIMEOUT_SECS") {
+        if let Ok(secs) = v.trim().parse::<u64>() {
+            limits.per_turn_timeout = std::time::Duration::from_secs(secs);
+        }
+    }
 
     if let Some(prompt) = args.prompt.clone() {
         // One-shot.
