@@ -91,6 +91,17 @@
   background: color-mix(in srgb, var(--text) 10%, transparent);
   color: var(--text);
 }
+/* WebKitGTK collapses an inline SVG to width:0 inside a flex button: the SVG's
+ * flex main-size shrinks to its 0 min-content width while the cross-axis height
+ * is preserved (measured box was width:0, height:17). This is the true cause of
+ * the "New conversation" glyph being invisible until hover — a hover-triggered
+ * relayout accidentally restored the width. Pin an explicit box and disable
+ * flex-shrink so the 17px glyph always lays out. (tuxlink-y0y9m) */
+.elmer-newconv-button svg {
+  flex: none;
+  width: 17px;
+  height: 17px;
+}
 /* Context-pressure emphasis: a local model's window is nearly full, so starting
  * fresh is the obvious next move. Amber, matching the accent-warn family. */
 .elmer-newconv-button--emph {
