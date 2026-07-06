@@ -1,0 +1,17 @@
+[package]
+name = "tuxlink-ft8"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "AGPL-3.0-or-later"
+description = "Clean-room pure-Rust FT-8 decoder (Station Intelligence, L0 spike)"
+authors = ["Cameron Zucker"]
+
+# CLEAN-ROOM: no GPL dependency. The wsjtr/WSJT-X decoder is a binary test oracle
+# only (see PROVENANCE.md). FFT is reused from the permissive rustfft/realfft.
+[dependencies]
+rustfft = "6"
+realfft = "3"
+hound = "3"
+
+[dev-dependencies]
