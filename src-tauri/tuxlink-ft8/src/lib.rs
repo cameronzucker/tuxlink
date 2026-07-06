@@ -2,12 +2,17 @@
 //!
 //! # Clean-room provenance (see `PROVENANCE.md`)
 //!
-//! Implemented ONLY from: the QEX 2020 FT4/FT8 protocol paper
-//! (Franke/Somerville/Taylor); the WB2FKO "Synchronization in FT8" paper; and the
-//! MIT-licensed references `ft8_lib` (kgoba) + `RustFT8` (jl1nie). The GPL
-//! `wsjtr`/WSJT-X is a **binary test oracle only** — its source is never read, its
-//! binary never `strings`/`objdump`-ed, and its `generator.dat`/`parity.dat` are
-//! never copied (the LDPC matrix comes from MIT `ft8_lib` or is regenerated).
+//! FT8-protocol-specific expression (LDPC tables, Gray/Costas arrays, CRC,
+//! message layout, demapper/min-sum form) is taken ONLY from the QEX 2020 FT4/FT8
+//! protocol paper (Franke/Somerville/Taylor), the WB2FKO "Synchronization in FT8"
+//! paper, and the MIT-licensed `ft8_lib` (kgoba). `RustFT8` (jl1nie, MIT) is an
+//! available permitted reference but was **not** read/transcribed for this code.
+//! Standard published algorithms and public-domain code (noncoherent-MFSK error
+//! probability, min-sum, BP, SplitMix64, Box–Muller) are cited to their own
+//! literature — see `PROVENANCE.md` for the two-tier rule. The GPL `wsjtr`/WSJT-X
+//! is a **binary test oracle only** — its source is never read, its binary never
+//! `strings`/`objdump`-ed, and its `generator.dat`/`parity.dat` are never copied
+//! (the LDPC matrix comes from MIT `ft8_lib` or is regenerated).
 //!
 //! Layers land bottom-up per `docs/plans/2026-07-05-station-intel-l0-ft8-decoder-plan.md`:
 //! message pack/unpack → CRC-14 → Gray/Costas framing → LDPC encode/syndrome →

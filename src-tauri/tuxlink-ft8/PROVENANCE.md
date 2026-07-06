@@ -1,12 +1,30 @@
 # tuxlink-ft8 — constants & tables provenance ledger
 
 **Clean-room rule.** Every magic constant, table, or algorithm in this crate cites
-an **allowed** source below. Allowed sources:
+an **allowed** source below. The rule has two tiers:
+
+1. **FT8-protocol-specific expression** — the tables, constants, and framing that are
+   particular to FT8 (LDPC matrices, Gray/Costas arrays, CRC parameters, message
+   layout, the soft-symbol / demapper form, the min-sum schedule) — MUST come only
+   from the **protocol sources** below, and NEVER from the GPL `wsjtr`/WSJT-X (see
+   Forbidden). This is the actual clean-room boundary: it keeps GPL-derived *expression*
+   out of the crate.
+2. **Standard published algorithms & public-domain code** — general results that are
+   textbook / public knowledge and not derived from any forbidden source — are permitted
+   with citation to their originating literature. These are NOT FT8-specific and carry
+   no GPL entanglement: e.g. the closed-form noncoherent M-FSK error probability
+   (Proakis), normalized min-sum scaling (Chen/Fossorier), belief-propagation
+   (S. Johnson), the SplitMix64 PRNG and Box–Muller transform (public domain). Citing
+   them is honest provenance, not a clean-room violation.
+
+**Protocol sources (tier 1):**
 
 - QEX 2020 "The FT4 and FT8 Communication Protocols" (Franke/Somerville/Taylor)
 - WB2FKO "Synchronization in FT8"
-- `ft8_lib` (kgoba) — **MIT**
-- `RustFT8` (jl1nie) — **MIT**
+- `ft8_lib` (kgoba) — **MIT** (the tables/algorithms actually transcribed here)
+- `RustFT8` (jl1nie) — **MIT** — an *available* permitted reference; **not** read or
+  transcribed for the current code (the min-sum is derived from `ft8_lib` `bp_decode`
+  + textbook min-sum, not from RustFT8).
 
 **Forbidden.** `wsjtr` / WSJT-X are **GPL** and are used ONLY as a pre-built binary
 test oracle (feed a WAV, read the stdout decode list). Never:

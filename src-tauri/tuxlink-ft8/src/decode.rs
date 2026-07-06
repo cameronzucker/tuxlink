@@ -146,7 +146,15 @@ pub fn ldpc_decode_ms(llr: &[f32; CODEWORD_BITS], max_iters: usize) -> DecodeRes
     let mut best_codeword = hard_decision(&ch, &tov);
     let mut best_errors = num_failed_checks(&best_codeword);
     let mut best_iters = 0usize;
-    if best_errors == 0 {
+    // The all-zero word is a valid (syndrome-0) codeword of a linear code but a
+    // PROHIBITED decode: a no-signal / erased / flat-magnitude input collapses to
+    // it, and its all-zero 91-bit prefix also passes CRC-14 — so accepting it as
+    // `converged` would let a downstream `converged && check_crc(..)` gate admit
+    // an empty slot as a false decode. ft8_lib's `bp_decode` guards exactly this
+    // (`if (plain_sum == 0) break;`). Convergence therefore requires syndrome 0
+    // AND a non-all-zero word.
+    // provenance: `ft8_lib` `ft8/ldpc.c` `bp_decode` all-zero guard (MIT).
+    if best_errors == 0 && !is_all_zero(&best_codeword) {
         return DecodeResult { codeword: best_codeword, converged: true, iters: 0 };
     }
 
@@ -200,6 +208,11 @@ pub fn ldpc_decode_ms(llr: &[f32; CODEWORD_BITS], max_iters: usize) -> DecodeRes
 
         // ── Posterior + hard decision + early stop. ──────────────────────────
         let codeword = hard_decision(&ch, &tov);
+        // Prohibited all-zero solution (no-signal collapse) — stop, non-converged.
+        // Mirrors ft8_lib `bp_decode`'s `if (plain_sum == 0) break;`.
+        if is_all_zero(&codeword) {
+            break;
+        }
         let errors = num_failed_checks(&codeword);
         if errors < best_errors {
             best_errors = errors;
@@ -236,6 +249,12 @@ fn hard_decision(
 /// syndrome rather than re-implementing the check.
 fn num_failed_checks(codeword: &[bool; CODEWORD_BITS]) -> usize {
     ldpc_syndrome(codeword).iter().filter(|&&s| s).count()
+}
+
+/// True iff every bit is 0 — the prohibited all-zero codeword (see the all-zero
+/// guard in [`ldpc_decode_ms`]).
+fn is_all_zero(codeword: &[bool; CODEWORD_BITS]) -> bool {
+    !codeword.iter().any(|&b| b)
 }
 
 #[cfg(test)]
@@ -325,17 +344,24 @@ mod tests {
         }
     }
 
-    /// Edge: all-zero LLRs carry no information; the hard decision is all-false,
-    /// which is the (valid) zero codeword of a linear code, so this input
-    /// legitimately converges. Documents that boundary rather than asserting a
-    /// non-converging path (see `unrecoverable_input_reports_not_converged` for
-    /// that). No panic; the flag matches the syndrome.
+    /// Edge: all-zero LLRs carry no information; the hard decision collapses to
+    /// the all-zero word. Although that word has a zero syndrome (it is a valid
+    /// codeword of a linear code) AND its 91-bit prefix passes CRC-14, it is a
+    /// PROHIBITED decode — a no-signal / erased slot must NOT be reported as a
+    /// decode (ft8_lib guards this via `bp_decode`'s `plain_sum == 0` break). So
+    /// the decoder must report `converged == false` here, protecting a downstream
+    /// `converged && check_crc(..)` gate from admitting an empty slot.
     #[test]
-    fn zero_llr_converges_to_zero_codeword() {
+    fn all_zero_input_is_rejected_not_a_decode() {
         let res = ldpc_decode_ms(&[0.0f32; CODEWORD_BITS], 5);
-        assert!(res.converged, "all-zero LLR ⇒ valid zero codeword");
-        assert_eq!(res.codeword, [false; CODEWORD_BITS]);
-        assert_eq!(res.converged, is_valid_codeword(&res.codeword));
+        assert!(
+            !res.converged,
+            "all-zero (no-signal) input must be rejected, not reported as a decode"
+        );
+        // The all-zero word is itself a valid codeword + passes CRC — proving the
+        // guard is what rejects it, not the syndrome/CRC.
+        assert!(is_valid_codeword(&[false; CODEWORD_BITS]));
+        assert!(check_crc(&[false; crate::consts::MSG_CRC_BITS]));
     }
 
     /// Pins the best-effort / `converged == false` return branch (decode.rs

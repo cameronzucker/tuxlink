@@ -113,9 +113,10 @@ impl Rng {
 // SNR-in-2500-Hz reference-bandwidth conversion (QEX convention)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// FT-8 symbol duration in seconds. `T = 0.16 s`.
+/// FT-8 symbol duration in seconds (`T = 0.16 s`). Reuses the crate constant so
+/// a future edit to the symbol rate propagates here automatically.
 /// provenance: QEX 2020 §4 / Table 4 (`crate::consts::SYMBOL_SECS`).
-const T_SYMBOL_SECS: f64 = 0.160;
+const T_SYMBOL_SECS: f64 = crate::consts::SYMBOL_SECS;
 
 /// QEX's reference bandwidth for quoted SNR thresholds, in Hz.
 /// provenance: QEX 2020 §"Table 5" text — "signal-to-noise ratios in 2500 Hz
@@ -280,6 +281,16 @@ mod tests {
     // before looking at decode curves.
     #[test]
     fn calibration_self_test() {
+        assert_model_calibrated();
+    }
+
+    /// The calibration linchpin, factored out so it also runs INSIDE
+    /// [`awgn_snr_curve`] — otherwise `cargo test -- --ignored awgn_snr_curve`
+    /// (the documented go/no-go command) would run only the ignored sweep and
+    /// SKIP the non-ignored `calibration_self_test`, leaving the coded curve
+    /// ungated by the Pe-vs-model check. Panics (failing the caller) if the
+    /// model's uncoded symbol-error rate diverges from closed-form theory.
+    fn assert_model_calibrated() {
         // Es/N0 test points in dB (symbol SNR, NOT SNR-in-2500-Hz).
         let esn0_db = [3.0f64, 6.0, 9.0];
         let n_symbols = 40_000usize;
@@ -486,6 +497,11 @@ mod tests {
         const ANCHOR_FAIR_DB: f64 = -19.6; // FAIR anchor for THIS config (N=1 demap + BP)
         const ANCHOR_HEADLINE_DB: f64 = -20.8; // full-decoder headline (BP+OSD, no AP)
 
+        // Gate the coded curve on the calibration self-check FIRST, so this test
+        // is self-protecting even when invoked alone via `--ignored`. If the SNR
+        // axis is mis-calibrated the coded numbers below are meaningless.
+        assert_model_calibrated();
+
         // ≥50 distinct codewords for independent trials.
         let codewords = distinct_codewords(50, 0x00F7_8000_0000_0001);
         assert_eq!(codewords.len(), 50);
@@ -547,15 +563,20 @@ mod tests {
             false_decodes, 0,
             "AWGN sweep produced {false_decodes} false decodes (converged+CRC-OK but wrong codeword)"
         );
-        // The crossing must exist and be better (more negative) than −16.0 dB.
-        // −16.0 ≈ 4 dB worse than the −20.8 headline = the plan's STOP line; if
-        // the core can't even beat that, it is broken and this test SHOULD fail.
-        // We do NOT assert we beat −19.6 — that ±0.5 dB call is the human's, not
-        // a CI hard-fail.
+        // The crossing must exist and be better (more negative) than the plan's
+        // NO-GO / STOP line. The plan sets STOP at ≥4 dB worse than the −20.8
+        // headline = −16.8 dB: a crossing at or above that means the LLR+BP core
+        // is broken and this test SHOULD hard-fail. Values in the −16.8…−18.8
+        // window (the edge of the "within 1–2 dB of −20.8" GO band) are the
+        // "marginal, surface to the operator" zone — the printed anchors above
+        // drive that human GO-vs-marginal call; the hard assertion only enforces
+        // the unambiguous NO-GO. Our measured −19.69 dB clears this comfortably.
+        const STOP_LINE_DB: f64 = -16.8; // 4 dB worse than the −20.8 headline
         let c = crossing.expect("P(decode) never crossed 0.5 in the swept range — core is broken");
         assert!(
-            c < -16.0,
-            "50% crossing {c:.2} dB is not better than −16.0 dB sanity bound — core appears broken"
+            c < STOP_LINE_DB,
+            "50% crossing {c:.2} dB is at/above the {STOP_LINE_DB} dB STOP line \
+             (≥4 dB worse than the −20.8 headline) — NO-GO, core is broken"
         );
     }
 
@@ -568,11 +589,14 @@ mod tests {
     /// vs the full curve's 1.000 @ −17 dB and 0.000 @ −23 dB) so it is not flaky.
     #[test]
     fn awgn_curve_smoke() {
-        let codewords = distinct_codewords(12, 0x00F7_8000_0000_0001);
-        // Straddle the ~−19.7 dB threshold: a strong point (≈all decode), a weak
-        // point (≈none decode).
-        let snr_points = [-17.0f64, -23.0];
-        let n_trials = 30usize; // 12 × 30 × 2 = 720 decodes — a few seconds in debug.
+        let codewords = distinct_codewords(20, 0x00F7_8000_0000_0001);
+        // Three points: a strong rail (≈all decode), a NEAR-THRESHOLD point, and
+        // a weak rail (≈none decode). The mid point is what actually guards the
+        // GO/NO-GO threshold in default CI — a decoder whose threshold regressed
+        // by more than ~1 dB would push P(−20 dB) out of the asserted band even
+        // though both rails still look fine.
+        let snr_points = [-17.0f64, -20.0, -23.0];
+        let n_trials = 40usize; // 20 × 40 × 3 = 2400 decodes — a few seconds in debug.
         let (probs, false_decodes) =
             run_sweep(&snr_points, &codewords, n_trials, 0xA1B2_C3D4_E5F6_0789);
 
@@ -582,10 +606,19 @@ mod tests {
             "P(decode) at −17 dB = {:.3}, expected ≥0.90 (core should decode near-perfectly well above threshold)",
             probs[0]
         );
+        // Near-threshold guard. The full curve puts P(−20 dB) ≈ 0.32; with 800
+        // samples the 1σ is ≈0.017, so [0.12, 0.62] is non-flaky yet a ≳1 dB
+        // threshold regression (which drives P toward 0 or 1 here) trips it.
         assert!(
-            probs[1] <= 0.10,
-            "P(decode) at −23 dB = {:.3}, expected ≤0.10 (core should almost never decode well below threshold)",
+            (0.12..=0.62).contains(&probs[1]),
+            "P(decode) at −20 dB = {:.3}, expected in [0.12, 0.62] (near-threshold guard: \
+             a decoder whose 50% point regressed >~1 dB from −19.7 dB would fall outside this)",
             probs[1]
+        );
+        assert!(
+            probs[2] <= 0.10,
+            "P(decode) at −23 dB = {:.3}, expected ≤0.10 (core should almost never decode well below threshold)",
+            probs[2]
         );
     }
 
