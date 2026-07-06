@@ -80,8 +80,15 @@ encode + syndrome (`ldpc.rs`). Byte-exact KATs cross-verified across modules + a
 independent Python transcription of MIT `ft8_lib`; all 41 KATs green on both arches. M0
 review verdict **SOUND**. Clean-room provenance verified (only negative GPL citations).
 
-## Operator's outstanding real-world task (for M3/M4, not M1)
-Two 20m FT-8 SDR captures — one ordinary, one deliberately crowded-band — each with a
-WSJT-X decode log produced with **AP (a-priori) decoding DISABLED** (AP decodes are
-un-reproducible by a passive decoder; including them rigs the ≥85% exit gate). Final-gate
-oracle for M3/M4. (Operator was setting up the SDR at session end.)
+## M3/M4 exit-gate oracle — CAPTURED this session (was the operator's task)
+The operator put an **RTL-SDR Blog V3** on the Pi (Delta Loop) at session end, and I
+captured the fixtures: `src-tauri/tuxlink-ft8/tests/fixtures/sdr/` — four real off-air
+15 s FT-8 slots (40m crowded/ordinary, 20m busier/quiet) + their **AP-disabled** `jt9`
+reference decode lists + a capture-recipe README. These are the ≥85%-message-match,
+zero-false-decode oracle for M3/M4. (Receive-only capture; no transmit.)
+- **Capture gotcha (in the README):** the V3 does HF via direct sampling on the
+  **Q-branch** — `rtl_fm -M usb -E direct2 -f <dial> -s 1024000 -r 12000` (NOT `-E
+  direct`, the empty I-branch). Reference = `jt9 -8 <wav>` with no `--my-call` (AP inert).
+- **Only follow-up:** 20m was quiet at capture (≤4 decodes/slot), so the crowded-band
+  arm (multi-pass subtraction stress, ~20–40 overlapping sigs) is lightly exercised.
+  When 20m/40m are busy, re-grab a denser slot with the README recipe and add it.
