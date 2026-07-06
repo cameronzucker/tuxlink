@@ -1,0 +1,46 @@
+{
+  "id": "sample-void",
+  "family": "station-intel",
+  "prompt": "find a nearby Winlink gateway I can connect to",
+  "spec": {
+    "grounded_claims": ["W1AW", "FN31", "7104.0"],
+    "must_decline_when_absent": ["stations"]
+  },
+  "world": {
+    "modem": {
+      "kind": "ardop",
+      "connected": false,
+      "state": "disconnected"
+    },
+    "position": {
+      "has_fix": true,
+      "grid": "CN87",
+      "source": "gps"
+    },
+    "rig": {
+      "vfo_hz": 7104000,
+      "mode": "PKTUSB",
+      "ptt": false,
+      "configured": true
+    },
+    "backend": {
+      "connected": true,
+      "transport": "telnet",
+      "state": "idle"
+    },
+    "stations": {
+      "gateways": [],
+      "fetched_at_ms": 1750000000000,
+      "operator_grid": "CN87"
+    },
+    "solar": {
+      "sfi": 140.0,
+      "a_index": 7.0,
+      "k_index": 2.0,
+      "ssn": 70.0,
+      "updated_at_ms": 1750000000000,
+      "source": "bundled"
+    },
+    "mailbox": []
+  }
+}

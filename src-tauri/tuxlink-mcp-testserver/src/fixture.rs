@@ -488,4 +488,18 @@ mod tests {
         let stations = fx.world.stations.expect("sample has stations");
         assert_eq!(stations.gateways[0].callsign, "W1AW");
     }
+
+    #[test]
+    fn committed_sample_void_fixture_loads_with_empty_gateways() {
+        // The A/B void twin: same shape as sample-grounded but zero gateways, so
+        // the agent has no real station data to cite (Arm VOID).
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("sample-void.json");
+        let fx = load_fixture(&path).expect("committed sample-void.json loads");
+        assert_eq!(fx.id, "sample-void");
+        let stations = fx.world.stations.expect("void sample still has a stations object");
+        assert!(stations.gateways.is_empty(), "void world has no gateways");
+    }
 }
