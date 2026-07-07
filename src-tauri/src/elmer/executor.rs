@@ -33,7 +33,7 @@ use async_trait::async_trait;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use rmcp::model::CallToolRequestParam;
+use rmcp::model::CallToolRequestParams;
 use rmcp::service::{RoleClient, RunningService, ServiceExt};
 
 use tuxlink_agent_frontend::mcp_client::{classify_call_error, list_tools_as_specs, map_call_result};
@@ -139,10 +139,8 @@ impl ToolInvoker for InProcessMcpInvoker {
         // SEC-3: the runner only ever passes Agent; assert belt-and-suspenders.
         debug_assert_eq!(authority, CallAuthority::Agent);
 
-        let param = CallToolRequestParam {
-            name: call.name.clone().into(),
-            arguments: call.args.as_object().cloned(),
-        };
+        let mut param = CallToolRequestParams::new(call.name.clone());
+        param.arguments = call.args.as_object().cloned();
 
         let client = self.client.lock().await;
         tokio::select! {
