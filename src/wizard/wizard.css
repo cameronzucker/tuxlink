@@ -546,3 +546,60 @@
 .wizard-root .wizard-linklike:hover { color: var(--accent); }
 .wizard-root .wizard-linklike:disabled { opacity: 0.55; cursor: not-allowed; }
 .wizard-root .wizard-inline-hint { display: inline; margin: 0; }
+
+/* tuxlink-w7212: VARA HF provisioning step */
+.wizard-step-vara .wizard-vara__steps {
+  margin: 1rem 0;
+  padding-left: 1.25rem;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.wizard-vara__downloads {
+  margin-top: 0.75rem;
+}
+.wizard-vara__checklist {
+  list-style: none;
+  margin: 1rem 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+.wizard-vara__item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+.wizard-vara__item-state {
+  font-family: var(--mono);
+  font-size: 0.85em;
+  color: var(--text-dim);
+  text-transform: capitalize;
+}
+.wizard-vara__item--done {
+  border-color: var(--success, #5dd6a0);
+  background: var(--w-success-soft);
+}
+.wizard-vara__item--done .wizard-vara__item-state {
+  color: var(--success, #5dd6a0);
+}
+.wizard-vara__item--running {
+  border-color: var(--accent);
+  background: var(--w-accent-soft);
+}
+.wizard-vara__item--failed {
+  border-color: var(--w-error);
+}
+.wizard-vara__item--failed .wizard-vara__item-state {
+  color: var(--w-error);
+}
+.wizard-vara__ok {
+  color: var(--success, #5dd6a0);
+  font-weight: 600;
+}

@@ -7,6 +7,7 @@ import { AccountCreate } from './AccountCreate';
 import { Step2OfflineIdentity } from './Step2OfflineIdentity';
 import { Step3TestSend } from './Step3TestSend';
 import { StepLocation } from './StepLocation';
+import { StepVaraProvision } from './StepVaraProvision';
 
 interface WizardInnerProps {
   /** Called once the wizard reaches `complete`, so App.tsx can swap
@@ -36,6 +37,8 @@ export function WizardInner({ onComplete }: WizardInnerProps) {
       {state.step === 'cms_verify' && <Step3TestSend />}
       {/* tuxlink-9xy1: GPS / location setup — every identity path threads through here. */}
       {state.step === 'location' && <StepLocation />}
+      {/* tuxlink-w7212: optional VARA HF provisioning under WINE (x86_64, prep-time). */}
+      {state.step === 'vara_provision' && <StepVaraProvision />}
       {/* Transient — App.tsx swaps to the shell via onComplete almost immediately. */}
       {state.step === 'complete' && (
         <p data-testid="wizard-complete-placeholder" className="wizard-complete-msg">
