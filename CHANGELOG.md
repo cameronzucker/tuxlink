@@ -31,6 +31,44 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.83.0](https://github.com/cameronzucker/tuxlink/compare/v0.82.0...v0.83.0) (2026-07-07)
+
+
+### Features
+
+* **config:** enrich serial device pickers with real USB device name from sysfs (tuxlink-xj7e1) ([bd0fa80](https://github.com/cameronzucker/tuxlink/commit/bd0fa8030d9f5ac5d07dbb94894b1d97fafe8beb))
+* **elmer:** context meter counter-mode when window is unknown ([4951fc2](https://github.com/cameronzucker/tuxlink/commit/4951fc29582a4368288d6e68bcfded672708e5cd))
+* **elmer:** emit ContextUsage from the compat path (windowless) ([c6c5cff](https://github.com/cameronzucker/tuxlink/commit/c6c5cff07dc61584cc01302308a8f8e1cd2611bf))
+* **elmer:** make context-meter denominator Option&lt;u32&gt; end to end ([6495802](https://github.com/cameronzucker/tuxlink/commit/64958029562400eb8ae2980e14d58ddb3eaed29d))
+* **elmer:** probe /v1/models for the compat context window ([cfb0160](https://github.com/cameronzucker/tuxlink/commit/cfb016091591cc293210195493174199cb110a08))
+* **ft8:** M2 real-WAV acquisition slice (channelize + Costas sync + thin e2e) ([4a2b621](https://github.com/cameronzucker/tuxlink/commit/4a2b6214b27c5af8c25668202c5ecb488855b813))
+* **ft8:** receive-only type-4 non-standard-callsign unpack ([a140f6f](https://github.com/cameronzucker/tuxlink/commit/a140f6f9df98e2abd9d3ca3d0caa3ea1df23ff26))
+* **mcp:** expose VARA provisioning to Elmer as MCP tools + playbook (wire-walk Flow 3) ([cdb5709](https://github.com/cameronzucker/tuxlink/commit/cdb5709109522dd387c01b5b6829f99725c08e78))
+* **vara:** anytime VARA setup entry point in the VARA panel (wire-walk Flow 2) ([71a69d6](https://github.com/cameronzucker/tuxlink/commit/71a69d68256de5dfd2260488c6f4b8c6499e337b))
+* **vara:** backend commands to provision VARA HF via the engine ([3072602](https://github.com/cameronzucker/tuxlink/commit/30726026657984aaccc60a09a4fa57b32c5174ca))
+* **wizard:** optional VARA HF provisioning step in onboarding ([5aebeea](https://github.com/cameronzucker/tuxlink/commit/5aebeea0882d6f98db78e246cf7709378d04ba68))
+
+
+### Bug Fixes
+
+* **config:** serial-name enrich walks ancestors for bInterfaceNumber (Codex P2, tuxlink-xj7e1) ([d32ed9b](https://github.com/cameronzucker/tuxlink/commit/d32ed9bdac4d68f50b4e1d2c7ceda85cb2254153))
+* **elmer:** anti-stacking guard for Ollama — stop the Stop-then-Send OOM (P0) ([ee60f2f](https://github.com/cameronzucker/tuxlink/commit/ee60f2f55491c6bd314c629069ddc5bbaf78dbd2))
+* **elmer:** bound the /v1/models probe + reject bogus context lengths ([ee3c641](https://github.com/cameronzucker/tuxlink/commit/ee3c64188dee176415efa8df0980e124515b20e8))
+* **elmer:** gate num_ctx on loopback-alias-aware isLocalOllamaEndpoint ([0637219](https://github.com/cameronzucker/tuxlink/commit/06372194c6965f0af88614d8498f9c3b59f9d1d7))
+* **elmer:** gate operator num_ctx control on the Ollama preset ([742dfc9](https://github.com/cameronzucker/tuxlink/commit/742dfc9016c8b8204062ab8f1c4c487e9cfe43aa))
+* **elmer:** retry compat request once without stream_options on 400/422 ([165f026](https://github.com/cameronzucker/tuxlink/commit/165f026f061d417f824afd62fd161fb1361fc510))
+* **elmer:** stop sending temperature to Anthropic frontier models (400) ([615c64f](https://github.com/cameronzucker/tuxlink/commit/615c64faa210dcf1d32becc823d4ff17a5b81c90))
+* **ft8:** correct sync.rs metric provenance docs + harden sort (M2 review) ([dac4d6c](https://github.com/cameronzucker/tuxlink/commit/dac4d6c8275a21f07dd5775cc5565c25e40588d9))
+* **ft8:** harden M2 acquisition per Codex adversarial round ([72019d1](https://github.com/cameronzucker/tuxlink/commit/72019d1f3ed9106b22dfeaf9d0b1cab6ba0b78ee))
+* **vara:** address Codex adversarial review findings ([525bc6f](https://github.com/cameronzucker/tuxlink/commit/525bc6fe27f466f78d7fa474a1bf3cf4df9b5d06))
+* **vara:** detect dropped VARA connection (heartbeat) + poll status so the panel unlocks (tuxlink-6urh2) ([efa7605](https://github.com/cameronzucker/tuxlink/commit/efa76056fbe926d9e97d8afbb955ba117fe5555b))
+* **vara:** listener terminal EOF stamps SocketLost, not laundered Open (tuxlink-6urh2) ([7d1a7ef](https://github.com/cameronzucker/tuxlink/commit/7d1a7ef8859b7f2cf70974043a6f26532953f087))
+* **vara:** mark_socket_lost returns bool, not Result&lt;(),()&gt; (clippy) (tuxlink-6urh2) ([bfde602](https://github.com/cameronzucker/tuxlink/commit/bfde602fa87cf2d146bff8d22d9ed7d6a3812269))
+* **vara:** non-blocking liveness drain + non-UTF8 counts as alive (tuxlink-6urh2) ([b784032](https://github.com/cameronzucker/tuxlink/commit/b7840327358c7e0a544403735f159d89c68a8160))
+* **vara:** rebuild drop-detection as a consuming EOF-aware heartbeat (Codex, tuxlink-6urh2) ([8af6c6f](https://github.com/cameronzucker/tuxlink/commit/8af6c6f8b60d9e18e41c0ede714949fe7c5822f9))
+* **vara:** thread bound host/port into mark_socket_lost (reopen target) (tuxlink-6urh2) ([697389a](https://github.com/cameronzucker/tuxlink/commit/697389a36a4df4800df785f602504c7104af88d0))
+* **vara:** treat EINTR as a live idle tick in the liveness read (tuxlink-6urh2) ([e7d41bb](https://github.com/cameronzucker/tuxlink/commit/e7d41bb82aaccbcb93bc9845d444d94e5bd785fc))
+
 ## [0.82.0](https://github.com/cameronzucker/tuxlink/compare/v0.81.0...v0.82.0) (2026-07-06)
 
 
