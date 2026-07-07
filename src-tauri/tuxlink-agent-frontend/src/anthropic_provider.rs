@@ -72,6 +72,36 @@ fn anthropic_max_tokens(model: &str) -> u32 {
     }
 }
 
+/// Whether this Anthropic model still accepts the top-level `temperature`
+/// sampling parameter.
+///
+/// Anthropic REMOVED `temperature` (and `top_p` / `top_k`) on its frontier
+/// models — Opus 4.7, Opus 4.8, Sonnet 5, and Fable/Mythos 5 — where sending it
+/// returns `HTTP 400 invalid_request_error: "temperature is deprecated for this
+/// model"` (tuxlink-a8uh1). It is a hard rejection, not a clamp: there is no
+/// accepted value. Older models (Haiku 4.5, Sonnet 4.6 and earlier, Opus 4.6 and
+/// earlier) still accept it.
+///
+/// The two directions are asymmetric: OMITTING `temperature` is always safe (the
+/// server applies its default), while SENDING it can 400. So this is an
+/// ALLOWLIST of the known-accepting families and omits for everything else —
+/// including any unrecognized or newly released model, which will almost
+/// certainly continue Anthropic's no-sampling-param trend. A new accepting model
+/// merely loses the operator's temperature until it is added here (harmless,
+/// server default); a new rejecting model is handled correctly with no change.
+/// Pure — no IO.
+fn model_accepts_temperature(model: &str) -> bool {
+    let m = model.to_ascii_lowercase();
+    m.contains("haiku")
+        || m.contains("sonnet-4")
+        || m.contains("sonnet-3")
+        || m.contains("opus-4-6")
+        || m.contains("opus-4-5")
+        || m.contains("opus-4-1")
+        || m.contains("opus-4-0")
+        || m.contains("opus-3")
+}
+
 /// Anthropic API version header value. Required on every request.
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
@@ -198,9 +228,12 @@ impl Provider for AnthropicProvider {
 ///
 /// Pure — no IO. Exported so Rust tests can drive it directly.
 ///
-/// `temperature` is forwarded as a top-level `"temperature"` field when `Some`;
-/// omitted entirely when `None` so the server default applies. The Anthropic
-/// Messages API accepts `temperature` as a top-level key (not nested).
+/// `temperature` is forwarded as a top-level `"temperature"` field when `Some`
+/// AND the model still accepts the parameter ([`model_accepts_temperature`]);
+/// omitted otherwise so the server default applies. Anthropic's frontier models
+/// (Opus 4.7/4.8, Sonnet 5, Fable/Mythos 5) reject `temperature` with a hard 400,
+/// so it is never sent to them (tuxlink-a8uh1). The Messages API accepts
+/// `temperature` as a top-level key (not nested).
 ///
 /// `system_prompt` is the effective system prompt (the operator override or the
 /// built-in [`ELMER_SYSTEM_PROMPT`], resolved by the caller — see
@@ -234,9 +267,12 @@ pub fn build_anthropic_request(
         "messages": messages,
     });
 
-    // `temperature` is omitted entirely when `None` (server default); present
-    // as a top-level JSON number when `Some` (Anthropic Messages API placement).
-    if let Some(t) = temperature {
+    // `temperature` is omitted when `None` (server default), AND omitted for the
+    // frontier models that reject the parameter (Opus 4.7/4.8, Sonnet 5,
+    // Fable/Mythos 5) — sending it there is a hard HTTP 400 (tuxlink-a8uh1). It
+    // is present as a top-level JSON number only for a `Some` value on a model
+    // known to accept it. See `model_accepts_temperature`.
+    if let Some(t) = temperature.filter(|_| model_accepts_temperature(model)) {
         body["temperature"] = json!(t);
     }
 
@@ -850,5 +886,56 @@ mod tests {
             body.get("temperature").is_none(),
             "temperature must be absent when None; got: {body}"
         );
+    }
+
+    /// Frontier models (Opus 4.7/4.8, Sonnet 5, Fable/Mythos 5) REMOVED the
+    /// `temperature` parameter — sending it is a hard HTTP 400. Even with a
+    /// `Some` value, the request body must OMIT `temperature` for these models
+    /// (tuxlink-a8uh1).
+    #[test]
+    fn request_body_omits_temperature_for_frontier_models() {
+        let convo = Conversation::new("hi");
+        for model in ["claude-opus-4-8", "claude-opus-4-7", "claude-sonnet-5", "claude-fable-5"] {
+            let body = build_anthropic_request(model, &convo, &[], Some(0.2_f32), ELMER_SYSTEM_PROMPT);
+            assert!(
+                body.get("temperature").is_none(),
+                "temperature must be ABSENT for {model} (rejected with 400); got: {body}"
+            );
+        }
+    }
+
+    /// Older models still accept `temperature`, so a `Some` value must still be
+    /// forwarded for them (no behavior change from before the frontier gate).
+    #[test]
+    fn request_body_includes_temperature_for_accepting_models() {
+        let convo = Conversation::new("hi");
+        for model in ["claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-6"] {
+            let body = build_anthropic_request(model, &convo, &[], Some(0.3_f32), ELMER_SYSTEM_PROMPT);
+            let temp = body
+                .get("temperature")
+                .and_then(Value::as_f64)
+                .unwrap_or_else(|| panic!("temperature must be present for {model}; got: {body}"));
+            assert!((temp - 0.3).abs() < 1e-6, "temperature must be ~0.3 for {model}; got: {temp}");
+        }
+    }
+
+    /// `model_accepts_temperature` allowlists the accepting families and omits
+    /// for the frontier and any unrecognized model (safe default).
+    #[test]
+    fn model_accepts_temperature_gates_by_family() {
+        // Accepting families.
+        assert!(model_accepts_temperature("claude-haiku-4-5"));
+        assert!(model_accepts_temperature("claude-sonnet-4-6"));
+        assert!(model_accepts_temperature("claude-sonnet-4-5"));
+        assert!(model_accepts_temperature("claude-opus-4-6"));
+        assert!(model_accepts_temperature("claude-opus-4-5"));
+        // Frontier — rejected.
+        assert!(!model_accepts_temperature("claude-opus-4-8"));
+        assert!(!model_accepts_temperature("claude-opus-4-7"));
+        assert!(!model_accepts_temperature("claude-sonnet-5"));
+        assert!(!model_accepts_temperature("claude-fable-5"));
+        assert!(!model_accepts_temperature("claude-mythos-5"));
+        // Unknown / future — safe default is omit (false).
+        assert!(!model_accepts_temperature("some-new-model-2027"));
     }
 }
