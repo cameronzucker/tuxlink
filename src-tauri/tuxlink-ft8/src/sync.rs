@@ -535,15 +535,17 @@ mod tests {
         // A deliberately-wrong alignment: 500 Hz off, 1 s early.
         let wrong_bin = ((1000.0) / BIN_HZ).round() as usize;
         let wrong = costas_metric(&spec, wrong_bin, 5).unwrap();
-        assert!(
-            top.sync_metric > wrong * 5.0,
-            "signal metric {} not >> off-alignment {wrong}",
-            top.sync_metric
-        );
+        // The separation must straddle the floor: signal clears it, off-alignment
+        // does not. (Asserting `wrong < FLOOR` is meaningful even when `wrong` is
+        // negative dB, unlike a bare `top > wrong*5` ratio.)
         assert!(
             top.sync_metric > SYNC_FLOOR,
             "signal metric {} below floor {SYNC_FLOOR}",
             top.sync_metric
+        );
+        assert!(
+            wrong < SYNC_FLOOR,
+            "off-alignment metric {wrong} not below floor {SYNC_FLOOR}"
         );
     }
 
@@ -594,6 +596,34 @@ mod tests {
         assert!(
             decode_samples(&nan, 12_000).is_empty(),
             "NaN slot produced a decode"
+        );
+    }
+
+    /// A strong unmodulated carrier (CW tone, no Costas structure) yields NO
+    /// decode: a single tone matches at most one of the seven distinct Costas
+    /// tones per block, so its sync metric stays below the floor. This is the
+    /// realistic adversarial false-decode input for a passive HF decoder — more
+    /// so than white noise. (Final whole-branch review 2026-07-07.)
+    #[test]
+    fn cw_carrier_yields_no_decode() {
+        use std::f64::consts::PI;
+        let f = 1500.0_f64;
+        // Full-scale i16 amplitude — far stronger than the fixtures' signal.
+        let carrier: Vec<f32> = (0..180_000)
+            .map(|n| (2.0 * PI * f * n as f64 / 12_000.0).sin() as f32 * 20_000.0)
+            .collect();
+        let spec = compute_spectrogram(&carrier, 12_000);
+        let top = coarse_candidates(&spec)
+            .first()
+            .map(|c| c.sync_metric)
+            .unwrap_or(0.0);
+        assert!(
+            top < SYNC_FLOOR,
+            "CW carrier top metric {top} ≥ floor {SYNC_FLOOR}"
+        );
+        assert!(
+            decode_samples(&carrier, 12_000).is_empty(),
+            "CW carrier produced a decode"
         );
     }
 }
