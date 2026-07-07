@@ -12,9 +12,9 @@ use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
-    CallToolResult, ContentBlock, GetPromptRequestParam, GetPromptResult, ListPromptsResult,
-    ListResourcesResult, PaginatedRequestParam, Prompt, PromptArgument, PromptMessage,
-    ReadResourceRequestParam, ReadResourceResult, Resource, ResourceContents, Role,
+    CallToolResult, ContentBlock, GetPromptRequestParams, GetPromptResult, ListPromptsResult,
+    ListResourcesResult, PaginatedRequestParams, Prompt, PromptArgument, PromptMessage,
+    ReadResourceRequestParams, ReadResourceResult, Resource, ResourceContents, Role,
     ServerCapabilities, ServerInfo,
 };
 use rmcp::service::RequestContext;
@@ -1228,7 +1228,7 @@ pub struct VaraInstallParams {
     pub installer_path: String,
 }
 
-#[tool_handler]
+#[tool_handler(router = self.tool_router)]
 impl ServerHandler for TuxlinkMcp {
     // Build `ServerInfo` (= `InitializeResult`). rmcp 2.x dropped its `Default`
     // impl in favour of `ServerInfo::new(capabilities)`, which sets the protocol
@@ -1262,7 +1262,7 @@ impl ServerHandler for TuxlinkMcp {
 
     async fn list_resources(
         &self,
-        _request: Option<PaginatedRequestParam>,
+        _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
         Ok(self.knowledge_resources())
@@ -1270,7 +1270,7 @@ impl ServerHandler for TuxlinkMcp {
 
     async fn read_resource(
         &self,
-        request: ReadResourceRequestParam,
+        request: ReadResourceRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResult, ErrorData> {
         self.knowledge_read(&request.uri)
@@ -1278,7 +1278,7 @@ impl ServerHandler for TuxlinkMcp {
 
     async fn list_prompts(
         &self,
-        _request: Option<PaginatedRequestParam>,
+        _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListPromptsResult, ErrorData> {
         Ok(self.knowledge_prompts())
@@ -1286,7 +1286,7 @@ impl ServerHandler for TuxlinkMcp {
 
     async fn get_prompt(
         &self,
-        request: GetPromptRequestParam,
+        request: GetPromptRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<GetPromptResult, ErrorData> {
         self.knowledge_get_prompt(&request.name, request.arguments)

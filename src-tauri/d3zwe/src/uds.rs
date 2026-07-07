@@ -32,7 +32,7 @@ use tokio::net::UnixStream;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use rmcp::model::CallToolRequestParam;
+use rmcp::model::CallToolRequestParams;
 use rmcp::service::{RoleClient, RunningService, ServiceExt};
 
 use tuxlink_agent_runner::{CallAuthority, ToolCall, ToolInvoker, ToolOutcome, ToolSpec};
@@ -85,7 +85,7 @@ impl UdsToolInvoker {
     /// Returns whether the call reached the server without a transport error; an
     /// abort is never gated, so a non-error reply is success.
     pub async fn call_abort(&self, tool_name: &str) -> bool {
-        let param = CallToolRequestParam::new(tool_name.to_string());
+        let param = CallToolRequestParams::new(tool_name.to_string());
         let client = self.client.lock().await;
         client.call_tool(param).await.is_ok()
     }
@@ -124,7 +124,7 @@ impl ToolInvoker for UdsToolInvoker {
         // and returns only the terminal outcome — see print.rs).
         eprintln!("  → tool {} {}", call.name, call.args);
 
-        let mut param = CallToolRequestParam::new(call.name.clone());
+        let mut param = CallToolRequestParams::new(call.name.clone());
         param.arguments = call.args.as_object().cloned();
 
         let client = self.client.lock().await;
