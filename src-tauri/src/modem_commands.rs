@@ -122,7 +122,7 @@ fn resolve_ardop_binary(configured: &str) -> PathBuf {
 /// derived from the overridden `rigctld`'s directory so the model list and the
 /// control daemon never version-skew.
 fn resolve_rig_binaries(configured_rigctld: &str) -> (PathBuf, PathBuf) {
-    if configured_rigctld == "rigctld" {
+    if configured_rigctld.trim().is_empty() || configured_rigctld == "rigctld" {
         if let Ok(exe) = std::env::current_exe() {
             if let Some(dir) = exe.parent() {
                 let d = dir.join("tuxlink-rigctld");
@@ -2163,6 +2163,11 @@ mod tests {
         // back to the bare names on $PATH — documents the dev/test path.
         assert_eq!(d, std::path::PathBuf::from("rigctld"));
         assert_eq!(l, std::path::PathBuf::from("rigctl"));
+        // An empty/whitespace value is treated as the bundled sentinel too (a
+        // hand-edited config never round-trips empty, but the contract is
+        // "missing/empty/legacy-rigctld -> bundled").
+        assert_eq!(resolve_rig_binaries(""), (std::path::PathBuf::from("rigctld"), std::path::PathBuf::from("rigctl")));
+        assert_eq!(resolve_rig_binaries("  "), (std::path::PathBuf::from("rigctld"), std::path::PathBuf::from("rigctl")));
     }
 
     #[test]

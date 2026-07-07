@@ -179,7 +179,7 @@ jobs:
           allow='libc\.|libm\.|libpthread|libdl|ld-linux|linux-vdso|libusb-1\.0|libudev|libcap'
           for b in tuxlink-rigctl tuxlink-rigctld; do
             bin="src-tauri/binaries/${b}-${TRIPLE}"
-            ldd "$bin" | awk '{print $1}' | grep -vE "^($allow)" | grep . && { echo "FORBIDDEN lib in $b"; exit 1; } || true
+            ldd "$bin" | awk '{print $1}' | sed 's#^/.*/##' | grep -vE "^($allow)" | grep . && { echo "FORBIDDEN lib in $b"; exit 1; } || true
             ldd "$bin" | grep -iE 'libhamlib|readline|tinfo|ncurses|gpiod|xml2' && { echo "FORBIDDEN hamlib/readline in $b"; exit 1; } || true
             # GLIBC floor: ECT runner is glibc 2.35 -> assert no symbol newer than 2.35
             maxglibc="$(readelf --version-info "$bin" | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -uV | tail -1)"
