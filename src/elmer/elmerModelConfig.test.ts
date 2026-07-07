@@ -287,6 +287,14 @@ describe('inferPreset', () => {
     expect(inferPreset('http://127.0.0.1:11434/api/tags')).toBe('localOllama');
   });
 
+  it('gate: a loopback llama.cpp on a non-ollama port is NOT localOllama', () => {
+    // Regression for the num_ctx gate (Task 5): a loopback llama.cpp/compat
+    // server on a non-11434 port is isLoopback()===true but NOT localOllama --
+    // gating the operator num_ctx control on isLoopback wrongly showed/sent it
+    // for this tile, where the server (not the client) owns the KV cache.
+    expect(inferPreset('http://127.0.0.1:8080/v1/chat/completions')).toBe('custom');
+  });
+
   it('returns custom for an unknown origin', () => {
     expect(inferPreset('https://selfhosted.example.com/v1/chat/completions')).toBe('custom');
   });

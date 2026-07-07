@@ -770,15 +770,17 @@ export function ModelForm({
     setSaveState({ kind: 'idle' });
     // Advanced fields — send the FULL advanced state on every save so a routine
     // model/endpoint change no longer wipes saved num_ctx/temperature/system
-    // prompt (Codex P2 "config clobber"). num_ctx is only meaningful on the
-    // native/local path; a custom LOCAL endpoint (isLoopback) still gets it, a
-    // remote endpoint sends null. An empty system prompt sends null (backend
-    // default).
+    // prompt (Codex P2 "config clobber"). An empty system prompt sends null
+    // (backend default).
     const parsedNumCtx = (() => {
       const n = parseInt(advanced.numCtxStr, 10);
       return Number.isFinite(n) && n > 0 ? n : DEFAULT_NUM_CTX;
     })();
-    const numCtxArg: number | null = isLoopback(endpoint) ? parsedNumCtx : null;
+    // num_ctx is causal ONLY on native Ollama (it allocates the KV cache). On
+    // every compat/cloud tile the server owns a fixed window (read via
+    // /v1/models), so we never send an operator num_ctx there — gate on the
+    // Ollama preset, not the loopback string (a loopback llama.cpp is compat).
+    const numCtxArg: number | null = inferPreset(endpoint) === 'localOllama' ? parsedNumCtx : null;
     const systemPromptArg: string | null = advanced.systemPrompt.trim()
       ? advanced.systemPrompt.trim()
       : null;
@@ -1002,9 +1004,12 @@ export function ModelForm({
       )}
 
       {/* Advanced disclosure (tuxlink-65qhn) — the shared num_ctx / temperature /
-          system-prompt panel. num_ctx renders only for a LOCAL (loopback)
-          endpoint, so the native Ollama tile gets the field the epic centres on
-          while a custom REMOTE endpoint hides it. Collapsed by default. */}
+          system-prompt panel. num_ctx is causal ONLY on native Ollama (it
+          allocates the KV cache); on every compat/cloud endpoint reached via
+          this form (openrouter, custom, including a loopback llama.cpp) the
+          server owns a fixed window, so the control renders only when the
+          endpoint resolves to the localOllama preset, not merely a loopback
+          host. Collapsed by default. */}
       <div className="get-key-advanced" data-testid="model-form-advanced">
         <button
           type="button"
@@ -1020,7 +1025,7 @@ export function ModelForm({
           <AdvancedModelSettings
             values={advanced}
             onChange={setAdvanced}
-            showNumCtx={endpointIsLoopback}
+            showNumCtx={currentPreset === 'localOllama'}
             endpoint={endpoint}
             model={model}
             defaultSystemPromptPlaceholder={DEFAULT_SYSTEM_PROMPT_PLACEHOLDER}

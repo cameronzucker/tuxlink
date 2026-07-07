@@ -29,7 +29,7 @@
 import { useState, useCallback } from 'react';
 import { open as shellOpen } from '@tauri-apps/plugin-shell';
 import type { ProviderPreset, SetKey, KeyStatus, KeySource, ConfigReadDto } from './elmerModelConfig';
-import { isLoopback } from './elmerModelConfig';
+import { inferPreset } from './elmerModelConfig';
 import type { DetectState } from './useElmer';
 import { DetectedModelCombobox } from './DetectedModelCombobox';
 import {
@@ -195,9 +195,9 @@ export function GetKeyCard({
   // Collapsed by default per spec.
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
-  // Whether this tile's endpoint is local/native (determines num_ctx visibility).
-  // Cloud tiles show the disclosure minus num_ctx (per mock annotation).
-  const isLocalTile = isLoopback(preset.endpoint);
+  // Show the num_ctx control only on the native Ollama tile (causal there);
+  // compat/cloud tiles read the window from the server, so hide it.
+  const isLocalTile = inferPreset(preset.endpoint) === 'localOllama';
 
   // T8: Advanced-panel values, seeded from initialConfig (saved values) or
   // sensible defaults. num_ctx is a string so the number input stays freely
