@@ -267,6 +267,49 @@ pub struct VaraStatusDto {
     pub state: String,
 }
 
+/// One checkpoint of the VARA-under-WINE install pipeline
+/// (deps → prefix → vara → vb6 → ocx → verify → autostart), curated from the
+/// setup engine's JSONL `checkpoint` events. All fields are `Option` because
+/// the engine's `hello` / `checkpoint` / `summary` lines carry different subsets.
+/// App-owned provisioning telemetry — no external untrusted content.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+pub struct VaraCheckpointDto {
+    /// Stable checkpoint id (e.g. `"deps"`, `"prefix"`, `"vara"`, `"verify"`).
+    pub id: Option<String>,
+    /// 1-based position of this checkpoint in the pipeline.
+    pub index: Option<u32>,
+    /// Total number of checkpoints in the pipeline.
+    pub total: Option<u32>,
+    /// Checkpoint state token (e.g. `"running"`, `"ok"`, `"failed"`).
+    pub state: Option<String>,
+    /// Human-readable detail line for display / diagnosis.
+    pub detail: Option<String>,
+}
+
+/// Result of the read-only, offline VARA install-readiness probe: whether VARA
+/// is provisioned (`ready`) plus each pipeline checkpoint's state. Never
+/// launches VARA and never touches the network.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+pub struct VaraInstallStatusDto {
+    /// True iff the setup engine reported the core checkpoints green.
+    pub ready: bool,
+    /// Per-checkpoint state from the status stream, for display.
+    pub checkpoints: Vec<VaraCheckpointDto>,
+}
+
+/// Terminal summary of a VARA install run: whether it completed green (`ok`),
+/// the WINE prefix it provisioned into, and the VARA version label reported by
+/// the engine.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+pub struct VaraInstallSummaryDto {
+    /// True iff the install completed all checkpoints successfully.
+    pub ok: bool,
+    /// The WINE prefix VARA was installed into, when known.
+    pub prefix: Option<String>,
+    /// The installed VARA version label, when known.
+    pub vara_version: Option<String>,
+}
+
 /// Current position status. `grid` is precision-reduced by the impl.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PositionStatusDto {
@@ -478,6 +521,27 @@ pub trait StatusPort: Send + Sync {
     /// live fields are `None` when the read fails (unconfigured / rigctld
     /// absent / serial busy).
     async fn rig_status(&self) -> Result<RigStatusDto, PortError>;
+}
+
+/// VARA-under-WINE provisioning (tuxlink-w7212). The two probes are read-only
+/// and do NOT taint (app-owned build/readiness data). `vara_install_start` runs
+/// the one-time, prep-time install of VARA HF; it is **NON-TRANSMIT** (it drives
+/// `apt`/`winetricks`/`wine` to install software and never keys a radio), so it
+/// is NOT routed through the transmit consent gate — the operator-presence guard
+/// is the engine's own `pkexec` OS password prompt. Object-safe so
+/// [`crate::McpState`] can hold it as `Arc<dyn ProvisionPort>`.
+#[async_trait]
+pub trait ProvisionPort: Send + Sync {
+    /// True iff the VARA setup engine is bundled in this build. Read-only.
+    async fn vara_engine_available(&self) -> Result<bool, PortError>;
+    /// Offline readiness probe (no network, no launch). Read-only.
+    async fn vara_install_status(&self) -> Result<VaraInstallStatusDto, PortError>;
+    /// Install VARA HF from a user-supplied installer `.exe` path. NON-TRANSMIT;
+    /// gated only by pkexec's OS password prompt, not the transmit consent gate.
+    async fn vara_install_start(
+        &self,
+        installer_path: String,
+    ) -> Result<VaraInstallSummaryDto, PortError>;
 }
 
 /// Mailbox reads. `list` + `read` return untrusted message content → the

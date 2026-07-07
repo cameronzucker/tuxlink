@@ -196,6 +196,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         compose: Arc::new(mocks::MockCompose::new(Arc::clone(&staged))),
         stations,
         prediction,
+        // Provisioning is non-transmit + ungated; the mock is used in both the
+        // scenario and no-scenario branches (like egress/abort/write/compose).
+        provision: Arc::new(mocks::MockProvision),
     };
     let router = TuxlinkMcp::new(Arc::new(state));
 

@@ -1461,6 +1461,12 @@ pub fn run() {
                         prediction: std::sync::Arc::new(
                             crate::mcp_ports::MonolithPredictionPort::new(h.clone()),
                         ),
+                        // tuxlink-w7212: VARA-under-WINE provisioning. Read probes
+                        // + a NON-TRANSMIT install (pkexec is the operator-presence
+                        // gate; NOT the transmit consent gate).
+                        provision: std::sync::Arc::new(
+                            crate::mcp_ports::MonolithProvisionPort::new(h.clone()),
+                        ),
                     });
                     let router = tuxlink_mcp_core::router::TuxlinkMcp::new(mcp_state);
 
@@ -1547,6 +1553,7 @@ pub fn run() {
                     compose: std::sync::Arc::new(crate::mcp_ports::MonolithComposePort::new(h_elmer.clone())),
                     stations: std::sync::Arc::new(crate::mcp_ports::MonolithStationPort::new(h_elmer.clone())),
                     prediction: std::sync::Arc::new(crate::mcp_ports::MonolithPredictionPort::new(h_elmer.clone())),
+                    provision: std::sync::Arc::new(crate::mcp_ports::MonolithProvisionPort::new(h_elmer.clone())),
                 });
 
                 // Perform the async MCP duplex handshake synchronously from setup.

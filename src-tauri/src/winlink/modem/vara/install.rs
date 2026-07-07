@@ -120,17 +120,27 @@ fn engine_command(engine: &Path) -> Command {
     cmd
 }
 
+/// Shared logic behind [`vara_engine_available`]: true iff the VARA provisioning
+/// engine is bundled in this build. Takes `&AppHandle` so BOTH the
+/// `#[tauri::command]` wrapper AND the MCP provision adapter can call it. Pure
+/// resource-path probe; no I/O beyond the `exists()` check.
+pub fn run_engine_available(app: &AppHandle) -> bool {
+    resolve_engine(app).is_ok()
+}
+
 /// True iff the VARA provisioning engine is present in this build.
 #[tauri::command]
 pub fn vara_engine_available(app: AppHandle) -> bool {
-    resolve_engine(&app).is_ok()
+    run_engine_available(&app)
 }
 
-/// Read-only, offline readiness probe: runs `status --json` and reports whether
-/// VARA is provisioned. Never launches VARA and never touches the network.
-#[tauri::command]
-pub fn vara_install_status(app: AppHandle) -> Result<InstallStatus, String> {
-    let engine = resolve_engine(&app)?;
+/// Shared logic behind [`vara_install_status`]: read-only, offline readiness
+/// probe. Runs `status --json`, parses each JSONL line into an [`EngineEvent`],
+/// and reports whether the engine exited green. Never launches VARA and never
+/// touches the network. Takes `&AppHandle` so the MCP provision adapter can
+/// reuse it.
+pub fn run_install_status(app: &AppHandle) -> Result<InstallStatus, String> {
+    let engine = resolve_engine(app)?;
     let output = engine_command(&engine)
         .args(["status", "--json"])
         .output()
@@ -145,27 +155,39 @@ pub fn vara_install_status(app: AppHandle) -> Result<InstallStatus, String> {
     })
 }
 
-/// Provision VARA HF from a user-supplied installer `.exe`. Streams each
-/// engine progress line on `vara_install:progress` and returns the final
-/// `summary` event. Errors if the engine is missing, the installer path does
-/// not exist, the child fails to spawn, or the run ends non-green.
-///
-/// `installer_path` is a filesystem path chosen by the user via the native
-/// file dialog; it is passed as a process argument (not through a shell), so
-/// it cannot inject additional commands.
+/// Read-only, offline readiness probe: runs `status --json` and reports whether
+/// VARA is provisioned. Never launches VARA and never touches the network.
 #[tauri::command]
-pub fn vara_install_start(app: AppHandle, installer_path: String) -> Result<EngineEvent, String> {
-    let engine = resolve_engine(&app)?;
+pub fn vara_install_status(app: AppHandle) -> Result<InstallStatus, String> {
+    run_install_status(&app)
+}
+
+/// Shared logic behind [`vara_install_start`]. Provisions VARA HF from a
+/// user-supplied installer `.exe`, streaming each engine progress line on
+/// `vara_install:progress` (via `app.emit`) and returning the final `summary`
+/// event. Errors if the engine is missing, the installer path does not exist,
+/// the child fails to spawn, or the run ends non-green.
+///
+/// Takes `&AppHandle` + `&str` so BOTH the `#[tauri::command]` wrapper AND the
+/// MCP provision adapter can drive it. The install is a blocking operation
+/// (spawns a child + drains its stdout to completion); the async MCP adapter
+/// runs it on a blocking thread.
+///
+/// `installer_path` is a filesystem path chosen by the user (native file dialog
+/// or agent-relayed); it is passed as a process argument (not through a shell),
+/// so it cannot inject additional commands.
+pub fn run_install(app: &AppHandle, installer_path: &str) -> Result<EngineEvent, String> {
+    let engine = resolve_engine(app)?;
 
     if installer_path.trim().is_empty() {
         return Err("no installer selected".to_string());
     }
-    if !PathBuf::from(&installer_path).exists() {
+    if !PathBuf::from(installer_path).exists() {
         return Err(format!("installer not found: {installer_path}"));
     }
 
     let mut child = engine_command(&engine)
-        .args(build_install_args(&installer_path))
+        .args(build_install_args(installer_path))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -222,6 +244,14 @@ pub fn vara_install_start(app: AppHandle, installer_path: String) -> Result<Engi
             .or_else(|| non_empty(stderr_text))
             .unwrap_or_else(|| "VARA setup produced no result".to_string())),
     }
+}
+
+/// Provision VARA HF from a user-supplied installer `.exe`. Thin
+/// `#[tauri::command]` wrapper over [`run_install`]; see it for the streaming
+/// contract and error modes.
+#[tauri::command]
+pub fn vara_install_start(app: AppHandle, installer_path: String) -> Result<EngineEvent, String> {
+    run_install(&app, &installer_path)
 }
 
 /// Return `Some(s)` iff `s` is non-empty after trimming.

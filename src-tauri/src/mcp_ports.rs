@@ -42,10 +42,11 @@ use tuxlink_mcp_core::ports::{
     GatewayAntennaDto, GatewayDto, GribRequestDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto,
     ModemStatusDto, OutboxReadPort, PacketConfigDto, PacketWriteDto, ParsedMessageDto,
     PathPredictionDto, PlatformInfoDto, PortError, PositionStatusDto, PredictRequestDto,
-    PredictionPort, QsyCandidateDto, RigConfigDto, RigStatusDto, SearchPort, SearchQueryDto,
-    SearchResultsDto, SendFormDto, SerialDeviceDto, SessionIntentDto, SolarSnapshotDto,
-    StationFilterDto, StationListDto, StationModeDto, StationPort, StagedRecordDto, StatusPort,
-    VaraConfigDto, VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
+    PredictionPort, ProvisionPort, QsyCandidateDto, RigConfigDto, RigStatusDto, SearchPort,
+    SearchQueryDto, SearchResultsDto, SendFormDto, SerialDeviceDto, SessionIntentDto,
+    SolarSnapshotDto, StationFilterDto, StationListDto, StationModeDto, StationPort,
+    StagedRecordDto, StatusPort, VaraCheckpointDto, VaraConfigDto, VaraInstallStatusDto,
+    VaraInstallSummaryDto, VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
 };
 use tuxlink_mcp_core::validate::{
     validate_address, validate_attachment_dest, validate_body, validate_drive_level,
@@ -2294,6 +2295,104 @@ impl PredictionPort for MonolithPredictionPort {
         // Never errors hard when solar data is merely absent: the loader returns
         // the bundled-SSN fallback (ssn present, indices None, source "bundled").
         Ok(load_solar_snapshot_dto())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Provision port (tuxlink-w7212) — VARA-under-WINE setup.
+//
+// The two probes (`vara_engine_available` / `vara_install_status`) are read-only
+// and NON-tainting. `vara_install_start` runs the vendored `wine-vara-setup`
+// engine to install VARA HF. It is NON-TRANSMIT (drives apt/winetricks/wine to
+// install software; the engine's own `pkexec` prompts the operator for their OS
+// password), so it is NOT routed through `guarded_egress` — the transmit consent
+// gate governs keying a radio, which provisioning never does. The operator-
+// presence guard here is pkexec's password dialog, not the arm/taint state.
+//
+// The shared install fns in `winlink::modem::vara::install` are synchronous and
+// blocking (they spawn a child + drain its stdout to completion), so every method
+// runs them on a blocking thread via `spawn_blocking` to avoid stalling the async
+// MCP runtime.
+// ---------------------------------------------------------------------------
+
+/// Map one setup-engine [`EngineEvent`](crate::winlink::modem::vara::install::EngineEvent)
+/// checkpoint line onto the agent-facing [`VaraCheckpointDto`].
+fn map_vara_checkpoint(
+    e: crate::winlink::modem::vara::install::EngineEvent,
+) -> VaraCheckpointDto {
+    VaraCheckpointDto {
+        id: e.id,
+        index: e.index,
+        total: e.total,
+        state: e.state,
+        detail: e.detail,
+    }
+}
+
+/// [`ProvisionPort`] adapter over the vendored VARA-under-WINE setup engine.
+pub struct MonolithProvisionPort {
+    app: AppHandle,
+}
+
+impl MonolithProvisionPort {
+    pub fn new(app: AppHandle) -> Self {
+        Self { app }
+    }
+}
+
+#[async_trait]
+impl ProvisionPort for MonolithProvisionPort {
+    async fn vara_engine_available(&self) -> Result<bool, PortError> {
+        // Pure resource-path probe; still off the async runtime for uniformity
+        // (it touches the filesystem via `exists()`).
+        let app = self.app.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::winlink::modem::vara::install::run_engine_available(&app)
+        })
+        .await
+        .map_err(|e| PortError::Internal(format!("join: {e}")))
+    }
+
+    async fn vara_install_status(&self) -> Result<VaraInstallStatusDto, PortError> {
+        // Read-only, offline `status --json` probe. Blocking (spawns the engine +
+        // reads its output), so run it on a blocking thread.
+        let app = self.app.clone();
+        let status = tokio::task::spawn_blocking(move || {
+            crate::winlink::modem::vara::install::run_install_status(&app)
+        })
+        .await
+        .map_err(|e| PortError::Internal(format!("join: {e}")))?
+        .map_err(|e| PortError::Internal(redact_err(e)))?;
+        Ok(VaraInstallStatusDto {
+            ready: status.ready,
+            checkpoints: status
+                .checkpoints
+                .into_iter()
+                .map(map_vara_checkpoint)
+                .collect(),
+        })
+    }
+
+    async fn vara_install_start(
+        &self,
+        installer_path: String,
+    ) -> Result<VaraInstallSummaryDto, PortError> {
+        // NON-TRANSMIT: do NOT use guarded_egress (that is the transmit gate).
+        // pkexec inside the engine is the operator-presence gate. Run the
+        // (blocking) install on a blocking thread so the async runtime is not
+        // stalled for the duration of the install.
+        let app = self.app.clone();
+        let summary = tokio::task::spawn_blocking(move || {
+            crate::winlink::modem::vara::install::run_install(&app, &installer_path)
+        })
+        .await
+        .map_err(|e| PortError::Internal(format!("join: {e}")))?
+        .map_err(|e| PortError::Internal(redact_err(e)))?;
+        Ok(VaraInstallSummaryDto {
+            ok: summary.ok.unwrap_or(false),
+            prefix: summary.prefix,
+            vara_version: summary.vara_version,
+        })
     }
 }
 
