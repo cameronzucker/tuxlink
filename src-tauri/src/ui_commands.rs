@@ -6372,16 +6372,13 @@ fn vara_listener_consumer_task(
         // only self-heals ~3s later when the heartbeat's next tick reads EOF.
         // Generation-gated: a stale snapshot means Close already intervened, so
         // leave that teardown intact.
-        match vara_session.mark_socket_lost_if_generation_matches(transport, close_gen_snapshot) {
-            Ok(()) => {
-                progress("VARA listener consumer: cmd socket lost; session marked SocketLost.");
-            }
-            Err(()) => {
-                progress(
-                    "VARA listener consumer: cmd socket lost but close intervened; \
-                     leaving teardown to the close path.",
-                );
-            }
+        if vara_session.mark_socket_lost_if_generation_matches(transport, close_gen_snapshot) {
+            progress("VARA listener consumer: cmd socket lost; session marked SocketLost.");
+        } else {
+            progress(
+                "VARA listener consumer: cmd socket lost but close intervened; \
+                 leaving teardown to the close path.",
+            );
         }
     } else {
         // Clean disarm path: send LISTEN OFF best-effort and return the still-

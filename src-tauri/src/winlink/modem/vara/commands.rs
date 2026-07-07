@@ -646,13 +646,19 @@ impl VaraSession {
     /// Generation-gated exactly like the install sibling: a stale
     /// `snapshot_gen` means the operator's Close intervened and already tore
     /// the session down, so we just drop the (already-dropped) transport and
-    /// leave state alone (`Err(())`) rather than stamping SocketLost over a
-    /// session the operator deliberately closed.
+    /// leave state alone rather than stamping SocketLost over a session the
+    /// operator deliberately closed.
+    ///
+    /// Returns `true` when SocketLost was stamped, `false` when the stamp was a
+    /// no-op (stale generation or poisoned mutex — close path owns teardown).
+    /// Unlike the install sibling there is no transport to hand back on the
+    /// no-op path (a dead socket has nothing to preserve), so a plain `bool`
+    /// carries the outcome.
     pub fn mark_socket_lost_if_generation_matches(
         &self,
         t: VaraTransport,
         snapshot_gen: u64,
-    ) -> Result<(), ()> {
+    ) -> bool {
         // Dead socket — nothing to preserve; close its fds up front so we
         // don't hold the session mutex across the drop.
         drop(t);
@@ -661,7 +667,7 @@ impl VaraSession {
                 let live = self.close_generation.load(Ordering::Acquire);
                 if live != snapshot_gen {
                     // Close intervened: leave the close path's teardown intact.
-                    return Err(());
+                    return false;
                 }
                 guard.active_intent = None;
                 guard.active_transport_kind = None;
@@ -685,9 +691,9 @@ impl VaraSession {
                     active_intent: None,
                     active_transport_kind: None,
                 };
-                Ok(())
+                true
             }
-            Err(_poisoned) => Err(()),
+            Err(_poisoned) => false,
         }
     }
 
@@ -3284,9 +3290,7 @@ mod tests {
         // A consumer (listener) holds the transport, then finds it dead.
         let t = session.take_transport().expect("transport present");
 
-        assert!(session
-            .mark_socket_lost_if_generation_matches(t, gen)
-            .is_ok());
+        assert!(session.mark_socket_lost_if_generation_matches(t, gen));
 
         let snap = session.snapshot();
         assert_eq!(snap.state, VaraState::SocketLost);
@@ -3322,9 +3326,7 @@ mod tests {
         session.bump_close_generation();
         let t = session.take_transport().expect("transport present");
 
-        assert!(session
-            .mark_socket_lost_if_generation_matches(t, stale_gen)
-            .is_err());
+        assert!(!session.mark_socket_lost_if_generation_matches(t, stale_gen));
 
         // We did NOT stamp SocketLost — the close path's teardown is untouched.
         assert_ne!(
