@@ -11,13 +11,13 @@ operator needs it, and how it relates to tuxlink's radio chain.
 
 ## Tuxlink does not drive CAT
 
-Tuxlink has no built-in rig-control client. It does not read or set the
-radio's frequency, mode, or VFO, and it does not require rigctld to operate.
-Tune the radio by hand to the frequency a gateway listing names, then Connect.
+Tuxlink bundles `rigctld` (Hamlib 4.6.2) and integrates rig-control support
+in its settings. However, Tuxlink's dashboard does not display the radio's
+live CAT frequency; tune the radio by hand to the frequency a gateway listing
+names, then Connect. You only need rigctld running if other software on your
+station needs to share the rig.
 
-rigctld is **external, operator-run** infrastructure. Whether you run it at
-all depends on the *other* software sharing the radio. CAT via rigctld becomes
-valuable when:
+CAT via rigctld becomes valuable when:
 
 - **Dire Wolf needs CAT-command PTT.** A Packet setup that keys the radio
   through CAT rather than a hardware PTT line points Dire Wolf at rigctld for
@@ -118,18 +118,23 @@ returns `RPRT -1` or a connection refused; the rigctld journal log
 
 ## Tuxlink and CAT
 
-Tuxlink does not integrate rigctld. There is no rig-control client in tuxlink
-and no Settings panel for one; the dashboard ribbon shows the operator's
-identity and grid, not a live CAT frequency. Tune the radio by hand — or with
-whatever rig-control software you already run — to the gateway's frequency
-before you Connect. Hamlib rig control inside tuxlink is deferred to a later
-release.
+Tuxlink bundles `rigctld` (Hamlib 4.6.2) and integrates it for full rig-control
+support. Rig control works out of the box with no separate Hamlib installation
+required. The Settings panel includes a `rigctld binary` option that defaults
+to the bundled copy; you can override it with an absolute path to use your own
+Hamlib installation if needed. The bundled copy is used deterministically
+regardless of any system Hamlib version.
 
-rigctld remains useful *around* tuxlink: it lets Dire Wolf key the radio over
-CAT, and it lets loggers and propagation tools share the rig. Tuxlink's own
-modems handle their transmit path independently — ardopcf and VARA assert PTT
-through their own configuration, and the DigiRig's hardware PTT line keys the
-radio directly (see [DigiRig setup](10-digirig.md)).
+Tuxlink does not display the radio's live CAT frequency in the dashboard ribbon
+(which shows the operator's identity and grid instead). When rig control is
+configured, Tuxlink uses its bundled `rigctld` to set the radio's frequency and
+mode for a session and to populate the rig-model picker; otherwise, tune the
+radio by hand to the gateway's frequency before connecting. The bundled copy is
+a private, short-lived helper for Tuxlink's own use, not a shared system daemon:
+other CAT applications (Dire Wolf, loggers, propagation tools) use their own
+Hamlib installation. Tuxlink's modems handle their transmit path independently —
+ardopcf and VARA assert PTT through their own configuration, and the DigiRig's
+hardware PTT line keys the radio directly (see [DigiRig setup](10-digirig.md)).
 
 ## CAT-PTT conflict avoidance
 

@@ -2,11 +2,21 @@
 # deb-install-smoke.sh — runs INSIDE a clean Debian container (no dev toolchain,
 # fresh apt state) to validate Tuxlink's DOCUMENTED end-user install path.
 #
-# Two modes:
+# Three modes:
 #   install (default) — SUPPORTED distro (Debian 13 Trixie+, Ubuntu 24.04+).
 #     Mirrors docs/install.md: `apt-get update && apt-get install -y ./*.deb`,
 #     then asserts apt resolved every Depends, the binary is present, and its
-#     shared libraries ALL resolve (ldd has no "not found").
+#     shared libraries ALL resolve (ldd has no "not found"). Additionally
+#     asserts the hamlib sidecar bundling contract (tuxlink-hs2k): system
+#     hamlib was NOT pulled in as a transitive Depends, the bundled
+#     tuxlink-rigctld binary is present + fully linked, and a live
+#     dummy-backend rigctl round-trip (set/get frequency) works end to end.
+#   hamlib-present — the machine that actually breaks: a container that
+#     ALREADY has libhamlib-utils installed (so /usr/bin/rigctld exists)
+#     before Tuxlink is installed. Asserts the Tuxlink .deb still installs
+#     cleanly — the direct guard against the historical /usr/bin/rigctld
+#     collision now that the bundled binaries are named tuxlink-rigctl /
+#     tuxlink-rigctld (tuxlink-hs2k).
 #   refuse — UNSUPPORTED distro (e.g. Debian 12 Bookworm: glibc 2.36 < the
 #     binary's 2.39 floor). Asserts apt REFUSES cleanly because of the
 #     `libc6 (>= 2.39)` Depends — i.e. the user gets a clear unmet-dependency
@@ -17,10 +27,10 @@
 # Class-prevention for GH #786 (tuxlink-w636). Deliberately never `dpkg -i`
 # (does not resolve deps).
 #
-# Usage: deb-install-smoke.sh <path-to-.deb> [install|refuse]
+# Usage: deb-install-smoke.sh <path-to-.deb> [install|hamlib-present|refuse]
 set -euo pipefail
 
-DEB="${1:?usage: deb-install-smoke.sh <path-to-.deb> [install|refuse]}"
+DEB="${1:?usage: deb-install-smoke.sh <path-to-.deb> [install|hamlib-present|refuse]}"
 DEB="$(readlink -f "$DEB")"
 test -f "$DEB"
 MODE="${2:-install}"
@@ -55,6 +65,16 @@ if [ "$MODE" = "refuse" ]; then
   exit 0
 fi
 
+if [ "$MODE" = "hamlib-present" ]; then
+  echo "::group::apt-get install libhamlib-utils (simulate a machine that already has system hamlib)"
+  # The R2 collision case: /usr/bin/rigctld already exists (from libhamlib-utils)
+  # BEFORE Tuxlink installs its own bundled tuxlink-rigctl/tuxlink-rigctld. The
+  # binaries are renamed precisely so this never collides; installing here first
+  # is the direct regression guard for that rename ever being undone.
+  apt-get install -y libhamlib-utils
+  echo "::endgroup::"
+fi
+
 echo "::group::apt-get install ./${DEB##*/} (documented user path; resolves deps)"
 # Absolute path => apt treats it as a local .deb and resolves its Depends from
 # the configured repositories. A non-zero exit = unmet Depends = the bug we guard.
@@ -81,5 +101,39 @@ if [ -n "$missing" ]; then
   exit 1
 fi
 echo "::endgroup::"
+
+if [ "$MODE" = "install" ]; then
+  # tuxlink-hs2k: the clean-container case is the ONE state that was never
+  # broken (a machine that never had hamlib installed can't hit the R2
+  # collision). Prove the bundled hamlib sidecar contract here instead: no
+  # system hamlib got dragged in as a transitive Depends, the bundled
+  # tuxlink-rigctld binary is present, fully linked, and actually runs a
+  # dummy-backend rigctl round-trip.
+  echo "::group::assert no system hamlib pulled + bundled tuxlink-rigctld runs"
+  if dpkg -s libhamlib-utils >/dev/null 2>&1; then
+    echo "FAIL: system hamlib (libhamlib-utils) was pulled in by the Tuxlink install"
+    exit 1
+  fi
+  test -x /usr/bin/tuxlink-rigctld
+  test -x /usr/bin/tuxlink-rigctl
+  missing_rigctld="$(ldd /usr/bin/tuxlink-rigctld 2>/dev/null | awk '/not found/ {print}')"
+  if [ -n "$missing_rigctld" ]; then
+    echo "FAIL: unresolved shared libraries in bundled tuxlink-rigctld:"
+    echo "$missing_rigctld"
+    exit 1
+  fi
+  /usr/bin/tuxlink-rigctld -m 1 -t 4590 & dp=$!
+  sleep 1
+  /usr/bin/tuxlink-rigctl -m 2 -r localhost:4590 F 14074000
+  # `rigctl -m 2` prints a "rigctld: Hamlib ..." banner before the value; take the
+  # frequency line (all-digits), not the whole multi-line capture.
+  freq="$(/usr/bin/tuxlink-rigctl -m 2 -r localhost:4590 f | grep -m1 -E '^[0-9]+$' || true)"
+  kill "$dp" 2>/dev/null || true
+  if [ "$freq" != "14074000" ]; then
+    echo "FAIL: dummy-backend rigctl round-trip returned '$freq', expected 14074000"
+    exit 1
+  fi
+  echo "::endgroup::"
+fi
 
 echo "OK: ${DEB##*/} installs cleanly via apt and all shared libraries resolve."

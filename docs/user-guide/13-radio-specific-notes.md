@@ -10,13 +10,13 @@ jack will run Winlink with tuxlink — but the entries below have either been
 operationally confirmed or have well-known community-tested settings worth
 reproducing.
 
-The Hamlib model numbers below were verified against the Hamlib source at
-the time of writing (Hamlib master, accessed June 2026). Model IDs do
-shift between Hamlib versions; `rigctl --list | grep <model>` against the
-installed Hamlib confirms the current number for any rig. Tuxlink does not
-drive CAT itself — these model numbers and CAT settings apply when running
-rigctld for external software (Dire Wolf CAT-PTT, a logger); see
-[CAT and rigctld](12-cat-and-rigctld.md).
+Tuxlink bundles `rigctld` from Hamlib 4.6.2. The model numbers below were
+verified against Hamlib 4.6.2 at the time of writing (June 2026). Model IDs
+can shift between Hamlib versions; if using a different Hamlib installation,
+run `rigctl --list | grep <model>` against that installation to confirm the
+current model number for any rig. Tuxlink's dashboard does not display live CAT
+frequency, but the bundled rigctld enables rig control for external software
+such as Dire Wolf (for CAT-PTT) or a logger; see [CAT and rigctld](12-cat-and-rigctld.md).
 
 ## Xiegu G90 (HF, 20 W)
 

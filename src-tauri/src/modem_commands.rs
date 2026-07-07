@@ -111,6 +111,40 @@ fn resolve_ardop_binary(configured: &str) -> PathBuf {
     PathBuf::from(configured)
 }
 
+/// Resolve the `(rigctld, rigctl)` binaries to use, mirroring
+/// `resolve_ardop_binary` but for the two hamlib utils.
+///
+/// The shipped package bundles them as `externalBin` sidecars named
+/// `tuxlink-rigctld` / `tuxlink-rigctl` (the `tuxlink-` prefix avoids colliding
+/// with `/usr/bin/rigctld` owned by system hamlib). Only the EXACT default
+/// config value `"rigctld"` opts into the bundled pair; any other value is a
+/// deliberate operator override honored verbatim, with the `rigctl` sibling
+/// derived from the overridden `rigctld`'s directory so the model list and the
+/// control daemon never version-skew.
+fn resolve_rig_binaries(configured_rigctld: &str) -> (PathBuf, PathBuf) {
+    if configured_rigctld.trim().is_empty() || configured_rigctld == "rigctld" {
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                let d = dir.join("tuxlink-rigctld");
+                if d.exists() {
+                    let l = dir.join("tuxlink-rigctl");
+                    let rigctl = if l.exists() { l } else { PathBuf::from("rigctl") };
+                    return (d, rigctl);
+                }
+            }
+        }
+        return (PathBuf::from("rigctld"), PathBuf::from("rigctl")); // dev / $PATH
+    }
+    // Override: honor rigctld verbatim; derive sibling rigctl if a path was given.
+    let d = PathBuf::from(configured_rigctld);
+    let rigctl = if configured_rigctld.contains('/') {
+        d.parent().map(|p| p.join("rigctl")).unwrap_or_else(|| PathBuf::from("rigctl"))
+    } else {
+        PathBuf::from("rigctl")
+    };
+    (d, rigctl)
+}
+
 /// Return the persisted ARDOP configuration, or the struct default if nothing
 /// has been written yet (first run) or the config file is absent.
 #[tauri::command]
@@ -166,9 +200,19 @@ pub struct RigModelDto {
 /// its table. Returns an empty list on ANY failure (rigctl absent, parse
 /// empty) so the picker degrades to a manual hamlib-model-number entry rather
 /// than erroring — there is no model list for tuxlink to maintain.
+///
+/// Reads the persisted `rig.rigctld_binary` via [`config::read_config`] — the
+/// same free-function accessor `config_get_rig` uses (no `AppHandle` state
+/// lookup exists in this file) — and resolves the paired `rigctl` through
+/// [`resolve_rig_binaries`] so the listed models always come from the same
+/// hamlib install as the daemon `rig_config_from` will spawn.
 #[tauri::command]
 pub fn rig_list_models() -> Vec<RigModelDto> {
-    tux_rig::list_models("rigctl")
+    let configured = config::read_config()
+        .map(|cfg| cfg.rig.rigctld_binary)
+        .unwrap_or_else(|_| "rigctld".to_string());
+    let (_daemon, rigctl) = resolve_rig_binaries(&configured);
+    tux_rig::list_models(&rigctl.to_string_lossy())
         .map(|models| {
             models
                 .into_iter()
@@ -1913,7 +1957,10 @@ pub(crate) fn rig_config_from(rig: &RigUiConfig) -> Option<tux_rig::RigConfig> {
         .clone()
         .filter(|p| !p.trim().is_empty())?;
     Some(tux_rig::RigConfig {
-        binary: rig.rigctld_binary.clone(),
+        binary: resolve_rig_binaries(&rig.rigctld_binary)
+            .0
+            .to_string_lossy()
+            .into_owned(),
         model,
         serial_path,
         baud: rig.cat_baud,
@@ -2105,6 +2152,36 @@ mod tests {
             Some("ardopcf"),
             "bare default must resolve to an ardopcf path, got {resolved:?}"
         );
+    }
+
+    #[test]
+    fn resolve_rig_binaries_default_prefers_bundled_siblings() {
+        // With the literal default "rigctld", when the bundled siblings exist next
+        // to current_exe they are used; the rigctl sibling is derived from the same dir.
+        let (d, l) = resolve_rig_binaries("rigctld");
+        // In the test binary's dir there is no tuxlink-rigctld sibling, so it falls
+        // back to the bare names on $PATH — documents the dev/test path.
+        assert_eq!(d, std::path::PathBuf::from("rigctld"));
+        assert_eq!(l, std::path::PathBuf::from("rigctl"));
+        // An empty/whitespace value is treated as the bundled sentinel too (a
+        // hand-edited config never round-trips empty, but the contract is
+        // "missing/empty/legacy-rigctld -> bundled").
+        assert_eq!(resolve_rig_binaries(""), (std::path::PathBuf::from("rigctld"), std::path::PathBuf::from("rigctl")));
+        assert_eq!(resolve_rig_binaries("  "), (std::path::PathBuf::from("rigctld"), std::path::PathBuf::from("rigctl")));
+    }
+
+    #[test]
+    fn resolve_rig_binaries_absolute_override_derives_sibling_rigctl() {
+        let (d, l) = resolve_rig_binaries("/opt/hamlib/bin/rigctld");
+        assert_eq!(d, std::path::PathBuf::from("/opt/hamlib/bin/rigctld"));
+        assert_eq!(l, std::path::PathBuf::from("/opt/hamlib/bin/rigctl"));
+    }
+
+    #[test]
+    fn resolve_rig_binaries_bare_custom_name_stays_on_path() {
+        let (d, l) = resolve_rig_binaries("rigctld-git");
+        assert_eq!(d, std::path::PathBuf::from("rigctld-git"));
+        assert_eq!(l, std::path::PathBuf::from("rigctl")); // no dir to derive from
     }
 
     #[test]
@@ -4318,6 +4395,8 @@ mod tests {
         assert_eq!(rc.serial_path, "/dev/ttyUSB0");
         // C1: rigctld default port is 4534 (not 4532).
         assert_eq!(rc.port, 4534);
+        // resolve_rig_binaries falls back to bare "rigctld" when no bundled
+        // sibling is present (test env).
         assert_eq!(rc.binary, "rigctld");
     }
 

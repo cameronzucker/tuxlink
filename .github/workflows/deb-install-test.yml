@@ -103,3 +103,20 @@ jobs:
             -v "$PWD:/work" -w /work \
             "debian:${{ matrix.distro }}-slim" \
             bash scripts/ci/deb-install-smoke.sh "$deb" "$EXPECT"
+
+      # tuxlink-hs2k: only meaningful on the expect=install legs — on the
+      # expect=refuse (Bookworm/glibc-2.36) legs, apt refuses the Tuxlink .deb
+      # outright regardless of whether system hamlib is present, so there is
+      # nothing distinct to prove there. Direct regression guard for the R2
+      # collision: a machine that ALREADY has libhamlib-utils (/usr/bin/rigctld)
+      # before Tuxlink installs its own bundled tuxlink-rigctl/tuxlink-rigctld.
+      - name: deb install with system hamlib already present (debian:${{ matrix.distro }}, ${{ matrix.arch }})
+        if: matrix.expect == 'install'
+        run: |
+          set -euxo pipefail
+          deb="$(ls debs/tuxlink_*_${{ matrix.arch }}.deb | head -1)"
+          test -n "$deb"
+          docker run --rm \
+            -v "$PWD:/work" -w /work \
+            "debian:${{ matrix.distro }}-slim" \
+            bash scripts/ci/deb-install-smoke.sh "$deb" hamlib-present
