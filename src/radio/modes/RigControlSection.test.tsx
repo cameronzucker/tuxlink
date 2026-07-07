@@ -356,6 +356,47 @@ describe('<RigControlSection>', () => {
     });
   });
 
+  // bd-tuxlink-a9ip3 (hamlib bundled sidecar): the default rigctld_binary
+  // value "rigctld" now means "use Tuxlink's bundled copy" rather than "look
+  // up rigctld on $PATH" (system hamlib). The field must document that
+  // reaching a different/system hamlib requires an absolute path.
+  it('documents that overriding rigctld needs an absolute path', async () => {
+    render(<RigControlSection storageKeyPrefix="ardop" />);
+    const field = await screen.findByLabelText(/rigctld binary/i);
+    expect(field).toHaveAttribute(
+      'placeholder',
+      expect.stringMatching(/bundled|absolute path/i),
+    );
+  });
+
+  it('renders the loaded rigctld_binary value in the field', async () => {
+    render(<RigControlSection storageKeyPrefix="ardop" />);
+    await waitFor(() => {
+      const input = screen.getByTestId('rig-rigctld-binary') as HTMLInputElement;
+      expect(input.value).toBe('rigctld');
+    });
+  });
+
+  it('persists rigctld_binary override on blur via config_set_rig', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+    render(<RigControlSection storageKeyPrefix="ardop" />);
+    await waitFor(() => {
+      expect((screen.getByTestId('rig-rigctld-binary') as HTMLInputElement).value).toBe('rigctld');
+    });
+    invokeMock.mockClear();
+    fireEvent.change(screen.getByTestId('rig-rigctld-binary'), { target: { value: '/usr/bin/rigctld' } });
+    fireEvent.blur(screen.getByTestId('rig-rigctld-binary'));
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith(
+        'config_set_rig',
+        expect.objectContaining({
+          value: expect.objectContaining({ rigctld_binary: '/usr/bin/rigctld' }),
+        }),
+      );
+    });
+  });
+
   it('no longer renders the QSY-on-fail control or the CAT backend label', async () => {
     const core = await import('@tauri-apps/api/core');
     (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {

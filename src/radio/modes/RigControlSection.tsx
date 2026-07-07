@@ -83,6 +83,7 @@ export function RigControlSection({ storageKeyPrefix, variant = 'expander', onRa
   const [rigConfig, setRigConfig] = useState<RigConfig | null>(null);
   const [catSerialInput, setCatSerialInput] = useState<string>('');
   const [catBaudInput, setCatBaudInput] = useState<string>('38400');
+  const [rigctldBinaryInput, setRigctldBinaryInput] = useState<string>('rigctld');
 
   const [models, setModels] = useState<RigModel[]>([]);
   const [serialPorts, setSerialPorts] = useState<{ path: string; kind: string; label: string }[]>([]);
@@ -123,6 +124,7 @@ export function RigControlSection({ storageKeyPrefix, variant = 'expander', onRa
         setRigConfig(c);
         setCatSerialInput(c.cat_serial_path ?? '');
         setCatBaudInput(String(c.cat_baud ?? 38400));
+        setRigctldBinaryInput(c.rigctld_binary ?? 'rigctld');
       })
       .catch(() => {
         /* config absent on first-run / pre-wizard — keep defaults */
@@ -219,6 +221,19 @@ export function RigControlSection({ storageKeyPrefix, variant = 'expander', onRa
       return;
     }
     persistRigWithOverride('cat_baud', { cat_baud: n });
+  };
+
+  /** Blank clears back to the bundled sentinel "rigctld" rather than an empty
+   *  string, since rigctld_binary is a plain (non-nullable) string field and
+   *  "rigctld" is what config_get_rig / the Rust backend treats as "use the
+   *  bundled copy" (bd-tuxlink-a9ip3). Not radio-profile-driven (unlike
+   *  data_mode/cat_baud/close_serial), so a plain persistRig — no override-set
+   *  bookkeeping needed. */
+  const commitRigctldBinary = () => {
+    const trimmed = rigctldBinaryInput.trim();
+    const next = trimmed === '' ? 'rigctld' : trimmed;
+    setRigctldBinaryInput(next);
+    persistRig({ rigctld_binary: next });
   };
 
   const rows = (
@@ -337,6 +352,31 @@ export function RigControlSection({ storageKeyPrefix, variant = 'expander', onRa
           onBlur={commitCatBaud}
         />
       </label>
+
+      {/* rigctld binary — default "rigctld" is the bundled-sidecar sentinel
+          (bd-tuxlink-a9ip3): Tuxlink resolves it to the copy it ships, no
+          system hamlib install required. Overriding it to reach a different
+          hamlib on the operator's system requires an absolute path — a bare
+          name like "rigctld" would just re-resolve to the bundled copy. */}
+      <label className="radio-panel-input-row">
+        <span>rigctld binary</span>
+        <Field
+          type="text"
+          className="radio-panel-input"
+          data-testid="rig-rigctld-binary"
+          value={rigctldBinaryInput}
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
+          placeholder="bundled (default) — set an absolute path to use your own hamlib"
+          onChange={(e) => setRigctldBinaryInput(e.target.value)}
+          onBlur={commitRigctldBinary}
+        />
+      </label>
+      <p className="radio-panel-radio-help" data-testid="rig-rigctld-binary-hint">
+        Leave as <strong>rigctld</strong> to use Tuxlink&apos;s bundled copy. To use a
+        different hamlib, enter its absolute path (e.g. <strong>/usr/bin/rigctld</strong>).
+      </p>
 
       {/* Data mode — the token rigctld sets on tune (Mode::rigctl_str). */}
       <label className="radio-panel-input-row">
