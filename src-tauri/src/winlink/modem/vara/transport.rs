@@ -133,6 +133,17 @@ impl VaraTransport {
 
     /// Read one inbound command line. Returns `Ok(None)` on read
     /// timeout (when [`VaraConfig::read_timeout`] is set) or EOF.
+    ///
+    /// **Not suitable for liveness detection (tuxlink-6urh2 v2).** This fn
+    /// collapses "peer closed" (EOF) and "peer idle" (timeout) to the same
+    /// `Ok(None)`, which is correct for the command-exchange callers that
+    /// only care "nothing more to read right now" — but a caller trying to
+    /// distinguish "socket still open" from "socket dead" needs
+    /// [`Self::recv_line_distinguishing_eof`] instead. See that fn's docs
+    /// for why a non-consuming peek can't make this distinction reliably on
+    /// VARA's cmd socket (unsolicited `IAMALIVE` / setter-echo `OK` lines
+    /// buffer unread during the idle-open window and make a peek report
+    /// "alive" forever, even after the peer's FIN).
     pub fn recv(&mut self) -> io::Result<Option<InboundCommand>> {
         match self.cmd_reader.read_line() {
             Ok(None) => Ok(None),
@@ -161,6 +172,112 @@ impl VaraTransport {
             }
             Err(e) => Err(e),
         }
+    }
+
+    /// Consuming, EOF-aware read for liveness detection (tuxlink-6urh2 v2 —
+    /// replaces the non-consuming `peek_liveness` design). Distinguishes
+    /// three outcomes that [`Self::recv`] collapses to `Ok(None)`:
+    ///
+    /// - [`RecvOutcome::Line`] — a full line was read (parsed, or wrapped
+    ///   as [`InboundCommand::Unknown`] on a parse miss). Receiving ANY
+    ///   byte-terminated line — even an unsolicited `IAMALIVE` keepalive or
+    ///   a setter echo — proves the peer is alive.
+    /// - [`RecvOutcome::Idle`] — the read timed out
+    ///   ([`VaraConfig::read_timeout`]) with nothing buffered. The socket
+    ///   is still open; the peer just hasn't sent anything this tick.
+    /// - [`RecvOutcome::Eof`] — [`super::wire::LineReader::read_line`]
+    ///   returned `Ok(None)` because the underlying `read` returned
+    ///   `Ok(0)`: the peer sent FIN. **This is the case a peek cannot
+    ///   distinguish from `Idle`** — VARA's idle-open window has
+    ///   unsolicited `IAMALIVE` / `OK` lines sitting in the kernel receive
+    ///   buffer unread by any consumer, so a `MSG_PEEK` always finds
+    ///   *something* buffered (or, once drained, `WouldBlock`) and reports
+    ///   "alive" even after the peer has actually closed the socket — the
+    ///   flaw this fn's consuming design fixes.
+    /// - [`RecvOutcome::Err`] — the read failed with an I/O error other
+    ///   than a timeout (e.g. `ECONNRESET`).
+    pub fn recv_line_distinguishing_eof(&mut self) -> RecvOutcome {
+        match self.cmd_reader.read_line() {
+            Ok(None) => RecvOutcome::Eof,
+            Ok(Some(line)) => match InboundCommand::parse(&line) {
+                Ok(cmd) => RecvOutcome::Line(cmd),
+                Err(_e) => {
+                    // Garbage/unparseable content is still a byte the peer
+                    // sent — it proves liveness just as much as a
+                    // recognized command does. Wrap as Unknown so the
+                    // caller always sees a Line variant either way (mirrors
+                    // `recv`'s Unknown-wrapping posture above).
+                    RecvOutcome::Line(InboundCommand::Unknown(line))
+                }
+            },
+            Err(e)
+                if e.kind() == io::ErrorKind::WouldBlock
+                    || e.kind() == io::ErrorKind::TimedOut
+                    // EINTR: a signal interrupted the read — not a peer close.
+                    // std normally retries EINTR internally, so this is
+                    // belt-and-suspenders, but a false `Dead` here would be a
+                    // spurious SocketLost, so treat it as a live idle tick.
+                    || e.kind() == io::ErrorKind::Interrupted
+                    // InvalidData = LineReader read a full line but it wasn't
+                    // valid UTF-8. The bytes were CONSUMED — a byte arrived, so
+                    // the peer is alive. This honors the "any received byte
+                    // proves liveness" contract (parse failures already wrap as
+                    // Line(Unknown); a non-UTF8 line must NOT be a false FIN).
+                    || e.kind() == io::ErrorKind::InvalidData =>
+            {
+                RecvOutcome::Idle
+            }
+            Err(e) => RecvOutcome::Err(e),
+        }
+    }
+
+    /// Bounded, consuming liveness drain for the idle-open heartbeat
+    /// (tuxlink-6urh2 v2). The heartbeat owns the transport EXCLUSIVELY during
+    /// this call (`TransportOwner::Heartbeat`).
+    ///
+    /// The drain runs the shared cmd socket **non-blocking** for its duration:
+    /// buffered `IAMALIVE` / setter-echo `OK` lines (each proves liveness) are
+    /// consumed until the kernel buffer is momentarily empty, which surfaces as
+    /// `WouldBlock` -> [`RecvOutcome::Idle`] -> alive IMMEDIATELY — it does NOT
+    /// block waiting for the *next* keepalive. A peer FIN surfaces as a 0-byte
+    /// read -> [`RecvOutcome::Eof`] -> dead, also immediately. Reads at most
+    /// `cap` lines as a backstop against a pathological in-buffer stream.
+    /// Returns `true` = alive, `false` = dead (Eof/Err).
+    ///
+    /// Why non-blocking rather than a lowered blocking timeout: a peer that
+    /// streams keepalives *faster* than any blocking `probe_timeout` never
+    /// yields an idle gap, so a blocking drain would consume line-by-line up to
+    /// `cap` — holding the borrow (and, called from the async heartbeat task,
+    /// the runtime thread) for `cap x inter-line-gap`, and eventually reading a
+    /// finite peer's natural FIN as a false drop. Non-blocking bounds the
+    /// borrow to the buffered backlog (microseconds), independent of peer
+    /// chattiness.
+    ///
+    /// `O_NONBLOCK` is a file-status flag on the shared open file description,
+    /// so toggling it via `cmd_writer` also governs `cmd_reader`'s reads (the
+    /// two are dup'd fds of one socket). Exclusive heartbeat ownership means no
+    /// concurrent reader observes the non-blocking window, and blocking mode is
+    /// restored before the transport is re-installed. The `_probe_timeout` arg
+    /// is retained for call-site/signature stability but is unused: `SO_RCVTIMEO`
+    /// is irrelevant while the socket is non-blocking.
+    pub fn probe_liveness_draining(&mut self, _probe_timeout: Duration, cap: usize) -> bool {
+        // Best-effort: if the mode toggle fails the drain still classifies
+        // correctly, it just falls back to the socket's blocking read timeout.
+        let _ = self.cmd_writer.set_nonblocking(true);
+        let mut alive = true;
+        for _ in 0..cap {
+            match self.recv_line_distinguishing_eof() {
+                RecvOutcome::Line(_) => continue, // buffered keepalive/echo — alive
+                RecvOutcome::Idle => break,        // buffer empty, no FIN — alive
+                RecvOutcome::Eof | RecvOutcome::Err(_) => {
+                    alive = false; // peer FIN or hard error — dead
+                    break;
+                }
+            }
+        }
+        // Restore blocking mode so the exchange path's reads honor SO_RCVTIMEO.
+        let _ = self.cmd_writer.set_nonblocking(false);
+        alive
     }
 
     /// Borrowed access to the connected-mode data byte stream.
@@ -222,5 +339,114 @@ impl VaraTransport {
             Box::new(writer) as Box<dyn Write + Send>,
             Box::new(stream_clone) as Box<dyn ShutdownableStream>,
         ))
+    }
+}
+
+/// Outcome of [`VaraTransport::recv_line_distinguishing_eof`] — a
+/// consuming, EOF-aware read used for liveness detection (tuxlink-6urh2 v2).
+/// See that fn's doc comment for the full outcome mapping.
+#[derive(Debug)]
+pub enum RecvOutcome {
+    /// A full command line was read — parsed, or wrapped as
+    /// [`InboundCommand::Unknown`] on a parse miss. Any line at all proves
+    /// the peer is alive.
+    Line(InboundCommand),
+    /// The read timed out with nothing buffered. Socket still open.
+    Idle,
+    /// The peer sent FIN (`read` returned `Ok(0)`). Socket is dead.
+    Eof,
+    /// The read failed with an I/O error other than a timeout.
+    Err(io::Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::TcpListener;
+    use std::thread;
+
+    /// Connect a real `VaraTransport` against loopback cmd + data acceptors,
+    /// returning the transport plus the server-side cmd-socket handle (so
+    /// the test can write lines / close it to drive the client's read
+    /// outcomes). Mirrors the loopback pattern used throughout
+    /// `commands.rs`'s test module — a real TCP pair, not a mock trait, so
+    /// the EOF-vs-timeout distinction is exercised at the actual socket
+    /// layer rather than an in-memory stand-in that could paper over a
+    /// kernel-level subtlety.
+    fn loopback_pair(read_timeout: Duration) -> (VaraTransport, TcpStream) {
+        let cmd_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let cmd_port = cmd_l.local_addr().unwrap().port();
+        let data_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let data_port = data_l.local_addr().unwrap().port();
+
+        let cmd_accept = thread::spawn(move || cmd_l.accept().unwrap().0);
+        let data_accept = thread::spawn(move || data_l.accept().unwrap().0);
+
+        let cfg = VaraConfig {
+            host: "127.0.0.1".into(),
+            cmd_port,
+            data_port,
+            connect_timeout: Duration::from_secs(2),
+            read_timeout: Some(read_timeout),
+        };
+        let transport = VaraTransport::connect(cfg).expect("connect must succeed");
+        let cmd_server = cmd_accept.join().unwrap();
+        let _data_server = data_accept.join().unwrap();
+        (transport, cmd_server)
+    }
+
+    /// tuxlink-6urh2 v2: the three outcomes a liveness-checking caller
+    /// needs distinguished, in sequence against ONE live socket pair —
+    /// Idle (nothing sent, timeout fires), Line (a buffered `IAMALIVE`
+    /// keepalive, the exact line class the flawed peek design mistook for
+    /// "forever alive"), then Eof once the peer actually closes.
+    #[test]
+    fn recv_line_distinguishing_eof_classifies_idle_line_then_eof() {
+        let (mut transport, mut server) = loopback_pair(Duration::from_millis(100));
+
+        // Idle: nothing sent yet — the bounded read times out with nothing
+        // buffered.
+        match transport.recv_line_distinguishing_eof() {
+            RecvOutcome::Idle => {}
+            other => panic!("expected Idle, got {other:?}"),
+        }
+
+        // Line: an unsolicited IAMALIVE keepalive arrives — the exact
+        // buffered-line class that a non-consuming peek would also report
+        // as "alive," but here it's CONSUMED (this is the load-bearing
+        // difference from the old design: recv() drains it so a
+        // subsequent read can observe the peer's eventual FIN instead of
+        // perpetually re-peeking the same buffered bytes).
+        server.write_all(b"IAMALIVE\r").unwrap();
+        server.flush().unwrap();
+        match transport.recv_line_distinguishing_eof() {
+            RecvOutcome::Line(InboundCommand::IAmAlive) => {}
+            other => panic!("expected Line(IAmAlive), got {other:?}"),
+        }
+
+        // Eof: the peer closes — must be distinguished from Idle, not
+        // folded into it.
+        drop(server);
+        match transport.recv_line_distinguishing_eof() {
+            RecvOutcome::Eof => {}
+            other => panic!("expected Eof, got {other:?}"),
+        }
+    }
+
+    /// A garbage/unparseable line still counts as proof of liveness — it's
+    /// wrapped as `Unknown` rather than surfacing as an error, so a
+    /// liveness-checking drain loop doesn't misclassify a malformed-but-
+    /// present byte stream as "dead."
+    #[test]
+    fn recv_line_distinguishing_eof_wraps_unparseable_as_unknown_line() {
+        let (mut transport, mut server) = loopback_pair(Duration::from_millis(200));
+        server.write_all(b"SOMETHING NOVEL\r").unwrap();
+        server.flush().unwrap();
+        match transport.recv_line_distinguishing_eof() {
+            RecvOutcome::Line(InboundCommand::Unknown(s)) => {
+                assert_eq!(s, "SOMETHING NOVEL");
+            }
+            other => panic!("expected Line(Unknown), got {other:?}"),
+        }
     }
 }

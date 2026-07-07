@@ -64,7 +64,7 @@ use crate::winlink::listener::{
 };
 
 use super::command::{InboundCommand, OutboundCommand};
-use super::transport::VaraTransport;
+use super::transport::{RecvOutcome, VaraTransport};
 
 // ──────────────────────────────────────────────────────────────
 // Peer call parsing
@@ -304,6 +304,20 @@ pub enum VaraListenerError {
     /// retry or disarm — same posture as ARDOP's RemoteDisconnect path.
     #[error("vara listener: remote disconnect before CONNECTED")]
     RemoteDisconnect,
+    /// The cmd-socket TCP connection reached EOF (peer sent FIN) while
+    /// waiting for an inbound CONNECTED (Codex P1 #3 — tuxlink-6urh2 v2).
+    /// Distinct from [`Self::RemoteDisconnect`]: a `DISCONNECTED` command
+    /// is a normal VARA protocol event for a SINGLE peer (the listener
+    /// keeps running); an EOF means the cmd socket itself is gone (the
+    /// VARA process died, or the TCP link dropped) — the consumer task
+    /// cannot keep serving inbound events over a closed socket, so this is
+    /// terminal. Prior to this fix, `serve_inbound_one` folded EOF into
+    /// the same `Ok(None)` bucket as an ordinary read timeout, so the
+    /// consumer's poll loop treated a dead cmd socket as just another
+    /// timeout tick and spun on it forever instead of noticing the
+    /// transport was gone.
+    #[error("vara listener: cmd-socket EOF — transport is gone")]
+    TransportClosed,
 }
 
 /// Wait for ONE inbound `CONNECTED <mycall> <target> [bw]` event, run
@@ -337,8 +351,8 @@ pub fn serve_inbound_one(
         if elapsed >= deadline {
             return Err(VaraListenerError::Timeout);
         }
-        match transport.recv() {
-            Ok(Some(InboundCommand::Connected { target, .. })) => {
+        match transport.recv_line_distinguishing_eof() {
+            RecvOutcome::Line(InboundCommand::Connected { target, .. }) => {
                 let peer = parse_peer_call(&target);
                 let decision = decide_for_vara_event(&peer, allowed, arms);
                 match decision {
@@ -383,20 +397,32 @@ pub fn serve_inbound_one(
             // Terminal mid-listen: peer hung up before completing the
             // CONNECTED handshake (rare; mostly happens on a race
             // between the operator disarming and a peer call arriving).
-            Ok(Some(InboundCommand::Disconnected)) => {
+            RecvOutcome::Line(InboundCommand::Disconnected) => {
                 return Err(VaraListenerError::RemoteDisconnect);
             }
             // Absorb every other async event (PTT / BUFFER / PENDING /
             // CANCELPENDING / LINK REGISTERED / IAMALIVE / OFFLINE /
             // MissingSoundcard / WrongCallsign / Unknown) and keep
             // waiting for a CONNECTED.
-            Ok(Some(_)) => continue,
-            // recv timeout (per VaraConfig.read_timeout) or EOF: treat
-            // as a tick — continue the loop until the overall deadline
-            // expires. The caller's read_timeout (default 2s) plus this
-            // loop give a reasonable polling cadence without burning CPU.
-            Ok(None) => continue,
-            Err(e) => return Err(VaraListenerError::Io(e)),
+            RecvOutcome::Line(_) => continue,
+            // recv timeout (per VaraConfig.read_timeout): treat as a tick
+            // — continue the loop until the overall deadline expires. The
+            // caller's read_timeout (default 2s) plus this loop give a
+            // reasonable polling cadence without burning CPU.
+            RecvOutcome::Idle => continue,
+            // Codex P1 #3 (tuxlink-6urh2 v2): the cmd socket itself is
+            // gone (peer FIN). Prior to this fix, `recv()` folded this
+            // into the same `Ok(None)` bucket as an ordinary timeout,
+            // so this loop kept polling a dead socket as if it were
+            // merely idle. Surface as terminal instead — the consumer
+            // task's match on this fn's `Err` falls through to its
+            // generic "transport error; stopping" arm for any variant
+            // it doesn't special-case (only `Timeout` and
+            // `RemoteDisconnect` get bespoke non-terminal handling
+            // there), so this correctly ends the consumer's poll loop
+            // rather than spinning on a closed socket.
+            RecvOutcome::Eof => return Err(VaraListenerError::TransportClosed),
+            RecvOutcome::Err(e) => return Err(VaraListenerError::Io(e)),
         }
     }
 }
@@ -808,6 +834,43 @@ mod tests {
         )
         .expect_err("must time out");
         assert!(matches!(err, VaraListenerError::Timeout));
+        drop(transport);
+        cmd_handle.join().unwrap();
+        data_handle.join().unwrap();
+    }
+
+    /// Codex P1 #3 (tuxlink-6urh2 v2): an EOF on the cmd socket (peer FIN)
+    /// must surface as `VaraListenerError::TransportClosed`, a DISTINCT
+    /// terminal error from `Timeout` — prior to the fix, `recv()` folded
+    /// EOF into the same `Ok(None)` bucket as an ordinary read timeout, so
+    /// this loop would have kept "timing out" forever against a socket
+    /// that was actually gone, never returning to the consumer task's
+    /// generic transport-error handling.
+    #[test]
+    fn serve_inbound_one_surfaces_transport_closed_on_eof() {
+        let (cmd_addr, data_addr, cmd_handle, data_handle) = spawn_mock_vara(|conn| {
+            // Immediate close — sends FIN before any CONNECTED arrives.
+            drop(conn);
+        });
+
+        let mut transport = connect_transport(cmd_addr, data_addr);
+        let allowed = allowed_with("N7CPZ", 0);
+        let arms = arms_fresh_vara();
+        let err = serve_inbound_one(
+            &mut transport,
+            &allowed,
+            &arms,
+            // Generous relative to connect_transport's 100ms read_timeout —
+            // the EOF should be observed on the first or second poll, well
+            // before this deadline, proving it's terminal rather than a
+            // repeated timeout tick.
+            Duration::from_millis(500),
+        )
+        .expect_err("EOF must be terminal, not a timeout");
+        assert!(
+            matches!(err, VaraListenerError::TransportClosed),
+            "expected TransportClosed, got {err:?}"
+        );
         drop(transport);
         cmd_handle.join().unwrap();
         data_handle.join().unwrap();
