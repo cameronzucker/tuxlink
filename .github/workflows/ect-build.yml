@@ -295,6 +295,19 @@ jobs:
             "debian:bookworm-slim" \
             bash scripts/ci/deb-install-smoke.sh "$deb" install
 
+      - name: Install on debian:bookworm that ALREADY has system hamlib (tuxlink-hs2k R2 collision guard)
+        run: |
+          set -euxo pipefail
+          deb="$(ls debs/tuxlink_*_${{ matrix.arch }}_ect.deb | head -1)"
+          test -n "$deb"
+          # Direct regression guard for the R2 collision: a container that
+          # already has libhamlib-utils (so /usr/bin/rigctld exists) BEFORE
+          # Tuxlink installs its own bundled tuxlink-rigctl/tuxlink-rigctld.
+          docker run --rm \
+            -v "$PWD:/work" -w /work \
+            "debian:bookworm-slim" \
+            bash scripts/ci/deb-install-smoke.sh "$deb" hamlib-present
+
   # tuxlink-b4ga / ADR 0020: publish the validated low-floor .deb as a release
   # asset so EmComm Tools Community (Ubuntu 22.10 EOL, glibc 2.36) and Debian 12
   # Bookworm users have a downloadable install — the core release .deb refuses on
