@@ -118,3 +118,43 @@ fn silence_and_noise_yield_no_decode() {
         "pure noise produced a false decode"
     );
 }
+
+/// Within-slot dedup on normalized message identity (plan T3.1 / WSJT-X multiset
+/// semantics): two copies of the SAME message at well-separated carriers
+/// (800 + 2400 Hz, 1600 Hz apart) summed into one slot must yield that message
+/// EXACTLY ONCE. A frequency-only guard would report it twice (the carriers are
+/// >4 Hz apart); message identity is the correct dedup key.
+#[test]
+fn same_message_at_two_carriers_dedups_to_one() {
+    let a = load_fixture("std_cq_0800.wav");
+    let b = load_fixture("std_cq_2400.wav");
+    assert_eq!(a.len(), b.len());
+    let mixed: Vec<f32> = a.iter().zip(b.iter()).map(|(x, y)| x + y).collect();
+    let decodes = decode_samples(&mixed, 12_000);
+    let msgs: Vec<&str> = decodes.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(
+        msgs,
+        vec!["CQ K1ABC FN42"],
+        "same message at two carriers must dedup to exactly one decode"
+    );
+}
+
+/// Two DISTINCT messages in one slot both survive dedup (the dedup keys on
+/// message identity, not frequency): a standard CQ at 1500 Hz summed with a
+/// non-standard CQ at 800 Hz yields both messages. Guards against an
+/// over-aggressive dedup that would collapse genuinely different signals.
+#[test]
+fn two_distinct_messages_in_one_slot_both_decode() {
+    let nonstd = load_fixture("nonstd_cq_1500.wav"); // "CQ PJ4/K1ABC" at 1500 Hz
+    let low = load_fixture("std_cq_0800.wav"); // "CQ K1ABC FN42" at 800 Hz
+    assert_eq!(nonstd.len(), low.len());
+    let mixed: Vec<f32> = nonstd.iter().zip(low.iter()).map(|(x, y)| x + y).collect();
+    let decodes = decode_samples(&mixed, 12_000);
+    let mut msgs: Vec<&str> = decodes.iter().map(|d| d.message.as_str()).collect();
+    msgs.sort_unstable();
+    assert_eq!(
+        msgs,
+        vec!["CQ K1ABC FN42", "CQ PJ4/K1ABC"],
+        "two distinct messages must both decode"
+    );
+}
