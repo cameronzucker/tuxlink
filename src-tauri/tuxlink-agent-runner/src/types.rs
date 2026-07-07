@@ -209,26 +209,32 @@ pub enum RunEvent {
         /// A partial fragment of the model's reasoning text.
         chunk: String,
     },
-    /// The context-window usage reported by a native local provider after a
-    /// turn. Emitted (fire-and-forget) by a `Provider` — currently the native
-    /// Ollama `/api/chat` adapter — once per turn when the model reports token
-    /// counts, so a caller can render a context-fullness meter against the
-    /// `num_ctx` the provider requested.
+    /// The context-window usage reported by a provider after a turn. Emitted
+    /// (fire-and-forget) once per turn when the model reports token counts, by
+    /// either the native Ollama `/api/chat` adapter — which always knows
+    /// `num_ctx` because it set `options.num_ctx` on the request — or the
+    /// OpenAI-compat adapter, which best-effort probes the endpoint's
+    /// `/v1/models` for its advertised context length.
     ///
     /// Like the other variants this is purely informational: the runner relays
-    /// it unchanged and never interprets the counts. It is only meaningful when
-    /// `num_ctx` is known (i.e. the native path where the app sets the window);
-    /// providers that leave the window at the server default do not emit it. A
-    /// model that omits token counts simply causes no emission, so a caller that
-    /// hides its meter until the first event degrades gracefully.
+    /// it unchanged and never interprets the counts. `num_ctx` is `Some(window)`
+    /// when the window is known (native path always; compat path when the probe
+    /// succeeds) and `None` when the compat probe could not determine one — the
+    /// event still carries the token counts, and a caller renders a bare token
+    /// counter (no percentage) rather than hiding the meter. A model that omits
+    /// token counts entirely simply causes no emission, so a caller that hides
+    /// its meter until the first event degrades gracefully.
     ContextUsage {
         /// Tokens the full prompt occupied this turn (Ollama `prompt_eval_count`).
         prompt_tokens: u32,
         /// Tokens the model generated this turn (Ollama `eval_count`).
         eval_tokens: u32,
-        /// The context window the provider requested (`options.num_ctx`), the
-        /// denominator for the fullness meter.
-        num_ctx: u32,
+        /// The context window the provider requested (native Ollama
+        /// `options.num_ctx`) or discovered (compat `/v1/models`), the
+        /// denominator for the fullness meter. `None` when the window is
+        /// unknown (compat endpoint that advertises no context length) — the
+        /// meter then renders a bare token counter with no percentage.
+        num_ctx: Option<u32>,
     },
 }
 
@@ -304,7 +310,7 @@ mod tests {
         let event = RunEvent::ContextUsage {
             prompt_tokens: 1234,
             eval_tokens: 56,
-            num_ctx: 32_768,
+            num_ctx: Some(32_768),
         };
 
         // A fire-and-forget sink records the event verbatim.
@@ -321,7 +327,7 @@ mod tests {
             } => {
                 assert_eq!(*prompt_tokens, 1234);
                 assert_eq!(*eval_tokens, 56);
-                assert_eq!(*num_ctx, 32_768);
+                assert_eq!(*num_ctx, Some(32_768));
             }
             other => panic!("expected ContextUsage, got {other:?}"),
         }
@@ -329,5 +335,16 @@ mod tests {
         // Equality is field-wise (derived `PartialEq`), so a re-constructed
         // value with the same fields compares equal — the relay is lossless.
         assert_eq!(seen[0], event);
+
+        // A windowless emit (compat path with no probed window) carries None.
+        let counterless = RunEvent::ContextUsage {
+            prompt_tokens: 900,
+            eval_tokens: 12,
+            num_ctx: None,
+        };
+        match counterless {
+            RunEvent::ContextUsage { num_ctx, .. } => assert_eq!(num_ctx, None),
+            other => panic!("expected ContextUsage, got {other:?}"),
+        }
     }
 }

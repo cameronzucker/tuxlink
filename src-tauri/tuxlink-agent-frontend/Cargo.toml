@@ -61,5 +61,12 @@ futures-util = { version = "0.3", default-features = false }
 # feature set (no new major, same lockfile resolution).
 rmcp = { version = "0.8", features = ["client", "transport-async-rw"] }
 
+# tokio::sync::OnceCell (tuxlink-xnenf): memoizes OpenAiProvider's best-effort
+# GET /v1/models context-window probe so it runs at most once per provider
+# instance. `sync` is the only feature the lib target needs; already resolved
+# workspace-wide (the `tuxlink` root crate pulls tokio with "full"), so this
+# adds no new Cargo.lock entry.
+tokio = { version = "1", features = ["sync"] }
+
 [dev-dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }

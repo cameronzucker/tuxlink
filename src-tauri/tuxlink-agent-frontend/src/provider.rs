@@ -181,15 +181,18 @@ pub struct OpenAiProvider {
     /// leaks through `Debug`/`Display`; only used via `.expose()` at the HTTP
     /// header boundary.
     api_key: Option<ApiKey>,
-    /// Operator-configured context-window budget (tuxlink-evucv). The OpenAI Chat
-    /// Completions API has no context-size field (unlike Ollama's
-    /// `options.num_ctx`), so this drives a CLIENT-SIDE transcript trim before the
-    /// POST: if the estimated prompt exceeds the budget, the oldest turns are
-    /// dropped so the request cannot overflow the server context (the 400
-    /// `exceed_context_size_error`). `None` = no trim (unbounded, prior behavior).
-    /// Set via [`OpenAiProvider::with_num_ctx`] so existing constructors/tests are
-    /// unaffected.
-    num_ctx: Option<u32>,
+    /// Memoized result of the best-effort `GET /v1/models` probe (tuxlink-xnenf).
+    /// The OpenAI Chat Completions API has no context-size field (unlike
+    /// Ollama's `options.num_ctx`), so the compat adapter discovers the SERVER'S
+    /// actual context window itself — `max_model_len` (vLLM) or `context_length`
+    /// (OpenRouter) — and uses it as BOTH the meter denominator AND the
+    /// client-side transcript-trim budget. Resolved once (via
+    /// [`OpenAiProvider::resolve_window`]) and cached for the provider's
+    /// lifetime; any probe failure (no models URL, network error, non-2xx,
+    /// unparseable, model not listed, no context field) resolves to `None`
+    /// (counter-mode + no trim) rather than failing the turn. There is no
+    /// operator override on this path — the server owns the window.
+    context_window: tokio::sync::OnceCell<Option<u32>>,
 }
 
 impl OpenAiProvider {
@@ -218,17 +221,72 @@ impl OpenAiProvider {
             temperature,
             system_prompt,
             api_key,
-            num_ctx: None,
+            context_window: tokio::sync::OnceCell::new(),
         }
     }
 
-    /// Set the client-side context-window budget (tuxlink-evucv). Builder form so
-    /// the 6-arg `new` and its many callers/tests stay unchanged; only the
-    /// operator-configured construction sites opt in. `None` disables trimming.
-    #[must_use]
-    pub fn with_num_ctx(mut self, num_ctx: Option<u32>) -> Self {
-        self.num_ctx = num_ctx;
-        self
+    /// Resolve (once) this endpoint's context window via `GET /v1/models`.
+    /// Best-effort: any failure (no models URL, network error, non-2xx,
+    /// unparseable, model not listed, no context field) resolves to `None`
+    /// (counter-mode + no trim). Credential-safe; never fails the turn.
+    async fn resolve_window(&self) -> Option<u32> {
+        *self
+            .context_window
+            .get_or_init(|| async {
+                let url = models_url(&self.endpoint)?;
+                let mut req = self
+                    .client
+                    .get(url)
+                    // Best-effort probe, not the chat request: bound it to a
+                    // short timeout so a stalling /v1/models endpoint can
+                    // never consume the runner's per-turn budget. This
+                    // timeout is scoped to this one request only — it does
+                    // NOT apply to the chat completions POST.
+                    .timeout(std::time::Duration::from_secs(8));
+                if let Some(key) = &self.api_key {
+                    req = req.bearer_auth(key.expose());
+                }
+                let resp = req.send().await.ok()?;
+                if !resp.status().is_success() {
+                    return None;
+                }
+                // Bound the body before parsing so a huge/hostile response
+                // can't balloon memory or blow up the JSON parser. The 8s
+                // timeout above already bounds how much a slow endpoint can
+                // deliver; this length check rejects an oversized-but-fast
+                // body before the more expensive parse step.
+                let bytes = resp.bytes().await.ok()?;
+                if bytes.len() > MAX_MODELS_BODY_BYTES {
+                    return None;
+                }
+                let value: Value = serde_json::from_slice(&bytes).ok()?;
+                parse_model_context_window(&value, &self.model)
+            })
+            .await
+    }
+
+    /// POST `body` to the chat-completions endpoint with the bearer header, and
+    /// map a transport failure onto a credential-safe [`ProviderError::Transport`]
+    /// (URL stripped via `without_url()`, cause chain surfaced). Returns the raw
+    /// [`reqwest::Response`] so the caller inspects the status. Used for the
+    /// initial send AND the `stream_options`-fallback retry (Codex #4), so the
+    /// send + error-mapping live in one place.
+    async fn send_chat(&self, body: &Value) -> Result<reqwest::Response, ProviderError> {
+        let mut req = self.client.post(self.endpoint.clone()).json(body);
+        if let Some(key) = &self.api_key {
+            req = req.bearer_auth(key.expose());
+        }
+        req.send().await.map_err(|e| {
+            // `reqwest::Error`'s Display re-embeds the full request URL ("for url
+            // (...)") — which can carry a query credential. Strip it with
+            // `without_url()` and use our own credential-safe `redacted_url`
+            // instead, so a secret never reaches the error / session log (Codex P1).
+            ProviderError::Transport(format!(
+                "request to {} failed: {}",
+                redacted_url(&self.endpoint),
+                error_cause_chain(&e.without_url())
+            ))
+        })
     }
 }
 
@@ -248,12 +306,17 @@ impl Provider for OpenAiProvider {
         // a flag through `build_request_body`, whose tests assert the non-stream
         // body shape. The pure assembly stays untouched.
         let system_prompt = self.system_prompt.as_deref().unwrap_or(ELMER_SYSTEM_PROMPT);
-        // tuxlink-evucv: client-side context trim. The OpenAI API has no
-        // context-size field, so when the operator configured a window, drop the
-        // oldest turns that don't fit rather than letting the request overflow the
-        // server context (HTTP 400 exceed_context_size_error). No-op when num_ctx
-        // is None (unbounded) or the transcript already fits.
-        let trimmed = transcript_budget(self.num_ctx, system_prompt, tools).and_then(|budget| {
+        // tuxlink-xnenf: probe-driven context window. The OpenAI API has no
+        // context-size field, so the compat adapter discovers the server's real
+        // window via a best-effort, memoized GET /v1/models (`resolve_window`)
+        // and uses it as BOTH the meter denominator (the ContextUsage emits
+        // below) AND the client-side trim budget: when a window is known, drop
+        // the oldest turns that don't fit rather than letting the request
+        // overflow the server context (HTTP 400 exceed_context_size_error).
+        // No-op when the probe couldn't determine a window (counter-mode) or the
+        // transcript already fits.
+        let window = self.resolve_window().await;
+        let trimmed = transcript_budget(window, system_prompt, tools).and_then(|budget| {
             let kept = trim_messages_to_budget(conversation.messages(), budget);
             (kept.len() < conversation.messages().len()).then(|| Conversation::from_messages(kept))
         });
@@ -267,23 +330,28 @@ impl Provider for OpenAiProvider {
             system_prompt,
         );
         body["stream"] = json!(true);
+        // Ask the server to append a final usage chunk to the stream (vLLM /
+        // OpenAI / OpenRouter honor this; without it, streamed usage is omitted).
+        body["stream_options"] = json!({ "include_usage": true });
 
-        let mut req = self.client.post(self.endpoint.clone()).json(&body);
-        if let Some(key) = &self.api_key {
-            req = req.bearer_auth(key.expose());
+        let mut resp = self.send_chat(&body).await?;
+        // Codex #4 (tuxlink-xnenf): a STRICT OpenAI-compat endpoint (notably the
+        // arbitrary "custom" tile) may reject the optional `stream_options` key
+        // with HTTP 400/422 before producing any turn — which would break EVERY
+        // request, not just the usage meter. Retry ONCE without `stream_options`
+        // so such an endpoint keeps working (losing only the meter). Only 400/422
+        // plausibly signal an unsupported parameter; 401/403/404/429/5xx must not
+        // trigger the (meter-dropping) retry, and a 400 for some OTHER reason just
+        // 400s again and falls through to the normal error path below.
+        if should_retry_without_stream_options(
+            resp.status().as_u16(),
+            body.get("stream_options").is_some(),
+        ) {
+            if let Some(obj) = body.as_object_mut() {
+                obj.remove("stream_options");
+            }
+            resp = self.send_chat(&body).await?;
         }
-
-        let resp = req.send().await.map_err(|e| {
-            // `reqwest::Error`'s Display re-embeds the full request URL ("for url
-            // (...)") — which can carry a query credential. Strip it with
-            // `without_url()` and use our own credential-safe `redacted_url`
-            // instead, so a secret never reaches the error / session log (Codex P1).
-            ProviderError::Transport(format!(
-                "request to {} failed: {}",
-                redacted_url(&self.endpoint),
-                error_cause_chain(&e.without_url())
-            ))
-        })?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -325,6 +393,9 @@ impl Provider for OpenAiProvider {
             let value: Value = resp.json().await.map_err(|e| {
                 ProviderError::Unparseable(format!("response was not JSON: {e}"))
             })?;
+            if let Some((prompt_tokens, eval_tokens)) = parse_usage(&value) {
+                on_event(RunEvent::ContextUsage { prompt_tokens, eval_tokens, num_ctx: window });
+            }
             return parse_completion(&value).map_err(ProviderError::Unparseable);
         }
 
@@ -352,6 +423,11 @@ impl Provider for OpenAiProvider {
         // line before closing the connection (rare, but lenient parsing avoids
         // dropping the final delta).
         acc.finish(on_event)?;
+
+        let usage = acc.usage();
+        if let Some((prompt_tokens, eval_tokens)) = usage {
+            on_event(RunEvent::ContextUsage { prompt_tokens, eval_tokens, num_ctx: window });
+        }
 
         Ok(acc.into_turn())
     }
@@ -389,6 +465,16 @@ const MAX_PENDING_FRAME_BYTES: usize = 1024 * 1024; // 1 MiB
 /// the configured timeout. Exceeding it is a transport error.
 const MAX_TOTAL_OUTPUT_BYTES: usize = 16 * 1024 * 1024; // 16 MiB
 
+/// Maximum size, in bytes, of a `GET /v1/models` probe response body
+/// (tuxlink-xnenf) accepted for parsing. The probe is best-effort discovery
+/// of the server's context window, never load-bearing for the turn itself, so
+/// a hostile or broken endpoint returning a huge body must not be allowed to
+/// balloon memory before (or during) JSON parsing. 4 MiB comfortably covers a
+/// real-world `/v1/models` listing (OpenRouter's catalog of several hundred
+/// models included) while still bounding the worst case. Exceeding it makes
+/// the probe resolve to `None` (counter-mode) like any other probe failure.
+const MAX_MODELS_BODY_BYTES: usize = 4 * 1024 * 1024; // 4 MiB
+
 /// Accumulates an OpenAI-style SSE chat-completions stream into a [`ModelTurn`],
 /// emitting [`RunEvent`] deltas through a caller-supplied sink as fragments land.
 ///
@@ -420,6 +506,10 @@ struct SseAccumulator {
     tool_calls: BTreeMap<i64, PartialToolCall>,
     /// Set once a `data: [DONE]` sentinel is seen.
     done: bool,
+    /// Token usage captured from a trailing usage-only chunk (`choices: []`)
+    /// when the request set `stream_options.include_usage` (tuxlink-xnenf).
+    /// `None` until such a chunk arrives — most servers never send one.
+    usage: Option<(u32, u32)>,
 }
 
 /// Find the first SSE frame delimiter in `buf` at the BYTE level, returning
@@ -456,6 +546,7 @@ impl SseAccumulator {
             reasoning: String::new(),
             tool_calls: BTreeMap::new(),
             done: false,
+            usage: None,
         }
     }
 
@@ -581,6 +672,13 @@ impl SseAccumulator {
         chunk: &Value,
         on_event: &(dyn Fn(RunEvent) + Sync),
     ) -> Result<(), ProviderError> {
+        // A usage-only final chunk (choices empty) carries token counts when the
+        // request set stream_options.include_usage. Capture it regardless of the
+        // delta branch below.
+        if let Some(u) = parse_usage(chunk) {
+            self.usage = Some(u);
+        }
+
         let delta = match chunk
             .get("choices")
             .and_then(Value::as_array)
@@ -701,6 +799,11 @@ impl SseAccumulator {
     #[cfg(test)]
     fn reasoning(&self) -> &str {
         &self.reasoning
+    }
+
+    /// Token usage captured from the streamed final chunk, if the server sent one.
+    fn usage(&self) -> Option<(u32, u32)> {
+        self.usage
     }
 }
 
@@ -1072,6 +1175,66 @@ pub fn parse_completion(value: &Value) -> Result<ModelTurn, String> {
         .unwrap_or("")
         .to_string();
     Ok(ModelTurn::Text(content))
+}
+
+/// Extract `(prompt_tokens, eval_tokens)` from an OpenAI-compat `usage` object.
+/// `prompt_tokens` is required (it is the meter numerator); `completion_tokens`
+/// defaults to 0 when a server omits it on the final streamed chunk. Returns
+/// `None` when there is no usable `prompt_tokens`. Pure — no IO.
+pub(crate) fn parse_usage(value: &Value) -> Option<(u32, u32)> {
+    let usage = value.get("usage")?;
+    let prompt = usage.get("prompt_tokens").and_then(Value::as_u64)? as u32;
+    let eval = usage
+        .get("completion_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as u32;
+    Some((prompt, eval))
+}
+
+/// Whether a first chat-completion attempt should be retried once WITHOUT the
+/// optional `stream_options` key. Only a 400/422 plausibly signals that a strict
+/// OpenAI-compat endpoint rejected the unknown parameter; 401/403/404/429/5xx are
+/// not parameter problems and MUST NOT trigger the retry (which drops the usage
+/// meter). Requires that `stream_options` was actually sent. Pure — no IO.
+/// (Codex #4, tuxlink-xnenf.)
+pub(crate) fn should_retry_without_stream_options(status: u16, sent_stream_options: bool) -> bool {
+    sent_stream_options && matches!(status, 400 | 422)
+}
+
+/// Find `model`'s context window in an OpenAI-compat `/v1/models` response.
+/// Reads `max_model_len` (vLLM) or `context_length` (OpenRouter); first present
+/// wins. Returns `None` when the model is not listed or advertises neither
+/// field (bare llama.cpp, OpenAI). Pure — no IO. Exact-id match only; never
+/// guesses from a partial name.
+pub(crate) fn parse_model_context_window(models_json: &Value, model: &str) -> Option<u32> {
+    let entry = models_json
+        .get("data")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|m| m.get("id").and_then(Value::as_str) == Some(model))?;
+    entry
+        .get("max_model_len")
+        .and_then(Value::as_u64)
+        .or_else(|| entry.get("context_length").and_then(Value::as_u64))
+        // Reject values that don't fit in a u32 rather than silently wrapping
+        // them into a small bogus window (Codex adrev #5), and reject zero —
+        // a reported window of 0 is not a real context size. Either case
+        // degrades to `None` (counter-mode) like any other unusable probe
+        // result.
+        .and_then(|n| u32::try_from(n).ok())
+        .filter(|n| *n > 0)
+}
+
+/// Derive the `/v1/models` URL from a `…/chat/completions` endpoint by swapping
+/// the trailing segment. `None` when the endpoint does not end in
+/// `/chat/completions` (we then skip the probe → counter-mode). Pure.
+pub(crate) fn models_url(endpoint: &Url) -> Option<Url> {
+    let path = endpoint.path();
+    let base = path.strip_suffix("/chat/completions")?;
+    let mut u = endpoint.clone();
+    u.set_path(&format!("{base}/models"));
+    u.set_query(None);
+    Some(u)
 }
 
 /// Parse a single OpenAI tool-call object into a [`ToolCall`].
@@ -1835,6 +1998,124 @@ mod tests {
         assert!(parse_completion(&json!({ "choices": [] })).is_err());
     }
 
+    // --- parse_model_context_window: /v1/models probe parser (tuxlink-xnenf) --
+
+    #[test]
+    fn probe_reads_vllm_max_model_len() {
+        let v = json!({ "data": [
+            { "id": "meta-llama/Llama-3.1-8B-Instruct", "max_model_len": 32768 }
+        ]});
+        assert_eq!(parse_model_context_window(&v, "meta-llama/Llama-3.1-8B-Instruct"), Some(32768));
+    }
+
+    #[test]
+    fn probe_reads_openrouter_context_length() {
+        let v = json!({ "data": [
+            { "id": "anthropic/claude-3.5-sonnet", "context_length": 200000 }
+        ]});
+        assert_eq!(parse_model_context_window(&v, "anthropic/claude-3.5-sonnet"), Some(200000));
+    }
+
+    #[test]
+    fn probe_model_not_found_or_no_field_is_none() {
+        let v = json!({ "data": [ { "id": "other", "max_model_len": 8192 } ]});
+        assert_eq!(parse_model_context_window(&v, "missing"), None);
+        let no_field = json!({ "data": [ { "id": "m" } ]});
+        assert_eq!(parse_model_context_window(&no_field, "m"), None);
+        assert_eq!(parse_model_context_window(&json!({}), "m"), None);
+    }
+
+    /// A `context_length` of exactly zero is not a real context window (Codex
+    /// adrev #5) — it must degrade to `None` (counter-mode) rather than being
+    /// accepted as `Some(0)`, which would make every trim/meter computation
+    /// divide-by-zero or otherwise nonsensical downstream.
+    #[test]
+    fn probe_zero_context_length_is_none() {
+        let v = json!({ "data": [ { "id": "m", "context_length": 0 } ]});
+        assert_eq!(parse_model_context_window(&v, "m"), None);
+    }
+
+    /// A `max_model_len` beyond `u32::MAX` must not silently wrap into a small
+    /// bogus window via `as u32` truncation (Codex adrev #5) — it must degrade
+    /// to `None` (counter-mode) instead of reporting a wrapped, wrong value.
+    #[test]
+    fn probe_max_model_len_beyond_u32_is_none() {
+        let v = json!({ "data": [
+            { "id": "m", "max_model_len": (u32::MAX as u64) + 1 }
+        ]});
+        assert_eq!(parse_model_context_window(&v, "m"), None);
+    }
+
+    /// A normal in-range value still resolves correctly — guards against the
+    /// zero/overflow-rejection logic accidentally rejecting valid windows too.
+    #[test]
+    fn probe_normal_context_length_still_resolves() {
+        let v = json!({ "data": [ { "id": "m", "context_length": 32768 } ]});
+        assert_eq!(parse_model_context_window(&v, "m"), Some(32768));
+    }
+
+    // --- models_url: derive /v1/models from /v1/chat/completions ------------
+
+    #[test]
+    fn models_url_derives_from_chat_completions() {
+        let u = Url::parse("https://host:8000/v1/chat/completions").unwrap();
+        assert_eq!(models_url(&u).unwrap().as_str(), "https://host:8000/v1/models");
+    }
+
+    #[test]
+    fn models_url_none_when_path_not_chat_completions() {
+        let u = Url::parse("https://host/custom/path").unwrap();
+        assert!(models_url(&u).is_none());
+    }
+
+    /// A chat-completions endpoint carrying a query string (e.g. an
+    /// `api-version` parameter some hosted gateways require) must have that
+    /// query stripped from the derived `/v1/models` URL — `set_query(None)`
+    /// in `models_url` is what does this; a probe request that echoed the
+    /// original query could leak an API-version credential-adjacent param
+    /// where it does not belong, or 400 against a `/models` endpoint that
+    /// does not recognize it.
+    #[test]
+    fn models_url_strips_query_string() {
+        let u = Url::parse("https://host:8000/v1/chat/completions?api-version=2024").unwrap();
+        assert_eq!(models_url(&u).unwrap().as_str(), "https://host:8000/v1/models");
+    }
+
+    // --- parse_usage: compat usage object (windowless, tuxlink-xnenf) -----
+
+    #[test]
+    fn parse_usage_reads_prompt_and_completion() {
+        let v = json!({ "usage": { "prompt_tokens": 1500, "completion_tokens": 40, "total_tokens": 1540 } });
+        assert_eq!(parse_usage(&v), Some((1500, 40)));
+    }
+
+    #[test]
+    fn parse_usage_absent_or_partial_is_none() {
+        assert_eq!(parse_usage(&json!({})), None);
+        // completion_tokens missing → treat as 0 (some servers omit it on the final chunk).
+        assert_eq!(parse_usage(&json!({ "usage": { "prompt_tokens": 10 } })), Some((10, 0)));
+        // prompt_tokens missing → None (no usable numerator).
+        assert_eq!(parse_usage(&json!({ "usage": { "completion_tokens": 5 } })), None);
+    }
+
+    // --- stream_options fallback decision (Codex #4) ----------------------
+
+    #[test]
+    fn retry_without_stream_options_only_on_400_422_when_sent() {
+        // 400 / 422 with stream_options sent → retry.
+        assert!(should_retry_without_stream_options(400, true));
+        assert!(should_retry_without_stream_options(422, true));
+        // Same statuses but stream_options was NOT sent → nothing to strip.
+        assert!(!should_retry_without_stream_options(400, false));
+        assert!(!should_retry_without_stream_options(422, false));
+        // Other client/server errors are not parameter problems → no retry.
+        for s in [401u16, 403, 404, 409, 429, 500, 503] {
+            assert!(!should_retry_without_stream_options(s, true), "must not retry on {s}");
+        }
+        // Success never retries.
+        assert!(!should_retry_without_stream_options(200, true));
+    }
+
     // --- request assembly -------------------------------------------------
 
     /// The first message in every request MUST be the Elmer system prompt.
@@ -2135,6 +2416,24 @@ mod tests {
             vec![RunEvent::ReasoningDelta { chunk: "thinking...".into() }],
             "the `reasoning_content` spelling must also emit ReasoningDelta"
         );
+    }
+
+    /// A trailing usage-only frame (`choices: []`, carrying `usage`) is captured
+    /// even though it has no `delta` to apply — the vLLM/OpenAI
+    /// `stream_options.include_usage` final chunk (tuxlink-xnenf).
+    #[test]
+    fn sse_accumulator_captures_trailing_usage_frame() {
+        let mut acc = SseAccumulator::new();
+        let sink = |_e: RunEvent| {};
+        // A content frame, then the usage-only final frame vLLM/OpenAI send when
+        // stream_options.include_usage=true (choices empty), then [DONE].
+        let bytes = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":200,\"completion_tokens\":3}}\n\n",
+            "data: [DONE]\n\n",
+        );
+        acc.feed(bytes.as_bytes(), &sink).unwrap();
+        assert_eq!(acc.usage(), Some((200, 3)));
     }
 
     /// Tool calls streamed in fragments — name once, arguments in 2+ pieces, keyed
