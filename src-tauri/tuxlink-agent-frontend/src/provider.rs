@@ -181,15 +181,18 @@ pub struct OpenAiProvider {
     /// leaks through `Debug`/`Display`; only used via `.expose()` at the HTTP
     /// header boundary.
     api_key: Option<ApiKey>,
-    /// Operator-configured context-window budget (tuxlink-evucv). The OpenAI Chat
-    /// Completions API has no context-size field (unlike Ollama's
-    /// `options.num_ctx`), so this drives a CLIENT-SIDE transcript trim before the
-    /// POST: if the estimated prompt exceeds the budget, the oldest turns are
-    /// dropped so the request cannot overflow the server context (the 400
-    /// `exceed_context_size_error`). `None` = no trim (unbounded, prior behavior).
-    /// Set via [`OpenAiProvider::with_num_ctx`] so existing constructors/tests are
-    /// unaffected.
-    num_ctx: Option<u32>,
+    /// Memoized result of the best-effort `GET /v1/models` probe (tuxlink-xnenf).
+    /// The OpenAI Chat Completions API has no context-size field (unlike
+    /// Ollama's `options.num_ctx`), so the compat adapter discovers the SERVER'S
+    /// actual context window itself — `max_model_len` (vLLM) or `context_length`
+    /// (OpenRouter) — and uses it as BOTH the meter denominator AND the
+    /// client-side transcript-trim budget. Resolved once (via
+    /// [`OpenAiProvider::resolve_window`]) and cached for the provider's
+    /// lifetime; any probe failure (no models URL, network error, non-2xx,
+    /// unparseable, model not listed, no context field) resolves to `None`
+    /// (counter-mode + no trim) rather than failing the turn. There is no
+    /// operator override on this path — the server owns the window.
+    context_window: tokio::sync::OnceCell<Option<u32>>,
 }
 
 impl OpenAiProvider {
@@ -218,17 +221,31 @@ impl OpenAiProvider {
             temperature,
             system_prompt,
             api_key,
-            num_ctx: None,
+            context_window: tokio::sync::OnceCell::new(),
         }
     }
 
-    /// Set the client-side context-window budget (tuxlink-evucv). Builder form so
-    /// the 6-arg `new` and its many callers/tests stay unchanged; only the
-    /// operator-configured construction sites opt in. `None` disables trimming.
-    #[must_use]
-    pub fn with_num_ctx(mut self, num_ctx: Option<u32>) -> Self {
-        self.num_ctx = num_ctx;
-        self
+    /// Resolve (once) this endpoint's context window via `GET /v1/models`.
+    /// Best-effort: any failure (no models URL, network error, non-2xx,
+    /// unparseable, model not listed, no context field) resolves to `None`
+    /// (counter-mode + no trim). Credential-safe; never fails the turn.
+    async fn resolve_window(&self) -> Option<u32> {
+        *self
+            .context_window
+            .get_or_init(|| async {
+                let url = models_url(&self.endpoint)?;
+                let mut req = self.client.get(url);
+                if let Some(key) = &self.api_key {
+                    req = req.bearer_auth(key.expose());
+                }
+                let resp = req.send().await.ok()?;
+                if !resp.status().is_success() {
+                    return None;
+                }
+                let value: Value = resp.json().await.ok()?;
+                parse_model_context_window(&value, &self.model)
+            })
+            .await
     }
 }
 
@@ -248,12 +265,17 @@ impl Provider for OpenAiProvider {
         // a flag through `build_request_body`, whose tests assert the non-stream
         // body shape. The pure assembly stays untouched.
         let system_prompt = self.system_prompt.as_deref().unwrap_or(ELMER_SYSTEM_PROMPT);
-        // tuxlink-evucv: client-side context trim. The OpenAI API has no
-        // context-size field, so when the operator configured a window, drop the
-        // oldest turns that don't fit rather than letting the request overflow the
-        // server context (HTTP 400 exceed_context_size_error). No-op when num_ctx
-        // is None (unbounded) or the transcript already fits.
-        let trimmed = transcript_budget(self.num_ctx, system_prompt, tools).and_then(|budget| {
+        // tuxlink-xnenf: probe-driven context window. The OpenAI API has no
+        // context-size field, so the compat adapter discovers the server's real
+        // window via a best-effort, memoized GET /v1/models (`resolve_window`)
+        // and uses it as BOTH the meter denominator (the ContextUsage emits
+        // below) AND the client-side trim budget: when a window is known, drop
+        // the oldest turns that don't fit rather than letting the request
+        // overflow the server context (HTTP 400 exceed_context_size_error).
+        // No-op when the probe couldn't determine a window (counter-mode) or the
+        // transcript already fits.
+        let window = self.resolve_window().await;
+        let trimmed = transcript_budget(window, system_prompt, tools).and_then(|budget| {
             let kept = trim_messages_to_budget(conversation.messages(), budget);
             (kept.len() < conversation.messages().len()).then(|| Conversation::from_messages(kept))
         });
@@ -329,7 +351,7 @@ impl Provider for OpenAiProvider {
                 ProviderError::Unparseable(format!("response was not JSON: {e}"))
             })?;
             if let Some((prompt_tokens, eval_tokens)) = parse_usage(&value) {
-                on_event(RunEvent::ContextUsage { prompt_tokens, eval_tokens, num_ctx: None });
+                on_event(RunEvent::ContextUsage { prompt_tokens, eval_tokens, num_ctx: window });
             }
             return parse_completion(&value).map_err(ProviderError::Unparseable);
         }
@@ -361,7 +383,7 @@ impl Provider for OpenAiProvider {
 
         let usage = acc.usage();
         if let Some((prompt_tokens, eval_tokens)) = usage {
-            on_event(RunEvent::ContextUsage { prompt_tokens, eval_tokens, num_ctx: None });
+            on_event(RunEvent::ContextUsage { prompt_tokens, eval_tokens, num_ctx: window });
         }
 
         Ok(acc.into_turn())
@@ -1114,6 +1136,36 @@ pub(crate) fn parse_usage(value: &Value) -> Option<(u32, u32)> {
         .and_then(Value::as_u64)
         .unwrap_or(0) as u32;
     Some((prompt, eval))
+}
+
+/// Find `model`'s context window in an OpenAI-compat `/v1/models` response.
+/// Reads `max_model_len` (vLLM) or `context_length` (OpenRouter); first present
+/// wins. Returns `None` when the model is not listed or advertises neither
+/// field (bare llama.cpp, OpenAI). Pure — no IO. Exact-id match only; never
+/// guesses from a partial name.
+pub(crate) fn parse_model_context_window(models_json: &Value, model: &str) -> Option<u32> {
+    let entry = models_json
+        .get("data")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|m| m.get("id").and_then(Value::as_str) == Some(model))?;
+    entry
+        .get("max_model_len")
+        .and_then(Value::as_u64)
+        .or_else(|| entry.get("context_length").and_then(Value::as_u64))
+        .map(|n| n as u32)
+}
+
+/// Derive the `/v1/models` URL from a `…/chat/completions` endpoint by swapping
+/// the trailing segment. `None` when the endpoint does not end in
+/// `/chat/completions` (we then skip the probe → counter-mode). Pure.
+pub(crate) fn models_url(endpoint: &Url) -> Option<Url> {
+    let path = endpoint.path();
+    let base = path.strip_suffix("/chat/completions")?;
+    let mut u = endpoint.clone();
+    u.set_path(&format!("{base}/models"));
+    u.set_query(None);
+    Some(u)
 }
 
 /// Parse a single OpenAI tool-call object into a [`ToolCall`].
@@ -1875,6 +1927,47 @@ mod tests {
     fn missing_choices_is_error() {
         assert!(parse_completion(&json!({})).is_err());
         assert!(parse_completion(&json!({ "choices": [] })).is_err());
+    }
+
+    // --- parse_model_context_window: /v1/models probe parser (tuxlink-xnenf) --
+
+    #[test]
+    fn probe_reads_vllm_max_model_len() {
+        let v = json!({ "data": [
+            { "id": "meta-llama/Llama-3.1-8B-Instruct", "max_model_len": 32768 }
+        ]});
+        assert_eq!(parse_model_context_window(&v, "meta-llama/Llama-3.1-8B-Instruct"), Some(32768));
+    }
+
+    #[test]
+    fn probe_reads_openrouter_context_length() {
+        let v = json!({ "data": [
+            { "id": "anthropic/claude-3.5-sonnet", "context_length": 200000 }
+        ]});
+        assert_eq!(parse_model_context_window(&v, "anthropic/claude-3.5-sonnet"), Some(200000));
+    }
+
+    #[test]
+    fn probe_model_not_found_or_no_field_is_none() {
+        let v = json!({ "data": [ { "id": "other", "max_model_len": 8192 } ]});
+        assert_eq!(parse_model_context_window(&v, "missing"), None);
+        let no_field = json!({ "data": [ { "id": "m" } ]});
+        assert_eq!(parse_model_context_window(&no_field, "m"), None);
+        assert_eq!(parse_model_context_window(&json!({}), "m"), None);
+    }
+
+    // --- models_url: derive /v1/models from /v1/chat/completions ------------
+
+    #[test]
+    fn models_url_derives_from_chat_completions() {
+        let u = Url::parse("https://host:8000/v1/chat/completions").unwrap();
+        assert_eq!(models_url(&u).unwrap().as_str(), "https://host:8000/v1/models");
+    }
+
+    #[test]
+    fn models_url_none_when_path_not_chat_completions() {
+        let u = Url::parse("https://host/custom/path").unwrap();
+        assert!(models_url(&u).is_none());
     }
 
     // --- parse_usage: compat usage object (windowless, tuxlink-xnenf) -----

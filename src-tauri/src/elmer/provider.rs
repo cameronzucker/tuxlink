@@ -122,10 +122,12 @@ impl ElmerProvider {
     ///   credentials-in-URL at config time; this constructor adds the
     ///   fetch-time DNS-rebind gate).
     /// * `model` — model identifier string (e.g. `"llama3"`, `"gpt-4o"`, `"claude-haiku-4-5"`).
-    /// * `num_ctx` — context window. Native Ollama requests it via
-    ///   `options.num_ctx`; the OpenAI-compat adapter has no wire field for it so
-    ///   it drives a CLIENT-SIDE transcript trim instead (tuxlink-evucv); the
-    ///   Anthropic adapter ignores it. `None` = server default / no trim (T3/T4).
+    /// * `num_ctx` — context window, Ollama-only: native Ollama requests it via
+    ///   `options.num_ctx` (T3/T4). The OpenAI-compat adapter (tuxlink-xnenf) no
+    ///   longer takes an operator override here — it discovers the SERVER'S own
+    ///   window via a best-effort `GET /v1/models` probe and uses that as both
+    ///   the meter denominator and its client-side transcript-trim budget. The
+    ///   Anthropic adapter ignores this parameter entirely.
     /// * `temperature` — sampling temperature threaded to ALL three adapters
     ///   (Ollama `options.temperature`; OpenAI / Anthropic top-level
     ///   `"temperature"`). `None` leaves the server default unchanged (T9).
@@ -296,8 +298,7 @@ impl ElmerProvider {
                             "loopback probe found Ollama but native URL parse failed — falling back to compat"
                         );
                         (
-                            Box::new(OpenAiProvider::new(client, url, model, temperature, system_prompt, api_key)
-                    .with_num_ctx(num_ctx)),
+                            Box::new(OpenAiProvider::new(client, url, model, temperature, system_prompt, api_key)),
                             ProviderKind::OpenAi,
                         )
                     }
@@ -305,16 +306,17 @@ impl ElmerProvider {
             } else {
                 // Any non-positive probe (404 / refused / timeout / unparseable)
                 // preserves the current compat behavior. LOG it so the fallback
-                // is not silent (a user who expected native num_ctx to apply can
-                // see why it didn't).
+                // is not silent (the compat adapter now derives its own context
+                // window via a GET /v1/models probe rather than the operator's
+                // num_ctx, so a user who expected native num_ctx to apply can see
+                // why it didn't).
                 tracing::info!(
                     target: "elmer",
                     endpoint = %url,
-                    "loopback probe did not find native Ollama — using OpenAI-compat (num_ctx drives a client-side transcript trim)"
+                    "loopback probe did not find native Ollama — using OpenAI-compat (server-probed context window drives the client-side transcript trim)"
                 );
                 (
-                    Box::new(OpenAiProvider::new(client, url, model, temperature, system_prompt, api_key)
-                    .with_num_ctx(num_ctx)),
+                    Box::new(OpenAiProvider::new(client, url, model, temperature, system_prompt, api_key)),
                     ProviderKind::OpenAi,
                 )
             }
@@ -326,8 +328,7 @@ impl ElmerProvider {
             )
         } else {
             (
-                Box::new(OpenAiProvider::new(client, url, model, temperature, system_prompt, api_key)
-                    .with_num_ctx(num_ctx)),
+                Box::new(OpenAiProvider::new(client, url, model, temperature, system_prompt, api_key)),
                 ProviderKind::OpenAi,
             )
         };
