@@ -4205,7 +4205,9 @@ pub struct SerialDeviceDto {
 /// `None` if it isn't one. USB-serial adapters (`ttyUSB`/`ttyACM`); bound
 /// Bluetooth RFCOMM (`rfcomm`, appears once the operator pairs+binds — spec
 /// §4.1); on-board UARTs (`ttyAMA`/`ttyS`, e.g. the Pi's GPIO serial). The
-/// suffix check excludes a bare prefix with no instance number.
+/// suffix check excludes a bare prefix with no instance number. The `"usb"`
+/// label here is only the FALLBACK — `packet_list_serial_devices` overwrites
+/// it with a sysfs-derived human name (tuxlink-xj7e1) when one is available.
 fn classify_serial_device(name: &str) -> Option<(&'static str, &'static str)> {
     let has_suffix = |p: &str| name.starts_with(p) && name.len() > p.len();
     if has_suffix("ttyUSB") || has_suffix("ttyACM") {
@@ -4223,7 +4225,10 @@ fn classify_serial_device(name: &str) -> Option<(&'static str, &'static str)> {
 /// might use, classified by kind. Pure + dir-injected so it is unit-testable
 /// without real hardware. Sorted by path, deduped. Plain `std::fs` — no libudev,
 /// no new system deps. This only ENUMERATES candidates; the operator confirms
-/// the right one (and a real open is exercised on-air, RADIO-1).
+/// the right one (and a real open is exercised on-air, RADIO-1). USB-class
+/// entries get the generic `"USB serial"` label here — `packet_list_serial_devices`
+/// enriches it with a real device name via sysfs (tuxlink-xj7e1) before handing
+/// the list to the frontend.
 pub fn discover_serial_devices(dev_dir: &std::path::Path) -> Vec<SerialDeviceDto> {
     let mut found: Vec<SerialDeviceDto> = match std::fs::read_dir(dev_dir) {
         Ok(entries) => entries
@@ -4244,12 +4249,204 @@ pub fn discover_serial_devices(dev_dir: &std::path::Path) -> Vec<SerialDeviceDto
     found
 }
 
+// ============================================================================
+// tuxlink-xj7e1 — USB serial label enrichment via sysfs
+// ============================================================================
+// `discover_serial_devices` above only classifies a `/dev` node name into a
+// generic kind + fixed label ("USB serial"), so two interfaces of the same
+// USB-serial adapter (e.g. a Silicon Labs CP2105 dual UART bridge exposing
+// /dev/ttyUSB0 + /dev/ttyUSB1 as its two interfaces) are indistinguishable in
+// the picker. This section reads `/sys/class/tty/<name>/device` — a symlink
+// into the USB interface's sysfs node — to recover the adapter's real
+// `product`/`manufacturer`/`serial` strings and the specific interface number,
+// so the picker can show e.g. "Silicon Labs CP2105 Dual UART Bridge (port 0)"
+// vs "(port 1)" instead of two identical "USB serial" entries.
+
+/// USB device/interface metadata recovered from sysfs for one `ttyUSB*` /
+/// `ttyACM*` node. Every field is optional — sysfs attribute files can be
+/// absent (older kernel, non-USB serial device, permission-denied) and the
+/// formatter degrades gracefully rather than failing the whole enrichment.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UsbSerialMeta {
+    /// `product` string from the USB device's sysfs node, e.g.
+    /// `"CP2105 Dual UART Bridge"`.
+    pub product: Option<String>,
+    /// `manufacturer` string, e.g. `"Silicon Labs"`.
+    pub manufacturer: Option<String>,
+    /// `serial` string (the device's USB serial number), e.g. `"01C71CA5"`.
+    pub serial: Option<String>,
+    /// Decimal USB interface number (`bInterfaceNumber`, parsed from its hex
+    /// text form) — which physical UART this `/dev` node is, for a
+    /// multi-interface adapter like the CP2105.
+    pub interface: Option<u8>,
+    /// `idVendor` hex string (4 hex digits, no `0x` prefix), e.g. `"10c4"`.
+    pub id_vendor: Option<String>,
+    /// `idProduct` hex string, e.g. `"ea70"`.
+    pub id_product: Option<String>,
+}
+
+/// Format a human label from USB sysfs metadata. Pure — no I/O — so every
+/// fallback branch is directly unit-testable. Preference order:
+/// `manufacturer + " " + product"` (or just `product` if no manufacturer) →
+/// `"<idVendor>:<idProduct>"` → the caller's generic fallback (`"USB serial"`).
+/// A resolved interface number is appended as `" (port N)"`; a serial number
+/// as `" SN <serial>"`. This is what makes the two sides of a CP2105 dual-UART
+/// adapter distinguishable in the picker instead of both showing "USB serial".
+pub fn format_usb_serial_label(meta: &UsbSerialMeta, fallback: &str) -> String {
+    let base = match (&meta.manufacturer, &meta.product) {
+        (Some(mfr), Some(prod)) => {
+            let mfr = mfr.trim();
+            let prod = prod.trim();
+            if prod.is_empty() {
+                None
+            } else if !mfr.is_empty()
+                && !prod.to_lowercase().contains(mfr.to_lowercase().as_str())
+            {
+                Some(format!("{mfr} {prod}"))
+            } else {
+                Some(prod.to_string())
+            }
+        }
+        (None, Some(prod)) if !prod.trim().is_empty() => Some(prod.trim().to_string()),
+        (Some(mfr), None) if !mfr.trim().is_empty() => Some(mfr.trim().to_string()),
+        _ => None,
+    };
+    let mut label = base.unwrap_or_else(|| {
+        match (&meta.id_vendor, &meta.id_product) {
+            (Some(v), Some(p)) if !v.trim().is_empty() && !p.trim().is_empty() => {
+                format!("{}:{}", v.trim(), p.trim())
+            }
+            _ => fallback.to_string(),
+        }
+    });
+    if let Some(iface) = meta.interface {
+        label.push_str(&format!(" (port {iface})"));
+    }
+    if let Some(serial) = &meta.serial {
+        let serial = serial.trim();
+        if !serial.is_empty() {
+            label.push_str(&format!(" SN {serial}"));
+        }
+    }
+    label
+}
+
+/// Read one sysfs attribute file and return its trimmed contents, or `None`
+/// if the file is missing, unreadable (permission denied), or empty after
+/// trimming. Centralizes the "soft failure" posture so a locked-down sysfs
+/// mount never turns into a panic or an error the frontend has to handle.
+fn read_sysfs_attr(dir: &std::path::Path, attr: &str) -> Option<String> {
+    let text = std::fs::read_to_string(dir.join(attr)).ok()?;
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+/// Walk from a USB *interface* sysfs directory up its parents looking for the
+/// USB *device* node (identified by the presence of an `idVendor` file — every
+/// USB device directory carries one; interface subdirectories do not). Bounded
+/// to a handful of levels so a symlink loop or unexpected sysfs shape can't
+/// spin forever; returns `None` if no device dir turns up in that range (the
+/// caller falls back to the generic label).
+fn find_usb_device_dir(start: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut dir = start.to_path_buf();
+    for _ in 0..8 {
+        if dir.join("idVendor").is_file() {
+            return Some(dir);
+        }
+        dir = dir.parent()?.to_path_buf();
+    }
+    None
+}
+
+/// Resolve USB sysfs metadata for one tty device name (e.g. `"ttyUSB0"`) under
+/// an injectable `/sys/class/tty` root, so tests can build a fake sysfs tree
+/// without real hardware. `None` means no metadata could be recovered at all
+/// (missing symlink, non-USB device, sysfs unavailable) — the caller keeps the
+/// generic "USB serial" label in that case.
+///
+/// Real layout for a USB-serial adapter (e.g. CP2105 on `ttyUSB0`):
+/// `/sys/class/tty/ttyUSB0/device` → symlink to
+/// `.../usbN/N-x/N-x:1.0/ttyUSB0` (the interface dir, holding
+/// `bInterfaceNumber`), whose parent chain eventually reaches
+/// `.../usbN/N-x` (the USB device dir, holding `idVendor`/`product`/etc).
+/// `ttyACM*` devices have one extra directory level between the tty and the
+/// interface (a `tty` subdirectory) but the same upward walk finds the device
+/// dir either way since it just looks for the first ancestor with `idVendor`.
+pub fn read_usb_serial_meta(
+    sys_class_tty_root: &std::path::Path,
+    tty_name: &str,
+) -> Option<UsbSerialMeta> {
+    let device_link = sys_class_tty_root.join(tty_name).join("device");
+    // `canonicalize` follows the symlink chain AND requires the target to
+    // exist, which is exactly what we want here (a dangling symlink or a
+    // missing `device` node yields `None`, not a bogus path).
+    let interface_dir = std::fs::canonicalize(&device_link).ok()?;
+
+    // `bInterfaceNumber` lives directly in the interface directory when this
+    // node IS a USB interface. It's genuinely absent for non-composite
+    // devices / other tty backends, so a missing file is not an error.
+    let interface = read_sysfs_attr(&interface_dir, "bInterfaceNumber")
+        .and_then(|hex| u8::from_str_radix(hex.trim(), 16).ok());
+
+    let device_dir = find_usb_device_dir(&interface_dir)?;
+    let meta = UsbSerialMeta {
+        product: read_sysfs_attr(&device_dir, "product"),
+        manufacturer: read_sysfs_attr(&device_dir, "manufacturer"),
+        serial: read_sysfs_attr(&device_dir, "serial"),
+        interface,
+        id_vendor: read_sysfs_attr(&device_dir, "idVendor"),
+        id_product: read_sysfs_attr(&device_dir, "idProduct"),
+    };
+    if meta == UsbSerialMeta::default() {
+        // Found a device dir but every attribute was unreadable/empty — no
+        // enrichment is possible; let the caller keep the generic label.
+        None
+    } else {
+        Some(meta)
+    }
+}
+
+/// Enrich USB-class entries in `devices` with a real device name pulled from
+/// `sys_class_tty_root` (normally `/sys/class/tty`), leaving Bluetooth/UART
+/// entries untouched. Split out from `packet_list_serial_devices` so the
+/// sysfs root is injectable for tests. Any device whose sysfs lookup fails
+/// keeps its existing (generic "USB serial") label — enrichment is strictly
+/// additive, never a source of a missing entry.
+pub fn enrich_usb_serial_labels(
+    devices: &mut [SerialDeviceDto],
+    sys_class_tty_root: &std::path::Path,
+) {
+    for d in devices.iter_mut() {
+        if d.kind != "usb" {
+            continue;
+        }
+        let Some(name) = std::path::Path::new(&d.path).file_name().and_then(|n| n.to_str())
+        else {
+            continue;
+        };
+        if let Some(meta) = read_usb_serial_meta(sys_class_tty_root, name) {
+            d.label = format_usb_serial_label(&meta, &d.label);
+        }
+    }
+}
+
 /// List serial/RFCOMM devices a KISS TNC might use, classified by transport
 /// (USB / Bluetooth / on-board UART), by scanning `/dev`. An empty list means
 /// none are present — plug in a TNC or bind an rfcomm device, then refresh.
+/// USB-class entries are enriched with a real device name (product/manufacturer/
+/// interface/serial) read from `/sys/class/tty` when available (tuxlink-xj7e1),
+/// so e.g. the two interfaces of a CP2105 dual-UART DigiRig-class adapter show
+/// up as distinguishable "Silicon Labs CP2105 Dual UART Bridge (port 0)" /
+/// "(port 1)" entries instead of two identical "USB serial" rows.
 #[tauri::command]
 pub async fn packet_list_serial_devices() -> Result<Vec<SerialDeviceDto>, UiError> {
-    Ok(discover_serial_devices(std::path::Path::new("/dev")))
+    let mut devices = discover_serial_devices(std::path::Path::new("/dev"));
+    enrich_usb_serial_labels(&mut devices, std::path::Path::new("/sys/class/tty"));
+    Ok(devices)
 }
 
 /// A paired Bluetooth radio the operator can dial as a KISS modem via the
@@ -8438,6 +8635,212 @@ mod tests {
     #[test]
     fn discover_serial_devices_empty_when_dir_missing() {
         assert!(discover_serial_devices(std::path::Path::new("/no/such/dir/xyzzy")).is_empty());
+    }
+
+    // ========================================================================
+    // tuxlink-xj7e1 — USB serial label enrichment
+    // ========================================================================
+
+    #[test]
+    fn format_usb_serial_label_cp2105_dual_uart_distinguishes_ports_by_interface() {
+        // The motivating real-world case: /dev/ttyUSB0 + /dev/ttyUSB1 are the
+        // two interfaces of ONE "Silicon Labs CP2105 Dual UART Bridge" — they
+        // must render as different labels, not two identical "USB serial"s.
+        let port0 = UsbSerialMeta {
+            product: Some("CP2105 Dual UART Bridge".into()),
+            manufacturer: Some("Silicon Labs".into()),
+            serial: Some("01C71CA5".into()),
+            interface: Some(0),
+            id_vendor: Some("10c4".into()),
+            id_product: Some("ea70".into()),
+        };
+        let port1 = UsbSerialMeta { interface: Some(1), ..port0.clone() };
+        let label0 = format_usb_serial_label(&port0, "USB serial");
+        let label1 = format_usb_serial_label(&port1, "USB serial");
+        assert_ne!(label0, label1, "the two CP2105 interfaces must be distinguishable");
+        assert_eq!(label0, "Silicon Labs CP2105 Dual UART Bridge (port 0) SN 01C71CA5");
+        assert_eq!(label1, "Silicon Labs CP2105 Dual UART Bridge (port 1) SN 01C71CA5");
+    }
+
+    #[test]
+    fn format_usb_serial_label_product_only_no_manufacturer_duplication() {
+        // Manufacturer omitted entirely.
+        let meta = UsbSerialMeta { product: Some("FT232R USB UART".into()), ..Default::default() };
+        assert_eq!(format_usb_serial_label(&meta, "USB serial"), "FT232R USB UART");
+
+        // Manufacturer present but already embedded in the product string —
+        // must not duplicate to "FTDI FTDI FT232R USB UART".
+        let meta_dup = UsbSerialMeta {
+            product: Some("FTDI FT232R USB UART".into()),
+            manufacturer: Some("FTDI".into()),
+            ..Default::default()
+        };
+        assert_eq!(format_usb_serial_label(&meta_dup, "USB serial"), "FTDI FT232R USB UART");
+    }
+
+    #[test]
+    fn format_usb_serial_label_falls_back_to_vendor_product_ids_then_generic() {
+        // No product/manufacturer strings at all, but vendor:product IDs present.
+        let ids_only = UsbSerialMeta {
+            id_vendor: Some("10c4".into()),
+            id_product: Some("ea70".into()),
+            ..Default::default()
+        };
+        assert_eq!(format_usb_serial_label(&ids_only, "USB serial"), "10c4:ea70");
+
+        // Nothing at all resolvable — generic fallback survives untouched.
+        let empty = UsbSerialMeta::default();
+        assert_eq!(format_usb_serial_label(&empty, "USB serial"), "USB serial");
+
+        // Blank/whitespace-only strings count as absent, same as None.
+        let blank = UsbSerialMeta {
+            product: Some("   ".into()),
+            manufacturer: Some("".into()),
+            id_vendor: Some(" ".into()),
+            id_product: Some("ea70".into()),
+            ..Default::default()
+        };
+        assert_eq!(format_usb_serial_label(&blank, "USB serial"), "USB serial");
+    }
+
+    #[test]
+    fn format_usb_serial_label_interface_and_serial_append_independently() {
+        // Interface number with no serial.
+        let iface_only = UsbSerialMeta {
+            product: Some("Widget".into()),
+            interface: Some(2),
+            ..Default::default()
+        };
+        assert_eq!(format_usb_serial_label(&iface_only, "USB serial"), "Widget (port 2)");
+
+        // Serial with no interface number (single-interface adapter).
+        let serial_only = UsbSerialMeta {
+            product: Some("Widget".into()),
+            serial: Some("ABC123".into()),
+            ..Default::default()
+        };
+        assert_eq!(format_usb_serial_label(&serial_only, "USB serial"), "Widget SN ABC123");
+    }
+
+    /// Build a fake `/sys/class/tty/<name>/device -> ../../../<iface>` sysfs
+    /// tree under `root`, mirroring the real CP2105 layout closely enough to
+    /// exercise `read_usb_serial_meta`'s symlink-follow + upward walk without
+    /// real hardware. `iface_num` is written as 2-digit hex text (sysfs's real
+    /// format, e.g. `"00"` / `"01"`).
+    #[cfg(unix)]
+    fn write_fake_usb_tty(
+        root: &std::path::Path,
+        tty_name: &str,
+        iface_num: u8,
+        product: Option<&str>,
+        manufacturer: Option<&str>,
+        serial: Option<&str>,
+    ) {
+        let device_dir = root.join("__devices__").join("usb1").join("1-1");
+        let iface_dir = device_dir.join(format!("1-1:1.{iface_num}"));
+        std::fs::create_dir_all(&iface_dir).unwrap();
+        std::fs::write(iface_dir.join("bInterfaceNumber"), format!("{iface_num:02x}\n")).unwrap();
+        std::fs::write(device_dir.join("idVendor"), "10c4\n").unwrap();
+        std::fs::write(device_dir.join("idProduct"), "ea70\n").unwrap();
+        if let Some(p) = product {
+            std::fs::write(device_dir.join("product"), format!("{p}\n")).unwrap();
+        }
+        if let Some(m) = manufacturer {
+            std::fs::write(device_dir.join("manufacturer"), format!("{m}\n")).unwrap();
+        }
+        if let Some(s) = serial {
+            std::fs::write(device_dir.join("serial"), format!("{s}\n")).unwrap();
+        }
+        let tty_dir = root.join(tty_name);
+        std::fs::create_dir_all(&tty_dir).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&iface_dir, tty_dir.join("device")).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn read_usb_serial_meta_walks_symlink_and_finds_device_attrs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        write_fake_usb_tty(
+            root,
+            "ttyUSB0",
+            0,
+            Some("CP2105 Dual UART Bridge"),
+            Some("Silicon Labs"),
+            Some("01C71CA5"),
+        );
+        write_fake_usb_tty(
+            root,
+            "ttyUSB1",
+            1,
+            Some("CP2105 Dual UART Bridge"),
+            Some("Silicon Labs"),
+            Some("01C71CA5"),
+        );
+        let meta0 = read_usb_serial_meta(root, "ttyUSB0").expect("meta for ttyUSB0");
+        let meta1 = read_usb_serial_meta(root, "ttyUSB1").expect("meta for ttyUSB1");
+        assert_eq!(meta0.interface, Some(0));
+        assert_eq!(meta1.interface, Some(1));
+        assert_eq!(meta0.product.as_deref(), Some("CP2105 Dual UART Bridge"));
+        assert_eq!(meta0.manufacturer.as_deref(), Some("Silicon Labs"));
+        assert_eq!(meta0.serial.as_deref(), Some("01C71CA5"));
+
+        let label0 = format_usb_serial_label(&meta0, "USB serial");
+        let label1 = format_usb_serial_label(&meta1, "USB serial");
+        assert_ne!(label0, label1);
+        assert!(label0.contains("(port 0)"), "{label0}");
+        assert!(label1.contains("(port 1)"), "{label1}");
+    }
+
+    #[test]
+    fn read_usb_serial_meta_returns_none_when_device_symlink_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("ttyUSB0")).unwrap();
+        // No `device` symlink at all — e.g. sysfs unavailable or the node
+        // isn't actually backed by a USB device.
+        assert!(read_usb_serial_meta(root, "ttyUSB0").is_none());
+        // Nonexistent tty name entirely.
+        assert!(read_usb_serial_meta(root, "ttyUSB99").is_none());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn enrich_usb_serial_labels_only_touches_usb_kind_and_falls_back_gracefully() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sys_root = tmp.path();
+        write_fake_usb_tty(
+            sys_root,
+            "ttyUSB0",
+            0,
+            Some("CP2105 Dual UART Bridge"),
+            Some("Silicon Labs"),
+            Some("01C71CA5"),
+        );
+        let mut devices = vec![
+            SerialDeviceDto {
+                path: "/dev/ttyUSB0".into(),
+                kind: "usb".into(),
+                label: "USB serial".into(),
+            },
+            SerialDeviceDto {
+                path: "/dev/ttyUSB9".into(),
+                kind: "usb".into(),
+                label: "USB serial".into(),
+            },
+            SerialDeviceDto {
+                path: "/dev/rfcomm0".into(),
+                kind: "bluetooth".into(),
+                label: "Bluetooth (RFCOMM)".into(),
+            },
+        ];
+        enrich_usb_serial_labels(&mut devices, sys_root);
+        assert_eq!(devices[0].label, "Silicon Labs CP2105 Dual UART Bridge (port 0) SN 01C71CA5");
+        // No sysfs entry for ttyUSB9 — keeps the generic fallback label.
+        assert_eq!(devices[1].label, "USB serial");
+        // Bluetooth entry is untouched.
+        assert_eq!(devices[2].label, "Bluetooth (RFCOMM)");
     }
 
     // tuxlink-mqu3: BluetoothDeviceDto parser regression-pin. Real `bluetoothctl
