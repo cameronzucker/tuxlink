@@ -267,6 +267,9 @@ impl Provider for OpenAiProvider {
             system_prompt,
         );
         body["stream"] = json!(true);
+        // Ask the server to append a final usage chunk to the stream (vLLM /
+        // OpenAI / OpenRouter honor this; without it, streamed usage is omitted).
+        body["stream_options"] = json!({ "include_usage": true });
 
         let mut req = self.client.post(self.endpoint.clone()).json(&body);
         if let Some(key) = &self.api_key {
@@ -325,6 +328,9 @@ impl Provider for OpenAiProvider {
             let value: Value = resp.json().await.map_err(|e| {
                 ProviderError::Unparseable(format!("response was not JSON: {e}"))
             })?;
+            if let Some((prompt_tokens, eval_tokens)) = parse_usage(&value) {
+                on_event(RunEvent::ContextUsage { prompt_tokens, eval_tokens, num_ctx: None });
+            }
             return parse_completion(&value).map_err(ProviderError::Unparseable);
         }
 
@@ -352,6 +358,11 @@ impl Provider for OpenAiProvider {
         // line before closing the connection (rare, but lenient parsing avoids
         // dropping the final delta).
         acc.finish(on_event)?;
+
+        let usage = acc.usage();
+        if let Some((prompt_tokens, eval_tokens)) = usage {
+            on_event(RunEvent::ContextUsage { prompt_tokens, eval_tokens, num_ctx: None });
+        }
 
         Ok(acc.into_turn())
     }
@@ -420,6 +431,10 @@ struct SseAccumulator {
     tool_calls: BTreeMap<i64, PartialToolCall>,
     /// Set once a `data: [DONE]` sentinel is seen.
     done: bool,
+    /// Token usage captured from a trailing usage-only chunk (`choices: []`)
+    /// when the request set `stream_options.include_usage` (tuxlink-xnenf).
+    /// `None` until such a chunk arrives — most servers never send one.
+    usage: Option<(u32, u32)>,
 }
 
 /// Find the first SSE frame delimiter in `buf` at the BYTE level, returning
@@ -456,6 +471,7 @@ impl SseAccumulator {
             reasoning: String::new(),
             tool_calls: BTreeMap::new(),
             done: false,
+            usage: None,
         }
     }
 
@@ -581,6 +597,13 @@ impl SseAccumulator {
         chunk: &Value,
         on_event: &(dyn Fn(RunEvent) + Sync),
     ) -> Result<(), ProviderError> {
+        // A usage-only final chunk (choices empty) carries token counts when the
+        // request set stream_options.include_usage. Capture it regardless of the
+        // delta branch below.
+        if let Some(u) = parse_usage(chunk) {
+            self.usage = Some(u);
+        }
+
         let delta = match chunk
             .get("choices")
             .and_then(Value::as_array)
@@ -701,6 +724,11 @@ impl SseAccumulator {
     #[cfg(test)]
     fn reasoning(&self) -> &str {
         &self.reasoning
+    }
+
+    /// Token usage captured from the streamed final chunk, if the server sent one.
+    fn usage(&self) -> Option<(u32, u32)> {
+        self.usage
     }
 }
 
@@ -1072,6 +1100,20 @@ pub fn parse_completion(value: &Value) -> Result<ModelTurn, String> {
         .unwrap_or("")
         .to_string();
     Ok(ModelTurn::Text(content))
+}
+
+/// Extract `(prompt_tokens, eval_tokens)` from an OpenAI-compat `usage` object.
+/// `prompt_tokens` is required (it is the meter numerator); `completion_tokens`
+/// defaults to 0 when a server omits it on the final streamed chunk. Returns
+/// `None` when there is no usable `prompt_tokens`. Pure — no IO.
+pub(crate) fn parse_usage(value: &Value) -> Option<(u32, u32)> {
+    let usage = value.get("usage")?;
+    let prompt = usage.get("prompt_tokens").and_then(Value::as_u64)? as u32;
+    let eval = usage
+        .get("completion_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as u32;
+    Some((prompt, eval))
 }
 
 /// Parse a single OpenAI tool-call object into a [`ToolCall`].
@@ -1835,6 +1877,23 @@ mod tests {
         assert!(parse_completion(&json!({ "choices": [] })).is_err());
     }
 
+    // --- parse_usage: compat usage object (windowless, tuxlink-xnenf) -----
+
+    #[test]
+    fn parse_usage_reads_prompt_and_completion() {
+        let v = json!({ "usage": { "prompt_tokens": 1500, "completion_tokens": 40, "total_tokens": 1540 } });
+        assert_eq!(parse_usage(&v), Some((1500, 40)));
+    }
+
+    #[test]
+    fn parse_usage_absent_or_partial_is_none() {
+        assert_eq!(parse_usage(&json!({})), None);
+        // completion_tokens missing → treat as 0 (some servers omit it on the final chunk).
+        assert_eq!(parse_usage(&json!({ "usage": { "prompt_tokens": 10 } })), Some((10, 0)));
+        // prompt_tokens missing → None (no usable numerator).
+        assert_eq!(parse_usage(&json!({ "usage": { "completion_tokens": 5 } })), None);
+    }
+
     // --- request assembly -------------------------------------------------
 
     /// The first message in every request MUST be the Elmer system prompt.
@@ -2135,6 +2194,24 @@ mod tests {
             vec![RunEvent::ReasoningDelta { chunk: "thinking...".into() }],
             "the `reasoning_content` spelling must also emit ReasoningDelta"
         );
+    }
+
+    /// A trailing usage-only frame (`choices: []`, carrying `usage`) is captured
+    /// even though it has no `delta` to apply — the vLLM/OpenAI
+    /// `stream_options.include_usage` final chunk (tuxlink-xnenf).
+    #[test]
+    fn sse_accumulator_captures_trailing_usage_frame() {
+        let mut acc = SseAccumulator::new();
+        let sink = |_e: RunEvent| {};
+        // A content frame, then the usage-only final frame vLLM/OpenAI send when
+        // stream_options.include_usage=true (choices empty), then [DONE].
+        let bytes = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":200,\"completion_tokens\":3}}\n\n",
+            "data: [DONE]\n\n",
+        );
+        acc.feed(bytes.as_bytes(), &sink).unwrap();
+        assert_eq!(acc.usage(), Some((200, 3)));
     }
 
     /// Tool calls streamed in fragments — name once, arguments in 2+ pieces, keyed
