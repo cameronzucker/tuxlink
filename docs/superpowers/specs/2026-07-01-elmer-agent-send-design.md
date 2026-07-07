@@ -181,3 +181,67 @@ Four Claude lenses (RADIO-1 runaway, security/gate-bypass, completeness/honesty,
 | 10 | LOW | serde/schemars wire-format for new DTOs; param-scope docs; rig_tune pre-existing | C4 wire-format test; C7 doc clarifications |
 
 Self-resolved by the reviewers as consistent with the design (no change): gate-at-start correctly blocks new ops after expiry; taint gates future egress, not in-flight (accepted); cumulative-budget not needed; the two-check trip-wire structure is preserved by #9's mechanical replacement.
+
+---
+
+# Part 2 — Integrated remaining-scope design (C3+C4+C6+C7 + P2P peer store)
+
+**Operator directive (2026-07-01):** the remaining epic is built as ONE coherent, functioning delivery — no tiny/deferred parts that get lost. Definition of done = the 20-station motivating flow works end-to-end, wire-walked. Rigor unchanged (adrev + plan-eng-review + wire-walk); only the work product is unified. Branch: `bd-tuxlink-sg5zw.2/agent-send-core`. First increment (C1+C2+C5) already shipped in PR #997 (merged `9439b6ae`).
+
+## Decision D-1 — teardown on disarm/abort (operator-approved 2026-07-01)
+
+On send-authority ending MID-SESSION by an operator **disarm or abort** (NOT expiry): emit **one** AX.25 DISC / ARDOP DISCONNECT-END frame to close the L2/ARQ session cleanly, then **hard silence** (drop the transport, no further RF). Airtime after consent ends is bounded to a single teardown frame; the peer is not left hanging. **Expiry is unchanged** — an in-flight op runs to its natural end (bounded by inherent timeout + the C3d exchange backstop); expiry does NOT fire the hard cancel, it only blocks new ops (gate-at-start).
+
+## Mechanism grounding — the unified de-auth/abort primitive
+
+The Explore map (2026-07-01) collapses C3a/C3b/C3c into one clean mechanism:
+
+- **`AbortableByteLink` already gates every write on an `Arc<AtomicBool>`** (`src-tauri/src/winlink/ax25/link.rs:85-123`; checks flag on read+write, 200ms poll on serial/BT).
+- **`send_frame` is the SINGLE AX.25 TX chokepoint** (`src-tauri/src/winlink/ax25/datalink.rs:256`) — every frame (SABM/UA/RR/REJ/I/DISC) routes through `self.link.write_all`. `Ax25Stream.link: Box<dyn ByteLink>` (datalink.rs:76) is the wrap point.
+- **Unify:** the guard's de-auth signal IS the same `Arc<AtomicBool>` the ByteLink checks. On disarm/taint (and, for a listener, expiry), set the flag → next `send_frame` write returns `ConnectionAborted` → no frame emitted (per D-1, allow exactly one DISC first).
+- **Real abort = drop/close the transport**, not just the flag — eliminates the residual one-frame check-then-write leak (link.rs:104-107). TCP already uses `try_clone`+`shutdown`; serial/BT/UV-Pro need the owned handle dropped.
+- **`guarded_egress`** (`src-tauri/tuxlink-security/src/lib.rs:196`) is where a `tokio CancellationToken` threads in (select! on `token.cancelled()`; on fire, `guard.disarm()` then stop). Expiry is LAZY (no event — `authorize` re-checks the deadline); a long op learns of expiry via the exchange backstop timer, not the guard.
+- **`AbortPort`** (`ports.rs:654-661`) has cms_abort/ardop_disconnect/vara_stop_session; **add `packet_abort`**. Mirror the Post Office real-abort pattern (`ui_commands.rs:7774-7791`).
+
+## C3d — exchange wedge-backstop (concrete)
+
+`run_b2f_with_transport` (`modem_commands.rs:1822`) passes NO deadline to the EXCHANGE phase (connect phase has `connect_backstop_deadline`, :1716). Add `exchange_timeout: Option<Duration>` (derived from `ARQTimeout`) threaded through the ARDOP exchange and the VARA equivalent (`vara/commands.rs:1554` → `run_vara_b2f_with_transport:1655`). Wedge-detector, not a cap (see [[project_ardop_arqtimeout_exchange_wedge]]).
+
+## C4 — concrete plumbing
+
+- `cms_connect`/`verify_cms_connection` take zero params (read `cfg.connect.transport`, `ui_commands.rs:2891`) → add `transport_override: Option<CmsTransport>`.
+- `packet_connect` (`PacketConnectParams{call, path}`) has **no** mode/bandwidth (AX.25 has no protocol-level bandwidth knob) — document N/A.
+- **Typed callsign validation:** reuse `identity::Callsign::parse` (`identity/address.rs:18`, `validate_identity_describe`) before the gate; AX.25 `Address::encode` silently truncates >6 chars (`ax25/frame.rs:45-52`) — validate first. Reject CR/LF/control/whitespace/overlong/bad-SSID.
+
+## C6 — MID-set binding (concrete)
+
+`OutboxApproval{approval_id, digest, session_epoch, expires_unix}` (`elmer/approval.rs:30-39`). Add `mids: Vec<String>`. The flush path (`winlink_backend.rs:~2868`) drains the whole outbox → filter to the approval's MID-set so an armed autonomous send transmits only intended messages, not stale drafts. Decoupled from the modal UI (approval machinery stays; the modal becomes optional).
+
+## NEW sub-feature — P2P peer store (operator decision 2026-07-01)
+
+**Gap it fills:** every station-tracking affordance today (`find_stations`) points at Winlink RMS **gateways**. There is no first-class notion of a **peer** (a non-gateway station you connect to directly). P2P cannot function as a mode without it. Operator named this a real product gap and scoped it in.
+
+**Grounding:** RF P2P already works via `intent=p2p` on `ardop_b2f_exchange`/`vara_b2f_exchange`/packet (addressed by callsign+freq; per-peer keyring password via `p2p_peer_password_status`). Only **telnet_p2p is divergent** — network-addressed (`host:port`, `P2pDialRequest` `ui_commands.rs:6906`), which is the SSRF/arbitrary-host surface, and it currently has NO allowlist. The peer store serves ALL P2P modes but the security-critical part is vetting telnet endpoints.
+
+**`Peer` model:** `callsign` (identity + agent selection key); reachability, possibly several per peer — RF: preferred band(s)/freq(s); telnet: `host`+`port`; `password` (keyring, reuse per-callsign infra); `notes`, `last_connected` (nice-to-have).
+
+**Storage:** new `peers` config section (parallel to AllowedStations); passwords in OS keyring, never plaintext ([[feedback_no_disk_creds_default]]).
+
+**Operator UX:** inline "P2P Peers" list in settings (add/edit/remove) — inline, no pop-up ([[feedback_inline_ui_no_window_clutter]]). **This is the one net-new UI surface; design it with a high-fidelity dark mock before build** ([[feedback_high_fidelity_mocks]], [[feedback_visual_companion_default]]).
+
+**Agent read tool:** `find_peers` (mirrors `find_stations`, does NOT taint) so the agent can answer "who can I P2P with?" and select one.
+
+**Wiring:** `telnet_p2p_connect(peer_callsign)` → vetted `host:port` lookup, unknown peer → denied (SSRF closed by construction). RF P2P (`intent=p2p`) may pull freq/password from the store for convenience but still works with an explicit callsign+freq.
+
+## Integrated scope + status (resume anchor)
+
+- **SHIPPED:** C1 un-withhold + C2 tests + C5 truthful prompt/label — PR #997, merged `9439b6ae`. sg5zw.1/.4 closed.
+- **REMAINING (this delivery, one PR off `bd-tuxlink-sg5zw.2/agent-send-core`):**
+  - C3 (sg5zw.2) — spine: guard cancellation + per-frame AX.25 gate (D-1 teardown) + real cross-transport aborts + `packet_abort` + exchange wedge-backstop + rebuild `packet_listen`/`telnet_p2p`.
+  - C4 (sg5zw.3) — params + typed-callsign validation.
+  - C6 (sg5zw.5) — approval opt-in + MID-set binding.
+  - C7 (sg5zw.6) — docs + wire-walk the 20-station flow.
+  - trip-wire (sg5zw.7) — route-driven, folded into C3.
+  - **P2P peer store (sg5zw.8, NEW)** — data model + `peers` config + settings UI (mock first) + `find_peers` tool + telnet/RF-P2P wiring. C3's telnet_p2p rebuild depends on it.
+
+**Next-session entry point:** design pass on the P2P peer surface (mock the settings UI), then finalize this Part-2 design → adversarial review → plan-eng-review → build. Everything else here is grounded to file:line and ready.
