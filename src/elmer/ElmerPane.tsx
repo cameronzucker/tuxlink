@@ -1222,7 +1222,7 @@ export const ElmerPane = memo(function ElmerPane({
   // ≥85% full, the "New conversation" icon self-emphasizes so starting fresh is
   // the obvious move before replies degrade. Guarded on a positive numCtx.
   const contextPressure =
-    context !== null && context.numCtx > 0 && context.promptTokens / context.numCtx >= 0.85;
+    context !== null && context.numCtx != null && context.numCtx > 0 && context.promptTokens / context.numCtx >= 0.85;
 
   return (
     <aside className="elmer-pane" data-testid="elmer-pane" aria-label="Elmer assistant">

@@ -190,3 +190,29 @@ describe('ContextMeter hidden-until-first-event', () => {
     expect(left).toContain('20k');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Counter-mode (numCtx === null): window unknown
+// ---------------------------------------------------------------------------
+
+describe('ContextMeter counter-mode (numCtx null)', () => {
+  it('counter-mode: renders bare token count when numCtx is null', () => {
+    render(<ContextMeter promptTokens={12000} numCtx={null} />);
+    expect(screen.getByTestId('elmer-context-meter-left').textContent).toBe('Context 12k');
+    // No "/ 32k", no percentage suffix, no fill track.
+    expect(screen.queryByTestId('elmer-context-meter-right')).toBeNull();
+    expect(screen.queryByTestId('elmer-context-meter-track')).toBeNull();
+  });
+
+  it('counter-mode: aria-label states the window is unknown', () => {
+    render(<ContextMeter promptTokens={12000} numCtx={null} />);
+    const el = screen.getByTestId('elmer-context-meter');
+    expect(el.getAttribute('aria-label')).toBe('Context usage: 12k tokens (window unknown)');
+  });
+
+  it('windowed mode still renders the bar when numCtx is a number', () => {
+    render(<ContextMeter promptTokens={12000} numCtx={32000} />);
+    expect(screen.getByTestId('elmer-context-meter-track')).toBeTruthy();
+    expect(screen.getByTestId('elmer-context-meter-left').textContent).toBe('Context 12k / 32k');
+  });
+});

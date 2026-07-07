@@ -256,7 +256,7 @@ export interface UseElmer {
    * first EV_CONTEXT event arrives). Once non-null, persists across turns so
    * the meter stays visible. Only the fields needed by <ContextMeter> are kept.
    */
-  context: { promptTokens: number; numCtx: number } | null;
+  context: { promptTokens: number; numCtx: number | null } | null;
 }
 
 /**
@@ -309,7 +309,9 @@ export function useElmer(): UseElmer {
 
   // T7: Latest context-usage snapshot from OllamaProvider. Null until the
   // first EV_CONTEXT event arrives; persists across turns so the meter stays visible.
-  const [context, setContext] = useState<{ promptTokens: number; numCtx: number } | null>(null);
+  const [context, setContext] = useState<{ promptTokens: number; numCtx: number | null } | null>(
+    null,
+  );
 
   // Subscribe to all three Elmer event channels for the lifetime of the hook.
   // The listeners are set up once on mount and torn down on unmount. Tauri's

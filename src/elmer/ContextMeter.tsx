@@ -31,10 +31,33 @@ export function formatK(tokens: number): string {
 
 interface ContextMeterProps {
   promptTokens: number;
-  numCtx: number;
+  numCtx: number | null;
 }
 
 export function ContextMeter({ promptTokens, numCtx }: ContextMeterProps) {
+  // Counter-mode: window unknown (compat endpoint that advertises no context
+  // length). Show tokens consumed only — no percentage, no fill bar — so the
+  // gauge stays present and honest without a denominator it cannot trust.
+  if (numCtx == null) {
+    return (
+      <div
+        className="elmer-context-meter elmer-context-meter--counter"
+        data-testid="elmer-context-meter"
+        aria-label={`Context usage: ${formatK(promptTokens)} tokens (window unknown)`}
+      >
+        <div className="elmer-context-meter-labels">
+          <span
+            className="elmer-context-meter-left"
+            data-testid="elmer-context-meter-left"
+          >
+            Context {formatK(promptTokens)}
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  // Windowed mode (unchanged below this point).
   // Guard: if numCtx is zero (unexpected), avoid division-by-zero.
   const pct = numCtx > 0 ? Math.round((promptTokens / numCtx) * 100) : 0;
   const fillPct = Math.min(pct, 100);
