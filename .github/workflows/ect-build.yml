@@ -191,7 +191,9 @@ jobs:
           # functional: dummy backend set/get freq
           "src-tauri/binaries/tuxlink-rigctld-${TRIPLE}" -m 1 -t 4590 & dp=$!; sleep 1
           "src-tauri/binaries/tuxlink-rigctl-${TRIPLE}" -m 2 -r localhost:4590 F 14074000
-          test "$("src-tauri/binaries/tuxlink-rigctl-${TRIPLE}" -m 2 -r localhost:4590 f)" = "14074000"
+          # `rigctl -m 2` prints a "rigctld: Hamlib ..." banner before the value,
+          # so match the exact frequency line rather than the whole capture.
+          "src-tauri/binaries/tuxlink-rigctl-${TRIPLE}" -m 2 -r localhost:4590 f | grep -qx 14074000
           kill "$dp" 2>/dev/null || true
           du -h "src-tauri/binaries/tuxlink-rigctl-${TRIPLE}" "src-tauri/binaries/tuxlink-rigctld-${TRIPLE}"
 

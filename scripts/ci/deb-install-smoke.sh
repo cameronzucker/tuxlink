@@ -125,7 +125,9 @@ if [ "$MODE" = "install" ]; then
   /usr/bin/tuxlink-rigctld -m 1 -t 4590 & dp=$!
   sleep 1
   /usr/bin/tuxlink-rigctl -m 2 -r localhost:4590 F 14074000
-  freq="$(/usr/bin/tuxlink-rigctl -m 2 -r localhost:4590 f)"
+  # `rigctl -m 2` prints a "rigctld: Hamlib ..." banner before the value; take the
+  # frequency line (all-digits), not the whole multi-line capture.
+  freq="$(/usr/bin/tuxlink-rigctl -m 2 -r localhost:4590 f | grep -m1 -E '^[0-9]+$' || true)"
   kill "$dp" 2>/dev/null || true
   if [ "$freq" != "14074000" ]; then
     echo "FAIL: dummy-backend rigctl round-trip returned '$freq', expected 14074000"
