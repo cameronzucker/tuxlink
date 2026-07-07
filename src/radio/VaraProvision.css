@@ -1,0 +1,109 @@
+/* VaraProvision.css — shared VARA provisioning flow (tuxlink-w7212).
+   Self-contained (renders inside the wizard AND the VARA panel), using the
+   app design tokens so it looks native in both. */
+
+.vara-provision {
+  color: var(--text);
+  max-width: 640px;
+}
+.vara-provision p {
+  color: var(--text-dim);
+}
+.vara-provision__steps {
+  margin: 1rem 0;
+  padding-left: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.vara-provision__downloads {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+.vara-provision__card {
+  flex: 1 1 220px;
+  text-align: left;
+  padding: 0.75rem 0.9rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+.vara-provision__card:hover {
+  border-color: var(--accent);
+  background: var(--w-accent-soft, rgba(245, 159, 60, 0.12));
+}
+.vara-provision__card strong {
+  display: block;
+  margin-bottom: 0.25rem;
+}
+.vara-provision__card p {
+  margin: 0;
+  font-size: 0.9em;
+}
+.vara-provision__actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-top: 1.25rem;
+}
+.vara-provision__btn-secondary {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+}
+.vara-provision__error {
+  border: 1px solid var(--error, #ee6b6b);
+  background: var(--error-soft, rgba(238, 107, 107, 0.12));
+  color: var(--text);
+  padding: 0.6rem 0.8rem;
+  border-radius: 6px;
+  margin-bottom: 0.75rem;
+}
+.vara-provision__checklist {
+  list-style: none;
+  margin: 1rem 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+.vara-provision__item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+.vara-provision__item-state {
+  font-family: var(--mono);
+  font-size: 0.85em;
+  color: var(--text-dim);
+  text-transform: capitalize;
+}
+.vara-provision__item--done {
+  border-color: var(--success, #5dd6a0);
+  background: var(--success-soft, rgba(93, 214, 160, 0.12));
+}
+.vara-provision__item--done .vara-provision__item-state {
+  color: var(--success, #5dd6a0);
+}
+.vara-provision__item--running {
+  border-color: var(--accent);
+  background: var(--w-accent-soft, rgba(245, 159, 60, 0.12));
+}
+.vara-provision__item--failed {
+  border-color: var(--error, #ee6b6b);
+}
+.vara-provision__item--failed .vara-provision__item-state {
+  color: var(--error, #ee6b6b);
+}
+.vara-provision__ok {
+  color: var(--success, #5dd6a0);
+  font-weight: 600;
+}
