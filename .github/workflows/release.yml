@@ -193,6 +193,51 @@ jobs:
           install -m 0755 /tmp/ardop-src/build/linux/ardopcf "src-tauri/binaries/ardopcf-${TRIPLE}"
           echo "Staged ardopcf-${TRIPLE} (built ${ARDOP_PIN}, $(du -h "src-tauri/binaries/ardopcf-${TRIPLE}" | cut -f1))"
 
+      - name: Stage hamlib sidecar (rigctl/rigctld, static, from pinned source)
+        run: |
+          set -euxo pipefail
+          HAMLIB_VER=4.6.2
+          HAMLIB_SHA=b2ac73f44dd1161e95fdee6c95276144757647bf92d7fdb369ee2fe41ed47ae8
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libusb-1.0-dev pkg-config
+          curl -fSL "https://github.com/Hamlib/Hamlib/releases/download/${HAMLIB_VER}/hamlib-${HAMLIB_VER}.tar.gz" -o /tmp/hamlib.tar.gz
+          echo "${HAMLIB_SHA}  /tmp/hamlib.tar.gz" | sha256sum -c -
+          rm -rf /tmp/hamlib-src && mkdir -p /tmp/hamlib-src
+          tar xzf /tmp/hamlib.tar.gz -C /tmp/hamlib-src --strip-components=1
+          cd /tmp/hamlib-src
+          ./configure --enable-static --disable-shared --without-readline --without-cxx-binding
+          make -j"$(nproc)"
+          make install-strip DESTDIR=/tmp/hamlib-install
+          mkdir -p "$GITHUB_WORKSPACE/src-tauri/resources/licenses"
+          cp /tmp/hamlib-src/COPYING "$GITHUB_WORKSPACE/src-tauri/resources/licenses/hamlib-COPYING.txt"
+          TRIPLE="$(rustc -vV | awk '/^host:/{print $2}')"
+          mkdir -p "$GITHUB_WORKSPACE/src-tauri/binaries"
+          for b in rigctl rigctld; do
+            src="/tmp/hamlib-install/usr/local/bin/$b"
+            file "$src" | grep -q ELF   # not a libtool wrapper script
+            install -m 0755 "$src" "$GITHUB_WORKSPACE/src-tauri/binaries/tuxlink-${b}-${TRIPLE}"
+          done
+          cd "$GITHUB_WORKSPACE"
+          # ldd deny-by-default (both binaries)
+          allow='libc\.|libm\.|libpthread|libdl|ld-linux|linux-vdso|libusb-1\.0|libudev|libcap'
+          for b in tuxlink-rigctl tuxlink-rigctld; do
+            bin="src-tauri/binaries/${b}-${TRIPLE}"
+            ldd "$bin" | awk '{print $1}' | grep -vE "^($allow)" | grep . && { echo "FORBIDDEN lib in $b"; exit 1; } || true
+            ldd "$bin" | grep -iE 'libhamlib|readline|tinfo|ncurses|gpiod|xml2' && { echo "FORBIDDEN hamlib/readline in $b"; exit 1; } || true
+            # GLIBC floor: core runner is glibc 2.39 -> assert no symbol newer than 2.39
+            maxglibc="$(readelf --version-info "$bin" | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -uV | tail -1)"
+            printf '%s\n2.39\n' "${maxglibc#GLIBC_}" | sort -CV || { echo "$b needs $maxglibc > core floor 2.39"; exit 1; }
+          done
+          # capability: FT-710 + G90 backends compiled in
+          "src-tauri/binaries/tuxlink-rigctl-${TRIPLE}" -m 1049 --dump-caps | grep -qi 'Model name.*FT-710'
+          "src-tauri/binaries/tuxlink-rigctl-${TRIPLE}" -m 3088 --dump-caps | grep -qi 'Model name.*G90'
+          # functional: dummy backend set/get freq
+          "src-tauri/binaries/tuxlink-rigctld-${TRIPLE}" -m 1 -t 4590 & dp=$!; sleep 1
+          "src-tauri/binaries/tuxlink-rigctl-${TRIPLE}" -m 2 -r localhost:4590 F 14074000
+          test "$("src-tauri/binaries/tuxlink-rigctl-${TRIPLE}" -m 2 -r localhost:4590 f)" = "14074000"
+          kill "$dp" 2>/dev/null || true
+          du -h "src-tauri/binaries/tuxlink-rigctl-${TRIPLE}" "src-tauri/binaries/tuxlink-rigctld-${TRIPLE}"
+
       # Inject externalBin + the itshfbc/basemap resource globs — CI-ONLY, never
       # committed. tauri-build validates externalBin existence at cargo-build time,
       # so these entries in the committed tauri.conf.json would break the `verify`
@@ -204,8 +249,8 @@ jobs:
         run: |
           set -euxo pipefail
           cd src-tauri
-          jq '.bundle.externalBin = ["binaries/voacapl", "binaries/pmtiles", "binaries/ardopcf"]
-              | .bundle.resources = ["resources/wle-forms/**/*", "resources/itshfbc/**/*", "resources/propagation/ssn-forecast.json", "resources/basemap/**/*"]' \
+          jq '.bundle.externalBin = ["binaries/voacapl", "binaries/pmtiles", "binaries/ardopcf", "binaries/tuxlink-rigctl", "binaries/tuxlink-rigctld"]
+              | .bundle.resources = ["resources/wle-forms/**/*", "resources/itshfbc/**/*", "resources/propagation/ssn-forecast.json", "resources/basemap/**/*", "resources/licenses/**/*"]' \
              tauri.conf.json > tauri.conf.json.tmp
           mv tauri.conf.json.tmp tauri.conf.json
           echo "Patched bundle config:"; jq '{externalBin: .bundle.externalBin, resources: .bundle.resources}' tauri.conf.json
@@ -231,10 +276,12 @@ jobs:
           test -x "$(dirname "$main")/voacapl"   # sidecar adjacent to the main binary
           test -x "$(dirname "$main")/pmtiles"   # go-pmtiles region-pack extractor, adjacent (tuxlink-ndi4)
           test -x "$(dirname "$main")/ardopcf"   # ARDOP HF modem, adjacent (tuxlink-vbpy)
+          test -x "$(dirname "$main")/tuxlink-rigctl"
+          test -x "$(dirname "$main")/tuxlink-rigctld"
           find /tmp/deb-extract -path '*resources/itshfbc/database/version.w32' | grep -q version.w32
           # tuxlink-ndi4: the bundled world overview must ship, or the map is blank.
           find /tmp/deb-extract -path '*resources/basemap/world-z0-6.pmtiles' | grep -q world-z0-6.pmtiles
-          echo "OK: voacapl + pmtiles + ardopcf adjacent to $main; itshfbc + basemap present under resources/"
+          echo "OK: voacapl + pmtiles + ardopcf + tuxlink-rigctl/rigctld adjacent to $main; itshfbc + basemap present under resources/"
 
       - name: Collect bundle artifacts
         run: |
