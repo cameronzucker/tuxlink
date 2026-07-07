@@ -328,7 +328,7 @@ impl ElmerSession {
     /// D-Bus round-trip, so it runs inside [`tokio::task::spawn_blocking`].  A
     /// backend error (locked keyring) maps to a NeedsOperator reason — it is
     /// NEVER collapsed to a keyless send.
-    async fn build_turn_provider(&self) -> Result<Arc<dyn Provider>, String> {
+    async fn build_turn_provider(&self) -> Result<Arc<ElmerProvider>, String> {
         // Hold the model-config tokio mutex across the whole build so the
         // {endpoint, model, key} triple is atomic w.r.t. a concurrent
         // `elmer_config_set`.  No `inner` std-Mutex is touched here.
@@ -389,6 +389,18 @@ impl ElmerSession {
                 return RunOutcome::NeedsOperator(reason);
             }
         };
+
+        // ── Anti-stacking guard (tuxlink-jfpj2) ─────────────────────────────
+        // This Ollama version keeps generating server-side after a client
+        // disconnect, so Stop cannot abort it. Starting a new generation while
+        // one is still in-flight STACKS them and can OOM the host. Refuse the
+        // send while a generation is running; bail here (like a build failure)
+        // so no user turn is pushed and no run task is spawned.
+        if provider.ollama_generation_in_flight().await {
+            return RunOutcome::NeedsOperator(
+                "A previous generation is still running on the Ollama host and cannot be aborted on this Ollama version. Wait for it to finish before sending again — otherwise a second generation stacks and can run the host out of memory.".into(),
+            );
+        }
 
         // ── Brief inner lock A: push user turn, take conversation, mint cancel token ──
         // No `.await` inside this block.
@@ -810,7 +822,7 @@ async fn build_turn_provider_from_parts(
     temperature: Option<f32>,
     system_prompt: Option<String>,
     keyring: &Arc<ElmerKeyring>,
-) -> Result<Arc<dyn Provider>, String> {
+) -> Result<Arc<ElmerProvider>, String> {
     // Step 1 — parse + validate the endpoint (SSRF config-time gate).
     let endpoint = AgentEndpoint::parse(endpoint)
         .map_err(|_| "endpoint invalid — check Connect an AI Agent settings".to_string())?;
@@ -865,7 +877,7 @@ async fn build_turn_provider_from_parts(
     .await
     .map_err(|e| format!("couldn't reach the model endpoint policy — {e}"))?;
 
-    Ok(Arc::new(provider) as Arc<dyn Provider>)
+    Ok(Arc::new(provider))
 }
 
 /// Current Unix timestamp in seconds.

@@ -70,6 +70,13 @@ pub struct ElmerProvider {
     /// attribute is absent, so there is no unused-allow warning).
     #[cfg_attr(not(test), allow(dead_code))]
     kind: ProviderKind,
+    /// tuxlink-jfpj2: `Some((client, ps_url))` ONLY for a native-Ollama
+    /// loopback build (the `client` is the SAME vetted client `inner` uses;
+    /// `ps_url` is `{origin}/api/ps`). `None` for every other adapter
+    /// (OpenAI-compat, Anthropic) — the anti-stacking probe is Ollama-specific.
+    /// `reqwest::Url` (re-exports `url::Url`) — no direct `url` dep needed here,
+    /// matching the rest of this file's convention.
+    ollama_ps: Option<(reqwest::Client, reqwest::Url)>,
 }
 
 /// The concrete adapter an [`ElmerProvider`] wraps. Recorded so tests can assert
@@ -100,7 +107,7 @@ impl ElmerProvider {
         let inner: Box<dyn Provider + Send + Sync> = Box::new(
             OpenAiProvider::new(client, endpoint.0, model, None, None, api_key.map(ApiKey::new))
         );
-        Self { inner, kind: ProviderKind::OpenAi }
+        Self { inner, kind: ProviderKind::OpenAi, ollama_ps: None }
     }
 
     /// Build a redacting provider whose inner adapter uses the SSRF-guarded
@@ -245,7 +252,11 @@ impl ElmerProvider {
         let origin = endpoint.origin();
         let url = endpoint.0;
 
-        let (inner, kind): (Box<dyn Provider + Send + Sync>, ProviderKind) = if is_loopback {
+        let (inner, kind, ollama_ps): (
+            Box<dyn Provider + Send + Sync>,
+            ProviderKind,
+            Option<(reqwest::Client, reqwest::Url)>,
+        ) = if is_loopback {
             // D1 — loopback discrimination via probe-with-fallback. A loopback
             // host may be Ollama (native `/api/*`) OR llama.cpp (compat-only,
             // 404s on `/api/*`). Probe `GET {origin}/api/tags` on the vetted
@@ -275,6 +286,14 @@ impl ElmerProvider {
                             native_url = %native_url,
                             "loopback probe found native Ollama (/api/tags) — using OllamaProvider"
                         );
+                        // tuxlink-jfpj2: anti-stacking probe target. `{origin}/api/ps`
+                        // is always the same host+port as the native `/api/chat` URL
+                        // just built, so this parse cannot fail in practice — but the
+                        // probe is best-effort (fail-open), so a parse failure just
+                        // means the probe is unavailable (`ollama_ps: None`), never a
+                        // build failure.
+                        let ps_url = reqwest::Url::parse(&format!("{origin}/api/ps")).ok();
+                        let ps_client = client.clone();
                         (
                             Box::new(OllamaProvider::new(
                                 client,
@@ -286,6 +305,7 @@ impl ElmerProvider {
                                 api_key,
                             )),
                             ProviderKind::Ollama,
+                            ps_url.map(|u| (ps_client, u)),
                         )
                     }
                     Err(e) => {
@@ -300,6 +320,7 @@ impl ElmerProvider {
                         (
                             Box::new(OpenAiProvider::new(client, url, model, temperature, system_prompt, api_key)),
                             ProviderKind::OpenAi,
+                            None,
                         )
                     }
                 }
@@ -318,6 +339,7 @@ impl ElmerProvider {
                 (
                     Box::new(OpenAiProvider::new(client, url, model, temperature, system_prompt, api_key)),
                     ProviderKind::OpenAi,
+                    None,
                 )
             }
         } else if is_anthropic_endpoint(url.as_str()) {
@@ -325,15 +347,17 @@ impl ElmerProvider {
             (
                 Box::new(AnthropicProvider::new(client, url, model, temperature, system_prompt, api_key)),
                 ProviderKind::Anthropic,
+                None,
             )
         } else {
             (
                 Box::new(OpenAiProvider::new(client, url, model, temperature, system_prompt, api_key)),
                 ProviderKind::OpenAi,
+                None,
             )
         };
 
-        Ok(Self { inner, kind })
+        Ok(Self { inner, kind, ollama_ps })
     }
 
     /// The concrete adapter this provider wraps — test-only accessor for the D1
@@ -341,6 +365,23 @@ impl ElmerProvider {
     #[cfg(test)]
     pub(crate) fn kind(&self) -> ProviderKind {
         self.kind
+    }
+
+    /// tuxlink-jfpj2: for a native-Ollama endpoint, GET /api/ps to detect a
+    /// generation STILL running on the host (this Ollama version keeps generating
+    /// after client disconnect, so Stop cannot abort it). Non-Ollama → false.
+    /// Any probe error / non-2xx / parse failure → false (FAIL-OPEN: never wedge a
+    /// send on a flaky probe). 3s timeout so a hung /api/ps can't stall the send.
+    pub async fn ollama_generation_in_flight(&self) -> bool {
+        let Some((client, ps_url)) = &self.ollama_ps else { return false; };
+        let Ok(resp) = client.get(ps_url.clone()).timeout(std::time::Duration::from_secs(3)).send().await else { return false; };
+        if !resp.status().is_success() {
+            return false;
+        }
+        match resp.json::<serde_json::Value>().await {
+            Ok(json) => ps_response_has_running_model(&json),
+            Err(_) => false,
+        }
     }
 }
 
@@ -384,6 +425,17 @@ async fn probe_ollama(client: &reqwest::Client, origin: String) -> bool {
         Ok(body) => body.get("models").map(Value::is_array).unwrap_or(false),
         Err(_) => false,
     }
+}
+
+// ---------------------------------------------------------------------------
+// Ollama anti-stacking guard (tuxlink-jfpj2)
+// ---------------------------------------------------------------------------
+
+/// tuxlink-jfpj2: does an Ollama `/api/ps` response show a loaded model? With
+/// `keep_alive:0` a loaded model is an ACTIVELY generating one, so a non-empty
+/// `models` array means a generation is still in-flight on the host. Pure.
+pub(crate) fn ps_response_has_running_model(json: &serde_json::Value) -> bool {
+    json.get("models").and_then(serde_json::Value::as_array).map(|m| !m.is_empty()).unwrap_or(false)
 }
 
 // ---------------------------------------------------------------------------
@@ -506,6 +558,52 @@ fn redact_json_value(val: &Value) -> Value {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    // -----------------------------------------------------------------------
+    // tuxlink-jfpj2: Ollama anti-stacking guard
+    // -----------------------------------------------------------------------
+
+    /// A non-empty `models` array means a generation is in-flight.
+    #[test]
+    fn ps_response_has_running_model_true_for_nonempty_models() {
+        let body = json!({ "models": [{ "name": "gpt-oss:120b" }] });
+        assert!(ps_response_has_running_model(&body));
+    }
+
+    /// An empty `models` array means nothing is loaded/generating.
+    #[test]
+    fn ps_response_has_running_model_false_for_empty_models() {
+        let body = json!({ "models": [] });
+        assert!(!ps_response_has_running_model(&body));
+    }
+
+    /// A response with no `models` key at all is treated as "not running".
+    #[test]
+    fn ps_response_has_running_model_false_for_missing_models_key() {
+        let body = json!({});
+        assert!(!ps_response_has_running_model(&body));
+    }
+
+    /// A non-object JSON value (e.g. a bare array or null) is treated as
+    /// "not running" rather than panicking.
+    #[test]
+    fn ps_response_has_running_model_false_for_non_object() {
+        assert!(!ps_response_has_running_model(&json!(null)));
+        assert!(!ps_response_has_running_model(&json!([1, 2, 3])));
+    }
+
+    /// An `ElmerProvider` built for a non-Ollama endpoint (`ollama_ps: None`)
+    /// reports no in-flight generation without making any HTTP call.
+    #[tokio::test]
+    async fn ollama_generation_in_flight_false_when_not_ollama() {
+        let ep = LoopbackEndpoint::parse("http://127.0.0.1:11434/v1/chat/completions")
+            .expect("loopback must be accepted");
+        let provider = ElmerProvider::new(ep, "llama3".into(), None);
+        assert!(
+            !provider.ollama_generation_in_flight().await,
+            "a non-Ollama-probed provider must report no in-flight generation (no IO)"
+        );
+    }
 
     // -----------------------------------------------------------------------
     // AC-6: redact_message exhaustiveness + content checks
