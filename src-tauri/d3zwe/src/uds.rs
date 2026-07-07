@@ -85,10 +85,7 @@ impl UdsToolInvoker {
     /// Returns whether the call reached the server without a transport error; an
     /// abort is never gated, so a non-error reply is success.
     pub async fn call_abort(&self, tool_name: &str) -> bool {
-        let param = CallToolRequestParam {
-            name: tool_name.to_string().into(),
-            arguments: None,
-        };
+        let param = CallToolRequestParam::new(tool_name.to_string());
         let client = self.client.lock().await;
         client.call_tool(param).await.is_ok()
     }
@@ -127,11 +124,8 @@ impl ToolInvoker for UdsToolInvoker {
         // and returns only the terminal outcome — see print.rs).
         eprintln!("  → tool {} {}", call.name, call.args);
 
-        let arguments = call.args.as_object().cloned();
-        let param = CallToolRequestParam {
-            name: call.name.clone().into(),
-            arguments,
-        };
+        let mut param = CallToolRequestParam::new(call.name.clone());
+        param.arguments = call.args.as_object().cloned();
 
         let client = self.client.lock().await;
         // Race the call against cancellation so an operator abort mid-tool is
