@@ -1970,6 +1970,19 @@ mod tests {
         assert!(models_url(&u).is_none());
     }
 
+    /// A chat-completions endpoint carrying a query string (e.g. an
+    /// `api-version` parameter some hosted gateways require) must have that
+    /// query stripped from the derived `/v1/models` URL — `set_query(None)`
+    /// in `models_url` is what does this; a probe request that echoed the
+    /// original query could leak an API-version credential-adjacent param
+    /// where it does not belong, or 400 against a `/models` endpoint that
+    /// does not recognize it.
+    #[test]
+    fn models_url_strips_query_string() {
+        let u = Url::parse("https://host:8000/v1/chat/completions?api-version=2024").unwrap();
+        assert_eq!(models_url(&u).unwrap().as_str(), "https://host:8000/v1/models");
+    }
+
     // --- parse_usage: compat usage object (windowless, tuxlink-xnenf) -----
 
     #[test]

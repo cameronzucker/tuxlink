@@ -252,9 +252,11 @@ export interface UseElmer {
    */
   onboarded: boolean | null;
   /**
-   * T7 — Latest context-usage snapshot from OllamaProvider (null until the
-   * first EV_CONTEXT event arrives). Once non-null, persists across turns so
-   * the meter stays visible. Only the fields needed by <ContextMeter> are kept.
+   * T7 — Latest context-usage snapshot (null until the first EV_CONTEXT event
+   * arrives). Arrives from either the native Ollama path or the OpenAI-compat
+   * path; `numCtx` is null when the compat probe could not determine a window
+   * (counter-mode). Once non-null, persists across turns so the meter stays
+   * visible. Only the fields needed by <ContextMeter> are kept.
    */
   context: { promptTokens: number; numCtx: number | null } | null;
 }
@@ -307,8 +309,9 @@ export function useElmer(): UseElmer {
   const activeModelRef = useRef<string | null>(null);
   const [activeModel, setActiveModel] = useState<string | null>(null);
 
-  // T7: Latest context-usage snapshot from OllamaProvider. Null until the
-  // first EV_CONTEXT event arrives; persists across turns so the meter stays visible.
+  // T7: Latest context-usage snapshot, from either the native Ollama path or
+  // the OpenAI-compat path. Null until the first EV_CONTEXT event arrives;
+  // persists across turns so the meter stays visible.
   const [context, setContext] = useState<{ promptTokens: number; numCtx: number | null } | null>(
     null,
   );
@@ -406,7 +409,9 @@ export function useElmer(): UseElmer {
         setStreamingReasoning('');
       });
 
-      // T7: EV_CONTEXT — context-usage snapshot from OllamaProvider. Store the
+      // T7: EV_CONTEXT — context-usage snapshot from a completed turn, emitted
+      // by either the native Ollama path or the OpenAI-compat path (numCtx is
+      // null on compat when the probe couldn't determine a window). Store the
       // latest promptTokens + numCtx so <ContextMeter> can render a fill meter.
       // Once non-null, context persists across turns; the meter never disappears.
       const unContext = await listen<ElmerContextPayload>(EV_CONTEXT, (event) => {

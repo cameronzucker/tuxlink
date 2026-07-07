@@ -281,4 +281,31 @@ mod tests {
             "expected exactly 4 keys: kind, promptTokens, evalTokens, numCtx"
         );
     }
+
+    /// `ElmerEvent::Context` with `num_ctx: None` (the OpenAI-compat
+    /// counter-mode case, when the endpoint's `/v1/models` probe cannot
+    /// determine a context window) must still serialize `promptTokens` /
+    /// `evalTokens`, with `numCtx` shipping as JSON `null` rather than being
+    /// omitted. Regression guard for the wire contract: a future
+    /// `#[serde(skip_serializing_if = "Option::is_none")]` on `num_ctx` would
+    /// drop the key entirely, and the frontend's `payload.numCtx` would read
+    /// as `undefined` instead of the `null` it currently branches on to enter
+    /// counter-mode.
+    #[test]
+    fn context_serializes_null_num_ctx_for_counter_mode() {
+        let event = ElmerEvent::Context {
+            prompt_tokens: 512,
+            eval_tokens: 128,
+            num_ctx: None,
+        };
+        let json: serde_json::Value = serde_json::to_value(&event).unwrap();
+
+        assert_eq!(json["kind"], "context");
+        assert_eq!(json["promptTokens"], 512, "frontend reads payload.promptTokens");
+        assert_eq!(json["evalTokens"], 128, "frontend reads payload.evalTokens");
+        assert!(
+            json["numCtx"].is_null(),
+            "numCtx must serialize as JSON null in counter-mode, not be omitted"
+        );
+    }
 }
