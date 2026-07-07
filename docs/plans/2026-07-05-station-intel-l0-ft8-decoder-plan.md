@@ -16,6 +16,34 @@ slice) before investing in the full multi-candidate detector + multi-pass
 subtraction. If either de-risk slice fails badly, STOP and reassess (fall back to
 the wsjtr-dependency option from the design doc) rather than sink L-effort.
 
+## ⭐ L0 SPIKE OUTCOME (2026-07-07): NO-GO → jt9/wsjtr fallback
+
+The spike answered its question. **NO-GO.** M0–M2 shipped and the noiseless
+synthetic gate passed, but M3's first test against REAL captures is decisive:
+
+| Capture | jt9 (WSJT-X) reference | Our single-pass clean-room | Gate |
+|---|---|---|---|
+| 40m ordinary | 5/5 | **1/5 (20 %)** | ≥85 % |
+| 20m quiet | 2/2 | **0/2 (0 %)** | ≥85 % |
+
+Zero false decodes throughout. Root cause is **weak-signal coarse TIME
+localization**, NOT the sync floor: a floor-free decode targeted at the exact
+reference carriers still fails, because the coarse dB-contrast metric mislocates
+the frame start `t0` beyond the ±40 ms fine-refine window on −14…−19 dB signals
+(frequency lands within 1–3 Hz; `t0` is scattered/implausible). The missing lever
+is a robust sub-sample time-sync stage (ft8_lib/WB2FKO `sync8d`-class) — bigger
+than an M3 tuning task. The M2 GO only proved noiseless synthetic decode.
+
+**Operator decision (2026-07-07, B+C):** take the design doc's wsjtr-dependency
+fallback — Station Intelligence depends on the proven external decoder
+(`jt9`/`wsjtr`). Keep this crate as a tested reference / learning artifact. The M3
+deliverables merged anyway (hash-table population, within-slot dedup, and the
+permanent `oracle` comparator harness — all green). Do NOT sink further L-effort
+into clean-room weak-signal acquisition unless the jt9 dependency proves
+problematic or the project matures with spare capacity. L1 (tuxlink-b026z.2) is
+superseded by the fallback direction. M4 (crowded-band multi-pass subtraction) is
+not attempted. Full evidence: handoff `dev/handoffs/2026-07-07-*-ft8-l0-nogo-*`.
+
 ## Where to work (pinned; do NOT drift)
 
 - Worktree: /home/administrator/Code/tuxlink/worktrees/bd-tuxlink-b026z.1-station-intel-ft8-l0

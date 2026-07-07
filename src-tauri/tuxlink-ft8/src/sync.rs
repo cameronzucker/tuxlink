@@ -39,8 +39,9 @@ use crate::consts::{COSTAS, INFO_SYMBOLS, SAMPLE_RATE_HZ};
 use crate::crc::check_crc;
 use crate::decode::ldpc_decode_ms_default;
 use crate::llr::soft_demap;
-use crate::message::{unpack, HashTable, Payload, PAYLOAD_BYTES};
+use crate::message::{message_identity, unpack, HashTable, Payload, PAYLOAD_BYTES};
 use crate::symbols::COSTAS_OFFSETS;
+use std::collections::HashSet;
 
 /// FT-8 tone spacing in Hz (QEX 2020 §4). Local alias for readability.
 const TONE_HZ: f64 = 6.25;
@@ -364,41 +365,75 @@ fn payload_from_bits(bits: &[bool; crate::consts::PAYLOAD_BITS]) -> Payload {
 /// stops. Combined with the decoder's `converged` (all-zero rejection) and the
 /// CRC-14 check, an empty/noise slot yields no decode.
 pub fn decode_samples(samples: &[f32], sample_rate: u32) -> Vec<Decoded> {
+    decode_samples_with_floor(samples, sample_rate, SYNC_FLOOR)
+}
+
+/// [`decode_samples`] with an explicit sync-metric floor. The default entry point
+/// passes [`SYNC_FLOOR`]; this variant exists so the oracle-parity harness and
+/// floor-calibration diagnostics can sweep the floor against real-SNR captures
+/// (M3 carry-forward #4) without editing a compile-time constant. Lowering the
+/// floor trades recall for false-decode risk; the `converged && CRC` guard is the
+/// backstop that keeps a lower floor from admitting garbage.
+pub fn decode_samples_with_floor(samples: &[f32], sample_rate: u32, floor: f32) -> Vec<Decoded> {
     let spec = compute_spectrogram(samples, sample_rate);
     let cands = coarse_candidates(&spec);
     let mut hash = HashTable::new();
     let mut out: Vec<Decoded> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
 
     for cand in cands {
-        if cand.sync_metric < SYNC_FLOOR {
+        if cand.sync_metric < floor {
             break; // ranked descending — nothing below here qualifies
         }
-        let refined = fine_refine(samples, &cand);
-        let powers = extract_info_powers(samples, &refined);
-        let llr = soft_demap(&powers);
-        let res = ldpc_decode_ms_default(&llr);
-        if !res.converged {
-            continue;
-        }
-        let msg91 = res.message_bits();
-        if !check_crc(&msg91) {
-            continue;
-        }
-        let payload = payload_from_bits(&res.payload_bits());
-        if let Ok(message) = unpack(&payload, &mut hash) {
-            // Dedup decoded signals by frequency.
-            if out.iter().any(|d| (d.freq_hz - refined.freq_hz).abs() < DEDUP_HZ) {
-                continue;
+        if let Some(d) = try_decode_candidate(samples, &cand, &mut hash) {
+            // Within-slot dedup on normalized message identity (WSJT-X multiset
+            // semantics; plan T3.1). This replaces M2's frequency-only guard:
+            // `coarse_candidates` already discards candidates within DEDUP_HZ, so
+            // a second frequency filter here would wrongly drop two genuinely
+            // distinct signals that fine-refine close together in a crowded slot
+            // (hurting the M4 ≥85% gate). The message string is the correct key —
+            // the same signal acquired at two candidates decodes to the same
+            // message and collapses; two different stations never do. The key is
+            // `message_identity` (hashed callsigns collapsed to `<*>`), so the
+            // SAME signal that renders `<...> A B` before its call is learned and
+            // `<CALL> A B` after still dedups to one decode (Codex adrev P2).
+            if seen.insert(message_identity(&d.message)) {
+                out.push(d); // first sighting of this message in the slot
             }
-            out.push(Decoded {
-                message,
-                freq_hz: refined.freq_hz,
-                start_sample: refined.start_sample,
-                sync_metric: cand.sync_metric,
-            });
         }
     }
     out
+}
+
+/// Attempt to decode ONE candidate: fine-refine → extract → soft-demap → LDPC →
+/// guard (`converged` AND CRC-14) → unpack. Returns the [`Decoded`] message or
+/// `None` if any guard rejects it. The `hash` table is threaded so a decoded
+/// callsign is available to resolve later hashed references in the same slot
+/// (M3 carry-forward #1); pass one `&mut HashTable` across a slot's candidates.
+///
+/// Note this applies NO sync-metric floor — the caller gates on
+/// [`Candidate::sync_metric`]. The `converged && CRC` pair is the intrinsic
+/// zero-false guard here.
+pub fn try_decode_candidate(
+    samples: &[f32],
+    cand: &Candidate,
+    hash: &mut HashTable,
+) -> Option<Decoded> {
+    let refined = fine_refine(samples, cand);
+    let powers = extract_info_powers(samples, &refined);
+    let llr = soft_demap(&powers);
+    let res = ldpc_decode_ms_default(&llr);
+    if !res.converged || !check_crc(&res.message_bits()) {
+        return None;
+    }
+    let payload = payload_from_bits(&res.payload_bits());
+    let message = unpack(&payload, hash).ok()?;
+    Some(Decoded {
+        message,
+        freq_hz: refined.freq_hz,
+        start_sample: refined.start_sample,
+        sync_metric: cand.sync_metric,
+    })
 }
 
 #[cfg(test)]

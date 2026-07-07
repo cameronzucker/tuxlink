@@ -209,22 +209,32 @@ impl HashTable {
     /// Look up a callsign by a hash of the given bit width (10, 12, or 22).
     ///
     /// The stored key is the 22-bit hash; for 10/12-bit lookups we compare the
-    /// appropriate truncation.
+    /// appropriate truncation. A 10/12-bit hash is a *truncation* and can collide:
+    /// two distinct saved calls may share it (e.g. `K0AAA`/`K0BAP` share the same
+    /// 12-bit hash). When the match is ambiguous — two or more distinct callsigns
+    /// under the requested truncation — this returns `None` so the caller renders
+    /// `<...>` rather than an ARBITRARY, non-reproducible `<CALL>` (which a plain
+    /// `HashMap::iter().find()` would). The 22-bit hash is the full stored key and
+    /// is never ambiguous. provenance: ambiguity guard beyond `ft8_lib`
+    /// `lookup_callsign` (MIT), which assumes hashes are effectively unique.
     pub fn lookup(&self, hash: u32, bits: u8) -> Option<&str> {
-        match bits {
-            22 => self.by22.get(&hash).map(String::as_str),
-            12 => self
-                .by22
-                .iter()
-                .find(|(&k, _)| (k >> 10) == hash)
-                .map(|(_, v)| v.as_str()),
-            10 => self
-                .by22
-                .iter()
-                .find(|(&k, _)| (k >> 12) == hash)
-                .map(|(_, v)| v.as_str()),
-            _ => None,
+        let shift = match bits {
+            22 => return self.by22.get(&hash).map(String::as_str),
+            12 => 10,
+            10 => 12,
+            _ => return None,
+        };
+        let mut matched: Option<&str> = None;
+        for (&k, v) in self.by22.iter() {
+            if (k >> shift) == hash {
+                match matched {
+                    None => matched = Some(v.as_str()),
+                    Some(prev) if prev == v => {}
+                    Some(_) => return None, // ambiguous truncated hash → <...>
+                }
+            }
         }
+        matched
     }
 }
 
@@ -368,7 +378,7 @@ fn pack28(callsign: &str, hash: &mut HashTable) -> Option<(u32, u8)> {
 
 /// Unpack a 28-bit callsign value (`ip` = suffix flag, `i3` selects `/R` vs `/P`).
 /// provenance: `ft8_lib` `message.c` `unpack28` (MIT).
-fn unpack28(n28: u32, ip: u8, i3: u8, hash: &HashTable) -> String {
+fn unpack28(n28: u32, ip: u8, i3: u8, hash: &mut HashTable) -> String {
     if n28 < codec_consts::NTOKENS {
         // Special tokens (only the three low values are implemented in T0.2).
         return match n28 {
@@ -395,6 +405,14 @@ fn unpack28(n28: u32, ip: u8, i3: u8, hash: &HashTable) -> String {
             2 => call.push_str("/P"),
             _ => {}
         }
+    }
+    // Record the decoded callsign so a later message in the same slot that
+    // carries only its 10/12/22-bit hash resolves to `<CALL>` rather than
+    // `<...>`. Mirrors `pack28`'s save on the encode side (same full-string key)
+    // and ft8_lib `unpack28`'s `save_callsign` during decode. Inert for a
+    // single-signal slot; load-bearing for multi-signal slots (M3).
+    if let Some((h22, _, _)) = callsign_hash(&call) {
+        hash.save(&call, h22);
     }
     call
 }
@@ -689,6 +707,41 @@ pub fn unpack(p: &Payload, hash: &mut HashTable) -> Result<String, PackError> {
     }
 }
 
+/// Canonicalize a decoded message for within-slot dedup and oracle comparison:
+/// trim and collapse every internal whitespace run to a single space. The
+/// unpackers already single-space-join their fields, so this is a defensive
+/// normalization that also matches the reference decode logs (jt9 emits a single
+/// space between fields). Used both by [`crate::sync::decode_samples`]'s
+/// within-slot multiset dedup and the M3 oracle-parity comparator.
+pub fn normalize_message(msg: &str) -> String {
+    msg.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The slot-stable **identity** of a decoded message: [`normalize_message`] with
+/// every bracketed hashed-callsign token (`<...>` or `<CALL>`) collapsed to `<*>`.
+///
+/// A hashed callsign renders as `<...>` before its base call is learned in the
+/// slot and as `<CALL>` after — the *same transmission* can therefore stringify
+/// two different ways depending on decode order. Collapsing the bracketed token
+/// makes the identity invariant to that, so within-slot dedup
+/// ([`crate::sync::decode_samples`]) treats the two renderings as one signal
+/// (not a spurious duplicate), and the oracle comparator treats a hashed callsign
+/// as its own equivalence class. The non-hashed fields are preserved verbatim, so
+/// this never conflates two genuinely different messages.
+pub fn message_identity(msg: &str) -> String {
+    normalize_message(msg)
+        .split(' ')
+        .map(|tok| {
+            if tok.len() >= 2 && tok.starts_with('<') && tok.ends_with('>') {
+                "<*>"
+            } else {
+                tok
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Unpack a NON-STANDARD-CALLSIGN (`i3=4`) message, e.g. `"CQ PJ4/K1ABC"` or
 /// `"<W9XYZ> PJ4/K1ABC RR73"`. One call is a 58-bit base-38 packed non-standard
 /// callsign; the other is a 12-bit hash rendered from `hash` (`<CALL>` when known,
@@ -697,7 +750,7 @@ pub fn unpack(p: &Payload, hash: &mut HashTable) -> Result<String, PackError> {
 /// provenance: `ft8_lib` `message.c` `ftx_message_decode_nonstd` + `unpack58`
 /// (base-38 over the 38-char `FT8_CHAR_TABLE_ALPHANUM_SPACE_SLASH`) (MIT); QEX
 /// Table 1 row `4` (`h12 c58 …`).
-pub fn unpack_nonstd(p: &Payload, hash: &HashTable) -> String {
+pub fn unpack_nonstd(p: &Payload, hash: &mut HashTable) -> String {
     let b = &p.bytes;
     // 12-bit hash of the standard callsign.
     let n12 = ((b[0] as u16) << 4) | ((b[1] as u16) >> 4);
@@ -715,10 +768,17 @@ pub fn unpack_nonstd(p: &Payload, hash: &HashTable) -> String {
     let icq = (b[9] >> 6) & 0x01;
 
     let call_decoded = unpack58(n58);
+    // Resolve THIS message's hashed slot before saving the decoded call, so the
+    // 58-bit call cannot resolve its own hashed field via a hash collision — the
+    // save benefits only later messages in the slot (ft8_lib decode-then-save).
     let call_hashed = match hash.lookup(n12 as u32, 12) {
         Some(c) => format!("<{c}>"),
         None => "<...>".to_string(),
     };
+    // Record the decoded non-standard call for later hashed references (M3).
+    if let Some((h22, _, _)) = callsign_hash(&call_decoded) {
+        hash.save(&call_decoded, h22);
+    }
 
     let (call_1, call_2) = if iflip != 0 {
         (call_decoded.as_str(), call_hashed.as_str())
@@ -756,7 +816,7 @@ fn unpack58(n58: u64) -> String {
 
 /// Unpack a STANDARD (`i3=1`) message to `"to de extra"`.
 /// provenance: `ft8_lib` `message.c` `ftx_message_decode_std` (MIT).
-pub fn unpack_std(p: &Payload, hash: &HashTable) -> String {
+pub fn unpack_std(p: &Payload, hash: &mut HashTable) -> String {
     let b = &p.bytes;
     let n29a = ((b[0] as u32) << 21)
         | ((b[1] as u32) << 13)
@@ -870,7 +930,7 @@ mod tests {
         assert_eq!(ip, 1);
         assert_eq!(n_plain, n_slashr);
         // unpack28 with ip=1, i3=1 appends /R
-        assert_eq!(unpack28(n_slashr, 1, 1, &h), "K1ABC/R");
+        assert_eq!(unpack28(n_slashr, 1, 1, &mut h), "K1ABC/R");
     }
 
     #[test]
@@ -1031,11 +1091,11 @@ mod tests {
         let mut h = HashTable::new();
         h.save("PJ4/K1ABC", h22);
         // known -> <CALL>
-        assert_eq!(unpack28(codec_consts::NTOKENS + h22, 0, 1, &h), "<PJ4/K1ABC>");
+        assert_eq!(unpack28(codec_consts::NTOKENS + h22, 0, 1, &mut h), "<PJ4/K1ABC>");
         // unknown 22-bit hash -> <...>
-        let empty = HashTable::new();
+        let mut empty = HashTable::new();
         assert_eq!(
-            unpack28(codec_consts::NTOKENS + h22, 0, 1, &empty),
+            unpack28(codec_consts::NTOKENS + h22, 0, 1, &mut empty),
             "<...>"
         );
     }
@@ -1149,5 +1209,110 @@ mod tests {
         let p = nonstd_payload(0x123, n58_of("PJ4/K1ABC"), 1, 0, 0);
         let mut h = HashTable::new();
         assert_eq!(unpack(&p, &mut h).unwrap(), "PJ4/K1ABC <...>");
+    }
+
+    // ── Hash-table population on the UNPACK path (M3 carry-forward #1) ────────
+    //
+    // ft8_lib calls `save_callsign` for every real (non-token, non-hashed)
+    // callsign it decodes, so a later message in the same slot that carries only
+    // a 10/12/22-bit hash of that call renders `<CALL>` instead of `<...>`. This
+    // is inert for a single-signal slot (M2) but load-bearing once a slot holds
+    // multiple signals (M3). These KATs pin that the unpack path — not just the
+    // pack path — populates the table.
+
+    #[test]
+    fn unpack_std_populates_hash_table_with_base_calls() {
+        // A standard message's two real base callsigns must land in the table,
+        // keyed by their 22-bit hash (which answers 10/12/22-bit lookups).
+        let mut ph = HashTable::new();
+        let p = pack("W9XYZ K1ABC FN42", &mut ph).unwrap();
+        let mut hash = HashTable::new();
+        assert_eq!(unpack(&p, &mut hash).unwrap(), "W9XYZ K1ABC FN42");
+        let (h22_to, _, _) = callsign_hash("W9XYZ").unwrap();
+        let (h22_de, _, _) = callsign_hash("K1ABC").unwrap();
+        assert_eq!(hash.lookup(h22_to, 22), Some("W9XYZ"));
+        assert_eq!(hash.lookup(h22_de, 22), Some("K1ABC"));
+    }
+
+    #[test]
+    fn unpack_std_does_not_save_cq_token() {
+        // The `CQ` token is not a callsign and must never enter the table.
+        let mut ph = HashTable::new();
+        let p = pack("CQ K1ABC FN42", &mut ph).unwrap();
+        let mut hash = HashTable::new();
+        assert_eq!(unpack(&p, &mut hash).unwrap(), "CQ K1ABC FN42");
+        // K1ABC saved; the table holds exactly one entry (no CQ pseudo-call).
+        let (h22_de, _, _) = callsign_hash("K1ABC").unwrap();
+        assert_eq!(hash.lookup(h22_de, 22), Some("K1ABC"));
+        assert_eq!(hash.by22.len(), 1, "only the real call K1ABC should be saved");
+    }
+
+    #[test]
+    fn unpack_nonstd_populates_hash_table_with_decoded_call() {
+        // The 58-bit non-standard callsign in a type-4 message must be saved.
+        let p = nonstd_payload(0, n58_of("PJ4/K1ABC"), 0, 0, 1);
+        let mut hash = HashTable::new();
+        assert_eq!(unpack(&p, &mut hash).unwrap(), "CQ PJ4/K1ABC");
+        let (h22, _, _) = callsign_hash("PJ4/K1ABC").unwrap();
+        assert_eq!(hash.lookup(h22, 22), Some("PJ4/K1ABC"));
+    }
+
+    #[test]
+    fn later_message_resolves_hash_from_earlier_decode() {
+        // Decode order matters: a message referencing a base call by hash renders
+        // `<CALL>` only if that base call was decoded (and saved) earlier in the
+        // slot. This is the multi-signal-slot payoff of carry-forward #1.
+        let mut hash = HashTable::new();
+        // Decode #1 establishes PJ4/K1ABC.
+        let p1 = nonstd_payload(0, n58_of("PJ4/K1ABC"), 0, 0, 1);
+        assert_eq!(unpack(&p1, &mut hash).unwrap(), "CQ PJ4/K1ABC");
+        // Decode #2 carries only PJ4/K1ABC's 12-bit hash in the hashed slot.
+        let (_, h12, _) = callsign_hash("PJ4/K1ABC").unwrap();
+        let p2 = nonstd_payload(h12 as u16, n58_of("3DA0RS"), 0, 2, 0);
+        assert_eq!(
+            unpack(&p2, &mut hash).unwrap(),
+            "<PJ4/K1ABC> 3DA0RS RR73",
+            "hashed slot should resolve to the earlier-decoded call"
+        );
+    }
+
+    #[test]
+    fn lookup_returns_none_on_ambiguous_truncated_hash() {
+        // K0AAA and K0BAP share the same 12-bit hash but have distinct 22-bit
+        // hashes (Codex adrev 2026-07-07). Once decode-side saves populate the
+        // slot table with both, a 12-bit-hash reference is AMBIGUOUS and must
+        // render `<...>`, not an arbitrary/non-reproducible `<CALL>`.
+        let (h22_a, h12_a, _) = callsign_hash("K0AAA").unwrap();
+        let (h22_b, h12_b, _) = callsign_hash("K0BAP").unwrap();
+        assert_eq!(h12_a, h12_b, "precondition: K0AAA/K0BAP collide on h12");
+        assert_ne!(h22_a, h22_b, "but their 22-bit hashes differ");
+
+        let mut h = HashTable::new();
+        h.save("K0AAA", h22_a);
+        assert_eq!(h.lookup(h12_a, 12), Some("K0AAA"), "unique 12-bit resolves");
+
+        h.save("K0BAP", h22_b);
+        assert_eq!(h.lookup(h12_a, 12), None, "ambiguous 12-bit must not resolve");
+        // The full 22-bit key is never ambiguous.
+        assert_eq!(h.lookup(h22_a, 22), Some("K0AAA"));
+        assert_eq!(h.lookup(h22_b, 22), Some("K0BAP"));
+    }
+
+    #[test]
+    fn message_identity_collapses_hashed_callsign_class() {
+        // The same transmission rendered before vs after its call is learned in
+        // the slot must share ONE identity (Codex adrev 2026-07-07 — otherwise
+        // within-slot dedup emits it twice).
+        assert_eq!(
+            message_identity("<...> N2CUA EM95"),
+            message_identity("<K1ABC> N2CUA EM95"),
+        );
+        // Verifiable fields still discriminate.
+        assert_ne!(
+            message_identity("<...> N2CUA EM95"),
+            message_identity("<...> N2CUA FN31"),
+        );
+        // Non-hashed messages just normalize whitespace.
+        assert_eq!(message_identity("CQ  K1ABC   FN42"), "CQ K1ABC FN42");
     }
 }

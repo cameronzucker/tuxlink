@@ -102,6 +102,12 @@ pub mod sync;
 /// Correction" + textbook normalized min-sum; see `decode` module docs.
 pub mod decode;
 
+/// M3 oracle-parity comparator (plan T3.2): the permanent regression harness
+/// that scores this crate's decode set against an AP-disabled WSJT-X `jt9 -8`
+/// reference log as a hash-class-aware multiset, reporting parity % + false
+/// count for the L0 ≥85%/zero-false exit gate. See `oracle` module docs.
+pub mod oracle;
+
 /// T1.2 AWGN-vs-SNR go/no-go harness (test-only): the noncoherent 8-FSK AWGN
 /// tone model, the SNR-in-2500-Hz conversion, a dependency-free deterministic
 /// PRNG, the self-verifying calibration against closed-form FSK theory, and the
