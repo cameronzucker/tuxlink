@@ -459,7 +459,7 @@ impl TuxlinkMcp {
             .vara_engine_available()
             .await
             .map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json(available)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(available)?]))
     }
 
     #[tool(
@@ -473,7 +473,7 @@ impl TuxlinkMcp {
             .vara_install_status()
             .await
             .map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
     #[tool(
@@ -491,7 +491,7 @@ impl TuxlinkMcp {
             .vara_install_start(installer_path)
             .await
             .map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
     // ----- GATED egress (require armed send authority; deny when tainted) -----
