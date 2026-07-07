@@ -90,17 +90,14 @@ fn silence_and_noise_yield_no_decode() {
         "silent slot produced a false decode"
     );
 
-    // The first ~1.0 s of a fixture is guaranteed silence (the centred frame does
-    // not start until sample 14160 = 1.18 s); a whole-slot buffer of just that
-    // silence must not decode.
-    let head_silence = vec![0.0f32; 180_000];
+    // Sanity: the synthesized silent slot above faithfully models a real empty
+    // capture — the fixture's leading 1.0 s (12000 samples) really is silence (the
+    // centred frame does not start until sample 14160 = 1.18 s).
     let real = load_fixture("std_cq_1500.wav");
-    // Sanity: the fixture's leading 12000 samples (1.0 s) are silent.
     assert!(
         real[..12_000].iter().all(|&s| s == 0.0),
         "fixture lead-in is not silent as documented"
     );
-    assert!(decode_samples(&head_silence, 12_000).is_empty());
 
     // Deterministic white noise (test-only LCG) — no Costas structure.
     let mut state = 0x9E37_79B9u32;

@@ -4,30 +4,31 @@
 //!
 //! # Clean-room provenance (see `PROVENANCE.md`)
 //!
-//! The sync metric and search are the **WB2FKO "Synchronization in FT8"**
-//! algorithm: sum the seven Costas-tone energies at the expected time/frequency
-//! offsets across the three Costas blocks (symbol offsets 0, 36, 72), normalized
-//! by the energy of the nominally-empty tone bins — WB2FKO's `Sabc = t/tN`, with
-//! the `Sbc` variant (first block dropped) used when the start time places the
-//! first block outside the captured slot. Coarse resolution is 3.125 Hz / 40 ms;
-//! fine refinement searches sub-bin time (±40 ms) and frequency (±2.5 Hz) by
-//! maximizing the Costas cross-energy, per WB2FKO's `ft8b`/`sync8d` fine step.
-//! Symbol extraction reads the eight tone powers per info symbol, mirroring MIT
-//! `ft8_lib` `decode.c` `ft8_extract_symbol` (which reads the eight tone bins of
-//! each info-symbol block). The `(fc, t0)` search bounds are cross-checked
-//! against `ft8_lib` `ftx_find_candidates`.
+//! The **search structure** follows **WB2FKO "Synchronization in FT8"**: a coarse
+//! 2-D `(fc, t0)` scan of the spectrogram evaluates the Costas array at the three
+//! sync blocks (symbol offsets 0, 36, 72), producing a ranked, frequency-deduped
+//! candidate list (WB2FKO: "as many as 200 candidates … the weaker of a nearby
+//! pair is discarded") at 3.125 Hz / 40 ms resolution, followed by per-candidate
+//! fine time/frequency refinement (WB2FKO's `ft8b`/`sync8d` fine step).
 //!
-//! # Metric normalization vs. WB2FKO `Sabc`/`Sbc`
+//! The **scoring metric is MIT `ft8_lib`'s `ft8_sync_score`, NOT WB2FKO's raw
+//! `Sabc = t/tN` energy ratio.** WB2FKO normalizes on-tone energy by the off-tone
+//! energy; that ratio is unstable in practice — a near-empty spectral region
+//! (denominator → 0) out-scores the true signal. [`costas_metric`] instead scores
+//! the mean **dB contrast** of each Costas tone against its immediate frequency
+//! (±1 tone) and time (±1 symbol) neighbours: scale-invariant, and immune to
+//! spectral emptiness (an empty region scores ≈ 0 dB because the tone is no
+//! brighter than its own neighbours there). See [`costas_metric`]'s docstring for
+//! the exact `ft8_lib` correspondence. Costas positions that fall outside the slot
+//! at negative `t0` are excluded from the mean — this subsumes WB2FKO's separate
+//! `Sbc` (first-block-dropped) case.
 //!
-//! WB2FKO computes `Sabc` (all three blocks) and `Sbc` (blocks b,c only) and
-//! records the larger. This module normalizes the on-tone energy by the *mean*
-//! off-tone energy over exactly the Costas positions that fall inside the slot:
-//! when the start time pushes the first block out of bounds those positions are
-//! simply excluded from both sums, which is precisely the `Sbc` case, and when
-//! all three blocks are in bounds all are used, which is the `Sabc` case. The
-//! mean-normalized ratio therefore subsumes the "larger of `Sabc`/`Sbc`" rule
-//! while remaining directly comparable across start times (WB2FKO's stated
-//! reason for normalizing).
+//! **Fine refinement** searches sub-bin time (±40 ms) and frequency (±one FT-8
+//! tone, ±6.25 Hz — widened from WB2FKO's ±2.5 Hz for this crate's coarse metric;
+//! see [`fine_refine`]) by maximizing the Costas cross-energy. **Symbol
+//! extraction** reads the eight tone powers per info symbol, mirroring `ft8_lib`
+//! `decode.c` `ft8_extract_symbol`/`ft8_extract_likelihood`. The `(fc, t0)` search
+//! bounds are cross-checked against `ft8_lib` `ftx_find_candidates`.
 
 use crate::channelize::{
     compute_spectrogram, tone_power, Spectrogram, BIN_HZ, FREQ_OSR, HOP_SAMPLES, SYMBOL_SAMPLES,
@@ -77,7 +78,9 @@ pub const MAX_CANDIDATES: usize = 300;
 /// for decode. Chosen from the measured separation between the five real
 /// single-signal fixtures (contrast 20.8–21.8 dB, noiseless) and pure-noise /
 /// silence inputs (contrast ≤ ~5.8 dB even taking the max over the whole 2-D
-/// search); 10.0 dB sits with wide margin in that gap.
+/// search); 10.0 dB sits with wide margin in that gap. The noise ceiling is
+/// measured on a single deterministic-LCG realization against noiseless fixtures;
+/// this floor is re-tuned against real-SNR captures in M3/M4.
 /// provenance: empirical separation measured by the `sync_metric_signal_vs_noise`
 /// and `noise_stays_below_floor` KATs; guards a downstream `converged && CRC`
 /// gate against admitting an empty slot (see `decode.rs` all-zero guard).
@@ -95,7 +98,8 @@ pub struct Candidate {
     pub freq_hz: f64,
     /// Sample offset of symbol 0 (first Costas tone) from the slot start.
     pub start_sample: f64,
-    /// Normalized on/off Costas-energy ratio (WB2FKO `Sabc`/`Sbc`).
+    /// Costas sync score: the mean dB neighbour-contrast (`ft8_lib`
+    /// `ft8_sync_score`); see [`costas_metric`]. Higher ⟹ stronger alignment.
     pub sync_metric: f32,
 }
 
@@ -197,8 +201,9 @@ pub fn coarse_candidates(spec: &Spectrogram) -> Vec<Candidate> {
         }
     }
 
-    // Rank strongest-first.
-    all.sort_by(|a, b| b.sync_metric.partial_cmp(&a.sync_metric).unwrap());
+    // Rank strongest-first. `total_cmp` avoids a latent panic if a future change
+    // ever lets a NaN metric through (today `db_at`'s `+POWER_EPS` keeps it finite).
+    all.sort_by(|a, b| b.sync_metric.total_cmp(&a.sync_metric));
 
     // Greedy dedup: keep the strongest, drop any later candidate within DEDUP_HZ
     // of one already kept (WB2FKO's weaker-of-nearby-pair discard).
