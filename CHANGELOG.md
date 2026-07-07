@@ -31,6 +31,22 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.84.0](https://github.com/cameronzucker/tuxlink/compare/v0.83.0...v0.84.0) (2026-07-07)
+
+
+### Features
+
+* **rig:** expose rigctld_binary override field; document bundled default (tuxlink-a9ip3) ([45a075b](https://github.com/cameronzucker/tuxlink/commit/45a075bfd3b4e0ff88aefaaab3ce38daa3a82a52))
+* **rig:** resolve bundled tuxlink-rigctl/rigctld by default (tuxlink-a9ip3) ([0b0ef3a](https://github.com/cameronzucker/tuxlink/commit/0b0ef3ab73b0bf64c9f58b764de0d5223dcb873e))
+
+
+### Bug Fixes
+
+* **ci:** correct libusb dev package name to libusb-1.0-0-dev (tuxlink-a9ip3) ([ba27a94](https://github.com/cameronzucker/tuxlink/commit/ba27a94bda22943e7207cc3ab4f0437c8c905088))
+* **ci:** dummy-backend smoke must match the freq line, not the whole capture (tuxlink-a9ip3) ([9e4dc15](https://github.com/cameronzucker/tuxlink/commit/9e4dc15558867bf05f3da609af9acb15eba84942))
+* **ci:** ldd allow-list must basename the loader path; empty rigctld_binary=bundled (tuxlink-a9ip3) ([3b52b5d](https://github.com/cameronzucker/tuxlink/commit/3b52b5d3d1cd5c393e10ead02223d584756ecbba))
+* **packaging:** drop system hamlib dep, add bundled-binary base libs (tuxlink-a9ip3) ([c13544e](https://github.com/cameronzucker/tuxlink/commit/c13544e29b65255a0e796636579c5cbb4e5858cc))
+
 ## [0.83.0](https://github.com/cameronzucker/tuxlink/compare/v0.82.0...v0.83.0) (2026-07-07)
 
 
