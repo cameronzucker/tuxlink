@@ -311,8 +311,11 @@ describe('<RigControlSection>', () => {
     await waitFor(() => {
       expect(screen.getByTestId('rig-model')).toBeInTheDocument();
     });
-    // both manufacturers' models are options
-    expect(screen.getByRole('option', { name: /FT-710/ })).toBeInTheDocument();
+    // both manufacturers' models are options. rig_list_models resolves on a
+    // later tick than the container, so poll for the first option (findByRole)
+    // before the synchronous sibling assertion — same async race as the
+    // CAT-port test, latent until a slow runner surfaced it.
+    expect(await screen.findByRole('option', { name: /FT-710/ })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /IC-7300/ })).toBeInTheDocument();
   });
 
@@ -330,7 +333,13 @@ describe('<RigControlSection>', () => {
     await waitFor(() => {
       expect(screen.getByTestId('rig-cat-port')).toBeInTheDocument();
     });
-    expect(screen.getByRole('option', { name: /\/dev\/ttyUSB0/ })).toBeInTheDocument();
+    // The CAT-port <select> renders before packet_list_serial_devices resolves,
+    // so the ttyUSB0 <option> arrives on a LATER tick. findByRole polls for it
+    // instead of racing the async invoke (a synchronous getByRole flakes on
+    // slower CI runners — observed on ubuntu-24.04-arm).
+    expect(
+      await screen.findByRole('option', { name: /\/dev\/ttyUSB0/ }),
+    ).toBeInTheDocument();
   });
 
   it('renders a Mode row bound to data_mode', async () => {
