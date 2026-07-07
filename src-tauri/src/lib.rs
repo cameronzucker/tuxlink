@@ -2041,6 +2041,10 @@ pub fn run() {
             crate::winlink::modem::vara::commands::vara_close_session,
             crate::winlink::modem::vara::commands::vara_status,
             crate::winlink::modem::vara::commands::platform_info,
+            // tuxlink-w7212: provision VARA HF under WINE via the vendored wine-vara-setup engine
+            crate::winlink::modem::vara::install::vara_engine_available,
+            crate::winlink::modem::vara::install::vara_install_status,
+            crate::winlink::modem::vara::install::vara_install_start,
             // tuxlink-0ye6 Task 3.4: VARA dial-path B2F exchange — CONNECT to peer
             // + B2F handshake + intent-filtered mailbox drain + DISCONNECT, all
             // in one Tauri call. Mirror of `modem_ardop_b2f_exchange`'s shape.
