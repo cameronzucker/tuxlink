@@ -155,8 +155,11 @@ const GENERATOR: [[u8; K_BYTES]; PARITY_BITS] = [
 /// provenance: `ft8_lib` `ft8/constants.c` `kFTX_LDPC_Nm[FTX_LDPC_M][7]` (MIT).
 /// This is an MIT-licensed data table; the GPL WSJT-X `parity.dat` is NOT the
 /// source.
+///
+/// Exposed `pub(crate)` so the T1.1 belief-propagation decoder (`crate::decode`)
+/// can walk the check→variable edges.
 #[rustfmt::skip]
-const NM: [[u8; 7]; PARITY_BITS] = [
+pub(crate) const NM: [[u8; 7]; PARITY_BITS] = [
     [4, 31, 59, 91, 92, 96, 153],
     [5, 32, 60, 93, 115, 146, 0],
     [6, 24, 61, 94, 122, 151, 0],
@@ -242,6 +245,198 @@ const NM: [[u8; 7]; PARITY_BITS] = [
     [17, 42, 75, 129, 170, 172, 0],
 ];
 
+/// The LDPC(174,91) variable→check incidence table `Mn`: for each of the 174
+/// codeword bits (variables), the 1-origin indices of the exactly-3 parity
+/// checks that variable participates in. This is the transpose companion of
+/// [`NM`] (which lists check→variable); together they describe the same
+/// bipartite Tanner graph. The `graph_consistency` KAT asserts that every edge
+/// asserted by `MN` has its mirror in `NM` and vice-versa, catching any
+/// transcription typo.
+///
+/// provenance: `ft8_lib` `ft8/constants.c` `kFTX_LDPC_Mn[FTX_LDPC_N][3]` (MIT).
+/// This is an MIT-licensed data table; the GPL WSJT-X `parity.dat` is NOT the
+/// source.
+///
+/// Exposed `pub(crate)` so the T1.1 belief-propagation decoder (`crate::decode`)
+/// can walk the variable→check edges.
+#[rustfmt::skip]
+pub(crate) const MN: [[u8; 3]; CODEWORD_BITS] = [
+    [16, 45, 73],
+    [25, 51, 62],
+    [33, 58, 78],
+    [1, 44, 45],
+    [2, 7, 61],
+    [3, 6, 54],
+    [4, 35, 48],
+    [5, 13, 21],
+    [8, 56, 79],
+    [9, 64, 69],
+    [10, 19, 66],
+    [11, 36, 60],
+    [12, 37, 58],
+    [14, 32, 43],
+    [15, 63, 80],
+    [17, 28, 77],
+    [18, 74, 83],
+    [22, 53, 81],
+    [23, 30, 34],
+    [24, 31, 40],
+    [26, 41, 76],
+    [27, 57, 70],
+    [29, 49, 65],
+    [3, 38, 78],
+    [5, 39, 82],
+    [46, 50, 73],
+    [51, 52, 74],
+    [55, 71, 72],
+    [44, 67, 72],
+    [43, 68, 78],
+    [1, 32, 59],
+    [2, 6, 71],
+    [4, 16, 54],
+    [7, 65, 67],
+    [8, 30, 42],
+    [9, 22, 31],
+    [10, 18, 76],
+    [11, 23, 82],
+    [12, 28, 61],
+    [13, 52, 79],
+    [14, 50, 51],
+    [15, 81, 83],
+    [17, 29, 60],
+    [19, 33, 64],
+    [20, 26, 73],
+    [21, 34, 40],
+    [24, 27, 77],
+    [25, 55, 58],
+    [35, 53, 66],
+    [36, 48, 68],
+    [37, 46, 75],
+    [38, 45, 47],
+    [39, 57, 69],
+    [41, 56, 62],
+    [20, 49, 53],
+    [46, 52, 63],
+    [45, 70, 75],
+    [27, 35, 80],
+    [1, 15, 30],
+    [2, 68, 80],
+    [3, 36, 51],
+    [4, 28, 51],
+    [5, 31, 56],
+    [6, 20, 37],
+    [7, 40, 82],
+    [8, 60, 69],
+    [9, 10, 49],
+    [11, 44, 57],
+    [12, 39, 59],
+    [13, 24, 55],
+    [14, 21, 65],
+    [16, 71, 78],
+    [17, 30, 76],
+    [18, 25, 80],
+    [19, 61, 83],
+    [22, 38, 77],
+    [23, 41, 50],
+    [7, 26, 58],
+    [29, 32, 81],
+    [33, 40, 73],
+    [18, 34, 48],
+    [13, 42, 64],
+    [5, 26, 43],
+    [47, 69, 72],
+    [54, 55, 70],
+    [45, 62, 68],
+    [10, 63, 67],
+    [14, 66, 72],
+    [22, 60, 74],
+    [35, 39, 79],
+    [1, 46, 64],
+    [1, 24, 66],
+    [2, 5, 70],
+    [3, 31, 65],
+    [4, 49, 58],
+    [1, 4, 5],
+    [6, 60, 67],
+    [7, 32, 75],
+    [8, 48, 82],
+    [9, 35, 41],
+    [10, 39, 62],
+    [11, 14, 61],
+    [12, 71, 74],
+    [13, 23, 78],
+    [11, 35, 55],
+    [15, 16, 79],
+    [7, 9, 16],
+    [17, 54, 63],
+    [18, 50, 57],
+    [19, 30, 47],
+    [20, 64, 80],
+    [21, 28, 69],
+    [22, 25, 43],
+    [13, 22, 37],
+    [2, 47, 51],
+    [23, 54, 74],
+    [26, 34, 72],
+    [27, 36, 37],
+    [21, 36, 63],
+    [29, 40, 44],
+    [19, 26, 57],
+    [3, 46, 82],
+    [14, 15, 58],
+    [33, 52, 53],
+    [30, 43, 52],
+    [6, 9, 52],
+    [27, 33, 65],
+    [25, 69, 73],
+    [38, 55, 83],
+    [20, 39, 77],
+    [18, 29, 56],
+    [32, 48, 71],
+    [42, 51, 59],
+    [28, 44, 79],
+    [34, 60, 62],
+    [31, 45, 61],
+    [46, 68, 77],
+    [6, 24, 76],
+    [8, 10, 78],
+    [40, 41, 70],
+    [17, 50, 53],
+    [42, 66, 68],
+    [4, 22, 72],
+    [36, 64, 81],
+    [13, 29, 47],
+    [2, 8, 81],
+    [56, 67, 73],
+    [5, 38, 50],
+    [12, 38, 64],
+    [59, 72, 80],
+    [3, 26, 79],
+    [45, 76, 81],
+    [1, 65, 74],
+    [7, 18, 77],
+    [11, 56, 59],
+    [14, 39, 54],
+    [16, 37, 66],
+    [10, 28, 55],
+    [15, 60, 70],
+    [17, 25, 82],
+    [20, 30, 31],
+    [12, 67, 68],
+    [23, 75, 80],
+    [27, 32, 62],
+    [24, 69, 75],
+    [19, 21, 71],
+    [34, 53, 61],
+    [35, 46, 47],
+    [33, 59, 76],
+    [40, 43, 83],
+    [41, 42, 63],
+    [49, 75, 83],
+    [20, 44, 48],
+    [42, 49, 57],
+];
+
 /// Per-check incident-bit count for each of the [`PARITY_BITS`] (83) checks —
 /// how many of the 7 [`NM`] entries are real (6 or 7). Redundant with the `0`
 /// sentinels in [`NM`], but pinned as a table for a clippy-clean loop bound and
@@ -249,8 +444,11 @@ const NM: [[u8; 7]; PARITY_BITS] = [
 ///
 /// provenance: `ft8_lib` `ft8/constants.c` `kFTX_LDPC_Num_rows[FTX_LDPC_M]`
 /// (MIT).
+///
+/// Exposed `pub(crate)` so the T1.1 belief-propagation decoder (`crate::decode`)
+/// can bound its per-check loops.
 #[rustfmt::skip]
-const NUM_ROWS: [u8; PARITY_BITS] = [
+pub(crate) const NUM_ROWS: [u8; PARITY_BITS] = [
     7, 6, 6, 6, 7, 6, 7, 6, 6, 7, 6, 6, 7, 7, 6, 6,
     6, 7, 6, 7, 6, 7, 6, 6, 6, 7, 6, 6, 6, 7, 6, 6,
     6, 6, 7, 6, 6, 6, 7, 7, 6, 6, 6, 6, 7, 7, 6, 6,
@@ -399,6 +597,50 @@ mod tests {
             // A 6-bit check's 7th slot is the 0 sentinel.
             if n == 6 {
                 assert_eq!(NM[m][6], 0, "6-bit check {m} lacks 0 sentinel");
+            }
+        }
+    }
+
+    /// MN/NM GRAPH CONSISTENCY: `MN` (variable→check) and `NM` (check→variable)
+    /// must describe the exact same bipartite Tanner graph. For every edge
+    /// `(var n, check m)` asserted by `MN`, the reverse edge must appear in `NM`,
+    /// and vice-versa. A single transcription typo in either table breaks this.
+    /// provenance: ft8_lib constants.c kFTX_LDPC_Mn is the transpose of
+    /// kFTX_LDPC_Nm (MIT).
+    #[test]
+    fn mn_nm_graph_consistency() {
+        // Shape: MN has 174 rows of 3, and every entry is a valid 1-origin check.
+        assert_eq!(MN.len(), CODEWORD_BITS);
+        for (n, checks) in MN.iter().enumerate() {
+            for &m in checks {
+                assert!(
+                    (1..=PARITY_BITS as u8).contains(&m),
+                    "MN[{n}] check index {m} out of 1..=83"
+                );
+            }
+        }
+
+        // Forward: every (n -> m) in MN has (m -> n) in NM.
+        for (n, checks) in MN.iter().enumerate() {
+            let var = n as u8 + 1; // 1-origin variable index
+            for &m in checks {
+                let check_row = &NM[m as usize - 1][..NUM_ROWS[m as usize - 1] as usize];
+                assert!(
+                    check_row.contains(&var),
+                    "MN says var {var} is in check {m}, but NM[{m}] lacks var {var}"
+                );
+            }
+        }
+
+        // Reverse: every (m -> n) in NM has (n -> m) in MN.
+        for (m, row) in NM.iter().enumerate() {
+            let check = m as u8 + 1; // 1-origin check index
+            for &var in &row[..NUM_ROWS[m] as usize] {
+                let var_row = &MN[var as usize - 1];
+                assert!(
+                    var_row.contains(&check),
+                    "NM says check {check} covers var {var}, but MN[{var}] lacks check {check}"
+                );
             }
         }
     }

@@ -2,12 +2,17 @@
 //!
 //! # Clean-room provenance (see `PROVENANCE.md`)
 //!
-//! Implemented ONLY from: the QEX 2020 FT4/FT8 protocol paper
-//! (Franke/Somerville/Taylor); the WB2FKO "Synchronization in FT8" paper; and the
-//! MIT-licensed references `ft8_lib` (kgoba) + `RustFT8` (jl1nie). The GPL
-//! `wsjtr`/WSJT-X is a **binary test oracle only** — its source is never read, its
-//! binary never `strings`/`objdump`-ed, and its `generator.dat`/`parity.dat` are
-//! never copied (the LDPC matrix comes from MIT `ft8_lib` or is regenerated).
+//! FT8-protocol-specific expression (LDPC tables, Gray/Costas arrays, CRC,
+//! message layout, demapper/min-sum form) is taken ONLY from the QEX 2020 FT4/FT8
+//! protocol paper (Franke/Somerville/Taylor), the WB2FKO "Synchronization in FT8"
+//! paper, and the MIT-licensed `ft8_lib` (kgoba). `RustFT8` (jl1nie, MIT) is an
+//! available permitted reference but was **not** read/transcribed for this code.
+//! Standard published algorithms and public-domain code (noncoherent-MFSK error
+//! probability, min-sum, BP, SplitMix64, Box–Muller) are cited to their own
+//! literature — see `PROVENANCE.md` for the two-tier rule. The GPL `wsjtr`/WSJT-X
+//! is a **binary test oracle only** — its source is never read, its binary never
+//! `strings`/`objdump`-ed, and its `generator.dat`/`parity.dat` are never copied
+//! (the LDPC matrix comes from MIT `ft8_lib` or is regenerated).
 //!
 //! Layers land bottom-up per `docs/plans/2026-07-05-station-intel-l0-ft8-decoder-plan.md`:
 //! message pack/unpack → CRC-14 → Gray/Costas framing → LDPC encode/syndrome →
@@ -68,6 +73,28 @@ pub mod symbols;
 /// tables) / `encode.c` (`encode174`) / `ldpc.c` (`ldpc_check`); see `ldpc`
 /// module docs.
 pub mod ldpc;
+
+/// FT-8 soft-demapper: 8 per-symbol FSK tone powers -> 174 variance-normalized
+/// codeword-bit LLRs (`log(P1/P0)` convention, positive => bit 1). Provenance:
+/// QEX 2020 §6 (soft-symbol metric) + MIT `ft8_lib` `decode.c`
+/// (`ft8_extract_symbol` max-log demap + `ftx_normalize_logl`); see `llr`
+/// module docs.
+pub mod llr;
+
+/// FT-8 LDPC(174,91) belief-propagation (normalized min-sum) decoder: 174 LLRs
+/// -> corrected 174-bit codeword. Provenance: QEX 2020 §3 + MIT `ft8_lib`
+/// `ldpc.c` (`ldpc_decode`/`bp_decode`) + S. Johnson "Iterative Error
+/// Correction" + textbook normalized min-sum; see `decode` module docs.
+pub mod decode;
+
+/// T1.2 AWGN-vs-SNR go/no-go harness (test-only): the noncoherent 8-FSK AWGN
+/// tone model, the SNR-in-2500-Hz conversion, a dependency-free deterministic
+/// PRNG, the self-verifying calibration against closed-form FSK theory, and the
+/// coded decode-probability sweep. Compiled only under `cfg(test)`. Provenance:
+/// QEX 2020 §4/§6/§8 + Table 5/6; Proakis noncoherent-MFSK Pe; SplitMix64 +
+/// Box–Muller (public domain); see `awgn` module docs + `PROVENANCE.md`.
+#[cfg(test)]
+mod awgn;
 
 #[cfg(test)]
 mod tests {

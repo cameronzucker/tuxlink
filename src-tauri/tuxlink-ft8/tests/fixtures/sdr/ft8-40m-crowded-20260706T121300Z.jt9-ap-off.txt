@@ -1,0 +1,10 @@
+-2 -1.1  679 ~  KE7WVV KJ7WLL CN85                      
+-6 -1.0 1097 ~  CQ N5IF EM11                            
+-8 -1.0  470 ~  YD2BCR W7DGM DN37                       
+-1 -1.0 1268 ~  9V1DX N7QT -06                          
+-5 -1.0 2190 ~  KO6ALP VB7F +09                         
+-16 -0.7 2483 ~  W7CHW JP7EIP QM08                       
+-19 -1.0  312 ~  K2L AA7BB DN13                          
+-16 -1.4  270 ~  YB5NHD NA6JD CN88                       
+-18 -0.7 1938 ~  CQ AA7J DN30                            
+-9 -1.0 1234 ~  CQ W5XO EM10                            
