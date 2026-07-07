@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window. tuxlink-ng3: custom HTML chrome (decorations:false) needs the window-manipulation commands the native titlebar used to perform — minimize/toggle-maximize/close (controls), start-dragging (data-tauri-drag-region), start-resize-dragging (borderless resize handles), is-maximized (control icon state). Shell:open is scoped to winlink.org + tuxlink repo for smart auth-failure diagnostics banner, report-issue action, AboutDialog, plus the four Elmer provider key-page URLs (Gemini/Groq/Anthropic/OpenAI) for the model-access get-a-key flow (tuxlink-wpqwy). All provider entries are path-tight exact-URL constants matching exactly the URLs opened by GetKeyCard (elmerModelConfig.ts keyPageUrl); no domain-wide wildcards. The renderer only ever opens a constant mapped from a preset id, never a config-derived URL.",
+  "description": "Capability for the main window. tuxlink-ng3: custom HTML chrome (decorations:false) needs the window-manipulation commands the native titlebar used to perform — minimize/toggle-maximize/close (controls), start-dragging (data-tauri-drag-region), start-resize-dragging (borderless resize handles), is-maximized (control icon state). Shell:open is scoped to winlink.org + tuxlink repo for smart auth-failure diagnostics banner, report-issue action, AboutDialog, plus the four Elmer provider key-page URLs (Gemini/Groq/Anthropic/OpenAI) for the model-access get-a-key flow (tuxlink-wpqwy), plus rosmodem.wordpress.com (EA5HVK, the VARA HF author's download page) for the wizard's VARA-provision step (tuxlink-w7212) — winlink.org is already allowed and hosts the Winlink software page. All provider entries are path-tight exact-URL constants matching exactly the URLs opened by the renderer; no config-derived URLs are ever opened.",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -18,6 +18,7 @@
       "allow": [
         { "url": "https://winlink.org/**" },
         { "url": "https://www.winlink.org/**" },
+        { "url": "https://rosmodem.wordpress.com/**" },
         { "url": "https://github.com/cameronzucker/tuxlink/**" },
         { "url": "https://aistudio.google.com/apikey" },
         { "url": "https://console.groq.com/keys" },

@@ -440,6 +440,60 @@ impl TuxlinkMcp {
         Ok(CallToolResult::success(vec![Content::json(dto)?]))
     }
 
+    // ----- Provisioning: VARA-under-WINE setup (tuxlink-w7212) -----
+    //
+    // Two read-only probes plus the one-time install action. The probes are
+    // inert reads (no taint, no gate). `vara_install_start` is NON-TRANSMIT — it
+    // installs software (apt/winetricks/wine) and never keys a radio — so it does
+    // NOT pass through the transmit consent gate; the operator-presence guard is
+    // the engine's own pkexec OS password prompt.
+
+    #[tool(
+        name = "vara_engine_available",
+        description = "Report whether this Tuxlink build bundles the VARA-under-WINE setup engine (true means vara_install_start can run here). x86_64 Linux only. Read-only; does not transmit."
+    )]
+    pub async fn vara_engine_available(&self) -> Result<CallToolResult, ErrorData> {
+        let available = self
+            .state
+            .provision
+            .vara_engine_available()
+            .await
+            .map_err(port_err)?;
+        Ok(CallToolResult::success(vec![Content::json(available)?]))
+    }
+
+    #[tool(
+        name = "vara_install_status",
+        description = "Probe whether VARA HF is already provisioned under WINE on this host: returns `ready` plus each install-pipeline checkpoint's state (deps -> prefix -> vara -> vb6 -> ocx -> verify -> autostart). Offline and read-only — never launches VARA, never touches the network, never transmits. Read tuxlink://playbook/vara-wine-setup for the full workflow."
+    )]
+    pub async fn vara_install_status(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self
+            .state
+            .provision
+            .vara_install_status()
+            .await
+            .map_err(port_err)?;
+        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+    }
+
+    #[tool(
+        name = "vara_install_start",
+        description = "Install VARA HF under WINE from a user-supplied installer .exe path (x86_64 Linux only). This runs a PRIVILEGED install: pkexec prompts the OPERATOR for their OS password at the machine — you cannot supply it. NON-TRANSMIT: it provisions software (apt/winetricks/wine) and never keys a radio, so it does NOT require armed send authority. The operator must FIRST download the proprietary VARA .exe themselves (rosmodem / winlink.org) — Tuxlink cannot bundle it. Read tuxlink://playbook/vara-wine-setup FIRST, then call vara_engine_available + vara_install_status to check state before invoking this. Runs for several minutes and returns the final install summary."
+    )]
+    pub async fn vara_install_start(
+        &self,
+        params: Parameters<VaraInstallParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(VaraInstallParams { installer_path }) = params;
+        let dto = self
+            .state
+            .provision
+            .vara_install_start(installer_path)
+            .await
+            .map_err(port_err)?;
+        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+    }
+
     // ----- GATED egress (require armed send authority; deny when tainted) -----
     //
     // These tools transmit/connect (egress). The IMPL gates each call through
@@ -1166,6 +1220,14 @@ pub struct PredictRequestParams {
     pub gateway_antenna: Option<crate::ports::GatewayAntennaDto>,
 }
 
+/// `{ "installer_path": "/home/ham/Downloads/VARA setup.exe" }` — input for
+/// `vara_install_start`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct VaraInstallParams {
+    /// Filesystem path to the user-downloaded VARA HF installer `.exe`.
+    pub installer_path: String,
+}
+
 #[tool_handler]
 impl ServerHandler for TuxlinkMcp {
     // Build `ServerInfo` (= `InitializeResult`) from `default()` then set the
@@ -1752,6 +1814,67 @@ mod tests {
         );
     }
 
+    // --- Provisioning: VARA-under-WINE (reads + ungated non-transmit install) ---
+
+    #[tokio::test]
+    async fn vara_engine_available_returns_bool_and_does_not_taint() {
+        let h = handler();
+        assert!(!h.state.guard.is_tainted());
+        let result = h.vara_engine_available().await.unwrap();
+        let available: bool = json_of(&result);
+        assert!(available, "the mock reports the setup engine bundled");
+        assert!(
+            !h.state.guard.is_tainted(),
+            "vara_engine_available is a read and must NOT taint"
+        );
+    }
+
+    #[tokio::test]
+    async fn vara_install_status_returns_dto_and_does_not_taint() {
+        use crate::ports::VaraInstallStatusDto;
+        let h = handler();
+        assert!(!h.state.guard.is_tainted());
+        let result = h.vara_install_status().await.unwrap();
+        let dto: VaraInstallStatusDto = json_of(&result);
+        assert!(!dto.ready, "the mock reports VARA not yet provisioned");
+        assert_eq!(dto.checkpoints.len(), 1, "the mock seeds one checkpoint");
+        assert_eq!(dto.checkpoints[0].id.as_deref(), Some("deps"));
+        assert!(
+            !h.state.guard.is_tainted(),
+            "vara_install_status is an offline read and must NOT taint"
+        );
+    }
+
+    #[tokio::test]
+    async fn vara_install_start_runs_ungated_on_disarmed_guard() {
+        use crate::ports::VaraInstallSummaryDto;
+        // Provisioning is NON-TRANSMIT and ungated: unlike the egress/write tier,
+        // the install must run and succeed on a FRESH, DISARMED guard. Because
+        // MockProvision flips the SHARED `op_ran` (which only a gated egress/write
+        // op would otherwise touch), and nothing arms the guard here, `op_ran`
+        // flipping proves the ungated install actually executed.
+        let (h, op_ran, _staged) = handler_with_write_probes();
+        assert!(!h.state.guard.is_tainted());
+        assert!(!op_ran.load(Ordering::SeqCst));
+        let result = h
+            .vara_install_start(Parameters(VaraInstallParams {
+                installer_path: "/home/ham/Downloads/VARA setup.exe".into(),
+            }))
+            .await
+            .expect("provisioning is ungated; must succeed on a disarmed guard");
+        let dto: VaraInstallSummaryDto = json_of(&result);
+        assert!(dto.ok, "the mock reports a green install");
+        assert_eq!(dto.vara_version.as_deref(), Some("VARA HF"));
+        assert!(
+            op_ran.load(Ordering::SeqCst),
+            "the underlying install op must have run without any arm (ungated)"
+        );
+        assert!(
+            !h.state.guard.is_tainted(),
+            "provisioning must NOT taint the session"
+        );
+    }
+
     // --- STEP 6: egress gate + injection-containment via the real tools ---
 
     #[tokio::test]
@@ -2130,6 +2253,8 @@ mod tests {
         assert!(uris.contains(&"tuxlink://playbook/cms-z-password-lag"));
         assert!(uris.contains(&"tuxlink://device/uv-pro"));
         assert!(uris.contains(&"tuxlink://reference/modem-capability-matrix"));
+        // The VARA-under-WINE provisioning playbook (tuxlink-w7212) must be present.
+        assert!(uris.contains(&"tuxlink://playbook/vara-wine-setup"));
         // A curated user-guide resource must be present too.
         assert!(uris.contains(&"tuxlink://guide/ardop"));
     }

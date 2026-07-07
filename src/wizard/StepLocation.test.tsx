@@ -1,7 +1,7 @@
 // StepLocation.test.tsx — wizard Location step (tuxlink-9xy1).
 // The step wraps the shared GpsSourcePicker in wizard chrome and persists grid /
 // source via the same config_set_grid / position_set_source commands as Settings.
-// Continue advances location → complete (ADVANCE_FROM_LOCATION).
+// Continue advances location → vara_provision (ADVANCE_FROM_LOCATION; tuxlink-w7212).
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
@@ -90,10 +90,11 @@ describe('<StepLocation>', () => {
     await waitFor(() => expect(invoke).toHaveBeenCalledWith('config_set_grid', { grid: 'EM75' }));
   });
 
-  it('Continue advances the wizard from location → complete', async () => {
+  it('Continue advances the wizard from location → vara_provision', async () => {
+    // tuxlink-w7212: the VARA provisioning step now sits between location and complete.
     mockBackend();
     render(<WizardProvider initialStateOverride={{ step: 'location' }}><StepProbe /></WizardProvider>);
     fireEvent.click(await screen.findByTestId('wizard-location-continue'));
-    await waitFor(() => expect(screen.getByTestId('probe-step')).toHaveTextContent('complete'));
+    await waitFor(() => expect(screen.getByTestId('probe-step')).toHaveTextContent('vara_provision'));
   });
 });

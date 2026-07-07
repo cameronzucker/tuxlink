@@ -32,6 +32,7 @@
 
 pub mod command;
 pub mod commands;
+pub mod install;
 pub mod listener;
 pub mod transport;
 pub mod wire;

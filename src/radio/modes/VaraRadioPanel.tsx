@@ -37,6 +37,7 @@ import { listenGatewayPrefill } from '../../favorites/prefillEvent';
 import { tsLocal } from '../../favorites/ts-local';
 import type { FavoriteDial } from '../../favorites/types';
 import { RigControlSection } from './RigControlSection';
+import { VaraProvision } from '../VaraProvision';
 import {
   parseFreqInputToHz,
   dialFreqToMhzString,
@@ -100,6 +101,11 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
     boundCmdPort: null,
   });
   const [platform, setPlatform] = useState<PlatformInfoDto | null>(null);
+  // VARA provisioning (tuxlink-w7212): the anytime / post-upgrade entry point to
+  // set up VARA HF under WINE. engineAvailable gates the affordance to builds
+  // that bundle the setup engine; showProvision toggles the inline flow.
+  const [engineAvailable, setEngineAvailable] = useState(false);
+  const [showProvision, setShowProvision] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   // tuxlink-p6iq: set when a "use this gateway" action (Find-a-Station "Use →"
@@ -269,6 +275,22 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
   }, []);
 
   const platformBlocked = platform !== null && !platform.varaSupported;
+
+  // Is the VARA setup engine bundled in this build? Gates the "Set up VARA HF…"
+  // affordance (tuxlink-w7212).
+  useEffect(() => {
+    let cancelled = false;
+    void invoke<boolean>('vara_engine_available')
+      .then((ok) => {
+        if (!cancelled) setEngineAvailable(ok);
+      })
+      .catch(() => {
+        if (!cancelled) setEngineAvailable(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const commitHost = () => {
     const trimmed = hostInput.trim();
@@ -501,6 +523,29 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
           VARA can&rsquo;t run on <code>{platform?.arch}</code> — point Host at a remote
           x86 VARA instance.
         </p>
+      )}
+
+      {!platformBlocked && engineAvailable && (
+        <section className="radio-panel-sec" data-testid="vara-setup-section">
+          {showProvision ? (
+            <VaraProvision
+              variant="panel"
+              onComplete={() => setShowProvision(false)}
+              onSkip={() => setShowProvision(false)}
+            />
+          ) : (
+            <div className="radio-panel-input-row">
+              <span>VARA HF setup</span>
+              <Button
+                type="button"
+                data-testid="vara-setup-open"
+                onClick={() => setShowProvision(true)}
+              >
+                Set up VARA HF…
+              </Button>
+            </div>
+          )}
+        </section>
       )}
 
       <section className="radio-panel-sec">

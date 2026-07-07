@@ -546,3 +546,4 @@
 .wizard-root .wizard-linklike:hover { color: var(--accent); }
 .wizard-root .wizard-linklike:disabled { opacity: 0.55; cursor: not-allowed; }
 .wizard-root .wizard-inline-hint { display: inline; margin: 0; }
+

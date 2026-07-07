@@ -1461,6 +1461,12 @@ pub fn run() {
                         prediction: std::sync::Arc::new(
                             crate::mcp_ports::MonolithPredictionPort::new(h.clone()),
                         ),
+                        // tuxlink-w7212: VARA-under-WINE provisioning. Read probes
+                        // + a NON-TRANSMIT install (pkexec is the operator-presence
+                        // gate; NOT the transmit consent gate).
+                        provision: std::sync::Arc::new(
+                            crate::mcp_ports::MonolithProvisionPort::new(h.clone()),
+                        ),
                     });
                     let router = tuxlink_mcp_core::router::TuxlinkMcp::new(mcp_state);
 
@@ -1547,6 +1553,7 @@ pub fn run() {
                     compose: std::sync::Arc::new(crate::mcp_ports::MonolithComposePort::new(h_elmer.clone())),
                     stations: std::sync::Arc::new(crate::mcp_ports::MonolithStationPort::new(h_elmer.clone())),
                     prediction: std::sync::Arc::new(crate::mcp_ports::MonolithPredictionPort::new(h_elmer.clone())),
+                    provision: std::sync::Arc::new(crate::mcp_ports::MonolithProvisionPort::new(h_elmer.clone())),
                 });
 
                 // Perform the async MCP duplex handshake synchronously from setup.
@@ -2041,6 +2048,10 @@ pub fn run() {
             crate::winlink::modem::vara::commands::vara_close_session,
             crate::winlink::modem::vara::commands::vara_status,
             crate::winlink::modem::vara::commands::platform_info,
+            // tuxlink-w7212: provision VARA HF under WINE via the vendored wine-vara-setup engine
+            crate::winlink::modem::vara::install::vara_engine_available,
+            crate::winlink::modem::vara::install::vara_install_status,
+            crate::winlink::modem::vara::install::vara_install_start,
             // tuxlink-0ye6 Task 3.4: VARA dial-path B2F exchange — CONNECT to peer
             // + B2F handshake + intent-filtered mailbox drain + DISCONNECT, all
             // in one Tauri call. Mirror of `modem_ardop_b2f_exchange`'s shape.

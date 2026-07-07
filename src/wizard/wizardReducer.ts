@@ -116,8 +116,16 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
       };
 
     case 'ADVANCE_FROM_LOCATION':
-      // Location → complete. The Location step has already persisted grid/source
-      // via config_set_grid / position_set_source; this only advances the step.
+      // Location → VARA provisioning (tuxlink-w7212). The Location step has already
+      // persisted grid/source via config_set_grid / position_set_source; this only
+      // advances the step. VARA provisioning is the last onboarding step before
+      // complete so it runs while the operator is online and preparing.
+      return { ...state, step: 'vara_provision' };
+
+    case 'ADVANCE_FROM_VARA_PROVISION':
+      // VARA provisioning → complete. Fires on provision-done, skip, or self-skip
+      // (unsupported hardware / unbundled engine). Provisioning writes no wizard
+      // config, so this only advances the step.
       return { ...state, step: 'complete' };
 
     default:

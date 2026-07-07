@@ -52,6 +52,12 @@ export type WizardStep =
   // the wizard-chrome counterpart to Settings → Location. Grid + source persist via
   // config_set_grid / position_set_source (the same commands the Settings panel uses).
   | 'location'
+  // VARA HF provisioning (tuxlink-w7212). Sits between location and complete so
+  // every identity path is offered VARA setup during onboarding, while online and
+  // in prep — provisioning is internet-bound (apt + winetricks) and cannot happen
+  // in the field. The step self-skips on non-x86_64 hardware (VARA unsupported) and
+  // when the setup engine is not bundled. Skippable everywhere (ARDOP is the floor).
+  | 'vara_provision'
   | 'complete';
 
 export interface WizardState {
@@ -101,4 +107,9 @@ export type WizardAction =
   // already persisted (via config_set_grid / position_set_source) by the time this
   // fires, so it only advances `location → complete`. Location is non-blocking:
   // Continue is always available (grid is optional everywhere in onboarding).
-  | { type: 'ADVANCE_FROM_LOCATION' };
+  | { type: 'ADVANCE_FROM_LOCATION' }
+  // ADVANCE_FROM_VARA_PROVISION: leave the VARA provisioning step → complete.
+  // Fired whether the user provisioned VARA, skipped it, or the step self-skipped
+  // (unsupported hardware / engine not bundled). VARA provisioning writes no wizard
+  // config, so this only advances the step.
+  | { type: 'ADVANCE_FROM_VARA_PROVISION' };

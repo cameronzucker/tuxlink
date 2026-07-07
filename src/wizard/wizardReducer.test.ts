@@ -55,10 +55,36 @@ describe('wizardReducer', () => {
     expect(s.inFlight).toBe(false);
   });
 
-  it('ADVANCE_FROM_LOCATION routes location → complete', () => {
+  // tuxlink-w7212: the VARA provisioning step sits between location and complete.
+  it('ADVANCE_FROM_LOCATION routes location → vara_provision', () => {
     const base = { ...initialWizardState(), step: 'location' as const };
     const s = wizardReducer(base, { type: 'ADVANCE_FROM_LOCATION' });
+    expect(s.step).toBe('vara_provision');
+  });
+
+  it('ADVANCE_FROM_VARA_PROVISION routes vara_provision → complete', () => {
+    const base = { ...initialWizardState(), step: 'vara_provision' as const };
+    const s = wizardReducer(base, { type: 'ADVANCE_FROM_VARA_PROVISION' });
     expect(s.step).toBe('complete');
+  });
+
+  it('every identity path reaches vara_provision before complete', () => {
+    // skip-CMS path: credentials → location → vara_provision
+    let s = wizardReducer(
+      { ...initialWizardState(), step: 'credentials' as const },
+      { type: 'SUBMIT_CREDENTIALS_SUCCESS', skipCmsVerify: true },
+    );
+    expect(s.step).toBe('location');
+    s = wizardReducer(s, { type: 'ADVANCE_FROM_LOCATION' });
+    expect(s.step).toBe('vara_provision');
+    // offline path also lands on location → vara_provision
+    let o = wizardReducer(
+      { ...initialWizardState(), step: 'offline_identity' as const },
+      { type: 'SUBMIT_OFFLINE_SUCCESS' },
+    );
+    expect(o.step).toBe('location');
+    o = wizardReducer(o, { type: 'ADVANCE_FROM_LOCATION' });
+    expect(o.step).toBe('vara_provision');
   });
 
   // INVARIANT: BEGIN_CMS_VERIFY while probing is a no-op (dedup correctness)

@@ -30,8 +30,8 @@ pub mod validate;
 
 pub use ports::{
     AbortPort, ComposePort, ConfigPort, DevicePort, EgressPort, EgressPortError, LogPort,
-    MailboxPort, PortError, PredictionPort, SearchPort, StationPort, StatusPort, WritePort,
-    WritePortError,
+    MailboxPort, PortError, PredictionPort, ProvisionPort, SearchPort, StationPort, StatusPort,
+    WritePort, WritePortError,
 };
 pub use router::TuxlinkMcp;
 pub use transport_uds::serve;
@@ -91,6 +91,10 @@ pub struct McpState {
     /// Offline HF propagation prediction + space-weather reads. Read-only —
     /// never taints, never gates.
     pub prediction: Arc<dyn PredictionPort>,
+    /// VARA-under-WINE provisioning (tuxlink-w7212). The probes are read-only;
+    /// `vara_install_start` is NON-TRANSMIT (installs software via pkexec's own
+    /// password prompt) so it does NOT pass through the transmit consent gate.
+    pub provision: Arc<dyn ProvisionPort>,
 }
 
 /// Serializable shape returned by the `server_info` tool.
@@ -146,10 +150,11 @@ pub mod test_support {
         EgressPortError, FolderDto, GatewayAntennaDto, GatewayDto, GribRequestDto, LogLineDto,
         LogPort, MailboxPort, MessageMetaDto, ModemStatusDto, PacketConfigDto, PacketWriteDto,
         ParsedMessageDto, PathPredictionDto, PlatformInfoDto, PortError, PositionStatusDto,
-        PredictRequestDto, PredictionPort, QsyCandidateDto, RigConfigDto, RigStatusDto, SearchPort,
-        SearchQueryDto, SearchResultsDto, SendFormDto, SerialDeviceDto, SessionIntentDto,
-        SolarSnapshotDto, StationFilterDto, StationListDto, StationModeDto, StationPort, StatusPort,
-        VaraConfigDto, VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
+        PredictRequestDto, PredictionPort, ProvisionPort, QsyCandidateDto, RigConfigDto,
+        RigStatusDto, SearchPort, SearchQueryDto, SearchResultsDto, SendFormDto, SerialDeviceDto,
+        SessionIntentDto, SolarSnapshotDto, StationFilterDto, StationListDto, StationModeDto,
+        StationPort, StatusPort, VaraCheckpointDto, VaraConfigDto, VaraInstallStatusDto,
+        VaraInstallSummaryDto, VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
     };
     use crate::validate::{
         validate_address, validate_attachment_dest, validate_body, validate_drive_level,
@@ -703,6 +708,53 @@ pub mod test_support {
         }
     }
 
+    /// A mock [`ProvisionPort`]. The two probes are canned reads (engine
+    /// bundled; not-yet-ready with one pending checkpoint). `vara_install_start`
+    /// is UNGATED (provisioning is non-transmit), so it flips the shared `op_ran`
+    /// flag and returns a green summary WITHOUT any guard interaction — a test on
+    /// a DISARMED guard proves the install ran precisely because it is ungated.
+    pub struct MockProvision {
+        op_ran: Arc<AtomicBool>,
+    }
+
+    impl MockProvision {
+        pub fn new(op_ran: Arc<AtomicBool>) -> Self {
+            Self { op_ran }
+        }
+    }
+
+    #[async_trait]
+    impl ProvisionPort for MockProvision {
+        async fn vara_engine_available(&self) -> Result<bool, PortError> {
+            Ok(true)
+        }
+        async fn vara_install_status(&self) -> Result<VaraInstallStatusDto, PortError> {
+            Ok(VaraInstallStatusDto {
+                ready: false,
+                checkpoints: vec![VaraCheckpointDto {
+                    id: Some("deps".into()),
+                    index: Some(1),
+                    total: Some(7),
+                    state: Some("pending".into()),
+                    detail: None,
+                }],
+            })
+        }
+        async fn vara_install_start(
+            &self,
+            _installer_path: String,
+        ) -> Result<VaraInstallSummaryDto, PortError> {
+            // UNGATED: no guard check — flip the shared op_ran flag so a test can
+            // prove the install executed even on a disarmed guard.
+            self.op_ran.store(true, Ordering::SeqCst);
+            Ok(VaraInstallSummaryDto {
+                ok: true,
+                prefix: Some("/home/ham/.wine-vara".into()),
+                vara_version: Some("VARA HF".into()),
+            })
+        }
+    }
+
     /// Build an [`McpState`] around the supplied guard, wiring all mock ports.
     /// The egress/abort flags are internal; use [`state_with_egress_probes`] to
     /// observe whether a gated egress op actually ran or an abort fired.
@@ -755,6 +807,7 @@ pub mod test_support {
             compose: Arc::new(MockCompose::new(Arc::clone(&staged))),
             stations: Arc::new(MockStation),
             prediction: Arc::new(MockPrediction),
+            provision: Arc::new(MockProvision::new(Arc::clone(&op_ran))),
         })
     }
 
@@ -784,6 +837,7 @@ pub mod test_support {
             compose: Arc::new(MockCompose::new(Arc::clone(&staged))),
             stations: Arc::new(MockStation),
             prediction: Arc::new(MockPrediction),
+            provision: Arc::new(MockProvision::new(Arc::clone(&op_ran))),
         };
         (state, op_ran, aborted, staged)
     }

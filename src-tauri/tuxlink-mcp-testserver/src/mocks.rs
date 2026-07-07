@@ -20,10 +20,11 @@ use tuxlink_mcp_core::ports::{
     GatewayAntennaDto, GatewayDto, GribRequestDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto,
     ModemStatusDto, PacketConfigDto, PacketWriteDto, ParsedMessageDto, PathPredictionDto,
     PlatformInfoDto, PortError, PositionStatusDto, PredictRequestDto, PredictionPort,
-    QsyCandidateDto, RigConfigDto, RigStatusDto, SearchPort, SearchQueryDto, SearchResultsDto,
-    SendFormDto, SerialDeviceDto, SessionIntentDto, SolarSnapshotDto, StationFilterDto,
-    StationListDto, StationModeDto, StationPort, StatusPort, VaraConfigDto, VaraStatusDto,
-    VaraWriteDto, WritePort, WritePortError,
+    ProvisionPort, QsyCandidateDto, RigConfigDto, RigStatusDto, SearchPort, SearchQueryDto,
+    SearchResultsDto, SendFormDto, SerialDeviceDto, SessionIntentDto, SolarSnapshotDto,
+    StationFilterDto, StationListDto, StationModeDto, StationPort, StatusPort, VaraCheckpointDto,
+    VaraConfigDto, VaraInstallStatusDto, VaraInstallSummaryDto, VaraStatusDto, VaraWriteDto,
+    WritePort, WritePortError,
 };
 use tuxlink_mcp_core::validate::{
     validate_address, validate_attachment_dest, validate_body, validate_drive_level,
@@ -581,6 +582,40 @@ impl PredictionPort for MockPrediction {
             ssn: 70.0,
             updated_at_ms: 0,
             source: "bundled".into(),
+        })
+    }
+}
+
+/// A mock [`ProvisionPort`]. The probes report the engine bundled + not-yet-ready
+/// with one pending checkpoint; `vara_install_start` returns a green summary.
+/// Non-transmit, ungated — never touches the guard.
+pub struct MockProvision;
+
+#[async_trait]
+impl ProvisionPort for MockProvision {
+    async fn vara_engine_available(&self) -> Result<bool, PortError> {
+        Ok(true)
+    }
+    async fn vara_install_status(&self) -> Result<VaraInstallStatusDto, PortError> {
+        Ok(VaraInstallStatusDto {
+            ready: false,
+            checkpoints: vec![VaraCheckpointDto {
+                id: Some("deps".into()),
+                index: Some(1),
+                total: Some(7),
+                state: Some("pending".into()),
+                detail: None,
+            }],
+        })
+    }
+    async fn vara_install_start(
+        &self,
+        _installer_path: String,
+    ) -> Result<VaraInstallSummaryDto, PortError> {
+        Ok(VaraInstallSummaryDto {
+            ok: true,
+            prefix: Some("/home/ham/.wine-vara".into()),
+            vara_version: Some("VARA HF".into()),
         })
     }
 }
