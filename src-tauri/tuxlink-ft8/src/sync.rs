@@ -23,9 +23,10 @@
 //! at negative `t0` are excluded from the mean — this subsumes WB2FKO's separate
 //! `Sbc` (first-block-dropped) case.
 //!
-//! **Fine refinement** searches sub-bin time (±40 ms) and frequency (±one FT-8
-//! tone, ±6.25 Hz — widened from WB2FKO's ±2.5 Hz for this crate's coarse metric;
-//! see [`fine_refine`]) by maximizing the Costas cross-energy. **Symbol
+//! **Fine refinement** searches sub-bin time (±40 ms) and frequency (±two FT-8
+//! tones, ±12.5 Hz — widened from WB2FKO's ±2.5 Hz because this crate's coarse
+//! metric can mislocate an off-grid carrier by >1 tone; see [`fine_refine`]) by
+//! maximizing the Costas cross-energy. **Symbol
 //! extraction** reads the eight tone powers per info symbol, mirroring `ft8_lib`
 //! `decode.c` `ft8_extract_symbol`/`ft8_extract_likelihood`. The `(fc, t0)` search
 //! bounds are cross-checked against `ft8_lib` `ftx_find_candidates`.
@@ -69,8 +70,14 @@ pub const T0_STEP_MAX: isize = 125;
 /// the weaker candidate is discarded."
 pub const DEDUP_HZ: f64 = 4.0;
 
-/// Maximum ranked candidates retained from the coarse search.
-/// provenance: WB2FKO "As many as 200 candidate signals can be acquired."
+/// Maximum ranked candidates retained from the coarse search. This is an
+/// implementation retention/performance cap, NOT a protocol constant: a larger
+/// cap only lets the per-candidate decode loop try more low-ranked candidates
+/// (all still guarded by the sync floor + CRC + `converged`), it does not change
+/// any FT-8 quantity. Set above WB2FKO's observed "as many as 200 candidates" as
+/// headroom for crowded bands (M3/M4); reducible with no correctness impact.
+/// provenance: implementation choice; WB2FKO reports ~200 candidates as the
+/// typical acquired count, this crate keeps headroom over that.
 pub const MAX_CANDIDATES: usize = 300;
 
 /// Sync-metric floor (T2.3 false-decode guard), in dB. A candidate whose mean
@@ -88,6 +95,14 @@ pub const SYNC_FLOOR: f32 = 10.0;
 
 /// Small power floor so `log10` is finite in truly-empty spectral regions (both
 /// the on-tone and its neighbour are ~0 there, so their dB difference is ~0).
+/// This is a standard numerical guard against `log10(0)`, not an FT-8 protocol
+/// value: `1e-12` sits far below any real tone power (a single 12 kHz symbol's
+/// energy is O(10^0..10^16) on the i16-scaled fixtures), so it only regularizes
+/// genuinely-empty bins and never shifts a real contrast. Chosen as a
+/// conventional float epsilon well under the smallest meaningful power.
+/// provenance: standard/public-domain numerical practice (two-tier rule — not
+/// protocol-specific expression); empirically verified not to affect the
+/// signal-vs-noise separation in the `sync_metric_signal_vs_noise` KAT.
 const POWER_EPS: f32 = 1e-12;
 
 /// A synchronization candidate: the tone-0 audio frequency, the start sample of
@@ -192,6 +207,13 @@ pub fn coarse_candidates(spec: &Spectrogram) -> Vec<Candidate> {
     for fc_bin in fc_bin_min..=fc_bin_hi {
         for t0_step in T0_STEP_MIN..=T0_STEP_MAX {
             if let Some(metric) = costas_metric(spec, fc_bin, t0_step) {
+                // A non-finite metric (NaN/inf from non-finite input samples) must
+                // never rank as a candidate: `total_cmp` would order it and
+                // `metric < SYNC_FLOOR` is false for NaN, so it would slip past the
+                // floor guard. Reject it here so a corrupt slot yields no decode.
+                if !metric.is_finite() {
+                    continue;
+                }
                 all.push(Candidate {
                     freq_hz: fc_bin as f64 * BIN_HZ,
                     start_sample: (t0_step * HOP_SAMPLES as isize) as f64,
@@ -245,29 +267,34 @@ fn costas_cross_energy(samples: &[f32], start_sample: f64, freq_hz: f64) -> f32 
 }
 
 /// Fine-refine a coarse candidate: search sub-step time (±[`HOP_SAMPLES`], the
-/// ±40 ms coarse cell) and sub-bin frequency (±one tone) for the alignment that
+/// ±40 ms coarse cell) and sub-bin frequency (±two tones) for the alignment that
 /// maximizes the Costas cross-energy. A distinct step from the coarse search.
 ///
-/// The frequency span is ±one FT-8 tone (±6.25 Hz), not WB2FKO's ±2.5 Hz,
-/// because the coarse dB neighbour-contrast metric ([`costas_metric`]) localizes
-/// the carrier only to within one tone on GFSK signals (the contrast surface has
-/// a broad, slightly tone-biased peak), whereas the Costas cross-energy objective
-/// here is sharply unimodal at the true carrier (three orders of magnitude above
-/// its ±6.25 Hz neighbours). Searching one full tone therefore guarantees the
-/// energy peak — the true carrier — is inside the fine window. The 0.25 Hz step
-/// divides the 6.25 Hz tone exactly, so the true carrier is reachable exactly
-/// from any (bin-multiple) coarse estimate. WB2FKO's ±2.5 Hz assumes a
-/// 3-Hz-accurate coarse stage.
+/// The frequency span is ±two FT-8 tones (±12.5 Hz), not WB2FKO's ±2.5 Hz,
+/// because the coarse dB neighbour-contrast metric ([`costas_metric`]) can
+/// mislocate an OFF-GRID carrier by more than one tone: on `gen_ft8` carriers off
+/// the 3.125 Hz coarse grid the coarse top candidate has been measured up to
+/// ~6.6 Hz from the true tone-0 (a ±6.25 Hz window would then never evaluate the
+/// real carrier). Two tones contains it with margin, and the Costas cross-energy
+/// objective is sharply unimodal at the true carrier (orders of magnitude above
+/// its neighbours), so the wider span cannot latch onto a wrong tone for a single
+/// signal. The 0.25 Hz step divides the 6.25 Hz tone exactly, so a bin-multiple
+/// carrier is still reachable exactly. WB2FKO's ±2.5 Hz assumes a 3-Hz-accurate
+/// coarse stage; this crate's coarse metric is coarser in frequency.
+/// (M3/M4 caveat: in a multi-signal slot a ±2-tone fine window can reach a
+/// neighbour only ~2 tones away; multi-signal deconfliction is M3/M4 scope, and
+/// dedup + per-signal energy peaks bound the risk — re-evaluate when crowded-band
+/// decoding lands.)
 /// provenance: WB2FKO fine sync (`∆t = ±40 ms`, sub-Hz `∆f` in `ft8b`/`sync8d`),
-/// frequency span widened to one tone for this crate's coarse metric — see note.
+/// frequency span widened to ±2 tones for this crate's coarse metric — see note.
 pub fn fine_refine(samples: &[f32], coarse: &Candidate) -> Candidate {
     // Time grid: ±40 ms in 2 ms steps (24 samples) — divides the 240-sample
     // half-cell so an on-boundary true offset is reachable exactly.
     const DT_STEP: isize = 24;
     const DT_SPAN: isize = HOP_SAMPLES as isize; // ±480 samples
-                                                 // Frequency grid: ±one tone (±6.25 Hz) in 0.25 Hz steps (25 per side).
-    const DF_STEPS: i32 = 25;
-    const DF_HZ: f64 = TONE_HZ / 25.0; // 0.25 Hz; ±25 steps = ±6.25 Hz exactly
+                                                 // Frequency grid: ±two tones (±12.5 Hz) in 0.25 Hz steps (50 per side).
+    const DF_STEPS: i32 = 50;
+    const DF_HZ: f64 = TONE_HZ / 25.0; // 0.25 Hz; ±50 steps = ±12.5 Hz (±2 tones)
 
     let base = coarse.start_sample;
     let mut best = *coarse;
@@ -550,5 +577,23 @@ mod tests {
         // No decode from either.
         assert!(decode_samples(&silence, 12_000).is_empty(), "silence decoded");
         assert!(decode_samples(&noise, 12_000).is_empty(), "noise decoded");
+    }
+
+    /// Non-finite input (all-NaN slot) yields NO candidates and NO decode. Guards
+    /// the regression where a NaN metric slips past the sync floor (`NaN < FLOOR`
+    /// is false) and `total_cmp` ranks it, making the decoder grind every
+    /// candidate. (Codex adrev 2026-07-07.)
+    #[test]
+    fn nonfinite_input_yields_no_decode() {
+        let nan = vec![f32::NAN; 180_000];
+        let spec = compute_spectrogram(&nan, 12_000);
+        assert!(
+            coarse_candidates(&spec).is_empty(),
+            "NaN slot produced coarse candidates"
+        );
+        assert!(
+            decode_samples(&nan, 12_000).is_empty(),
+            "NaN slot produced a decode"
+        );
     }
 }

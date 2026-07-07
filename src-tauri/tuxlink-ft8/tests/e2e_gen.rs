@@ -32,26 +32,32 @@ fn load_fixture(name: &str) -> Vec<f32> {
         .collect()
 }
 
-/// Every fixture decodes to its exact known message (three messages × three
-/// carriers). The known-answer manifest is `tests/fixtures/gen/README.md`.
+/// Every fixture decodes to its exact known message (three message types, four
+/// carriers incl. one deliberately off the coarse grid). The known-answer
+/// manifest is `tests/fixtures/gen/README.md`.
 #[test]
-fn all_five_fixtures_decode_to_known_message() {
+fn all_fixtures_decode_to_known_message() {
     let cases = [
         ("std_cq_1500.wav", "CQ K1ABC FN42"),
         ("freetext_1500.wav", "TNX BOB 73 GL"),
         ("nonstd_cq_1500.wav", "CQ PJ4/K1ABC"),
         ("std_cq_0800.wav", "CQ K1ABC FN42"),
         ("std_cq_2400.wav", "CQ K1ABC FN42"),
+        // Off the 3.125 Hz coarse grid: the coarse metric mislocates the carrier
+        // by >1 tone, so this exercises the fine-refine window's ability to
+        // recover it. (Codex adrev 2026-07-07, sync.rs fine_refine.)
+        ("std_cq_1509_offgrid.wav", "CQ K1ABC FN42"),
     ];
 
     for (file, expected) in cases {
         let samples = load_fixture(file);
         let decodes = decode_samples(&samples, 12_000);
-        assert!(
-            decodes.iter().any(|d| d.message == expected),
-            "{file}: expected to decode {expected:?}, got {:?}",
-            decodes.iter().map(|d| &d.message).collect::<Vec<_>>()
-        );
+        // Zero-false ON THE FIXTURE ITSELF: a single-signal fixture must yield
+        // EXACTLY one decode equal to the known message — not merely "contains it
+        // among others". `any()` would pass even with spurious extra decodes and
+        // so would not enforce the zero-false half of the hard-stop gate.
+        let msgs: Vec<&str> = decodes.iter().map(|d| d.message.as_str()).collect();
+        assert_eq!(msgs, vec![expected], "{file}: expected exactly one decode");
     }
 }
 

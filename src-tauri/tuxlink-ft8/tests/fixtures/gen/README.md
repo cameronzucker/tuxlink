@@ -50,6 +50,12 @@ sample offset above; do not hard-code a WSJT-X DT offset.)
 | `nonstd_cq_1500.wav` | `CQ PJ4/K1ABC`  | 4 nonstandard call | 1500 Hz |
 | `std_cq_0800.wav`    | `CQ K1ABC FN42` | 1 standard         |  800 Hz |
 | `std_cq_2400.wav`    | `CQ K1ABC FN42` | 1 standard         | 2400 Hz |
+| `std_cq_1509_offgrid.wav` | `CQ K1ABC FN42` | 1 standard    | 1509 Hz |
+
+`std_cq_1509_offgrid.wav` is a carrier deliberately **off** the 3.125 Hz coarse
+search grid: the dB-contrast coarse metric lands its top candidate >1 tone away
+(≈1515.6 Hz), so it exercises the fine-refine frequency window's ability to
+recover a true carrier the coarse stage mislocates by more than one tone.
 
 The three frequencies for the standard message exercise the T2.2 coarse frequency
 search across the audio passband (do not overfit the search to 1500 Hz). Types 1,
