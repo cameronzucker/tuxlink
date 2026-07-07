@@ -135,6 +135,8 @@ pub enum MessageType {
     Telemetry,
     /// `i3=1` (and `i3=2`, deferred) standard message (`c28 r1 c28 r1 R1 g15`).
     Standard,
+    /// `i3=4` non-standard-callsign message (`h12 c58 h1 r2 c1`).
+    NonStandardCall,
     /// A type recognized by tag but not implemented in T0.2.
     Unsupported {
         /// The `i3` tag observed.
@@ -155,6 +157,7 @@ impl Payload {
                 n3 => MessageType::Unsupported { i3, n3 },
             },
             1 => MessageType::Standard,
+            4 => MessageType::NonStandardCall,
             _ => MessageType::Unsupported { i3, n3: 0 },
         }
     }
@@ -681,8 +684,74 @@ pub fn unpack(p: &Payload, hash: &mut HashTable) -> Result<String, PackError> {
         MessageType::Standard => Ok(unpack_std(p, hash)),
         MessageType::FreeText => Ok(unpack_free_text(p)),
         MessageType::Telemetry => Ok(unpack_telemetry(p)),
+        MessageType::NonStandardCall => Ok(unpack_nonstd(p, hash)),
         MessageType::Unsupported { .. } => Err(PackError::Unsupported),
     }
+}
+
+/// Unpack a NON-STANDARD-CALLSIGN (`i3=4`) message, e.g. `"CQ PJ4/K1ABC"` or
+/// `"<W9XYZ> PJ4/K1ABC RR73"`. One call is a 58-bit base-38 packed non-standard
+/// callsign; the other is a 12-bit hash rendered from `hash` (`<CALL>` when known,
+/// `<...>` otherwise). `iflip` orders the two, `icq`/`nrpt` supply the `CQ` token
+/// and the `RRR`/`RR73`/`73` suffix.
+/// provenance: `ft8_lib` `message.c` `ftx_message_decode_nonstd` + `unpack58`
+/// (base-38 over the 38-char `FT8_CHAR_TABLE_ALPHANUM_SPACE_SLASH`) (MIT); QEX
+/// Table 1 row `4` (`h12 c58 …`).
+pub fn unpack_nonstd(p: &Payload, hash: &HashTable) -> String {
+    let b = &p.bytes;
+    // 12-bit hash of the standard callsign.
+    let n12 = ((b[0] as u16) << 4) | ((b[1] as u16) >> 4);
+    // 58-bit base-38 packed non-standard callsign.
+    let n58 = (((b[1] & 0x0f) as u64) << 54)
+        | ((b[2] as u64) << 46)
+        | ((b[3] as u64) << 38)
+        | ((b[4] as u64) << 30)
+        | ((b[5] as u64) << 22)
+        | ((b[6] as u64) << 14)
+        | ((b[7] as u64) << 6)
+        | ((b[8] as u64) >> 2);
+    let iflip = (b[8] >> 1) & 0x01;
+    let nrpt = ((b[8] & 0x01) << 1) | (b[9] >> 7);
+    let icq = (b[9] >> 6) & 0x01;
+
+    let call_decoded = unpack58(n58);
+    let call_hashed = match hash.lookup(n12 as u32, 12) {
+        Some(c) => format!("<{c}>"),
+        None => "<...>".to_string(),
+    };
+
+    let (call_1, call_2) = if iflip != 0 {
+        (call_decoded.as_str(), call_hashed.as_str())
+    } else {
+        (call_hashed.as_str(), call_decoded.as_str())
+    };
+
+    let (call_to, extra) = if icq == 0 {
+        let extra = match nrpt {
+            1 => "RRR",
+            2 => "RR73",
+            3 => "73",
+            _ => "",
+        };
+        (call_1.to_string(), extra)
+    } else {
+        ("CQ".to_string(), "")
+    };
+    join_fields(&call_to, call_2, extra)
+}
+
+/// Decode a 58-bit non-standard callsign: 11 base-38 characters over the
+/// `space 0-9 A-Z /` alphabet, right-aligned, whitespace-trimmed.
+/// provenance: `ft8_lib` `message.c` `unpack58` (MIT).
+fn unpack58(n58: u64) -> String {
+    let mut c = [b' '; 11];
+    let mut v = n58;
+    for slot in c.iter_mut().rev() {
+        *slot = charn((v % 38) as u32, T_ALNUM_SPACE_SLASH);
+        v /= 38;
+    }
+    let s: String = c.iter().map(|&ch| ch as char).collect();
+    s.trim().to_string()
 }
 
 /// Unpack a STANDARD (`i3=1`) message to `"to de extra"`.
@@ -1013,5 +1082,72 @@ mod tests {
             pack_telemetry("123456789ABCDEF012").unwrap().message_type(),
             MessageType::Telemetry
         );
+    }
+
+    // ── Non-standard-callsign (i3=4) unpack KATs ────────────────────────────
+    //
+    // Independently base-38-encode a non-standard call and lay it out per the
+    // documented i3=4 field layout, then assert the unpacker round-trips it.
+
+    /// Base-38 pack of a call, right-aligned into 11 chars (inverse of `unpack58`).
+    fn n58_of(call: &str) -> u64 {
+        let padded = format!("{call:>11}");
+        assert_eq!(padded.len(), 11, "call too long for 11-char field");
+        let mut v = 0u64;
+        for ch in padded.bytes() {
+            let idx = T_ALNUM_SPACE_SLASH.iter().position(|&t| t == ch).unwrap() as u64;
+            v = v * 38 + idx;
+        }
+        v
+    }
+
+    /// Assemble an i3=4 payload from its fields (inverse of `unpack_nonstd`'s
+    /// byte extraction).
+    fn nonstd_payload(n12: u16, n58: u64, iflip: u8, nrpt: u8, icq: u8) -> Payload {
+        let mut b = [0u8; PAYLOAD_BYTES];
+        b[0] = (n12 >> 4) as u8;
+        b[1] = (((n12 & 0x0f) << 4) as u8) | ((n58 >> 54) & 0x0f) as u8;
+        b[2] = (n58 >> 46) as u8;
+        b[3] = (n58 >> 38) as u8;
+        b[4] = (n58 >> 30) as u8;
+        b[5] = (n58 >> 22) as u8;
+        b[6] = (n58 >> 14) as u8;
+        b[7] = (n58 >> 6) as u8;
+        b[8] = (((n58 & 0x3f) << 2) as u8) | (iflip << 1) | ((nrpt >> 1) & 0x01);
+        b[9] = ((nrpt & 0x01) << 7) | (icq << 6) | (4u8 << 3); // i3 = 4
+        Payload { bytes: b }
+    }
+
+    #[test]
+    fn unpack58_base38_round_trip() {
+        for call in ["PJ4/K1ABC", "3DA0RS", "K1ABC/2"] {
+            assert_eq!(super::unpack58(n58_of(call)), call, "unpack58 {call}");
+        }
+    }
+
+    #[test]
+    fn unpack_nonstd_cq_matches_fixture_message() {
+        // "CQ PJ4/K1ABC": icq=1 ⇒ call_to="CQ", iflip=0 ⇒ call_de=decoded call.
+        let p = nonstd_payload(0, n58_of("PJ4/K1ABC"), 0, 0, 1);
+        assert_eq!(p.i3(), 4);
+        assert_eq!(p.message_type(), MessageType::NonStandardCall);
+        let mut h = HashTable::new();
+        assert_eq!(unpack(&p, &mut h).unwrap(), "CQ PJ4/K1ABC");
+    }
+
+    #[test]
+    fn unpack_nonstd_hashed_call_and_report() {
+        // icq=0, iflip=0, nrpt=2 ⇒ "<...> PJ4/K1ABC RR73" (hash unknown ⇒ <...>).
+        let p = nonstd_payload(0x123, n58_of("PJ4/K1ABC"), 0, 2, 0);
+        let mut h = HashTable::new();
+        assert_eq!(unpack(&p, &mut h).unwrap(), "<...> PJ4/K1ABC RR73");
+    }
+
+    #[test]
+    fn unpack_nonstd_iflip_orders_calls() {
+        // iflip=1 ⇒ decoded call is call_1 (to), hashed is call_2 (de).
+        let p = nonstd_payload(0x123, n58_of("PJ4/K1ABC"), 1, 0, 0);
+        let mut h = HashTable::new();
+        assert_eq!(unpack(&p, &mut h).unwrap(), "PJ4/K1ABC <...>");
     }
 }
