@@ -56,7 +56,9 @@
           "libheif1",
           "libde265-0",
           "libwebp7",
-          "libhamlib-utils"
+          "libusb-1.0-0",
+          "libudev1",
+          "libcap2"
         ],
         "recommends": [
           "direwolf (>= 1.6)"
@@ -77,7 +79,9 @@
           "libheif",
           "libde265",
           "libwebp",
-          "hamlib"
+          "libusb1",
+          "systemd-libs",
+          "libcap"
         ],
         "recommends": [
           "direwolf >= 1.6"
