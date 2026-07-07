@@ -60,6 +60,16 @@ const openStatus = {
   boundCmdPort: 8300,
 };
 
+// tuxlink-6urh2: the heartbeat-detected drop-state. Mirrors the backend's
+// `spawn_vara_socket_heartbeat` stamp exactly (message text + bound-host
+// preserved from the pre-drop Open status).
+const socketLostStatus = {
+  state: 'socket-lost',
+  lastError: 'VARA connection lost — reopen to reconnect',
+  boundHost: '127.0.0.1',
+  boundCmdPort: 8300,
+};
+
 const x86Platform = { arch: 'x86_64', os: 'linux', varaSupported: true };
 const armPlatform = { arch: 'aarch64', os: 'linux', varaSupported: false };
 
@@ -165,6 +175,31 @@ describe('<VaraRadioPanel>', () => {
     await waitFor(() => {
       expect(screen.getByTestId('vara-state-display')).toHaveTextContent('State: open');
     });
+  });
+
+  // tuxlink-6urh2: a heartbeat-stamped SocketLost status must unlock the
+  // (previously Open-locked) host input, surface the last-error string, AND
+  // show the dedicated socket-lost banner pointing the operator at Start.
+  it('unlocks config fields and shows the last error on a socket-lost status', async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(
+      makeInvoke({ vara_status: socketLostStatus }),
+    );
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    await waitFor(() => {
+      expect(screen.getByTestId('vara-state-display')).toHaveTextContent(
+        'State: socket-lost',
+      );
+    });
+    expect(screen.getByTestId('vara-host-input')).not.toBeDisabled();
+    expect(screen.getByTestId('vara-last-error')).toHaveTextContent(
+      'VARA connection lost — reopen to reconnect',
+    );
+    expect(screen.getByTestId('vara-socket-lost-banner')).toBeInTheDocument();
+    // isOpen excludes 'socket-lost', so the action row reverts to Start
+    // (not Send/Receive + Stop) — the operator's only recovery path.
+    expect(screen.getByTestId('vara-start-btn')).toBeInTheDocument();
+    expect(screen.queryByTestId('vara-stop-btn')).toBeNull();
   });
 
   // tuxlink-n95sr #3: the action row now mirrors ARDOP — Start is REPLACED by

@@ -48,7 +48,12 @@ import '../sections/ListenSection.css';
 /** Mirror of Rust's `commands::VaraStatus`. camelCase per the Rust
  *  `#[serde(rename_all = "camelCase")]` on the struct. */
 interface VaraStatusDto {
-  state: 'closed' | 'connecting' | 'open' | 'error';
+  // tuxlink-6urh2: 'socket-lost' is the heartbeat-detected cmd-port-drop
+  // state (Rust `VaraState::SocketLost`, wire form via
+  // `#[serde(rename = "socket-lost")]`). Distinct from 'error' (the
+  // Start-time TCP-connect failure) — SocketLost means the transport WAS
+  // open and the peer went away underneath it.
+  state: 'closed' | 'connecting' | 'open' | 'error' | 'socket-lost';
   lastError: string | null;
   boundHost: string | null;
   boundCmdPort: number | null;
@@ -88,6 +93,14 @@ function mapVaraStateToPanelState(s: VaraStatusDto['state']): RadioPanelState {
       return 'connected';
     case 'error':
       return 'error';
+    // tuxlink-6urh2: the heartbeat-detected drop is a distinct wire state
+    // from the Start-time connect failure, but the panel header only has
+    // connected/connecting/disconnected/error — 'error' is the right
+    // bucket (it renders the same way an operator needs to notice + act).
+    case 'socket-lost':
+      return 'error';
+    default:
+      return 'error';
   }
 }
 
@@ -115,6 +128,13 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
   // without being re-created on every render.
   const statusRef = useRef<VaraStatusDto>(status);
   statusRef.current = status;
+  // tuxlink-6urh2: ref so the recurring status-poll effect (below) can read
+  // the CURRENT busy flag from its setInterval closure without re-creating
+  // the interval on every render. (exchangingRef is declared further down,
+  // right after `exchanging`'s own useState — it must come after that
+  // declaration in source order.)
+  const busyRef = useRef(false);
+  busyRef.current = busy;
   // Synchronous open-in-flight guard — set true BEFORE the first await so a
   // manual Start click and the auto-open effect firing in the same tick cannot
   // both issue vara_open_session (a render-synced ref can't: it only updates at
@@ -136,6 +156,9 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
   // recorded on the call's resolve and `failed` in its catch (Packet semantics).
   const [target, setTarget] = useState<string>('');
   const [exchanging, setExchanging] = useState(false);
+  // tuxlink-6urh2: mirrors busyRef — read by the status-poll effect.
+  const exchangingRef = useRef(false);
+  exchangingRef.current = exchanging;
   // tuxlink-8fkkk A3: operator-entered frequency in MHz for CAT-based QSY before
   // the VARA connect. "7.102" → 7102000 Hz. Empty/invalid → null (backend skips
   // the pre-audio retune). Mirrors ARDOP; uses the shared parse/normalize helper.
@@ -265,6 +288,56 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
       });
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  // tuxlink-6urh2: recurring status poll. Before this effect existed the
+  // panel NEVER re-read `vara_status` after the mount-time snapshot except
+  // in the Start/Stop/Send-Receive call sites' own `finally` blocks — a
+  // backend-driven transition with no frontend call in flight (the VARA
+  // drop-detection heartbeat stamping `SocketLost` while the operator is
+  // just sitting on an idle-open session) was invisible until the operator
+  // happened to click something. Polling makes that transition observable.
+  //
+  // Skip applying a tick's result while:
+  //  - `openInFlightRef` — a Start click's own `vara_open_session` call is
+  //    in flight; that call's `finally` already re-syncs status, and a
+  //    poll resolving in the same window could show a stale pre-open
+  //    snapshot.
+  //  - `busyRef` — a Start/Stop click is in flight (shared `busy` flag);
+  //    same reasoning.
+  //  - `exchangingRef` — an outbound Send/Receive is running.
+  //    `VaraSession::take_transport` (the dial's claim on the transport)
+  //    transiently sets `status.state = Closed` for the WHOLE exchange
+  //    window, not just a connect-timing race — applying a poll tick here
+  //    would flip the panel back to the Start button mid-exchange. The
+  //    `onSendReceive` `finally` block already re-syncs status once the
+  //    exchange (and the transport install-back) completes.
+  //
+  // Deliberately NOT reusing `openInitiatedRef` for this gate (unlike the
+  // one-shot mount poll above): that ref is set true on the FIRST open and
+  // never reset, so gating a RECURRING poll on it would permanently
+  // disable polling after the operator's first Start click — defeating
+  // the point of observing a heartbeat-driven SocketLost that can occur
+  // long after that first open. The three transient refs above cover the
+  // actual clobber hazard without that side effect.
+  useEffect(() => {
+    let cancelled = false;
+    const id = setInterval(() => {
+      if (cancelled) return;
+      if (openInFlightRef.current || busyRef.current || exchangingRef.current) return;
+      invoke<VaraStatusDto>('vara_status')
+        .then((s) => {
+          if (!cancelled && s) setStatus(s);
+        })
+        .catch(() => {
+          // Transient poll failure — keep the prior status and try again
+          // on the next tick.
+        });
+    }, 2500);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
     };
   }, []);
 
@@ -590,6 +663,16 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
         {status.lastError && (
           <p className="radio-panel-error" data-testid="vara-last-error">
             {status.lastError}
+          </p>
+        )}
+        {/* tuxlink-6urh2: SocketLost is heartbeat-detected, not an operator
+            action — the plain error string above doesn't say what to do
+            about it. isOpen already excludes 'socket-lost' (see below), so
+            the action row already reverts to the Start button; this note
+            just tells the operator that. */}
+        {status.state === 'socket-lost' && (
+          <p className="radio-panel-radio-help" data-testid="vara-socket-lost-banner">
+            The VARA connection dropped on its own. Press Start to reopen it.
           </p>
         )}
       </section>

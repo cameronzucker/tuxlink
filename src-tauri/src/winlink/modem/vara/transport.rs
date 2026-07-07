@@ -223,4 +223,81 @@ impl VaraTransport {
             Box::new(stream_clone) as Box<dyn ShutdownableStream>,
         ))
     }
+
+    /// Clone the cmd-port socket for the drop-detection heartbeat
+    /// (tuxlink-6urh2). Mirrors [`Self::try_clone_abort_writer`]'s
+    /// clone-the-cmd-socket pattern, but the returned handle is used PURELY
+    /// as input to [`Self::peek_liveness`] — never for writing — so it
+    /// carries none of the abort writer's bounded `write_timeout` setup.
+    pub fn try_clone_cmd_socket(&self) -> io::Result<TcpStream> {
+        self.cmd_writer.try_clone()
+    }
+
+    /// Pure liveness probe for a cmd-port socket clone (tuxlink-6urh2). Peeks
+    /// (does NOT consume) one byte to distinguish "peer closed" from "peer
+    /// idle" without disturbing [`Self::recv`]'s byte stream:
+    ///
+    /// - `Ok(0)` — the peer sent FIN with nothing buffered: [`LivenessProbe::Dead`].
+    /// - `Err(WouldBlock)` — no data buffered, socket still open: this is the
+    ///   steady idle-open state: [`LivenessProbe::Alive`].
+    /// - `Ok(n > 0)` — data is sitting in the receive buffer unread by
+    ///   [`Self::recv`]: [`LivenessProbe::Alive`]. The peek does not consume
+    ///   the byte, so a subsequent `recv()` still sees it — no corruption of
+    ///   the command exchange.
+    /// - Any other `Err` (`ECONNRESET`, etc.): [`LivenessProbe::Dead`].
+    ///
+    /// **No shared-socket-option mutation (load-bearing).** `TcpStream::try_clone`
+    /// dup()s the fd, so the clone shares the underlying open file description —
+    /// and thus `O_NONBLOCK` — with `cmd_writer` / `cmd_reader`. We therefore do
+    /// NOT call `set_nonblocking`: its flag is shared and would flip the whole
+    /// transport nonblocking, silently breaking `recv()`'s blocking-with-timeout
+    /// contract. Instead the probe passes `MSG_DONTWAIT` — a PER-CALL nonblocking
+    /// flag that affects only this one `recv` syscall and never touches the
+    /// shared file description — combined with `MSG_PEEK` (no consume). So a
+    /// concurrent `recv()`/`send()` on any clone is completely undisturbed, with
+    /// no transient-nonblocking window to reason about.
+    pub fn peek_liveness(sock: &TcpStream) -> LivenessProbe {
+        use std::os::unix::io::AsRawFd;
+        let mut buf = [0u8; 1];
+        // SAFETY: `sock` is a live `TcpStream`, so its fd is valid for the
+        // duration of this call; `recv` writes at most `buf.len()` bytes into
+        // `buf`. MSG_PEEK leaves the byte in the kernel receive buffer (no
+        // consume); MSG_DONTWAIT makes only this one call nonblocking.
+        let n = unsafe {
+            libc::recv(
+                sock.as_raw_fd(),
+                buf.as_mut_ptr() as *mut libc::c_void,
+                buf.len(),
+                libc::MSG_PEEK | libc::MSG_DONTWAIT,
+            )
+        };
+        if n == 0 {
+            // Peer sent FIN with nothing buffered — connection closed.
+            LivenessProbe::Dead
+        } else if n > 0 {
+            // Data sitting unread by `recv()`; the peek did not consume it.
+            LivenessProbe::Alive
+        } else {
+            match io::Error::last_os_error().kind() {
+                // No data yet, socket open — the steady idle-open state.
+                io::ErrorKind::WouldBlock => LivenessProbe::Alive,
+                // Interrupted by a signal — inconclusive; retry next tick.
+                io::ErrorKind::Interrupted => LivenessProbe::Alive,
+                // ECONNRESET / EPIPE / EBADF etc. — treat as dead.
+                _ => LivenessProbe::Dead,
+            }
+        }
+    }
+}
+
+/// Liveness classification returned by [`VaraTransport::peek_liveness`].
+/// See that fn's doc comment for the exact `peek()` outcome mapping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LivenessProbe {
+    /// Socket is idle-alive (`WouldBlock`) or has unread data buffered
+    /// (`Ok(n > 0)`).
+    Alive,
+    /// Peer closed the connection (`Ok(0)`) or the peek failed with an
+    /// error other than `WouldBlock`.
+    Dead,
 }
