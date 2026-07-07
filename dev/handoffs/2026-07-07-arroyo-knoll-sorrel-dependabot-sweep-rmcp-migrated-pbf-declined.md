@@ -17,21 +17,22 @@ Eight low-risk dependabot bumps, each verified CI-green by headSha before merge:
 - **#1029** color2k 2.0.3→2.0.4 (npm) — had ONE flaky failure (`RigControlSection > CAT-port picker`, unrelated to a color lib, passed on arm64); re-ran the job → green → merged
 - **#1027** vitest 3.2.6→3.2.7 (npm dev) — hit a package-lock conflict after #1030 merged; `@dependabot rebase` → green → merged
 
-## In flight — rmcp 0.8.5 → 2.1.0 (PR #1042, bd tuxlink-o98yl)
+## ✅ MERGED — rmcp 0.8.5 → 2.1.0 (PR #1042, bd tuxlink-o98yl closed)
 
-**PR #1042** (`bd-tuxlink-o98yl/rmcp-migration-v2`), worktree `worktrees/bd-tuxlink-o98yl-rmcp-migration`. Supersedes dependabot #1033 and the abandoned #1041 (see lesson below). Only gitignored `node_modules`/`target` on disk in the worktree; the branch is fully pushed.
-
-**Migration COMPILES — confirmed by CI:** both `build ECT .deb` jobs (amd64 + arm64), which do a full Rust workspace compile, are GREEN. The `verify` jobs (which run clippy `-D warnings` + `cargo test` AFTER the frontend `vitest` step) failed on a **flaky frontend vitest run** — all 3668 tests passed but the step exited non-zero on `TypeError: fetch failed` / `Failed to get Canvas context` unhandled rejections (network/jsdom flakiness, identical frontend to main, unrelated to this Rust-only change). Re-ran the failed verify jobs to clear the flake and let clippy/cargo run. **NEXT SESSION: confirm verify is green (SHA `71e7462e`), then `gh pr merge 1042 --merge` and `gh pr close 1033`.** If verify red again on the same flaky vitest, just re-run it; if red on clippy, it'll be a style nit (the code already compiles on both arches).
+**PR #1042 MERGED to main** (merge commit `e1b1fa89`; all 12 checks green on both arches by SHA `51e819e7`). main now carries `rmcp = "2.1"`. Superseded dependabot #1033 (closed) and the abandoned #1041 (closed — see lesson below). bd **tuxlink-o98yl** closed. Worktree `worktrees/bd-tuxlink-o98yl-rmcp-migration` is now on a merged-dead branch — dispose it (ADR 0009).
 
 Migration was **verified against the actual rmcp 2.1.0 crate source** (`cargo fetch` downloads source without a compile — the Pi can't finish a cold Rust build):
 - `Content` → `ContentBlock` (`CallToolResult::success` now takes `Vec<ContentBlock>`); every `Content::json` → `ContentBlock::json`.
 - `RawResource::new(..).no_annotation()` → `Resource::new(..)` fluent builder — `AnnotateAble`/`no_annotation` removed upstream; annotations embed on `Resource`.
-- `#[non_exhaustive]` structs → constructors: `ReadResourceResult::new`, `GetPromptResult::new(..).with_description(..)`, `PromptArgument::new(..)` builder, `CallToolRequestParam::new(name)` + `.arguments`.
+- `#[non_exhaustive]` structs → constructors: `ReadResourceResult::new`, `GetPromptResult::new(..).with_description(..)`, `PromptArgument::new(..)` builder.
 - `ServerInfo` lost `Default` → `ServerInfo::new(caps).with_instructions(..)`.
 - `PromptMessageRole` → `Role`; `PromptMessageContent::Text{..}` → `ContentBlock::Text(..)`.
-- Singular `*RequestParam` names are still valid type aliases in 2.1.0 (the 2.0.0 rename was reverted) — imports unchanged. Macro surface unchanged.
+- The singular `*RequestParam` names (`Paginated`/`ReadResource`/`GetPrompt`/`CallTool`) are **`#[deprecated]` aliases** in 2.1 → renamed to the `*Params` plural. `cargo build` tolerates the deprecation (both ECT .deb builds were green) but **clippy `-D warnings` rejects it**.
+- rmcp 2.1's `#[tool_handler]` defaults its router to `Self::tool_router()`, leaving the stored `tool_router` field unread (`dead_code`) → `#[tool_handler(router = self.tool_router)]` (rmcp's own canonical test form).
 
-**LESSON (worth carrying forward): dependabot branches are based on a STALE main, and GitHub PR-merge CI compiles the branch merged with CURRENT main.** #1041 was built on the stale dependabot base; it compiled locally-clean but CI failed 10× because main had added new MCP tools still calling `Content::json` that the merge reintroduced. Fix: **rebase the dependabot branch onto `origin/main` first**, then migrate. Because the original branch was already pushed and force-push is banned, the rebased work went to a NEW branch (`-v2`) with a fresh PR and #1041 was closed. (pbf avoided this by rebasing before first push.)
+**LESSONS worth carrying forward (both cost a CI round):**
+1. **dependabot branches are stale-based; GitHub PR-merge CI compiles the branch merged with CURRENT main.** #1041 (built on the stale dependabot base) compiled locally-clean but CI failed 10× because main had added new MCP tools still calling `Content::json`. Fix: **rebase the dependabot branch onto `origin/main` first**, then migrate. (Because the original branch was already pushed and force-push is banned, the rebased work went to a NEW branch `-v2` with a fresh PR; #1041 closed. Rename the local branch to match the live PR branch or the branch-lifecycle hook refuses commits.)
+2. **"Both ECT .deb builds green" proves the code COMPILES, not that clippy `-D warnings` passes.** Deprecation + dead_code are lints, not compile errors — they only fail under `verify`'s clippy step, which runs BEHIND the frontend vitest in the same job. So a flaky vitest can mask an un-run clippy gate. Read *which step* verify failed on before assuming a Rust problem.
 
 ## Declined — pbf 4→5 (#875 CLOSED, bd tuxlink-tgxak OPEN follow-up)
 
@@ -40,13 +41,13 @@ pbf 5 is a breaking change, not a bump: default export removed, `Pbf` split into
 ## Worktree / branch state
 
 - **Disposed (ADR 0009, all clean — 0 tracked-dirty / 0 untracked / 0 gitignored-stateful):** `worktrees/bd-tuxlink-a8uh1-anthropic-temp-gate` (merged #1034), `worktrees/bd-tuxlink-xnenf-ctx-meter` (merged #1037), `worktrees/bd-tuxlink-jfpj2-ollama-antistacking` (merged #1038), `worktrees/bd-tuxlink-tgxak-pbf-migration` (declined). `qe6ie` and `xnenf-remote-native-ollama` from the prior handoff were already gone.
-- **Live:** `worktrees/bd-tuxlink-o98yl-rmcp-migration` (PR #1042 — keep until merged).
+- **To dispose (merged-dead after this session):** `worktrees/bd-tuxlink-o98yl-rmcp-migration` (PR #1042 merged) and `worktrees/handoff-arroyo` (handoff branch pushed). Both should be disposed at session end / next session per ADR 0009.
 
 ## bd state
 
-- **tuxlink-o98yl** — in_progress; PR #1042. Close when #1042 merges.
-- **tuxlink-tgxak** — open; pbf re-vendoring follow-up.
-- **tuxlink-jmps0** — the low-risk batch tracker; all 8 merged → can be closed.
+- **tuxlink-o98yl** — CLOSED (rmcp migration merged, #1042).
+- **tuxlink-jmps0** — CLOSED (low-risk batch, all 8 merged).
+- **tuxlink-tgxak** — OPEN; the only remaining follow-up — bump pbf to 5.x once protomaps-leaflet is re-vendored against pbf 5 (or the direct pbf dep is dropped).
 
 ## Hook notes for next session
 
