@@ -4386,11 +4386,31 @@ pub fn read_usb_serial_meta(
     // missing `device` node yields `None`, not a bogus path).
     let interface_dir = std::fs::canonicalize(&device_link).ok()?;
 
-    // `bInterfaceNumber` lives directly in the interface directory when this
-    // node IS a USB interface. It's genuinely absent for non-composite
-    // devices / other tty backends, so a missing file is not an error.
-    let interface = read_sysfs_attr(&interface_dir, "bInterfaceNumber")
-        .and_then(|hex| u8::from_str_radix(hex.trim(), 16).ok());
+    // `bInterfaceNumber` lives on the USB *interface* directory. For `ttyUSB*`
+    // the canonicalized `device` target IS that interface (found immediately);
+    // for `ttyACM*` (an extra `tty/ttyACM0` level) and some other layouts it
+    // sits one or more levels up. Walk ancestors (bounded) to the first dir
+    // that carries it, stopping once we reach the USB *device* dir (`idVendor`)
+    // — the interface is always strictly below the device. Absent everywhere →
+    // non-composite device / other tty backend; not an error.
+    let interface = {
+        let mut dir = interface_dir.clone();
+        let mut found = None;
+        for _ in 0..8 {
+            if let Some(hex) = read_sysfs_attr(&dir, "bInterfaceNumber") {
+                found = u8::from_str_radix(hex.trim(), 16).ok();
+                break;
+            }
+            if dir.join("idVendor").is_file() {
+                break;
+            }
+            match dir.parent() {
+                Some(p) => dir = p.to_path_buf(),
+                None => break,
+            }
+        }
+        found
+    };
 
     let device_dir = find_usb_device_dir(&interface_dir)?;
     let meta = UsbSerialMeta {
@@ -8791,6 +8811,34 @@ mod tests {
         assert_ne!(label0, label1);
         assert!(label0.contains("(port 0)"), "{label0}");
         assert!(label1.contains("(port 1)"), "{label1}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn read_usb_serial_meta_finds_interface_number_on_an_ancestor_dir() {
+        // Some layouts (notably ttyACM*) canonicalize `device` to a node BELOW
+        // the USB interface, so `bInterfaceNumber` sits on an ancestor rather
+        // than the symlink target. The upward walk must still recover it.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let device_dir = root.join("__acm__").join("usb1").join("1-2");
+        let iface_dir = device_dir.join("1-2:1.0");
+        let sub_node = iface_dir.join("tty").join("ttyACM0");
+        std::fs::create_dir_all(&sub_node).unwrap();
+        std::fs::write(device_dir.join("idVendor"), "0483\n").unwrap();
+        std::fs::write(device_dir.join("idProduct"), "5740\n").unwrap();
+        std::fs::write(device_dir.join("product"), "STM32 Virtual COM Port\n").unwrap();
+        std::fs::write(iface_dir.join("bInterfaceNumber"), "03\n").unwrap();
+        let tty_dir = root.join("ttyACM0");
+        std::fs::create_dir_all(&tty_dir).unwrap();
+        // The tty's `device` points at the sub-node, which has NO
+        // bInterfaceNumber; the walk must climb to `1-2:1.0` to find it.
+        std::os::unix::fs::symlink(&sub_node, tty_dir.join("device")).unwrap();
+
+        let meta = read_usb_serial_meta(root, "ttyACM0").expect("meta for ttyACM0");
+        assert_eq!(meta.interface, Some(3), "walked up to the ancestor interface");
+        assert_eq!(meta.product.as_deref(), Some("STM32 Virtual COM Port"));
+        assert_eq!(meta.id_vendor.as_deref(), Some("0483"));
     }
 
     #[test]
