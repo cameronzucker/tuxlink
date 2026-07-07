@@ -188,12 +188,20 @@ pub fn vara_install_start(app: AppHandle, installer_path: String) -> Result<Engi
     });
 
     // Stream stdout line-by-line, emitting each parsed event and remembering
-    // the terminal summary.
+    // the terminal summary plus the last failed checkpoint's detail (the real,
+    // specific error — e.g. "pkexec denied" or "regsvr32 failed" — which the
+    // summary event does not carry).
     let mut summary: Option<EngineEvent> = None;
+    let mut last_failed_detail: Option<String> = None;
     for line in BufReader::new(stdout).lines().map_while(Result::ok) {
         if let Some(ev) = parse_engine_line(&line) {
             if ev.event == "summary" {
                 summary = Some(ev.clone());
+            }
+            if ev.event == "checkpoint" && ev.state.as_deref() == Some("failed") {
+                if let Some(d) = ev.detail.as_ref().filter(|d| !d.is_empty()) {
+                    last_failed_detail = Some(d.clone());
+                }
             }
             let _ = app.emit(VARA_INSTALL_PROGRESS_EVENT, &ev);
         }
@@ -206,12 +214,12 @@ pub fn vara_install_start(app: AppHandle, installer_path: String) -> Result<Engi
 
     match summary {
         Some(ev) if status.success() && ev.ok == Some(true) => Ok(ev),
-        Some(ev) => Err(ev
-            .detail
-            .filter(|d| !d.is_empty())
+        Some(ev) => Err(last_failed_detail
+            .or_else(|| ev.detail.filter(|d| !d.is_empty()))
             .or_else(|| non_empty(stderr_text))
             .unwrap_or_else(|| "VARA setup did not complete".to_string())),
-        None => Err(non_empty(stderr_text)
+        None => Err(last_failed_detail
+            .or_else(|| non_empty(stderr_text))
             .unwrap_or_else(|| "VARA setup produced no result".to_string())),
     }
 }

@@ -239,7 +239,7 @@ export function StepVaraProvision() {
 
       {phase === 'done' && (
         <div data-testid="wizard-vara-done">
-          <p className="wizard-vara__ok">VARA HF is set up and will start automatically.</p>
+          <p className="wizard-vara__ok">VARA HF is set up. It will start with Tuxlink when your radio is connected.</p>
           <div className="wizard-submit-row">
             <button type="button" data-testid="wizard-vara-continue" onClick={advance} autoFocus>
               Continue

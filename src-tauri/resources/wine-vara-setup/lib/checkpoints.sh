@@ -35,7 +35,13 @@ detect_deps() {
 detect_prefix() { [ -d "$(wv_prefix)/drive_c/windows/syswow64" ] && [ -f "$(wv_prefix)/system.reg" ]; }
 detect_vara() { [ -e "$(wv_prefix)/drive_c/VARA HF/VARA.exe" ]; }
 detect_vb6() { [ -e "$(wv_prefix)/drive_c/windows/syswow64/msvbvm60.dll" ]; }
-detect_ocx() { grep -qi MSWINSCK "$(wv_prefix)/system.reg" 2>/dev/null; }
+# Require BOTH the critical TCP control (MSWINSCK) AND the last control the
+# do_ocx loop registers (MSSTDFMT): if the last is present the loop completed,
+# so a retry won't skip a partially-registered set.
+detect_ocx() {
+  local reg; reg="$(wv_prefix)/system.reg"
+  grep -qi MSWINSCK "$reg" 2>/dev/null && grep -qi MSSTDFMT "$reg" 2>/dev/null
+}
 detect_autostart() { [ -e "$HOME/.config/systemd/user/wine-vara.service" ]; }
 
 # ---- launch helpers --------------------------------------------------------
@@ -73,8 +79,17 @@ wv_wait_ports() {
 # ---- actions (side effects; some require internet) -------------------------
 
 # Installs WINE + winetricks, plus iproute2 (ss) and a netcat (nc) used by the
-# verify checkpoint. Requires internet.
-do_deps() { pkexec apt-get install -y wine winetricks iproute2 netcat-openbsd; }
+# verify checkpoint. Requires internet. Debian/apt only: on a non-apt host
+# (Fedora, openSUSE, Arch) fail loudly with manual instructions rather than
+# blindly invoking apt-get, which does not exist there.
+do_deps() {
+  if command -v apt-get >/dev/null; then
+    pkexec apt-get install -y wine winetricks iproute2 netcat-openbsd
+  else
+    echo "no apt-get on this system. Install these with your package manager, then re-run: wine winetricks iproute2 (ss) and a netcat (nc)" >&2
+    return 1
+  fi
+}
 
 do_prefix() {
   wv_wineenv
@@ -139,7 +154,9 @@ UNIT
   # The unit is installed regardless (it starts at next graphical login); warn
   # rather than hard-fail so headless provisioning still succeeds.
   if ! { systemctl --user daemon-reload && systemctl --user enable --now wine-vara.service; } 2>/dev/null; then
-    echo "unit installed but 'systemctl --user enable' did not run (no active user session?); it will start at next login" >&2
+    # Without a successful `enable` the wants/ symlink is not created, so the
+    # unit will NOT auto-start. Be honest and give the manual command.
+    echo "unit written but could not be enabled (no active user systemd session?). Enable it later with: systemctl --user enable --now wine-vara.service" >&2
   fi
   return 0
 }
