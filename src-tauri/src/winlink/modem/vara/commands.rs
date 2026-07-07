@@ -634,6 +634,63 @@ impl VaraSession {
         }
     }
 
+    /// Guarded SocketLost stamp: the DEAD-transport sibling of
+    /// [`Self::install_transport_if_generation_matches`] (tuxlink-6urh2 v2,
+    /// self-adrev MEDIUM 2). When a consumer detects a *terminal* transport
+    /// error — the listener's cmd-socket `Eof`/`TransportClosed` or a hard I/O
+    /// error — the transport is dead and must NOT be laundered back into the
+    /// session as `VaraState::Open`. This drops it and transitions the session
+    /// to `SocketLost` (preserving `bound_host`/`bound_cmd_port` so the UI can
+    /// offer reopen), mirroring the heartbeat's own dead-path field reset.
+    ///
+    /// Generation-gated exactly like the install sibling: a stale
+    /// `snapshot_gen` means the operator's Close intervened and already tore
+    /// the session down, so we just drop the (already-dropped) transport and
+    /// leave state alone (`Err(())`) rather than stamping SocketLost over a
+    /// session the operator deliberately closed.
+    pub fn mark_socket_lost_if_generation_matches(
+        &self,
+        t: VaraTransport,
+        snapshot_gen: u64,
+    ) -> Result<(), ()> {
+        // Dead socket — nothing to preserve; close its fds up front so we
+        // don't hold the session mutex across the drop.
+        drop(t);
+        match self.inner.lock() {
+            Ok(mut guard) => {
+                let live = self.close_generation.load(Ordering::Acquire);
+                if live != snapshot_gen {
+                    // Close intervened: leave the close path's teardown intact.
+                    return Err(());
+                }
+                guard.active_intent = None;
+                guard.active_transport_kind = None;
+                guard.abort_writer = None;
+                guard.abort_stream = None;
+                guard.transport_owner = TransportOwner::None;
+                guard.current_exchange = None;
+                guard.heartbeat_shutdown = None;
+                let bound_host = guard.status.bound_host.clone();
+                let bound_cmd_port = guard.status.bound_cmd_port;
+                guard.status = VaraStatus {
+                    state: VaraState::SocketLost,
+                    last_error: Some(
+                        "VARA connection lost — reopen to reconnect".to_string(),
+                    ),
+                    bound_host,
+                    bound_cmd_port,
+                    listener_armed: false,
+                    exchange: None,
+                    transport_owner: TransportOwner::None,
+                    active_intent: None,
+                    active_transport_kind: None,
+                };
+                Ok(())
+            }
+            Err(_poisoned) => Err(()),
+        }
+    }
+
     // ── Arbiter (tuxlink-0ye6 Task 4.3, Codex Round 1 P1 #5) ────────────
 
     /// Current transport owner — accessor for the arbiter state machine.
@@ -3210,6 +3267,72 @@ mod tests {
         assert_eq!(session.snapshot().state, VaraState::Open);
 
         session.set_transport_owner_for_test(TransportOwner::None);
+        drop(session);
+        ch.join().unwrap();
+        dh.join().unwrap();
+    }
+
+    /// tuxlink-6urh2 v2 (self-adrev MEDIUM 2): a consumer that reports a dead
+    /// transport via `mark_socket_lost_if_generation_matches` must transition
+    /// the session to `SocketLost` (preserving bound host/port for reopen) and
+    /// drop the corpse — NOT re-install it as `Open`.
+    #[test]
+    fn mark_socket_lost_stamps_socket_lost_and_drops_transport() {
+        let (transport, cmd_port, ch, dh) = loopback_vara_transport(false);
+        let session = open_vara_session(transport, cmd_port);
+        let gen = session.current_close_generation();
+        // A consumer (listener) holds the transport, then finds it dead.
+        let t = session.take_transport().expect("transport present");
+
+        assert!(session
+            .mark_socket_lost_if_generation_matches(t, gen)
+            .is_ok());
+
+        let snap = session.snapshot();
+        assert_eq!(snap.state, VaraState::SocketLost);
+        assert_eq!(
+            snap.last_error.as_deref(),
+            Some("VARA connection lost — reopen to reconnect")
+        );
+        assert_eq!(snap.transport_owner, TransportOwner::None);
+        // bound host/port preserved so the UI can offer reopen.
+        assert_eq!(snap.bound_host.as_deref(), Some("127.0.0.1"));
+        assert_eq!(snap.bound_cmd_port, Some(cmd_port));
+        // The dead transport must be gone, never laundered back to Open.
+        assert!(
+            session.take_transport().is_none(),
+            "dead transport must be dropped, not re-installed"
+        );
+
+        drop(session);
+        ch.join().unwrap();
+        dh.join().unwrap();
+    }
+
+    /// tuxlink-6urh2 v2 (self-adrev MEDIUM 2): a stale generation (operator's
+    /// Close intervened while the consumer ran) must make the SocketLost stamp
+    /// a no-op — the close path already owns the teardown; stamping SocketLost
+    /// over it would revive a deliberately-closed session's error state.
+    #[test]
+    fn mark_socket_lost_is_noop_on_stale_generation() {
+        let (transport, cmd_port, ch, dh) = loopback_vara_transport(false);
+        let session = open_vara_session(transport, cmd_port);
+        let stale_gen = session.current_close_generation();
+        // Simulate the operator's Close bumping the generation mid-consume.
+        session.bump_close_generation();
+        let t = session.take_transport().expect("transport present");
+
+        assert!(session
+            .mark_socket_lost_if_generation_matches(t, stale_gen)
+            .is_err());
+
+        // We did NOT stamp SocketLost — the close path's teardown is untouched.
+        assert_ne!(
+            session.snapshot().state,
+            VaraState::SocketLost,
+            "stale generation must not stamp SocketLost over the close path"
+        );
+
         drop(session);
         ch.join().unwrap();
         dh.join().unwrap();

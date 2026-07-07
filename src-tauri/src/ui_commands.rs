@@ -6213,6 +6213,15 @@ fn vara_listener_consumer_task(
         }
     };
 
+    // tuxlink-6urh2 v2 (self-adrev MEDIUM 2): distinguish a *terminal transport
+    // error* exit (cmd-socket EOF / hard I/O error — the socket is DEAD) from a
+    // clean disarm exit (shutdown flag). A clean disarm re-installs the still-
+    // live transport to `Open`; a terminal error must instead stamp
+    // `SocketLost` and drop the corpse, NOT launder it back through the
+    // install path (which, since no operator close bumped the generation,
+    // would re-install a dead transport as `Open`).
+    let mut terminal_transport_error = false;
+
     while !shutdown.load(Ordering::SeqCst) {
         // 1-second tick budget on each poll — same cadence as ARDOP's
         // wait_for_listener_connect. The consumer task reacts to disarm
@@ -6231,6 +6240,10 @@ fn vara_listener_consumer_task(
             }
             Err(e) => {
                 progress(&format!("VARA listener consumer: transport error {e}; stopping."));
+                // tuxlink-6urh2 v2 (self-adrev MEDIUM 2): the cmd socket is
+                // dead (EOF / hard I/O). Flag it so the drain path stamps
+                // SocketLost instead of re-installing the corpse as Open.
+                terminal_transport_error = true;
                 break;
             }
         };
@@ -6351,39 +6364,60 @@ fn vara_listener_consumer_task(
         }
     }
 
-    // Shutdown path: send LISTEN OFF best-effort and return the transport
-    // to the session so the operator's vara_close_session / vara_status
-    // sees the transport as if the consumer never owned it.
-    progress("VARA listener consumer: draining; sending LISTEN OFF.");
-    let _ = crate::winlink::modem::vara::set_listen(&mut transport, false);
-    // tuxlink-pdnw (Codex Phase 3-4 P1 #4): guarded install. Stale snapshot
-    // → close intervened (vara_close_session_inner ran since we took the
-    // transport). Drop the transport instead of restoring `VaraState::Open`.
-    //
-    // tuxlink-0iqi: the listener consumer's drain path runs at shutdown —
-    // it's tearing down the session, not preserving the operator's active
-    // mode. Pass `None`/`None` for active_intent + active_transport_kind
-    // so the install-back (if it happens — fresh snapshot only) resets
-    // the active-mode fields, matching the legacy drain behavior.
-    match vara_session.install_transport_if_generation_matches(
-        transport,
-        close_gen_snapshot,
-        bound_host,
-        bound_cmd_port,
-        None,
-        None,
-    ) {
-        Ok(()) => {}
-        Err(dropped) => {
-            progress(
-                "VARA listener consumer: close intervened during drain; \
-                 dropping transport instead of restoring session.",
-            );
-            drop(dropped);
+    if terminal_transport_error {
+        // tuxlink-6urh2 v2 (self-adrev MEDIUM 2): the socket is dead. Do NOT
+        // send LISTEN OFF (the write would fail) and do NOT re-install — stamp
+        // SocketLost + drop the corpse so the operator sees "connection lost —
+        // reopen" and the panel unlocks, instead of a laundered "Open" that
+        // only self-heals ~3s later when the heartbeat's next tick reads EOF.
+        // Generation-gated: a stale snapshot means Close already intervened, so
+        // leave that teardown intact.
+        match vara_session.mark_socket_lost_if_generation_matches(transport, close_gen_snapshot) {
+            Ok(()) => {
+                progress("VARA listener consumer: cmd socket lost; session marked SocketLost.");
+            }
+            Err(()) => {
+                progress(
+                    "VARA listener consumer: cmd socket lost but close intervened; \
+                     leaving teardown to the close path.",
+                );
+            }
+        }
+    } else {
+        // Clean disarm path: send LISTEN OFF best-effort and return the still-
+        // live transport to the session so the operator's vara_close_session /
+        // vara_status sees it as if the consumer never owned it.
+        progress("VARA listener consumer: draining; sending LISTEN OFF.");
+        let _ = crate::winlink::modem::vara::set_listen(&mut transport, false);
+        // tuxlink-pdnw (Codex Phase 3-4 P1 #4): guarded install. Stale snapshot
+        // → close intervened (vara_close_session_inner ran since we took the
+        // transport). Drop the transport instead of restoring `VaraState::Open`.
+        //
+        // tuxlink-0iqi: the listener consumer's drain path runs at shutdown —
+        // it's tearing down the session, not preserving the operator's active
+        // mode. Pass `None`/`None` for active_intent + active_transport_kind
+        // so the install-back (if it happens — fresh snapshot only) resets
+        // the active-mode fields, matching the legacy drain behavior.
+        match vara_session.install_transport_if_generation_matches(
+            transport,
+            close_gen_snapshot,
+            bound_host,
+            bound_cmd_port,
+            None,
+            None,
+        ) {
+            Ok(()) => {}
+            Err(dropped) => {
+                progress(
+                    "VARA listener consumer: close intervened during drain; \
+                     dropping transport instead of restoring session.",
+                );
+                drop(dropped);
+            }
         }
     }
     *listen_state.inner.lock().unwrap() = None;
-    progress("VARA listener disarmed (transport returned).");
+    progress("VARA listener disarmed.");
 }
 
 fn with_packet_allowed_stations<F>(mutate: F) -> Result<(), UiError>
