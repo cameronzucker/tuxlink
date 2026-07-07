@@ -12,10 +12,10 @@ use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
-    AnnotateAble, CallToolResult, Content, GetPromptRequestParam, GetPromptResult, Implementation,
-    ListPromptsResult, ListResourcesResult, PaginatedRequestParam, Prompt, PromptArgument,
-    PromptMessage, PromptMessageRole, ProtocolVersion, RawResource, ReadResourceRequestParam,
-    ReadResourceResult, ResourceContents, ServerCapabilities, ServerInfo,
+    CallToolResult, ContentBlock, GetPromptRequestParam, GetPromptResult, ListPromptsResult,
+    ListResourcesResult, PaginatedRequestParam, Prompt, PromptArgument, PromptMessage,
+    ReadResourceRequestParam, ReadResourceResult, Resource, ResourceContents, Role,
+    ServerCapabilities, ServerInfo,
 };
 use rmcp::service::RequestContext;
 use rmcp::{tool, tool_handler, tool_router, ErrorData, RoleServer};
@@ -103,7 +103,7 @@ impl TuxlinkMcp {
     )]
     pub async fn server_info(&self) -> Result<CallToolResult, ErrorData> {
         let dto = server_info_view(&self.state);
-        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
     // ----- Status / diagnostics (no taint) -----
@@ -114,7 +114,7 @@ impl TuxlinkMcp {
     )]
     pub async fn backend_status(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.status.backend_status().await.map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
     #[tool(
@@ -123,7 +123,7 @@ impl TuxlinkMcp {
     )]
     pub async fn modem_get_status(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.status.modem_status().await.map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
     #[tool(
@@ -132,7 +132,7 @@ impl TuxlinkMcp {
     )]
     pub async fn vara_status(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.status.vara_status().await.map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
     #[tool(
@@ -141,7 +141,7 @@ impl TuxlinkMcp {
     )]
     pub async fn position_status(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.status.position_status().await.map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
     #[tool(
@@ -150,7 +150,7 @@ impl TuxlinkMcp {
     )]
     pub async fn platform_info(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.status.platform_info().await.map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
     #[tool(
@@ -159,7 +159,7 @@ impl TuxlinkMcp {
     )]
     pub async fn rig_status(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.status.rig_status().await.map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
     #[tool(
@@ -168,7 +168,7 @@ impl TuxlinkMcp {
     )]
     pub async fn get_wizard_completed(&self) -> Result<CallToolResult, ErrorData> {
         let done = self.state.status.wizard_completed().await.map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json(done)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(done)?]))
     }
 
     #[tool(
@@ -186,7 +186,7 @@ impl TuxlinkMcp {
             .p2p_peer_password_status(&callsign)
             .await
             .map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json(set)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(set)?]))
     }
 
     // ----- Mailbox -----
@@ -202,7 +202,7 @@ impl TuxlinkMcp {
         let Parameters(FolderParams { folder }) = params;
         let dto = self.state.mailbox.list(&folder).await.map_err(port_err)?;
         self.state.guard.taint();
-        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
     #[tool(
@@ -221,7 +221,7 @@ impl TuxlinkMcp {
             .await
             .map_err(port_err)?;
         self.state.guard.taint();
-        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
     #[tool(
@@ -230,7 +230,7 @@ impl TuxlinkMcp {
     )]
     pub async fn user_folders_list(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.mailbox.folders().await.map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
     // ----- Search -----
@@ -259,7 +259,7 @@ impl TuxlinkMcp {
             .await
             .map_err(port_err)?;
         self.state.guard.taint();
-        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
     #[tool(
@@ -272,7 +272,7 @@ impl TuxlinkMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let Parameters(QueryParams { query }) = params;
         let dto = self.state.search.docs(&query).await.map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
     #[tool(
@@ -281,7 +281,7 @@ impl TuxlinkMcp {
     )]
     pub async fn catalog_list(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.search.catalog().await.map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
     // ----- Config (curated, non-secret) -----
@@ -292,7 +292,7 @@ impl TuxlinkMcp {
     )]
     pub async fn config_read(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.config.read().await.map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
     #[tool(
@@ -301,7 +301,7 @@ impl TuxlinkMcp {
     )]
     pub async fn config_get_ardop(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.config.ardop().await.map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
     #[tool(
@@ -310,7 +310,7 @@ impl TuxlinkMcp {
     )]
     pub async fn config_get_vara(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.config.vara().await.map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
     #[tool(
@@ -319,7 +319,7 @@ impl TuxlinkMcp {
     )]
     pub async fn packet_config_get(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.config.packet().await.map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
     #[tool(
@@ -328,7 +328,7 @@ impl TuxlinkMcp {
     )]
     pub async fn config_get_rig(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.config.rig().await.map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
     // ----- Devices -----
@@ -339,7 +339,7 @@ impl TuxlinkMcp {
     )]
     pub async fn packet_list_serial_devices(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.devices.serial().await.map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
     #[tool(
@@ -348,7 +348,7 @@ impl TuxlinkMcp {
     )]
     pub async fn packet_list_bluetooth_devices(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.devices.bluetooth().await.map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
     #[tool(
@@ -357,7 +357,7 @@ impl TuxlinkMcp {
     )]
     pub async fn ardop_list_audio_devices(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.devices.audio().await.map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
     // ----- Logs -----
@@ -369,7 +369,7 @@ impl TuxlinkMcp {
     pub async fn session_log_snapshot(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.logs.snapshot().await.map_err(port_err)?;
         self.state.guard.taint();
-        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
     // ----- Station intelligence (inert reads; no taint, no gate) -----
@@ -402,7 +402,7 @@ impl TuxlinkMcp {
             })
             .await
             .map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
     #[tool(
@@ -428,7 +428,7 @@ impl TuxlinkMcp {
             })
             .await
             .map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
     #[tool(
@@ -437,7 +437,7 @@ impl TuxlinkMcp {
     )]
     pub async fn solar_conditions(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.prediction.solar().await.map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json(dto)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
     // ----- Provisioning: VARA-under-WINE setup (tuxlink-w7212) -----
@@ -508,7 +508,7 @@ impl TuxlinkMcp {
     )]
     pub async fn cms_connect(&self) -> Result<CallToolResult, ErrorData> {
         self.state.egress.cms_connect().await.map_err(egress_err)?;
-        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json("ok")?]))
     }
 
     #[tool(
@@ -521,7 +521,7 @@ impl TuxlinkMcp {
             .verify_cms_connection()
             .await
             .map_err(egress_err)?;
-        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json("ok")?]))
     }
 
     #[tool(
@@ -534,7 +534,7 @@ impl TuxlinkMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let Parameters(RigTuneParams { freq_hz }) = params;
         self.state.egress.rig_tune(freq_hz).await.map_err(egress_err)?;
-        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json("ok")?]))
     }
 
     #[tool(
@@ -555,7 +555,7 @@ impl TuxlinkMcp {
             .ardop_connect(target, freq_hz, qsy_candidates)
             .await
             .map_err(egress_err)?;
-        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json("ok")?]))
     }
 
     #[tool(
@@ -572,7 +572,7 @@ impl TuxlinkMcp {
             .ardop_b2f_exchange(target, intent)
             .await
             .map_err(egress_err)?;
-        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json("ok")?]))
     }
 
     #[tool(
@@ -594,7 +594,7 @@ impl TuxlinkMcp {
             .vara_b2f_exchange(target, intent, freq_hz, qsy_candidates)
             .await
             .map_err(egress_err)?;
-        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json("ok")?]))
     }
 
     #[tool(
@@ -611,7 +611,7 @@ impl TuxlinkMcp {
             .packet_connect(call, path)
             .await
             .map_err(egress_err)?;
-        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json("ok")?]))
     }
 
     // ----- UNGATED abort (stopping is ALWAYS allowed) -----
@@ -625,7 +625,7 @@ impl TuxlinkMcp {
     )]
     pub async fn cms_abort(&self) -> Result<CallToolResult, ErrorData> {
         self.state.abort.cms_abort().await.map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json("ok")?]))
     }
 
     #[tool(
@@ -634,7 +634,7 @@ impl TuxlinkMcp {
     )]
     pub async fn modem_ardop_disconnect(&self) -> Result<CallToolResult, ErrorData> {
         self.state.abort.ardop_disconnect().await.map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json("ok")?]))
     }
 
     #[tool(
@@ -647,7 +647,7 @@ impl TuxlinkMcp {
             .vara_stop_session()
             .await
             .map_err(port_err)?;
-        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json("ok")?]))
     }
 
     // ----- GATED writes (mutate config/state; require armed send authority) -----
@@ -673,7 +673,7 @@ impl TuxlinkMcp {
             .set_ardop(ArdopWriteDto { drive_level })
             .await
             .map_err(write_err)?;
-        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json("ok")?]))
     }
 
     #[tool(
@@ -690,7 +690,7 @@ impl TuxlinkMcp {
             .set_vara(VaraWriteDto { bandwidth_hz })
             .await
             .map_err(write_err)?;
-        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json("ok")?]))
     }
 
     #[tool(
@@ -717,7 +717,7 @@ impl TuxlinkMcp {
             })
             .await
             .map_err(write_err)?;
-        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json("ok")?]))
     }
 
     #[tool(
@@ -730,7 +730,7 @@ impl TuxlinkMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let Parameters(GridParams { grid }) = params;
         self.state.write.set_grid(grid).await.map_err(write_err)?;
-        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json("ok")?]))
     }
 
     #[tool(
@@ -747,7 +747,7 @@ impl TuxlinkMcp {
             .set_position_source(source)
             .await
             .map_err(write_err)?;
-        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json("ok")?]))
     }
 
     #[tool(
@@ -767,7 +767,7 @@ impl TuxlinkMcp {
             .set_privacy(gps_state, precision)
             .await
             .map_err(write_err)?;
-        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json("ok")?]))
     }
 
     #[tool(
@@ -784,7 +784,7 @@ impl TuxlinkMcp {
             .set_packet_listen(enabled)
             .await
             .map_err(write_err)?;
-        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json("ok")?]))
     }
 
     #[tool(
@@ -801,7 +801,7 @@ impl TuxlinkMcp {
             .mailbox_move(from, to, id)
             .await
             .map_err(write_err)?;
-        Ok(CallToolResult::success(vec![Content::json("ok")?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json("ok")?]))
     }
 
     #[tool(
@@ -824,7 +824,7 @@ impl TuxlinkMcp {
             .attachment_save(folder, id, filename, dest)
             .await
             .map_err(write_err)?;
-        Ok(CallToolResult::success(vec![Content::json(saved)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(saved)?]))
     }
 
     // ----- UNGATED compose/staging (no transmission; never gated/tainting) -----
@@ -859,7 +859,7 @@ impl TuxlinkMcp {
             })
             .await
             .map_err(write_err)?;
-        Ok(CallToolResult::success(vec![Content::json(mid)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(mid)?]))
     }
 
     #[tool(
@@ -891,7 +891,7 @@ impl TuxlinkMcp {
             })
             .await
             .map_err(write_err)?;
-        Ok(CallToolResult::success(vec![Content::json(mid)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(mid)?]))
     }
 
     #[tool(
@@ -909,7 +909,7 @@ impl TuxlinkMcp {
             .catalog_send_inquiry(item_ids)
             .await
             .map_err(write_err)?;
-        Ok(CallToolResult::success(vec![Content::json(mid)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(mid)?]))
     }
 
     #[tool(
@@ -937,7 +937,7 @@ impl TuxlinkMcp {
             })
             .await
             .map_err(write_err)?;
-        Ok(CallToolResult::success(vec![Content::json(mid)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(mid)?]))
     }
 }
 
@@ -1230,21 +1230,17 @@ pub struct VaraInstallParams {
 
 #[tool_handler]
 impl ServerHandler for TuxlinkMcp {
-    // Build `ServerInfo` (= `InitializeResult`) from `default()` then set the
-    // fields we care about. clippy's `field_reassign_with_default` must be
-    // allowed at the FN level: a statement-level allow on the `let` does NOT
-    // cover the lint's span and CI's clippy still fired (PR #911 first verify).
-    #[allow(clippy::field_reassign_with_default)]
+    // Build `ServerInfo` (= `InitializeResult`). rmcp 2.x dropped its `Default`
+    // impl in favour of `ServerInfo::new(capabilities)`, which sets the protocol
+    // version to `ProtocolVersion::default()` (= `LATEST`) and `server_info` from
+    // the build env; `.with_instructions(..)` attaches the operator-facing blurb.
     fn get_info(&self) -> ServerInfo {
-        let mut info = ServerInfo::default();
-        info.protocol_version = ProtocolVersion::LATEST;
-        info.capabilities = ServerCapabilities::builder()
+        let capabilities = ServerCapabilities::builder()
             .enable_tools()
             .enable_prompts()
             .enable_resources()
             .build();
-        info.server_info = Implementation::from_build_env();
-        info.instructions = Some(
+        ServerInfo::new(capabilities).with_instructions(
             "Tuxlink MCP server. New here? Read the resource tuxlink://agents/guide \
              first — it explains the full tool surface by tier and the arm/taint \
              rules. Read-only tools report app/backend/modem status, \
@@ -1253,10 +1249,8 @@ impl ServerHandler for TuxlinkMcp {
              tauri_search_run, session_log_snapshot) taint the session, locking send \
              authority until the operator re-arms. Resources (tuxlink:// URIs) serve \
              curated operator knowledge — glossary, transport/device guides, and \
-             diagnostic playbooks. Prompts walk common operator workflows."
-                .to_string(),
-        );
-        info
+             diagnostic playbooks. Prompts walk common operator workflows.",
+        )
     }
 
     // ----- Knowledge layer: resources + prompts (phase 3.5) -----
@@ -1308,11 +1302,10 @@ impl TuxlinkMcp {
         let resources = content::CATALOG
             .iter()
             .map(|r| {
-                let mut raw = RawResource::new(r.uri, r.name);
-                raw.title = Some(r.title.to_string());
-                raw.description = Some(r.description.to_string());
-                raw.mime_type = Some(KNOWLEDGE_MIME.to_string());
-                raw.no_annotation()
+                Resource::new(r.uri, r.name)
+                    .with_title(r.title)
+                    .with_description(r.description)
+                    .with_mime_type(KNOWLEDGE_MIME)
             })
             .collect();
         ListResourcesResult::with_all_items(resources)
@@ -1336,9 +1329,7 @@ impl TuxlinkMcp {
             text: resource.markdown.to_string(),
             meta: None,
         };
-        Ok(ReadResourceResult {
-            contents: vec![contents],
-        })
+        Ok(ReadResourceResult::new(vec![contents]))
     }
 
     /// The three knowledge-layer prompts. Pure.
@@ -1350,15 +1341,12 @@ impl TuxlinkMcp {
                     "Diagnose why a connection or transport is not working, read-only. \
                      Optional `transport` (ardop/vara/packet/telnet) focuses the walk.",
                 ),
-                Some(vec![PromptArgument {
-                    name: "transport".to_string(),
-                    title: Some("Transport".to_string()),
-                    description: Some(
-                        "Optional transport to focus on: ardop, vara, packet, or telnet."
-                            .to_string(),
-                    ),
-                    required: Some(false),
-                }]),
+                Some(vec![PromptArgument::new("transport")
+                    .with_title("Transport")
+                    .with_description(
+                        "Optional transport to focus on: ardop, vara, packet, or telnet.",
+                    )
+                    .with_required(false)]),
             ),
             Prompt::new(
                 "help_me_set_up",
@@ -1366,15 +1354,12 @@ impl TuxlinkMcp {
                     "Walk through setting up a device or PTT method. Requires `device` \
                      (e.g. uv-pro, digirig, ptt).",
                 ),
-                Some(vec![PromptArgument {
-                    name: "device".to_string(),
-                    title: Some("Device".to_string()),
-                    description: Some(
-                        "The device or method to set up (e.g. uv-pro, digirig, ptt)."
-                            .to_string(),
-                    ),
-                    required: Some(true),
-                }]),
+                Some(vec![PromptArgument::new("device")
+                    .with_title("Device")
+                    .with_description(
+                        "The device or method to set up (e.g. uv-pro, digirig, ptt).",
+                    )
+                    .with_required(true)]),
             ),
             Prompt::new(
                 "compose_an_ics_213",
@@ -1383,18 +1368,14 @@ impl TuxlinkMcp {
                      Optional `to` and `subject` pre-fill fields.",
                 ),
                 Some(vec![
-                    PromptArgument {
-                        name: "to".to_string(),
-                        title: Some("To".to_string()),
-                        description: Some("Optional recipient address(es).".to_string()),
-                        required: Some(false),
-                    },
-                    PromptArgument {
-                        name: "subject".to_string(),
-                        title: Some("Subject".to_string()),
-                        description: Some("Optional message subject.".to_string()),
-                        required: Some(false),
-                    },
+                    PromptArgument::new("to")
+                        .with_title("To")
+                        .with_description("Optional recipient address(es).")
+                        .with_required(false),
+                    PromptArgument::new("subject")
+                        .with_title("Subject")
+                        .with_description("Optional message subject.")
+                        .with_required(false),
                 ]),
             ),
         ];
@@ -1458,10 +1439,8 @@ impl TuxlinkMcp {
                      DO NOT transmit, connect, or change any configuration. This is a \
                      read-only diagnosis; staging or transmission is the operator's call."
                 );
-                Ok(GetPromptResult {
-                    description: Some("Read-only connection diagnosis walk.".to_string()),
-                    messages: vec![PromptMessage::new_text(PromptMessageRole::User, text)],
-                })
+                Ok(GetPromptResult::new(vec![PromptMessage::new_text(Role::User, text)])
+                    .with_description("Read-only connection diagnosis walk."))
             }
             "help_me_set_up" => {
                 let Some(device) = arg("device") else {
@@ -1492,10 +1471,8 @@ impl TuxlinkMcp {
                      Configuration writes require the operator's armed send authority; \
                      propose the values and let the operator apply them. Do not transmit."
                 );
-                Ok(GetPromptResult {
-                    description: Some(format!("Setup walk for {device}.")),
-                    messages: vec![PromptMessage::new_text(PromptMessageRole::User, text)],
-                })
+                Ok(GetPromptResult::new(vec![PromptMessage::new_text(Role::User, text)])
+                    .with_description(format!("Setup walk for {device}.")))
             }
             "compose_an_ics_213" => {
                 let to = arg("to");
@@ -1520,10 +1497,8 @@ impl TuxlinkMcp {
                      Staging only — no transmission occurs. The message stays in the local \
                      outbox until the operator arms send authority and runs a gated connect."
                 );
-                Ok(GetPromptResult {
-                    description: Some("ICS-213 compose-and-stage walk.".to_string()),
-                    messages: vec![PromptMessage::new_text(PromptMessageRole::User, text)],
-                })
+                Ok(GetPromptResult::new(vec![PromptMessage::new_text(Role::User, text)])
+                    .with_description("ICS-213 compose-and-stage walk."))
             }
             other => Err(ErrorData::invalid_request(
                 format!("unknown prompt: {other}"),
@@ -1572,7 +1547,7 @@ mod tests {
     }
 
     /// Extract + deserialize the JSON the tool packed into its first text
-    /// content. `Content::json` serializes to a text content carrying the JSON.
+    /// content. `ContentBlock::json` serializes to a text content carrying the JSON.
     fn json_of<T: serde::de::DeserializeOwned>(result: &CallToolResult) -> T {
         let text = result.content[0]
             .as_text()
@@ -2353,9 +2328,9 @@ mod tests {
             .expect("diagnose prompt renders");
         assert_eq!(result.messages.len(), 1);
         let msg = &result.messages[0];
-        assert_eq!(msg.role, PromptMessageRole::User);
+        assert_eq!(msg.role, Role::User);
         let text = match &msg.content {
-            rmcp::model::PromptMessageContent::Text { text } => text.clone(),
+            ContentBlock::Text(tc) => tc.text.clone(),
             other => panic!("expected a Text prompt message, got {other:?}"),
         };
         assert!(

@@ -40,7 +40,7 @@ pub fn classify_call_error(message: &str) -> ToolOutcome {
 // --- Result extraction ------------------------------------------------------
 
 /// Extract the concatenated text of a tool result's content blocks. The Tuxlink
-/// tools pack a single JSON text content (`Content::json`), but be defensive
+/// tools pack a single JSON text content (`ContentBlock::json`), but be defensive
 /// about multiple / non-text blocks.
 pub fn extract_result_text(result: &rmcp::model::CallToolResult) -> String {
     let mut out = String::new();

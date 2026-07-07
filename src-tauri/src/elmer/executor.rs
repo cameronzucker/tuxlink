@@ -139,10 +139,8 @@ impl ToolInvoker for InProcessMcpInvoker {
         // SEC-3: the runner only ever passes Agent; assert belt-and-suspenders.
         debug_assert_eq!(authority, CallAuthority::Agent);
 
-        let param = CallToolRequestParam {
-            name: call.name.clone().into(),
-            arguments: call.args.as_object().cloned(),
-        };
+        let mut param = CallToolRequestParam::new(call.name.clone());
+        param.arguments = call.args.as_object().cloned();
 
         let client = self.client.lock().await;
         tokio::select! {
