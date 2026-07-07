@@ -31,7 +31,7 @@
 //! structurally cannot reproduce; diffing against an AP-*enabled* reference would
 //! rig the ≥85 % gate.
 
-use crate::message::normalize_message;
+use crate::message::{message_identity, normalize_message};
 use std::collections::HashMap;
 
 /// The outcome of comparing a decode set against a reference decode list.
@@ -86,21 +86,12 @@ impl ParityResult {
     }
 }
 
-/// Collapse a message to its multiset match key: normalized, with every
-/// bracketed hashed-callsign token (`<...>` or `<CALL>`) replaced by `<*>`.
-/// See the module docs' "Hashed-callsign class" rule.
+/// The multiset match key for a message: [`message_identity`] — normalized with
+/// every bracketed hashed-callsign token collapsed to `<*>`. This is the same key
+/// the decoder's within-slot dedup uses, so "hashed callsign as its own class"
+/// (module docs) and the dedup rule cannot drift apart.
 fn match_key(msg: &str) -> String {
-    normalize_message(msg)
-        .split(' ')
-        .map(|tok| {
-            if tok.starts_with('<') && tok.ends_with('>') && tok.len() >= 2 {
-                "<*>"
-            } else {
-                tok
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+    message_identity(msg)
 }
 
 /// Parse a WSJT-X `jt9 -8` reference log into its list of decoded messages.

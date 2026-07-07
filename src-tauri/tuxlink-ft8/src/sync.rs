@@ -39,7 +39,7 @@ use crate::consts::{COSTAS, INFO_SYMBOLS, SAMPLE_RATE_HZ};
 use crate::crc::check_crc;
 use crate::decode::ldpc_decode_ms_default;
 use crate::llr::soft_demap;
-use crate::message::{normalize_message, unpack, HashTable, Payload, PAYLOAD_BYTES};
+use crate::message::{message_identity, unpack, HashTable, Payload, PAYLOAD_BYTES};
 use crate::symbols::COSTAS_OFFSETS;
 use std::collections::HashSet;
 
@@ -393,8 +393,11 @@ pub fn decode_samples_with_floor(samples: &[f32], sample_rate: u32, floor: f32) 
             // distinct signals that fine-refine close together in a crowded slot
             // (hurting the M4 ≥85% gate). The message string is the correct key —
             // the same signal acquired at two candidates decodes to the same
-            // message and collapses; two different stations never do.
-            if seen.insert(normalize_message(&d.message)) {
+            // message and collapses; two different stations never do. The key is
+            // `message_identity` (hashed callsigns collapsed to `<*>`), so the
+            // SAME signal that renders `<...> A B` before its call is learned and
+            // `<CALL> A B` after still dedups to one decode (Codex adrev P2).
+            if seen.insert(message_identity(&d.message)) {
                 out.push(d); // first sighting of this message in the slot
             }
         }

@@ -69,16 +69,23 @@ Branch `bd-tuxlink-b026z.1/station-intel-ft8-m3` off `origin/main`, commit(s):
 - Self-review: 3 passes over the hash-save ordering, dedup key, and comparator
   match rules. No findings.
 - **Codex adversarial round (2 passes, gitignored transcripts
-  `dev/adversarial/2026-07-07-m3-ft8-codex*.md`):** the custom-prompt pass
-  brute-forced type-4 hash collisions (the carry-forward #1 risk) and confirmed
-  22/12-bit hashes collide — but that is **protocol-inherent** to FT8 (identical
-  exposure in WSJT-X/ft8_lib; our save-on-decode mirrors ft8_lib, and the `oracle`
-  hash-class rule treats bracketed callsigns as unverifiable, so a collision is
-  neither masked-as-false nor rewarded). The structured pass read the full diff +
-  fixtures + Cargo config. **Neither pass emitted a synthesized findings block
-  before hitting the `codex review` turn/time limit** (large diff + slow Pi
-  `cargo test`). No defect surfaced; combined with the 3-pass self-review, no
-  code change warranted. (Shelved crate — impact is low per calibrate-to-impact.)
+  `dev/adversarial/2026-07-07-m3-ft8-codex*.md`):** the structured pass surfaced
+  **2 genuine P2s that the 3-pass self-review missed — both FIXED** (commit after
+  `d67762a0`):
+  1. **Dedup key instability** — the same signal decoded twice could render
+     `<...> A B` then `<CALL> A B` (hash learned in between) → two `normalize_message`
+     keys → a spurious duplicate that **breaks the shipped zero-false guard** in
+     crowded slots. Fix: dedup on the new `message_identity` (bracketed callsigns
+     collapsed to `<*>`), the same key the `oracle` comparator uses. KAT added.
+  2. **Ambiguous truncated-hash misresolution** — after decode-side saves populate
+     the slot table, a 12/10-bit-hash reference where two saved calls collide
+     (`K0AAA`/`K0BAP` share h12) resolved to an ARBITRARY, non-reproducible `<CALL>`
+     via `HashMap::iter().find()`. Fix: `HashTable::lookup` returns `None` (→ `<...>`)
+     when a truncated hash is ambiguous. KAT added.
+  The custom-prompt pass separately confirmed 22/12-bit hashes collide — protocol-
+  inherent, and now handled correctly by fix #2. **A good demonstration that the
+  cross-provider round earns its keep** (it caught what self-review's "the two
+  candidates decode to the *same string*" assumption glossed over).
 
 ## bd / branch / worktree state
 - `tuxlink-b026z.1` (L0 spike): **in_progress**, notes updated with the NO-GO

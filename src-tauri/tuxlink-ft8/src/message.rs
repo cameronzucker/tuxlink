@@ -209,22 +209,32 @@ impl HashTable {
     /// Look up a callsign by a hash of the given bit width (10, 12, or 22).
     ///
     /// The stored key is the 22-bit hash; for 10/12-bit lookups we compare the
-    /// appropriate truncation.
+    /// appropriate truncation. A 10/12-bit hash is a *truncation* and can collide:
+    /// two distinct saved calls may share it (e.g. `K0AAA`/`K0BAP` share the same
+    /// 12-bit hash). When the match is ambiguous — two or more distinct callsigns
+    /// under the requested truncation — this returns `None` so the caller renders
+    /// `<...>` rather than an ARBITRARY, non-reproducible `<CALL>` (which a plain
+    /// `HashMap::iter().find()` would). The 22-bit hash is the full stored key and
+    /// is never ambiguous. provenance: ambiguity guard beyond `ft8_lib`
+    /// `lookup_callsign` (MIT), which assumes hashes are effectively unique.
     pub fn lookup(&self, hash: u32, bits: u8) -> Option<&str> {
-        match bits {
-            22 => self.by22.get(&hash).map(String::as_str),
-            12 => self
-                .by22
-                .iter()
-                .find(|(&k, _)| (k >> 10) == hash)
-                .map(|(_, v)| v.as_str()),
-            10 => self
-                .by22
-                .iter()
-                .find(|(&k, _)| (k >> 12) == hash)
-                .map(|(_, v)| v.as_str()),
-            _ => None,
+        let shift = match bits {
+            22 => return self.by22.get(&hash).map(String::as_str),
+            12 => 10,
+            10 => 12,
+            _ => return None,
+        };
+        let mut matched: Option<&str> = None;
+        for (&k, v) in self.by22.iter() {
+            if (k >> shift) == hash {
+                match matched {
+                    None => matched = Some(v.as_str()),
+                    Some(prev) if prev == v => {}
+                    Some(_) => return None, // ambiguous truncated hash → <...>
+                }
+            }
         }
+        matched
     }
 }
 
@@ -705,6 +715,31 @@ pub fn unpack(p: &Payload, hash: &mut HashTable) -> Result<String, PackError> {
 /// within-slot multiset dedup and the M3 oracle-parity comparator.
 pub fn normalize_message(msg: &str) -> String {
     msg.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The slot-stable **identity** of a decoded message: [`normalize_message`] with
+/// every bracketed hashed-callsign token (`<...>` or `<CALL>`) collapsed to `<*>`.
+///
+/// A hashed callsign renders as `<...>` before its base call is learned in the
+/// slot and as `<CALL>` after — the *same transmission* can therefore stringify
+/// two different ways depending on decode order. Collapsing the bracketed token
+/// makes the identity invariant to that, so within-slot dedup
+/// ([`crate::sync::decode_samples`]) treats the two renderings as one signal
+/// (not a spurious duplicate), and the oracle comparator treats a hashed callsign
+/// as its own equivalence class. The non-hashed fields are preserved verbatim, so
+/// this never conflates two genuinely different messages.
+pub fn message_identity(msg: &str) -> String {
+    normalize_message(msg)
+        .split(' ')
+        .map(|tok| {
+            if tok.len() >= 2 && tok.starts_with('<') && tok.ends_with('>') {
+                "<*>"
+            } else {
+                tok
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Unpack a NON-STANDARD-CALLSIGN (`i3=4`) message, e.g. `"CQ PJ4/K1ABC"` or
@@ -1239,5 +1274,45 @@ mod tests {
             "<PJ4/K1ABC> 3DA0RS RR73",
             "hashed slot should resolve to the earlier-decoded call"
         );
+    }
+
+    #[test]
+    fn lookup_returns_none_on_ambiguous_truncated_hash() {
+        // K0AAA and K0BAP share the same 12-bit hash but have distinct 22-bit
+        // hashes (Codex adrev 2026-07-07). Once decode-side saves populate the
+        // slot table with both, a 12-bit-hash reference is AMBIGUOUS and must
+        // render `<...>`, not an arbitrary/non-reproducible `<CALL>`.
+        let (h22_a, h12_a, _) = callsign_hash("K0AAA").unwrap();
+        let (h22_b, h12_b, _) = callsign_hash("K0BAP").unwrap();
+        assert_eq!(h12_a, h12_b, "precondition: K0AAA/K0BAP collide on h12");
+        assert_ne!(h22_a, h22_b, "but their 22-bit hashes differ");
+
+        let mut h = HashTable::new();
+        h.save("K0AAA", h22_a);
+        assert_eq!(h.lookup(h12_a, 12), Some("K0AAA"), "unique 12-bit resolves");
+
+        h.save("K0BAP", h22_b);
+        assert_eq!(h.lookup(h12_a, 12), None, "ambiguous 12-bit must not resolve");
+        // The full 22-bit key is never ambiguous.
+        assert_eq!(h.lookup(h22_a, 22), Some("K0AAA"));
+        assert_eq!(h.lookup(h22_b, 22), Some("K0BAP"));
+    }
+
+    #[test]
+    fn message_identity_collapses_hashed_callsign_class() {
+        // The same transmission rendered before vs after its call is learned in
+        // the slot must share ONE identity (Codex adrev 2026-07-07 — otherwise
+        // within-slot dedup emits it twice).
+        assert_eq!(
+            message_identity("<...> N2CUA EM95"),
+            message_identity("<K1ABC> N2CUA EM95"),
+        );
+        // Verifiable fields still discriminate.
+        assert_ne!(
+            message_identity("<...> N2CUA EM95"),
+            message_identity("<...> N2CUA FN31"),
+        );
+        // Non-hashed messages just normalize whitespace.
+        assert_eq!(message_identity("CQ  K1ABC   FN42"), "CQ K1ABC FN42");
     }
 }
