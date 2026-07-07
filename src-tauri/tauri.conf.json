@@ -54,7 +54,8 @@
           "libsecret-1-0",
           "libheif1",
           "libde265-0",
-          "libwebp7"
+          "libwebp7",
+          "libhamlib-utils"
         ],
         "recommends": [
           "direwolf (>= 1.6)"
@@ -74,7 +75,8 @@
           "libayatana-appindicator-gtk3",
           "libheif",
           "libde265",
-          "libwebp"
+          "libwebp",
+          "hamlib"
         ],
         "recommends": [
           "direwolf >= 1.6"
