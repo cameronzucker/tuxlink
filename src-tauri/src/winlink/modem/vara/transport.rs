@@ -217,7 +217,13 @@ impl VaraTransport {
                     // std normally retries EINTR internally, so this is
                     // belt-and-suspenders, but a false `Dead` here would be a
                     // spurious SocketLost, so treat it as a live idle tick.
-                    || e.kind() == io::ErrorKind::Interrupted =>
+                    || e.kind() == io::ErrorKind::Interrupted
+                    // InvalidData = LineReader read a full line but it wasn't
+                    // valid UTF-8. The bytes were CONSUMED — a byte arrived, so
+                    // the peer is alive. This honors the "any received byte
+                    // proves liveness" contract (parse failures already wrap as
+                    // Line(Unknown); a non-UTF8 line must NOT be a false FIN).
+                    || e.kind() == io::ErrorKind::InvalidData =>
             {
                 RecvOutcome::Idle
             }
@@ -227,35 +233,50 @@ impl VaraTransport {
 
     /// Bounded, consuming liveness drain for the idle-open heartbeat
     /// (tuxlink-6urh2 v2). The heartbeat owns the transport EXCLUSIVELY during
-    /// this call (`TransportOwner::Heartbeat`), so it temporarily lowers the
-    /// cmd read timeout to `probe_timeout` (restored before returning): an
-    /// "open but idle" verdict then costs ~`probe_timeout` instead of the full
-    /// 2s command `read_timeout`, bounding how long the heartbeat holds the
-    /// borrowed transport away from a would-be exchange. The drain consumes
-    /// buffered `IAMALIVE` / setter-echo `OK` lines (each proves liveness); a
-    /// peer FIN surfaces as `Eof` IMMEDIATELY regardless of the timeout. Reads
-    /// at most `cap` lines. Returns `true` = alive, `false` = dead (Eof/Err).
+    /// this call (`TransportOwner::Heartbeat`).
     ///
-    /// Safe re: the socket-level `SO_RCVTIMEO` shared across the dup'd cmd fds
-    /// — exclusive heartbeat ownership means no concurrent reader observes the
-    /// lowered timeout, and it is restored before the transport is re-installed.
-    pub fn probe_liveness_draining(&mut self, probe_timeout: Duration, cap: usize) -> bool {
-        let restore = self.cfg.read_timeout;
-        // Best-effort: if lowering the timeout fails the drain still works, it
-        // just falls back to the original (longer) per-read wait.
-        let _ = self.cmd_writer.set_read_timeout(Some(probe_timeout));
+    /// The drain runs the shared cmd socket **non-blocking** for its duration:
+    /// buffered `IAMALIVE` / setter-echo `OK` lines (each proves liveness) are
+    /// consumed until the kernel buffer is momentarily empty, which surfaces as
+    /// `WouldBlock` -> [`RecvOutcome::Idle`] -> alive IMMEDIATELY — it does NOT
+    /// block waiting for the *next* keepalive. A peer FIN surfaces as a 0-byte
+    /// read -> [`RecvOutcome::Eof`] -> dead, also immediately. Reads at most
+    /// `cap` lines as a backstop against a pathological in-buffer stream.
+    /// Returns `true` = alive, `false` = dead (Eof/Err).
+    ///
+    /// Why non-blocking rather than a lowered blocking timeout: a peer that
+    /// streams keepalives *faster* than any blocking `probe_timeout` never
+    /// yields an idle gap, so a blocking drain would consume line-by-line up to
+    /// `cap` — holding the borrow (and, called from the async heartbeat task,
+    /// the runtime thread) for `cap x inter-line-gap`, and eventually reading a
+    /// finite peer's natural FIN as a false drop. Non-blocking bounds the
+    /// borrow to the buffered backlog (microseconds), independent of peer
+    /// chattiness.
+    ///
+    /// `O_NONBLOCK` is a file-status flag on the shared open file description,
+    /// so toggling it via `cmd_writer` also governs `cmd_reader`'s reads (the
+    /// two are dup'd fds of one socket). Exclusive heartbeat ownership means no
+    /// concurrent reader observes the non-blocking window, and blocking mode is
+    /// restored before the transport is re-installed. The `_probe_timeout` arg
+    /// is retained for call-site/signature stability but is unused: `SO_RCVTIMEO`
+    /// is irrelevant while the socket is non-blocking.
+    pub fn probe_liveness_draining(&mut self, _probe_timeout: Duration, cap: usize) -> bool {
+        // Best-effort: if the mode toggle fails the drain still classifies
+        // correctly, it just falls back to the socket's blocking read timeout.
+        let _ = self.cmd_writer.set_nonblocking(true);
         let mut alive = true;
         for _ in 0..cap {
             match self.recv_line_distinguishing_eof() {
                 RecvOutcome::Line(_) => continue, // buffered keepalive/echo — alive
-                RecvOutcome::Idle => break,        // drained, socket still open — alive
+                RecvOutcome::Idle => break,        // buffer empty, no FIN — alive
                 RecvOutcome::Eof | RecvOutcome::Err(_) => {
                     alive = false; // peer FIN or hard error — dead
                     break;
                 }
             }
         }
-        let _ = self.cmd_writer.set_read_timeout(restore);
+        // Restore blocking mode so the exchange path's reads honor SO_RCVTIMEO.
+        let _ = self.cmd_writer.set_nonblocking(false);
         alive
     }
 
