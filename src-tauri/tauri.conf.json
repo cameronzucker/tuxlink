@@ -43,7 +43,8 @@
     "resources": [
       "resources/wle-forms/**/*",
       "resources/propagation/ssn-forecast.json",
-      "resources/basemap/**/*"
+      "resources/basemap/**/*",
+      "resources/wine-vara-setup/**/*"
     ],
     "linux": {
       "deb": {

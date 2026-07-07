@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+#
+# wine-vara-setup — provision VARA HF under native WINE on x86_64 Linux.
+# See docs/DESIGN.md. VARA is never downloaded here; you supply the installer.
+set -euo pipefail
+
+WV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib/env.sh
+source "$WV_DIR/lib/env.sh"
+# shellcheck source=lib/checkpoints.sh
+source "$WV_DIR/lib/checkpoints.sh"
+# shellcheck source=lib/render.sh
+source "$WV_DIR/lib/render.sh"
+# shellcheck source=lib/pipeline.sh
+source "$WV_DIR/lib/pipeline.sh"
+# shellcheck source=lib/menu.sh disable=SC1091
+[ -f "$WV_DIR/lib/menu.sh" ] && source "$WV_DIR/lib/menu.sh"
+
+die() { local code="$1"; shift; printf 'wine-vara-setup: %s\n' "$*" >&2; exit "$code"; }
+
+usage() {
+  cat <<'EOF'
+wine-vara-setup — set up VARA HF under native WINE (x86_64 Linux)
+
+USAGE
+  wine-vara-setup                          interactive menu (needs a terminal)
+  wine-vara-setup install --installer <path> [--prefix DIR] [--yes] [--json] [--autostart]
+  wine-vara-setup status  [--json]         report setup state (offline; exit 0 iff ready)
+  wine-vara-setup launch  [--daemon]       start VARA (listens on 127.0.0.1:8300/8301)
+  wine-vara-setup stop                     stop a daemonized VARA
+  wine-vara-setup doctor                   diagnose a broken setup
+
+VARA HF is proprietary freeware; download it yourself and pass the .exe with
+--installer. This tool never downloads VARA and never contacts winlink.org.
+EOF
+}
+
+main() {
+  local cmd="${1:-}"; if [ "$#" -gt 0 ]; then shift; fi
+
+  case "$cmd" in
+    ""|menu)
+      if [ -t 0 ] && [ -t 1 ] && command -v wv_menu >/dev/null; then wv_menu; exit $?; fi
+      usage; exit 2 ;;
+    -h|--help|help) usage; exit 0 ;;
+
+    install)
+      local installer="" autostart=0 assume_yes=0
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --installer) installer="${2:-}"; shift 2 ;;
+          --prefix) export WINE_VARA_PREFIX="${2:-}"; shift 2 ;;
+          --yes|-y) assume_yes=1; shift ;;
+          --json) export WV_RENDER=json; shift ;;
+          --autostart) autostart=1; shift ;;
+          *) die 2 "unknown flag for install: $1" ;;
+        esac
+      done
+      [ -n "$installer" ] || die 2 "install requires --installer <path to VARA setup .exe>"
+      [ -e "$installer" ] || die 2 "installer not found: $installer"
+      if [ "$assume_yes" != 1 ] && { [ ! -t 0 ] || [ ! -t 1 ]; }; then
+        die 2 "refusing to run non-interactively without --yes"
+      fi
+      wv_preflight || exit 1
+      export WV_INSTALLER="$installer" WV_AUTOSTART="$autostart"
+      wv_install ;;
+
+    status)
+      while [ "$#" -gt 0 ]; do
+        case "$1" in --json) export WV_RENDER=json; shift ;; *) die 2 "unknown flag for status: $1" ;; esac
+      done
+      wv_status ;;
+
+    launch) wv_preflight || exit 1; wv_launch "${1:-}" ;;
+    stop) wv_stop ;;
+    doctor) wv_doctor ;;
+
+    *) die 2 "unknown command: $cmd (try --help)" ;;
+  esac
+}
+
+main "$@"
