@@ -234,7 +234,15 @@ impl OpenAiProvider {
             .context_window
             .get_or_init(|| async {
                 let url = models_url(&self.endpoint)?;
-                let mut req = self.client.get(url);
+                let mut req = self
+                    .client
+                    .get(url)
+                    // Best-effort probe, not the chat request: bound it to a
+                    // short timeout so a stalling /v1/models endpoint can
+                    // never consume the runner's per-turn budget. This
+                    // timeout is scoped to this one request only — it does
+                    // NOT apply to the chat completions POST.
+                    .timeout(std::time::Duration::from_secs(8));
                 if let Some(key) = &self.api_key {
                     req = req.bearer_auth(key.expose());
                 }
@@ -242,7 +250,16 @@ impl OpenAiProvider {
                 if !resp.status().is_success() {
                     return None;
                 }
-                let value: Value = resp.json().await.ok()?;
+                // Bound the body before parsing so a huge/hostile response
+                // can't balloon memory or blow up the JSON parser. The 8s
+                // timeout above already bounds how much a slow endpoint can
+                // deliver; this length check rejects an oversized-but-fast
+                // body before the more expensive parse step.
+                let bytes = resp.bytes().await.ok()?;
+                if bytes.len() > MAX_MODELS_BODY_BYTES {
+                    return None;
+                }
+                let value: Value = serde_json::from_slice(&bytes).ok()?;
                 parse_model_context_window(&value, &self.model)
             })
             .await
@@ -421,6 +438,16 @@ const MAX_PENDING_FRAME_BYTES: usize = 1024 * 1024; // 1 MiB
 /// `MAX_PENDING_FRAME_BYTES` would not catch them) from exhausting memory before
 /// the configured timeout. Exceeding it is a transport error.
 const MAX_TOTAL_OUTPUT_BYTES: usize = 16 * 1024 * 1024; // 16 MiB
+
+/// Maximum size, in bytes, of a `GET /v1/models` probe response body
+/// (tuxlink-xnenf) accepted for parsing. The probe is best-effort discovery
+/// of the server's context window, never load-bearing for the turn itself, so
+/// a hostile or broken endpoint returning a huge body must not be allowed to
+/// balloon memory before (or during) JSON parsing. 4 MiB comfortably covers a
+/// real-world `/v1/models` listing (OpenRouter's catalog of several hundred
+/// models included) while still bounding the worst case. Exceeding it makes
+/// the probe resolve to `None` (counter-mode) like any other probe failure.
+const MAX_MODELS_BODY_BYTES: usize = 4 * 1024 * 1024; // 4 MiB
 
 /// Accumulates an OpenAI-style SSE chat-completions stream into a [`ModelTurn`],
 /// emitting [`RunEvent`] deltas through a caller-supplied sink as fragments land.
@@ -1153,7 +1180,13 @@ pub(crate) fn parse_model_context_window(models_json: &Value, model: &str) -> Op
         .get("max_model_len")
         .and_then(Value::as_u64)
         .or_else(|| entry.get("context_length").and_then(Value::as_u64))
-        .map(|n| n as u32)
+        // Reject values that don't fit in a u32 rather than silently wrapping
+        // them into a small bogus window (Codex adrev #5), and reject zero —
+        // a reported window of 0 is not a real context size. Either case
+        // degrades to `None` (counter-mode) like any other unusable probe
+        // result.
+        .and_then(|n| u32::try_from(n).ok())
+        .filter(|n| *n > 0)
 }
 
 /// Derive the `/v1/models` URL from a `…/chat/completions` endpoint by swapping
@@ -1954,6 +1987,35 @@ mod tests {
         let no_field = json!({ "data": [ { "id": "m" } ]});
         assert_eq!(parse_model_context_window(&no_field, "m"), None);
         assert_eq!(parse_model_context_window(&json!({}), "m"), None);
+    }
+
+    /// A `context_length` of exactly zero is not a real context window (Codex
+    /// adrev #5) — it must degrade to `None` (counter-mode) rather than being
+    /// accepted as `Some(0)`, which would make every trim/meter computation
+    /// divide-by-zero or otherwise nonsensical downstream.
+    #[test]
+    fn probe_zero_context_length_is_none() {
+        let v = json!({ "data": [ { "id": "m", "context_length": 0 } ]});
+        assert_eq!(parse_model_context_window(&v, "m"), None);
+    }
+
+    /// A `max_model_len` beyond `u32::MAX` must not silently wrap into a small
+    /// bogus window via `as u32` truncation (Codex adrev #5) — it must degrade
+    /// to `None` (counter-mode) instead of reporting a wrapped, wrong value.
+    #[test]
+    fn probe_max_model_len_beyond_u32_is_none() {
+        let v = json!({ "data": [
+            { "id": "m", "max_model_len": (u32::MAX as u64) + 1 }
+        ]});
+        assert_eq!(parse_model_context_window(&v, "m"), None);
+    }
+
+    /// A normal in-range value still resolves correctly — guards against the
+    /// zero/overflow-rejection logic accidentally rejecting valid windows too.
+    #[test]
+    fn probe_normal_context_length_still_resolves() {
+        let v = json!({ "data": [ { "id": "m", "context_length": 32768 } ]});
+        assert_eq!(parse_model_context_window(&v, "m"), Some(32768));
     }
 
     // --- models_url: derive /v1/models from /v1/chat/completions ------------
