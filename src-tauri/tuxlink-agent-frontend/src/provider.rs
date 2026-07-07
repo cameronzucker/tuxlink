@@ -264,6 +264,30 @@ impl OpenAiProvider {
             })
             .await
     }
+
+    /// POST `body` to the chat-completions endpoint with the bearer header, and
+    /// map a transport failure onto a credential-safe [`ProviderError::Transport`]
+    /// (URL stripped via `without_url()`, cause chain surfaced). Returns the raw
+    /// [`reqwest::Response`] so the caller inspects the status. Used for the
+    /// initial send AND the `stream_options`-fallback retry (Codex #4), so the
+    /// send + error-mapping live in one place.
+    async fn send_chat(&self, body: &Value) -> Result<reqwest::Response, ProviderError> {
+        let mut req = self.client.post(self.endpoint.clone()).json(body);
+        if let Some(key) = &self.api_key {
+            req = req.bearer_auth(key.expose());
+        }
+        req.send().await.map_err(|e| {
+            // `reqwest::Error`'s Display re-embeds the full request URL ("for url
+            // (...)") — which can carry a query credential. Strip it with
+            // `without_url()` and use our own credential-safe `redacted_url`
+            // instead, so a secret never reaches the error / session log (Codex P1).
+            ProviderError::Transport(format!(
+                "request to {} failed: {}",
+                redacted_url(&self.endpoint),
+                error_cause_chain(&e.without_url())
+            ))
+        })
+    }
 }
 
 #[async_trait]
@@ -310,22 +334,24 @@ impl Provider for OpenAiProvider {
         // OpenAI / OpenRouter honor this; without it, streamed usage is omitted).
         body["stream_options"] = json!({ "include_usage": true });
 
-        let mut req = self.client.post(self.endpoint.clone()).json(&body);
-        if let Some(key) = &self.api_key {
-            req = req.bearer_auth(key.expose());
+        let mut resp = self.send_chat(&body).await?;
+        // Codex #4 (tuxlink-xnenf): a STRICT OpenAI-compat endpoint (notably the
+        // arbitrary "custom" tile) may reject the optional `stream_options` key
+        // with HTTP 400/422 before producing any turn — which would break EVERY
+        // request, not just the usage meter. Retry ONCE without `stream_options`
+        // so such an endpoint keeps working (losing only the meter). Only 400/422
+        // plausibly signal an unsupported parameter; 401/403/404/429/5xx must not
+        // trigger the (meter-dropping) retry, and a 400 for some OTHER reason just
+        // 400s again and falls through to the normal error path below.
+        if should_retry_without_stream_options(
+            resp.status().as_u16(),
+            body.get("stream_options").is_some(),
+        ) {
+            if let Some(obj) = body.as_object_mut() {
+                obj.remove("stream_options");
+            }
+            resp = self.send_chat(&body).await?;
         }
-
-        let resp = req.send().await.map_err(|e| {
-            // `reqwest::Error`'s Display re-embeds the full request URL ("for url
-            // (...)") — which can carry a query credential. Strip it with
-            // `without_url()` and use our own credential-safe `redacted_url`
-            // instead, so a secret never reaches the error / session log (Codex P1).
-            ProviderError::Transport(format!(
-                "request to {} failed: {}",
-                redacted_url(&self.endpoint),
-                error_cause_chain(&e.without_url())
-            ))
-        })?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -1163,6 +1189,16 @@ pub(crate) fn parse_usage(value: &Value) -> Option<(u32, u32)> {
         .and_then(Value::as_u64)
         .unwrap_or(0) as u32;
     Some((prompt, eval))
+}
+
+/// Whether a first chat-completion attempt should be retried once WITHOUT the
+/// optional `stream_options` key. Only a 400/422 plausibly signals that a strict
+/// OpenAI-compat endpoint rejected the unknown parameter; 401/403/404/429/5xx are
+/// not parameter problems and MUST NOT trigger the retry (which drops the usage
+/// meter). Requires that `stream_options` was actually sent. Pure — no IO.
+/// (Codex #4, tuxlink-xnenf.)
+pub(crate) fn should_retry_without_stream_options(status: u16, sent_stream_options: bool) -> bool {
+    sent_stream_options && matches!(status, 400 | 422)
 }
 
 /// Find `model`'s context window in an OpenAI-compat `/v1/models` response.
@@ -2060,6 +2096,24 @@ mod tests {
         assert_eq!(parse_usage(&json!({ "usage": { "prompt_tokens": 10 } })), Some((10, 0)));
         // prompt_tokens missing → None (no usable numerator).
         assert_eq!(parse_usage(&json!({ "usage": { "completion_tokens": 5 } })), None);
+    }
+
+    // --- stream_options fallback decision (Codex #4) ----------------------
+
+    #[test]
+    fn retry_without_stream_options_only_on_400_422_when_sent() {
+        // 400 / 422 with stream_options sent → retry.
+        assert!(should_retry_without_stream_options(400, true));
+        assert!(should_retry_without_stream_options(422, true));
+        // Same statuses but stream_options was NOT sent → nothing to strip.
+        assert!(!should_retry_without_stream_options(400, false));
+        assert!(!should_retry_without_stream_options(422, false));
+        // Other client/server errors are not parameter problems → no retry.
+        for s in [401u16, 403, 404, 409, 429, 500, 503] {
+            assert!(!should_retry_without_stream_options(s, true), "must not retry on {s}");
+        }
+        // Success never retries.
+        assert!(!should_retry_without_stream_options(200, true));
     }
 
     // --- request assembly -------------------------------------------------
