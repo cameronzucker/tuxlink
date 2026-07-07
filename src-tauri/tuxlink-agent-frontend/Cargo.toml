@@ -59,7 +59,7 @@ futures-util = { version = "0.3", default-features = false }
 # rmcp client types: Tool, CallToolResult, RunningService<RoleClient, ()>,
 # ServiceError, ServiceExt.  `client` + `transport-async-rw` match d3zwe's
 # feature set (no new major, same lockfile resolution).
-rmcp = { version = "0.8", features = ["client", "transport-async-rw"] }
+rmcp = { version = "2.1", features = ["client", "transport-async-rw"] }
 
 # tokio::sync::OnceCell (tuxlink-xnenf): memoizes OpenAiProvider's best-effort
 # GET /v1/models context-window probe so it runs at most once per provider
