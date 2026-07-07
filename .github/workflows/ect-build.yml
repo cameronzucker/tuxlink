@@ -156,7 +156,7 @@ jobs:
           HAMLIB_VER=4.6.2
           HAMLIB_SHA=b2ac73f44dd1161e95fdee6c95276144757647bf92d7fdb369ee2fe41ed47ae8
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libusb-1.0-dev pkg-config
+          sudo apt-get install -y --no-install-recommends libusb-1.0-0-dev pkg-config
           curl -fSL "https://github.com/Hamlib/Hamlib/releases/download/${HAMLIB_VER}/hamlib-${HAMLIB_VER}.tar.gz" -o /tmp/hamlib.tar.gz
           echo "${HAMLIB_SHA}  /tmp/hamlib.tar.gz" | sha256sum -c -
           rm -rf /tmp/hamlib-src && mkdir -p /tmp/hamlib-src
