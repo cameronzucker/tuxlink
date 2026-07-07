@@ -81,6 +81,21 @@ pub mod ldpc;
 /// module docs.
 pub mod llr;
 
+/// FT-8 channelization (M2): 12 kHz real audio → short-time power spectrogram +
+/// a single-bin DFT primitive for sub-bin tone extraction. Provenance: WB2FKO
+/// "Synchronization in FT8" spectrogram construction + MIT `ft8_lib` waterfall
+/// oversampling model; Hann window + Goertzel are public-domain DSP; see
+/// `channelize` module docs + `PROVENANCE.md`.
+pub mod channelize;
+
+/// FT-8 Costas synchronization (M2): coarse 2-D `(fc, t0)` search + ranked/deduped
+/// candidates + fine time/frequency refinement + per-symbol tone-power extraction,
+/// and the full real-WAV decode pipeline feeding the M1 demapper/decoder.
+/// Provenance: WB2FKO "Synchronization in FT8" (`Sabc`/`Sbc`, fine `ft8b`/`sync8d`)
+/// + MIT `ft8_lib` `decode.c` (`ftx_find_candidates`, `ft8_extract_symbol`); see
+/// `sync` module docs + `PROVENANCE.md`.
+pub mod sync;
+
 /// FT-8 LDPC(174,91) belief-propagation (normalized min-sum) decoder: 174 LLRs
 /// -> corrected 174-bit codeword. Provenance: QEX 2020 §3 + MIT `ft8_lib`
 /// `ldpc.c` (`ldpc_decode`/`bp_decode`) + S. Johnson "Iterative Error
