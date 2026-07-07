@@ -29,7 +29,7 @@ import { memo, useState, useRef, useEffect, useCallback, useMemo, type KeyboardE
 import { useElmer, keyStatusForOrigins, type ElmerItem, type ElmerPhase } from './useElmer';
 import { EgressArmControl } from '../shell/EgressArmControl';
 import type { EgressStatusDto } from '../security/egressTypes';
-import { PRESETS, inferPreset, isLoopback, originOf, nextModelForPreset } from './elmerModelConfig';
+import { PRESETS, inferPreset, isLoopback, isLocalOllamaEndpoint, originOf, nextModelForPreset } from './elmerModelConfig';
 import type { SetKey, KeySource, KeyStatusByOrigin, ConfigReadDto } from './elmerModelConfig';
 import { ModelTilePicker } from './ModelTilePicker';
 import { DetectedModelCombobox } from './DetectedModelCombobox';
@@ -778,9 +778,11 @@ export function ModelForm({
     })();
     // num_ctx is causal ONLY on native Ollama (it allocates the KV cache). On
     // every compat/cloud tile the server owns a fixed window (read via
-    // /v1/models), so we never send an operator num_ctx there — gate on the
-    // Ollama preset, not the loopback string (a loopback llama.cpp is compat).
-    const numCtxArg: number | null = inferPreset(endpoint) === 'localOllama' ? parsedNumCtx : null;
+    // /v1/models), so we never send an operator num_ctx there. Gate on
+    // isLocalOllamaEndpoint (loopback host + Ollama port), NOT inferPreset alone
+    // — inferPreset misses loopback aliases like localhost:11434 / [::1]:11434
+    // and would wrongly clear num_ctx for a real local Ollama (tuxlink-xnenf).
+    const numCtxArg: number | null = isLocalOllamaEndpoint(endpoint) ? parsedNumCtx : null;
     const systemPromptArg: string | null = advanced.systemPrompt.trim()
       ? advanced.systemPrompt.trim()
       : null;
@@ -1025,7 +1027,7 @@ export function ModelForm({
           <AdvancedModelSettings
             values={advanced}
             onChange={setAdvanced}
-            showNumCtx={currentPreset === 'localOllama'}
+            showNumCtx={isLocalOllamaEndpoint(endpoint)}
             endpoint={endpoint}
             model={model}
             defaultSystemPromptPlaceholder={DEFAULT_SYSTEM_PROMPT_PLACEHOLDER}

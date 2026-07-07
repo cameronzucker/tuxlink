@@ -25,6 +25,7 @@ import {
   originOf,
   inferPreset,
   isLoopback,
+  isLocalOllamaEndpoint,
 } from './elmerModelConfig';
 
 // ---------------------------------------------------------------------------
@@ -350,5 +351,32 @@ describe('isLoopback', () => {
 
   it('returns false for an empty endpoint', () => {
     expect(isLoopback('')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isLocalOllamaEndpoint -- loopback host + Ollama port 11434 (alias-aware).
+// Guards the num_ctx-gate regression: inferPreset misses loopback aliases like
+// localhost:11434, which are real native Ollama (tuxlink-xnenf, Codex #3).
+// ---------------------------------------------------------------------------
+describe('isLocalOllamaEndpoint', () => {
+  it('true for the localOllama preset origin', () => {
+    expect(isLocalOllamaEndpoint('http://127.0.0.1:11434/v1/chat/completions')).toBe(true);
+  });
+  it('true for loopback ALIASES on the Ollama port (the bug inferPreset missed)', () => {
+    expect(isLocalOllamaEndpoint('http://localhost:11434/v1/chat/completions')).toBe(true);
+    expect(isLocalOllamaEndpoint('http://[::1]:11434/v1/chat/completions')).toBe(true);
+    expect(isLocalOllamaEndpoint('http://127.0.0.5:11434/api/chat')).toBe(true);
+  });
+  it('false for a loopback compat server on a non-Ollama port (llama.cpp)', () => {
+    expect(isLocalOllamaEndpoint('http://localhost:8080/v1/chat/completions')).toBe(false);
+    expect(isLocalOllamaEndpoint('http://127.0.0.1:8080/v1/chat/completions')).toBe(false);
+  });
+  it('false for a remote endpoint even on port 11434', () => {
+    expect(isLocalOllamaEndpoint('https://example.com:11434/v1/chat/completions')).toBe(false);
+  });
+  it('false for an empty or unparseable endpoint', () => {
+    expect(isLocalOllamaEndpoint('')).toBe(false);
+    expect(isLocalOllamaEndpoint('not a url')).toBe(false);
   });
 });

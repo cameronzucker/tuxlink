@@ -342,3 +342,25 @@ export function isLoopback(endpoint: string): boolean {
 
   return false;
 }
+
+/**
+ * Returns true when `endpoint` is a native local Ollama server — a loopback host
+ * (127.x / ::1 / localhost) on Ollama's default port 11434.
+ *
+ * `inferPreset(endpoint) === 'localOllama'` alone is NOT enough: it matches by
+ * exact origin against the preset's `http://127.0.0.1:11434`, so a hand-edited
+ * loopback ALIAS like `http://localhost:11434` or `http://[::1]:11434` — a real
+ * local Ollama the backend routes to `OllamaProvider` via `/api/tags` — infers
+ * `'custom'` and would wrongly clear the operator's num_ctx (tuxlink-xnenf).
+ * Keying on loopback-host + the Ollama port covers every alias; a loopback
+ * llama.cpp on a different port (e.g. 8080) stays excluded (compat, not native
+ * Ollama, where num_ctx is meaningless anyway).
+ */
+export function isLocalOllamaEndpoint(endpoint: string): boolean {
+  if (!isLoopback(endpoint)) return false;
+  try {
+    return new URL(endpoint).port === '11434';
+  } catch {
+    return false;
+  }
+}
