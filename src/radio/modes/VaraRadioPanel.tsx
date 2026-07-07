@@ -45,6 +45,21 @@ import {
 import './VaraRadioPanel.css';
 import '../sections/ListenSection.css';
 
+/** Mirror of Rust's `modem_status::TransportOwner` (shared arbiter enum —
+ *  `src-tauri/src/modem_status.rs`). camelCase per its own
+ *  `#[serde(rename_all = "camelCase")]` derive. Lists every current
+ *  variant; a future addition to the Rust enum needs a matching addition
+ *  here (the panel only branches on the two "listener owns it" values
+ *  explicitly, so an unhandled future variant just falls through as
+ *  "not listener-armed" rather than a type error). */
+type TransportOwnerDto =
+  | 'none'
+  | 'listenerArmed'
+  | 'listenerInbound'
+  | 'outboundPending'
+  | 'outbound'
+  | 'heartbeat';
+
 /** Mirror of Rust's `commands::VaraStatus`. camelCase per the Rust
  *  `#[serde(rename_all = "camelCase")]` on the struct. */
 interface VaraStatusDto {
@@ -57,6 +72,17 @@ interface VaraStatusDto {
   lastError: string | null;
   boundHost: string | null;
   boundCmdPort: number | null;
+  // tuxlink-6urh2 v2 (Codex P1 #1b): the backend's `take_transport()`
+  // (called when the listener consumer arms) sets the CACHED `state` to
+  // `'closed'` for the whole armed/exchange window — see
+  // `VaraSession::take_transport`'s doc in commands.rs. `listenerArmed` /
+  // `transportOwner` are the arbiter's LIVE overlay (from
+  // `VaraSession::snapshot()`) that stay accurate through that window.
+  // Optional because older backends (pre-tuxlink-0ye6 Task 3.0 wire-in)
+  // and defensive test fixtures may omit them — treated as "not armed" /
+  // "none" when absent.
+  listenerArmed?: boolean;
+  transportOwner?: TransportOwnerDto;
 }
 
 /** Mirror of Rust's `commands::PlatformInfo`. */
@@ -549,7 +575,20 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
     ? `${status.boundHost}:${status.boundCmdPort ?? '?'}`
     : `${hostInput || config.host}:${cmdPortInput || config.cmd_port}`;
 
-  const isOpen = status.state === 'open' || status.state === 'connecting';
+  // tuxlink-6urh2 v2 (Codex P1 #1b): a listener-owned/armed transport must
+  // read as OCCUPIED even though the backend's cached `status.state` reads
+  // 'closed' during that window (see `VaraStatusDto.transportOwner`'s
+  // doc). Without the `transportOwner`/`listenerArmed` fold-in, a
+  // P2p/RadioOnly session that auto-armed its listener would show the
+  // Start button again — inviting a double-open (`vara_open_session_inner`
+  // now also rejects that at the backend per the reopen-guard fix, but the
+  // UI should never offer the action in the first place).
+  const listenerOwnsTransport =
+    status.listenerArmed === true ||
+    status.transportOwner === 'listenerArmed' ||
+    status.transportOwner === 'listenerInbound';
+  const isOpen =
+    status.state === 'open' || status.state === 'connecting' || listenerOwnsTransport;
 
   return (
     <RadioPanel
@@ -762,8 +801,13 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
         {/* tuxlink-p6iq: a VISIBLE closed-state hint (not just the button's hover
             title) so the manual-target path is never a silent dead-end. Find-a-
             Station "Use →" auto-opens the transport; an operator who instead
-            opens the panel and types a target needs to know to press Start. */}
-        {status.state !== 'open' && status.state !== 'connecting' && (
+            opens the panel and types a target needs to know to press Start.
+            tuxlink-6urh2 v2: gate on `!isOpen` (not the raw `status.state`
+            check) so this hint doesn't contradict the action row during the
+            listener-armed window, where `status.state` reads 'closed' but
+            the panel is correctly showing Stop, not Start (see `isOpen`'s
+            doc above). */}
+        {!isOpen && (
           <p className="radio-panel-radio-help" data-testid="vara-transport-hint">
             Transport closed — press <strong>Start</strong> below to open the VARA
             session, then Send / Receive.

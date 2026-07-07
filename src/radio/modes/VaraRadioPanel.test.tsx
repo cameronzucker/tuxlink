@@ -70,6 +70,20 @@ const socketLostStatus = {
   boundCmdPort: 8300,
 };
 
+// tuxlink-6urh2 v2 (Codex P1 #1b): the backend's `take_transport()` (called
+// when the listener consumer arms — P2p/RadioOnly auto-arm on open) sets the
+// CACHED `status.state` to 'closed' for the whole armed window, while the
+// arbiter's live `transportOwner`/`listenerArmed` overlay stays accurate.
+// This fixture reproduces exactly that shape.
+const listenerArmedStatus = {
+  state: 'closed',
+  lastError: null,
+  boundHost: '127.0.0.1',
+  boundCmdPort: 8300,
+  listenerArmed: true,
+  transportOwner: 'listenerArmed',
+};
+
 const x86Platform = { arch: 'x86_64', os: 'linux', varaSupported: true };
 const armPlatform = { arch: 'aarch64', os: 'linux', varaSupported: false };
 
@@ -226,6 +240,26 @@ describe('<VaraRadioPanel>', () => {
       expect(screen.getByTestId('vara-start-btn')).toBeInTheDocument();
     });
     expect(screen.queryByTestId('vara-stop-btn')).toBeNull();
+  });
+
+  // tuxlink-6urh2 v2 (Codex P1 #1b): a listener-owned/armed transport reads
+  // `status.state === 'closed'` (the backend's `take_transport` caches
+  // Closed for the whole armed window) but must NOT show the Start button —
+  // that would invite a double-open. `transportOwner`/`listenerArmed` fold
+  // into `isOpen` so the panel shows Stop (occupied), not Start.
+  it('treats a listener-armed transport as occupied even though status.state reads closed', async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(
+      makeInvoke({ vara_status: listenerArmedStatus }),
+    );
+    renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    await waitFor(() => {
+      expect(screen.getByTestId('vara-stop-btn')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('vara-start-btn')).toBeNull();
+    // The config inputs must stay locked too — same occupied posture as an
+    // ordinary open transport.
+    expect(screen.getByTestId('vara-host-input')).toBeDisabled();
   });
 
   it('invokes vara_open_session on Start click and updates status', async () => {

@@ -86,7 +86,7 @@ pub const ARBITER_YIELD_TIMEOUT: Duration = Duration::from_secs(3);
 /// receive `"ListenerArmed"` (PascalCase) while expecting `"listenerArmed"`
 /// (camelCase) for the `transportOwner` field. Variants serialize as:
 /// `none`, `listenerArmed`, `listenerInbound`, `outboundPending`,
-/// `outbound`.
+/// `outbound`, `heartbeat`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum TransportOwner {
@@ -109,6 +109,17 @@ pub enum TransportOwner {
     /// Outbound exchange holds the transport. Another outbound request
     /// rejects with "outbound exchange already in flight".
     Outbound,
+    /// The drop-detection heartbeat (tuxlink-6urh2 v2 —
+    /// `winlink::modem::vara::commands::spawn_vara_socket_heartbeat`) has
+    /// temporarily taken the transport out of the session to run a
+    /// bounded consuming drain over the cmd socket. Distinct from
+    /// `ListenerArmed`/`Outbound`: neither a listener consumer nor an
+    /// outbound dial is running during this window — it's purely the
+    /// heartbeat's own brief idle-open borrow (bounded by the transport's
+    /// `read_timeout`, worst case a couple of seconds). `take_transport`
+    /// treats this the same as "unavailable" so a concurrent listener-arm
+    /// or outbound dial can't race the heartbeat for the socket.
+    Heartbeat,
 }
 
 /// Coarse classification of an in-flight ARQ exchange (tuxlink-0ye6
@@ -950,6 +961,13 @@ impl ModemSession {
                 }
                 TransportOwner::OutboundPending | TransportOwner::Outbound => {
                     return Err("outbound exchange already in flight".into())
+                }
+                // tuxlink-6urh2 v2: the drop-detection heartbeat's brief
+                // idle-open borrow. Treat like any other "someone else has
+                // it right now" state — retry after the bounded borrow
+                // window ends.
+                TransportOwner::Heartbeat => {
+                    return Err("modem busy — heartbeat probe in progress".into())
                 }
                 TransportOwner::ListenerArmed => {
                     inner.transport_owner = TransportOwner::OutboundPending;
@@ -2136,6 +2154,10 @@ mod tests {
             serde_json::to_string(&TransportOwner::Outbound).unwrap(),
             "\"outbound\""
         );
+        assert_eq!(
+            serde_json::to_string(&TransportOwner::Heartbeat).unwrap(),
+            "\"heartbeat\""
+        );
     }
 
     #[test]
@@ -2146,6 +2168,7 @@ mod tests {
             TransportOwner::ListenerInbound,
             TransportOwner::OutboundPending,
             TransportOwner::Outbound,
+            TransportOwner::Heartbeat,
         ] {
             let json = serde_json::to_string(&owner).unwrap();
             let back: TransportOwner = serde_json::from_str(&json).unwrap();

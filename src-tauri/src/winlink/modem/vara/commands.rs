@@ -44,7 +44,7 @@ use crate::winlink::session::SessionIntent;
 use crate::winlink_backend::{LogLevel, LogSource};
 
 use super::command::{Bandwidth, OutboundCommand};
-use super::transport::{LivenessProbe, VaraConfig, VaraTransport};
+use super::transport::{VaraConfig, VaraTransport};
 
 /// Append a session-log line to the durable buffer (assigning its `seq`) and
 /// emit it on `session_log:line`. Mirrors `ui_commands::emit_session_line`'s
@@ -87,8 +87,12 @@ pub enum VaraState {
     /// [`crate::modem_status::ModemState::SocketLost`] (tuxlink-0ye6 Task
     /// 3.0 / Codex Round 3 P1 #4). Operator's only recovery is Close
     /// Session → reopen. Driven by [`spawn_vara_socket_heartbeat`]
-    /// (tuxlink-6urh2), which peeks the cmd socket during the idle-open
-    /// window and stamps this variant when the peer has closed.
+    /// (tuxlink-6urh2), which consumingly drains the cmd socket during the
+    /// idle-open window and stamps this variant when the drain observes
+    /// EOF (the peer closed) rather than a mere read timeout. (v2 —
+    /// replaces an earlier non-consuming-peek design that could never
+    /// observe the peer's FIN once unsolicited `IAMALIVE`/`OK` lines had
+    /// buffered unread in the idle-open window.)
     #[serde(rename = "socket-lost")]
     SocketLost,
 }
@@ -457,8 +461,24 @@ impl VaraSession {
     /// `transport_owner = ListenerArmed`. Outbound's
     /// [`Self::take_transport_for_outbound`] then sequences the yield
     /// when needed.
+    ///
+    /// **Heartbeat exclusion (tuxlink-6urh2 v2):** returns `None` while
+    /// `transport_owner == Heartbeat` WITHOUT even attempting the take —
+    /// the drop-detection heartbeat has the transport out of `guard.transport`
+    /// for its brief consuming-drain window, so `guard.transport` would
+    /// already read `None` there regardless; the explicit owner check is
+    /// belt-and-suspenders documentation of the invariant (at most one
+    /// owner holds the transport at a time) rather than a distinct
+    /// behavior. A concurrent caller (listener re-arm, outbound dial) sees
+    /// the same "not available right now" `None` it already has to handle
+    /// for the ordinary already-closed case; the borrow window is bounded
+    /// (at most ~ one `read_timeout`, a couple of seconds) and only
+    /// happens during idle-open, never mid-exchange.
     pub fn take_transport(&self) -> Option<VaraTransport> {
         let mut guard = self.inner.lock().ok()?;
+        if guard.transport_owner == TransportOwner::Heartbeat {
+            return None;
+        }
         let t = guard.transport.take();
         if t.is_some() {
             guard.status = VaraStatus::closed();
@@ -727,6 +747,12 @@ impl VaraSession {
                 TransportOwner::OutboundPending | TransportOwner::Outbound => {
                     return Err("outbound exchange already in flight".into())
                 }
+                // tuxlink-6urh2 v2: the drop-detection heartbeat's brief
+                // idle-open borrow. Mirrors ARDOP's
+                // `ModemSession::take_transport_for_outbound` arm.
+                TransportOwner::Heartbeat => {
+                    return Err("modem busy — heartbeat probe in progress".into())
+                }
                 TransportOwner::ListenerArmed => {
                     guard.transport_owner = TransportOwner::OutboundPending;
                     // Drop the guard explicitly so the notify_one()
@@ -959,8 +985,23 @@ impl VaraSession {
     /// previously-installed flag — there is at most one live heartbeat per
     /// open, and the close that necessarily preceded this open already
     /// cancelled the prior one via `vara_stop_session_inner`.
+    ///
+    /// **Cancels the outgoing flag before replacing it (Codex P1 #1 — v2).**
+    /// The "close necessarily preceded this open" assumption doesn't hold
+    /// for every caller: nothing stops a future or test call-site from
+    /// invoking `spawn_vara_socket_heartbeat` + `install_heartbeat_shutdown`
+    /// twice in a row without an intervening close (e.g. a retry path). Prior
+    /// to this fix, the second install silently replaced the field without
+    /// ever setting the first flag — the ORIGINAL heartbeat task keeps
+    /// running forever with no way to cancel it (its shutdown handle is
+    /// gone), leaking a `tokio::spawn`'d task for the life of the process.
+    /// Flipping the outgoing flag here guarantees at most one live heartbeat
+    /// task per session regardless of call pattern.
     pub fn install_heartbeat_shutdown(&self, shutdown: Arc<std::sync::atomic::AtomicBool>) {
         if let Ok(mut guard) = self.inner.lock() {
+            if let Some(prev) = guard.heartbeat_shutdown.take() {
+                prev.store(true, Ordering::SeqCst);
+            }
             guard.heartbeat_shutdown = Some(shutdown);
         }
     }
@@ -1062,32 +1103,72 @@ pub const VARA_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(3);
 
 /// Spawn the VARA cmd-port drop-detection heartbeat (tuxlink-6urh2 — the
 /// `VaraState::SocketLost` variant existed but its detection was deferred;
-/// this is that follow-up). Ticks every `interval`; on each tick:
+/// this is that follow-up). **v2 (this revision)** replaces an earlier
+/// non-consuming-peek design that was fundamentally broken: VARA sends
+/// unsolicited `IAMALIVE` keepalives (and setter-echo `OK` lines) during the
+/// idle-open window, and those bytes sit in the kernel receive buffer
+/// unread by anything (nothing else is reading the cmd socket while idle).
+/// A `MSG_PEEK` therefore ALWAYS finds something buffered — or, once
+/// drained by a lucky race, reports `WouldBlock` — and reports "alive"
+/// forever, even after the peer has sent FIN. The peek could never observe
+/// the peer's close. This version reads (consumes) instead of peeking, and
+/// distinguishes EOF from timeout at the `LineReader` layer
+/// ([`super::transport::RecvOutcome`]) rather than folding both to `None`
+/// the way [`VaraTransport::recv`] does for the ordinary command-exchange
+/// callers.
 ///
-/// 1. Snapshot under `session.inner`'s lock whether the session is
-///    **idle-open** — `status.state == Open`, a transport is installed,
-///    AND `transport_owner == TransportOwner::None` (no listener/exchange
-///    holds it) — then clone the cmd socket and DROP the guard. Skips the
-///    tick entirely (no peek) when not idle-open: a listener-armed or
-///    in-flight-exchange transport is being read/written by its owning
-///    task, and this heartbeat only ever probes the unarmed, unwatched
-///    idle window the wedge actually lives in.
-/// 2. `VaraTransport::peek_liveness` on the clone, WITH NO LOCK HELD. This
-///    is the hard rule for this task: never hold `session.inner`'s
-///    std-mutex across a syscall or an `.await`.
-/// 3. On `Alive`, tick again. On `Dead`, re-acquire the lock and
-///    re-validate BEFORE mutating: `session.current_close_generation()`
-///    must still equal the generation snapshotted at spawn time, AND the
-///    session must still be idle-open, AND the shutdown flag must not have
-///    fired in the meantime. A stale reading (operator's own Close, a
-///    listener arm, or an outbound dial all started between the peek and
-///    the re-lock) exits the task quietly with no mutation — mirrors
-///    `install_transport_if_generation_matches`'s close-race guard.
-/// 4. Otherwise stamps `VaraState::SocketLost` (mirroring
-///    `vara_stop_session_inner`'s field reset, minus the heartbeat's own
-///    shutdown-flag handling since this IS the heartbeat) and exits — the
-///    task's job ends the moment the session leaves idle-open, whichever
-///    way it leaves.
+/// Ticks every `interval`; on each tick:
+///
+/// 1. **Phase 1 (locked).** Snapshot whether the session is **idle-open**
+///    — `status.state == Open`, a transport is installed, AND
+///    `transport_owner == TransportOwner::None` (no listener/exchange
+///    holds it). If not idle-open, skip the tick entirely: a
+///    listener-armed or in-flight-exchange transport is being read/written
+///    by its owning task, and this heartbeat only ever probes the
+///    unarmed, unwatched idle window the wedge actually lives in. If
+///    idle-open, take the transport OUT of the session (`guard.transport =
+///    None`) and mark `transport_owner = Heartbeat` — this is a BORROW,
+///    not a close: `status.state` stays `Open` throughout. Drop the guard
+///    before any I/O.
+/// 2. **Phase 2 (no lock).** Bounded consuming drain, up to
+///    [`HEARTBEAT_DRAIN_CAP`] iterations of
+///    [`VaraTransport::recv_line_distinguishing_eof`]:
+///    - `Line(_)` — even `IAMALIVE` — proves the peer is alive; keep
+///      draining (VARA may have queued several keepalives since the last
+///      tick).
+///    - `Idle` — the bounded read timed out with nothing buffered: the
+///      socket is still open, stop draining, alive.
+///    - `Eof` / `Err` — the peer is gone: stop draining, dead.
+///    - Hitting the cap without a definitive Idle/Eof/Err (i.e. every
+///      iteration was `Line`) is itself "alive" — bounding the loop only
+///      protects against a flooding peer spinning this tick forever; it
+///      does not change the classification.
+/// 3. **Phase 3 (re-locked).** Re-validate BEFORE mutating:
+///    `session.current_close_generation()` must still equal the generation
+///    snapshotted at spawn time, AND the shutdown flag must not have fired
+///    in the meantime. Either firing means a close (or close+reopen)
+///    intervened while this heartbeat held the transport out — drop the
+///    local transport handle (closing its sockets) and exit WITHOUT
+///    touching session state; the close path already tore down (or is
+///    tearing down) its own view of the session. Otherwise:
+///    - Alive → re-install: `guard.transport = Some(transport)`,
+///      `guard.transport_owner = TransportOwner::None`. `status` is left
+///      untouched (bound_host/state/etc. were never mutated by the
+///      borrow).
+///    - Dead → stamp `VaraState::SocketLost` (mirroring
+///      `vara_stop_session_inner`'s field reset, minus the heartbeat's own
+///      shutdown-flag handling since this IS the heartbeat) and exit — the
+///      task's job ends the moment the session leaves idle-open, whichever
+///      way it leaves.
+///
+/// **Concurrency invariant:** the std-mutex is held ONLY for Phase 1 + 3
+/// (brief snapshot/mutate sections); Phase 2's blocking reads (up to
+/// `read_timeout`, ~2s worst case per tick) run with no lock held. While
+/// the borrow is out, [`VaraSession::take_transport`] returns `None` to
+/// any concurrent listener-arm or outbound dial (see that fn's
+/// heartbeat-exclusion doc) — a rare, bounded window that only ever
+/// occurs during idle-open (never mid-exchange, since the heartbeat skips
+/// the tick entirely when the transport is armed/in-flight).
 ///
 /// `app` + `log` are `Option` so the regression test can drive this
 /// without a `Tauri` runtime; production (`vara_open_session`) always
@@ -1106,15 +1187,32 @@ pub fn spawn_vara_socket_heartbeat(
     log: Option<Arc<SessionLogState>>,
     interval: Duration,
 ) -> Arc<std::sync::atomic::AtomicBool> {
+    /// Bound on how many buffered lines (IAMALIVE / OK / stray async
+    /// events) one tick's drain will consume before concluding "alive"
+    /// without ever having observed an Idle/Eof/Err. Every iteration below
+    /// the cap is either an immediate consuming read (a buffered `Line`)
+    /// or a single bounded-by-`read_timeout` wait (Idle/Eof/Err, which
+    /// break the loop immediately) — so the cap exists purely to stop a
+    /// peer that floods the cmd socket faster than we drain it from
+    /// spinning this tick forever; it is generous headroom over VARA's
+    /// normal idle-open chatter (a handful of keepalives between ticks).
+    const HEARTBEAT_DRAIN_CAP: usize = 64;
+    // Short per-read timeout used ONLY inside the exclusive heartbeat borrow so
+    // an "open but idle" verdict costs ~50ms instead of the 2s cmd read_timeout
+    // — this bounds how long each tick holds the transport away from a
+    // would-be exchange. A peer FIN is detected immediately regardless.
+    const HEARTBEAT_PROBE_TIMEOUT: Duration = Duration::from_millis(50);
+
     let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let shutdown_for_task = shutdown.clone();
     let spawn_gen = session.current_close_generation();
 
-    // `tokio::spawn` (not `spawn_blocking`) is correct here, unlike the b2f
-    // exchange's genuinely-blocking reads: `peek_liveness` uses a MSG_DONTWAIT
-    // `recv` peek, so the syscall returns immediately (µs) either way — it
-    // never parks the runtime worker thread waiting on I/O the way a blocking
-    // `read` with a timeout does.
+    // `tokio::spawn` (not `spawn_blocking`): Phase 2's reads block on this
+    // dedicated task only (never while holding `session.inner`'s
+    // std-mutex), bounded by `read_timeout` per read — acceptable to run
+    // on a tokio worker thread for the same reason the rest of this
+    // module's short, bounded blocking I/O is (this is NOT the genuinely
+    // long-running b2f exchange, which uses `spawn_blocking`).
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(interval).await;
@@ -1123,10 +1221,15 @@ pub fn spawn_vara_socket_heartbeat(
                 return;
             }
 
-            // Phase 1: snapshot under the lock, clone the cmd socket if
-            // idle-open, then DROP the guard before any I/O.
-            let cmd_clone = {
-                let guard = match session.inner.lock() {
+            // Phase 1 (locked): borrow the transport OUT of the session
+            // iff idle-open. This is a BORROW, not a close — leave
+            // `status.state == Open`. `take_transport()` additionally
+            // refuses to hand the transport to a concurrent
+            // listener/outbound taker while `transport_owner ==
+            // Heartbeat` (see that fn's doc), so recording the owner here
+            // is load-bearing, not just documentation.
+            let mut transport = {
+                let mut guard = match session.inner.lock() {
                     Ok(g) => g,
                     Err(poisoned) => poisoned.into_inner(),
                 };
@@ -1136,43 +1239,59 @@ pub fn spawn_vara_socket_heartbeat(
                 if !idle_open {
                     continue;
                 }
-                match guard.transport.as_ref().map(|t| t.try_clone_cmd_socket()) {
-                    Some(Ok(clone)) => clone,
-                    _ => continue,
+                guard.transport_owner = TransportOwner::Heartbeat;
+                match guard.transport.take() {
+                    Some(t) => t,
+                    None => {
+                        // Unreachable given the idle_open check above
+                        // (transport.is_some() was just verified under
+                        // the same lock), but defensive: undo the owner
+                        // flip and skip the tick rather than panicking.
+                        guard.transport_owner = TransportOwner::None;
+                        continue;
+                    }
                 }
-            }; // guard dropped here — REQUIRED before the peek below.
+            }; // guard dropped here — REQUIRED before any blocking I/O below.
 
-            // Phase 2: liveness I/O with NO lock held.
-            let probe = VaraTransport::peek_liveness(&cmd_clone);
-            drop(cmd_clone);
+            // Phase 2 (no lock): bounded, consuming liveness drain with a SHORT
+            // per-read timeout so the borrow lasts ~tens of ms, not the full 2s
+            // cmd read_timeout — otherwise the heartbeat would hold the transport
+            // away from a would-be exchange for most of each interval. A drained
+            // line (even IAMALIVE) or an idle timeout = alive; a peer FIN (Eof,
+            // returned immediately) or a hard error = dead.
+            let alive =
+                transport.probe_liveness_draining(HEARTBEAT_PROBE_TIMEOUT, HEARTBEAT_DRAIN_CAP);
 
-            if probe == LivenessProbe::Alive {
-                continue;
-            }
-
-            // Phase 3: Dead reading — re-lock and re-validate BEFORE
-            // mutating (generation + still-idle-open + not-yet-cancelled),
-            // mirroring `install_transport_if_generation_matches`'s guard.
+            // Phase 3 (re-locked): re-validate BEFORE mutating — a close
+            // (or close+reopen) that raced the borrow above must win.
             let mut guard = match session.inner.lock() {
                 Ok(g) => g,
                 Err(poisoned) => poisoned.into_inner(),
             };
             let live_gen = session.current_close_generation();
-            let still_idle_open = guard.status.state == VaraState::Open
-                && guard.transport.is_some()
-                && guard.transport_owner == TransportOwner::None;
-            if live_gen != spawn_gen
-                || !still_idle_open
-                || shutdown_for_task.load(Ordering::Acquire)
-            {
-                // Stale: the operator (or another worker) already changed
-                // the session's disposition since the peek. Exit without
-                // touching state — whatever the current state is, it is
-                // NOT this heartbeat's business to overwrite it.
+            if live_gen != spawn_gen || shutdown_for_task.load(Ordering::Acquire) {
+                // Stale: the operator's Close Session (or a close+reopen)
+                // intervened while this heartbeat held the transport out.
+                // Drop our local handle (closes its sockets) and exit
+                // WITHOUT touching session state — the close path already
+                // tore down (or is tearing down) its own view.
+                drop(guard);
+                drop(transport);
                 return;
             }
 
-            guard.transport = None;
+            if alive {
+                guard.transport = Some(transport);
+                guard.transport_owner = TransportOwner::None;
+                // `status` (state/bound_host/etc.) is untouched — the
+                // borrow never mutated it.
+                continue;
+            }
+
+            // Dead: stamp SocketLost (mirroring `vara_stop_session_inner`'s
+            // field reset) and exit — this heartbeat's job is over the
+            // moment the session leaves idle-open, whichever way.
+            drop(transport);
             guard.active_intent = None;
             guard.active_transport_kind = None;
             guard.abort_writer = None;
@@ -1385,7 +1504,14 @@ pub fn vara_open_session_inner(
     // double-press on Start doesn't open two transports.
     let mut guard = session.inner.lock().map_err(|e| format!("session lock poisoned: {e}"))?;
 
-    if guard.transport.is_some() {
+    // tuxlink-6urh2 v2: reject on owner too, not just `transport.is_some()`.
+    // A listener consumer (or the drop-detection heartbeat, or an in-flight
+    // outbound dial) can hold `transport_owner != None` while
+    // `guard.transport` itself reads `None` (the transport is OUT of the
+    // session for the duration of that borrow) — the pre-fix check would
+    // let a reopen race in during exactly that window, installing a second
+    // transport while the first one is still owned elsewhere.
+    if guard.transport.is_some() || guard.transport_owner != TransportOwner::None {
         return Err("VARA session already started — call vara_close_session first".into());
     }
 
@@ -2636,6 +2762,55 @@ mod tests {
         );
     }
 
+    /// tuxlink-6urh2 v2: the reopen guard must also reject on
+    /// `transport_owner != None`, not just `transport.is_some()`. The
+    /// heartbeat's borrow window (and the listener consumer's armed
+    /// window) both have `guard.transport == None` WHILE an owner other
+    /// than `None` holds the (temporarily absent) transport — a reopen
+    /// racing that window must not be allowed to install a second
+    /// transport underneath the borrower.
+    #[test]
+    fn vara_open_session_rejected_while_owner_held_though_transport_is_none() {
+        let session = Arc::new(VaraSession::new());
+        {
+            let mut guard = session.inner.lock().unwrap();
+            guard.status = VaraStatus {
+                state: VaraState::Open,
+                last_error: None,
+                bound_host: Some("127.0.0.1".into()),
+                bound_cmd_port: Some(8300),
+                listener_armed: false,
+                exchange: None,
+                transport_owner: TransportOwner::Heartbeat,
+                active_intent: None,
+                active_transport_kind: None,
+            };
+            guard.transport_owner = TransportOwner::Heartbeat;
+            assert!(
+                guard.transport.is_none(),
+                "borrow-window precondition: transport is OUT of the session"
+            );
+        }
+        let ui_cfg = VaraUiConfig {
+            host: "127.0.0.1".into(),
+            cmd_port: 1,
+            data_port: 2,
+            bandwidth_hz: None,
+        };
+        let err = vara_open_session_inner(
+            &session,
+            &ui_cfg,
+            None,
+            SessionIntent::Cms,
+            TransportKind::VaraHf,
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("already started"),
+            "reopen must be rejected by the owner check even though transport is None; got: {err}"
+        );
+    }
+
     // tuxlink-9ls2: take_transport / return_transport — the lifecycle
     // primitives the listener consumer task uses to own the transport for
     // the armed window.
@@ -2800,10 +2975,10 @@ mod tests {
 
     /// tuxlink-6urh2: variant of `loopback_vara_transport` whose cmd
     /// acceptor closes the accepted connection IMMEDIATELY (no write, no
-    /// sleep) so a `peek()` on the client-side cmd-socket clone observes
-    /// EOF (`Ok(0)`) promptly — simulating a dropped VARA instance. The
+    /// sleep) so the client-side `recv_line_distinguishing_eof` observes
+    /// `RecvOutcome::Eof` promptly — simulating a dropped VARA instance. The
     /// data acceptor still holds its connection open briefly (mirroring
-    /// the sibling helper's scaffolding); the heartbeat only ever probes
+    /// the sibling helper's scaffolding); the heartbeat only ever drains
     /// the cmd socket.
     fn loopback_vara_transport_cmd_dies_immediately(
     ) -> (VaraTransport, u16, std::thread::JoinHandle<()>, std::thread::JoinHandle<()>) {
@@ -2914,6 +3089,126 @@ mod tests {
 
         // Cleanup: cancel the heartbeat, restore ownership, close.
         shutdown.store(true, Ordering::Release);
+        session.set_transport_owner_for_test(TransportOwner::None);
+        drop(session);
+        ch.join().unwrap();
+        dh.join().unwrap();
+    }
+
+    /// tuxlink-6urh2 v2: variant of `loopback_vara_transport_cmd_dies_immediately`
+    /// whose cmd acceptor stays connected and periodically emits `IAMALIVE\r`
+    /// — the exact unsolicited-keepalive traffic that made the OLD
+    /// non-consuming peek design report "alive" forever regardless of the
+    /// peer's actual state. Used to prove the NEW consuming-drain design
+    /// correctly classifies a genuinely-alive peer as alive across several
+    /// heartbeat ticks (re-installing the transport each time) rather than
+    /// false-triggering `SocketLost`.
+    fn loopback_vara_transport_alive_with_keepalives(
+    ) -> (VaraTransport, u16, std::thread::JoinHandle<()>, std::thread::JoinHandle<()>) {
+        use std::io::Write;
+        use std::net::TcpListener;
+        use std::thread;
+        use std::time::Duration;
+
+        let cmd_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let cmd_port = cmd_l.local_addr().unwrap().port();
+        let data_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let data_port = data_l.local_addr().unwrap().port();
+        let cmd_handle = thread::spawn(move || {
+            if let Ok((mut c, _)) = cmd_l.accept() {
+                // Spans several 20ms heartbeat ticks so the test can
+                // observe multiple re-install cycles against a live peer.
+                for _ in 0..25 {
+                    if c.write_all(b"IAMALIVE\r").is_err() {
+                        break;
+                    }
+                    if c.flush().is_err() {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(15));
+                }
+            }
+        });
+        let data_handle = thread::spawn(move || {
+            let _ = data_l.accept();
+            thread::sleep(Duration::from_millis(400));
+        });
+        let cfg = VaraConfig {
+            host: "127.0.0.1".into(),
+            cmd_port,
+            data_port,
+            connect_timeout: Duration::from_secs(2),
+            read_timeout: Some(Duration::from_millis(50)),
+        };
+        let transport = VaraTransport::connect(cfg).expect("connect must succeed");
+        (transport, cmd_port, cmd_handle, data_handle)
+    }
+
+    /// tuxlink-6urh2 v2: the regression the old peek design could never
+    /// meaningfully exercise (a peek always said "alive" against ANY peer,
+    /// dead or not) — a genuinely-alive peer sending periodic `IAMALIVE`
+    /// keepalives must be drained + classified alive, with the transport
+    /// re-installed and `transport_owner` reset to `None` (not left at
+    /// `Heartbeat`) after every tick.
+    #[tokio::test]
+    async fn vara_heartbeat_reinstalls_transport_when_peer_stays_alive() {
+        let (transport, cmd_port, ch, dh) = loopback_vara_transport_alive_with_keepalives();
+        let session = open_vara_session(transport, cmd_port);
+
+        let shutdown = spawn_vara_socket_heartbeat(
+            session.clone(),
+            None,
+            None,
+            std::time::Duration::from_millis(20),
+        );
+        session.install_heartbeat_shutdown(shutdown.clone());
+
+        // Several ticks against a genuinely alive peer.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        let snap = session.snapshot();
+        assert_eq!(
+            snap.state,
+            VaraState::Open,
+            "must not false-trigger SocketLost against a live peer"
+        );
+        assert_eq!(
+            snap.transport_owner,
+            TransportOwner::None,
+            "must re-install with owner reset to None, not left at Heartbeat"
+        );
+        assert!(
+            session.take_transport().is_some(),
+            "transport must be re-installed after each tick, not dropped"
+        );
+
+        shutdown.store(true, Ordering::Release);
+        ch.join().unwrap();
+        dh.join().unwrap();
+    }
+
+    /// tuxlink-6urh2 v2: `take_transport` must refuse the take (return
+    /// `None`) while `transport_owner == Heartbeat`, mirroring the
+    /// belt-and-suspenders explicit check documented on that fn — even
+    /// though in production `guard.transport` is ALSO `None` during the
+    /// heartbeat's borrow (making the outcome identical either way), this
+    /// test drives the owner-gate directly (with a real transport still
+    /// present) so a future refactor that reorders the take-vs-owner-check
+    /// can't silently regress the invariant.
+    #[test]
+    fn take_transport_refuses_while_owner_is_heartbeat() {
+        let (transport, cmd_port, ch, dh) = loopback_vara_transport(false);
+        let session = open_vara_session(transport, cmd_port);
+        session.set_transport_owner_for_test(TransportOwner::Heartbeat);
+
+        assert!(
+            session.take_transport().is_none(),
+            "take_transport must refuse while the heartbeat owns the transport"
+        );
+        // Nothing was disturbed by the refused take.
+        assert_eq!(session.transport_owner(), TransportOwner::Heartbeat);
+        assert_eq!(session.snapshot().state, VaraState::Open);
+
         session.set_transport_owner_for_test(TransportOwner::None);
         drop(session);
         ch.join().unwrap();
