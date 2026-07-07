@@ -226,9 +226,12 @@ pub enum RunEvent {
         prompt_tokens: u32,
         /// Tokens the model generated this turn (Ollama `eval_count`).
         eval_tokens: u32,
-        /// The context window the provider requested (`options.num_ctx`), the
-        /// denominator for the fullness meter.
-        num_ctx: u32,
+        /// The context window the provider requested (native Ollama
+        /// `options.num_ctx`) or discovered (compat `/v1/models`), the
+        /// denominator for the fullness meter. `None` when the window is
+        /// unknown (compat endpoint that advertises no context length) — the
+        /// meter then renders a bare token counter with no percentage.
+        num_ctx: Option<u32>,
     },
 }
 
@@ -304,7 +307,7 @@ mod tests {
         let event = RunEvent::ContextUsage {
             prompt_tokens: 1234,
             eval_tokens: 56,
-            num_ctx: 32_768,
+            num_ctx: Some(32_768),
         };
 
         // A fire-and-forget sink records the event verbatim.
@@ -321,7 +324,7 @@ mod tests {
             } => {
                 assert_eq!(*prompt_tokens, 1234);
                 assert_eq!(*eval_tokens, 56);
-                assert_eq!(*num_ctx, 32_768);
+                assert_eq!(*num_ctx, Some(32_768));
             }
             other => panic!("expected ContextUsage, got {other:?}"),
         }
@@ -329,5 +332,16 @@ mod tests {
         // Equality is field-wise (derived `PartialEq`), so a re-constructed
         // value with the same fields compares equal — the relay is lossless.
         assert_eq!(seen[0], event);
+
+        // A windowless emit (compat path with no probed window) carries None.
+        let counterless = RunEvent::ContextUsage {
+            prompt_tokens: 900,
+            eval_tokens: 12,
+            num_ctx: None,
+        };
+        match counterless {
+            RunEvent::ContextUsage { num_ctx, .. } => assert_eq!(num_ctx, None),
+            other => panic!("expected ContextUsage, got {other:?}"),
+        }
     }
 }

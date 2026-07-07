@@ -255,7 +255,7 @@ impl Provider for OllamaProvider {
                 on_event(RunEvent::ContextUsage {
                     prompt_tokens,
                     eval_tokens,
-                    num_ctx,
+                    num_ctx: Some(num_ctx),
                 });
             }
 
@@ -296,7 +296,7 @@ impl Provider for OllamaProvider {
             on_event(RunEvent::ContextUsage {
                 prompt_tokens,
                 eval_tokens,
-                num_ctx,
+                num_ctx: Some(num_ctx),
             });
         }
 

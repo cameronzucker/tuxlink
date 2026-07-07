@@ -112,10 +112,13 @@ pub enum ElmerEvent {
     },
     /// Context-window usage from a native local provider, for the fullness
     /// meter above the composer.  Bridged from `RunEvent::ContextUsage`.
-    /// Only emitted on the native Ollama path (known `num_ctx` denominator).
+    /// Emitted on the native Ollama path (`num_ctx` always known there) and,
+    /// in later providers, on compat paths that may not know the window.
     ///
     /// On the wire (`elmer-context` channel) the payload is:
-    /// `{ "kind": "context", "promptTokens": N, "evalTokens": N, "numCtx": N }`
+    /// `{ "kind": "context", "promptTokens": N, "evalTokens": N, "numCtx": N | null }`
+    /// — `numCtx` is `null` when the provider could not determine a context
+    /// window (compat endpoint that advertises no context length).
     ///
     /// ## Per-field `rename` — REQUIRED (mirrors `outcome_kind` / `delta_kind` precedent)
     ///
@@ -137,11 +140,14 @@ pub enum ElmerEvent {
         #[serde(rename = "evalTokens")]
         eval_tokens: u32,
         /// The context-window size that was set for this request (`options.num_ctx`).
-        /// Used as the denominator for the fullness meter.
+        /// Used as the denominator for the fullness meter. `None` serializes
+        /// to `numCtx: null` when the provider could not determine a window
+        /// (compat endpoint that advertises no context length) — the meter
+        /// then renders a bare token counter with no percentage.
         ///
         /// Explicit `rename` required — see variant doc.
         #[serde(rename = "numCtx")]
-        num_ctx: u32,
+        num_ctx: Option<u32>,
     },
 }
 
@@ -241,7 +247,7 @@ mod tests {
         let event = ElmerEvent::Context {
             prompt_tokens: 1024,
             eval_tokens: 256,
-            num_ctx: 32768,
+            num_ctx: Some(32768),
         };
         let json: serde_json::Value = serde_json::to_value(&event).unwrap();
 
