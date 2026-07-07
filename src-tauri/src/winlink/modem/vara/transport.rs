@@ -210,7 +210,15 @@ impl VaraTransport {
                     RecvOutcome::Line(InboundCommand::Unknown(line))
                 }
             },
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut => {
+            Err(e)
+                if e.kind() == io::ErrorKind::WouldBlock
+                    || e.kind() == io::ErrorKind::TimedOut
+                    // EINTR: a signal interrupted the read — not a peer close.
+                    // std normally retries EINTR internally, so this is
+                    // belt-and-suspenders, but a false `Dead` here would be a
+                    // spurious SocketLost, so treat it as a live idle tick.
+                    || e.kind() == io::ErrorKind::Interrupted =>
+            {
                 RecvOutcome::Idle
             }
             Err(e) => RecvOutcome::Err(e),
