@@ -654,10 +654,21 @@ impl VaraSession {
     /// Unlike the install sibling there is no transport to hand back on the
     /// no-op path (a dead socket has nothing to preserve), so a plain `bool`
     /// carries the outcome.
+    ///
+    /// `bound_host` / `bound_cmd_port` are supplied by the caller (captured
+    /// from the session snapshot BEFORE `take_transport`) rather than read from
+    /// `guard.status`, because `take_transport` resets status to `closed()`
+    /// (nulling those fields) at arm time — so by the time the listener
+    /// consumer detects a terminal error, `guard.status.bound_host` is already
+    /// `None`. Threading them in preserves the reopen target on the SocketLost
+    /// status. (The heartbeat's inline dead-path can read `guard.status`
+    /// directly because its Phase-1 borrow leaves status `Open`, not `closed`.)
     pub fn mark_socket_lost_if_generation_matches(
         &self,
         t: VaraTransport,
         snapshot_gen: u64,
+        bound_host: Option<String>,
+        bound_cmd_port: Option<u16>,
     ) -> bool {
         // Dead socket — nothing to preserve; close its fds up front so we
         // don't hold the session mutex across the drop.
@@ -676,8 +687,6 @@ impl VaraSession {
                 guard.transport_owner = TransportOwner::None;
                 guard.current_exchange = None;
                 guard.heartbeat_shutdown = None;
-                let bound_host = guard.status.bound_host.clone();
-                let bound_cmd_port = guard.status.bound_cmd_port;
                 guard.status = VaraStatus {
                     state: VaraState::SocketLost,
                     last_error: Some(
@@ -3290,7 +3299,14 @@ mod tests {
         // A consumer (listener) holds the transport, then finds it dead.
         let t = session.take_transport().expect("transport present");
 
-        assert!(session.mark_socket_lost_if_generation_matches(t, gen));
+        // Caller supplies bound host/port captured before the take (take_transport
+        // resets status to closed(), so the session no longer holds them).
+        assert!(session.mark_socket_lost_if_generation_matches(
+            t,
+            gen,
+            Some("127.0.0.1".into()),
+            Some(cmd_port),
+        ));
 
         let snap = session.snapshot();
         assert_eq!(snap.state, VaraState::SocketLost);
@@ -3326,7 +3342,12 @@ mod tests {
         session.bump_close_generation();
         let t = session.take_transport().expect("transport present");
 
-        assert!(!session.mark_socket_lost_if_generation_matches(t, stale_gen));
+        assert!(!session.mark_socket_lost_if_generation_matches(
+            t,
+            stale_gen,
+            Some("127.0.0.1".into()),
+            Some(cmd_port),
+        ));
 
         // We did NOT stamp SocketLost — the close path's teardown is untouched.
         assert_ne!(
