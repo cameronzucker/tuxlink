@@ -28,8 +28,10 @@ guides assume this domain vocabulary; resolve it first rather than guessing.
 
 ### Diagnostic reads — always available, redacted, no authorization
 
-`server_info`, `backend_status`, `modem_get_status`, `vara_status`,
-`position_status`, `platform_info`, `get_wizard_completed`,
+`server_info`, `backend_status`, `modem_get_status` (reports both what is
+`running` and what the operator has `selected`), `vara_status` (includes cmd-port
+`reachable`), `vara_probe` (deep read-only banner/VERSION check: down /
+socket-not-vara / vara-ok), `position_status`, `platform_info`, `get_wizard_completed`,
 `p2p_peer_password_status` (status only, never the password), `user_folders_list`,
 `docs_search`, `catalog_list`, `config_read`, `config_get_ardop`,
 `config_get_vara`, `packet_config_get`, the device enumerators
@@ -118,7 +120,8 @@ relay it and give the operator the **cause-specific** remedy:
 ## Typical flows
 
 - **Diagnose a connection** — read `backend_status` / `modem_get_status` /
-  `config_read`, then `session_log_snapshot` (taints), and consult
+  `config_read`; for VARA, check `vara_status.reachable` then `vara_probe` to
+  confirm a real VARA is answering the cmd port; then `session_log_snapshot` (taints), and consult
   `tuxlink://playbook/ardop-wont-connect` or
   `tuxlink://playbook/connection-troubleshooting`. Explain plainly; do not connect.
 - **Find a gateway and predict bands** — `find_stations` to list reachable RMS

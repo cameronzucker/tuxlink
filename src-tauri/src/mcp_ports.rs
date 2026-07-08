@@ -45,9 +45,10 @@ use tuxlink_mcp_core::ports::{
     PathPredictionDto, PlatformInfoDto, PortError, PositionStatusDto, PredictRequestDto,
     PredictionPort, PrinterDto, ProvisionPort, QsyCandidateDto, RigConfigDto, RigStatusDto, SearchPort,
     SearchQueryDto, SearchResultsDto, SendFormDto, SerialDeviceDto, SessionIntentDto,
-    SolarSnapshotDto, StationFilterDto, StationListDto, StationModeDto, StationPort,
-    StagedRecordDto, StatusPort, VaraCheckpointDto, VaraConfigDto, VaraInstallStatusDto,
-    VaraInstallSummaryDto, VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
+    RunningModemDto, SelectedConnectionDto, SolarSnapshotDto, StationFilterDto, StationListDto,
+    StationModeDto, StationPort, StagedRecordDto, StatusPort, VaraCheckpointDto, VaraConfigDto,
+    VaraInstallStatusDto, VaraInstallSummaryDto, VaraProbeDto, VaraStatusDto, VaraWriteDto,
+    WritePort, WritePortError,
 };
 use tuxlink_mcp_core::validate::{
     validate_address, validate_attachment_dest, validate_body, validate_drive_level,
@@ -129,6 +130,93 @@ impl MonolithStatusPort {
     }
 }
 
+/// Pure source-of-truth derivation for `modem_get_status` (tuxlink-7ppfq,
+/// Contract 2). Reports BOTH `running` (live sessions) and the operator's
+/// `selected` target, with `kind` dispatched on what is actually running.
+///
+/// ARDOP liveness comes from `ardop_transport_present` (the caller sources it
+/// from `ModemSession::snapshot_transport_present()`), NEVER
+/// `active_transport_kind()` — the live `modem_ardop_connect` path installs the
+/// transport but never sets that field, so sourcing it there returns idle for a
+/// live session (a coverage trap). `kind` NEVER falls back to `selected`, which
+/// would re-introduce a false-positive against `connected`.
+pub(crate) fn derive_modem_status(
+    ardop_state: &crate::modem_status::ModemState,
+    ardop_transport_present: bool,
+    vara_state: &crate::winlink::modem::vara::commands::VaraState,
+    selected: Option<SelectedConnectionDto>,
+) -> ModemStatusDto {
+    use crate::modem_status::ModemState;
+    use crate::winlink::modem::vara::commands::VaraState;
+
+    // ARDOP running: transport installed, or a non-terminal state. A live
+    // connect leaves `active_transport_kind` None, so transport-present is the
+    // authoritative signal; SocketLost counts as running (degraded).
+    let ardop_running = ardop_transport_present
+        || !matches!(ardop_state, ModemState::Stopped | ModemState::Error);
+    // VARA running: any non-terminal VARA state (Open/Connecting/SocketLost).
+    let vara_running = !matches!(vara_state, VaraState::Closed | VaraState::Error);
+
+    // Fixed tie-break order: ARDOP first, then VARA. In a genuine conflict the
+    // agent consults `running` + `conflict` + `selected`.
+    let mut running = Vec::new();
+    if ardop_running {
+        running.push(RunningModemDto {
+            kind: "ardop".to_string(),
+            state: format!("{ardop_state:?}").to_lowercase(),
+        });
+    }
+    if vara_running {
+        running.push(RunningModemDto {
+            kind: "vara-hf".to_string(),
+            state: format!("{vara_state:?}").to_lowercase(),
+        });
+    }
+
+    let conflict = running.len() > 1;
+    let (kind, state) = match running.first() {
+        Some(r) => (r.kind.clone(), r.state.clone()),
+        None => ("idle".to_string(), "idle".to_string()),
+    };
+    // `connected` pairs with the reported `kind` (honest, never `selected`).
+    let connected = match kind.as_str() {
+        "ardop" => matches!(
+            ardop_state,
+            ModemState::ConnectedIrs | ModemState::ConnectedIss
+        ),
+        "vara-hf" => matches!(vara_state, VaraState::Open),
+        _ => false,
+    };
+
+    ModemStatusDto {
+        kind,
+        connected,
+        state,
+        running,
+        selected,
+        conflict,
+    }
+}
+
+/// Session-taking gathering seam over [`derive_modem_status`]. `selected` is
+/// passed in (not `&Config`) because `Config` does not impl `Default` — the
+/// trait impl reads it via `read_config().ok()`. MUST source ARDOP liveness
+/// from `snapshot_transport_present()`, proven by the gather trap-guard test.
+pub(crate) fn gather_modem_status(
+    modem: &crate::modem_status::ModemSession,
+    vara: &crate::winlink::modem::vara::VaraSession,
+    selected: Option<SelectedConnectionDto>,
+) -> ModemStatusDto {
+    let ardop_state = modem.status_snapshot().state;
+    let vara_state = vara.snapshot().state;
+    derive_modem_status(
+        &ardop_state,
+        modem.snapshot_transport_present(),
+        &vara_state,
+        selected,
+    )
+}
+
 #[async_trait]
 impl StatusPort for MonolithStatusPort {
     async fn backend_status(&self) -> Result<BackendStatusDto, PortError> {
@@ -193,22 +281,23 @@ impl StatusPort for MonolithStatusPort {
     }
 
     async fn modem_status(&self) -> Result<ModemStatusDto, PortError> {
-        use crate::modem_status::ModemState;
-        let session = self
+        // Source of truth (tuxlink-7ppfq, Contract 2): both `running` (live) and
+        // `selected` (operator target, persisted). `kind` dispatches on the SoT.
+        let modem = self
             .app
             .state::<Arc<crate::modem_status::ModemSession>>();
-        let status = crate::modem_commands::modem_get_status_inner(session.inner());
-        let connected = matches!(
-            status.state,
-            ModemState::ConnectedIrs | ModemState::ConnectedIss
-        );
-        // Lower-case Debug rendering of the state enum for a stable string.
-        let state = format!("{:?}", status.state).to_lowercase();
-        Ok(ModemStatusDto {
-            kind: "ardop".to_string(),
-            connected,
-            state,
-        })
+        let vara = self
+            .app
+            .state::<Arc<crate::winlink::modem::vara::VaraSession>>();
+        let selected = crate::config::read_config()
+            .ok()
+            .and_then(|c| c.active_connection)
+            .map(|s| SelectedConnectionDto {
+                session_type: s.session_type,
+                protocol: s.protocol,
+            });
+        Ok(gather_modem_status(&modem, &vara, selected))
+        // (`&modem`/`&vara` deref-coerce State<Arc<T>> → &T.)
     }
 
     async fn vara_status(&self) -> Result<VaraStatusDto, PortError> {
@@ -221,14 +310,36 @@ impl StatusPort for MonolithStatusPort {
         let connected = matches!(status.state, VaraState::Open);
         // VARA bandwidth lives in config, not the live status; surface the
         // configured bandwidth so the agent sees the negotiated width target.
-        let bandwidth = crate::winlink::modem::vara::commands::config_get_vara()
-            .bandwidth_hz
-            .unwrap_or(0);
+        let ui = crate::winlink::modem::vara::commands::config_get_vara();
+        let bandwidth = ui.bandwidth_hz.unwrap_or(0);
         let state = format!("{:?}", status.state).to_lowercase();
+        // Cmd-port reachability (tuxlink-7ppfq, Contract 1). Source host/cmd_port
+        // and the connect timeout from the SAME `build_transport_config` the
+        // transport uses, so the probe timeout can't drift from the real dial.
+        let tcfg = crate::winlink::modem::vara::commands::build_transport_config(&ui);
+        let reachable = session.probe_reachable(&tcfg.host, tcfg.cmd_port, tcfg.connect_timeout);
         Ok(VaraStatusDto {
             connected,
             bandwidth,
             state,
+            reachable,
+        })
+    }
+
+    async fn vara_probe(&self) -> Result<VaraProbeDto, PortError> {
+        // Read-only deep probe (tuxlink-7ppfq, Contract 1). Blocking socket I/O,
+        // so run it off the async runtime. host/cmd_port/timeout come from the
+        // same `build_transport_config` the transport uses (never hardcoded).
+        let cfg = crate::winlink::modem::vara::commands::build_transport_config(
+            &crate::winlink::modem::vara::commands::config_get_vara(),
+        );
+        let result =
+            tokio::task::spawn_blocking(move || crate::winlink::modem::vara::transport::deep_probe(&cfg))
+                .await
+                .map_err(|e| PortError::Internal(format!("vara_probe join error: {e}")))?;
+        Ok(VaraProbeDto {
+            classification: result.classification,
+            banner: result.banner,
         })
     }
 
@@ -2803,6 +2914,166 @@ mod tests {
             assert!(super::super::project_audio_cards(&snap).is_empty());
         }
     }
+
+    // ── tuxlink-7ppfq Contract 2: modem_status source-of-truth derivation ──
+    mod modem_sot {
+        use crate::modem_status::ModemState;
+        use crate::winlink::modem::vara::commands::VaraState;
+        use tuxlink_mcp_core::ports::SelectedConnectionDto;
+
+        fn sel(protocol: &str) -> Option<SelectedConnectionDto> {
+            Some(SelectedConnectionDto {
+                session_type: "cms".into(),
+                protocol: protocol.into(),
+            })
+        }
+
+        #[test]
+        fn derive_idle_when_nothing_running() {
+            let dto = super::super::derive_modem_status(
+                &ModemState::Stopped,
+                false,
+                &VaraState::Closed,
+                None,
+            );
+            assert_eq!(dto.kind, "idle");
+            assert_eq!(dto.state, "idle");
+            assert!(!dto.connected);
+            assert!(dto.running.is_empty());
+            assert!(!dto.conflict);
+        }
+
+        #[test]
+        fn derive_ardop_running_from_transport_present() {
+            // The trap in pure form: a live ARDOP session = transport present.
+            let dto = super::super::derive_modem_status(
+                &ModemState::ConnectedIss,
+                true,
+                &VaraState::Closed,
+                None,
+            );
+            assert_eq!(dto.kind, "ardop");
+            assert!(dto.connected); // ConnectedIss pairs with kind=ardop
+            assert!(dto.running.iter().any(|r| r.kind == "ardop"));
+        }
+
+        #[test]
+        fn derive_vara_running_and_connected_pairing() {
+            let dto = super::super::derive_modem_status(
+                &ModemState::Stopped,
+                false,
+                &VaraState::Open,
+                None,
+            );
+            assert_eq!(dto.kind, "vara-hf");
+            assert!(dto.connected); // VaraState::Open pairs with kind=vara-hf
+        }
+
+        #[test]
+        fn derive_socketlost_ardop_is_running_but_not_connected() {
+            let dto = super::super::derive_modem_status(
+                &ModemState::SocketLost,
+                true,
+                &VaraState::Closed,
+                None,
+            );
+            assert!(dto.running.iter().any(|r| r.kind == "ardop"));
+            assert!(!dto.connected); // degraded: running, not connected
+        }
+
+        #[test]
+        fn derive_conflict_when_both_running() {
+            let dto = super::super::derive_modem_status(
+                &ModemState::ConnectedIss,
+                true,
+                &VaraState::Open,
+                None,
+            );
+            assert!(dto.conflict);
+            assert_eq!(dto.running.len(), 2);
+            assert_eq!(dto.kind, "ardop"); // fixed tie-break: ARDOP first
+        }
+
+        #[test]
+        fn derive_selected_never_leaks_into_kind_when_idle() {
+            let dto = super::super::derive_modem_status(
+                &ModemState::Stopped,
+                false,
+                &VaraState::Closed,
+                sel("vara-hf"),
+            );
+            assert_eq!(dto.selected.unwrap().protocol, "vara-hf");
+            assert_eq!(dto.kind, "idle"); // NOT "vara-hf" — no false-positive
+            assert!(!dto.connected);
+        }
+
+        /// Minimal ARDOP transport stub: gather only checks transport PRESENCE,
+        /// so connect/data are never exercised.
+        struct StubTransport;
+        impl crate::winlink::modem::ModemTransport for StubTransport {
+            fn init(
+                &mut self,
+                _: &crate::winlink::modem::InitConfig,
+            ) -> Result<(), crate::winlink::modem::SessionError> {
+                Ok(())
+            }
+            fn connect_arq(
+                &mut self,
+                _: &str,
+                _: u32,
+                _: Option<std::time::Duration>,
+            ) -> Result<crate::winlink::modem::ConnectInfo, crate::winlink::modem::SessionError>
+            {
+                unimplemented!("stub")
+            }
+            fn disconnect(
+                &mut self,
+                _: std::time::Duration,
+            ) -> Result<(), crate::winlink::modem::SessionError> {
+                Ok(())
+            }
+            fn data_stream(
+                &mut self,
+            ) -> std::io::Result<&mut dyn crate::winlink::modem::ReadWrite> {
+                Err(std::io::Error::other("stub"))
+            }
+        }
+
+        #[test]
+        fn gather_sources_ardop_from_transport_not_active_kind() {
+            use crate::modem_status::ModemSession;
+            use crate::winlink::modem::vara::VaraSession;
+            // Mirror exactly what modem_ardop_connect does (install_transport, and
+            // it NEVER calls set_active_session_mode):
+            let modem = ModemSession::new();
+            modem.install_transport(Box::new(StubTransport));
+            assert!(modem.snapshot_transport_present());
+            assert_eq!(
+                modem.active_transport_kind(),
+                None,
+                "connect path leaves this None — must not be the source"
+            );
+
+            let dto = super::super::gather_modem_status(&modem, &VaraSession::new(), None);
+            assert_eq!(
+                dto.kind, "ardop",
+                "a wrong impl reading active_transport_kind would return 'idle' here"
+            );
+        }
+
+        #[test]
+        fn gather_passes_selected_through() {
+            use crate::modem_status::ModemSession;
+            use crate::winlink::modem::vara::VaraSession;
+            let dto = super::super::gather_modem_status(
+                &ModemSession::new(),
+                &VaraSession::new(),
+                sel("vara-hf"),
+            );
+            assert_eq!(dto.selected.unwrap().protocol, "vara-hf");
+        }
+    }
+
     use crate::catalog::stations::{Gateway, GatewayAntenna};
     use tuxlink_mcp_core::ports::{
         GatewayAntennaDto, GatewayDto, OutboxReadPort, StagedRecordDto, StationModeDto,

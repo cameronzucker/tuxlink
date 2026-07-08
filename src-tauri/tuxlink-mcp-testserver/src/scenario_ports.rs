@@ -29,8 +29,8 @@ use tuxlink_mcp_core::ports::{
     MessageMetaDto, ModemStatusDto, PacketConfigDto, ParsedMessageDto, PathPredictionDto,
     PlatformInfoDto, PortError, PositionStatusDto, PredictRequestDto, PredictionPort, PrinterDto,
     RigConfigDto, RigStatusDto, SearchPort, SearchQueryDto, SearchResultsDto, SerialDeviceDto,
-    SolarSnapshotDto,
-    StationFilterDto, StationListDto, StationPort, StatusPort, VaraConfigDto, VaraStatusDto,
+    SolarSnapshotDto, StationFilterDto, StationListDto, StationPort, StatusPort, VaraConfigDto,
+    VaraProbeDto, VaraStatusDto,
 };
 
 use crate::fixture::World;
@@ -64,6 +64,15 @@ impl StatusPort for ScenarioStatus {
             connected: false,
             bandwidth: 2300,
             state: "idle".into(),
+            reachable: Some(false),
+        })
+    }
+
+    async fn vara_probe(&self) -> Result<VaraProbeDto, PortError> {
+        // Deterministic minimal value — not on the fabrication axis.
+        Ok(VaraProbeDto {
+            classification: "down".into(),
+            banner: None,
         })
     }
     async fn position_status(&self) -> Result<PositionStatusDto, PortError> {
