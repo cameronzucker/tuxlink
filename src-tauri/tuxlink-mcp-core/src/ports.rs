@@ -236,11 +236,47 @@ pub struct BluetoothDeviceDto {
     pub mac: String,
 }
 
-/// Capture + playback audio device names for modem audio selection.
+/// One USB audio card, resolved to the identity fields the agent needs to
+/// disambiguate look-alike devices (tuxlink-77seh, Contract 4). VID:PID + bus
+/// path split two identically-named cards; `in_use` flags a card another program
+/// currently holds. The agent applies the disambiguation METHOD (served as the
+/// `tuxlink://playbook/audio-setup` guidance resource) — the code never ranks.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AudioCardDto {
+    /// Human label from the card longname (e.g. `"C-Media USB Audio Device"`).
+    pub name: String,
+    /// The ALSA `plughw:CARD=<id>,DEV=0` name.
+    pub alsa_name: String,
+    /// Live boot-order `card<N>` index.
+    pub card_index: u32,
+    /// USB `vid:pid` (e.g. `"0d8c:013a"`); `None` for onboard/non-USB cards.
+    pub vid_pid: Option<String>,
+    /// sysfs USB device-node / bus path (e.g. `".../usb2/2-1"`) — distinguishes
+    /// two identical-name cards on different ports. `None` when unresolved.
+    pub bus_path: Option<String>,
+    /// True when another program currently holds a capture or playback substream
+    /// of this card (best-effort read of `/proc/asound/card<N>` status).
+    pub in_use: bool,
+}
+
+/// Capture + playback audio device names for modem audio selection, plus the
+/// richer per-card inspection list (`cards`, tuxlink-77seh) carrying VID:PID /
+/// bus path / in-use for disambiguation.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AudioDevicesDto {
     pub capture: Vec<String>,
     pub playback: Vec<String>,
+    #[serde(default)]
+    pub cards: Vec<AudioCardDto>,
+}
+
+/// A CUPS print destination (tuxlink-z2nwx, Contract 3), from `lpstat -p -d`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PrinterDto {
+    /// The CUPS queue name passed to `lp -d <name>`.
+    pub name: String,
+    /// True for the system default destination (`lpstat -d`).
+    pub is_default: bool,
 }
 
 /// Live backend (CMS connection / engine) status.
@@ -642,12 +678,27 @@ pub trait ConfigPort: Send + Sync {
     async fn rig(&self) -> Result<RigConfigDto, PortError>;
 }
 
-/// Hardware device enumeration. None taint (device names, not message content).
+/// Local host capabilities (tuxlink-z2nwx, Contract 3): hardware device
+/// enumeration (read-only, none taint) PLUS the shell-equivalent local actions
+/// of printing and report export. None of these are RADIO-1 acts or external
+/// egress — they are ungated, exactly what a competent operator could do at a
+/// shell (list printers, `lp` a file, write a report to their Documents folder).
 #[async_trait]
 pub trait DevicePort: Send + Sync {
     async fn serial(&self) -> Result<Vec<SerialDeviceDto>, PortError>;
     async fn bluetooth(&self) -> Result<Vec<BluetoothDeviceDto>, PortError>;
     async fn audio(&self) -> Result<AudioDevicesDto, PortError>;
+    /// Enumerate CUPS print destinations (`lpstat -p -d`). Empty list when CUPS
+    /// is absent — the agent falls back to `export_report`.
+    async fn printer_list(&self) -> Result<Vec<PrinterDto>, PortError>;
+    /// Print a local file to a CUPS destination (`lp -d <printer> <path>`). An
+    /// ungated local action; not a transmission. CUPS auto-filters text/markdown.
+    async fn print_document(&self, printer: String, path: String) -> Result<(), PortError>;
+    /// Write agent-generated markdown/text to a sandboxed reports directory
+    /// (`~/Documents/Tuxlink/reports/`). The agent picks the FILENAME, never the
+    /// directory; `..`/absolute/traversal paths are rejected. Returns the
+    /// absolute path written.
+    async fn export_report(&self, filename: String, content: String) -> Result<String, PortError>;
 }
 
 /// Session-log snapshot. The snapshot can carry untrusted wire content → the

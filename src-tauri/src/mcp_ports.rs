@@ -36,13 +36,14 @@ use tauri::{AppHandle, Manager};
 // returned by `BackendState::current()`.
 
 use tuxlink_mcp_core::ports::{
-    AbortPort, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto, AudioDevicesDto, BackendStatusDto,
+    AbortPort, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto, AudioCardDto, AudioDevicesDto,
+    BackendStatusDto,
     BluetoothDeviceDto, CatalogEntryDto, ChannelReliabilityDto, ComposeDraftDto, ComposePort,
     ConfigPort, ConfigViewDto, DevicePort, DocsHitDto, EgressPort, EgressPortError, FolderDto,
     GatewayAntennaDto, GatewayDto, GribRequestDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto,
     ModemStatusDto, OutboxReadPort, PacketConfigDto, PacketWriteDto, ParsedMessageDto,
     PathPredictionDto, PlatformInfoDto, PortError, PositionStatusDto, PredictRequestDto,
-    PredictionPort, ProvisionPort, QsyCandidateDto, RigConfigDto, RigStatusDto, SearchPort,
+    PredictionPort, PrinterDto, ProvisionPort, QsyCandidateDto, RigConfigDto, RigStatusDto, SearchPort,
     SearchQueryDto, SearchResultsDto, SendFormDto, SerialDeviceDto, SessionIntentDto,
     RunningModemDto, SelectedConnectionDto, SolarSnapshotDto, StationFilterDto, StationListDto,
     StationModeDto, StationPort, StagedRecordDto, StatusPort, VaraCheckpointDto, VaraConfigDto,
@@ -800,11 +801,171 @@ impl DevicePort for MonolithDevicePort {
         let devices = crate::ui_commands::ardop_list_audio_devices()
             .await
             .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
+        // Rich per-card inspection (tuxlink-77seh, Contract 4): bridge to the
+        // fixture-tested sysfs snapshot for VID:PID + bus path, overlaying a
+        // best-effort in-use flag from the /proc/asound substream status.
+        let snapshot = crate::winlink::ax25::devices::read_sys_snapshot();
+        let mut cards = project_audio_cards(&snapshot);
+        for card in &mut cards {
+            card.in_use = crate::winlink::ax25::direwolf_probe::probe_device_busy(
+                &card.alsa_name,
+                card.card_index,
+            )
+            .is_err();
+        }
         Ok(AudioDevicesDto {
             capture: devices.captures.into_iter().map(|d| d.name).collect(),
             playback: devices.playbacks.into_iter().map(|d| d.name).collect(),
+            cards,
         })
     }
+
+    async fn printer_list(&self) -> Result<Vec<PrinterDto>, PortError> {
+        // Read-only shell-out; soft-fail to an empty list when CUPS / lpstat is
+        // absent (the agent then falls back to export_report).
+        let run = |args: &[&str]| -> String {
+            std::process::Command::new("lpstat")
+                .args(args)
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+                .unwrap_or_default()
+        };
+        Ok(parse_printers(&run(&["-p"]), &run(&["-d"])))
+    }
+
+    async fn print_document(&self, printer: String, filename: String) -> Result<(), PortError> {
+        // Prints a report the agent previously wrote via export_report: `filename`
+        // is resolved INSIDE the reports sandbox (never an arbitrary host path).
+        let base = agent_reports_dir()?;
+        let path = tuxlink_mcp_core::validate::validate_attachment_dest(&base, &filename)
+            .map_err(|e| PortError::Unavailable(format!("bad report filename: {e}")))?;
+        // Reject a symlink at the final component (Codex P2): don't let `lp` print
+        // a file OUTSIDE the reports sandbox via a leaf symlink. `symlink_metadata`
+        // does NOT follow, so `is_file()` here is true only for a real regular file.
+        let meta = std::fs::symlink_metadata(&path).map_err(|_| PortError::NotFound)?;
+        if meta.file_type().is_symlink() {
+            return Err(PortError::Unavailable("report path is a symlink".into()));
+        }
+        if !meta.is_file() {
+            return Err(PortError::NotFound);
+        }
+        let status = std::process::Command::new("lp")
+            .arg("-d")
+            .arg(&printer)
+            .arg(&path)
+            .status()
+            .map_err(|e| PortError::Unavailable(format!("lp unavailable: {e}")))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(PortError::Internal("lp reported a non-zero exit".into()))
+        }
+    }
+
+    async fn export_report(&self, filename: String, content: String) -> Result<String, PortError> {
+        let base = agent_reports_dir()?;
+        let path = export_report_to(&base, &filename, &content)?;
+        Ok(path.to_string_lossy().into_owned())
+    }
+}
+
+/// Pure projection of the sysfs snapshot into the agent-facing per-card audio
+/// inspection list (tuxlink-77seh, Contract 4). VID:PID from the card's USB
+/// identity, bus path from the device node. `in_use` is left `false` here — the
+/// caller overlays it from a live `/proc/asound` read, kept out of the pure fn so
+/// this projection is fixture-testable.
+pub(crate) fn project_audio_cards(
+    snapshot: &crate::winlink::ax25::devices::SysSnapshot,
+) -> Vec<AudioCardDto> {
+    crate::winlink::ax25::devices::enumerate_audio_devices(snapshot)
+        .into_iter()
+        .map(|d| {
+            let vid_pid = snapshot
+                .cards
+                .iter()
+                .find(|c| c.card_index == d.card_index)
+                .and_then(|c| c.usb.as_ref())
+                .map(|u| format!("{}:{}", u.vid, u.pid));
+            AudioCardDto {
+                name: d.human_name,
+                alsa_name: d.alsa_plughw,
+                card_index: d.card_index,
+                vid_pid,
+                bus_path: d.usb_parent,
+                in_use: false,
+            }
+        })
+        .collect()
+}
+
+/// Resolve + create the sandboxed agent reports directory
+/// (`~/Documents/Tuxlink/reports/`, tuxlink-z2nwx Contract 3). Refuses if the
+/// Documents dir is unresolvable — never a CWD-relative fallback (§11.4).
+fn agent_reports_dir() -> Result<std::path::PathBuf, PortError> {
+    let docs = dirs::document_dir()
+        .ok_or_else(|| PortError::Unavailable("Documents directory unavailable".into()))?;
+    let dir = docs.join("Tuxlink").join("reports");
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| PortError::Internal(format!("create reports dir: {e}")))?;
+    Ok(dir)
+}
+
+/// Parse `lpstat -p` (+ `lpstat -d`) into CUPS print destinations. Pure/testable.
+/// `lpstat -p` lines look like `printer <NAME> is idle.  enabled since ...`;
+/// `lpstat -d` is `system default destination: <NAME>` (or `no default ...`).
+pub(crate) fn parse_printers(lpstat_p: &str, lpstat_d: &str) -> Vec<PrinterDto> {
+    let default = lpstat_d
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("system default destination:"))
+        .map(|s| s.trim().to_string());
+    lpstat_p
+        .lines()
+        .filter_map(|l| {
+            let rest = l.trim().strip_prefix("printer ")?;
+            let name = rest.split_whitespace().next()?.to_string();
+            Some(PrinterDto {
+                is_default: default.as_deref() == Some(name.as_str()),
+                name,
+            })
+        })
+        .collect()
+}
+
+/// Validate `filename` against the sandbox `base` and write `content`. Injected
+/// `base` makes it unit-testable with a tempdir; traversal is rejected via the
+/// shared `validate_attachment_dest` guard (tuxlink-5lbm).
+pub(crate) fn export_report_to(
+    base: &std::path::Path,
+    filename: &str,
+    content: &str,
+) -> Result<std::path::PathBuf, PortError> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let path = tuxlink_mcp_core::validate::validate_attachment_dest(base, filename)
+        .map_err(|e| PortError::Unavailable(format!("bad report filename: {e}")))?;
+    // Leaf-symlink escape defense (Codex P2): `validate_attachment_dest` only
+    // canonicalizes the PARENT, so a pre-existing final-component symlink could
+    // let a plain write follow it out of the sandbox. Refuse a final symlink AND
+    // open O_NOFOLLOW so the kernel won't follow one (closes the validate->write
+    // TOCTOU). Mirrors MonolithWritePort::attachment_save.
+    let final_is_symlink = std::fs::symlink_metadata(&path)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false);
+    if final_is_symlink {
+        return Err(PortError::Unavailable("report path is a symlink".into()));
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&path)
+        .map_err(|e| PortError::Internal(format!("open report: {e}")))?;
+    file.write_all(content.as_bytes())
+        .map_err(|e| PortError::Internal(format!("write report: {e}")))?;
+    Ok(path)
 }
 
 // ---------------------------------------------------------------------------
@@ -2658,6 +2819,101 @@ mod tests {
         any_freq_in_bands, curate_gateway, is_plausible_callsign, khz_to_band, sanitize_channel,
         sort_gateways_by_distance,
     };
+
+    // ── tuxlink-z2nwx Contract 3: print + report export ──
+    mod z2nwx {
+        #[test]
+        fn parse_printers_extracts_names_and_default() {
+            let p = "printer Brother_HL is idle.  enabled since Mon\n\
+                     printer Office_Laser disabled since Tue\n";
+            let d = "system default destination: Office_Laser\n";
+            let got = super::super::parse_printers(p, d);
+            assert_eq!(got.len(), 2);
+            assert_eq!(got[0].name, "Brother_HL");
+            assert!(!got[0].is_default);
+            assert_eq!(got[1].name, "Office_Laser");
+            assert!(got[1].is_default);
+        }
+
+        #[test]
+        fn parse_printers_empty_when_none() {
+            assert!(super::super::parse_printers("", "no system default destination").is_empty());
+        }
+
+        #[test]
+        fn export_report_writes_into_sandbox_and_returns_path() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = super::super::export_report_to(dir.path(), "sitrep.md", "# hi").unwrap();
+            assert!(path.starts_with(dir.path()));
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), "# hi");
+        }
+
+        #[test]
+        fn export_report_rejects_traversal_and_absolute() {
+            let dir = tempfile::tempdir().unwrap();
+            assert!(super::super::export_report_to(dir.path(), "../escape.md", "x").is_err());
+            assert!(super::super::export_report_to(dir.path(), "/tmp/escape.md", "x").is_err());
+        }
+
+        #[test]
+        fn export_report_rejects_final_symlink_escape() {
+            // A pre-existing leaf symlink inside the sandbox must NOT be followed
+            // (Codex P2): writing through it would escape the reports directory.
+            let dir = tempfile::tempdir().unwrap();
+            let target = dir.path().join("secret.txt");
+            std::fs::write(&target, "orig").unwrap();
+            std::os::unix::fs::symlink(&target, dir.path().join("link.md")).unwrap();
+            assert!(super::super::export_report_to(dir.path(), "link.md", "pwned").is_err());
+            assert_eq!(std::fs::read_to_string(&target).unwrap(), "orig");
+        }
+    }
+
+    // ── tuxlink-77seh Contract 4: audio-card inspection projection ──
+    mod audio_77seh {
+        use crate::winlink::ax25::devices::{SnapshotCard, SysSnapshot, UsbIdentity};
+
+        #[test]
+        fn project_audio_cards_maps_vid_pid_and_bus_path() {
+            let snap = SysSnapshot {
+                cards: vec![SnapshotCard {
+                    card_index: 2,
+                    card_id: "Device".into(),
+                    card_name: "USB Audio CODEC".into(),
+                    by_id_basename: None,
+                    usb: Some(UsbIdentity {
+                        vid: "0d8c".into(),
+                        pid: "013a".into(),
+                        serial: None,
+                    }),
+                    usb_parent: Some("/sys/devices/platform/usb2/2-1".into()),
+                }],
+                ..Default::default()
+            };
+            let cards = super::super::project_audio_cards(&snap);
+            assert_eq!(cards.len(), 1);
+            assert_eq!(cards[0].vid_pid.as_deref(), Some("0d8c:013a"));
+            assert_eq!(cards[0].bus_path.as_deref(), Some("/sys/devices/platform/usb2/2-1"));
+            assert_eq!(cards[0].card_index, 2);
+            assert_eq!(cards[0].name, "USB Audio CODEC");
+            assert!(!cards[0].in_use); // pure projection leaves in_use false
+        }
+
+        #[test]
+        fn project_audio_cards_excludes_onboard_non_usb() {
+            let snap = SysSnapshot {
+                cards: vec![SnapshotCard {
+                    card_index: 0,
+                    card_id: "PCH".into(),
+                    card_name: "HDA Intel PCH".into(),
+                    by_id_basename: None,
+                    usb: None,
+                    usb_parent: None,
+                }],
+                ..Default::default()
+            };
+            assert!(super::super::project_audio_cards(&snap).is_empty());
+        }
+    }
 
     // ── tuxlink-7ppfq Contract 2: modem_status source-of-truth derivation ──
     mod modem_sot {

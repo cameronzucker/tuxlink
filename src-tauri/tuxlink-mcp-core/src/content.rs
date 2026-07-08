@@ -169,6 +169,13 @@ pub static CATALOG: &[KnowledgeResource] = &[
         markdown: include_str!("../../../docs/mcp-knowledge/vara-wine-setup.md"),
     },
     KnowledgeResource {
+        uri: "tuxlink://playbook/audio-setup",
+        name: "playbook-audio-setup",
+        title: "Playbook: picking the right audio device for a digital modem",
+        description: "How to read ardop_list_audio_devices and apply the disambiguation METHOD (VID:PID + bus path + in-use) to pick the operator's radio interface — without a code-side ranking. Guides a new user to find THEIR card; never assumes a specific bench's identity.",
+        markdown: include_str!("../../../docs/mcp-knowledge/audio-setup.md"),
+    },
+    KnowledgeResource {
         uri: "tuxlink://guide/emcomm-ics",
         name: "guide-emcomm-ics",
         title: "EmComm and ICS",

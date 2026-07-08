@@ -378,11 +378,55 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "ardop_list_audio_devices",
-        description = "Enumerate capture + playback audio devices for modem audio selection. Read-only."
+        description = "Enumerate audio devices for modem audio selection. Read-only. Returns `capture`/`playback` ALSA names AND a richer `cards` list — per USB card: name, ALSA name, card index, `vid_pid` (e.g. 0d8c:013a), `bus_path` (distinguishes two identical-name cards on different ports), and `in_use`. To disambiguate, read tuxlink://playbook/audio-setup — the method (VID:PID + bus path + in-use), never a code-side ranking."
     )]
     pub async fn ardop_list_audio_devices(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.devices.audio().await.map_err(port_err)?;
         Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
+        name = "printer_list",
+        description = "List CUPS print destinations (lpstat -p -d): each destination's name and whether it is the system default. Read-only. An empty list means no printer / CUPS is available — fall back to export_report."
+    )]
+    pub async fn printer_list(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self.state.devices.printer_list().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
+        name = "export_report",
+        description = "Write a generated report (`content`, markdown or plain text) to the operator's ~/Documents/Tuxlink/reports/ folder under `filename`. You pick the FILENAME, never the directory; `..`/absolute/traversal paths are rejected. Returns the absolute path written. A local file write — NOT a transmission, ungated."
+    )]
+    pub async fn export_report(
+        &self,
+        params: Parameters<ExportReportParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(ExportReportParams { filename, content }) = params;
+        let path = self
+            .state
+            .devices
+            .export_report(filename, content)
+            .await
+            .map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(path)?]))
+    }
+
+    #[tool(
+        name = "print_document",
+        description = "Print a report you previously wrote with export_report to a CUPS destination (lp -d <printer>). `filename` is resolved INSIDE the reports folder (only files you exported can be printed); `printer` is a name from printer_list. CUPS auto-filters text/markdown. A local action — NOT a transmission, ungated."
+    )]
+    pub async fn print_document(
+        &self,
+        params: Parameters<PrintDocumentParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(PrintDocumentParams { printer, filename }) = params;
+        self.state
+            .devices
+            .print_document(printer, filename)
+            .await
+            .map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json("ok")?]))
     }
 
     // ----- Logs -----
@@ -1251,6 +1295,25 @@ pub struct PredictRequestParams {
 pub struct VaraInstallParams {
     /// Filesystem path to the user-downloaded VARA HF installer `.exe`.
     pub installer_path: String,
+}
+
+/// Input for `export_report` (tuxlink-z2nwx, Contract 3).
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ExportReportParams {
+    /// Filename for the report (e.g. `sitrep.md`). Relative to the reports
+    /// folder; `..` / absolute paths are rejected.
+    pub filename: String,
+    /// The report body — markdown or plain text.
+    pub content: String,
+}
+
+/// Input for `print_document` (tuxlink-z2nwx, Contract 3).
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct PrintDocumentParams {
+    /// CUPS destination name (from `printer_list`).
+    pub printer: String,
+    /// Filename of a report previously written by `export_report`.
+    pub filename: String,
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -2296,6 +2359,8 @@ mod tests {
         assert!(uris.contains(&"tuxlink://reference/modem-capability-matrix"));
         // The VARA-under-WINE provisioning playbook (tuxlink-w7212) must be present.
         assert!(uris.contains(&"tuxlink://playbook/vara-wine-setup"));
+        // The audio-device disambiguation playbook (tuxlink-77seh) must be present.
+        assert!(uris.contains(&"tuxlink://playbook/audio-setup"));
         // A curated user-guide resource must be present too.
         assert!(uris.contains(&"tuxlink://guide/ardop"));
     }
