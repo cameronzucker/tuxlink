@@ -119,7 +119,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "modem_get_status",
-        description = "Report the current modem (ARDOP/VARA/packet) status: kind, connected, and state. Read-only."
+        description = "Report modem status with BOTH what is actually RUNNING and what the operator has SELECTED. `running` lists every live session (ARDOP and VARA are independent — both can be live); `kind`/`connected`/`state` describe the primary running modem (`kind`=\"idle\" when nothing runs — it never falls back to `selected`); `conflict` is true when more than one modem runs; `selected` is the operator's persisted target connection (`{session_type, protocol}`) regardless of what is live. Read-only."
     )]
     pub async fn modem_get_status(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.status.modem_status().await.map_err(port_err)?;

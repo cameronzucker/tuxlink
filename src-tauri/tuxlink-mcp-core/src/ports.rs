@@ -251,12 +251,51 @@ pub struct BackendStatusDto {
     pub state: String,
 }
 
-/// Live modem status.
+/// Live modem status (tuxlink-7ppfq, Contract 2). Reports BOTH what is actually
+/// `running` (live sessions) and what the operator has `selected` (their target),
+/// with `kind` dispatched on the source of truth — never a hardcoded literal.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModemStatusDto {
+    /// The PRIMARY running modem's kind (`"ardop"` / `"vara-hf"`), or `"idle"`
+    /// when nothing is running. Dispatched on `running`, NEVER on `selected` —
+    /// a `selected` fallback would re-introduce a false-positive against
+    /// `connected`. When more than one modem runs, this is `running[0]` (a
+    /// fixed tie-break; consult `running` + `conflict` for the full picture).
     pub kind: String,
+    /// Whether the PRIMARY running modem is in a connected/open state. Pairs
+    /// with `kind` (never with `selected`), so it is honest for the reported kind.
     pub connected: bool,
+    /// The primary running modem's state string, or `"idle"` when nothing runs.
     pub state: String,
+    /// Every live modem session (ARDOP and VARA are independent objects, so both
+    /// can be non-idle). Empty when nothing is running. `SocketLost` counts as
+    /// running (degraded) so the agent knows to close+reopen, not "idle".
+    #[serde(default)]
+    pub running: Vec<RunningModemDto>,
+    /// The operator's persisted selected connection (their target), independent
+    /// of what is live. Reported separately from `kind`/`running`.
+    #[serde(default)]
+    pub selected: Option<SelectedConnectionDto>,
+    /// True when more than one modem is running — a state convention forbids but
+    /// the code does not enforce; surfaced honestly so the agent can react.
+    #[serde(default)]
+    pub conflict: bool,
+}
+
+/// One live modem session within [`ModemStatusDto::running`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RunningModemDto {
+    /// `"ardop"` or `"vara-hf"`.
+    pub kind: String,
+    /// The session's current state string.
+    pub state: String,
+}
+
+/// The operator's selected connection, mirrored from `Config.active_connection`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SelectedConnectionDto {
+    pub session_type: String,
+    pub protocol: String,
 }
 
 /// Live VARA modem status.

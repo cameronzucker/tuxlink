@@ -188,9 +188,12 @@ pub mod test_support {
         }
         async fn modem_status(&self) -> Result<ModemStatusDto, PortError> {
             Ok(ModemStatusDto {
-                kind: "ardop".into(),
+                kind: "idle".into(),
                 connected: false,
-                state: "disconnected".into(),
+                state: "idle".into(),
+                running: vec![],
+                selected: None,
+                conflict: false,
             })
         }
         async fn vara_status(&self) -> Result<VaraStatusDto, PortError> {
