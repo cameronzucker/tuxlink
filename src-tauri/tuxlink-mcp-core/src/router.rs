@@ -44,14 +44,34 @@ fn port_err(e: PortError) -> ErrorData {
 fn egress_err(e: EgressPortError) -> ErrorData {
     match e {
         EgressPortError::Denied(reason) => ErrorData::invalid_request(
-            format!(
-                "not authorized to transmit: {reason}. The operator must ARM send \
-                 authority, and the session must not be tainted (reading untrusted \
-                 message content locks send authority until re-armed)."
-            ),
+            format!("not authorized to transmit: {reason}. {}", denial_remedy(&reason)),
             None,
         ),
         EgressPortError::Failed(reason) => ErrorData::internal_error(reason, None),
+    }
+}
+
+/// Cause-accurate operator-facing remedy for an egress/write denial (pf6re).
+///
+/// The runner now feeds this text back to the model so it can narrate the denial
+/// (instead of the turn dying). It MUST be truthful: expiry/not-armed and taint
+/// have DIFFERENT unlocks, and telling a tainted agent to "re-arm and resume"
+/// would be a lie — re-arming a tainted session QUARANTINES it (discards the
+/// conversation). `reason` is an `EgressDenied` Display; `"tainted"` marks the
+/// taint case. Callers keep the `"not authorized to …"` prefix so the message
+/// still classifies as a denial in `classify_call_error`.
+fn denial_remedy(reason: &str) -> &'static str {
+    if reason.contains("tainted") {
+        "This session read untrusted content, so transmit is locked for the rest \
+         of this session as an injection safeguard. The operator can re-arm to \
+         start a FRESH authorized session, but re-arming DISCARDS this conversation \
+         — you will NOT be able to resume it, and waiting for the timer does \
+         nothing. Nothing was sent; do not claim otherwise."
+    } else {
+        "Send authority is armed by the operator only — you cannot arm it yourself. \
+         Tell the operator what you were about to transmit and ask them to ARM the \
+         Agent-send control, then continue from where you left off. Nothing was \
+         sent; do not claim otherwise."
     }
 }
 
@@ -62,11 +82,7 @@ fn egress_err(e: EgressPortError) -> ErrorData {
 fn write_err(e: WritePortError) -> ErrorData {
     match e {
         WritePortError::Denied(reason) => ErrorData::invalid_request(
-            format!(
-                "not authorized to write: {reason}. The operator must ARM send \
-                 authority, and the session must not be tainted (reading untrusted \
-                 message content locks send authority until re-armed)."
-            ),
+            format!("not authorized to write: {reason}. {}", denial_remedy(&reason)),
             None,
         ),
         WritePortError::Invalid(reason) => ErrorData::invalid_request(reason, None),
@@ -99,7 +115,7 @@ impl TuxlinkMcp {
     /// into an rmcp tool result.
     #[tool(
         name = "server_info",
-        description = "Report the operator's SEND-AUTHORITY state — whether send authority is currently ARMED (armed=true means you MAY transmit; false means you may only stage), how many seconds of the armed window remain, and whether the session is TAINTED (which locks sending) — plus the Tuxlink app name/version. Call this to check whether you are authorized to transmit right now, e.g. before deciding whether to connect+send or to stage-and-report. Read-only; does not transmit or change any state."
+        description = "Report the operator's SEND-AUTHORITY state — whether send authority is currently ARMED (armed=true means you MAY transmit; false means you may only stage), how many seconds of the armed window remain, whether the session is TAINTED (which locks sending), and if tainted, taint_reason (a content-free token like \"message_read\" naming why) — plus the Tuxlink app name/version. IMPORTANT: taint DOMINATES arming — if tainted=true you cannot transmit even if armed=true, and the ONLY unlock is the operator re-arming, which DISCARDS the current conversation (it is a quarantine, not a resume); waiting for the timer does nothing. If not tainted but not armed, ask the operator to ARM (that preserves the conversation and you can continue). Call this to check whether you are authorized to transmit right now, e.g. before deciding whether to connect+send or to stage-and-report. Read-only; does not transmit or change any state."
     )]
     pub async fn server_info(&self) -> Result<CallToolResult, ErrorData> {
         let dto = server_info_view(&self.state);
@@ -210,7 +226,7 @@ impl TuxlinkMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let Parameters(FolderParams { folder }) = params;
         let dto = self.state.mailbox.list(&folder).await.map_err(port_err)?;
-        self.state.guard.taint();
+        self.state.guard.taint(tuxlink_security::TaintReason::MailboxList);
         Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
@@ -229,7 +245,7 @@ impl TuxlinkMcp {
             .read(&folder, &id)
             .await
             .map_err(port_err)?;
-        self.state.guard.taint();
+        self.state.guard.taint(tuxlink_security::TaintReason::MessageRead);
         Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
@@ -267,7 +283,7 @@ impl TuxlinkMcp {
             })
             .await
             .map_err(port_err)?;
-        self.state.guard.taint();
+        self.state.guard.taint(tuxlink_security::TaintReason::SearchResults);
         Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
@@ -377,7 +393,7 @@ impl TuxlinkMcp {
     )]
     pub async fn session_log_snapshot(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.logs.snapshot().await.map_err(port_err)?;
-        self.state.guard.taint();
+        self.state.guard.taint(tuxlink_security::TaintReason::SessionLog);
         Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
@@ -1529,6 +1545,47 @@ mod tests {
     };
     use tuxlink_security::EgressGuard;
 
+    // --- pf6re: cause-accurate denial remedy ------------------------------
+
+    #[test]
+    fn denial_remedy_is_cause_accurate() {
+        // Taint denial: warn the conversation is DISCARDED on re-arm; do NOT
+        // promise the agent can continue where it left off (re-arm quarantines).
+        let taint = denial_remedy("session is tainted by untrusted message content; egress blocked");
+        assert!(
+            taint.contains("DISCARDS"),
+            "taint remedy must warn that re-arm discards the conversation"
+        );
+        assert!(
+            !taint.contains("continue from where you left off"),
+            "taint remedy must NOT promise a resume — re-arm quarantines"
+        );
+        // Expiry/not-armed: name ARM + promise resume; no discard warning.
+        let expired = denial_remedy("send authority expired 1195s ago; re-arm to continue");
+        assert!(expired.contains("ARM the Agent-send control"));
+        assert!(expired.contains("continue from where you left off"));
+        assert!(!expired.contains("DISCARDS"));
+    }
+
+    #[test]
+    fn egress_err_keeps_denial_classifier_tokens() {
+        // The runner feeds this back to the model; it must stay a Denial (the
+        // client classifier keys on "not authorized"/"tainted") AND carry the
+        // cause-specific remedy.
+        let taint = egress_err(EgressPortError::Denied(
+            "session is tainted by untrusted message content; egress blocked".to_string(),
+        ));
+        assert!(taint.message.contains("not authorized to transmit"));
+        assert!(taint.message.contains("tainted"));
+        assert!(taint.message.contains("DISCARDS"));
+
+        let expired = egress_err(EgressPortError::Denied(
+            "send authority expired 1195s ago; re-arm to continue".to_string(),
+        ));
+        assert!(expired.message.contains("not authorized to transmit"));
+        assert!(expired.message.contains("ARM the Agent-send control"));
+    }
+
     fn handler() -> TuxlinkMcp {
         TuxlinkMcp::new(Arc::new(state_with_guard(EgressGuard::new())))
     }
@@ -1892,7 +1949,7 @@ mod tests {
     async fn gated_egress_denied_when_tainted_even_if_armed() {
         // Simulate a prior malicious read tainting the session, then arming.
         let (h, op_ran, _aborted) = handler_with_probes();
-        h.state.guard.taint(); // a prior message_read/search tainted the session
+        h.state.guard.taint(tuxlink_security::TaintReason::MessageRead); // a prior message_read/search tainted the session
         h.state.guard.arm(30); // arming does NOT clear taint
         let err = h
             .ardop_connect(Parameters(TargetParams {
@@ -1912,7 +1969,7 @@ mod tests {
     #[tokio::test]
     async fn gated_egress_allowed_after_clear_taint_and_fresh_arm() {
         let (h, op_ran, _aborted) = handler_with_probes();
-        h.state.guard.taint();
+        h.state.guard.taint(tuxlink_security::TaintReason::MessageRead);
         h.state.guard.clear_taint(); // explicit session reset
         h.state.guard.arm(30);
         h.vara_b2f_exchange(Parameters(VaraExchangeParams {
@@ -1966,7 +2023,7 @@ mod tests {
     #[tokio::test]
     async fn rig_tune_denied_when_tainted_even_if_armed() {
         let (h, op_ran, _aborted) = handler_with_probes();
-        h.state.guard.taint();
+        h.state.guard.taint(tuxlink_security::TaintReason::MessageRead);
         h.state.guard.arm(30); // arming does NOT clear taint
         let err = h
             .rig_tune(Parameters(RigTuneParams {
@@ -2045,7 +2102,7 @@ mod tests {
     async fn abort_tool_succeeds_regardless_of_guard_state() {
         // Unarmed + tainted: the abort tool must STILL succeed (never gated).
         let (h, _op_ran, aborted) = handler_with_probes();
-        h.state.guard.taint(); // hostile state
+        h.state.guard.taint(tuxlink_security::TaintReason::MessageRead); // hostile state
         h.cms_abort().await.expect("abort is never gated");
         assert!(
             aborted.load(Ordering::SeqCst),
@@ -2056,7 +2113,7 @@ mod tests {
     #[tokio::test]
     async fn all_abort_tools_succeed_when_tainted_and_unarmed() {
         let (h, _op_ran, aborted) = handler_with_probes();
-        h.state.guard.taint();
+        h.state.guard.taint(tuxlink_security::TaintReason::MessageRead);
         h.cms_abort().await.unwrap();
         h.modem_ardop_disconnect().await.unwrap();
         h.vara_stop_session().await.unwrap();
@@ -2086,7 +2143,7 @@ mod tests {
     #[tokio::test]
     async fn write_denied_when_tainted_even_if_armed() {
         let (h, op_ran, _staged) = handler_with_write_probes();
-        h.state.guard.taint();
+        h.state.guard.taint(tuxlink_security::TaintReason::MessageRead);
         h.state.guard.arm(30); // arming does NOT clear taint
         let err = h
             .config_set_ardop(Parameters(ArdopWriteParams { drive_level: 80 }))

@@ -364,10 +364,26 @@ export function useElmer(): UseElmer {
 
       const unChip = await listen<ElmerChipPayload>(EV_CHIP, (event) => {
         const payload = event.payload;
-        setItems((prev) => [
-          ...prev,
-          { kind: 'chip', id: nextId(), tool: payload.tool, status: payload.status },
-        ]);
+        setItems((prev) => {
+          // pf6re: a 'denied' chip flips the most-recent still-'calling' chip for
+          // the SAME tool to 'denied' (a durable, structured "that transmit was
+          // refused" marker in the persisted transcript) rather than appending a
+          // duplicate. Falls back to appending if no matching in-flight chip.
+          if (payload.status === 'denied') {
+            for (let i = prev.length - 1; i >= 0; i--) {
+              const it = prev[i];
+              if (it.kind === 'chip' && it.tool === payload.tool && it.status === 'calling') {
+                const next = prev.slice();
+                next[i] = { ...it, status: 'denied' };
+                return next;
+              }
+            }
+          }
+          return [
+            ...prev,
+            { kind: 'chip', id: nextId(), tool: payload.tool, status: payload.status },
+          ];
+        });
       });
 
       const unOutcome = await listen<ElmerOutcomePayload>(EV_OUTCOME, (event) => {

@@ -40,8 +40,8 @@ vi.mock('@tauri-apps/api/event', () => ({
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(() => Promise.resolve()) }));
 
 import { useElmer, keyStatusForOrigins } from './useElmer';
-import { EV_CONTEXT, EV_DELTA, EV_OUTCOME, EV_TURN } from './elmerEvents';
-import type { ElmerContextPayload, ElmerDeltaPayload, ElmerOutcomePayload, ElmerTurnPayload } from './elmerEvents';
+import { EV_CHIP, EV_CONTEXT, EV_DELTA, EV_OUTCOME, EV_TURN } from './elmerEvents';
+import type { ElmerChipPayload, ElmerContextPayload, ElmerDeltaPayload, ElmerOutcomePayload, ElmerTurnPayload } from './elmerEvents';
 import { invoke } from '@tauri-apps/api/core';
 
 // setupListeners() awaits each listen() sequentially, so resolving the pending
@@ -160,6 +160,32 @@ describe('useElmer streaming (phase 2b)', () => {
     expect(committed.reasoning).toBeUndefined();
     expect(result.current.streamingAnswer).toBe('');
     expect(result.current.streamingReasoning).toBe('');
+  });
+
+  it('pf6re: a denied chip flips the matching in-flight chip instead of appending a duplicate', async () => {
+    const { result } = renderHook(() => useElmer());
+    await resolveAllListens();
+
+    // A tool call is in flight (the existing "calling" chip).
+    await dispatch<ElmerChipPayload>(EV_CHIP, {
+      kind: 'chip',
+      tool: 'cms_connect',
+      status: 'calling',
+    } as ElmerChipPayload);
+    let chips = result.current.items.filter((i) => i.kind === 'chip');
+    expect(chips).toHaveLength(1);
+    expect((chips[0] as { status: string }).status).toBe('calling');
+
+    // The egress gate denies it: the SAME chip flips to 'denied' (a durable,
+    // persisted refusal marker) — no second chip is appended.
+    await dispatch<ElmerChipPayload>(EV_CHIP, {
+      kind: 'chip',
+      tool: 'cms_connect',
+      status: 'denied',
+    } as ElmerChipPayload);
+    chips = result.current.items.filter((i) => i.kind === 'chip');
+    expect(chips).toHaveLength(1);
+    expect((chips[0] as { status: string }).status).toBe('denied');
   });
 
   it('a terminal outcome WITHOUT a finalizing EV_TURN (cancel/error mid-stream) clears the live buffers', async () => {
