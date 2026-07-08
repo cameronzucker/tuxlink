@@ -41,6 +41,42 @@ pub enum EgressDenied {
     Tainted,
 }
 
+/// Why the session is tainted — names the OPERATION that read untrusted content,
+/// NEVER the content itself. Content-free by construction: the enum carries no
+/// `String`/data payload, so a taint reason can never re-inject or leak the
+/// untrusted material that caused the taint (the taint sites hold attacker-
+/// controlled DTOs in scope — deriving a reason from them would be a leak channel
+/// through the always-available `server_info` surface). Surfaced to the agent via
+/// `server_info` so it can explain the transmit lock and its remedy.
+///
+/// `#[non_exhaustive]`: new taint sources may be added without breaking matchers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TaintReason {
+    /// `mailbox_list` — untrusted senders/subjects.
+    MailboxList,
+    /// `message_read` — untrusted message body.
+    MessageRead,
+    /// message search — untrusted results.
+    SearchResults,
+    /// `session_log_snapshot` — may contain untrusted wire content.
+    SessionLog,
+}
+
+impl TaintReason {
+    /// Stable snake_case token for wire / UI / agent-facing surfaces. Kept here
+    /// (not a serde derive) so the security crate stays dependency-free; the
+    /// mcp-core DTO serializes this token.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TaintReason::MailboxList => "mailbox_list",
+            TaintReason::MessageRead => "message_read",
+            TaintReason::SearchResults => "search_results",
+            TaintReason::SessionLog => "session_log",
+        }
+    }
+}
+
 /// Pure authorization decision. `armed_until` is a unix-seconds deadline (None =
 /// disarmed); `now` is the current unix seconds. Taint takes precedence over the
 /// armed check, so a poisoned session is blocked even while armed.
@@ -76,6 +112,9 @@ struct EgressGuardInner {
     armed_until: Option<u64>,
     /// Set when untrusted content is read; cleared only by an explicit reset.
     tainted: bool,
+    /// Why the session was tainted (the FIRST taint's operation; monotonic within
+    /// a run). `None` when un-tainted. Content-free ([`TaintReason`]).
+    taint_reason: Option<TaintReason>,
 }
 
 fn real_now_unix() -> u64 {
@@ -93,7 +132,11 @@ impl EgressGuard {
 
     pub fn with_clock(now_unix: fn() -> u64) -> Self {
         Self {
-            inner: Mutex::new(EgressGuardInner { armed_until: None, tainted: false }),
+            inner: Mutex::new(EgressGuardInner {
+                armed_until: None,
+                tainted: false,
+                taint_reason: None,
+            }),
             now_unix,
         }
     }
@@ -109,12 +152,21 @@ impl EgressGuard {
         self.inner.lock().unwrap().armed_until = None;
     }
 
-    pub fn taint(&self) {
-        self.inner.lock().unwrap().tainted = true;
+    /// Mark the session tainted, recording WHY (the operation that read untrusted
+    /// content). First taint wins — the reason is monotonic within a run, so a
+    /// later read cannot overwrite the original cause. Idempotent on `tainted`.
+    pub fn taint(&self, reason: TaintReason) {
+        let mut g = self.inner.lock().unwrap();
+        if !g.tainted {
+            g.taint_reason = Some(reason);
+        }
+        g.tainted = true;
     }
 
     pub fn clear_taint(&self) {
-        self.inner.lock().unwrap().tainted = false;
+        let mut g = self.inner.lock().unwrap();
+        g.tainted = false;
+        g.taint_reason = None;
     }
 
     /// Atomically clear taint AND set a fresh arm deadline in one locked act.
@@ -126,12 +178,18 @@ impl EgressGuard {
         let deadline = now.saturating_add(duration_secs);
         let mut g = self.inner.lock().unwrap();
         g.tainted = false;
+        g.taint_reason = None;
         g.armed_until = Some(deadline);
         deadline
     }
 
     pub fn is_tainted(&self) -> bool {
         self.inner.lock().unwrap().tainted
+    }
+
+    /// The recorded taint cause (content-free), or `None` when un-tainted.
+    pub fn taint_reason(&self) -> Option<TaintReason> {
+        self.inner.lock().unwrap().taint_reason
     }
 
     /// Seconds remaining on the armed grant; 0 if disarmed or expired.
@@ -314,7 +372,7 @@ mod tests {
     #[test]
     fn taint_blocks_agent_and_survives_arming() {
         let g = EgressGuard::with_clock(fixed_1000);
-        g.taint();
+        g.taint(TaintReason::MessageRead);
         g.arm(30); // arming must NOT clear taint (closes the read->arm bypass)
         assert!(g.is_tainted());
         assert_eq!(g.authorize(EgressAuthority::Agent), Err(EgressDenied::Tainted));
@@ -323,7 +381,7 @@ mod tests {
     #[test]
     fn clear_taint_re_enables_after_explicit_reset() {
         let g = EgressGuard::with_clock(fixed_1000);
-        g.taint();
+        g.taint(TaintReason::MessageRead);
         g.arm(30);
         g.clear_taint(); // explicit session reset, distinct from arm
         assert!(!g.is_tainted());
@@ -333,7 +391,7 @@ mod tests {
     #[test]
     fn operator_authorizes_even_when_disarmed_and_tainted() {
         let g = EgressGuard::with_clock(fixed_1000);
-        g.taint();
+        g.taint(TaintReason::MessageRead);
         assert!(g.authorize(EgressAuthority::Operator).is_ok());
     }
 
@@ -445,7 +503,7 @@ mod tests {
     fn guarded_tainted_agent_denies_and_op_never_runs() {
         let g = EgressGuard::with_clock(fixed_1000);
         g.arm(30);
-        g.taint();
+        g.taint(TaintReason::MessageRead);
         let o = run_guarded(&g, EgressAuthority::Agent);
         assert_eq!(o.res, Err(EgressDenied::Tainted));
         assert!(!o.ran);
@@ -472,7 +530,7 @@ mod tests {
     #[test]
     fn guarded_operator_runs_op_even_when_tainted() {
         let g = EgressGuard::with_clock(fixed_1000);
-        g.taint(); // tainted + disarmed — Operator must still run
+        g.taint(TaintReason::MessageRead); // tainted + disarmed — Operator must still run
         let o = run_guarded(&g, EgressAuthority::Operator);
         assert_eq!(o.res, Ok(42));
         assert!(o.ran, "Operator op must run regardless of state");
@@ -484,7 +542,7 @@ mod tests {
     #[test]
     fn quarantine_and_rearm_sets_clean_taint_and_fresh_deadline_atomically() {
         let g = EgressGuard::with_clock(|| 1_000);
-        g.arm(300); g.taint();
+        g.arm(300); g.taint(TaintReason::MessageRead);
         assert!(g.authorize(EgressAuthority::Agent).is_err());
         let deadline = g.quarantine_and_rearm(60);
         assert_eq!(deadline, 1_060);
@@ -494,14 +552,73 @@ mod tests {
     #[test]
     fn quarantine_and_rearm_replaces_not_extends_old_deadline() {
         let g = EgressGuard::with_clock(|| 1_000);
-        g.arm(10_000); g.taint();
+        g.arm(10_000); g.taint(TaintReason::MessageRead);
         assert_eq!(g.quarantine_and_rearm(60), 1_060); // not 11_000
     }
     #[test]
     fn plain_arm_still_does_not_clear_taint() {
         let g = EgressGuard::with_clock(|| 1_000);
-        g.taint(); g.arm(300);
+        g.taint(TaintReason::MessageRead); g.arm(300);
         assert!(g.is_tainted());
         assert!(g.authorize(EgressAuthority::Agent).is_err());
+    }
+
+    // --- taint_reason (tuxlink-pf6re) -------------------------------------
+
+    #[test]
+    fn taint_records_the_reason() {
+        let g = EgressGuard::with_clock(|| 1_000);
+        assert_eq!(g.taint_reason(), None, "un-tainted guard has no reason");
+        g.taint(TaintReason::SearchResults);
+        assert!(g.is_tainted());
+        assert_eq!(g.taint_reason(), Some(TaintReason::SearchResults));
+    }
+
+    #[test]
+    fn taint_reason_is_first_wins_monotonic() {
+        // A later read must NOT overwrite the original cause within a run.
+        let g = EgressGuard::with_clock(|| 1_000);
+        g.taint(TaintReason::MailboxList);
+        g.taint(TaintReason::MessageRead);
+        assert_eq!(
+            g.taint_reason(),
+            Some(TaintReason::MailboxList),
+            "first taint wins; a later read must not clobber the recorded cause"
+        );
+    }
+
+    #[test]
+    fn clear_taint_resets_the_reason() {
+        let g = EgressGuard::with_clock(|| 1_000);
+        g.taint(TaintReason::SessionLog);
+        g.clear_taint();
+        assert!(!g.is_tainted());
+        assert_eq!(g.taint_reason(), None);
+    }
+
+    #[test]
+    fn quarantine_and_rearm_resets_the_reason() {
+        let g = EgressGuard::with_clock(|| 1_000);
+        g.taint(TaintReason::MessageRead);
+        g.quarantine_and_rearm(60);
+        assert_eq!(g.taint_reason(), None, "quarantine clears the reason with the taint");
+    }
+
+    #[test]
+    fn plain_arm_preserves_the_reason() {
+        // Pairs with `plain_arm_still_does_not_clear_taint`: arm touches neither
+        // the taint flag nor its recorded cause.
+        let g = EgressGuard::with_clock(|| 1_000);
+        g.taint(TaintReason::MailboxList);
+        g.arm(300);
+        assert_eq!(g.taint_reason(), Some(TaintReason::MailboxList));
+    }
+
+    #[test]
+    fn taint_reason_tokens_are_stable() {
+        assert_eq!(TaintReason::MailboxList.as_str(), "mailbox_list");
+        assert_eq!(TaintReason::MessageRead.as_str(), "message_read");
+        assert_eq!(TaintReason::SearchResults.as_str(), "search_results");
+        assert_eq!(TaintReason::SessionLog.as_str(), "session_log");
     }
 }

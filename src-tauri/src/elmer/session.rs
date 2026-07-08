@@ -481,6 +481,14 @@ impl ElmerSession {
                     RunEvent::ContextUsage { prompt_tokens, eval_tokens, num_ctx } => {
                         ElmerEvent::Context { prompt_tokens, eval_tokens, num_ctx }
                     }
+                    // pf6re: a denied tool call flips its chip to "denied" — a
+                    // durable, structured signal that a transmit was refused, so a
+                    // denial is not silently lost when the run ends `Completed`
+                    // with the model's narration.
+                    RunEvent::ToolDenied { tool, reason: _ } => ElmerEvent::Chip {
+                        tool,
+                        status: "denied".to_string(),
+                    },
                     _ => return,
                 };
                 emit_for_task(elmer_event);
@@ -1156,6 +1164,10 @@ mod tests {
                             delta_kind: "reasoning".to_string(),
                             chunk,
                         },
+                        RunEvent::ToolDenied { tool, reason: _ } => ElmerEvent::Chip {
+                            tool,
+                            status: "denied".to_string(),
+                        },
                         _ => return,
                     };
                     emitted_for_task.lock().unwrap().push(elmer_event);
@@ -1389,7 +1401,7 @@ mod tests {
         let probes = Probes::new();
         let session = parking_session(Arc::clone(&probes));
 
-        session.guard.taint();
+        session.guard.taint(tuxlink_security::TaintReason::MessageRead);
         assert!(session.guard.is_tainted());
 
         let sess = Arc::clone(&session);
@@ -1418,7 +1430,7 @@ mod tests {
         let session = parking_session(Arc::clone(&probes));
 
         // Taint the guard so we can prove new_conversation leaves egress state alone.
-        session.guard.taint();
+        session.guard.taint(tuxlink_security::TaintReason::MessageRead);
         assert!(session.guard.is_tainted());
 
         let sess = Arc::clone(&session);
@@ -1470,7 +1482,7 @@ mod tests {
     #[tokio::test]
     async fn second_send_racing_rearm_sees_seed_and_untainted() {
         let session = fast_session();
-        session.guard.taint();
+        session.guard.taint(tuxlink_security::TaintReason::MessageRead);
 
         let _dl = session.rearm(60).await;
         assert!(!session.guard.is_tainted());

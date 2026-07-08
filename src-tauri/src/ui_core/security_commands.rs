@@ -90,7 +90,7 @@ mod tests {
     fn status_dto_reflects_taint() {
         let g = EgressGuard::new();
         assert!(!EgressStatusDto::from_guard(&g).tainted);
-        g.taint();
+        g.taint(crate::ui_core::security::TaintReason::MessageRead);
         assert!(EgressStatusDto::from_guard(&g).tainted);
     }
 }

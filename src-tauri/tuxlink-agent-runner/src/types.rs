@@ -96,8 +96,12 @@ impl ToolCall {
 /// Outcome of a single tool invocation, as the `ToolInvoker` reports it.
 ///
 /// `Denied` is the relay of an authority/taint refusal from below the MCP
-/// boundary (the runner does not decide it — the security layer does). The loop
-/// treats a `Denied` as terminal: it surfaces a [`RunOutcome::ToolDenied`].
+/// boundary (the runner does not decide it — the security layer does). Egress
+/// stays absolutely locked: a `Denied` is NEVER retried into a successful
+/// transmit. The loop no longer KILLS the turn on a denial (pf6re) — it feeds the
+/// denial back so the model can narrate it, grants ONE bounded narration turn,
+/// then terminates: [`RunOutcome::ToolDenied`] for an authority/expiry denial, or
+/// a re-arm-quarantine [`RunOutcome::NeedsOperator`] for a taint denial.
 ///
 /// `Cancelled` signals that the invoker observed cooperative cancellation mid-call
 /// (e.g. the CancellationToken fired before or during dispatch). The runner treats
@@ -196,6 +200,18 @@ pub enum RunEvent {
     ToolCall {
         /// The tool name as the model addressed it.
         tool: String,
+    },
+    /// A tool call was DENIED by the security layer (egress arm/taint gate).
+    /// Emitted at the denial site — INDEPENDENT of the terminal [`RunOutcome`] —
+    /// so a denial leaves a durable, structured trace (chip → denied, telemetry)
+    /// even when the run goes on to end `Completed` with the model's narration of
+    /// the denial (pf6re). A caller MUST NOT rely on model prose for the fact that
+    /// a denial happened.
+    ToolDenied {
+        /// The tool that was refused.
+        tool: String,
+        /// The relayed, cause-accurate denial reason.
+        reason: String,
     },
     /// An incremental piece of the model's final answer, emitted as content
     /// streams in (before the finalizing [`RunEvent::AssistantText`]). Each
