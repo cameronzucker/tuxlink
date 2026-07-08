@@ -594,7 +594,7 @@ async fn injection_egress_is_arm_gated() {
 
             // --- Armed + tainted → Denied(Tainted-class): taint takes precedence ---
             let g = Arc::new(EgressGuard::new());
-            g.taint();
+            g.taint(tuxlink_security::TaintReason::MessageRead);
             g.arm(30);
             let inv = InProcessMcpInvoker::connect(
                 test_support::state_with_seeded_inbox(g, SEEDED_ID),

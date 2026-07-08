@@ -201,7 +201,7 @@ impl TuxlinkMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let Parameters(FolderParams { folder }) = params;
         let dto = self.state.mailbox.list(&folder).await.map_err(port_err)?;
-        self.state.guard.taint();
+        self.state.guard.taint(tuxlink_security::TaintReason::MailboxList);
         Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
@@ -220,7 +220,7 @@ impl TuxlinkMcp {
             .read(&folder, &id)
             .await
             .map_err(port_err)?;
-        self.state.guard.taint();
+        self.state.guard.taint(tuxlink_security::TaintReason::MessageRead);
         Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
@@ -258,7 +258,7 @@ impl TuxlinkMcp {
             })
             .await
             .map_err(port_err)?;
-        self.state.guard.taint();
+        self.state.guard.taint(tuxlink_security::TaintReason::SearchResults);
         Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
@@ -368,7 +368,7 @@ impl TuxlinkMcp {
     )]
     pub async fn session_log_snapshot(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.logs.snapshot().await.map_err(port_err)?;
-        self.state.guard.taint();
+        self.state.guard.taint(tuxlink_security::TaintReason::SessionLog);
         Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
@@ -1883,7 +1883,7 @@ mod tests {
     async fn gated_egress_denied_when_tainted_even_if_armed() {
         // Simulate a prior malicious read tainting the session, then arming.
         let (h, op_ran, _aborted) = handler_with_probes();
-        h.state.guard.taint(); // a prior message_read/search tainted the session
+        h.state.guard.taint(tuxlink_security::TaintReason::MessageRead); // a prior message_read/search tainted the session
         h.state.guard.arm(30); // arming does NOT clear taint
         let err = h
             .ardop_connect(Parameters(TargetParams {
@@ -1903,7 +1903,7 @@ mod tests {
     #[tokio::test]
     async fn gated_egress_allowed_after_clear_taint_and_fresh_arm() {
         let (h, op_ran, _aborted) = handler_with_probes();
-        h.state.guard.taint();
+        h.state.guard.taint(tuxlink_security::TaintReason::MessageRead);
         h.state.guard.clear_taint(); // explicit session reset
         h.state.guard.arm(30);
         h.vara_b2f_exchange(Parameters(VaraExchangeParams {
@@ -1957,7 +1957,7 @@ mod tests {
     #[tokio::test]
     async fn rig_tune_denied_when_tainted_even_if_armed() {
         let (h, op_ran, _aborted) = handler_with_probes();
-        h.state.guard.taint();
+        h.state.guard.taint(tuxlink_security::TaintReason::MessageRead);
         h.state.guard.arm(30); // arming does NOT clear taint
         let err = h
             .rig_tune(Parameters(RigTuneParams {
@@ -2036,7 +2036,7 @@ mod tests {
     async fn abort_tool_succeeds_regardless_of_guard_state() {
         // Unarmed + tainted: the abort tool must STILL succeed (never gated).
         let (h, _op_ran, aborted) = handler_with_probes();
-        h.state.guard.taint(); // hostile state
+        h.state.guard.taint(tuxlink_security::TaintReason::MessageRead); // hostile state
         h.cms_abort().await.expect("abort is never gated");
         assert!(
             aborted.load(Ordering::SeqCst),
@@ -2047,7 +2047,7 @@ mod tests {
     #[tokio::test]
     async fn all_abort_tools_succeed_when_tainted_and_unarmed() {
         let (h, _op_ran, aborted) = handler_with_probes();
-        h.state.guard.taint();
+        h.state.guard.taint(tuxlink_security::TaintReason::MessageRead);
         h.cms_abort().await.unwrap();
         h.modem_ardop_disconnect().await.unwrap();
         h.vara_stop_session().await.unwrap();
@@ -2077,7 +2077,7 @@ mod tests {
     #[tokio::test]
     async fn write_denied_when_tainted_even_if_armed() {
         let (h, op_ran, _staged) = handler_with_write_probes();
-        h.state.guard.taint();
+        h.state.guard.taint(tuxlink_security::TaintReason::MessageRead);
         h.state.guard.arm(30); // arming does NOT clear taint
         let err = h
             .config_set_ardop(Parameters(ArdopWriteParams { drive_level: 80 }))

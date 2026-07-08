@@ -910,7 +910,7 @@ mod tests {
     #[test]
     fn tainting_makes_view_report_tainted() {
         let state = state_with(EgressGuard::with_clock(fixed_1000));
-        state.guard.taint();
+        state.guard.taint(tuxlink_security::TaintReason::MessageRead);
         let dto = server_info_view(&state);
         assert!(dto.tainted, "after taint() the view must report tainted=true");
     }
@@ -920,7 +920,7 @@ mod tests {
         // Taint must not clear the arm grant, and vice versa: both can be true.
         let state = state_with(EgressGuard::with_clock(fixed_1000));
         state.guard.arm(30);
-        state.guard.taint();
+        state.guard.taint(tuxlink_security::TaintReason::MessageRead);
         let dto = server_info_view(&state);
         assert!(dto.armed);
         assert!(dto.tainted);

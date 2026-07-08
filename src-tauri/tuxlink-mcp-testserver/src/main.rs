@@ -90,7 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let raw = raw.to_string_lossy();
         let v = raw.trim();
         if v.eq_ignore_ascii_case("1") || v.eq_ignore_ascii_case("true") {
-            guard.taint();
+            guard.taint(tuxlink_security::TaintReason::MessageRead);
             eprintln!("{TAINT_ENV}={v}: session tainted");
         }
     }

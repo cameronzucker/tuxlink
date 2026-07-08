@@ -1389,7 +1389,7 @@ mod tests {
         let probes = Probes::new();
         let session = parking_session(Arc::clone(&probes));
 
-        session.guard.taint();
+        session.guard.taint(tuxlink_security::TaintReason::MessageRead);
         assert!(session.guard.is_tainted());
 
         let sess = Arc::clone(&session);
@@ -1418,7 +1418,7 @@ mod tests {
         let session = parking_session(Arc::clone(&probes));
 
         // Taint the guard so we can prove new_conversation leaves egress state alone.
-        session.guard.taint();
+        session.guard.taint(tuxlink_security::TaintReason::MessageRead);
         assert!(session.guard.is_tainted());
 
         let sess = Arc::clone(&session);
@@ -1470,7 +1470,7 @@ mod tests {
     #[tokio::test]
     async fn second_send_racing_rearm_sees_seed_and_untainted() {
         let session = fast_session();
-        session.guard.taint();
+        session.guard.taint(tuxlink_security::TaintReason::MessageRead);
 
         let _dl = session.rearm(60).await;
         assert!(!session.guard.is_tainted());
