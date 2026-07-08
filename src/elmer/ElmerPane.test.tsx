@@ -17,7 +17,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
-import { ElmerPane, ModelForm, RADIO_VERBS } from './ElmerPane';
+import { ElmerPane, ModelForm } from './ElmerPane';
+import { RADIO_VERBS } from './radioVerbs';
 import type { ElmerChipPayload, ElmerContextPayload, ElmerDeltaPayload, ElmerOutcomePayload, ElmerTurnPayload } from './elmerEvents';
 import { EV_CHIP, EV_CONTEXT, EV_DELTA, EV_OUTCOME, EV_TURN } from './elmerEvents';
 import { EGRESS_STATUS_DISARMED } from '../security/egressTypes';

@@ -42,6 +42,7 @@ import {
 } from './AdvancedModelSettings';
 import { renderMarkdown } from '../shell/markdownRender';
 import { sanitizeHtml } from '../shell/sanitizeHtml';
+import { RADIO_VERBS } from './radioVerbs';
 import './ElmerPane.css';
 
 // ---------------------------------------------------------------------------
@@ -89,33 +90,6 @@ function detectRemedy(reason: string, endpoint: string): string {
   return reason || 'Could not detect models. Check the endpoint and key.';
 }
 
-// ---------------------------------------------------------------------------
-// ThinkingIndicator constants
-// ---------------------------------------------------------------------------
-
-/** Ham-radio verb phrases cycled by ThinkingIndicator while a run is in progress. */
-export const RADIO_VERBS: readonly string[] = [
-  'tuning the bands',
-  'listening on frequency',
-  'working the pileup',
-  'spinning the VFO',
-  'chasing DX',
-  'checking propagation',
-  'reading the waterfall',
-  'copying your signal',
-  'pulling it out of the noise',
-  'netting in',
-  'keying up',
-  'warming up the tubes',
-  'checking the SWR',
-  'rolling the dial',
-  'squelching the static',
-  'working simplex',
-  'consulting the band plan',
-  'peaking the signal',
-  'calling CQ',
-  'logging the contact',
-];
 
 // ---------------------------------------------------------------------------
 // Sub-components
