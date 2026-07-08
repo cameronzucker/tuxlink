@@ -730,7 +730,14 @@ impl DevicePort for MonolithDevicePort {
         let base = agent_reports_dir()?;
         let path = tuxlink_mcp_core::validate::validate_attachment_dest(&base, &filename)
             .map_err(|e| PortError::Unavailable(format!("bad report filename: {e}")))?;
-        if !path.is_file() {
+        // Reject a symlink at the final component (Codex P2): don't let `lp` print
+        // a file OUTSIDE the reports sandbox via a leaf symlink. `symlink_metadata`
+        // does NOT follow, so `is_file()` here is true only for a real regular file.
+        let meta = std::fs::symlink_metadata(&path).map_err(|_| PortError::NotFound)?;
+        if meta.file_type().is_symlink() {
+            return Err(PortError::Unavailable("report path is a symlink".into()));
+        }
+        if !meta.is_file() {
             return Err(PortError::NotFound);
         }
         let status = std::process::Command::new("lp")
@@ -823,9 +830,29 @@ pub(crate) fn export_report_to(
     filename: &str,
     content: &str,
 ) -> Result<std::path::PathBuf, PortError> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
     let path = tuxlink_mcp_core::validate::validate_attachment_dest(base, filename)
         .map_err(|e| PortError::Unavailable(format!("bad report filename: {e}")))?;
-    std::fs::write(&path, content)
+    // Leaf-symlink escape defense (Codex P2): `validate_attachment_dest` only
+    // canonicalizes the PARENT, so a pre-existing final-component symlink could
+    // let a plain write follow it out of the sandbox. Refuse a final symlink AND
+    // open O_NOFOLLOW so the kernel won't follow one (closes the validate->write
+    // TOCTOU). Mirrors MonolithWritePort::attachment_save.
+    let final_is_symlink = std::fs::symlink_metadata(&path)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false);
+    if final_is_symlink {
+        return Err(PortError::Unavailable("report path is a symlink".into()));
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&path)
+        .map_err(|e| PortError::Internal(format!("open report: {e}")))?;
+    file.write_all(content.as_bytes())
         .map_err(|e| PortError::Internal(format!("write report: {e}")))?;
     Ok(path)
 }
@@ -2715,6 +2742,18 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             assert!(super::super::export_report_to(dir.path(), "../escape.md", "x").is_err());
             assert!(super::super::export_report_to(dir.path(), "/tmp/escape.md", "x").is_err());
+        }
+
+        #[test]
+        fn export_report_rejects_final_symlink_escape() {
+            // A pre-existing leaf symlink inside the sandbox must NOT be followed
+            // (Codex P2): writing through it would escape the reports directory.
+            let dir = tempfile::tempdir().unwrap();
+            let target = dir.path().join("secret.txt");
+            std::fs::write(&target, "orig").unwrap();
+            std::os::unix::fs::symlink(&target, dir.path().join("link.md")).unwrap();
+            assert!(super::super::export_report_to(dir.path(), "link.md", "pwned").is_err());
+            assert_eq!(std::fs::read_to_string(&target).unwrap(), "orig");
         }
     }
 
