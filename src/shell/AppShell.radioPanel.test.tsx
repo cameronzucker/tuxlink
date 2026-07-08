@@ -33,6 +33,20 @@ const mockUseModemStatus = vi.fn();
 vi.mock('../modem/useModemStatus', () => ({
   useModemStatus: () => mockUseModemStatus(),
   useModemIsActive: () => mockUseModemStatus().status.state !== 'stopped',
+  // tuxlink-7ppfq: AppShell's active-modem panel now tracks the SELECTED
+  // protocol via useActiveModemMode. Mirror the real logic so the panel mode
+  // follows the connection (only while the mocked modem is live).
+  useActiveModemMode: (active: { sessionType: string; protocol: string }) => {
+    if (mockUseModemStatus().status.state === 'stopped') return null;
+    const intent =
+      active.sessionType === 'p2p' || active.sessionType === 'radio-only'
+        ? active.sessionType
+        : 'cms';
+    if (active.protocol === 'vara-hf') return { kind: 'vara-hf', intent };
+    if (active.protocol === 'ardop-hf') return { kind: 'ardop-hf', intent };
+    // Non-radio selection while live → ARDOP fallback (mirrors the real hook).
+    return { kind: 'ardop-hf', intent: 'cms' };
+  },
   MODEM_STATUS_EVENT: 'modem:status',
 }));
 

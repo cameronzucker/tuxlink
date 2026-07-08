@@ -69,6 +69,13 @@ export interface ConfigViewDto {
    * the operator opted out and the close button quits. The Settings "Window"
    * toggle reads this and persists changes via set_close_to_tray. */
   close_to_tray: boolean;
+  /** The operator's persisted selected connection (tuxlink-7ppfq, Contract 2).
+   * `null` until the operator first selects a connection. The shell hydrates
+   * `activeConnection` from this on mount so the selection survives a restart.
+   * snake_case matches the Rust ConfigViewDto (this DTO has no camelCase rename).
+   * Optional in the TS mirror (like other non-universally-consumed fields) so
+   * existing partial fixtures need not enumerate it. */
+  active_connection?: { session_type: string; protocol: string } | null;
 }
 
 /** Mirrors PositionStatusDto from ui_commands.rs (tuxlink-va1i: amended for the

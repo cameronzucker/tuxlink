@@ -44,7 +44,7 @@ import { DashboardRibbon } from './DashboardRibbon';
 import { CloseBehaviorPrompt } from './CloseBehaviorPrompt';
 import { useIdentityList, useActiveIdentity, useIdentitySwitch } from './useIdentities';
 import { StatusBar } from './StatusBar';
-import { useStatusData, type StatusTone } from './useStatus';
+import { useStatusData, type StatusTone, type ConfigViewDto } from './useStatus';
 import { applyColorScheme, saveColorScheme } from './colorScheme';
 
 // tuxlink-perf-coldstart: lazy-load every overlay/dialog panel. None of these
@@ -223,7 +223,7 @@ const SavedSearchesPanel = lazy(() =>
 );
 import { useSearch } from '../search/useSearch';
 import { useSavedSearches } from '../search/useSavedSearches';
-import { useModemIsActive } from '../modem/useModemStatus';
+import { useModemIsActive, useActiveModemMode } from '../modem/useModemStatus';
 import { computePanelMode } from '../radio/radioPanelVisibility';
 import type { RadioPanelMode } from '../radio/types';
 import { PlaceholderRadioPanel } from '../radio/modes/PlaceholderRadioPanel';
@@ -840,13 +840,12 @@ export function AppShell() {
   // Spec §3.3 visibility rule. computePanelMode applies the OR of
   // (sidebar selection, active modem, pinned toggle) and returns the mode
   // to display, or null when the panel should not mount.
-  // In v1, only the ARDOP modem exists; when it's running, the active
-  // context is Ardop Winlink. Multi-modem coordination is out of scope
-  // per spec §8.
-  const activeModem: RadioPanelMode | null = useMemo(
-    () => (modemIsActive ? { kind: 'ardop-hf', intent: 'cms' } : null),
-    [modemIsActive],
-  );
+  // tuxlink-7ppfq (Contract 2): the active-modem panel now tracks the SELECTED
+  // protocol (VARA-HF vs ARDOP-HF) instead of a hardcoded `ardop-hf`. Deduped
+  // selector — derives from `useModemIsActive` (one fire per transition) and
+  // memoizes on `activeConnection`, so the shell never re-renders at the 4 Hz
+  // modem-broadcaster cadence.
+  const activeModem: RadioPanelMode | null = useActiveModemMode(activeConnection);
 
   useEffect(() => {
     const status = statusData.status;
@@ -861,6 +860,38 @@ export function AppShell() {
       ));
     }
   }, [statusData.status]);
+
+  // tuxlink-7ppfq (Contract 2): persist the operator's selected connection so
+  // the MCP `modem_status` surface can report `selected`. Hook the
+  // `activeConnection` STATE TRANSITION (not just `onSelectConnection`) so BOTH
+  // writers — the sidebar/favorites click AND the status-driven effect above —
+  // are captured; hooking only the click would leave React and config out of
+  // sync (the hoi1 multi-writer-clobber class). The hydration gate below stops
+  // the initial mount-hydrate value from being immediately re-persisted.
+  const activeConnHydrated = useRef(false);
+  useEffect(() => {
+    let cancelled = false;
+    invoke<ConfigViewDto>('config_read')
+      .then((cfg) => {
+        const sel = cfg?.active_connection;
+        if (!cancelled && sel) {
+          setActiveConnection({
+            sessionType: sel.session_type as ConnectionKey['sessionType'],
+            protocol: sel.protocol as ConnectionKey['protocol'],
+          });
+        }
+      })
+      .catch(() => { /* best-effort hydrate — fall back to the default */ })
+      .finally(() => { activeConnHydrated.current = true; });
+    return () => { cancelled = true; };
+  }, []);
+  useEffect(() => {
+    if (!activeConnHydrated.current) return; // don't re-persist the hydrated value
+    void invoke('config_set_active_connection', {
+      sessionType: activeConnection.sessionType,
+      protocol: activeConnection.protocol,
+    }).catch(() => { /* perception persistence is best-effort */ });
+  }, [activeConnection]);
 
   const radioPanelSelectedConnection = selectedConnection ?? (pinRadioPanel ? activeConnection : null);
   const radioPanelMode = computePanelMode({
