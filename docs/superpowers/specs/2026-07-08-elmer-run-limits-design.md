@@ -117,6 +117,24 @@ per-turn call?).
    a call already in flight is bounded by the per-turn timeout; the response
    deadline gates whether to *start* the next turn.
 
+## Delivery split
+
+Shipped as two focused PRs (the config plumbing is a ~20-site signature ripple
+through `ModelConfigSnapshot::new`/`set` + all callers, none locally compilable
+on the dev Pi — a blind 20-site Rust change is riskier than two clean increments):
+
+- **Increment 1 (this branch, tuxlink-jc6st): remove the cap + default run
+  budget.** `Limits.max_tool_turns` deleted; `max_response_duration` added
+  (default 1800s); the runner enforces the whole-run deadline; `session.rs`
+  picks it up via `..Limits::default()` with no further wiring. The "…continue?"
+  nag is gone; a run is bounded by a generous 30-min default. Runner unit tests
+  cover >10 tool turns completing and the deadline firing.
+- **Increment 2 (follow-up issue): make the per-response timeout operator-
+  configurable** — the `config.rs` / `model_config_state.rs` / `config_commands.rs`
+  / `lib.rs` plumbing + the "Max per-response timeout (seconds)" UI row + DTO +
+  frontend tests described above. Until it lands, the run budget is the 1800s
+  default (not yet operator-tunable).
+
 ## Out of scope
 
 - No `elmerEvents` / event-contract change. No streaming-UI change (that is

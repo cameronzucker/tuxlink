@@ -1523,9 +1523,10 @@ mod tests {
     /// After many turns the transcript is trimmed to at most MAX_TURNS.
     #[tokio::test]
     async fn transcript_bounded_after_many_turns() {
-        // max_tool_turns defaults to 10; the loop will terminate at 11 turns.
-        // With a valid schema that accepts empty objects, script 12 tool-call
-        // turns + a final text so the NeedsOperator branch trips at 11.
+        // There is no tool-turn count cap (tuxlink-jc6st): a run may take many
+        // tool turns and completes on the final Text under the whole-run budget.
+        // Script 15 tool-call turns + a final text; the loop runs them all and
+        // the transcript stays bounded by MAX_TURNS.
         let schema = serde_json::json!({ "type": "object" });
         let spec = ToolSpec::new("noop", schema);
 

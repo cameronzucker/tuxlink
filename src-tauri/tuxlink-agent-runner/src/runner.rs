@@ -6,9 +6,10 @@
 //! taint (SEC-4). Every tool call carries [`CallAuthority::Agent`] (SEC-3).
 //!
 //! Termination is guaranteed: every iteration either returns, advances the
-//! bounded tool-turn counter (COR-1), or advances the bounded malformed-retry
-//! counter (COR-3). Both counters are hard caps, so the loop cannot spin
-//! forever even against an adversarial Provider.
+//! bounded malformed-retry counter (COR-3), or moves wall-clock time toward the
+//! whole-run budget (COR-1, `max_response_duration`, checked at the loop top).
+//! The malformed-retry cap and the run budget are both hard bounds, so the loop
+//! cannot spin forever even against an adversarial Provider.
 
 use tokio_util::sync::CancellationToken;
 
@@ -58,13 +59,27 @@ pub async fn run_with_conversation(
 
     let tools: Vec<ToolSpec> = invoker.tools().to_vec();
 
-    let mut tool_turns: u32 = 0;
     let mut malformed_retries: u32 = 0;
+    // COR-1: bound the WHOLE run by wall-clock, not by an arbitrary tool-call
+    // count. `tokio::time::Instant` shares the runtime clock with the per-turn
+    // `timeout` below, so both are controllable together in time-paused tests.
+    let start = tokio::time::Instant::now();
 
     loop {
         // COR-2: never start a Provider call once cancellation is requested.
         if cancel.is_cancelled() {
             return RunOutcome::Cancelled;
+        }
+
+        // COR-1: the whole-run wall-clock budget. Checked before starting each
+        // turn; a turn already in flight is bounded by the per-turn timeout, so
+        // the total run is bounded by max_response_duration + one per-turn
+        // timeout. Replaces the former fixed tool-turn count cap.
+        if start.elapsed() >= limits.max_response_duration {
+            return RunOutcome::NeedsOperator(format!(
+                "Elmer's response exceeded the {}s budget",
+                limits.max_response_duration.as_secs()
+            ));
         }
 
         // COR-1: a per-turn wall-clock timeout. Exhaustion → NeedsOperator.
@@ -125,16 +140,11 @@ pub async fn run_with_conversation(
                     continue;
                 }
 
-                // Valid batch. COR-1: this counts as one tool-executing turn.
-                // Reset the malformed counter — the model recovered.
+                // Valid batch. Reset the malformed counter — the model
+                // recovered. The whole-run wall-clock budget (checked at the
+                // loop top) bounds how long the tool loop may run; there is no
+                // fixed cap on the number of tool turns.
                 malformed_retries = 0;
-                tool_turns += 1;
-                if tool_turns > limits.max_tool_turns {
-                    return RunOutcome::NeedsOperator(format!(
-                        "taken {} tool turns without finishing — continue?",
-                        limits.max_tool_turns
-                    ));
-                }
 
                 // Dispatch each call. Cancellation is checked before each and
                 // propagated into the in-flight tool future (COR-2).

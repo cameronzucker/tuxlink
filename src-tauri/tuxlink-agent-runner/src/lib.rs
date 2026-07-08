@@ -31,8 +31,8 @@
 //!
 //! ## Correctness invariants
 //!
-//! * **COR-1** — a hard [`Limits::max_tool_turns`] cap and per-turn timeout;
-//!   exhaustion returns [`RunOutcome::NeedsOperator`].
+//! * **COR-1** — a whole-run [`Limits::max_response_duration`] budget and a
+//!   per-turn timeout; exhaustion returns [`RunOutcome::NeedsOperator`].
 //! * **COR-2** — a [`tokio_util::sync::CancellationToken`] is checked before
 //!   every Provider call and propagated into each tool invocation.
 //! * **COR-3** — each tool call's args are validated against the tool's JSON
@@ -82,7 +82,7 @@ mod acceptance_tests {
 
     fn fast_limits() -> Limits {
         Limits {
-            max_tool_turns: 10,
+            max_response_duration: Duration::from_secs(1800),
             per_turn_timeout: Duration::from_secs(5),
             max_malformed_retries: 2,
         }
@@ -252,9 +252,43 @@ mod acceptance_tests {
     // --- COR-1 ------------------------------------------------------------
 
     #[tokio::test]
-    async fn cor1_terminates_at_max_tool_turns() {
-        // A provider that emits a (valid) tool call EVERY turn must terminate at
-        // the bound, not loop forever.
+    async fn cor1_many_tool_turns_no_longer_halt() {
+        // Regression (tuxlink-jc6st): the former fixed 10-tool-turn cap is gone.
+        // A run that legitimately takes MANY (>10) tool turns before finishing
+        // must complete, not stop and nag the operator. 15 tool turns then a
+        // final Text under the generous default run budget → Completed.
+        let mut script = Vec::new();
+        for _ in 0..15 {
+            script.push(ModelTurn::ToolCalls(vec![ToolCall::new(
+                "echo",
+                json!({"msg": "again"}),
+            )]));
+        }
+        script.push(ModelTurn::Text("done".into()));
+        let provider = ScriptedProvider::new(script);
+        let invoker = RecordingInvoker::always_ok(vec![echo_tool()]);
+        let outcome = run(
+            "go",
+            &provider,
+            &invoker,
+            EgressStatus::default(),
+            fast_limits(),
+            CancellationToken::new(),
+        )
+        .await;
+        match outcome {
+            RunOutcome::Completed(text) => assert_eq!(text, "done"),
+            other => panic!("expected Completed after 15 tool turns, got {other:?}"),
+        }
+        assert_eq!(invoker.call_count(), 15);
+    }
+
+    #[tokio::test]
+    async fn cor1_response_deadline_yields_needs_operator() {
+        // A provider that emits a (valid) tool call EVERY turn must terminate on
+        // the whole-run wall-clock budget, not loop forever. A ZERO budget trips
+        // the loop-top deadline check on the first iteration (before any turn),
+        // deterministically, and surfaces the budget message.
         let mut script = Vec::new();
         for _ in 0..100 {
             script.push(ModelTurn::ToolCalls(vec![ToolCall::new(
@@ -265,7 +299,7 @@ mod acceptance_tests {
         let provider = ScriptedProvider::new(script);
         let invoker = RecordingInvoker::always_ok(vec![echo_tool()]);
         let limits = Limits {
-            max_tool_turns: 3,
+            max_response_duration: Duration::ZERO,
             ..fast_limits()
         };
         let outcome = run(
@@ -279,12 +313,12 @@ mod acceptance_tests {
         .await;
         match outcome {
             RunOutcome::NeedsOperator(reason) => {
-                assert!(reason.contains('3'), "reason was: {reason}");
+                assert!(reason.contains("budget"), "reason was: {reason}");
             }
             other => panic!("expected NeedsOperator, got {other:?}"),
         }
-        // 3 turns executed before the 4th tripped the bound.
-        assert_eq!(invoker.call_count(), 3);
+        // Deadline tripped before any tool executed.
+        assert_eq!(invoker.call_count(), 0);
     }
 
     #[tokio::test]
