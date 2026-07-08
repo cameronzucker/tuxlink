@@ -1,0 +1,23 @@
+/** Ham-radio verb phrases cycled while Elmer is awaiting/reasoning (pre-answer). */
+export const RADIO_VERBS: readonly string[] = [
+  'tuning the bands',
+  'listening on frequency',
+  'working the pileup',
+  'spinning the VFO',
+  'chasing DX',
+  'checking propagation',
+  'reading the waterfall',
+  'copying your signal',
+  'pulling it out of the noise',
+  'netting in',
+  'keying up',
+  'warming up the tubes',
+  'checking the SWR',
+  'rolling the dial',
+  'squelching the static',
+  'working simplex',
+  'consulting the band plan',
+  'peaking the signal',
+  'calling CQ',
+  'logging the contact',
+];

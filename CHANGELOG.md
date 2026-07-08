@@ -31,6 +31,31 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.86.0](https://github.com/cameronzucker/tuxlink/compare/v0.85.0...v0.86.0) (2026-07-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* **elmer:** Limits.max_tool_turns is replaced by Limits.max_response_duration.
+
+### Features
+
+* **elmer:** remove the 10-tool-turn cap; bound a run by wall-clock instead ([386608c](https://github.com/cameronzucker/tuxlink/commit/386608cc247a0cf3e43d797fabd0c2770bf5c8f2))
+* **elmer:** render one StreamingStatusCard; kill the bubble/indicator glitches ([cab37a7](https://github.com/cameronzucker/tuxlink/commit/cab37a7da0a912dd719e12a7b07818f49e402e16))
+* **elmer:** StreamingStatusCard — collapsed counter + bounded expand (h5azu/06v9s/d5zns) ([bf6c612](https://github.com/cameronzucker/tuxlink/commit/bf6c612f613dc0568f42cb0d2f39846cafe4b800))
+* **elmer:** useStreamAutoFollow pin-to-bottom scroll hook (06v9s) ([0581843](https://github.com/cameronzucker/tuxlink/commit/05818431117e1e242feb0252507b1e3354bb1c87))
+* **elmer:** useThinkingPulse verb + elapsed ticker ([3de5e8e](https://github.com/cameronzucker/tuxlink/commit/3de5e8e745912beb5d3c70e8d06797be2c6d2e50))
+
+
+### Bug Fixes
+
+* **elmer:** keep Stop responsive between fast tool turns; stronger deadline test ([8324055](https://github.com/cameronzucker/tuxlink/commit/83240559eaf16df80425975cee27e9f3ca3948b2))
+
+
+### Refactors
+
+* **elmer:** extract RADIO_VERBS into radioVerbs module ([7e2f1cb](https://github.com/cameronzucker/tuxlink/commit/7e2f1cbcfa9de6e9778be35ece80d5801e941e56))
+
 ## [0.85.0](https://github.com/cameronzucker/tuxlink/compare/v0.84.0...v0.85.0) (2026-07-08)
 
 

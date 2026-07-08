@@ -96,8 +96,12 @@ impl ToolCall {
 /// Outcome of a single tool invocation, as the `ToolInvoker` reports it.
 ///
 /// `Denied` is the relay of an authority/taint refusal from below the MCP
-/// boundary (the runner does not decide it — the security layer does). The loop
-/// treats a `Denied` as terminal: it surfaces a [`RunOutcome::ToolDenied`].
+/// boundary (the runner does not decide it — the security layer does). Egress
+/// stays absolutely locked: a `Denied` is NEVER retried into a successful
+/// transmit. The loop no longer KILLS the turn on a denial (pf6re) — it feeds the
+/// denial back so the model can narrate it, grants ONE bounded narration turn,
+/// then terminates: [`RunOutcome::ToolDenied`] for an authority/expiry denial, or
+/// a re-arm-quarantine [`RunOutcome::NeedsOperator`] for a taint denial.
 ///
 /// `Cancelled` signals that the invoker observed cooperative cancellation mid-call
 /// (e.g. the CancellationToken fired before or during dispatch). The runner treats
@@ -132,9 +136,12 @@ pub enum ModelTurn {
 /// Hard bounds on a single `run`. Defaults are conservative.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
-    /// Maximum number of tool-executing turns before the loop stops and returns
-    /// [`RunOutcome::NeedsOperator`] (COR-1). Default 10.
-    pub max_tool_turns: u32,
+    /// Maximum wall-clock duration for the WHOLE run (all turns combined) before
+    /// the loop stops and returns [`RunOutcome::NeedsOperator`] (COR-1). Checked
+    /// at the top of the loop, before starting each Provider turn. This replaces
+    /// the former fixed tool-turn *count* cap: a run is bounded by time, not by
+    /// an arbitrary number of tool calls. Default 30 min.
+    pub max_response_duration: std::time::Duration,
     /// Per-turn wall-clock timeout for a single Provider call (COR-1). A turn
     /// that exceeds it is treated as exhaustion → [`RunOutcome::NeedsOperator`].
     pub per_turn_timeout: std::time::Duration,
@@ -146,7 +153,7 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
-            max_tool_turns: 10,
+            max_response_duration: std::time::Duration::from_secs(1800),
             per_turn_timeout: std::time::Duration::from_secs(120),
             max_malformed_retries: 2,
         }

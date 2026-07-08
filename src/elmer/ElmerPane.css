@@ -450,68 +450,12 @@
   font-weight: 600;
 }
 
-/* Thinking indicator — the 70–117 s local-model wait must read as progress. */
-.elmer-thinking {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-dim, #94a0ad);
-  font-style: italic;
-  font-size: 12px;
-}
-.elmer-thinking::before {
-  content: '';
-  flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent, var(--accent-teal));
-  animation: elmer-pulse 1.1s ease-in-out infinite;
-}
+/* elmer-pulse (pulsing dot) is reused by the streaming status card. */
 @keyframes elmer-pulse {
   0%, 100% { opacity: 0.35; transform: scale(0.85); }
   50%      { opacity: 1;    transform: scale(1.15); }
 }
-/* Visually-hidden label for screen readers (stable; not re-announced on tick). */
-.elmer-thinking-sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-/* Elapsed timer — dimmer than the verb phrase to stay subtle. */
-.elmer-thinking-elapsed {
-  color: var(--text-faint, var(--text-dim));
-  font-variant-numeric: tabular-nums;
-  font-size: 11px;
-  font-style: normal;
-}
-
-/* ── Streaming bubble (phase 2b) ────────────────────────────────────────────
- * Transient live render of a streamed turn: plain-text answer + blinking cursor,
- * with an auto-collapsing "Thinking…" reasoning section above. Replaced at
- * finalize by the committed (markdown) assistant item. */
-.elmer-streaming-answer {
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: var(--text);
-}
-/* Blinking caret trailing the live answer text. */
-.elmer-streaming-cursor {
-  display: inline-block;
-  width: 2px;
-  height: 1.05em;
-  margin-left: 1px;
-  vertical-align: text-bottom;
-  background: var(--accent, var(--accent-teal));
-  animation: elmer-blink 1s step-end infinite;
-}
+/* elmer-blink (caret) is reused by the streaming status card cursor. */
 @keyframes elmer-blink {
   0%, 100% { opacity: 1; }
   50%      { opacity: 0; }
@@ -538,10 +482,6 @@
 }
 .elmer-reasoning-toggle:hover {
   color: var(--text-dim, #94a0ad);
-}
-/* Live (streaming) toggle is a non-interactive label — no hover affordance. */
-.elmer-reasoning-toggle--live {
-  cursor: default;
 }
 .elmer-reasoning-body {
   white-space: pre-wrap;
@@ -1453,4 +1393,113 @@
 
 .elmer-back-to-chat-btn:hover {
   background: var(--bg-subtle, var(--bg-dim));
+}
+
+/* ── Streaming status card (tuxlink-h5azu / 06v9s / d5zns) ───────────────────
+ * One in-flight surface: collapsed to a live counter row by default, expandable
+ * to a bounded (~10-line) scrolling body. Replaces the old bubble + indicator. */
+.elmer-stream-card {
+  align-self: stretch;
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: 9px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.elmer-stream-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 9px 11px;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.elmer-stream-head:hover {
+  background: var(--surface-3, var(--surface-2));
+}
+.elmer-stream-chev {
+  flex: 0 0 auto;
+  width: 11px;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+.elmer-stream-pulse {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent, var(--accent-teal));
+  animation: elmer-pulse 1.1s ease-in-out infinite;
+}
+.elmer-stream-verb {
+  font-size: 12.5px;
+  color: var(--text);
+}
+.elmer-stream-verb-em {
+  color: var(--accent, var(--accent-teal));
+}
+.elmer-stream-spacer {
+  flex: 1 1 auto;
+}
+.elmer-stream-metrics {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.elmer-stream-tokens {
+  color: var(--accent-teal);
+}
+.elmer-stream-body {
+  max-height: 210px; /* ~10 lines — tuxlink-06v9s bounded box */
+  overflow-y: auto;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-dim, var(--surface-1));
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.55;
+  position: relative;
+}
+.elmer-stream-reasoning {
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--border);
+  color: var(--text-faint, var(--text-dim));
+  font-style: italic;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.elmer-stream-answer {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.elmer-stream-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  background: var(--accent, var(--accent-teal));
+  animation: elmer-blink 1s step-end infinite;
+}
+.elmer-stream-jump-live,
+.elmer-transcript-jump-live {
+  position: sticky;
+  bottom: 6px;
+  float: right;
+  padding: 2px 9px;
+  border: 0;
+  border-radius: 11px;
+  background: var(--accent, var(--accent-teal));
+  color: var(--bg, #0b0e13);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+.elmer-transcript-jump-live {
+  margin-left: auto;
 }
