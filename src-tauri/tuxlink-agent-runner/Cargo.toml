@@ -34,5 +34,7 @@ tokio-util = "0.7"
 tokio = { version = "1", features = ["time", "macros", "rt"] }
 
 [dev-dependencies]
-# rt-multi-thread + time for the loop tests; macros for #[tokio::test].
-tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "time", "sync"] }
+# rt-multi-thread + time for the loop tests; macros for #[tokio::test];
+# test-util for #[tokio::test(start_paused = true)] (deterministic clock in the
+# response-deadline test).
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "time", "sync", "test-util"] }

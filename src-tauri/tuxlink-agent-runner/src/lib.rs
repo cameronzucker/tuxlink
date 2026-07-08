@@ -283,28 +283,40 @@ mod acceptance_tests {
         assert_eq!(invoker.call_count(), 15);
     }
 
-    #[tokio::test]
-    async fn cor1_response_deadline_yields_needs_operator() {
-        // A provider that emits a (valid) tool call EVERY turn must terminate on
-        // the whole-run wall-clock budget, not loop forever. A ZERO budget trips
-        // the loop-top deadline check on the first iteration (before any turn),
-        // deterministically, and surfaces the budget message.
-        let mut script = Vec::new();
-        for _ in 0..100 {
-            script.push(ModelTurn::ToolCalls(vec![ToolCall::new(
-                "echo",
-                json!({"msg": "again"}),
-            )]));
+    #[tokio::test(start_paused = true)]
+    async fn cor1_response_deadline_fires_after_some_turns() {
+        // A Provider that emits a (valid) tool call EVERY turn must terminate on
+        // the whole-run wall-clock budget, not loop forever. Under paused time,
+        // a Provider that advances the clock 1s per turn against a 3s budget runs
+        // a few turns then trips the deadline — proving a POSITIVE budget
+        // eventually fires (not just a zero short-circuit), and that some tool
+        // turns completed first.
+        struct SleepyProvider;
+        #[async_trait::async_trait]
+        impl Provider for SleepyProvider {
+            async fn turn(
+                &self,
+                _c: &Conversation,
+                _t: &[ToolSpec],
+                _on_event: &(dyn Fn(RunEvent) + Sync),
+            ) -> Result<ModelTurn, ProviderError> {
+                // Advances the paused runtime clock by 1s (< the 5s per-turn
+                // timeout, so the per-turn guard does not trip).
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                Ok(ModelTurn::ToolCalls(vec![ToolCall::new(
+                    "echo",
+                    json!({"msg": "again"}),
+                )]))
+            }
         }
-        let provider = ScriptedProvider::new(script);
         let invoker = RecordingInvoker::always_ok(vec![echo_tool()]);
         let limits = Limits {
-            max_response_duration: Duration::ZERO,
+            max_response_duration: Duration::from_secs(3),
             ..fast_limits()
         };
         let outcome = run(
             "go",
-            &provider,
+            &SleepyProvider,
             &invoker,
             EgressStatus::default(),
             limits,
@@ -317,8 +329,8 @@ mod acceptance_tests {
             }
             other => panic!("expected NeedsOperator, got {other:?}"),
         }
-        // Deadline tripped before any tool executed.
-        assert_eq!(invoker.call_count(), 0);
+        // Turns at t=0,1,2 ran (elapsed < 3s); the deadline tripped at t=3s.
+        assert_eq!(invoker.call_count(), 3);
     }
 
     #[tokio::test]

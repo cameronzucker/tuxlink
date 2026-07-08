@@ -66,6 +66,14 @@ pub async fn run_with_conversation(
     let start = tokio::time::Instant::now();
 
     loop {
+        // COR-2: cooperative yield so a Stop/cancel task is polled between fast
+        // tool turns even on a current-thread runtime. Without the former count
+        // cap, a Provider + ToolInvoker that both return immediately could keep
+        // this loop continuously ready until the whole-run budget elapsed and
+        // starve the reactor — masking an external cancellation. yield_now costs
+        // one reschedule per iteration and does not advance the clock.
+        tokio::task::yield_now().await;
+
         // COR-2: never start a Provider call once cancellation is requested.
         if cancel.is_cancelled() {
             return RunOutcome::Cancelled;
