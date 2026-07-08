@@ -31,6 +31,26 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.87.0](https://github.com/cameronzucker/tuxlink/compare/v0.86.0...v0.87.0) (2026-07-08)
+
+
+### Features
+
+* **config:** persist selected connection; bump schema 5-&gt;6 (Contract 2) ([a20248a](https://github.com/cameronzucker/tuxlink/commit/a20248a127aeed89f0c111553591dabecc26aed3))
+* **mcp:** agent print + report export (Contract 3, tuxlink-z2nwx) ([9d38f3d](https://github.com/cameronzucker/tuxlink/commit/9d38f3d74ad79393b4990919edff5ce877ba3c99))
+* **mcp:** modem_get_status reports selected + running with SoT kind (Contract 2) ([ccdae4c](https://github.com/cameronzucker/tuxlink/commit/ccdae4c44d633c358101c743087bf32427285999))
+* **mcp:** read-only vara_probe deep probe tool (Contract 1b) ([ebf1e2c](https://github.com/cameronzucker/tuxlink/commit/ebf1e2c84b2ccb0bcc0288a42a2d55a1224e76e1))
+* **mcp:** rich audio-card inspection + disambiguation guidance (Contract 4, tuxlink-77seh) ([3486e53](https://github.com/cameronzucker/tuxlink/commit/3486e533eadc0127389ba9f3598c40da0dd5d8ba))
+* **mcp:** VARA cmd-port reachability on vara_status (Contract 1a) ([7038436](https://github.com/cameronzucker/tuxlink/commit/7038436a202f4544c8bdec052e92bc761425e900))
+* **ui:** kind-aware active-modem panel + persist selected connection (Contract 2) ([792016d](https://github.com/cameronzucker/tuxlink/commit/792016d547c26577535e270bec7d6f21c39a0499))
+
+
+### Bug Fixes
+
+* **7ppfq:** address Codex review (private-leak lint, vara-fm panel, hydrate race) ([e9d55da](https://github.com/cameronzucker/tuxlink/commit/e9d55da57e8ae41584ef6803a1cea50f9ee5e0ef))
+* **config:** add active_connection to all Config struct literals (CI E0063) ([191e75c](https://github.com/cameronzucker/tuxlink/commit/191e75c9331cb4942495f47d97bddb3f706b2dc7))
+* **mcp:** reject leaf-symlink escape in report export/print (Codex P2) ([144baf6](https://github.com/cameronzucker/tuxlink/commit/144baf661ee2960dd473a9c7b32b511fa36c4863))
+
 ## [0.86.0](https://github.com/cameronzucker/tuxlink/compare/v0.85.0...v0.86.0) (2026-07-08)
 
 
