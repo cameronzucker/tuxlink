@@ -251,12 +251,51 @@ pub struct BackendStatusDto {
     pub state: String,
 }
 
-/// Live modem status.
+/// Live modem status (tuxlink-7ppfq, Contract 2). Reports BOTH what is actually
+/// `running` (live sessions) and what the operator has `selected` (their target),
+/// with `kind` dispatched on the source of truth — never a hardcoded literal.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModemStatusDto {
+    /// The PRIMARY running modem's kind (`"ardop"` / `"vara-hf"`), or `"idle"`
+    /// when nothing is running. Dispatched on `running`, NEVER on `selected` —
+    /// a `selected` fallback would re-introduce a false-positive against
+    /// `connected`. When more than one modem runs, this is `running[0]` (a
+    /// fixed tie-break; consult `running` + `conflict` for the full picture).
     pub kind: String,
+    /// Whether the PRIMARY running modem is in a connected/open state. Pairs
+    /// with `kind` (never with `selected`), so it is honest for the reported kind.
     pub connected: bool,
+    /// The primary running modem's state string, or `"idle"` when nothing runs.
     pub state: String,
+    /// Every live modem session (ARDOP and VARA are independent objects, so both
+    /// can be non-idle). Empty when nothing is running. `SocketLost` counts as
+    /// running (degraded) so the agent knows to close+reopen, not "idle".
+    #[serde(default)]
+    pub running: Vec<RunningModemDto>,
+    /// The operator's persisted selected connection (their target), independent
+    /// of what is live. Reported separately from `kind`/`running`.
+    #[serde(default)]
+    pub selected: Option<SelectedConnectionDto>,
+    /// True when more than one modem is running — a state convention forbids but
+    /// the code does not enforce; surfaced honestly so the agent can react.
+    #[serde(default)]
+    pub conflict: bool,
+}
+
+/// One live modem session within [`ModemStatusDto::running`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RunningModemDto {
+    /// `"ardop"` or `"vara-hf"`.
+    pub kind: String,
+    /// The session's current state string.
+    pub state: String,
+}
+
+/// The operator's selected connection, mirrored from `Config.active_connection`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SelectedConnectionDto {
+    pub session_type: String,
+    pub protocol: String,
 }
 
 /// Live VARA modem status.
@@ -265,6 +304,26 @@ pub struct VaraStatusDto {
     pub connected: bool,
     pub bandwidth: u32,
     pub state: String,
+    /// Command-port (8300) reachability, classified WITHOUT disturbing a live
+    /// session: `Some(true)` = the cmd port answered (or a session is Open),
+    /// `Some(false)` = no answer, `None` = unknown (the session lock was
+    /// contended, so the probe was skipped rather than made to wait).
+    /// **cmd-reachable is NOT "ready to send"** — 8300 can accept while 8301
+    /// (data) still lags on a WINE restart.
+    pub reachable: Option<bool>,
+}
+
+/// Result of the read-only VARA deep probe (`vara_probe`): connect the cmd port
+/// and read the startup banner / `VERSION` reply to distinguish "nothing there"
+/// from "something is listening but is not VARA" from "a real VARA answered".
+/// Read-only — never sends a stateful setter, never opens the data port.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VaraProbeDto {
+    /// `"down"` (no TCP), `"socket-not-vara"` (answered but not VARA), or
+    /// `"vara-ok"` (a real VARA banner / VERSION reply).
+    pub classification: String,
+    /// The trimmed banner / VERSION reply text, when any bytes were read.
+    pub banner: Option<String>,
 }
 
 /// One checkpoint of the VARA-under-WINE install pipeline
@@ -509,6 +568,9 @@ pub trait StatusPort: Send + Sync {
     async fn backend_status(&self) -> Result<BackendStatusDto, PortError>;
     async fn modem_status(&self) -> Result<ModemStatusDto, PortError>;
     async fn vara_status(&self) -> Result<VaraStatusDto, PortError>;
+    /// Read-only deep probe of the VARA cmd port (banner / VERSION). Never
+    /// sends a stateful setter, never opens the data port, never transmits.
+    async fn vara_probe(&self) -> Result<VaraProbeDto, PortError>;
     async fn position_status(&self) -> Result<PositionStatusDto, PortError>;
     async fn platform_info(&self) -> Result<PlatformInfoDto, PortError>;
     async fn wizard_completed(&self) -> Result<bool, PortError>;

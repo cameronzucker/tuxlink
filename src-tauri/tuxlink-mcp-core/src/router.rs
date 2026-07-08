@@ -135,7 +135,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "modem_get_status",
-        description = "Report the current modem (ARDOP/VARA/packet) status: kind, connected, and state. Read-only."
+        description = "Report modem status with BOTH what is actually RUNNING and what the operator has SELECTED. `running` lists every live session (ARDOP and VARA are independent — both can be live); `kind`/`connected`/`state` describe the primary running modem (`kind`=\"idle\" when nothing runs — it never falls back to `selected`); `conflict` is true when more than one modem runs; `selected` is the operator's persisted target connection (`{session_type, protocol}`) regardless of what is live. Read-only."
     )]
     pub async fn modem_get_status(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.status.modem_status().await.map_err(port_err)?;
@@ -144,10 +144,19 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "vara_status",
-        description = "Report VARA modem status: connected, bandwidth, and state. Read-only."
+        description = "Report VARA modem status: connected, bandwidth, and state. Read-only. Also reports `reachable` (true/false/null): command-port (8300) reachability — true = the cmd port answered (or a session is Open), false = no answer, null = unknown (session busy, probe skipped rather than made to wait). cmd-reachable is NOT ready-to-send; use `vara_probe` to confirm a real VARA is answering."
     )]
     pub async fn vara_status(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.status.vara_status().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
+        name = "vara_probe",
+        description = "Deep READ-ONLY probe of the VARA modem: connect the command port and read its startup banner / VERSION reply. Returns `classification`: \"down\" (no TCP), \"socket-not-vara\" (something is listening but is not VARA), or \"vara-ok\" (a real VARA answered), plus the raw `banner`. NEVER sends MYCALL/BW/LISTEN, never opens the data port, never transmits. Use after `vara_status.reachable` to confirm a real VARA before a send attempt."
+    )]
+    pub async fn vara_probe(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self.state.status.vara_probe().await.map_err(port_err)?;
         Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 

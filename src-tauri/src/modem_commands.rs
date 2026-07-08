@@ -3055,6 +3055,7 @@ mod tests {
             trash_retention_days: 30,
             close_to_tray: true,
             close_prompt_seen: false,
+            active_connection: None,
         };
         assert!(check_identity_present(&cfg).is_err());
     }
@@ -3774,6 +3775,7 @@ mod tests {
             trash_retention_days: 30,
             close_to_tray: true,
             close_prompt_seen: false,
+            active_connection: None,
         }
     }
 

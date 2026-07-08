@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
-import { useModemStatus } from './useModemStatus';
+import { useModemStatus, connectionToPanelMode, useActiveModemMode } from './useModemStatus';
 import { STOPPED, type ModemStatus } from './types';
+import type { ConnectionKey } from '../connections/sessionTypes';
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
@@ -54,5 +55,67 @@ describe('useModemStatus', () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.status.state).toBe('stopped');
     expect(result.current.error).toContain('backend not ready');
+  });
+});
+
+describe('connectionToPanelMode (tuxlink-7ppfq Contract 2)', () => {
+  it('maps a vara-hf selection to a vara-hf panel mode', () => {
+    expect(connectionToPanelMode({ sessionType: 'cms', protocol: 'vara-hf' })).toEqual({
+      kind: 'vara-hf',
+      intent: 'cms',
+    });
+  });
+
+  it('maps an ardop-hf selection, carrying the intent from sessionType', () => {
+    expect(connectionToPanelMode({ sessionType: 'p2p', protocol: 'ardop-hf' })).toEqual({
+      kind: 'ardop-hf',
+      intent: 'p2p',
+    });
+  });
+
+  it('maps a vara-fm selection to a vara-fm panel mode', () => {
+    expect(connectionToPanelMode({ sessionType: 'cms', protocol: 'vara-fm' })).toEqual({
+      kind: 'vara-fm',
+      intent: 'cms',
+    });
+  });
+
+  it('returns null for non-radio protocols', () => {
+    expect(connectionToPanelMode({ sessionType: 'cms', protocol: 'telnet' })).toBeNull();
+    expect(connectionToPanelMode({ sessionType: 'cms', protocol: 'packet' })).toBeNull();
+  });
+});
+
+describe('useActiveModemMode (tuxlink-7ppfq Contract 2)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listenMock.mockResolvedValue(() => {});
+  });
+
+  const vara: ConnectionKey = { sessionType: 'cms', protocol: 'vara-hf' };
+
+  it('returns the selected panel mode while the modem is live', async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    // A non-stopped state means the modem is live.
+    (invoke as ReturnType<typeof vi.fn>).mockResolvedValue({ ...STOPPED, state: 'connecting' });
+    const { result } = renderHook(() => useActiveModemMode(vara));
+    await waitFor(() => expect(result.current).toEqual({ kind: 'vara-hf', intent: 'cms' }));
+  });
+
+  it('returns null when the modem is stopped, regardless of selection', async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    (invoke as ReturnType<typeof vi.fn>).mockResolvedValue(STOPPED);
+    const { result } = renderHook(() => useActiveModemMode(vara));
+    // Stays null across the initial fetch.
+    await waitFor(() => expect(result.current).toBeNull());
+  });
+
+  it('falls back to ardop-hf when live but the selection is not a radio protocol', async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    (invoke as ReturnType<typeof vi.fn>).mockResolvedValue({ ...STOPPED, state: 'connecting' });
+    const telnet: ConnectionKey = { sessionType: 'cms', protocol: 'telnet' };
+    const { result } = renderHook(() => useActiveModemMode(telnet));
+    // A live (ARDOP) modem with a non-radio selection still surfaces the ARDOP panel.
+    await waitFor(() => expect(result.current).toEqual({ kind: 'ardop-hf', intent: 'cms' }));
   });
 });

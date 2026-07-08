@@ -1978,6 +1978,7 @@ pub fn run() {
             crate::ui_commands::network_po_favorites_remove,
             crate::ui_commands::network_po_favorites_set,
             crate::ui_commands::config_set_review_inbound, // tuxlink-bsiy (review-pending-messages preference)
+            crate::ui_commands::config_set_active_connection, // tuxlink-7ppfq (persist operator-selected connection)
             crate::ui_commands::config_set_trash_auto_purge, // tuxlink-wl7n (trash auto-purge + retention)
             // Task 10 (tuxlink-1hu): find-messages search commands
             crate::search::commands::tauri_search_run,

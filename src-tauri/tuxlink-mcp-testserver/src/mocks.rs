@@ -23,8 +23,8 @@ use tuxlink_mcp_core::ports::{
     ProvisionPort, QsyCandidateDto, RigConfigDto, RigStatusDto, SearchPort, SearchQueryDto,
     SearchResultsDto, SendFormDto, SerialDeviceDto, SessionIntentDto, SolarSnapshotDto,
     StationFilterDto, StationListDto, StationModeDto, StationPort, StatusPort, VaraCheckpointDto,
-    VaraConfigDto, VaraInstallStatusDto, VaraInstallSummaryDto, VaraStatusDto, VaraWriteDto,
-    WritePort, WritePortError,
+    VaraConfigDto, VaraInstallStatusDto, VaraInstallSummaryDto, VaraProbeDto, VaraStatusDto,
+    VaraWriteDto, WritePort, WritePortError,
 };
 use tuxlink_mcp_core::validate::{
     validate_address, validate_attachment_dest, validate_body, validate_drive_level,
@@ -58,9 +58,12 @@ impl StatusPort for MockStatus {
     }
     async fn modem_status(&self) -> Result<ModemStatusDto, PortError> {
         Ok(ModemStatusDto {
-            kind: "ardop".into(),
+            kind: "idle".into(),
             connected: false,
-            state: "disconnected".into(),
+            state: "idle".into(),
+            running: vec![],
+            selected: None,
+            conflict: false,
         })
     }
     async fn vara_status(&self) -> Result<VaraStatusDto, PortError> {
@@ -68,6 +71,13 @@ impl StatusPort for MockStatus {
             connected: false,
             bandwidth: 2300,
             state: "idle".into(),
+            reachable: Some(false),
+        })
+    }
+    async fn vara_probe(&self) -> Result<VaraProbeDto, PortError> {
+        Ok(VaraProbeDto {
+            classification: "down".into(),
+            banner: None,
         })
     }
     async fn position_status(&self) -> Result<PositionStatusDto, PortError> {

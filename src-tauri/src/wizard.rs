@@ -219,6 +219,7 @@ pub async fn persist_cms_impl(
         trash_retention_days: 30,
         close_to_tray: true,
         close_prompt_seen: false,
+        active_connection: None,
     };
 
     // Step 4: Create keyring entry handle (needed for rollback in step 7).
@@ -460,6 +461,7 @@ pub async fn persist_offline_impl(
         trash_retention_days: 30,
         close_to_tray: true,
         close_prompt_seen: false,
+        active_connection: None,
     };
 
     // Single atomic write to config.json. No keyring involved.

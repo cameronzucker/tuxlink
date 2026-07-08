@@ -113,6 +113,7 @@ fn native_test_config() -> tuxlink_lib::config::Config {
         trash_retention_days: 30,
         close_to_tray: true,
         close_prompt_seen: false,
+        active_connection: None,
     }
 }
 

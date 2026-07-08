@@ -359,11 +359,238 @@ pub enum RecvOutcome {
     Err(io::Error),
 }
 
+/// Read-only TCP reachability touch on VARA's COMMAND port (tuxlink-7ppfq,
+/// Contract 1). Opens a socket, then immediately shuts it down — issues NO
+/// VARA command, so it never mutates modem state (unlike MYCALL/BW/LISTEN).
+///
+/// `cmd`-reachable is NOT "ready to send": 8300 can accept while 8301 (data)
+/// still lags on a WINE restart. Callers name/describe this as cmd-port
+/// reachability, not "usable session."
+pub fn cmd_port_reachable(host: &str, cmd_port: u16, timeout: Duration) -> bool {
+    let Ok(mut addrs) = (host, cmd_port).to_socket_addrs() else {
+        return false;
+    };
+    let Some(addr) = addrs.next() else {
+        return false;
+    };
+    match TcpStream::connect_timeout(&addr, timeout) {
+        Ok(stream) => {
+            // Explicit shutdown so we never leave a half-open connection on
+            // VARA's single-App acceptor.
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// Outcome of the read-only deep probe ([`deep_probe`]). A transport-layer type
+/// (the MCP `VaraProbeDto` is built from it in `mcp_ports`) so this module does
+/// not depend upward on the MCP DTO crate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VaraProbeResult {
+    /// `"down"` (no TCP), `"socket-not-vara"` (something answered but is not
+    /// VARA), or `"vara-ok"` (a real VARA banner / VERSION reply).
+    pub classification: String,
+    /// The trimmed banner / VERSION reply text, when any bytes were read.
+    pub banner: Option<String>,
+}
+
+/// READ-ONLY deep probe (tuxlink-7ppfq, Contract 1): connect the cmd port, read
+/// VARA's startup banner, and — only if that banner does not already identify
+/// VARA — send a single `VERSION` query (a pure read; it does NOT mutate modem
+/// state, unlike MYCALL/BW/LISTEN) and read the reply. Mirrors the setup
+/// engine's `wv_wait_ports` verify handshake. Never opens the data port, never
+/// sends a stateful setter, never keys a radio.
+pub fn deep_probe(cfg: &VaraConfig) -> VaraProbeResult {
+    use std::io::Read;
+    let addr = match (cfg.host.as_str(), cfg.cmd_port)
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut a| a.next())
+    {
+        Some(a) => a,
+        None => {
+            return VaraProbeResult {
+                classification: "down".into(),
+                banner: None,
+            }
+        }
+    };
+    let mut stream = match TcpStream::connect_timeout(&addr, cfg.connect_timeout) {
+        Ok(s) => s,
+        Err(_) => {
+            return VaraProbeResult {
+                classification: "down".into(),
+                banner: None,
+            }
+        }
+    };
+    let _ = stream.set_read_timeout(
+        cfg.read_timeout
+            .or_else(|| Some(Duration::from_millis(500))),
+    );
+    let mut acc = String::new();
+    let mut buf = [0u8; 512];
+    // Drain any startup banner first (read-only).
+    if let Ok(n) = stream.read(&mut buf) {
+        acc.push_str(&String::from_utf8_lossy(&buf[..n]));
+    }
+    if !acc.to_uppercase().contains("VARA") {
+        // Single read-only VERSION query (CR terminator matches VARA's codec).
+        let _ = stream.write_all(b"VERSION\r");
+        if let Ok(n) = stream.read(&mut buf) {
+            acc.push_str(&String::from_utf8_lossy(&buf[..n]));
+        }
+    }
+    let _ = stream.shutdown(std::net::Shutdown::Both);
+    let banner = acc.trim().to_string();
+    let classification = if banner.to_uppercase().contains("VARA") {
+        "vara-ok"
+    } else {
+        "socket-not-vara"
+    };
+    VaraProbeResult {
+        classification: classification.into(),
+        banner: if banner.is_empty() {
+            None
+        } else {
+            Some(banner)
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::net::TcpListener;
     use std::thread;
+
+    #[test]
+    fn cmd_port_reachable_true_when_listener_bound() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral");
+        let port = listener.local_addr().unwrap().port();
+        assert!(cmd_port_reachable(
+            "127.0.0.1",
+            port,
+            Duration::from_secs(5)
+        ));
+    }
+
+    #[test]
+    fn cmd_port_reachable_false_when_no_listener() {
+        // Bind then drop to obtain a port nothing is listening on.
+        let port = {
+            let l = TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap().port()
+        };
+        assert!(!cmd_port_reachable(
+            "127.0.0.1",
+            port,
+            Duration::from_millis(500)
+        ));
+    }
+
+    /// Fake VARA cmd-port acceptor: replies `reply` as a startup banner, then
+    /// records every byte it subsequently receives so a test can assert the
+    /// read-only probe sent NO stateful setter.
+    fn spawn_fake_vara(reply: &'static str) -> (u16, std::sync::mpsc::Receiver<String>) {
+        use std::io::{Read, Write};
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            if let Ok((mut sock, _)) = listener.accept() {
+                // Short per-read timeout, but keep looping past timeouts up to an
+                // overall deadline: with a SILENT banner the probe only sends
+                // VERSION after ITS own banner-read timeout, so the fake must not
+                // give up on the first idle read (else it misses the VERSION).
+                sock.set_read_timeout(Some(Duration::from_millis(100))).ok();
+                let _ = sock.write_all(reply.as_bytes());
+                let mut buf = [0u8; 512];
+                let mut seen = String::new();
+                let start = std::time::Instant::now();
+                while start.elapsed() < Duration::from_secs(2) {
+                    match sock.read(&mut buf) {
+                        Ok(0) => break, // peer (the probe) shut down
+                        Ok(n) => seen.push_str(&String::from_utf8_lossy(&buf[..n])),
+                        Err(e)
+                            if e.kind() == std::io::ErrorKind::WouldBlock
+                                || e.kind() == std::io::ErrorKind::TimedOut =>
+                        {
+                            continue
+                        }
+                        Err(_) => break,
+                    }
+                }
+                let _ = tx.send(seen);
+            }
+        });
+        (port, rx)
+    }
+
+    fn probe_cfg(port: u16) -> VaraConfig {
+        VaraConfig {
+            host: "127.0.0.1".into(),
+            cmd_port: port,
+            data_port: port,
+            connect_timeout: Duration::from_secs(5),
+            read_timeout: Some(Duration::from_millis(300)),
+        }
+    }
+
+    #[test]
+    fn deep_probe_classifies_vara_ok_and_sends_no_setter() {
+        let (port, rx) = spawn_fake_vara("VARA HF v4.8.6 Ready\r");
+        let result = deep_probe(&probe_cfg(port));
+        assert_eq!(result.classification, "vara-ok");
+        assert!(result
+            .banner
+            .unwrap_or_default()
+            .to_uppercase()
+            .contains("VARA"));
+        // The banner already identified VARA, so the probe must not have sent
+        // VERSION or any setter. Assert NOTHING mutating crossed the wire.
+        let seen = rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap_or_default();
+        let up = seen.to_uppercase();
+        assert!(!up.contains("MYCALL"), "probe must not send MYCALL");
+        assert!(!up.contains("BW"), "probe must not send BW");
+        assert!(!up.contains("LISTEN"), "probe must not send LISTEN");
+    }
+
+    #[test]
+    fn deep_probe_sends_version_only_when_banner_silent() {
+        // Empty banner → probe falls back to a single VERSION query (read-only).
+        let (port, rx) = spawn_fake_vara("");
+        let _ = deep_probe(&probe_cfg(port));
+        let seen = rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap_or_default();
+        let up = seen.to_uppercase();
+        assert!(up.contains("VERSION"), "expected the read-only VERSION query");
+        assert!(!up.contains("MYCALL") && !up.contains("LISTEN"), "no setter");
+    }
+
+    #[test]
+    fn deep_probe_socket_not_vara() {
+        let (port, _rx) = spawn_fake_vara("gibberish\r");
+        assert_eq!(deep_probe(&probe_cfg(port)).classification, "socket-not-vara");
+    }
+
+    #[test]
+    fn deep_probe_down_when_no_listener() {
+        let port = {
+            let l = TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap().port()
+        };
+        let cfg = VaraConfig {
+            connect_timeout: Duration::from_millis(500),
+            ..probe_cfg(port)
+        };
+        assert_eq!(deep_probe(&cfg).classification, "down");
+    }
 
     /// Connect a real `VaraTransport` against loopback cmd + data acceptors,
     /// returning the transport plus the server-side cmd-socket handle (so

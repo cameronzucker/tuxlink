@@ -18,7 +18,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// reject a config carrying `"rig"`, so the field set change bumps the version
 /// (the trash_auto_purge class). The bump also lets a v5 file be classified
 /// `MigrateAdditive` by an intermediate build rather than `Unsupported`.
-pub const CONFIG_SCHEMA_VERSION: u32 = 5;
+pub const CONFIG_SCHEMA_VERSION: u32 = 6;
 
 /// What to do with an on-disk config of a given `schema_version` (Phase 2,
 /// tuxlink-7iy2). A v1 file is a breaking migration candidate; a version ≥2 but
@@ -205,6 +205,19 @@ fn tag_folder(
 /// `[rig]` section. This is the documented serde idiom for post-deserialize
 /// fix-ups; all field-level serde attributes (including the
 /// `deserialize_schema_version` normalization) are preserved verbatim.
+/// The operator's currently-selected connection — session type + protocol
+/// (tuxlink-7ppfq, Contract 2). Persisted so the MCP `modem_status` surface can
+/// report `selected` (the operator's target): React `activeConnection` state and
+/// `localStorage` are invisible to the Rust MCP layer, so a Rust-side store is
+/// required. Perception only — persisting a selection NEVER triggers a connect.
+/// Field names mirror the frontend `ConnectionKey { sessionType, protocol }`
+/// (Tauri converts the camelCase command args to these snake_case fields).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelectedConnection {
+    pub session_type: String,
+    pub protocol: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, remote = "Self")]
 pub struct Config {
@@ -236,6 +249,13 @@ pub struct Config {
     /// client; tuxlink does NOT manage the VARA process lifecycle.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modem_vara: Option<VaraUiConfig>,
+    /// The operator's selected connection (session type + protocol), persisted
+    /// so MCP `modem_status` can report `selected` (tuxlink-7ppfq, Contract 2).
+    /// Always-serialized (`null` when unset) — it is part of the tracked field
+    /// set, which is why this bumped `CONFIG_SCHEMA_VERSION` 5 → 6.
+    /// `#[serde(default)]` migrates pre-6 configs (absent → `None`).
+    #[serde(default)]
+    pub active_connection: Option<SelectedConnection>,
     /// Radio-level CAT / rig-control settings (tuxlink-8fkkk). Describes ONE
     /// physical transceiver and is consumed by BOTH the ARDOP and VARA paths:
     /// the hamlib model + rigctld endpoint for QSY / live-VFO, the CAT serial
@@ -1694,6 +1714,7 @@ mod tests {
             "review_inbound_before_download", "aprs",
             "trash_auto_purge", "trash_retention_days",
             "close_to_tray", "close_prompt_seen",
+            "active_connection",
         ];
         expected.sort_unstable();
         assert_eq!(
@@ -1702,6 +1723,34 @@ mod tests {
              CONFIG_SCHEMA_VERSION (now {}). Bump it (+ add a migration if non-additive) \
              and update this golden set (tuxlink-ulrz).",
             CONFIG_SCHEMA_VERSION
+        );
+    }
+
+    // tuxlink-7ppfq Contract 2: a config written before `active_connection`
+    // existed must load additively (absent → None) — no data loss, no crash.
+    #[test]
+    fn active_connection_defaults_to_none_when_absent_from_config() {
+        let cfg: Config = serde_json::from_str(&config_json(2, ""))
+            .expect("an older config without active_connection deserializes additively");
+        assert_eq!(cfg.active_connection, None);
+    }
+
+    #[test]
+    fn active_connection_round_trips() {
+        let mut cfg: Config =
+            serde_json::from_str(&config_json(CONFIG_SCHEMA_VERSION, "")).unwrap();
+        cfg.active_connection = Some(SelectedConnection {
+            session_type: "cms".into(),
+            protocol: "vara-hf".into(),
+        });
+        let s = serde_json::to_string(&cfg).unwrap();
+        let back: Config = serde_json::from_str(&s).unwrap();
+        assert_eq!(
+            back.active_connection,
+            Some(SelectedConnection {
+                session_type: "cms".into(),
+                protocol: "vara-hf".into()
+            })
         );
     }
 
