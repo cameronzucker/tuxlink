@@ -382,6 +382,7 @@ pub mod test_support {
             Ok(AudioDevicesDto {
                 capture: vec!["default".into()],
                 playback: vec!["default".into()],
+                cards: vec![],
             })
         }
         async fn printer_list(&self) -> Result<Vec<PrinterDto>, PortError> {

@@ -329,6 +329,7 @@ impl DevicePort for ScenarioDevice {
             .unwrap_or(AudioDevicesDto {
                 capture: Vec::new(),
                 playback: Vec::new(),
+                cards: Vec::new(),
             }))
     }
     async fn printer_list(&self) -> Result<Vec<PrinterDto>, PortError> {

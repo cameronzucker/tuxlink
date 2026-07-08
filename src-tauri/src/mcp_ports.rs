@@ -36,7 +36,8 @@ use tauri::{AppHandle, Manager};
 // returned by `BackendState::current()`.
 
 use tuxlink_mcp_core::ports::{
-    AbortPort, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto, AudioDevicesDto, BackendStatusDto,
+    AbortPort, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto, AudioCardDto, AudioDevicesDto,
+    BackendStatusDto,
     BluetoothDeviceDto, CatalogEntryDto, ChannelReliabilityDto, ComposeDraftDto, ComposePort,
     ConfigPort, ConfigViewDto, DevicePort, DocsHitDto, EgressPort, EgressPortError, FolderDto,
     GatewayAntennaDto, GatewayDto, GribRequestDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto,
@@ -689,9 +690,22 @@ impl DevicePort for MonolithDevicePort {
         let devices = crate::ui_commands::ardop_list_audio_devices()
             .await
             .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
+        // Rich per-card inspection (tuxlink-77seh, Contract 4): bridge to the
+        // fixture-tested sysfs snapshot for VID:PID + bus path, overlaying a
+        // best-effort in-use flag from the /proc/asound substream status.
+        let snapshot = crate::winlink::ax25::devices::read_sys_snapshot();
+        let mut cards = project_audio_cards(&snapshot);
+        for card in &mut cards {
+            card.in_use = crate::winlink::ax25::direwolf_probe::probe_device_busy(
+                &card.alsa_name,
+                card.card_index,
+            )
+            .is_err();
+        }
         Ok(AudioDevicesDto {
             capture: devices.captures.into_iter().map(|d| d.name).collect(),
             playback: devices.playbacks.into_iter().map(|d| d.name).collect(),
+            cards,
         })
     }
 
@@ -737,6 +751,35 @@ impl DevicePort for MonolithDevicePort {
         let path = export_report_to(&base, &filename, &content)?;
         Ok(path.to_string_lossy().into_owned())
     }
+}
+
+/// Pure projection of the sysfs snapshot into the agent-facing per-card audio
+/// inspection list (tuxlink-77seh, Contract 4). VID:PID from the card's USB
+/// identity, bus path from the device node. `in_use` is left `false` here — the
+/// caller overlays it from a live `/proc/asound` read, kept out of the pure fn so
+/// this projection is fixture-testable.
+pub(crate) fn project_audio_cards(
+    snapshot: &crate::winlink::ax25::devices::SysSnapshot,
+) -> Vec<AudioCardDto> {
+    crate::winlink::ax25::devices::enumerate_audio_devices(snapshot)
+        .into_iter()
+        .map(|d| {
+            let vid_pid = snapshot
+                .cards
+                .iter()
+                .find(|c| c.card_index == d.card_index)
+                .and_then(|c| c.usb.as_ref())
+                .map(|u| format!("{}:{}", u.vid, u.pid));
+            AudioCardDto {
+                name: d.human_name,
+                alsa_name: d.alsa_plughw,
+                card_index: d.card_index,
+                vid_pid,
+                bus_path: d.usb_parent,
+                in_use: false,
+            }
+        })
+        .collect()
 }
 
 /// Resolve + create the sandboxed agent reports directory
@@ -2672,6 +2715,53 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             assert!(super::super::export_report_to(dir.path(), "../escape.md", "x").is_err());
             assert!(super::super::export_report_to(dir.path(), "/tmp/escape.md", "x").is_err());
+        }
+    }
+
+    // ── tuxlink-77seh Contract 4: audio-card inspection projection ──
+    mod audio_77seh {
+        use crate::winlink::ax25::devices::{SnapshotCard, SysSnapshot, UsbIdentity};
+
+        #[test]
+        fn project_audio_cards_maps_vid_pid_and_bus_path() {
+            let snap = SysSnapshot {
+                cards: vec![SnapshotCard {
+                    card_index: 2,
+                    card_id: "Device".into(),
+                    card_name: "USB Audio CODEC".into(),
+                    by_id_basename: None,
+                    usb: Some(UsbIdentity {
+                        vid: "0d8c".into(),
+                        pid: "013a".into(),
+                        serial: None,
+                    }),
+                    usb_parent: Some("/sys/devices/platform/usb2/2-1".into()),
+                }],
+                ..Default::default()
+            };
+            let cards = super::super::project_audio_cards(&snap);
+            assert_eq!(cards.len(), 1);
+            assert_eq!(cards[0].vid_pid.as_deref(), Some("0d8c:013a"));
+            assert_eq!(cards[0].bus_path.as_deref(), Some("/sys/devices/platform/usb2/2-1"));
+            assert_eq!(cards[0].card_index, 2);
+            assert_eq!(cards[0].name, "USB Audio CODEC");
+            assert!(!cards[0].in_use); // pure projection leaves in_use false
+        }
+
+        #[test]
+        fn project_audio_cards_excludes_onboard_non_usb() {
+            let snap = SysSnapshot {
+                cards: vec![SnapshotCard {
+                    card_index: 0,
+                    card_id: "PCH".into(),
+                    card_name: "HDA Intel PCH".into(),
+                    by_id_basename: None,
+                    usb: None,
+                    usb_parent: None,
+                }],
+                ..Default::default()
+            };
+            assert!(super::super::project_audio_cards(&snap).is_empty());
         }
     }
     use crate::catalog::stations::{Gateway, GatewayAntenna};

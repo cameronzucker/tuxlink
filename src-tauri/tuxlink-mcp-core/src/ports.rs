@@ -236,11 +236,38 @@ pub struct BluetoothDeviceDto {
     pub mac: String,
 }
 
-/// Capture + playback audio device names for modem audio selection.
+/// One USB audio card, resolved to the identity fields the agent needs to
+/// disambiguate look-alike devices (tuxlink-77seh, Contract 4). VID:PID + bus
+/// path split two identically-named cards; `in_use` flags a card another program
+/// currently holds. The agent applies the disambiguation METHOD (served as the
+/// `tuxlink://playbook/audio-setup` guidance resource) — the code never ranks.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AudioCardDto {
+    /// Human label from the card longname (e.g. `"C-Media USB Audio Device"`).
+    pub name: String,
+    /// The ALSA `plughw:CARD=<id>,DEV=0` name.
+    pub alsa_name: String,
+    /// Live boot-order `card<N>` index.
+    pub card_index: u32,
+    /// USB `vid:pid` (e.g. `"0d8c:013a"`); `None` for onboard/non-USB cards.
+    pub vid_pid: Option<String>,
+    /// sysfs USB device-node / bus path (e.g. `".../usb2/2-1"`) — distinguishes
+    /// two identical-name cards on different ports. `None` when unresolved.
+    pub bus_path: Option<String>,
+    /// True when another program currently holds a capture or playback substream
+    /// of this card (best-effort read of `/proc/asound/card<N>` status).
+    pub in_use: bool,
+}
+
+/// Capture + playback audio device names for modem audio selection, plus the
+/// richer per-card inspection list (`cards`, tuxlink-77seh) carrying VID:PID /
+/// bus path / in-use for disambiguation.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AudioDevicesDto {
     pub capture: Vec<String>,
     pub playback: Vec<String>,
+    #[serde(default)]
+    pub cards: Vec<AudioCardDto>,
 }
 
 /// A CUPS print destination (tuxlink-z2nwx, Contract 3), from `lpstat -p -d`.

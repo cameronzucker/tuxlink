@@ -369,7 +369,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "ardop_list_audio_devices",
-        description = "Enumerate capture + playback audio devices for modem audio selection. Read-only."
+        description = "Enumerate audio devices for modem audio selection. Read-only. Returns `capture`/`playback` ALSA names AND a richer `cards` list — per USB card: name, ALSA name, card index, `vid_pid` (e.g. 0d8c:013a), `bus_path` (distinguishes two identical-name cards on different ports), and `in_use`. To disambiguate, read tuxlink://playbook/audio-setup — the method (VID:PID + bus path + in-use), never a code-side ranking."
     )]
     pub async fn ardop_list_audio_devices(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.devices.audio().await.map_err(port_err)?;
@@ -2350,6 +2350,8 @@ mod tests {
         assert!(uris.contains(&"tuxlink://reference/modem-capability-matrix"));
         // The VARA-under-WINE provisioning playbook (tuxlink-w7212) must be present.
         assert!(uris.contains(&"tuxlink://playbook/vara-wine-setup"));
+        // The audio-device disambiguation playbook (tuxlink-77seh) must be present.
+        assert!(uris.contains(&"tuxlink://playbook/audio-setup"));
         // A curated user-guide resource must be present too.
         assert!(uris.contains(&"tuxlink://guide/ardop"));
     }
