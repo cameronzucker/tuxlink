@@ -43,6 +43,7 @@ vi.mock('../modem/useModemStatus', () => ({
         ? active.sessionType
         : 'cms';
     if (active.protocol === 'vara-hf') return { kind: 'vara-hf', intent };
+    if (active.protocol === 'vara-fm') return { kind: 'vara-fm', intent };
     if (active.protocol === 'ardop-hf') return { kind: 'ardop-hf', intent };
     // Non-radio selection while live → ARDOP fallback (mirrors the real hook).
     return { kind: 'ardop-hf', intent: 'cms' };

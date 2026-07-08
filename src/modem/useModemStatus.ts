@@ -96,6 +96,7 @@ export function connectionToPanelMode(conn: ConnectionKey): RadioPanelMode | nul
       ? conn.sessionType
       : 'cms';
   if (conn.protocol === 'vara-hf') return { kind: 'vara-hf', intent };
+  if (conn.protocol === 'vara-fm') return { kind: 'vara-fm', intent };
   if (conn.protocol === 'ardop-hf') return { kind: 'ardop-hf', intent };
   return null;
 }

@@ -791,9 +791,12 @@ impl VaraSession {
     }
 
     /// Test-only helper: hold `inner` so a test can prove `probe_reachable`
-    /// returns `unknown` (never waits) under lock contention.
+    /// returns `unknown` (never waits) under lock contention. Deliberately NOT
+    /// `pub` — the child `tests` module can call it, and a `pub` signature would
+    /// expose the private `VaraSessionInner` type (the `private_interfaces` lint,
+    /// denied under `clippy --all-targets -D warnings`).
     #[cfg(test)]
-    pub fn lock_inner_for_test(&self) -> std::sync::MutexGuard<'_, VaraSessionInner> {
+    fn lock_inner_for_test(&self) -> std::sync::MutexGuard<'_, VaraSessionInner> {
         self.inner.lock().unwrap()
     }
 

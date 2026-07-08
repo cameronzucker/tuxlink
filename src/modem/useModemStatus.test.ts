@@ -73,6 +73,13 @@ describe('connectionToPanelMode (tuxlink-7ppfq Contract 2)', () => {
     });
   });
 
+  it('maps a vara-fm selection to a vara-fm panel mode', () => {
+    expect(connectionToPanelMode({ sessionType: 'cms', protocol: 'vara-fm' })).toEqual({
+      kind: 'vara-fm',
+      intent: 'cms',
+    });
+  });
+
   it('returns null for non-radio protocols', () => {
     expect(connectionToPanelMode({ sessionType: 'cms', protocol: 'telnet' })).toBeNull();
     expect(connectionToPanelMode({ sessionType: 'cms', protocol: 'packet' })).toBeNull();

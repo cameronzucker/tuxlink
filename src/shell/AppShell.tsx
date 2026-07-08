@@ -869,12 +869,18 @@ export function AppShell() {
   // sync (the hoi1 multi-writer-clobber class). The hydration gate below stops
   // the initial mount-hydrate value from being immediately re-persisted.
   const activeConnHydrated = useRef(false);
+  // A real selection can race `config_read`: if the operator (or the status
+  // effect) changes activeConnection while hydration is in flight, we must NOT
+  // let the stale hydrate overwrite it, and we MUST still persist it.
+  const localSelectionRacedHydrate = useRef(false);
+  const persistMountSkip = useRef(true);
   useEffect(() => {
     let cancelled = false;
     invoke<ConfigViewDto>('config_read')
       .then((cfg) => {
         const sel = cfg?.active_connection;
-        if (!cancelled && sel) {
+        // Skip if a newer local selection already landed during the load window.
+        if (!cancelled && sel && !localSelectionRacedHydrate.current) {
           setActiveConnection({
             sessionType: sel.session_type as ConnectionKey['sessionType'],
             protocol: sel.protocol as ConnectionKey['protocol'],
@@ -886,7 +892,11 @@ export function AppShell() {
     return () => { cancelled = true; };
   }, []);
   useEffect(() => {
-    if (!activeConnHydrated.current) return; // don't re-persist the hydrated value
+    // Ignore the initial mount value (the default) — only persist real changes.
+    if (persistMountSkip.current) { persistMountSkip.current = false; return; }
+    // A change that lands before hydration completes is a real local selection;
+    // flag it so the hydrate doesn't clobber it, and fall through to persist it.
+    if (!activeConnHydrated.current) { localSelectionRacedHydrate.current = true; }
     void invoke('config_set_active_connection', {
       sessionType: activeConnection.sessionType,
       protocol: activeConnection.protocol,
