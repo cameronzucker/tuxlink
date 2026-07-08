@@ -580,16 +580,74 @@ mod acceptance_tests {
         assert_eq!(invoker.call_count(), 1);
     }
 
-    // --- Tool denial ------------------------------------------------------
+    // --- Tool denial (pf6re: narrate-not-kill) ----------------------------
 
+    /// A denied egress call no longer KILLS the turn: the model is granted one
+    /// narration turn and the run ends with the agent's own message. The denied
+    /// op is never retried, and a durable `ToolDenied` event fires even though the
+    /// outcome is `Completed`.
     #[tokio::test]
-    async fn tool_denied_is_terminal() {
-        let provider = ScriptedProvider::new(vec![ModelTurn::ToolCalls(vec![
-            ToolCall::new("echo", json!({"msg": "x"})),
-        ])]);
+    async fn denial_narrates_then_completes() {
+        let provider = ScriptedProvider::new(vec![
+            ModelTurn::ToolCalls(vec![ToolCall::new("echo", json!({"msg": "x"}))]),
+            ModelTurn::Text("send authority lapsed — please re-arm and I'll continue".into()),
+        ]);
         let invoker = RecordingInvoker::new(
             vec![echo_tool()],
-            vec![ToolOutcome::Denied("session is tainted".into())],
+            vec![ToolOutcome::Denied(
+                "send authority expired 60s ago; re-arm to continue".into(),
+            )],
+        );
+
+        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::<RunEvent>::new()));
+        let ev = std::sync::Arc::clone(&events);
+        let sink = move |e: RunEvent| ev.lock().unwrap().push(e);
+        let mut convo = Conversation::new("go");
+        let outcome = run_with_conversation(
+            &mut convo,
+            &provider,
+            &invoker,
+            EgressStatus::default(),
+            fast_limits(),
+            CancellationToken::new(),
+            &sink,
+        )
+        .await;
+
+        assert_eq!(
+            outcome,
+            RunOutcome::Completed("send authority lapsed — please re-arm and I'll continue".into()),
+        );
+        // The denied egress op ran exactly once and was NEVER retried.
+        assert_eq!(invoker.call_count(), 1, "the denied egress must not be retried");
+        // The security signal survives the outcome becoming Completed.
+        let saw_denied = events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e, RunEvent::ToolDenied { .. }));
+        assert!(
+            saw_denied,
+            "a ToolDenied event must fire independent of the terminal outcome"
+        );
+    }
+
+    /// Injection regression: after a TAINT denial the model gets ONE narration
+    /// turn; if it emits tool calls again (an injected model ignoring the denial),
+    /// NONE are dispatched and the run terminates with the re-arm-quarantine
+    /// remedy. Egress is never retried.
+    #[tokio::test]
+    async fn taint_denial_grants_one_turn_then_terminates_without_egress() {
+        let provider = ScriptedProvider::new(vec![
+            ModelTurn::ToolCalls(vec![ToolCall::new("echo", json!({"msg": "x"}))]),
+            // The (injected) model ignores the denial and tries again:
+            ModelTurn::ToolCalls(vec![ToolCall::new("echo", json!({"msg": "again"}))]),
+        ]);
+        let invoker = RecordingInvoker::new(
+            vec![echo_tool()],
+            vec![ToolOutcome::Denied(
+                "session is tainted by untrusted message content; egress blocked".into(),
+            )],
         );
         let outcome = run(
             "go",
@@ -601,9 +659,50 @@ mod acceptance_tests {
         )
         .await;
         match outcome {
-            RunOutcome::ToolDenied(reason) => assert!(reason.contains("tainted")),
-            other => panic!("expected ToolDenied, got {other:?}"),
+            RunOutcome::NeedsOperator(msg) => {
+                assert!(msg.contains("re-arm"), "taint terminal must direct the operator to re-arm");
+                assert!(
+                    msg.contains("discards"),
+                    "taint terminal must warn the conversation is discarded"
+                );
+            }
+            other => panic!("expected NeedsOperator (taint re-arm), got {other:?}"),
         }
+        // Only the first (denied) call ever hit the invoker — the post-denial
+        // batch was NOT dispatched.
+        assert_eq!(
+            invoker.call_count(),
+            1,
+            "post-denial tool calls must NOT be invoked"
+        );
+    }
+
+    /// An authority (not-armed/expired) denial retains the `ToolDenied` terminal
+    /// when the model retries tools rather than answering — keeping the variant
+    /// live for its consumers.
+    #[tokio::test]
+    async fn authority_denial_terminal_is_tool_denied_on_retry() {
+        let provider = ScriptedProvider::new(vec![
+            ModelTurn::ToolCalls(vec![ToolCall::new("echo", json!({"msg": "x"}))]),
+            ModelTurn::ToolCalls(vec![ToolCall::new("echo", json!({"msg": "again"}))]),
+        ]);
+        let invoker = RecordingInvoker::new(
+            vec![echo_tool()],
+            vec![ToolOutcome::Denied("send authority is not armed".into())],
+        );
+        let outcome = run(
+            "go",
+            &provider,
+            &invoker,
+            EgressStatus::default(),
+            fast_limits(),
+            CancellationToken::new(),
+        )
+        .await;
+        assert!(
+            matches!(outcome, RunOutcome::ToolDenied(_)),
+            "authority denial retains the ToolDenied terminal, got {outcome:?}"
+        );
         assert_eq!(invoker.call_count(), 1);
     }
 

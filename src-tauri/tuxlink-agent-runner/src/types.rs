@@ -194,6 +194,18 @@ pub enum RunEvent {
         /// The tool name as the model addressed it.
         tool: String,
     },
+    /// A tool call was DENIED by the security layer (egress arm/taint gate).
+    /// Emitted at the denial site — INDEPENDENT of the terminal [`RunOutcome`] —
+    /// so a denial leaves a durable, structured trace (chip → denied, telemetry)
+    /// even when the run goes on to end `Completed` with the model's narration of
+    /// the denial (pf6re). A caller MUST NOT rely on model prose for the fact that
+    /// a denial happened.
+    ToolDenied {
+        /// The tool that was refused.
+        tool: String,
+        /// The relayed, cause-accurate denial reason.
+        reason: String,
+    },
     /// An incremental piece of the model's final answer, emitted as content
     /// streams in (before the finalizing [`RunEvent::AssistantText`]). Each
     /// chunk is a partial fragment, not a complete message — accumulate them.

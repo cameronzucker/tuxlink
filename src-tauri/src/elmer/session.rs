@@ -481,6 +481,14 @@ impl ElmerSession {
                     RunEvent::ContextUsage { prompt_tokens, eval_tokens, num_ctx } => {
                         ElmerEvent::Context { prompt_tokens, eval_tokens, num_ctx }
                     }
+                    // pf6re: a denied tool call flips its chip to "denied" — a
+                    // durable, structured signal that a transmit was refused, so a
+                    // denial is not silently lost when the run ends `Completed`
+                    // with the model's narration.
+                    RunEvent::ToolDenied { tool, reason: _ } => ElmerEvent::Chip {
+                        tool,
+                        status: "denied".to_string(),
+                    },
                     _ => return,
                 };
                 emit_for_task(elmer_event);
@@ -1155,6 +1163,10 @@ mod tests {
                         RunEvent::ReasoningDelta { chunk } => ElmerEvent::Delta {
                             delta_kind: "reasoning".to_string(),
                             chunk,
+                        },
+                        RunEvent::ToolDenied { tool, reason: _ } => ElmerEvent::Chip {
+                            tool,
+                            status: "denied".to_string(),
                         },
                         _ => return,
                     };

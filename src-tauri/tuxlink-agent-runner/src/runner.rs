@@ -19,6 +19,36 @@ use crate::types::{
 };
 use crate::validate;
 
+/// The operator-facing terminal message when a TAINT denial's one narration turn
+/// is spent on more tool calls instead of an answer (pf6re). Truthful: a tainted
+/// session only unlocks via a quarantine re-arm, which discards the conversation.
+const TAINT_REARM_MSG: &str =
+    "session tainted — the operator must re-arm to start a fresh authorized session \
+     (this discards the conversation); nothing was sent";
+
+/// Which kind of egress denial occurred, derived from the relayed reason string
+/// (the security layer's `EgressDenied` Display; `"tainted"` marks the taint case).
+/// Derived from the string rather than reshaping [`ToolOutcome::Denied`] — the
+/// injection-test suite pattern-matches that variant and must stay untouched; the
+/// coupling mirrors `classify_call_error`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DenialKind {
+    /// Not armed / expired — an operator ARM unlocks and PRESERVES the conversation
+    /// (the agent can resume where it left off).
+    Authority,
+    /// Session tainted — only a quarantine re-arm unlocks it, and that DISCARDS the
+    /// conversation (no resume). The stricter path.
+    Taint,
+}
+
+fn denial_kind(reason: &str) -> DenialKind {
+    if reason.to_ascii_lowercase().contains("tainted") {
+        DenialKind::Taint
+    } else {
+        DenialKind::Authority
+    }
+}
+
 /// Run the bounded agent loop to completion, using a pre-built conversation.
 ///
 /// **Contract:** the caller MUST append the initiating `Message::User` via
@@ -60,6 +90,13 @@ pub async fn run_with_conversation(
 
     let mut tool_turns: u32 = 0;
     let mut malformed_retries: u32 = 0;
+    // pf6re: one-shot post-denial finalization. Set when an egress call is denied;
+    // the model is then granted exactly ONE more turn to narrate the denial. If it
+    // answers (Text) the run completes with that narration; if it calls tools again
+    // it gets NO working window — the run terminates with denial context. This
+    // preserves the "egress never retried" invariant while ending the turn with the
+    // agent's own message instead of a raw error that clobbers output.
+    let mut denial_final: Option<(String, DenialKind)> = None;
 
     loop {
         // COR-2: never start a Provider call once cancellation is requested.
@@ -109,6 +146,19 @@ pub async fn run_with_conversation(
                 return RunOutcome::Completed(text);
             }
             ModelTurn::ToolCalls(calls) => {
+                // pf6re: one-shot finalization. If a prior tool call was denied we
+                // granted exactly ONE narration turn. The model was supposed to
+                // ANSWER (Text). It emitted tool calls instead — do NOT dispatch
+                // them (a tainted/injected model gets no working window after a
+                // denial). Terminate with denial context: taint routes to a
+                // re-arm-quarantine NeedsOperator; authority relays the denial.
+                if let Some((reason, kind)) = denial_final.take() {
+                    return match kind {
+                        DenialKind::Taint => RunOutcome::NeedsOperator(TAINT_REARM_MSG.to_string()),
+                        DenialKind::Authority => RunOutcome::ToolDenied(reason),
+                    };
+                }
+
                 // COR-3: validate the calls. A malformed batch is fed back and
                 // re-prompted, bounded by `max_malformed_retries`.
                 if let Some(detail) = first_validation_error(&tools, &calls) {
@@ -159,10 +209,23 @@ pub async fn run_with_conversation(
                         return RunOutcome::Cancelled;
                     }
 
-                    // A denial is terminal: the security layer refused egress.
+                    // pf6re: a denial no longer KILLS the turn. Feed it back as a
+                    // tool result (the model sees the cause-accurate reason and can
+                    // narrate it), emit a DURABLE denial event so the security
+                    // signal survives even if the run ends `Completed`, then BREAK
+                    // the batch (do NOT execute the remaining calls — they were
+                    // predicated on this one succeeding) and re-prompt for the ONE
+                    // narration turn. Egress stays absolutely locked: the gate
+                    // already refused, and any retry in the narration turn is not
+                    // dispatched (the `denial_final` check above).
                     if let ToolOutcome::Denied(reason) = &outcome {
                         conversation.push_outcome(&call.name, &outcome);
-                        return RunOutcome::ToolDenied(reason.clone());
+                        on_event(RunEvent::ToolDenied {
+                            tool: call.name.clone(),
+                            reason: reason.clone(),
+                        });
+                        denial_final = Some((reason.clone(), denial_kind(reason)));
+                        break;
                     }
 
                     conversation.push_outcome(&call.name, &outcome);
