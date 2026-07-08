@@ -501,15 +501,27 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         thread::spawn(move || {
             if let Ok((mut sock, _)) = listener.accept() {
-                sock.set_read_timeout(Some(Duration::from_millis(300))).ok();
+                // Short per-read timeout, but keep looping past timeouts up to an
+                // overall deadline: with a SILENT banner the probe only sends
+                // VERSION after ITS own banner-read timeout, so the fake must not
+                // give up on the first idle read (else it misses the VERSION).
+                sock.set_read_timeout(Some(Duration::from_millis(100))).ok();
                 let _ = sock.write_all(reply.as_bytes());
                 let mut buf = [0u8; 512];
                 let mut seen = String::new();
-                while let Ok(n) = sock.read(&mut buf) {
-                    if n == 0 {
-                        break;
+                let start = std::time::Instant::now();
+                while start.elapsed() < Duration::from_secs(2) {
+                    match sock.read(&mut buf) {
+                        Ok(0) => break, // peer (the probe) shut down
+                        Ok(n) => seen.push_str(&String::from_utf8_lossy(&buf[..n])),
+                        Err(e)
+                            if e.kind() == std::io::ErrorKind::WouldBlock
+                                || e.kind() == std::io::ErrorKind::TimedOut =>
+                        {
+                            continue
+                        }
+                        Err(_) => break,
                     }
-                    seen.push_str(&String::from_utf8_lossy(&buf[..n]));
                 }
                 let _ = tx.send(seen);
             }
