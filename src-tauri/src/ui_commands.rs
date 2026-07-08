@@ -3406,6 +3406,11 @@ pub struct ConfigViewDto {
     /// "Window" toggle can load the current preference. Mirrors
     /// `Config.close_to_tray`.
     pub close_to_tray: bool,
+    /// The operator's persisted selected connection (tuxlink-7ppfq, Contract 2).
+    /// Surfaced so the shell can HYDRATE `activeConnection` from disk on mount
+    /// (React state / localStorage are lost across restarts). Serialized
+    /// snake_case (`{ session_type, protocol }`) matching this DTO's convention.
+    pub active_connection: Option<config::SelectedConnection>,
 }
 
 impl From<&config::Config> for ConfigViewDto {
@@ -3428,6 +3433,7 @@ impl From<&config::Config> for ConfigViewDto {
             trash_auto_purge: c.trash_auto_purge,
             trash_retention_days: c.trash_retention_days,
             close_to_tray: c.close_to_tray,
+            active_connection: c.active_connection.clone(),
         }
     }
 }
@@ -6916,6 +6922,31 @@ pub async fn config_set_review_inbound(
     config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
     if let Some(backend) = state.current() {
         backend.set_config(cfg); // live refresh: next connect sees it without restart (Codex #9)
+    }
+    Ok(())
+}
+
+/// Persist the operator's selected connection (tuxlink-7ppfq, Contract 2) so the
+/// MCP `modem_status` surface can report `selected`. Perception only — this NEVER
+/// triggers a connect; it only records the target the operator has chosen in the
+/// UI. Mirrors `config_set_review_inbound`'s read → mutate → `write_config_atomic`
+/// → `backend.set_config` live-refresh shape. The serde round-trip + additive
+/// default are unit-tested in `config.rs`; this is a thin wrapper over the
+/// already-tested `write_config_atomic`.
+#[tauri::command]
+pub async fn config_set_active_connection(
+    state: State<'_, BackendState>,
+    session_type: String,
+    protocol: String,
+) -> Result<(), UiError> {
+    let mut cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    cfg.active_connection = Some(config::SelectedConnection {
+        session_type,
+        protocol,
+    });
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    if let Some(backend) = state.current() {
+        backend.set_config(cfg);
     }
     Ok(())
 }
