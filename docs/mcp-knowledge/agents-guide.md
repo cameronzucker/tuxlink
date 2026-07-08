@@ -38,8 +38,10 @@ guides assume this domain vocabulary; resolve it first rather than guessing.
 
 These four return **untrusted message/wire content and TAINT the session**:
 `mailbox_list`, `message_read`, `tauri_search_run`, `session_log_snapshot`. Once
-tainted, egress and writes are locked until the operator re-arms (see the
-arm/taint model below).
+tainted, egress and writes are locked for the rest of the session; clearing the
+taint requires the operator to **re-arm**, which starts a fresh authorized
+session and **DISCARDS the current conversation** (a quarantine — not a resume).
+A plain ARM does not clear taint. See the arm/taint model below.
 
 ### Station intelligence — reads, no taint, no authorization
 
@@ -90,17 +92,28 @@ config on its own.
 - **Reading untrusted content taints the session.** `mailbox_list`,
   `message_read`, `tauri_search_run`, and `session_log_snapshot` return content
   that may carry injected instructions. Calling any of them locks egress and writes
-  until the operator re-arms. This contains prompt injection: an instruction read
-  out of a message cannot be turned into a transmission in the same armed window.
+  for the rest of the session. The lock clears ONLY when the operator **re-arms**,
+  which quarantines: it discards the current conversation and starts a fresh
+  authorized session (a plain ARM does NOT clear taint). This contains prompt
+  injection: an instruction read out of a message cannot be turned into a
+  transmission — not even after a re-arm, because the re-arm drops the conversation
+  that carried the instruction.
 - **Compose stages; the gated connect transmits.** `message_send` / `send_form`
   build an outbox draft with no authorization. The message only leaves the station
   when the operator arms authority and a gated egress tool (e.g. `cms_connect`)
   runs.
 
-A denied egress/write returns a clear `not authorized` error naming the cause
-(not armed, or tainted). That is expected behavior, not a bug — relay it to the
-operator and ask them to arm send-authority (and note that reading a message
-re-locks it).
+A denied egress/write returns a clear `not authorized` error naming the cause.
+That is expected behavior, not a bug — the denial no longer ends your turn, so
+relay it and give the operator the **cause-specific** remedy:
+
+- **Not armed / expired** — ask the operator to ARM send-authority. This preserves
+  the conversation, so you can continue exactly where you left off. Never claim you
+  sent anything.
+- **Tainted** (you read untrusted content) — ask the operator to re-arm, but warn
+  that re-arming **DISCARDS this conversation** (it is a quarantine — you will not
+  be able to resume it), and that waiting for the arm timer does nothing. Never
+  claim you sent anything.
 
 ## Typical flows
 

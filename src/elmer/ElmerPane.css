@@ -437,6 +437,18 @@
 .elmer-chip-status {
   color: var(--text-faint, var(--text-dim));
 }
+/* pf6re: a DENIED tool call — the transmit was refused by the arm/taint gate.
+ * Amber, matching the locked/tainted treatment, so a refusal is visually
+ * distinct from an in-flight ("calling") or ordinary chip and survives in the
+ * transcript as ground truth (not just the model's prose). */
+.elmer-chip[data-status='denied'] {
+  border-color: var(--warning-border, #b7791f);
+  background: var(--warning-surface, rgba(183, 121, 31, 0.12));
+}
+.elmer-chip[data-status='denied'] .elmer-chip-status {
+  color: var(--warning-text, #d69e2e);
+  font-weight: 600;
+}
 
 /* Thinking indicator — the 70–117 s local-model wait must read as progress. */
 .elmer-thinking {
