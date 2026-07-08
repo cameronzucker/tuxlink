@@ -31,6 +31,13 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.85.0](https://github.com/cameronzucker/tuxlink/compare/v0.84.0...v0.85.0) (2026-07-08)
+
+
+### Features
+
+* **rig:** bundle Hamlib 4.7.2 with Yaesu FTX-1 support (tuxlink-13pno) ([f94b268](https://github.com/cameronzucker/tuxlink/commit/f94b268aebf696aeab2f6a52559a1a54fb132edb))
+
 ## [0.84.0](https://github.com/cameronzucker/tuxlink/compare/v0.83.0...v0.84.0) (2026-07-07)
 
 
