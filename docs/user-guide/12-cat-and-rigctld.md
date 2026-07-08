@@ -11,7 +11,7 @@ operator needs it, and how it relates to tuxlink's radio chain.
 
 ## Tuxlink does not drive CAT
 
-Tuxlink bundles `rigctld` (Hamlib 4.6.2) and integrates rig-control support
+Tuxlink bundles `rigctld` (Hamlib 4.7.2) and integrates rig-control support
 in its settings. However, Tuxlink's dashboard does not display the radio's
 live CAT frequency; tune the radio by hand to the frequency a gateway listing
 names, then Connect. You only need rigctld running if other software on your
@@ -118,7 +118,7 @@ returns `RPRT -1` or a connection refused; the rigctld journal log
 
 ## Tuxlink and CAT
 
-Tuxlink bundles `rigctld` (Hamlib 4.6.2) and integrates it for full rig-control
+Tuxlink bundles `rigctld` (Hamlib 4.7.2) and integrates it for full rig-control
 support. Rig control works out of the box with no separate Hamlib installation
 required. The Settings panel includes a `rigctld binary` option that defaults
 to the bundled copy; you can override it with an absolute path to use your own

@@ -153,8 +153,8 @@ jobs:
       - name: Stage hamlib sidecar (rigctl/rigctld, static, from pinned source)
         run: |
           set -euxo pipefail
-          HAMLIB_VER=4.6.2
-          HAMLIB_SHA=b2ac73f44dd1161e95fdee6c95276144757647bf92d7fdb369ee2fe41ed47ae8
+          HAMLIB_VER=4.7.2
+          HAMLIB_SHA=ae1fcf2dbc80ea0786ea8f047b09399c3f7737d1930442f61a031708ed33e88f
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libusb-1.0-0-dev pkg-config
           curl -fSL "https://github.com/Hamlib/Hamlib/releases/download/${HAMLIB_VER}/hamlib-${HAMLIB_VER}.tar.gz" -o /tmp/hamlib.tar.gz
@@ -185,9 +185,10 @@ jobs:
             maxglibc="$(readelf --version-info "$bin" | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -uV | tail -1)"
             printf '%s\n2.35\n' "${maxglibc#GLIBC_}" | sort -CV || { echo "$b needs $maxglibc > ECT floor 2.35"; exit 1; }
           done
-          # capability: FT-710 + G90 backends compiled in
+          # capability: FT-710 + G90 + FTX-1 (Yaesu FTX-1, hamlib 4.7 model 1051) backends compiled in
           "src-tauri/binaries/tuxlink-rigctl-${TRIPLE}" -m 1049 --dump-caps | grep -qi 'Model name.*FT-710'
           "src-tauri/binaries/tuxlink-rigctl-${TRIPLE}" -m 3088 --dump-caps | grep -qi 'Model name.*G90'
+          "src-tauri/binaries/tuxlink-rigctl-${TRIPLE}" -m 1051 --dump-caps | grep -qi 'Model name.*FTX-1'
           # functional: dummy backend set/get freq
           "src-tauri/binaries/tuxlink-rigctld-${TRIPLE}" -m 1 -t 4590 & dp=$!; sleep 1
           "src-tauri/binaries/tuxlink-rigctl-${TRIPLE}" -m 2 -r localhost:4590 F 14074000
