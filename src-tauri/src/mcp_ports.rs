@@ -46,7 +46,7 @@ use tuxlink_mcp_core::ports::{
     SearchQueryDto, SearchResultsDto, SendFormDto, SerialDeviceDto, SessionIntentDto,
     SolarSnapshotDto, StationFilterDto, StationListDto, StationModeDto, StationPort,
     StagedRecordDto, StatusPort, VaraCheckpointDto, VaraConfigDto, VaraInstallStatusDto,
-    VaraInstallSummaryDto, VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
+    VaraInstallSummaryDto, VaraProbeDto, VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
 };
 use tuxlink_mcp_core::validate::{
     validate_address, validate_attachment_dest, validate_body, validate_drive_level,
@@ -233,6 +233,23 @@ impl StatusPort for MonolithStatusPort {
             bandwidth,
             state,
             reachable,
+        })
+    }
+
+    async fn vara_probe(&self) -> Result<VaraProbeDto, PortError> {
+        // Read-only deep probe (tuxlink-7ppfq, Contract 1). Blocking socket I/O,
+        // so run it off the async runtime. host/cmd_port/timeout come from the
+        // same `build_transport_config` the transport uses (never hardcoded).
+        let cfg = crate::winlink::modem::vara::commands::build_transport_config(
+            &crate::winlink::modem::vara::commands::config_get_vara(),
+        );
+        let result =
+            tokio::task::spawn_blocking(move || crate::winlink::modem::vara::transport::deep_probe(&cfg))
+                .await
+                .map_err(|e| PortError::Internal(format!("vara_probe join error: {e}")))?;
+        Ok(VaraProbeDto {
+            classification: result.classification,
+            banner: result.banner,
         })
     }
 

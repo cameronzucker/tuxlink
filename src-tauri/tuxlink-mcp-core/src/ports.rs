@@ -274,6 +274,19 @@ pub struct VaraStatusDto {
     pub reachable: Option<bool>,
 }
 
+/// Result of the read-only VARA deep probe (`vara_probe`): connect the cmd port
+/// and read the startup banner / `VERSION` reply to distinguish "nothing there"
+/// from "something is listening but is not VARA" from "a real VARA answered".
+/// Read-only — never sends a stateful setter, never opens the data port.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VaraProbeDto {
+    /// `"down"` (no TCP), `"socket-not-vara"` (answered but not VARA), or
+    /// `"vara-ok"` (a real VARA banner / VERSION reply).
+    pub classification: String,
+    /// The trimmed banner / VERSION reply text, when any bytes were read.
+    pub banner: Option<String>,
+}
+
 /// One checkpoint of the VARA-under-WINE install pipeline
 /// (deps → prefix → vara → vb6 → ocx → verify → autostart), curated from the
 /// setup engine's JSONL `checkpoint` events. All fields are `Option` because
@@ -516,6 +529,9 @@ pub trait StatusPort: Send + Sync {
     async fn backend_status(&self) -> Result<BackendStatusDto, PortError>;
     async fn modem_status(&self) -> Result<ModemStatusDto, PortError>;
     async fn vara_status(&self) -> Result<VaraStatusDto, PortError>;
+    /// Read-only deep probe of the VARA cmd port (banner / VERSION). Never
+    /// sends a stateful setter, never opens the data port, never transmits.
+    async fn vara_probe(&self) -> Result<VaraProbeDto, PortError>;
     async fn position_status(&self) -> Result<PositionStatusDto, PortError>;
     async fn platform_info(&self) -> Result<PlatformInfoDto, PortError>;
     async fn wizard_completed(&self) -> Result<bool, PortError>;

@@ -136,6 +136,15 @@ impl TuxlinkMcp {
     }
 
     #[tool(
+        name = "vara_probe",
+        description = "Deep READ-ONLY probe of the VARA modem: connect the command port and read its startup banner / VERSION reply. Returns `classification`: \"down\" (no TCP), \"socket-not-vara\" (something is listening but is not VARA), or \"vara-ok\" (a real VARA answered), plus the raw `banner`. NEVER sends MYCALL/BW/LISTEN, never opens the data port, never transmits. Use after `vara_status.reachable` to confirm a real VARA before a send attempt."
+    )]
+    pub async fn vara_probe(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self.state.status.vara_probe().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
         name = "position_status",
         description = "Report THE OPERATOR'S current station location — their Maidenhead grid square (precision-reduced to ~4 chars for privacy) and GPS fix status. Call this to answer 'where am I', 'what's near me', or any location-relative question — do NOT ask the operator for their location; Tuxlink already knows it. Read-only."
     )]
