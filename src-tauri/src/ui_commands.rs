@@ -9613,6 +9613,7 @@ hw:CARD=Device,DEV=0
             trash_retention_days: 30,
             close_to_tray: true,
             close_prompt_seen: false,
+            active_connection: None,
         }
     }
 
@@ -9943,6 +9944,7 @@ hw:CARD=Device,DEV=0
             trash_retention_days: 30,
             close_to_tray: true,
             close_prompt_seen: false,
+            active_connection: None,
         };
         let tmp = tempfile::tempdir().expect("tmpdir");
         let state = BackendState::new();
@@ -11347,6 +11349,7 @@ hw:CARD=Device,DEV=0
             trash_retention_days: 30,
             close_to_tray: true,
             close_prompt_seen: false,
+            active_connection: None,
         }
     }
 

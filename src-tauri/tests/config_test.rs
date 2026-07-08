@@ -734,6 +734,7 @@ fn config_skips_pat_mbo_address_on_write() {
         trash_retention_days: 30,
         close_to_tray: true,
         close_prompt_seen: false,
+        active_connection: None,
     };
     let json = serde_json::to_string(&cfg).unwrap();
     assert!(
