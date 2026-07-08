@@ -111,6 +111,13 @@ pub struct ServerInfoDto {
     pub armed_remaining_secs: u64,
     /// True when the session is tainted by untrusted content.
     pub tainted: bool,
+    /// WHY the session is tainted — a content-free operation token
+    /// (`"message_read"`, `"mailbox_list"`, `"search_results"`, `"session_log"`),
+    /// or `null` when un-tainted. Never contains message content. When present,
+    /// taint DOMINATES the armed state: transmit is locked regardless of
+    /// `armed`/`armed_remaining_secs`, and the only unlock is an operator re-arm
+    /// (which DISCARDS the current conversation) — not waiting out the timer.
+    pub taint_reason: Option<String>,
 }
 
 /// Pure view of `server_info`: reads the live guard state and the
@@ -127,6 +134,10 @@ pub fn server_info_view(state: &McpState) -> ServerInfoDto {
         armed: remaining > 0,
         armed_remaining_secs: remaining,
         tainted: state.guard.is_tainted(),
+        // Content-free token (or None). `TaintReason` deliberately carries no
+        // serde derive so the security crate stays dependency-free; map its stable
+        // token here.
+        taint_reason: state.guard.taint_reason().map(|r| r.as_str().to_owned()),
     }
 }
 
@@ -924,5 +935,22 @@ mod tests {
         let dto = server_info_view(&state);
         assert!(dto.armed);
         assert!(dto.tainted);
+    }
+
+    #[test]
+    fn view_surfaces_taint_reason_token_or_none() {
+        // pf6re: the agent perceives WHY it is tainted via a content-free token.
+        let state = state_with(EgressGuard::with_clock(fixed_1000));
+        assert_eq!(
+            server_info_view(&state).taint_reason,
+            None,
+            "un-tainted view has no taint_reason"
+        );
+        state.guard.taint(tuxlink_security::TaintReason::MailboxList);
+        assert_eq!(
+            server_info_view(&state).taint_reason.as_deref(),
+            Some("mailbox_list"),
+            "tainted view surfaces the content-free operation token"
+        );
     }
 }
