@@ -42,7 +42,9 @@ import {
 } from './AdvancedModelSettings';
 import { renderMarkdown } from '../shell/markdownRender';
 import { sanitizeHtml } from '../shell/sanitizeHtml';
-import { RADIO_VERBS } from './radioVerbs';
+import { StreamingStatusCard } from './StreamingStatusCard';
+import { useThinkingPulse } from './useThinkingPulse';
+import { useStreamAutoFollow } from './useStreamAutoFollow';
 import './ElmerPane.css';
 
 // ---------------------------------------------------------------------------
@@ -183,67 +185,12 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-/**
- * Transient streaming bubble (phase 2b) — shown while a streamed turn is in
- * flight (streamingAnswer or streamingReasoning non-empty), before the EV_TURN
- * finalize swaps it for the committed markdown item.
- *
- *  - The live answer renders as PLAIN text with a blinking cursor (NOT markdown
- *    — avoids half-parsed flicker mid-stream).
- *  - Above it, a "Thinking…" section shows the reasoning trace. It is expanded
- *    while only reasoning has arrived, and AUTO-COLLAPSES once the answer starts
- *    (streamingAnswer non-empty) — the operator's attention follows the answer.
- */
-function StreamingBubble({
-  answer,
-  reasoning,
-}: {
-  answer: string;
-  reasoning: string;
-}) {
-  const answerStarted = answer.length > 0;
-  // Auto-collapse the reasoning once the answer starts; expanded before that.
-  const reasoningOpen = !answerStarted;
-  return (
-    <div
-      className="elmer-turn elmer-turn--assistant elmer-streaming-bubble"
-      data-testid="elmer-streaming-bubble"
-      data-role="assistant"
-    >
-      <span className="elmer-turn-role">Elmer</span>
-      {reasoning.length > 0 && (
-        <div
-          className="elmer-reasoning"
-          data-testid="elmer-reasoning"
-          data-open={reasoningOpen}
-        >
-          <span
-            className="elmer-reasoning-toggle elmer-reasoning-toggle--live"
-            data-testid="elmer-reasoning-toggle"
-            aria-hidden="true"
-          >
-            {reasoningOpen ? '▾' : '▸'} Thinking…
-          </span>
-          {reasoningOpen && (
-            <div className="elmer-reasoning-body" data-testid="elmer-reasoning-body">
-              {reasoning}
-            </div>
-          )}
-        </div>
-      )}
-      {answerStarted && (
-        <span className="elmer-streaming-answer">
-          {answer}
-          <span
-            className="elmer-streaming-cursor"
-            data-testid="elmer-streaming-cursor"
-            aria-hidden="true"
-          />
-        </span>
-      )}
-    </div>
-  );
-}
+// The transient StreamingBubble and standalone ThinkingIndicator were replaced
+// by a single <StreamingStatusCard> (see ./StreamingStatusCard) that owns the
+// whole in-flight window — collapsed to a live counter by default, expandable to
+// a bounded scrolling box. This removes the bubble<->indicator handoff that
+// produced the collapse-to-cursor / dump-clear-reprint / thinking re-flash
+// glitches (tuxlink-h5azu) and the scroll-lock (tuxlink-06v9s).
 
 /** Renders a single turn, chip, or attribution item. */
 function MessageItem({ item }: { item: ElmerItem }) {
@@ -318,78 +265,6 @@ function MessageItem({ item }: { item: ElmerItem }) {
         )
       }
       {item.text ? <CopyButton text={item.text} /> : null}
-    </div>
-  );
-}
-
-/**
- * "Elmer is thinking…" indicator shown while a run is in progress.
- *
- * Cycles a ham-radio verb phrase every ~3 s and shows an elapsed-time counter.
- * The pulsing dot (::before pseudo-element) is preserved.
- *
- * Accessibility: the outer role="status" carries a stable sr-only label so
- * screen readers get a single announcement; the cycling verb + elapsed are
- * aria-hidden so they do not spam the AT with each tick.
- */
-function ThinkingIndicator() {
-  const [verb, setVerb] = useState<string>(() => RADIO_VERBS[Math.floor(Math.random() * RADIO_VERBS.length)]);
-  const [elapsed, setElapsed] = useState(0);
-
-  useEffect(() => {
-    // 1-second tick — advances elapsed every tick, advances verb every 3rd tick.
-    let ticks = 0;
-    let lastVerb = verb;
-
-    const id = setInterval(() => {
-      ticks += 1;
-      setElapsed((s) => s + 1);
-
-      if (ticks % 3 === 0) {
-        // Pick a random verb that is not the current one.
-        const pool = RADIO_VERBS.filter((v) => v !== lastVerb);
-        const next = pool[Math.floor(Math.random() * pool.length)];
-        lastVerb = next;
-        setVerb(next);
-      }
-    }, 1000);
-
-    return () => clearInterval(id);
-    // Intentionally exclude `verb` from deps — `lastVerb` is a closure variable
-    // that tracks current without causing a re-register on every verb change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Format: <60s → "12s"; >=60s → "2m 05s"
-  const elapsedLabel =
-    elapsed < 60
-      ? `${elapsed}s`
-      : `${Math.floor(elapsed / 60)}m ${String(elapsed % 60).padStart(2, '0')}s`;
-
-  return (
-    <div
-      className="elmer-thinking"
-      data-testid="elmer-thinking"
-      role="status"
-    >
-      {/* Stable sr-only label — announced once; doesn't change on each tick. */}
-      <span className="elmer-thinking-sr-only">Elmer is working</span>
-      {/* Cycling verb — visual-only, not announced. */}
-      <span
-        className="elmer-thinking-verb"
-        data-testid="elmer-thinking-verb"
-        aria-hidden="true"
-      >
-        Elmer is {verb}…
-      </span>
-      {/* Elapsed counter — visual-only, not announced. */}
-      <span
-        className="elmer-thinking-elapsed"
-        data-testid="elmer-thinking-elapsed"
-        aria-hidden="true"
-      >
-        {elapsedLabel}
-      </span>
     </div>
   );
 }
@@ -1103,7 +978,8 @@ export const ElmerPane = memo(function ElmerPane({
   // T8b: Per-origin key-status map passed to the tile picker. Populated once
   // when the picker opens (not per-keystroke).
   const [keyStatusByOrigin, setKeyStatusByOrigin] = useState<KeyStatusByOrigin>({});
-  const listEndRef = useRef<HTMLDivElement>(null);
+  // Scroll container for the transcript; auto-follow is gated on pin-to-bottom.
+  const messagesRef = useRef<HTMLDivElement>(null);
   // Ref to track whether configRead has been called, so the eager-load
   // on mount and the disclosure open don't double-call it.
   const configReadCalledRef = useRef(false);
@@ -1167,19 +1043,27 @@ export const ElmerPane = memo(function ElmerPane({
     });
   }, [advancedOpen, openCounter, notOnboarded, switchProviderFocusTier]);
 
-  // phase 2b — true while a streamed turn is in flight (live buffers non-empty),
-  // before EV_TURN finalizes and clears them. Drives the transient streaming
-  // bubble and suppresses the duplicate pre-first-token ThinkingIndicator.
-  const isStreaming = streamingAnswer.length > 0 || streamingReasoning.length > 0;
+  // One predicate governs the whole in-flight window — the StreamingStatusCard
+  // owns running->done, so there is no second component to flash in the
+  // EV_TURN -> EV_OUTCOME gap (tuxlink-h5azu).
+  const isInFlight =
+    phase === 'running' || streamingAnswer.length > 0 || streamingReasoning.length > 0;
+  const isResponding = streamingAnswer.length > 0;
+  // Live token counter is a char/4 estimate (the backend only sends exact counts
+  // post-turn via EV_CONTEXT); shown as "~N tok". Counter hidden when 0.
+  const tokensEstimate = Math.round(
+    (streamingAnswer.length + streamingReasoning.length) / 4,
+  );
+  const { verb, elapsedSecs } = useThinkingPulse(isInFlight);
+  // Sticky-per-session expand state for the stream box (default collapsed, d5zns).
+  const [streamExpanded, setStreamExpanded] = useState(false);
 
-  // Auto-scroll to the bottom of the message list on each new item — and as the
-  // live streaming buffers grow, so the cursor stays in view mid-stream.
-  // Guard for jsdom (tests) where scrollIntoView is not implemented.
+  // Transcript auto-follow — only while pinned to the bottom, so the operator can
+  // scroll up to supervise tool-call chips mid-stream (tuxlink-06v9s).
+  const transcriptFollow = useStreamAutoFollow(messagesRef);
   useEffect(() => {
-    if (typeof listEndRef.current?.scrollIntoView === 'function') {
-      listEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [items, streamingAnswer, streamingReasoning]);
+    transcriptFollow.followIfPinned();
+  }, [items, streamingAnswer, streamingReasoning, transcriptFollow]);
 
   const handleSend = () => {
     const msg = input.trim();
@@ -1344,17 +1228,32 @@ export const ElmerPane = memo(function ElmerPane({
         }
         /* Message list (normal onboarded path) */
         return (
-          <div className="elmer-messages" data-testid="elmer-messages" role="log" aria-live="polite">
+          <div
+            className="elmer-messages"
+            data-testid="elmer-messages"
+            role="log"
+            aria-live="polite"
+            ref={messagesRef}
+            onScroll={transcriptFollow.onScroll}
+          >
             {items.map((item) => (
               <MessageItem key={item.id} item={item} />
             ))}
-            {/* phase 2b — transient live streaming bubble; carries the liveness once
-                the first token arrives, so the pre-token ThinkingIndicator is hidden
-                while it is shown (no double indicator). */}
-            {isStreaming && (
-              <StreamingBubble answer={streamingAnswer} reasoning={streamingReasoning} />
+            {/* One streaming status card owns the whole in-flight window
+                (thinking -> responding -> done). Collapsed to a live counter by
+                default; expandable to a bounded scrolling box. */}
+            {isInFlight && (
+              <StreamingStatusCard
+                verb={verb}
+                isResponding={isResponding}
+                answer={streamingAnswer}
+                reasoning={streamingReasoning}
+                tokensEstimate={tokensEstimate}
+                elapsedSecs={elapsedSecs}
+                expanded={streamExpanded}
+                onToggleExpand={() => setStreamExpanded((v) => !v)}
+              />
             )}
-            {isRunning && !isStreaming && <ThinkingIndicator />}
             {lastOutcome && (
               <OutcomeCallout
                 phase={phase}
@@ -1362,7 +1261,16 @@ export const ElmerPane = memo(function ElmerPane({
                 onSwitchProvider={() => { setSwitchProviderFocusTier('paygo'); }}
               />
             )}
-            <div ref={listEndRef} />
+            {!transcriptFollow.atBottom && (
+              <button
+                type="button"
+                className="elmer-transcript-jump-live"
+                data-testid="elmer-transcript-jump-live"
+                onClick={transcriptFollow.jumpToLive}
+              >
+                ↓ Jump to live
+              </button>
+            )}
           </div>
         );
       })()}

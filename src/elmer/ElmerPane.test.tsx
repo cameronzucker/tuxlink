@@ -15,7 +15,7 @@
  * G2: Model form -- preset/endpoint/key-affordance/model+Detect, Save & use.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import { ElmerPane, ModelForm } from './ElmerPane';
 import { RADIO_VERBS } from './radioVerbs';
@@ -309,174 +309,38 @@ describe('<ElmerPane> -- Stop calls elmer_stop', () => {
   });
 });
 
-describe('<ElmerPane> -- thinking indicator', () => {
-  it('shows the thinking indicator (radio-verb form) while a run is in progress', async () => {
+describe('<ElmerPane> -- in-flight streaming card (collapsed default)', () => {
+  it('shows the collapsed streaming card while a run is in progress', async () => {
     render(<ElmerPane />);
 
     const input = screen.getByTestId('elmer-input');
     fireEvent.change(input, { target: { value: 'question' } });
     fireEvent.click(screen.getByTestId('elmer-send'));
 
-    await waitFor(() => {
-      expect(screen.getByTestId('elmer-thinking')).toBeTruthy();
-    });
+    await waitFor(() => expect(screen.getByTestId('elmer-stream-card')).toBeTruthy());
 
-    // Verb span must be present and show a phrase from the bank.
-    const verbSpan = screen.getByTestId('elmer-thinking-verb');
-    const verbText = verbSpan.textContent ?? '';
-    // Text is "Elmer is <verb>…" -- strip the wrapper and check the verb is in the bank.
-    const verbOnly = verbText.replace(/^Elmer is /, '').replace(/…$/, '');
+    // Collapsed by default: no expanded body.
+    expect(screen.queryByTestId('elmer-stream-body')).toBeNull();
+
+    // Before any answer token, the verb is a RADIO_VERBS phrase.
+    const verbText = screen.getByTestId('elmer-stream-verb').textContent ?? '';
+    const verbOnly = verbText.replace(/^Elmer is\s*/, '').replace(/…\s*$/, '').trim();
     expect(RADIO_VERBS).toContain(verbOnly);
-
-    // Elapsed span must be present.
-    expect(screen.getByTestId('elmer-thinking-elapsed')).toBeTruthy();
   });
 
-  it('thinking indicator disappears once EV_OUTCOME arrives', async () => {
+  it('the streaming card disappears once EV_OUTCOME arrives', async () => {
     render(<ElmerPane />);
 
     const input = screen.getByTestId('elmer-input');
     fireEvent.change(input, { target: { value: 'question' } });
     fireEvent.click(screen.getByTestId('elmer-send'));
 
-    await waitFor(() => expect(screen.getByTestId('elmer-thinking')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('elmer-stream-card')).toBeTruthy());
 
     const payload: ElmerOutcomePayload = { kind: 'outcome', outcomeKind: 'done', detail: '' };
     await fireElmerEvent<ElmerOutcomePayload>(EV_OUTCOME, payload);
 
-    expect(screen.queryByTestId('elmer-thinking')).toBeNull();
-  });
-});
-
-describe('<ElmerPane> -- thinking indicator verb cycling', () => {
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it('verb phrase is from RADIO_VERBS on mount', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    render(<ElmerPane />);
-
-    const input = screen.getByTestId('elmer-input');
-    fireEvent.change(input, { target: { value: 'question' } });
-    fireEvent.click(screen.getByTestId('elmer-send'));
-
-    await waitFor(() => expect(screen.getByTestId('elmer-thinking')).toBeTruthy());
-
-    const verbSpan = screen.getByTestId('elmer-thinking-verb');
-    const verbOnly = (verbSpan.textContent ?? '').replace(/^Elmer is /, '').replace(/…$/, '');
-    expect(RADIO_VERBS).toContain(verbOnly);
-
-    vi.useRealTimers();
-  });
-
-  it('verb phrase changes after ~3s and the new phrase is also from RADIO_VERBS', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    render(<ElmerPane />);
-
-    const input = screen.getByTestId('elmer-input');
-    fireEvent.change(input, { target: { value: 'question' } });
-    fireEvent.click(screen.getByTestId('elmer-send'));
-
-    await waitFor(() => expect(screen.getByTestId('elmer-thinking')).toBeTruthy());
-
-    const before = screen.getByTestId('elmer-thinking-verb').textContent ?? '';
-
-    // Advance 3 ticks of 1s each so the verb advances.
-    act(() => { vi.advanceTimersByTime(3000); });
-
-    const after = screen.getByTestId('elmer-thinking-verb').textContent ?? '';
-
-    // The new phrase must still be from the bank.
-    const verbOnly = after.replace(/^Elmer is /, '').replace(/…$/, '');
-    expect(RADIO_VERBS).toContain(verbOnly);
-
-    // Advance a further 3 ticks to confirm it can change again (cycling is working).
-    act(() => { vi.advanceTimersByTime(3000); });
-    const after2 = screen.getByTestId('elmer-thinking-verb').textContent ?? '';
-    const verbOnly2 = after2.replace(/^Elmer is /, '').replace(/…$/, '');
-    expect(RADIO_VERBS).toContain(verbOnly2);
-
-    // Suppress unused-variable warning -- `before` is here to document intent.
-    void before;
-
-    vi.useRealTimers();
-  });
-});
-
-describe('<ElmerPane> -- thinking indicator elapsed timer', () => {
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it('elapsed counter shows "0s" at mount (before any tick)', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    render(<ElmerPane />);
-
-    const input = screen.getByTestId('elmer-input');
-    fireEvent.change(input, { target: { value: 'question' } });
-    fireEvent.click(screen.getByTestId('elmer-send'));
-
-    await waitFor(() => expect(screen.getByTestId('elmer-thinking')).toBeTruthy());
-
-    const elapsedEl = screen.getByTestId('elmer-thinking-elapsed');
-    expect(elapsedEl.textContent).toBe('0s');
-
-    vi.useRealTimers();
-  });
-
-  it('elapsed counter shows "5s" after 5 seconds', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    render(<ElmerPane />);
-
-    const input = screen.getByTestId('elmer-input');
-    fireEvent.change(input, { target: { value: 'question' } });
-    fireEvent.click(screen.getByTestId('elmer-send'));
-
-    await waitFor(() => expect(screen.getByTestId('elmer-thinking')).toBeTruthy());
-
-    act(() => { vi.advanceTimersByTime(5000); });
-
-    const elapsedEl = screen.getByTestId('elmer-thinking-elapsed');
-    expect(elapsedEl.textContent).toBe('5s');
-
-    vi.useRealTimers();
-  });
-
-  it('elapsed counter shows "1m 05s" after 65 seconds', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    render(<ElmerPane />);
-
-    const input = screen.getByTestId('elmer-input');
-    fireEvent.change(input, { target: { value: 'question' } });
-    fireEvent.click(screen.getByTestId('elmer-send'));
-
-    await waitFor(() => expect(screen.getByTestId('elmer-thinking')).toBeTruthy());
-
-    act(() => { vi.advanceTimersByTime(65000); });
-
-    const elapsedEl = screen.getByTestId('elmer-thinking-elapsed');
-    expect(elapsedEl.textContent).toBe('1m 05s');
-
-    vi.useRealTimers();
-  });
-
-  it('elapsed counter shows "2m 05s" after 125 seconds', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    render(<ElmerPane />);
-
-    const input = screen.getByTestId('elmer-input');
-    fireEvent.change(input, { target: { value: 'question' } });
-    fireEvent.click(screen.getByTestId('elmer-send'));
-
-    await waitFor(() => expect(screen.getByTestId('elmer-thinking')).toBeTruthy());
-
-    act(() => { vi.advanceTimersByTime(125000); });
-
-    const elapsedEl = screen.getByTestId('elmer-thinking-elapsed');
-    expect(elapsedEl.textContent).toBe('2m 05s');
-
-    vi.useRealTimers();
+    expect(screen.queryByTestId('elmer-stream-card')).toBeNull();
   });
 });
 
@@ -2057,51 +1921,104 @@ describe('<ElmerPane> -- save_includes_turn_timeout', () => {
 // committed-item collapsed reasoning toggle
 // ---------------------------------------------------------------------------
 
-describe('<ElmerPane> phase 2b -- streaming bubble renders live answer + cursor', () => {
-  it('assistant deltas render as a live bubble with the blinking cursor', async () => {
+describe('<ElmerPane> streaming card -- live stream renders in the expandable body', () => {
+  it('assistant deltas appear in the expanded body with a cursor; card carries the token estimate', async () => {
     render(<ElmerPane />);
 
     await fireElmerEvent<ElmerDeltaPayload>(EV_DELTA, { kind: 'delta', deltaKind: 'assistant', chunk: 'Hello ' });
     await fireElmerEvent<ElmerDeltaPayload>(EV_DELTA, { kind: 'delta', deltaKind: 'assistant', chunk: 'world' });
 
-    const bubble = screen.getByTestId('elmer-streaming-bubble');
-    expect(bubble.textContent).toContain('Hello world');
-    // The blinking cursor is present while streaming.
-    expect(screen.getByTestId('elmer-streaming-cursor')).toBeTruthy();
+    expect(screen.getByTestId('elmer-stream-card')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('elmer-stream-card-toggle'));
+
+    const body = screen.getByTestId('elmer-stream-body');
+    expect(body.textContent).toContain('Hello world');
+    expect(screen.getByTestId('elmer-stream-cursor')).toBeTruthy();
+    // 'Hello world' = 11 chars -> round(11 / 4) = 3.
+    expect(screen.getByTestId('elmer-stream-tokens').textContent).toBe('~3 tok');
   });
 
-  it('the streaming bubble + cursor disappear at finalize (EV_TURN), replaced by the committed item', async () => {
+  it('h5azu-b: at finalize the card is gone and exactly one committed markdown item renders', async () => {
     render(<ElmerPane />);
 
     await fireElmerEvent<ElmerDeltaPayload>(EV_DELTA, { kind: 'delta', deltaKind: 'assistant', chunk: 'Streamed answer' });
-    expect(screen.getByTestId('elmer-streaming-bubble')).toBeTruthy();
+    expect(screen.getByTestId('elmer-stream-card')).toBeTruthy();
 
     await fireElmerEvent<ElmerTurnPayload>(EV_TURN, { kind: 'turn', role: 'assistant', text: 'Streamed answer' });
 
-    // The transient bubble + cursor are gone; the committed markdown item remains.
-    expect(screen.queryByTestId('elmer-streaming-bubble')).toBeNull();
-    expect(screen.queryByTestId('elmer-streaming-cursor')).toBeNull();
-    expect(screen.getByTestId('elmer-turn-assistant').textContent).toContain('Streamed answer');
+    // No transient card, exactly one committed markdown item — no dump/clear/reprint.
+    expect(screen.queryByTestId('elmer-stream-card')).toBeNull();
+    expect(screen.queryByTestId('elmer-stream-cursor')).toBeNull();
+    const committed = screen.getAllByTestId('elmer-turn-assistant');
+    expect(committed).toHaveLength(1);
+    expect(committed[0].textContent).toContain('Streamed answer');
+  });
+
+  it('h5azu-reflash: exactly one in-flight card while the run continues after a committed turn', async () => {
+    render(<ElmerPane />);
+
+    const input = screen.getByTestId('elmer-input');
+    fireEvent.change(input, { target: { value: 'question' } });
+    fireEvent.click(screen.getByTestId('elmer-send'));
+
+    await fireElmerEvent<ElmerDeltaPayload>(EV_DELTA, { kind: 'delta', deltaKind: 'assistant', chunk: 'Answer' });
+    // Finalize the assistant message; the RUN is not done (no EV_OUTCOME), so the
+    // single card stays as the in-flight indicator — the old code re-flashed a
+    // second ThinkingIndicator below the committed answer here.
+    await fireElmerEvent<ElmerTurnPayload>(EV_TURN, { kind: 'turn', role: 'assistant', text: 'Answer' });
+
+    expect(screen.getAllByTestId('elmer-stream-card')).toHaveLength(1);
+    expect(screen.getByTestId('elmer-turn-assistant').textContent).toContain('Answer');
+  });
+
+  it('h5azu-a: reasoning stays visible when the answer starts (expanded)', async () => {
+    render(<ElmerPane />);
+
+    await fireElmerEvent<ElmerDeltaPayload>(EV_DELTA, { kind: 'delta', deltaKind: 'reasoning', chunk: 'a long thinking trace' });
+    fireEvent.click(screen.getByTestId('elmer-stream-card-toggle')); // expand
+    expect(screen.getByTestId('elmer-stream-reasoning').textContent).toContain('a long thinking trace');
+
+    // Answer starts -> reasoning must NOT disappear (no collapse-to-cursor).
+    await fireElmerEvent<ElmerDeltaPayload>(EV_DELTA, { kind: 'delta', deltaKind: 'assistant', chunk: 'X' });
+    expect(screen.getByTestId('elmer-stream-reasoning').textContent).toContain('a long thinking trace');
+    expect(screen.getByTestId('elmer-stream-body').textContent).toContain('X');
   });
 });
 
-describe('<ElmerPane> phase 2b -- reasoning auto-collapses when the answer arrives', () => {
-  it('reasoning section is expanded while only reasoning has streamed, then collapses once the answer starts', async () => {
+describe('<ElmerPane> streaming card -- expand is sticky across turns (d5zns)', () => {
+  it('once expanded, a later turn stays expanded', async () => {
     render(<ElmerPane />);
 
-    // Only reasoning so far -> section expanded (body visible).
-    await fireElmerEvent<ElmerDeltaPayload>(EV_DELTA, { kind: 'delta', deltaKind: 'reasoning', chunk: 'Considering options.' });
+    await fireElmerEvent<ElmerDeltaPayload>(EV_DELTA, { kind: 'delta', deltaKind: 'assistant', chunk: 'first' });
+    fireEvent.click(screen.getByTestId('elmer-stream-card-toggle')); // expand
+    expect(screen.getByTestId('elmer-stream-body')).toBeTruthy();
 
-    const reasoning = screen.getByTestId('elmer-reasoning');
-    expect(reasoning.getAttribute('data-open')).toBe('true');
-    expect(screen.getByTestId('elmer-reasoning-body').textContent).toContain('Considering options.');
+    await fireElmerEvent<ElmerTurnPayload>(EV_TURN, { kind: 'turn', role: 'assistant', text: 'first' });
+    await fireElmerEvent<ElmerDeltaPayload>(EV_DELTA, { kind: 'delta', deltaKind: 'assistant', chunk: 'second' });
 
-    // Answer starts -> reasoning auto-collapses (body hidden).
-    await fireElmerEvent<ElmerDeltaPayload>(EV_DELTA, { kind: 'delta', deltaKind: 'assistant', chunk: 'Here is the answer.' });
+    // Still expanded (sticky) — body visible without another click.
+    expect(screen.getByTestId('elmer-stream-body')).toBeTruthy();
+  });
+});
 
-    const reasoningAfter = screen.getByTestId('elmer-reasoning');
-    expect(reasoningAfter.getAttribute('data-open')).toBe('false');
-    expect(screen.queryByTestId('elmer-reasoning-body')).toBeNull();
+describe('<ElmerPane> transcript -- scroll-lock released when scrolled up (06v9s)', () => {
+  it('does not force-scroll the transcript when the operator has scrolled up', async () => {
+    render(<ElmerPane />);
+    const list = screen.getByTestId('elmer-messages');
+    // jsdom does no layout — define scroll geometry by hand.
+    Object.defineProperty(list, 'scrollHeight', { value: 1000, configurable: true });
+    Object.defineProperty(list, 'clientHeight', { value: 200, configurable: true });
+    let top = 100; // scrolled up
+    Object.defineProperty(list, 'scrollTop', {
+      get: () => top, set: (v: number) => { top = v; }, configurable: true,
+    });
+    fireEvent.scroll(list); // register scrolled-up state
+
+    await fireElmerEvent<ElmerDeltaPayload>(EV_DELTA, { kind: 'delta', deltaKind: 'assistant', chunk: 'token' });
+    // The transcript was NOT yanked back to the bottom.
+    expect(top).toBe(100);
+    // A jump-to-live affordance is offered.
+    expect(screen.getByTestId('elmer-transcript-jump-live')).toBeTruthy();
   });
 });
 
