@@ -27,8 +27,9 @@ use tuxlink_mcp_core::ports::{
     ArdopConfigDto, AudioDevicesDto, BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto,
     ConfigPort, ConfigViewDto, DevicePort, DocsHitDto, FolderDto, LogLineDto, LogPort, MailboxPort,
     MessageMetaDto, ModemStatusDto, PacketConfigDto, ParsedMessageDto, PathPredictionDto,
-    PlatformInfoDto, PortError, PositionStatusDto, PredictRequestDto, PredictionPort, RigConfigDto,
-    RigStatusDto, SearchPort, SearchQueryDto, SearchResultsDto, SerialDeviceDto, SolarSnapshotDto,
+    PlatformInfoDto, PortError, PositionStatusDto, PredictRequestDto, PredictionPort, PrinterDto,
+    RigConfigDto, RigStatusDto, SearchPort, SearchQueryDto, SearchResultsDto, SerialDeviceDto,
+    SolarSnapshotDto,
     StationFilterDto, StationListDto, StationPort, StatusPort, VaraConfigDto, VaraStatusDto,
 };
 
@@ -329,6 +330,15 @@ impl DevicePort for ScenarioDevice {
                 capture: Vec::new(),
                 playback: Vec::new(),
             }))
+    }
+    async fn printer_list(&self) -> Result<Vec<PrinterDto>, PortError> {
+        Ok(Vec::new())
+    }
+    async fn print_document(&self, _printer: String, _filename: String) -> Result<(), PortError> {
+        Ok(())
+    }
+    async fn export_report(&self, filename: String, _content: String) -> Result<String, PortError> {
+        Ok(format!("/scenario/reports/{filename}"))
     }
 }
 

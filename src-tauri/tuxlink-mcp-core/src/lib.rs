@@ -161,7 +161,7 @@ pub mod test_support {
         EgressPortError, FolderDto, GatewayAntennaDto, GatewayDto, GribRequestDto, LogLineDto,
         LogPort, MailboxPort, MessageMetaDto, ModemStatusDto, PacketConfigDto, PacketWriteDto,
         ParsedMessageDto, PathPredictionDto, PlatformInfoDto, PortError, PositionStatusDto,
-        PredictRequestDto, PredictionPort, ProvisionPort, QsyCandidateDto, RigConfigDto,
+        PredictRequestDto, PredictionPort, PrinterDto, ProvisionPort, QsyCandidateDto, RigConfigDto,
         RigStatusDto, SearchPort, SearchQueryDto, SearchResultsDto, SendFormDto, SerialDeviceDto,
         SessionIntentDto, SolarSnapshotDto, StationFilterDto, StationListDto, StationModeDto,
         StationPort, StatusPort, VaraCheckpointDto, VaraConfigDto, VaraInstallStatusDto,
@@ -383,6 +383,18 @@ pub mod test_support {
                 capture: vec!["default".into()],
                 playback: vec!["default".into()],
             })
+        }
+        async fn printer_list(&self) -> Result<Vec<PrinterDto>, PortError> {
+            Ok(vec![PrinterDto {
+                name: "Mock_Printer".into(),
+                is_default: true,
+            }])
+        }
+        async fn print_document(&self, _printer: String, _filename: String) -> Result<(), PortError> {
+            Ok(())
+        }
+        async fn export_report(&self, filename: String, _content: String) -> Result<String, PortError> {
+            Ok(format!("/mock/reports/{filename}"))
         }
     }
 

@@ -42,7 +42,7 @@ use tuxlink_mcp_core::ports::{
     GatewayAntennaDto, GatewayDto, GribRequestDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto,
     ModemStatusDto, OutboxReadPort, PacketConfigDto, PacketWriteDto, ParsedMessageDto,
     PathPredictionDto, PlatformInfoDto, PortError, PositionStatusDto, PredictRequestDto,
-    PredictionPort, ProvisionPort, QsyCandidateDto, RigConfigDto, RigStatusDto, SearchPort,
+    PredictionPort, PrinterDto, ProvisionPort, QsyCandidateDto, RigConfigDto, RigStatusDto, SearchPort,
     SearchQueryDto, SearchResultsDto, SendFormDto, SerialDeviceDto, SessionIntentDto,
     SolarSnapshotDto, StationFilterDto, StationListDto, StationModeDto, StationPort,
     StagedRecordDto, StatusPort, VaraCheckpointDto, VaraConfigDto, VaraInstallStatusDto,
@@ -694,6 +694,97 @@ impl DevicePort for MonolithDevicePort {
             playback: devices.playbacks.into_iter().map(|d| d.name).collect(),
         })
     }
+
+    async fn printer_list(&self) -> Result<Vec<PrinterDto>, PortError> {
+        // Read-only shell-out; soft-fail to an empty list when CUPS / lpstat is
+        // absent (the agent then falls back to export_report).
+        let run = |args: &[&str]| -> String {
+            std::process::Command::new("lpstat")
+                .args(args)
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+                .unwrap_or_default()
+        };
+        Ok(parse_printers(&run(&["-p"]), &run(&["-d"])))
+    }
+
+    async fn print_document(&self, printer: String, filename: String) -> Result<(), PortError> {
+        // Prints a report the agent previously wrote via export_report: `filename`
+        // is resolved INSIDE the reports sandbox (never an arbitrary host path).
+        let base = agent_reports_dir()?;
+        let path = tuxlink_mcp_core::validate::validate_attachment_dest(&base, &filename)
+            .map_err(|e| PortError::Unavailable(format!("bad report filename: {e}")))?;
+        if !path.is_file() {
+            return Err(PortError::NotFound);
+        }
+        let status = std::process::Command::new("lp")
+            .arg("-d")
+            .arg(&printer)
+            .arg(&path)
+            .status()
+            .map_err(|e| PortError::Unavailable(format!("lp unavailable: {e}")))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(PortError::Internal("lp reported a non-zero exit".into()))
+        }
+    }
+
+    async fn export_report(&self, filename: String, content: String) -> Result<String, PortError> {
+        let base = agent_reports_dir()?;
+        let path = export_report_to(&base, &filename, &content)?;
+        Ok(path.to_string_lossy().into_owned())
+    }
+}
+
+/// Resolve + create the sandboxed agent reports directory
+/// (`~/Documents/Tuxlink/reports/`, tuxlink-z2nwx Contract 3). Refuses if the
+/// Documents dir is unresolvable — never a CWD-relative fallback (§11.4).
+fn agent_reports_dir() -> Result<std::path::PathBuf, PortError> {
+    let docs = dirs::document_dir()
+        .ok_or_else(|| PortError::Unavailable("Documents directory unavailable".into()))?;
+    let dir = docs.join("Tuxlink").join("reports");
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| PortError::Internal(format!("create reports dir: {e}")))?;
+    Ok(dir)
+}
+
+/// Parse `lpstat -p` (+ `lpstat -d`) into CUPS print destinations. Pure/testable.
+/// `lpstat -p` lines look like `printer <NAME> is idle.  enabled since ...`;
+/// `lpstat -d` is `system default destination: <NAME>` (or `no default ...`).
+pub(crate) fn parse_printers(lpstat_p: &str, lpstat_d: &str) -> Vec<PrinterDto> {
+    let default = lpstat_d
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("system default destination:"))
+        .map(|s| s.trim().to_string());
+    lpstat_p
+        .lines()
+        .filter_map(|l| {
+            let rest = l.trim().strip_prefix("printer ")?;
+            let name = rest.split_whitespace().next()?.to_string();
+            Some(PrinterDto {
+                is_default: default.as_deref() == Some(name.as_str()),
+                name,
+            })
+        })
+        .collect()
+}
+
+/// Validate `filename` against the sandbox `base` and write `content`. Injected
+/// `base` makes it unit-testable with a tempdir; traversal is rejected via the
+/// shared `validate_attachment_dest` guard (tuxlink-5lbm).
+pub(crate) fn export_report_to(
+    base: &std::path::Path,
+    filename: &str,
+    content: &str,
+) -> Result<std::path::PathBuf, PortError> {
+    let path = tuxlink_mcp_core::validate::validate_attachment_dest(base, filename)
+        .map_err(|e| PortError::Unavailable(format!("bad report filename: {e}")))?;
+    std::fs::write(&path, content)
+        .map_err(|e| PortError::Internal(format!("write report: {e}")))?;
+    Ok(path)
 }
 
 // ---------------------------------------------------------------------------
@@ -2547,6 +2638,42 @@ mod tests {
         any_freq_in_bands, curate_gateway, is_plausible_callsign, khz_to_band, sanitize_channel,
         sort_gateways_by_distance,
     };
+
+    // ── tuxlink-z2nwx Contract 3: print + report export ──
+    mod z2nwx {
+        #[test]
+        fn parse_printers_extracts_names_and_default() {
+            let p = "printer Brother_HL is idle.  enabled since Mon\n\
+                     printer Office_Laser disabled since Tue\n";
+            let d = "system default destination: Office_Laser\n";
+            let got = super::super::parse_printers(p, d);
+            assert_eq!(got.len(), 2);
+            assert_eq!(got[0].name, "Brother_HL");
+            assert!(!got[0].is_default);
+            assert_eq!(got[1].name, "Office_Laser");
+            assert!(got[1].is_default);
+        }
+
+        #[test]
+        fn parse_printers_empty_when_none() {
+            assert!(super::super::parse_printers("", "no system default destination").is_empty());
+        }
+
+        #[test]
+        fn export_report_writes_into_sandbox_and_returns_path() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = super::super::export_report_to(dir.path(), "sitrep.md", "# hi").unwrap();
+            assert!(path.starts_with(dir.path()));
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), "# hi");
+        }
+
+        #[test]
+        fn export_report_rejects_traversal_and_absolute() {
+            let dir = tempfile::tempdir().unwrap();
+            assert!(super::super::export_report_to(dir.path(), "../escape.md", "x").is_err());
+            assert!(super::super::export_report_to(dir.path(), "/tmp/escape.md", "x").is_err());
+        }
+    }
     use crate::catalog::stations::{Gateway, GatewayAntenna};
     use tuxlink_mcp_core::ports::{
         GatewayAntennaDto, GatewayDto, OutboxReadPort, StagedRecordDto, StationModeDto,

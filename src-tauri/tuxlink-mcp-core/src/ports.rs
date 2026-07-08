@@ -243,6 +243,15 @@ pub struct AudioDevicesDto {
     pub playback: Vec<String>,
 }
 
+/// A CUPS print destination (tuxlink-z2nwx, Contract 3), from `lpstat -p -d`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PrinterDto {
+    /// The CUPS queue name passed to `lp -d <name>`.
+    pub name: String,
+    /// True for the system default destination (`lpstat -d`).
+    pub is_default: bool,
+}
+
 /// Live backend (CMS connection / engine) status.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BackendStatusDto {
@@ -580,12 +589,27 @@ pub trait ConfigPort: Send + Sync {
     async fn rig(&self) -> Result<RigConfigDto, PortError>;
 }
 
-/// Hardware device enumeration. None taint (device names, not message content).
+/// Local host capabilities (tuxlink-z2nwx, Contract 3): hardware device
+/// enumeration (read-only, none taint) PLUS the shell-equivalent local actions
+/// of printing and report export. None of these are RADIO-1 acts or external
+/// egress — they are ungated, exactly what a competent operator could do at a
+/// shell (list printers, `lp` a file, write a report to their Documents folder).
 #[async_trait]
 pub trait DevicePort: Send + Sync {
     async fn serial(&self) -> Result<Vec<SerialDeviceDto>, PortError>;
     async fn bluetooth(&self) -> Result<Vec<BluetoothDeviceDto>, PortError>;
     async fn audio(&self) -> Result<AudioDevicesDto, PortError>;
+    /// Enumerate CUPS print destinations (`lpstat -p -d`). Empty list when CUPS
+    /// is absent — the agent falls back to `export_report`.
+    async fn printer_list(&self) -> Result<Vec<PrinterDto>, PortError>;
+    /// Print a local file to a CUPS destination (`lp -d <printer> <path>`). An
+    /// ungated local action; not a transmission. CUPS auto-filters text/markdown.
+    async fn print_document(&self, printer: String, path: String) -> Result<(), PortError>;
+    /// Write agent-generated markdown/text to a sandboxed reports directory
+    /// (`~/Documents/Tuxlink/reports/`). The agent picks the FILENAME, never the
+    /// directory; `..`/absolute/traversal paths are rejected. Returns the
+    /// absolute path written.
+    async fn export_report(&self, filename: String, content: String) -> Result<String, PortError>;
 }
 
 /// Session-log snapshot. The snapshot can carry untrusted wire content → the
