@@ -265,6 +265,13 @@ pub struct VaraStatusDto {
     pub connected: bool,
     pub bandwidth: u32,
     pub state: String,
+    /// Command-port (8300) reachability, classified WITHOUT disturbing a live
+    /// session: `Some(true)` = the cmd port answered (or a session is Open),
+    /// `Some(false)` = no answer, `None` = unknown (the session lock was
+    /// contended, so the probe was skipped rather than made to wait).
+    /// **cmd-reachable is NOT "ready to send"** — 8300 can accept while 8301
+    /// (data) still lags on a WINE restart.
+    pub reachable: Option<bool>,
 }
 
 /// One checkpoint of the VARA-under-WINE install pipeline

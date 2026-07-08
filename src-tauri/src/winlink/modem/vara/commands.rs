@@ -212,6 +212,12 @@ pub struct VaraSession {
     /// new open's worker takes a fresh snapshot tied to that open's
     /// generation number.
     close_generation: AtomicU64,
+    /// TTL cache for [`VaraSession::probe_reachable`] (tuxlink-7ppfq,
+    /// Contract 1). Holds `(measured_at, reachable)` from the last bare
+    /// cmd-port TCP touch so routine polls (~heartbeat cadence) don't churn
+    /// VARA's single-App acceptor. Deliberately OUTSIDE `inner` so the probe
+    /// never has to take the session lock to read/refresh the cache.
+    reachable_cache: Mutex<Option<(std::time::Instant, bool)>>,
 }
 
 struct VaraSessionInner {
@@ -318,7 +324,48 @@ impl VaraSession {
             transport_return_tx: return_tx,
             transport_return_rx: Mutex::new(Some(return_rx)),
             close_generation: AtomicU64::new(0),
+            reachable_cache: Mutex::new(None),
         }
+    }
+
+    /// Read-only cmd-port reachability, classified WITHOUT holding `inner`
+    /// across a socket op (tuxlink-7ppfq, Contract 1). One brief `try_lock`
+    /// classification: if a live session is Open/Connecting we lean on the
+    /// heartbeat and touch NO socket; otherwise a bare `connect_timeout` on
+    /// the cmd port, TTL-cached. Returns `None` (unknown) when the session
+    /// lock is contended — it never waits (the open path holds the lock across
+    /// a ~5 s connect, and this probe must not queue behind it).
+    ///
+    /// `host`/`cmd_port`/`timeout` come from the caller (which sources them
+    /// from `config_get_vara()` via `build_transport_config`, never hardcoded)
+    /// so the connect timeout is the SAME knob the transport uses.
+    pub fn probe_reachable(&self, host: &str, cmd_port: u16, timeout: Duration) -> Option<bool> {
+        // One brief try_lock classification. Contended → unknown (never wait).
+        // `VaraState` is `Copy`, so we copy it out and drop the guard before
+        // any socket work — satisfying the no-session-mutex-contention invariant.
+        let state = match self.inner.try_lock() {
+            Ok(g) => g.status.state,
+            Err(std::sync::TryLockError::WouldBlock) => return None,
+            Err(std::sync::TryLockError::Poisoned(p)) => p.into_inner().status.state,
+        };
+        // Guard dropped. If a session is live, lean on the ~3 s heartbeat — no socket.
+        if matches!(state, VaraState::Open | VaraState::Connecting) {
+            return Some(matches!(state, VaraState::Open));
+        }
+        // No live session: bare cmd-port touch, TTL-cached (~heartbeat cadence).
+        const TTL: Duration = Duration::from_secs(3);
+        if let Ok(cache) = self.reachable_cache.lock() {
+            if let Some((at, val)) = *cache {
+                if at.elapsed() < TTL {
+                    return Some(val);
+                }
+            }
+        }
+        let val = super::transport::cmd_port_reachable(host, cmd_port, timeout);
+        if let Ok(mut cache) = self.reachable_cache.lock() {
+            *cache = Some((std::time::Instant::now(), val));
+        }
+        Some(val)
     }
 
     /// Read-only snapshot of the current status. Cheap; safe to poll.
@@ -731,6 +778,23 @@ impl VaraSession {
         if let Ok(mut guard) = self.inner.lock() {
             guard.transport_owner = owner;
         }
+    }
+
+    /// Test-only helper: drive the cached status `state` directly, so a test
+    /// can exercise `probe_reachable`'s open/connecting classification without
+    /// standing up a real transport (tuxlink-7ppfq, Contract 1).
+    #[cfg(test)]
+    pub fn set_state_for_test(&self, s: VaraState) {
+        if let Ok(mut guard) = self.inner.lock() {
+            guard.status.state = s;
+        }
+    }
+
+    /// Test-only helper: hold `inner` so a test can prove `probe_reachable`
+    /// returns `unknown` (never waits) under lock contention.
+    #[cfg(test)]
+    pub fn lock_inner_for_test(&self) -> std::sync::MutexGuard<'_, VaraSessionInner> {
+        self.inner.lock().unwrap()
     }
 
     /// Test-only clone of the yield-notify handle. Lets a test spawn a
@@ -2609,6 +2673,71 @@ fn vara_dial_disconnect(transport: &mut VaraTransport) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    // ── tuxlink-7ppfq Contract 1: VARA cmd-port reachability probe ──
+
+    #[test]
+    fn probe_reachable_open_session_reports_true_without_socket() {
+        // Open session: derive from state == Open, do NOT touch a socket.
+        let s = VaraSession::new();
+        s.set_state_for_test(VaraState::Open);
+        // Port 1 is privileged/unused; a socket attempt would fail — proving
+        // the Open branch skipped the socket entirely.
+        assert_eq!(
+            s.probe_reachable("127.0.0.1", 1, std::time::Duration::from_millis(50)),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn probe_reachable_connecting_session_reports_false_without_socket() {
+        let s = VaraSession::new();
+        s.set_state_for_test(VaraState::Connecting);
+        assert_eq!(
+            s.probe_reachable("127.0.0.1", 1, std::time::Duration::from_millis(50)),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn probe_reachable_closed_session_touches_socket_true() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let s = VaraSession::new(); // new() starts Closed
+        s.set_state_for_test(VaraState::Closed);
+        assert_eq!(
+            s.probe_reachable("127.0.0.1", port, std::time::Duration::from_secs(5)),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn probe_reachable_closed_session_no_listener_false() {
+        let port = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap().port()
+        };
+        let s = VaraSession::new();
+        s.set_state_for_test(VaraState::Closed);
+        assert_eq!(
+            s.probe_reachable("127.0.0.1", port, std::time::Duration::from_millis(500)),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn probe_reachable_returns_unknown_when_lock_contended() {
+        // No-session-mutex-contention invariant: holding `inner` must NOT make
+        // the probe wait — it returns `unknown` promptly.
+        let s = VaraSession::new();
+        s.set_state_for_test(VaraState::Closed);
+        let guard = s.lock_inner_for_test();
+        assert_eq!(
+            s.probe_reachable("127.0.0.1", 1, std::time::Duration::from_secs(5)),
+            None
+        );
+        drop(guard);
+    }
 
     // ── tuxlink-8fkkk Task A2: VARA pre-audio tune + candidate walk ──
     //

@@ -359,11 +359,61 @@ pub enum RecvOutcome {
     Err(io::Error),
 }
 
+/// Read-only TCP reachability touch on VARA's COMMAND port (tuxlink-7ppfq,
+/// Contract 1). Opens a socket, then immediately shuts it down — issues NO
+/// VARA command, so it never mutates modem state (unlike MYCALL/BW/LISTEN).
+///
+/// `cmd`-reachable is NOT "ready to send": 8300 can accept while 8301 (data)
+/// still lags on a WINE restart. Callers name/describe this as cmd-port
+/// reachability, not "usable session."
+pub fn cmd_port_reachable(host: &str, cmd_port: u16, timeout: Duration) -> bool {
+    let Ok(mut addrs) = (host, cmd_port).to_socket_addrs() else {
+        return false;
+    };
+    let Some(addr) = addrs.next() else {
+        return false;
+    };
+    match TcpStream::connect_timeout(&addr, timeout) {
+        Ok(stream) => {
+            // Explicit shutdown so we never leave a half-open connection on
+            // VARA's single-App acceptor.
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::net::TcpListener;
     use std::thread;
+
+    #[test]
+    fn cmd_port_reachable_true_when_listener_bound() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral");
+        let port = listener.local_addr().unwrap().port();
+        assert!(cmd_port_reachable(
+            "127.0.0.1",
+            port,
+            Duration::from_secs(5)
+        ));
+    }
+
+    #[test]
+    fn cmd_port_reachable_false_when_no_listener() {
+        // Bind then drop to obtain a port nothing is listening on.
+        let port = {
+            let l = TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap().port()
+        };
+        assert!(!cmd_port_reachable(
+            "127.0.0.1",
+            port,
+            Duration::from_millis(500)
+        ));
+    }
 
     /// Connect a real `VaraTransport` against loopback cmd + data acceptors,
     /// returning the transport plus the server-side cmd-socket handle (so

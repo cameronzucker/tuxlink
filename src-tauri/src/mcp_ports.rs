@@ -220,14 +220,19 @@ impl StatusPort for MonolithStatusPort {
         let connected = matches!(status.state, VaraState::Open);
         // VARA bandwidth lives in config, not the live status; surface the
         // configured bandwidth so the agent sees the negotiated width target.
-        let bandwidth = crate::winlink::modem::vara::commands::config_get_vara()
-            .bandwidth_hz
-            .unwrap_or(0);
+        let ui = crate::winlink::modem::vara::commands::config_get_vara();
+        let bandwidth = ui.bandwidth_hz.unwrap_or(0);
         let state = format!("{:?}", status.state).to_lowercase();
+        // Cmd-port reachability (tuxlink-7ppfq, Contract 1). Source host/cmd_port
+        // and the connect timeout from the SAME `build_transport_config` the
+        // transport uses, so the probe timeout can't drift from the real dial.
+        let tcfg = crate::winlink::modem::vara::commands::build_transport_config(&ui);
+        let reachable = session.probe_reachable(&tcfg.host, tcfg.cmd_port, tcfg.connect_timeout);
         Ok(VaraStatusDto {
             connected,
             bandwidth,
             state,
+            reachable,
         })
     }
 

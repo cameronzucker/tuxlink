@@ -128,7 +128,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "vara_status",
-        description = "Report VARA modem status: connected, bandwidth, and state. Read-only."
+        description = "Report VARA modem status: connected, bandwidth, and state. Read-only. Also reports `reachable` (true/false/null): command-port (8300) reachability — true = the cmd port answered (or a session is Open), false = no answer, null = unknown (session busy, probe skipped rather than made to wait). cmd-reachable is NOT ready-to-send; use `vara_probe` to confirm a real VARA is answering."
     )]
     pub async fn vara_status(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.status.vara_status().await.map_err(port_err)?;

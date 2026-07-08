@@ -63,6 +63,7 @@ impl StatusPort for ScenarioStatus {
             connected: false,
             bandwidth: 2300,
             state: "idle".into(),
+            reachable: Some(false),
         })
     }
     async fn position_status(&self) -> Result<PositionStatusDto, PortError> {
