@@ -31,6 +31,14 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.87.1](https://github.com/cameronzucker/tuxlink/compare/v0.87.0...v0.87.1) (2026-07-09)
+
+
+### Bug Fixes
+
+* **elmer:** stop the streaming card collapsing to a gray line on transcript overflow ([4e2cef3](https://github.com/cameronzucker/tuxlink/commit/4e2cef3681828c2b4fba274aa8f09ec23f96d746))
+* **shell:** grant window:allow-set-title (1695 unhandled rejections) ([ff38fe1](https://github.com/cameronzucker/tuxlink/commit/ff38fe162da1ad7e378e7fb33f3e026d16b8cd15))
+
 ## [0.87.0](https://github.com/cameronzucker/tuxlink/compare/v0.86.0...v0.87.0) (2026-07-08)
 
 
