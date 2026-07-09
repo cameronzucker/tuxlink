@@ -68,6 +68,9 @@ Deciders: <names or session monikers of people involved>
 - [0013 — v0.0.1 main UI is Mock B (principles-faithful), not Mock D (supersedes 0012)](0013-v001-main-ui-is-mock-b-not-mock-d.md) — *the approved design is Mock B; agent-authored records are not the spec — the operator's approved artifact is*
 - [0014 — Design the v0.5+ modem clean-sheet; do not examine VARA's internals (preserve the independent-creation defense)](0014-clean-sheet-modem-no-prior-art-examination.md) — *bright line: no decompilation, no RE write-ups, no black-box on-air of VARA, from any source*
 - [0015 — Modem integration: managed-spawn lifecycle, generic external-TCP-modem transport, rig control as its own crate](0015-modem-integration-and-rig-control-foundation.md)
+- [0016 — Native B2F outbound with attachments](0016-native-b2f-outbound-with-attachments.md)
+- [0017 — Branch lifecycle state machine + pre-commit/pre-push hook enforcement](0017-branch-state-machine.md)
+- [0018 — Ban autonomous agent bd-issue splitting and phase deferrals](0018-ban-autonomous-agent-issue-splitting-and-deferrals.md) — *grounded in the VARA Phase-3-never-built incident; complements wire-walk*
 
 ## References
 
