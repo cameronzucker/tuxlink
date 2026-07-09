@@ -716,8 +716,7 @@ pub trait LogPort: Send + Sync {
 #[async_trait]
 pub trait StationPort: Send + Sync {
     /// List RMS gateways matching `filter`. Read-only; does not taint or gate.
-    async fn find_stations(&self, filter: StationFilterDto)
-        -> Result<StationListDto, PortError>;
+    async fn find_stations(&self, filter: StationFilterDto) -> Result<StationListDto, PortError>;
 }
 
 /// Offline HF propagation prediction + space-weather reads. Both methods are
@@ -830,10 +829,19 @@ pub trait EgressPort: Send + Sync {
         freq_hz: Option<u64>,
         qsy_candidates: Option<Vec<QsyCandidateDto>>,
     ) -> Result<(), EgressPortError>;
+    /// Open the VARA session: install the TCP transport to the local VARA
+    /// engine and register MYCALL (the on-air station ID). PRE-AIR by itself
+    /// (no RF leaves the radio), but it stands up a TRANSMIT-CAPABLE surface,
+    /// so it runs in the same authority class as egress (mirrors the
+    /// `rig_status` posture: an un-armed agent must not be able to open
+    /// transmit-capable state). Required before
+    /// [`EgressPort::vara_b2f_exchange`]; closed via the ungated
+    /// [`AbortPort::vara_stop_session`]. Pins VARA-HF (parity with the
+    /// exchange tool's pin).
+    async fn vara_open_session(&self, intent: SessionIntentDto) -> Result<(), EgressPortError>;
     /// Connect an AX.25 packet session to `call` over the optional digipeater
     /// `path`.
-    async fn packet_connect(&self, call: String, path: Vec<String>)
-        -> Result<(), EgressPortError>;
+    async fn packet_connect(&self, call: String, path: Vec<String>) -> Result<(), EgressPortError>;
 }
 
 /// UNGATED pure-stop capability. Stopping a transmission/connection is ALWAYS
@@ -1016,8 +1024,7 @@ pub trait ComposePort: Send + Sync {
     /// Stage a form submission; returns the staged MID.
     async fn send_form(&self, dto: SendFormDto) -> Result<String, WritePortError>;
     /// Stage a catalog inquiry for the given catalog item ids; returns the MID.
-    async fn catalog_send_inquiry(&self, item_ids: Vec<String>)
-        -> Result<String, WritePortError>;
+    async fn catalog_send_inquiry(&self, item_ids: Vec<String>) -> Result<String, WritePortError>;
     /// Stage a GRIB weather-product request; returns the staged MID.
     async fn grib_send_request(&self, dto: GribRequestDto) -> Result<String, WritePortError>;
 }

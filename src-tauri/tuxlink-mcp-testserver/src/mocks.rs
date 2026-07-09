@@ -17,20 +17,20 @@ use tuxlink_mcp_core::ports::{
     AbortPort, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto, AudioDevicesDto, BackendStatusDto,
     BluetoothDeviceDto, CatalogEntryDto, ChannelReliabilityDto, ComposeDraftDto, ComposePort,
     ConfigPort, ConfigViewDto, DevicePort, DocsHitDto, EgressPort, EgressPortError, FolderDto,
-    GatewayAntennaDto, GatewayDto, GribRequestDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto,
-    ModemStatusDto, PacketConfigDto, PacketWriteDto, ParsedMessageDto, PathPredictionDto,
-    PlatformInfoDto, PortError, PositionStatusDto, PredictRequestDto, PredictionPort,
-    PrinterDto, ProvisionPort, QsyCandidateDto, RigConfigDto, RigStatusDto, SearchPort, SearchQueryDto,
-    SearchResultsDto, SendFormDto, SerialDeviceDto, SessionIntentDto, SolarSnapshotDto,
-    StationFilterDto, StationListDto, StationModeDto, StationPort, StatusPort, VaraCheckpointDto,
-    VaraConfigDto, VaraInstallStatusDto, VaraInstallSummaryDto, VaraProbeDto, VaraStatusDto,
-    VaraWriteDto, WritePort, WritePortError,
+    GatewayAntennaDto, GatewayDto, GribRequestDto, LogLineDto, LogPort, MailboxPort,
+    MessageMetaDto, ModemStatusDto, PacketConfigDto, PacketWriteDto, ParsedMessageDto,
+    PathPredictionDto, PlatformInfoDto, PortError, PositionStatusDto, PredictRequestDto,
+    PredictionPort, PrinterDto, ProvisionPort, QsyCandidateDto, RigConfigDto, RigStatusDto,
+    SearchPort, SearchQueryDto, SearchResultsDto, SendFormDto, SerialDeviceDto, SessionIntentDto,
+    SolarSnapshotDto, StationFilterDto, StationListDto, StationModeDto, StationPort, StatusPort,
+    VaraCheckpointDto, VaraConfigDto, VaraInstallStatusDto, VaraInstallSummaryDto, VaraProbeDto,
+    VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
 };
 use tuxlink_mcp_core::validate::{
     validate_address, validate_attachment_dest, validate_body, validate_drive_level,
     validate_subject, validate_vara_bandwidth,
 };
-use tuxlink_security::{guarded_egress, EgressAuthority, EgressAudit, EgressGuard};
+use tuxlink_security::{guarded_egress, EgressAudit, EgressAuthority, EgressGuard};
 
 /// Recognizable seeded message — tier-2 reads this and verifies the round-trip.
 pub const SEED_MSG_ID: &str = "MSG001";
@@ -358,6 +358,9 @@ impl EgressPort for MockEgress {
     ) -> Result<(), EgressPortError> {
         self.gated("vara_b2f_exchange").await
     }
+    async fn vara_open_session(&self, _intent: SessionIntentDto) -> Result<(), EgressPortError> {
+        self.gated("vara_open_session").await
+    }
     async fn packet_connect(
         &self,
         _call: String,
@@ -529,10 +532,7 @@ impl ComposePort for MockCompose {
         Self::validate_recipients(&dto.to, &dto.cc)?;
         Ok(self.stage())
     }
-    async fn catalog_send_inquiry(
-        &self,
-        _item_ids: Vec<String>,
-    ) -> Result<String, WritePortError> {
+    async fn catalog_send_inquiry(&self, _item_ids: Vec<String>) -> Result<String, WritePortError> {
         Ok(self.stage())
     }
     async fn grib_send_request(&self, dto: GribRequestDto) -> Result<String, WritePortError> {

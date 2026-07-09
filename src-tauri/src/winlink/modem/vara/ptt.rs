@@ -101,6 +101,15 @@ impl VaraPtt {
     }
 }
 
+// Manual Debug: `SerialRts` holds a `Box<dyn serialport::SerialPort>`, which
+// is not `Debug`, so derive is unavailable. `describe()` is the right
+// rendering anyway (used by tests' `expect_err` bounds).
+impl std::fmt::Debug for VaraPtt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.describe())
+    }
+}
+
 impl PttSink for VaraPtt {
     fn set_ptt(&mut self, on: bool) -> Result<(), String> {
         match self {

@@ -44,7 +44,10 @@ fn port_err(e: PortError) -> ErrorData {
 fn egress_err(e: EgressPortError) -> ErrorData {
     match e {
         EgressPortError::Denied(reason) => ErrorData::invalid_request(
-            format!("not authorized to transmit: {reason}. {}", denial_remedy(&reason)),
+            format!(
+                "not authorized to transmit: {reason}. {}",
+                denial_remedy(&reason)
+            ),
             None,
         ),
         EgressPortError::Failed(reason) => ErrorData::internal_error(reason, None),
@@ -82,7 +85,10 @@ fn denial_remedy(reason: &str) -> &'static str {
 fn write_err(e: WritePortError) -> ErrorData {
     match e {
         WritePortError::Denied(reason) => ErrorData::invalid_request(
-            format!("not authorized to write: {reason}. {}", denial_remedy(&reason)),
+            format!(
+                "not authorized to write: {reason}. {}",
+                denial_remedy(&reason)
+            ),
             None,
         ),
         WritePortError::Invalid(reason) => ErrorData::invalid_request(reason, None),
@@ -165,7 +171,12 @@ impl TuxlinkMcp {
         description = "Report THE OPERATOR'S current station location — their Maidenhead grid square (precision-reduced to ~4 chars for privacy) and GPS fix status. Call this to answer 'where am I', 'what's near me', or any location-relative question — do NOT ask the operator for their location; Tuxlink already knows it. Read-only."
     )]
     pub async fn position_status(&self) -> Result<CallToolResult, ErrorData> {
-        let dto = self.state.status.position_status().await.map_err(port_err)?;
+        let dto = self
+            .state
+            .status
+            .position_status()
+            .await
+            .map_err(port_err)?;
         Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
@@ -192,7 +203,12 @@ impl TuxlinkMcp {
         description = "Report whether the first-run setup wizard has been completed. Read-only."
     )]
     pub async fn get_wizard_completed(&self) -> Result<CallToolResult, ErrorData> {
-        let done = self.state.status.wizard_completed().await.map_err(port_err)?;
+        let done = self
+            .state
+            .status
+            .wizard_completed()
+            .await
+            .map_err(port_err)?;
         Ok(CallToolResult::success(vec![ContentBlock::json(done)?]))
     }
 
@@ -226,7 +242,9 @@ impl TuxlinkMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let Parameters(FolderParams { folder }) = params;
         let dto = self.state.mailbox.list(&folder).await.map_err(port_err)?;
-        self.state.guard.taint(tuxlink_security::TaintReason::MailboxList);
+        self.state
+            .guard
+            .taint(tuxlink_security::TaintReason::MailboxList);
         Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
@@ -245,7 +263,9 @@ impl TuxlinkMcp {
             .read(&folder, &id)
             .await
             .map_err(port_err)?;
-        self.state.guard.taint(tuxlink_security::TaintReason::MessageRead);
+        self.state
+            .guard
+            .taint(tuxlink_security::TaintReason::MessageRead);
         Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
@@ -283,7 +303,9 @@ impl TuxlinkMcp {
             })
             .await
             .map_err(port_err)?;
-        self.state.guard.taint(tuxlink_security::TaintReason::SearchResults);
+        self.state
+            .guard
+            .taint(tuxlink_security::TaintReason::SearchResults);
         Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
@@ -437,7 +459,9 @@ impl TuxlinkMcp {
     )]
     pub async fn session_log_snapshot(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.logs.snapshot().await.map_err(port_err)?;
-        self.state.guard.taint(tuxlink_security::TaintReason::SessionLog);
+        self.state
+            .guard
+            .taint(tuxlink_security::TaintReason::SessionLog);
         Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
@@ -528,7 +552,9 @@ impl TuxlinkMcp {
             .vara_engine_available()
             .await
             .map_err(port_err)?;
-        Ok(CallToolResult::success(vec![ContentBlock::json(available)?]))
+        Ok(CallToolResult::success(vec![ContentBlock::json(
+            available,
+        )?]))
     }
 
     #[tool(
@@ -602,7 +628,11 @@ impl TuxlinkMcp {
         params: Parameters<RigTuneParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let Parameters(RigTuneParams { freq_hz }) = params;
-        self.state.egress.rig_tune(freq_hz).await.map_err(egress_err)?;
+        self.state
+            .egress
+            .rig_tune(freq_hz)
+            .await
+            .map_err(egress_err)?;
         Ok(CallToolResult::success(vec![ContentBlock::json("ok")?]))
     }
 
@@ -667,6 +697,23 @@ impl TuxlinkMcp {
     }
 
     #[tool(
+        name = "vara_open_session",
+        description = "Open the VARA HF session: connect the TCP transport to the local VARA engine and register the station callsign (MYCALL). Pre-air by itself (no RF), but it stands up a transmit-capable surface: requires armed send-authority and an un-tainted session; denied otherwise. Required before vara_b2f_exchange; close with vara_stop_session."
+    )]
+    pub async fn vara_open_session(
+        &self,
+        params: Parameters<VaraOpenSessionParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(VaraOpenSessionParams { intent }) = params;
+        self.state
+            .egress
+            .vara_open_session(intent)
+            .await
+            .map_err(egress_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json("ok")?]))
+    }
+
+    #[tool(
         name = "packet_connect",
         description = "Connect an AX.25 packet session to a callsign over an optional digipeater path. EGRESS (keys the transmitter): requires armed send-authority and an un-tainted session; denied otherwise."
     )]
@@ -702,7 +749,11 @@ impl TuxlinkMcp {
         description = "Disconnect the ARDOP modem. Stopping is always allowed (never gated)."
     )]
     pub async fn modem_ardop_disconnect(&self) -> Result<CallToolResult, ErrorData> {
-        self.state.abort.ardop_disconnect().await.map_err(port_err)?;
+        self.state
+            .abort
+            .ardop_disconnect()
+            .await
+            .map_err(port_err)?;
         Ok(CallToolResult::success(vec![ContentBlock::json("ok")?]))
     }
 
@@ -1117,6 +1168,14 @@ pub struct VaraExchangeParams {
     pub qsy_candidates: Option<Vec<QsyCandidateDto>>,
 }
 
+/// `{ "intent": "cms" }` — input for `vara_open_session` (tuxlink-cgna5).
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct VaraOpenSessionParams {
+    /// The routing pool for the session; defaults to `cms` when omitted.
+    #[serde(default)]
+    pub intent: SessionIntentDto,
+}
+
 /// `{ "call": "W1AW-5", "path": ["WIDE1-1"] }` — input for `packet_connect`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct PacketConnectParams {
@@ -1444,9 +1503,7 @@ impl TuxlinkMcp {
                 ),
                 Some(vec![PromptArgument::new("device")
                     .with_title("Device")
-                    .with_description(
-                        "The device or method to set up (e.g. uv-pro, digirig, ptt).",
-                    )
+                    .with_description("The device or method to set up (e.g. uv-pro, digirig, ptt).")
                     .with_required(true)]),
             ),
             Prompt::new(
@@ -1527,8 +1584,10 @@ impl TuxlinkMcp {
                      DO NOT transmit, connect, or change any configuration. This is a \
                      read-only diagnosis; staging or transmission is the operator's call."
                 );
-                Ok(GetPromptResult::new(vec![PromptMessage::new_text(Role::User, text)])
-                    .with_description("Read-only connection diagnosis walk."))
+                Ok(
+                    GetPromptResult::new(vec![PromptMessage::new_text(Role::User, text)])
+                        .with_description("Read-only connection diagnosis walk."),
+                )
             }
             "help_me_set_up" => {
                 let Some(device) = arg("device") else {
@@ -1559,8 +1618,10 @@ impl TuxlinkMcp {
                      Configuration writes require the operator's armed send authority; \
                      propose the values and let the operator apply them. Do not transmit."
                 );
-                Ok(GetPromptResult::new(vec![PromptMessage::new_text(Role::User, text)])
-                    .with_description(format!("Setup walk for {device}.")))
+                Ok(
+                    GetPromptResult::new(vec![PromptMessage::new_text(Role::User, text)])
+                        .with_description(format!("Setup walk for {device}.")),
+                )
             }
             "compose_an_ics_213" => {
                 let to = arg("to");
@@ -1585,8 +1646,10 @@ impl TuxlinkMcp {
                      Staging only — no transmission occurs. The message stays in the local \
                      outbox until the operator arms send authority and runs a gated connect."
                 );
-                Ok(GetPromptResult::new(vec![PromptMessage::new_text(Role::User, text)])
-                    .with_description("ICS-213 compose-and-stage walk."))
+                Ok(
+                    GetPromptResult::new(vec![PromptMessage::new_text(Role::User, text)])
+                        .with_description("ICS-213 compose-and-stage walk."),
+                )
             }
             other => Err(ErrorData::invalid_request(
                 format!("unknown prompt: {other}"),
@@ -1614,7 +1677,8 @@ mod tests {
     fn denial_remedy_is_cause_accurate() {
         // Taint denial: warn the conversation is DISCARDED on re-arm; do NOT
         // promise the agent can continue where it left off (re-arm quarantines).
-        let taint = denial_remedy("session is tainted by untrusted message content; egress blocked");
+        let taint =
+            denial_remedy("session is tainted by untrusted message content; egress blocked");
         assert!(
             taint.contains("DISCARDS"),
             "taint remedy must warn that re-arm discards the conversation"
@@ -1888,10 +1952,18 @@ mod tests {
             dto.tx_grid, SEED_TX_GRID,
             "tx_grid is the impl-injected provenance grid"
         );
-        assert_eq!(dto.tx_grid.len(), 4, "tx_grid must be the 4-char provenance grid");
+        assert_eq!(
+            dto.tx_grid.len(),
+            4,
+            "tx_grid must be the 4-char provenance grid"
+        );
         assert_eq!(dto.channels.len(), 1, "the mock returns one channel");
         let ch = &dto.channels[0];
-        assert_eq!(ch.rel_by_hour.len(), 24, "rel vector is 24-long (UTC 0..23)");
+        assert_eq!(
+            ch.rel_by_hour.len(),
+            24,
+            "rel vector is 24-long (UTC 0..23)"
+        );
         assert_eq!(ch.snr_by_hour.len(), 24, "snr vector is 24-long");
         assert_eq!(ch.mufday_by_hour.len(), 24, "mufday vector is 24-long");
         assert!(
@@ -2012,7 +2084,9 @@ mod tests {
     async fn gated_egress_denied_when_tainted_even_if_armed() {
         // Simulate a prior malicious read tainting the session, then arming.
         let (h, op_ran, _aborted) = handler_with_probes();
-        h.state.guard.taint(tuxlink_security::TaintReason::MessageRead); // a prior message_read/search tainted the session
+        h.state
+            .guard
+            .taint(tuxlink_security::TaintReason::MessageRead); // a prior message_read/search tainted the session
         h.state.guard.arm(30); // arming does NOT clear taint
         let err = h
             .ardop_connect(Parameters(TargetParams {
@@ -2032,7 +2106,9 @@ mod tests {
     #[tokio::test]
     async fn gated_egress_allowed_after_clear_taint_and_fresh_arm() {
         let (h, op_ran, _aborted) = handler_with_probes();
-        h.state.guard.taint(tuxlink_security::TaintReason::MessageRead);
+        h.state
+            .guard
+            .taint(tuxlink_security::TaintReason::MessageRead);
         h.state.guard.clear_taint(); // explicit session reset
         h.state.guard.arm(30);
         h.vara_b2f_exchange(Parameters(VaraExchangeParams {
@@ -2043,7 +2119,37 @@ mod tests {
         }))
         .await
         .expect("fresh arm after clear_taint must allow");
-        assert!(op_ran.load(Ordering::SeqCst), "op must run after a clean re-arm");
+        assert!(
+            op_ran.load(Ordering::SeqCst),
+            "op must run after a clean re-arm"
+        );
+    }
+
+    #[tokio::test]
+    async fn vara_open_session_is_egress_gated() {
+        // Opening the VARA session stands up a transmit-capable surface, so
+        // it rides the SAME gate as the dial: unarmed → denied, op never
+        // runs; armed → runs (tuxlink-cgna5).
+        let (h, op_ran, _aborted) = handler_with_probes();
+        let err = h
+            .vara_open_session(Parameters(VaraOpenSessionParams {
+                intent: SessionIntentDto::Cms,
+            }))
+            .await
+            .expect_err("unarmed vara_open_session must deny");
+        assert!(err.message.contains("not authorized"));
+        assert!(
+            !op_ran.load(Ordering::SeqCst),
+            "a denied open must never reach the underlying op"
+        );
+
+        h.state.guard.arm(30);
+        h.vara_open_session(Parameters(VaraOpenSessionParams {
+            intent: SessionIntentDto::Cms,
+        }))
+        .await
+        .expect("armed vara_open_session must run");
+        assert!(op_ran.load(Ordering::SeqCst), "armed open must run the op");
     }
 
     #[tokio::test]
@@ -2052,9 +2158,7 @@ mod tests {
         // denied and the underlying CAT tune never runs.
         let (h, op_ran, _aborted) = handler_with_probes();
         let err = h
-            .rig_tune(Parameters(RigTuneParams {
-                freq_hz: 7_104_000,
-            }))
+            .rig_tune(Parameters(RigTuneParams { freq_hz: 7_104_000 }))
             .await
             .expect_err("unarmed rig_tune must deny");
         assert!(
@@ -2072,11 +2176,9 @@ mod tests {
     async fn rig_tune_allowed_after_arm_and_op_runs() {
         let (h, op_ran, _aborted) = handler_with_probes();
         h.state.guard.arm(30);
-        h.rig_tune(Parameters(RigTuneParams {
-            freq_hz: 7_104_000,
-        }))
-        .await
-        .expect("armed + untainted rig_tune must allow");
+        h.rig_tune(Parameters(RigTuneParams { freq_hz: 7_104_000 }))
+            .await
+            .expect("armed + untainted rig_tune must allow");
         assert!(
             op_ran.load(Ordering::SeqCst),
             "the underlying rig tune must run once authorized"
@@ -2086,12 +2188,12 @@ mod tests {
     #[tokio::test]
     async fn rig_tune_denied_when_tainted_even_if_armed() {
         let (h, op_ran, _aborted) = handler_with_probes();
-        h.state.guard.taint(tuxlink_security::TaintReason::MessageRead);
+        h.state
+            .guard
+            .taint(tuxlink_security::TaintReason::MessageRead);
         h.state.guard.arm(30); // arming does NOT clear taint
         let err = h
-            .rig_tune(Parameters(RigTuneParams {
-                freq_hz: 7_104_000,
-            }))
+            .rig_tune(Parameters(RigTuneParams { freq_hz: 7_104_000 }))
             .await
             .expect_err("tainted rig_tune must deny even when armed");
         assert!(err.message.contains("not authorized"));
@@ -2165,7 +2267,9 @@ mod tests {
     async fn abort_tool_succeeds_regardless_of_guard_state() {
         // Unarmed + tainted: the abort tool must STILL succeed (never gated).
         let (h, _op_ran, aborted) = handler_with_probes();
-        h.state.guard.taint(tuxlink_security::TaintReason::MessageRead); // hostile state
+        h.state
+            .guard
+            .taint(tuxlink_security::TaintReason::MessageRead); // hostile state
         h.cms_abort().await.expect("abort is never gated");
         assert!(
             aborted.load(Ordering::SeqCst),
@@ -2176,7 +2280,9 @@ mod tests {
     #[tokio::test]
     async fn all_abort_tools_succeed_when_tainted_and_unarmed() {
         let (h, _op_ran, aborted) = handler_with_probes();
-        h.state.guard.taint(tuxlink_security::TaintReason::MessageRead);
+        h.state
+            .guard
+            .taint(tuxlink_security::TaintReason::MessageRead);
         h.cms_abort().await.unwrap();
         h.modem_ardop_disconnect().await.unwrap();
         h.vara_stop_session().await.unwrap();
@@ -2206,7 +2312,9 @@ mod tests {
     #[tokio::test]
     async fn write_denied_when_tainted_even_if_armed() {
         let (h, op_ran, _staged) = handler_with_write_probes();
-        h.state.guard.taint(tuxlink_security::TaintReason::MessageRead);
+        h.state
+            .guard
+            .taint(tuxlink_security::TaintReason::MessageRead);
         h.state.guard.arm(30); // arming does NOT clear taint
         let err = h
             .config_set_ardop(Parameters(ArdopWriteParams { drive_level: 80 }))
@@ -2484,7 +2592,10 @@ mod tests {
         let err = h
             .knowledge_get_prompt("help_me_set_up", None)
             .expect_err("missing required device must error");
-        assert!(err.message.contains("device"), "error must name the missing arg");
+        assert!(
+            err.message.contains("device"),
+            "error must name the missing arg"
+        );
     }
 
     #[test]

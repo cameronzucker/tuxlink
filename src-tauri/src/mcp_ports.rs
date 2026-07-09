@@ -37,18 +37,17 @@ use tauri::{AppHandle, Manager};
 
 use tuxlink_mcp_core::ports::{
     AbortPort, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto, AudioCardDto, AudioDevicesDto,
-    BackendStatusDto,
-    BluetoothDeviceDto, CatalogEntryDto, ChannelReliabilityDto, ComposeDraftDto, ComposePort,
-    ConfigPort, ConfigViewDto, DevicePort, DocsHitDto, EgressPort, EgressPortError, FolderDto,
-    GatewayAntennaDto, GatewayDto, GribRequestDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto,
-    ModemStatusDto, OutboxReadPort, PacketConfigDto, PacketWriteDto, ParsedMessageDto,
-    PathPredictionDto, PlatformInfoDto, PortError, PositionStatusDto, PredictRequestDto,
-    PredictionPort, PrinterDto, ProvisionPort, QsyCandidateDto, RigConfigDto, RigStatusDto, SearchPort,
-    SearchQueryDto, SearchResultsDto, SendFormDto, SerialDeviceDto, SessionIntentDto,
-    RunningModemDto, SelectedConnectionDto, SolarSnapshotDto, StationFilterDto, StationListDto,
-    StationModeDto, StationPort, StagedRecordDto, StatusPort, VaraCheckpointDto, VaraConfigDto,
-    VaraInstallStatusDto, VaraInstallSummaryDto, VaraProbeDto, VaraStatusDto, VaraWriteDto,
-    WritePort, WritePortError,
+    BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto, ChannelReliabilityDto, ComposeDraftDto,
+    ComposePort, ConfigPort, ConfigViewDto, DevicePort, DocsHitDto, EgressPort, EgressPortError,
+    FolderDto, GatewayAntennaDto, GatewayDto, GribRequestDto, LogLineDto, LogPort, MailboxPort,
+    MessageMetaDto, ModemStatusDto, OutboxReadPort, PacketConfigDto, PacketWriteDto,
+    ParsedMessageDto, PathPredictionDto, PlatformInfoDto, PortError, PositionStatusDto,
+    PredictRequestDto, PredictionPort, PrinterDto, ProvisionPort, QsyCandidateDto, RigConfigDto,
+    RigStatusDto, RunningModemDto, SearchPort, SearchQueryDto, SearchResultsDto,
+    SelectedConnectionDto, SendFormDto, SerialDeviceDto, SessionIntentDto, SolarSnapshotDto,
+    StagedRecordDto, StationFilterDto, StationListDto, StationModeDto, StationPort, StatusPort,
+    VaraCheckpointDto, VaraConfigDto, VaraInstallStatusDto, VaraInstallSummaryDto, VaraProbeDto,
+    VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
 };
 use tuxlink_mcp_core::validate::{
     validate_address, validate_attachment_dest, validate_body, validate_drive_level,
@@ -152,8 +151,8 @@ pub(crate) fn derive_modem_status(
     // ARDOP running: transport installed, or a non-terminal state. A live
     // connect leaves `active_transport_kind` None, so transport-present is the
     // authoritative signal; SocketLost counts as running (degraded).
-    let ardop_running = ardop_transport_present
-        || !matches!(ardop_state, ModemState::Stopped | ModemState::Error);
+    let ardop_running =
+        ardop_transport_present || !matches!(ardop_state, ModemState::Stopped | ModemState::Error);
     // VARA running: any non-terminal VARA state (Open/Connecting/SocketLost).
     let vara_running = !matches!(vara_state, VaraState::Closed | VaraState::Error);
 
@@ -283,9 +282,7 @@ impl StatusPort for MonolithStatusPort {
     async fn modem_status(&self) -> Result<ModemStatusDto, PortError> {
         // Source of truth (tuxlink-7ppfq, Contract 2): both `running` (live) and
         // `selected` (operator target, persisted). `kind` dispatches on the SoT.
-        let modem = self
-            .app
-            .state::<Arc<crate::modem_status::ModemSession>>();
+        let modem = self.app.state::<Arc<crate::modem_status::ModemSession>>();
         let vara = self
             .app
             .state::<Arc<crate::winlink::modem::vara::VaraSession>>();
@@ -333,10 +330,11 @@ impl StatusPort for MonolithStatusPort {
         let cfg = crate::winlink::modem::vara::commands::build_transport_config(
             &crate::winlink::modem::vara::commands::config_get_vara(),
         );
-        let result =
-            tokio::task::spawn_blocking(move || crate::winlink::modem::vara::transport::deep_probe(&cfg))
-                .await
-                .map_err(|e| PortError::Internal(format!("vara_probe join error: {e}")))?;
+        let result = tokio::task::spawn_blocking(move || {
+            crate::winlink::modem::vara::transport::deep_probe(&cfg)
+        })
+        .await
+        .map_err(|e| PortError::Internal(format!("vara_probe join error: {e}")))?;
         Ok(VaraProbeDto {
             classification: result.classification,
             banner: result.banner,
@@ -345,23 +343,20 @@ impl StatusPort for MonolithStatusPort {
 
     async fn position_status(&self) -> Result<PositionStatusDto, PortError> {
         use crate::config::{PositionPrecision, PositionSource};
-        let arbiter_state = self
-            .app
-            .state::<Arc<crate::position::PositionArbiter>>();
+        let arbiter_state = self.app.state::<Arc<crate::position::PositionArbiter>>();
         // `effective_broadcast_locator` wants `Option<&PositionArbiter>`; deref
         // the State→Arc→PositionArbiter chain to a plain reference (State derefs
         // to Arc, Arc derefs to PositionArbiter).
         let arbiter: &crate::position::PositionArbiter = &arbiter_state;
         let cfg = crate::config::read_config()
             .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
-        let has_fix = arbiter.has_fresh_fix()
-            && cfg.privacy.gps_state != crate::config::GpsState::Off;
+        let has_fix =
+            arbiter.has_fresh_fix() && cfg.privacy.gps_state != crate::config::GpsState::Off;
         // Reduce the broadcast locator to a 4-char grid for the MCP DTO —
         // privacy default (the GUI keeps full precision; the agent surface does
         // not). `effective_broadcast_locator` already honors gps_state; we
         // additionally clamp precision to FourCharGrid here.
-        let raw_grid =
-            crate::position::effective_broadcast_locator(&cfg, Some(arbiter));
+        let raw_grid = crate::position::effective_broadcast_locator(&cfg, Some(arbiter));
         let grid = crate::config::broadcast_grid(&raw_grid, PositionPrecision::FourCharGrid);
         let source = match cfg.privacy.position_source {
             PositionSource::Gps => "gps".to_string(),
@@ -436,9 +431,7 @@ impl MonolithMailboxPort {
         Self { app }
     }
 
-    fn backend(
-        &self,
-    ) -> Result<Arc<dyn crate::winlink_backend::WinlinkBackend>, PortError> {
+    fn backend(&self) -> Result<Arc<dyn crate::winlink_backend::WinlinkBackend>, PortError> {
         let state = self.app.state::<crate::app_backend::BackendState>();
         state
             .current()
@@ -988,9 +981,7 @@ impl MonolithLogPort {
 impl LogPort for MonolithLogPort {
     async fn snapshot(&self) -> Result<Vec<LogLineDto>, PortError> {
         use crate::winlink_backend::LogLevel;
-        let state = self
-            .app
-            .state::<Arc<crate::session_log::SessionLogState>>();
+        let state = self.app.state::<Arc<crate::session_log::SessionLogState>>();
         // `SessionLogState::snapshot` returns the durable `Vec<LogLine>`
         // (the `session_log_snapshot` command maps these to `LogLineDto`).
         let lines = state.snapshot();
@@ -1007,8 +998,7 @@ impl LogPort for MonolithLogPort {
                 // (Cow::Borrowed) on clean lines. Source is no longer branched
                 // for redaction (the LogSource label is not surfaced in the
                 // agent DTO).
-                let message =
-                    crate::winlink::redaction::redact_freeform(&l.message).into_owned();
+                let message = crate::winlink::redaction::redact_freeform(&l.message).into_owned();
                 let level = match l.level {
                     LogLevel::Trace => "trace",
                     LogLevel::Debug => "debug",
@@ -1103,9 +1093,7 @@ fn egress_audit_sink(app: AppHandle) -> impl Fn(EgressAudit<'_>) + Send + Sync {
 /// connected; the intent selects routing, not transfer direction.
 ///
 /// [`SessionIntent`]: crate::winlink::session::SessionIntent
-fn map_session_intent(
-    intent: SessionIntentDto,
-) -> crate::winlink::session::SessionIntent {
+fn map_session_intent(intent: SessionIntentDto) -> crate::winlink::session::SessionIntent {
     use crate::winlink::session::SessionIntent;
     match intent {
         SessionIntentDto::Cms => SessionIntent::Cms,
@@ -1139,20 +1127,26 @@ impl EgressPort for MonolithEgressPort {
     async fn cms_connect(&self) -> Result<(), EgressPortError> {
         let audit = egress_audit_sink(self.app.clone());
         let app = self.app.clone();
-        guarded_egress(&self.guard, EgressAuthority::Agent, "cms_connect", &audit, || async move {
-            // Same egress as the `cms_connect` command (ui_commands.rs:2891):
-            // drive `NativeBackend::connect` over the configured CMS transport
-            // (the outbox flush rides inside the native exchange), then close
-            // the transient session. Resolve managed state via the AppHandle.
-            crate::ui_commands::cms_connect(
-                app.clone(),
-                app.state::<crate::app_backend::BackendState>(),
-                app.state::<Arc<crate::session_log::SessionLogState>>(),
-                app.state::<crate::winlink::inbound_selection::SelectionRegistry>(),
-            )
-            .await
-            .map_err(|e| EgressPortError::Failed(redact_err(format!("{e:?}"))))
-        })
+        guarded_egress(
+            &self.guard,
+            EgressAuthority::Agent,
+            "cms_connect",
+            &audit,
+            || async move {
+                // Same egress as the `cms_connect` command (ui_commands.rs:2891):
+                // drive `NativeBackend::connect` over the configured CMS transport
+                // (the outbox flush rides inside the native exchange), then close
+                // the transient session. Resolve managed state via the AppHandle.
+                crate::ui_commands::cms_connect(
+                    app.clone(),
+                    app.state::<crate::app_backend::BackendState>(),
+                    app.state::<Arc<crate::session_log::SessionLogState>>(),
+                    app.state::<crate::winlink::inbound_selection::SelectionRegistry>(),
+                )
+                .await
+                .map_err(|e| EgressPortError::Failed(redact_err(format!("{e:?}"))))
+            },
+        )
         .await
         .map_err(|d| EgressPortError::Denied(d.to_string()))?
     }
@@ -1186,12 +1180,18 @@ impl EgressPort for MonolithEgressPort {
         // sent to the radio). The gate pattern is reused verbatim (op="rig_tune",
         // EgressAuthority::Agent, the shared guard + the egress audit sink).
         let audit = egress_audit_sink(self.app.clone());
-        guarded_egress(&self.guard, EgressAuthority::Agent, "rig_tune", &audit, || async move {
-            // modem_commands.rs ardop_tune_rig: set VFO + the HF data mode over
-            // CAT, then drop (release the serial). Mode-agnostic, radio-level.
-            crate::modem_commands::ardop_tune_rig(freq_hz)
-                .map_err(|e| EgressPortError::Failed(redact_err(e)))
-        })
+        guarded_egress(
+            &self.guard,
+            EgressAuthority::Agent,
+            "rig_tune",
+            &audit,
+            || async move {
+                // modem_commands.rs ardop_tune_rig: set VFO + the HF data mode over
+                // CAT, then drop (release the serial). Mode-agnostic, radio-level.
+                crate::modem_commands::ardop_tune_rig(freq_hz)
+                    .map_err(|e| EgressPortError::Failed(redact_err(e)))
+            },
+        )
         .await
         .map_err(|d| EgressPortError::Denied(d.to_string()))?
     }
@@ -1205,21 +1205,27 @@ impl EgressPort for MonolithEgressPort {
         let audit = egress_audit_sink(self.app.clone());
         let app = self.app.clone();
         let qsy = map_qsy_candidates(qsy_candidates);
-        guarded_egress(&self.guard, EgressAuthority::Agent, "ardop_connect", &audit, || async move {
-            // modem_commands.rs modem_ardop_connect (Arc<ModemSession>).
-            // tuxlink-wxwlr: thread the agent-supplied freq_hz + QSY candidate
-            // list through (mapped to Vec<DialCandidate>). `None`/empty → the
-            // legacy single dial of `target`.
-            crate::modem_commands::modem_ardop_connect(
-                app.clone(),
-                app.state::<Arc<crate::modem_status::ModemSession>>(),
-                target,
-                freq_hz,
-                qsy,
-            )
-            .await
-            .map_err(|e| EgressPortError::Failed(redact_err(e)))
-        })
+        guarded_egress(
+            &self.guard,
+            EgressAuthority::Agent,
+            "ardop_connect",
+            &audit,
+            || async move {
+                // modem_commands.rs modem_ardop_connect (Arc<ModemSession>).
+                // tuxlink-wxwlr: thread the agent-supplied freq_hz + QSY candidate
+                // list through (mapped to Vec<DialCandidate>). `None`/empty → the
+                // legacy single dial of `target`.
+                crate::modem_commands::modem_ardop_connect(
+                    app.clone(),
+                    app.state::<Arc<crate::modem_status::ModemSession>>(),
+                    target,
+                    freq_hz,
+                    qsy,
+                )
+                .await
+                .map_err(|e| EgressPortError::Failed(redact_err(e)))
+            },
+        )
         .await
         .map_err(|d| EgressPortError::Denied(d.to_string()))?
     }
@@ -1299,25 +1305,60 @@ impl EgressPort for MonolithEgressPort {
         .map_err(|d| EgressPortError::Denied(d.to_string()))?
     }
 
-    async fn packet_connect(
-        &self,
-        call: String,
-        path: Vec<String>,
-    ) -> Result<(), EgressPortError> {
+    async fn vara_open_session(&self, intent: SessionIntentDto) -> Result<(), EgressPortError> {
         let audit = egress_audit_sink(self.app.clone());
         let app = self.app.clone();
-        guarded_egress(&self.guard, EgressAuthority::Agent, "packet_connect", &audit, || async move {
-            // ui_commands.rs:4534 packet_connect.
-            crate::ui_commands::packet_connect(
-                app.clone(),
-                app.state::<crate::app_backend::BackendState>(),
-                app.state::<Arc<crate::session_log::SessionLogState>>(),
-                call,
-                path,
-            )
-            .await
-            .map_err(|e| EgressPortError::Failed(redact_err(format!("{e:?}"))))
-        })
+        guarded_egress(
+            &self.guard,
+            EgressAuthority::Agent,
+            "vara_open_session",
+            &audit,
+            || async move {
+                // vara/commands.rs vara_open_session — installs the TCP
+                // transport + registers MYCALL from the authenticated active
+                // identity. PRE-AIR (no RF leaves the radio), but it stands up
+                // transmit-capable state, so it runs behind the same Agent
+                // egress gate as the dial (the rig_status posture: no un-armed
+                // agent opens a transmit-capable surface). Pin VaraHf —
+                // parity with vara_b2f_exchange's pin (tuxlink-cgna5).
+                crate::winlink::modem::vara::commands::vara_open_session(
+                    app.clone(),
+                    app.state::<Arc<crate::winlink::modem::vara::VaraSession>>(),
+                    app.state::<Arc<crate::session_log::SessionLogState>>(),
+                    app.state::<Arc<crate::ui_commands::VaraListenState>>(),
+                    map_session_intent(intent),
+                    crate::winlink::listener::transport::TransportKind::VaraHf,
+                )
+                .await
+                .map(|_status| ())
+                .map_err(|e| EgressPortError::Failed(redact_err(e)))
+            },
+        )
+        .await
+        .map_err(|d| EgressPortError::Denied(d.to_string()))?
+    }
+
+    async fn packet_connect(&self, call: String, path: Vec<String>) -> Result<(), EgressPortError> {
+        let audit = egress_audit_sink(self.app.clone());
+        let app = self.app.clone();
+        guarded_egress(
+            &self.guard,
+            EgressAuthority::Agent,
+            "packet_connect",
+            &audit,
+            || async move {
+                // ui_commands.rs:4534 packet_connect.
+                crate::ui_commands::packet_connect(
+                    app.clone(),
+                    app.state::<crate::app_backend::BackendState>(),
+                    app.state::<Arc<crate::session_log::SessionLogState>>(),
+                    call,
+                    path,
+                )
+                .await
+                .map_err(|e| EgressPortError::Failed(redact_err(format!("{e:?}"))))
+            },
+        )
         .await
         .map_err(|d| EgressPortError::Denied(d.to_string()))?
     }
@@ -1481,15 +1522,22 @@ impl WritePort for MonolithWritePort {
         validate_drive_level(dto.drive_level)?;
         let audit = write_audit_sink(self.app.clone());
         let drive_level = dto.drive_level;
-        guarded_egress(&self.guard, EgressAuthority::Agent, "set_ardop", &audit, || async move {
-            // Read the current ArdopUiConfig, mutate ONLY drive_level, persist.
-            // (modem_commands.rs:107 config_get_ardop / :117 config_set_ardop —
-            // the latter read-modify-writes the whole config atomically.) The
-            // agent may not touch any other ARDOP field.
-            let mut cfg = crate::modem_commands::config_get_ardop();
-            cfg.drive_level = Some(drive_level);
-            crate::modem_commands::config_set_ardop(cfg).map_err(|e| WritePortError::Failed(redact_err(e)))
-        })
+        guarded_egress(
+            &self.guard,
+            EgressAuthority::Agent,
+            "set_ardop",
+            &audit,
+            || async move {
+                // Read the current ArdopUiConfig, mutate ONLY drive_level, persist.
+                // (modem_commands.rs:107 config_get_ardop / :117 config_set_ardop —
+                // the latter read-modify-writes the whole config atomically.) The
+                // agent may not touch any other ARDOP field.
+                let mut cfg = crate::modem_commands::config_get_ardop();
+                cfg.drive_level = Some(drive_level);
+                crate::modem_commands::config_set_ardop(cfg)
+                    .map_err(|e| WritePortError::Failed(redact_err(e)))
+            },
+        )
         .await
         .map_err(|d| WritePortError::Denied(d.to_string()))?
     }
@@ -1508,15 +1556,21 @@ impl WritePort for MonolithWritePort {
         }
         let audit = write_audit_sink(self.app.clone());
         let bandwidth_hz = dto.bandwidth_hz;
-        guarded_egress(&self.guard, EgressAuthority::Agent, "set_vara", &audit, || async move {
-            // Read the current VaraUiConfig, mutate ONLY bandwidth_hz, persist
-            // via the same read-modify-write-atomic path the ARDOP setter uses
-            // (vara/commands.rs:983 config_get_vara / :993 config_set_vara).
-            let mut cfg = crate::winlink::modem::vara::commands::config_get_vara();
-            cfg.bandwidth_hz = Some(bandwidth_hz);
-            crate::winlink::modem::vara::commands::config_set_vara(cfg)
-                .map_err(|e| WritePortError::Failed(redact_err(e)))
-        })
+        guarded_egress(
+            &self.guard,
+            EgressAuthority::Agent,
+            "set_vara",
+            &audit,
+            || async move {
+                // Read the current VaraUiConfig, mutate ONLY bandwidth_hz, persist
+                // via the same read-modify-write-atomic path the ARDOP setter uses
+                // (vara/commands.rs:983 config_get_vara / :993 config_set_vara).
+                let mut cfg = crate::winlink::modem::vara::commands::config_get_vara();
+                cfg.bandwidth_hz = Some(bandwidth_hz);
+                crate::winlink::modem::vara::commands::config_set_vara(cfg)
+                    .map_err(|e| WritePortError::Failed(redact_err(e)))
+            },
+        )
         .await
         .map_err(|d| WritePortError::Denied(d.to_string()))?
     }
@@ -1568,21 +1622,27 @@ impl WritePort for MonolithWritePort {
             tcp_port,
             txdelay_ms,
         } = dto;
-        guarded_egress(&self.guard, EgressAuthority::Agent, "set_packet", &audit, || async move {
-            current.ssid = ssid;
-            current.link_kind = Some("Tcp".to_string());
-            current.tcp_host = Some(tcp_host);
-            current.tcp_port = Some(tcp_port);
-            // txdelay is a u8 on the monolith DTO; clamp the agent's u32 ms.
-            current.txdelay = u8::try_from(txdelay_ms).unwrap_or(u8::MAX);
-            crate::ui_commands::packet_config_set(
-                app.clone(),
-                app.state::<crate::app_backend::BackendState>(),
-                current,
-            )
-            .await
-            .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))
-        })
+        guarded_egress(
+            &self.guard,
+            EgressAuthority::Agent,
+            "set_packet",
+            &audit,
+            || async move {
+                current.ssid = ssid;
+                current.link_kind = Some("Tcp".to_string());
+                current.tcp_host = Some(tcp_host);
+                current.tcp_port = Some(tcp_port);
+                // txdelay is a u8 on the monolith DTO; clamp the agent's u32 ms.
+                current.txdelay = u8::try_from(txdelay_ms).unwrap_or(u8::MAX);
+                crate::ui_commands::packet_config_set(
+                    app.clone(),
+                    app.state::<crate::app_backend::BackendState>(),
+                    current,
+                )
+                .await
+                .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))
+            },
+        )
         .await
         .map_err(|d| WritePortError::Denied(d.to_string()))?
     }
@@ -1598,19 +1658,25 @@ impl WritePort for MonolithWritePort {
         }
         let audit = write_audit_sink(self.app.clone());
         let app = self.app.clone();
-        guarded_egress(&self.guard, EgressAuthority::Agent, "set_grid", &audit, || async move {
-            // ui_commands.rs:6323 config_set_grid_impl (validates via
-            // validate_grid_input → UiError::Rejected on a bad locator). Resolve
-            // the arbiter + backend from managed state.
-            let arbiter = app
-                .state::<Arc<crate::position::PositionArbiter>>()
-                .inner()
-                .clone();
-            let backend = app.state::<crate::app_backend::BackendState>().current();
-            crate::ui_commands::config_set_grid_impl(grid, arbiter, backend)
-                .await
-                .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))
-        })
+        guarded_egress(
+            &self.guard,
+            EgressAuthority::Agent,
+            "set_grid",
+            &audit,
+            || async move {
+                // ui_commands.rs:6323 config_set_grid_impl (validates via
+                // validate_grid_input → UiError::Rejected on a bad locator). Resolve
+                // the arbiter + backend from managed state.
+                let arbiter = app
+                    .state::<Arc<crate::position::PositionArbiter>>()
+                    .inner()
+                    .clone();
+                let backend = app.state::<crate::app_backend::BackendState>().current();
+                crate::ui_commands::config_set_grid_impl(grid, arbiter, backend)
+                    .await
+                    .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))
+            },
+        )
         .await
         .map_err(|d| WritePortError::Denied(d.to_string()))?
     }
@@ -1661,11 +1727,9 @@ impl WritePort for MonolithWritePort {
             "Off" => GpsState::Off,
             "LocalUiOnly" => GpsState::LocalUiOnly,
             "BroadcastAtPrecision" => GpsState::BroadcastAtPrecision,
-            other => {
-                return Err(WritePortError::Invalid(format!(
-                    "unknown gps_state '{other}' (expected Off | LocalUiOnly | BroadcastAtPrecision)"
-                )))
-            }
+            other => return Err(WritePortError::Invalid(format!(
+                "unknown gps_state '{other}' (expected Off | LocalUiOnly | BroadcastAtPrecision)"
+            ))),
         };
         let precision = match precision.as_str() {
             "FourCharGrid" => PositionPrecision::FourCharGrid,
@@ -1678,28 +1742,34 @@ impl WritePort for MonolithWritePort {
         };
         let audit = write_audit_sink(self.app.clone());
         let app = self.app.clone();
-        guarded_egress(&self.guard, EgressAuthority::Agent, "set_privacy", &audit, || async move {
-            // Replicate config_set_privacy's body (ui_commands.rs:6568): read →
-            // set both privacy fields → write atomically → sync the arbiter's
-            // precision → refresh the live backend. The command itself takes
-            // Tauri State extractors; call its inner logic against resolved
-            // managed state so the agent path mirrors the GUI exactly.
-            let arbiter = app
-                .state::<Arc<crate::position::PositionArbiter>>()
-                .inner()
-                .clone();
-            let mut cfg = crate::config::read_config()
-                .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))?;
-            cfg.privacy.gps_state = gps_state;
-            cfg.privacy.position_precision = precision;
-            crate::config::write_config_atomic(&cfg)
-                .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))?;
-            arbiter.set_precision(precision);
-            if let Some(backend) = app.state::<crate::app_backend::BackendState>().current() {
-                backend.set_config(cfg);
-            }
-            Ok::<(), WritePortError>(())
-        })
+        guarded_egress(
+            &self.guard,
+            EgressAuthority::Agent,
+            "set_privacy",
+            &audit,
+            || async move {
+                // Replicate config_set_privacy's body (ui_commands.rs:6568): read →
+                // set both privacy fields → write atomically → sync the arbiter's
+                // precision → refresh the live backend. The command itself takes
+                // Tauri State extractors; call its inner logic against resolved
+                // managed state so the agent path mirrors the GUI exactly.
+                let arbiter = app
+                    .state::<Arc<crate::position::PositionArbiter>>()
+                    .inner()
+                    .clone();
+                let mut cfg = crate::config::read_config()
+                    .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))?;
+                cfg.privacy.gps_state = gps_state;
+                cfg.privacy.position_precision = precision;
+                crate::config::write_config_atomic(&cfg)
+                    .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))?;
+                arbiter.set_precision(precision);
+                if let Some(backend) = app.state::<crate::app_backend::BackendState>().current() {
+                    backend.set_config(cfg);
+                }
+                Ok::<(), WritePortError>(())
+            },
+        )
         .await
         .map_err(|d| WritePortError::Denied(d.to_string()))?
     }
@@ -1738,18 +1808,24 @@ impl WritePort for MonolithWritePort {
             .map_err(|e| WritePortError::Invalid(format!("invalid 'to' folder: {e:?}")))?;
         let audit = write_audit_sink(self.app.clone());
         let app = self.app.clone();
-        guarded_egress(&self.guard, EgressAuthority::Agent, "mailbox_move", &audit, || async move {
-            // ui_commands.rs:1426 mailbox_move (validates folders via
-            // parse_folder_ref). Resolve BackendState from the AppHandle.
-            crate::ui_commands::mailbox_move(
-                from,
-                to,
-                id,
-                app.state::<crate::app_backend::BackendState>(),
-            )
-            .await
-            .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))
-        })
+        guarded_egress(
+            &self.guard,
+            EgressAuthority::Agent,
+            "mailbox_move",
+            &audit,
+            || async move {
+                // ui_commands.rs:1426 mailbox_move (validates folders via
+                // parse_folder_ref). Resolve BackendState from the AppHandle.
+                crate::ui_commands::mailbox_move(
+                    from,
+                    to,
+                    id,
+                    app.state::<crate::app_backend::BackendState>(),
+                )
+                .await
+                .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))
+            },
+        )
         .await
         .map_err(|d| WritePortError::Denied(d.to_string()))?
     }
@@ -1976,10 +2052,8 @@ impl ComposePort for MonolithComposePort {
         // form_id still surfaces "unknown form" from send_form (we mirror its
         // find_form lookup but tolerate a miss here and let send_form report it).
         if let Some(form) = crate::forms::catalog::find_form(&dto.form_id) {
-            let rendered_subject = crate::forms::serialize::render_body_template(
-                form.subject_template,
-                &field_values,
-            );
+            let rendered_subject =
+                crate::forms::serialize::render_body_template(form.subject_template, &field_values);
             validate_subject(&rendered_subject)?;
         }
         let mid = crate::ui_commands::send_form(
@@ -1997,10 +2071,7 @@ impl ComposePort for MonolithComposePort {
         Ok(mid)
     }
 
-    async fn catalog_send_inquiry(
-        &self,
-        item_ids: Vec<String>,
-    ) -> Result<String, WritePortError> {
+    async fn catalog_send_inquiry(&self, item_ids: Vec<String>) -> Result<String, WritePortError> {
         // VALIDATE each filename for control chars + length (reuse the address
         // validator's control/CRLF/len checks; catalog filenames carry no `@`
         // semantics but must not inject CRLF or control bytes into the inquiry
@@ -2147,9 +2218,7 @@ fn map_listing_mode(mode: crate::catalog::stations::ListingMode) -> StationModeD
 }
 
 /// Map a monolith [`GatewayAntenna`] onto the agent-facing [`GatewayAntennaDto`].
-fn map_gateway_antenna_out(
-    a: crate::catalog::stations::GatewayAntenna,
-) -> GatewayAntennaDto {
+fn map_gateway_antenna_out(a: crate::catalog::stations::GatewayAntenna) -> GatewayAntennaDto {
     use crate::catalog::stations::GatewayAntenna;
     match a {
         GatewayAntenna::Beam => GatewayAntennaDto::Beam,
@@ -2160,9 +2229,7 @@ fn map_gateway_antenna_out(
 
 /// Map an agent-supplied [`GatewayAntennaDto`] onto the monolith
 /// [`GatewayAntenna`] (the far-end antenna refinement for a prediction).
-fn map_gateway_antenna_in(
-    a: GatewayAntennaDto,
-) -> crate::catalog::stations::GatewayAntenna {
+fn map_gateway_antenna_in(a: GatewayAntennaDto) -> crate::catalog::stations::GatewayAntenna {
     use crate::catalog::stations::GatewayAntenna;
     match a {
         GatewayAntennaDto::Beam => GatewayAntenna::Beam,
@@ -2215,8 +2282,7 @@ fn any_freq_in_bands(freqs_khz: &[f64], wanted: &[String]) -> bool {
 fn is_plausible_callsign(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 12
-        && s
-            .chars()
+        && s.chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '/')
 }
 
@@ -2224,10 +2290,7 @@ fn is_plausible_callsign(s: &str) -> bool {
 /// control characters and cap to 32 chars so it cannot carry a payload. An empty
 /// result is acceptable — the channel is just an id, not load-bearing.
 fn sanitize_channel(s: &str) -> String {
-    s.chars()
-        .filter(|c| !c.is_control())
-        .take(32)
-        .collect()
+    s.chars().filter(|c| !c.is_control()).take(32).collect()
 }
 
 /// Curate ONE monolith [`Gateway`](crate::catalog::stations::Gateway) into the
@@ -2309,9 +2372,7 @@ impl MonolithStationPort {
     /// boundary, so distances are square-center based, not fine-grained.
     fn resolve_operator_grid(&self) -> Option<String> {
         use crate::config::PositionPrecision;
-        let arbiter_state = self
-            .app
-            .state::<Arc<crate::position::PositionArbiter>>();
+        let arbiter_state = self.app.state::<Arc<crate::position::PositionArbiter>>();
         let arbiter: &crate::position::PositionArbiter = &arbiter_state;
         let cfg = crate::config::read_config().ok()?;
         let raw = crate::position::effective_broadcast_locator(&cfg, Some(arbiter));
@@ -2327,10 +2388,7 @@ impl MonolithStationPort {
 
 #[async_trait]
 impl StationPort for MonolithStationPort {
-    async fn find_stations(
-        &self,
-        filter: StationFilterDto,
-    ) -> Result<StationListDto, PortError> {
+    async fn find_stations(&self, filter: StationFilterDto) -> Result<StationListDto, PortError> {
         use crate::catalog::stations::ListingMode;
         // VALIDATE the optional history bound up front (cap 720 h): a bad bound is
         // a malformed request, rejected before any fetch. (No armed-grant concept
@@ -2354,13 +2412,10 @@ impl StationPort for MonolithStationPort {
         let cache = self
             .app
             .state::<Arc<crate::catalog::stations_cache::StationsCache>>();
-        let listings = crate::catalog::commands::catalog_fetch_stations(
-            modes,
-            filter.history_hours,
-            cache,
-        )
-        .await
-        .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
+        let listings =
+            crate::catalog::commands::catalog_fetch_stations(modes, filter.history_hours, cache)
+                .await
+                .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
 
         // Provenance: the cache stamps `fetched_at_ms` on every entry it stores or
         // stale-returns (a fresh in-memory parse leaves it `None`). Surface the
@@ -2385,8 +2440,7 @@ impl StationPort for MonolithStationPort {
         for listing in &listings {
             let mode = map_listing_mode(listing.mode);
             for g in &listing.gateways {
-                if !filter.bands.is_empty()
-                    && !any_freq_in_bands(&g.frequencies_khz, &filter.bands)
+                if !filter.bands.is_empty() && !any_freq_in_bands(&g.frequencies_khz, &filter.bands)
                 {
                     continue;
                 }
@@ -2484,18 +2538,14 @@ impl MonolithPredictionPort {
 
 #[async_trait]
 impl PredictionPort for MonolithPredictionPort {
-    async fn predict_path(
-        &self,
-        req: PredictRequestDto,
-    ) -> Result<PathPredictionDto, PortError> {
+    async fn predict_path(&self, req: PredictRequestDto) -> Result<PathPredictionDto, PortError> {
         use crate::config::PositionPrecision;
         use crate::propagation::commands::PropagationState;
 
         // VALIDATE the agent-supplied inputs BEFORE doing any work (reuse the
         // mcp-core validators): a 4/6-char Maidenhead rx_grid and a 1..=11 dial
         // list each within 1800..=30000 kHz. A bad input is a malformed request.
-        validate_grid(&req.rx_grid)
-            .map_err(|e| PortError::Internal(e.to_string()))?;
+        validate_grid(&req.rx_grid).map_err(|e| PortError::Internal(e.to_string()))?;
         validate_frequencies_khz(&req.frequencies_khz)
             .map_err(|e| PortError::Internal(e.to_string()))?;
 
@@ -2504,16 +2554,12 @@ impl PredictionPort for MonolithPredictionPort {
         // gps_state, then broadcast_grid clamps to a 4-char locator for the agent
         // surface. (A malicious agent must not be able to spoof the station's
         // location into a prediction.)
-        let arbiter_state = self
-            .app
-            .state::<Arc<crate::position::PositionArbiter>>();
+        let arbiter_state = self.app.state::<Arc<crate::position::PositionArbiter>>();
         let arbiter: &crate::position::PositionArbiter = &arbiter_state;
         let cfg = crate::config::read_config()
             .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
-        let raw_grid =
-            crate::position::effective_broadcast_locator(&cfg, Some(arbiter));
-        let tx_grid =
-            crate::config::broadcast_grid(&raw_grid, PositionPrecision::FourCharGrid);
+        let raw_grid = crate::position::effective_broadcast_locator(&cfg, Some(arbiter));
+        let tx_grid = crate::config::broadcast_grid(&raw_grid, PositionPrecision::FourCharGrid);
 
         // Map the optional far-end antenna refinement onto the monolith enum.
         let gateway_antenna = req.gateway_antenna.map(map_gateway_antenna_in);
@@ -2589,9 +2635,7 @@ impl PredictionPort for MonolithPredictionPort {
 
 /// Map one setup-engine [`EngineEvent`](crate::winlink::modem::vara::install::EngineEvent)
 /// checkpoint line onto the agent-facing [`VaraCheckpointDto`].
-fn map_vara_checkpoint(
-    e: crate::winlink::modem::vara::install::EngineEvent,
-) -> VaraCheckpointDto {
+fn map_vara_checkpoint(e: crate::winlink::modem::vara::install::EngineEvent) -> VaraCheckpointDto {
     VaraCheckpointDto {
         id: e.id,
         index: e.index,
@@ -2685,9 +2729,7 @@ impl MonolithOutboxReadPort {
         Self { app }
     }
 
-    fn backend(
-        &self,
-    ) -> Result<Arc<dyn crate::winlink_backend::WinlinkBackend>, PortError> {
+    fn backend(&self) -> Result<Arc<dyn crate::winlink_backend::WinlinkBackend>, PortError> {
         let state = self.app.state::<crate::app_backend::BackendState>();
         state
             .current()
@@ -2720,24 +2762,18 @@ impl OutboxReadPort for MonolithOutboxReadPort {
             {
                 Ok(b) => b,
                 Err(e) => {
-                    eprintln!(
-                        "list_staged: skipping outbox message {:?}: {e}",
-                        meta.id
-                    );
+                    eprintln!("list_staged: skipping outbox message {:?}: {e}", meta.id);
                     continue;
                 }
             };
-            let parsed =
-                match crate::ui_commands::parse_raw_rfc5322(&meta.id.0, &body.raw_rfc5322) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        eprintln!(
-                            "list_staged: skipping parse error for {:?}: {e:?}",
-                            meta.id
-                        );
-                        continue;
-                    }
-                };
+            let parsed = match crate::ui_commands::parse_raw_rfc5322(&meta.id.0, &body.raw_rfc5322)
+            {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("list_staged: skipping parse error for {:?}: {e:?}", meta.id);
+                    continue;
+                }
+            };
             out.push(StagedRecordDto {
                 mid: meta.id.0.clone(),
                 to: parsed.to,
@@ -2795,21 +2831,19 @@ pub(crate) async fn approval_gated_flush(
         .map_err(|e| FlushError::ReadError(format!("{e:?}")))?;
 
     // Step 2 — verify the approval against the live set (digest + epoch + expiry).
-    crate::elmer::approval::verify_approval(approval, &live_records, session_epoch, now)
-        .map_err(|e| match e {
+    crate::elmer::approval::verify_approval(approval, &live_records, session_epoch, now).map_err(
+        |e| match e {
             crate::elmer::approval::ApprovalError::DigestMismatch => FlushError::DigestMismatch,
             crate::elmer::approval::ApprovalError::EpochMismatch => FlushError::EpochMismatch,
             crate::elmer::approval::ApprovalError::Expired => FlushError::Expired,
-        })?;
+        },
+    )?;
 
     // Step 3 — dispatch the whole-outbox flush through the egress gate.
-    egress_port
-        .cms_connect()
-        .await
-        .map_err(|e| match e {
-            EgressPortError::Denied(msg) => FlushError::Denied(msg),
-            EgressPortError::Failed(msg) => FlushError::Failed(msg),
-        })
+    egress_port.cms_connect().await.map_err(|e| match e {
+        EgressPortError::Denied(msg) => FlushError::Denied(msg),
+        EgressPortError::Failed(msg) => FlushError::Failed(msg),
+    })
 }
 
 #[cfg(test)]
@@ -2892,7 +2926,10 @@ mod tests {
             let cards = super::super::project_audio_cards(&snap);
             assert_eq!(cards.len(), 1);
             assert_eq!(cards[0].vid_pid.as_deref(), Some("0d8c:013a"));
-            assert_eq!(cards[0].bus_path.as_deref(), Some("/sys/devices/platform/usb2/2-1"));
+            assert_eq!(
+                cards[0].bus_path.as_deref(),
+                Some("/sys/devices/platform/usb2/2-1")
+            );
             assert_eq!(cards[0].card_index, 2);
             assert_eq!(cards[0].name, "USB Audio CODEC");
             assert!(!cards[0].in_use); // pure projection leaves in_use false
@@ -3075,10 +3112,10 @@ mod tests {
     }
 
     use crate::catalog::stations::{Gateway, GatewayAntenna};
+    use tuxlink_mcp_core::ports::PortError;
     use tuxlink_mcp_core::ports::{
         GatewayAntennaDto, GatewayDto, OutboxReadPort, StagedRecordDto, StationModeDto,
     };
-    use tuxlink_mcp_core::ports::PortError;
 
     /// A monolith `Gateway` fixture carrying a full free-text + PII payload so a
     /// curation test can assert those fields never cross the boundary.
@@ -3100,14 +3137,8 @@ mod tests {
     #[test]
     fn minimize_bt_mac_masks_middle_octets() {
         // Canonical 6-octet MAC: keep first + last, mask the middle four.
-        assert_eq!(
-            minimize_bt_mac("38:D2:00:01:55:5C"),
-            "38:**:**:**:**:5C"
-        );
-        assert_eq!(
-            minimize_bt_mac("AA:BB:CC:DD:EE:FF"),
-            "AA:**:**:**:**:FF"
-        );
+        assert_eq!(minimize_bt_mac("38:D2:00:01:55:5C"), "38:**:**:**:**:5C");
+        assert_eq!(minimize_bt_mac("AA:BB:CC:DD:EE:FF"), "AA:**:**:**:**:FF");
     }
 
     #[test]
@@ -3232,8 +3263,14 @@ mod tests {
         )
         .expect("a plausible callsign survives even with a bad grid");
         assert_eq!(dto.callsign, "KK7ABC-10");
-        assert_eq!(dto.grid, None, "an out-of-spec grid is nulled, not injected");
-        assert_eq!(dto.distance_km, None, "a nulled gateway grid yields no distance");
+        assert_eq!(
+            dto.grid, None,
+            "an out-of-spec grid is nulled, not injected"
+        );
+        assert_eq!(
+            dto.distance_km, None,
+            "a nulled gateway grid yields no distance"
+        );
     }
 
     #[test]
@@ -3325,8 +3362,13 @@ mod tests {
                 body: "Check in.".to_string(),
             },
         ];
-        let port = SeededOutboxPort { records: records.clone() };
-        let result = port.list_staged().await.expect("list_staged should succeed");
+        let port = SeededOutboxPort {
+            records: records.clone(),
+        };
+        let result = port
+            .list_staged()
+            .await
+            .expect("list_staged should succeed");
         assert_eq!(result.len(), 2, "should return both seeded records");
         assert_eq!(result[0].mid, "MID001");
         assert_eq!(result[0].to, vec!["w1aw@winlink.org"]);
