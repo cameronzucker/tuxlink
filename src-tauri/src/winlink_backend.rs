@@ -3535,6 +3535,51 @@ pub fn run_vara_b2f_answer(
 ) -> Result<(), BackendError> {
     use std::io::BufReader;
 
+    // Thin wrapper over [`run_vara_b2f_answer_io`] — see
+    // [`run_vara_b2f_exchange`] for why the split exists (the listener's
+    // consumer task runs the answer on pre-cloned data halves while a
+    // concurrent PTT pump owns the transport's cmd socket, tuxlink-yrrjq).
+    let writer =
+        transport
+            .data_stream()
+            .try_clone()
+            .map_err(|e| BackendError::TransportFailed {
+                reason: format!("VARA data-socket try_clone failed: {e}"),
+                source: None,
+            })?;
+    let reader = BufReader::new(transport.data_stream().try_clone().map_err(|e| {
+        BackendError::TransportFailed {
+            reason: format!("VARA data-socket try_clone (reader) failed: {e}"),
+            source: None,
+        }
+    })?);
+    run_vara_b2f_answer_io(
+        reader,
+        writer,
+        peer_callsign,
+        config,
+        session_id,
+        mailbox,
+        position,
+        progress,
+    )
+}
+
+/// IO-generic core of [`run_vara_b2f_answer`]: the B2F answer exchange over
+/// already-split data-socket halves, so the listener's consumer task can key
+/// the rig from a concurrent PTT pump that owns the cmd socket while the
+/// answer turns run (tuxlink-yrrjq — the answer side transmits too).
+#[allow(clippy::too_many_arguments)]
+pub fn run_vara_b2f_answer_io(
+    mut reader: impl std::io::BufRead,
+    mut writer: impl std::io::Write,
+    peer_callsign: &str,
+    config: &Config,
+    session_id: &crate::identity::SessionIdentity,
+    mailbox: &Mailbox,
+    position: Option<&crate::position::PositionArbiter>,
+    progress: Option<&dyn Fn(&str)>,
+) -> Result<(), BackendError> {
     // tuxlink-0063 (Phase 3, Task 3.7): the on-air station ID is the session's
     // full callsign captured AT LISTENER-ARM TIME — not config.identity.active_full.
     // Threading `&SessionIdentity` makes on-air impersonation a compile error.
@@ -3560,28 +3605,6 @@ pub fn run_vara_b2f_answer(
         password: None,
         intent: SessionIntent::P2p,
     };
-
-    // Split the duplex VARA data socket into BufRead + Write halves.
-    // `try_clone` on a `TcpStream` returns a second handle to the same
-    // underlying socket; both halves share read+write buffers at the OS
-    // level. The B2F engine is strictly turn-based so the duplex split
-    // here is safe (only one side reads or writes at any instant).
-    let writer =
-        transport
-            .data_stream()
-            .try_clone()
-            .map_err(|e| BackendError::TransportFailed {
-                reason: format!("VARA data-socket try_clone failed: {e}"),
-                source: None,
-            })?;
-    let reader = BufReader::new(transport.data_stream().try_clone().map_err(|e| {
-        BackendError::TransportFailed {
-            reason: format!("VARA data-socket try_clone (reader) failed: {e}"),
-            source: None,
-        }
-    })?);
-    let mut reader = reader;
-    let mut writer = writer;
 
     let result = session::run_exchange_with_role(
         &mut reader,

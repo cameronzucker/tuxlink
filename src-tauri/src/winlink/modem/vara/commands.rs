@@ -2565,7 +2565,7 @@ fn run_vara_b2f_with_transport(
 /// drop — keyed with nobody left to unkey it. Runs on a scoped thread that
 /// owns `&mut transport` (the exchange drives pre-cloned data halves);
 /// exits within one cmd-socket read-timeout tick of `stop` being set.
-fn pump_vara_ptt_during_exchange(
+pub(crate) fn pump_vara_ptt_during_exchange(
     transport: &mut VaraTransport,
     ptt: &SharedPtt,
     stop: &AtomicBool,
@@ -2781,7 +2781,10 @@ fn wait_for_connected(
 /// end of a successful exchange; the cooperative `ABORT\r` side-channel
 /// (Task 4.1) is the in-flight interrupt path for the operator's Close
 /// Session click. They serve distinct purposes.
-fn vara_dial_disconnect(transport: &mut VaraTransport, ptt: &SharedPtt) -> Result<(), String> {
+pub(crate) fn vara_dial_disconnect(
+    transport: &mut VaraTransport,
+    ptt: &SharedPtt,
+) -> Result<(), String> {
     use crate::winlink::modem::vara::command::InboundCommand;
     use std::time::Instant;
 

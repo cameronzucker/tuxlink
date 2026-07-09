@@ -25,7 +25,7 @@
 //! `Arc` and drops the `RwLock` guard via [`BackendState::current`] BEFORE
 //! awaiting the trait method — the guard is never held across an await.
 
-use mail_parser::{HeaderName, MimeHeaders, MessageParser};
+use mail_parser::{HeaderName, MessageParser, MimeHeaders};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -66,12 +66,20 @@ pub enum UiError {
     NotConfigured(String),
     /// Message id not found.
     NotFound(String),
-    AuthFailed { reason: String },
-    Transport { reason: String },
-    Unavailable { reason: String },
+    AuthFailed {
+        reason: String,
+    },
+    Transport {
+        reason: String,
+    },
+    Unavailable {
+        reason: String,
+    },
     Rejected(String),
     Cancelled,
-    Internal { detail: String },
+    Internal {
+        detail: String,
+    },
 }
 
 impl From<BackendError> for UiError {
@@ -242,33 +250,35 @@ fn render_ics309_pdf_inner(req: Ics309PdfRequest) -> Result<Vec<u8>, Box<dyn std
     const PAGE_W_MM: f32 = 216.0;
     const PAGE_H_MM: f32 = 279.0;
     // Convenience conversion: mm to pt (1 mm = 2.8346 pt).
-    fn mm_to_pt(mm: f32) -> Pt { Pt(mm * 2.8346) }
+    fn mm_to_pt(mm: f32) -> Pt {
+        Pt(mm * 2.8346)
+    }
 
-    let normal_font  = PdfFontHandle::Builtin(BuiltinFont::Helvetica);
-    let bold_font    = PdfFontHandle::Builtin(BuiltinFont::HelveticaBold);
+    let normal_font = PdfFontHandle::Builtin(BuiltinFont::Helvetica);
+    let bold_font = PdfFontHandle::Builtin(BuiltinFont::HelveticaBold);
 
     // Column x positions (pt from left margin)
     let left_margin_pt = mm_to_pt(15.0);
     let col_datetime_x = left_margin_pt;
-    let col_dir_x      = Pt(col_datetime_x.0 + mm_to_pt(45.0).0);
-    let col_from_x     = Pt(col_dir_x.0 + mm_to_pt(10.0).0);
-    let col_to_x       = Pt(col_from_x.0 + mm_to_pt(35.0).0);
-    let col_subject_x  = Pt(col_to_x.0 + mm_to_pt(35.0).0);
+    let col_dir_x = Pt(col_datetime_x.0 + mm_to_pt(45.0).0);
+    let col_from_x = Pt(col_dir_x.0 + mm_to_pt(10.0).0);
+    let col_to_x = Pt(col_from_x.0 + mm_to_pt(35.0).0);
+    let col_subject_x = Pt(col_to_x.0 + mm_to_pt(35.0).0);
 
     // Row height and starting y cursor
-    const ROW_H_PT: f32 = 14.0;      // pt per data row
+    const ROW_H_PT: f32 = 14.0; // pt per data row
     const FONT_SIZE_TITLE: f32 = 14.0;
     const FONT_SIZE_HEADER: f32 = 9.0;
     const FONT_SIZE_DATA: f32 = 8.5;
 
-    let page_top_pt    = mm_to_pt(PAGE_H_MM - 15.0); // top margin
-    let footer_y_pt    = mm_to_pt(10.0);               // bottom margin
+    let page_top_pt = mm_to_pt(PAGE_H_MM - 15.0); // top margin
+    let footer_y_pt = mm_to_pt(10.0); // bottom margin
 
     // How many data rows fit on a page (after title + headers consume ~4 rows).
-    let title_block_h  = mm_to_pt(25.0).0; // approx title + sub + col-headers height
-    let usable_h       = page_top_pt.0 - footer_y_pt.0 - title_block_h;
-    let rows_per_page  = (usable_h / ROW_H_PT).floor() as usize;
-    let rows_per_page  = rows_per_page.max(1);
+    let title_block_h = mm_to_pt(25.0).0; // approx title + sub + col-headers height
+    let usable_h = page_top_pt.0 - footer_y_pt.0 - title_block_h;
+    let rows_per_page = (usable_h / ROW_H_PT).floor() as usize;
+    let rows_per_page = rows_per_page.max(1);
 
     let station_label = req.station_callsign.as_deref().unwrap_or("(unknown)");
 
@@ -284,69 +294,92 @@ fn render_ics309_pdf_inner(req: Ics309PdfRequest) -> Result<Vec<u8>, Box<dyn std
 
     for page_idx in 0..total_pages {
         let chunk_start = page_idx * rows_per_page;
-        let chunk_end   = (chunk_start + rows_per_page).min(req.rows.len());
-        let chunk       = &req.rows[chunk_start..chunk_end];
+        let chunk_end = (chunk_start + rows_per_page).min(req.rows.len());
+        let chunk = &req.rows[chunk_start..chunk_end];
 
         let mut ops: Vec<Op> = Vec::new();
         ops.push(Op::StartTextSection);
 
         // ── Title ──────────────────────────────────────────────────────────
-        ops.push(Op::SetFont { font: bold_font.clone(), size: Pt(FONT_SIZE_TITLE) });
+        ops.push(Op::SetFont {
+            font: bold_font.clone(),
+            size: Pt(FONT_SIZE_TITLE),
+        });
         ops.push(Op::SetTextCursor {
-            pos: Point { x: mm_to_pt(PAGE_W_MM / 2.0 - 50.0), y: Pt(page_top_pt.0) },
+            pos: Point {
+                x: mm_to_pt(PAGE_W_MM / 2.0 - 50.0),
+                y: Pt(page_top_pt.0),
+            },
         });
         ops.push(Op::ShowText {
             items: vec![TextItem::Text("ICS-309 COMMUNICATIONS LOG".to_string())],
         });
 
         // ── Sub-header (station + date range) ──────────────────────────────
-        ops.push(Op::SetFont { font: normal_font.clone(), size: Pt(FONT_SIZE_HEADER) });
+        ops.push(Op::SetFont {
+            font: normal_font.clone(),
+            size: Pt(FONT_SIZE_HEADER),
+        });
         ops.push(Op::SetTextCursor {
-            pos: Point { x: col_datetime_x, y: Pt(page_top_pt.0 - 18.0) },
+            pos: Point {
+                x: col_datetime_x,
+                y: Pt(page_top_pt.0 - 18.0),
+            },
         });
         ops.push(Op::ShowText {
             items: vec![TextItem::Text(format!(
                 "Station: {station_label}   Period: {} — {}   Page {} of {total_pages}",
-                req.range_start, req.range_end,
+                req.range_start,
+                req.range_end,
                 page_idx + 1,
             ))],
         });
 
         // ── Column headers ─────────────────────────────────────────────────
         let col_hdr_y = Pt(page_top_pt.0 - 32.0);
-        ops.push(Op::SetFont { font: bold_font.clone(), size: Pt(FONT_SIZE_HEADER) });
+        ops.push(Op::SetFont {
+            font: bold_font.clone(),
+            size: Pt(FONT_SIZE_HEADER),
+        });
         for (x, label) in [
             (col_datetime_x, "Datetime (UTC)"),
-            (col_dir_x,      "Dir"),
-            (col_from_x,     "From"),
-            (col_to_x,       "To"),
-            (col_subject_x,  "Subject"),
+            (col_dir_x, "Dir"),
+            (col_from_x, "From"),
+            (col_to_x, "To"),
+            (col_subject_x, "Subject"),
         ] {
-            ops.push(Op::SetTextCursor { pos: Point { x, y: col_hdr_y } });
+            ops.push(Op::SetTextCursor {
+                pos: Point { x, y: col_hdr_y },
+            });
             ops.push(Op::ShowText {
                 items: vec![TextItem::Text(label.to_string())],
             });
         }
 
         // ── Data rows ──────────────────────────────────────────────────────
-        ops.push(Op::SetFont { font: normal_font.clone(), size: Pt(FONT_SIZE_DATA) });
+        ops.push(Op::SetFont {
+            font: normal_font.clone(),
+            size: Pt(FONT_SIZE_DATA),
+        });
         let mut row_y = col_hdr_y.0 - ROW_H_PT;
         for row in chunk {
             // Truncate long fields to fit the column widths.
-            let dt      = &row.datetime;
-            let dir     = row.direction.as_str();
-            let from    = truncate_str(&row.from, 18);
-            let to      = truncate_str(&row.to, 18);
+            let dt = &row.datetime;
+            let dir = row.direction.as_str();
+            let from = truncate_str(&row.from, 18);
+            let to = truncate_str(&row.to, 18);
             let subject = truncate_str(&row.subject, 40);
 
             for (x, text) in [
                 (col_datetime_x, dt.as_str()),
-                (col_dir_x,      dir),
-                (col_from_x,     &from),
-                (col_to_x,       &to),
-                (col_subject_x,  &subject),
+                (col_dir_x, dir),
+                (col_from_x, &from),
+                (col_to_x, &to),
+                (col_subject_x, &subject),
             ] {
-                ops.push(Op::SetTextCursor { pos: Point { x, y: Pt(row_y) } });
+                ops.push(Op::SetTextCursor {
+                    pos: Point { x, y: Pt(row_y) },
+                });
                 ops.push(Op::ShowText {
                     items: vec![TextItem::Text(text.to_string())],
                 });
@@ -355,9 +388,15 @@ fn render_ics309_pdf_inner(req: Ics309PdfRequest) -> Result<Vec<u8>, Box<dyn std
         }
 
         // ── Footer ─────────────────────────────────────────────────────────
-        ops.push(Op::SetFont { font: normal_font.clone(), size: Pt(7.0) });
+        ops.push(Op::SetFont {
+            font: normal_font.clone(),
+            size: Pt(7.0),
+        });
         ops.push(Op::SetTextCursor {
-            pos: Point { x: col_datetime_x, y: footer_y_pt },
+            pos: Point {
+                x: col_datetime_x,
+                y: footer_y_pt,
+            },
         });
         ops.push(Op::ShowText {
             items: vec![TextItem::Text(format!("Rendered by tuxlink — {now_utc}"))],
@@ -478,8 +517,9 @@ pub fn parse_folder_ref(folder: &str) -> Result<crate::native_mailbox::FolderRef
         // generic `message_move`; the UI does not offer Trash as a move target.
         "deleted" => Ok(FolderRef::System(MailboxFolder::Deleted)),
         other => {
-            crate::user_folders::validate_slug(other)
-                .map_err(|e| UiError::Internal { detail: format!("invalid folder slug: {e}") })?;
+            crate::user_folders::validate_slug(other).map_err(|e| UiError::Internal {
+                detail: format!("invalid folder slug: {e}"),
+            })?;
             Ok(FolderRef::User(other.to_string()))
         }
     }
@@ -623,10 +663,7 @@ pub fn parse_raw_rfc5322(mid: &str, raw: &[u8]) -> Result<ParsedMessageDto, UiEr
         })?;
 
     // Subject — empty string if absent.
-    let subject = msg
-        .subject()
-        .map(|s| s.to_string())
-        .unwrap_or_default();
+    let subject = msg.subject().map(|s| s.to_string()).unwrap_or_default();
 
     // From — first address's display form. Native Winlink/B2F headers often
     // contain bare service/callsign identities (`From: SERVICE`, `To: N7CPZ`)
@@ -727,9 +764,7 @@ fn extract_first_address(addr: Option<&mail_parser::Address<'_>>) -> String {
         return String::new();
     };
     match a {
-        mail_parser::Address::List(list) => {
-            list.first().map(addr_to_string).unwrap_or_default()
-        }
+        mail_parser::Address::List(list) => list.first().map(addr_to_string).unwrap_or_default(),
         mail_parser::Address::Group(groups) => groups
             .first()
             .and_then(|g| g.addresses.first())
@@ -1065,14 +1100,11 @@ fn build_attachment_preview(
 }
 
 fn base64_encode_standard(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
     let mut i = 0;
     while i + 3 <= bytes.len() {
-        let n = ((bytes[i] as u32) << 16)
-            | ((bytes[i + 1] as u32) << 8)
-            | (bytes[i + 2] as u32);
+        let n = ((bytes[i] as u32) << 16) | ((bytes[i + 1] as u32) << 8) | (bytes[i + 2] as u32);
         encoded.push(ALPHABET[((n >> 18) & 0x3f) as usize] as char);
         encoded.push(ALPHABET[((n >> 12) & 0x3f) as usize] as char);
         encoded.push(ALPHABET[((n >> 6) & 0x3f) as usize] as char);
@@ -1165,9 +1197,7 @@ fn format_unix_ts(ts: i64) -> String {
             sec
         )
     } else {
-        format!(
-            "{year:04}-{month:02}-{day:02}T{hour:02}:{min:02}:{sec:02}Z"
-        )
+        format!("{year:04}-{month:02}-{day:02}T{hour:02}:{min:02}:{sec:02}Z")
     }
 }
 
@@ -1204,7 +1234,11 @@ fn ymd_to_days(year: i64, month: u32, day: u32) -> Option<i64> {
         4 | 6 | 9 | 11 => 30,
         2 => {
             let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
-            if leap { 29 } else { 28 }
+            if leap {
+                29
+            } else {
+                28
+            }
         }
         _ => unreachable!(),
     };
@@ -1318,9 +1352,7 @@ pub async fn message_attachment_preview(
             detail: format!("could not parse message {id}"),
         })?;
     let bytes = extract_attachment_bytes(&msg, body.raw_rfc5322.as_slice(), &filename)
-        .ok_or_else(|| {
-            UiError::NotFound(format!("attachment '{filename}' not in message {id}"))
-        })?;
+        .ok_or_else(|| UiError::NotFound(format!("attachment '{filename}' not in message {id}")))?;
     build_attachment_preview(&filename, bytes)
 }
 
@@ -1370,9 +1402,7 @@ pub async fn message_attachment_save(
             detail: format!("could not parse message {id}"),
         })?;
     let bytes = extract_attachment_bytes(&msg, body.raw_rfc5322.as_slice(), &filename)
-        .ok_or_else(|| {
-            UiError::NotFound(format!("attachment '{filename}' not in message {id}"))
-        })?;
+        .ok_or_else(|| UiError::NotFound(format!("attachment '{filename}' not in message {id}")))?;
 
     // Reduce the suggested name to its basename: a received-message attachment
     // filename is attacker-influenced and must not seed path separators.
@@ -1588,7 +1618,9 @@ pub(crate) async fn delete_bulk_with_backend(
     for item in items {
         let from_ref = parse_folder_ref(&item.folder)?;
         let mid = MessageId::new(&item.id);
-        backend.delete_message_in(from_ref, &mid, item.identity.as_deref()).await?;
+        backend
+            .delete_message_in(from_ref, &mid, item.identity.as_deref())
+            .await?;
     }
     Ok(())
 }
@@ -1597,10 +1629,7 @@ pub(crate) async fn delete_bulk_with_backend(
 /// Recoverable action — no confirm. A missing/stale sidecar falls back to the
 /// active identity's Inbox at the storage layer.
 #[tauri::command]
-pub async fn message_restore(
-    id: String,
-    state: State<'_, BackendState>,
-) -> Result<(), UiError> {
+pub async fn message_restore(id: String, state: State<'_, BackendState>) -> Result<(), UiError> {
     let mid = MessageId::new(&id);
     let backend = state
         .current()
@@ -1642,10 +1671,7 @@ pub async fn trash_empty(state: State<'_, BackendState>) -> Result<usize, UiErro
 /// frontend gates this behind a confirm. Only valid for a message already in
 /// Trash.
 #[tauri::command]
-pub async fn trash_purge_one(
-    id: String,
-    state: State<'_, BackendState>,
-) -> Result<(), UiError> {
+pub async fn trash_purge_one(id: String, state: State<'_, BackendState>) -> Result<(), UiError> {
     let mid = MessageId::new(&id);
     let backend = state
         .current()
@@ -1859,7 +1885,7 @@ pub async fn message_send(
 
     let msg = OutboundMessage {
         to: draft.to,
-        cc: draft.cc,  // forwarded as-is; native B2F Cc support is a v0.1 TODO (Codex F5)
+        cc: draft.cc, // forwarded as-is; native B2F Cc support is a v0.1 TODO (Codex F5)
         subject: draft.subject,
         body: draft.body,
         date,
@@ -1901,10 +1927,9 @@ pub async fn send_form(
 ) -> Result<String, UiError> {
     use crate::forms;
 
-    let form = forms::catalog::find_form(&form_id)
-        .ok_or_else(|| UiError::Internal {
-            detail: format!("unknown form: {}", form_id),
-        })?;
+    let form = forms::catalog::find_form(&form_id).ok_or_else(|| UiError::Internal {
+        detail: format!("unknown form: {}", form_id),
+    })?;
 
     let now = chrono::Utc::now();
     let params = forms::types::FormParameters {
@@ -2010,14 +2035,20 @@ pub async fn send_webview_form(
     //    A stale draft restored from localStorage with a form_id no longer in
     //    the catalog (e.g. operator deleted their custom form) gets the same
     //    "unknown form" surface as `send_form`'s BUNDLED_FORMS check.
-    let bundle = forms::wle_templates::bundle_root_for_app(&app).map_err(|e| {
-        UiError::Internal { detail: e.to_string() }
-    })?;
+    let bundle =
+        forms::wle_templates::bundle_root_for_app(&app).map_err(|e| UiError::Internal {
+            detail: e.to_string(),
+        })?;
     let custom = forms::wle_templates::custom_root_for_app(&app);
-    let custom_opt = if custom.exists() { Some(custom.as_path()) } else { None };
-    let catalog = forms::wle_templates::list(&bundle, custom_opt).map_err(|e| {
-        UiError::Internal { detail: e.to_string() }
-    })?;
+    let custom_opt = if custom.exists() {
+        Some(custom.as_path())
+    } else {
+        None
+    };
+    let catalog =
+        forms::wle_templates::list(&bundle, custom_opt).map_err(|e| UiError::Internal {
+            detail: e.to_string(),
+        })?;
     let template = catalog
         .iter()
         .find(|t| t.id == form_id)
@@ -2070,7 +2101,11 @@ pub async fn send_webview_form(
     });
     let (txt, display_form) = match sendreply {
         Some(sr) => {
-            let disp = sr.template.display_html.clone().unwrap_or_else(viewer_fallback);
+            let disp = sr
+                .template
+                .display_html
+                .clone()
+                .unwrap_or_else(viewer_fallback);
             (Some(sr.template), disp)
         }
         None => (
@@ -2104,7 +2139,10 @@ pub async fn send_webview_form(
             "ProgramVersion".to_string(),
             format!("Tuxlink/{}", env!("CARGO_PKG_VERSION")),
         );
-        h.insert("DateTime".to_string(), now.format("%Y-%m-%d %H:%M:%SZ").to_string());
+        h.insert(
+            "DateTime".to_string(),
+            now.format("%Y-%m-%d %H:%M:%SZ").to_string(),
+        );
         h.insert("Date".to_string(), now.format("%Y-%m-%d").to_string());
         h.insert("Time".to_string(), now.format("%H:%M:%SZ").to_string());
         h.insert("MsgTo".to_string(), to.join("; "));
@@ -2172,7 +2210,13 @@ pub async fn send_webview_form(
         // G10: a reply's SendReply `.0` carries no Subject: directive, so fall
         // back to the operator's compose subject ("Re: <original>") before the
         // last-resort "Form: <id>". Blank hint is ignored.
-        .or_else(|| subject_hint.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string))
+        .or_else(|| {
+            subject_hint
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        })
         .unwrap_or_else(|| format!("Form: {form_id}"));
 
     // 6. Recipients: union the .txt `To:`/`Cc:` (rendered) with the
@@ -2234,8 +2278,7 @@ fn merge_txt_recipients(
     }
     let mut out: Vec<String> = Vec::new();
     if let Some(line) = txt_line {
-        let rendered =
-            crate::forms::txt_template::render_template(line, field_values, host_tags);
+        let rendered = crate::forms::txt_template::render_template(line, field_values, host_tags);
         for addr in rendered.split([';', ',']) {
             push_unique(&mut out, addr);
         }
@@ -2358,8 +2401,11 @@ pub async fn forms_import_preview(
     reg: State<'_, std::sync::Arc<crate::forms::import::ImportStagingRegistry>>,
 ) -> Result<crate::forms::import::ImportPlan, crate::forms::import::ImportError> {
     let custom_root = crate::forms::wle_templates::custom_root_for_app(&app);
-    let bundle_root = crate::forms::wle_templates::bundle_root_for_app(&app)
-        .map_err(|e| crate::forms::import::ImportError::Io { reason: e.to_string() })?;
+    let bundle_root = crate::forms::wle_templates::bundle_root_for_app(&app).map_err(|e| {
+        crate::forms::import::ImportError::Io {
+            reason: e.to_string(),
+        }
+    })?;
     let reg = reg.inner().clone();
     tokio::task::spawn_blocking(move || {
         crate::forms::import::preview_sources(&sources, &custom_root, &bundle_root, &reg)
@@ -2393,8 +2439,11 @@ pub async fn forms_import_commit(
     reg: State<'_, std::sync::Arc<crate::forms::import::ImportStagingRegistry>>,
 ) -> Result<crate::forms::import::ImportResult, crate::forms::import::ImportError> {
     let custom_root = crate::forms::wle_templates::custom_root_for_app(&app);
-    let bundle_root = crate::forms::wle_templates::bundle_root_for_app(&app)
-        .map_err(|e| crate::forms::import::ImportError::Io { reason: e.to_string() })?;
+    let bundle_root = crate::forms::wle_templates::bundle_root_for_app(&app).map_err(|e| {
+        crate::forms::import::ImportError::Io {
+            reason: e.to_string(),
+        }
+    })?;
     crate::forms::import::commit(
         &staging_token,
         &approved_overwrite_ids,
@@ -2467,8 +2516,7 @@ pub async fn open_webview_form(
     } else {
         None
     };
-    let cat = crate::forms::wle_templates::list(&bundle, custom_opt)
-        .map_err(|e| e.to_string())?;
+    let cat = crate::forms::wle_templates::list(&bundle, custom_opt).map_err(|e| e.to_string())?;
     let template = cat
         .into_iter()
         .find(|t| t.id == form_id)
@@ -2524,14 +2572,15 @@ pub struct FormsRefreshStatus {
 /// than crashing.
 #[tauri::command]
 pub async fn forms_check_for_update(app: AppHandle) -> Result<FormsRefreshStatus, String> {
-    let runtime_root = crate::forms::wle_templates::runtime_root_for_app(&app)
-        .ok_or_else(|| "platform data dir unavailable — runtime forms root cannot be resolved".to_string())?;
+    let runtime_root =
+        crate::forms::wle_templates::runtime_root_for_app(&app).ok_or_else(|| {
+            "platform data dir unavailable — runtime forms root cannot be resolved".to_string()
+        })?;
     let current_version = crate::forms::updater::current_version(&runtime_root);
-    let info = crate::forms::updater::fetch_latest_info(
-        crate::forms::updater::DEFAULT_METADATA_URL,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
+    let info =
+        crate::forms::updater::fetch_latest_info(crate::forms::updater::DEFAULT_METADATA_URL)
+            .await
+            .map_err(|e| e.to_string())?;
     let update_available = current_version.as_deref() != Some(info.version.as_str());
     Ok(FormsRefreshStatus {
         current_version,
@@ -2554,13 +2603,14 @@ pub async fn forms_check_for_update(app: AppHandle) -> Result<FormsRefreshStatus
 /// to pick up the new entries.
 #[tauri::command]
 pub async fn forms_refresh(app: AppHandle) -> Result<crate::forms::updater::InstallReport, String> {
-    let runtime_root = crate::forms::wle_templates::runtime_root_for_app(&app)
-        .ok_or_else(|| "platform data dir unavailable — runtime forms root cannot be resolved".to_string())?;
-    let info = crate::forms::updater::fetch_latest_info(
-        crate::forms::updater::DEFAULT_METADATA_URL,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
+    let runtime_root =
+        crate::forms::wle_templates::runtime_root_for_app(&app).ok_or_else(|| {
+            "platform data dir unavailable — runtime forms root cannot be resolved".to_string()
+        })?;
+    let info =
+        crate::forms::updater::fetch_latest_info(crate::forms::updater::DEFAULT_METADATA_URL)
+            .await
+            .map_err(|e| e.to_string())?;
     crate::forms::updater::install(&info.archive_url, &info.version, &runtime_root)
         .await
         .map_err(|e| e.to_string())
@@ -2620,10 +2670,7 @@ pub async fn forms_export_pdf(
 /// form's child-webview label (`compose-form-<token>` / `viewer-form-<token>`).
 /// Returns `true` if the operator printed, `false` if they cancelled.
 #[tauri::command]
-pub async fn forms_print(
-    webview_label: String,
-    app: AppHandle,
-) -> Result<bool, UiError> {
+pub async fn forms_print(webview_label: String, app: AppHandle) -> Result<bool, UiError> {
     tauri::async_runtime::spawn_blocking(move || {
         crate::forms::pdf_export::print_webview(&app, &webview_label)
     })
@@ -2702,16 +2749,14 @@ pub async fn open_webview_viewer(
     // 1. Resolve the live catalog so we can find the form's folder (for
     //    {FormFolder} substitution + adjacent-asset serving). The Viewer
     //    file lives next to the form's INITIAL .html in the same folder.
-    let bundle =
-        forms::wle_templates::bundle_root_for_app(&app).map_err(|e| e.to_string())?;
+    let bundle = forms::wle_templates::bundle_root_for_app(&app).map_err(|e| e.to_string())?;
     let custom = forms::wle_templates::custom_root_for_app(&app);
     let custom_opt = if custom.exists() {
         Some(custom.as_path())
     } else {
         None
     };
-    let cat = forms::wle_templates::list(&bundle, custom_opt)
-        .map_err(|e| e.to_string())?;
+    let cat = forms::wle_templates::list(&bundle, custom_opt).map_err(|e| e.to_string())?;
     let template = cat
         .iter()
         .find(|t| t.id == form_id)
@@ -2811,8 +2856,7 @@ pub async fn open_webview_reply(
     use crate::forms;
 
     // 1. Resolve the live catalog → the original form's template (folder + path).
-    let bundle =
-        forms::wle_templates::bundle_root_for_app(&app).map_err(|e| e.to_string())?;
+    let bundle = forms::wle_templates::bundle_root_for_app(&app).map_err(|e| e.to_string())?;
     let custom = forms::wle_templates::custom_root_for_app(&app);
     let custom_opt = if custom.exists() {
         Some(custom.as_path())
@@ -2960,7 +3004,12 @@ pub async fn cms_connect(
                 outcome = "ok",
                 "CMS exchange complete",
             );
-            emit_session_line(&app, &log, LogLevel::Info, "CMS exchange complete.".to_string());
+            emit_session_line(
+                &app,
+                &log,
+                LogLevel::Info,
+                "CMS exchange complete.".to_string(),
+            );
             // 2026-05-31 operator-flagged: previously the session was
             // dropped without transitioning status back to Disconnected,
             // so the ribbon + status bar showed "Connected · Telnet"
@@ -2997,7 +3046,12 @@ pub async fn cms_connect(
                 outcome = "aborted",
                 "CMS connection aborted by operator",
             );
-            emit_session_line(&app, &log, LogLevel::Warn, "CMS connection aborted.".to_string());
+            emit_session_line(
+                &app,
+                &log,
+                LogLevel::Warn,
+                "CMS connection aborted.".to_string(),
+            );
             Err(BackendError::Cancelled.into())
         }
         Err(e) => {
@@ -3007,7 +3061,12 @@ pub async fn cms_connect(
                 outcome = "error",
                 "CMS connect failed",
             );
-            emit_session_line(&app, &log, LogLevel::Error, format!("CMS connect failed: {e}"));
+            emit_session_line(
+                &app,
+                &log,
+                LogLevel::Error,
+                format!("CMS connect failed: {e}"),
+            );
 
             // Task 12 (tuxlink-7do4, R5 spec §6.3 + §6.4): emit a structured
             // AuthClassified event so the React useAuthDiagnostic hook can
@@ -3028,26 +3087,30 @@ pub async fn cms_connect(
                 // This variant is new in Task 12 — the map_err in native_connect
                 // lifts ExchangeError::RemoteError + HandshakeError::RemoteError
                 // into it so the payload is preserved structurally.
-                BackendError::RemoteError(payload) => {
-                    (crate::winlink::auth_taxonomy::classify(payload), Some(payload.clone()))
-                }
+                BackendError::RemoteError(payload) => (
+                    crate::winlink::auth_taxonomy::classify(payload),
+                    Some(payload.clone()),
+                ),
                 // TransportFailed = TCP / TLS / DNS failure (no *** payload).
                 // These are Mode 1 (NetworkUnreachable). Mode 1 vs Mode 5
                 // discrimination requires deep backend.connect event threading
                 // (deferred — bd-tuxlink-7do4-followup-backend-events).
-                BackendError::TransportFailed { .. } => {
-                    (FailureMode::NetworkUnreachable, None)
-                }
+                BackendError::TransportFailed { .. } => (FailureMode::NetworkUnreachable, None),
                 // AuthFailed is the listener gate variant (not a CMS telnet
                 // scenario), but map it conservatively.
-                BackendError::AuthFailed { reason } => {
-                    (crate::winlink::auth_taxonomy::classify(reason), Some(reason.clone()))
-                }
+                BackendError::AuthFailed { reason } => (
+                    crate::winlink::auth_taxonomy::classify(reason),
+                    Some(reason.clone()),
+                ),
                 // All other BackendError variants in the cms_connect Err arm
                 // → Uncategorized; surface the error Display as raw context.
                 _ => (FailureMode::Uncategorized, Some(format!("{e}"))),
             };
-            events_sink.push(B2fEvent::AuthClassified { mode, raw, attempt_id });
+            events_sink.push(B2fEvent::AuthClassified {
+                mode,
+                raw,
+                attempt_id,
+            });
 
             Err(e.into())
         }
@@ -3073,7 +3136,12 @@ pub async fn cms_abort(
         target: "tuxlink::cms",
         "CMS connection abort requested",
     );
-    emit_session_line(&app, &log, LogLevel::Info, "Aborting CMS connection…".to_string());
+    emit_session_line(
+        &app,
+        &log,
+        LogLevel::Info,
+        "Aborting CMS connection…".to_string(),
+    );
     backend.abort().await?;
 
     // tuxlink-bsiy: wake a decider parked on a pending selection prompt. Dropping
@@ -3157,24 +3225,22 @@ pub async fn cms_resolve_inbound_selection(
 /// destructive-overwrite-readback discipline (R2 #3 keyring-locked
 /// failure handling: any KeyringError surfaces; no in-memory fallback).
 #[tauri::command]
-pub async fn credentials_write_password(
-    callsign: String,
-    password: String,
-) -> Result<(), UiError> {
-    crate::winlink::credentials::write_password(&callsign, &password)
-        .map_err(|e| UiError::Internal { detail: e.to_string() })
+pub async fn credentials_write_password(callsign: String, password: String) -> Result<(), UiError> {
+    crate::winlink::credentials::write_password(&callsign, &password).map_err(|e| {
+        UiError::Internal {
+            detail: e.to_string(),
+        }
+    })
 }
 
 /// Reopen the onboarding wizard scoped to a specific step. Per spec
 /// §4.3 (ii) — the "Try a different callsign" affordance on the Mode 4
 /// banner uses this with step="callsign".
 #[tauri::command]
-pub async fn wizard_reopen(
-    app: tauri::AppHandle,
-    step: String,
-) -> Result<(), UiError> {
-    crate::wizard::reopen(&app, &step)
-        .map_err(|e| UiError::Internal { detail: e.to_string() })
+pub async fn wizard_reopen(app: tauri::AppHandle, step: String) -> Result<(), UiError> {
+    crate::wizard::reopen(&app, &step).map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })
 }
 
 /// Clear the most-recent auth-diagnostic classification from Rust state.
@@ -3188,12 +3254,12 @@ pub async fn wizard_reopen(
 /// emission alone unblocks the React side. If Rust-side state is added
 /// later (e.g., for replay-after-mount), this is the place to clear it.
 #[tauri::command]
-pub async fn auth_diagnostic_clear(
-    app: tauri::AppHandle,
-) -> Result<(), UiError> {
+pub async fn auth_diagnostic_clear(app: tauri::AppHandle) -> Result<(), UiError> {
     use tauri::Emitter;
     app.emit("auth-diagnostic-clear", ())
-        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+        .map_err(|e| UiError::Internal {
+            detail: e.to_string(),
+        })?;
     Ok(())
 }
 
@@ -3252,7 +3318,10 @@ pub async fn cms_connect_test(
 
     let attempt_id = crate::winlink::b2f_events::AttemptId::fresh();
 
-    match backend.cms_connect_test(events_sink.clone(), attempt_id).await {
+    match backend
+        .cms_connect_test(events_sink.clone(), attempt_id)
+        .await
+    {
         Ok(()) => {
             emit_session_line(
                 &app,
@@ -3278,7 +3347,12 @@ pub async fn cms_connect_test(
             Ok(())
         }
         Err(BackendError::Cancelled) => {
-            emit_session_line(&app, &log, LogLevel::Warn, "Credential test aborted.".to_string());
+            emit_session_line(
+                &app,
+                &log,
+                LogLevel::Warn,
+                "Credential test aborted.".to_string(),
+            );
             Err(BackendError::Cancelled.into())
         }
         Err(e) => {
@@ -3291,16 +3365,22 @@ pub async fn cms_connect_test(
             // Emit AuthClassified so the React banner updates.
             use crate::winlink::b2f_events::{B2fEvent, FailureMode};
             let (mode, raw) = match &e {
-                BackendError::RemoteError(payload) => {
-                    (crate::winlink::auth_taxonomy::classify(payload), Some(payload.clone()))
-                }
+                BackendError::RemoteError(payload) => (
+                    crate::winlink::auth_taxonomy::classify(payload),
+                    Some(payload.clone()),
+                ),
                 BackendError::TransportFailed { .. } => (FailureMode::NetworkUnreachable, None),
-                BackendError::AuthFailed { reason } => {
-                    (crate::winlink::auth_taxonomy::classify(reason), Some(reason.clone()))
-                }
+                BackendError::AuthFailed { reason } => (
+                    crate::winlink::auth_taxonomy::classify(reason),
+                    Some(reason.clone()),
+                ),
                 _ => (FailureMode::Uncategorized, Some(format!("{e}"))),
             };
-            events_sink.push(B2fEvent::AuthClassified { mode, raw, attempt_id });
+            events_sink.push(B2fEvent::AuthClassified {
+                mode,
+                raw,
+                attempt_id,
+            });
             Err(e.into())
         }
     }
@@ -3309,12 +3389,7 @@ pub async fn cms_connect_test(
 /// Append a session-log line to the durable buffer (assigning its `seq`) and emit
 /// it live on `session_log:line`, so it lands in the bottom progress log
 /// (snapshot + tail). Used for connect progress/results (tuxlink-0ic).
-fn emit_session_line(
-    app: &AppHandle,
-    buffer: &SessionLogState,
-    level: LogLevel,
-    message: String,
-) {
+fn emit_session_line(app: &AppHandle, buffer: &SessionLogState, level: LogLevel, message: String) {
     emit_session_line_with_source(app, buffer, level, LogSource::Transport, message);
 }
 
@@ -3446,13 +3521,14 @@ impl From<&config::Config> for ConfigViewDto {
 /// `config_set_connect`).
 #[tauri::command]
 pub async fn config_set_aredn_master_node_host(host: Option<String>) -> Result<(), UiError> {
-    let normalized = host
-        .map(|h| h.trim().to_string())
-        .filter(|h| !h.is_empty());
-    let mut cfg =
-        config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let normalized = host.map(|h| h.trim().to_string()).filter(|h| !h.is_empty());
+    let mut cfg = config::read_config().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     cfg.aredn_master_node_host = normalized;
-    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     Ok(())
 }
 
@@ -3703,9 +3779,7 @@ pub async fn session_log_snapshot(
 /// stale panel still holding a `last_seq` cursor cannot accidentally match a
 /// recycled id.
 #[tauri::command]
-pub fn session_log_clear(
-    state: State<'_, std::sync::Arc<SessionLogState>>,
-) -> Result<(), UiError> {
+pub fn session_log_clear(state: State<'_, std::sync::Arc<SessionLogState>>) -> Result<(), UiError> {
     state.clear();
     Ok(())
 }
@@ -3808,20 +3882,40 @@ impl From<&config::PacketConfig> for PacketConfigDto {
     fn from(p: &config::PacketConfig) -> Self {
         use crate::winlink::ax25::KissLinkConfig;
         let (link_kind, tcp_host, tcp_port, serial_device, serial_baud, bt_mac) = match &p.link {
-            Some(KissLinkConfig::Tcp { host, port }) => {
-                (Some("Tcp".into()), Some(host.clone()), Some(*port), None, None, None)
-            }
-            Some(KissLinkConfig::Serial { device, baud }) => {
-                (Some("Serial".into()), None, None, Some(device.clone()), Some(*baud), None)
-            }
-            Some(KissLinkConfig::Bluetooth { mac }) => {
-                (Some("Bluetooth".into()), None, None, None, None, Some(mac.clone()))
-            }
+            Some(KissLinkConfig::Tcp { host, port }) => (
+                Some("Tcp".into()),
+                Some(host.clone()),
+                Some(*port),
+                None,
+                None,
+                None,
+            ),
+            Some(KissLinkConfig::Serial { device, baud }) => (
+                Some("Serial".into()),
+                None,
+                None,
+                Some(device.clone()),
+                Some(*baud),
+                None,
+            ),
+            Some(KissLinkConfig::Bluetooth { mac }) => (
+                Some("Bluetooth".into()),
+                None,
+                None,
+                None,
+                None,
+                Some(mac.clone()),
+            ),
             // UV-Pro native rides the same `bt_mac` scalar as Bluetooth (both
             // address the radio by MAC); the `link_kind` discriminates which path.
-            Some(KissLinkConfig::UvproNative { mac }) => {
-                (Some("UvproNative".into()), None, None, None, None, Some(mac.clone()))
-            }
+            Some(KissLinkConfig::UvproNative { mac }) => (
+                Some("UvproNative".into()),
+                None,
+                None,
+                None,
+                None,
+                Some(mac.clone()),
+            ),
             // The managed link carries no tcp_/serial_/bt_ scalar — its audio device
             // + PTT ride the structured `managed_*` fields, set below the tuple.
             Some(KissLinkConfig::ManagedDireWolf { .. }) => {
@@ -3866,12 +3960,12 @@ impl PacketConfigDto {
         use crate::winlink::ax25::KissLinkConfig;
         let link = match self.link_kind.as_deref() {
             Some("Tcp") => Some(KissLinkConfig::Tcp {
-                host: self
-                    .tcp_host
-                    .ok_or_else(|| UiError::Internal { detail: "Tcp link needs tcp_host".into() })?,
-                port: self
-                    .tcp_port
-                    .ok_or_else(|| UiError::Internal { detail: "Tcp link needs tcp_port".into() })?,
+                host: self.tcp_host.ok_or_else(|| UiError::Internal {
+                    detail: "Tcp link needs tcp_host".into(),
+                })?,
+                port: self.tcp_port.ok_or_else(|| UiError::Internal {
+                    detail: "Tcp link needs tcp_port".into(),
+                })?,
             }),
             Some("Serial") => Some(KissLinkConfig::Serial {
                 device: self.serial_device.ok_or_else(|| UiError::Internal {
@@ -3947,7 +4041,9 @@ fn apply_packet_dto(
 /// (no BackendState), like `config_read`.
 #[tauri::command]
 pub async fn packet_config_get() -> Result<PacketConfigDto, UiError> {
-    let cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let cfg = config::read_config().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     Ok(PacketConfigDto::from(&cfg.packet))
 }
 
@@ -3959,14 +4055,19 @@ pub async fn packet_config_set(
     state: State<'_, BackendState>,
     dto: PacketConfigDto,
 ) -> Result<(), UiError> {
-    let mut cfg =
-        config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let mut cfg = config::read_config().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     // tuxlink-hoi1 B1: an absent link_kind preserves the saved link instead of
     // erasing it. `apply_packet_dto` reads `cfg.packet.link` BEFORE the DTO is
     // consumed, so an SSID/timing-only write can never blank a configured radio.
     cfg.packet = apply_packet_dto(cfg.packet.link.clone(), dto)?;
-    cfg.validate().map_err(|e| UiError::Internal { detail: e.to_string() })?;
-    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    cfg.validate().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     // Project the persisted packet section for the change event BEFORE the
     // backend refresh consumes `cfg` (no whole-config clone needed).
     let changed = PacketConfigDto::from(&cfg.packet);
@@ -4025,7 +4126,9 @@ impl AprsConfigDto {
 /// (no BackendState), like `packet_config_get`.
 #[tauri::command]
 pub async fn aprs_config_get() -> Result<AprsConfigDto, UiError> {
-    let cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let cfg = config::read_config().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     Ok(AprsConfigDto::from(&cfg.aprs))
 }
 
@@ -4042,11 +4145,16 @@ pub async fn aprs_config_set(
     // a half-applied write. `parse_path` returns Err(String) on >2 hops / bad token.
     crate::winlink::aprs::identity::parse_path(&dto.path)
         .map_err(|detail| UiError::Internal { detail })?;
-    let mut cfg =
-        config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let mut cfg = config::read_config().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     cfg.aprs = dto.into_aprs_config();
-    cfg.validate().map_err(|e| UiError::Internal { detail: e.to_string() })?;
-    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    cfg.validate().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     // Refresh the LIVE backend so a later read of config (callsign/params) stays
     // consistent — same refresh path packet_config_set uses (tuxlink-p5u).
     if let Some(backend) = state.current() {
@@ -4112,7 +4220,9 @@ pub async fn aprs_listen_start(
     aprs: State<'_, crate::winlink::aprs::engine::AprsState>,
     uvpro: State<'_, std::sync::Arc<crate::winlink::ax25::uvpro::session::UvproSession>>,
 ) -> Result<(), UiError> {
-    let cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let cfg = config::read_config().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     // tuxlink-xyi7: instrument the connect path. Every error below returns a UiError
     // straight to the frontend (shown inline in the connect strip) but used to write
     // nothing to the structured log, so "can't connect" was undiagnosable from logs.
@@ -4305,8 +4415,7 @@ pub fn format_usb_serial_label(meta: &UsbSerialMeta, fallback: &str) -> String {
             let prod = prod.trim();
             if prod.is_empty() {
                 None
-            } else if !mfr.is_empty()
-                && !prod.to_lowercase().contains(mfr.to_lowercase().as_str())
+            } else if !mfr.is_empty() && !prod.to_lowercase().contains(mfr.to_lowercase().as_str())
             {
                 Some(format!("{mfr} {prod}"))
             } else {
@@ -4317,13 +4426,11 @@ pub fn format_usb_serial_label(meta: &UsbSerialMeta, fallback: &str) -> String {
         (Some(mfr), None) if !mfr.trim().is_empty() => Some(mfr.trim().to_string()),
         _ => None,
     };
-    let mut label = base.unwrap_or_else(|| {
-        match (&meta.id_vendor, &meta.id_product) {
-            (Some(v), Some(p)) if !v.trim().is_empty() && !p.trim().is_empty() => {
-                format!("{}:{}", v.trim(), p.trim())
-            }
-            _ => fallback.to_string(),
+    let mut label = base.unwrap_or_else(|| match (&meta.id_vendor, &meta.id_product) {
+        (Some(v), Some(p)) if !v.trim().is_empty() && !p.trim().is_empty() => {
+            format!("{}:{}", v.trim(), p.trim())
         }
+        _ => fallback.to_string(),
     });
     if let Some(iface) = meta.interface {
         label.push_str(&format!(" (port {iface})"));
@@ -4450,7 +4557,9 @@ pub fn enrich_usb_serial_labels(
         if d.kind != "usb" {
             continue;
         }
-        let Some(name) = std::path::Path::new(&d.path).file_name().and_then(|n| n.to_str())
+        let Some(name) = std::path::Path::new(&d.path)
+            .file_name()
+            .and_then(|n| n.to_str())
         else {
             continue;
         };
@@ -4515,7 +4624,10 @@ pub fn parse_paired_bluetooth(output: &str) -> Vec<BluetoothDeviceDto> {
             // also `RfcommSocket::connect` cleanly.
             crate::winlink::ax25::rfcomm::parse_bdaddr(mac)?;
             let name = parts.next().unwrap_or("").trim().to_string();
-            Some(BluetoothDeviceDto { mac: mac.to_string(), name })
+            Some(BluetoothDeviceDto {
+                mac: mac.to_string(),
+                name,
+            })
         })
         .collect()
 }
@@ -4582,11 +4694,7 @@ pub struct AlsaDevicesDto {
 /// is unit-testable without an ALSA stack. Sorted with hardware devices
 /// first so the operator's natural top-of-list choice is the right kind.
 pub fn parse_alsa_devices(output: &str) -> Vec<AlsaDeviceDto> {
-    fn finish(
-        name: Option<String>,
-        desc_lines: &[String],
-        out: &mut Vec<AlsaDeviceDto>,
-    ) {
+    fn finish(name: Option<String>, desc_lines: &[String], out: &mut Vec<AlsaDeviceDto>) {
         if let Some(n) = name {
             let is_hardware = n.starts_with("plughw:CARD=") || n.starts_with("hw:CARD=");
             out.push(AlsaDeviceDto {
@@ -4630,9 +4738,7 @@ pub fn parse_alsa_devices(output: &str) -> Vec<AlsaDeviceDto> {
 #[tauri::command]
 pub async fn ardop_list_audio_devices() -> Result<AlsaDevicesDto, UiError> {
     let run = |bin: &str| match std::process::Command::new(bin).arg("-L").output() {
-        Ok(o) if o.status.success() => {
-            parse_alsa_devices(&String::from_utf8_lossy(&o.stdout))
-        }
+        Ok(o) if o.status.success() => parse_alsa_devices(&String::from_utf8_lossy(&o.stdout)),
         _ => Vec::new(),
     };
     Ok(AlsaDevicesDto {
@@ -4679,8 +4785,7 @@ pub struct ManagedAudioDeviceDto {
 /// `read_sys_snapshot()` read. Soft-failure: an empty system → an empty list, as
 /// with the ARDOP / serial / Bluetooth pickers — never an error / panic.
 #[tauri::command]
-pub async fn packet_list_audio_devices(
-) -> Result<Vec<ManagedAudioDeviceDto>, UiError> {
+pub async fn packet_list_audio_devices() -> Result<Vec<ManagedAudioDeviceDto>, UiError> {
     use crate::winlink::ax25::devices::{discover_ptt, enumerate_audio_devices, read_sys_snapshot};
     let snapshot = read_sys_snapshot();
     Ok(enumerate_audio_devices(&snapshot)
@@ -4764,8 +4869,9 @@ pub async fn packet_connect(
     let backend = state
         .current()
         .ok_or_else(|| UiError::NotConfigured("backend offline".into()))?;
-    let cfg =
-        config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let cfg = config::read_config().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     let transport = packet_transport_from_config(&cfg, call.clone(), path)?;
     emit_session_line(
         &app,
@@ -4822,8 +4928,9 @@ pub async fn packet_listen(
     let backend = state
         .current()
         .ok_or_else(|| UiError::NotConfigured("backend offline".into()))?;
-    let cfg =
-        config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let cfg = config::read_config().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     let transport = packet_listen_transport_from_config(&cfg)?;
     // tuxlink-0063 (Phase 3, Task 3.8): effective call derives from the active
     // SessionIdentity — the authenticated Part 97 principal — NOT from
@@ -4867,12 +4974,7 @@ pub async fn packet_listen(
             Ok(())
         }
         Err(BackendError::Cancelled) => {
-            emit_session_line(
-                &app,
-                &log,
-                LogLevel::Warn,
-                "Stopped listening.".into(),
-            );
+            emit_session_line(&app, &log, LogLevel::Warn, "Stopped listening.".into());
             Err(BackendError::Cancelled.into())
         }
         Err(e) => {
@@ -4891,10 +4993,13 @@ pub async fn packet_listen(
 /// Settings selector write the same value).
 #[tauri::command]
 pub async fn packet_set_listen(enabled: bool) -> Result<(), UiError> {
-    let mut cfg =
-        config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let mut cfg = config::read_config().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     apply_listen_default(&mut cfg, enabled);
-    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     Ok(())
 }
 
@@ -5009,8 +5114,11 @@ impl From<&crate::winlink::listener::AllowedStations> for AllowedStationsDto {
 #[tauri::command]
 pub async fn ardop_allowed_stations_get() -> Result<AllowedStationsDto, UiError> {
     let path = ardop_allowed_stations_path();
-    let allowed = crate::winlink::listener::AllowedStations::load_from(&path)
-        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let allowed = crate::winlink::listener::AllowedStations::load_from(&path).map_err(|e| {
+        UiError::Internal {
+            detail: e.to_string(),
+        }
+    })?;
     Ok(AllowedStationsDto::from(&allowed))
 }
 
@@ -5021,16 +5129,21 @@ pub async fn ardop_allowed_stations_get() -> Result<AllowedStationsDto, UiError>
 pub async fn ardop_allowed_stations_add(callsign: String) -> Result<(), UiError> {
     let trimmed = callsign.trim();
     if trimmed.is_empty() {
-        return Err(UiError::Internal { detail: "callsign must not be empty".into() });
+        return Err(UiError::Internal {
+            detail: "callsign must not be empty".into(),
+        });
     }
     let _guard = ardop_allowlist_file_lock().lock().unwrap();
     let path = ardop_allowed_stations_path();
-    let mut allowed = crate::winlink::listener::AllowedStations::load_from(&path)
-        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let mut allowed = crate::winlink::listener::AllowedStations::load_from(&path).map_err(|e| {
+        UiError::Internal {
+            detail: e.to_string(),
+        }
+    })?;
     allowed.add_callsign_pattern(trimmed);
-    allowed
-        .save_to(&path)
-        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    allowed.save_to(&path).map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     Ok(())
 }
 
@@ -5041,12 +5154,17 @@ pub async fn ardop_allowed_stations_add(callsign: String) -> Result<(), UiError>
 pub async fn ardop_allowed_stations_remove(callsign: String) -> Result<(), UiError> {
     let needle = callsign.trim().to_uppercase();
     if needle.is_empty() {
-        return Err(UiError::Internal { detail: "callsign must not be empty".into() });
+        return Err(UiError::Internal {
+            detail: "callsign must not be empty".into(),
+        });
     }
     let _guard = ardop_allowlist_file_lock().lock().unwrap();
     let path = ardop_allowed_stations_path();
-    let allowed = crate::winlink::listener::AllowedStations::load_from(&path)
-        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let allowed = crate::winlink::listener::AllowedStations::load_from(&path).map_err(|e| {
+        UiError::Internal {
+            detail: e.to_string(),
+        }
+    })?;
     // AllowedStations doesn't expose a public `remove_callsign` API; rebuild
     // a fresh AllowedStations omitting the matched entry, then save.
     let mut rebuilt = crate::winlink::listener::AllowedStations::new();
@@ -5059,9 +5177,9 @@ pub async fn ardop_allowed_stations_remove(callsign: String) -> Result<(), UiErr
     for ip in allowed.ips() {
         rebuilt.add_ip_pattern(ip.clone());
     }
-    rebuilt
-        .save_to(&path)
-        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    rebuilt.save_to(&path).map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     Ok(())
 }
 
@@ -5076,12 +5194,15 @@ pub async fn ardop_allowed_stations_remove(callsign: String) -> Result<(), UiErr
 pub async fn ardop_allowed_stations_set_allow_all(allow_all: bool) -> Result<(), UiError> {
     let _guard = ardop_allowlist_file_lock().lock().unwrap();
     let path = ardop_allowed_stations_path();
-    let mut allowed = crate::winlink::listener::AllowedStations::load_from(&path)
-        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let mut allowed = crate::winlink::listener::AllowedStations::load_from(&path).map_err(|e| {
+        UiError::Internal {
+            detail: e.to_string(),
+        }
+    })?;
     allowed.set_allow_all(allow_all);
-    allowed
-        .save_to(&path)
-        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    allowed.save_to(&path).map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     Ok(())
 }
 
@@ -5129,13 +5250,7 @@ pub async fn ardop_listen(
     // it without going through the Tauri dispatcher (which would require
     // re-extracting the same managed-state Arcs the outer caller already
     // has). Mirror of the VARA Task 3.2 `arm_vara_listener_inner` pattern.
-    ardop_listen_inner(
-        &app,
-        log.inner(),
-        session.inner(),
-        listen_state.inner(),
-    )
-    .await
+    ardop_listen_inner(&app, log.inner(), session.inner(), listen_state.inner()).await
 }
 
 /// Inner body of [`ardop_listen`] — factored out so the
@@ -5165,14 +5280,16 @@ pub(crate) async fn ardop_listen_inner(
 
     // Validate allowlist file loads.
     let allowlist_path = ardop_allowed_stations_path();
-    let allowed = crate::winlink::listener::AllowedStations::load_from(&allowlist_path)
-        .map_err(|e| UiError::Internal {
-            detail: format!(
-                "ARDOP listener arm refused: allowlist file at {} could not be loaded: {e}. \
+    let allowed =
+        crate::winlink::listener::AllowedStations::load_from(&allowlist_path).map_err(|e| {
+            UiError::Internal {
+                detail: format!(
+                    "ARDOP listener arm refused: allowlist file at {} could not be loaded: {e}. \
                  Repair or delete the file (a missing file is fine — it falls back to the \
                  tuxlink WLE-parity default of allow_all=true + empty list).",
-                allowlist_path.display()
-            ),
+                    allowlist_path.display()
+                ),
+            }
         })?;
 
     // Append arms record BEFORE flipping the modem (Codex 2026-06-03 P2).
@@ -5193,7 +5310,9 @@ pub(crate) async fn ardop_listen_inner(
     let arms = ListenerArmsRecord::arm(TransportKind::Ardop, ttl);
     let log_path = ardop_arms_log_path();
     arms.append_to_log(&log_path)
-        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+        .map_err(|e| UiError::Internal {
+            detail: e.to_string(),
+        })?;
 
     // Codex review 2026-06-03 [P1 #1] (tuxlink-61yg): only flip the running
     // modem into listen mode when it's IDLE. A modem in Connecting/Connected
@@ -5201,10 +5320,7 @@ pub(crate) async fn ardop_listen_inner(
     // `take_transport()` would yank the live connection out from under
     // `modem_ardop_b2f_exchange` and any in-flight disconnect logic.
     let cur_state = session.status_snapshot().state;
-    let already_running_idle = matches!(
-        cur_state,
-        crate::modem_status::ModemState::Idle
-    );
+    let already_running_idle = matches!(cur_state, crate::modem_status::ModemState::Idle);
     let modem_busy = matches!(
         cur_state,
         crate::modem_status::ModemState::Connecting
@@ -5239,11 +5355,11 @@ pub(crate) async fn ardop_listen_inner(
         .active_identity()?;
 
     if !already_running_idle {
-        let cfg = config::read_config()
-            .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+        let cfg = config::read_config().map_err(|e| UiError::Internal {
+            detail: e.to_string(),
+        })?;
         let ardop_ui = cfg.modem_ardop.clone().unwrap_or_default();
-        let session_arc: std::sync::Arc<crate::modem_status::ModemSession> =
-            (*session).clone();
+        let session_arc: std::sync::Arc<crate::modem_status::ModemSession> = (*session).clone();
         // tuxlink-0063 (Phase 3, Task 3.9): the modem-init MYCALL (on-air
         // station ID) comes from the active SessionIdentity resolved above at
         // arm time. `session_id` is moved into the listener consumer task
@@ -5264,13 +5380,18 @@ pub(crate) async fn ardop_listen_inner(
                 &ardop_ui,
                 |cfg, _target| {
                     crate::winlink::modem::ardop::transport::ArdopTransport::with_managed_modem(cfg)
-                        .map(|t| Box::new(t.with_wire_sink(wire.clone())) as Box<dyn crate::winlink::modem::ModemTransport>)
+                        .map(|t| {
+                            Box::new(t.with_wire_sink(wire.clone()))
+                                as Box<dyn crate::winlink::modem::ModemTransport>
+                        })
                         .map_err(|e| format!("{e:?}"))
                 },
             )
         })
         .await
-        .map_err(|e| UiError::Internal { detail: format!("modem spawn task failed: {e}") })?;
+        .map_err(|e| UiError::Internal {
+            detail: format!("modem spawn task failed: {e}"),
+        })?;
         if let Err(e) = res {
             return Err(UiError::Internal {
                 detail: format!("ARDOP listener arm refused — could not start modem: {e}"),
@@ -5278,9 +5399,11 @@ pub(crate) async fn ardop_listen_inner(
         }
     } else {
         // Modem already running — just flip LISTEN TRUE via the side channel.
-        session.send_listen_command(true).map_err(|e| UiError::Internal {
-            detail: format!("ARDOP listener arm — could not flip LISTEN: {e}"),
-        })?;
+        session
+            .send_listen_command(true)
+            .map_err(|e| UiError::Internal {
+                detail: format!("ARDOP listener arm — could not flip LISTEN: {e}"),
+            })?;
     }
 
     // Build the mailbox for inbound-mail persistence.
@@ -5304,7 +5427,9 @@ pub(crate) async fn ardop_listen_inner(
     let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     {
         let mut guard = listen_state.inner.lock().unwrap();
-        *guard = Some(ArdopListenHandle { shutdown: shutdown.clone() });
+        *guard = Some(ArdopListenHandle {
+            shutdown: shutdown.clone(),
+        });
     }
 
     let arbiter: std::sync::Arc<crate::position::PositionArbiter> =
@@ -5405,7 +5530,8 @@ pub(crate) async fn ardop_set_listen_inner(
             app,
             log,
             LogLevel::Info,
-            "ARDOP listener disarming — ABORT + LISTEN FALSE sent; waiting for consumer to drain.".to_string(),
+            "ARDOP listener disarming — ABORT + LISTEN FALSE sent; waiting for consumer to drain."
+                .to_string(),
         );
     } else {
         emit_session_line(
@@ -5458,13 +5584,13 @@ fn ardop_listener_consumer_task(
     log: std::sync::Arc<SessionLogState>,
     listen_state: std::sync::Arc<ArdopListenState>,
 ) {
-    use std::sync::atomic::Ordering;
-    use std::time::Duration;
     use crate::winlink::listener::{
         listener_decide_at, packet_gate, ListenerDecision, PeerId, StationPassword,
     };
-    use crate::winlink_backend::run_ardop_b2f_answer;
     use crate::winlink::modem::ardop::session::ConnectInfo;
+    use crate::winlink_backend::run_ardop_b2f_answer;
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
 
     let log_clone_for_progress = log.clone();
     let app_clone_for_progress = app.clone();
@@ -5509,11 +5635,16 @@ fn ardop_listener_consumer_task(
             Ok(Some(info)) => info,
             Ok(None) => continue,
             Err(e) => {
-                progress(&format!("ARDOP listener consumer: transport error {e}; stopping."));
+                progress(&format!(
+                    "ARDOP listener consumer: transport error {e}; stopping."
+                ));
                 break;
             }
         };
-        let ConnectInfo { peer_call, bandwidth_hz } = evt;
+        let ConnectInfo {
+            peer_call,
+            bandwidth_hz,
+        } = evt;
         progress(&format!(
             "ARDOP inbound: {} @ {} Hz; gating…",
             peer_call, bandwidth_hz
@@ -5535,11 +5666,16 @@ fn ardop_listener_consumer_task(
         match decision {
             ListenerDecision::Accept => {
                 // Read config + run B2F over the live transport.
-                progress(&format!("ARDOP listener: accepting {}; running B2F…", peer_call));
+                progress(&format!(
+                    "ARDOP listener: accepting {}; running B2F…",
+                    peer_call
+                ));
                 let cfg = match crate::config::read_config() {
                     Ok(c) => c,
                     Err(e) => {
-                        progress(&format!("ARDOP listener: config read failed {e}; dropping link"));
+                        progress(&format!(
+                            "ARDOP listener: config read failed {e}; dropping link"
+                        ));
                         let _ = arq_disconnect_via_cmd_writer(&*transport);
                         continue;
                     }
@@ -5596,10 +5732,16 @@ fn ardop_listener_consumer_task(
                 };
                 match result {
                     Ok(()) => {
-                        progress(&format!("ARDOP listener: exchange with {} complete.", peer_call));
+                        progress(&format!(
+                            "ARDOP listener: exchange with {} complete.",
+                            peer_call
+                        ));
                     }
                     Err(e) => {
-                        progress(&format!("ARDOP listener: exchange with {} failed: {e}", peer_call));
+                        progress(&format!(
+                            "ARDOP listener: exchange with {} failed: {e}",
+                            peer_call
+                        ));
                     }
                 }
                 // Best-effort DISCONNECT to release the ARQ link. Run
@@ -5608,7 +5750,8 @@ fn ardop_listener_consumer_task(
                 // reference (not exposed on ModemTransport trait).
                 let _ = arq_disconnect_via_cmd_writer(&*transport);
             }
-            ListenerDecision::RejectAllowlist | ListenerDecision::RejectExpired
+            ListenerDecision::RejectAllowlist
+            | ListenerDecision::RejectExpired
             | ListenerDecision::RejectPassword => {
                 let reason = match decision {
                     ListenerDecision::RejectAllowlist => "allowlist",
@@ -5644,9 +5787,7 @@ fn ardop_listener_consumer_task(
     // → close intervened (ardop_close_session_inner ran since we took the
     // transport). Drop the transport instead of installing — the session
     // is in a Stopped posture and a fresh open will spawn a new transport.
-    match session
-        .install_transport_if_generation_matches(transport, close_gen_snapshot)
-    {
+    match session.install_transport_if_generation_matches(transport, close_gen_snapshot) {
         Ok(()) => {
             let mut snap = session.status_snapshot();
             snap.peer = None;
@@ -5676,9 +5817,9 @@ fn arq_disconnect_via_cmd_writer(
     // The DISCONNECT path only needs the cooperative writer; the hard-close
     // stream is discarded — graceful disconnect is the contract here, and
     // an unresponsive peer just surfaces the write error to the caller.
-    let (mut writer, _stream) = transport.try_clone_abort_writer().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::NotConnected, "no cmd writer")
-    })?;
+    let (mut writer, _stream) = transport
+        .try_clone_abort_writer()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotConnected, "no cmd writer"))?;
     writer.write_all(b"DISCONNECT\r")?;
     writer.flush()
 }
@@ -5778,8 +5919,11 @@ fn vara_arms_log_path() -> std::path::PathBuf {
 #[tauri::command]
 pub async fn vara_allowed_stations_get() -> Result<AllowedStationsDto, UiError> {
     let path = vara_allowed_stations_path();
-    let allowed = crate::winlink::listener::AllowedStations::load_from(&path)
-        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let allowed = crate::winlink::listener::AllowedStations::load_from(&path).map_err(|e| {
+        UiError::Internal {
+            detail: e.to_string(),
+        }
+    })?;
     Ok(AllowedStationsDto::from(&allowed))
 }
 
@@ -5789,16 +5933,21 @@ pub async fn vara_allowed_stations_get() -> Result<AllowedStationsDto, UiError> 
 pub async fn vara_allowed_stations_add(callsign: String) -> Result<(), UiError> {
     let trimmed = callsign.trim();
     if trimmed.is_empty() {
-        return Err(UiError::Internal { detail: "callsign must not be empty".into() });
+        return Err(UiError::Internal {
+            detail: "callsign must not be empty".into(),
+        });
     }
     let _guard = vara_allowlist_file_lock().lock().unwrap();
     let path = vara_allowed_stations_path();
-    let mut allowed = crate::winlink::listener::AllowedStations::load_from(&path)
-        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let mut allowed = crate::winlink::listener::AllowedStations::load_from(&path).map_err(|e| {
+        UiError::Internal {
+            detail: e.to_string(),
+        }
+    })?;
     allowed.add_callsign_pattern(trimmed);
-    allowed
-        .save_to(&path)
-        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    allowed.save_to(&path).map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     Ok(())
 }
 
@@ -5809,12 +5958,17 @@ pub async fn vara_allowed_stations_add(callsign: String) -> Result<(), UiError> 
 pub async fn vara_allowed_stations_remove(callsign: String) -> Result<(), UiError> {
     let needle = callsign.trim().to_uppercase();
     if needle.is_empty() {
-        return Err(UiError::Internal { detail: "callsign must not be empty".into() });
+        return Err(UiError::Internal {
+            detail: "callsign must not be empty".into(),
+        });
     }
     let _guard = vara_allowlist_file_lock().lock().unwrap();
     let path = vara_allowed_stations_path();
-    let allowed = crate::winlink::listener::AllowedStations::load_from(&path)
-        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let allowed = crate::winlink::listener::AllowedStations::load_from(&path).map_err(|e| {
+        UiError::Internal {
+            detail: e.to_string(),
+        }
+    })?;
     let mut rebuilt = crate::winlink::listener::AllowedStations::new();
     rebuilt.set_allow_all(allowed.allow_all());
     for c in allowed.callsigns() {
@@ -5825,9 +5979,9 @@ pub async fn vara_allowed_stations_remove(callsign: String) -> Result<(), UiErro
     for ip in allowed.ips() {
         rebuilt.add_ip_pattern(ip.clone());
     }
-    rebuilt
-        .save_to(&path)
-        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    rebuilt.save_to(&path).map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     Ok(())
 }
 
@@ -5841,12 +5995,15 @@ pub async fn vara_allowed_stations_remove(callsign: String) -> Result<(), UiErro
 pub async fn vara_allowed_stations_set_allow_all(allow_all: bool) -> Result<(), UiError> {
     let _guard = vara_allowlist_file_lock().lock().unwrap();
     let path = vara_allowed_stations_path();
-    let mut allowed = crate::winlink::listener::AllowedStations::load_from(&path)
-        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let mut allowed = crate::winlink::listener::AllowedStations::load_from(&path).map_err(|e| {
+        UiError::Internal {
+            detail: e.to_string(),
+        }
+    })?;
     allowed.set_allow_all(allow_all);
-    allowed
-        .save_to(&path)
-        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    allowed.save_to(&path).map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     Ok(())
 }
 
@@ -5975,24 +6132,23 @@ pub(crate) async fn arm_vara_listener_inner(
 
     // Validate allowlist file loads.
     let allowlist_path = vara_allowed_stations_path();
-    let allowed = crate::winlink::listener::AllowedStations::load_from(&allowlist_path)
-        .map_err(|e| UiError::Internal {
-            detail: format!(
-                "VARA listener arm refused: allowlist file at {} could not be loaded: {e}. \
+    let allowed =
+        crate::winlink::listener::AllowedStations::load_from(&allowlist_path).map_err(|e| {
+            UiError::Internal {
+                detail: format!(
+                    "VARA listener arm refused: allowlist file at {} could not be loaded: {e}. \
                  Repair or delete the file (a missing file is fine — it falls back to the \
                  tuxlink WLE-parity default of allow_all=true + empty list).",
-                allowlist_path.display()
-            ),
+                    allowlist_path.display()
+                ),
+            }
         })?;
 
     // VARA precondition: the transport must be Open. Unlike ARDOP we
     // don't auto-spawn — the operator runs VARA externally and must
     // open the session first.
     let snap = vara_session.snapshot();
-    if !matches!(
-        snap.state,
-        crate::winlink::modem::vara::VaraState::Open
-    ) {
+    if !matches!(snap.state, crate::winlink::modem::vara::VaraState::Open) {
         return Err(UiError::Internal {
             detail: format!(
                 "VARA listener arm refused — VARA transport is not Open (current state: {:?}). \
@@ -6012,7 +6168,9 @@ pub(crate) async fn arm_vara_listener_inner(
     let arms = ListenerArmsRecord::arm(transport_kind, DEFAULT_TTL);
     let log_path = vara_arms_log_path();
     arms.append_to_log(&log_path)
-        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+        .map_err(|e| UiError::Internal {
+            detail: e.to_string(),
+        })?;
 
     // tuxlink-0063 (Phase 3, Task 3.7 — RF-correctness fix): capture the active
     // session identity AT ARM TIME so the answerer answers as the identity that
@@ -6057,7 +6215,9 @@ pub(crate) async fn arm_vara_listener_inner(
     let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     {
         let mut guard = listen_state.inner.lock().unwrap();
-        *guard = Some(VaraListenHandle { shutdown: shutdown.clone() });
+        *guard = Some(VaraListenHandle {
+            shutdown: shutdown.clone(),
+        });
     }
     let arbiter: std::sync::Arc<crate::position::PositionArbiter> =
         (*app.state::<std::sync::Arc<crate::position::PositionArbiter>>()).clone();
@@ -6150,7 +6310,8 @@ pub(crate) fn disarm_vara_listener_inner(
             app,
             log,
             LogLevel::Info,
-            "VARA listener disarming — shutdown flag set; waiting for consumer to drain.".to_string(),
+            "VARA listener disarming — shutdown flag set; waiting for consumer to drain."
+                .to_string(),
         );
     } else {
         emit_session_line(
@@ -6182,10 +6343,10 @@ fn vara_listener_consumer_task(
     bound_cmd_port: Option<u16>,
     transport_kind: crate::winlink::listener::TransportKind,
 ) {
+    use crate::winlink::modem::vara::ptt::PttSink;
+    use crate::winlink::modem::vara::{InboundOutcome, VaraListenerError};
     use std::sync::atomic::Ordering;
     use std::time::Duration;
-    use crate::winlink::modem::vara::{InboundOutcome, VaraListenerError};
-    use crate::winlink_backend::run_vara_b2f_answer;
 
     let log_clone_for_progress = log.clone();
     let app_clone_for_progress = app.clone();
@@ -6245,7 +6406,9 @@ fn vara_listener_consumer_task(
                 continue;
             }
             Err(e) => {
-                progress(&format!("VARA listener consumer: transport error {e}; stopping."));
+                progress(&format!(
+                    "VARA listener consumer: transport error {e}; stopping."
+                ));
                 // tuxlink-6urh2 v2 (self-adrev MEDIUM 2): the cmd socket is
                 // dead (EOF / hard I/O). Flag it so the drain path stamps
                 // SocketLost instead of re-installing the corpse as Open.
@@ -6266,29 +6429,52 @@ fn vara_listener_consumer_task(
                 // the bottom of this branch (success / config-read
                 // failure / tempdir failure all route through the
                 // continue or the end-of-branch end_exchange).
-                vara_session.begin_exchange(
-                    crate::modem_status::ExchangeState::Inbound,
-                );
+                vara_session.begin_exchange(crate::modem_status::ExchangeState::Inbound);
                 let cfg = match crate::config::read_config() {
                     Ok(c) => c,
                     Err(e) => {
-                        progress(&format!("VARA listener: config read failed {e}; dropping link"));
+                        progress(&format!(
+                            "VARA listener: config read failed {e}; dropping link"
+                        ));
                         let _ = crate::winlink::modem::vara::set_listen(&mut transport, false);
                         vara_session.end_exchange();
                         continue;
                     }
                 };
                 let mb_ref = mailbox.as_deref();
-                let result = match mb_ref {
-                    Some(mb) => run_vara_b2f_answer(
-                        &mut transport,
-                        &peer_call,
-                        &cfg,
-                        &session_id,
-                        mb,
-                        Some(arbiter.as_ref()),
-                        Some(&progress),
-                    ),
+
+                // tuxlink-yrrjq: the ANSWER side transmits too — VARA raises
+                // `PTT ON`/`PTT OFF` on the cmd socket for our answer turns
+                // and the HOST must key the rig (VARA has no PTT of its own).
+                // Resolve the keyer FAIL-CLOSED before the exchange; without
+                // keying, answering would dead-air and strand the peer.
+                let keyer = match crate::winlink::modem::vara::ptt::resolve_vara_ptt(
+                    &cfg.modem_ardop.clone().unwrap_or_default(),
+                    &cfg.rig,
+                ) {
+                    Ok(k) => k,
+                    Err(e) => {
+                        progress(&format!(
+                            "VARA listener: PTT not available — dropping inbound link: {e}"
+                        ));
+                        let _ = transport
+                            .send(&crate::winlink::modem::vara::OutboundCommand::Disconnect);
+                        vara_session.end_exchange();
+                        continue;
+                    }
+                };
+                progress(&format!("VARA PTT: {}", keyer.describe()));
+                let keyer: crate::winlink::modem::vara::ptt::SharedPtt =
+                    std::sync::Mutex::new(Box::new(keyer));
+                // Unkey on every exit from this exchange (incl. panic unwind).
+                let _unkey_guard = crate::winlink::modem::vara::ptt::UnkeyGuard::new(&keyer);
+
+                // Resolve the mailbox (real, or a private tempdir for a
+                // protocol-only exchange). The TempDir handle must outlive
+                // the exchange — Drop deletes the directory.
+                let tmp_holder: (crate::native_mailbox::Mailbox, tempfile::TempDir);
+                let mb: &crate::native_mailbox::Mailbox = match mb_ref {
+                    Some(mb) => mb,
                     None => {
                         progress(
                             "VARA listener: no mailbox available; \
@@ -6296,17 +6482,8 @@ fn vara_listener_consumer_task(
                         );
                         match tempfile::tempdir() {
                             Ok(tmp) => {
-                                let tmp_mb = crate::native_mailbox::Mailbox::new(tmp.path());
-                                let r = run_vara_b2f_answer(
-                                    &mut transport,
-                                    &peer_call,
-                                    &cfg,
-                                    &session_id,
-                                    &tmp_mb,
-                                    Some(arbiter.as_ref()),
-                                    Some(&progress),
-                                );
-                                r
+                                tmp_holder = (crate::native_mailbox::Mailbox::new(tmp.path()), tmp);
+                                &tmp_holder.0
                             }
                             Err(e) => {
                                 progress(&format!(
@@ -6320,19 +6497,70 @@ fn vara_listener_consumer_task(
                         }
                     }
                 };
+
+                // Pre-clone the data halves: the PTT pump owns the cmd socket
+                // (and `transport`) while the answer turns run on the data
+                // socket, so mid-exchange keying requests actually key the
+                // rig (tuxlink-yrrjq; mirrors the outbound dial path).
+                let result = match (
+                    transport.data_stream().try_clone(),
+                    transport.data_stream().try_clone(),
+                ) {
+                    (Ok(data_writer), Ok(data_reader)) => {
+                        let stop = std::sync::atomic::AtomicBool::new(false);
+                        std::thread::scope(|s| {
+                            let pump = s.spawn(|| {
+                                crate::winlink::modem::vara::commands::pump_vara_ptt_during_exchange(
+                                    &mut transport,
+                                    &keyer,
+                                    &stop,
+                                )
+                            });
+                            let r = crate::winlink_backend::run_vara_b2f_answer_io(
+                                std::io::BufReader::new(data_reader),
+                                data_writer,
+                                &peer_call,
+                                &cfg,
+                                &session_id,
+                                mb,
+                                Some(arbiter.as_ref()),
+                                Some(&progress),
+                            );
+                            stop.store(true, Ordering::SeqCst);
+                            let _ = pump.join();
+                            r
+                        })
+                    }
+                    (Err(e), _) | (_, Err(e)) => {
+                        Err(crate::winlink_backend::BackendError::TransportFailed {
+                            reason: format!("VARA data-socket try_clone failed: {e}"),
+                            source: None,
+                        })
+                    }
+                };
                 match result {
                     Ok(()) => {
-                        progress(&format!("VARA listener: exchange with {} complete.", peer_call));
+                        progress(&format!(
+                            "VARA listener: exchange with {} complete.",
+                            peer_call
+                        ));
                     }
                     Err(e) => {
-                        progress(&format!("VARA listener: exchange with {} failed: {e}", peer_call));
+                        progress(&format!(
+                            "VARA listener: exchange with {} failed: {e}",
+                            peer_call
+                        ));
                     }
                 }
-                // After the B2F exchange completes (success or fail) the
-                // peer's link will normally have torn down. Send a
-                // best-effort DISCONNECT so the modem releases the ARQ
-                // link if it's still up.
-                let _ = transport.send(&crate::winlink::modem::vara::OutboundCommand::Disconnect);
+                // After the B2F exchange completes (success or fail), tear
+                // the ARQ link down gracefully. The wind-down services PTT so
+                // the disconnect frames key the rig (tuxlink-yrrjq), bounded
+                // by VARA_DISCONNECT_DEADLINE; the caller drops/reinstalls
+                // the transport regardless.
+                let _ = crate::winlink::modem::vara::commands::vara_dial_disconnect(
+                    &mut transport,
+                    &keyer,
+                );
                 // Codex Phase 3-4 boundary P2 #4: clear the exchange
                 // marker now that the b2f handling is fully done.
                 vara_session.end_exchange();
@@ -6434,12 +6662,15 @@ where
 {
     let _guard = packet_allowlist_file_lock().lock().unwrap();
     let path = crate::winlink::listener::packet_gate::packet_allowed_stations_path();
-    let mut allowed = crate::winlink::listener::AllowedStations::load_from(&path)
-        .map_err(|e| UiError::Internal { detail: format!("load allowlist: {e}") })?;
+    let mut allowed = crate::winlink::listener::AllowedStations::load_from(&path).map_err(|e| {
+        UiError::Internal {
+            detail: format!("load allowlist: {e}"),
+        }
+    })?;
     mutate(&mut allowed);
-    allowed
-        .save_to(&path)
-        .map_err(|e| UiError::Internal { detail: format!("save allowlist: {e}") })?;
+    allowed.save_to(&path).map_err(|e| UiError::Internal {
+        detail: format!("save allowlist: {e}"),
+    })?;
     Ok(())
 }
 
@@ -6448,8 +6679,11 @@ where
 #[tauri::command]
 pub async fn packet_allowed_stations_get() -> Result<PacketAllowedStationsDto, UiError> {
     let path = crate::winlink::listener::packet_gate::packet_allowed_stations_path();
-    let allowed = crate::winlink::listener::AllowedStations::load_from(&path)
-        .map_err(|e| UiError::Internal { detail: format!("load allowlist: {e}") })?;
+    let allowed = crate::winlink::listener::AllowedStations::load_from(&path).map_err(|e| {
+        UiError::Internal {
+            detail: format!("load allowlist: {e}"),
+        }
+    })?;
     Ok(PacketAllowedStationsDto::from_allowed(&allowed))
 }
 
@@ -6479,8 +6713,11 @@ pub async fn packet_allowed_stations_remove(callsign: String) -> Result<(), UiEr
     }
     let _guard = packet_allowlist_file_lock().lock().unwrap();
     let path = crate::winlink::listener::packet_gate::packet_allowed_stations_path();
-    let mut allowed = crate::winlink::listener::AllowedStations::load_from(&path)
-        .map_err(|e| UiError::Internal { detail: format!("load allowlist: {e}") })?;
+    let mut allowed = crate::winlink::listener::AllowedStations::load_from(&path).map_err(|e| {
+        UiError::Internal {
+            detail: format!("load allowlist: {e}"),
+        }
+    })?;
     // The struct doesn't expose a remove_callsign API, so reconstruct without
     // the entry. (Mirrors the "clear + re-add survivors" pattern; bd follow-up
     // could expose a first-class remove on the AllowedStations API.)
@@ -6500,9 +6737,9 @@ pub async fn packet_allowed_stations_remove(callsign: String) -> Result<(), UiEr
     for ip in ips {
         allowed.add_ip_pattern(ip);
     }
-    allowed
-        .save_to(&path)
-        .map_err(|e| UiError::Internal { detail: format!("save allowlist: {e}") })?;
+    allowed.save_to(&path).map_err(|e| UiError::Internal {
+        detail: format!("save allowlist: {e}"),
+    })?;
     Ok(())
 }
 
@@ -6595,12 +6832,14 @@ pub(crate) async fn config_set_grid_impl(
     // The backend.set_config push happens AFTER mutex release
     // (eventually-consistent — pre-existing pattern).
     let new_cfg = arbiter.with_inner(|i| -> Result<config::Config, UiError> {
-        let mut cfg = config::read_config()
-            .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+        let mut cfg = config::read_config().map_err(|e| UiError::Internal {
+            detail: e.to_string(),
+        })?;
         cfg.identity.grid = Some(g.clone());
-        cfg.privacy.position_source = config::PositionSource::Manual;  // RESTORED per spec §3.1 (Codex P1 #3)
-        config::write_config_atomic(&cfg)
-            .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+        cfg.privacy.position_source = config::PositionSource::Manual; // RESTORED per spec §3.1 (Codex P1 #3)
+        config::write_config_atomic(&cfg).map_err(|e| UiError::Internal {
+            detail: e.to_string(),
+        })?;
         // Mirror in-memory: T1 invariant — set_manual pins source = Manual.
         i.manual_grid = Some(g.clone());
         i.source = config::PositionSource::Manual;
@@ -6672,11 +6911,13 @@ pub(crate) async fn position_set_source_impl(
             // write_config_atomic error the closure returns without mutating
             // the arbiter's in-memory source.
             let new_cfg = arbiter.with_inner(|i| -> Result<config::Config, UiError> {
-                let mut cfg = config::read_config()
-                    .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+                let mut cfg = config::read_config().map_err(|e| UiError::Internal {
+                    detail: e.to_string(),
+                })?;
                 cfg.privacy.position_source = config::PositionSource::Gps;
-                config::write_config_atomic(&cfg)
-                    .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+                config::write_config_atomic(&cfg).map_err(|e| UiError::Internal {
+                    detail: e.to_string(),
+                })?;
                 // Mirror in-memory: use_gps semantics (T2 — infallible).
                 i.source = config::PositionSource::Gps;
                 Ok(cfg)
@@ -6687,7 +6928,9 @@ pub(crate) async fn position_set_source_impl(
             }
             Ok(())
         }
-        other => Err(UiError::Rejected(format!("unsupported position source: {other}"))),
+        other => Err(UiError::Rejected(format!(
+            "unsupported position source: {other}"
+        ))),
     }
 }
 
@@ -6742,7 +6985,9 @@ pub struct PositionStatusDto {
 pub async fn position_status(
     arbiter: tauri::State<'_, std::sync::Arc<crate::position::PositionArbiter>>,
 ) -> Result<PositionStatusDto, UiError> {
-    let cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let cfg = config::read_config().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     let gps_ready =
         arbiter.has_fresh_fix() && cfg.privacy.gps_state != crate::config::GpsState::Off;
     // Surface the raw fix coords only when the fix is live AND GPS is on — so a
@@ -6830,10 +7075,14 @@ pub async fn config_set_privacy(
     arbiter: tauri::State<'_, std::sync::Arc<crate::position::PositionArbiter>>,
     state: State<'_, BackendState>,
 ) -> Result<(), UiError> {
-    let mut cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let mut cfg = config::read_config().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     cfg.privacy.gps_state = gps_state;
     cfg.privacy.position_precision = position_precision;
-    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     arbiter.set_precision(position_precision);
     // tuxlink-ka7/p5u: refresh the live backend (config_set_* wildcard). gps_state
     // is read directly from config by effective_broadcast_locator's on-air gate, so
@@ -6876,10 +7125,14 @@ pub async fn config_set_connect(
     if let Some(msg) = validate_cms_host(&host) {
         return Err(UiError::Rejected(msg.to_string()));
     }
-    let mut cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let mut cfg = config::read_config().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     cfg.connect.host = host;
     cfg.connect.transport = transport;
-    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     // tuxlink-ka7: refresh the LIVE backend so this host/transport selection applies
     // on the NEXT connect without an app restart. The connect path reads the
     // backend's live config (not the disk), so persisting alone is not enough — the
@@ -6917,9 +7170,13 @@ pub async fn config_set_review_inbound(
     state: State<'_, BackendState>,
     enabled: bool,
 ) -> Result<(), UiError> {
-    let mut cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let mut cfg = config::read_config().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     cfg.review_inbound_before_download = enabled;
-    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     if let Some(backend) = state.current() {
         backend.set_config(cfg); // live refresh: next connect sees it without restart (Codex #9)
     }
@@ -6939,12 +7196,16 @@ pub async fn config_set_active_connection(
     session_type: String,
     protocol: String,
 ) -> Result<(), UiError> {
-    let mut cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let mut cfg = config::read_config().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     cfg.active_connection = Some(config::SelectedConnection {
         session_type,
         protocol,
     });
-    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     if let Some(backend) = state.current() {
         backend.set_config(cfg);
     }
@@ -6960,7 +7221,9 @@ pub async fn config_set_active_connection(
 /// `365` and returns the effective value. Pure; no I/O. Testable in isolation.
 fn validate_trash_retention_days(days: u32) -> Result<u32, UiError> {
     if days == 0 {
-        return Err(UiError::Rejected("retention_days must be at least 1".to_string()));
+        return Err(UiError::Rejected(
+            "retention_days must be at least 1".to_string(),
+        ));
     }
     Ok(days.min(365))
 }
@@ -6981,11 +7244,14 @@ pub async fn config_set_trash_auto_purge(
     retention_days: u32,
 ) -> Result<(), UiError> {
     let clamped = validate_trash_retention_days(retention_days)?;
-    let mut cfg =
-        config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let mut cfg = config::read_config().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     cfg.trash_auto_purge = enabled;
     cfg.trash_retention_days = clamped;
-    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     if let Some(backend) = state.current() {
         backend.set_config(cfg);
     }
@@ -7016,10 +7282,14 @@ pub async fn resolve_close_prompt(
     app: tauri::AppHandle,
     quit_on_close: bool,
 ) -> Result<(), UiError> {
-    let mut cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let mut cfg = config::read_config().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     cfg.close_to_tray = !quit_on_close;
     cfg.close_prompt_seen = true;
-    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
 
     if quit_on_close {
         app.exit(0);
@@ -7049,10 +7319,14 @@ pub async fn resolve_close_prompt(
 /// Mirrors `config_set_*`'s read → mutate → `write_config_atomic` shape.
 #[tauri::command]
 pub async fn set_close_to_tray(value: bool) -> Result<(), UiError> {
-    let mut cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let mut cfg = config::read_config().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     cfg.close_to_tray = value;
     cfg.close_prompt_seen = true;
-    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     Ok(())
 }
 
@@ -7083,7 +7357,9 @@ pub(crate) fn validate_cms_host(host: &str) -> Option<&'static str> {
 /// Read-only; mirrors the `config_set_connect` read path.
 #[tauri::command]
 pub async fn network_po_favorites_get() -> Result<Vec<config::RelayFavorite>, UiError> {
-    let cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let cfg = config::read_config().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     Ok(cfg.network_po_favorites)
 }
 
@@ -7112,13 +7388,15 @@ pub async fn network_po_favorites_add(
         label: favorite.label.trim().to_string(),
         port: favorite.port,
     };
-    let mut cfg =
-        config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let mut cfg = config::read_config().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     // Check for duplicate using the trimmed host so whitespace-padded inputs
     // cannot evade the case-insensitive (host, port) dedup.
-    let is_dup = cfg.network_po_favorites.iter().any(|f| {
-        f.host.eq_ignore_ascii_case(&trimmed.host) && f.port == trimmed.port
-    });
+    let is_dup = cfg
+        .network_po_favorites
+        .iter()
+        .any(|f| f.host.eq_ignore_ascii_case(&trimmed.host) && f.port == trimmed.port);
     if is_dup {
         return Err(UiError::Rejected(format!(
             "a favorite with host '{}' port {} already exists",
@@ -7126,8 +7404,9 @@ pub async fn network_po_favorites_add(
         )));
     }
     cfg.network_po_favorites.push(trimmed);
-    config::write_config_atomic(&cfg)
-        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     Ok(cfg.network_po_favorites)
 }
 
@@ -7140,12 +7419,14 @@ pub async fn network_po_favorites_remove(
     host: String,
     port: u16,
 ) -> Result<Vec<config::RelayFavorite>, UiError> {
-    let mut cfg =
-        config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let mut cfg = config::read_config().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     cfg.network_po_favorites
         .retain(|f| !(f.host.eq_ignore_ascii_case(&host) && f.port == port));
-    config::write_config_atomic(&cfg)
-        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     Ok(cfg.network_po_favorites)
 }
 
@@ -7161,11 +7442,13 @@ pub async fn network_po_favorites_remove(
 pub async fn network_po_favorites_set(
     favorites: Vec<config::RelayFavorite>,
 ) -> Result<Vec<config::RelayFavorite>, UiError> {
-    let mut cfg =
-        config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let mut cfg = config::read_config().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     cfg.network_po_favorites = favorites;
-    config::write_config_atomic(&cfg)
-        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     Ok(cfg.network_po_favorites)
 }
 
@@ -7240,7 +7523,9 @@ pub struct P2pConnectState {
 #[tauri::command]
 pub async fn p2p_peer_password_set(callsign: String, password: String) -> Result<(), UiError> {
     crate::winlink::credentials::p2p_peer_password_write(&callsign, &password).map_err(|e| {
-        UiError::Internal { detail: e.to_string() }
+        UiError::Internal {
+            detail: e.to_string(),
+        }
     })
 }
 
@@ -7251,7 +7536,9 @@ pub async fn p2p_peer_password_set(callsign: String, password: String) -> Result
 #[tauri::command]
 pub async fn p2p_peer_password_clear(callsign: String) -> Result<(), UiError> {
     crate::winlink::credentials::p2p_peer_password_delete(&callsign).map_err(|e| {
-        UiError::Internal { detail: e.to_string() }
+        UiError::Internal {
+            detail: e.to_string(),
+        }
     })
 }
 
@@ -7261,14 +7548,14 @@ pub async fn p2p_peer_password_clear(callsign: String) -> Result<(), UiError> {
 /// [`PeerPasswordStatus::NotSet`] when absent. Any other keyring error is
 /// surfaced as `UiError::Internal`.
 #[tauri::command]
-pub async fn p2p_peer_password_status(
-    callsign: String,
-) -> Result<PeerPasswordStatus, UiError> {
+pub async fn p2p_peer_password_status(callsign: String) -> Result<PeerPasswordStatus, UiError> {
     use crate::winlink::credentials::KeyringError;
     match crate::winlink::credentials::p2p_peer_password_read(&callsign) {
         Ok(_) => Ok(PeerPasswordStatus::Set),
         Err(KeyringError::NoEntry { .. }) => Ok(PeerPasswordStatus::NotSet),
-        Err(e) => Err(UiError::Internal { detail: e.to_string() }),
+        Err(e) => Err(UiError::Internal {
+            detail: e.to_string(),
+        }),
     }
 }
 
@@ -7314,10 +7601,10 @@ pub async fn telnet_p2p_connect(
     log: State<'_, std::sync::Arc<SessionLogState>>,
     req: P2pDialRequest,
 ) -> Result<P2pDialResult, UiError> {
-    use std::sync::atomic::Ordering;
     use crate::winlink::credentials::KeyringError;
     use crate::winlink::session::{ExchangeConfig, SessionIntent};
     use crate::winlink::telnet_p2p;
+    use std::sync::atomic::Ordering;
 
     // Phase 3 (bd-tuxlink-0063): the on-air station ID comes from the
     // authenticated active SessionIdentity, not req.my_callsign (advisory).
@@ -7348,7 +7635,9 @@ pub async fn telnet_p2p_connect(
     };
     emit_p2p_status(
         &app,
-        StatusDto::Connecting { transport: "P2P-Telnet".to_string() },
+        StatusDto::Connecting {
+            transport: "P2P-Telnet".to_string(),
+        },
     );
 
     // tuxlink-l55l: build a Mailbox at the same on-disk location the native
@@ -7412,7 +7701,9 @@ pub async fn telnet_p2p_connect(
                 LogLevel::Error,
                 format!("Outbox read failed: {e}"),
             );
-            return Err(UiError::Internal { detail: format!("outbox read: {e}") });
+            return Err(UiError::Internal {
+                detail: format!("outbox read: {e}"),
+            });
         }
     };
 
@@ -7434,17 +7725,18 @@ pub async fn telnet_p2p_connect(
     );
 
     // Look up peer password if configured (None = no password challenge attempted).
-    let peer_password = match crate::winlink::credentials::p2p_peer_password_read(
-        &req.peer_callsign,
-    ) {
-        Ok(p) => Some(p),
-        Err(KeyringError::NoEntry { .. }) => None,
-        Err(e) => {
-            p2p_state.in_progress.store(false, Ordering::SeqCst);
-            emit_p2p_status(&app, StatusDto::Disconnected);
-            return Err(UiError::Internal { detail: e.to_string() });
-        }
-    };
+    let peer_password =
+        match crate::winlink::credentials::p2p_peer_password_read(&req.peer_callsign) {
+            Ok(p) => Some(p),
+            Err(KeyringError::NoEntry { .. }) => None,
+            Err(e) => {
+                p2p_state.in_progress.store(false, Ordering::SeqCst);
+                emit_p2p_status(&app, StatusDto::Disconnected);
+                return Err(UiError::Internal {
+                    detail: e.to_string(),
+                });
+            }
+        };
 
     let config = ExchangeConfig {
         // req.my_callsign is advisory; mycall authority is the active SessionIdentity.
@@ -7477,7 +7769,12 @@ pub async fn telnet_p2p_connect(
             &config,
             outbound,
             &move |line: &str| {
-                emit_session_line(&app_progress, &log_progress, LogLevel::Info, line.to_string());
+                emit_session_line(
+                    &app_progress,
+                    &log_progress,
+                    LogLevel::Info,
+                    line.to_string(),
+                );
             },
             &move |line: &str| {
                 emit_session_line_with_source(
@@ -7492,7 +7789,9 @@ pub async fn telnet_p2p_connect(
         )
     })
     .await
-    .map_err(|e| UiError::Internal { detail: format!("P2P connect task failed: {e}") })?;
+    .map_err(|e| UiError::Internal {
+        detail: format!("P2P connect task failed: {e}"),
+    })?;
 
     // Release single-flight flag before processing the outcome.
     p2p_state.in_progress.store(false, Ordering::SeqCst);
@@ -7582,7 +7881,9 @@ pub async fn telnet_p2p_connect(
                 );
             }
             emit_p2p_status(&app, StatusDto::Disconnected);
-            Err(UiError::Transport { reason: e.to_string() })
+            Err(UiError::Transport {
+                reason: e.to_string(),
+            })
         }
     }
 }
@@ -7607,7 +7908,12 @@ pub async fn telnet_p2p_abort(
 ) -> Result<(), UiError> {
     use std::sync::atomic::Ordering;
 
-    emit_session_line(&app, &log, LogLevel::Info, "Aborting P2P connection…".to_string());
+    emit_session_line(
+        &app,
+        &log,
+        LogLevel::Info,
+        "Aborting P2P connection…".to_string(),
+    );
     p2p_state.aborting.store(true, Ordering::SeqCst);
     // Emit Disconnected immediately — the blocking task will still run to
     // completion, but the StatusBar should respond right away.
@@ -7784,7 +8090,11 @@ fn post_office_exchange_config(
     local: bool,
 ) -> crate::winlink::session::ExchangeConfig {
     use crate::winlink::session::SessionIntent;
-    let intent = if local { SessionIntent::PostOffice } else { SessionIntent::Mesh };
+    let intent = if local {
+        SessionIntent::PostOffice
+    } else {
+        SessionIntent::Mesh
+    };
     crate::winlink::session::ExchangeConfig {
         mycall: crate::winlink::telnet::base_callsign_for_post_office(mycall.as_str(), local),
         targetcall: crate::winlink::telnet::CMS_TARGET_CALL.to_string(),
@@ -7852,7 +8162,8 @@ where
     F: Fn(
         &[crate::winlink::proposal::Proposal],
         &[crate::winlink::proposal::PendingMessage],
-    ) -> Result<Vec<crate::winlink::proposal::Answer>, crate::winlink::session::ExchangeError>,
+    )
+        -> Result<Vec<crate::winlink::proposal::Answer>, crate::winlink::session::ExchangeError>,
 {
     let config = post_office_exchange_config(mycall, locator, local);
     let intent = config.intent;
@@ -7863,9 +8174,15 @@ where
     // pool, never forwarded globally) keeps the explicit send-time selection as
     // its leakage guard (`Some`; advisory set ∩ live Outbox, vanished MID
     // skipped). tuxlink-b6ad.
-    let outbound =
-        crate::winlink_backend::build_outbound_proposals(mailbox, intent, po_drain_selection(local, selected), Some(mycall.as_str()))
-            .map_err(|e| UiError::Internal { detail: format!("outbox drain: {e}") })?;
+    let outbound = crate::winlink_backend::build_outbound_proposals(
+        mailbox,
+        intent,
+        po_drain_selection(local, selected),
+        Some(mycall.as_str()),
+    )
+    .map_err(|e| UiError::Internal {
+        detail: format!("outbox drain: {e}"),
+    })?;
 
     let result = crate::winlink::telnet::connect_and_exchange(
         host,
@@ -7878,13 +8195,17 @@ where
         register_socket,
         decide,
     )
-    .map_err(|e| UiError::Transport { reason: format!("{e:?}") })?;
+    .map_err(|e| UiError::Transport {
+        reason: format!("{e:?}"),
+    })?;
 
     // File received mail (Inbox; PostOffice stamps the marker) + move sent
     // MIDs Outbox → Sent. Filing FIRST is idempotent even on an all-rejected
     // batch (mirrors native_connect P1.4).
     crate::winlink_backend::file_exchange_result(mailbox, &result, intent, mailbox_change)
-        .map_err(|e| UiError::Internal { detail: format!("file exchange result: {e}") })?;
+        .map_err(|e| UiError::Internal {
+            detail: format!("file exchange result: {e}"),
+        })?;
 
     Ok(PostOfficeDialResult {
         sent_count: result.sent.len(),
@@ -7961,7 +8282,12 @@ pub async fn telnet_post_office_connect(
     }
 
     let transport_label = "Post Office".to_string();
-    emit_p2p_status(&app, StatusDto::Connecting { transport: transport_label.clone() });
+    emit_p2p_status(
+        &app,
+        StatusDto::Connecting {
+            transport: transport_label.clone(),
+        },
+    );
 
     // Build a Mailbox at the same on-disk location the native backend uses
     // (`<app_data>/native-mbox`); the Post Office path walks the shared store
@@ -8014,8 +8340,7 @@ pub async fn telnet_post_office_connect(
     // exchange (Phase 3). req.my_callsign is advisory and intentionally unused.
     let mycall = session_id.mycall().clone();
     let locator = req.locator.clone();
-    let selected: std::collections::HashSet<String> =
-        req.selected_mids.iter().cloned().collect();
+    let selected: std::collections::HashSet<String> = req.selected_mids.iter().cloned().collect();
     let registry = registry.inner().clone();
     let aborting = po_state.aborting.clone();
     // Clone the SHARED abort handle (lives on PostOfficeConnectState) into the
@@ -8083,7 +8408,12 @@ pub async fn telnet_post_office_connect(
             local,
             &selected,
             &move |line: &str| {
-                emit_session_line(&app_progress, &log_progress, LogLevel::Info, line.to_string());
+                emit_session_line(
+                    &app_progress,
+                    &log_progress,
+                    LogLevel::Info,
+                    line.to_string(),
+                );
             },
             &move |line: &str| {
                 emit_session_line_with_source(
@@ -8189,7 +8519,12 @@ pub async fn telnet_post_office_abort(
 ) -> Result<(), UiError> {
     use std::sync::atomic::Ordering;
 
-    emit_session_line(&app, &log, LogLevel::Info, "Aborting Post Office connection…".to_string());
+    emit_session_line(
+        &app,
+        &log,
+        LogLevel::Info,
+        "Aborting Post Office connection…".to_string(),
+    );
     // Order matters (mirrors cms_abort / NativeBackend::abort): set `aborting`
     // FIRST so the woken decider's post-recv abort re-check returns Cancelled
     // (not accept-all) and a socket connecting after this point is shut down by
@@ -8236,21 +8571,26 @@ pub struct TelnetListenHandle {
 fn telnet_allowed_stations_path() -> std::path::PathBuf {
     let mut p = crate::config::config_path();
     p.pop(); // strip `config.json`
-    p.join("listener").join("telnet").join("allowed_stations.json")
+    p.join("listener")
+        .join("telnet")
+        .join("allowed_stations.json")
 }
 
-fn load_telnet_allowed_stations()
-    -> Result<crate::winlink::listener::AllowedStations, UiError>
-{
-    crate::winlink::listener::AllowedStations::load_from(&telnet_allowed_stations_path())
-        .map_err(|e| UiError::Internal { detail: e.to_string() })
+fn load_telnet_allowed_stations() -> Result<crate::winlink::listener::AllowedStations, UiError> {
+    crate::winlink::listener::AllowedStations::load_from(&telnet_allowed_stations_path()).map_err(
+        |e| UiError::Internal {
+            detail: e.to_string(),
+        },
+    )
 }
 
 fn save_telnet_allowed_stations(
     a: &crate::winlink::listener::AllowedStations,
 ) -> Result<(), UiError> {
     a.save_to(&telnet_allowed_stations_path())
-        .map_err(|e| UiError::Internal { detail: e.to_string() })
+        .map_err(|e| UiError::Internal {
+            detail: e.to_string(),
+        })
 }
 
 /// Codex review 2026-06-03 [P3]: process-wide mutex serialising
@@ -8302,7 +8642,12 @@ pub async fn telnet_allowed_stations_remove_callsign(callsign: String) -> Result
     let _guard = telnet_allowlist_file_lock().lock().unwrap();
     let mut a = load_telnet_allowed_stations()?;
     let target = callsign.trim().to_uppercase();
-    let kept: Vec<String> = a.callsigns().iter().filter(|c| **c != target).cloned().collect();
+    let kept: Vec<String> = a
+        .callsigns()
+        .iter()
+        .filter(|c| **c != target)
+        .cloned()
+        .collect();
     let allow_all = a.allow_all();
     let ips_kept: Vec<String> = a.ips().to_vec();
     a = crate::winlink::listener::AllowedStations::new().with_allow_all(allow_all);
@@ -8368,14 +8713,17 @@ pub enum StationPasswordStatus {
 pub async fn telnet_station_password_set(password: String) -> Result<(), UiError> {
     let sp = crate::winlink::listener::StationPassword::new();
     let normalised = crate::winlink::telnet_listen::normalize_station_password(&password);
-    sp.set(&normalised)
-        .map_err(|e| UiError::Internal { detail: e.to_string() })
+    sp.set(&normalised).map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })
 }
 
 #[tauri::command]
 pub async fn telnet_station_password_clear() -> Result<(), UiError> {
     let sp = crate::winlink::listener::StationPassword::new();
-    sp.clear().map_err(|e| UiError::Internal { detail: e.to_string() })
+    sp.clear().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })
 }
 
 #[tauri::command]
@@ -8399,7 +8747,9 @@ pub struct TelnetListenConfigDto {
 
 #[tauri::command]
 pub async fn telnet_listen_config_get() -> Result<TelnetListenConfigDto, UiError> {
-    let cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let cfg = config::read_config().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     Ok(TelnetListenConfigDto {
         port: cfg.telnet_listen.port,
         bind_addr: cfg.telnet_listen.bind_addr,
@@ -8409,13 +8759,15 @@ pub async fn telnet_listen_config_get() -> Result<TelnetListenConfigDto, UiError
 
 #[tauri::command]
 pub async fn telnet_listen_config_set(req: TelnetListenConfigDto) -> Result<(), UiError> {
-    let mut cfg =
-        config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let mut cfg = config::read_config().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     cfg.telnet_listen.port = req.port;
     cfg.telnet_listen.bind_addr = req.bind_addr;
     cfg.telnet_listen.ttl_secs = req.ttl_secs;
-    config::write_config_atomic(&cfg)
-        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
     Ok(())
 }
 
@@ -8453,8 +8805,9 @@ pub async fn telnet_listen(
         }
     }
 
-    let cfg = config::read_config()
-        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let cfg = config::read_config().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
 
     // Phase 3 (bd-tuxlink-0063): the station ID the listener answers as comes
     // from the authenticated active SessionIdentity captured AT ARM TIME, not
@@ -8471,14 +8824,14 @@ pub async fn telnet_listen(
 
     // Bind the TCP socket up-front so a bind failure is surfaced
     // synchronously to the operator (port conflict / permission).
-    let listener = crate::winlink::telnet_listen::bind(
-        &cfg.telnet_listen.bind_addr,
-        cfg.telnet_listen.port,
-    )
-    .map_err(|e| UiError::Internal { detail: e.to_string() })?;
-    let bound_addr = listener
-        .local_addr()
-        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let listener =
+        crate::winlink::telnet_listen::bind(&cfg.telnet_listen.bind_addr, cfg.telnet_listen.port)
+            .map_err(|e| UiError::Internal {
+            detail: e.to_string(),
+        })?;
+    let bound_addr = listener.local_addr().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
 
     // Load the allowlist + station password.
     let allowed = load_telnet_allowed_stations()?;
@@ -8511,7 +8864,10 @@ pub async fn telnet_listen(
         &app,
         &log,
         LogLevel::Info,
-        format!("Telnet listener armed on {bound_addr} (TTL {}s)", cfg.telnet_listen.ttl_secs),
+        format!(
+            "Telnet listener armed on {bound_addr} (TTL {}s)",
+            cfg.telnet_listen.ttl_secs
+        ),
     );
 
     // Build the same on-disk mailbox the Packet listener + telnet_p2p_connect
@@ -8576,14 +8932,10 @@ pub async fn telnet_listen(
                 );
             },
             &move |line: &str| {
-                emit_session_line(
-                    &app_wire,
-                    &log_wire,
-                    LogLevel::Info,
-                    line.to_string(),
-                );
+                emit_session_line(&app_wire, &log_wire, LogLevel::Info, line.to_string());
             },
-            |proposals: &[crate::winlink::proposal::Proposal], _manifest: &[crate::winlink::proposal::PendingMessage]| {
+            |proposals: &[crate::winlink::proposal::Proposal],
+             _manifest: &[crate::winlink::proposal::PendingMessage]| {
                 // Codex review 2026-06-03 [P1]: returning an empty Vec made
                 // `receive_turn` fail with `AnswerCountMismatch` on any
                 // inbound batch, so the listener couldn't actually accept
@@ -8682,14 +9034,19 @@ mod tests {
             parent_slug: None,
         });
         let json_top = serde_json::to_string(&top).unwrap();
-        assert!(!json_top.contains("parentSlug"), "top-level must omit the key: {json_top}");
+        assert!(
+            !json_top.contains("parentSlug"),
+            "top-level must omit the key: {json_top}"
+        );
     }
 
     #[test]
     fn discover_serial_devices_classifies_usb_bluetooth_uart_and_excludes_others() {
         let tmp = tempfile::tempdir().unwrap();
         let dev = tmp.path();
-        for name in ["ttyUSB0", "ttyACM0", "rfcomm0", "ttyAMA0", "ttyS0", "null", "sda1", "tty"] {
+        for name in [
+            "ttyUSB0", "ttyACM0", "rfcomm0", "ttyAMA0", "ttyS0", "null", "sda1", "tty",
+        ] {
             std::fs::write(dev.join(name), b"").unwrap();
         }
         let found = discover_serial_devices(dev);
@@ -8741,19 +9098,37 @@ mod tests {
             id_vendor: Some("10c4".into()),
             id_product: Some("ea70".into()),
         };
-        let port1 = UsbSerialMeta { interface: Some(1), ..port0.clone() };
+        let port1 = UsbSerialMeta {
+            interface: Some(1),
+            ..port0.clone()
+        };
         let label0 = format_usb_serial_label(&port0, "USB serial");
         let label1 = format_usb_serial_label(&port1, "USB serial");
-        assert_ne!(label0, label1, "the two CP2105 interfaces must be distinguishable");
-        assert_eq!(label0, "Silicon Labs CP2105 Dual UART Bridge (port 0) SN 01C71CA5");
-        assert_eq!(label1, "Silicon Labs CP2105 Dual UART Bridge (port 1) SN 01C71CA5");
+        assert_ne!(
+            label0, label1,
+            "the two CP2105 interfaces must be distinguishable"
+        );
+        assert_eq!(
+            label0,
+            "Silicon Labs CP2105 Dual UART Bridge (port 0) SN 01C71CA5"
+        );
+        assert_eq!(
+            label1,
+            "Silicon Labs CP2105 Dual UART Bridge (port 1) SN 01C71CA5"
+        );
     }
 
     #[test]
     fn format_usb_serial_label_product_only_no_manufacturer_duplication() {
         // Manufacturer omitted entirely.
-        let meta = UsbSerialMeta { product: Some("FT232R USB UART".into()), ..Default::default() };
-        assert_eq!(format_usb_serial_label(&meta, "USB serial"), "FT232R USB UART");
+        let meta = UsbSerialMeta {
+            product: Some("FT232R USB UART".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            format_usb_serial_label(&meta, "USB serial"),
+            "FT232R USB UART"
+        );
 
         // Manufacturer present but already embedded in the product string —
         // must not duplicate to "FTDI FTDI FT232R USB UART".
@@ -8762,7 +9137,10 @@ mod tests {
             manufacturer: Some("FTDI".into()),
             ..Default::default()
         };
-        assert_eq!(format_usb_serial_label(&meta_dup, "USB serial"), "FTDI FT232R USB UART");
+        assert_eq!(
+            format_usb_serial_label(&meta_dup, "USB serial"),
+            "FTDI FT232R USB UART"
+        );
     }
 
     #[test]
@@ -8773,7 +9151,10 @@ mod tests {
             id_product: Some("ea70".into()),
             ..Default::default()
         };
-        assert_eq!(format_usb_serial_label(&ids_only, "USB serial"), "10c4:ea70");
+        assert_eq!(
+            format_usb_serial_label(&ids_only, "USB serial"),
+            "10c4:ea70"
+        );
 
         // Nothing at all resolvable — generic fallback survives untouched.
         let empty = UsbSerialMeta::default();
@@ -8798,7 +9179,10 @@ mod tests {
             interface: Some(2),
             ..Default::default()
         };
-        assert_eq!(format_usb_serial_label(&iface_only, "USB serial"), "Widget (port 2)");
+        assert_eq!(
+            format_usb_serial_label(&iface_only, "USB serial"),
+            "Widget (port 2)"
+        );
 
         // Serial with no interface number (single-interface adapter).
         let serial_only = UsbSerialMeta {
@@ -8806,7 +9190,10 @@ mod tests {
             serial: Some("ABC123".into()),
             ..Default::default()
         };
-        assert_eq!(format_usb_serial_label(&serial_only, "USB serial"), "Widget SN ABC123");
+        assert_eq!(
+            format_usb_serial_label(&serial_only, "USB serial"),
+            "Widget SN ABC123"
+        );
     }
 
     /// Build a fake `/sys/class/tty/<name>/device -> ../../../<iface>` sysfs
@@ -8826,7 +9213,11 @@ mod tests {
         let device_dir = root.join("__devices__").join("usb1").join("1-1");
         let iface_dir = device_dir.join(format!("1-1:1.{iface_num}"));
         std::fs::create_dir_all(&iface_dir).unwrap();
-        std::fs::write(iface_dir.join("bInterfaceNumber"), format!("{iface_num:02x}\n")).unwrap();
+        std::fs::write(
+            iface_dir.join("bInterfaceNumber"),
+            format!("{iface_num:02x}\n"),
+        )
+        .unwrap();
         std::fs::write(device_dir.join("idVendor"), "10c4\n").unwrap();
         std::fs::write(device_dir.join("idProduct"), "ea70\n").unwrap();
         if let Some(p) = product {
@@ -8903,7 +9294,11 @@ mod tests {
         std::os::unix::fs::symlink(&sub_node, tty_dir.join("device")).unwrap();
 
         let meta = read_usb_serial_meta(root, "ttyACM0").expect("meta for ttyACM0");
-        assert_eq!(meta.interface, Some(3), "walked up to the ancestor interface");
+        assert_eq!(
+            meta.interface,
+            Some(3),
+            "walked up to the ancestor interface"
+        );
         assert_eq!(meta.product.as_deref(), Some("STM32 Virtual COM Port"));
         assert_eq!(meta.id_vendor.as_deref(), Some("0483"));
     }
@@ -8951,7 +9346,10 @@ mod tests {
             },
         ];
         enrich_usb_serial_labels(&mut devices, sys_root);
-        assert_eq!(devices[0].label, "Silicon Labs CP2105 Dual UART Bridge (port 0) SN 01C71CA5");
+        assert_eq!(
+            devices[0].label,
+            "Silicon Labs CP2105 Dual UART Bridge (port 0) SN 01C71CA5"
+        );
         // No sysfs entry for ttyUSB9 — keeps the generic fallback label.
         assert_eq!(devices[1].label, "USB serial");
         // Bluetooth entry is untouched.
@@ -8983,7 +9381,10 @@ Device 11:22:33:44:55:66 Some BT Speaker
 ";
         let found = parse_paired_bluetooth(output);
         assert_eq!(found.len(), 3);
-        assert_eq!(found[1].name, "My Pixel 8", "name must keep internal spaces");
+        assert_eq!(
+            found[1].name, "My Pixel 8",
+            "name must keep internal spaces"
+        );
         assert_eq!(found[2].mac, "11:22:33:44:55:66");
     }
 
@@ -9177,7 +9578,9 @@ hw:CARD=Device,DEV=0
         let mut b64 = String::new();
         let mut i = 0;
         while i + 3 <= payload.len() {
-            let n = ((payload[i] as u32) << 16) | ((payload[i + 1] as u32) << 8) | (payload[i + 2] as u32);
+            let n = ((payload[i] as u32) << 16)
+                | ((payload[i + 1] as u32) << 8)
+                | (payload[i + 2] as u32);
             b64.push(ALPHABET[((n >> 18) & 0x3f) as usize] as char);
             b64.push(ALPHABET[((n >> 12) & 0x3f) as usize] as char);
             b64.push(ALPHABET[((n >> 6) & 0x3f) as usize] as char);
@@ -9251,8 +9654,8 @@ hw:CARD=Device,DEV=0
         // JPEG SOI + JFIF marker + a handful of high-entropy bytes —
         // representative of the CMS-Z Catalog payload shape that surfaced the bug.
         raw.extend_from_slice(&[
-            0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
-            0xcb, 0xa1, 0x12, 0xef, 0xc9, 0x97, 0xd4, 0xb2, 0x68, 0x5a, 0x80, 0xff,
+            0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0xcb, 0xa1,
+            0x12, 0xef, 0xc9, 0x97, 0xd4, 0xb2, 0x68, 0x5a, 0x80, 0xff,
         ]);
 
         let msg = mail_parser::MessageParser::new()
@@ -9305,16 +9708,19 @@ hw:CARD=Device,DEV=0
         // text-body byte count, the text body, then a binary attachment.
         // The attachment magic bytes (JFIF) MUST NOT leak into the rendered
         // body — that's the screenshot-bad bug operators reported.
-        let text_body = "Resource URL: https://example.org/cat/img.jpg\r\n  Inquiry ID: WCCOL.JPG\r\n";
+        let text_body =
+            "Resource URL: https://example.org/cat/img.jpg\r\n  Inquiry ID: WCCOL.JPG\r\n";
         let attachment_bytes: &[u8] = &[
-            0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
-            0xcb, 0xa1, 0x12, 0xef, 0xc9, 0x97, 0xd4, 0xb2, 0x68, 0x5a, 0x80, 0xff,
+            0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0xcb, 0xa1,
+            0x12, 0xef, 0xc9, 0x97, 0xd4, 0xb2, 0x68, 0x5a, 0x80, 0xff,
         ];
         let mut raw: Vec<u8> = Vec::new();
         raw.extend_from_slice(b"Mid: 9YMNP4GB4UOD\r\n");
         raw.extend_from_slice(format!("Body: {}\r\n", text_body.len()).as_bytes());
         raw.extend_from_slice(b"Date: 2026/06/05 11:24\r\n");
-        raw.extend_from_slice(format!("File: {} 600x600.jpg\r\n", attachment_bytes.len()).as_bytes());
+        raw.extend_from_slice(
+            format!("File: {} 600x600.jpg\r\n", attachment_bytes.len()).as_bytes(),
+        );
         raw.extend_from_slice(b"From: SERVICE\r\n");
         raw.extend_from_slice(b"Mbo: SYSTEM\r\n");
         raw.extend_from_slice(b"Subject: INQUIRY - https://example.org/cat/img.jpg\r\n");
@@ -9366,7 +9772,9 @@ hw:CARD=Device,DEV=0
     #[test]
     fn extract_attachment_bytes_returns_none_for_unknown_filename() {
         let raw = build_mime_with_attachment("a.bin", b"abc");
-        let msg = mail_parser::MessageParser::new().parse(raw.as_slice()).unwrap();
+        let msg = mail_parser::MessageParser::new()
+            .parse(raw.as_slice())
+            .unwrap();
         assert!(extract_attachment_bytes(&msg, raw.as_slice(), "missing.bin").is_none());
     }
 
@@ -9434,8 +9842,8 @@ hw:CARD=Device,DEV=0
     fn parse_raw_rfc5322_surfaces_b2f_attachment_end_to_end() {
         let text_body = "Resource URL: https://example.org/cat/img.jpg\r\n";
         let attachment_bytes: &[u8] = &[
-            0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
-            0xcb, 0xa1, 0x12, 0xef, 0xc9, 0x97, 0xd4, 0xb2, 0x68, 0x5a, 0x80, 0xff,
+            0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0xcb, 0xa1,
+            0x12, 0xef, 0xc9, 0x97, 0xd4, 0xb2, 0x68, 0x5a, 0x80, 0xff,
         ];
         let filename = "600x600.jpg";
 
@@ -9508,7 +9916,10 @@ hw:CARD=Device,DEV=0
         // Simulate the final map: `Option<MessageId>` → `Option<String>`
         let mid: Option<MessageId> = None; // Pat 1.0.0 behavior
         let result: Option<String> = mid.map(|id| id.0);
-        assert!(result.is_none(), "Pat's None return maps to Ok(None), not an error");
+        assert!(
+            result.is_none(),
+            "Pat's None return maps to Ok(None), not an error"
+        );
     }
 
     #[test]
@@ -9734,8 +10145,14 @@ hw:CARD=Device,DEV=0
     fn config_view_dto_maps_trash_fields_defaults() {
         let cfg = cms_config_fixture();
         let dto = ConfigViewDto::from(&cfg);
-        assert!(dto.trash_auto_purge, "trash_auto_purge default true must project to DTO");
-        assert_eq!(dto.trash_retention_days, 30, "trash_retention_days default 30 must project to DTO");
+        assert!(
+            dto.trash_auto_purge,
+            "trash_auto_purge default true must project to DTO"
+        );
+        assert_eq!(
+            dto.trash_retention_days, 30,
+            "trash_retention_days default 30 must project to DTO"
+        );
     }
 
     // Flipping to non-default values confirms the From impl reads the live config
@@ -9746,8 +10163,14 @@ hw:CARD=Device,DEV=0
         cfg.trash_auto_purge = false;
         cfg.trash_retention_days = 14;
         let dto = ConfigViewDto::from(&cfg);
-        assert!(!dto.trash_auto_purge, "trash_auto_purge = false must project through");
-        assert_eq!(dto.trash_retention_days, 14, "trash_retention_days = 14 must project through");
+        assert!(
+            !dto.trash_auto_purge,
+            "trash_auto_purge = false must project through"
+        );
+        assert_eq!(
+            dto.trash_retention_days, 14,
+            "trash_retention_days = 14 must project through"
+        );
     }
 
     // ========================================================================
@@ -9777,7 +10200,10 @@ hw:CARD=Device,DEV=0
     #[test]
     fn config_set_trash_auto_purge_clamps_above_max() {
         let result = validate_trash_retention_days(400);
-        assert!(result.is_ok(), "retention_days > 365 must clamp, not reject; got {result:?}");
+        assert!(
+            result.is_ok(),
+            "retention_days > 365 must clamp, not reject; got {result:?}"
+        );
         assert_eq!(result.unwrap(), 365, "must clamp to 365");
     }
 
@@ -9785,7 +10211,10 @@ hw:CARD=Device,DEV=0
     #[test]
     fn config_set_trash_auto_purge_accepts_valid_days() {
         let result = validate_trash_retention_days(14);
-        assert!(result.is_ok(), "retention_days = 14 must be accepted; got {result:?}");
+        assert!(
+            result.is_ok(),
+            "retention_days = 14 must be accepted; got {result:?}"
+        );
         assert_eq!(result.unwrap(), 14, "must not alter a valid value");
     }
 
@@ -9923,7 +10352,11 @@ hw:CARD=Device,DEV=0
                 transport: CmsTransport::CmsSsl,
                 host: crate::config::default_cms_host(),
             },
-            identity: IdentityConfig { active_full: Some("N0CALL".into()), identifier: None, grid: None },
+            identity: IdentityConfig {
+                active_full: Some("N0CALL".into()),
+                identifier: None,
+                grid: None,
+            },
             privacy: PrivacyConfig {
                 gps_state: GpsState::Off,
                 position_precision: PositionPrecision::FourCharGrid,
@@ -10058,12 +10491,27 @@ hw:CARD=Device,DEV=0
     // `set_manual`; see the dedicated test below for that side of the contract).
     #[test]
     fn validate_grid_accepts_valid_four_and_six_char() {
-        assert!(validate_grid_input("EM75").is_none(), "4-char Maidenhead should be valid");
-        assert!(validate_grid_input("EM75xx").is_none(), "6-char Maidenhead should be valid");
+        assert!(
+            validate_grid_input("EM75").is_none(),
+            "4-char Maidenhead should be valid"
+        );
+        assert!(
+            validate_grid_input("EM75xx").is_none(),
+            "6-char Maidenhead should be valid"
+        );
         // Rejection path
-        assert!(validate_grid_input("ZZ99").is_some(), "ZZ out-of-range field");
-        assert!(validate_grid_input("").is_some(), "empty string should be invalid");
-        assert!(validate_grid_input("EM7").is_some(), "3-char should be invalid");
+        assert!(
+            validate_grid_input("ZZ99").is_some(),
+            "ZZ out-of-range field"
+        );
+        assert!(
+            validate_grid_input("").is_some(),
+            "empty string should be invalid"
+        );
+        assert!(
+            validate_grid_input("EM7").is_some(),
+            "3-char should be invalid"
+        );
     }
 
     // Step 4c — multibyte UTF-8 input must not panic and must return Some (invalid).
@@ -10100,7 +10548,9 @@ hw:CARD=Device,DEV=0
         let tmp = tempfile::tempdir().expect("create tempdir");
         let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
         // SAFETY: single-threaded test (env_lock); no concurrent env reads within this block.
-        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+        unsafe {
+            std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path());
+        }
 
         // Seed a minimal valid config with position_source = Gps so we can
         // assert it FLIPS to Manual via the command.
@@ -10135,7 +10585,10 @@ hw:CARD=Device,DEV=0
         )
         .await;
 
-        assert!(result.is_ok(), "config_set_grid must succeed; got {result:?}");
+        assert!(
+            result.is_ok(),
+            "config_set_grid must succeed; got {result:?}"
+        );
 
         // Arbiter side: set_manual pins source = Manual (T1) and updates manual_grid.
         assert_eq!(
@@ -10182,13 +10635,25 @@ hw:CARD=Device,DEV=0
     // rejected with the most-actionable message first (empty before whitespace).
     #[test]
     fn validate_cms_host_accepts_typical_hosts_and_rejects_empty_or_whitespace() {
-        assert!(validate_cms_host("cms-z.winlink.org").is_none(), "dev host should be valid");
-        assert!(validate_cms_host("server.winlink.org").is_none(), "production host should be valid");
-        assert!(validate_cms_host("127.0.0.1").is_none(), "an IP literal should be valid");
+        assert!(
+            validate_cms_host("cms-z.winlink.org").is_none(),
+            "dev host should be valid"
+        );
+        assert!(
+            validate_cms_host("server.winlink.org").is_none(),
+            "production host should be valid"
+        );
+        assert!(
+            validate_cms_host("127.0.0.1").is_none(),
+            "an IP literal should be valid"
+        );
         // Rejection paths.
         assert_eq!(validate_cms_host(""), Some("CMS host must not be empty"));
-        assert_eq!(validate_cms_host("   "), Some("CMS host must not be empty"),
-            "whitespace-only trims to empty → empty message (most actionable first)");
+        assert_eq!(
+            validate_cms_host("   "),
+            Some("CMS host must not be empty"),
+            "whitespace-only trims to empty → empty message (most actionable first)"
+        );
         assert_eq!(
             validate_cms_host("cms z.winlink.org"),
             Some("CMS host must not contain whitespace"),
@@ -10217,7 +10682,9 @@ hw:CARD=Device,DEV=0
         let tmp = tempfile::tempdir().expect("create tempdir");
         let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
         // SAFETY: single-threaded test (env_lock).
-        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+        unsafe {
+            std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path());
+        }
 
         let seed = format!(
             r#"{{
@@ -10245,7 +10712,10 @@ hw:CARD=Device,DEV=0
         assert_eq!(added[0], fav);
 
         let get_result = network_po_favorites_get().await;
-        assert!(get_result.is_ok(), "get after add must succeed; got {get_result:?}");
+        assert!(
+            get_result.is_ok(),
+            "get after add must succeed; got {get_result:?}"
+        );
         assert_eq!(get_result.unwrap(), vec![fav]);
 
         unsafe {
@@ -10263,7 +10733,9 @@ hw:CARD=Device,DEV=0
         let _env_guard = position_set_source_env_lock().await;
         let tmp = tempfile::tempdir().expect("create tempdir");
         let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
-        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+        unsafe {
+            std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path());
+        }
 
         let seed = format!(
             r#"{{
@@ -10284,7 +10756,7 @@ hw:CARD=Device,DEV=0
             port: 8772,
         };
         let dup = crate::config::RelayFavorite {
-            callsign: "K7XYZ".into(),   // different callsign/label — only host+port matters
+            callsign: "K7XYZ".into(), // different callsign/label — only host+port matters
             label: "Dup".into(),
             host: "relay.local".into(), // same host, different case
             port: 8772,
@@ -10312,7 +10784,9 @@ hw:CARD=Device,DEV=0
         let _env_guard = position_set_source_env_lock().await;
         let tmp = tempfile::tempdir().expect("create tempdir");
         let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
-        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+        unsafe {
+            std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path());
+        }
 
         let seed = format!(
             r#"{{
@@ -10337,13 +10811,25 @@ hw:CARD=Device,DEV=0
 
         // First remove: should remove the entry and return empty Vec.
         let remove1 = network_po_favorites_remove("relay.local".into(), 8772).await;
-        assert!(remove1.is_ok(), "first remove must succeed; got {remove1:?}");
-        assert!(remove1.unwrap().is_empty(), "Vec must be empty after remove");
+        assert!(
+            remove1.is_ok(),
+            "first remove must succeed; got {remove1:?}"
+        );
+        assert!(
+            remove1.unwrap().is_empty(),
+            "Vec must be empty after remove"
+        );
 
         // Second remove: idempotent — no error, still empty.
         let remove2 = network_po_favorites_remove("relay.local".into(), 8772).await;
-        assert!(remove2.is_ok(), "second remove must be idempotent; got {remove2:?}");
-        assert!(remove2.unwrap().is_empty(), "Vec remains empty after second remove");
+        assert!(
+            remove2.is_ok(),
+            "second remove must be idempotent; got {remove2:?}"
+        );
+        assert!(
+            remove2.unwrap().is_empty(),
+            "Vec remains empty after second remove"
+        );
 
         unsafe {
             match prior {
@@ -10360,7 +10846,9 @@ hw:CARD=Device,DEV=0
         let _env_guard = position_set_source_env_lock().await;
         let tmp = tempfile::tempdir().expect("create tempdir");
         let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
-        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+        unsafe {
+            std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path());
+        }
 
         let seed = format!(
             r#"{{
@@ -10388,11 +10876,17 @@ hw:CARD=Device,DEV=0
         };
 
         assert!(
-            matches!(network_po_favorites_add(bad_host).await, Err(UiError::Rejected(_))),
+            matches!(
+                network_po_favorites_add(bad_host).await,
+                Err(UiError::Rejected(_))
+            ),
             "empty host must be Rejected"
         );
         assert!(
-            matches!(network_po_favorites_add(bad_callsign).await, Err(UiError::Rejected(_))),
+            matches!(
+                network_po_favorites_add(bad_callsign).await,
+                Err(UiError::Rejected(_))
+            ),
             "empty callsign must be Rejected"
         );
 
@@ -10413,7 +10907,9 @@ hw:CARD=Device,DEV=0
         let _env_guard = position_set_source_env_lock().await;
         let tmp = tempfile::tempdir().expect("create tempdir");
         let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
-        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+        unsafe {
+            std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path());
+        }
 
         let seed = format!(
             r#"{{
@@ -10441,7 +10937,9 @@ hw:CARD=Device,DEV=0
         };
 
         // Seed one favorite via add, then replace with two via set.
-        let _ = network_po_favorites_add(fav_a.clone()).await.expect("add fav_a");
+        let _ = network_po_favorites_add(fav_a.clone())
+            .await
+            .expect("add fav_a");
         let set_result = network_po_favorites_set(vec![fav_a.clone(), fav_b.clone()]).await;
         assert!(set_result.is_ok(), "set must succeed; got {set_result:?}");
         let after_set = set_result.unwrap();
@@ -10470,7 +10968,9 @@ hw:CARD=Device,DEV=0
         let _env_guard = position_set_source_env_lock().await;
         let tmp = tempfile::tempdir().expect("create tempdir");
         let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
-        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+        unsafe {
+            std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path());
+        }
 
         let seed = format!(
             r#"{{
@@ -10495,12 +10995,21 @@ hw:CARD=Device,DEV=0
 
         // set with empty Vec must clear the list.
         let set_result = network_po_favorites_set(vec![]).await;
-        assert!(set_result.is_ok(), "set(empty) must succeed; got {set_result:?}");
-        assert!(set_result.unwrap().is_empty(), "set(empty) must return empty Vec");
+        assert!(
+            set_result.is_ok(),
+            "set(empty) must succeed; got {set_result:?}"
+        );
+        assert!(
+            set_result.unwrap().is_empty(),
+            "set(empty) must return empty Vec"
+        );
 
         let get_result = network_po_favorites_get().await;
         assert!(get_result.is_ok());
-        assert!(get_result.unwrap().is_empty(), "get after set(empty) must return empty");
+        assert!(
+            get_result.unwrap().is_empty(),
+            "get after set(empty) must return empty"
+        );
 
         unsafe {
             match prior {
@@ -10517,7 +11026,9 @@ hw:CARD=Device,DEV=0
         let _env_guard = position_set_source_env_lock().await;
         let tmp = tempfile::tempdir().expect("create tempdir");
         let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
-        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+        unsafe {
+            std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path());
+        }
 
         let seed = format!(
             r#"{{
@@ -10539,7 +11050,10 @@ hw:CARD=Device,DEV=0
             port: 8772,
         };
         let add_result = network_po_favorites_add(padded).await;
-        assert!(add_result.is_ok(), "padded add must succeed; got {add_result:?}");
+        assert!(
+            add_result.is_ok(),
+            "padded add must succeed; got {add_result:?}"
+        );
         let stored = add_result.unwrap();
         assert_eq!(stored.len(), 1);
         // Host, callsign, and label must be trimmed on store.
@@ -10607,8 +11121,7 @@ hw:CARD=Device,DEV=0
             message: "CMS connection timeout".into(),
         });
 
-        let dtos: Vec<LogLineDto> =
-            ring.snapshot().into_iter().map(LogLineDto::from).collect();
+        let dtos: Vec<LogLineDto> = ring.snapshot().into_iter().map(LogLineDto::from).collect();
 
         assert_eq!(dtos.len(), 2, "both appended lines project to DTOs");
         assert_eq!(dtos[0].seq, 1, "first line gets seq=1");
@@ -10623,7 +11136,10 @@ hw:CARD=Device,DEV=0
         let v = serde_json::to_value(&dtos[0]).unwrap();
         assert_eq!(v["seq"], 1);
         assert_eq!(v["timestampIso"], "2026-05-20T00:00:01Z");
-        assert!(v.get("timestamp_iso").is_none(), "no snake_case key on wire");
+        assert!(
+            v.get("timestamp_iso").is_none(),
+            "no snake_case key on wire"
+        );
     }
 
     // Operator smoke 2026-05-31: SessionLogState::clear drains the buffer.
@@ -10671,15 +11187,17 @@ hw:CARD=Device,DEV=0
             source: LogSource::Backend,
             message: "before-clear".into(),
         });
-        assert!(!ring.snapshot().is_empty(), "buffer has a line before clear");
+        assert!(
+            !ring.snapshot().is_empty(),
+            "buffer has a line before clear"
+        );
 
         // This is the body of `session_log_clear` — calling it through the
         // Arc the way the tauri State guard does, without spinning up a
         // tauri runtime.
         ring.clear();
 
-        let after: Vec<LogLineDto> =
-            ring.snapshot().into_iter().map(LogLineDto::from).collect();
+        let after: Vec<LogLineDto> = ring.snapshot().into_iter().map(LogLineDto::from).collect();
         assert!(after.is_empty(), "snapshot is empty after clear");
     }
 
@@ -10783,9 +11301,17 @@ hw:CARD=Device,DEV=0
         // Adding the Managed arm must not regress the existing variants' round-trips.
         use crate::winlink::ax25::KissLinkConfig;
         for link in [
-            KissLinkConfig::Tcp { host: "127.0.0.1".into(), port: 8001 },
-            KissLinkConfig::Serial { device: "/dev/ttyUSB0".into(), baud: 9600 },
-            KissLinkConfig::Bluetooth { mac: "38:D2:00:01:55:5C".into() },
+            KissLinkConfig::Tcp {
+                host: "127.0.0.1".into(),
+                port: 8001,
+            },
+            KissLinkConfig::Serial {
+                device: "/dev/ttyUSB0".into(),
+                baud: 9600,
+            },
+            KissLinkConfig::Bluetooth {
+                mac: "38:D2:00:01:55:5C".into(),
+            },
         ] {
             let pc = config::PacketConfig {
                 ssid: 3,
@@ -10794,7 +11320,10 @@ hw:CARD=Device,DEV=0
                 listen_default: false,
             };
             let back = PacketConfigDto::from(&pc).into_packet_config().unwrap();
-            assert_eq!(back, pc, "existing link variant must round-trip through the DTO");
+            assert_eq!(
+                back, pc,
+                "existing link variant must round-trip through the DTO"
+            );
         }
     }
 
@@ -10805,7 +11334,9 @@ hw:CARD=Device,DEV=0
         use crate::winlink::ax25::KissLinkConfig;
         let pc = config::PacketConfig {
             ssid: 7,
-            link: Some(KissLinkConfig::UvproNative { mac: "38:D2:00:01:55:5C".into() }),
+            link: Some(KissLinkConfig::UvproNative {
+                mac: "38:D2:00:01:55:5C".into(),
+            }),
             params: config::Ax25ParamsConfig::default(),
             listen_default: false,
         };
@@ -10813,7 +11344,10 @@ hw:CARD=Device,DEV=0
         assert_eq!(dto.link_kind.as_deref(), Some("UvproNative"));
         assert_eq!(dto.bt_mac.as_deref(), Some("38:D2:00:01:55:5C"));
         let back = dto.into_packet_config().unwrap();
-        assert_eq!(back, pc, "UvproNative must round-trip and stay distinct from Bluetooth");
+        assert_eq!(
+            back, pc,
+            "UvproNative must round-trip and stay distinct from Bluetooth"
+        );
     }
 
     #[test]
@@ -10823,9 +11357,13 @@ hw:CARD=Device,DEV=0
         // link config the engine opens (tuxlink-a20f: not just a Bluetooth MAC).
         // Bluetooth RFCOMM socket.
         assert_eq!(
-            aprs_transport_from_link(Some(&KissLinkConfig::Bluetooth { mac: "AA:BB".into() }))
-                .unwrap(),
-            AprsTransportKind::Kiss(KissLinkConfig::Bluetooth { mac: "AA:BB".into() }),
+            aprs_transport_from_link(Some(&KissLinkConfig::Bluetooth {
+                mac: "AA:BB".into()
+            }))
+            .unwrap(),
+            AprsTransportKind::Kiss(KissLinkConfig::Bluetooth {
+                mac: "AA:BB".into()
+            }),
         );
         // KISS-over-TCP (Dire Wolf / SoundModem on :8001) — Phase 1b multi-transport.
         assert_eq!(
@@ -10854,8 +11392,10 @@ hw:CARD=Device,DEV=0
         // The SAME MAC declared as UvproNative selects the native path, NOT KISS —
         // the operator's declaration decides, not the radio model behind the MAC.
         assert_eq!(
-            aprs_transport_from_link(Some(&KissLinkConfig::UvproNative { mac: "AA:BB".into() }))
-                .unwrap(),
+            aprs_transport_from_link(Some(&KissLinkConfig::UvproNative {
+                mac: "AA:BB".into()
+            }))
+            .unwrap(),
             AprsTransportKind::Native,
         );
     }
@@ -10903,7 +11443,9 @@ hw:CARD=Device,DEV=0
             serial_baud: None,
             bt_mac: None,
             managed_audio_device: None, // missing — the error case
-            managed_ptt: Some(PttChoice::Cm108Hid { hidraw_path: "/dev/hidraw3".into() }),
+            managed_ptt: Some(PttChoice::Cm108Hid {
+                hidraw_path: "/dev/hidraw3".into(),
+            }),
             txdelay: 0,
             persistence: 0,
             slot_time: 0,
@@ -10983,7 +11525,10 @@ hw:CARD=Device,DEV=0
         });
         let dto = make_packet_dto(9, None);
         let out = apply_packet_dto(existing.clone(), dto).unwrap();
-        assert_eq!(out.link, existing, "absent link_kind must preserve the saved link");
+        assert_eq!(
+            out.link, existing,
+            "absent link_kind must preserve the saved link"
+        );
         assert_eq!(out.ssid, 9, "the SSID change from the DTO still applies");
         assert_eq!(out.params.paclen, 128, "params from the DTO still apply");
     }
@@ -11006,7 +11551,10 @@ hw:CARD=Device,DEV=0
         });
         let dto = make_packet_dto(9, None);
         let out = apply_packet_dto(existing.clone(), dto).unwrap();
-        assert_eq!(out.link, existing, "a Managed link must survive an absent link_kind");
+        assert_eq!(
+            out.link, existing,
+            "a Managed link must survive an absent link_kind"
+        );
         assert_eq!(out.ssid, 9);
     }
 
@@ -11046,7 +11594,10 @@ hw:CARD=Device,DEV=0
                 port: 8001
             }),
         );
-        assert_eq!(out.ssid, 3, "ssid/params from the DTO still apply on replace");
+        assert_eq!(
+            out.ssid, 3,
+            "ssid/params from the DTO still apply on replace"
+        );
     }
 
     // ========================================================================
@@ -11121,8 +11672,9 @@ hw:CARD=Device,DEV=0
     fn unknown_position_source_maps_to_rejected() {
         // Replicate the command's match arm for unknown strings.
         let source = "Unknown";
-        let result: Result<(), UiError> =
-            Err(UiError::Rejected(format!("unsupported position source: {source}")));
+        let result: Result<(), UiError> = Err(UiError::Rejected(format!(
+            "unsupported position source: {source}"
+        )));
         assert!(
             matches!(result, Err(UiError::Rejected(_))),
             "unknown source string maps to UiError::Rejected"
@@ -11159,7 +11711,9 @@ hw:CARD=Device,DEV=0
         let tmp = tempfile::tempdir().expect("create tempdir");
         let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
         // SAFETY: single-threaded test (env_lock); no concurrent env reads within this block.
-        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+        unsafe {
+            std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path());
+        }
 
         // Seed a minimal valid config with position_source = Manual so we can
         // assert it FLIPS to Gps via the command (offline path: no callsign).
@@ -11240,7 +11794,9 @@ hw:CARD=Device,DEV=0
         let tmp = tempfile::tempdir().expect("create tempdir");
         let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
         // SAFETY: single-threaded test (env_lock); no concurrent env reads within this block.
-        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+        unsafe {
+            std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path());
+        }
 
         // Seed a minimal valid config so read_config inside the spawned tasks
         // has something to deserialize on first call.
@@ -11318,12 +11874,18 @@ hw:CARD=Device,DEV=0
     // Helpers for position_status DTO unit tests.
     #[allow(deprecated)] // sets pat_mbo_address on Config literal; field deprecated per tuxlink-9phd T8.1
     fn make_config_for_position_status(gps_state: GpsState, grid: Option<&str>) -> config::Config {
-        use crate::config::{ConnectConfig, CmsTransport, IdentityConfig, PrivacyConfig, CONFIG_SCHEMA_VERSION};
+        use crate::config::{
+            CmsTransport, ConnectConfig, IdentityConfig, PrivacyConfig, CONFIG_SCHEMA_VERSION,
+        };
         config::Config {
             elmer: crate::config::ElmerConfig::default(),
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
-            connect: ConnectConfig { connect_to_cms: false, transport: CmsTransport::Telnet, host: config::default_cms_host() },
+            connect: ConnectConfig {
+                connect_to_cms: false,
+                transport: CmsTransport::Telnet,
+                host: config::default_cms_host(),
+            },
             identity: IdentityConfig {
                 active_full: None,
                 identifier: None,
@@ -11366,12 +11928,19 @@ hw:CARD=Device,DEV=0
             fix_lon: None,
         };
         let v = serde_json::to_value(&dto).unwrap();
-        assert!(v.get("active_source").is_none(),
-            "PositionStatusDto must not have active_source field (spec §3.1)");
+        assert!(
+            v.get("active_source").is_none(),
+            "PositionStatusDto must not have active_source field (spec §3.1)"
+        );
         assert_eq!(v.get("gps_ready").and_then(|x| x.as_bool()), Some(true));
-        assert_eq!(v.get("broadcast_grid").and_then(|x| x.as_str()), Some("CN87"));
-        assert!(v.get("ui_grid").is_some(),
-            "PositionStatusDto must carry ui_grid field (tuxlink-va1i, spec §3.1)");
+        assert_eq!(
+            v.get("broadcast_grid").and_then(|x| x.as_str()),
+            Some("CN87")
+        );
+        assert!(
+            v.get("ui_grid").is_some(),
+            "PositionStatusDto must carry ui_grid field (tuxlink-va1i, spec §3.1)"
+        );
         assert_eq!(v.get("ui_grid").and_then(|x| x.as_str()), Some("CN87"));
     }
 
@@ -11379,29 +11948,31 @@ hw:CARD=Device,DEV=0
     // → PositionStatusDto { gps_ready: true, broadcast_grid: "DM33", ui_grid: "DM33" }.
     #[test]
     fn position_status_dto_gps_ready_true_when_fresh_fix() {
-        let arbiter = PositionArbiter::new(
-            PositionSource::Gps,
-            None,
-            PositionPrecision::FourCharGrid,
-        );
+        let arbiter =
+            PositionArbiter::new(PositionSource::Gps, None, PositionPrecision::FourCharGrid);
         arbiter.apply_gps_fix(Fix::test("DM33ab"));
         assert!(arbiter.has_fresh_fix(), "fresh fix just applied");
         let cfg = make_config_for_position_status(GpsState::BroadcastAtPrecision, None);
         let dto = PositionStatusDto {
-            gps_ready: arbiter.has_fresh_fix()
-                && cfg.privacy.gps_state != GpsState::Off,
+            gps_ready: arbiter.has_fresh_fix() && cfg.privacy.gps_state != GpsState::Off,
             broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
             ui_grid: crate::position::effective_ui_locator(&cfg, Some(&arbiter)),
             fix_lat: None,
             fix_lon: None,
         };
         assert!(dto.gps_ready);
-        assert_eq!(dto.broadcast_grid, "DM33", "GPS fix grid must appear in broadcast_grid");
+        assert_eq!(
+            dto.broadcast_grid, "DM33",
+            "GPS fix grid must appear in broadcast_grid"
+        );
         assert_eq!(dto.ui_grid, "DM33", "GPS fix grid must appear in ui_grid");
         // Verify snake_case serialization.
         let v = serde_json::to_value(&dto).unwrap();
         assert_eq!(v["gps_ready"], true, "gps_ready serializes snake_case");
-        assert_eq!(v["broadcast_grid"], "DM33", "broadcast_grid serializes snake_case");
+        assert_eq!(
+            v["broadcast_grid"], "DM33",
+            "broadcast_grid serializes snake_case"
+        );
         assert_eq!(v["ui_grid"], "DM33", "ui_grid serializes snake_case");
     }
 
@@ -11416,8 +11987,7 @@ hw:CARD=Device,DEV=0
         assert!(!arbiter.has_fresh_fix(), "no fix applied");
         let cfg = make_config_for_position_status(GpsState::BroadcastAtPrecision, None);
         let dto = PositionStatusDto {
-            gps_ready: arbiter.has_fresh_fix()
-                && cfg.privacy.gps_state != GpsState::Off,
+            gps_ready: arbiter.has_fresh_fix() && cfg.privacy.gps_state != GpsState::Off,
             broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
             ui_grid: crate::position::effective_ui_locator(&cfg, Some(&arbiter)),
             fix_lat: None,
@@ -11437,16 +12007,12 @@ hw:CARD=Device,DEV=0
     // → broadcast_grid is "DM33" (config grid, not the GPS fix).
     #[test]
     fn position_status_dto_broadcast_grid_respects_gps_state_off() {
-        let arbiter = PositionArbiter::new(
-            PositionSource::Gps,
-            None,
-            PositionPrecision::FourCharGrid,
-        );
+        let arbiter =
+            PositionArbiter::new(PositionSource::Gps, None, PositionPrecision::FourCharGrid);
         arbiter.apply_gps_fix(Fix::test("CN87ux"));
         let cfg = make_config_for_position_status(GpsState::Off, Some("DM33"));
         let dto = PositionStatusDto {
-            gps_ready: arbiter.has_fresh_fix()
-                && cfg.privacy.gps_state != GpsState::Off,
+            gps_ready: arbiter.has_fresh_fix() && cfg.privacy.gps_state != GpsState::Off,
             broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
             ui_grid: crate::position::effective_ui_locator(&cfg, Some(&arbiter)),
             fix_lat: None,
@@ -11465,20 +12031,20 @@ hw:CARD=Device,DEV=0
     // operator's "Off" intent by reporting gps_ready=false.
     #[test]
     fn gps_ready_false_under_off() {
-        let arbiter = PositionArbiter::new(
-            PositionSource::Gps,
-            None,
-            PositionPrecision::FourCharGrid,
-        );
+        let arbiter =
+            PositionArbiter::new(PositionSource::Gps, None, PositionPrecision::FourCharGrid);
         arbiter.apply_gps_fix(Fix::test("DM33ab"));
-        assert!(arbiter.has_fresh_fix(),
-            "arbiter must still report fresh fix (gpsd task not killed on Off)");
+        assert!(
+            arbiter.has_fresh_fix(),
+            "arbiter must still report fresh fix (gpsd task not killed on Off)"
+        );
         let cfg = make_config_for_position_status(GpsState::Off, Some("DM33"));
         // Direct test of the position_status command's gps_ready expression.
-        let gps_ready = arbiter.has_fresh_fix()
-            && cfg.privacy.gps_state != GpsState::Off;
-        assert!(!gps_ready,
-            "operator chose Off — gps_ready must be false even with stale-fresh fix in arbiter");
+        let gps_ready = arbiter.has_fresh_fix() && cfg.privacy.gps_state != GpsState::Off;
+        assert!(
+            !gps_ready,
+            "operator chose Off — gps_ready must be false even with stale-fresh fix in arbiter"
+        );
     }
 
     // tuxlink-va1i: DTO contract test — ui_grid and broadcast_grid can diverge
@@ -11487,8 +12053,8 @@ hw:CARD=Device,DEV=0
     fn position_status_dto_serializes_ui_grid_and_broadcast_grid_when_they_differ() {
         let dto = PositionStatusDto {
             gps_ready: true,
-            broadcast_grid: "DM33".to_string(),  // config fallback under LocalUiOnly
-            ui_grid: "DM33ww".to_string(),       // live fix shown to operator
+            broadcast_grid: "DM33".to_string(), // config fallback under LocalUiOnly
+            ui_grid: "DM33ww".to_string(),      // live fix shown to operator
             fix_lat: None,
             fix_lon: None,
         };
@@ -11503,10 +12069,8 @@ hw:CARD=Device,DEV=0
     // also enforces gps_state privacy gating.)
     #[test]
     fn manual_source_ignores_fresh_gps_fix_at_broadcast_boundary() {
-        let mut cfg = make_config_for_position_status(
-            crate::config::GpsState::BroadcastAtPrecision,
-            None,
-        );
+        let mut cfg =
+            make_config_for_position_status(crate::config::GpsState::BroadcastAtPrecision, None);
         cfg.privacy.position_source = crate::config::PositionSource::Manual;
         let arbiter = crate::position::PositionArbiter::new(
             crate::config::PositionSource::Manual,
@@ -11515,8 +12079,10 @@ hw:CARD=Device,DEV=0
         );
         arbiter.apply_gps_fix(crate::position::Fix::test("DM33ab"));
         let locator = crate::position::effective_broadcast_locator(&cfg, Some(&arbiter));
-        assert_eq!(locator, "EM75",
-            "Manual source must broadcast manual_grid regardless of fresh GPS fix");
+        assert_eq!(
+            locator, "EM75",
+            "Manual source must broadcast manual_grid regardless of fresh GPS fix"
+        );
     }
 
     // ========================================================================
@@ -11534,9 +12100,12 @@ hw:CARD=Device,DEV=0
     #[test]
     fn outbound_draft_dto_defaults_attachments_to_empty_vec() {
         let json = r#"{"to":["W1AW"],"cc":[],"subject":"Hi","body":"Hello"}"#;
-        let dto: OutboundDraftDto = serde_json::from_str(json)
-            .expect("dto without attachments field should deserialize");
-        assert!(dto.attachments.is_empty(), "missing 'attachments' must default to []");
+        let dto: OutboundDraftDto =
+            serde_json::from_str(json).expect("dto without attachments field should deserialize");
+        assert!(
+            dto.attachments.is_empty(),
+            "missing 'attachments' must default to []"
+        );
     }
 
     /// `OutboundDraftDto` with an explicit attachments array deserializes correctly.
@@ -11552,8 +12121,8 @@ hw:CARD=Device,DEV=0
                 {"filename": "report.txt", "bytes": [72, 101, 108, 108, 111]}
             ]
         }"#;
-        let dto: OutboundDraftDto = serde_json::from_str(json)
-            .expect("dto with attachments should deserialize");
+        let dto: OutboundDraftDto =
+            serde_json::from_str(json).expect("dto with attachments should deserialize");
         assert_eq!(dto.attachments.len(), 1);
         assert_eq!(dto.attachments[0].filename, "report.txt");
         assert_eq!(dto.attachments[0].bytes, b"Hello");
@@ -11584,8 +12153,14 @@ hw:CARD=Device,DEV=0
             subject: "Multi".to_string(),
             body: "Two files.".to_string(),
             attachments: vec![
-                OutboundAttachmentDto { filename: "a.txt".into(), bytes: vec![1, 2] },
-                OutboundAttachmentDto { filename: "b.bin".into(), bytes: vec![3, 4, 5] },
+                OutboundAttachmentDto {
+                    filename: "a.txt".into(),
+                    bytes: vec![1, 2],
+                },
+                OutboundAttachmentDto {
+                    filename: "b.bin".into(),
+                    bytes: vec![3, 4, 5],
+                },
             ],
         };
         let mapped: Vec<crate::winlink_backend::OutboundAttachment> = dto
@@ -11628,7 +12203,10 @@ hw:CARD=Device,DEV=0
     // can display exchange totals after a successful dial.
     #[test]
     fn p2p_dial_result_serializes_counts() {
-        let dto = P2pDialResult { sent_count: 3, received_count: 1 };
+        let dto = P2pDialResult {
+            sent_count: 3,
+            received_count: 1,
+        };
         let v = serde_json::to_value(&dto).unwrap();
         assert_eq!(v["sent_count"], 3);
         assert_eq!(v["received_count"], 1);
@@ -11647,9 +12225,7 @@ hw:CARD=Device,DEV=0
     /// VaraHf again surfaces.
     #[test]
     fn arms_record_carries_supplied_transport_kind() {
-        use crate::winlink::listener::{
-            ListenerArmsRecord, TransportKind, DEFAULT_TTL,
-        };
+        use crate::winlink::listener::{ListenerArmsRecord, TransportKind, DEFAULT_TTL};
         let hf = ListenerArmsRecord::arm(TransportKind::VaraHf, DEFAULT_TTL);
         assert_eq!(hf.transport, TransportKind::VaraHf);
         let fm = ListenerArmsRecord::arm(TransportKind::VaraFm, DEFAULT_TTL);
@@ -11665,16 +12241,13 @@ hw:CARD=Device,DEV=0
     /// consumer-task reject path against a hardcoded-HF regression.
     #[test]
     fn reject_event_carries_supplied_transport_kind() {
-        use crate::winlink::listener::{
-            packet_gate::ListenerRejectEvent, PeerId, TransportKind,
-        };
         use crate::winlink::ax25::frame::Address;
+        use crate::winlink::listener::{packet_gate::ListenerRejectEvent, PeerId, TransportKind};
         let peer = PeerId::Callsign(Address {
             call: "W1ABC".into(),
             ssid: 0,
         });
-        let evt_hf =
-            ListenerRejectEvent::new(TransportKind::VaraHf, "allowlist", &peer);
+        let evt_hf = ListenerRejectEvent::new(TransportKind::VaraHf, "allowlist", &peer);
         let json_hf = serde_json::to_string(&evt_hf).unwrap();
         assert!(
             json_hf.contains("vara-hf"),
@@ -11682,8 +12255,7 @@ hw:CARD=Device,DEV=0
              got: {json_hf}"
         );
 
-        let evt_fm =
-            ListenerRejectEvent::new(TransportKind::VaraFm, "allowlist", &peer);
+        let evt_fm = ListenerRejectEvent::new(TransportKind::VaraFm, "allowlist", &peer);
         let json_fm = serde_json::to_string(&evt_fm).unwrap();
         assert!(
             json_fm.contains("vara-fm"),
@@ -11873,7 +12445,10 @@ hw:CARD=Device,DEV=0
     fn send_webview_form_subject_prefers_explicit_subject_field() {
         let form_id = "ICS213_Initial";
         let mut field_values = std::collections::HashMap::new();
-        field_values.insert("subject".to_string(), "Urgent — supplies needed".to_string());
+        field_values.insert(
+            "subject".to_string(),
+            "Urgent — supplies needed".to_string(),
+        );
         let subject = field_values
             .get("subject")
             .or_else(|| field_values.get("msg_subject"))
@@ -12084,12 +12659,21 @@ hw:CARD=Device,DEV=0
         if t.seq_inc {
             fv.insert("SeqNum".to_string(), store.allocate("X").to_string());
         }
-        assert_eq!(render_template(t.subject.as_deref().unwrap(), &fv, &ht), "Msg# 1");
-        assert_eq!(render_template(t.msg.as_deref().unwrap(), &fv, &ht), "Serial 1");
+        assert_eq!(
+            render_template(t.subject.as_deref().unwrap(), &fv, &ht),
+            "Msg# 1"
+        );
+        assert_eq!(
+            render_template(t.msg.as_deref().unwrap(), &fv, &ht),
+            "Serial 1"
+        );
 
         // Second send: the counter advances → SeqNum=2.
         fv.insert("SeqNum".to_string(), store.allocate("X").to_string());
-        assert_eq!(render_template(t.subject.as_deref().unwrap(), &fv, &ht), "Msg# 2");
+        assert_eq!(
+            render_template(t.subject.as_deref().unwrap(), &fv, &ht),
+            "Msg# 2"
+        );
     }
 
     /// A non-SeqInc form does not allocate or stamp a serial (the gate holds).
@@ -12137,7 +12721,10 @@ hw:CARD=Device,DEV=0
         let bytes = result.unwrap();
         assert!(!bytes.is_empty(), "PDF must have bytes");
         // PDF magic bytes: %PDF- (0x25 0x50 0x44 0x46 0x2D)
-        assert!(bytes.starts_with(b"%PDF-"), "output must start with PDF magic bytes");
+        assert!(
+            bytes.starts_with(b"%PDF-"),
+            "output must start with PDF magic bytes"
+        );
     }
 
     #[test]
@@ -12149,7 +12736,10 @@ hw:CARD=Device,DEV=0
             station_callsign: None,
         };
         let bytes = render_ics309_pdf_inner(req).expect("empty rows must still produce a PDF");
-        assert!(bytes.starts_with(b"%PDF-"), "empty-row PDF must have PDF magic bytes");
+        assert!(
+            bytes.starts_with(b"%PDF-"),
+            "empty-row PDF must have PDF magic bytes"
+        );
     }
 
     #[test]
@@ -12162,7 +12752,10 @@ hw:CARD=Device,DEV=0
     #[test]
     fn rfc3339_to_epoch_parses_utc_string() {
         // 2024-05-20T10:13:00Z = 1_716_199_980 (from native_mailbox tests)
-        assert_eq!(rfc3339_to_epoch("2024-05-20T10:13:00Z"), Some(1_716_199_980));
+        assert_eq!(
+            rfc3339_to_epoch("2024-05-20T10:13:00Z"),
+            Some(1_716_199_980)
+        );
         assert_eq!(rfc3339_to_epoch("not-a-date"), None);
         assert_eq!(rfc3339_to_epoch(""), None);
     }
@@ -12182,8 +12775,11 @@ hw:CARD=Device,DEV=0
         raw.extend_from_slice(b"Date: 2026/06/08 12:00\r\n");
         raw.extend_from_slice(b"Body: 5\r\n");
         raw.extend_from_slice(
-            format!("{}: {}\r\n", RECEIVED_SESSION_HEADER, RECEIVED_SESSION_POST_OFFICE)
-                .as_bytes(),
+            format!(
+                "{}: {}\r\n",
+                RECEIVED_SESSION_HEADER, RECEIVED_SESSION_POST_OFFICE
+            )
+            .as_bytes(),
         );
         raw.extend_from_slice(b"\r\n");
         raw.extend_from_slice(b"hello");
@@ -12252,7 +12848,10 @@ hw:CARD=Device,DEV=0
             "CN87",
             true,
         );
-        assert_eq!(cfg.mycall, "N7CPZ-L", "local PO login is the base call + -L");
+        assert_eq!(
+            cfg.mycall, "N7CPZ-L",
+            "local PO login is the base call + -L"
+        );
         assert_eq!(
             cfg.targetcall,
             crate::winlink::telnet::CMS_TARGET_CALL,
@@ -12280,7 +12879,10 @@ hw:CARD=Device,DEV=0
             "CN87",
             false,
         );
-        assert_eq!(cfg.mycall, "N7CPZ", "network PO login is the bare base call, no -L");
+        assert_eq!(
+            cfg.mycall, "N7CPZ",
+            "network PO login is the bare base call, no -L"
+        );
         assert_eq!(cfg.targetcall, crate::winlink::telnet::CMS_TARGET_CALL);
         assert!(cfg.password.is_none(), "network PO also reads no keyring");
         assert_eq!(
@@ -12325,7 +12927,10 @@ hw:CARD=Device,DEV=0
         assert_eq!(req.port, 8772);
         assert_eq!(req.my_callsign, "N7CPZ");
         assert_eq!(req.locator, "CN87");
-        assert_eq!(req.selected_mids, vec!["AAA111".to_string(), "BBB222".to_string()]);
+        assert_eq!(
+            req.selected_mids,
+            vec!["AAA111".to_string(), "BBB222".to_string()]
+        );
     }
 
     /// The result DTO serializes `relay_state` as a kebab-case string the pane
@@ -12376,6 +12981,7 @@ hw:CARD=Device,DEV=0
     /// is transmitted: 127.0.0.1 loopback only (RADIO-1 N/A — pure TCP).
     #[test]
     fn post_office_exchange_selects_outbound_and_files_inbound_with_marker() {
+        use crate::native_mailbox::Mailbox;
         use crate::winlink::b2f_events::{AttemptId, B2fEvent, B2fEventSink};
         use crate::winlink::compose::compose_message;
         use crate::winlink::inbound_selection::{
@@ -12384,11 +12990,10 @@ hw:CARD=Device,DEV=0
         };
         use crate::winlink::proposal::{Answer, PendingMessage, Proposal};
         use crate::winlink::session::{
-            run_exchange_with_role, ExchangeConfig, ExchangeRole, OutboundMessage as SessionOutbound,
-            SessionIntent,
+            run_exchange_with_role, ExchangeConfig, ExchangeRole,
+            OutboundMessage as SessionOutbound, SessionIntent,
         };
         use crate::winlink::telnet::CMS_TARGET_CALL;
-        use crate::native_mailbox::Mailbox;
         use std::collections::HashSet;
         use std::io::{BufRead, BufReader, Write};
         use std::net::{Shutdown, TcpListener, TcpStream};
@@ -12414,8 +13019,7 @@ hw:CARD=Device,DEV=0
             1_716_400_000,
         );
         let offered_mid = offered.header("Mid").expect("offered has Mid").to_string();
-        let (in_proposal, in_compressed) =
-            offered.to_proposal().expect("offered → proposal");
+        let (in_proposal, in_compressed) = offered.to_proposal().expect("offered → proposal");
         let server_outbound = vec![SessionOutbound {
             proposal: in_proposal,
             title: "PO inbound".to_string(),
@@ -12441,9 +13045,14 @@ hw:CARD=Device,DEV=0
             "leave me",
             1_716_400_101,
         );
-        let selected_mid = selected_msg.header("Mid").expect("selected has Mid").to_string();
-        let unselected_mid =
-            unselected_msg.header("Mid").expect("unselected has Mid").to_string();
+        let selected_mid = selected_msg
+            .header("Mid")
+            .expect("selected has Mid")
+            .to_string();
+        let unselected_mid = unselected_msg
+            .header("Mid")
+            .expect("unselected has Mid")
+            .to_string();
         client_mailbox
             .store(MailboxFolder::Outbox, &selected_msg.to_bytes())
             .unwrap();
@@ -12467,15 +13076,22 @@ hw:CARD=Device,DEV=0
             std::thread::spawn(move || {
                 let (sock, _) = listener.accept().expect("accept");
                 let mut writer = sock.try_clone().expect("clone for write");
-                writer.write_all(b"Callsign :\rPassword :\r").expect("login prompts");
+                writer
+                    .write_all(b"Callsign :\rPassword :\r")
+                    .expect("login prompts");
                 let mut reader = BufReader::new(sock);
                 // First client line is the callsign (login), second is the password.
                 let mut callsign_line = Vec::new();
-                reader.read_until(b'\r', &mut callsign_line).expect("read callsign");
-                *login_capture.lock().unwrap() =
-                    String::from_utf8_lossy(&callsign_line).trim_end_matches('\r').to_string();
+                reader
+                    .read_until(b'\r', &mut callsign_line)
+                    .expect("read callsign");
+                *login_capture.lock().unwrap() = String::from_utf8_lossy(&callsign_line)
+                    .trim_end_matches('\r')
+                    .to_string();
                 let mut password_line = Vec::new();
-                reader.read_until(b'\r', &mut password_line).expect("read password");
+                reader
+                    .read_until(b'\r', &mut password_line)
+                    .expect("read password");
 
                 let server_config = ExchangeConfig {
                     mycall: "W7AUX".into(),
@@ -12612,20 +13228,30 @@ hw:CARD=Device,DEV=0
         // -- Assertion: the inbound offer fired via the bsiy decider. ----------
         let log = events.lock().unwrap();
         let offer = log.iter().find_map(|e| match e {
-            B2fEvent::InboundProposalsOffered { proposals, attempt_id: a, .. } => {
-                Some((proposals.clone(), *a))
-            }
+            B2fEvent::InboundProposalsOffered {
+                proposals,
+                attempt_id: a,
+                ..
+            } => Some((proposals.clone(), *a)),
             _ => None,
         });
-        let (dtos, evt_attempt) =
-            offer.expect("an InboundProposalsOffered event must have fired");
-        assert_eq!(evt_attempt, attempt_id, "offer carries the threaded attempt_id");
+        let (dtos, evt_attempt) = offer.expect("an InboundProposalsOffered event must have fired");
+        assert_eq!(
+            evt_attempt, attempt_id,
+            "offer carries the threaded attempt_id"
+        );
         assert_eq!(dtos.len(), 1, "exactly one inbound proposal offered");
         assert_eq!(dtos[0].mid, offered_mid);
 
         // -- Assertion: received PO mail filed with the post-office marker. ----
-        let inbox = client_mailbox.list(MailboxFolder::Inbox).expect("list inbox");
-        assert_eq!(inbox.len(), 1, "selected inbound landed in Inbox; got {inbox:?}");
+        let inbox = client_mailbox
+            .list(MailboxFolder::Inbox)
+            .expect("list inbox");
+        assert_eq!(
+            inbox.len(),
+            1,
+            "selected inbound landed in Inbox; got {inbox:?}"
+        );
         let body = client_mailbox
             .read(MailboxFolder::Inbox, &inbox[0].id)
             .expect("read filed inbound");
@@ -12715,7 +13341,10 @@ hw:CARD=Device,DEV=0
         // The peer observed the shutdown as EOF (0 bytes), proving the abort
         // actually force-closed the in-flight socket.
         let bytes_read = server.join().expect("server thread");
-        assert_eq!(bytes_read, 0, "peer must see EOF after abort shuts the socket down");
+        assert_eq!(
+            bytes_read, 0,
+            "peer must see EOF after abort shuts the socket down"
+        );
 
         // The original client handle still exists but is shut; an extra
         // shutdown of an already-closed socket is a harmless no-op.
@@ -12798,9 +13427,19 @@ hw:CARD=Device,DEV=0
     fn merge_txt_recipients_empty_txt_keeps_operator() {
         use std::collections::HashMap;
         // Blank .txt To: (SendReply style) or absent → operator recipients alone.
-        let from_blank = merge_txt_recipients(Some(""), &HashMap::new(), &HashMap::new(), &["a@b.c".to_string()]);
+        let from_blank = merge_txt_recipients(
+            Some(""),
+            &HashMap::new(),
+            &HashMap::new(),
+            &["a@b.c".to_string()],
+        );
         assert_eq!(from_blank, vec!["a@b.c"]);
-        let from_none = merge_txt_recipients(None, &HashMap::new(), &HashMap::new(), &["a@b.c".to_string()]);
+        let from_none = merge_txt_recipients(
+            None,
+            &HashMap::new(),
+            &HashMap::new(),
+            &["a@b.c".to_string()],
+        );
         assert_eq!(from_none, vec!["a@b.c"]);
     }
 
@@ -12817,36 +13456,69 @@ hw:CARD=Device,DEV=0
         let dir = tempfile::tempdir().unwrap();
         let seed = Mailbox::new(dir.path());
         let a = seed
-            .store(MailboxFolder::Inbox, &compose_message("N7CPZ", &["W1AW"], &[], "A", "a", 1_716_200_000).to_bytes())
+            .store(
+                MailboxFolder::Inbox,
+                &compose_message("N7CPZ", &["W1AW"], &[], "A", "a", 1_716_200_000).to_bytes(),
+            )
             .unwrap();
         let b = seed
-            .store(MailboxFolder::Inbox, &compose_message("N7CPZ", &["W1AW"], &[], "B", "b", 1_716_200_001).to_bytes())
+            .store(
+                MailboxFolder::Inbox,
+                &compose_message("N7CPZ", &["W1AW"], &[], "B", "b", 1_716_200_001).to_bytes(),
+            )
             .unwrap();
         let c = seed
-            .store(MailboxFolder::Sent, &compose_message("N7CPZ", &["W1AW"], &[], "C", "c", 1_716_200_002).to_bytes())
+            .store(
+                MailboxFolder::Sent,
+                &compose_message("N7CPZ", &["W1AW"], &[], "C", "c", 1_716_200_002).to_bytes(),
+            )
             .unwrap();
 
         let backend = NativeBackend::new(crate::test_helpers::native_test_config(), dir.path());
 
         let items = vec![
-            MessageRefDto { folder: "inbox".into(), id: a.0.clone(), identity: None },
-            MessageRefDto { folder: "inbox".into(), id: b.0.clone(), identity: None },
-            MessageRefDto { folder: "sent".into(), id: c.0.clone(), identity: None },
+            MessageRefDto {
+                folder: "inbox".into(),
+                id: a.0.clone(),
+                identity: None,
+            },
+            MessageRefDto {
+                folder: "inbox".into(),
+                id: b.0.clone(),
+                identity: None,
+            },
+            MessageRefDto {
+                folder: "sent".into(),
+                id: c.0.clone(),
+                identity: None,
+            },
         ];
         move_bulk_with_backend(&backend, items, "archive")
             .await
             .expect("bulk move succeeds");
 
         assert!(
-            backend.list_messages(MailboxFolder::Inbox).await.unwrap().is_empty(),
+            backend
+                .list_messages(MailboxFolder::Inbox)
+                .await
+                .unwrap()
+                .is_empty(),
             "both inbox messages left the source folder"
         );
         assert!(
-            backend.list_messages(MailboxFolder::Sent).await.unwrap().is_empty(),
+            backend
+                .list_messages(MailboxFolder::Sent)
+                .await
+                .unwrap()
+                .is_empty(),
             "the sent message left the source folder"
         );
         assert_eq!(
-            backend.list_messages(MailboxFolder::Archive).await.unwrap().len(),
+            backend
+                .list_messages(MailboxFolder::Archive)
+                .await
+                .unwrap()
+                .len(),
             3,
             "all three messages landed in the single destination folder"
         );
@@ -12864,17 +13536,28 @@ hw:CARD=Device,DEV=0
         let dir = tempfile::tempdir().unwrap();
         let seed = Mailbox::new(dir.path());
         let a = seed
-            .store(MailboxFolder::Inbox, &compose_message("N7CPZ", &["W1AW"], &[], "A", "a", 1_716_200_000).to_bytes())
+            .store(
+                MailboxFolder::Inbox,
+                &compose_message("N7CPZ", &["W1AW"], &[], "A", "a", 1_716_200_000).to_bytes(),
+            )
             .unwrap();
         let backend = NativeBackend::new(crate::test_helpers::native_test_config(), dir.path());
 
-        let items = vec![MessageRefDto { folder: "inbox".into(), id: a.0.clone(), identity: None }];
+        let items = vec![MessageRefDto {
+            folder: "inbox".into(),
+            id: a.0.clone(),
+            identity: None,
+        }];
         move_bulk_with_backend(&backend, items, "inbox")
             .await
             .expect("self-move is accepted as a no-op");
 
         assert_eq!(
-            backend.list_messages(MailboxFolder::Inbox).await.unwrap().len(),
+            backend
+                .list_messages(MailboxFolder::Inbox)
+                .await
+                .unwrap()
+                .len(),
             1,
             "a self-move must not delete the message"
         );
@@ -12893,36 +13576,69 @@ hw:CARD=Device,DEV=0
         let dir = tempfile::tempdir().unwrap();
         let seed = Mailbox::new(dir.path());
         let a = seed
-            .store(MailboxFolder::Inbox, &compose_message("N7CPZ", &["W1AW"], &[], "A", "a", 1_716_200_000).to_bytes())
+            .store(
+                MailboxFolder::Inbox,
+                &compose_message("N7CPZ", &["W1AW"], &[], "A", "a", 1_716_200_000).to_bytes(),
+            )
             .unwrap();
         let b = seed
-            .store(MailboxFolder::Inbox, &compose_message("N7CPZ", &["W1AW"], &[], "B", "b", 1_716_200_001).to_bytes())
+            .store(
+                MailboxFolder::Inbox,
+                &compose_message("N7CPZ", &["W1AW"], &[], "B", "b", 1_716_200_001).to_bytes(),
+            )
             .unwrap();
         let c = seed
-            .store(MailboxFolder::Sent, &compose_message("N7CPZ", &["W1AW"], &[], "C", "c", 1_716_200_002).to_bytes())
+            .store(
+                MailboxFolder::Sent,
+                &compose_message("N7CPZ", &["W1AW"], &[], "C", "c", 1_716_200_002).to_bytes(),
+            )
             .unwrap();
 
         let backend = NativeBackend::new(crate::test_helpers::native_test_config(), dir.path());
 
         let items = vec![
-            MessageRefDto { folder: "inbox".into(), id: a.0.clone(), identity: None },
-            MessageRefDto { folder: "inbox".into(), id: b.0.clone(), identity: None },
-            MessageRefDto { folder: "sent".into(), id: c.0.clone(), identity: None },
+            MessageRefDto {
+                folder: "inbox".into(),
+                id: a.0.clone(),
+                identity: None,
+            },
+            MessageRefDto {
+                folder: "inbox".into(),
+                id: b.0.clone(),
+                identity: None,
+            },
+            MessageRefDto {
+                folder: "sent".into(),
+                id: c.0.clone(),
+                identity: None,
+            },
         ];
         delete_bulk_with_backend(&backend, items)
             .await
             .expect("bulk delete succeeds");
 
         assert!(
-            backend.list_messages(MailboxFolder::Inbox).await.unwrap().is_empty(),
+            backend
+                .list_messages(MailboxFolder::Inbox)
+                .await
+                .unwrap()
+                .is_empty(),
             "both inbox messages left the source folder"
         );
         assert!(
-            backend.list_messages(MailboxFolder::Sent).await.unwrap().is_empty(),
+            backend
+                .list_messages(MailboxFolder::Sent)
+                .await
+                .unwrap()
+                .is_empty(),
             "the sent message left the source folder"
         );
         assert_eq!(
-            backend.list_messages(MailboxFolder::Deleted).await.unwrap().len(),
+            backend
+                .list_messages(MailboxFolder::Deleted)
+                .await
+                .unwrap()
+                .len(),
             3,
             "all three messages landed in the Deleted (Trash) folder"
         );
@@ -12967,12 +13683,19 @@ hw:CARD=Device,DEV=0
 
         // Message is now in Deleted; W1ABC's namespaced Inbox is empty.
         assert_eq!(
-            backend.list_messages(MailboxFolder::Deleted).await.unwrap().len(),
+            backend
+                .list_messages(MailboxFolder::Deleted)
+                .await
+                .unwrap()
+                .len(),
             1,
             "message moved to Deleted folder"
         );
         assert!(
-            seed.for_identity("W1ABC").list(MailboxFolder::Inbox).unwrap().is_empty(),
+            seed.for_identity("W1ABC")
+                .list(MailboxFolder::Inbox)
+                .unwrap()
+                .is_empty(),
             "W1ABC's Inbox must be empty after delete"
         );
 
@@ -12995,7 +13718,10 @@ hw:CARD=Device,DEV=0
             .await
             .expect("restore succeeds");
         assert_eq!(
-            seed.for_identity("W1ABC").list(MailboxFolder::Inbox).unwrap().len(),
+            seed.for_identity("W1ABC")
+                .list(MailboxFolder::Inbox)
+                .unwrap()
+                .len(),
             1,
             "restored message must be in W1ABC's namespaced Inbox"
         );
@@ -13051,7 +13777,9 @@ pub async fn form_draft_library_upsert(
     payload: serde_json::Value,
     library: State<'_, std::sync::Arc<DraftLibrary>>,
 ) -> Result<FormDraftSlot, String> {
-    library.upsert(slot_id, form_id, label, payload).map_err(|e| e.to_string())
+    library
+        .upsert(slot_id, form_id, label, payload)
+        .map_err(|e| e.to_string())
 }
 
 /// Delete a draft slot by `slot_id`. No-op-safe if the slot does not exist.
