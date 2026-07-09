@@ -37,25 +37,51 @@ Build the whole VARA connect/transmit flow, **mirroring the established, RADIO-1
 - `vara_connect { target, consent_token }` (gated) → mirrors `modem_ardop_connect`: consume token FIRST, then run the connect flow. Registered in `lib.rs` AND exposed on the agent/MCP surface (`mcp_ports.rs`) so an agent can drive it (the gap that made "agents can't use it" true).
 - `vara_disconnect` → send `DISCONNECT`, invalidate the consent token, reset status, close.
 
-### Connect flow (post-consume), driven off `VaraTransport`
+### Connect + session flow (post-consume), driven off `VaraTransport` — HARDENED per Codex 2026-07-09
+
+Three invariants the review forced (see "Codex review" section for the failure sequences):
+- **Lock discipline (P1):** take the transport OUT of the `VaraSession` mutex and release the lock before ANY blocking I/O; install the abort writer under the lock first. All recv/PTT/B2F work runs on a local `transport`, so `vara_disconnect` can acquire the mutex and fire the abort at any instant. (Mirrors ARDOP's `take_transport` + run-outside-lock discipline.)
+- **One airtime budget (P1):** a single deadline covers connect AND B2F. Bound BOTH sockets — add a write timeout on the data socket (the transport sets only read timeouts today).
+- **PTT pump runs through B2F (P1):** VARA emits `PTT ON/OFF`/`DISCONNECTED` on the CMD socket for the whole ARQ session, including during B2F on the DATA socket. A concurrent pump owns keying for the entire session.
 
 ```
-consume_consent_token            # RADIO-1 gate, first — no I/O before this passes
-ensure session open              # reuse vara_start_session_inner (MYCALL + BW); require callsign
-install abort writer             # cloned cmd_writer; Disconnect sends DISCONNECT/ABORT
+# ── under session lock, ONE critical section (P1 single-flight) ──
+if status in {Connecting, Connected}: return Err(busy)     # reject concurrent connect
+if !consume_consent_token(tok):       return Err(no-consent) # RADIO-1 gate, before ANY I/O
 status = Connecting
-send(OutboundCommand::Connect { mycall, target })
-loop until deadline:             # bounded airtime, mirrors CONNECT_DEADLINE
-    match recv()? :
-        Ptt(true)   -> rig.key()      # RADIO-1: VARA asks host to key; drive configured ptt_method
-        Ptt(false)  -> rig.unkey()
-        Pending     -> status = Connecting (negotiating)
-        Connected{peer,bw} -> break Ok    # install transport, publish Connected snapshot
-        Disconnected -> break Err("remote/again")
-        Unknown(l)  -> log + continue
-        None        -> (timeout tick) check deadline / abort flag
-on Ok(Connected): run B2F over data_stream()   # move the message
-always on exit: ensure rig.unkey() + DISCONNECT   # never leave the radio keyed
+transport = take_transport()                                # move out of the mutex
+install_abort_writer(cmd_writer.clone())
+# ── lock RELEASED; all blocking I/O below runs on local `transport` ──
+
+ptt = resolve_ptt_backend()?          # P2/#6: FAIL CLOSED — if unconfigured, or a
+                                      # key+unkey probe fails, return Err BEFORE any CONNECT.
+                                      # Never emit CONNECT unless we can reliably key AND unkey.
+let _guard = UnkeyOnDrop(&ptt)        # Drop guard: unkey on EVERY exit, incl. panic-unwind
+
+send(Connect { mycall, target })
+loop bounded by deadline:
+    match recv():                     # recv() must distinguish EOF from read-timeout (P2)
+        Ptt(true)  -> ptt.key()   (bounded write; on Err -> abort)
+        Ptt(false) -> ptt.unkey() (bounded write; on Err -> abort)
+        Pending    -> status = Connecting
+        Connected{peer,bw} -> break Ok
+        Disconnected                              -> break Err(remote)
+        WrongCallsign|MissingSoundcard|Offline|CancelPending -> break Err(fatal)   # P2
+        EOF                                        -> break Err(eof)                # P2
+        Unknown(l) -> log + continue
+        timeout    -> if past deadline or abort-flag: break Err(timeout/abort)
+
+on Ok(Connected):
+    # P1: the cmd/PTT pump keeps running CONCURRENTLY with B2F.
+    spawn pump(transport.cmd_reader):
+        loop: match recv(): Ptt(true/false)->ptt.key/unkey;
+              Disconnected|fatal|EOF -> set shared abort flag + return
+    run_b2f_exchange(transport.data_stream(), deadline, abort_flag)   # bounded + abort-aware
+    signal pump stop; join pump
+# ── always (guard drop + explicit) ──
+ptt.unkey()                           # belt-and-suspenders atop the Drop guard
+send_best_effort(DISCONNECT) (bounded)
+status = Idle | Error
 ```
 
 ### PTT integration (RADIO-1-critical)
@@ -83,12 +109,25 @@ Extend `VaraStatus`/`VaraState` with the connect states (`Connecting`/`Pending`/
 
 With a working rig config + access restored: mint consent → `vara_connect <gateway>` → observe PTT keys, `PENDING`→`CONNECTED`, a B2F message exchanged, clean `DISCONNECT`, radio returns to RX. Bounded + abortable throughout.
 
-## Explicitly out of scope (NOT deferred silently — flagged per ADR 0018)
+## Scope (per ADR 0018 — built whole, nothing carved)
 
-- Fixing the operator's specific R2 rig/PTT/baud config so it keys — that is the separate on-air/rig thread, and it is the operator's wire-walk, not this code change.
-- VARA FM / P2P intents beyond the single connect-to-gateway flow (memory `vara-intents-grounded-wle`): if the operator wants those too, that is an operator-authorized additional scope, raised as its own bd issue — not something this change quietly includes or quietly omits.
+The VARA connect feature is ONE target-agnostic flow: `CONNECT <mycall> <target>` works for a gateway OR a peer callsign, so gateway and P2P are the *same* code, both covered — there is no slice to defer. VARA FM vs VARA HF is a config choice (which engine/ports the operator points at); the connect flow is identical, so it is covered too. Nothing about the VARA-connect capability is deferred.
 
-## Review gates before implementation
+The one thing this change does NOT do — because it is a *different concern*, not a slice of this feature — is fix the operator's specific R2 machine rig/PTT/serial config so his particular radio keys. That is host/hardware configuration and belongs to his on-air wire-walk, not to this app-code change. The code fails CLOSED if the rig can't key (Codex #6), surfacing an actionable error rather than dead-air.
 
-1. Codex adversarial review (build-robust-features step 2, ≥1 Codex round) — attack: the consent gate ordering, the unkey-on-exit invariant across panics, B2F stream reuse, deadline/abort correctness.
-2. Operator sign-off on this design + the two "out of scope" boundaries (ADR 0018: the operator decides scope, not the agent).
+## Codex adversarial review — 2026-07-09 (gpt-5.5, xhigh)
+
+Transcript: `dev/adversarial/2026-07-09-vara-connect-design-codex.md` (gitignored). Six findings, all incorporated into the hardened flow above:
+
+| # | Sev | Finding | Disposition |
+|---|-----|---------|-------------|
+| 1 | P1 | cmd/PTT pump stops at CONNECTED; VARA can request keying during B2F with no reader → stuck TX | Concurrent pump owns keying for the whole session, runs alongside B2F |
+| 2 | P1 | Deadline only wraps connect; B2F unbounded; data socket has no write timeout | One airtime budget over connect+B2F; write timeout added on data socket |
+| 3 | P1 | Borrowing transport under the mutex deadlocks `vara_disconnect` → abort wedge | Take transport out of mutex; all blocking I/O outside the lock |
+| 4 | P1 | Mint stays open during in-flight connect → two connects race unkey paths | Atomic single-flight: consume token + mark Connecting in one critical section; reject while Connecting/Connected |
+| 5 | P2 | Only Connected/Disconnected handled; fatal events + EOF ignored until deadline → PTT held | Abort immediately on WrongCallsign/MissingSoundcard/Offline/CancelPending/EOF; recv distinguishes EOF from timeout |
+| 6 | P2 | No VARA PTT/rig surface exists; impl could no-op or unbounded-write | Resolve+probe a concrete keyer after consent, fail CLOSED before CONNECT; Drop-guard unkey |
+
+## Remaining gate before implementation
+
+Operator review of this hardened design. Per ADR 0018 there is no scope to authorize — the feature is built whole; this is a correctness/approach review, not a scope negotiation.
