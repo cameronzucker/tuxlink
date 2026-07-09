@@ -110,8 +110,22 @@ impl std::fmt::Debug for VaraPtt {
     }
 }
 
+/// Tail hold before every unkey: VARA raises `PTT OFF` when it has finished
+/// *writing* the frame's samples, but under Wine → PipeWire → USB codec the
+/// last ~65–170 ms of audio is still buffered in flight (measured off-air via
+/// a monitor receiver, 2026-07-09 kestrel-butte-granite self-decode rig — the
+/// RF envelope died mid-waveform on every ConReq while the sink monitor
+/// showed the intended audio outliving the carrier by a median 127 ms).
+/// Unkeying immediately amputates the frame tail and breaks remote decode.
+/// 250 ms covers the measured deficit with margin — the same "TX tail" knob
+/// every hardware soundcard interface exposes for exactly this reason.
+const PTT_TAIL_HOLD_MS: u64 = 250;
+
 impl PttSink for VaraPtt {
     fn set_ptt(&mut self, on: bool) -> Result<(), String> {
+        if !on {
+            std::thread::sleep(std::time::Duration::from_millis(PTT_TAIL_HOLD_MS));
+        }
         match self {
             VaraPtt::Vox => Ok(()),
             VaraPtt::CatSerial {
