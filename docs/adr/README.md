@@ -70,7 +70,7 @@ Deciders: <names or session monikers of people involved>
 - [0015 — Modem integration: managed-spawn lifecycle, generic external-TCP-modem transport, rig control as its own crate](0015-modem-integration-and-rig-control-foundation.md)
 - [0016 — Native B2F outbound with attachments](0016-native-b2f-outbound-with-attachments.md)
 - [0017 — Branch lifecycle state machine + pre-commit/pre-push hook enforcement](0017-branch-state-machine.md)
-- [0018 — Ban autonomous agent bd-issue splitting and phase deferrals](0018-ban-autonomous-agent-issue-splitting-and-deferrals.md) — *grounded in the VARA Phase-3-never-built incident; complements wire-walk*
+- [0018 — Features are built whole: no arbitrary splitting, deferral, or delay](0018-ban-autonomous-agent-issue-splitting-and-deferrals.md) — *grounded in the VARA Phase-3-never-built incident; completeness is an invariant, not an authorizable scope; complements wire-walk*
 
 ## References
 

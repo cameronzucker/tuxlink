@@ -1,4 +1,4 @@
-# 18. Ban autonomous agent bd-issue splitting and phase deferrals
+# 18. Features are built whole: no arbitrary splitting, deferral, or delay
 
 Date: 2026-07-09
 Status: Accepted
@@ -16,44 +16,44 @@ The VARA module shipped **2026-06-01** (`1f6c3ef1 feat(modem/vara): wire VARA TC
 
 `wire-walk` — the `build-robust-features` final gate that forces walking a feature's flow end-to-end to a real, user-reachable outcome — was added on **2026-06-13** (`2a29084`, cz-agent-skills), twelve days *after* the VARA gap was created. It is the process guard against precisely this failure, but it postdates the gap, and because Phase 3 was never picked up as ready work, no subsequent `build-robust-features` cycle re-walked the flow to catch that the load-bearing half was still missing.
 
-The root enabler is not the missing code; it is the **autonomous split-and-defer**. An agent, on its own initiative, carved a single user-facing capability ("connect to a Winlink station over VARA") into phases, shipped the inert phase, and deferred the load-bearing phase — with no operator decision that the deferral was acceptable, and no forcing function that ever brought the deferred phase back.
+The root enabler is the **arbitrary split-and-defer**: a single user-facing capability ("connect to a Winlink station over VARA and move a message") was carved into phases, the inert phase shipped, and the load-bearing phase deferred. A first draft of this ADR tried to fix that by requiring the agent to *escalate the split for operator authorization* — which is itself defective: it relocates the deferral behind a sign-off instead of forbidding it. The correct rule is that the feature is not split at all.
 
 ## Decision
 
-**Autonomous agents are banned from splitting a unit of work and from deferring any part of a feature's load-bearing, user-reachable flow.** Specifically:
+**A feature — a complete, user-reachable capability — is built and shipped whole. It MUST NOT be arbitrarily split into phases or slices, deferred, or delayed.**
 
-1. An agent MUST NOT, on its own initiative, split a bd issue into sub-issues/phases in order to ship part of it and defer the rest. Decomposition of genuinely large work is legitimate — but the decision to decompose, and the decision about what may be deferred, belong to the **operator**, not the agent.
+1. An agent MUST NOT carve a single feature into a shippable inert slice plus a deferred remainder. "Phase 2 now, Phase 3 later," "wire the transport now, add connect later," "happy path now, the part that reaches the user later" — all banned. The feature is not split; it is completed.
 
-2. An agent MUST NOT ship a feature whose core flow is a stub ("Phase N", "wire the transport now, add connect later", "happy path now, error handling later" *when the happy path itself doesn't reach the user's outcome*). A feature is **done** only when it has been wire-walked end-to-end to the real, user-reachable outcome. Opening a socket and completing a handshake is not "the feature, phased" — it is scaffolding.
+2. A feature is **done** only when it has been wire-walked end-to-end to its real, user-reachable outcome. Opening a socket and completing a handshake is not "the feature, phased" — it is scaffolding, and scaffolding does not ship as a feature.
 
-3. When an agent judges a unit too large to build whole in one pass, it MUST **escalate to the operator** with the proposed split and an explicit statement of what would be deferred and why — and wait for the operator to authorize it. The agent proposes; the operator disposes. Silent scope reduction to fit a context or time budget is the banned act.
+3. **There is no authorization escape hatch.** This ADR does not create a path where an agent proposes a split and someone signs off on shipping the stub. Because the feature is not split, there is nothing to authorize. Completeness is an invariant, not negotiable scope — for the agent *or* the operator-in-a-hurry.
 
-4. Operator-authorized deferrals are recorded where the deferral is visible: the bd issue that ships the partial work states, in its body, "operator authorized deferring X to <tracked issue>," and the deferred work is a `bd create`d issue linked by a `bd dep` edge — never an implicit "later" living only in a code comment or a phase label.
+4. If a feature is genuinely too large to finish in the available effort, it is **not done** — it does not ship, and it is not parked half-built and labelled "delayed." It stays in progress until it is whole. "Not finished yet" is an honest state; "shipped a working-looking stub" is the banned one. Working a feature across multiple sessions until it is whole is completion, not delay; shipping part of it and moving on is the violation.
 
-The distinction the ban draws: **decomposing large work with operator sign-off is fine; an agent unilaterally shipping an inert slice and deferring the part that makes it work is not.** "Phase" labels on a code path that never reaches the user's outcome are the anti-pattern this ADR names.
+Distinct, independently-complete capabilities are separate features, each built whole — that is not "splitting." What is banned is taking one feature and shipping part of it while the load-bearing part is deferred or delayed.
 
 ## Consequences
 
-- Agents can no longer absorb "this is bigger than I can finish cleanly" by silently shipping a slice and moving on. They must escalate. This costs velocity in the moment and is the intended trade: a slower "I can't finish this whole tonight — here's the split I propose" beats a fast green stub that reads as shipped.
+- An agent can no longer discharge "this is bigger than I can finish cleanly" by shipping a green-looking slice and moving on. The only honest outcomes are *finished-and-whole* or *still-in-progress*. There is no third state that looks shipped but isn't.
 - Reinforces, at the ADR layer, rules already stated as memory/feedback: features shipped end-to-end (user-reachable, not component-complete); no smoke-gate on unwired features; "alpha = vettedness, not built-ness"; no incomplete/internal refs in shipped features. This ADR is the canonical source; those are its downstream expressions.
-- Complements, does not replace, `wire-walk`. `wire-walk` catches an un-walked flow *when a `build-robust-features` cycle runs on it*. A deferred phase that nobody returns to never triggers `wire-walk` — which is exactly how VARA slipped. This ban removes the deferral that creates the un-revisited stub in the first place; `wire-walk` is the gate for the work that does get built.
-- Enforcement is primarily behavioral (CLAUDE.md/AGENTS.md rule + operator vigilance + review), not a single hook. Splitting is a judgment call — a blanket hook denying agent-authored `bd create` of child issues would also block legitimate operator-directed decomposition. A lint/CI audit MAY be added later to flag agent-authored issue splits that lack a recorded operator authorization, and to flag PRs that ship a code path labeled "Phase N" / "stub" / "TODO: connect" on a user-facing flow (filed as a follow-up, not a blocker for this ADR).
+- Complements, does not replace, `wire-walk`. `wire-walk` catches an un-walked flow *when a `build-robust-features` cycle runs on it*. A deferred phase that nobody returns to never triggers `wire-walk` — which is exactly how VARA slipped. This ADR removes the split-and-defer that creates the un-revisited stub in the first place; `wire-walk` is the gate for the work as it is built whole.
+- Enforcement is primarily behavioral (CLAUDE.md/AGENTS.md rule + review + `wire-walk`), backed by an optional lint/CI audit that flags a shipped code path labelled "Phase N" / "stub" / "TODO: connect" on a user-facing flow, and a diff that ships a modem/transport whose corresponding connect/transmit path is absent. Filed as a follow-up, not a blocker for this ADR.
 - The CLAUDE.md propagation contract permits ONE operational-doc pointer to this ADR; CLAUDE.md gets it, and the AGENTS.md parity check covers the non-Claude-agent surface (Codex CLI, etc.) in the same change.
 
 ## Alternatives considered
 
 ### A. Rely on `wire-walk` alone
 
-`wire-walk` already exists as the `build-robust-features` final gate and would catch an un-walked flow. **Rejected as sufficient:** it only fires when a `build-robust-features` cycle runs on the feature. A phase deferred and never picked back up never triggers the gate — precisely the VARA failure. The gate guards the work that gets built; this ADR guards against the work quietly not getting built. Both are needed.
+`wire-walk` already exists as the `build-robust-features` final gate and would catch an un-walked flow. **Rejected as sufficient:** it only fires when a `build-robust-features` cycle runs on the feature. A phase deferred and never picked back up never triggers the gate — precisely the VARA failure. Both are needed: this ADR forbids the deferral; `wire-walk` gates the work as built.
 
-### B. Allow splitting, require a tracked blocking issue for the deferred phase
+### B. Allow splitting, require a tracked / operator-authorized deferral for the remainder
 
-Permit agents to split freely as long as the deferred phase gets a `bd create`d, dep-linked issue. **Rejected as the primary rule:** a tracked deferral still ships a non-functional feature to users in the interim, which is the harm; and tracking issues rot into an un-surfaced backlog. Tracking is *required* for operator-authorized deferrals (Decision §4) but is not a license for agents to self-authorize the split.
+Permit the agent to split as long as the deferred remainder gets a tracked, signed-off bd issue. **Rejected — this was the first draft's defect.** A tracked or authorized deferral still ships a non-functional feature to users in the interim, which is the whole harm; and an authorization step trains agents to seek permission to ship stubs rather than to finish. Completeness is the invariant; there is no sign-off that converts a stub into a shipped feature.
 
 ### C. Hook-enforce: deny agent-authored child `bd create`
 
-A `bd` hook could refuse issue creation that splits a parent when the author is an agent. **Rejected:** decomposition is often the right, operator-directed move for genuinely large work; a hard denial would block legitimate splits and push agents toward worse workarounds. Operator authorization surfaced in the issue body — auditable, not hard-blocked — is the proportionate control. A soft CI audit (Consequences, above) is the enforcement lift if the behavioral rule proves insufficient.
+A `bd` hook could refuse issue creation that splits a parent. **Rejected:** genuinely distinct features legitimately get their own issues, and a hard denial would push agents toward worse workarounds. The invariant to enforce is "no stub ships as a feature," which is caught at the diff/`wire-walk` layer, not at issue-creation time. A soft CI audit (Consequences) is the enforcement lift if the behavioral rule proves insufficient.
 
-### D. Narrow the ban to "no shipping stubs," leave splitting unrestricted
+### D. Narrow the ban to "no shipping stubs," say nothing about splitting
 
-Ban only the shipping of inert slices; say nothing about splitting. **Rejected:** the split is the upstream act that produces the shippable stub. Naming only the downstream symptom (the stub) invites the same failure via "I split it and shipped Phase 2, which passes tests." The ban has to reach the autonomous *decision to split and defer*, which is where operator judgment is required.
+Ban only the shipping of inert slices. **Rejected:** the arbitrary split is the upstream act that produces the shippable stub. But note this ADR's decision effectively subsumes the concern — because a feature is built whole, an arbitrary split that produces a shippable slice can't occur without producing a bannable stub. The decision names both the split and the stub so neither reading offers an escape.
