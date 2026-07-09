@@ -5466,7 +5466,7 @@ pub(crate) async fn ardop_listen_inner(
         format!(
             "ARDOP listener armed {window_desc} (consent uuid {}). \
              Modem is in LISTEN TRUE; waiting for inbound peers…",
-            &arms.consent_uuid
+            arms.consent_uuid
         ),
     );
     Ok(())
@@ -6255,7 +6255,7 @@ pub(crate) async fn arm_vara_listener_inner(
         format!(
             "VARA listener armed for {mins} min (consent uuid {}). \
              Modem is in LISTEN ON; waiting for inbound peers…",
-            &arms.consent_uuid
+            arms.consent_uuid
         ),
     );
     Ok(())
