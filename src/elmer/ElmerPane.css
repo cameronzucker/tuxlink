@@ -1400,6 +1400,11 @@
  * to a bounded (~10-line) scrolling body. Replaces the old bubble + indicator. */
 .elmer-stream-card {
   align-self: stretch;
+  /* Do NOT let the flex column crush the card. Its child is a display:flex
+   * <button> whose min-content height computes to ~0, so with the default
+   * flex-shrink:1 the flex algorithm collapses the card to its border (a "gray
+   * line") once .elmer-messages overflows with a long agentic transcript. */
+  flex: 0 0 auto;
   border: 1px solid var(--border-strong, var(--border));
   border-radius: 9px;
   background: var(--surface-2);
@@ -1452,14 +1457,18 @@
   white-space: nowrap;
 }
 .elmer-stream-tokens {
-  color: var(--accent-teal);
+  /* --accent-teal is defined in no theme; fall back to the defined --accent so
+   * the live token count is not left inheriting the dim metrics color. */
+  color: var(--accent-teal, var(--accent));
 }
 .elmer-stream-body {
   max-height: 210px; /* ~10 lines — tuxlink-06v9s bounded box */
   overflow-y: auto;
   padding: 10px 12px;
   border-top: 1px solid var(--border);
-  background: var(--bg-dim, var(--surface-1));
+  /* --bg-dim and --surface-1 are both undefined; keep a literal final fallback
+   * so the expanded body never resolves to an invalid background. */
+  background: var(--bg-dim, var(--surface-1, #0c1017));
   color: var(--text);
   font-size: 12px;
   line-height: 1.55;
