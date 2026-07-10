@@ -102,7 +102,7 @@ pub enum GatewayAntenna {
 #[serde(rename_all = "camelCase")]
 pub struct Gateway {
     pub channel: String,            // "8P6BWS.WINLINK"
-    pub callsign: String,           // "8P6BWS" (channel before the first '.'/'-')
+    pub callsign: String,           // "8P6BWS" / "KB2PCN-5" (channel before the first '.'; SSID preserved)
     pub sysop_name: Option<String>, // None when "-"
     pub grid: Option<String>,       // "GK03ED"
     pub location: Option<String>,   // "BRIDGESTOWN, -"
@@ -248,9 +248,12 @@ fn parse_header_line(line: &str) -> Option<Gateway> {
     if !looks_like_channel(&channel) {
         return None;
     }
-    // Empty-callsign guard: a channel of "." / "-" would yield an empty callsign — drop it.
+    // The '-' in a channel token is the SSID separator, and the SSID is part of
+    // the dialable callsign — KB2PCN-5.WINLINK answers a ConReq only as KB2PCN-5
+    // (tuxlink-gbb05). Split on '.' alone so the suffix (.WINLINK / .RMS.PACKET)
+    // drops and the SSID survives. Empty-callsign guard kept for defense.
     let callsign = channel
-        .split(['.', '-'])
+        .split('.')
         .next()
         .filter(|s| !s.is_empty())?
         .to_string();
@@ -408,6 +411,38 @@ mod tests {
     }
 
     #[test]
+    fn ssid_channel_keeps_ssid_in_callsign() {
+        // KB2PCN-5.WINLINK is a real production channel token (2026-07-09 on-air
+        // campaign, tuxlink-gbb05): VARA answers only a ConReq addressed to its
+        // configured MYCALL, which is the SSID'd form. Stripping the SSID dialed
+        // "KB2PCN" — a station that does not exist on the air.
+        let body = "WINLINK VARA CHANNEL LISTING - (Monday, June 8, 2026 03:42 UTC)\r\n\
+                    Channel, Sysop Name / Callsign, [Grid], (last update)\r\n\
+                    \r\n\
+                    KB2PCN-5.WINLINK, Joe Sysop/KB2PCN, [FN13: Rochester, NY], (Sat, 06 Jun 2026 08:47:00 GMT)\r\n   \
+                    -  14108.0\r\n";
+        let listing = parse_listing(body, ListingMode::VaraHf);
+        assert_eq!(listing.gateways.len(), 1);
+        let g = &listing.gateways[0];
+        assert_eq!(g.channel, "KB2PCN-5.WINLINK");
+        assert_eq!(g.callsign, "KB2PCN-5");
+    }
+
+    #[test]
+    fn bare_dash_channel_form_keeps_full_callsign() {
+        // The channel grammar (looks_like_channel) also admits `CALL-SSID` with
+        // no dotted suffix; the whole token is the dialable callsign.
+        let body = "WINLINK VARA CHANNEL LISTING - (Monday, June 8, 2026 03:42 UTC)\r\n\
+                    Channel, Sysop Name / Callsign, [Grid], (last update)\r\n\
+                    \r\n\
+                    NS7K-10, Sam Sysop/NS7K, [DN06: Umatilla, OR], (Sat, 06 Jun 2026 08:47:00 GMT)\r\n   \
+                    -  14104.9\r\n";
+        let listing = parse_listing(body, ListingMode::VaraHf);
+        assert_eq!(listing.gateways.len(), 1);
+        assert_eq!(listing.gateways[0].callsign, "NS7K-10");
+    }
+
+    #[test]
     fn unknown_sysop_name_dash_becomes_none() {
         let listing = parse_listing(&one_station("-/AI4Y"), ListingMode::ArdopHf);
         assert_eq!(listing.gateways[0].sysop_name, None);
@@ -510,7 +545,9 @@ mod tests {
         let listing = parse_listing(body, ListingMode::Packet);
         assert!(listing.parsed_ok);
         assert_eq!(listing.gateways[0].sysop_name.as_deref(), Some("André"));
-        assert_eq!(listing.gateways[0].callsign, "PI1ZTM");
+        // The AX.25 gateway answers as PI1ZTM-12 (its link-layer address) —
+        // the SSID is part of the dialable callsign (tuxlink-gbb05).
+        assert_eq!(listing.gateways[0].callsign, "PI1ZTM-12");
         // 144.925 is a VHF packet dial given by Winlink in MHz; normalized to kHz.
         assert_eq!(listing.gateways[0].frequencies_khz, vec![144925.0]);
     }
