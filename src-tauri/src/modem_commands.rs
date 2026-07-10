@@ -1740,6 +1740,7 @@ pub async fn modem_ardop_b2f_exchange(
 /// CONNECT-class failure (the ARQ link never came up — terminal, free the
 /// modem) from a mid-EXCHANGE failure (the link was up — keep the open session
 /// for retry). The caller, [`finish_b2f_exchange`], branches cleanup on it.
+#[derive(Debug)]
 enum ExchangeOutcome {
     /// `connect_arq` + the full B2F exchange completed.
     Completed,
