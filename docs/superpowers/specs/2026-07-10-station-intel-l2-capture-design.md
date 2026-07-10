@@ -1,11 +1,13 @@
 # Station Intelligence L2 — live audio capture + slot-timing decode service
 
-Status: v3 — hardened against adversarial rounds 1–4 (R1 audio/DSP/timing,
-R2 concurrency/lifecycle, R3 product/contract: 10 P1 + 11 P2 + 12 P3; R4
-Codex cross-artifact/implementability: 4 P1 + 7 P2 — all dispositioned; raw
-reports local-only under `dev/adversarial/`, consolidated at
+Status: v4 — REVIEWED. Five adversarial rounds applied 2026-07-10
+(R1 audio/DSP/timing, R2 concurrency/lifecycle, R3 product/contract, R4
+Codex cross-artifact/implementability, R5 fresh-eyes holistic; totals
+16 P1 + 23 P2 + 20 P3, all dispositioned; raw reports local-only under
+`dev/adversarial/`, consolidated dispositions at
 `dev/adversarial/2026-07-10-station-intel-l2-r1-r3-consolidated.md` +
-`…-r4-codex.md`). Round 5 (fresh-eyes) pending. Session: esker-sorrel-redwood.
+`…-r4-codex.md`; R5's lifecycle cluster resolved by the §Lifecycle
+ownership consolidation). Session: esker-sorrel-redwood.
 Issue: tuxlink-b026z.3 (epic tuxlink-b026z). Consumes: tuxlink-jt9 (L1,
 shipped PR #1070). Resolves: tuxlink-gujnz (salvage-on-signal), dispositions
 tuxlink-b026z.8 (grandchild pipe-holder leak bound).
@@ -362,16 +364,52 @@ consumers (decoder, waterfall, ring), all downstream of the decimator"
   via shared atomics incremented on the decode thread. (Neither worker
   thread can host these duties: capture is joined while yielded — precisely
   when the resume poll must run — and decode parks in `recv`.)
-- **Stop protocol:** set abort → join capture (bounded 2 s via
-  `is_finished()` poll; PCM closed on drop) → **drop the capture-side
-  `Sender`** (the decode thread's `recv` returns `Disconnected` — race-free;
-  no stop sentinel exists in this design) → join decode (bounded 16 s,
-  covering 14 s worst-case decode) → join supervisor (1 s). A join-bound
-  overrun force-detaches with a warning AND transitions the service to
-  **`blocked(capture-wedged)`** — a detached thread may still hold the PCM,
-  so the state must say "this process can no longer arbitrate the card"
-  rather than masquerade as self-healing `yielded`. Recovery from
-  capture-wedged is app restart; the snapshot names it.
+### Lifecycle ownership (single-owner rules; every axis transition has one writer)
+
+| Action | Runs on | Threads alive after |
+|---|---|---|
+| start / autostart | `ft8_listener_start` handler (`spawn_blocking`) spawns the supervisor from `stopped` ONLY; **idempotent** — with a live supervisor it signals a sequence re-run instead (no runner reconstruction unless the device changed) | supervisor (+ capture + decode once `listening`) |
+| stop | `ft8_listener_stop` handler (`spawn_blocking`) | none |
+| pause (yield) | modem spawn path (`spawn_blocking` — pinned contract) | supervisor + decode (capture joined) |
+| resume / device-absent retry | supervisor tick | supervisor + capture + decode |
+
+- **Threads per state:** `stopped` — none (and `pause_for_modem` from
+  `stopped` returns `Ok(())` immediately: no latch, no state change — a
+  system that never enabled FT8 must never acquire phantom listener state).
+  `blocked(*)` — supervisor only. `starting` — supervisor (executing the
+  sequence; the PCM, if open, is held BY the supervisor until step 8 hands
+  it to capture). `yielded` — supervisor + decode (parked in `recv`).
+  `listening` — all three.
+- **The decode thread and the channel survive yield and device loss.** The
+  master `SyncSender` lives in `Ft8ListenerState` and is cloned into each
+  capture thread; only `stop()` drops the master (decode's `recv` returns
+  `Disconnected` — race-free; no stop sentinel exists in this design).
+  **Resume and device-absent recovery re-run steps 1–7 and then spawn the
+  capture thread only** (step 8′) — never a second decode thread or
+  supervisor. (Including step 1 keeps jt9 discovery at "start + resume
+  only", the delta's pinned probe timing.) Prewarm is skipped on resume
+  (once per runner construction).
+- **Stop protocol:** set stop-request (checked by the start sequence
+  between every step, same points as the yield check) + abort → join
+  capture if present (bounded 2 s via `is_finished()` poll; PCM closed on
+  drop) → drop the master `Sender` → join decode if present (bounded 16 s,
+  covering 14 s worst-case decode) → join supervisor (bounded 16 s — the
+  supervisor may be inside an unabortable start step: prewarm is a blocking
+  `decode_slot`; its tick sleep is abort-interruptible, `park_timeout`).
+  Absent handles (already `take()`n by pause, or never spawned in a blocked
+  state) are skipped, not errors. A join-bound overrun force-detaches with
+  a warning AND transitions to **`blocked(capture-wedged)`** — a detached
+  thread may still hold the PCM, so the state must say "this process can no
+  longer arbitrate the card" rather than masquerade as self-healing
+  `yielded`. Recovery from capture-wedged is app restart; the snapshot
+  names it.
+- **Axis writers:** pause writes `yielded`; the supervisor writes every
+  other transition; the yield/stop request flags only tell the supervisor
+  to abandon its sequence — they never write the axis themselves.
+- **Supervisor cadences count slot BOUNDARIES (capture-side atomic), not
+  decoded slots** — dropped/discarded slots never reach the decode thread,
+  and the clock re-probe + pipe watermark must not freeze during exactly
+  the degraded streaks they exist to observe.
 
 ### Lock discipline (pinned)
 
@@ -430,8 +468,11 @@ decode of a stale slot.
   counts consecutive non-`Decoded`/non-`BandDead` outcomes; a clean
   zero-decode exit is a good slot).
 - **k (band-dead phase):** incremented by `BandDead`, reset by `Decoded`.
-  `Failed(_)` slots neither increment nor reset k (a failure is not evidence
-  of a quiet band). k resets on band change (QSY) and on resume.
+  `Failed(_)` slots and all `Dropped*` outcomes neither increment nor reset
+  k (neither failure nor a dropped slot is evidence about band quietness).
+  k resets on band change (QSY) and on resume. Slot-phase-from-ring-recency
+  treats `Dropped*`/`Discarded` records the same way: they are not evidence
+  toward `decoded` or `band-dead`; the phase holds its last value.
 - **Scheduled discards count toward NEITHER counter:** the partial first
   slot after start/resume, the QSY transition slot, and clock-anomaly
   abandonments. These are policy, not failures; folding them into N would
@@ -577,19 +618,35 @@ Called from every modem path that will open the audio device
   ardopcf/Dire Wolf only; this spec states the VARA exception rather than
   claiming uniform coverage.
 
-Sequence (under the arbiter lock): cancel/await any in-flight rig session →
-**latch the hold unconditionally** (even when the service holds no PCM yet:
-during start steps 1–6 the card is free, but without a latch FT8's own
-steps 7–8 could grab it after the modem passed its probe and before the
-modem's open — the latch closes that window; the hook shares the service
-state mutex and acts in EVERY `starting` sub-step) → if the service holds
-the PCM (states `listening`, or `starting` past its ALSA-open step): abort
-capture → join (bounded 2 s, `is_finished()` poll) → PCM closed by drop; if
-the service is mid-start pre-open: set a yield-request flag the start
-sequence checks between every step (converting the start to `yielded` at
-its next check) → set `yielded(device-busy)` →
-`confirm_audio_device_released(pcm_device_path, ..)` (`process.rs:286`)
-against `/dev/snd/pcmC<card>D<dev>c` → `Ok(())`.
+Sequence (under the arbiter lock), by service axis:
+
+- **`stopped`:** return `Ok(())` immediately — no latch, no state change
+  (P1 of round 5: pause fires on EVERY modem spawn, including systems that
+  never enabled FT8; those must acquire no phantom listener state).
+- **`blocked(*)`:** latch the hold (the latch is a lazily-evaluated
+  timestamp in the arbiter — it needs no supervisor to expire) but leave
+  the blocked axis and reason untouched; return `Ok(())`.
+- **`listening`:** cancel/await any in-flight rig session → latch → abort
+  capture → join (bounded 2 s, `is_finished()` poll) → PCM closed by the
+  capture thread's drop → write `yielded(device-busy)` (pause is this
+  transition's single writer) →
+  `confirm_audio_device_released(pcm_device_path, ..)` (`process.rs:286`)
+  against `/dev/snd/pcmC<card>D<dev>c` → `Ok(())`.
+- **`starting` (any sub-step):** cancel/await any in-flight rig session →
+  latch → set the yield-request flag → write `yielded(device-busy)`. There
+  is never a capture thread to join during `starting` (it is spawned only
+  at step 8, which transitions to `listening`); if the supervisor is past
+  step 7 it holds the PCM itself, and its between-step flag check **drops
+  the PCM before abandoning the sequence** (the flag never writes the
+  axis — pause already did). The trailing
+  `confirm_audio_device_released` poll absorbs the milliseconds until that
+  drop lands; steps 4–5 (the multi-second ones) hold no PCM, so pause
+  never waits on them. → `Ok(())`.
+
+`confirm_audio_device_released` timing out (something else still holds the
+device path) returns `Err(PauseError::ReleaseTimeout)`; the modem seam
+surfaces it as the same device-busy-class error as `CaptureWedged` and does
+not proceed to a doomed spawn.
 
 Join timeout (wedged capture thread — a hung USB device can park even the
 wait-loop): transition to `blocked(capture-wedged)`, return
@@ -621,18 +678,24 @@ While `yielded`, each 5 s tick resumes capture when ALL hold:
    yielded forever; `Idle` (listen-only, ardopcf holds the card) remains
    active).
 
-Resume re-runs start steps 2–8 (§Start sequence) — device re-resolve,
-re-probe, re-open; prewarm is skipped (runner already constructed). FT8
-start while a modem is active lands in `yielded` via its busy probe and
-auto-resumes later — safe and self-healing.
+Resume re-runs start steps 1–7 and spawns the capture thread only (step 8′,
+§Lifecycle ownership — the decode thread and channel survive the yield;
+prewarm is skipped, runner already constructed; step 1 keeps jt9 discovery
+at the delta's pinned "start + resume only" timing). Device-absent recovery
+uses the identical path. FT8 start while a modem is active lands in
+`yielded` via its busy probe and auto-resumes later — safe and
+self-healing.
 
 ## Clock probe
 
 - `ClockProbe` production impl: subprocess
   `timedatectl show -p NTPSynchronized --value` (bounded 2 s, kill on
-  overrun), parsed `yes`/`no`. Daemon-agnostic (chrony and timesyncd both
-  drive the kernel sync flag it reports); no new crate dependency (zbus
-  stays transitive).
+  overrun), parsed `yes`/`no`. This implements the delta's pinned
+  `org.freedesktop.timedate1 NTPSynchronized` property via the timedatectl
+  transport instead of a direct D-Bus client — same property, daemon-
+  agnostic (chrony and timesyncd both drive it), no new crate dependency
+  (zbus stays transitive); transport choice operator-reviewed (decision
+  list item 3).
 - `Unknown` (binary missing / timeout / unparseable): flag NOT set; a
   startup log records that clock sync is unverifiable. A false "decode
   unreliable" warning on every non-systemd system is worse than a missing
@@ -745,7 +808,9 @@ Ft8Snapshot {
   n_consecutive: u8, k_consecutive: u8,       // live counter values
   last_slot_utc_ms: Option<u64>,
   last_failure: Option<String>,               // most recent diagnostic
-  available_devices: Option<Vec<AudioDeviceChoice>>, // when device==None
+  available_devices: Option<Vec<AudioDeviceChoice>>,
+      // present when device==None OR blocked(device-absent |
+      // needs-device-selection) — §Device selection is the one rule
   ring_tail: Vec<SlotRecord>,                 // bounded page
 }
 ```
@@ -812,6 +877,9 @@ checked between every step (§Arbitration).
 5. CAT presence (`Config.rig`) → `cat-fixed-band` flag if absent; else the
    one arbiter-owned start rig session (§Hold-band).
 6. busy probe (`probe_device_busy`) — busy → `yielded(device-busy)`.
+   **The hold latch is consulted here too: latched ⇒ treated as busy** (a
+   fresh start command landing inside a pause-to-modem-open window must not
+   steal the card the latch is protecting).
 7. ALSA open (`hw:`) — `EBUSY` → `yielded`; absent-class →
    `blocked(device-absent)`; param rejection →
    `blocked(unsupported-sample-rate)`.
@@ -852,7 +920,12 @@ command-gated (`set_device`, config change, or `ft8_listener_start` retry);
   re-arm on resume, never-fires-while-yielded); device loss mid-run →
   `blocked(device-absent)` → supervisor recovery; `stop()` during in-flight
   decode (no force-detach); snapshot field completeness (every §Snapshot
-  field asserted); config command validation + writer-mutex serialization.
+  field asserted); config command validation + writer-mutex serialization;
+  hold-latch positive clear on observed card-busy (not only the TTL path);
+  pipe-fd watermark trip (fake /proc reader); autostart with
+  `enabled = true, device = None` lands `blocked(needs-device-selection)`;
+  pause from `stopped` is a stateless no-op; stop during `starting` (mid-
+  prewarm fake) completes without capture-wedged.
 - **E2E (CI, real jt9, both arches):** upsample a committed 12 kHz SDR
   fixture to 48 kHz by 4× sample repetition, feed through
   `SampleSource`-faked capture (synthetic time driving slot boundaries —
