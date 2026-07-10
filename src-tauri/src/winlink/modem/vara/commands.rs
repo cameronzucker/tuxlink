@@ -1803,14 +1803,14 @@ pub fn vara_open_session_inner(
         .lock()
         .map_err(|e| format!("session lock poisoned: {e}"))?;
 
-    // Re-validate: if another open won the race and installed a transport (or
-    // took ownership) while we were unlocked, ABORT this open. Dropping the
-    // local `transport` on return FINs its sockets, and we must NOT clobber
-    // the winner's state. The `Connecting` fast-reject in Phase 1 makes a
-    // second *connect* rare, but the mutex only serializes the two
-    // re-acquisitions — whichever re-acquires first stashes, the loser aborts
-    // here — so this check is what actually preserves the no-double-install
-    // invariant.
+    // Re-validate the double-open invariant (amendment c step 4). The
+    // load-bearing guard is Phase 1's `Connecting` fast-reject: it holds for
+    // the whole open, including the unlocked gate window, so a second open
+    // cannot reach this point while this one is in flight. This re-check is
+    // defensive belt-and-suspenders — if some future path installs a
+    // transport or takes ownership during the gate window anyway, ABORT this
+    // open (dropping the local `transport` on return FINs its sockets) rather
+    // than clobbering that state.
     if guard.transport.is_some() || guard.transport_owner != TransportOwner::None {
         return Err(
             "VARA session already started during readiness gate — aborting redundant open".into(),
@@ -2099,9 +2099,11 @@ pub(crate) enum Readiness {
 /// [`vara_open_session_inner`]); dials never re-wait — `REGISTERED` does not
 /// repeat per dial [R3-2].
 ///
-/// **Fails OPEN:** `t_max` expiry returns [`Readiness::Unconfirmed`], never an
-/// error. The gate only READS the cmd socket — it never keys TX — so a
-/// concurrent close/abort during the (unlocked) gate window is harmless
+/// **Fails OPEN:** `t_max` expiry — or a mid-gate cmd-socket close (peer FIN,
+/// detected via the EOF-distinguishing read so a dead socket exits promptly
+/// instead of spinning to the ceiling) — returns [`Readiness::Unconfirmed`],
+/// never an error. The gate only READS the cmd socket — it never keys TX — so
+/// a concurrent close/abort during the (unlocked) gate window is harmless
 /// (RADIO-1).
 ///
 /// Bounds each poll at [`VARA_READY_POLL`] regardless of the transport's
@@ -2128,35 +2130,59 @@ pub(crate) fn wait_for_readiness(
 
 /// Inner poll loop for [`wait_for_readiness`], factored out so the caller can
 /// restore the transport's `read_timeout` on every exit path.
+///
+/// Reads via [`VaraTransport::recv_line_distinguishing_eof`] rather than
+/// `recv` (task-review fix): `recv` folds a peer FIN into the same `Ok(None)`
+/// as an idle timeout, and a FIN'd socket returns `Ok(0)` IMMEDIATELY on every
+/// subsequent read — the loop would hot-spin a core at 100% until `t_max`
+/// (up to 5 s) on the executor thread. The EOF-distinguishing read lets a
+/// mid-gate socket close break out promptly: fail OPEN (`Unconfirmed`, same
+/// outcome as `t_max` expiry), still honoring the `t_min` settle.
 fn poll_for_readiness(
     transport: &mut VaraTransport,
     t_min: Duration,
     t_max: Duration,
 ) -> Readiness {
     use super::command::InboundCommand;
+    use super::transport::RecvOutcome;
 
     let start = std::time::Instant::now();
+    // The T_min settle floor is honored on EVERY early exit — token arrival
+    // AND mid-gate FIN — so a modem restarting underneath the open can never
+    // re-arm the 464 ms m9kcd race [R3-2].
+    let settle_to_floor = |outcome: Readiness| {
+        let settle = t_min.saturating_sub(start.elapsed());
+        if !settle.is_zero() {
+            std::thread::sleep(settle);
+        }
+        outcome
+    };
     loop {
         if start.elapsed() >= t_max {
             return Readiness::Unconfirmed; // fail OPEN — caller logs + proceeds
         }
-        match transport.recv() {
-            Ok(Some(InboundCommand::Registered(_)))
-            | Ok(Some(InboundCommand::LinkRegistered)) => {
-                // Honor the settle floor even when the token arrived early.
-                let settle = t_min.saturating_sub(start.elapsed());
-                if !settle.is_zero() {
-                    std::thread::sleep(settle);
-                }
-                return Readiness::Confirmed;
+        match transport.recv_line_distinguishing_eof() {
+            RecvOutcome::Line(InboundCommand::Registered(_))
+            | RecvOutcome::Line(InboundCommand::LinkRegistered) => {
+                return settle_to_floor(Readiness::Confirmed);
             }
-            // Absorb IAMALIVE / BUFFER / setter echoes / timeouts / EOF and
-            // keep polling to t_max. `recv` folds a peer FIN into `Ok(None)`
-            // too — that is fine: a modem that closes the cmd socket during
-            // the gate is unconfirmed, and the caller fails open.
-            Ok(_) => {}
-            Err(_) => {
-                // Socket hiccup: never wedge — brief backoff, poll to t_max.
+            // Absorb IAMALIVE / BUFFER / setter echoes / Unknown lines and
+            // keep polling to t_max.
+            RecvOutcome::Line(_) => {}
+            // Idle tick: the bounded VARA_READY_POLL read timed out with
+            // nothing buffered — socket open, peer quiet, keep polling.
+            RecvOutcome::Idle => {}
+            // Peer FIN mid-gate: the socket is dead and every further read
+            // returns instantly — polling to t_max would spin a core for
+            // nothing. Fail OPEN now (same outcome as t_max expiry); the
+            // open path proceeds and downstream I/O surfaces the dead
+            // transport through its normal error handling.
+            RecvOutcome::Eof => {
+                return settle_to_floor(Readiness::Unconfirmed);
+            }
+            RecvOutcome::Err(_) => {
+                // Hard I/O error (timeouts are Idle, not Err): never wedge,
+                // never spin — brief backoff, keep polling to t_max.
                 std::thread::sleep(Duration::from_millis(50));
             }
         }
@@ -4283,6 +4309,38 @@ mod tests {
         assert!(
             start.elapsed() < Duration::from_millis(600) + Duration::from_millis(500),
             "gate must not fall back to the cmd read_timeout; elapsed {:?}",
+            start.elapsed()
+        );
+        drop(t);
+        ch.join().unwrap();
+        dh.join().unwrap();
+    }
+
+    #[test]
+    fn readiness_fails_open_promptly_on_mid_gate_socket_close() {
+        // Task-review fix: a modem that closes the cmd socket during the gate
+        // window must break the gate out promptly (fail OPEN, Unconfirmed) —
+        // not hot-spin instant `Ok(0)` reads until the t_max ceiling. The
+        // shared helper's cmd acceptor writes nothing and drops the socket
+        // after ~700ms, so the gate sees Idle ticks then a FIN well before
+        // t_max (5s). The t_min settle (900ms > the ~700ms FIN arrival) must
+        // still be honored on the early exit.
+        let (mut t, ch, dh) = scripted_cmd_vara_transport(b"");
+        let start = std::time::Instant::now();
+        let r = wait_for_readiness(
+            &mut t,
+            Duration::from_millis(900),
+            Duration::from_secs(5),
+        );
+        assert_eq!(r, Readiness::Unconfirmed, "mid-gate FIN fails open");
+        assert!(
+            start.elapsed() >= Duration::from_millis(900),
+            "settle floor must be honored even on the EOF early exit; elapsed {:?}",
+            start.elapsed()
+        );
+        assert!(
+            start.elapsed() < Duration::from_millis(2500),
+            "gate must exit promptly on EOF, not poll to the 5s ceiling; elapsed {:?}",
             start.elapsed()
         );
         drop(t);
