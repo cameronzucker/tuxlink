@@ -627,6 +627,13 @@ impl VaraSession {
     /// Send/Receive or listener re-arm runs without re-opening the
     /// session. The listener consumer's drain path passes `None`/`None`
     /// — it's tearing down the session, not preserving it.
+    // The `Err(VaraTransport)` is an ownership GIVE-BACK, not an error
+    // payload — the caller must receive the transport to drop it at the
+    // install site (see doc above). It crossed clippy's result_large_err
+    // 128-byte threshold when VaraConfig grew `data_read_timeout`
+    // (tuxlink-xzxk1); boxing a once-per-close-race hand-back would distort
+    // the API for no runtime benefit.
+    #[allow(clippy::result_large_err)]
     pub fn install_transport_if_generation_matches(
         &self,
         t: VaraTransport,
