@@ -1667,10 +1667,16 @@ pub fn vara_open_session_inner(
     intent: SessionIntent,
     transport_kind: TransportKind,
 ) -> Result<VaraStatus, String> {
-    // Acquire the lock for the duration of the open. We hold the lock across
-    // `VaraTransport::connect` (TCP connect, ~ms on localhost; bounded by
-    // the 5s connect_timeout) — calls from the UI side are serialized so a
-    // double-press on Start doesn't open two transports.
+    // ── Phase 1 (LOCKED): claim the open, connect, send the identity setters ─
+    // We hold the session lock across `VaraTransport::connect` (TCP connect,
+    // ~ms on localhost; bounded by the 5s connect_timeout) plus the quick
+    // MYCALL / BW setter writes, so a double-press on Start can't open two
+    // transports. The lock is then DROPPED for the readiness gate (amendment c
+    // / R3-F3): the gate can block up to `VARA_READY_T_MAX` (5s) reading the
+    // cmd socket, and holding the session lock across it would stall every
+    // status poll for the whole gate window. The double-open invariant is
+    // preserved by the `Connecting` fast-reject below (a racing open sees the
+    // in-flight state) PLUS the re-validation on re-acquire in Phase 3.
     let mut guard = session
         .inner
         .lock()
@@ -1683,12 +1689,24 @@ pub fn vara_open_session_inner(
     // session for the duration of that borrow) — the pre-fix check would
     // let a reopen race in during exactly that window, installing a second
     // transport while the first one is still owned elsewhere.
-    if guard.transport.is_some() || guard.transport_owner != TransportOwner::None {
+    //
+    // amendment c: ALSO reject while `status.state == Connecting`. This arm is
+    // load-bearing now that the readiness gate runs with the lock DROPPED —
+    // without it a second open racing the gate window would see
+    // `transport == None && transport_owner == None` and open a second socket
+    // underneath the first. The `Connecting` marker (set just below and left
+    // in place for the whole open, including the unlocked gate window) is the
+    // claim that fast-rejects that racer before it connects.
+    if guard.transport.is_some()
+        || guard.transport_owner != TransportOwner::None
+        || guard.status.state == VaraState::Connecting
+    {
         return Err("VARA session already started — call vara_close_session first".into());
     }
 
-    // Mark Connecting so any concurrent vara_status sees the in-flight state.
-    // (The lock prevents true concurrency on the start path itself.)
+    // Mark Connecting so any concurrent vara_status — and a racing open (the
+    // check above) — sees the in-flight state for the WHOLE open, including
+    // the unlocked readiness-gate window.
     guard.status = VaraStatus {
         state: VaraState::Connecting,
         last_error: None,
@@ -1749,6 +1767,62 @@ pub fn vara_open_session_inner(
             // not "fully configured."
             let _ = transport.send(&OutboundCommand::Bw(bw));
         }
+    }
+
+    // Snapshot the close-generation BEFORE dropping the lock so Phase 3 can
+    // detect a close that raced the unlocked readiness-gate window and abort
+    // THIS open rather than resurrecting a torn-down session (mirrors the
+    // worker install-back generation check, tuxlink-pdnw). Lock-free atomic
+    // load — safe to call while holding `guard`.
+    let open_gen = session.current_close_generation();
+
+    // ── DROP the lock for the readiness gate (amendment c step 2) ──────────
+    drop(guard);
+
+    // ── Phase 2 (UNLOCKED): readiness gate (amendment c step 3) ────────────
+    // Runs on the LOCAL `transport` with NO session lock held. Reads the cmd
+    // socket only (never keys TX — RADIO-1 safe) up to `VARA_READY_T_MAX`,
+    // always honoring the `VARA_READY_T_MIN` settle. Fails OPEN on expiry.
+    // (Task 4 will add the HF P2P session-type setter sends in this window.)
+    if wait_for_readiness(&mut transport, VARA_READY_T_MIN, VARA_READY_T_MAX)
+        == Readiness::Unconfirmed
+    {
+        tracing::warn!(
+            target: "tuxlink::winlink::modem::vara",
+            host = %ui_cfg.host,
+            cmd_port = ui_cfg.cmd_port,
+            "VARA: modem readiness unconfirmed (no REGISTERED within the readiness \
+             ceiling) — proceeding (fail-open)",
+        );
+    }
+
+    // ── Phase 3 (RE-LOCKED): re-validate the double-open invariant + stash ──
+    // (amendment c step 4)
+    let mut guard = session
+        .inner
+        .lock()
+        .map_err(|e| format!("session lock poisoned: {e}"))?;
+
+    // Re-validate: if another open won the race and installed a transport (or
+    // took ownership) while we were unlocked, ABORT this open. Dropping the
+    // local `transport` on return FINs its sockets, and we must NOT clobber
+    // the winner's state. The `Connecting` fast-reject in Phase 1 makes a
+    // second *connect* rare, but the mutex only serializes the two
+    // re-acquisitions — whichever re-acquires first stashes, the loser aborts
+    // here — so this check is what actually preserves the no-double-install
+    // invariant.
+    if guard.transport.is_some() || guard.transport_owner != TransportOwner::None {
+        return Err(
+            "VARA session already started during readiness gate — aborting redundant open".into(),
+        );
+    }
+
+    // Re-validate: a close that raced the gate window bumped the
+    // close-generation and already set the session Closed. Honor it — dropping
+    // the local `transport` on return FINs the sockets instead of resurrecting
+    // the session.
+    if session.current_close_generation() != open_gen {
+        return Err("VARA session closed during readiness gate — aborting open".into());
     }
 
     // Install the ABORT side-channel BEFORE stashing the transport so any
@@ -1988,6 +2062,105 @@ pub fn vara_stop_session_inner(
 #[tauri::command]
 pub fn vara_status(session: State<'_, std::sync::Arc<VaraSession>>) -> VaraStatus {
     session.snapshot()
+}
+
+/// Readiness-gate settle floor: always waited after transport open, whether
+/// or not a `REGISTERED` token arrives. Defeats the 464 ms m9kcd race where
+/// the first dial fires before the modem has finished coming up [R3-2].
+pub(crate) const VARA_READY_T_MIN: Duration = Duration::from_millis(600);
+
+/// Readiness-gate ceiling: on expiry the open proceeds with a warning
+/// (fail OPEN — anti-wedge posture per the ARDOP ARQTimeout lesson). An
+/// unregistered VARA that never emits `REGISTERED` is the common, fully
+/// functional case, so the ceiling must never harden into an error [R3-2].
+pub(crate) const VARA_READY_T_MAX: Duration = Duration::from_secs(5);
+
+/// Per-poll cmd-socket read budget for the readiness gate. Bounds each `recv`
+/// tick INDEPENDENTLY of [`VaraConfig::read_timeout`] (2 s in production, and
+/// permitted to be `None` = block forever) so `t_max` is a real wall-clock
+/// ceiling and the fail-open path can never wedge. The gate restores the
+/// transport's configured cadence before returning.
+const VARA_READY_POLL: Duration = Duration::from_millis(100);
+
+/// Outcome of the VARA readiness gate ([`wait_for_readiness`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Readiness {
+    /// A `REGISTERED …` (bare or SSID'd) or `LINK REGISTERED` token arrived
+    /// within `t_max`.
+    Confirmed,
+    /// `t_max` expired with no token — the caller logs "modem readiness
+    /// unconfirmed" and PROCEEDS (fail OPEN). Never an error, never a wedge.
+    Unconfirmed,
+}
+
+/// Wait for any readiness token (`REGISTERED` bare or SSID'd, or
+/// `LINK REGISTERED`) up to `t_max`, always honoring the `t_min` settle even
+/// when the token arrives instantly. Runs ONCE per transport-open (from
+/// [`vara_open_session_inner`]); dials never re-wait — `REGISTERED` does not
+/// repeat per dial [R3-2].
+///
+/// **Fails OPEN:** `t_max` expiry returns [`Readiness::Unconfirmed`], never an
+/// error. The gate only READS the cmd socket — it never keys TX — so a
+/// concurrent close/abort during the (unlocked) gate window is harmless
+/// (RADIO-1).
+///
+/// Bounds each poll at [`VARA_READY_POLL`] regardless of the transport's
+/// configured `read_timeout`, restoring the configured cadence before
+/// returning so the heartbeat / exchange that reuse the transport see the
+/// normal cmd tick (amendment b).
+pub(crate) fn wait_for_readiness(
+    transport: &mut VaraTransport,
+    t_min: Duration,
+    t_max: Duration,
+) -> Readiness {
+    // Bound the poll independently of the configured cmd read_timeout: a 2 s /
+    // None cadence would let a silent modem overshoot t_max by up to one full
+    // read, or block forever. Restore on the way out so downstream reuse of
+    // the transport keeps its configured cadence.
+    let prior_timeout = transport.config().read_timeout;
+    let _ = transport.cmd_writer().set_read_timeout(Some(VARA_READY_POLL));
+
+    let outcome = poll_for_readiness(transport, t_min, t_max);
+
+    let _ = transport.cmd_writer().set_read_timeout(prior_timeout);
+    outcome
+}
+
+/// Inner poll loop for [`wait_for_readiness`], factored out so the caller can
+/// restore the transport's `read_timeout` on every exit path.
+fn poll_for_readiness(
+    transport: &mut VaraTransport,
+    t_min: Duration,
+    t_max: Duration,
+) -> Readiness {
+    use super::command::InboundCommand;
+
+    let start = std::time::Instant::now();
+    loop {
+        if start.elapsed() >= t_max {
+            return Readiness::Unconfirmed; // fail OPEN — caller logs + proceeds
+        }
+        match transport.recv() {
+            Ok(Some(InboundCommand::Registered(_)))
+            | Ok(Some(InboundCommand::LinkRegistered)) => {
+                // Honor the settle floor even when the token arrived early.
+                let settle = t_min.saturating_sub(start.elapsed());
+                if !settle.is_zero() {
+                    std::thread::sleep(settle);
+                }
+                return Readiness::Confirmed;
+            }
+            // Absorb IAMALIVE / BUFFER / setter echoes / timeouts / EOF and
+            // keep polling to t_max. `recv` folds a peer FIN into `Ok(None)`
+            // too — that is fine: a modem that closes the cmd socket during
+            // the gate is unconfirmed, and the caller fails open.
+            Ok(_) => {}
+            Err(_) => {
+                // Socket hiccup: never wedge — brief backoff, poll to t_max.
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
 }
 
 /// Worst-case `CONNECT` wall-clock budget for the VARA dial path
@@ -4030,6 +4203,93 @@ mod tests {
         dh.join().unwrap();
     }
 
+    // ── Task 3: REGISTERED readiness gate (fail-open, T_min settle) ─────────
+    //
+    // Drives `wait_for_readiness` against the shared `scripted_cmd_vara_transport`
+    // loopback helper (amendment a — no bespoke helper). Covers: (1) confirm on
+    // a bare REGISTERED with the T_min settle honored even though the token
+    // arrives instantly; (2) confirm on REGISTERED-with-callsign AND on
+    // LINK REGISTERED (no callsign match; both release the gate [R3-2]); (3)
+    // fail OPEN — a silent modem returns Unconfirmed at ~T_max, bounded (never
+    // the 2s cmd read_timeout, never a wedge).
+
+    #[test]
+    fn readiness_confirms_on_bare_registered_after_t_min_settle() {
+        let (mut t, ch, dh) = scripted_cmd_vara_transport(b"REGISTERED\r");
+        let start = std::time::Instant::now();
+        let r = wait_for_readiness(
+            &mut t,
+            Duration::from_millis(300),
+            Duration::from_secs(3),
+        );
+        assert_eq!(r, Readiness::Confirmed);
+        // T_min settle honored even though the token arrived at ~0ms.
+        assert!(
+            start.elapsed() >= Duration::from_millis(300),
+            "settle floor must be honored; elapsed {:?}",
+            start.elapsed()
+        );
+        drop(t);
+        ch.join().unwrap();
+        dh.join().unwrap();
+    }
+
+    #[test]
+    fn readiness_confirms_on_registered_with_callsign_and_on_link_registered() {
+        // REGISTERED with an SSID'd callsign: no callsign match — any
+        // REGISTERED line releases the gate.
+        let (mut t, ch, dh) = scripted_cmd_vara_transport(b"REGISTERED W6ABC-7\r");
+        assert_eq!(
+            wait_for_readiness(&mut t, Duration::from_millis(50), Duration::from_secs(3)),
+            Readiness::Confirmed
+        );
+        drop(t);
+        ch.join().unwrap();
+        dh.join().unwrap();
+
+        // LINK REGISTERED is the distinct link-layer token; it also releases
+        // the gate.
+        let (mut t2, ch2, dh2) = scripted_cmd_vara_transport(b"LINK REGISTERED\r");
+        assert_eq!(
+            wait_for_readiness(&mut t2, Duration::from_millis(50), Duration::from_secs(3)),
+            Readiness::Confirmed
+        );
+        drop(t2);
+        ch2.join().unwrap();
+        dh2.join().unwrap();
+    }
+
+    #[test]
+    fn readiness_fails_open_on_t_max_expiry() {
+        // Silent modem: NO token. Must return Unconfirmed at ~T_max — a
+        // warning outcome, never an error, never a wedge [R3-2].
+        let (mut t, ch, dh) = scripted_cmd_vara_transport(b"");
+        let start = std::time::Instant::now();
+        let r = wait_for_readiness(
+            &mut t,
+            Duration::from_millis(100),
+            Duration::from_millis(600),
+        );
+        assert_eq!(r, Readiness::Unconfirmed);
+        assert!(
+            start.elapsed() >= Duration::from_millis(600),
+            "must wait out t_max before failing open; elapsed {:?}",
+            start.elapsed()
+        );
+        // Bounded poll (amendment b): must return within roughly t_max + one
+        // poll, NOT at the transport's read_timeout. The 500ms headroom over
+        // the one-poll (100ms) ceiling absorbs CI scheduling jitter while still
+        // proving the gate does not fall back to a multi-second read.
+        assert!(
+            start.elapsed() < Duration::from_millis(600) + Duration::from_millis(500),
+            "gate must not fall back to the cmd read_timeout; elapsed {:?}",
+            start.elapsed()
+        );
+        drop(t);
+        ch.join().unwrap();
+        dh.join().unwrap();
+    }
+
     // ── tuxlink-0ye6 Task 4.1: VaraSession::abort_in_flight ──────────────
     //
     // VARA equivalent of ARDOP's `ModemSession::abort_in_flight` — sends
@@ -4295,14 +4555,22 @@ mod tests {
         let data_port = data_l.local_addr().unwrap().port();
 
         // Acceptors hold the sockets open long enough for the inner to
-        // complete TCP connect + the MYCALL/BW best-effort writes.
+        // complete TCP connect + the MYCALL/BW best-effort writes + the
+        // readiness gate. The cmd acceptor emits `REGISTERED\r` on accept so
+        // the readiness gate confirms after the `VARA_READY_T_MIN` settle
+        // (~600ms) instead of stalling the full `VARA_READY_T_MAX` (5s)
+        // fail-open ceiling — every open now runs the gate.
         let cmd_handle = thread::spawn(move || {
-            let (_c, _) = cmd_l.accept().unwrap();
-            thread::sleep(Duration::from_millis(500));
+            use std::io::Write;
+            if let Ok((mut c, _)) = cmd_l.accept() {
+                let _ = c.write_all(b"REGISTERED\r");
+                let _ = c.flush();
+                thread::sleep(Duration::from_millis(900));
+            }
         });
         let data_handle = thread::spawn(move || {
             let (_c, _) = data_l.accept().unwrap();
-            thread::sleep(Duration::from_millis(500));
+            thread::sleep(Duration::from_millis(900));
         });
 
         let session = Arc::new(VaraSession::new());
@@ -4317,7 +4585,7 @@ mod tests {
 
         // Detach the acceptors — they finish on their own after the sleep.
         // Tests that need post-open assertions read the session before the
-        // acceptors exit; the brief 500ms window is plenty for an assertion.
+        // acceptors exit; the window covers the readiness-gate settle.
         std::mem::drop((cmd_handle, data_handle));
         session
     }
@@ -5049,11 +5317,19 @@ mod tests {
 
         // Spawn acceptors that hand the accepted peer sockets back to the
         // test thread via a channel. Once accepted, the acceptor thread
-        // exits — the test owns the sockets and controls their lifetime.
+        // exits — the test owns the sockets and controls their lifetime. The
+        // cmd acceptor first emits `REGISTERED\r` (server→client) so the
+        // readiness gate inside `vara_open_session_inner` confirms after the
+        // settle instead of stalling the 5s fail-open ceiling. That token is
+        // consumed by the gate's client-side read and never appears in the
+        // client→server bytes the test reads back from `cmd_peer`.
         let (cmd_tx, cmd_rx) = std_mpsc::channel::<std::net::TcpStream>();
         let (data_tx, data_rx) = std_mpsc::channel::<std::net::TcpStream>();
         thread::spawn(move || {
-            let (s, _) = cmd_l.accept().unwrap();
+            use std::io::Write;
+            let (mut s, _) = cmd_l.accept().unwrap();
+            let _ = s.write_all(b"REGISTERED\r");
+            let _ = s.flush();
             let _ = cmd_tx.send(s);
         });
         thread::spawn(move || {
