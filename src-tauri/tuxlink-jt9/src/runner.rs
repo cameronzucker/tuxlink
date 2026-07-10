@@ -73,9 +73,9 @@ impl Jt9Runner {
         });
         let mut stderr = child.stderr.take().expect("stderr piped");
         let stderr_thread = std::thread::spawn(move || {
-            let mut buf = String::new();
-            let _ = stderr.read_to_string(&mut buf);
-            buf
+            let mut buf = Vec::new();
+            let _ = stderr.read_to_end(&mut buf);
+            String::from_utf8_lossy(&buf).into_owned()
         });
 
         let mut guard = ChildGuard(Some(child));

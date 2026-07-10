@@ -175,6 +175,21 @@ fn garbage_output_without_decodes_is_parse_error() {
 }
 
 #[test]
+fn non_utf8_stderr_is_captured_lossily() {
+    // \\xff is invalid UTF-8; the drain must not discard the whole stream.
+    // The fake jt9 emits a valid message prefix, then 0xFF garbage, then dies by signal.
+    let (runner, wav, tmp) = setup("badutf8",
+        "#!/bin/sh\nprintf 'Fortran runtime error: \\377 garbage\\n' 1>&2\nkill -SEGV $$\n");
+    match runner.decode_slot(&wav, &tmp, 0) {
+        SlotOutcome::Failed(SlotFailure::Signal { stderr_tail, .. }) => {
+            assert!(stderr_tail.contains("Fortran runtime error"), "lossy capture must keep valid bytes, got: {stderr_tail:?}");
+        }
+        other => panic!("want Signal, got {other:?}"),
+    }
+    let _ = std::fs::remove_dir_all(wav.parent().unwrap());
+}
+
+#[test]
 fn arg_builder_never_emits_shmem() {
     // Guard the GPL boundary at the unit level: the fake script fails loudly
     // if it ever sees -s/--shmem.
