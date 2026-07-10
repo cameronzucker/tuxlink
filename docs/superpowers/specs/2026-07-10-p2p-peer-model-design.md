@@ -254,6 +254,24 @@ different feature from P2P, out of this design's scope. It is recorded here
 so the boundary is explicit; if radio-only-over-RF interop with WLE
 gateways is pursued, it needs its own design.
 
+### Interop analysis — the divergence from WLE's per-mode stores is off-wire
+
+The peer store never appears on any wire. The interop surfaces are: the VARA
+TNC command stream (host-local to Tuxlink's own modem; this design increases
+WLE conformance there — session-type command, valid compression vocabulary,
+owned RETRIES — and fixes the one far-end-observable nonconformance, dialing
+peers on the 4.0 s RMS retry cycle instead of the 4.6 s P2P cycle); ConReq/
+AX.25 addressing (dials always use the channel's exact SSID'd callsign — the
+base-callsign anchor is aggregation-only and nothing wire-facing derives
+from it); B2F semantics (already modeled by SessionIntent/RoutingFlag/
+ExchangeRole independent of storage); and the telnet P2P login exchange
+(unchanged). Two non-wire caveats, neither created by the divergence:
+cross-mode aggregation is an inference (same licensee, possibly different
+physical stations — mitigated because every channel row retains its own
+callsign/frequency/last-seen evidence), and Winlink P2P requires mutual
+intent (a WLE far end answers only from an open P2P session window — an
+operational fact recorded in the bench runbook below).
+
 ## Section 8 — two-rig bench verification (operator-executed, RADIO-1)
 
 The home lab is a complete P2P bench: no CMS, no WDT dependency. Rig plan:
@@ -271,7 +289,9 @@ frequencies):
    wire (also serves the tuxlink-i3dg9 evidence gap).
 2. **Outgoing:** Tuxlink dials WLE peer (P2P intent), B2F message moves
    both directions, clean disconnect. Verify the peer record materializes
-   with origin `outgoing`, correct channel (SSID, center freq).
+   with origin `outgoing`, correct channel (SSID, center freq). The WLE far
+   end must have its **Vara P2P Session** window open (P2P requires mutual
+   intent; a WL2K-session window will not answer a P2P call).
 3. **Incoming:** Tuxlink armed listen (P2P auto-arm); WLE dials Tuxlink.
    Verify accept path, answer-role B2F, and that the peer record
    materializes with origin `incoming` — the live test of the
