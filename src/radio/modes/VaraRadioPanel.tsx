@@ -813,8 +813,14 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
             the VARA connect. Tune… (ardop_tune_rig — mode-agnostic Tune-only,
             reads Config.rig) sets the rig WITHOUT dialing. Both paths are no-ops
             when the field is blank (freqHz === null). */}
+        {/* tuxlink-9pzaj: the value is the channel's CENTER frequency (the
+            number Winlink catalogs and WLE publish). The backend converts to
+            the sideband dial (center − 1.5 kHz on USB) at the CAT tune — for
+            BOTH Tune… and Send/Receive — so operators enter what the catalog
+            says, exactly like WLE. The hint shows the derived USB dial so
+            WLE muscle-memory can cross-check either number. */}
         <div className="radio-panel-input-row">
-          <label htmlFor="vara-freq">Frequency (MHz)</label>
+          <label htmlFor="vara-freq">Center freq (MHz)</label>
           <Field
             id="vara-freq"
             data-testid="vara-freq"
@@ -838,6 +844,11 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
             Tune…
           </Button>
         </div>
+        {freqHz !== null && (
+          <p className="radio-panel-radio-help" data-testid="vara-dial-hint">
+            USB dial: {((freqHz - 1500) / 1_000_000).toFixed(4)} MHz
+          </p>
+        )}
         {/* tuxlink-n95sr #3: Send/Receive moved OUT of the Connect section into
             the action row below, mirroring ARDOP's control model exactly — the
             action row toggles Start ⇄ (Send/Receive + Stop), so Start and
