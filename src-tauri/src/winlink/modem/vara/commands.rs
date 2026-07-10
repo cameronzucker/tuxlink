@@ -2712,6 +2712,7 @@ fn send_connect_and_wait(
         .send(&OutboundCommand::Connect {
             mycall: mycall.to_string(),
             target: target.to_string(),
+            via: vec![],
         })
         .map_err(|e| format!("VARA cmd-port CONNECT write failed: {e}"))?;
 
