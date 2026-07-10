@@ -18,6 +18,7 @@ pub mod media;
 pub mod stations_window;
 pub mod theme_state;
 pub mod native_mailbox;
+pub mod peers;
 pub mod position;
 pub mod search;
 pub mod session_log;
