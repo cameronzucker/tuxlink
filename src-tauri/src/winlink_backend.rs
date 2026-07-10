@@ -159,6 +159,11 @@ pub enum TransportConfig {
         link: KissLinkConfig,
         ssid: u8,
         role: PacketRole,
+        /// [R4-3][R1-C15][R5-3] Which message pool this packet session
+        /// belongs to. A dial defaults to `Cms` (existing callers); an
+        /// armed Listen is always `P2p` (an inbound packet call is by
+        /// definition a peer session — this station is not an RMS).
+        intent: SessionIntent,
     },
 }
 
@@ -182,6 +187,11 @@ pub struct ResolvedPacket {
     pub role: ExchangeRole,
     /// `Some((target, digis))` for a dial; `None` for listen.
     pub dial: Option<(Address, Vec<Address>)>,
+    /// [R4-3][R1-C15][R5-3] Carried through from the `TransportConfig::Packet`
+    /// the operator (or `packet_listen_transport_from_config`) built; travels
+    /// alongside `role` so `native_packet_connect` can build an intent-aware
+    /// `PacketConnectCtx` without re-deriving it.
+    pub intent: SessionIntent,
 }
 
 /// Parse a `CALL` or `CALL-SSID` string into an [`Address`]. A bare call has
@@ -207,10 +217,16 @@ fn parse_call_ssid(s: &str) -> Result<Address, BackendError> {
 
 /// Resolve identity + role into the concrete addresses + exchange role. Enforces
 /// the 0–2 digipeater cap (spec §1) and the identity split (spec §4.4).
+///
+/// `intent` [R4-3][R1-C15][R5-3] rides straight through to [`ResolvedPacket::intent`]
+/// unexamined — this function resolves *addressing*, not message-pool policy; the
+/// caller (`packet_connect_inner`) is the one that knows whether this is a dial
+/// (operator-selected intent, default `Cms`) or a Listen answer (always `P2p`).
 pub fn resolve_packet_endpoint(
     base_mycall: &str,
     ssid: u8,
     role: PacketRole,
+    intent: SessionIntent,
 ) -> Result<ResolvedPacket, BackendError> {
     let base = base_mycall.trim().to_uppercase();
     let link_mycall = Address {
@@ -223,6 +239,7 @@ pub fn resolve_packet_endpoint(
             base_mycall: base,
             role: ExchangeRole::Answer,
             dial: None,
+            intent,
         }),
         PacketRole::DialTo { call, path } => {
             if path.len() > 2 {
@@ -241,6 +258,7 @@ pub fn resolve_packet_endpoint(
                 base_mycall: base,
                 role: ExchangeRole::Dial,
                 dial: Some((target, digis)),
+                intent,
             })
         }
     }
@@ -1845,8 +1863,14 @@ impl WinlinkBackend for NativeBackend {
     ) -> Result<Session, BackendError> {
         // Dispatch to per-transport paths. The packet path runs no CMS inbound
         // selection, so it drops `selection` (callers pass `None` there anyway).
-        if let TransportConfig::Packet { link, ssid, role } = transport {
-            return self.packet_connect_inner(link, ssid, role).await;
+        if let TransportConfig::Packet {
+            link,
+            ssid,
+            role,
+            intent,
+        } = transport
+        {
+            return self.packet_connect_inner(link, ssid, role, intent).await;
         }
         let mode = match transport {
             TransportConfig::Cms { mode } => mode,
@@ -2191,6 +2215,7 @@ impl NativeBackend {
         link: KissLinkConfig,
         ssid: u8,
         role: PacketRole,
+        intent: SessionIntent,
     ) -> Result<Session, BackendError> {
         // Single-flight guard (same as the CMS arm).
         if self
@@ -2226,7 +2251,7 @@ impl NativeBackend {
         // Decide the armed-state status before `role` is moved into resolve
         // (tuxlink-orj): Listen → Listening (armed), DialTo → Connecting (dial).
         let initial_status = initial_packet_status(&role, ssid);
-        let resolved = resolve_packet_endpoint(&base, ssid, role)?;
+        let resolved = resolve_packet_endpoint(&base, ssid, role, intent)?;
 
         let config = self.live_config();
         let mailbox = self.mailbox.clone();
@@ -2319,6 +2344,22 @@ struct PacketConnectCtx<'a> {
     role: ExchangeRole,
     /// Grid locator at configured broadcast precision.
     locator: &'a str,
+    /// [R4-3][R1-C15][R5-3] Which message pool this session belongs to.
+    /// Carried through to [`session::ExchangeConfig::intent`] via
+    /// [`exchange_config_for_packet`].
+    intent: SessionIntent,
+}
+
+/// The [`session::ExchangeConfig`] for a packet session — pure, so the intent
+/// contract [R5-3] is pinned without a KISS link.
+fn exchange_config_for_packet(ctx: &PacketConnectCtx<'_>) -> session::ExchangeConfig {
+    session::ExchangeConfig {
+        mycall: ctx.base_mycall.to_string(), // BASE call — no SSID in B2F identity
+        targetcall: ctx.targetcall.to_string(),
+        locator: ctx.locator.to_string(),
+        password: ctx.password.clone(),
+        intent: ctx.intent,
+    }
 }
 
 /// Streams whose `read()` returns `Ok(0)` for "no data yet" rather than EOF (the
@@ -2379,12 +2420,15 @@ fn native_packet_exchange<S: std::io::Read + std::io::Write + Send + 'static>(
     progress: &dyn Fn(&str),
     wire_log: &dyn Fn(&str),
 ) -> Result<(), BackendError> {
+    // [R4-3][R1-C15][R5-3] Build the exchange config off `ctx` BEFORE destructuring
+    // it below — `exchange_config_for_packet` takes `&ctx` (clones what it needs),
+    // so this must run before `role`/`base_mycall`/`intent` are moved out of `ctx`.
+    let exchange_config = exchange_config_for_packet(&ctx);
     let PacketConnectCtx {
         base_mycall,
-        targetcall,
-        password,
         role,
-        locator,
+        intent,
+        ..
     } = ctx;
     // Split the owned stream into simultaneous read + write halves via a shared
     // Arc<Mutex> (the same pattern as telnet's shared-socket approach). The
@@ -2413,31 +2457,20 @@ fn native_packet_exchange<S: std::io::Read + std::io::Write + Send + 'static>(
     let mut reader = std::io::BufReader::new(ReadHalf(shared.clone()));
     let mut writer = WriteHalf(shared.clone());
 
-    // TODO(tuxlink-u5hl follow-up): migrate to build_outbound_proposals for skip-not-abort parity
-    // Build outbox proposals (mirrors native_connect).
-    let mut outbound = Vec::new();
-    for meta in mailbox.list(MailboxFolder::Outbox)? {
-        let body = mailbox.read(MailboxFolder::Outbox, &meta.id)?;
-        if let Ok(message) = Message::from_bytes(&body.raw_rfc5322) {
-            if let Some((proposal, compressed)) = message.to_proposal() {
-                let title = message.header("Subject").unwrap_or_default().to_string();
-                outbound.push(session::OutboundMessage {
-                    proposal,
-                    title,
-                    compressed,
-                });
-            }
-        }
-    }
+    // [R4-3][R1-C15][R5-3] intent-aware outbound drain (resolves the prior
+    // TODO(tuxlink-u5hl follow-up)): mirrors the CMS/VARA/ARDOP dial paths'
+    // skip-not-abort degrade — the safety gate for P2p/RadioOnly (§5.5) means
+    // this legitimately returns an empty outbound for a P2P packet session
+    // today; the exchange still runs (and still receives), it just proposes
+    // nothing outbound until tuxlink-u5hl re-scopes the gate.
+    let outbound = build_outbound_proposals(mailbox, intent, None, Some(base_mycall))
+        .unwrap_or_else(|e| {
+            eprintln!(
+                "native_packet_exchange: outbound drain skipped ({e}); exchange continues with empty outbound"
+            );
+            Vec::new()
+        });
     let outbound_log = outbound_log_items(&outbound);
-
-    let exchange_config = session::ExchangeConfig {
-        mycall: base_mycall.to_string(), // BASE call — no SSID in B2F identity
-        targetcall: targetcall.to_string(),
-        locator: locator.to_string(), // config-derived locator (controller directive)
-        password,
-        intent: SessionIntent::Cms,
-    };
 
     progress("AX.25 connected; negotiating messages…");
     let result = session::run_exchange_with_role(
@@ -2686,6 +2719,7 @@ fn native_packet_connect(
                     password,
                     role: ExchangeRole::Dial,
                     locator: &locator,
+                    intent: resolved.intent,
                 },
                 mailbox,
                 progress,
@@ -2812,6 +2846,7 @@ fn native_packet_connect(
                     password: None,
                     role: ExchangeRole::Answer,
                     locator: &locator,
+                    intent: resolved.intent,
                 },
                 mailbox,
                 progress,
@@ -5003,6 +5038,7 @@ mod native_read_state_tests {
                         call: "W7AUX".into(),
                         path: vec![],
                     },
+                    intent: SessionIntent::Cms,
                 },
                 None,
             )
@@ -5557,6 +5593,7 @@ mod native_read_state_tests {
                 call: "W7AUX".into(),
                 path: vec!["RELAY-1".into()],
             },
+            SessionIntent::Cms,
         )
         .unwrap();
         assert_eq!(
@@ -5587,7 +5624,8 @@ mod native_read_state_tests {
 
     #[test]
     fn resolve_packet_endpoint_listen_yields_answer_role_and_no_target() {
-        let resolved = resolve_packet_endpoint("N7CPZ", 7, PacketRole::Listen).unwrap();
+        let resolved =
+            resolve_packet_endpoint("N7CPZ", 7, PacketRole::Listen, SessionIntent::P2p).unwrap();
         assert_eq!(
             resolved.link_mycall,
             Address {
@@ -5598,6 +5636,7 @@ mod native_read_state_tests {
         assert_eq!(resolved.base_mycall, "N7CPZ");
         assert_eq!(resolved.role, ExchangeRole::Answer);
         assert!(resolved.dial.is_none());
+        assert_eq!(resolved.intent, SessionIntent::P2p);
     }
 
     #[test]
@@ -5609,6 +5648,7 @@ mod native_read_state_tests {
                 call: "W7AUX".into(),
                 path: vec!["A-1".into(), "B-2".into(), "C-3".into()],
             },
+            SessionIntent::Cms,
         )
         .unwrap_err();
         assert!(matches!(err, BackendError::NotConfigured(_)));
@@ -5637,6 +5677,7 @@ mod native_read_state_tests {
                 call: "W7AUX".into(),
                 path: vec![],
             },
+            SessionIntent::Cms,
         )
         .unwrap();
         assert_eq!(
@@ -5709,6 +5750,7 @@ mod native_read_state_tests {
             },
             ssid: 7,
             role: PacketRole::Listen,
+            intent: SessionIntent::Cms,
         };
         let dial = TransportConfig::Packet {
             link: KissLinkConfig::Tcp {
@@ -5720,6 +5762,7 @@ mod native_read_state_tests {
                 call: "W7AUX-7".into(),
                 path: vec![],
             },
+            intent: SessionIntent::Cms,
         };
 
         let outcome = tokio::time::timeout(std::time::Duration::from_secs(15), async {
@@ -5747,6 +5790,35 @@ mod native_read_state_tests {
             "N7CPZ",
             "packet base call must be the SESSION call (N7CPZ), not the config call (W7AUX)"
         );
+    }
+
+    // =========================================================================
+    // Task 12 (tuxlink-c39af): packet SessionIntent plumbing
+    // =========================================================================
+
+    #[test]
+    fn packet_dial_default_intent_is_cms_and_p2p_is_not_cms() {
+        // [R5-3] pins both directions of the contract: existing callers are
+        // untouched (Cms default), and a P2P packet session is not
+        // classified as CMS.
+        //
+        // Assert on `cms` BEFORE building `p2p` via struct-update (`..cms`):
+        // `PacketConnectCtx::password` is `Option<String>` (not `Copy`), so
+        // `..cms` partially moves `cms` and a later `&cms` would not compile.
+        let cms = PacketConnectCtx {
+            base_mycall: "W6ABC",
+            targetcall: "N0DAJ-10",
+            password: None,
+            role: ExchangeRole::Dial,
+            locator: "CN87",
+            intent: SessionIntent::Cms,
+        };
+        assert_eq!(exchange_config_for_packet(&cms).intent, SessionIntent::Cms);
+        let p2p = PacketConnectCtx {
+            intent: SessionIntent::P2p,
+            ..cms
+        };
+        assert_eq!(exchange_config_for_packet(&p2p).intent, SessionIntent::P2p);
     }
 
     // =========================================================================
@@ -5798,6 +5870,7 @@ mod native_read_state_tests {
                 password: Some("MYPASS".into()),
                 role: ExchangeRole::Dial,
                 locator: "CN87", // controller directive: pass cms_locator
+                intent: SessionIntent::Cms,
             },
             &mailbox,
             &|_| {},
@@ -5851,6 +5924,7 @@ mod native_read_state_tests {
                 password: None,
                 role: ExchangeRole::Answer,
                 locator: "CN87",
+                intent: SessionIntent::Cms,
             },
             &mailbox,
             &|_| {},
@@ -5917,6 +5991,7 @@ mod native_read_state_tests {
                 password: None,
                 role: ExchangeRole::Dial,
                 locator: "CN87",
+                intent: SessionIntent::Cms,
             },
             &mailbox,
             &|_| {},
@@ -5993,6 +6068,7 @@ mod native_read_state_tests {
                 password: None,
                 role: ExchangeRole::Dial,
                 locator: "CN87",
+                intent: SessionIntent::Cms,
             },
             &mailbox,
             &|_| {},
@@ -6118,6 +6194,7 @@ mod native_read_state_tests {
                         call: "W7AUX".into(),
                         path: vec![],
                     },
+                    intent: SessionIntent::Cms,
                 },
                 None,
             )
@@ -6174,6 +6251,7 @@ mod native_read_state_tests {
                         call: "W7AUX".into(),
                         path: vec![],
                     },
+                    intent: SessionIntent::Cms,
                 },
                 None,
             )
@@ -6200,14 +6278,15 @@ mod native_read_state_tests {
                 PacketRole::DialTo {
                     call: "W7AUX".into(),
                     path: vec![]
-                }
+                },
+                SessionIntent::Cms,
             )
             .unwrap()
             .role,
             ExchangeRole::Dial
         );
         assert_eq!(
-            resolve_packet_endpoint("N7CPZ", 7, PacketRole::Listen)
+            resolve_packet_endpoint("N7CPZ", 7, PacketRole::Listen, SessionIntent::P2p)
                 .unwrap()
                 .role,
             ExchangeRole::Answer
@@ -6339,6 +6418,7 @@ mod native_read_state_tests {
             },
             ssid: 7,
             role: PacketRole::Listen,
+            intent: SessionIntent::Cms,
         };
         let dial = TransportConfig::Packet {
             link: KissLinkConfig::Tcp {
@@ -6350,6 +6430,7 @@ mod native_read_state_tests {
                 call: "W7AUX-7".into(),
                 path: vec![],
             },
+            intent: SessionIntent::Cms,
         };
 
         // Watchdog: a handshake/connect deadlock must fail the test, not hang cargo.

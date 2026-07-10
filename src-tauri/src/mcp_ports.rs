@@ -1354,12 +1354,17 @@ impl EgressPort for MonolithEgressPort {
             &audit,
             || async move {
                 // ui_commands.rs:4534 packet_connect.
+                // tuxlink-c39af Task 12: the MCP egress port has no `intent`
+                // arg of its own (agent-initiated packet dials are always a
+                // CMS gateway dial today) — `None` → `SessionIntent::Cms`
+                // default, unchanged behavior.
                 crate::ui_commands::packet_connect(
                     app.clone(),
                     app.state::<crate::app_backend::BackendState>(),
                     app.state::<Arc<crate::session_log::SessionLogState>>(),
                     call,
                     path,
+                    None,
                 )
                 .await
                 .map_err(|e| EgressPortError::Failed(redact_err(format!("{e:?}"))))

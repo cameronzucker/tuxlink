@@ -33,6 +33,7 @@ use crate::app_backend::{BackendPhase, BackendState};
 use crate::config::{self, CmsTransport, GpsState, PositionPrecision, PositionSource};
 use crate::session_log::SessionLogState;
 use crate::winlink::message::RECEIVED_SESSION_HEADER;
+use crate::winlink::session::SessionIntent;
 use crate::winlink_backend::{
     BackendError, BackendStatus, LogLevel, LogLine, LogSource, MailboxFolder, MessageId,
     MessageMeta, OutboundMessage, TransportConfig,
@@ -4809,10 +4810,15 @@ pub async fn packet_list_audio_devices() -> Result<Vec<ManagedAudioDeviceDto>, U
 /// Build the packet `TransportConfig` from config + the operator's dial args.
 /// Returns `NotConfigured` if no KISS link is set yet (the UI must configure
 /// one first via `packet_config_set`).
+///
+/// `intent` [R4-3][R1-C15][R5-3]: Task 23a's peer-channel Connect passes
+/// `SessionIntent::P2p` for a peer dial; `packet_connect`'s default (no intent
+/// arg from the frontend) is `SessionIntent::Cms` — a gateway dial, as today.
 pub fn packet_transport_from_config(
     cfg: &config::Config,
     call: String,
     path: Vec<String>,
+    intent: SessionIntent,
 ) -> Result<TransportConfig, UiError> {
     let link = cfg
         .packet
@@ -4823,6 +4829,7 @@ pub fn packet_transport_from_config(
         link,
         ssid: cfg.packet.ssid,
         role: crate::winlink_backend::PacketRole::DialTo { call, path },
+        intent,
     })
 }
 
@@ -4830,6 +4837,10 @@ pub fn packet_transport_from_config(
 /// Returns `NotConfigured` if no KISS link is set yet (the UI must configure
 /// one first via `packet_config_set`). Mirrors `packet_transport_from_config`
 /// but resolves to the Listen role — arm the station to answer an inbound call.
+///
+/// [R4-3][R1-C15][R5-3] Always `SessionIntent::P2p` — an inbound packet call
+/// is by definition a peer session (this station is not an RMS; WLE Packet
+/// Peer Stations ground truth).
 pub fn packet_listen_transport_from_config(
     cfg: &config::Config,
 ) -> Result<TransportConfig, UiError> {
@@ -4842,6 +4853,7 @@ pub fn packet_listen_transport_from_config(
         link,
         ssid: cfg.packet.ssid,
         role: crate::winlink_backend::PacketRole::Listen,
+        intent: SessionIntent::P2p,
     })
 }
 
@@ -4865,6 +4877,12 @@ pub async fn packet_connect(
     log: State<'_, std::sync::Arc<SessionLogState>>,
     call: String,
     path: Vec<String>,
+    // tuxlink-c39af Task 12: which message pool this dial belongs to. `Option`
+    // so existing callers (PacketRadioPanel, connectDispatch, AppShell) that
+    // omit `intent` deserialize to `None` → `Cms` (today's only behavior,
+    // mirrors `via: Option<Vec<String>>` on `modem_vara_b2f_exchange`). Task
+    // 23a's peer-channel Connect will pass `intent: 'p2p'` for a peer dial.
+    intent: Option<SessionIntent>,
 ) -> Result<(), UiError> {
     let backend = state
         .current()
@@ -4872,7 +4890,8 @@ pub async fn packet_connect(
     let cfg = config::read_config().map_err(|e| UiError::Internal {
         detail: e.to_string(),
     })?;
-    let transport = packet_transport_from_config(&cfg, call.clone(), path)?;
+    let transport =
+        packet_transport_from_config(&cfg, call.clone(), path, intent.unwrap_or_default())?;
     emit_session_line(
         &app,
         &log,
@@ -11610,8 +11629,13 @@ hw:CARD=Device,DEV=0
     fn packet_transport_from_config_builds_dialto_with_ssid_and_path() {
         let mut cfg = config_with_packet_link();
         cfg.packet.ssid = 7;
-        let tc =
-            packet_transport_from_config(&cfg, "W7AUX".into(), vec!["RELAY-1".into()]).unwrap();
+        let tc = packet_transport_from_config(
+            &cfg,
+            "W7AUX".into(),
+            vec!["RELAY-1".into()],
+            SessionIntent::Cms,
+        )
+        .unwrap();
         match tc {
             TransportConfig::Packet { ssid, role, .. } => {
                 assert_eq!(ssid, 7);
@@ -11630,8 +11654,45 @@ hw:CARD=Device,DEV=0
     #[test]
     fn packet_transport_from_config_with_no_link_is_not_configured() {
         let cfg = config_with_packet_defaults();
-        let err = packet_transport_from_config(&cfg, "W7AUX".into(), vec![]).unwrap_err();
+        let err =
+            packet_transport_from_config(&cfg, "W7AUX".into(), vec![], SessionIntent::Cms)
+                .unwrap_err();
         assert!(matches!(err, UiError::NotConfigured(_)));
+    }
+
+    // ========================================================================
+    // Task 12 (tuxlink-c39af) — packet SessionIntent plumbing [R4-3][R1-C15][R5-3]
+    // ========================================================================
+
+    #[test]
+    fn packet_listen_transport_carries_p2p_intent() {
+        // An inbound packet call is by definition a peer session — this
+        // station is not an RMS (WLE Packet Peer Stations ground truth).
+        let cfg = config_with_packet_link();
+        let t = packet_listen_transport_from_config(&cfg).unwrap();
+        match t {
+            TransportConfig::Packet { intent, role, .. } => {
+                assert_eq!(intent, SessionIntent::P2p);
+                assert_eq!(role, crate::winlink_backend::PacketRole::Listen);
+            }
+            _ => panic!("expected packet transport"),
+        }
+    }
+
+    #[test]
+    fn packet_dial_transport_defaults_to_cms() {
+        let cfg = config_with_packet_link();
+        let t = packet_transport_from_config(
+            &cfg,
+            "N0DAJ-10".into(),
+            vec![],
+            SessionIntent::Cms,
+        )
+        .unwrap();
+        match t {
+            TransportConfig::Packet { intent, .. } => assert_eq!(intent, SessionIntent::Cms),
+            _ => panic!("expected packet transport"),
+        }
     }
 
     #[test]
