@@ -93,6 +93,25 @@ fn timeout_salvages_partial_decodes() {
 }
 
 #[test]
+fn timeout_after_sentinel_yields_complete_records() {
+    // The sentinel means jt9 finished its own accounting before the
+    // trailing hang (e.g. a post-decode cleanup wedge); salvaged records
+    // are therefore COMPLETE, not partial — per the design contract on
+    // Ft8Decode::partial (types.rs): partial is true ONLY when salvaged
+    // WITHOUT the sentinel.
+    let (runner, wav, tmp) = setup("post-sentinel-hang", &format!(
+        "#!/bin/sh\necho '{DECODE_LINE}'\necho '{SENTINEL}'\nexec sleep 30\n"));
+    match runner.decode_slot(&wav, &tmp, 0) {
+        SlotOutcome::Decoded(recs) => {
+            assert_eq!(recs.len(), 1);
+            assert!(!recs[0].partial, "sentinel seen before the hang => records are complete");
+        }
+        other => panic!("want salvaged Decoded, got {other:?}"),
+    }
+    let _ = std::fs::remove_dir_all(wav.parent().unwrap());
+}
+
+#[test]
 fn timeout_with_no_output_is_timeout_failure() {
     let (runner, wav, tmp) = setup("hang", "#!/bin/sh\nexec sleep 30\n");
     let t0 = std::time::Instant::now();
@@ -186,6 +205,66 @@ fn non_utf8_stderr_is_captured_lossily() {
         }
         other => panic!("want Signal, got {other:?}"),
     }
+    let _ = std::fs::remove_dir_all(wav.parent().unwrap());
+}
+
+#[test]
+fn nonzero_exit_without_signal_is_exit_code_signal() {
+    // Clean exit code, but non-zero, and no signal: still classified as
+    // Signal per the taxonomy's exit-code fallback (signal field carries
+    // "exit N" rather than "signal N").
+    let (runner, wav, tmp) = setup("exit3", &format!(
+        "#!/bin/sh\necho '{SENTINEL}'\nexit 3\n"));
+    match runner.decode_slot(&wav, &tmp, 0) {
+        SlotOutcome::Failed(SlotFailure::Signal { signal, .. }) => {
+            assert_eq!(signal, "exit 3");
+        }
+        other => panic!("want Signal(exit 3), got {other:?}"),
+    }
+    let _ = std::fs::remove_dir_all(wav.parent().unwrap());
+}
+
+#[test]
+fn signal_death_discards_prior_decodes_by_taxonomy() {
+    // Signal beats decodes in the failure taxonomy (delta §failure
+    // taxonomy): even when jt9 emitted a decode line before dying, a
+    // signal death still reports Failed(Signal) — the decodes are
+    // discarded, not salvaged. (Salvage-on-decodes is a timeout-path-only
+    // behavior; a signal death is never partial-salvaged.)
+    let (runner, wav, tmp) = setup("segv-with-decodes", &format!(
+        "#!/bin/sh\necho '{DECODE_LINE}'\necho 'dying now' 1>&2\nkill -SEGV $$\n"));
+    match runner.decode_slot(&wav, &tmp, 0) {
+        SlotOutcome::Failed(SlotFailure::Signal { .. }) => {}
+        other => panic!("want Signal (decodes discarded), got {other:?}"),
+    }
+    let _ = std::fs::remove_dir_all(wav.parent().unwrap());
+}
+
+#[test]
+fn stderr_eof_wins_over_decodes_on_clean_exit() {
+    // jt9's "EOF on input file" capture bug takes priority over any
+    // decodes that happened to land before it, even on a clean exit code
+    // with the sentinel present.
+    let (runner, wav, tmp) = setup("eof-with-decodes", &format!(
+        "#!/bin/sh\necho '{DECODE_LINE}'\necho 'EOF on input file' 1>&2\necho '{SENTINEL}'\nexit 0\n"));
+    assert_eq!(runner.decode_slot(&wav, &tmp, 0), SlotOutcome::Failed(SlotFailure::StderrEof));
+    let _ = std::fs::remove_dir_all(wav.parent().unwrap());
+}
+
+#[test]
+fn unreadable_wav_maps_to_stable_permission_string() {
+    // STABLE-STRING CONTRACT (types.rs SlotFailure::BadWav doc): the exact
+    // string "permission denied" is API that L2 matches on. Exercise it
+    // through decode_slot's preflight, not just wav.rs's unit test.
+    let (runner, wav, tmp) = setup("noperm", "#!/bin/sh\ntouch spawned-marker\nexit 0\n");
+    std::fs::set_permissions(&wav, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let result = runner.decode_slot(&wav, &tmp, 0);
+    std::fs::set_permissions(&wav, std::fs::Permissions::from_mode(0o644)).unwrap();
+    match result {
+        SlotOutcome::Failed(SlotFailure::BadWav(s)) => assert_eq!(s, "permission denied"),
+        other => panic!("want BadWav(\"permission denied\"), got {other:?}"),
+    }
+    assert!(!tmp.join("spawned-marker").exists(), "preflight must gate the spawn");
     let _ = std::fs::remove_dir_all(wav.parent().unwrap());
 }
 

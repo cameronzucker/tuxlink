@@ -5,7 +5,10 @@
 //! has no version flag — verified: `--version` → "unrecognised option",
 //! exit 0). Fallback: "jt9 (version unknown)".
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, PartialEq)]
 pub enum DiscoverError {
@@ -38,6 +41,13 @@ fn which_jt9() -> Option<PathBuf> {
     std::env::split_paths(&path).map(|d| d.join("jt9")).find(|c| c.is_file())
 }
 
+/// Deadline for the sibling probe. A hung `wsjtx_app_version` (NFS stall,
+/// frozen cgroup, a broken build) must not wedge jt9 discovery — it is
+/// killed and discovery falls back to UNKNOWN rather than blocking forever
+/// on an unbounded `.output()`.
+const PROBE_DEADLINE: Duration = Duration::from_secs(2);
+const PROBE_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
 fn probe_version(jt9_path: &Path) -> String {
     const UNKNOWN: &str = "jt9 (version unknown)";
     let Some(dir) = jt9_path.parent() else { return UNKNOWN.into() };
@@ -45,13 +55,41 @@ fn probe_version(jt9_path: &Path) -> String {
     if !sibling.is_file() {
         return UNKNOWN.into();
     }
-    match std::process::Command::new(&sibling).arg("-v").output() {
-        Ok(out) => {
-            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if s.is_empty() { UNKNOWN.into() } else { s }
+    let mut child = match Command::new(&sibling)
+        .arg("-v")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => return UNKNOWN.into(),
+    };
+
+    let deadline = Instant::now() + PROBE_DEADLINE;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_status)) => break,
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return UNKNOWN.into();
+                }
+                std::thread::sleep(PROBE_POLL_INTERVAL);
+            }
+            Err(_) => return UNKNOWN.into(),
         }
-        Err(_) => UNKNOWN.into(),
     }
+
+    // The child has exited: reading its (tiny, one-line) stdout here cannot
+    // deadlock — the pipe was never full and nothing is still writing to it.
+    let mut out = String::new();
+    if let Some(mut stdout) = child.stdout.take() {
+        let _ = stdout.read_to_string(&mut out);
+    }
+    let s = out.trim().to_string();
+    if s.is_empty() { UNKNOWN.into() } else { s }
 }
 
 #[cfg(test)]
@@ -90,6 +128,29 @@ mod tests {
         std::fs::create_dir_all(&d).unwrap();
         let jt9 = install_fake(&d, "jt9", "#!/bin/sh\nexit 0\n");
         let got = discover_jt9(Some(&jt9)).unwrap();
+        assert_eq!(got.engine_version, "jt9 (version unknown)");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn hung_version_probe_falls_back_to_unknown() {
+        // A wedged wsjtx_app_version (real-world: NFS stall, cgroup freeze,
+        // a bad build that hangs on startup) must not wedge jt9 discovery
+        // forever. The probe must give up within a bounded deadline and
+        // fall back to UNKNOWN. sleep 15 (not 30) keeps a red run's runtime
+        // tolerable: pre-fix, .output() blocks for the full 15s before the
+        // elapsed-time assertion catches it.
+        let d = fake_bin_dir().join("t3");
+        std::fs::create_dir_all(&d).unwrap();
+        let jt9 = install_fake(&d, "jt9", "#!/bin/sh\nexit 0\n");
+        install_fake(&d, "wsjtx_app_version", "#!/bin/sh\nexec sleep 15\n");
+        let t0 = Instant::now();
+        let got = discover_jt9(Some(&jt9)).unwrap();
+        assert!(
+            t0.elapsed() < Duration::from_secs(10),
+            "hung version probe must not wedge discovery, took {:?}",
+            t0.elapsed()
+        );
         assert_eq!(got.engine_version, "jt9 (version unknown)");
         let _ = std::fs::remove_dir_all(&d);
     }

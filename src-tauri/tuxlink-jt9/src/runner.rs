@@ -104,6 +104,19 @@ impl Jt9Runner {
             // the drains a beat to flush what the kernel buffered, then
             // collect via the channel; the threads exit on their own at pipe
             // EOF whenever the holder dies.
+            //
+            // Accepted bound: if a killed jt9 ever left behind such a
+            // pipe-holding grandchild that never exits on its own, the two
+            // drain threads plus their two pipe read fds leak for the
+            // remaining process lifetime (this path never joins them).
+            // Accepted because (1) jt9 does not fork grandchildren in
+            // practice (observed behavior, not a documented guarantee), and
+            // (2) this crate is std-only — no libc, so no killpg to reap a
+            // process group. Any future mitigation (process-group kill,
+            // cgroup-based reaping, periodic fd/thread supervision) belongs
+            // to L2's slot loop (tuxlink-b026z.3), which owns the
+            // long-running process lifecycle this runner is invoked from;
+            // tracked at tuxlink-b026z.8.
             std::thread::sleep(Duration::from_millis(50));
             String::new()
         } else {
@@ -139,7 +152,10 @@ impl Jt9Runner {
                 SlotOutcome::Failed(SlotFailure::Timeout)
             } else {
                 for d in &mut decodes {
-                    d.partial = true;
+                    // partial iff the sentinel was never seen: jt9 signals
+                    // its own completeness with <DecodeFinished>, so a
+                    // salvage AFTER the sentinel yields complete records.
+                    d.partial = !saw_sentinel;
                 }
                 SlotOutcome::Decoded(decodes)
             };
@@ -168,7 +184,6 @@ impl Jt9Runner {
         if !decodes.is_empty() {
             return SlotOutcome::Decoded(decodes);
         }
-        let _ = saw_sentinel; // completeness marker only matters on the timeout path
         if raw_lines == 0 {
             SlotOutcome::BandDead
         } else {
@@ -181,10 +196,16 @@ impl Jt9Runner {
         std::fs::create_dir_all(&dir).map_err(|e| SlotFailure::SpawnFailed(e.to_string()))?;
         let wav = dir.join("silence.wav");
         write_silence_wav(&wav).map_err(|e| SlotFailure::SpawnFailed(e.to_string()))?;
-        match self.decode_slot(&wav, &dir, 0) {
+        let result = match self.decode_slot(&wav, &dir, 0) {
             SlotOutcome::Decoded(_) | SlotOutcome::BandDead => Ok(()),
             SlotOutcome::Failed(f) => Err(f),
-        }
+        };
+        // Best-effort cleanup on BOTH arms: the FFTW wisdom this decode
+        // produces lands in self.data_dir (the -a dir), never in this
+        // scratch dir, so the scratch dir is never needed again once
+        // decode_slot returns, success or failure.
+        let _ = std::fs::remove_dir_all(&dir);
+        result
     }
 }
 
