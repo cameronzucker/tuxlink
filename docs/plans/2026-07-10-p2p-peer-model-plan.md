@@ -61,6 +61,17 @@ populated → Task 28 wire-walk (correctly) fails the feature as a stub. This ta
   (`modem_commands.rs` VARA/ARDOP b2f command args, `ui_commands.rs`
   `packet_connect`). Landing this makes Tasks 13-16's record sites actually
   reachable from the UI.
+- **R3-F6 correction — supersedes Task 23's dial wording.** Task 23 Step 3 says
+  "set `intent:'p2p'` on the dial," but the rail `onUse` path builds a
+  `FavoriteDial` (which has NO `intent` field) and routes to AppShell prefill —
+  it never calls `connectFor`, so that wording is unimplementable. The peer
+  Connect instead invokes `connectFor({ sessionType: 'p2p', protocol })`
+  directly (intent flows via `intentOf(key) = key.sessionType`), after
+  persisting the channel's `target`/`via`/`freq` for that protocol. `via`/`freq`
+  are threaded through the same command `connectFor` already calls
+  (`modem_vara_b2f_exchange` gains `via`; `packet_connect` gains `intent` +
+  `path`); do NOT rely on the panel path for channel fidelity. Task 23 keeps the
+  finder chrome (type filter, peer rows, capability hide); 23a owns the dial.
 
 **Task 1 (CDX-5).** Add a THIRD fn `validate_presented_callsign(s) -> Result<(),String>`
 — accepts base (3-7 A-Z0-9) + optional `/SUFFIX` (e.g. `/P`, `/M`, `/MM`) +
@@ -87,11 +98,20 @@ forever → would wedge the "never wedge" path). Set a short read_timeout on the
 transport for the gate window (e.g. 100 ms) or use a deadline-checked poll;
 `t_max` becomes a real ceiling. Relax the fail-open test's upper bound to
 `< t_max + one_poll`.
-(c) GATE OUTSIDE THE LOCK (CLD-5): `vara_open_session_inner` holds
-`session.inner.lock()` from `commands.rs:1674` to fn end. Run `wait_for_readiness`
-on the `transport` BEFORE it is stashed into the locked session (or scope the
-lock so the multi-second wait is not inside it) — otherwise `vara_status` and
-concurrent ops block ~5-6s every HF P2P open.
+(c) GATE OUTSIDE THE LOCK (CLD-5; R3-F3 correction — the lock is held from
+`commands.rs:1674` to fn end, so merely moving the gate "before stashing" does
+NOT help; it still runs inside `guard`). Concrete lock-scoping that preserves
+the tuxlink-6urh2 double-open guard: (1) acquire `guard`, run the double-open
+check, set state `Connecting`, and take ownership of the local `transport`;
+(2) DROP `guard` (explicit `drop(guard)` or scope block); (3) run
+`wait_for_readiness(&mut transport, …)` + the HF setter sends on the local
+`transport` with NO lock held; (4) re-acquire `guard` and stash the transport +
+mark `Open`. Re-validate the double-open invariant on re-acquire (if another
+open raced in while unlocked, abort this one). This keeps the multi-second gate
+window off the lock so `vara_status`/concurrent ops never block on it. If the
+double-open guard cannot be safely re-validated on re-acquire, fall back to
+documenting the ≤5 s status-poll stall as a known open-time limitation (fail-open,
+bounded, only during an HF P2P open) — but attempt the lock-scoping first.
 
 **Task 5 (CDX-1, CLD-6).** Do NOT add `via` to the shared
 `modem_commands::DialCandidate` (`modem_commands.rs:2097`; used by ARDOP, MCP
@@ -115,26 +135,59 @@ Document this as a known alpha limitation in the module doc; do not claim
 `Operator` endpoint (that is how a telnet favorite is born, T16). The unconditional
 downgrade in the T8 snippet contradicts T16 and would leave T20's agent dial no
 Operator endpoint to resolve.
-(b) `conflict: true` records must be COUNTED and EVICTABLE — remove `!conflict`
-from `evict_over_cap`'s filter (or give conflict records their own small cap).
-Otherwise a spoofed-SSID loop on a split base grows unbounded un-evictable rows.
-Add a per-peer cap on `channels` and `presented_callsigns` (e.g. 64 each,
-oldest-`last_seen` evicted) so rotated observations on ONE peer cannot grow it
-without bound. Pin both with tests.
+(b) `conflict: true` records must be bounded (R3-F4 correction — do NOT just
+remove `!conflict` from `evict_over_cap`; that makes fresh conflict spam evict
+the OLDEST legit Auto peers via LRU, since conflict records are the newest).
+Instead: (i) a MANDATORY separate `CONFLICT_CAP` (e.g. 100) evicting
+oldest-among-conflict-records only — conflict spam evicts conflict spam, never a
+real peer; (ii) route conflict-record CREATION through the inbound limiter — the
+current `record_peer_observation` skips the limiter when the base "exists," but a
+split base always exists, so conflict creation currently bypasses the limiter
+entirely; add: if the observation would create a NEW conflict record (split base,
+no presented match), run it through the limiter's failed path first. (iii) a
+per-peer cap on `channels` and `presented_callsigns` (e.g. 64 each, oldest-
+`last_seen` evicted) so rotated observations on ONE peer cannot grow it without
+bound. Pin all three with tests (conflict-flood evicts only conflicts; a real
+peer survives a conflict flood; per-peer channel cap holds).
 
 **Task 9 (CDX-3, CLD-13).** `Config` is `#[serde(deny_unknown_fields, remote = "Self")]`
 (`config.rs:222`) — add the `p2p_limits` field to BOTH the remote and the shadow
 struct (still additive-safe for old files). The reject→limiter hook is folded
 into Task 16 (see below), not here.
 
-**Task 11 (CLD-12).** Narrow `P2pCapabilities` to the THREE UI-queried bits
-(`finder_peers`, `map_peers`, `settings_editor`) — those are the only rows a UI
-surface queries to hide. Drop the other five bits; the agent/store/protocol rows
-land ATOMICALLY (the tool/store/command exists in the binary or it doesn't —
-there is no half-state to hide), so a capability bit for them gates nothing.
-State this honestly (spec R5-8's "each row exposes a queried bit" applies to UI
-rows). Each remaining bit is flipped true only in the task that lands its UI, with
-an absence test (Tasks 23-25).
+**Task 11 (CLD-12; R3-F1 correction).** KEEP all eight `P2pCapabilities`
+fields — do NOT drop any (removing them breaks Tasks 16/17/19/20/21, which
+each flip one of the five agent/store/protocol bits, and Task 28's "all bits
+true" check → `error[E0560]`). The honest distinction is in DOCUMENTATION, not
+deletion: exactly THREE bits are UI-queried and drive the hide mechanism —
+`finder_peers`, `map_peers`, `settings_editor` (Tasks 23-25 have absence tests
+proving a false bit HIDES its row). The other five (`peer_store`,
+`agent_find_peers`, `agent_telnet_dial`, `vara_engine_split`,
+`favorites_peer_link`) are INFORMATIONAL only — the agent tool / store / command
+exists in the binary or it doesn't (no half-state to hide), so nothing queries
+them to gate rendering. They are still flipped true as their row lands (honest
+progress signal + Task 28's completeness check), but spec R5-8's "each row
+exposes a queried bit that hides the row" applies to the three UI rows only.
+Document this on the `P2pCapabilities` struct.
+
+**Task 1 + Task 8 (CDX-5; R3-F2 correction — the validator division must be
+WIRED, not just named).** Concretely:
+- Task 1 body: `sanitize_display` MUST reject `/` — change its test from
+  `sanitize_display("W6ABC/P") == Some(...)` to `== None`, and add
+  `assert!(validate_presented_callsign("W6ABC/P").is_ok())` +
+  `assert!(sanitize_display("W6ABC/P").is_none())`.
+- Task 8 `PeersStore::apply_observation` WRITE boundary: gate the presented
+  callsign with `validate_presented_callsign(&presented).is_ok()` (NOT
+  `sanitize_display`) — otherwise a legit `W6ABC/P` is dropped at write. Add a
+  Task 8 test `slash_p_presented_form_is_stored` asserting a `W6ABC/P`
+  observation creates a record whose `presented_callsigns` contains `W6ABC/P`.
+- Task 18 write-boundary pinning uses `validate_presented_callsign` for the
+  same reason; the hostile-input test still expects injection shapes
+  (`<img…>`, `A:B`, `../`) → dropped, because those fail
+  `validate_presented_callsign` too (it accepts only base + `/SUFFIX` + SSID).
+- Task 19 `curate_peer` (agent-DTO floor) keeps `sanitize_display` — the agent
+  surface may legitimately drop `/`-forms (canonical presentation), and the
+  floor's job is injection safety, not preserving portable suffixes.
 
 **Tasks 13-16 (CDX-7).** Every record-site test MUST drive the real code path
 (the actual `run_vara_b2f_with_transport` walk / `run_ardop_connect_b2f_with_transport`
@@ -143,13 +196,21 @@ not hand-construct-and-drop an `ObservationGuard` (that is false-green; it passe
 even if the site was never wired). Extract a testable core fn if the real fn's
 `AppHandle` blocks direct calling.
 
-**Task 16 (CDX-3, CLD-3-related).** Add a rejected-inbound hook at EVERY
-allowlist-reject site (telnet `handle_one_session` reject paths
-`telnet_listen.rs:371-389`; the VARA/ARDOP/packet listener gates) that calls the
-limiter's FAILED path + a visible `tracing::warn!` + session-log line, WITHOUT
-creating a roster record. This is the only way the spoofing-loop quarantine
-counter (spec §223-229) ever sees real rejected bursts — the accepted-path guard
-never does.
+**Task 16 (CDX-3; R3-F5 correction — the reject hook needs its own plumbing;
+`handle_one_session` has no limiter/app-state, and the observation sink bails on
+`NoRecord` BEFORE the limiter, so routing rejects through the sink can never
+increment the counter).** Add a SECOND process-global, parallel to the
+observation sink: `peers::recorder::install_inbound_limiter(Arc<Mutex<InboundCreateLimiter>>)`
+(installed in lib.rs `.setup()` from the same managed limiter) +
+`peers::recorder::record_inbound_reject(transport: ChannelTransport)` — a global
+fn that calls the limiter's FAILED path and emits a visible `tracing::warn!`
+(+ session-log line where an emitter is reachable), creating NO roster record.
+Every allowlist-reject site calls `record_inbound_reject(...)` (no app state
+needed): telnet `handle_one_session` reject paths (`telnet_listen.rs:371-389`,
+which take no `AppHandle` — the global is exactly why this works); the
+VARA/ARDOP/packet listener allowlist gates. This is the ONLY path by which the
+spoofing-loop quarantine counter (spec §223-229) sees real rejected bursts — the
+accepted-answer guard never does. Test: N rejects increment `quarantined()`.
 
 **Task 17 (CDX-9, CLD-11).** `record_attempt`'s real signature is
 `record_attempt(&mut self, dial: FavoriteDial, outcome: String, ts_local: String,
