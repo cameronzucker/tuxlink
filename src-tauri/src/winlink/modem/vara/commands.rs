@@ -43,7 +43,7 @@ use crate::winlink::listener::transport::TransportKind;
 use crate::winlink::session::SessionIntent;
 use crate::winlink_backend::{LogLevel, LogSource};
 
-use super::command::{Bandwidth, OutboundCommand};
+use super::command::{Bandwidth, Compression, OutboundCommand, VaraSessionType};
 use super::ptt::{self, PttSink, SharedPtt, UnkeyGuard, VaraPtt};
 use super::transport::{VaraConfig, VaraTransport};
 
@@ -1747,27 +1747,35 @@ pub fn vara_open_session_inner(
     // treats the socket as half-attached. Pre-wizard / no callsign:
     // skip; the operator sees the VARA-side warning and knows to
     // complete identity setup.
+    //
+    // Validate before sending: an invalid stored identity (e.g. a
+    // partially-typed callsign persisted before the wizard completed)
+    // must NOT brick the open — skip the MYCALL send with a logged
+    // warning and let VARA surface its own not-connected notice.
     if let Some(call) = callsign {
         let trimmed = call.trim();
         if !trimmed.is_empty() {
-            let _ = transport.send(&OutboundCommand::MyCall(trimmed.to_string()));
+            match crate::winlink::callsign::validate_wire_callsign(trimmed) {
+                Ok(()) => {
+                    let _ = transport.send(&OutboundCommand::MyCall(trimmed.to_string()));
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        target: "tuxlink::winlink::modem::vara",
+                        callsign = %trimmed,
+                        "VARA: stored callsign failed validation ({e}) — skipping MYCALL \
+                         setter; VARA will warn it is not connected to an App",
+                    );
+                }
+            }
         }
     }
 
-    // Best-effort: send BW if the operator configured a known bandwidth.
-    // VARA echoes setter commands on success; we don't wait for the echo
-    // here (the read would block up to the 2s read_timeout) — the operator
-    // is responsible for verifying the configuration matches what the VARA
-    // instance accepted. A future enhancement could surface the echo in a
-    // status field.
-    if let Some(hz) = ui_cfg.bandwidth_hz {
-        if let Some(bw) = bandwidth_from_hz(hz) {
-            // Ignore send errors here — the transport is open and usable
-            // even if the BW setter didn't take. The status reflects "open"
-            // not "fully configured."
-            let _ = transport.send(&OutboundCommand::Bw(bw));
-        }
-    }
+    // NOTE: the BW setter and the engine-split HF setter chain (PUBLIC ON →
+    // SessionType → COMPRESSION TEXT → RETRIES 10 → optional BW) are sent in
+    // Phase 2 (UNLOCKED), AFTER the readiness gate — never here under the
+    // lock. Only MYCALL (the identity handshake) is sent while the lock is
+    // held; every mode-configuring setter belongs to the unlocked window.
 
     // Snapshot the close-generation BEFORE dropping the lock so Phase 3 can
     // detect a close that raced the unlocked readiness-gate window and abort
@@ -1779,21 +1787,54 @@ pub fn vara_open_session_inner(
     // ── DROP the lock for the readiness gate (amendment c step 2) ──────────
     drop(guard);
 
-    // ── Phase 2 (UNLOCKED): readiness gate (amendment c step 3) ────────────
-    // Runs on the LOCAL `transport` with NO session lock held. Reads the cmd
-    // socket only (never keys TX — RADIO-1 safe) up to `VARA_READY_T_MAX`,
-    // always honoring the `VARA_READY_T_MIN` settle. Fails OPEN on expiry.
-    // (Task 4 will add the HF P2P session-type setter sends in this window.)
-    if wait_for_readiness(&mut transport, VARA_READY_T_MIN, VARA_READY_T_MAX)
-        == Readiness::Unconfirmed
-    {
-        tracing::warn!(
-            target: "tuxlink::winlink::modem::vara",
-            host = %ui_cfg.host,
-            cmd_port = ui_cfg.cmd_port,
-            "VARA: modem readiness unconfirmed (no REGISTERED within the readiness \
-             ceiling) — proceeding (fail-open)",
-        );
+    // ── Phase 2 (UNLOCKED): engine-split setter sequence ───────────────────
+    // (amendment c step 3; spec §7, [R3-1][R1-C1]). Runs on the LOCAL
+    // `transport` with NO session lock held — both the setter writes and the
+    // readiness gate touch the cmd socket only (never key TX — RADIO-1 safe).
+    //
+    // HF/SAT: readiness gate (up to `VARA_READY_T_MAX`, honoring the
+    //   `VARA_READY_T_MIN` settle; fail-OPEN on expiry), then PUBLIC ON →
+    //   SessionType → COMPRESSION TEXT → RETRIES 10 → optional BW. Every
+    //   setter after MYCALL is fire-and-forget: a WRONG reply is absorbed by
+    //   the wait loops / Task 5 dial-window drain and logged, never fatal
+    //   [R3-3].
+    // FM: WLE's VaraFMSession sends ONLY MYCALL/LISTEN/CONNECT/ABORT/
+    //   DISCONNECT — no setters, no BW [R3-1]. A `VARA_READY_T_MIN` settle
+    //   replaces the gate (FM emits REGISTERED too, but it is log-only there).
+    // CWID: intentionally NOT sent — CW station ID is a per-station
+    //   regulatory choice the operator configures in VARA itself (VARA.ini
+    //   persists it); WLE's own CWID setter draws WRONG across versions, so
+    //   owning it adds a failure mode without adding capability. [R3-5] is
+    //   satisfied by PUBLIC ON below + CWID delegated to VARA's own config.
+    if transport_kind == TransportKind::VaraFm {
+        std::thread::sleep(VARA_READY_T_MIN);
+    } else {
+        if wait_for_readiness(&mut transport, VARA_READY_T_MIN, VARA_READY_T_MAX)
+            == Readiness::Unconfirmed
+        {
+            // Fail OPEN [R3-2]: proceed with a warning, never a wedge.
+            tracing::warn!(
+                target: "tuxlink::winlink::modem::vara",
+                host = %ui_cfg.host,
+                cmd_port = ui_cfg.cmd_port,
+                "VARA: modem readiness unconfirmed (no REGISTERED within the readiness \
+                 ceiling) — proceeding (fail-open)",
+            );
+        }
+        // Fire-and-forget setter chain (matches the prior BW posture) — a
+        // WRONG reply to any of these is absorbed by the wait loops and
+        // logged, never fatal [R3-3].
+        let _ = transport.send(&OutboundCommand::Public(true)); // [R3-5]
+        let _ = transport.send(&OutboundCommand::SessionType(
+            VaraSessionType::from_intent(intent),
+        ));
+        let _ = transport.send(&OutboundCommand::Compression(Compression::Text));
+        let _ = transport.send(&OutboundCommand::Retries(10)); // [R3-4] HF-only
+        if let Some(hz) = ui_cfg.bandwidth_hz {
+            if let Some(bw) = bandwidth_from_hz(hz) {
+                let _ = transport.send(&OutboundCommand::Bw(bw));
+            }
+        }
     }
 
     // ── Phase 3 (RE-LOCKED): re-validate the double-open invariant + stash ──
@@ -4648,6 +4689,128 @@ mod tests {
         session
     }
 
+    /// Acceptor that records every "\r"-terminated line the client writes
+    /// to the cmd socket, optionally replying to the first line with
+    /// `reply` (e.g. "REGISTERED"). Returns the captured lines via mpsc.
+    fn capturing_cmd_acceptor(
+        listener: std::net::TcpListener,
+        reply: Option<&'static str>,
+        capture_for: std::time::Duration,
+    ) -> std::sync::mpsc::Receiver<Vec<String>> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            let (mut s, _) = listener.accept().unwrap();
+            s.set_read_timeout(Some(std::time::Duration::from_millis(50)))
+                .unwrap();
+            let mut buf = Vec::new();
+            let mut lines: Vec<String> = Vec::new();
+            let start = std::time::Instant::now();
+            let mut replied = false;
+            while start.elapsed() < capture_for {
+                let mut b = [0u8; 256];
+                match s.read(&mut b) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        buf.extend_from_slice(&b[..n]);
+                        while let Some(pos) = buf.iter().position(|&c| c == b'\r') {
+                            let line: Vec<u8> = buf.drain(..=pos).collect();
+                            lines.push(
+                                String::from_utf8_lossy(&line[..line.len() - 1]).into_owned(),
+                            );
+                            if !replied {
+                                if let Some(r) = reply {
+                                    let _ = s.write_all(format!("{r}\r").as_bytes());
+                                    replied = true;
+                                }
+                            }
+                        }
+                    }
+                    Err(_) => {} // read timeout — keep capturing
+                }
+            }
+            let _ = tx.send(lines);
+        });
+        rx
+    }
+
+    #[test]
+    fn hf_open_sends_full_setter_sequence_in_order() {
+        use std::net::TcpListener;
+        let cmd_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let cmd_port = cmd_l.local_addr().unwrap().port();
+        let data_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let data_port = data_l.local_addr().unwrap().port();
+        let rx =
+            capturing_cmd_acceptor(cmd_l, Some("REGISTERED"), std::time::Duration::from_secs(3));
+        let _dh = std::thread::spawn(move || {
+            let (_c, _) = data_l.accept().unwrap();
+            std::thread::sleep(std::time::Duration::from_secs(3));
+        });
+        let session = Arc::new(VaraSession::new());
+        let ui_cfg = VaraUiConfig {
+            host: "127.0.0.1".into(),
+            cmd_port,
+            data_port,
+            bandwidth_hz: Some(2300),
+        };
+        vara_open_session_inner(
+            &session,
+            &ui_cfg,
+            Some("W6ABC"),
+            SessionIntent::P2p,
+            TransportKind::VaraHf,
+        )
+        .expect("open");
+        let lines = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        // Spec §7 open order: MYCALL → (gate) → PUBLIC ON → SessionType →
+        // COMPRESSION TEXT → RETRIES 10 → BW. (CWID intentionally absent.)
+        assert_eq!(
+            lines,
+            vec![
+                "MYCALL W6ABC",
+                "PUBLIC ON",
+                "P2P SESSION",
+                "COMPRESSION TEXT",
+                "RETRIES 10",
+                "BW2300",
+            ]
+        );
+    }
+
+    #[test]
+    fn fm_open_sends_mycall_only() {
+        use std::net::TcpListener;
+        let cmd_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let cmd_port = cmd_l.local_addr().unwrap().port();
+        let data_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let data_port = data_l.local_addr().unwrap().port();
+        let rx = capturing_cmd_acceptor(cmd_l, None, std::time::Duration::from_secs(2));
+        let _dh = std::thread::spawn(move || {
+            let (_c, _) = data_l.accept().unwrap();
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        });
+        let session = Arc::new(VaraSession::new());
+        let ui_cfg = VaraUiConfig {
+            host: "127.0.0.1".into(),
+            cmd_port,
+            data_port,
+            bandwidth_hz: Some(2300), // set, but FM must NOT send BW [R3-1]
+        };
+        vara_open_session_inner(
+            &session,
+            &ui_cfg,
+            Some("W6ABC"),
+            SessionIntent::P2p,
+            TransportKind::VaraFm,
+        )
+        .expect("open");
+        let lines = rx.recv_timeout(std::time::Duration::from_secs(4)).unwrap();
+        // FM command set is MYCALL/LISTEN/CONNECT/ABORT/DISCONNECT only —
+        // no SessionType, COMPRESSION, RETRIES, PUBLIC, or BW [R3-1].
+        assert_eq!(lines, vec!["MYCALL W6ABC"]);
+    }
+
     #[test]
     fn vara_open_session_inner_populates_active_intent_for_cms() {
         // Codex Round 2 P2: both intent + transport_kind flow through; the
@@ -5419,6 +5582,38 @@ mod tests {
         (session, cmd_peer, data_peer)
     }
 
+    /// Read from `sock`, accumulating bytes across reads until the decoded
+    /// string contains `needle` or `deadline` elapses; returns whatever was
+    /// accumulated. The Task 4 engine-split HF open emits a setter prelude
+    /// (PUBLIC ON → SessionType → COMPRESSION TEXT → RETRIES 10) on the cmd
+    /// socket ahead of anything a test sends, so a single `read()` can land
+    /// mid-stream — accumulate rather than assert on one segment.
+    fn read_until_contains(
+        sock: &mut std::net::TcpStream,
+        needle: &str,
+        deadline: std::time::Duration,
+    ) -> String {
+        use std::io::Read;
+        sock.set_read_timeout(Some(std::time::Duration::from_millis(100)))
+            .ok();
+        let start = std::time::Instant::now();
+        let mut acc: Vec<u8> = Vec::new();
+        while start.elapsed() < deadline {
+            let mut buf = [0u8; 64];
+            match sock.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    acc.extend_from_slice(&buf[..n]);
+                    if String::from_utf8_lossy(&acc).contains(needle) {
+                        break;
+                    }
+                }
+                Err(_) => {} // read timeout — keep polling until the deadline
+            }
+        }
+        String::from_utf8_lossy(&acc).into_owned()
+    }
+
     #[test]
     fn vara_open_session_installs_abort_writer() {
         // After a successful open, the session's abort_in_flight() MUST NOT
@@ -5452,17 +5647,16 @@ mod tests {
         // version of `vara_open_session_installs_abort_writer` — proves
         // not just "installed" but "installed pointing at the right
         // socket."
-        use std::io::Read;
         use std::time::Duration;
 
         let (session, mut cmd_peer, _data_peer) =
             loopback_open_with_cmd_peer(SessionIntent::Cms, TransportKind::VaraHf);
 
-        // Drain any best-effort MYCALL/BW writes (open path sends none in
-        // this test — None callsign + bandwidth_hz: None — but the read
-        // below tolerates leading bytes via the contains() check below).
-        cmd_peer.set_read_timeout(Some(Duration::from_secs(2))).ok();
-
+        // The HF open path emits a setter prelude (PUBLIC ON → SessionType →
+        // COMPRESSION TEXT → RETRIES 10) on the cmd socket ahead of the
+        // ABORT this test triggers (Task 4 engine-split open). Accumulate
+        // across reads until ABORT appears rather than asserting on a single
+        // possibly-mid-stream segment.
         // Fire abort against the freshly-installed writer.
         let abort_result = session.abort_in_flight();
         assert!(
@@ -5471,11 +5665,7 @@ mod tests {
             abort_result
         );
 
-        // Read what arrived at the peer cmd socket. Read enough bytes to
-        // cover any incidental prelude + the "ABORT\r" itself.
-        let mut buf = [0u8; 64];
-        let n = cmd_peer.read(&mut buf).expect("peer read must yield bytes");
-        let s = String::from_utf8_lossy(&buf[..n]);
+        let s = read_until_contains(&mut cmd_peer, "ABORT\r", Duration::from_secs(2));
         assert!(
             s.contains("ABORT\r"),
             "expected peer cmd-port to receive 'ABORT\\r' from the installed \
@@ -5492,14 +5682,11 @@ mod tests {
         // close path's abort no longer hits the "no writer installed"
         // fast-out path).
         use crate::ui_commands::VaraListenState;
-        use std::io::Read;
         use std::time::Duration;
 
         let (session, mut cmd_peer, _data_peer) =
             loopback_open_with_cmd_peer(SessionIntent::Cms, TransportKind::VaraHf);
         let listen_state = Arc::new(VaraListenState::default());
-
-        cmd_peer.set_read_timeout(Some(Duration::from_secs(2))).ok();
 
         let result = vara_close_session_inner(&session, &listen_state);
         assert!(result.is_ok(), "close must succeed: {result:?}");
@@ -5507,10 +5694,11 @@ mod tests {
         // The close path's step 2 (abort_in_flight) MUST have sent ABORT\r
         // through the installed writer to the peer cmd socket. Without
         // Task 4.2's install, the abort would have returned Err("no
-        // writer") and no bytes would arrive.
-        let mut buf = [0u8; 64];
-        let n = cmd_peer.read(&mut buf).expect("peer read must yield bytes");
-        let s = String::from_utf8_lossy(&buf[..n]);
+        // writer") and no bytes would arrive. The HF open path first emits a
+        // setter prelude (PUBLIC ON → SessionType → COMPRESSION TEXT →
+        // RETRIES 10), so accumulate across reads until ABORT appears rather
+        // than asserting on a single possibly-mid-stream segment.
+        let s = read_until_contains(&mut cmd_peer, "ABORT\r", Duration::from_secs(2));
         assert!(
             s.contains("ABORT\r"),
             "Task 4.2: vara_close_session_inner must abort via the installed \
