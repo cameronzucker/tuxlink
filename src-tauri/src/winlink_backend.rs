@@ -2706,20 +2706,9 @@ fn native_packet_connect(
                         crate::peers::recorder::PeerObservation {
                             path: crate::peers::recorder::ObservedPath::Rf {
                                 transport: crate::peers::model::ChannelTransport::Packet,
-                                // `Address` has no `Display`/`ToString` impl (the
-                                // brief's `d.to_string()` does not compile) —
-                                // format CALL-SSID the same way
-                                // `ax25::datalink::fmt_addr` does (bare call when
-                                // SSID 0, else `CALL-SSID`).
                                 via: digis
                                     .iter()
-                                    .map(|d| {
-                                        if d.ssid == 0 {
-                                            d.call.clone()
-                                        } else {
-                                            format!("{}-{}", d.call, d.ssid)
-                                        }
-                                    })
+                                    .map(crate::winlink::ax25::datalink::fmt_addr)
                                     .collect(),
                                 freq_hz: None,
                                 bandwidth: None,
