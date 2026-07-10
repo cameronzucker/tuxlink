@@ -2688,7 +2688,52 @@ fn native_packet_connect(
 
     match resolved.dial {
         Some((target, digis)) => {
+            let intent = resolved.intent;
             progress(&format!("Connecting to {}…", target.call));
+
+            // ─── Peer-observation recording (Task 15) ──────────────────────
+            // Arm the drop-guard BEFORE the AX.25 connect (`connect_with_logger`
+            // — the actual CONNECT transmission), gated on P2P intent [spec §3]:
+            // a link-level connect failure (below) still records `DialAttempted`
+            // → Fail on the guard's drop [R3-11]. CMS/gateway/RadioOnly/
+            // PostOffice dials resolve no sink and never construct a guard.
+            // Mirrors the VARA (`dial_observation_sink`) / ARDOP
+            // (`ardop_dial_observation_sink`) dial gates (Tasks 13-14).
+            let obs_guard = if intent == SessionIntent::P2p {
+                crate::peers::recorder::observation_sink().map(|s| {
+                    crate::peers::recorder::ObservationGuard::new(
+                        s,
+                        crate::peers::recorder::PeerObservation {
+                            path: crate::peers::recorder::ObservedPath::Rf {
+                                transport: crate::peers::model::ChannelTransport::Packet,
+                                // `Address` has no `Display`/`ToString` impl (the
+                                // brief's `d.to_string()` does not compile) —
+                                // format CALL-SSID the same way
+                                // `ax25::datalink::fmt_addr` does (bare call when
+                                // SSID 0, else `CALL-SSID`).
+                                via: digis
+                                    .iter()
+                                    .map(|d| {
+                                        if d.ssid == 0 {
+                                            d.call.clone()
+                                        } else {
+                                            format!("{}-{}", d.call, d.ssid)
+                                        }
+                                    })
+                                    .collect(),
+                                freq_hz: None,
+                                bandwidth: None,
+                            },
+                            direction: crate::peers::model::Direction::Outgoing,
+                            presented_target: target.call.clone(),
+                            phase: crate::peers::recorder::ObservationPhase::DialAttempted,
+                        },
+                    )
+                })
+            } else {
+                None
+            };
+
             let stream = crate::winlink::ax25::connect_with_logger(
                 bytelink,
                 resolved.link_mycall,
@@ -2701,6 +2746,12 @@ fn native_packet_connect(
                 reason: format!("AX.25 connect: {e}"),
                 source: None,
             })?;
+            // `obs_guard` (if armed) fired above on the `?` early-return, at
+            // `DialAttempted` → Fail [R3-11]. Past this point the AX.25 link is
+            // up — advance to `Connected`.
+            if let Some(g) = &obs_guard {
+                g.set_phase(crate::peers::recorder::ObservationPhase::Connected);
+            }
             // P1.3 (Codex post-impl review): read_password is deferred until AFTER
             // the KISS link is established. The prior placement (before connect_link)
             // caused the OS-keyring migration to run even when the link failed — e.g.
@@ -2711,7 +2762,7 @@ fn native_packet_connect(
             let password = crate::winlink::credentials::read_password(&base)
                 .ok()
                 .filter(|p| !p.is_empty());
-            native_packet_exchange(
+            let result = native_packet_exchange(
                 BlockingB2fStream(stream),
                 PacketConnectCtx {
                     base_mycall: &base,
@@ -2719,12 +2770,19 @@ fn native_packet_connect(
                     password,
                     role: ExchangeRole::Dial,
                     locator: &locator,
-                    intent: resolved.intent,
+                    intent,
                 },
                 mailbox,
                 progress,
                 wire_log,
-            )
+            );
+            if let Some(g) = &obs_guard {
+                g.set_phase(match &result {
+                    Ok(()) => crate::peers::recorder::ObservationPhase::B2fOk,
+                    Err(_) => crate::peers::recorder::ObservationPhase::B2fFail,
+                });
+            }
+            result
         }
         None => {
             // ── Listener-arms gate (tuxlink-inde) — armed BEFORE answer()
@@ -2836,9 +2894,40 @@ fn native_packet_connect(
                 });
             }
 
+            // ─── Peer-observation recording (Task 15) ──────────────────────
+            // Arm the drop-guard for the inbound answer at `B2fStarted`, ABOVE
+            // the exchange call — mirrors the ARDOP/VARA answer-site placement
+            // standard (arm above local mailbox/tempdir resolution; the packet
+            // answer path takes its mailbox as a caller-supplied `Arc`, so a
+            // peer that already answered records even if the exchange call
+            // itself fails). No intent check needed here:
+            // `packet_listen_transport_from_config` pins every Listen role to
+            // `SessionIntent::P2p` (Task 12), and a rejected inbound (allowlist/
+            // expired) already returned above — never reaches this point, so
+            // never records, by construction. The guard fires on drop with its
+            // last phase: `Accepted` on a clean exchange, `B2fFail` on failure,
+            // and — if a wedge/panic-unwind unwinds past here — the
+            // `B2fStarted` it was armed at, which classifies as Fail [R3-11].
+            let obs_guard = crate::peers::recorder::observation_sink().map(|s| {
+                crate::peers::recorder::ObservationGuard::new(
+                    s,
+                    crate::peers::recorder::PeerObservation {
+                        path: crate::peers::recorder::ObservedPath::Rf {
+                            transport: crate::peers::model::ChannelTransport::Packet,
+                            via: vec![],
+                            freq_hz: None,
+                            bandwidth: None,
+                        },
+                        direction: crate::peers::model::Direction::Incoming,
+                        presented_target: peer.call.clone(),
+                        phase: crate::peers::recorder::ObservationPhase::B2fStarted,
+                    },
+                )
+            });
+
             // Listen (Answer role) does not need a password — peers do not challenge.
             // password: None is intentional; no read_password call here.
-            native_packet_exchange(
+            let result = native_packet_exchange(
                 BlockingB2fStream(stream),
                 PacketConnectCtx {
                     base_mycall: &base,
@@ -2851,7 +2940,14 @@ fn native_packet_connect(
                 mailbox,
                 progress,
                 wire_log,
-            )
+            );
+            if let Some(g) = &obs_guard {
+                g.set_phase(match &result {
+                    Ok(()) => crate::peers::recorder::ObservationPhase::Accepted,
+                    Err(_) => crate::peers::recorder::ObservationPhase::B2fFail,
+                });
+            }
+            result
         }
     }
 }
@@ -7086,5 +7182,270 @@ mod native_read_state_tests {
             !written.contains(";FW: W7AUX"),
             "run_vara_b2f_answer must NOT use the config callsign W7AUX in ;FW:; got:\n{written}"
         );
+    }
+
+    // =========================================================================
+    // Task 15 (tuxlink-c39af): packet record sites (dial + answer)
+    // =========================================================================
+
+    /// A KISS TCP stand-in that accepts the connection but never replies — the
+    /// AX.25 SABM/UA handshake never completes, so `connect_with_logger` (inside
+    /// the dial arm of `native_packet_connect`) times out and errors. Mirrors
+    /// `ax25::link`'s `connect_link_with_abort_yields_a_tcp_abort_handle_that_closes_the_link`
+    /// fixture (a real TCP peer that only sinks bytes), reused here so the
+    /// dial-fail record-site test drives a genuine AX.25 connect failure rather
+    /// than a lower-level TCP-open failure (which would never reach the guard —
+    /// per the brief, the guard arms AFTER the KISS link opens, immediately
+    /// before the AX.25 CONNECT).
+    fn spawn_silent_kiss_wire() -> std::net::SocketAddr {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut sock, _)) = listener.accept() {
+                let mut sink = Vec::new();
+                let _ = std::io::Read::read_to_end(&mut sock, &mut sink);
+            }
+        });
+        addr
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial_test::serial]
+    async fn packet_answer_p2p_intent_records_incoming_accepted_observation() {
+        // [CDX-7]: drives the REAL `native_packet_connect` answer path — via
+        // `NativeBackend::connect` → `packet_connect_inner` → `spawn_blocking` —
+        // over a genuine TCP+KISS+AX.25 loopback wire (mirrors the Task 12
+        // `packet_two_real_peers_complete_a_connect_and_b2f_over_tcp_kiss`
+        // fixture), never a hand-constructed `ObservationGuard`. #[serial]:
+        // the recorder sink is process-global.
+        use crate::identity::{Callsign, IdentityHandle, SessionIdentity};
+
+        let seen: Arc<std::sync::Mutex<Vec<crate::peers::recorder::PeerObservation>>> =
+            Arc::default();
+        {
+            let seen = seen.clone();
+            crate::peers::recorder::install_observation_sink(Arc::new(move |o| {
+                seen.lock().unwrap().push(o)
+            }));
+        }
+
+        let wire = spawn_kiss_wire();
+
+        let dialer_dir = tempdir().unwrap();
+        let answerer_dir = tempdir().unwrap();
+        let seed = Mailbox::new(dialer_dir.path());
+        let raw = compose_message(
+            "N7CPZ",
+            &["W7AUX"],
+            &[],
+            "P2P record site",
+            "task 15 observation",
+            1_716_200_000,
+        )
+        .to_bytes();
+        seed.store(MailboxFolder::Outbox, &raw).unwrap();
+
+        let dialer = NativeBackend::new(config_with_call("N7CPZ"), dialer_dir.path());
+        dialer.set_active_identity(SessionIdentity::full(IdentityHandle::for_test(
+            Callsign::parse("N7CPZ").unwrap(),
+        )));
+        let answerer = NativeBackend::new(config_with_call("W7AUX"), answerer_dir.path())
+            .with_packet_allowlist(
+                crate::winlink::listener::AllowedStations::new().with_allow_all(true),
+            );
+        answerer.set_active_identity(SessionIdentity::full(IdentityHandle::for_test(
+            Callsign::parse("W7AUX").unwrap(),
+        )));
+
+        let listen = TransportConfig::Packet {
+            link: KissLinkConfig::Tcp {
+                host: wire.ip().to_string(),
+                port: wire.port(),
+            },
+            ssid: 7,
+            role: PacketRole::Listen,
+            intent: SessionIntent::P2p,
+        };
+        let dial = TransportConfig::Packet {
+            link: KissLinkConfig::Tcp {
+                host: wire.ip().to_string(),
+                port: wire.port(),
+            },
+            ssid: 7,
+            role: PacketRole::DialTo {
+                call: "W7AUX-7".into(),
+                path: vec![],
+            },
+            intent: SessionIntent::P2p,
+        };
+
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            tokio::join!(answerer.connect(listen, None), dialer.connect(dial, None))
+        })
+        .await;
+        let (ans_res, dial_res) =
+            outcome.expect("packet P2P answer record-site test timed out");
+        ans_res.expect("answerer (Listen/Answer role) connect+exchange failed");
+        dial_res.expect("dialer (DialTo/Dial role) connect+exchange failed");
+
+        let obs = seen.lock().unwrap();
+        let incoming: Vec<_> = obs
+            .iter()
+            .filter(|o| o.direction == crate::peers::model::Direction::Incoming)
+            .collect();
+        assert_eq!(
+            incoming.len(),
+            1,
+            "exactly one Incoming observation from the answer arm; got {obs:?}"
+        );
+        let o = incoming[0];
+        match &o.path {
+            crate::peers::recorder::ObservedPath::Rf { transport, .. } => {
+                assert_eq!(*transport, crate::peers::model::ChannelTransport::Packet);
+            }
+            other => panic!("expected an Rf path for the packet answer site; got {other:?}"),
+        }
+        assert_eq!(
+            o.presented_target, "N7CPZ",
+            "the answerer's observation must present the dialer's base call"
+        );
+        assert_eq!(
+            crate::peers::recorder::classify(o.phase),
+            crate::peers::recorder::Classified::Ok,
+            "a clean accepted exchange must classify Ok; got phase {:?}",
+            o.phase
+        );
+        drop(obs);
+
+        crate::peers::recorder::install_observation_sink(Arc::new(|_| {})); // reset
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial_test::serial]
+    async fn packet_dial_connect_fail_p2p_intent_records_one_fail_observation() {
+        // [CDX-7] [R3-11]: drives the REAL `native_packet_connect` dial path
+        // (via `NativeBackend::connect`) against a KISS wire that accepts the
+        // TCP link but never answers the AX.25 SABM — `connect_with_logger`
+        // times out, the dial arm's `?` fires, and the guard armed immediately
+        // before that call drops recording `DialAttempted` → Fail. #[serial]:
+        // the recorder sink is process-global.
+        let seen: Arc<std::sync::Mutex<Vec<crate::peers::recorder::PeerObservation>>> =
+            Arc::default();
+        {
+            let seen = seen.clone();
+            crate::peers::recorder::install_observation_sink(Arc::new(move |o| {
+                seen.lock().unwrap().push(o)
+            }));
+        }
+
+        let wire = spawn_silent_kiss_wire();
+
+        // Fast AX.25 timing so the failed connect resolves in well under a
+        // second: `datalink::connect` keys at most 2 SABMs regardless of
+        // `n2_retries`, one `t1` apart.
+        let mut cfg = config_with_call("N7CPZ");
+        cfg.packet.params.t1_ms = 20;
+        cfg.packet.params.n2_retries = 0;
+
+        let dir = tempdir().unwrap();
+        let dialer = NativeBackend::new(cfg, dir.path());
+        dialer.set_active_identity(crate::identity::SessionIdentity::full(
+            crate::identity::IdentityHandle::for_test(
+                crate::identity::Callsign::parse("N7CPZ").unwrap(),
+            ),
+        ));
+
+        let dial = TransportConfig::Packet {
+            link: KissLinkConfig::Tcp {
+                host: wire.ip().to_string(),
+                port: wire.port(),
+            },
+            ssid: 7,
+            role: PacketRole::DialTo {
+                call: "W7AUX-7".into(),
+                path: vec![],
+            },
+            intent: SessionIntent::P2p,
+        };
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(10), dialer.connect(dial, None))
+            .await
+            .expect("packet dial-fail record-site test timed out");
+        assert!(
+            result.is_err(),
+            "a dial into a silent KISS wire must fail the AX.25 connect, got {result:?}"
+        );
+
+        let obs = seen.lock().unwrap();
+        assert_eq!(
+            obs.len(),
+            1,
+            "exactly one observation for the failed P2P dial; got {obs:?}"
+        );
+        assert_eq!(obs[0].direction, crate::peers::model::Direction::Outgoing);
+        assert_eq!(obs[0].presented_target, "W7AUX");
+        assert_eq!(
+            crate::peers::recorder::classify(obs[0].phase),
+            crate::peers::recorder::Classified::Fail
+        );
+        drop(obs);
+
+        crate::peers::recorder::install_observation_sink(Arc::new(|_| {})); // reset
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial_test::serial]
+    async fn packet_dial_connect_fail_cms_intent_records_nothing_even_with_sink_installed() {
+        // [spec §3]: the packet dial gate mirrors the VARA/ARDOP dial gates —
+        // only `SessionIntent::P2p` dials resolve the global sink. A CMS dial
+        // that fails its AX.25 connect must not touch the peer roster even
+        // though the global sink IS installed.
+        let seen: Arc<std::sync::Mutex<Vec<crate::peers::recorder::PeerObservation>>> =
+            Arc::default();
+        {
+            let seen = seen.clone();
+            crate::peers::recorder::install_observation_sink(Arc::new(move |o| {
+                seen.lock().unwrap().push(o)
+            }));
+        }
+
+        let wire = spawn_silent_kiss_wire();
+
+        let mut cfg = config_with_call("N7CPZ");
+        cfg.packet.params.t1_ms = 20;
+        cfg.packet.params.n2_retries = 0;
+
+        let dir = tempdir().unwrap();
+        let dialer = NativeBackend::new(cfg, dir.path());
+        dialer.set_active_identity(crate::identity::SessionIdentity::full(
+            crate::identity::IdentityHandle::for_test(
+                crate::identity::Callsign::parse("N7CPZ").unwrap(),
+            ),
+        ));
+
+        let dial = TransportConfig::Packet {
+            link: KissLinkConfig::Tcp {
+                host: wire.ip().to_string(),
+                port: wire.port(),
+            },
+            ssid: 7,
+            role: PacketRole::DialTo {
+                call: "W7AUX-7".into(),
+                path: vec![],
+            },
+            intent: SessionIntent::Cms,
+        };
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(10), dialer.connect(dial, None))
+            .await
+            .expect("packet dial-fail CMS-intent test timed out");
+        assert!(result.is_err(), "expected the AX.25 connect to fail, got {result:?}");
+
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "a CMS packet dial must not record even with the global sink installed"
+        );
+
+        crate::peers::recorder::install_observation_sink(Arc::new(|_| {})); // reset
     }
 }
