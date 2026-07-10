@@ -9,7 +9,7 @@
 //! entry point (classification → inbound-create rate limit → store apply).
 
 use crate::peers::model::{ChannelBandwidth, ChannelTransport, Direction, Provenance};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 /// The conclusion phase of a single connection attempt. The recorder maps
 /// these to a [`Classified`] bucket via [`classify`].
@@ -86,6 +86,30 @@ pub struct PeerObservation {
 /// calls [`record_peer_observation`] and emits `peers:changed` on a real write;
 /// tests substitute a capturing closure.
 pub type ObservationSink = Arc<dyn Fn(PeerObservation) + Send + Sync>;
+
+/// Process-global observation sink [R4-1]. The 8 record sites (Tasks 13-16) span
+/// backend layers with and without an `AppHandle` (`native_packet_connect` and
+/// `telnet_listen::handle_one_session` have none), so rather than thread a sink
+/// parameter through the whole backend, the recorder holds it here. Installed
+/// ONCE at app setup (`lib.rs`), after the peers store + limiter are managed;
+/// every site reads it via [`observation_sink`] and is a NO-OP when `None`
+/// (unit tests, headless tools).
+static SINK: RwLock<Option<ObservationSink>> = RwLock::new(None);
+
+/// Install the global observation sink. Called once from `lib.rs` `.setup()`.
+/// A poisoned lock leaves the sink uninstalled (sites no-op) rather than panics.
+pub fn install_observation_sink(sink: ObservationSink) {
+    if let Ok(mut g) = SINK.write() {
+        *g = Some(sink);
+    }
+}
+
+/// The installed sink, or `None` when no sink has been installed (tests,
+/// headless tools) or the lock is poisoned. Record sites clone this to arm an
+/// [`ObservationGuard`]; a `None` return means the site is a no-op.
+pub fn observation_sink() -> Option<ObservationSink> {
+    SINK.read().ok().and_then(|g| g.clone())
+}
 
 /// Drop-guard recorder [R3-11]: construct at attempt start (`DialAttempted`, or
 /// the `Accepted`-path initial for an inbound), advance the phase via
@@ -396,6 +420,27 @@ mod tests {
             // …exchange wedges; nothing sets B2fOk…
         }
         assert_eq!(classify(seen.lock().unwrap()[0].phase), Classified::Fail);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn global_sink_install_read_and_fire_roundtrip() {
+        // The process-global sink (Task 13): install → observation_sink() returns
+        // it → an ObservationGuard armed with it fires into the captured buffer on
+        // drop. #[serial] because SINK is a process-global RwLock.
+        let seen: Arc<Mutex<Vec<PeerObservation>>> = Arc::default();
+        {
+            let seen = seen.clone();
+            install_observation_sink(Arc::new(move |o| seen.lock().unwrap().push(o)));
+        }
+        let sink = observation_sink().expect("sink is installed → Some");
+        {
+            let g = ObservationGuard::new(sink, obs(ObservationPhase::DialAttempted));
+            g.set_phase(ObservationPhase::B2fOk);
+        } // drop → fire into the installed sink
+        assert_eq!(seen.lock().unwrap().len(), 1);
+        assert_eq!(seen.lock().unwrap()[0].phase, ObservationPhase::B2fOk);
+        install_observation_sink(Arc::new(|_| {})); // reset to a no-op sink
     }
 
     #[test]

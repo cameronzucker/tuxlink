@@ -1046,6 +1046,41 @@ pub fn run() {
                         ),
                     )));
 
+                    // Install the process-global peer-observation sink (Task 13),
+                    // immediately after the peers store + limiter are managed so
+                    // every record site (Tasks 13-16) can resolve it. The sink
+                    // captures the managed store + limiter and routes each
+                    // concluded observation through `record_peer_observation`
+                    // (classify → inbound-create rate limit → store apply),
+                    // emitting `peers:changed` only on a real roster write. Sites
+                    // are no-ops until this runs (unit tests, headless tools).
+                    // Task 17 will add the favorites bridge inside this closure.
+                    {
+                        let store = app
+                            .state::<std::sync::Arc<std::sync::Mutex<crate::peers::store::PeersStore>>>()
+                            .inner()
+                            .clone();
+                        let limiter = app
+                            .state::<std::sync::Arc<std::sync::Mutex<crate::peers::limiter::InboundCreateLimiter>>>()
+                            .inner()
+                            .clone();
+                        let emit_handle = app.handle().clone();
+                        crate::peers::recorder::install_observation_sink(std::sync::Arc::new(
+                            move |obs: crate::peers::recorder::PeerObservation| {
+                                let effect = crate::peers::recorder::record_peer_observation(
+                                    &store, &limiter, obs,
+                                );
+                                if !matches!(
+                                    effect,
+                                    crate::peers::store::ApplyEffect::NoRecord
+                                ) {
+                                    use tauri::Emitter;
+                                    let _ = emit_handle.emit("peers:changed", ());
+                                }
+                            },
+                        ));
+                    }
+
                     // forms sequence counters (tuxlink-2tom / G12-C): per-form
                     // serial numbers for SeqInc forms. `SeqCounterStore::open` is
                     // INFALLIBLE (degrade-to-empty on read error) like the stores

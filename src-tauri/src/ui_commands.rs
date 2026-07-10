@@ -6517,6 +6517,45 @@ fn vara_listener_consumer_task(
                     }
                 };
 
+                // Peer-observation recording (Task 13): arm a drop-guard for the
+                // inbound answer at `B2fStarted`. Record P2P answers only — the
+                // VARA listener auto-arms for P2p AND RadioOnly, so gate on the
+                // open session's intent (a RadioOnly inbound is not a peer, per
+                // spec §3 / brief line 51). A rejected inbound (allowlist/expired)
+                // never reaches this Accepted branch — no record, by construction.
+                // The guard fires on drop with its last phase: `Accepted` on a
+                // clean exchange, `B2fFail` on failure, and — if an early return
+                // or wedge unwinds past here — the `B2fStarted` it was armed at,
+                // which classifies as Fail [R3-11].
+                let obs_sink = if vara_session.active_intent() == Some(SessionIntent::P2p) {
+                    crate::peers::recorder::observation_sink()
+                } else {
+                    None
+                };
+                let obs_guard = obs_sink.map(|s| {
+                    crate::peers::recorder::ObservationGuard::new(
+                        s,
+                        crate::peers::recorder::PeerObservation {
+                            path: crate::peers::recorder::ObservedPath::Rf {
+                                transport: match vara_session.active_transport_kind() {
+                                    Some(
+                                        crate::winlink::listener::transport::TransportKind::VaraFm,
+                                    ) => crate::peers::model::ChannelTransport::VaraFm,
+                                    _ => crate::peers::model::ChannelTransport::VaraHf,
+                                },
+                                via: vec![],
+                                // No wire freq source on inbound (CONNECTED carries
+                                // bandwidth, not frequency) [R3-11].
+                                freq_hz: None,
+                                bandwidth: None,
+                            },
+                            direction: crate::peers::model::Direction::Incoming,
+                            presented_target: peer_call.clone(),
+                            phase: crate::peers::recorder::ObservationPhase::B2fStarted,
+                        },
+                    )
+                });
+
                 // Pre-clone the data halves: the PTT pump owns the cmd socket
                 // (and `transport`) while the answer turns run on the data
                 // socket, so mid-exchange keying requests actually key the
@@ -6559,18 +6598,28 @@ fn vara_listener_consumer_task(
                 };
                 match result {
                     Ok(()) => {
+                        if let Some(g) = &obs_guard {
+                            g.set_phase(crate::peers::recorder::ObservationPhase::Accepted);
+                        }
                         progress(&format!(
                             "VARA listener: exchange with {} complete.",
                             peer_call
                         ));
                     }
                     Err(e) => {
+                        if let Some(g) = &obs_guard {
+                            g.set_phase(crate::peers::recorder::ObservationPhase::B2fFail);
+                        }
                         progress(&format!(
                             "VARA listener: exchange with {} failed: {e}",
                             peer_call
                         ));
                     }
                 }
+                // Fire the inbound observation with its terminal phase (Accepted /
+                // B2fFail). Dropped explicitly here so the record lands before the
+                // link wind-down below, not at end-of-branch.
+                drop(obs_guard);
                 // After the B2F exchange completes (success or fail), tear
                 // the ARQ link down gracefully. The wind-down services PTT so
                 // the disconnect frames key the rig (tuxlink-yrrjq), bounded

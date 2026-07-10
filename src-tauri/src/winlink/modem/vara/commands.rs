@@ -2733,7 +2733,32 @@ fn run_vara_b2f_with_transport(
     // The connected target (winning candidate) for the post-walk log + exchange.
     let mut connected_target: Option<String> = None;
 
-    let outcome = walk_candidates(&candidates, qsy_on_fail, |_idx, c| {
+    // ─── Peer-observation recording (Task 13) ─────────────────────────
+    // Record P2P outbound dials only [spec §3]: a CMS/gateway/RadioOnly/
+    // PostOffice dial never constructs a guard. The channel-transport label
+    // mirrors the sideband discriminator below (a None pre-open kind → HF).
+    let engine_transport = match session.active_transport_kind() {
+        Some(TransportKind::VaraFm) => crate::peers::model::ChannelTransport::VaraFm,
+        _ => crate::peers::model::ChannelTransport::VaraHf,
+    };
+    let sink = if intent == SessionIntent::P2p {
+        crate::peers::recorder::observation_sink()
+    } else {
+        None
+    };
+
+    // `run_recorded_dial_walk` arms one `ObservationGuard` per candidate at
+    // `DialAttempted`; on connect success the guard advances to `Connected` and
+    // is returned as `live_guard` (advanced to `B2fOk`/`B2fFail` after the
+    // exchange, then dropped); on connect failure the guard drops in-place,
+    // recording the per-candidate fail [R3-11].
+    let (outcome, live_guard) = run_recorded_dial_walk(
+        &candidates,
+        qsy_on_fail,
+        engine_transport,
+        via,
+        sink,
+        |_idx, c| {
         // Abort recheck (C2 for VARA): if the operator closed the session
         // mid-walk, the close generation bumps; stop attempting rather than
         // QSY-ing to the next candidate after a Close. The remaining
@@ -2898,10 +2923,86 @@ fn run_vara_b2f_with_transport(
         let _ = pump.join();
         r
     });
-    match exchange_result {
-        Ok(()) => VaraExchangeOutcome::Completed,
-        Err(e) => VaraExchangeOutcome::ExchangeFailed(format!("VARA B2F exchange failed: {e}")),
-    }
+    // Advance the surviving dial guard to its terminal exchange phase, then drop
+    // it so the observation records with that phase. An abort/wedge that unwinds
+    // past here (or an early return above, e.g. the data-socket try_clone
+    // failures) instead drops `live_guard` at whatever phase it last reached —
+    // `Connected` classifies as Fail, so the fail still records [R3-11].
+    let outcome = match exchange_result {
+        Ok(()) => {
+            if let Some(g) = &live_guard {
+                g.set_phase(crate::peers::recorder::ObservationPhase::B2fOk);
+            }
+            VaraExchangeOutcome::Completed
+        }
+        Err(e) => {
+            if let Some(g) = &live_guard {
+                g.set_phase(crate::peers::recorder::ObservationPhase::B2fFail);
+            }
+            VaraExchangeOutcome::ExchangeFailed(format!("VARA B2F exchange failed: {e}"))
+        }
+    };
+    drop(live_guard);
+    outcome
+}
+
+/// The recording half of the VARA dial walk (Task 13), extracted so a unit test
+/// can drive the REAL guard-construction path without an `AppHandle` [CDX-7].
+///
+/// Runs [`walk_candidates`], arming one [`crate::peers::recorder::ObservationGuard`]
+/// per candidate at `DialAttempted`. When a candidate's `attempt` returns `true`
+/// (connect established) the guard advances to `Connected` and is returned as the
+/// live guard — the caller advances it to `B2fOk`/`B2fFail` after the exchange
+/// and drops it. When `attempt` returns `false` (connect failed) the guard drops
+/// in-place, recording that candidate's fail [R3-11].
+///
+/// `sink` is `None` for non-P2P intents (CMS/gateway/RadioOnly/PostOffice dials
+/// never record) and in headless/unit contexts with no sink installed — then the
+/// walk runs with no recording. `via` is the shared dial via-list (a
+/// [`DialCandidate`] carries only target + freq); the guard mirrors what the
+/// CONNECT actually threads.
+fn run_recorded_dial_walk<F>(
+    candidates: &[DialCandidate],
+    qsy_on_fail: bool,
+    engine_transport: crate::peers::model::ChannelTransport,
+    via: &[String],
+    sink: Option<crate::peers::recorder::ObservationSink>,
+    mut attempt: F,
+) -> (Option<usize>, Option<crate::peers::recorder::ObservationGuard>)
+where
+    F: FnMut(usize, &DialCandidate) -> bool,
+{
+    let mut live_guard: Option<crate::peers::recorder::ObservationGuard> = None;
+    let outcome = walk_candidates(candidates, qsy_on_fail, |idx, c| {
+        let guard = sink.clone().map(|s| {
+            crate::peers::recorder::ObservationGuard::new(
+                s,
+                crate::peers::recorder::PeerObservation {
+                    path: crate::peers::recorder::ObservedPath::Rf {
+                        transport: engine_transport,
+                        via: via.to_vec(),
+                        freq_hz: c.freq_hz,
+                        bandwidth: None,
+                    },
+                    direction: crate::peers::model::Direction::Outgoing,
+                    presented_target: c.target.clone(),
+                    phase: crate::peers::recorder::ObservationPhase::DialAttempted,
+                },
+            )
+        });
+        let connected = attempt(idx, c);
+        if connected {
+            if let Some(g) = &guard {
+                g.set_phase(crate::peers::recorder::ObservationPhase::Connected);
+            }
+            // The winning candidate's guard survives into the exchange; the
+            // caller owns its terminal phase + drop.
+            live_guard = guard;
+        }
+        // On failure `guard` drops here → records the per-candidate fail [R3-11].
+        connected
+    });
+    (outcome, live_guard)
 }
 
 /// Service VARA cmd-socket events while the B2F exchange runs on the data
@@ -4436,6 +4537,113 @@ mod tests {
             let lines = rx.recv_timeout(Duration::from_secs(4)).unwrap();
             assert_eq!(lines, expected, "kind={kind:?}");
         }
+    }
+
+    // ── Task 13: dial-site peer-observation recording ──
+
+    #[test]
+    #[serial_test::serial]
+    fn vara_dial_walk_records_fail_per_failed_candidate() {
+        // [CDX-7] Drive the REAL recording path, not a hand-built guard:
+        // `run_recorded_dial_walk` is the production dial-walk recorder, and the
+        // attempt closure runs the REAL `send_connect_and_wait_inner` against a
+        // loopback cmd server that never sends CONNECTED. The single candidate
+        // fails at the shortened deadline, so the walk's own per-candidate
+        // guard-drop records exactly one Fail [R3-11]. The sink is process-global,
+        // so this test is #[serial].
+        let seen: Arc<Mutex<Vec<crate::peers::recorder::PeerObservation>>> = Arc::default();
+        {
+            let seen = seen.clone();
+            crate::peers::recorder::install_observation_sink(Arc::new(move |o| {
+                seen.lock().unwrap().push(o)
+            }));
+        }
+
+        // Empty cmd script → no CONNECTED ever arrives → the dial times out.
+        let (mut t, ch, dh) = scripted_cmd_vara_transport(b"");
+        let (ptt, _calls) = recording_keyer();
+        let candidates = vec![DialCandidate {
+            target: "N0DAJ-7".into(),
+            freq_hz: Some(7_101_000),
+        }];
+
+        let (outcome, live_guard) = run_recorded_dial_walk(
+            &candidates,
+            false,
+            crate::peers::model::ChannelTransport::VaraHf,
+            &[],
+            crate::peers::recorder::observation_sink(),
+            |_idx, c| {
+                send_connect_and_wait_inner(
+                    &mut t,
+                    "W6ABC",
+                    &c.target,
+                    &[],
+                    TransportKind::VaraHf,
+                    SessionIntent::P2p,
+                    Duration::from_millis(200),
+                    &ptt,
+                )
+                .is_ok()
+            },
+        );
+
+        assert!(outcome.is_none(), "no candidate connected");
+        assert!(live_guard.is_none(), "no surviving guard on an all-fail walk");
+        {
+            let recs = seen.lock().unwrap();
+            assert_eq!(recs.len(), 1, "exactly one per-candidate fail recorded");
+            assert_eq!(
+                crate::peers::recorder::classify(recs[0].phase),
+                crate::peers::recorder::Classified::Fail
+            );
+            assert_eq!(recs[0].presented_target, "N0DAJ-7");
+            assert_eq!(recs[0].direction, crate::peers::model::Direction::Outgoing);
+        }
+
+        crate::peers::recorder::install_observation_sink(Arc::new(|_| {})); // reset
+        drop(t);
+        ch.join().unwrap();
+        dh.join().unwrap();
+    }
+
+    #[test]
+    fn vara_dial_walk_no_record_without_sink() {
+        // Non-P2P dials pass `sink: None` (the caller gates on intent); the walk
+        // then runs with zero recording and no guard construction. Proves the
+        // record site is a clean no-op off the P2P path — a CMS/gateway dial
+        // never touches the roster.
+        let (mut t, ch, dh) = scripted_cmd_vara_transport(b"");
+        let (ptt, _calls) = recording_keyer();
+        let candidates = vec![DialCandidate {
+            target: "N0DAJ-7".into(),
+            freq_hz: Some(7_101_000),
+        }];
+        let (outcome, live_guard) = run_recorded_dial_walk(
+            &candidates,
+            false,
+            crate::peers::model::ChannelTransport::VaraHf,
+            &[],
+            None, // non-P2P: no sink
+            |_idx, c| {
+                send_connect_and_wait_inner(
+                    &mut t,
+                    "W6ABC",
+                    &c.target,
+                    &[],
+                    TransportKind::VaraHf,
+                    SessionIntent::Cms,
+                    Duration::from_millis(200),
+                    &ptt,
+                )
+                .is_ok()
+            },
+        );
+        assert!(outcome.is_none());
+        assert!(live_guard.is_none());
+        drop(t);
+        ch.join().unwrap();
+        dh.join().unwrap();
     }
 
     #[test]
