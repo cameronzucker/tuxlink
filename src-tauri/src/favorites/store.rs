@@ -554,8 +554,8 @@ impl FavoritesStore {
     /// Merge ONLY the operator-editable fields of `edited` into the existing
     /// favorite with the same `id`, preserving everything `favorite_star` and
     /// `record_attempt` own (M12). Editable fields: `gateway`, `freq`,
-    /// `transport`, `band`, `grid`, `note`, `peer_id` [R5-7]. PRESERVED from the
-    /// existing record: `id`, `mode`, `starred`, `created_at`, `last_attempt_at`
+    /// `transport`, `band`, `grid`, `note`. PRESERVED from the existing record:
+    /// `id`, `mode`, `starred`, `created_at`, `last_attempt_at`, `peer_id`
     /// (and, in the file, the whole `log` — untouched here). Bumps `updated_at`
     /// to `now`.
     ///
@@ -563,6 +563,13 @@ impl FavoritesStore {
     /// carrying `starred:false` (or a stale `last_attempt_at`) can never revert a
     /// concurrent star or rewind the dial clock, because those fields are read
     /// from the LIVE record, not the caller's payload.
+    ///
+    /// `peer_id` [R5-7] is preserved, NOT merged, for the same reason: it is a
+    /// system-derived back-link to the P2P roster (like `id`), not
+    /// operator-typed metadata. The edit form round-trips the client's cached
+    /// whole-object snapshot, so merging it would let a stale edit payload
+    /// (touching just `note`) resurrect a peer link the system had since
+    /// cleared — or clobber one it had since written.
     ///
     /// Returns `None` (and does NOT flush) when no favorite with `edited.id`
     /// exists — the command layer treats that as a brand-new mint. On a hit, the
@@ -587,9 +594,10 @@ impl FavoritesStore {
         existing.band = edited.band.clone();
         existing.grid = edited.grid.clone();
         existing.note = edited.note.clone();
-        existing.peer_id = edited.peer_id.clone();
         existing.updated_at = now;
-        // starred, created_at, last_attempt_at, mode, id: PRESERVED (not touched).
+        // starred, created_at, last_attempt_at, mode, id, peer_id: PRESERVED
+        // (not touched). peer_id is a system-derived roster back-link [R5-7];
+        // a round-tripped edit snapshot must never resurrect or clobber it.
         let merged = existing.clone();
         self.flush()?;
         Ok(Some(merged))
@@ -1084,6 +1092,54 @@ mod tests {
         assert_eq!(merged.freq.as_deref(), Some("7102.0"));
         assert_eq!(merged.grid.as_deref(), Some("CN88"));
         assert_eq!(merged.updated_at, "2026-06-08T12:00:00+00:00");
+    }
+
+    #[test]
+    fn favorite_merge_editable_preserves_peer_id_both_directions() {
+        // [R5-7] peer_id is a system-derived roster back-link (like `id`), NOT
+        // operator-typed metadata — the merge must read it from the LIVE record,
+        // never the caller's payload. The edit form round-trips the client's
+        // cached whole-object snapshot, so an editable peer_id would let a stale
+        // Edit (touching just `note`) resurrect a link the system had since
+        // cleared, or clobber one it had since written. Pin BOTH directions.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let mut store = FavoritesStore::open(path);
+
+        // Direction 1: live Some survives an edit carrying None.
+        let mut seed = favorite("f1", "vara-hf", "KK6XYZ");
+        seed.peer_id = Some("p1".to_string());
+        store.favorite_upsert(seed).unwrap();
+        let mut edit = favorite("f1", "vara-hf", "KK6XYZ");
+        edit.peer_id = None; // stale snapshot from before the system linked p1
+        edit.note = Some("edited note".to_string());
+        let merged = store
+            .favorite_merge_editable(&edit, "2026-06-08T12:00:00+00:00".to_string())
+            .unwrap()
+            .expect("merge over an existing id returns Some");
+        assert_eq!(
+            merged.peer_id.as_deref(),
+            Some("p1"),
+            "a live peer link must survive an edit payload carrying None"
+        );
+        assert_eq!(merged.note.as_deref(), Some("edited note"), "the edit itself landed");
+
+        // Direction 2: live None survives an edit carrying Some.
+        let seed2 = favorite("f2", "vara-hf", "W6ABC"); // peer_id: None (cleared/never linked)
+        store.favorite_upsert(seed2).unwrap();
+        let mut edit2 = favorite("f2", "vara-hf", "W6ABC");
+        edit2.peer_id = Some("p-ghost".to_string()); // stale snapshot from before a cleanup
+        let merged2 = store
+            .favorite_merge_editable(&edit2, "2026-06-08T13:00:00+00:00".to_string())
+            .unwrap()
+            .expect("merge over an existing id returns Some");
+        assert_eq!(
+            merged2.peer_id, None,
+            "a cleared peer link must not be resurrected by a stale edit payload"
+        );
+        // And the live store agrees on both.
+        assert_eq!(store.favorites()[0].peer_id.as_deref(), Some("p1"));
+        assert_eq!(store.favorites()[1].peer_id, None);
     }
 
     #[test]
