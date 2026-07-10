@@ -15,6 +15,7 @@ use std::time::Duration;
 use tuxlink_jt9::discover::{discover_jt9, Jt9Binary};
 use tuxlink_jt9::runner::Jt9Runner;
 use tuxlink_jt9::types::SlotOutcome;
+use tuxlink_jt9::wav::{SLOT_FRAMES, SLOT_RATE_HZ};
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../tuxlink-ft8/tests/fixtures/sdr").join(name)
@@ -62,6 +63,27 @@ fn slot_dir(tag: &str) -> PathBuf {
     d
 }
 
+/// Canonical silence WAV matching wav.rs's preflight contract (PCM mono
+/// 16-bit at `SLOT_RATE_HZ`, exactly `SLOT_FRAMES` all-zero samples).
+fn write_silence_wav(path: &Path) {
+    use std::io::Write;
+    let mut f = std::fs::File::create(path).unwrap();
+    let data_len: u32 = SLOT_FRAMES * 2;
+    f.write_all(b"RIFF").unwrap();
+    f.write_all(&(36 + data_len).to_le_bytes()).unwrap();
+    f.write_all(b"WAVEfmt ").unwrap();
+    f.write_all(&16u32.to_le_bytes()).unwrap();
+    f.write_all(&1u16.to_le_bytes()).unwrap();
+    f.write_all(&1u16.to_le_bytes()).unwrap();
+    f.write_all(&SLOT_RATE_HZ.to_le_bytes()).unwrap();
+    f.write_all(&(SLOT_RATE_HZ * 2).to_le_bytes()).unwrap();
+    f.write_all(&2u16.to_le_bytes()).unwrap();
+    f.write_all(&16u16.to_le_bytes()).unwrap();
+    f.write_all(b"data").unwrap();
+    f.write_all(&data_len.to_le_bytes()).unwrap();
+    f.write_all(&vec![0u8; data_len as usize]).unwrap();
+}
+
 #[test]
 fn ordinary_fixture_decodes_at_least_the_depth1_reference_set() {
     let Some((bin, data, lock)) = shared() else {
@@ -86,7 +108,11 @@ fn ordinary_fixture_decodes_at_least_the_depth1_reference_set() {
 }
 
 #[test]
-fn quiet_fixture_decodes_both_reference_messages() {
+fn quiet_fixture_decodes_reference_messages() {
+    // Reference fixture originally carried 2 known messages; -d3 now finds 4
+    // on current wsjtx. Floor at >=2 (the original reference count) so a
+    // wsjtx-version delta cannot flake this — same floor policy as the
+    // ordinary fixture's depth-1-count floor above.
     let Some((bin, data, lock)) = shared() else {
         eprintln!("SKIP: jt9 not installed (apt install wsjtx) — quiet");
         return;
@@ -121,12 +147,15 @@ fn silence_is_band_dead() {
         eprintln!("SKIP: jt9 not installed (apt install wsjtx) — silence");
         return;
     };
+    // prewarm()'s Ok collapse (asserted elsewhere via the shared init) only
+    // proves silence is not an error — Decoded and BandDead both map to Ok.
+    // This asserts the actual public contract on SlotOutcome: a truly quiet
+    // slot returns BandDead exactly, not merely "didn't fail".
     let runner = Jt9Runner::new(bin.clone(), data.to_path_buf(), Duration::from_secs(12));
+    let slot = slot_dir("silence");
+    let wav = slot.join("silence.wav");
+    write_silence_wav(&wav);
     let _guard = lock.lock().unwrap_or_else(|p| p.into_inner());
-    // prewarm()'s silence decode returns BandDead through the same path; this
-    // pins it as the public contract for a truly quiet slot.
-    match runner.prewarm() {
-        Ok(()) => {}
-        Err(f) => panic!("silence must be clean BandDead/Decoded, got {f:?}"),
-    }
+    assert_eq!(runner.decode_slot(&wav, &slot, 0), SlotOutcome::BandDead);
+    let _ = std::fs::remove_dir_all(&slot);
 }

@@ -1,5 +1,10 @@
 //! Decode-service data types (Station Intelligence L1).
 
+/// Production per-slot decode budget (design delta): 15s slot cadence minus
+/// margin for host-side WAV writeout + jt9 startup. L2's slot scheduler
+/// constructs `Jt9Runner` with this as the `timeout` argument.
+pub const SLOT_DECODE_TIMEOUT_SECS: u64 = 12;
+
 /// One decoded FT8 message. `slot_utc_ms` is stamped by the HOST slot
 /// scheduler — jt9's stdout timestamp is always `000000` for our filenames
 /// and is never used (delta §Grounded facts).
@@ -28,7 +33,10 @@ pub struct Ft8Decode {
 /// Degraded-flag thresholds (consumed by the L2 plan's slot scheduler; the
 /// delta requires them pinned here): jt9-degraded after N = 5 consecutive
 /// non-Decoded/non-BandDead outcomes, clearing on the first good slot;
-/// band-dead after k = 20 consecutive zero-decode slots (5 minutes).
+/// band-dead after k = 20 consecutive zero-decode slots (5 minutes). The N=5
+/// degraded counter also folds L2 backpressure drops — a slot L2 drops
+/// without ever calling `decode_slot` still counts as a non-Decoded outcome
+/// toward N.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SlotFailure {
     /// Preflight rejection — never spawned. STABLE-STRING CONTRACT: the exact

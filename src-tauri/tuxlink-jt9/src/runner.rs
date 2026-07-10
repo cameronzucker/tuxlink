@@ -61,21 +61,26 @@ impl Jt9Runner {
         };
 
         // Drain threads: decode lines stream incrementally; draining also
-        // prevents pipe-full stalls on chatty output.
+        // prevents pipe-full stalls on chatty output. Both threads report
+        // through channels (not join handles) so BOTH the timeout path and
+        // the clean-exit path can collect with a bounded wait instead of a
+        // blind join — a grandchild that inherits the pipe write-ends can
+        // otherwise keep a thread parked in a blocking read indefinitely.
         let (line_tx, line_rx) = mpsc::channel::<String>();
         let stdout = child.stdout.take().expect("stdout piped");
-        let stdout_thread = std::thread::spawn(move || {
+        let _stdout_thread = std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines().map_while(Result::ok) {
                 if line_tx.send(line).is_err() {
                     break;
                 }
             }
         });
+        let (stderr_tx, stderr_rx) = mpsc::channel::<String>();
         let mut stderr = child.stderr.take().expect("stderr piped");
-        let stderr_thread = std::thread::spawn(move || {
+        let _stderr_thread = std::thread::spawn(move || {
             let mut buf = Vec::new();
             let _ = stderr.read_to_end(&mut buf);
-            String::from_utf8_lossy(&buf).into_owned()
+            let _ = stderr_tx.send(String::from_utf8_lossy(&buf).into_owned());
         });
 
         let mut guard = ChildGuard(Some(child));
@@ -98,37 +103,63 @@ impl Jt9Runner {
             }
         };
         guard.0 = None; // reaped on every path above
-        let stderr_text = if timed_out {
-            // A grandchild of the killed process can hold the pipe write-ends
-            // open indefinitely; NEVER block on the drain threads here. Give
-            // the drains a beat to flush what the kernel buffered, then
-            // collect via the channel; the threads exit on their own at pipe
-            // EOF whenever the holder dies.
-            //
-            // Accepted bound: if a killed jt9 ever left behind such a
-            // pipe-holding grandchild that never exits on its own, the two
-            // drain threads plus their two pipe read fds leak for the
-            // remaining process lifetime (this path never joins them).
-            // Accepted because (1) jt9 does not fork grandchildren in
-            // practice (observed behavior, not a documented guarantee), and
-            // (2) this crate is std-only — no libc, so no killpg to reap a
-            // process group. Any future mitigation (process-group kill,
-            // cgroup-based reaping, periodic fd/thread supervision) belongs
-            // to L2's slot loop (tuxlink-b026z.3), which owns the
-            // long-running process lifecycle this runner is invoked from;
-            // tracked at tuxlink-b026z.8.
+
+        // Bounded drain on EVERY path: `decode_slot` must always return. The
+        // stdout/stderr threads exit once their pipe hits EOF, which happens
+        // the instant the child exits in the ordinary case (the kernel
+        // closes the last write-end). If jt9 — killed OR cleanly exited —
+        // left behind a forked grandchild that inherited the pipe
+        // write-ends, that write-end stays open and a blind join would wait
+        // for the grandchild's own lifetime, wedging the caller forever.
+        //
+        // Accepted bound: if such a pipe-holding grandchild never exits on
+        // its own, the two drain threads plus their two pipe read fds leak
+        // for the remaining process lifetime (neither branch below ever
+        // joins them). Accepted because (1) jt9 does not fork grandchildren
+        // in practice (observed behavior, not a documented guarantee), and
+        // (2) this crate is std-only — no libc, so no killpg to reap a
+        // process group. Any future mitigation (process-group kill,
+        // cgroup-based reaping, periodic fd/thread supervision) belongs to
+        // L2's slot loop (tuxlink-b026z.3), which owns the long-running
+        // process lifecycle this runner is invoked from; tracked at
+        // tuxlink-b026z.8.
+        let (stdout_lines, stderr_text): (Vec<String>, String) = if timed_out {
+            // Give the drains a beat to flush what the kernel already
+            // buffered, then collect non-blockingly via the channels; the
+            // threads exit on their own at pipe EOF whenever the holder
+            // dies.
             std::thread::sleep(Duration::from_millis(50));
-            String::new()
+            (line_rx.try_iter().collect(), stderr_rx.try_recv().unwrap_or_default())
         } else {
-            let _ = stdout_thread.join();
-            stderr_thread.join().unwrap_or_default()
+            // Clean-exit grace: bound the drain instead of blindly joining.
+            // Ordinary case (no grandchild): the stdout sender drops the
+            // instant the child exits, so `recv_timeout` returns
+            // `Disconnected` essentially immediately and the stderr message
+            // arrives immediately too — behavior identical to the old blind
+            // join. Grandchild case: up to a 2s total grace to flush,
+            // stopping the moment the deadline is hit.
+            let grace_deadline = Instant::now() + Duration::from_secs(2);
+            let mut lines = Vec::new();
+            loop {
+                let remaining = grace_deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    break;
+                }
+                match line_rx.recv_timeout(remaining) {
+                    Ok(line) => lines.push(line),
+                    Err(_) => break, // Disconnected (done) or Timeout (grace exhausted)
+                }
+            }
+            let remaining = grace_deadline.saturating_duration_since(Instant::now());
+            let stderr = stderr_rx.recv_timeout(remaining).unwrap_or_default();
+            (lines, stderr)
         };
 
         // Collect everything the drain saw.
         let mut decodes = Vec::new();
         let mut saw_sentinel = false;
         let mut raw_lines = 0usize;
-        for line in line_rx.try_iter() {
+        for line in stdout_lines {
             match parse_stdout_line(&line) {
                 ParsedLine::Decode { snr_db, dt_s, freq_hz, message } => {
                     let fields = extract_fields(&message);

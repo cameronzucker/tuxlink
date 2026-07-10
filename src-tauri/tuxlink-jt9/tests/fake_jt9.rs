@@ -145,11 +145,16 @@ fn stderr_eof_on_clean_exit_is_a_capture_bug_not_band_dead() {
 
 #[test]
 fn bad_wav_never_spawns() {
+    // STABLE-STRING CONTRACT (types.rs SlotFailure::BadWav doc): the exact
+    // string "not found" is API — L2's mid-run disappearance detection
+    // matches on it. This is the "not found" half of the contract; the
+    // "permission denied" half is exercised by
+    // `unreadable_wav_maps_to_stable_permission_string` below.
     let (runner, _wav, tmp) = setup("badwav", "#!/bin/sh\ntouch spawned-marker\nexit 0\n");
     let missing = std::env::temp_dir().join("no-such-slot.wav");
     match runner.decode_slot(&missing, &tmp, 0) {
-        SlotOutcome::Failed(SlotFailure::BadWav(_)) => {}
-        other => panic!("want BadWav, got {other:?}"),
+        SlotOutcome::Failed(SlotFailure::BadWav(s)) => assert_eq!(s, "not found"),
+        other => panic!("want BadWav(\"not found\"), got {other:?}"),
     }
     assert!(!tmp.join("spawned-marker").exists(), "preflight must gate the spawn");
     let _ = std::fs::remove_dir_all(tmp.parent().unwrap());
@@ -163,6 +168,24 @@ fn hung_grandchild_holding_pipes_does_not_block_the_kill_path() {
     let t0 = std::time::Instant::now();
     assert_eq!(runner.decode_slot(&wav, &tmp, 0), SlotOutcome::Failed(SlotFailure::Timeout));
     assert!(t0.elapsed() < Duration::from_secs(10), "must not block on grandchild pipes");
+    let _ = std::fs::remove_dir_all(wav.parent().unwrap());
+}
+
+#[test]
+fn grandchild_on_clean_exit_does_not_wedge_decode_slot() {
+    // jt9 exits 0 but a forked child inherits the pipes and lives 30s;
+    // the clean-exit drain must be bounded, not a blind join.
+    let (runner, wav, tmp) = setup("cleanexit-grandchild", &format!(
+        "#!/bin/sh\necho '{DECODE_LINE}'\necho '{SENTINEL}'\n( sleep 30 ) &\nexit 0\n"));
+    let t0 = std::time::Instant::now();
+    match runner.decode_slot(&wav, &tmp, 7) {
+        SlotOutcome::Decoded(recs) => {
+            assert_eq!(recs.len(), 1);
+            assert!(!recs[0].partial, "sentinel seen, clean exit — records complete");
+        }
+        other => panic!("want Decoded, got {other:?}"),
+    }
+    assert!(t0.elapsed() < Duration::from_secs(10), "clean-exit drain must be bounded");
     let _ = std::fs::remove_dir_all(wav.parent().unwrap());
 }
 
