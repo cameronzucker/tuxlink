@@ -79,3 +79,36 @@ blocked only by the timeout bug PR #1063 fixes.
   operator merges).
 
 Agent: jay-marsh-yew
+
+---
+
+## Late-night update (~02:30Z): fix MERGED + PROVEN ON AIR; next wall is administrative
+
+- **PR #1063 MERGED** (head `8a0955ee`; CI green both arches after a Codex adrev
+  round fixed a `mut`-binding compile error, added the abort-path data-socket
+  shutdown + regression test, and de-raced the handshake test; plus a scoped
+  `result_large_err` allow — VaraConfig growth crossed clippy 1.97's threshold
+  on the pre-existing transport give-back API). `tuxlink-xzxk1` CLOSED.
+- **R2 app swapped** to the fixed binary (diag branch `diag/xzxk1-onair` @
+  `5c187c0d` = kestrel's probes + the fix; pid at swap 158957; use rustup
+  cargo — `PATH=$HOME/.cargo/bin` — system cargo is 1.75 and fails on
+  edition2024 deps).
+- **Redial results**: 02:14Z KD6OAT no answer (likely gateway busy/QSB);
+  02:26Z **KD6OAT CONNECTED again and the B2F handshake COMPLETED OVER RF at
+  500 Hz** — we read the gateway's relayed CMS banner at ~41 bps, which the
+  old 2 s timeout could never have survived. The session then ended with:
+  `Unknown client types are not allowed on production servers -- use
+  cms-z.winlink.org - Disconnecting (136.36.234.56)`.
+- **Meaning**: every layer Tuxlink owns is on-air-proven (CAT/PTT/BW500
+  ConReq/ARQ/B2F-handshake-over-RF). The blocker is WDT policy: production
+  CMS rejects the `[tuxlink-<ver>-B2FHM$]` SID; over RF the gateway picks the
+  CMS (always production), so the telnet-era cms-z workaround cannot apply.
+  Filed `tuxlink-ie7dy` (P1, operator-action): request WDT client-type
+  whitelisting for "tuxlink" (Pat precedent). P2P sessions are unaffected.
+- **Process note**: one mis-cwd'd git command landed a benign-but-mislabeled
+  bd-snapshot commit `81fd0a2a` on the operator's `bd-tuxlink-ant8s` branch
+  (pushed; content = .beads/issues.jsonl only, message wrongly describes the
+  lint fix). Operator informed; left in place (amend banned, revert would
+  churn bd state). Pitfall logged: pin `cd`/`-C` on every git op.
+- Radio unkeyed (`TX0`) verified after every attempt; VARA bandwidth config
+  remains 500.
