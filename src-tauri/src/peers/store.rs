@@ -546,7 +546,7 @@ impl PeersStore {
         let keep = &mut self.file.peers[keep_idx];
 
         for pc in absorbed.presented_callsigns {
-            if !keep.presented_callsigns.iter().any(|c| *c == pc) {
+            if !keep.presented_callsigns.contains(&pc) {
                 keep.presented_callsigns.push(pc);
             }
         }
@@ -619,7 +619,7 @@ impl PeersStore {
             clone.channels = src
                 .channels
                 .iter()
-                .filter(|ch| moved.iter().any(|m| *m == ch.target_callsign))
+                .filter(|ch| moved.contains(&ch.target_callsign))
                 .cloned()
                 .collect();
             // Endpoints (telnet host:port) are not tied to a presented form;
@@ -633,7 +633,7 @@ impl PeersStore {
             src.presented_callsigns
                 .retain(|c| !moved.iter().any(|m| m == c));
             src.channels
-                .retain(|ch| !moved.iter().any(|m| *m == ch.target_callsign));
+                .retain(|ch| !moved.contains(&ch.target_callsign));
             src.do_not_merge = true;
         }
         self.file.peers.push(clone);
