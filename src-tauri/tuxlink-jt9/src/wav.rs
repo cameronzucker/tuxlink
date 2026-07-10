@@ -88,7 +88,10 @@ mod tests {
     }
 
     fn tmp(name: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join("tuxlink-jt9-wavtest");
+        // Pid-suffixed so concurrent `cargo test` runs from different
+        // worktrees on this shared machine cannot collide on identical paths.
+        // Tests within one process share the dir but use distinct filenames.
+        let d = std::env::temp_dir().join(format!("tuxlink-jt9-wavtest-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
         d.join(name)
     }
@@ -98,6 +101,7 @@ mod tests {
         let p = tmp("good.wav");
         write_wav(&p, 12_000, 1, 16, 180_000);
         assert_eq!(preflight_slot_wav(&p), Ok(()));
+        let _ = std::fs::remove_file(&p);
     }
 
     #[test]
@@ -117,6 +121,7 @@ mod tests {
             let p = tmp(name);
             write_wav(&p, rate, ch, bits, frames);
             assert!(matches!(preflight_slot_wav(&p), Err(WavError::WrongFormat(_))), "{name}");
+            let _ = std::fs::remove_file(&p);
         }
     }
 
@@ -125,9 +130,11 @@ mod tests {
         let p = tmp("garbage.wav");
         std::fs::write(&p, b"not a wav at all").unwrap();
         assert!(matches!(preflight_slot_wav(&p), Err(WavError::Malformed(_))));
+        let _ = std::fs::remove_file(&p);
         let p = tmp("tiny.wav");
         std::fs::write(&p, b"RIFF").unwrap();
         assert!(matches!(preflight_slot_wav(&p), Err(WavError::Malformed(_))));
+        let _ = std::fs::remove_file(&p);
     }
 
     #[test]
@@ -140,6 +147,7 @@ mod tests {
         let full = std::fs::read(&p).unwrap();
         std::fs::write(&p, &full[..full.len() / 2]).unwrap();
         assert!(matches!(preflight_slot_wav(&p), Err(WavError::WrongFormat(_))));
+        let _ = std::fs::remove_file(&p);
     }
 
     #[test]
@@ -150,6 +158,7 @@ mod tests {
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o000)).unwrap();
         let r = preflight_slot_wav(&p);
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let _ = std::fs::remove_file(&p);
         assert_eq!(r, Err(WavError::Permission));
     }
 
