@@ -54,6 +54,7 @@ fn main() {
         data_port,
         connect_timeout: Duration::from_secs(5),
         read_timeout: Some(Duration::from_millis(500)),
+        data_read_timeout: Some(Duration::from_millis(500)),
     };
 
     println!(

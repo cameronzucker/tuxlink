@@ -415,4 +415,57 @@ mod tests {
         let hs = read_remote_handshake(&mut cursor).unwrap();
         assert_eq!(hs.relay_state, RelayState::NotRelay);
     }
+
+    /// tuxlink-xzxk1 — the socket-level sharp edge behind the 2026-07-10
+    /// KD6OAT on-air disconnect. The handshake reader maps ANY read error,
+    /// including an SO_RCVTIMEO tick, to `ConnectionClosed` (by design: the
+    /// reader has no timeout/deadline concept). That makes the SOCKET's
+    /// read-timeout budget load-bearing: it must exceed the RF link's SID
+    /// delivery time. This test pins both halves of that contract with a
+    /// real TCP pair and a gateway that answers after a delay — an
+    /// in-memory Cursor can't reproduce the WouldBlock path.
+    #[test]
+    fn slow_sid_needs_rf_scale_socket_timeout() {
+        use std::io::{BufReader, Write};
+        use std::net::TcpListener;
+        use std::time::Duration;
+
+        // One fake gateway per sub-case: accept, wait, then send SID+prompt.
+        let serve_delayed = |delay: Duration| {
+            let l = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = l.local_addr().unwrap();
+            std::thread::spawn(move || {
+                if let Ok((mut sock, _)) = l.accept() {
+                    std::thread::sleep(delay);
+                    let _ = sock.write_all(b"[WL2K-5.0-B2FWIHJM$]\rCMS>\r");
+                    // Hold the socket open long enough for the client to
+                    // finish reading (dropping it early would race an EOF
+                    // in ahead of the bytes on a slow CI runner).
+                    std::thread::sleep(Duration::from_millis(500));
+                }
+            });
+            std::net::TcpStream::connect(addr).unwrap()
+        };
+
+        // Cmd-scale budget (the old shared 2s default, scaled down to keep
+        // the test fast): the timeout tick fires before the SID arrives and
+        // the reader reports ConnectionClosed — the KD6OAT failure mode.
+        let sock = serve_delayed(Duration::from_millis(400));
+        sock.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+        let mut reader = BufReader::new(sock);
+        assert_eq!(
+            read_remote_handshake(&mut reader).unwrap_err(),
+            HandshakeError::ConnectionClosed,
+            "a sub-SID-latency socket timeout must surface as ConnectionClosed \
+             (documents the failure mode; the fix is the RF-scale budget below)"
+        );
+
+        // RF-scale budget (data_read_timeout): the same delayed SID parses.
+        let sock = serve_delayed(Duration::from_millis(400));
+        sock.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        let mut reader = BufReader::new(sock);
+        let hs = read_remote_handshake(&mut reader)
+            .expect("SID slower than the cmd cadence must still parse under an RF-scale budget");
+        assert!(hs.sid.contains("B2"), "expected the WL2K SID, got: {}", hs.sid);
+    }
 }

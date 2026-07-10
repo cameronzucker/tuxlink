@@ -1204,10 +1204,14 @@ pub fn build_transport_config(ui: &VaraUiConfig) -> VaraConfig {
         cmd_port: ui.cmd_port,
         data_port: ui.data_port,
         // Conservative defaults. The transport layer's own `Default` uses
-        // 5s connect + 2s read; we pin them here so a future change to the
-        // transport defaults doesn't silently shift the UI's behavior.
+        // 5s connect + 2s cmd-read; we pin them here so a future change to
+        // the transport defaults doesn't silently shift the UI's behavior.
         connect_timeout: Duration::from_secs(5),
         read_timeout: Some(Duration::from_secs(2)),
+        // RF-scale data-socket budget (tuxlink-xzxk1): B2F bytes arrive at
+        // link speed (tens of bps at VARA 500), so inter-byte gaps far
+        // beyond the 2s cmd cadence are healthy. See VaraConfig field doc.
+        data_read_timeout: Some(Duration::from_secs(120)),
     }
 }
 
@@ -3013,6 +3017,10 @@ mod tests {
         // transport layer's Default changes.
         assert_eq!(t.connect_timeout.as_secs(), 5);
         assert_eq!(t.read_timeout.map(|d| d.as_secs()), Some(2));
+        // tuxlink-xzxk1: the DATA socket must get an RF-scale budget, not
+        // the 2s cmd cadence — a 2s data timeout disconnected the first
+        // on-air gateway answer (KD6OAT, BW500) 4s after link-up.
+        assert_eq!(t.data_read_timeout.map(|d| d.as_secs()), Some(120));
     }
 
     #[test]
@@ -3248,6 +3256,7 @@ mod tests {
             data_port,
             connect_timeout: Duration::from_secs(2),
             read_timeout: Some(Duration::from_millis(100)),
+            data_read_timeout: Some(Duration::from_millis(100)),
         };
         let transport = VaraTransport::connect(cfg).expect("connect must succeed");
 
@@ -3335,6 +3344,7 @@ mod tests {
             data_port,
             connect_timeout: Duration::from_secs(2),
             read_timeout: Some(Duration::from_millis(100)),
+            data_read_timeout: Some(Duration::from_millis(100)),
         };
         let transport = VaraTransport::connect(cfg).expect("connect must succeed");
         (transport, cmd_port, cmd_handle, data_handle)
@@ -3398,6 +3408,7 @@ mod tests {
             data_port,
             connect_timeout: Duration::from_secs(2),
             read_timeout: Some(Duration::from_millis(100)),
+            data_read_timeout: Some(Duration::from_millis(100)),
         };
         let transport = VaraTransport::connect(cfg).expect("connect must succeed");
         (transport, cmd_port, cmd_handle, data_handle)
@@ -3534,6 +3545,7 @@ mod tests {
             data_port,
             connect_timeout: Duration::from_secs(2),
             read_timeout: Some(Duration::from_millis(50)),
+            data_read_timeout: Some(Duration::from_millis(50)),
         };
         let transport = VaraTransport::connect(cfg).expect("connect must succeed");
         (transport, cmd_port, cmd_handle, data_handle)
@@ -3843,6 +3855,7 @@ mod tests {
             data_port,
             connect_timeout: Duration::from_secs(2),
             read_timeout: Some(Duration::from_millis(100)),
+            data_read_timeout: Some(Duration::from_millis(100)),
         };
         let transport = VaraTransport::connect(cfg).expect("connect must succeed");
         (transport, cmd_handle, data_handle)
@@ -4486,6 +4499,7 @@ mod tests {
             data_port,
             connect_timeout: Duration::from_secs(2),
             read_timeout: Some(Duration::from_millis(100)),
+            data_read_timeout: Some(Duration::from_millis(100)),
         };
         let transport = VaraTransport::connect(cfg).expect("connect must succeed");
         (transport, cmd_handle, data_handle)

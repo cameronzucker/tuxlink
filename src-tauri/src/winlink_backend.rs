@@ -6820,6 +6820,7 @@ mod native_read_state_tests {
             data_port,
             connect_timeout: Duration::from_secs(2),
             read_timeout: Some(Duration::from_millis(1000)),
+            data_read_timeout: Some(Duration::from_millis(1000)),
         };
         let mut transport = VaraTransport::connect(cfg_vara).expect("loopback connect");
 
@@ -6962,6 +6963,7 @@ mod native_read_state_tests {
             data_port,
             connect_timeout: Duration::from_secs(2),
             read_timeout: Some(Duration::from_millis(1000)),
+            data_read_timeout: Some(Duration::from_millis(1000)),
         };
         let mut transport = VaraTransport::connect(cfg_vara).expect("loopback connect");
 
