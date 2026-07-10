@@ -6342,6 +6342,25 @@ pub(crate) fn disarm_vara_listener_inner(
     }
 }
 
+/// The answer-site intent gate (Task 13): the VARA listener auto-arms for
+/// `SessionIntent::P2p` AND `SessionIntent::RadioOnly`, but only a P2P inbound
+/// is a peer-roster event — a RadioOnly inbound must not record [spec §3].
+/// `active_intent` is the open session's intent
+/// ([`crate::winlink::modem::vara::VaraSession::active_intent`], which
+/// `take_transport` leaves intact for the armed window); `None` (closed /
+/// poisoned session) records nothing. Extracted from
+/// [`vara_listener_consumer_task`] so the gate is unit-testable without an
+/// `AppHandle` [CDX-7].
+fn vara_answer_observation_sink(
+    active_intent: Option<SessionIntent>,
+) -> Option<crate::peers::recorder::ObservationSink> {
+    if active_intent == Some(SessionIntent::P2p) {
+        crate::peers::recorder::observation_sink()
+    } else {
+        None
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn vara_listener_consumer_task(
     vara_session: std::sync::Arc<crate::winlink::modem::vara::VaraSession>,
@@ -6518,20 +6537,15 @@ fn vara_listener_consumer_task(
                 };
 
                 // Peer-observation recording (Task 13): arm a drop-guard for the
-                // inbound answer at `B2fStarted`. Record P2P answers only — the
-                // VARA listener auto-arms for P2p AND RadioOnly, so gate on the
-                // open session's intent (a RadioOnly inbound is not a peer, per
-                // spec §3 / brief line 51). A rejected inbound (allowlist/expired)
-                // never reaches this Accepted branch — no record, by construction.
-                // The guard fires on drop with its last phase: `Accepted` on a
-                // clean exchange, `B2fFail` on failure, and — if an early return
-                // or wedge unwinds past here — the `B2fStarted` it was armed at,
+                // inbound answer at `B2fStarted`. Record P2P answers only —
+                // `vara_answer_observation_sink` gates on the open session's
+                // intent. A rejected inbound (allowlist/expired) never reaches
+                // this Accepted branch — no record, by construction. The guard
+                // fires on drop with its last phase: `Accepted` on a clean
+                // exchange, `B2fFail` on failure, and — if an early return or
+                // wedge unwinds past here — the `B2fStarted` it was armed at,
                 // which classifies as Fail [R3-11].
-                let obs_sink = if vara_session.active_intent() == Some(SessionIntent::P2p) {
-                    crate::peers::recorder::observation_sink()
-                } else {
-                    None
-                };
+                let obs_sink = vara_answer_observation_sink(vara_session.active_intent());
                 let obs_guard = obs_sink.map(|s| {
                     crate::peers::recorder::ObservationGuard::new(
                         s,
@@ -9066,6 +9080,60 @@ mod tests {
     use super::*;
     use crate::winlink::message::RECEIVED_SESSION_POST_OFFICE;
     use crate::winlink_backend::MessageId;
+
+    #[test]
+    #[serial_test::serial]
+    fn vara_answer_gate_records_p2p_inbound_only() {
+        // Task 13 review follow-up: the VARA listener auto-arms for P2p AND
+        // RadioOnly, so the answer record site gates on the open session's
+        // intent. With the global sink INSTALLED, only Some(P2p) resolves it —
+        // a RadioOnly inbound (armed listener, non-peer session) and a closed
+        // session (None) record nothing. #[serial]: the sink is process-global.
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<crate::peers::recorder::PeerObservation>>> =
+            std::sync::Arc::default();
+        {
+            let seen = seen.clone();
+            crate::peers::recorder::install_observation_sink(std::sync::Arc::new(move |o| {
+                seen.lock().unwrap().push(o)
+            }));
+        }
+
+        assert!(
+            vara_answer_observation_sink(Some(SessionIntent::RadioOnly)).is_none(),
+            "RadioOnly auto-arms the listener but is not a peer session"
+        );
+        assert!(vara_answer_observation_sink(None).is_none());
+        assert!(vara_answer_observation_sink(Some(SessionIntent::Cms)).is_none());
+
+        // The P2p sink is the INSTALLED sink: a guard armed with it fires the
+        // inbound observation into the roster path on drop.
+        let sink = vara_answer_observation_sink(Some(SessionIntent::P2p))
+            .expect("P2p resolves the installed sink");
+        {
+            let g = crate::peers::recorder::ObservationGuard::new(
+                sink,
+                crate::peers::recorder::PeerObservation {
+                    path: crate::peers::recorder::ObservedPath::Rf {
+                        transport: crate::peers::model::ChannelTransport::VaraHf,
+                        via: vec![],
+                        freq_hz: None,
+                        bandwidth: None,
+                    },
+                    direction: crate::peers::model::Direction::Incoming,
+                    presented_target: "N0DAJ-7".into(),
+                    phase: crate::peers::recorder::ObservationPhase::B2fStarted,
+                },
+            );
+            g.set_phase(crate::peers::recorder::ObservationPhase::Accepted);
+        } // drop → record
+        assert_eq!(seen.lock().unwrap().len(), 1);
+        assert_eq!(
+            seen.lock().unwrap()[0].phase,
+            crate::peers::recorder::ObservationPhase::Accepted
+        );
+
+        crate::peers::recorder::install_observation_sink(std::sync::Arc::new(|_| {})); // reset
+    }
 
     #[test]
     fn aprs_config_dto_round_trips() {

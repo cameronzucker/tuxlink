@@ -2726,125 +2726,145 @@ fn run_vara_b2f_with_transport(
         .unwrap_or(TransportKind::VaraHf);
 
     // The last candidate's failure message — surfaced if no candidate connects.
-    let mut last_err: Option<String> = None;
+    // RefCell: the walk's pre-TX and connect stage closures (below) both write it.
+    let last_err: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
     // Holds the winning candidate's kept rig (DRA-100) across the post-walk B2F
     // exchange. `None` on the close-serial path or when no rig is configured.
     let mut kept_rig: Option<tux_rig::ManagedRig> = None;
     // The connected target (winning candidate) for the post-walk log + exchange.
     let mut connected_target: Option<String> = None;
+    // Rig handoff across the walk's stage boundary: the pre-TX stage tunes and
+    // parks the kept handle here; the connect stage takes it. RefCell because
+    // both stage closures capture it (the walk is single-threaded).
+    let staged_rig: std::cell::RefCell<Option<tux_rig::ManagedRig>> =
+        std::cell::RefCell::new(None);
 
     // ─── Peer-observation recording (Task 13) ─────────────────────────
-    // Record P2P outbound dials only [spec §3]: a CMS/gateway/RadioOnly/
-    // PostOffice dial never constructs a guard. The channel-transport label
-    // mirrors the sideband discriminator below (a None pre-open kind → HF).
+    // Record P2P outbound dials only [spec §3] — `dial_observation_sink`
+    // returns `None` for CMS/gateway/RadioOnly/PostOffice, so those dials
+    // never construct a guard. The channel-transport label mirrors the
+    // sideband discriminator below (a None pre-open kind → HF).
     let engine_transport = match session.active_transport_kind() {
         Some(TransportKind::VaraFm) => crate::peers::model::ChannelTransport::VaraFm,
         _ => crate::peers::model::ChannelTransport::VaraHf,
     };
-    let sink = if intent == SessionIntent::P2p {
-        crate::peers::recorder::observation_sink()
-    } else {
-        None
-    };
+    let sink = dial_observation_sink(intent);
 
     // `run_recorded_dial_walk` arms one `ObservationGuard` per candidate at
-    // `DialAttempted`; on connect success the guard advances to `Connected` and
-    // is returned as `live_guard` (advanced to `B2fOk`/`B2fFail` after the
-    // exchange, then dropped); on connect failure the guard drops in-place,
-    // recording the per-candidate fail [R3-11].
+    // `DialAttempted` BETWEEN the two stage closures — after the abort-rechecks
+    // + CAT tune, immediately before the CONNECT send — so a pre-TX bail
+    // (operator Stop, tune failure) never records a phantom fail (review fix).
+    // On connect success the guard advances to `Connected` and is returned as
+    // `live_guard` (advanced to `B2fOk`/`B2fFail` after the exchange, then
+    // dropped); on connect failure it drops in-place, recording the
+    // per-candidate fail [R3-11].
     let (outcome, live_guard) = run_recorded_dial_walk(
         &candidates,
         qsy_on_fail,
         engine_transport,
         via,
         sink,
+        // ── Stage 1: pre-TX (nothing transmitted; a bail records nothing) ──
         |_idx, c| {
-        // Abort recheck (C2 for VARA): if the operator closed the session
-        // mid-walk, the close generation bumps; stop attempting rather than
-        // QSY-ing to the next candidate after a Close. The remaining
-        // candidates also observe the bumped generation and no-op, so the
-        // walk drains to `None` and surfaces a connect failure — same
-        // outcome-consistency as ARDOP's walk (intentional).
-        if session.current_close_generation() != close_gen_snapshot {
-            last_err = Some("VARA CONNECT aborted".into());
-            return false;
-        }
-
-        // Pre-CONNECT (pre-audio) CAT tune. `tune_rig_for_connect` honors
-        // close-serial (returns `None` once the serial is released) vs the
-        // DRA-100 keep-serial path (returns `Some(rig)` to hold for the
-        // session). Spawn/tune failures abort THIS candidate.
-        // Sideband center→dial conversion applies to VARA HF only — a VARA FM
-        // channel's listed frequency IS the RF frequency (Codex adrev P2 #1).
-        let sideband = !matches!(
-            session.active_transport_kind(),
-            Some(crate::winlink::listener::transport::TransportKind::VaraFm)
-        );
-        let rig = match tune_rig_for_connect(&cfg.rig, c.freq_hz, sideband) {
-            Ok(r) => r,
-            Err(e) => {
-                emit_vara_log(
-                    app,
-                    log,
-                    LogLevel::Error,
-                    format!("VARA tune failed for {}: {e}", c.target),
-                );
-                last_err = Some(e);
+            // Abort recheck (C2 for VARA): if the operator closed the session
+            // mid-walk, the close generation bumps; stop attempting rather than
+            // QSY-ing to the next candidate after a Close. The remaining
+            // candidates also observe the bumped generation and no-op, so the
+            // walk drains to `None` and surfaces a connect failure — same
+            // outcome-consistency as ARDOP's walk (intentional).
+            if session.current_close_generation() != close_gen_snapshot {
+                *last_err.borrow_mut() = Some("VARA CONNECT aborted".into());
                 return false;
             }
-        };
 
-        // tuxlink-8fkkk C2 (VARA): re-check the close-generation AFTER the tune
-        // returns and BEFORE `send_connect_and_wait`. The pre-CONNECT tune
-        // (rigctld spawn + CAT round-trips) can block for seconds; if the
-        // operator hit Stop during the tune the generation bumps, and without
-        // this guard the path would still send CONNECT — VARA would transmit
-        // after the session was closed. Release the just-spawned rig and bail.
-        // Mirror of the ARDOP post-tune guard in `dial_one_candidate`.
-        if session.current_close_generation() != close_gen_snapshot {
-            last_err = Some("VARA CONNECT aborted".into());
-            drop(rig);
-            return false;
-        }
+            // Pre-CONNECT (pre-audio) CAT tune. `tune_rig_for_connect` honors
+            // close-serial (returns `None` once the serial is released) vs the
+            // DRA-100 keep-serial path (returns `Some(rig)` to hold for the
+            // session). Spawn/tune failures abort THIS candidate.
+            // Sideband center→dial conversion applies to VARA HF only — a VARA
+            // FM channel's listed frequency IS the RF frequency (Codex adrev
+            // P2 #1).
+            let sideband = !matches!(
+                session.active_transport_kind(),
+                Some(crate::winlink::listener::transport::TransportKind::VaraFm)
+            );
+            let rig = match tune_rig_for_connect(&cfg.rig, c.freq_hz, sideband) {
+                Ok(r) => r,
+                Err(e) => {
+                    emit_vara_log(
+                        app,
+                        log,
+                        LogLevel::Error,
+                        format!("VARA tune failed for {}: {e}", c.target),
+                    );
+                    *last_err.borrow_mut() = Some(e);
+                    return false;
+                }
+            };
 
-        match send_connect_and_wait(
-            app, log, transport, &mycall, &c.target, via, engine, intent, keyer,
-        ) {
-            Ok(()) => {
-                // Hold the rig for the exchange (DRA-100); `None` if released.
-                kept_rig = rig;
-                connected_target = Some(c.target.clone());
-                true
-            }
-            Err(e) => {
-                emit_vara_log(
-                    app,
-                    log,
-                    LogLevel::Error,
-                    format!("VARA CONNECT to {} failed: {e}", c.target),
-                );
-                // A failed CONNECT (especially a timeout with no
-                // DISCONNECTED/CANCELPENDING) may leave VARA still calling the
-                // previous target. Best-effort DISCONNECT it back to idle BEFORE
-                // the walk retunes + dials the next candidate on this same
-                // transport, so the modem cannot end up dual-calling. Result is
-                // ignored: the next attempt drops the transport regardless and
-                // the TCP FIN forces VARA to notice if the wind-down stalls.
-                let _ = vara_dial_disconnect(transport, keyer);
-                // Release this candidate's rig before the next attempt so no
-                // rigctld is left holding the CAT serial.
+            // tuxlink-8fkkk C2 (VARA): re-check the close-generation AFTER the
+            // tune returns and BEFORE `send_connect_and_wait`. The pre-CONNECT
+            // tune (rigctld spawn + CAT round-trips) can block for seconds; if
+            // the operator hit Stop during the tune the generation bumps, and
+            // without this guard the path would still send CONNECT — VARA
+            // would transmit after the session was closed. Release the
+            // just-spawned rig and bail. Mirror of the ARDOP post-tune guard
+            // in `dial_one_candidate`.
+            if session.current_close_generation() != close_gen_snapshot {
+                *last_err.borrow_mut() = Some("VARA CONNECT aborted".into());
                 drop(rig);
-                last_err = Some(e);
-                false
+                return false;
             }
-        }
-    });
+
+            // Park the kept rig for the connect stage to take.
+            *staged_rig.borrow_mut() = rig;
+            true
+        },
+        // ── Stage 2: CONNECT send + CONNECTED wait (guard is now armed) ──
+        |_idx, c| {
+            let rig = staged_rig.borrow_mut().take();
+            match send_connect_and_wait(
+                app, log, transport, &mycall, &c.target, via, engine, intent, keyer,
+            ) {
+                Ok(()) => {
+                    // Hold the rig for the exchange (DRA-100); `None` if released.
+                    kept_rig = rig;
+                    connected_target = Some(c.target.clone());
+                    true
+                }
+                Err(e) => {
+                    emit_vara_log(
+                        app,
+                        log,
+                        LogLevel::Error,
+                        format!("VARA CONNECT to {} failed: {e}", c.target),
+                    );
+                    // A failed CONNECT (especially a timeout with no
+                    // DISCONNECTED/CANCELPENDING) may leave VARA still calling
+                    // the previous target. Best-effort DISCONNECT it back to
+                    // idle BEFORE the walk retunes + dials the next candidate
+                    // on this same transport, so the modem cannot end up
+                    // dual-calling. Result is ignored: the next attempt drops
+                    // the transport regardless and the TCP FIN forces VARA to
+                    // notice if the wind-down stalls.
+                    let _ = vara_dial_disconnect(transport, keyer);
+                    // Release this candidate's rig before the next attempt so
+                    // no rigctld is left holding the CAT serial.
+                    drop(rig);
+                    *last_err.borrow_mut() = Some(e);
+                    false
+                }
+            }
+        },
+    );
 
     if outcome.is_none() {
         // No candidate connected — CONNECT-class failure (terminal). Surface the
         // last useful error; the caller frees the modem (tuxlink-n95sr #2).
         return VaraExchangeOutcome::ConnectFailed(
-            last_err.unwrap_or_else(|| "VARA CONNECT failed for all candidates".to_string()),
+            last_err
+                .into_inner()
+                .unwrap_or_else(|| "VARA CONNECT failed for all candidates".to_string()),
         );
     }
 
@@ -2946,34 +2966,66 @@ fn run_vara_b2f_with_transport(
     outcome
 }
 
+/// The dial-site intent gate (Task 13): only a `SessionIntent::P2p` dial
+/// resolves the global observation sink — CMS/gateway/RadioOnly/PostOffice
+/// dials return `None` and never construct a guard [spec §3]. Extracted from
+/// [`run_vara_b2f_with_transport`] so the gate is unit-testable without an
+/// `AppHandle` [CDX-7].
+fn dial_observation_sink(
+    intent: SessionIntent,
+) -> Option<crate::peers::recorder::ObservationSink> {
+    if intent == SessionIntent::P2p {
+        crate::peers::recorder::observation_sink()
+    } else {
+        None
+    }
+}
+
 /// The recording half of the VARA dial walk (Task 13), extracted so a unit test
 /// can drive the REAL guard-construction path without an `AppHandle` [CDX-7].
 ///
-/// Runs [`walk_candidates`], arming one [`crate::peers::recorder::ObservationGuard`]
-/// per candidate at `DialAttempted`. When a candidate's `attempt` returns `true`
-/// (connect established) the guard advances to `Connected` and is returned as the
-/// live guard — the caller advances it to `B2fOk`/`B2fFail` after the exchange
-/// and drops it. When `attempt` returns `false` (connect failed) the guard drops
-/// in-place, recording that candidate's fail [R3-11].
+/// Each candidate runs in two stages, and the walk arms the
+/// [`crate::peers::recorder::ObservationGuard`] BETWEEN them (review fix — the
+/// guard-arm must not precede the pre-TX exits):
 ///
-/// `sink` is `None` for non-P2P intents (CMS/gateway/RadioOnly/PostOffice dials
-/// never record) and in headless/unit contexts with no sink installed — then the
-/// walk runs with no recording. `via` is the shared dial via-list (a
-/// [`DialCandidate`] carries only target + freq); the guard mirrors what the
-/// CONNECT actually threads.
-fn run_recorded_dial_walk<F>(
+/// 1. `pre_tx(idx, c)` — the abort-rechecks + pre-CONNECT CAT tune. A `false`
+///    here means NOTHING was transmitted, so no guard is armed and nothing
+///    records: an operator Stop or a rig-tune failure is not a peer-roster
+///    event, and recording it would pollute the roster with a phantom fail
+///    for a dial that never went out over the air.
+/// 2. The guard is armed at `DialAttempted` — immediately before the CONNECT
+///    send, per the brief's placement — then `connect(idx, c)` sends CONNECT
+///    and awaits `CONNECTED`. From here every exit records: a connect fail
+///    drops the guard in-place (per-candidate fail), a wedge/panic-unwind
+///    drops it at its latest phase [R3-11], and a success advances it to
+///    `Connected` and returns it as the live guard — the caller advances it
+///    to `B2fOk`/`B2fFail` after the exchange and drops it.
+///
+/// `sink` is `None` for non-P2P intents (via [`dial_observation_sink`]) and in
+/// headless/unit contexts with no sink installed — then the walk runs with no
+/// recording. `via` is the shared dial via-list (a [`DialCandidate`] carries
+/// only target + freq); the guard mirrors what the CONNECT actually threads.
+fn run_recorded_dial_walk<P, F>(
     candidates: &[DialCandidate],
     qsy_on_fail: bool,
     engine_transport: crate::peers::model::ChannelTransport,
     via: &[String],
     sink: Option<crate::peers::recorder::ObservationSink>,
-    mut attempt: F,
+    mut pre_tx: P,
+    mut connect: F,
 ) -> (Option<usize>, Option<crate::peers::recorder::ObservationGuard>)
 where
+    P: FnMut(usize, &DialCandidate) -> bool,
     F: FnMut(usize, &DialCandidate) -> bool,
 {
     let mut live_guard: Option<crate::peers::recorder::ObservationGuard> = None;
     let outcome = walk_candidates(candidates, qsy_on_fail, |idx, c| {
+        // Stage 1 — pre-TX: abort-rechecks + CAT tune. Nothing has gone out
+        // over the air yet, so a bail here must not touch the roster: no guard.
+        if !pre_tx(idx, c) {
+            return false;
+        }
+        // Arm between the stages — immediately before the CONNECT send.
         let guard = sink.clone().map(|s| {
             crate::peers::recorder::ObservationGuard::new(
                 s,
@@ -2990,7 +3042,8 @@ where
                 },
             )
         });
-        let connected = attempt(idx, c);
+        // Stage 2 — the CONNECT send + CONNECTED wait.
+        let connected = connect(idx, c);
         if connected {
             if let Some(g) = &guard {
                 g.set_phase(crate::peers::recorder::ObservationPhase::Connected);
@@ -4573,6 +4626,7 @@ mod tests {
             crate::peers::model::ChannelTransport::VaraHf,
             &[],
             crate::peers::recorder::observation_sink(),
+            |_idx, _c| true, // pre-TX (abort-rechecks + tune) passes
             |_idx, c| {
                 send_connect_and_wait_inner(
                     &mut t,
@@ -4608,11 +4662,80 @@ mod tests {
     }
 
     #[test]
-    fn vara_dial_walk_no_record_without_sink() {
-        // Non-P2P dials pass `sink: None` (the caller gates on intent); the walk
-        // then runs with zero recording and no guard construction. Proves the
-        // record site is a clean no-op off the P2P path — a CMS/gateway dial
-        // never touches the roster.
+    #[serial_test::serial]
+    fn vara_dial_walk_pre_tx_abort_records_nothing() {
+        // Review fix: a pre-TX bail — operator Stop (close-generation bump) or a
+        // rig-tune failure — happens BEFORE anything goes out over the air, so it
+        // must arm no guard and record nothing. A phantom "fail" here would
+        // pollute the roster with a peer record for a dial that never
+        // transmitted. The pre-TX stage runs the REAL close-generation check
+        // against a real VaraSession whose generation was bumped (the operator's
+        // Stop), mirroring the production stage-1 closure.
+        let seen: Arc<Mutex<Vec<crate::peers::recorder::PeerObservation>>> = Arc::default();
+        {
+            let seen = seen.clone();
+            crate::peers::recorder::install_observation_sink(Arc::new(move |o| {
+                seen.lock().unwrap().push(o)
+            }));
+        }
+
+        let session = VaraSession::new();
+        let close_gen_snapshot = session.current_close_generation();
+        // Operator hits Stop between the snapshot and the walk: generation bumps.
+        session.bump_close_generation();
+
+        let candidates = vec![DialCandidate {
+            target: "N0DAJ-7".into(),
+            freq_hz: Some(7_101_000),
+        }];
+        let mut connect_ran = false;
+        let (outcome, live_guard) = run_recorded_dial_walk(
+            &candidates,
+            false,
+            crate::peers::model::ChannelTransport::VaraHf,
+            &[],
+            crate::peers::recorder::observation_sink(),
+            // Production stage-1 abort recheck (C2 for VARA), verbatim shape.
+            |_idx, _c| session.current_close_generation() == close_gen_snapshot,
+            |_idx, _c| {
+                connect_ran = true;
+                true
+            },
+        );
+
+        assert!(outcome.is_none(), "aborted walk connects nothing");
+        assert!(live_guard.is_none());
+        assert!(!connect_ran, "CONNECT stage must never run after a pre-TX abort");
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "a dial that never transmitted must not touch the roster"
+        );
+
+        crate::peers::recorder::install_observation_sink(Arc::new(|_| {})); // reset
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn vara_dial_cms_intent_records_nothing_even_with_sink_installed() {
+        // The production intent gate (`dial_observation_sink`, used by
+        // `run_vara_b2f_with_transport`): a CMS/gateway dial resolves NO sink
+        // even when the global sink IS installed, so the walk arms no guard and
+        // a failed CMS dial never touches the peer roster. P2p resolves the
+        // installed sink; the auto-arming-but-non-peer RadioOnly does not.
+        let seen: Arc<Mutex<Vec<crate::peers::recorder::PeerObservation>>> = Arc::default();
+        {
+            let seen = seen.clone();
+            crate::peers::recorder::install_observation_sink(Arc::new(move |o| {
+                seen.lock().unwrap().push(o)
+            }));
+        }
+        assert!(dial_observation_sink(SessionIntent::P2p).is_some());
+        assert!(dial_observation_sink(SessionIntent::Cms).is_none());
+        assert!(dial_observation_sink(SessionIntent::RadioOnly).is_none());
+        assert!(dial_observation_sink(SessionIntent::PostOffice).is_none());
+
+        // Drive the real walk + real dial core with the CMS-gated sink: the
+        // single candidate fails at the deadline, and nothing records.
         let (mut t, ch, dh) = scripted_cmd_vara_transport(b"");
         let (ptt, _calls) = recording_keyer();
         let candidates = vec![DialCandidate {
@@ -4624,7 +4747,8 @@ mod tests {
             false,
             crate::peers::model::ChannelTransport::VaraHf,
             &[],
-            None, // non-P2P: no sink
+            dial_observation_sink(SessionIntent::Cms),
+            |_idx, _c| true,
             |_idx, c| {
                 send_connect_and_wait_inner(
                     &mut t,
@@ -4641,6 +4765,12 @@ mod tests {
         );
         assert!(outcome.is_none());
         assert!(live_guard.is_none());
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "a CMS dial must not record even with the global sink installed"
+        );
+
+        crate::peers::recorder::install_observation_sink(Arc::new(|_| {})); // reset
         drop(t);
         ch.join().unwrap();
         dh.join().unwrap();
