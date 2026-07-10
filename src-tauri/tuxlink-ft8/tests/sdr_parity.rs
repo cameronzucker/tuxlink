@@ -57,7 +57,7 @@ fn load_capture(stem: &str) -> Vec<f32> {
         .collect()
 }
 
-/// Decode a capture and score it against its `.jt9-ap-off.txt` reference log,
+/// Decode a capture and score it against its `.jt9-d3-ap-off.txt` reference log,
 /// printing a full report (visible with `--nocapture`).
 fn score_capture(stem: &str) -> ParityResult {
     let samples = load_capture(stem);
@@ -67,7 +67,7 @@ fn score_capture(stem: &str) -> ParityResult {
         .collect();
 
     let mut ref_path = sdr_dir();
-    ref_path.push(format!("{stem}.jt9-ap-off.txt"));
+    ref_path.push(format!("{stem}.jt9-d3-ap-off.txt"));
     let ref_text = std::fs::read_to_string(&ref_path)
         .unwrap_or_else(|e| panic!("read {}: {e}", ref_path.display()));
     let reference = parse_reference_log(&ref_text);
@@ -116,7 +116,7 @@ fn floor_calibration_diag() {
         }
         // Metric of the strongest candidate near each reference carrier.
         let mut ref_path = sdr_dir();
-        ref_path.push(format!("{stem}.jt9-ap-off.txt"));
+        ref_path.push(format!("{stem}.jt9-d3-ap-off.txt"));
         let ref_text = std::fs::read_to_string(&ref_path).unwrap();
         println!("candidate nearest each reference-log carrier:");
         for line in ref_text.lines() {

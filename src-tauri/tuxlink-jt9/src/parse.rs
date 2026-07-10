@@ -12,6 +12,11 @@
 //! audio freq Hz. Everything after `~` is the message, trimmed.
 //! Grammar lifted from tuxlink-ft8/src/oracle.rs (which discards the
 //! metadata; this parser keeps it — that is why it exists).
+//!
+//! 2026-07-10: output format verified on wsjtx 2.7.0 only. Packaging
+//! `Recommends` wsjtx >= 2.5; the grammar has not been checked against a
+//! 2.5-era `jt9` build. Version-floor verification tracked as
+//! `tuxlink-iy1av`.
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ParsedLine {
