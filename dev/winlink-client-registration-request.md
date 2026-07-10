@@ -1,5 +1,13 @@
 # Winlink client registration request — "tuxlink"
 
+> **Superseded 2026-07-10** by
+> [`winlink-cms-acceptance-packet.md`](winlink-cms-acceptance-packet.md).
+> This draft assumed whitelisting was a single administrative request; the
+> WDT client-onboarding doc (v20260600) requires a four-part acceptance run
+> against cms-z first (account CRUD, telnet test, over-the-air test through a
+> temporary RMS, and binaries verification). The packet carries the updated
+> cover email.
+
 **Why:** Winlink's production CMS servers only accept client software whose
 identifier (SID) name is on their allowlist. Tuxlink presents the SID name
 `tuxlink`, which isn't registered yet, so `server.winlink.org` rejects it:
