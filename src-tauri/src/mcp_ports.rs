@@ -1298,6 +1298,10 @@ impl EgressPort for MonolithEgressPort {
                     crate::winlink::listener::transport::TransportKind::VaraHf,
                     freq_hz,
                     qsy,
+                    // tuxlink-0ye6 Task 5: no digipeater path from the agent
+                    // egress port — direct dial (VIA is VARA-FM peer-channel
+                    // only, threaded by Task 23a; MCP HF dials are direct).
+                    None,
                 )
                 .await
                 .map_err(|e| EgressPortError::Failed(redact_err(e)))

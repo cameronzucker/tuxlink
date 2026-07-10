@@ -2328,7 +2328,14 @@ pub async fn modem_vara_b2f_exchange(
     // and the walk visits each candidate (operator-gated by `config.rig.qsy_on_fail`).
     freq_hz: Option<u64>,
     qsy_candidates: Option<Vec<DialCandidate>>,
+    // tuxlink-0ye6 Task 5: digipeater path for the VARA FM `CONNECT … VIA …`
+    // dial [R3-6]. VARA-LOCAL (NOT a `DialCandidate` field — CDX-1/CLD-6): Task
+    // 23a threads real digis here from the peer channel. `Option` so existing
+    // callers (VaraRadioPanel, connectDispatch, MCP) that omit `via` deserialize
+    // to `None` → empty path = direct dial (mirrors `qsy_candidates`).
+    via: Option<Vec<String>>,
 ) -> Result<(), String> {
+    let via = via.unwrap_or_default();
     // Codex Phase 3-4 boundary P2 #2 (tuxlink-u1r7): defensive
     // validation — the VARA b2f command must be invoked with a VARA
     // transport kind. Mirrors the ARDOP-side validation in
@@ -2451,6 +2458,7 @@ pub async fn modem_vara_b2f_exchange(
         &mut transport,
         &target_clean,
         intent,
+        &via,
         freq_hz,
         qsy_candidates,
         &keyer,
@@ -2598,6 +2606,7 @@ fn run_vara_b2f_with_transport(
     transport: &mut VaraTransport,
     target: &str,
     intent: SessionIntent,
+    via: &[String],
     freq_hz: Option<u64>,
     qsy_candidates: Option<Vec<DialCandidate>>,
     keyer: &SharedPtt,
@@ -2677,6 +2686,31 @@ fn run_vara_b2f_with_transport(
     // advance to regardless of this operator flag (tuxlink-8fkkk).
     let qsy_on_fail = cfg.rig.qsy_on_fail;
 
+    // ─── Pre-dial wire-grammar validation [R3-9] (tuxlink-0ye6 Task 5) ──
+    // Reject an invalid MYCALL or dial target BEFORE any tune or wire write,
+    // so a malformed callsign is a clean CONNECT-class failure and never
+    // reaches the cmd socket (no `CONNECT <garbage>` on the air). Uses the
+    // shared transport-grammar validator (Task 1), not a re-implementation.
+    if let Err(e) = crate::winlink::callsign::validate_wire_callsign(&mycall) {
+        return VaraExchangeOutcome::ConnectFailed(format!("invalid MYCALL {mycall:?}: {e}"));
+    }
+    for c in &candidates {
+        if let Err(e) = crate::winlink::callsign::validate_wire_callsign(&c.target) {
+            return VaraExchangeOutcome::ConnectFailed(format!(
+                "invalid dial target {:?}: {e}",
+                c.target
+            ));
+        }
+    }
+
+    // Session mode drives the per-dial `SessionType` prefix (HF/SAT sends it,
+    // FM does not [R3-9-placement]). Mirrors the sideband discriminator below:
+    // a None (pre-open) active kind is treated as HF (prefix sent), matching
+    // the `!VaraFm` sideband default.
+    let engine = session
+        .active_transport_kind()
+        .unwrap_or(TransportKind::VaraHf);
+
     // The last candidate's failure message — surfaced if no candidate connects.
     let mut last_err: Option<String> = None;
     // Holds the winning candidate's kept rig (DRA-100) across the post-walk B2F
@@ -2734,7 +2768,9 @@ fn run_vara_b2f_with_transport(
             return false;
         }
 
-        match send_connect_and_wait(app, log, transport, &mycall, &c.target, keyer) {
+        match send_connect_and_wait(
+            app, log, transport, &mycall, &c.target, via, engine, intent, keyer,
+        ) {
             Ok(()) => {
                 // Hold the rig for the exchange (DRA-100); `None` if released.
                 kept_rig = rig;
@@ -2928,18 +2964,90 @@ fn vara_dial_candidates(
     }
 }
 
-/// Send `CONNECT <mycall> <target>` on the cmd port and wait for the
-/// `CONNECTED` event (bounded by [`VARA_CONNECT_DEADLINE`]). Factored out of
-/// the candidate-walk closure so the two primitives (the existing cmd-port
-/// write + [`wait_for_connected`]) stay together and the closure body reads
-/// cleanly. Emits the per-candidate "VARA CONNECT {mycall} {target}" line so
-/// the operator sees each dialed target during a QSY walk.
+/// Testable core of the dial (tuxlink-0ye6 Task 5): optional per-candidate
+/// `SessionType` prefix (HF/SAT only — VARA FM has no session-type command
+/// [R3-9-placement]), a short setter-WRONG drain [R3-3], then `CONNECT` (with
+/// optional `VIA` digis [R3-6]) and the `CONNECTED` wait.
+///
+/// **`SessionType` before EACH `CONNECT`** [R3-9-placement]: re-sent inside the
+/// dial (not just at open) so a candidate never dials in a stale session mode.
+/// The clamp (tuxlink-qevsf, Part 97) leaves a single candidate today, but the
+/// per-dial placement keeps the invariant if auto-QSY is ever restored.
+///
+/// **Setter-WRONG drain** [R3-3]: after `SessionType`, drain the cmd socket
+/// briefly — a `WRONG` in that window is the setter's rejection (WLE
+/// suppression-list parity), logged and NON-fatal. Draining it here means a
+/// `WRONG` later seen by [`wait_for_connected`] is attributable to the
+/// `CONNECT` itself and fails fast [R3-6-wrong]. The drain bounds its poll
+/// independently of the configured cmd `read_timeout` (2 s default, or `None` =
+/// block forever) by mirroring the readiness gate: short poll, deadline-checked,
+/// restore (amendment b).
+#[allow(clippy::too_many_arguments)]
+fn send_connect_and_wait_inner(
+    transport: &mut VaraTransport,
+    mycall: &str,
+    target: &str,
+    via: &[String],
+    engine: TransportKind,
+    intent: SessionIntent,
+    deadline: Duration,
+    ptt: &SharedPtt,
+) -> Result<(), String> {
+    use crate::winlink::modem::vara::command::InboundCommand;
+
+    if engine != TransportKind::VaraFm {
+        transport
+            .send(&OutboundCommand::SessionType(VaraSessionType::from_intent(
+                intent,
+            )))
+            .map_err(|e| format!("VARA cmd-port SESSION write failed: {e}"))?;
+        // Setter-WRONG drain [R3-3]. Bound the poll independently of the
+        // configured cmd read_timeout — mirror `wait_for_readiness` (amendment
+        // b): save prior, set the short poll, deadline-check, restore.
+        let prior_timeout = transport.config().read_timeout;
+        let _ = transport.cmd_writer().set_read_timeout(Some(VARA_READY_POLL));
+        let drain_until = std::time::Instant::now() + Duration::from_millis(250);
+        while std::time::Instant::now() < drain_until {
+            match transport.recv() {
+                Ok(Some(InboundCommand::Wrong)) => {
+                    tracing::warn!(
+                        target: "tuxlink::winlink::modem::vara",
+                        "VARA: SessionType setter drew WRONG before CONNECT (non-fatal [R3-3])"
+                    );
+                }
+                Ok(Some(_)) | Ok(None) => {}
+                Err(_) => break,
+            }
+        }
+        let _ = transport.cmd_writer().set_read_timeout(prior_timeout);
+    }
+
+    transport
+        .send(&OutboundCommand::Connect {
+            mycall: mycall.to_string(),
+            target: target.to_string(),
+            via: via.to_vec(),
+        })
+        .map_err(|e| format!("VARA cmd-port CONNECT write failed: {e}"))?;
+
+    wait_for_connected(transport, target, deadline, ptt)
+        .map_err(|e| format!("VARA CONNECT to {target} failed: {e}"))
+}
+
+/// Emit the per-candidate "VARA CONNECT {mycall} {target}" line, then run the
+/// dial core against the full [`VARA_CONNECT_DEADLINE`]. Factored so the
+/// candidate-walk closure reads cleanly and the AppHandle/log concerns stay out
+/// of the testable [`send_connect_and_wait_inner`].
+#[allow(clippy::too_many_arguments)]
 fn send_connect_and_wait(
     app: &AppHandle,
     log: &Arc<SessionLogState>,
     transport: &mut VaraTransport,
     mycall: &str,
     target: &str,
+    via: &[String],
+    engine: TransportKind,
+    intent: SessionIntent,
     ptt: &SharedPtt,
 ) -> Result<(), String> {
     emit_vara_log(
@@ -2948,16 +3056,16 @@ fn send_connect_and_wait(
         LogLevel::Info,
         format!("VARA CONNECT {mycall} {target}"),
     );
-    transport
-        .send(&OutboundCommand::Connect {
-            mycall: mycall.to_string(),
-            target: target.to_string(),
-            via: vec![],
-        })
-        .map_err(|e| format!("VARA cmd-port CONNECT write failed: {e}"))?;
-
-    wait_for_connected(transport, target, VARA_CONNECT_DEADLINE, ptt)
-        .map_err(|e| format!("VARA CONNECT to {target} failed: {e}"))
+    send_connect_and_wait_inner(
+        transport,
+        mycall,
+        target,
+        via,
+        engine,
+        intent,
+        VARA_CONNECT_DEADLINE,
+        ptt,
+    )
 }
 
 /// Wait for the `CONNECTED <mycall> <target> [bw]` async event on the
@@ -2996,11 +3104,16 @@ fn wait_for_connected(
         }
         match transport.recv() {
             Ok(Some(InboundCommand::Connected { target: peer, .. })) => {
-                // CONNECTED — the dial succeeded. Match-tolerance: VARA's
-                // CONNECTED reports the peer as-typed (case-preserving),
-                // so we compare case-insensitively to absorb a target
-                // like "w7rms-10" vs "W7RMS-10".
-                if peer.eq_ignore_ascii_case(target) {
+                // gbb05 [R3-3-echo]: VARA's CONNECTED echoes the BARE
+                // callsign even when the dial string was SSID'd (dial
+                // "N0DAJ-7" → echo "CONNECTED W6ABC N0DAJ 2300"). Compare on
+                // canonical base; the wire dial string stays SSID'd. The base
+                // fold is uppercase + SSID/portable strip, so it also subsumes
+                // the prior case-insensitive tolerance ("w7rms-10" vs
+                // "W7RMS-10").
+                if crate::winlink::callsign::canonical_base(&peer)
+                    == crate::winlink::callsign::canonical_base(target)
+                {
                     return Ok(());
                 }
                 // Unexpected peer — VARA may be reporting a stray
@@ -3009,6 +3122,14 @@ fn wait_for_connected(
                 return Err(format!(
                     "unexpected CONNECTED peer={peer} (expected {target})"
                 ));
+            }
+            Ok(Some(InboundCommand::Wrong)) => {
+                // [R3-6-wrong]: a bare WRONG AFTER CONNECT is a rejected /
+                // malformed dial. `send_connect_and_wait_inner` already drained
+                // any SessionType-setter WRONG before sending CONNECT, so a
+                // WRONG reaching here is attributable to the CONNECT itself —
+                // fail fast instead of eating the 120 s VARA_CONNECT_DEADLINE.
+                return Err("VARA rejected CONNECT (WRONG)".to_string());
             }
             Ok(Some(InboundCommand::Disconnected)) => {
                 return Err(format!(
@@ -4193,6 +4314,114 @@ mod tests {
         drop(transport);
         ch.join().unwrap();
         dh.join().unwrap();
+    }
+
+    // ── Task 5: SSID echo base-match, WRONG fail-fast, per-dial SessionType ──
+
+    #[test]
+    fn wait_for_connected_matches_ssid_dial_against_bare_echo() {
+        // gbb05 [R3-3-echo]: dial "N0DAJ-7", VARA echoes the BARE callsign
+        // "CONNECTED W6ABC N0DAJ 2300". The base-match accepts it; the wire
+        // dial string stays SSID'd.
+        let (mut t, ch, dh) = scripted_cmd_vara_transport(b"CONNECTED W6ABC N0DAJ 2300\r");
+        let (keyer, _calls) = recording_keyer();
+        wait_for_connected(&mut t, "N0DAJ-7", Duration::from_secs(3), &keyer)
+            .expect("SSID'd dial must accept bare-callsign CONNECTED echo");
+        drop(t);
+        ch.join().unwrap();
+        dh.join().unwrap();
+    }
+
+    #[test]
+    fn wait_for_connected_still_rejects_a_different_peer() {
+        // A genuinely different base (K7XYZ vs N0DAJ) is NOT accepted by the
+        // base-match — the dial must not silently bind to the wrong link.
+        let (mut t, ch, dh) = scripted_cmd_vara_transport(b"CONNECTED W6ABC K7XYZ 2300\r");
+        let (keyer, _calls) = recording_keyer();
+        let err = wait_for_connected(&mut t, "N0DAJ-7", Duration::from_secs(3), &keyer)
+            .unwrap_err();
+        assert!(err.contains("unexpected CONNECTED peer"), "{err}");
+        drop(t);
+        ch.join().unwrap();
+        dh.join().unwrap();
+    }
+
+    #[test]
+    fn wait_for_connected_fails_fast_on_bare_wrong() {
+        // [R3-6-wrong]: a WRONG after CONNECT is a rejected/malformed dial —
+        // fail in ms, not after the 120 s VARA_CONNECT_DEADLINE.
+        let (mut t, ch, dh) = scripted_cmd_vara_transport(b"WRONG\r");
+        let (keyer, _calls) = recording_keyer();
+        let start = std::time::Instant::now();
+        let err = wait_for_connected(&mut t, "N0DAJ-7", Duration::from_secs(30), &keyer)
+            .unwrap_err();
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "WRONG must fail fast, not eat the deadline; elapsed {:?}",
+            start.elapsed()
+        );
+        assert!(err.contains("WRONG"), "{err}");
+        drop(t);
+        ch.join().unwrap();
+        dh.join().unwrap();
+    }
+
+    #[test]
+    fn send_connect_prefixes_session_type_for_hf_but_not_fm() {
+        // Captures the cmd stream for an HF dial and an FM dial.
+        // HF: ["P2P SESSION", "CONNECT W6ABC N0DAJ-7"] — per-dial SessionType
+        //     prefix [R3-9-placement].
+        // FM: ["CONNECT W6ABC N0DAJ-7 VIA DIGI1"] — no SessionType (FM has no
+        //     session-type command [R3-1]); VIA digi threaded [R3-6].
+        // No CONNECTED reply, so the wait times out — a 1 s deadline bounds it
+        // and the Err is ignored; only the captured wire lines matter.
+        use std::net::TcpListener;
+        for (kind, expected) in [
+            (
+                TransportKind::VaraHf,
+                vec!["P2P SESSION".to_string(), "CONNECT W6ABC N0DAJ-7".to_string()],
+            ),
+            (
+                TransportKind::VaraFm,
+                vec!["CONNECT W6ABC N0DAJ-7 VIA DIGI1".to_string()],
+            ),
+        ] {
+            let cmd_l = TcpListener::bind("127.0.0.1:0").unwrap();
+            let cmd_port = cmd_l.local_addr().unwrap().port();
+            let data_l = TcpListener::bind("127.0.0.1:0").unwrap();
+            let data_port = data_l.local_addr().unwrap().port();
+            let rx = capturing_cmd_acceptor(cmd_l, None, Duration::from_secs(2));
+            let _dh = std::thread::spawn(move || {
+                let (_c, _) = data_l.accept().unwrap();
+                std::thread::sleep(Duration::from_secs(2));
+            });
+            let cfg = VaraConfig {
+                host: "127.0.0.1".into(),
+                cmd_port,
+                data_port,
+                read_timeout: Some(Duration::from_millis(100)),
+                ..VaraConfig::default()
+            };
+            let mut t = VaraTransport::connect(cfg).unwrap();
+            let (keyer, _calls) = recording_keyer();
+            let via: Vec<String> = if kind == TransportKind::VaraFm {
+                vec!["DIGI1".into()]
+            } else {
+                vec![]
+            };
+            let _ = send_connect_and_wait_inner(
+                &mut t,
+                "W6ABC",
+                "N0DAJ-7",
+                &via,
+                kind,
+                SessionIntent::P2p,
+                Duration::from_secs(1),
+                &keyer,
+            );
+            let lines = rx.recv_timeout(Duration::from_secs(4)).unwrap();
+            assert_eq!(lines, expected, "kind={kind:?}");
+        }
     }
 
     #[test]
