@@ -1186,9 +1186,11 @@ impl EgressPort for MonolithEgressPort {
             "rig_tune",
             &audit,
             || async move {
-                // modem_commands.rs ardop_tune_rig: set VFO + the HF data mode over
-                // CAT, then drop (release the serial). Mode-agnostic, radio-level.
-                crate::modem_commands::ardop_tune_rig(freq_hz)
+                // modem_commands.rs ardop_tune_rig: freq_hz is the channel's
+                // audio-CENTER (tool contract, tuxlink-9pzaj); None = sideband
+                // default (HF) — the command converts center → USB dial before
+                // the CAT tune, then drops (releases the serial).
+                crate::modem_commands::ardop_tune_rig(freq_hz, None)
                     .map_err(|e| EgressPortError::Failed(redact_err(e)))
             },
         )
