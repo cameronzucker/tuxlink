@@ -12,14 +12,16 @@
 //!
 //! Keyring cascade [R2-S7]: `peer_delete` clears the id-keyed
 //! `p2p-endpoint:<peer_id>:<endpoint_id>` secret for every endpoint the store
-//! reports removed, so a peer delete never orphans a stored password.
+//! reports removed, and `peer_merge` re-keys/deletes secrets per the store's
+//! [`AbsorbedEndpoint`] dispositions — so no roster mutation ever orphans a
+//! stored password.
 
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
 use super::model::{Peer, PeersFile};
-use super::store::{PeersError, PeersStore};
+use super::store::{AbsorbedEndpoint, PeersError, PeersStore};
 
 /// App-level Tauri event emitted on every peers mutation so other webview
 /// windows can invalidate their cached roster. Payload is `()`. This exact
@@ -129,13 +131,95 @@ pub fn peer_delete(
     Ok(())
 }
 
-/// Merge `absorb_id` into `keep_id` (dedup presented forms / channels / endpoints
-/// onto the kept record), then emit `peers:changed`.
+/// Re-key / delete keyring secrets after a merge, per the store's
+/// [`AbsorbedEndpoint`] dispositions. Pure orchestration over injected
+/// keyring ops so it is deterministically testable without a real keyring;
+/// [`peer_merge`] supplies the production `p2p_endpoint_password_*` fns.
 ///
-/// The store returns the absorbed endpoint ids for the keyring re-key cascade,
-/// but re-keying `p2p-endpoint:<absorb_id>:<eid>` → `p2p-endpoint:<keep_id>:<eid>`
-/// is Task 10/20 territory (the store doc attributes it there); this command does
-/// not perform it, so the ids are intentionally dropped here.
+/// - `Survived { endpoint_id }`: the endpoint kept its id but moved under
+///   `keep_id`, so future lookups use `(keep_id, eid)` — read the secret at
+///   `(absorb_id, eid)`, write it to `(keep_id, eid)`, then delete the old
+///   entry (strictly after the write succeeds, so there is no window where
+///   the secret exists in neither account). A read-miss (`None`) is normal
+///   (no secret was ever set) — nothing to do.
+/// - `Deduped { endpoint_id }`: the endpoint was dropped in favor of an
+///   existing keep endpoint, so its account has no valid target — delete it.
+///
+/// Best-effort, mirroring the Task 10 migration-orphan posture: a backend
+/// error on any step warns (account ids only — NEVER the secret value) and
+/// continues with the remaining endpoints; the roster write already
+/// succeeded, so the command must not fail. A `NoEntry` delete is silent
+/// (the delete API is idempotent).
+fn rekey_merged_endpoint_secrets<R, W, D>(
+    keep_id: &str,
+    absorb_id: &str,
+    dispositions: &[AbsorbedEndpoint],
+    read: R,
+    write: W,
+    delete: D,
+) where
+    R: Fn(&str, &str) -> Result<Option<String>, String>,
+    W: Fn(&str, &str, &str) -> Result<(), String>,
+    D: Fn(&str, &str) -> Result<(), String>,
+{
+    for d in dispositions {
+        match d {
+            AbsorbedEndpoint::Survived { endpoint_id } => {
+                let secret = match read(absorb_id, endpoint_id) {
+                    Ok(Some(s)) => s,
+                    Ok(None) => continue, // no secret was ever set — nothing to move
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "tuxlink::peers",
+                            absorb_id = %absorb_id,
+                            endpoint_id = %endpoint_id,
+                            "merge re-key: reading absorbed endpoint secret failed: {e}"
+                        );
+                        continue;
+                    }
+                };
+                if let Err(e) = write(keep_id, endpoint_id, &secret) {
+                    tracing::warn!(
+                        target: "tuxlink::peers",
+                        keep_id = %keep_id,
+                        endpoint_id = %endpoint_id,
+                        "merge re-key: writing secret under the kept peer failed; \
+                         the secret remains under the absorbed id: {e}"
+                    );
+                    continue; // do NOT delete the old entry — it still holds the secret
+                }
+                if let Err(e) = delete(absorb_id, endpoint_id) {
+                    tracing::warn!(
+                        target: "tuxlink::peers",
+                        absorb_id = %absorb_id,
+                        endpoint_id = %endpoint_id,
+                        "merge re-key: secret moved to the kept peer, but deleting \
+                         the old entry failed; the old entry is orphaned and can be \
+                         removed manually: {e}"
+                    );
+                }
+            }
+            AbsorbedEndpoint::Deduped { endpoint_id } => {
+                if let Err(e) = delete(absorb_id, endpoint_id) {
+                    tracing::warn!(
+                        target: "tuxlink::peers",
+                        absorb_id = %absorb_id,
+                        endpoint_id = %endpoint_id,
+                        "merge: deleting the deduped endpoint's secret failed; \
+                         the entry is orphaned and can be removed manually: {e}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Merge `absorb_id` into `keep_id` (dedup presented forms / channels / endpoints
+/// onto the kept record), cascade the keyring secrets per the store's
+/// [`AbsorbedEndpoint`] dispositions [R2-S7] — a `Survived` endpoint's secret is
+/// re-keyed `(absorb_id, eid)` → `(keep_id, eid)`, a `Deduped` endpoint's secret
+/// is deleted — then emit `peers:changed`. Keyring failures warn (never the
+/// secret) but do not fail the command; the roster write already succeeded.
 #[tauri::command]
 pub fn peer_merge(
     app: tauri::AppHandle,
@@ -143,10 +227,18 @@ pub fn peer_merge(
     keep_id: String,
     absorb_id: String,
 ) -> Result<(), PeersError> {
-    let _absorbed_endpoint_ids = {
+    let dispositions = {
         let mut store = svc.lock().expect("peers store mutex poisoned");
         store.merge(&keep_id, &absorb_id)?
     };
+    rekey_merged_endpoint_secrets(
+        &keep_id,
+        &absorb_id,
+        &dispositions,
+        crate::winlink::credentials::p2p_endpoint_password_read,
+        crate::winlink::credentials::p2p_endpoint_password_write,
+        crate::winlink::credentials::p2p_endpoint_password_delete,
+    );
     emit_changed(&app);
     Ok(())
 }
@@ -276,6 +368,120 @@ mod tests {
         assert!(!c.agent_telnet_dial);
         assert!(!c.vara_engine_split);
         assert!(!c.favorites_peer_link);
+    }
+
+    // ------------------------------------------------------------------
+    // rekey_merged_endpoint_secrets — the peer_merge keyring cascade.
+    //
+    // The `#[tauri::command]` wrapper adds only State/AppHandle extraction
+    // (mirroring the contacts/favorites test posture); the cascade logic lives
+    // in the injected-ops core fn, exercised here against a fake keyring
+    // (RefCell<HashMap<(peer_id, endpoint_id), secret>>).
+    // ------------------------------------------------------------------
+
+    type FakeKeyring = std::cell::RefCell<std::collections::HashMap<(String, String), String>>;
+
+    fn run_cascade(kr: &FakeKeyring, keep: &str, absorb: &str, d: &[AbsorbedEndpoint]) {
+        rekey_merged_endpoint_secrets(
+            keep,
+            absorb,
+            d,
+            |p, e| Ok(kr.borrow().get(&(p.to_string(), e.to_string())).cloned()),
+            |p, e, s| {
+                kr.borrow_mut()
+                    .insert((p.to_string(), e.to_string()), s.to_string());
+                Ok(())
+            },
+            |p, e| {
+                kr.borrow_mut().remove(&(p.to_string(), e.to_string()));
+                Ok(()) // idempotent, like p2p_endpoint_password_delete
+            },
+        );
+    }
+
+    #[test]
+    fn merge_cascade_rekeys_survived_and_deletes_deduped_secrets() {
+        let kr: FakeKeyring = Default::default();
+        kr.borrow_mut()
+            .insert(("p-absorb".into(), "e-uniq".into()), "s3cret-uniq".into());
+        kr.borrow_mut()
+            .insert(("p-absorb".into(), "e-dup".into()), "s3cret-dup".into());
+
+        run_cascade(
+            &kr,
+            "p-keep",
+            "p-absorb",
+            &[
+                AbsorbedEndpoint::Deduped {
+                    endpoint_id: "e-dup".into(),
+                },
+                AbsorbedEndpoint::Survived {
+                    endpoint_id: "e-uniq".into(),
+                },
+            ],
+        );
+
+        let map = kr.borrow();
+        assert_eq!(
+            map.get(&("p-keep".into(), "e-uniq".into())).map(String::as_str),
+            Some("s3cret-uniq"),
+            "survived endpoint's secret is readable under (keep_id, eid)"
+        );
+        assert!(
+            !map.contains_key(&("p-absorb".into(), "e-uniq".into())),
+            "old survived account is gone after the re-key"
+        );
+        assert!(
+            !map.contains_key(&("p-absorb".into(), "e-dup".into())),
+            "deduped endpoint's secret is deleted (its id exists nowhere)"
+        );
+        assert!(
+            !map.contains_key(&("p-keep".into(), "e-dup".into())),
+            "a deduped secret is never re-keyed onto the kept peer"
+        );
+    }
+
+    #[test]
+    fn merge_cascade_survived_with_no_secret_is_a_silent_noop() {
+        let kr: FakeKeyring = Default::default();
+        run_cascade(
+            &kr,
+            "p-keep",
+            "p-absorb",
+            &[AbsorbedEndpoint::Survived {
+                endpoint_id: "e-uniq".into(),
+            }],
+        );
+        assert!(kr.borrow().is_empty(), "no secret existed → nothing written");
+    }
+
+    #[test]
+    fn merge_cascade_write_failure_keeps_the_old_entry() {
+        // Orphan posture: if the new-key write fails, the old entry must NOT
+        // be deleted — it is the only copy of the secret.
+        let kr: FakeKeyring = Default::default();
+        kr.borrow_mut()
+            .insert(("p-absorb".into(), "e-uniq".into()), "s3cret".into());
+        rekey_merged_endpoint_secrets(
+            "p-keep",
+            "p-absorb",
+            &[AbsorbedEndpoint::Survived {
+                endpoint_id: "e-uniq".into(),
+            }],
+            |p, e| Ok(kr.borrow().get(&(p.to_string(), e.to_string())).cloned()),
+            |_, _, _| Err("simulated backend write failure".to_string()),
+            |p, e| {
+                kr.borrow_mut().remove(&(p.to_string(), e.to_string()));
+                Ok(())
+            },
+        );
+        assert_eq!(
+            kr.borrow()
+                .get(&("p-absorb".into(), "e-uniq".into()))
+                .map(String::as_str),
+            Some("s3cret"),
+            "old entry survives when the re-key write fails — the secret is never lost"
+        );
     }
 
     #[test]

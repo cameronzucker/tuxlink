@@ -80,6 +80,22 @@ pub enum ApplyEffect {
     NoRecord,
 }
 
+/// Per-endpoint disposition reported by [`PeersStore::merge`] so the command
+/// layer can run the keyring cascade [R2-S7] without re-deriving the dedup
+/// decision. Endpoint ids are stable and never reminted by a merge.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AbsorbedEndpoint {
+    /// The absorbed endpoint moved onto the kept record with its ORIGINAL id.
+    /// Its keyring secret must be re-keyed `(absorb_id, id)` → `(keep_id, id)`
+    /// or future lookups under the kept peer will miss it.
+    Survived { endpoint_id: String },
+    /// The absorbed endpoint matched an existing keep endpoint by
+    /// `(host, port, provenance)` and was dropped. Its id exists nowhere in
+    /// the roster anymore, so its keyring secret has no valid target and must
+    /// be deleted.
+    Deduped { endpoint_id: String },
+}
+
 /// The peers store: an in-memory [`PeersFile`] plus the path it persists to.
 /// Mutations flush eagerly. Construct via [`PeersStore::open`].
 pub struct PeersStore {
@@ -504,8 +520,9 @@ impl PeersStore {
     }
 
     /// Remove a peer by id (no-op if absent). Returns the removed peer's
-    /// endpoint ids for the keyring-secret cascade (Task 10). Flushes when a
-    /// record was actually removed.
+    /// endpoint ids for the keyring-secret cascade the `peer_delete` command
+    /// (Task 11) runs via the Task 10 `p2p_endpoint_password_delete` API.
+    /// Flushes when a record was actually removed.
     pub fn delete_peer(&mut self, id: &str) -> Result<Vec<String>, PeersError> {
         match self.file.peers.iter().position(|p| p.id == id) {
             Some(idx) => {
@@ -520,9 +537,20 @@ impl PeersStore {
 
     /// Merge `absorb_id` into `keep_id`: move the absorbed record's
     /// presented forms / channels / endpoints onto the kept record (dedup by
-    /// their keys), delete the absorbed record, and return the absorbed
-    /// endpoint ids (the command layer re-keys their keyring secrets, Task 10).
-    pub fn merge(&mut self, keep_id: &str, absorb_id: &str) -> Result<Vec<String>, PeersError> {
+    /// their keys), delete the absorbed record, and return each absorbed
+    /// endpoint's [`AbsorbedEndpoint`] disposition for the keyring cascade.
+    ///
+    /// The `peer_merge` COMMAND (Task 11) performs that cascade: a `Survived`
+    /// endpoint keeps its id but now lives under `keep_id`, so its secret is
+    /// re-keyed `(absorb_id, eid)` → `(keep_id, eid)`; a `Deduped` endpoint no
+    /// longer exists anywhere, so its secret is deleted. (An earlier revision
+    /// attributed the re-key to Task 10 — wrong: Task 10 shipped only the
+    /// legacy-CALLSIGN → id-keyed migration, not a merge re-key primitive.)
+    pub fn merge(
+        &mut self,
+        keep_id: &str,
+        absorb_id: &str,
+    ) -> Result<Vec<AbsorbedEndpoint>, PeersError> {
         let keep_idx = self
             .file
             .peers
@@ -540,8 +568,6 @@ impl PeersStore {
         }
 
         let absorbed = self.file.peers.remove(absorb_idx);
-        let absorbed_endpoint_ids: Vec<String> =
-            absorbed.endpoints.iter().map(|e| e.id.clone()).collect();
         // The remove shifted indices; re-resolve the keep record by id.
         let keep_idx = self
             .file
@@ -568,6 +594,7 @@ impl PeersStore {
                 keep.channels.push(ch);
             }
         }
+        let mut dispositions: Vec<AbsorbedEndpoint> = Vec::with_capacity(absorbed.endpoints.len());
         for ep in absorbed.endpoints {
             if let Some(existing) = keep
                 .endpoints
@@ -577,13 +604,22 @@ impl PeersStore {
                 if ep.last_seen > existing.last_seen {
                     existing.last_seen = ep.last_seen;
                 }
+                // Matched an existing keep endpoint by (host, port, provenance):
+                // the absorbed row is dropped, so its id no longer exists
+                // anywhere — its keyring secret must be deleted, not re-keyed.
+                dispositions.push(AbsorbedEndpoint::Deduped { endpoint_id: ep.id });
             } else {
+                // Moved onto the kept record WITH ITS ORIGINAL id — the keyring
+                // secret must follow it from (absorb_id, id) to (keep_id, id).
+                dispositions.push(AbsorbedEndpoint::Survived {
+                    endpoint_id: ep.id.clone(),
+                });
                 keep.endpoints.push(ep);
             }
         }
         Self::enforce_per_peer_caps(keep);
         self.flush()?;
-        Ok(absorbed_endpoint_ids)
+        Ok(dispositions)
     }
 
     /// Split the named presented forms (and their exact-matching channels) off
@@ -1022,9 +1058,56 @@ mod tests {
         let mut s = PeersStore::open(dir.path().join("peers.json"));
         s.upsert_manual(manual_peer("p-keep", "W6ABC")).unwrap();
         s.upsert_manual(manual_peer("p-absorb", "W6ABC")).unwrap();
-        let absorbed = s.merge("p-keep", "p-absorb").unwrap();
+        let dispositions = s.merge("p-keep", "p-absorb").unwrap();
         assert_eq!(s.file().peers.len(), 1);
         assert_eq!(s.file().peers[0].id, "p-keep");
-        let _ = absorbed; // endpoint ids for the keyring re-key cascade (Task 10)
+        assert!(dispositions.is_empty(), "no endpoints on either record");
+    }
+
+    #[test]
+    fn merge_reports_survived_vs_deduped_endpoint_dispositions() {
+        // The peer_merge command's keyring cascade consumes these: a Survived
+        // endpoint's secret is re-keyed to keep_id; a Deduped endpoint's secret
+        // is deleted (its id exists nowhere after the merge).
+        fn ep(id: &str, host: &str, port: u16) -> Endpoint {
+            Endpoint {
+                id: id.into(),
+                host: host.into(),
+                port,
+                provenance: Provenance::Operator,
+                last_seen: "2026-07-10T12:00:00-07:00".into(),
+            }
+        }
+        let dir = td();
+        let mut s = PeersStore::open(dir.path().join("peers.json"));
+        let mut keep = manual_peer("p-keep", "W6ABC");
+        keep.endpoints = vec![ep("e-keep", "shared.example.org", 8772)];
+        let mut absorb = manual_peer("p-absorb", "W6ABC");
+        absorb.endpoints = vec![
+            // Same (host, port, provenance) as e-keep → deduped away.
+            ep("e-dup", "shared.example.org", 8772),
+            // Unique → survives under p-keep with its original id.
+            ep("e-uniq", "uniq.example.org", 8772),
+        ];
+        s.upsert_manual(keep).unwrap();
+        s.upsert_manual(absorb).unwrap();
+
+        let dispositions = s.merge("p-keep", "p-absorb").unwrap();
+        assert_eq!(
+            dispositions,
+            vec![
+                AbsorbedEndpoint::Deduped {
+                    endpoint_id: "e-dup".into()
+                },
+                AbsorbedEndpoint::Survived {
+                    endpoint_id: "e-uniq".into()
+                },
+            ]
+        );
+        // The survived endpoint kept its id, now under p-keep.
+        let kept = &s.file().peers[0];
+        assert_eq!(kept.id, "p-keep");
+        assert!(kept.endpoints.iter().any(|e| e.id == "e-uniq"));
+        assert!(!kept.endpoints.iter().any(|e| e.id == "e-dup"));
     }
 }

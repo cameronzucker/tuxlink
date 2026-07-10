@@ -167,6 +167,16 @@ impl Drop for ObservationGuard {
 ///    A split base always "exists", so without this second gate the base-exists
 ///    skip below would let a conflict flood bypass the limiter entirely (limiter
 ///    amendment (b)(ii)).
+///
+/// **Latent limiter bypass — heads-up for the task that introduces Tactical
+/// assignment.** The `exists` probe below matches on `canonical_base`, but a
+/// `Tactical` record ANCHORS on its full presented string [R4-6]: once an
+/// operator can mark a peer Tactical, an inbound form sharing that record's
+/// stored base would pass the base-exists skip here yet still CREATE a new
+/// record in `apply_observation` (the tactical anchor won't match) — an
+/// unlimited inbound create. No path before Tactical assignment can produce
+/// that state; the task that lands it must tighten this probe to mirror the
+/// store's routing (tactical → exact presented match).
 pub fn record_peer_observation(
     store: &Mutex<crate::peers::store::PeersStore>,
     limiter: &Mutex<crate::peers::limiter::InboundCreateLimiter>,
@@ -261,6 +271,79 @@ mod tests {
             presented_target: "W6ABC".into(),
             phase,
         }
+    }
+
+    /// Like [`obs`], but with a caller-chosen presented form + direction.
+    fn obs_for(presented: &str, direction: Direction, phase: ObservationPhase) -> PeerObservation {
+        PeerObservation {
+            path: ObservedPath::Rf {
+                transport: ChannelTransport::VaraHf,
+                via: vec![],
+                freq_hz: None,
+                bandwidth: None,
+            },
+            direction,
+            presented_target: presented.into(),
+            phase,
+        }
+    }
+
+    #[test]
+    fn conflict_flood_through_the_central_entry_is_quarantined() {
+        // Reviewer follow-up: end-to-end proof that record_peer_observation's
+        // base-exists branch runs conflict CREATION through the failed-path
+        // budget (limiter amendment (b)(ii)) — a split-base flood of distinct
+        // unmatched presented forms is capped at failed_per_minute; everything
+        // over budget returns NoRecord and never reaches the roster.
+        use crate::peers::limiter::{InboundCreateLimiter, P2pLimitsConfig};
+        use crate::peers::store::{ApplyEffect, PeersStore};
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = Mutex::new(PeersStore::open(dir.path().join("peers.json")));
+        let now = || "2026-07-10T12:00:00-07:00".to_string();
+        {
+            // Establish a split base: two twins on W6ABC, then split off -9.
+            let mut s = store.lock().unwrap();
+            s.apply_observation(
+                &obs_for("W6ABC-7", Direction::Outgoing, ObservationPhase::B2fOk),
+                now(),
+            )
+            .unwrap();
+            s.apply_observation(
+                &obs_for("W6ABC-9", Direction::Outgoing, ObservationPhase::B2fOk),
+                now(),
+            )
+            .unwrap();
+            let id = s.file().peers[0].id.clone();
+            s.split(&id, vec!["W6ABC-9".to_string()], now()).unwrap();
+        }
+        let limiter = Mutex::new(InboundCreateLimiter::new(P2pLimitsConfig::default()));
+
+        let (mut held, mut quarantined) = (0u32, 0u32);
+        for i in 0..40u32 {
+            // Distinct unmatched presented forms — each WOULD create a new
+            // conflict record on the split base. (The test flood completes in
+            // far under the limiter's 60s failed-path window.)
+            let o = obs_for(
+                &format!("W6ABC/Q{i}"),
+                Direction::Incoming,
+                ObservationPhase::Accepted,
+            );
+            match record_peer_observation(&store, &limiter, o) {
+                ApplyEffect::ConflictHeld => held += 1,
+                ApplyEffect::NoRecord => quarantined += 1,
+                other => panic!("unexpected effect {other:?}"),
+            }
+        }
+        assert_eq!(held, 10, "default failed_per_minute = 10 gates conflict creation");
+        assert_eq!(quarantined, 30, "everything over budget is quarantined");
+        let s = store.lock().unwrap();
+        assert_eq!(
+            s.file().peers.iter().filter(|p| p.conflict).count(),
+            10,
+            "the roster holds exactly the allowed budget — nothing beyond it"
+        );
+        assert_eq!(limiter.lock().unwrap().quarantined(), 30);
     }
 
     #[test]
