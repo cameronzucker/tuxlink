@@ -63,9 +63,12 @@ pub fn extract_fields(message: &str) -> MessageFields {
                 None => return out, // "CQ <grid>" alone — malformed
             };
             let candidate = rest[idx];
-            // Allow one leading modifier: "CQ DX K1ABC FN42" — candidate must
-            // be the callsign; a preceding token (if any) must be a modifier.
-            if (call_field(candidate).is_some() || candidate == "<...>")
+            // Allow AT MOST one leading modifier: "CQ DX K1ABC FN42" — the
+            // candidate must be the callsign; the (single, optional)
+            // preceding token must be a modifier. Two or more leading
+            // modifier-shaped tokens are out-of-grammar → all-None.
+            if idx <= 1
+                && (call_field(candidate).is_some() || candidate == "<...>")
                 && rest[..idx].iter().all(|t| is_cq_modifier(t))
             {
                 out.from_call = call_field(candidate);
@@ -145,6 +148,12 @@ mod tests {
             from_call: Some("W9XYZ".into()), to_call: Some("KA1ABC".into()), grid: None });
         // From-position hash: unresolved sender is None (design contract).
         assert_eq!(f("CQ <...>"), MessageFields::default());
+    }
+
+    #[test]
+    fn multiple_cq_modifiers_are_out_of_grammar() {
+        assert_eq!(f("CQ TEST DX K1ABC FN42"), MessageFields::default());
+        assert_eq!(f("CQ"), MessageFields::default());
     }
 
     #[test]
