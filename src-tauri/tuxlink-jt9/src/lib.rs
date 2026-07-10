@@ -7,3 +7,5 @@
 pub mod parse;
 pub mod message;
 pub mod wav;
+pub mod types;
+pub mod discover;
