@@ -5,3 +5,4 @@
 //! docs/design/2026-07-10-station-intel-jt9-engine-delta.md §GPL boundary).
 
 pub mod parse;
+pub mod message;
