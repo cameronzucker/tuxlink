@@ -62,6 +62,32 @@ CMS connections over the internet (Telnet) are not transmissions. Arming grants
 the agent a bounded send window; it does not transfer the operator's Part 97
 responsibility.
 
+## VARA HF by agent
+
+The tool surface covers the full VARA HF lifecycle, under the same
+authorization model:
+
+- **Setup.** `vara_engine_available` and `vara_install_status` report
+  whether this build carries the guided Wine setup engine (x86-64 Linux
+  only) and how far an install has progressed; `vara_install_start`
+  runs the install from a VARA installer `.exe` the operator has
+  already downloaded. Installing software is not a transmission, so
+  these run without armed send-authority — but the install prompts the
+  operator for their OS password at the machine, so it cannot proceed
+  unattended.
+- **Diagnostics.** `vara_status` reports connection state and
+  bandwidth; `vara_probe` opens VARA's command port read-only and
+  classifies what answered (down, something-but-not-VARA, or a real
+  VARA). Neither transmits, and both are always available.
+- **Configuration.** `config_set_vara` sets the VARA bandwidth
+  (500 / 2300 / 2750 Hz). Requires armed send-authority.
+- **Operation.** `rig_tune` tunes the rig over CAT; `vara_open_session`
+  opens the session and registers the callsign; `vara_b2f_exchange`
+  dials a gateway and runs the message exchange, optionally tuning
+  first. All three require armed send-authority and an untainted
+  session. `vara_stop_session` stops the session and, like every stop,
+  is always allowed.
+
 ## Connecting an agent
 
 The quickest path is **Tools → Connect an AI agent…**, which shows a ready-to-paste connect command for Claude Code, Codex, Gemini CLI, or any MCP client, with this station's paths already filled in.

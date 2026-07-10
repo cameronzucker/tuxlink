@@ -40,8 +40,8 @@ The `!` and the footer can co-exist; use `!` for quick signaling and the footer 
 
 | Scope | Subsystem |
 |---|---|
-| `protocol` | Protocol traits, telnet implementation, future VARA/AX.25 backends |
-| `wizard` | First-run wizard screens (account check, credentials, test send) |
+| `protocol` | Protocol traits; telnet, VARA, ARDOP, and AX.25 backends |
+| `wizard` | First-run wizard screens (account check, credentials, location, VARA setup, test send) |
 | `mailbox` | Inbox / Sent / Posted UI |
 | `compose` | Compose window, draft persistence |
 | `session` | Session log pane, session state |

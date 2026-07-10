@@ -59,14 +59,19 @@ capture / playback ALSA devices, optional PTT serial path, command port
 
 ## VARA HF
 
-VARA is a separate HF protocol with a different waveform. Tuxlink does
-not bundle a VARA modem — the operator runs VARA HF on a separate machine
+VARA is a separate HF protocol with a different waveform. Tuxlink cannot
+bundle the VARA modem (it is proprietary), but its guided setup flow —
+the first-run wizard's VARA step, or the VARA panel's **Set up VARA
+HF…** button — installs it under Wine on x86-64 Linux from an installer
+the operator downloads. Alternatively, VARA runs on another machine
 (Wine on x86 Linux, or a Windows host) and Tuxlink connects to its TCP
-command + data ports.
+command + data ports over the network. VARA does not run on ARM hosts.
 
-- **Bandwidth:** Standard (~2300 Hz) is operationally confirmed against
-  RMS gateways; Tactical (~2750 Hz) and Narrow (~500 Hz) depend on the
-  modem's licensed feature set.
+- **Bandwidth:** selectable 500 / 2300 / 2750 Hz. Narrow (500 Hz) and
+  Standard (2300 Hz) are operationally confirmed against real RMS
+  gateways; Tactical (2750 Hz) requires the paid VARA license tier.
+  The selected bandwidth must match the gateway channel's advertised
+  bandwidth for the gateway to answer.
 - **Latency:** seconds to minutes per session, generally faster than
   ARDOP for the same SNR.
 - **License gate:** General or higher (HF digital modes).
@@ -75,8 +80,11 @@ command + data ports.
 
 Configuration lives in the VARA radio panel itself (not Settings) —
 **Host** (default `127.0.0.1`), **Cmd Port** (default `8300`), **Data
-Port** (default `8301`), and an optional fixed **Bandwidth** override.
-Empty bandwidth means "leave at VARA's default."
+Port** (default `8301`), the **Bandwidth** selector (Auto means "leave
+at VARA's default"), and **Center freq (MHz)**: the gateway channel's
+audio-center frequency as the catalog publishes it. Tuxlink CAT-tunes
+the rig to center − 1.5 kHz automatically and shows the derived USB
+dial as a hint — enter the catalog's number, not the dial frequency.
 
 ## What "Connect" does
 
@@ -146,9 +154,13 @@ Use ARDOP or VARA for HF RMS access.
 1. Start the modem (`ardopcf`, VARA HF, or VARA FM) and confirm its audio path.
 2. Select **Connections -> Winlink (CMS) -> ARDOP HF**, **VARA HF**, or
    **VARA FM**.
-3. Use **Find a gateway** or enter the RMS callsign manually.
-4. Match bandwidth to the gateway and conditions. For VARA FM, leave bandwidth
-   on Auto so the VARA FM binary uses its own configured mode.
+3. Use **Find a gateway** or enter the RMS callsign manually — the exact
+   callsign the gateway operates under, including any SSID (`XX1XXX-10`).
+4. Match bandwidth to the gateway channel's advertised width and to
+   conditions — a channel listed as VARA 500 cannot decode a 2300 Hz
+   connect request. For VARA FM, leave bandwidth on Auto so the VARA FM
+   binary uses its own configured mode. For HF, enter the channel's
+   center frequency so the CAT tune dials the rig correctly.
 5. Run the RF pre-flight from [Choosing the right mode](17-choosing-the-right-mode.md#pre-flight-checklist).
 6. Click **Connect**.
 

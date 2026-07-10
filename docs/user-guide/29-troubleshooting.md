@@ -88,15 +88,39 @@ The wizard re-runs on next launch.
 
 - Verify the VARA HF modem process is running. VARA itself runs outside
   Tuxlink — either Wine on x86 Linux or a Windows host on the network.
+  An install made through the guided setup (the VARA panel's **Set up
+  VARA HF…** button) configures auto-start on login; a manual install
+  must be launched by the operator.
 - Cmd Port and Data Port (in the VARA radio panel) must match the modem's
   listening ports. A mismatch shows as a TCP connect error in the
   session log.
-- If the radio panel's connect attempt hangs with no audio on the radio,
-  PTT may be unwired — VARA drives PTT inside its own process; Tuxlink
-  does not assert PTT on its behalf.
-- Bandwidth licensing: Tactical and Narrow modes require the operator's
-  paid VARA license tier; "Standard" works on the free tier and is
-  operationally confirmed against RMS gateways.
+- If the radio never keys during a connect attempt, PTT may be
+  unwired. VARA raises PTT events on its command port and Tuxlink keys
+  the rig on them through the configured rig-control / PTT method —
+  check the rig control settings. Tuxlink refuses to dial when no PTT
+  method resolves, and the session log says so.
+- Bandwidth licensing: Tactical (2750 Hz) requires the operator's paid
+  VARA license tier; Narrow (500 Hz) and Standard (2300 Hz) work on the
+  free tier and are operationally confirmed against RMS gateways.
+
+## VARA gateway never answers
+
+The connect transmits, the log shows the call going out, but no gateway
+comes back. Check, in order:
+
+- **Bandwidth matches the channel.** Gateway listings advertise each
+  channel's VARA bandwidth (500 / 2300 / 2750 Hz). The gateway decodes
+  connect requests only at that width — a VARA 500 channel cannot hear
+  a 2300 Hz connect request. Set the VARA panel's Bandwidth to match.
+- **Frequency entered as the center.** Catalogs publish audio-center
+  frequencies; the rig's USB dial belongs 1.5 kHz below. Enter the
+  catalog's center in the panel's Center freq field and let the CAT
+  tune dial the rig — dialing the published number directly on the rig
+  puts the signal 1.5 kHz off the gateway's passband.
+- **Exact callsign, including SSID.** A gateway operating as
+  `XX1XXX-10` does not answer a call addressed to `XX1XXX`.
+- **Operating hours.** Gateway listings publish each channel's hours;
+  outside them, nobody is listening on that frequency.
 
 ## Message remains in Outbox after Connect
 

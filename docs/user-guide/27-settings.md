@@ -1,8 +1,8 @@
 # Settings
 
 Tuxlink distributes settings to where the operator uses them. The unified
-Settings panel (Tools → Settings → GPS & Privacy...) holds identities, the GPS
-position source, and broadcast privacy; map tiles have their own Settings entry;
+Settings panel (Tools → Settings… → GPS state & privacy) holds identities, the GPS
+position source, and broadcast privacy; offline map tiles are configured in the same panel;
 themes are under View; logging controls are in the Logging window; and transport
 settings sit in their transport panels.
 
@@ -10,17 +10,17 @@ settings sit in their transport panels.
 
 | Setting | Where to change it | Notes |
 |---|---|---|
-| Callsign and identities | First-launch wizard for the first identity; Tools -> Settings -> GPS & Privacy... -> Identities to add, edit, or switch | FULL (licensed) and tactical identities are both supported; the dashboard ribbon's identity switcher selects the active one. |
+| Callsign and identities | First-launch wizard for the first identity; Tools -> Settings… -> Identities to add, edit, or switch | FULL (licensed) and tactical identities are both supported; the dashboard ribbon's identity switcher selects the active one. |
 | Winlink password | First-launch wizard; auth recovery can re-enter the password after a CMS auth failure | Stored in the OS keyring, not in `config.json`. |
 | Manual grid | Dashboard ribbon -> Grid | Click the grid value to type a grid, or choose **Pick on map...** from the grid editor. |
 | GPS/manual position source | Dashboard ribbon -> Grid source segments | Pick **GPS** to use a receiver when available; pick **MANUAL** to pin a manual grid. |
-| GPS broadcast behavior | Tools -> Settings -> GPS & Privacy... | Controls whether GPS is read and what precision may leave the station. |
+| GPS broadcast behavior | Tools -> Settings… -> GPS state & privacy | Controls whether GPS is read and what precision may leave the station. |
 | CMS Telnet host and TLS/plaintext | Connections sidebar -> CMS -> Telnet | The Telnet radio panel owns the CMS server and transport choice. |
 | ARDOP HF modem | Connections sidebar -> ARDOP HF | The ARDOP panel owns sound devices, PTT, command port, and bandwidth. |
 | VARA modem | Connections sidebar -> VARA HF/FM | The VARA panel owns host, command port, data port, and bandwidth. |
 | Packet KISS and SSID | Connections sidebar -> Packet; dashboard callsign SSID picker | Packet uses the operator's callsign plus the selected AX.25 SSID. |
 | Pending inbound review | Dashboard ribbon -> On connect | **Review** prompts before downloading pending messages; **Download all** accepts all pending messages. |
-| LAN map tiles | Tools -> Settings -> Map tiles... | Optional local tile server for finer map zoom and six-character map picks. |
+| LAN map tiles | Tools -> Settings… -> Offline maps | Optional local tile server for finer map zoom and six-character map picks. |
 | Color scheme | View -> Color scheme | Presets and the saved custom theme are here. |
 | Custom theme tokens | View -> Color scheme -> Customize... | Opens the inline theme designer. |
 | Logging detail and retention | Help -> Logging... -> Settings | Controls detailed logging mode, age retention, and size cap. |
@@ -70,9 +70,9 @@ The dashboard ribbon's **GPS** segment uses the live GPS source when one is
 available. If GPS is selected but no fix is available, the ribbon falls back to
 the manual grid when one exists and marks the GPS state as unavailable.
 
-### GPS & Privacy panel
+### GPS state & privacy panel
 
-Tools -> Settings -> GPS & Privacy... opens the inline privacy panel.
+Tools -> Settings… -> GPS state & privacy opens the inline privacy panel.
 
 **GPS state**
 
@@ -180,9 +180,9 @@ Review is the safer field default when bandwidth is scarce or a large attachment
 could block more urgent traffic. Download-all is convenient on broadband or when
 the operator knows the pending queue is small.
 
-## Map tiles
+## Offline maps
 
-Tools -> Settings -> Map tiles... configures an optional LAN tile source for map
+Tools -> Settings… -> Offline maps configures an optional LAN tile source for map
 views. Without a LAN tile source, Tuxlink uses the bundled offline raster and
 keeps map zoom coarse. With a validated local tile source, map-backed position
 selection can zoom farther and can permit six-character grid picks where the

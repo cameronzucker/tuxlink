@@ -37,6 +37,21 @@ The wizard flow is short:
    that confirms the credentials work against the CMS endpoint before the
    shell loads. Skipping this step is fine; the first real Connect will
    surface any auth issue.
+4. **Location.** GPS detection with guided fixes for the common Linux
+   blockers (dialout group membership, ModemManager holding the port),
+   plus manual grid entry as the always-available fallback. The grid and
+   position source persist as entered; every identity path passes through
+   this step. The same controls live in Settings afterward.
+5. **Set up VARA HF.** Optional. A guided installer for the VARA HF
+   modem: download the installer from the VARA author's page
+   (rosmodem.wordpress.com) in a browser, point the wizard at the
+   `.exe`, and a live checklist walks the Wine setup, the VARA
+   installation, its runtime pieces, a launch check, and auto-start on
+   login. The step appears only on hardware that can run VARA (x86-64
+   Linux) and needs internet, so first launch — while online — is the
+   right moment. Skipping is fine: ARDOP works without it, and the same
+   flow is available later from the VARA panel's **Set up VARA HF…**
+   button. See the [VARA HF deep dive](16-vara-hf-deep-dive.md).
 
 ```mermaid
 flowchart TD
@@ -48,14 +63,16 @@ flowchart TD
     F["CMS verify (optional)"]
     G{"Verify passes?"}
     H["Skip verify"]
+    V["VARA HF setup (optional,<br/>x86-64 only)"]
     I["Shell loads"]
 
     A --> B
     B -- "No" --> C --> D --> E
     E -- "No" --> F --> G
-    G -- "Yes" --> I
+    G -- "Yes" --> V
     G -- "No" --> D
-    E -- "Yes" --> H --> I
+    E -- "Yes" --> H --> V
+    V --> I
     B -- "Yes" --> I
 ```
 
@@ -65,7 +82,7 @@ location, separate from the mailbox data at
 resets the wizard on next launch.
 
 Available transports — Telnet (CMS over the internet), Packet (1200-baud
-AX.25 over a radio modem), ARDOP HF, and VARA HF — surface in the folder
+AX.25 over a radio modem), ARDOP HF, and VARA HF / FM — surface in the folder
 sidebar once the shell opens. The operator picks which transport the next
 Connect will use by clicking its entry; nothing is locked in by the wizard.
 

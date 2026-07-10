@@ -87,9 +87,10 @@ APRS.
 > repro and the exported logs (Help → Logging → Export logs).
 >
 > Specifically, Tuxlink needs validation with a wide variety of radios. It's
-> currently tested against a Digirig, Bluetooth KISS, and the Benshi UV Pro
-> protocol. Please report hardware successes/failures with specific radios
-> and interfaces using the Help menu in Tuxlink.
+> currently tested against a Digirig, a DRA-series soundcard interface with
+> CAT-keyed HF rigs (through the bundled `rigctld`), Bluetooth KISS, and the
+> Benshi UV Pro protocol. Please report hardware successes/failures with
+> specific radios and interfaces using the Help menu in Tuxlink.
 >
 > Version tags are generated automatically from conventional-commit activity by
 > [release-please](https://github.com/googleapis/release-please) and track
@@ -123,9 +124,18 @@ Tuxlink ships the following on Linux for x86_64 and arm64:
   inline; ARQ bandwidth is selectable; and a live quality meter, an ARDOP frame
   ribbon, and the session log track the link as it runs — freeze-free, with a
   working abort.
-- **VARA HF / VARA FM.** A connection panel manages the TCP link to an
-  operator-supplied VARA instance, surfaces connect and error state, and edits
-  the persisted VARA configuration. Over-the-air peer sessions are pending.
+- **VARA HF / VARA FM — on-air validated.** The VARA panel dials Winlink
+  gateways end to end: it selects the ARQ bandwidth (500 / 2300 / 2750 Hz) to
+  match the gateway channel's advertised width, takes the channel's published
+  center frequency and dials the rig to the correct sideband spot over CAT,
+  keys PTT on VARA's keying events, and runs the B2F exchange over the ARQ
+  link — verified against a production VARA gateway at 500 Hz on real HF
+  (see [Maturity](#maturity-what-is-and-is-not-proven)). A guided
+  **Set up VARA HF…** flow installs VARA under WINE with a live checklist —
+  offered during the first-run wizard and any time from the panel — for
+  operators who do not already run their own VARA instance. Agents can drive
+  the same setup, configuration, and dialing surface through the MCP server,
+  behind the operator-armed gate.
 
 <br clear="right" />
 
@@ -303,14 +313,17 @@ Winlink catalog, and collects selected items in a unified send basket:
 
 Where each path stands:
 
-- **On-air validated (RF path end-to-end):** three modes are vetted on the air —
-  AX.25 1200-baud packet, ARDOP HF, and APRS tactical chat over Bluetooth KISS.
-  Packet and ARDOP both connect over a real radio, and the transmit path to the
-  Winlink network is proven end-to-end — a production Winlink CMS protocol response
-  was received over the air. That response was a rejection pending the client
-  registration noted below, which is precisely what confirms the chain (transmit,
-  RF link, gateway, CMS) is intact; the gap is an account, not a path. Peer-to-peer
-  sessions on both modes work today. APRS tactical chat has run continuously over a
+- **On-air validated (RF path end-to-end):** four modes are vetted on the air —
+  AX.25 1200-baud packet, ARDOP HF, VARA HF, and APRS tactical chat over
+  Bluetooth KISS. Packet, ARDOP, and VARA all connect over a real radio, and
+  the transmit path to the Winlink network is proven end-to-end — a production
+  Winlink CMS protocol response was received over the air, on both the packet
+  and the VARA HF paths. That response was a rejection pending the client
+  registration noted below, which is precisely what confirms the chain
+  (transmit, RF link, gateway, CMS) is intact; the gap is an account, not a
+  path. VARA HF's validation includes the hardest case: a 500 Hz-bandwidth ARQ
+  link to a production gateway, with the full B2F handshake completed across
+  the RF channel. Peer-to-peer sessions work on packet and ARDOP. APRS tactical chat has run continuously over a
   sustained Bluetooth KISS link **at the same time as** an HF Winlink session — the
   simultaneous HF/VHF workspace is functional today. Transmission always requires
   explicit, per-invocation operator consent (see
@@ -330,14 +343,16 @@ Where each path stands:
 
 ### Pending
 
-- **VARA over-the-air peer sessions.** The VARA panel manages the TCP transport
-  to an operator's VARA instance; the RF connect-to-peer session lifecycle is
-  pending.
-- **Hamlib rig control** and USB rig autodetect.
+- **VARA peer-to-peer on the air.** The VARA gateway-session path is on-air
+  validated (above); direct station-to-station VARA sessions are built and
+  awaiting on-air verification.
+- **USB rig autodetect.** Rig control itself — CAT tune and PTT through the
+  bundled Hamlib `rigctld` — is shipped and on-air proven; picking the radio
+  automatically from the attached USB devices is not.
 - **Native HF modem.** VARA is x86 Windows software that runs under WINE on x86
   Linux but not on ARM. Tuxlink targets a clean-room native HF modem (Sonde,
   developed as a separate project) rather than bundling VARA; VARA-TCP wire
-  compatibility serves operators who bring their own VARA install.
+  compatibility and the guided WINE setup serve operators who run VARA.
 
 ## Architecture
 
