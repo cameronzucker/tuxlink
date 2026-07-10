@@ -127,17 +127,22 @@ chrome to be fully native. Use that capability.
 
 ### Required elements (not negotiable for v0.1)
 
-- **Native menu bar at the top of the window**, populated via
-  `tauri::menu`. Categories, in order (subject to tuning per menu item):
-  - **File**: New Message, Open Draft, Save Draft, Post to Outbox, Quit
-  - **Message**: Reply, Reply All, Forward, Print, Properties
-  - **Session**: Connect (Telnet/AX.25/VARA HF/VARA FM/...), Disconnect,
-    Session Log, Statistics
-  - **Mailbox**: Inbox, Outbox, Sent, Archive, Empty Trash
-  - **View**: Show/Hide Session Log, Show/Hide Status Bar, Theme
-  - **Tools**: Templates, Rig Control, Operator Info, Radio Tuning,
-    Preferences, Diagnostics
-  - **Help**: About, Documentation, Winlink Website, Report Issue
+- **Native-style menu bar at the top of the window**, rendered by the
+  React `MenuBar` component from the single-source `MENU_TREE` in
+  `src/shell/chrome/menuModel.ts` (NOT `tauri::menu` — the model file is
+  the source of truth; a parity test pins the action-id vocabulary).
+  Shipped top-level categories, in order:
+  - **File**: Print, Quit
+  - **Message**: New Message, Reply, Reply All, Forward, Archive, Delete,
+    Request Center…
+  - **View**: panel and bar toggles, Theme
+  - **Tools**: Find a Station…, Verify CMS Connection…, Connect an AI
+    agent…, Elmer…, Set up Elmer's model…, Settings…
+  - **Help**: About, Documentation, Report Issue
+  Session and Mailbox top-level menus were removed after operator review
+  (connections live in the status-bar Connect control and the radio
+  panels; mailbox navigation lives in the folder sidebar). When adding a
+  menu item, edit `menuModel.ts` — do not re-introduce removed menus.
 - **System tray icon** with: Show/Hide window, New Message, Quit. Clicking
   the window close button HIDES the window to the tray; it does NOT quit
   the app. Quit only happens from File -> Quit, tray -> Quit, or the

@@ -7,17 +7,28 @@ generally more robust at low SNR, and the de-facto choice for many active
 HF Winlink operators — but it has licensing tiers, runs only as a Windows
 binary (requiring Wine on Linux), and is closed source.
 
-Tuxlink does not bundle VARA. The operator installs and runs VARA HF
-separately; tuxlink connects to its TCP command + data ports.
+Tuxlink cannot bundle VARA (it is proprietary), but it ships a guided
+setup flow that installs VARA HF under Wine from an installer the
+operator downloads (see "Guided setup" below). At run time, tuxlink
+connects to VARA's TCP command + data ports.
+
+Tuxlink's VARA HF dialing works end to end on the air: the CAT tune,
+PTT keying on VARA's PTT events, a bandwidth-selectable connect
+request, the gateway's answer, ARQ link establishment, and the B2F
+handshake over the RF link. Full message exchange with the production
+Winlink CMS over RF awaits Winlink's registration of the Tuxlink
+client type — the same registration step that gates production-CMS
+message exchange on every transport (RF gateways relay to the
+production CMS, which rejects unregistered clients; the Winlink test
+server accepts them). Peer-to-peer sessions do not involve the CMS.
 
 This topic covers the tier model, the Wine setup on Linux, the tuxlink-side
 wiring, and the operator-visible behaviours.
 
 ## Bandwidth modes and licensing
 
-VARA HF exposes three on-air bandwidth modes. Tuxlink's wire codec
-(`src-tauri/src/winlink/modem/vara/command.rs`) names them by their
-`BW<hz>` wire tokens:
+VARA HF exposes three on-air bandwidth modes. Tuxlink names them by
+their `BW<hz>` wire tokens:
 
 | Mode | Bandwidth | Wire token | Licensing |
 |---|---|---|---|
@@ -30,22 +41,56 @@ A tuxlink station running the free VARA tier sends `BW2300` over the
 command port the same way a paid-tier station sends `BW2750`; the modem
 decides on-air what is allowed.
 
-**Operationally confirmed from this project:** VARA HF Standard (2300 Hz)
-working against real RMS gateways on a Xiegu G90 (per the project's
-firsthand-operation memory). Narrow and Tactical have not been
-separately confirmed by this project, though tuxlink's wire codec sends
-the right tokens for each.
+**Operationally confirmed:** Narrow (500 Hz) has linked against a real
+RMS gateway on HF, holding the link at signal levels well below the
+noise floor — a verified session ran at S/N −11.8 dB at roughly
+41 bit/s: slow, but solid. Standard (2300 Hz) has established full ARQ
+links between two local stations over RF, with the called station
+answering and the exchange completing. Tactical sends the right wire
+token but has not been separately confirmed on the air.
 
 For an EmComm-ready Linux station, the Standard tier covers most
 operating scenarios. Tactical's wider bandwidth produces faster
 throughput on a clean channel; Narrow is a fallback for very poor
 conditions where 500 Hz is the only bandwidth that survives.
 
+**Match the bandwidth to the channel.** Gateway listings advertise each
+channel's VARA bandwidth (500 / 2300 / 2750 Hz) and its operating
+hours. The gateway decodes connect requests only at the channel's
+advertised bandwidth — a channel listed as VARA 500 cannot decode a
+2300 Hz connect request, and the call goes unanswered. Select the
+bandwidth in the VARA radio panel (or via configuration) to match the
+channel being called.
+
 ## VARA on Linux (Wine)
 
 VARA is a native Windows binary. Running it on Linux means running it under
-Wine. The Linux-amateur community has well-documented Wine setups that
-work; the broad strokes:
+Wine.
+
+### Guided setup
+
+Tuxlink drives the whole Wine provisioning as a guided flow with a live
+checklist: system dependencies (Wine), the Wine prefix, the VARA HF
+installation, the Visual Basic 6 runtime, the OCX controls, a launch +
+connection check, and auto-start on login. Because VARA is proprietary,
+the flow cannot download it — the operator downloads the installer from
+the VARA author's page (rosmodem.wordpress.com, EA5HVK) in a browser
+and points tuxlink at the `.exe`.
+
+Two entry points:
+
+- the first-run wizard's **Set up VARA HF (optional)** step, and
+- the VARA radio panel's **Set up VARA HF…** button — for setting up
+  later, or re-checking after an upgrade.
+
+The guided flow needs an x86-64 Linux host and a working internet
+connection, so run it before deploying — it cannot install VARA in the
+field. Once set up, VARA starts with tuxlink automatically.
+
+### Manual setup
+
+The Linux-amateur community also has well-documented manual Wine setups
+that work; the broad strokes:
 
 1. **Install Wine.** A recent version (8.x or later) from your distribution.
 2. **Install VARA HF.** Downloaded from the EA5HVK site, installed under
@@ -58,16 +103,16 @@ work; the broad strokes:
    PTT externally) handle that, and VARA's PTT setting stays "External."
 
 > [!NOTE]
-> **Pi 5 16k-page-kernel constraint.** A Raspberry Pi 5 running the
-> default 16K-page kernel (`kernel_2712.img`) cannot run Wine — `wineboot
-> --init` hard-fails on the 16K page size. To run VARA on a Pi 5, switch
-> to the 4K-page kernel (`kernel8.img`) via `/boot/firmware/config.txt`
-> and reboot. Alternative: run VARA on an x86 machine (laptop, mini-PC)
-> on the same network and connect tuxlink to it over TCP.
+> **VARA does not run on ARM.** VARA is an x86 Windows binary; an ARM
+> host (Raspberry Pi and similar) cannot run it usefully — even under
+> x86 emulation layers, VARA refuses to transmit. On ARM hardware,
+> either run VARA on an x86 machine (laptop, mini-PC) on the same
+> network and point tuxlink's VARA panel at it over TCP, or use
+> [ARDOP](15-ardop-deep-dive.md), which is native on ARM.
 
-The Wine-on-Linux story is workable but is not the focus of this project.
-For a station that prefers staying off Wine, [ARDOP](15-ardop-deep-dive.md)
-is the open native alternative.
+The Wine-on-Linux story is workable, and the guided setup absorbs most
+of its friction. For a station that prefers staying off Wine entirely,
+[ARDOP](15-ardop-deep-dive.md) is the open native alternative.
 
 ## VARA's TCP interface
 
@@ -91,12 +136,13 @@ the configuration:
   populate the LAN IP.
 - **Command port** — `8300` default.
 - **Data port** — `8301` default.
-- **Bandwidth** — optional override. Empty means "leave VARA at its
-  configured default."
-
-The "Bandwidth" override exists because the radio panel can pin the
-session's on-air bandwidth — useful for gateway-specific tuning where the
-RMS expects a specific bandwidth.
+- **Bandwidth** — the session's on-air bandwidth (500 / 2300 / 2750 Hz),
+  or Auto to leave VARA at its configured default. Set it to match the
+  target channel's advertised bandwidth (see above).
+- **Center freq (MHz)** — the target channel's audio-center frequency,
+  the number the catalog shows. The panel shows the derived **USB
+  dial** frequency as a hint; the CAT tune dials the rig 1.5 kHz below
+  the entered center (see "Frequency: enter the center" below).
 
 ## A typical VARA session
 
@@ -109,18 +155,41 @@ RMS expects a specific bandwidth.
 > switch is reachable. The Connect button is the per-session licensee
 > consent gate.
 
-The exchange:
+### Frequency: enter the center
 
-1. Tuxlink connects to VARA's command port (TCP).
-2. Tuxlink sends `LISTEN OFF` and the per-session configuration
+Winlink catalogs and gateway listings publish **audio-center**
+frequencies. The rig's USB dial frequency sits 1500 Hz below that
+center. Tuxlink converts automatically: enter the center — the number
+the catalog shows — in the panel's **Center freq (MHz)** field, and
+the CAT tune (via hamlib `rigctld`) dials the rig to center − 1.5 kHz.
+The panel shows the derived **USB dial** frequency as a hint so the
+two numbers never get confused. Dialing the published number directly
+on the rig puts the signal 1.5 kHz off the gateway's passband — the
+most common self-inflicted "nobody answers."
+
+### Address the exact callsign
+
+Gateway callsigns can carry SSIDs (for example `XX1XXX-10`). The
+connect request must address the exact callsign the gateway operates
+under — calling the base callsign when the gateway listens as `-10`
+goes unanswered.
+
+### The exchange
+
+1. Tuxlink tunes the rig over CAT to the entered center − 1.5 kHz.
+2. Tuxlink connects to VARA's command port (TCP).
+3. Tuxlink sends `LISTEN OFF` and the per-session configuration
    (bandwidth, my-call).
-3. Tuxlink sends `CONNECT <RMS-call>`.
-4. VARA transmits the on-air CONNECT frame and waits for the RMS to ACK.
-5. VARA negotiates bandwidth (within the licensed tier) and modulation
+4. Tuxlink sends `CONNECT <gateway-call>`.
+5. VARA raises `PTT ON` / `PTT OFF` on the command port; tuxlink keys
+   the rig on those events (VARA is a soundcard modem with no PTT of
+   its own) while VARA transmits the on-air CONNECT frame and waits
+   for the gateway to ACK.
+6. VARA negotiates bandwidth (within the licensed tier) and modulation
    based on the perceived link quality.
-6. Once connected, the B2F session opens over the data port (see
+7. Once connected, the B2F session opens over the data port (see
    [topic 06](06-the-b2f-protocol.md)).
-7. The session ends; VARA sends DISCONNECT; the channel is released.
+8. The session ends; VARA sends DISCONNECT; the channel is released.
 
 The session log carries VARA's state-change messages plus the B2F
 exchange — same shape as the ARDOP session log, different modem
@@ -134,11 +203,13 @@ sequenceDiagram
     participant Radio as Radio
     participant RMS as RMS gateway
 
+    TX->>Radio: CAT tune (center − 1.5 kHz)
     TX->>VC: LISTEN OFF
     TX->>VC: MYCALL <callsign>
-    TX->>VC: BW2300 (or BW2750 / BW500)
-    TX->>VC: CONNECT <RMS-call>
-    VC->>Radio: Key PTT, transmit CONNECT
+    TX->>VC: BW500 (or BW2300 / BW2750)
+    TX->>VC: CONNECT <gateway-call>
+    VC-->>TX: PTT ON
+    TX->>Radio: Key PTT
     Radio-->>RMS: RF
     RMS->>Radio: ACK + negotiation
     VC-->>TX: CONNECTED <bandwidth>
@@ -163,9 +234,9 @@ modem's GUI shows a level meter; the standard procedure:
    target).
 4. Listen on a second receiver for spectrum cleanliness.
 
-Cameron has operated VARA HF Standard 2300 Hz on a Xiegu G90 against real
-RMS gateways — the calibration procedure above produces a working signal
-out of the box for that combination.
+VARA HF on a Xiegu G90 against real RMS gateways is a confirmed working
+combination — the calibration procedure above produces a working signal
+out of the box for it.
 
 ## Peer-to-peer
 
@@ -174,11 +245,12 @@ without an RMS. The session runs the same B2F dance at the application
 layer; the difference is that both ends authenticate as operator callsigns
 rather than the gateway side authenticating as an RMS.
 
-Tuxlink's VARA radio panel opens and closes the TCP transport to the
-operator's VARA instance and runs the CMS/RMS path. RF connect-to-peer
-over VARA is pending — it needs the peer-to-peer session state machine and
-the per-session consent flow, which are not yet shipped. The VARA CMS/RMS
-flow is the supported VARA path today.
+Tuxlink exposes peer-to-peer VARA alongside the CMS path: one station
+arms Listen in the Peer-to-peer VARA connection, the other connects
+(see [Picking a transport](08-picking-a-transport.md) for the
+walkthrough). Because no CMS is in the path, peer-to-peer sessions are
+unaffected by the production-CMS client registration that currently
+gates CMS message exchange.
 
 ## VARA FM — the FM counterpart
 
@@ -205,8 +277,8 @@ What is the same:
   `8400/8401` vs the VARA HF default of `8300/8301`) so both binaries
   can coexist on one host. The wire protocol on the ports is the same.
 - The B2F application layer runs over the data port unchanged.
-- The Wine-on-Linux constraint applies to both binaries (Pi 5
-  16k-page-kernel block included).
+- The Wine-on-Linux constraint applies to both binaries (x86 only; no
+  ARM — see the note above).
 - The licensing tier setting in VARA HF (paid Tactical) does not apply
   to VARA FM; VARA FM is shipped as a single-tier free download from
   the EA5HVK site at time of writing.
@@ -237,7 +309,7 @@ ones to look for.
 | Symptom | Cause |
 |---|---|
 | Tuxlink reports "VARA unreachable" | VARA isn't running; or `Host`/`Port` mismatch in the radio panel |
-| Wine `wineboot --init` fails on Pi 5 | 16K page-size kernel; switch to `kernel8.img` |
+| Gateway never answers the connect request | Bandwidth mismatch (the panel's bandwidth must match the channel's advertised VARA bandwidth); frequency entered as the dial instead of the center (enter the catalog's center frequency); wrong callsign (include the gateway's SSID exactly); or the channel is outside its published operating hours |
 | VARA GUI shows "Listening" but no incoming connect detected | Audio chain not routing RX correctly; check the sound-card selection inside VARA's Setup |
 | Connection negotiates but no data transfers | Audio level off; or the B2F handshake is failing — check the session log |
 | Sessions complete but throughput is far below VARA's published numbers | Wrong bandwidth tier (you're stuck at Standard but expecting Tactical), or noisy channel |
@@ -249,3 +321,4 @@ ones to look for.
 - [Choosing the right mode](17-choosing-the-right-mode.md) — when VARA wins.
 - [The B2F protocol](06-the-b2f-protocol.md) — the application layer above the modem.
 - [Radio-specific notes](13-radio-specific-notes.md) — VARA-confirmed rig configurations.
+- [Troubleshooting](29-troubleshooting.md) — session-log-first diagnosis, including the no-answer checklist.

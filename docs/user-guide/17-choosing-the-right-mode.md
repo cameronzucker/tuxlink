@@ -102,7 +102,7 @@ For a freshly-installed tuxlink station:
 | Telnet | Lowest — works out of the box after the wizard | No RF chain needed |
 | Packet | Moderate — install Dire Wolf, configure ALSA + PTT | One-time setup; well-documented |
 | ARDOP | Moderate — install ardopcf, point at it | Linux-native, no Wine |
-| VARA HF | Highest — install Wine, install VARA, configure audio routing | Closed source; tier licensing decision |
+| VARA HF | Moderate — download the VARA installer, run tuxlink's guided setup (wizard step or the VARA panel's "Set up VARA HF…" button) | Closed source; x86-64 Linux only; the guided flow handles Wine and configuration |
 
 For a new station getting on the air, **start with Telnet** for the
 functional verification (the wizard's optional CMS verify step does this
@@ -168,10 +168,13 @@ Before every RF session:
 
 1. **Conditions check.** Glance at the waterfall, listen to the band, or
    pull a propagation report.
-2. **Frequency check.** Catalog says the RMS is on X.XXX MHz USB or USB-D.
-   Tune accordingly.
-3. **Mode check.** Catalog says ARDOP 500 Hz or VARA Standard. Tuxlink
-   needs to match.
+2. **Frequency check.** Catalog frequencies are audio **centers**, and
+   the rig's USB dial sits 1.5 kHz below the center. Enter the catalog's
+   center frequency in the radio panel and let the CAT tune dial the rig
+   — the panel shows the derived USB dial as a hint.
+3. **Mode check.** Catalog says ARDOP 500 Hz or VARA 500 / 2300 Hz.
+   Tuxlink's selected bandwidth must match the channel's advertised
+   width — a mismatched connect request goes undecoded and unanswered.
 4. **Levels check.** Audio-level meter in the right zone for the modem.
 5. **Power check.** Within FCC limits for the band. For QRP work,
    sometimes lower is better (less ALC squashing, cleaner waveform).
