@@ -258,7 +258,37 @@ operator.
 
 > **GATE (wire-walk Iron Law):** the flows below are supplied by the operator, greenfield, at plan start. They are the definition-of-done: at build end the wire-walk skill traces each one to `file:line` from its stated starting state. Any ❌ = the feature is not shipped. Agents MUST NOT edit, narrow, re-rank, or substitute these flows.
 
-**STATUS: PENDING — the operator has been asked (2026-07-10, session tanager-sequoia-opossum) and this section is populated verbatim from their reply before this plan is finalized and reviewed. The plan is not executable until this section is filled.**
+**STATUS: RECORDED — supplied by the operator, cold, 2026-07-10 (session oak-owl-taiga). Verbatim reply:**
+
+> Pretty simple flow: users should be able to receive P2P messages from allowed
+> stations, or any station if no whitelist is enacted, when listener is armed in
+> P2P Telnet, ARDOP, or VARA modes. Traffic should display on the tac map as P2P.
+>
+> Then, they should be able to reciprocally dial out P2P using Telnet, VARA, or
+> ARDOP to either a heard known peer or an unheard manually defined peer,
+> completing an entire Winlink exchange.
+
+Flow enumeration for tracing (operator wording unchanged; the cold-start states
+are appended per the wire-walk skill's mandatory requirement — fresh install /
+first launch, empty peer roster, post-upgrade — they are not operator edits):
+
+- **Flow 1 (inbound):** receive P2P messages from allowed stations, or any
+  station if no whitelist is enacted, when listener is armed in P2P Telnet,
+  ARDOP, or VARA modes. Traffic displays on the tac map as P2P.
+  - Trace per listener mode (Telnet / ARDOP / VARA) × starting states {fresh
+    install, empty roster, post-upgrade} × {whitelist enacted, no whitelist}.
+- **Flow 2 (outbound):** reciprocally dial out P2P using Telnet, VARA, or ARDOP
+  to either (a) a heard known peer or (b) an unheard manually defined peer,
+  completing an entire Winlink exchange.
+  - Trace per protocol (Telnet / VARA / ARDOP). (a) starts from a roster
+    populated only by Flow 1's hearing; (b) starts from an empty roster where
+    manually defining the peer is the user's first act. Both × {fresh install,
+    post-upgrade}.
+- **Flow 0 (setup / first-run — skill-mandated, not operator-supplied):** from
+  a fresh install, reach the states the flows above presuppose through UI the
+  user can touch: "listener is armed in P2P Telnet / ARDOP / VARA mode" and "a
+  peer is manually defined." The setup-writes-what-use-reads seam is a required
+  trace.
 
 ## File Structure
 
