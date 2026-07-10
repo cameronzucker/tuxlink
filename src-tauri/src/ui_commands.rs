@@ -5586,6 +5586,25 @@ pub struct ArdopListenHandle {
     pub shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
+/// The ARDOP answer-site intent gate (Task 14): identical shape to Task 13(b)'s
+/// `vara_answer_observation_sink` — the ARDOP listener auto-arms for
+/// `SessionIntent::P2p` AND `SessionIntent::RadioOnly`
+/// (`SessionIntent::auto_arms_listener`), but only a P2P inbound is a
+/// peer-roster event [spec §3]. `active_intent` is the open `ModemSession`'s
+/// intent ([`crate::modem_status::ModemSession::active_intent`]); `None`
+/// (closed / poisoned session) records nothing. Extracted from
+/// [`ardop_listener_consumer_task`] so the gate is unit-testable without an
+/// `AppHandle` [CDX-7].
+fn ardop_answer_observation_sink(
+    active_intent: Option<SessionIntent>,
+) -> Option<crate::peers::recorder::ObservationSink> {
+    if active_intent == Some(SessionIntent::P2p) {
+        crate::peers::recorder::observation_sink()
+    } else {
+        None
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn ardop_listener_consumer_task(
     session: std::sync::Arc<crate::modem_status::ModemSession>,
@@ -5700,6 +5719,39 @@ fn ardop_listener_consumer_task(
                     }
                 };
                 let mb_ref = mailbox.as_deref();
+
+                // Peer-observation recording (Task 14): arm a drop-guard for
+                // the inbound answer at `B2fStarted`, covering BOTH the
+                // real-mailbox and tempdir-fallback arms below — mirrors the
+                // VARA answer site's shape (Task 13(b)). Record P2P answers
+                // only — `ardop_answer_observation_sink` gates on the open
+                // session's intent. A rejected inbound (allowlist/expired/
+                // password) never reaches this Accept branch — no record, by
+                // construction. The guard fires on drop with its last phase:
+                // `Accepted` on a clean exchange, `B2fFail` on failure, and —
+                // if an early return or wedge unwinds past here — the
+                // `B2fStarted` it was armed at, which classifies as Fail
+                // [R3-11].
+                let obs_sink = ardop_answer_observation_sink(session.active_intent());
+                let obs_guard = obs_sink.map(|s| {
+                    crate::peers::recorder::ObservationGuard::new(
+                        s,
+                        crate::peers::recorder::PeerObservation {
+                            path: crate::peers::recorder::ObservedPath::Rf {
+                                transport: crate::peers::model::ChannelTransport::Ardop,
+                                via: vec![],
+                                // No wire freq source on inbound (CONNECTED
+                                // carries bandwidth, not frequency) [R3-11].
+                                freq_hz: None,
+                                bandwidth: None,
+                            },
+                            direction: crate::peers::model::Direction::Incoming,
+                            presented_target: peer_call.clone(),
+                            phase: crate::peers::recorder::ObservationPhase::B2fStarted,
+                        },
+                    )
+                });
+
                 let result = match mb_ref {
                     Some(mb) => run_ardop_b2f_answer(
                         transport.as_mut(),
@@ -5751,18 +5803,29 @@ fn ardop_listener_consumer_task(
                 };
                 match result {
                     Ok(()) => {
+                        if let Some(g) = &obs_guard {
+                            g.set_phase(crate::peers::recorder::ObservationPhase::Accepted);
+                        }
                         progress(&format!(
                             "ARDOP listener: exchange with {} complete.",
                             peer_call
                         ));
                     }
                     Err(e) => {
+                        if let Some(g) = &obs_guard {
+                            g.set_phase(crate::peers::recorder::ObservationPhase::B2fFail);
+                        }
                         progress(&format!(
                             "ARDOP listener: exchange with {} failed: {e}",
                             peer_call
                         ));
                     }
                 }
+                // Fire the inbound observation with its terminal phase
+                // (Accepted / B2fFail). Dropped explicitly here so the
+                // record lands before the link wind-down below, not at
+                // end-of-branch.
+                drop(obs_guard);
                 // Best-effort DISCONNECT to release the ARQ link. Run
                 // through the cmd-writer side-channel rather than the
                 // synchronous arq_disconnect that would need a CmdSocket
@@ -9115,6 +9178,61 @@ mod tests {
                 crate::peers::recorder::PeerObservation {
                     path: crate::peers::recorder::ObservedPath::Rf {
                         transport: crate::peers::model::ChannelTransport::VaraHf,
+                        via: vec![],
+                        freq_hz: None,
+                        bandwidth: None,
+                    },
+                    direction: crate::peers::model::Direction::Incoming,
+                    presented_target: "N0DAJ-7".into(),
+                    phase: crate::peers::recorder::ObservationPhase::B2fStarted,
+                },
+            );
+            g.set_phase(crate::peers::recorder::ObservationPhase::Accepted);
+        } // drop → record
+        assert_eq!(seen.lock().unwrap().len(), 1);
+        assert_eq!(
+            seen.lock().unwrap()[0].phase,
+            crate::peers::recorder::ObservationPhase::Accepted
+        );
+
+        crate::peers::recorder::install_observation_sink(std::sync::Arc::new(|_| {})); // reset
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn ardop_answer_gate_records_p2p_inbound_only() {
+        // Task 14: identical shape to `vara_answer_gate_records_p2p_inbound_only`
+        // (Task 13(b)) — the ARDOP listener auto-arms for P2p AND RadioOnly, so
+        // the answer record site gates on the open `ModemSession`'s intent. With
+        // the global sink INSTALLED, only Some(P2p) resolves it — a RadioOnly
+        // inbound (armed listener, non-peer session) and a closed session
+        // (None) record nothing. #[serial]: the sink is process-global.
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<crate::peers::recorder::PeerObservation>>> =
+            std::sync::Arc::default();
+        {
+            let seen = seen.clone();
+            crate::peers::recorder::install_observation_sink(std::sync::Arc::new(move |o| {
+                seen.lock().unwrap().push(o)
+            }));
+        }
+
+        assert!(
+            ardop_answer_observation_sink(Some(SessionIntent::RadioOnly)).is_none(),
+            "RadioOnly auto-arms the listener but is not a peer session"
+        );
+        assert!(ardop_answer_observation_sink(None).is_none());
+        assert!(ardop_answer_observation_sink(Some(SessionIntent::Cms)).is_none());
+
+        // The P2p sink is the INSTALLED sink: a guard armed with it fires the
+        // inbound observation into the roster path on drop.
+        let sink = ardop_answer_observation_sink(Some(SessionIntent::P2p))
+            .expect("P2p resolves the installed sink");
+        {
+            let g = crate::peers::recorder::ObservationGuard::new(
+                sink,
+                crate::peers::recorder::PeerObservation {
+                    path: crate::peers::recorder::ObservedPath::Rf {
+                        transport: crate::peers::model::ChannelTransport::Ardop,
                         via: vec![],
                         freq_hz: None,
                         bandwidth: None,
