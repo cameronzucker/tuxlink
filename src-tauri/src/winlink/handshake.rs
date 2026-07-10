@@ -447,18 +447,30 @@ mod tests {
             std::net::TcpStream::connect(addr).unwrap()
         };
 
-        // Cmd-scale budget (the old shared 2s default, scaled down to keep
-        // the test fast): the timeout tick fires before the SID arrives and
-        // the reader reports ConnectionClosed — the KD6OAT failure mode.
-        let sock = serve_delayed(Duration::from_millis(400));
+        // Cmd-scale budget, gateway silent: the timeout tick fires with no
+        // bytes buffered and the reader reports ConnectionClosed — the
+        // KD6OAT failure mode. A SILENT server (rather than a delayed SID)
+        // makes this deterministic: no scheduling race can land the SID in
+        // the buffer before the client's read (Codex adrev P2 #3).
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap();
+        let hold = std::thread::spawn(move || {
+            let sock = l.accept().map(|(s, _)| s);
+            // Hold open, sending nothing, past the client's timeout.
+            std::thread::sleep(Duration::from_secs(2));
+            drop(sock);
+        });
+        let sock = std::net::TcpStream::connect(addr).unwrap();
         sock.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
         let mut reader = BufReader::new(sock);
         assert_eq!(
             read_remote_handshake(&mut reader).unwrap_err(),
             HandshakeError::ConnectionClosed,
-            "a sub-SID-latency socket timeout must surface as ConnectionClosed \
+            "a timeout tick with no SID buffered must surface as ConnectionClosed \
              (documents the failure mode; the fix is the RF-scale budget below)"
         );
+        drop(reader);
+        hold.join().unwrap();
 
         // RF-scale budget (data_read_timeout): the same delayed SID parses.
         let sock = serve_delayed(Duration::from_millis(400));

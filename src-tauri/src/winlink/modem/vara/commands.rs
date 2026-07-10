@@ -241,6 +241,14 @@ struct VaraSessionInner {
     /// the VARA modem notices via TCP and halts in-flight TX on its end
     /// (tuxlink-0ye6 Task 4.1 — Codex Round 4 P1 #3).
     abort_stream: Option<Box<dyn ShutdownableStream>>,
+    /// Shutdown handle for the DATA socket, taken alongside the abort pair
+    /// (tuxlink-xzxk1 — Codex adrev P1 #2). With the RF-scale
+    /// `data_read_timeout`, an exchange thread can be parked in a data read
+    /// for up to that budget; [`VaraSession::abort_in_flight`] shuts this
+    /// down on BOTH outcome paths so the parked read returns EOF immediately
+    /// (the `ABORT\r` kills the ARQ link, so the data stream is already
+    /// dead in every abort scenario).
+    abort_data_stream: Option<Box<dyn ShutdownableStream>>,
     /// Current ownership of the live transport (tuxlink-0ye6 Task 4.3,
     /// Codex Round 1 P1 #5). Set as a side effect of `take_transport` /
     /// `return_transport` (listener consumer) and `take_transport_for_outbound`
@@ -308,6 +316,7 @@ impl VaraSession {
                 status: VaraStatus::default(),
                 abort_writer: None,
                 abort_stream: None,
+                abort_data_stream: None,
                 transport_owner: TransportOwner::None,
                 active_intent: None,
                 active_transport_kind: None,
@@ -727,6 +736,7 @@ impl VaraSession {
                 guard.active_transport_kind = None;
                 guard.abort_writer = None;
                 guard.abort_stream = None;
+                guard.abort_data_stream = None;
                 guard.transport_owner = TransportOwner::None;
                 guard.current_exchange = None;
                 guard.heartbeat_shutdown = None;
@@ -1041,6 +1051,17 @@ impl VaraSession {
         }
     }
 
+    /// Install the DATA-socket shutdown handle alongside the abort pair
+    /// (tuxlink-xzxk1 — Codex adrev P1 #2). Kept as a separate installer so
+    /// the existing `install_abort_writer` call sites (and their tests) stay
+    /// untouched; a session with no data handle installed simply skips the
+    /// data shutdown in [`abort_in_flight`].
+    pub fn install_abort_data_stream(&self, stream: Box<dyn ShutdownableStream>) {
+        if let Ok(mut guard) = self.inner.lock() {
+            guard.abort_data_stream = Some(stream);
+        }
+    }
+
     /// Bounded VARA-side abort: cooperatively send `ABORT\r` (NOT
     /// `DISCONNECT\r` — see spec §9 + Codex Round 1 P1 #4); on cooperative
     /// write Err, fall back to `shutdown_both` on the paired stream so the
@@ -1092,6 +1113,15 @@ impl VaraSession {
             let writer = guard.abort_writer.as_mut().expect("checked above");
             writer.write_all(b"ABORT\r").and_then(|()| writer.flush())
         };
+        // Unblock any exchange thread parked in a data-socket read
+        // (tuxlink-xzxk1 — Codex adrev P1 #2): with the RF-scale
+        // data_read_timeout, that read no longer ticks every 2 s, so the
+        // abort must shut the data socket down explicitly. Runs on BOTH
+        // outcome paths — the ABORT (or the hard-close below) kills the ARQ
+        // link either way, so the data stream is dead regardless.
+        if let Some(mut data) = guard.abort_data_stream.take() {
+            let _ = data.shutdown_both();
+        }
         if cooperative.is_ok() {
             return Ok(());
         }
@@ -1429,6 +1459,7 @@ pub fn spawn_vara_socket_heartbeat(
             guard.active_transport_kind = None;
             guard.abort_writer = None;
             guard.abort_stream = None;
+            guard.abort_data_stream = None;
             guard.transport_owner = TransportOwner::None;
             guard.current_exchange = None;
             guard.heartbeat_shutdown = None;
@@ -1736,6 +1767,13 @@ pub fn vara_open_session_inner(
         guard.abort_writer = Some(writer);
         guard.abort_stream = Some(stream);
     }
+    // Same best-effort posture for the DATA-socket shutdown handle
+    // (tuxlink-xzxk1 — Codex adrev P1 #2): without it, an abort during an
+    // exchange leaves the exchange thread parked in a data read for up to
+    // the RF-scale data_read_timeout instead of returning EOF immediately.
+    if let Ok(data) = transport.try_clone_data_shutdown_handle() {
+        guard.abort_data_stream = Some(data);
+    }
 
     guard.transport = Some(transport);
     guard.active_intent = Some(intent);
@@ -1914,6 +1952,7 @@ pub fn vara_stop_session_inner(
     // would surface as `listenerArmed = true` on a closed session.
     guard.abort_writer = None;
     guard.abort_stream = None;
+    guard.abort_data_stream = None;
     guard.transport_owner = TransportOwner::None;
     // Codex Phase 3-4 boundary P2 #4 (tuxlink-u1r7): also clear the
     // in-flight exchange marker — a close that races a b2f path's
@@ -4073,6 +4112,46 @@ mod tests {
         assert!(
             !*shutdown_called.lock().unwrap(),
             "shutdown_both must not run when cooperative write succeeded"
+        );
+    }
+
+    /// tuxlink-xzxk1 (Codex adrev P1 #2): the abort path must shut down the
+    /// DATA socket on the cooperative-success path too — with the RF-scale
+    /// data_read_timeout, an exchange thread parked in a data read no longer
+    /// ticks every 2 s, so without this shutdown the operator's Close
+    /// Session waits out the full data budget before the exchange unwinds.
+    #[test]
+    fn vara_abort_in_flight_shuts_down_data_socket_on_cooperative_success() {
+        let session = VaraSession::new();
+        let captured: Arc<std::sync::Mutex<Vec<u8>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let cmd_shutdown = Arc::new(std::sync::Mutex::new(false));
+        let data_shutdown = Arc::new(std::sync::Mutex::new(false));
+        session.install_abort_writer(
+            Box::new(RecordingWriter {
+                captured: captured.clone(),
+            }) as Box<dyn std::io::Write + Send>,
+            Box::new(ShutdownSpy {
+                called: cmd_shutdown.clone(),
+            }) as Box<dyn ShutdownableStream>,
+        );
+        session.install_abort_data_stream(Box::new(ShutdownSpy {
+            called: data_shutdown.clone(),
+        }) as Box<dyn ShutdownableStream>);
+
+        session.abort_in_flight().expect("cooperative abort succeeds");
+
+        assert!(
+            *data_shutdown.lock().unwrap(),
+            "data socket must be shut down even when the cooperative ABORT \
+             write succeeds — it unblocks the exchange thread's parked read"
+        );
+        assert!(
+            !*cmd_shutdown.lock().unwrap(),
+            "cmd hard-close fallback must still be reserved for cooperative failure"
+        );
+        assert!(
+            captured.lock().unwrap().starts_with(b"ABORT\r"),
+            "ABORT must still be written first"
         );
     }
 

@@ -360,6 +360,19 @@ impl VaraTransport {
             Box::new(stream_clone) as Box<dyn ShutdownableStream>,
         ))
     }
+
+    /// Clone a shutdown handle for the DATA socket (tuxlink-xzxk1 — Codex
+    /// adrev P1 #2 on the data_read_timeout fix). With the RF-scale
+    /// `data_read_timeout`, an exchange thread can be parked in a data-socket
+    /// read for up to that budget; the abort path must be able to
+    /// `shutdown_both` the data socket so the parked read returns EOF NOW
+    /// instead of after the timeout. `ABORT\r` kills the ARQ link anyway, so
+    /// the data stream is dead the moment an abort is issued — shutting it
+    /// down loses nothing.
+    pub fn try_clone_data_shutdown_handle(&self) -> io::Result<Box<dyn ShutdownableStream>> {
+        let data_clone = self.data_stream.try_clone()?;
+        Ok(Box::new(data_clone) as Box<dyn ShutdownableStream>)
+    }
 }
 
 /// Outcome of [`VaraTransport::recv_line_distinguishing_eof`] — a
@@ -718,7 +731,7 @@ mod tests {
         };
         let cmd_accept = thread::spawn(move || cmd_l.accept().unwrap().0);
         let data_accept = thread::spawn(move || data_l.accept().unwrap().0);
-        let transport = VaraTransport::connect(cfg).expect("connect must succeed");
+        let mut transport = VaraTransport::connect(cfg).expect("connect must succeed");
         let _cmd_server = cmd_accept.join().unwrap();
         let _data_server = data_accept.join().unwrap();
 
