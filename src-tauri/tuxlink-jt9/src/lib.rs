@@ -6,3 +6,4 @@
 
 pub mod parse;
 pub mod message;
+pub mod wav;
