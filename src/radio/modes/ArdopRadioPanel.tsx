@@ -977,8 +977,12 @@ export function ArdopRadioPanel({
                   on Connect so the backend CAT-tunes the rig before dialing. The
                   Tune… button sends ardop_tune_rig without dialing (QSY-only). Both
                   paths are no-ops when the field is blank (freqHz === null). */}
+              {/* tuxlink-9pzaj: the value is the channel's CENTER frequency
+                  (catalog convention); the backend converts to the sideband
+                  dial at the CAT tune for both Tune… and Connect. Mirrors the
+                  VARA panel exactly. */}
               <div className="radio-panel-input-row">
-                <label htmlFor="ardop-freq">Frequency (MHz)</label>
+                <label htmlFor="ardop-freq">Center freq (MHz)</label>
                 <Field
                   id="ardop-freq"
                   data-testid="ardop-freq"
@@ -1002,6 +1006,11 @@ export function ArdopRadioPanel({
                   Tune…
                 </Button>
               </div>
+              {freqHz !== null && (
+                <p className="radio-panel-radio-help" data-testid="ardop-dial-hint">
+                  USB dial: {((freqHz - 1500) / 1_000_000).toFixed(4)} MHz
+                </p>
+              )}
               {/* tuxlink-5xxq: connect retries (ConReq repeats) — feeds the
                   derived self-terminate backstop deadline. */}
               <label className="radio-panel-input-row">

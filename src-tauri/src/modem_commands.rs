@@ -729,7 +729,8 @@ where
     // AFTER init, BEFORE connect_arq (audio). Close-serial radios release the
     // serial here; DRA-100 keeps the rig and hands it back for session storage.
     // On a tune error, drop the transport first so ardopcf is reaped.
-    let live_rig = match tune_rig_for_connect(&cfg.rig, candidate.freq_hz) {
+    // ARDOP is HF sideband-data by definition — always convert center→dial.
+    let live_rig = match tune_rig_for_connect(&cfg.rig, candidate.freq_hz, true) {
         Ok(rig) => rig,
         Err(e) => {
             drop(transport);
@@ -1983,6 +1984,40 @@ pub(crate) fn rig_data_mode(rig: &RigUiConfig) -> tux_rig::Mode {
 
 // ── Task 8: pre-audio CAT tune helper ───────────────────────────────────────
 
+/// Audio-center offset for sideband data modes (tuxlink-9pzaj).
+///
+/// The Winlink catalog (CMS channels API, Channels.dat, the published text
+/// listings) gives per-channel **audio CENTER** frequencies. A sideband rig
+/// is dialed to the carrier point, offset from the center by the audio
+/// passband midpoint — 1500 Hz by Winlink convention. Ground truth: RMS
+/// Relay `HFInterface.cs:1471` (`strDialFrequency = num - 1.5`) and RMS
+/// Trimode `Channels.cs` help text ("Center frequency is 1500 Hz higher
+/// than the upper sideband dial frequency for all modes"); WLE's
+/// `VaraSession.cs` shows the same `center − 1.5 kHz` math in its dial box.
+pub(crate) const SIDEBAND_CENTER_OFFSET_HZ: u64 = 1_500;
+
+/// Convert a Winlink-catalog CENTER frequency to the rig DIAL frequency for
+/// the given data mode (tuxlink-9pzaj). USB-family modes dial below center;
+/// LSB-family modes dial above it (the audio passband sits below the
+/// carrier). Winlink HF is USB-by-convention on every band — the LSB arm
+/// exists so a hand-configured LSB-D rig lands on-frequency instead of
+/// 3 kHz off.
+///
+/// This is THE single conversion point: every frequency upstream of the
+/// CAT tune — catalog, Find-a-Station, the panel frequency field, the MCP
+/// `freq_hz` argument, `DialCandidate.freq_hz` — is a CENTER frequency.
+pub(crate) fn center_to_dial_hz(center_hz: u64, mode: tux_rig::Mode) -> u64 {
+    use tux_rig::Mode;
+    match mode {
+        Mode::PktUsb | Mode::Usb | Mode::DataU => {
+            center_hz.saturating_sub(SIDEBAND_CENTER_OFFSET_HZ)
+        }
+        Mode::PktLsb | Mode::Lsb | Mode::DataL => {
+            center_hz.saturating_add(SIDEBAND_CENTER_OFFSET_HZ)
+        }
+    }
+}
+
 /// Whether to stop rigctld (release the CAT serial) immediately after tuning,
 /// before audio. True on internal-codec radios (close-serial sequencing): the
 /// rig's codec contends with the audio device for the serial, so CAT must drop
@@ -1995,10 +2030,16 @@ pub(crate) fn should_release_after_tune(rig: &RigUiConfig) -> bool {
 /// Pre-audio CAT tune for one connect candidate. Runs AFTER `transport.init()`
 /// and BEFORE `connect_arq()` (audio).
 ///
+/// `freq_hz` is the channel's **CENTER** frequency (Winlink catalog
+/// convention); the VFO is dialed to [`center_to_dial_hz`] of it
+/// (tuxlink-9pzaj — previously the center went to the VFO verbatim, putting
+/// every catalog-driven dial 1.5 kHz off-channel on TX and RX).
+///
 /// - Returns `Ok(None)` when rig control is not configured
 ///   ([`rig_config_from`] is `None`) OR no target frequency is known
 ///   (`freq_hz` is `None`) — preserving today's no-tune behavior.
-/// - Otherwise spawns [`tux_rig::ManagedRig`], tunes to `(hz, rig_data_mode(rig_cfg))`,
+/// - Otherwise spawns [`tux_rig::ManagedRig`], tunes to
+///   `(center_to_dial_hz(hz, mode), mode)` where `mode = rig_data_mode(rig_cfg)`,
 ///   then branches on [`should_release_after_tune`]:
 ///   - close-serial (internal codec): `release_serial()` then `Ok(None)` —
 ///     the serial is freed before audio.
@@ -2009,6 +2050,7 @@ pub(crate) fn should_release_after_tune(rig: &RigUiConfig) -> bool {
 pub(crate) fn tune_rig_for_connect(
     rig_cfg: &RigUiConfig,
     freq_hz: Option<u64>,
+    sideband: bool,
 ) -> Result<Option<tux_rig::ManagedRig>, String> {
     let (rc, hz) = match (rig_config_from(rig_cfg), freq_hz) {
         (Some(rc), Some(hz)) => (rc, hz),
@@ -2017,7 +2059,22 @@ pub(crate) fn tune_rig_for_connect(
     };
     let mut rig =
         tux_rig::ManagedRig::spawn(rc).map_err(|e| format!("rigctld spawn failed: {e}"))?;
-    rig.tune(hz, rig_data_mode(rig_cfg))
+    let mode = rig_data_mode(rig_cfg);
+    // `sideband=false` (VARA FM / VHF-FM channels — Codex adrev P2 #1): FM
+    // channel listings ARE the RF frequency; no audio-center offset exists.
+    let dial_hz = if sideband {
+        center_to_dial_hz(hz, mode)
+    } else {
+        hz
+    };
+    tracing::info!(
+        target: "tuxlink::modem",
+        center_hz = hz,
+        dial_hz,
+        mode = mode.rigctl_str(),
+        "CAT tune: catalog center → sideband dial (tuxlink-9pzaj)",
+    );
+    rig.tune(dial_hz, mode)
         .map_err(|e| format!("CAT tune failed: {e}"))?;
     if should_release_after_tune(rig_cfg) {
         // Close-serial: free the serial before audio. Drop happens at fn end.
@@ -2032,6 +2089,11 @@ pub(crate) fn tune_rig_for_connect(
 // ── Task 9: ordered-list QSY (operator-gated) ───────────────────────────────
 
 /// One dial target plus the frequency to tune for it before dialing.
+///
+/// `freq_hz` is the channel's **CENTER** frequency (Winlink catalog
+/// convention, tuxlink-9pzaj) — the tune boundary converts to the sideband
+/// dial via [`center_to_dial_hz`]. Callers must NOT pre-subtract the
+/// 1500 Hz offset.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct DialCandidate {
     pub target: String,
@@ -2078,17 +2140,34 @@ where
     None
 }
 
-/// Tune-only: set the rig to `freq_hz` + the HF data mode over CAT, then release
-/// the serial (drop). Does NOT dial. Used by the "Tune…" affordance.
+/// Tune-only: set the rig for the channel whose **CENTER** frequency is
+/// `freq_hz`, then release the serial (drop). Does NOT dial. Used by the
+/// "Tune…" affordance and the MCP `rig_tune` tool.
+///
+/// tuxlink-9pzaj: converts center → sideband dial via [`center_to_dial_hz`]
+/// like the dial path, so Tune… and Send/Receive land the VFO on the SAME
+/// spot for the same typed frequency. App-wide invariant: every frequency
+/// the app accepts is a Winlink channel center.
+///
+/// `sideband` (Codex adrev P2 #1): `None` defaults to `true` (HF sideband —
+/// the ARDOP panel and agent callers). The VARA panel passes `false` in FM
+/// mode, where the listed frequency IS the RF frequency and no audio-center
+/// offset exists.
 #[tauri::command]
-pub fn ardop_tune_rig(freq_hz: u64) -> Result<(), String> {
+pub fn ardop_tune_rig(freq_hz: u64, sideband: Option<bool>) -> Result<(), String> {
     let cfg = config::read_config().map_err(|e| format!("read failed: {e}"))?;
     // tuxlink-8fkkk: rig control is radio-level (Config.rig), shared by ARDOP +
     // VARA. This Tune-only command is mode-agnostic.
     let rc = rig_config_from(&cfg.rig)
         .ok_or_else(|| "rig control not configured — set the rig model + CAT serial".to_string())?;
     let mut rig = tux_rig::ManagedRig::spawn(rc).map_err(|e| e.to_string())?;
-    rig.tune(freq_hz, rig_data_mode(&cfg.rig)).map_err(|e| e.to_string())?;
+    let mode = rig_data_mode(&cfg.rig);
+    let dial_hz = if sideband.unwrap_or(true) {
+        center_to_dial_hz(freq_hz, mode)
+    } else {
+        freq_hz
+    };
+    rig.tune(dial_hz, mode).map_err(|e| e.to_string())?;
     // Drop releases the serial (close-serial-safe for internal-codec radios).
     Ok(())
 }
@@ -4696,6 +4775,43 @@ mod tests {
             ModemState::Error,
             "genuine failure must set Error status; got: {state:?}"
         );
+    }
+
+    /// tuxlink-9pzaj: catalog CENTER → sideband DIAL at the tune boundary.
+    /// KD6OAT's 20m channel is published at 14112.5 kHz center; the USB dial
+    /// is 14111.0 — the exact pair from the 2026-07-10 first on-air connect.
+    #[test]
+    fn center_to_dial_subtracts_1500_for_usb_family() {
+        use tux_rig::Mode;
+        for mode in [Mode::PktUsb, Mode::Usb, Mode::DataU] {
+            assert_eq!(
+                super::center_to_dial_hz(14_112_500, mode),
+                14_111_000,
+                "USB-family {mode:?} must dial 1500 Hz below center"
+            );
+        }
+    }
+
+    /// LSB physics: the audio passband sits below the carrier, so the dial
+    /// is 1500 Hz ABOVE the published center. Winlink HF is USB-everywhere
+    /// by convention, but a hand-configured LSB-D rig must not land 3 kHz
+    /// off because we applied the USB sign.
+    #[test]
+    fn center_to_dial_adds_1500_for_lsb_family() {
+        use tux_rig::Mode;
+        for mode in [Mode::PktLsb, Mode::Lsb, Mode::DataL] {
+            assert_eq!(
+                super::center_to_dial_hz(7_106_000, mode),
+                7_107_500,
+                "LSB-family {mode:?} must dial 1500 Hz above center"
+            );
+        }
+    }
+
+    /// Degenerate input (center below the offset) must not underflow.
+    #[test]
+    fn center_to_dial_saturates_at_zero() {
+        assert_eq!(super::center_to_dial_hz(1_000, tux_rig::Mode::PktUsb), 0);
     }
 
     #[test]

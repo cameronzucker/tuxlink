@@ -621,7 +621,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "rig_tune",
-        description = "Tune the rig to a frequency (set VFO + data mode) over CAT. EGRESS (commands the radio — same authority class as a transmit): requires armed send-authority and an un-tainted session; denied otherwise."
+        description = "Tune the rig for a Winlink channel over CAT (set VFO + data mode). freq_hz is the channel's audio-CENTER frequency (the value Winlink catalogs publish); the app converts to the sideband dial (center - 1500 Hz on USB) internally — do NOT pre-subtract. EGRESS (commands the radio — same authority class as a transmit): requires armed send-authority and an un-tainted session; denied otherwise."
     )]
     pub async fn rig_tune(
         &self,
@@ -638,7 +638,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "ardop_connect",
-        description = "Connect the ARDOP modem to a target station. Optional freq_hz pre-tunes the rig over CAT for the dial; optional qsy_candidates supplies an ordered frequency walk (operator-gated). EGRESS (keys the transmitter): requires armed send-authority and an un-tainted session; denied otherwise."
+        description = "Connect the ARDOP modem to a target station. Optional freq_hz pre-tunes the rig over CAT for the dial (audio-CENTER frequency, Winlink catalog convention — the app converts to the sideband dial; do NOT pre-subtract); optional qsy_candidates supplies an ordered frequency walk (operator-gated). EGRESS (keys the transmitter): requires armed send-authority and an un-tainted session; denied otherwise."
     )]
     pub async fn ardop_connect(
         &self,
@@ -676,7 +676,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "vara_b2f_exchange",
-        description = "Run a VARA B2F message exchange with a target for the given routing intent (cms/radio-only/post-office/mesh/p2p; defaults to cms). Optional freq_hz / qsy_candidates pre-tune + QSY-walk the dial (VARA connects + tunes + exchanges in one call). EGRESS (keys the transmitter): requires armed send-authority and an un-tainted session; denied otherwise."
+        description = "Run a VARA B2F message exchange with a target for the given routing intent (cms/radio-only/post-office/mesh/p2p; defaults to cms). Optional freq_hz (audio-CENTER frequency, Winlink catalog convention — converted to the sideband dial internally on VARA HF; do NOT pre-subtract) / qsy_candidates pre-tune + QSY-walk the dial (VARA connects + tunes + exchanges in one call). EGRESS (keys the transmitter): requires armed send-authority and an un-tainted session; denied otherwise."
     )]
     pub async fn vara_b2f_exchange(
         &self,
@@ -1108,7 +1108,9 @@ pub struct QueryParams {
 /// `{ "freq_hz": 7104000 }` — input for `rig_tune`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct RigTuneParams {
-    /// The frequency in Hz to tune the rig VFO to.
+    /// The channel's audio-CENTER frequency in Hz (Winlink catalog
+    /// convention). The app converts to the sideband dial internally
+    /// (tuxlink-9pzaj) — callers must not pre-subtract the 1500 Hz offset.
     pub freq_hz: u64,
 }
 

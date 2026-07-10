@@ -2461,7 +2461,13 @@ fn run_vara_b2f_with_transport(
         // close-serial (returns `None` once the serial is released) vs the
         // DRA-100 keep-serial path (returns `Some(rig)` to hold for the
         // session). Spawn/tune failures abort THIS candidate.
-        let rig = match tune_rig_for_connect(&cfg.rig, c.freq_hz) {
+        // Sideband center→dial conversion applies to VARA HF only — a VARA FM
+        // channel's listed frequency IS the RF frequency (Codex adrev P2 #1).
+        let sideband = !matches!(
+            session.active_transport_kind(),
+            Some(crate::winlink::listener::transport::TransportKind::VaraFm)
+        );
+        let rig = match tune_rig_for_connect(&cfg.rig, c.freq_hz, sideband) {
             Ok(r) => r,
             Err(e) => {
                 emit_vara_log(
