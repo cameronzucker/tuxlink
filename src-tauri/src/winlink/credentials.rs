@@ -424,12 +424,214 @@ fn real_entry_factory(service: &str, account: &str) -> Box<dyn EntryLike> {
 }
 
 // ──────────────────────────────────────────────────────────────
+// P2P endpoint password helpers (Task 10 / VARA P2P peer model)
+// ──────────────────────────────────────────────────────────────
+//
+// Endpoint passwords use `SERVICE` ("tuxlink") as the keyring service, but an
+// id-keyed account string — `"p2p-endpoint:<peer_id>:<endpoint_id>"` — rather
+// than the callsign-keyed `p2p-peer:<CALLSIGN>` account used above. Both
+// `peer_id` and `endpoint_id` are stable, system-generated ids (Task 7
+// model: Peer.id is a uuid v4, Endpoint.id a ULID) rather than
+// operator/remote-supplied text, so the account string can never carry
+// attacker-controlled bytes: the keyring account-string injection class is
+// closed at the type level [R2-S10].
+//
+// Spec: docs/superpowers/specs/2026-07-10-p2p-peer-model-design.md
+// [R2-S7][R1-C7][R5-5]
+
+/// Build the keyring "account" string for a P2P endpoint password.
+///
+/// Keyed by ids, NOT by callsign [R2-S7][R1-C7]: ids are stable,
+/// system-generated (no attacker-controlled bytes), so keyring
+/// account-string injection is closed at the type level [R2-S10].
+fn p2p_endpoint_account(peer_id: &str, endpoint_id: &str) -> String {
+    format!("p2p-endpoint:{peer_id}:{endpoint_id}")
+}
+
+/// Read the password for a specific P2P endpoint from the keyring.
+///
+/// Returns `Ok(None)` on a keyring miss rather than an error — callers use
+/// the `None` case to decide whether to attempt [`migrate_legacy_peer_secret`].
+/// Accepts an entry factory for dependency injection.
+pub fn p2p_endpoint_password_read_with_factory<F>(
+    peer_id: &str,
+    endpoint_id: &str,
+    factory: &F,
+) -> Result<Option<String>, String>
+where
+    F: Fn(&str, &str) -> Box<dyn EntryLike>,
+{
+    let account = p2p_endpoint_account(peer_id, endpoint_id);
+    let entry = factory(SERVICE, &account);
+    match entry.get_password() {
+        Ok(password) => Ok(Some(password)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(other) => Err(format!("keyring backend error: {other}")),
+    }
+}
+
+/// Read the password for a specific P2P endpoint from the OS keyring.
+///
+/// Returns `Ok(None)` on a keyring miss — this is not an error condition,
+/// since the caller (Task 11/20) may attempt legacy migration on a miss.
+pub fn p2p_endpoint_password_read(
+    peer_id: &str,
+    endpoint_id: &str,
+) -> Result<Option<String>, String> {
+    p2p_endpoint_password_read_with_factory(peer_id, endpoint_id, &real_entry_factory)
+}
+
+/// Write the password for a specific P2P endpoint to the keyring.
+///
+/// Overwrites any existing entry for this `(peer_id, endpoint_id)` pair.
+/// Accepts an entry factory for dependency injection.
+pub fn p2p_endpoint_password_write_with_factory<F>(
+    peer_id: &str,
+    endpoint_id: &str,
+    password: &str,
+    factory: &F,
+) -> Result<(), String>
+where
+    F: Fn(&str, &str) -> Box<dyn EntryLike>,
+{
+    let account = p2p_endpoint_account(peer_id, endpoint_id);
+    let entry = factory(SERVICE, &account);
+    entry
+        .set_password(password)
+        .map_err(|e| format!("keyring backend error: {e}"))
+}
+
+/// Write the password for a specific P2P endpoint to the OS keyring.
+pub fn p2p_endpoint_password_write(
+    peer_id: &str,
+    endpoint_id: &str,
+    password: &str,
+) -> Result<(), String> {
+    p2p_endpoint_password_write_with_factory(peer_id, endpoint_id, password, &real_entry_factory)
+}
+
+/// Delete the password for a specific P2P endpoint from the keyring.
+///
+/// Idempotent: returns `Ok(())` if no entry exists. Accepts an entry factory
+/// for dependency injection.
+pub fn p2p_endpoint_password_delete_with_factory<F>(
+    peer_id: &str,
+    endpoint_id: &str,
+    factory: &F,
+) -> Result<(), String>
+where
+    F: Fn(&str, &str) -> Box<dyn EntryLike>,
+{
+    let account = p2p_endpoint_account(peer_id, endpoint_id);
+    let entry = factory(SERVICE, &account);
+    match entry.delete_password() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(other) => Err(format!("keyring backend error: {other}")),
+    }
+}
+
+/// Delete the password for a specific P2P endpoint from the OS keyring.
+///
+/// Idempotent: returns `Ok(())` if no entry exists. Used by the peers-store
+/// cascade clear (Task 8/20) so an endpoint or peer delete never orphans a
+/// keyring secret.
+pub fn p2p_endpoint_password_delete(peer_id: &str, endpoint_id: &str) -> Result<(), String> {
+    p2p_endpoint_password_delete_with_factory(peer_id, endpoint_id, &real_entry_factory)
+}
+
+/// Outcome of a lazy legacy-secret migration attempt.
+///
+/// `Ambiguous` means the caller could not establish a unique mapping from the
+/// legacy callsign-keyed secret to a single `(peer_id, endpoint_id)` pair; the
+/// peers settings UI (Task 25) surfaces manual reassignment in that case.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LegacyMigration {
+    /// The legacy secret was copied to the new id-keyed account and the
+    /// legacy entry was deleted.
+    Migrated,
+    /// No legacy secret existed for this callsign; nothing to migrate.
+    NoLegacySecret,
+    /// The caller reported the mapping as ambiguous (`unambiguous == false`);
+    /// no keyring mutation was attempted.
+    Ambiguous,
+}
+
+/// Conservative legacy re-key [R5-5].
+///
+/// `unambiguous` is computed by the CALLER against the peers store: exactly
+/// one peer with this base AND exactly one `Operator` endpoint. Anything else
+/// must pass `unambiguous = false`, which short-circuits to `Ambiguous`
+/// without touching the keyring — the peers settings UI (Task 25) then
+/// surfaces manual reassignment.
+///
+/// The legacy entry is deleted strictly AFTER the new-key write succeeds —
+/// there is no window where the secret exists in neither location.
+///
+/// Accepts an owned entry factory (matches the caller shape used by the
+/// migration test double, which builds a fresh closure per call).
+pub fn migrate_legacy_peer_secret_with_factory<F>(
+    callsign: &str,
+    peer_id: &str,
+    endpoint_id: &str,
+    unambiguous: bool,
+    factory: F,
+) -> Result<LegacyMigration, String>
+where
+    F: Fn(&str, &str) -> Box<dyn EntryLike>,
+{
+    if !unambiguous {
+        return Ok(LegacyMigration::Ambiguous);
+    }
+
+    let legacy_account = p2p_peer_account(callsign);
+    let legacy_entry = factory(SERVICE, &legacy_account);
+    let password = match legacy_entry.get_password() {
+        Ok(password) => password,
+        Err(keyring::Error::NoEntry) => return Ok(LegacyMigration::NoLegacySecret),
+        Err(other) => return Err(format!("keyring backend error: {other}")),
+    };
+
+    let new_account = p2p_endpoint_account(peer_id, endpoint_id);
+    let new_entry = factory(SERVICE, &new_account);
+    new_entry
+        .set_password(&password)
+        .map_err(|e| format!("keyring backend error: {e}"))?;
+
+    // Delete-legacy happens strictly after the new-key write above succeeded.
+    match legacy_entry.delete_password() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(LegacyMigration::Migrated),
+        Err(other) => Err(format!("keyring backend error: {other}")),
+    }
+}
+
+/// Conservative legacy re-key of a callsign-keyed P2P peer secret into the
+/// id-keyed `p2p-endpoint:<peer_id>:<endpoint_id>` account.
+///
+/// See [`migrate_legacy_peer_secret_with_factory`] for the full contract.
+pub fn migrate_legacy_peer_secret(
+    callsign: &str,
+    peer_id: &str,
+    endpoint_id: &str,
+    unambiguous: bool,
+) -> Result<LegacyMigration, String> {
+    migrate_legacy_peer_secret_with_factory(
+        callsign,
+        peer_id,
+        endpoint_id,
+        unambiguous,
+        real_entry_factory,
+    )
+}
+
+// ──────────────────────────────────────────────────────────────
 // Unit tests
 // ──────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
 
     /// Compile-time check that `write_password` exists with the documented
     /// signature. Behavioral correctness is covered by the keyring mock tests
@@ -442,5 +644,168 @@ mod tests {
         // expected by Task 13 (credentials_write_password Tauri command).
         let result: Result<(), KeyringError> = write_password("TEST-CALL", "test-password");
         let _ = result;
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // P2P endpoint keyring account + legacy migration (Task 10)
+    // ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn endpoint_account_is_id_keyed_not_callsign_keyed() {
+        assert_eq!(
+            p2p_endpoint_account("peer-uuid-1", "ep-uuid-2"),
+            "p2p-endpoint:peer-uuid-1:ep-uuid-2"
+        );
+    }
+
+    /// Fake keyring entry backed by a shared `HashMap<(service, account), password>`.
+    ///
+    /// Mirrors the `MockEntry` double in `winlink_credentials_test.rs`: the
+    /// `keyring` crate's own mock builder cannot share state across separate
+    /// `Entry::new` calls, so the migration test (read legacy → write new →
+    /// delete legacy, three distinct accounts) needs a HashMap-backed double
+    /// instead.
+    struct FakeEntry {
+        store: Arc<Mutex<HashMap<(String, String), String>>>,
+        service: String,
+        account: String,
+    }
+
+    impl EntryLike for FakeEntry {
+        fn get_password(&self) -> Result<String, keyring::Error> {
+            let store = self.store.lock().unwrap();
+            store
+                .get(&(self.service.clone(), self.account.clone()))
+                .cloned()
+                .ok_or(keyring::Error::NoEntry)
+        }
+
+        fn set_password(&self, password: &str) -> Result<(), keyring::Error> {
+            let mut store = self.store.lock().unwrap();
+            store.insert(
+                (self.service.clone(), self.account.clone()),
+                password.to_string(),
+            );
+            Ok(())
+        }
+
+        fn delete_password(&self) -> Result<(), keyring::Error> {
+            let mut store = self.store.lock().unwrap();
+            let key = (self.service.clone(), self.account.clone());
+            if store.remove(&key).is_some() {
+                Ok(())
+            } else {
+                Err(keyring::Error::NoEntry)
+            }
+        }
+    }
+
+    /// Build a factory closure backed by the given shared store.
+    fn fake_factory(
+        store: Arc<Mutex<HashMap<(String, String), String>>>,
+    ) -> impl Fn(&str, &str) -> Box<dyn EntryLike> {
+        move |service: &str, account: &str| -> Box<dyn EntryLike> {
+            Box::new(FakeEntry {
+                store: Arc::clone(&store),
+                service: service.to_string(),
+                account: account.to_string(),
+            })
+        }
+    }
+
+    #[test]
+    fn migration_copies_then_deletes_legacy_only_after_write_success() {
+        // Fake keyring: legacy secret exists; new key empty.
+        let store = Arc::new(Mutex::new(HashMap::from([(
+            ("tuxlink".to_string(), "p2p-peer:W6ABC".to_string()),
+            "hunter2".to_string(),
+        )])));
+        let out = migrate_legacy_peer_secret_with_factory(
+            "W6ABC",
+            "p1",
+            "e1",
+            true,
+            fake_factory(store.clone()),
+        )
+        .unwrap();
+        assert_eq!(out, LegacyMigration::Migrated);
+        let map = store.lock().unwrap();
+        assert_eq!(
+            map.get(&("tuxlink".into(), "p2p-endpoint:p1:e1".into()))
+                .map(String::as_str),
+            Some("hunter2")
+        );
+        assert!(
+            !map.contains_key(&("tuxlink".into(), "p2p-peer:W6ABC".into())),
+            "legacy deleted after write"
+        );
+    }
+
+    #[test]
+    fn ambiguous_mapping_migrates_nothing() {
+        let store = Arc::new(Mutex::new(HashMap::from([(
+            ("tuxlink".to_string(), "p2p-peer:W6ABC".to_string()),
+            "hunter2".to_string(),
+        )])));
+        let out = migrate_legacy_peer_secret_with_factory(
+            "W6ABC",
+            "p1",
+            "e1",
+            false,
+            fake_factory(store.clone()),
+        )
+        .unwrap();
+        assert_eq!(out, LegacyMigration::Ambiguous);
+        let map = store.lock().unwrap();
+        assert!(
+            map.contains_key(&("tuxlink".into(), "p2p-peer:W6ABC".into())),
+            "legacy untouched"
+        );
+        assert!(!map.contains_key(&("tuxlink".into(), "p2p-endpoint:p1:e1".into())));
+    }
+
+    #[test]
+    fn no_legacy_secret_when_neither_present() {
+        // Self-review edge case: unambiguous mapping, but no legacy secret at
+        // all (a fresh peer that never had a callsign-keyed secret) →
+        // NoLegacySecret, not a Backend error.
+        let store: Arc<Mutex<HashMap<(String, String), String>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let out = migrate_legacy_peer_secret_with_factory(
+            "W6ABC",
+            "p1",
+            "e1",
+            true,
+            fake_factory(store.clone()),
+        )
+        .unwrap();
+        assert_eq!(out, LegacyMigration::NoLegacySecret);
+        assert!(store.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn endpoint_password_roundtrip_and_idempotent_delete() {
+        // Self-review: the plain read/write/delete surface Tasks 11/20 consume
+        // directly, not just the migration path.
+        let store: Arc<Mutex<HashMap<(String, String), String>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let factory = fake_factory(store.clone());
+
+        assert_eq!(
+            p2p_endpoint_password_read_with_factory("p1", "e1", &factory).unwrap(),
+            None
+        );
+        p2p_endpoint_password_write_with_factory("p1", "e1", "s3cret", &factory).unwrap();
+        assert_eq!(
+            p2p_endpoint_password_read_with_factory("p1", "e1", &factory).unwrap(),
+            Some("s3cret".to_string())
+        );
+        p2p_endpoint_password_delete_with_factory("p1", "e1", &factory).unwrap();
+        assert_eq!(
+            p2p_endpoint_password_read_with_factory("p1", "e1", &factory).unwrap(),
+            None
+        );
+        // Idempotent: deleting an already-absent entry is still Ok(()).
+        p2p_endpoint_password_delete_with_factory("p1", "e1", &factory).unwrap();
     }
 }

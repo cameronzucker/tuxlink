@@ -479,6 +479,14 @@ fn keyring_targets(env: &CleanupEnv, warnings: &mut Vec<String>) -> Vec<KeyringT
         });
     }
 
+    for (peer_id, endpoint_id) in discover_peer_endpoint_ids(env) {
+        out.push(KeyringTarget {
+            service: KEYRING_SERVICE.into(),
+            account: format!("p2p-endpoint:{peer_id}:{endpoint_id}"),
+            description: "P2P endpoint password".into(),
+        });
+    }
+
     out.push(KeyringTarget {
         service: KEYRING_SERVICE.into(),
         account: LISTENER_PASSWORD_ACCOUNT.into(),
@@ -573,6 +581,44 @@ fn discover_peer_callsigns(env: &CleanupEnv) -> Vec<String> {
         }
     }
     out.into_iter().collect()
+}
+
+/// Discover `(peer_id, endpoint_id)` pairs from `peers.json` (Task 7/8 peer
+/// model) so a P2P endpoint keyring secret is never orphaned by a Full
+/// cleanup [R5-5]. Deliberately parses raw JSON rather than importing
+/// `peers::model` — this module has no dependency on other crate modules
+/// (same discipline as `collect_keyed_callsigns` above), so an unrelated
+/// model refactor cannot silently break cleanup enumeration.
+fn discover_peer_endpoint_ids(env: &CleanupEnv) -> Vec<(String, String)> {
+    let mut out = BTreeSet::new();
+    for path in [
+        env.app_data_dir().join("peers.json"),
+        env.legacy_data_dir().join("peers.json"),
+    ] {
+        if let Some(value) = read_json_value(&path) {
+            collect_peer_endpoint_ids(&value, &mut out);
+        }
+    }
+    out.into_iter().collect()
+}
+
+fn collect_peer_endpoint_ids(value: &serde_json::Value, out: &mut BTreeSet<(String, String)>) {
+    let Some(peers) = value.get("peers").and_then(|v| v.as_array()) else {
+        return;
+    };
+    for peer in peers {
+        let Some(peer_id) = peer.get("id").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(endpoints) = peer.get("endpoints").and_then(|v| v.as_array()) else {
+            continue;
+        };
+        for endpoint in endpoints {
+            if let Some(endpoint_id) = endpoint.get("id").and_then(|v| v.as_str()) {
+                out.insert((peer_id.to_string(), endpoint_id.to_string()));
+            }
+        }
+    }
 }
 
 fn collect_callsigns_from_allowed_stations(path: &Path, out: &mut BTreeSet<String>) {
@@ -1155,6 +1201,49 @@ mod tests {
             .warnings
             .iter()
             .any(|w| w.contains("cannot be enumerated service-wide")));
+    }
+
+    #[test]
+    fn full_cleanup_enumerates_peer_endpoint_keyring_accounts() {
+        let tmp = tempdir().unwrap();
+        let env = test_env(tmp.path());
+        write(
+            &env.app_data_dir().join("peers.json"),
+            r#"{"schema_version":1,"peers":[
+                {"id":"p1","canonical_base":"W6ABC","endpoints":[
+                    {"id":"e1","host":"1.2.3.4","port":8772,"last_seen":"2026-07-10T00:00:00Z"},
+                    {"id":"e2","host":"1.2.3.5","port":8772,"last_seen":"2026-07-10T00:00:00Z"}
+                ]},
+                {"id":"p2","canonical_base":"N7CPZ","endpoints":[]}
+            ]}"#,
+        );
+
+        let plan = build_plan(CleanupMode::Full, &env);
+        assert!(
+            plan.keyring_targets
+                .iter()
+                .any(|t| t.account == "p2p-endpoint:p1:e1"
+                    && t.description == "P2P endpoint password")
+        );
+
+        let mock = MockKeyring::with(KEYRING_SERVICE, "p2p-endpoint:p1:e1");
+        let report = execute_plan(&plan, false, &mock);
+        let deleted = mock.deleted.borrow();
+
+        assert!(deleted.contains(&(KEYRING_SERVICE.into(), "p2p-endpoint:p1:e1".into())));
+        assert!(deleted.contains(&(KEYRING_SERVICE.into(), "p2p-endpoint:p1:e2".into())));
+        // A peer with no endpoints contributes no endpoint keyring target.
+        assert!(!deleted
+            .iter()
+            .any(|(_, account)| account.starts_with("p2p-endpoint:p2:")));
+        assert_eq!(
+            report
+                .keyring
+                .iter()
+                .filter(|r| matches!(r.outcome, RemovalOutcome::Removed))
+                .count(),
+            1
+        );
     }
 
     #[test]
