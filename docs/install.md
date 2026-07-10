@@ -79,7 +79,7 @@ cargo build --release
 
 ## Prerequisites
 
-**Radio operations:** tuxlink integrates with amateur-radio tools available via the OS package manager. AX.25 packet work uses `direwolf (>= 1.6)` for TNC emulation. FT8 Station Intelligence uses the `wsjtx` package's `jt9` decoder (`sudo apt install wsjtx`); AppImage users install it manually — the deb/rpm recommend it automatically.
+FT8 Station Intelligence uses the `wsjtx` package's `jt9` decoder (`sudo apt install wsjtx`); AppImage users install it manually — the deb/rpm recommend it automatically.
 
 ## Runtime prerequisite: secret-service keyring
 
