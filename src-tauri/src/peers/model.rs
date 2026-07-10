@@ -268,6 +268,32 @@ mod tests {
         assert_eq!(serde_json::to_string(&Provenance::ObservedIncoming).unwrap(), r#""observed-incoming""#);
         assert_eq!(serde_json::to_string(&ChannelTransport::VaraFm).unwrap(), r#""vara-fm""#);
         assert_eq!(serde_json::to_string(&Origin::Incoming).unwrap(), r#""incoming""#);
+        assert_eq!(serde_json::to_string(&IdentityKind::Individual).unwrap(), r#""individual""#);
+        assert_eq!(serde_json::to_string(&GridSource::Contact).unwrap(), r#""contact""#);
+        assert_eq!(serde_json::to_string(&Direction::Outgoing).unwrap(), r#""outgoing""#);
+    }
+
+    #[test]
+    fn bandwidth_wire_shape_is_pinned_exactly() {
+        // The "kind" tag key + field names are the on-disk / TS contract —
+        // pin the exact JSON strings, not just self-round-trips.
+        assert_eq!(
+            serde_json::to_string(&ChannelBandwidth::Hz { hz: 2300 }).unwrap(),
+            r#"{"kind":"hz","hz":2300}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&ChannelBandwidth::Wide).unwrap(),
+            r#"{"kind":"wide"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&ChannelBandwidth::Narrow).unwrap(),
+            r#"{"kind":"narrow"}"#
+        );
+        // Bidirectional pin: the exact wire string parses back to the variant.
+        assert_eq!(
+            serde_json::from_str::<ChannelBandwidth>(r#"{"kind":"hz","hz":2300}"#).unwrap(),
+            ChannelBandwidth::Hz { hz: 2300 }
+        );
     }
 
     #[test]
