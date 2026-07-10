@@ -106,6 +106,7 @@ mod tests {
     fn base_config(gps_state: GpsState, grid: Option<&str>) -> Config {
         Config {
             elmer: crate::config::ElmerConfig::default(),
+            p2p_limits: crate::peers::limiter::P2pLimitsConfig::default(),
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: ConnectConfig { connect_to_cms: false, transport: CmsTransport::Telnet, host: crate::config::default_cms_host() },

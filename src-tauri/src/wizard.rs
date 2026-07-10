@@ -178,6 +178,7 @@ pub async fn persist_cms_impl(
     // Per spec §3.6: CMS path hardcodes connect_to_cms=true; NO password material.
     let new_config = crate::config::Config {
         elmer: crate::config::ElmerConfig::default(),
+        p2p_limits: crate::peers::limiter::P2pLimitsConfig::default(),
         schema_version: crate::config::CONFIG_SCHEMA_VERSION,
         wizard_completed: true,
         connect: crate::config::ConnectConfig {
@@ -424,6 +425,7 @@ pub async fn persist_offline_impl(
     //   pat_mbo_address = null (not used in offline path)
     let new_config = crate::config::Config {
         elmer: crate::config::ElmerConfig::default(),
+        p2p_limits: crate::peers::limiter::P2pLimitsConfig::default(),
         schema_version: crate::config::CONFIG_SCHEMA_VERSION,
         wizard_completed: true,
         connect: crate::config::ConnectConfig {

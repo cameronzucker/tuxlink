@@ -4273,6 +4273,7 @@ mod native_read_state_tests {
     fn offline_config() -> Config {
         Config {
             elmer: crate::config::ElmerConfig::default(),
+            p2p_limits: crate::peers::limiter::P2pLimitsConfig::default(),
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: ConnectConfig {
@@ -6051,6 +6052,7 @@ mod native_read_state_tests {
     fn offline_config_with_callsign() -> Config {
         Config {
             elmer: crate::config::ElmerConfig::default(),
+            p2p_limits: crate::peers::limiter::P2pLimitsConfig::default(),
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: ConnectConfig {

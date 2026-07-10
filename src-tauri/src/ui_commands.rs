@@ -9992,6 +9992,7 @@ hw:CARD=Device,DEV=0
     fn cms_config_fixture() -> Config {
         Config {
             elmer: crate::config::ElmerConfig::default(),
+            p2p_limits: crate::peers::limiter::P2pLimitsConfig::default(),
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: ConnectConfig {
@@ -10345,6 +10346,7 @@ hw:CARD=Device,DEV=0
         };
         let cfg = Config {
             elmer: crate::config::ElmerConfig::default(),
+            p2p_limits: crate::peers::limiter::P2pLimitsConfig::default(),
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: ConnectConfig {
@@ -11879,6 +11881,7 @@ hw:CARD=Device,DEV=0
         };
         config::Config {
             elmer: crate::config::ElmerConfig::default(),
+            p2p_limits: crate::peers::limiter::P2pLimitsConfig::default(),
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: ConnectConfig {
