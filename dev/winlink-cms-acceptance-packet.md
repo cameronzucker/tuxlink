@@ -57,10 +57,27 @@ CMS channels API) — quality work; its access-key need is folded into
 
 ## Temporary RMS plan (requirement 3)
 
-The RMS callsign must be the operator's licensed call (an SSID variant such as
-`N7CPZ-5` is conventional), reported to WDT for whitelisting before the test.
-An arbitrary or unregistered call is not an option (Part 97, and WDT
-whitelists a specific call).
+The RMS callsign is the operator's licensed call with an SSID: **`N7CPZ-1`**,
+reported to WDT for whitelisting before the test. An arbitrary or unregistered
+call is not an option (Part 97, and WDT whitelists a specific call). Avoid the
+SSID suffixes `-T`, `-R`, `-X`, `-L` — Winlink client software reserves them as
+session-type markers.
+
+Trimode's identity model, confirmed from the decompiled source (hamexandria
+`winlink-re`): the site callsign is the **base call** (`N7CPZ` in
+`SiteSettings.cs`), which authenticates to the CMS and api.winlink.org with the
+existing account password (`Registration.cs` `ValidatePassword`) — the RMS
+needs no new Winlink account. The **on-air callsign is per scanned channel**
+(`Channels.cs` channel-call fields → `MYCALL` to the VARA/ARDOP TNC), so
+`N7CPZ-1` goes in the channel-call field, and the gateway reports connects to
+the CMS under the base call (`CmsLink.cs`). The WDT notification states both
+forms: site call `N7CPZ`, on-air channel call `N7CPZ-1`.
+
+**Hard prerequisite: `tuxlink-gbb05`** (dial path strips gateway SSIDs,
+KB2PCN-5→KB2PCN). With the RMS at `N7CPZ-1`, an SSID-stripping client
+transmits its ConReq to `N7CPZ` — a station that does not exist on the air —
+and the test cannot start. gbb05 blocks the OTA test (`tuxlink-iiqoy`) in the
+dependency graph.
 
 - **Candidate A (primary): RMS Trimode + VARA HF under WINE on R2.** The
   [Winelink project](https://github.com/WheezyE/Winelink) installs
@@ -121,9 +138,9 @@ acceptance tests against cms-z.
   provide them through another channel if that is easier for your
   verification.
 - **Temporary RMS for the over-the-air test:** I plan to stand up a temporary
-  RMS under **N7CPZ-5** (RMS Trimode with VARA HF). Please whitelist that
-  callsign for cms-z, and let me know how the temporary RMS should be pointed
-  at cms-z.
+  RMS (RMS Trimode with VARA HF) under my callsign, site call **N7CPZ** with
+  the on-air channel call **N7CPZ-1**. Please whitelist that for cms-z, and
+  let me know how the temporary RMS should be pointed at cms-z.
 - **Access key:** the account API rejects the shared key from other clients,
   as expected. Please issue a Tuxlink application key so I can run the
   account create/read/update/delete test. Also, for the account test, please
