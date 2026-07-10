@@ -1710,4 +1710,103 @@ mod tests {
         );
         reset_peer_globals();
     }
+
+    // ── Task 18: write-boundary pinning — hostile inbound CALLSIGN ────────
+
+    #[test]
+    #[serial_test::serial]
+    fn hostile_callsign_in_callsign_phase_never_reaches_the_roster() {
+        // [R2-S2][R2-S10]: `parse_telnet_callsign` (like VARA's `parse_peer_call`)
+        // applies no charset filter and `allow_all` defaults TRUE, so a claimed
+        // callsign carrying arbitrary attacker bytes (`<b>EVIL</b>`) passes the
+        // allowlist gate and reaches `Accepted`. The write boundary is
+        // downstream: `record_peer_observation` → `PeersStore::apply_observation`
+        // drops any presented callsign failing `validate_presented_callsign`.
+        // Wire a REAL temp `PeersStore` + `InboundCreateLimiter` into the sink
+        // (CDX-7: drive `record_peer_observation`/`apply_observation`, not a
+        // hand-rolled assertion) and assert the store stays empty end-to-end.
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Mutex::new(crate::peers::store::PeersStore::open(
+            dir.path().join("peers.json"),
+        )));
+        let limiter = Arc::new(Mutex::new(crate::peers::limiter::InboundCreateLimiter::new(
+            crate::peers::limiter::P2pLimitsConfig::default(),
+        )));
+        {
+            let store = store.clone();
+            let limiter = limiter.clone();
+            crate::peers::recorder::install_observation_sink(Arc::new(move |obs| {
+                let _ = crate::peers::recorder::record_peer_observation(&store, &limiter, obs);
+            }));
+        }
+        crate::peers::recorder::install_inbound_limiter(limiter.clone());
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        // Accept policy is deliberately unchanged (allow_all defaults TRUE) —
+        // the hostile shape must clear the gate and hit the write boundary,
+        // not get pre-filtered by the allowlist.
+        let allowed = AllowedStations::new();
+        assert!(allowed.allow_all(), "precondition: allow_all default TRUE");
+        let password = mock_password(); // never .set() → unconditional prompt, any pw accepted
+        let arms = fresh_arms();
+        let config = ExchangeConfig {
+            mycall: "TUXLINK".into(),
+            targetcall: "PEER".into(),
+            locator: "CN87".into(),
+            password: None,
+            intent: SessionIntent::P2p,
+        };
+
+        let server = thread::spawn(move || {
+            let (stream, peer_addr) = listener.accept().unwrap();
+            handle_one_session(
+                stream,
+                peer_addr,
+                &allowed,
+                &password,
+                &arms,
+                &config,
+                None,
+                &|_| {},
+                &|_| {},
+                |_, _| Ok(Vec::new()),
+            )
+        });
+
+        // The dialer's `config.mycall` is sent RAW as the CALLSIGN-phase reply
+        // (`telnet_p2p_login::dialer_login` applies no validation) — the same
+        // attacker-controlled-bytes path the brief calls out for `parse_peer_call`.
+        let dial_config = ExchangeConfig {
+            mycall: "<b>EVIL</b>".into(),
+            targetcall: "TUXLINK".into(),
+            locator: "CN88".into(),
+            password: None,
+            intent: SessionIntent::P2p,
+        };
+        let client = thread::spawn(move || {
+            crate::winlink::telnet_p2p::connect_and_exchange(
+                "127.0.0.1",
+                port,
+                "TUXLINK",
+                None,
+                &dial_config,
+                Vec::new(),
+                &|_| {},
+                &|_| {},
+                |_, _| Ok(Vec::new()),
+            )
+        });
+
+        // The exchange may proceed or fault on either side per the existing
+        // gate (accept policy is unchanged) — what matters is the roster.
+        let _ = server.join().unwrap();
+        let _ = client.join().unwrap();
+
+        assert!(
+            store.lock().unwrap().file().peers.is_empty(),
+            "a hostile CALLSIGN-phase claim must never create a roster record"
+        );
+        reset_peer_globals();
+    }
 }

@@ -832,6 +832,34 @@ mod tests {
     }
 
     #[test]
+    fn hostile_callsigns_never_reach_the_roster() {
+        // [R2-S2][R2-S10] Task 18 pin: the write boundary gates on
+        // `validate_presented_callsign` (Task 8's backstop, NOT
+        // `sanitize_display`) — every injection shape below fails that
+        // validator too (it accepts only base + optional `/SUFFIX` + optional
+        // SSID), so it is dropped as `NoRecord` before any roster write.
+        let dir = td();
+        let mut s = PeersStore::open(dir.path().join("peers.json"));
+        for evil in [
+            "<img src=x onerror=alert(1)>",
+            "W6ABC:extra",
+            "A\u{0}B",
+            "../../etc/passwd",
+            "W6 ABC",
+            "`rm -rf`",
+        ] {
+            let eff = s
+                .apply_observation(
+                    &rf_obs(evil, Direction::Incoming, ObservationPhase::Accepted),
+                    now(),
+                )
+                .unwrap();
+            assert!(matches!(eff, ApplyEffect::NoRecord), "{evil:?} must be dropped");
+        }
+        assert!(s.file().peers.is_empty());
+    }
+
+    #[test]
     fn wedged_or_aborted_records_a_fail() {
         let dir = td();
         let mut s = PeersStore::open(dir.path().join("peers.json"));
