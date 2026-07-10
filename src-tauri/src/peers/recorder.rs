@@ -3,13 +3,13 @@
 //! attempt-conclusion site(s), via `ObservationGuard` so wedged /
 //! aborted / early-return paths still record a fail [R3-11].
 //!
-//! **Task scoping:** this module currently carries the observation TYPES and
-//! the pure phase-classifier only (consumed by the peer store, Task 8). The
-//! `ObservationGuard` drop-guard and the central `record_peer_observation`
-//! entry point (with its limiter wiring) land in Task 11; do not add them here
-//! ahead of that task.
+//! **Task scoping:** the observation TYPES + pure phase-classifier are consumed
+//! by the peer store (Task 8) and the inbound limiter (Task 9). Task 11 adds
+//! the [`ObservationGuard`] drop-guard and the central [`record_peer_observation`]
+//! entry point (classification → inbound-create rate limit → store apply).
 
 use crate::peers::model::{ChannelBandwidth, ChannelTransport, Direction, Provenance};
+use std::sync::{Arc, Mutex};
 
 /// The conclusion phase of a single connection attempt. The recorder maps
 /// these to a [`Classified`] bucket via [`classify`].
@@ -78,4 +78,254 @@ pub struct PeerObservation {
     /// Exact presented/SSID'd callsign of the far station.
     pub presented_target: String,
     pub phase: ObservationPhase,
+}
+
+/// A recorder sink: the effectful tail that turns a concluded
+/// [`PeerObservation`] into a roster write. In production this is a closure
+/// captured over the app's `PeersStore` + `InboundCreateLimiter` state that
+/// calls [`record_peer_observation`] and emits `peers:changed` on a real write;
+/// tests substitute a capturing closure.
+pub type ObservationSink = Arc<dyn Fn(PeerObservation) + Send + Sync>;
+
+/// Drop-guard recorder [R3-11]: construct at attempt start (`DialAttempted`, or
+/// the `Accepted`-path initial for an inbound), advance the phase via
+/// [`ObservationGuard::set_phase`] as the exchange progresses, and the record
+/// fires ON DROP with the latest phase — so EVERY exit path (early return, `?`,
+/// panic-unwind, or a wedge that merely lets the scope end) still records. The
+/// guard IS the `finally`; there is no single chokepoint every transport funnels
+/// through [R4-1]. Call [`ObservationGuard::disarm`] when a different site owns
+/// this attempt's authoritative record, to suppress the drop-fire.
+pub struct ObservationGuard {
+    sink: ObservationSink,
+    obs: Mutex<Option<PeerObservation>>,
+}
+
+impl ObservationGuard {
+    /// Arm a guard with its initial observation. The record fires on drop unless
+    /// [`disarm`](Self::disarm) is called first.
+    pub fn new(sink: ObservationSink, initial: PeerObservation) -> Self {
+        Self {
+            sink,
+            obs: Mutex::new(Some(initial)),
+        }
+    }
+
+    /// Advance the recorded phase. The LATEST phase set before drop is the one
+    /// that fires. A poisoned lock is a no-op (the drop-fire then uses the last
+    /// successfully-set phase).
+    pub fn set_phase(&self, phase: ObservationPhase) {
+        if let Ok(mut g) = self.obs.lock() {
+            if let Some(o) = g.as_mut() {
+                o.phase = phase;
+            }
+        }
+    }
+
+    /// Update path details learned mid-attempt (e.g. bandwidth parsed from the
+    /// CONNECTED line, or a via/freq not known at dial time).
+    pub fn set_path(&self, path: ObservedPath) {
+        if let Ok(mut g) = self.obs.lock() {
+            if let Some(o) = g.as_mut() {
+                o.path = path;
+            }
+        }
+    }
+
+    /// Disarm the guard: no record fires on drop. Use when a different site owns
+    /// the authoritative record for this attempt.
+    pub fn disarm(&self) {
+        if let Ok(mut g) = self.obs.lock() {
+            g.take();
+        }
+    }
+}
+
+impl Drop for ObservationGuard {
+    fn drop(&mut self) {
+        if let Ok(mut g) = self.obs.lock() {
+            if let Some(o) = g.take() {
+                (self.sink)(o);
+            }
+        }
+    }
+}
+
+/// Central recorder entry [R4-1]: classification → inbound-create rate limit →
+/// store apply, with visible quarantine logging. Record-site sinks wrap this
+/// with their app state (the managed `PeersStore` + `InboundCreateLimiter`) and
+/// emit `peers:changed` when the returned effect is a real write.
+///
+/// Rate-limiting applies to inbound CREATES only [R5-9]: outbound observations
+/// and updates to an existing record always pass. Two create-shaped cases are
+/// gated:
+///
+/// 1. A brand-new base (no roster record yet) runs the accepted/failed
+///    threshold.
+/// 2. An unmatched presented form on an operator-SPLIT base — which WOULD create
+///    a held `conflict` record — runs the failed-path budget via
+///    [`crate::peers::limiter::InboundCreateLimiter::allow_conflict_creation`].
+///    A split base always "exists", so without this second gate the base-exists
+///    skip below would let a conflict flood bypass the limiter entirely (limiter
+///    amendment (b)(ii)).
+pub fn record_peer_observation(
+    store: &Mutex<crate::peers::store::PeersStore>,
+    limiter: &Mutex<crate::peers::limiter::InboundCreateLimiter>,
+    obs: PeerObservation,
+) -> crate::peers::store::ApplyEffect {
+    use crate::peers::store::ApplyEffect;
+    if classify(obs.phase) == Classified::NoRecord {
+        return ApplyEffect::NoRecord;
+    }
+    // Rate-limit inbound CREATES only [R5-9]: existing-record updates and
+    // outbound observations always pass.
+    if obs.direction == Direction::Incoming {
+        let base = crate::winlink::callsign::canonical_base(&obs.presented_target);
+        let exists = store
+            .lock()
+            .map(|s| s.file().peers.iter().any(|p| p.canonical_base == base))
+            .unwrap_or(false);
+        if !exists {
+            // Brand-new base: threshold on accepted vs failed.
+            let transport = match &obs.path {
+                ObservedPath::Rf { transport, .. } => *transport,
+                ObservedPath::Telnet { .. } => ChannelTransport::Unknown,
+            };
+            let accepted = classify(obs.phase) == Classified::Ok;
+            let allowed = limiter
+                .lock()
+                .map(|mut l| l.allow(transport, accepted, std::time::Instant::now()))
+                .unwrap_or(true);
+            if !allowed {
+                let q = limiter.lock().map(|l| l.quarantined()).unwrap_or(0);
+                tracing::warn!(
+                    target: "tuxlink::peers",
+                    presented = %obs.presented_target,
+                    quarantined_total = q,
+                    "inbound peer auto-create rate-limited — quarantined (not added to roster)"
+                );
+                return ApplyEffect::NoRecord;
+            }
+        } else {
+            // Base exists — the only inbound CREATE still possible is a held
+            // `conflict` record on an operator-split base. Gate it through the
+            // failed-path budget so a split-base flood cannot bypass the limiter
+            // via the base-exists skip above (limiter amendment (b)(ii)).
+            // `allow_conflict_creation` returns true (a no-op) for any
+            // observation that would NOT create a conflict record, so a normal
+            // update to an existing record is never limited. Lock order is
+            // store→limiter here and nowhere reversed, so no deadlock.
+            let allowed = match store.lock() {
+                Ok(s) => limiter
+                    .lock()
+                    .map(|mut l| l.allow_conflict_creation(&s, &obs, std::time::Instant::now()))
+                    .unwrap_or(true),
+                Err(_) => true,
+            };
+            if !allowed {
+                let q = limiter.lock().map(|l| l.quarantined()).unwrap_or(0);
+                tracing::warn!(
+                    target: "tuxlink::peers",
+                    presented = %obs.presented_target,
+                    quarantined_total = q,
+                    "inbound conflict-record creation rate-limited — quarantined (not held)"
+                );
+                return ApplyEffect::NoRecord;
+            }
+        }
+    }
+    let now = chrono::Local::now().to_rfc3339();
+    match store.lock() {
+        Ok(mut s) => s.apply_observation(&obs, now).unwrap_or_else(|e| {
+            tracing::warn!(target: "tuxlink::peers", "peer observation write failed: {e:?}");
+            ApplyEffect::NoRecord
+        }),
+        Err(_) => ApplyEffect::NoRecord,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::peers::model::*;
+    use std::sync::{Arc, Mutex};
+
+    fn obs(phase: ObservationPhase) -> PeerObservation {
+        PeerObservation {
+            path: ObservedPath::Rf {
+                transport: ChannelTransport::VaraHf,
+                via: vec![],
+                freq_hz: None,
+                bandwidth: None,
+            },
+            direction: Direction::Outgoing,
+            presented_target: "W6ABC".into(),
+            phase,
+        }
+    }
+
+    #[test]
+    fn classification_matches_the_spec_table() {
+        // spec §3: dial_attempted → connected → (login_failed | b2f_started
+        // → b2f_ok | b2f_fail) | accepted | rejected | aborted/wedged
+        assert_eq!(classify(ObservationPhase::B2fOk), Classified::Ok);
+        assert_eq!(classify(ObservationPhase::Accepted), Classified::Ok);
+        assert_eq!(classify(ObservationPhase::Rejected), Classified::NoRecord);
+        for p in [
+            ObservationPhase::DialAttempted,
+            ObservationPhase::Connected,
+            ObservationPhase::LoginFailed,
+            ObservationPhase::B2fStarted,
+            ObservationPhase::B2fFail,
+            ObservationPhase::AbortedOrWedged,
+        ] {
+            assert_eq!(classify(p), Classified::Fail, "{p:?}");
+        }
+    }
+
+    #[test]
+    fn guard_fires_on_drop_with_the_latest_phase() {
+        let seen: Arc<Mutex<Vec<PeerObservation>>> = Arc::default();
+        let sink = {
+            let seen = seen.clone();
+            Arc::new(move |o: PeerObservation| seen.lock().unwrap().push(o))
+        };
+        {
+            let g = ObservationGuard::new(sink.clone(), obs(ObservationPhase::DialAttempted));
+            g.set_phase(ObservationPhase::Connected);
+            g.set_phase(ObservationPhase::B2fOk);
+        } // drop → fire
+        assert_eq!(seen.lock().unwrap().len(), 1);
+        assert_eq!(seen.lock().unwrap()[0].phase, ObservationPhase::B2fOk);
+    }
+
+    #[test]
+    fn guard_records_fail_when_dropped_mid_exchange() {
+        // The ARDOP-ARQTimeout lesson [R3-11]: a wedge/abort/early-return
+        // path still records — the guard IS the finally.
+        let seen: Arc<Mutex<Vec<PeerObservation>>> = Arc::default();
+        let sink = {
+            let seen = seen.clone();
+            Arc::new(move |o: PeerObservation| seen.lock().unwrap().push(o))
+        };
+        {
+            let g = ObservationGuard::new(sink, obs(ObservationPhase::DialAttempted));
+            g.set_phase(ObservationPhase::Connected);
+            // …exchange wedges; nothing sets B2fOk…
+        }
+        assert_eq!(classify(seen.lock().unwrap()[0].phase), Classified::Fail);
+    }
+
+    #[test]
+    fn guard_disarm_suppresses_the_record() {
+        let seen: Arc<Mutex<Vec<PeerObservation>>> = Arc::default();
+        let sink = {
+            let seen = seen.clone();
+            Arc::new(move |o: PeerObservation| seen.lock().unwrap().push(o))
+        };
+        {
+            let g = ObservationGuard::new(sink, obs(ObservationPhase::DialAttempted));
+            g.disarm(); // another site owns this attempt's record
+        }
+        assert!(seen.lock().unwrap().is_empty());
+    }
 }

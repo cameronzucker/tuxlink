@@ -1025,6 +1025,27 @@ pub fn run() {
                         ),
                     )));
 
+                    // peers (VARA P2P peer model, Task 11): the peers.json
+                    // first-class-peer roster + the inbound auto-create rate
+                    // limiter. `PeersStore::open` is INFALLIBLE (degrade-and-
+                    // preserve on a read/parse error, same contract as
+                    // ContactsStore/FavoritesStore) so it is UNCONDITIONALLY
+                    // managed — no guard branch, never blocks startup. The limiter
+                    // seeds its thresholds from `config.p2p_limits` (absent →
+                    // P2pLimitsConfig::default()); its quarantine counter is
+                    // in-memory only, never persisted. Reuses the already-resolved
+                    // `data_dir` (C2).
+                    app.manage(std::sync::Arc::new(std::sync::Mutex::new(
+                        crate::peers::store::PeersStore::open(data_dir.join("peers.json")),
+                    )));
+                    app.manage(std::sync::Arc::new(std::sync::Mutex::new(
+                        crate::peers::limiter::InboundCreateLimiter::new(
+                            crate::config::read_config()
+                                .map(|c| c.p2p_limits)
+                                .unwrap_or_default(),
+                        ),
+                    )));
+
                     // forms sequence counters (tuxlink-2tom / G12-C): per-form
                     // serial numbers for SeqInc forms. `SeqCounterStore::open` is
                     // INFALLIBLE (degrade-to-empty on read error) like the stores
@@ -2154,6 +2175,22 @@ pub fn run() {
             crate::favorites::commands::favorite_record_attempt,
             crate::favorites::commands::favorites_recents,
             crate::favorites::commands::favorite_tod_hint,
+            // peers (VARA P2P peer model, Task 11): first-class-peer roster CRUD
+            // + merge/split/promote + endpoint keyring set/clear over the managed
+            // `Arc<Mutex<PeersStore>>`. Mutations emit the `peers:changed`
+            // cross-window event (Task 22's usePeers hook listens on it);
+            // `peer_delete` cascades the endpoint keyring-secret clear [R2-S7].
+            // `p2p_capabilities` reports the integration-matrix hide bits [R5-8].
+            // KEEP THIS BLOCK CONTIGUOUS + LABELED.
+            crate::peers::commands::peers_read,
+            crate::peers::commands::peer_upsert,
+            crate::peers::commands::peer_delete,
+            crate::peers::commands::peer_merge,
+            crate::peers::commands::peer_split,
+            crate::peers::commands::peer_endpoint_promote,
+            crate::peers::commands::peer_endpoint_password_set,
+            crate::peers::commands::peer_endpoint_password_clear,
+            crate::peers::commands::p2p_capabilities,
             // tuxlink-dyop Phase 8.1: LAN map-tile command surface. configure
             // (validate→activate→persist), test (dry-run validate), clear-cache,
             // and a no-network status reflection of the gatekeeper. All take the

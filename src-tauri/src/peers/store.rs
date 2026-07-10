@@ -474,19 +474,25 @@ impl PeersStore {
     }
 
     /// Insert an operator-added peer, or replace the existing one with the same
-    /// `id`. Validates `canonical_base` + each `presented_callsigns` entry
-    /// through `sanitize_display` (the manual-entry floor). Flushes on success.
+    /// `id`. Validates `canonical_base` + each `presented_callsigns` entry through
+    /// [`crate::winlink::callsign::validate_presented_callsign`] (NOT
+    /// `sanitize_display`) [R3-F2], matching [`Self::apply_observation`]'s write
+    /// boundary and this module's documented presented-callsign write-boundary
+    /// invariant — so a legitimate portable form like `W6ABC/P` entered by hand is
+    /// stored rather than dropped, exactly as an observed one would be.
+    /// `sanitize_display` remains the floor for free-text display fields (notes),
+    /// which this manual path does not gate. Flushes on success.
     pub fn upsert_manual(&mut self, peer: Peer) -> Result<(), PeersError> {
-        if crate::winlink::callsign::sanitize_display(&peer.canonical_base).is_none() {
+        if let Err(e) = crate::winlink::callsign::validate_presented_callsign(&peer.canonical_base) {
             return Err(PeersError::Validation(format!(
-                "invalid canonical_base {:?}",
+                "invalid canonical_base {:?}: {e}",
                 peer.canonical_base
             )));
         }
         for pc in &peer.presented_callsigns {
-            if crate::winlink::callsign::sanitize_display(pc).is_none() {
+            if let Err(e) = crate::winlink::callsign::validate_presented_callsign(pc) {
                 return Err(PeersError::Validation(format!(
-                    "invalid presented callsign {pc:?}"
+                    "invalid presented callsign {pc:?}: {e}"
                 )));
             }
         }
@@ -985,6 +991,29 @@ mod tests {
         let reopened = PeersStore::open(path);
         assert_eq!(reopened.file().peers.len(), 1);
         assert_eq!(reopened.file().peers[0].canonical_base, "W6ABC");
+    }
+
+    #[test]
+    fn manual_upsert_accepts_portable_form_and_rejects_garbage() {
+        // [R3-F2] / Task-11 amendment: the manual write boundary gates on
+        // validate_presented_callsign, so a hand-entered `W6ABC/P` is stored
+        // (matching the observation path), while an injection-y string is
+        // rejected.
+        let dir = td();
+        let mut s = PeersStore::open(dir.path().join("peers.json"));
+        let mut p = manual_peer("p-port", "W6ABC");
+        p.presented_callsigns = vec!["W6ABC/P".to_string()];
+        s.upsert_manual(p).unwrap();
+        assert!(s.file().peers[0]
+            .presented_callsigns
+            .contains(&"W6ABC/P".to_string()));
+
+        let mut bad = manual_peer("p-bad", "W6ABC");
+        bad.presented_callsigns = vec!["../etc/passwd".to_string()];
+        assert!(matches!(
+            s.upsert_manual(bad),
+            Err(PeersError::Validation(_))
+        ));
     }
 
     #[test]
