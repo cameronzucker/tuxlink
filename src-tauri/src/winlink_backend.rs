@@ -7183,22 +7183,31 @@ mod native_read_state_tests {
     // Task 15 (tuxlink-c39af): packet record sites (dial + answer)
     // =========================================================================
 
-    /// A KISS TCP stand-in that accepts the connection but never replies — the
-    /// AX.25 SABM/UA handshake never completes, so `connect_with_logger` (inside
-    /// the dial arm of `native_packet_connect`) times out and errors. Mirrors
-    /// `ax25::link`'s `connect_link_with_abort_yields_a_tcp_abort_handle_that_closes_the_link`
-    /// fixture (a real TCP peer that only sinks bytes), reused here so the
-    /// dial-fail record-site test drives a genuine AX.25 connect failure rather
-    /// than a lower-level TCP-open failure (which would never reach the guard —
-    /// per the brief, the guard arms AFTER the KISS link opens, immediately
-    /// before the AX.25 CONNECT).
-    fn spawn_silent_kiss_wire() -> std::net::SocketAddr {
+    /// A KISS TCP stand-in that accepts the connection and IMMEDIATELY closes
+    /// it. The client's TCP open succeeds (so `connect_link_with_abort` — which
+    /// runs BEFORE the record guard arms — passes and the guard IS armed), then
+    /// the very next link read inside `datalink::connect`'s poll loop sees the
+    /// FIN: `recv_frame` maps a 0-byte read to `Err(ConnectionAborted)`
+    /// (datalink.rs "link closed" arm), which `connect`'s `recv_frame()?`
+    /// propagates on the FIRST poll iteration. That makes the AX.25 connect
+    /// failure DETERMINISTIC and sub-second — no reliance on retry timing.
+    ///
+    /// Why not a silent (accept-and-sink) wire: `datalink::connect` listens for
+    /// a slow UA until `params.connect_timeout`, and
+    /// `Ax25ParamsConfig::into_params` hard-codes that ceiling to the 25 s
+    /// `Ax25Params::default()` (a RADIO-1 safety default, deliberately not
+    /// config-tunable) — `t1_ms`/`n2_retries` only pace the ≤2 SABMs, they do
+    /// NOT end the wait. A silent wire therefore always costs the full 25 s,
+    /// which blew past the test timeout on a loaded CI runner
+    /// (run 29129290795, both arches).
+    fn spawn_closing_kiss_wire() -> std::net::SocketAddr {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         std::thread::spawn(move || {
-            if let Ok((mut sock, _)) = listener.accept() {
-                let mut sink = Vec::new();
-                let _ = std::io::Read::read_to_end(&mut sock, &mut sink);
+            if let Ok((sock, _)) = listener.accept() {
+                // Drop immediately → FIN to the client. Nothing is ever read
+                // or written on this side.
+                drop(sock);
             }
         });
         addr
@@ -7274,7 +7283,10 @@ mod native_read_state_tests {
             intent: SessionIntent::P2p,
         };
 
-        let outcome = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        // 60 s: the full loopback exchange completes in ~1-2 s locally; the
+        // margin covers spawn_blocking scheduling on a loaded 2-core CI runner
+        // (the dial-fail twins' original 10 s wrapper proved too tight there).
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(60), async {
             tokio::join!(answerer.connect(listen, None), dialer.connect(dial, None))
         })
         .await;
@@ -7320,10 +7332,13 @@ mod native_read_state_tests {
     async fn packet_dial_connect_fail_p2p_intent_records_one_fail_observation() {
         // [CDX-7] [R3-11]: drives the REAL `native_packet_connect` dial path
         // (via `NativeBackend::connect`) against a KISS wire that accepts the
-        // TCP link but never answers the AX.25 SABM — `connect_with_logger`
-        // times out, the dial arm's `?` fires, and the guard armed immediately
-        // before that call drops recording `DialAttempted` → Fail. #[serial]:
-        // the recorder sink is process-global.
+        // TCP link and immediately closes it — the FIN surfaces as
+        // `ConnectionAborted` on `datalink::connect`'s first poll, the dial
+        // arm's `?` fires, and the guard armed immediately before that call
+        // drops recording `DialAttempted` → Fail. Deterministic sub-second
+        // failure (see `spawn_closing_kiss_wire` for why a silent wire is NOT
+        // usable: the 25 s non-configurable `connect_timeout` governs that
+        // path). #[serial]: the recorder sink is process-global.
         let seen: Arc<std::sync::Mutex<Vec<crate::peers::recorder::PeerObservation>>> =
             Arc::default();
         {
@@ -7333,17 +7348,10 @@ mod native_read_state_tests {
             }));
         }
 
-        let wire = spawn_silent_kiss_wire();
-
-        // Fast AX.25 timing so the failed connect resolves in well under a
-        // second: `datalink::connect` keys at most 2 SABMs regardless of
-        // `n2_retries`, one `t1` apart.
-        let mut cfg = config_with_call("N7CPZ");
-        cfg.packet.params.t1_ms = 20;
-        cfg.packet.params.n2_retries = 0;
+        let wire = spawn_closing_kiss_wire();
 
         let dir = tempdir().unwrap();
-        let dialer = NativeBackend::new(cfg, dir.path());
+        let dialer = NativeBackend::new(config_with_call("N7CPZ"), dir.path());
         dialer.set_active_identity(crate::identity::SessionIdentity::full(
             crate::identity::IdentityHandle::for_test(
                 crate::identity::Callsign::parse("N7CPZ").unwrap(),
@@ -7363,12 +7371,15 @@ mod native_read_state_tests {
             intent: SessionIntent::P2p,
         };
 
-        let result = tokio::time::timeout(std::time::Duration::from_secs(10), dialer.connect(dial, None))
+        // Expected wall clock is sub-second (FIN on the first poll); 60 s gives
+        // order-of-magnitude headroom for a loaded 2-core CI runner and would
+        // even survive a regression back to the 25 s connect_timeout ceiling.
+        let result = tokio::time::timeout(std::time::Duration::from_secs(60), dialer.connect(dial, None))
             .await
             .expect("packet dial-fail record-site test timed out");
         assert!(
             result.is_err(),
-            "a dial into a silent KISS wire must fail the AX.25 connect, got {result:?}"
+            "a dial into an immediately-closed KISS wire must fail the AX.25 connect, got {result:?}"
         );
 
         let obs = seen.lock().unwrap();
@@ -7394,7 +7405,8 @@ mod native_read_state_tests {
         // [spec §3]: the packet dial gate mirrors the VARA/ARDOP dial gates —
         // only `SessionIntent::P2p` dials resolve the global sink. A CMS dial
         // that fails its AX.25 connect must not touch the peer roster even
-        // though the global sink IS installed.
+        // though the global sink IS installed. Same deterministic
+        // accept-then-close wire as the P2p twin (sub-second failure).
         let seen: Arc<std::sync::Mutex<Vec<crate::peers::recorder::PeerObservation>>> =
             Arc::default();
         {
@@ -7404,14 +7416,10 @@ mod native_read_state_tests {
             }));
         }
 
-        let wire = spawn_silent_kiss_wire();
-
-        let mut cfg = config_with_call("N7CPZ");
-        cfg.packet.params.t1_ms = 20;
-        cfg.packet.params.n2_retries = 0;
+        let wire = spawn_closing_kiss_wire();
 
         let dir = tempdir().unwrap();
-        let dialer = NativeBackend::new(cfg, dir.path());
+        let dialer = NativeBackend::new(config_with_call("N7CPZ"), dir.path());
         dialer.set_active_identity(crate::identity::SessionIdentity::full(
             crate::identity::IdentityHandle::for_test(
                 crate::identity::Callsign::parse("N7CPZ").unwrap(),
@@ -7431,7 +7439,8 @@ mod native_read_state_tests {
             intent: SessionIntent::Cms,
         };
 
-        let result = tokio::time::timeout(std::time::Duration::from_secs(10), dialer.connect(dial, None))
+        // Same 60 s order-of-magnitude margin as the P2p twin.
+        let result = tokio::time::timeout(std::time::Duration::from_secs(60), dialer.connect(dial, None))
             .await
             .expect("packet dial-fail CMS-intent test timed out");
         assert!(result.is_err(), "expected the AX.25 connect to fail, got {result:?}");
