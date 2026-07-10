@@ -230,7 +230,8 @@ pub async fn serve(router: TuxlinkMcp, sock_path: &Path) -> io::Result<()> {
             // handshake is dropped here; an established session's waiting() is
             // left UNBOUNDED so a legitimate long-lived agent is never killed.
             let established =
-                tokio::time::timeout(HANDSHAKE_TIMEOUT, router.serve((read_half, write_half))).await;
+                tokio::time::timeout(HANDSHAKE_TIMEOUT, router.serve((read_half, write_half)))
+                    .await;
 
             match established {
                 Ok(Ok(running)) => {
@@ -343,7 +344,11 @@ mod tests {
         }
         assert!(sock.exists(), "stale socket file should remain on disk");
         assert_ne!(
-            std::fs::symlink_metadata(&sock).unwrap().permissions().mode() & 0o777,
+            std::fs::symlink_metadata(&sock)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
             0o600,
             "precondition: the stale socket is not already 0600"
         );
@@ -468,10 +473,6 @@ mod tests {
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-        panic!(
-            "socket {} never reached mode {:o}",
-            p.display(),
-            want_mode
-        );
+        panic!("socket {} never reached mode {:o}", p.display(), want_mode);
     }
 }

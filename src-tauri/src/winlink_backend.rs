@@ -31,7 +31,13 @@ use tokio_stream::wrappers::BroadcastStream;
 /// `pat_client` module in tuxlink-9phd Phase 9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum MailboxFolder { Inbox, Sent, Outbox, Archive, Deleted }
+pub enum MailboxFolder {
+    Inbox,
+    Sent,
+    Outbox,
+    Archive,
+    Deleted,
+}
 
 impl MailboxFolder {
     #[allow(dead_code)]
@@ -193,7 +199,10 @@ fn parse_call_ssid(s: &str) -> Result<Address, BackendError> {
     if ssid > 15 || call.is_empty() {
         return Err(BackendError::NotConfigured(format!("bad call/ssid '{s}'")));
     }
-    Ok(Address { call: call.to_uppercase(), ssid })
+    Ok(Address {
+        call: call.to_uppercase(),
+        ssid,
+    })
 }
 
 /// Resolve identity + role into the concrete addresses + exchange role. Enforces
@@ -204,7 +213,10 @@ pub fn resolve_packet_endpoint(
     role: PacketRole,
 ) -> Result<ResolvedPacket, BackendError> {
     let base = base_mycall.trim().to_uppercase();
-    let link_mycall = Address { call: base.clone(), ssid };
+    let link_mycall = Address {
+        call: base.clone(),
+        ssid,
+    };
     match role {
         PacketRole::Listen => Ok(ResolvedPacket {
             link_mycall,
@@ -357,7 +369,11 @@ pub fn build_outbound_proposals(
         if let Ok(message) = Message::from_bytes(&body.raw_rfc5322) {
             if let Some((proposal, compressed)) = message.to_proposal() {
                 let title = message.header("Subject").unwrap_or_default().to_string();
-                outbound.push(session::OutboundMessage { proposal, title, compressed });
+                outbound.push(session::OutboundMessage {
+                    proposal,
+                    title,
+                    compressed,
+                });
             }
         }
     }
@@ -404,7 +420,10 @@ mod build_outbound_proposals_tests {
         let dir = tempdir().unwrap();
         let mailbox = Mailbox::new(dir.path());
         let out = build_outbound_proposals(&mailbox, SessionIntent::Cms, None, None).unwrap();
-        assert!(out.is_empty(), "empty outbox should produce no proposals; got {out:?}");
+        assert!(
+            out.is_empty(),
+            "empty outbox should produce no proposals; got {out:?}"
+        );
     }
 
     #[test]
@@ -437,8 +456,12 @@ mod build_outbound_proposals_tests {
             "second body",
             1_716_200_001,
         );
-        mailbox.store(MailboxFolder::Outbox, &m1.to_bytes()).unwrap();
-        mailbox.store(MailboxFolder::Outbox, &m2.to_bytes()).unwrap();
+        mailbox
+            .store(MailboxFolder::Outbox, &m1.to_bytes())
+            .unwrap();
+        mailbox
+            .store(MailboxFolder::Outbox, &m2.to_bytes())
+            .unwrap();
 
         let out = build_outbound_proposals(&mailbox, SessionIntent::Cms, None, None).unwrap();
         assert_eq!(
@@ -582,12 +605,17 @@ mod build_outbound_proposals_tests {
             .into_iter()
             .map(|meta| meta.id.0)
             .collect();
-        assert_eq!(mids.len(), 3, "fixture must produce 3 distinct MIDs; got {mids:?}");
+        assert_eq!(
+            mids.len(),
+            3,
+            "fixture must produce 3 distinct MIDs; got {mids:?}"
+        );
 
         // Select exactly 2 of the 3 real MIDs.
         let selected: HashSet<String> = [mids[0].clone(), mids[2].clone()].into_iter().collect();
         let out =
-            build_outbound_proposals(&mailbox, SessionIntent::PostOffice, Some(&selected), None).unwrap();
+            build_outbound_proposals(&mailbox, SessionIntent::PostOffice, Some(&selected), None)
+                .unwrap();
         let returned: HashSet<String> = out.iter().map(|o| o.proposal.mid.clone()).collect();
         assert_eq!(
             returned, selected,
@@ -614,7 +642,11 @@ mod build_outbound_proposals_tests {
         // Mesh is NOT gated (its routing flag is the normal C pool, tuxlink-6c9y).
         let out =
             build_outbound_proposals(&mailbox, SessionIntent::Mesh, Some(&selected), None).unwrap();
-        assert_eq!(out.len(), 1, "Mesh drain must ship the selected draft, not gate; got {out:?}");
+        assert_eq!(
+            out.len(),
+            1,
+            "Mesh drain must ship the selected draft, not gate; got {out:?}"
+        );
     }
 
     #[test]
@@ -633,10 +665,12 @@ mod build_outbound_proposals_tests {
         let mid = mailbox.list(MailboxFolder::Outbox).unwrap()[0].id.0.clone();
 
         // Select the real MID PLUS a ghost MID that is not in the Outbox.
-        let selected: HashSet<String> =
-            [mid, "GHOST-MID-NOT-IN-OUTBOX".to_string()].into_iter().collect();
+        let selected: HashSet<String> = [mid, "GHOST-MID-NOT-IN-OUTBOX".to_string()]
+            .into_iter()
+            .collect();
         let out =
-            build_outbound_proposals(&mailbox, SessionIntent::PostOffice, Some(&selected), None).unwrap();
+            build_outbound_proposals(&mailbox, SessionIntent::PostOffice, Some(&selected), None)
+                .unwrap();
         assert_eq!(
             out.len(),
             1,
@@ -654,7 +688,11 @@ mod build_outbound_proposals_tests {
         }
         // `None` selection = drain everything (status-quo CMS behavior).
         let out = build_outbound_proposals(&mailbox, SessionIntent::Cms, None, None).unwrap();
-        assert_eq!(out.len(), 2, "None selection must drain all Outbox drafts; got {out:?}");
+        assert_eq!(
+            out.len(),
+            2,
+            "None selection must drain all Outbox drafts; got {out:?}"
+        );
     }
 
     #[test]
@@ -678,16 +716,28 @@ mod build_outbound_proposals_tests {
         // Queue one message as W1ABC and one as W7XYZ into the SHARED outbox.
         let alpha = compose_message("W1ABC", &["W1AW"], &[], "Alpha out", "a", 1_716_200_000);
         let xray = compose_message("W7XYZ", &["W1AW"], &[], "Xray out", "x", 1_716_200_600);
-        mailbox.for_identity("W1ABC").store(MailboxFolder::Outbox, &alpha.to_bytes()).unwrap();
-        mailbox.for_identity("W7XYZ").store(MailboxFolder::Outbox, &xray.to_bytes()).unwrap();
+        mailbox
+            .for_identity("W1ABC")
+            .store(MailboxFolder::Outbox, &alpha.to_bytes())
+            .unwrap();
+        mailbox
+            .for_identity("W7XYZ")
+            .store(MailboxFolder::Outbox, &xray.to_bytes())
+            .unwrap();
 
         // Active session = W1ABC: only Alpha's message is proposed.
-        let out = build_outbound_proposals(&mailbox, SessionIntent::Cms, None, Some("W1ABC")).unwrap();
-        assert_eq!(out.len(), 1, "only the active identity's queued mail drains; got {out:?}");
+        let out =
+            build_outbound_proposals(&mailbox, SessionIntent::Cms, None, Some("W1ABC")).unwrap();
+        assert_eq!(
+            out.len(),
+            1,
+            "only the active identity's queued mail drains; got {out:?}"
+        );
         assert_eq!(out[0].title, "Alpha out");
 
         // Active session = W7XYZ: only Xray's.
-        let out2 = build_outbound_proposals(&mailbox, SessionIntent::Cms, None, Some("W7XYZ")).unwrap();
+        let out2 =
+            build_outbound_proposals(&mailbox, SessionIntent::Cms, None, Some("W7XYZ")).unwrap();
         assert_eq!(out2.len(), 1);
         assert_eq!(out2[0].title, "Xray out");
     }
@@ -701,10 +751,17 @@ mod build_outbound_proposals_tests {
         let mailbox = Mailbox::new(dir.path());
         // Store directly via the un-namespaced Mailbox (no .identity sidecar written).
         let legacy = compose_message("W1ABC", &["W1AW"], &[], "Legacy", "x", 1_716_200_000);
-        mailbox.store(MailboxFolder::Outbox, &legacy.to_bytes()).unwrap();
+        mailbox
+            .store(MailboxFolder::Outbox, &legacy.to_bytes())
+            .unwrap();
 
-        let out = build_outbound_proposals(&mailbox, SessionIntent::Cms, None, Some("W7XYZ")).unwrap();
-        assert_eq!(out.len(), 1, "an untagged legacy draft is not stranded by identity filtering");
+        let out =
+            build_outbound_proposals(&mailbox, SessionIntent::Cms, None, Some("W7XYZ")).unwrap();
+        assert_eq!(
+            out.len(),
+            1,
+            "an untagged legacy draft is not stranded by identity filtering"
+        );
     }
 }
 
@@ -756,15 +813,25 @@ impl Drop for Session {
 #[non_exhaustive]
 pub enum BackendStatus {
     Disconnected,
-    Connecting { transport: String },
+    Connecting {
+        transport: String,
+    },
     /// Packet armed-but-idle: the AX.25 layer is listening to answer an inbound
     /// SABM, but no session is up. Distinct from `Connecting` (an active dial)
     /// and `Disconnected` (not armed). Carries the transport so the ribbon can
     /// render "Listening · Packet 1200". (tuxlink-orj)
-    Listening { transport: String },
-    Connected { transport: String, peer: String, since_iso: String },
+    Listening {
+        transport: String,
+    },
+    Connected {
+        transport: String,
+        peer: String,
+        since_iso: String,
+    },
     Disconnecting,
-    Error { reason: String },
+    Error {
+        reason: String,
+    },
 }
 
 /// Backend log line emitted via `stream_log()`.
@@ -783,11 +850,21 @@ pub struct LogLine {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum LogLevel { Trace, Debug, Info, Warn, Error }
+pub enum LogLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum LogSource { Backend, Transport, Wire }
+pub enum LogSource {
+    Backend,
+    Transport,
+    Wire,
+}
 
 // ============================================================================
 // Error model (spec §3.3)
@@ -890,8 +967,7 @@ pub struct CmsSelectionContext {
 ///   cancels the subscription.
 #[async_trait]
 pub trait WinlinkBackend: Send + Sync {
-    async fn list_messages(&self, folder: MailboxFolder)
-        -> Result<Vec<MessageMeta>, BackendError>;
+    async fn list_messages(&self, folder: MailboxFolder) -> Result<Vec<MessageMeta>, BackendError>;
 
     /// Read a message from a specific folder. Added by Task 12
     /// (tuxlink-zsm): reading a Sent/Outbox message requires the folder,
@@ -899,14 +975,16 @@ pub trait WinlinkBackend: Send + Sync {
     /// (winlink_backend.rs, pre-zsm). `read_message` now delegates here
     /// with `MailboxFolder::Inbox` for back-compat. Implementors override
     /// this; `read_message` has a provided default that forwards.
-    async fn read_message_in(&self, folder: MailboxFolder, id: &MessageId)
-        -> Result<MessageBody, BackendError>;
+    async fn read_message_in(
+        &self,
+        folder: MailboxFolder,
+        id: &MessageId,
+    ) -> Result<MessageBody, BackendError>;
 
     /// Back-compat shim: read from the Inbox folder. Prefer
     /// [`WinlinkBackend::read_message_in`] when the folder is known
     /// (spec §2.1). Provided default forwards to `read_message_in(Inbox, id)`.
-    async fn read_message(&self, id: &MessageId)
-        -> Result<MessageBody, BackendError> {
+    async fn read_message(&self, id: &MessageId) -> Result<MessageBody, BackendError> {
         self.read_message_in(MailboxFolder::Inbox, id).await
     }
 
@@ -914,8 +992,7 @@ pub trait WinlinkBackend: Send + Sync {
     /// `NativeBackend` overrides it to drop a read-marker in its store.
     /// A failure here MUST NOT fail the read that triggered it — the caller
     /// (`message_read`) treats read-state as best-effort (tuxlink-xgn).
-    async fn mark_read(&self, _folder: MailboxFolder, _id: &MessageId)
-        -> Result<(), BackendError> {
+    async fn mark_read(&self, _folder: MailboxFolder, _id: &MessageId) -> Result<(), BackendError> {
         Ok(())
     }
 
@@ -1004,10 +1081,7 @@ pub trait WinlinkBackend: Send + Sync {
     }
 
     /// List the messages in a user folder. Default empty.
-    async fn list_user_messages(
-        &self,
-        _slug: &str,
-    ) -> Result<Vec<MessageMeta>, BackendError> {
+    async fn list_user_messages(&self, _slug: &str) -> Result<Vec<MessageMeta>, BackendError> {
         Ok(Vec::new())
     }
 
@@ -1079,8 +1153,7 @@ pub trait WinlinkBackend: Send + Sync {
     /// Returns `Ok(id)` with the MID assigned at queue time.
     ///
     /// `NativeBackend` assigns a real filesystem-derived MID at queue time.
-    async fn send_message(&self, msg: OutboundMessage)
-        -> Result<MessageId, BackendError>;
+    async fn send_message(&self, msg: OutboundMessage) -> Result<MessageId, BackendError>;
 
     /// Connect and run the exchange. `selection`: `None` ⇒ accept-all (download
     /// all inbound); `Some(CmsSelectionContext)` ⇒ on a CMS connect with the
@@ -1092,8 +1165,7 @@ pub trait WinlinkBackend: Send + Sync {
         selection: Option<CmsSelectionContext>,
     ) -> Result<Session, BackendError>;
 
-    async fn disconnect(&self, session: Session)
-        -> Result<(), BackendError>;
+    async fn disconnect(&self, session: Session) -> Result<(), BackendError>;
 
     /// Abort an in-flight [`WinlinkBackend::connect`] (tuxlink-9z2): shut down the
     /// connecting socket to unblock a slow TLS/login/exchange phase and return the
@@ -1402,7 +1474,9 @@ impl NativeBackend {
     /// Arc is already shared — that would be a programmer error in the boot path.
     pub fn with_index(mut self, index: Arc<std::sync::Mutex<crate::search::index::Index>>) -> Self {
         let mbox = Arc::try_unwrap(self.mailbox)
-            .unwrap_or_else(|_| panic!("with_index called after Arc<Mailbox> was shared — call before install"))
+            .unwrap_or_else(|_| {
+                panic!("with_index called after Arc<Mailbox> was shared — call before install")
+            })
             .with_index(index);
         self.mailbox = Arc::new(mbox);
         self
@@ -1496,8 +1570,15 @@ impl NativeBackend {
             .iter()
             .find(|t| t.label == label && t.parent.as_str() == parent.as_str())
             .map(|t| t.cms.clone());
-        let outcome =
-            gate_cms_entry(&mut store, &label, &parent, &self.tactical_gate.verifier, online, now).await;
+        let outcome = gate_cms_entry(
+            &mut store,
+            &label,
+            &parent,
+            &self.tactical_gate.verifier,
+            online,
+            now,
+        )
+        .await;
         // Persist ONLY if a re-verification actually refreshed the cached state.
         // The common case (cached, or offline with no verify) changes nothing, so a
         // blanket save would needlessly rewrite the whole IdentityStore on every
@@ -1634,10 +1715,7 @@ impl WinlinkBackend for NativeBackend {
         self.mailbox.rename_user_folder(slug, new_display_name)
     }
 
-    async fn list_user_messages(
-        &self,
-        slug: &str,
-    ) -> Result<Vec<MessageMeta>, BackendError> {
+    async fn list_user_messages(&self, slug: &str) -> Result<Vec<MessageMeta>, BackendError> {
         self.mailbox.list_user(slug)
     }
 
@@ -1722,10 +1800,7 @@ impl WinlinkBackend for NativeBackend {
         Ok(n)
     }
 
-    async fn send_message(
-        &self,
-        msg: OutboundMessage,
-    ) -> Result<MessageId, BackendError> {
+    async fn send_message(&self, msg: OutboundMessage) -> Result<MessageId, BackendError> {
         // GH #691 / tuxlink-spbw: queueing to the Outbox is NOT transmitting, so it
         // must not require an AUTHENTICATED active identity. Use the active
         // identity's address when one is authenticated; otherwise fall back to the
@@ -1756,7 +1831,9 @@ impl WinlinkBackend for NativeBackend {
             unix_secs,
         )
         .map_err(|e| BackendError::MessageRejected(e.to_string()))?;
-        let id = self.mailbox.store(MailboxFolder::Outbox, &message.to_bytes())?;
+        let id = self
+            .mailbox
+            .store(MailboxFolder::Outbox, &message.to_bytes())?;
         (self.mailbox_change)();
         Ok(id)
     }
@@ -1832,7 +1909,9 @@ impl WinlinkBackend for NativeBackend {
         // identities are never gated. On refusal, set a terminal status and return
         // WITHOUT dialing. P2P/Packet never reaches here (early-returned above).
         if let Err(e) = self.enforce_tactical_cms_gate(&session_id).await {
-            self.set_status(BackendStatus::Error { reason: e.to_string() });
+            self.set_status(BackendStatus::Error {
+                reason: e.to_string(),
+            });
             return Err(e);
         }
         let outcome = tokio::task::spawn_blocking(move || {
@@ -1973,11 +2052,14 @@ impl WinlinkBackend for NativeBackend {
         // be an ungated CMS-Telnet sibling that defeats the gate. FULL sessions are
         // never gated. On refusal: terminal status + return WITHOUT dialing.
         if let Err(e) = self.enforce_tactical_cms_gate(&session_id).await {
-            self.set_status(BackendStatus::Error { reason: e.to_string() });
+            self.set_status(BackendStatus::Error {
+                reason: e.to_string(),
+            });
             return Err(e);
         }
         let callsign = session_id.mycall().as_str().to_uppercase();
-        let locator = crate::position::effective_broadcast_locator(&config, self.position.as_deref());
+        let locator =
+            crate::position::effective_broadcast_locator(&config, self.position.as_deref());
         let password = crate::winlink::credentials::read_password(&callsign)
             .ok()
             .filter(|p| !p.is_empty());
@@ -1987,7 +2069,8 @@ impl WinlinkBackend for NativeBackend {
             .ok()
             .and_then(|s| s.parse::<u16>().ok());
         let transport_mode = config.connect.transport;
-        let (port, transport) = resolve_cms_endpoint(transport_mode, plaintext_override, port_override);
+        let (port, transport) =
+            resolve_cms_endpoint(transport_mode, plaintext_override, port_override);
         let host = resolve_cms_host(&config);
 
         let exchange_config = session::ExchangeConfig {
@@ -2028,9 +2111,9 @@ impl WinlinkBackend for NativeBackend {
                 attempt_id,
             )
             .map_err(|e| {
-                use telnet::TelnetError;
                 use crate::winlink::handshake::HandshakeError;
                 use crate::winlink::session::ExchangeError;
+                use telnet::TelnetError;
                 match e {
                     TelnetError::Exchange(ExchangeError::RemoteError(payload)) => {
                         BackendError::RemoteError(payload)
@@ -2296,7 +2379,13 @@ fn native_packet_exchange<S: std::io::Read + std::io::Write + Send + 'static>(
     progress: &dyn Fn(&str),
     wire_log: &dyn Fn(&str),
 ) -> Result<(), BackendError> {
-    let PacketConnectCtx { base_mycall, targetcall, password, role, locator } = ctx;
+    let PacketConnectCtx {
+        base_mycall,
+        targetcall,
+        password,
+        role,
+        locator,
+    } = ctx;
     // Split the owned stream into simultaneous read + write halves via a shared
     // Arc<Mutex> (the same pattern as telnet's shared-socket approach). The
     // exchange is strictly turn-based so the lock is never contended.
@@ -2332,7 +2421,11 @@ fn native_packet_exchange<S: std::io::Read + std::io::Write + Send + 'static>(
         if let Ok(message) = Message::from_bytes(&body.raw_rfc5322) {
             if let Some((proposal, compressed)) = message.to_proposal() {
                 let title = message.header("Subject").unwrap_or_default().to_string();
-                outbound.push(session::OutboundMessage { proposal, title, compressed });
+                outbound.push(session::OutboundMessage {
+                    proposal,
+                    title,
+                    compressed,
+                });
             }
         }
     }
@@ -2353,10 +2446,18 @@ fn native_packet_exchange<S: std::io::Read + std::io::Write + Send + 'static>(
         role,
         &exchange_config,
         outbound,
-        |proposals, _manifest| Ok(proposals.iter().map(|_| Answer::Accept { resume_offset: 0 }).collect()),
+        |proposals, _manifest| {
+            Ok(proposals
+                .iter()
+                .map(|_| Answer::Accept { resume_offset: 0 })
+                .collect())
+        },
         Some(wire_log),
     )
-    .map_err(|e| BackendError::TransportFailed { reason: format!("{e:?}"), source: None })?;
+    .map_err(|e| BackendError::TransportFailed {
+        reason: format!("{e:?}"),
+        source: None,
+    })?;
 
     // P1.4 (Codex post-impl review): file accepted messages FIRST, then surface
     // any rejection error. The prior ordering returned early on rejections, leaving
@@ -2367,7 +2468,11 @@ fn native_packet_exchange<S: std::io::Read + std::io::Write + Send + 'static>(
         mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
     }
     for mid in &result.sent {
-        mailbox.move_to(MailboxFolder::Outbox, MailboxFolder::Sent, &MessageId(mid.clone()))?;
+        mailbox.move_to(
+            MailboxFolder::Outbox,
+            MailboxFolder::Sent,
+            &MessageId(mid.clone()),
+        )?;
     }
     emit_exchange_result_progress(&result, &outbound_log, progress);
     if !result.rejected.is_empty() {
@@ -2510,8 +2615,12 @@ fn native_packet_connect(
     // in AbortableByteLink keyed on the SAME `aborting` flag: abort() sets the flag and
     // the next serial read returns ConnectionAborted, unwinding the loop (tuxlink-nj1).
     let (bytelink, abort_socket) =
-        crate::winlink::ax25::connect_link_with_abort(&link, aborting.clone())
-            .map_err(|e| BackendError::TransportFailed { reason: format!("KISS link: {e}"), source: None })?;
+        crate::winlink::ax25::connect_link_with_abort(&link, aborting.clone()).map_err(|e| {
+            BackendError::TransportFailed {
+                reason: format!("KISS link: {e}"),
+                source: None,
+            }
+        })?;
     if let Some(sock) = abort_socket {
         // Check `aborting` INSIDE the abort_handle lock (mirrors native_connect /
         // Codex #2): abort() sets `aborting` then locks to take the socket, so doing
@@ -2673,8 +2782,7 @@ fn native_packet_connect(
                     _ => reject_reason(&decision).unwrap_or("unknown"),
                 };
                 let log_path = listener_forensics_log_path();
-                let event =
-                    ListenerRejectEvent::new(TransportKind::Packet, reason, &peer_id);
+                let event = ListenerRejectEvent::new(TransportKind::Packet, reason, &peer_id);
                 let _ = event.append_to_log(&log_path);
 
                 let msg = format!(
@@ -2818,8 +2926,12 @@ fn resolve_locator(config: &Config, position: Option<&crate::position::PositionA
 /// either the accept-all closure or the operator-selecting decider (tuxlink-bsiy).
 /// Boxed because the two arms have distinct concrete types; it stays on the
 /// blocking exchange thread, so no `Send`/`Sync` bound is required.
-type InboundDecider =
-    Box<dyn Fn(&[crate::winlink::proposal::Proposal], &[crate::winlink::proposal::PendingMessage]) -> Result<Vec<Answer>, session::ExchangeError>>;
+type InboundDecider = Box<
+    dyn Fn(
+        &[crate::winlink::proposal::Proposal],
+        &[crate::winlink::proposal::PendingMessage],
+    ) -> Result<Vec<Answer>, session::ExchangeError>,
+>;
 
 /// Run one CMS exchange (blocking): build the outbox into proposals, connect over
 /// the chosen transport, accept all offered messages, then file what arrived into
@@ -2962,12 +3074,14 @@ fn native_connect(
                 aborting.clone(),
             ))
         }
-        None => Box::new(|proposals: &[Proposal], _manifest: &[crate::winlink::proposal::PendingMessage]| {
-            Ok(proposals
-                .iter()
-                .map(|_| Answer::Accept { resume_offset: 0 })
-                .collect())
-        }),
+        None => Box::new(
+            |proposals: &[Proposal], _manifest: &[crate::winlink::proposal::PendingMessage]| {
+                Ok(proposals
+                    .iter()
+                    .map(|_| Answer::Accept { resume_offset: 0 })
+                    .collect())
+            },
+        ),
     };
 
     let result = telnet::connect_and_exchange(
@@ -2987,16 +3101,16 @@ fn native_connect(
         // to classify via auth_taxonomy::classify. All other TelnetError
         // variants (TCP/TLS failures, other exchange errors) → TransportFailed
         // as before.
-        use telnet::TelnetError;
-        use session::ExchangeError;
         use crate::winlink::handshake::HandshakeError;
+        use session::ExchangeError;
+        use telnet::TelnetError;
         match e {
             TelnetError::Exchange(ExchangeError::RemoteError(payload)) => {
                 BackendError::RemoteError(payload)
             }
-            TelnetError::Exchange(ExchangeError::Handshake(
-                HandshakeError::RemoteError(payload),
-            )) => BackendError::RemoteError(payload),
+            TelnetError::Exchange(ExchangeError::Handshake(HandshakeError::RemoteError(
+                payload,
+            ))) => BackendError::RemoteError(payload),
             // tuxlink-bsiy: the selecting decider returns Cancelled when the
             // operator aborts a pending selection prompt. Map it explicitly so the
             // cancel path is structural here rather than relying solely on
@@ -3106,7 +3220,11 @@ fn compact_log_field(value: &str, max_chars: usize) -> String {
             truncated = true;
             break;
         }
-        let normalized = if ch.is_control() || ch.is_whitespace() { ' ' } else { ch };
+        let normalized = if ch.is_control() || ch.is_whitespace() {
+            ' '
+        } else {
+            ch
+        };
         if normalized == ' ' {
             if prev_space {
                 continue;
@@ -3150,7 +3268,11 @@ pub(crate) fn file_exchange_result(
         changed = true;
     }
     for mid in &result.sent {
-        mailbox.move_to(MailboxFolder::Outbox, MailboxFolder::Sent, &MessageId(mid.clone()))?;
+        mailbox.move_to(
+            MailboxFolder::Outbox,
+            MailboxFolder::Sent,
+            &MessageId(mid.clone()),
+        )?;
         changed = true;
     }
     if changed {
@@ -3361,7 +3483,10 @@ pub fn run_ardop_b2f_answer(
                 .collect())
         },
     )
-    .map_err(|e| BackendError::TransportFailed { reason: format!("{e}"), source: None })?;
+    .map_err(|e| BackendError::TransportFailed {
+        reason: format!("{e}"),
+        source: None,
+    })?;
 
     for message in &result.received {
         mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
@@ -3410,6 +3535,51 @@ pub fn run_vara_b2f_answer(
 ) -> Result<(), BackendError> {
     use std::io::BufReader;
 
+    // Thin wrapper over [`run_vara_b2f_answer_io`] — see
+    // [`run_vara_b2f_exchange`] for why the split exists (the listener's
+    // consumer task runs the answer on pre-cloned data halves while a
+    // concurrent PTT pump owns the transport's cmd socket, tuxlink-yrrjq).
+    let writer =
+        transport
+            .data_stream()
+            .try_clone()
+            .map_err(|e| BackendError::TransportFailed {
+                reason: format!("VARA data-socket try_clone failed: {e}"),
+                source: None,
+            })?;
+    let reader = BufReader::new(transport.data_stream().try_clone().map_err(|e| {
+        BackendError::TransportFailed {
+            reason: format!("VARA data-socket try_clone (reader) failed: {e}"),
+            source: None,
+        }
+    })?);
+    run_vara_b2f_answer_io(
+        reader,
+        writer,
+        peer_callsign,
+        config,
+        session_id,
+        mailbox,
+        position,
+        progress,
+    )
+}
+
+/// IO-generic core of [`run_vara_b2f_answer`]: the B2F answer exchange over
+/// already-split data-socket halves, so the listener's consumer task can key
+/// the rig from a concurrent PTT pump that owns the cmd socket while the
+/// answer turns run (tuxlink-yrrjq — the answer side transmits too).
+#[allow(clippy::too_many_arguments)]
+pub fn run_vara_b2f_answer_io(
+    mut reader: impl std::io::BufRead,
+    mut writer: impl std::io::Write,
+    peer_callsign: &str,
+    config: &Config,
+    session_id: &crate::identity::SessionIdentity,
+    mailbox: &Mailbox,
+    position: Option<&crate::position::PositionArbiter>,
+    progress: Option<&dyn Fn(&str)>,
+) -> Result<(), BackendError> {
     // tuxlink-0063 (Phase 3, Task 3.7): the on-air station ID is the session's
     // full callsign captured AT LISTENER-ARM TIME — not config.identity.active_full.
     // Threading `&SessionIdentity` makes on-air impersonation a compile error.
@@ -3436,30 +3606,6 @@ pub fn run_vara_b2f_answer(
         intent: SessionIntent::P2p,
     };
 
-    // Split the duplex VARA data socket into BufRead + Write halves.
-    // `try_clone` on a `TcpStream` returns a second handle to the same
-    // underlying socket; both halves share read+write buffers at the OS
-    // level. The B2F engine is strictly turn-based so the duplex split
-    // here is safe (only one side reads or writes at any instant).
-    let writer = transport
-        .data_stream()
-        .try_clone()
-        .map_err(|e| BackendError::TransportFailed {
-            reason: format!("VARA data-socket try_clone failed: {e}"),
-            source: None,
-        })?;
-    let reader = BufReader::new(
-        transport
-            .data_stream()
-            .try_clone()
-            .map_err(|e| BackendError::TransportFailed {
-                reason: format!("VARA data-socket try_clone (reader) failed: {e}"),
-                source: None,
-            })?,
-    );
-    let mut reader = reader;
-    let mut writer = writer;
-
     let result = session::run_exchange_with_role(
         &mut reader,
         &mut writer,
@@ -3474,7 +3620,10 @@ pub fn run_vara_b2f_answer(
         },
         None,
     )
-    .map_err(|e| BackendError::TransportFailed { reason: format!("{e:?}"), source: None })?;
+    .map_err(|e| BackendError::TransportFailed {
+        reason: format!("{e:?}"),
+        source: None,
+    })?;
 
     for message in &result.received {
         mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
@@ -3546,6 +3695,53 @@ pub fn run_vara_b2f_exchange(
 ) -> Result<(), BackendError> {
     use std::io::BufReader;
 
+    // Split the duplex VARA data socket into BufRead + Write halves.
+    // Same pattern as `run_vara_b2f_answer` — VARA's data socket is an
+    // OS-level TCP stream we can clone; the kernel arbitrates the duplex
+    // halves. The B2F engine is strictly turn-based so the split is safe
+    // (only one side reads or writes at any instant).
+    //
+    // Thin wrapper: the exchange itself lives in [`run_vara_b2f_exchange_io`]
+    // so the VARA dial path can run it on pre-cloned data halves while a
+    // concurrent PTT pump owns the transport's cmd socket (tuxlink-yrrjq).
+    let writer =
+        transport
+            .data_stream()
+            .try_clone()
+            .map_err(|e| BackendError::TransportFailed {
+                reason: format!("VARA data-socket try_clone failed: {e}"),
+                source: None,
+            })?;
+    let reader = BufReader::new(transport.data_stream().try_clone().map_err(|e| {
+        BackendError::TransportFailed {
+            reason: format!("VARA data-socket try_clone (reader) failed: {e}"),
+            source: None,
+        }
+    })?);
+    run_vara_b2f_exchange_io(
+        reader, writer, target, intent, config, session_id, mailbox, position, progress,
+    )
+}
+
+/// IO-generic core of [`run_vara_b2f_exchange`]: the B2F dial exchange over
+/// already-split data-socket reader/writer halves. Exists so the VARA dial
+/// path can drive the exchange on pre-cloned halves while a concurrent PTT
+/// pump owns the transport's cmd socket — VARA raises `PTT ON`/`PTT OFF` on
+/// the cmd port for the ENTIRE ARQ session, including mid-exchange, and the
+/// HOST must key the rig in response (tuxlink-yrrjq; VARA has no PTT
+/// mechanism of its own).
+#[allow(clippy::too_many_arguments)] // config + session_id together are one logical "session context"
+pub fn run_vara_b2f_exchange_io(
+    mut reader: impl std::io::BufRead,
+    mut writer: impl std::io::Write,
+    target: &str,
+    intent: SessionIntent,
+    config: &Config,
+    session_id: &crate::identity::SessionIdentity,
+    mailbox: &Mailbox,
+    position: Option<&crate::position::PositionArbiter>,
+    progress: Option<&dyn Fn(&str)>,
+) -> Result<(), BackendError> {
     // tuxlink-0063 (Phase 3, Task 3.7): the on-air station ID is the session's
     // full callsign — the Part 97 principal — not `config.identity.active_full`.
     // Threading `&SessionIdentity` makes on-air impersonation a compile error.
@@ -3588,30 +3784,6 @@ pub fn run_vara_b2f_exchange(
         password,
         intent,
     };
-
-    // Split the duplex VARA data socket into BufRead + Write halves.
-    // Same pattern as `run_vara_b2f_answer` — VARA's data socket is an
-    // OS-level TCP stream we can clone; the kernel arbitrates the duplex
-    // halves. The B2F engine is strictly turn-based so the split is safe
-    // (only one side reads or writes at any instant).
-    let writer = transport
-        .data_stream()
-        .try_clone()
-        .map_err(|e| BackendError::TransportFailed {
-            reason: format!("VARA data-socket try_clone failed: {e}"),
-            source: None,
-        })?;
-    let reader = BufReader::new(
-        transport
-            .data_stream()
-            .try_clone()
-            .map_err(|e| BackendError::TransportFailed {
-                reason: format!("VARA data-socket try_clone (reader) failed: {e}"),
-                source: None,
-            })?,
-    );
-    let mut reader = reader;
-    let mut writer = writer;
 
     let result = session::run_exchange_with_role(
         &mut reader,
@@ -3745,9 +3917,9 @@ mod mailbox_change_tests {
             .with_mailbox_change(Arc::new(move || {
                 notified_for_sink.fetch_add(1, Ordering::SeqCst);
             }));
-        backend.set_active_identity(SessionIdentity::full(
-            IdentityHandle::for_test(Callsign::parse("N7CPZ").unwrap()),
-        ));
+        backend.set_active_identity(SessionIdentity::full(IdentityHandle::for_test(
+            Callsign::parse("N7CPZ").unwrap(),
+        )));
 
         backend
             .send_message(OutboundMessage {
@@ -3776,7 +3948,9 @@ mod mailbox_change_tests {
             "outbound body",
             1_716_200_000,
         );
-        let queued_id = mailbox.store(MailboxFolder::Outbox, &queued.to_bytes()).unwrap();
+        let queued_id = mailbox
+            .store(MailboxFolder::Outbox, &queued.to_bytes())
+            .unwrap();
         let received = compose_message(
             "W1AW",
             &["N7CPZ"],
@@ -3797,7 +3971,8 @@ mod mailbox_change_tests {
             notified.fetch_add(1, Ordering::SeqCst);
         };
 
-        file_exchange_result(&mailbox, &result, SessionIntent::Cms, &notify).expect("files exchange result");
+        file_exchange_result(&mailbox, &result, SessionIntent::Cms, &notify)
+            .expect("files exchange result");
 
         assert_eq!(notified.load(Ordering::SeqCst), 1);
         assert_eq!(mailbox.list(MailboxFolder::Inbox).unwrap().len(), 1);
@@ -3814,8 +3989,13 @@ mod mailbox_change_tests {
             notified.fetch_add(1, Ordering::SeqCst);
         };
 
-        file_exchange_result(&mailbox, &session::ExchangeResult::default(), SessionIntent::Cms, &notify)
-            .expect("empty exchange is valid");
+        file_exchange_result(
+            &mailbox,
+            &session::ExchangeResult::default(),
+            SessionIntent::Cms,
+            &notify,
+        )
+        .expect("empty exchange is valid");
 
         assert_eq!(notified.load(Ordering::SeqCst), 0);
     }
@@ -3875,11 +4055,9 @@ mod mailbox_change_tests {
     fn exchange_result_progress_reports_no_traffic() {
         let lines = std::cell::RefCell::new(Vec::new());
 
-        emit_exchange_result_progress(
-            &session::ExchangeResult::default(),
-            &[],
-            &|line| lines.borrow_mut().push(line.to_string()),
-        );
+        emit_exchange_result_progress(&session::ExchangeResult::default(), &[], &|line| {
+            lines.borrow_mut().push(line.to_string())
+        });
 
         assert_eq!(lines.into_inner(), vec!["No messages exchanged."]);
     }
@@ -4003,7 +4181,9 @@ mod mailbox_change_tests {
 
         // Read the raw bytes from the Outbox and inspect the From header.
         let mailbox = &backend.mailbox;
-        let body = mailbox.read(MailboxFolder::Outbox, &id).expect("read stored message");
+        let body = mailbox
+            .read(MailboxFolder::Outbox, &id)
+            .expect("read stored message");
         let raw = String::from_utf8_lossy(&body.raw_rfc5322);
 
         assert!(
@@ -4095,8 +4275,16 @@ mod native_read_state_tests {
             elmer: crate::config::ElmerConfig::default(),
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
-            connect: ConnectConfig { connect_to_cms: false, transport: CmsTransport::Telnet, host: crate::config::default_cms_host() },
-            identity: IdentityConfig { active_full: None, identifier: None, grid: None },
+            connect: ConnectConfig {
+                connect_to_cms: false,
+                transport: CmsTransport::Telnet,
+                host: crate::config::default_cms_host(),
+            },
+            identity: IdentityConfig {
+                active_full: None,
+                identifier: None,
+                grid: None,
+            },
             privacy: PrivacyConfig {
                 gps_state: GpsState::Off,
                 position_precision: PositionPrecision::FourCharGrid,
@@ -4129,10 +4317,18 @@ mod native_read_state_tests {
         cfg.identity.grid = Some("CN87ux".to_string());
 
         cfg.privacy.position_precision = PositionPrecision::FourCharGrid;
-        assert_eq!(cms_locator(&cfg), "CN87", "default precision must broadcast 4-char");
+        assert_eq!(
+            cms_locator(&cfg),
+            "CN87",
+            "default precision must broadcast 4-char"
+        );
 
         cfg.privacy.position_precision = PositionPrecision::SixCharGrid;
-        assert_eq!(cms_locator(&cfg), "CN87ux", "opt-in precision broadcasts 6-char");
+        assert_eq!(
+            cms_locator(&cfg),
+            "CN87ux",
+            "opt-in precision broadcasts 6-char"
+        );
     }
 
     #[test]
@@ -4216,7 +4412,7 @@ mod native_read_state_tests {
     #[test]
     fn resolve_locator_arbiter_gps_no_fix_with_gps_off_falls_back_to_config_grid() {
         let cfg = cfg_with_grid("CN87ux"); // config has a grid; gps_state=Off
-        // Arbiter with GPS source but no fix yet.
+                                           // Arbiter with GPS source but no fix yet.
         let arbiter = crate::position::PositionArbiter::new(
             PositionSource::Gps,
             None, // no manual grid fallback either
@@ -4335,7 +4531,11 @@ mod native_read_state_tests {
     // source=Manual + gps_state=Off → arbiter's manual grid (broadcasts regardless).
     #[test]
     fn resolve_locator_manual_broadcasts_regardless_of_gps_state() {
-        for gps_state in [GpsState::Off, GpsState::LocalUiOnly, GpsState::BroadcastAtPrecision] {
+        for gps_state in [
+            GpsState::Off,
+            GpsState::LocalUiOnly,
+            GpsState::BroadcastAtPrecision,
+        ] {
             let cfg = cfg_with_grid_and_gps_state("DM33", gps_state);
             let arbiter = crate::position::PositionArbiter::new(
                 PositionSource::Manual,
@@ -4425,8 +4625,7 @@ mod native_read_state_tests {
         use crate::native_mailbox::FolderRef;
         let dir = tempdir().unwrap();
         let seed = Mailbox::new(dir.path());
-        let raw =
-            compose_message("N7CPZ", &["W1AW"], &[], "Bye", "body", 1_716_200_000).to_bytes();
+        let raw = compose_message("N7CPZ", &["W1AW"], &[], "Bye", "body", 1_716_200_000).to_bytes();
         let id = seed.store(MailboxFolder::Inbox, &raw).unwrap();
 
         let backend = NativeBackend::new(offline_config(), dir.path());
@@ -4573,7 +4772,10 @@ mod native_read_state_tests {
         // from the config (no env override, guarded above); the port is the listener's
         // ephemeral port (the test's stand-in for the resolve_cms_endpoint default).
         let host = resolve_cms_host(&cfg);
-        assert_eq!(host, "127.0.0.1", "dial host must be sourced from config.connect.host");
+        assert_eq!(
+            host, "127.0.0.1",
+            "dial host must be sourced from config.connect.host"
+        );
         let (_default_port, transport) = resolve_cms_endpoint(cfg.connect.transport, false, None);
         assert_eq!(
             transport,
@@ -4621,7 +4823,10 @@ mod native_read_state_tests {
     #[test]
     fn abort_aware_outcome_maps_error_to_cancelled_when_aborted() {
         let mapped = abort_aware_outcome(
-            Err(BackendError::TransportFailed { reason: "socket shutdown".into(), source: None }),
+            Err(BackendError::TransportFailed {
+                reason: "socket shutdown".into(),
+                source: None,
+            }),
             true,
         );
         assert!(matches!(mapped, Err(BackendError::Cancelled)));
@@ -4630,7 +4835,10 @@ mod native_read_state_tests {
     #[test]
     fn abort_aware_outcome_preserves_real_error_when_not_aborted() {
         let mapped = abort_aware_outcome(
-            Err(BackendError::TransportFailed { reason: "real failure".into(), source: None }),
+            Err(BackendError::TransportFailed {
+                reason: "real failure".into(),
+                source: None,
+            }),
             false,
         );
         assert!(matches!(mapped, Err(BackendError::TransportFailed { .. })));
@@ -4660,7 +4868,12 @@ mod native_read_state_tests {
         let backend = NativeBackend::new(offline_config(), dir.path());
         backend.connect_in_progress.store(true, Ordering::SeqCst);
         let result = backend
-            .connect(TransportConfig::Cms { mode: CmsTransport::Telnet }, None)
+            .connect(
+                TransportConfig::Cms {
+                    mode: CmsTransport::Telnet,
+                },
+                None,
+            )
             .await;
         assert!(
             matches!(result, Err(BackendError::BackendUnavailable { .. })),
@@ -4673,15 +4886,28 @@ mod native_read_state_tests {
     // never CMS-gated (the gate is a no-op and the connect proceeds to the dial).
     #[tokio::test]
     async fn tactical_unverified_is_refused_cms_without_dialing_but_full_is_not_gated() {
-        use crate::identity::{Callsign, FullIdentity, IdentityHandle, IdentityStore, SessionIdentity,
-            TacticalCmsState, TacticalIdentity, TacticalRegistrationVerifier};
+        use crate::identity::{
+            Callsign, FullIdentity, IdentityHandle, IdentityStore, SessionIdentity,
+            TacticalCmsState, TacticalIdentity, TacticalRegistrationVerifier,
+        };
         let tmp = tempfile::tempdir().unwrap();
         let store_path = tmp.path().join("identities.json");
         let mut store = IdentityStore::load(&store_path).unwrap();
-        store.add_full(FullIdentity { callsign: Callsign::parse("W1ABC").unwrap(), label: None,
-            has_cms_account: true, cms_registered: true }).unwrap();
-        store.add_tactical(TacticalIdentity { label: "EOC-3".into(),
-            parent: Callsign::parse("W1ABC").unwrap(), cms: TacticalCmsState::Unknown }).unwrap();
+        store
+            .add_full(FullIdentity {
+                callsign: Callsign::parse("W1ABC").unwrap(),
+                label: None,
+                has_cms_account: true,
+                cms_registered: true,
+            })
+            .unwrap();
+        store
+            .add_tactical(TacticalIdentity {
+                label: "EOC-3".into(),
+                parent: Callsign::parse("W1ABC").unwrap(),
+                cms: TacticalCmsState::Unknown,
+            })
+            .unwrap();
         store.save().unwrap();
 
         // Telnet + a loopback host => a closed plaintext port (8772) on the FULL
@@ -4689,35 +4915,54 @@ mod native_read_state_tests {
         // hanging on the real CMS. The gate runs before the dial regardless.
         let mut cfg = offline_config_with_callsign();
         cfg.connect.host = "127.0.0.1".to_string();
-        let backend = NativeBackend::new(cfg, tmp.path().join("mbox"))
-            .with_tactical_gate(
-                // dead URL + a key: a tactical Unknown while offline never calls verify anyway.
-                TacticalRegistrationVerifier::with_base_url("http://127.0.0.1:1/".into(), "K".into()),
-                store_path.clone(),
-                /*online=*/ false,
-            );
+        let backend = NativeBackend::new(cfg, tmp.path().join("mbox")).with_tactical_gate(
+            // dead URL + a key: a tactical Unknown while offline never calls verify anyway.
+            TacticalRegistrationVerifier::with_base_url("http://127.0.0.1:1/".into(), "K".into()),
+            store_path.clone(),
+            /*online=*/ false,
+        );
 
         // Active = tactical EOC-3 under W1ABC -> Unknown + offline -> Refuse, no dial.
         backend.set_active_identity(
-            SessionIdentity::tactical(IdentityHandle::for_test(Callsign::parse("W1ABC").unwrap()),
-                "EOC-3".into()).unwrap());
+            SessionIdentity::tactical(
+                IdentityHandle::for_test(Callsign::parse("W1ABC").unwrap()),
+                "EOC-3".into(),
+            )
+            .unwrap(),
+        );
         let err = backend
-            .connect(TransportConfig::Cms { mode: CmsTransport::Telnet }, None)
+            .connect(
+                TransportConfig::Cms {
+                    mode: CmsTransport::Telnet,
+                },
+                None,
+            )
             .await
             .unwrap_err();
-        assert!(matches!(err, BackendError::TacticalNotCmsRegistered { .. }), "got {err:?}");
+        assert!(
+            matches!(err, BackendError::TacticalNotCmsRegistered { .. }),
+            "got {err:?}"
+        );
 
         // Active = FULL W1ABC -> gate is a no-op; the connect proceeds to the dial and
         // fails with a TRANSPORT error (closed loopback port), NOT
         // TacticalNotCmsRegistered.
-        backend.set_active_identity(
-            SessionIdentity::full(IdentityHandle::for_test(Callsign::parse("W1ABC").unwrap())));
+        backend.set_active_identity(SessionIdentity::full(IdentityHandle::for_test(
+            Callsign::parse("W1ABC").unwrap(),
+        )));
         let full_res = backend
-            .connect(TransportConfig::Cms { mode: CmsTransport::Telnet }, None)
+            .connect(
+                TransportConfig::Cms {
+                    mode: CmsTransport::Telnet,
+                },
+                None,
+            )
             .await;
         if let Err(e) = full_res {
-            assert!(!matches!(e, BackendError::TacticalNotCmsRegistered { .. }),
-                "FULL identity must never be CMS-gated, got {e:?}");
+            assert!(
+                !matches!(e, BackendError::TacticalNotCmsRegistered { .. }),
+                "FULL identity must never be CMS-gated, got {e:?}"
+            );
         }
     }
 
@@ -4748,9 +4993,15 @@ mod native_read_state_tests {
         let err = backend
             .connect(
                 TransportConfig::Packet {
-                    link: KissLinkConfig::Tcp { host: addr.ip().to_string(), port: addr.port() },
+                    link: KissLinkConfig::Tcp {
+                        host: addr.ip().to_string(),
+                        port: addr.port(),
+                    },
                     ssid: 7,
-                    role: PacketRole::DialTo { call: "W7AUX".into(), path: vec![] },
+                    role: PacketRole::DialTo {
+                        call: "W7AUX".into(),
+                        path: vec![],
+                    },
                 },
                 None,
             )
@@ -4802,8 +5053,8 @@ mod native_read_state_tests {
             resolve_selection, InboundSelection, SelectionRegistry, UnselectedDisposition,
         };
         use crate::winlink::session::{
-            run_exchange_with_role, ExchangeConfig, ExchangeRole, OutboundMessage as SessionOutbound,
-            SessionIntent,
+            run_exchange_with_role, ExchangeConfig, ExchangeRole,
+            OutboundMessage as SessionOutbound, SessionIntent,
         };
         use crate::winlink::telnet::CMS_TARGET_CALL;
         use std::io::{BufRead, BufReader, Write};
@@ -4834,7 +5085,10 @@ mod native_read_state_tests {
             "pick me",
             1_716_300_000,
         );
-        let offered_mid = offered.header("Mid").expect("composed message has a Mid").to_string();
+        let offered_mid = offered
+            .header("Mid")
+            .expect("composed message has a Mid")
+            .to_string();
         let (proposal, compressed) = offered.to_proposal().expect("offered message → proposal");
         let server_outbound = vec![SessionOutbound {
             proposal,
@@ -4852,11 +5106,15 @@ mod native_read_state_tests {
             let (sock, _) = listener.accept().expect("accept");
             let mut writer = sock.try_clone().expect("clone for write");
             // Telnet login prompts, then read+discard the client's callsign+password.
-            writer.write_all(b"Callsign :\rPassword :\r").expect("write login prompts");
+            writer
+                .write_all(b"Callsign :\rPassword :\r")
+                .expect("write login prompts");
             let mut reader = BufReader::new(sock);
             for _ in 0..2 {
                 let mut line = Vec::new();
-                reader.read_until(b'\r', &mut line).expect("read login response");
+                reader
+                    .read_until(b'\r', &mut line)
+                    .expect("read login response");
             }
             let server_config = ExchangeConfig {
                 mycall: "W7AUX".into(),
@@ -4966,11 +5224,10 @@ mod native_read_state_tests {
         // tuxlink-0063 (Phase 3): native_connect now takes the session. The on-air
         // callsign comes from this session (N7CPZ), matching the prior config-derived
         // callsign so the exchange behavior is unchanged.
-        let session_id = crate::identity::SessionIdentity::full(
-            crate::identity::IdentityHandle::for_test(
+        let session_id =
+            crate::identity::SessionIdentity::full(crate::identity::IdentityHandle::for_test(
                 crate::identity::Callsign::parse("N7CPZ").unwrap(),
-            ),
-        );
+            ));
         let result = native_connect(
             &cfg,
             &session_id,
@@ -4996,22 +5253,36 @@ mod native_read_state_tests {
         // -------------------------------------------------------------------
         let log = events.lock().unwrap();
         let offer = log.iter().find_map(|e| match e {
-            B2fEvent::InboundProposalsOffered { proposals, attempt_id: a, .. } => {
-                Some((proposals.clone(), *a))
-            }
+            B2fEvent::InboundProposalsOffered {
+                proposals,
+                attempt_id: a,
+                ..
+            } => Some((proposals.clone(), *a)),
             _ => None,
         });
         let (dtos, evt_attempt) =
             offer.expect("an InboundProposalsOffered event must have been emitted");
-        assert_eq!(evt_attempt, attempt_id, "the event must carry the threaded attempt_id");
+        assert_eq!(
+            evt_attempt, attempt_id,
+            "the event must carry the threaded attempt_id"
+        );
         assert_eq!(dtos.len(), 1, "exactly one proposal was offered");
-        assert_eq!(dtos[0].mid, offered_mid, "the redacted DTO MID must match the offered MID");
+        assert_eq!(
+            dtos[0].mid, offered_mid,
+            "the redacted DTO MID must match the offered MID"
+        );
 
         // -------------------------------------------------------------------
         // Assertion (b): the selected message landed in the client's Inbox.
         // -------------------------------------------------------------------
-        let inbox = client_mailbox.list(MailboxFolder::Inbox).expect("list inbox");
-        assert_eq!(inbox.len(), 1, "the selected message must be in the Inbox; got {inbox:?}");
+        let inbox = client_mailbox
+            .list(MailboxFolder::Inbox)
+            .expect("list inbox");
+        assert_eq!(
+            inbox.len(),
+            1,
+            "the selected message must be in the Inbox; got {inbox:?}"
+        );
     }
 
     // =========================================================================
@@ -5047,11 +5318,17 @@ mod native_read_state_tests {
                 let (sock, _) = listener.accept().expect("accept");
                 let mut writer = sock.try_clone().expect("clone for write");
                 // Prompt for the callsign, read the client's reply, capture it, close.
-                writer.write_all(b"Callsign :\r").expect("write callsign prompt");
+                writer
+                    .write_all(b"Callsign :\r")
+                    .expect("write callsign prompt");
                 let mut reader = BufReader::new(sock);
                 let mut line = Vec::new();
-                reader.read_until(b'\r', &mut line).expect("read callsign reply");
-                let call = String::from_utf8_lossy(&line).trim_end_matches('\r').to_string();
+                reader
+                    .read_until(b'\r', &mut line)
+                    .expect("read callsign reply");
+                let call = String::from_utf8_lossy(&line)
+                    .trim_end_matches('\r')
+                    .to_string();
                 *captured.lock().unwrap() = Some(call);
                 // Drop the socket: the client's login/exchange then errors out.
             })
@@ -5143,11 +5420,17 @@ mod native_read_state_tests {
                 let (sock, _) = listener.accept().expect("accept");
                 let mut writer = sock.try_clone().expect("clone for write");
                 // Prompt for the callsign, read the client's reply, capture it, close.
-                writer.write_all(b"Callsign :\r").expect("write callsign prompt");
+                writer
+                    .write_all(b"Callsign :\r")
+                    .expect("write callsign prompt");
                 let mut reader = BufReader::new(sock);
                 let mut line = Vec::new();
-                reader.read_until(b'\r', &mut line).expect("read callsign reply");
-                let call = String::from_utf8_lossy(&line).trim_end_matches('\r').to_string();
+                reader
+                    .read_until(b'\r', &mut line)
+                    .expect("read callsign reply");
+                let call = String::from_utf8_lossy(&line)
+                    .trim_end_matches('\r')
+                    .to_string();
                 *captured.lock().unwrap() = Some(call);
                 // Drop the socket: the client's login/exchange then errors out.
             })
@@ -5198,8 +5481,10 @@ mod native_read_state_tests {
     // fake server needed — the gate returns before the socket opens).
     #[tokio::test]
     async fn cms_connect_test_refuses_unverified_tactical_without_dialing() {
-        use crate::identity::{Callsign, FullIdentity, IdentityHandle, IdentityStore, SessionIdentity,
-            TacticalCmsState, TacticalIdentity, TacticalRegistrationVerifier};
+        use crate::identity::{
+            Callsign, FullIdentity, IdentityHandle, IdentityStore, SessionIdentity,
+            TacticalCmsState, TacticalIdentity, TacticalRegistrationVerifier,
+        };
         use crate::winlink::b2f_events::{AttemptId, B2fEvent, B2fEventSink};
 
         struct NoopSink;
@@ -5210,21 +5495,39 @@ mod native_read_state_tests {
         let tmp = tempfile::tempdir().unwrap();
         let store_path = tmp.path().join("identities.json");
         let mut store = IdentityStore::load(&store_path).unwrap();
-        store.add_full(FullIdentity { callsign: Callsign::parse("W1ABC").unwrap(), label: None,
-            has_cms_account: true, cms_registered: true }).unwrap();
-        store.add_tactical(TacticalIdentity { label: "EOC-3".into(),
-            parent: Callsign::parse("W1ABC").unwrap(), cms: TacticalCmsState::Unknown }).unwrap();
+        store
+            .add_full(FullIdentity {
+                callsign: Callsign::parse("W1ABC").unwrap(),
+                label: None,
+                has_cms_account: true,
+                cms_registered: true,
+            })
+            .unwrap();
+        store
+            .add_tactical(TacticalIdentity {
+                label: "EOC-3".into(),
+                parent: Callsign::parse("W1ABC").unwrap(),
+                cms: TacticalCmsState::Unknown,
+            })
+            .unwrap();
         store.save().unwrap();
 
         let backend = NativeBackend::new(offline_config_with_callsign(), tmp.path().join("mbox"))
             .with_tactical_gate(
-                TacticalRegistrationVerifier::with_base_url("http://127.0.0.1:1/".into(), "K".into()),
+                TacticalRegistrationVerifier::with_base_url(
+                    "http://127.0.0.1:1/".into(),
+                    "K".into(),
+                ),
                 store_path.clone(),
                 /*online=*/ false,
             );
         backend.set_active_identity(
-            SessionIdentity::tactical(IdentityHandle::for_test(Callsign::parse("W1ABC").unwrap()),
-                "EOC-3".into()).unwrap());
+            SessionIdentity::tactical(
+                IdentityHandle::for_test(Callsign::parse("W1ABC").unwrap()),
+                "EOC-3".into(),
+            )
+            .unwrap(),
+        );
 
         let events: std::sync::Arc<dyn crate::winlink::b2f_events::B2fEventSink> =
             std::sync::Arc::new(NoopSink);
@@ -5232,8 +5535,10 @@ mod native_read_state_tests {
             .cms_connect_test(events, AttemptId::fresh())
             .await
             .unwrap_err();
-        assert!(matches!(err, BackendError::TacticalNotCmsRegistered { .. }),
-            "a tactical session must be refused by the CMS password test too; got {err:?}");
+        assert!(
+            matches!(err, BackendError::TacticalNotCmsRegistered { .. }),
+            "a tactical session must be refused by the CMS password test too; got {err:?}"
+        );
     }
 
     // =========================================================================
@@ -5247,21 +5552,48 @@ mod native_read_state_tests {
         let resolved = resolve_packet_endpoint(
             "N7CPZ",
             7,
-            PacketRole::DialTo { call: "W7AUX".into(), path: vec!["RELAY-1".into()] },
+            PacketRole::DialTo {
+                call: "W7AUX".into(),
+                path: vec!["RELAY-1".into()],
+            },
         )
         .unwrap();
-        assert_eq!(resolved.link_mycall, Address { call: "N7CPZ".into(), ssid: 7 });
+        assert_eq!(
+            resolved.link_mycall,
+            Address {
+                call: "N7CPZ".into(),
+                ssid: 7
+            }
+        );
         assert_eq!(resolved.base_mycall, "N7CPZ");
         assert_eq!(resolved.role, ExchangeRole::Dial);
         let (target, digis) = resolved.dial.unwrap();
-        assert_eq!(target, Address { call: "W7AUX".into(), ssid: 0 });
-        assert_eq!(digis, vec![Address { call: "RELAY".into(), ssid: 1 }]);
+        assert_eq!(
+            target,
+            Address {
+                call: "W7AUX".into(),
+                ssid: 0
+            }
+        );
+        assert_eq!(
+            digis,
+            vec![Address {
+                call: "RELAY".into(),
+                ssid: 1
+            }]
+        );
     }
 
     #[test]
     fn resolve_packet_endpoint_listen_yields_answer_role_and_no_target() {
         let resolved = resolve_packet_endpoint("N7CPZ", 7, PacketRole::Listen).unwrap();
-        assert_eq!(resolved.link_mycall, Address { call: "N7CPZ".into(), ssid: 7 });
+        assert_eq!(
+            resolved.link_mycall,
+            Address {
+                call: "N7CPZ".into(),
+                ssid: 7
+            }
+        );
         assert_eq!(resolved.base_mycall, "N7CPZ");
         assert_eq!(resolved.role, ExchangeRole::Answer);
         assert!(resolved.dial.is_none());
@@ -5300,7 +5632,10 @@ mod native_read_state_tests {
         let resolved = resolve_packet_endpoint(
             session_id.mycall().as_str(),
             7,
-            PacketRole::DialTo { call: "W7AUX".into(), path: vec![] },
+            PacketRole::DialTo {
+                call: "W7AUX".into(),
+                path: vec![],
+            },
         )
         .unwrap();
         assert_eq!(
@@ -5309,7 +5644,10 @@ mod native_read_state_tests {
         );
         assert_eq!(
             resolved.link_mycall,
-            Address { call: "N7CPZ".into(), ssid: 7 },
+            Address {
+                call: "N7CPZ".into(),
+                ssid: 7
+            },
             "link address must carry the session call + SSID"
         );
     }
@@ -5350,18 +5688,18 @@ mod native_read_state_tests {
         let mut dialer_cfg = config_with_call("W7AUX");
         dialer_cfg.connect.host = "127.0.0.1".to_string();
         let dialer = NativeBackend::new(dialer_cfg, dialer_dir.path());
-        dialer.set_active_identity(SessionIdentity::full(
-            IdentityHandle::for_test(Callsign::parse("N7CPZ").unwrap()),
-        ));
+        dialer.set_active_identity(SessionIdentity::full(IdentityHandle::for_test(
+            Callsign::parse("N7CPZ").unwrap(),
+        )));
 
         // Answerer: config and session both say W7AUX (no identity split here).
         let answerer = NativeBackend::new(config_with_call("W7AUX"), answerer_dir.path())
             .with_packet_allowlist(
                 crate::winlink::listener::AllowedStations::new().with_allow_all(true),
             );
-        answerer.set_active_identity(SessionIdentity::full(
-            IdentityHandle::for_test(Callsign::parse("W7AUX").unwrap()),
-        ));
+        answerer.set_active_identity(SessionIdentity::full(IdentityHandle::for_test(
+            Callsign::parse("W7AUX").unwrap(),
+        )));
 
         let listen = TransportConfig::Packet {
             link: KissLinkConfig::Tcp {
@@ -5377,7 +5715,10 @@ mod native_read_state_tests {
                 port: wire.port(),
             },
             ssid: 7,
-            role: PacketRole::DialTo { call: "W7AUX-7".into(), path: vec![] },
+            role: PacketRole::DialTo {
+                call: "W7AUX-7".into(),
+                path: vec![],
+            },
         };
 
         let outcome = tokio::time::timeout(std::time::Duration::from_secs(15), async {
@@ -5392,8 +5733,14 @@ mod native_read_state_tests {
 
         // The message in the answerer's inbox must have From: N7CPZ — the session
         // callsign — NOT W7AUX (the dialer's config callsign).
-        let inbox = Mailbox::new(answerer_dir.path()).list(MailboxFolder::Inbox).unwrap();
-        assert_eq!(inbox.len(), 1, "answerer inbox must hold exactly one message; got {inbox:?}");
+        let inbox = Mailbox::new(answerer_dir.path())
+            .list(MailboxFolder::Inbox)
+            .unwrap();
+        assert_eq!(
+            inbox.len(),
+            1,
+            "answerer inbox must hold exactly one message; got {inbox:?}"
+        );
         assert_eq!(
             inbox[0].from.trim().to_uppercase(),
             "N7CPZ",
@@ -5417,10 +5764,15 @@ mod native_read_state_tests {
     }
     impl std::io::Write for FakeAx25Stream {
         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.outbound.lock().expect("fake outbound").extend_from_slice(buf);
+            self.outbound
+                .lock()
+                .expect("fake outbound")
+                .extend_from_slice(buf);
             Ok(buf.len())
         }
-        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
 
     #[test]
@@ -5440,11 +5792,11 @@ mod native_read_state_tests {
         let result = native_packet_exchange(
             stream,
             PacketConnectCtx {
-                base_mycall: "N7CPZ",   // base B2F call (NO ssid)
-                targetcall: "W7AUX",    // target call (gateway)
+                base_mycall: "N7CPZ", // base B2F call (NO ssid)
+                targetcall: "W7AUX",  // target call (gateway)
                 password: Some("MYPASS".into()),
                 role: ExchangeRole::Dial,
-                locator: "CN87",        // controller directive: pass cms_locator
+                locator: "CN87", // controller directive: pass cms_locator
             },
             &mailbox,
             &|_| {},
@@ -5503,7 +5855,10 @@ mod native_read_state_tests {
             &|_| {},
             &|_| {},
         );
-        assert!(result.is_ok(), "answer exchange must succeed, got {result:?}");
+        assert!(
+            result.is_ok(),
+            "answer exchange must succeed, got {result:?}"
+        );
 
         // The received peer message was filed into the inbox.
         let inbox = mailbox.list(MailboxFolder::Inbox).unwrap();
@@ -5603,13 +5958,17 @@ mod native_read_state_tests {
         msg1.set_header("Mid", "MIXED00000A");
         msg1.set_header("Subject", "Msg A");
         msg1.set_body(b"Body A.\r\n".to_vec());
-        mailbox.store(MailboxFolder::Outbox, &msg1.to_bytes()).expect("store msg A");
+        mailbox
+            .store(MailboxFolder::Outbox, &msg1.to_bytes())
+            .expect("store msg A");
 
         let mut msg2 = WMessage::new();
         msg2.set_header("Mid", "MIXED00000B");
         msg2.set_header("Subject", "Msg B");
         msg2.set_body(b"Body B.\r\n".to_vec());
-        mailbox.store(MailboxFolder::Outbox, &msg2.to_bytes()).expect("store msg B");
+        mailbox
+            .store(MailboxFolder::Outbox, &msg2.to_bytes())
+            .expect("store msg B");
 
         // Scripted gateway (Dial role): `FS YN` — first proposal accepted, second rejected.
         // Filesystem enumeration order determines which MID is "first"; both orderings
@@ -5644,17 +6003,26 @@ mod native_read_state_tests {
             Err(BackendError::MessageRejected(ref msg)) => {
                 // Extract the one rejected MID from the error string.
                 let candidates = ["MIXED00000A", "MIXED00000B"];
-                let found: Vec<&str> = candidates.iter().copied()
+                let found: Vec<&str> = candidates
+                    .iter()
+                    .copied()
                     .filter(|m| msg.contains(m))
                     .collect();
-                assert_eq!(found.len(), 1,
-                    "MessageRejected must name exactly one of our two MIDs; got: {msg:?}");
+                assert_eq!(
+                    found.len(),
+                    1,
+                    "MessageRejected must name exactly one of our two MIDs; got: {msg:?}"
+                );
                 found[0].to_string()
             }
             other => panic!("expected BackendError::MessageRejected, got {other:?}"),
         };
 
-        let accepted_mid = if rejected_mid == "MIXED00000A" { "MIXED00000B" } else { "MIXED00000A" };
+        let accepted_mid = if rejected_mid == "MIXED00000A" {
+            "MIXED00000B"
+        } else {
+            "MIXED00000A"
+        };
 
         // The accepted MID must be in Sent — NOT left in Outbox.
         let sent = mailbox.list(MailboxFolder::Sent).unwrap();
@@ -5685,8 +6053,16 @@ mod native_read_state_tests {
             elmer: crate::config::ElmerConfig::default(),
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
-            connect: ConnectConfig { connect_to_cms: true, transport: CmsTransport::Telnet, host: crate::config::default_cms_host() },
-            identity: IdentityConfig { active_full: Some("N7CPZ".into()), identifier: None, grid: None },
+            connect: ConnectConfig {
+                connect_to_cms: true,
+                transport: CmsTransport::Telnet,
+                host: crate::config::default_cms_host(),
+            },
+            identity: IdentityConfig {
+                active_full: Some("N7CPZ".into()),
+                identifier: None,
+                grid: None,
+            },
             privacy: PrivacyConfig {
                 gps_state: GpsState::Off,
                 position_precision: PositionPrecision::FourCharGrid,
@@ -5729,11 +6105,20 @@ mod native_read_state_tests {
             ),
         ));
         let err = backend
-            .connect(TransportConfig::Packet {
-                link: KissLinkConfig::Tcp { host: addr.ip().to_string(), port: addr.port() },
-                ssid: 7,
-                role: PacketRole::DialTo { call: "W7AUX".into(), path: vec![] },
-            }, None)
+            .connect(
+                TransportConfig::Packet {
+                    link: KissLinkConfig::Tcp {
+                        host: addr.ip().to_string(),
+                        port: addr.port(),
+                    },
+                    ssid: 7,
+                    role: PacketRole::DialTo {
+                        call: "W7AUX".into(),
+                        path: vec![],
+                    },
+                },
+                None,
+            )
             .await
             .unwrap_err();
         assert!(
@@ -5776,11 +6161,20 @@ mod native_read_state_tests {
         ));
 
         let err = backend
-            .connect(TransportConfig::Packet {
-                link: KissLinkConfig::Tcp { host: addr.ip().to_string(), port: addr.port() },
-                ssid: 7,
-                role: PacketRole::DialTo { call: "W7AUX".into(), path: vec![] },
-            }, None)
+            .connect(
+                TransportConfig::Packet {
+                    link: KissLinkConfig::Tcp {
+                        host: addr.ip().to_string(),
+                        port: addr.port(),
+                    },
+                    ssid: 7,
+                    role: PacketRole::DialTo {
+                        call: "W7AUX".into(),
+                        path: vec![],
+                    },
+                },
+                None,
+            )
             .await
             .unwrap_err();
 
@@ -5798,13 +6192,22 @@ mod native_read_state_tests {
     #[test]
     fn packet_dial_selects_dial_role_and_listen_selects_answer_role() {
         assert_eq!(
-            resolve_packet_endpoint("N7CPZ", 7, PacketRole::DialTo { call: "W7AUX".into(), path: vec![] })
-                .unwrap()
-                .role,
+            resolve_packet_endpoint(
+                "N7CPZ",
+                7,
+                PacketRole::DialTo {
+                    call: "W7AUX".into(),
+                    path: vec![]
+                }
+            )
+            .unwrap()
+            .role,
             ExchangeRole::Dial
         );
         assert_eq!(
-            resolve_packet_endpoint("N7CPZ", 7, PacketRole::Listen).unwrap().role,
+            resolve_packet_endpoint("N7CPZ", 7, PacketRole::Listen)
+                .unwrap()
+                .role,
             ExchangeRole::Answer
         );
     }
@@ -5894,9 +6297,15 @@ mod native_read_state_tests {
         let dialer_dir = tempdir().unwrap();
         let answerer_dir = tempdir().unwrap();
         let seed = Mailbox::new(dialer_dir.path());
-        let raw =
-            compose_message("N7CPZ", &["W7AUX"], &[], "AX25-E2E", "hello over packet", 1_716_200_000)
-                .to_bytes();
+        let raw = compose_message(
+            "N7CPZ",
+            &["W7AUX"],
+            &[],
+            "AX25-E2E",
+            "hello over packet",
+            1_716_200_000,
+        )
+        .to_bytes();
         seed.store(MailboxFolder::Outbox, &raw).unwrap();
 
         let dialer = NativeBackend::new(config_with_call("N7CPZ"), dialer_dir.path());
@@ -5922,14 +6331,23 @@ mod native_read_state_tests {
         ));
 
         let listen = TransportConfig::Packet {
-            link: KissLinkConfig::Tcp { host: wire.ip().to_string(), port: wire.port() },
+            link: KissLinkConfig::Tcp {
+                host: wire.ip().to_string(),
+                port: wire.port(),
+            },
             ssid: 7,
             role: PacketRole::Listen,
         };
         let dial = TransportConfig::Packet {
-            link: KissLinkConfig::Tcp { host: wire.ip().to_string(), port: wire.port() },
+            link: KissLinkConfig::Tcp {
+                host: wire.ip().to_string(),
+                port: wire.port(),
+            },
             ssid: 7,
-            role: PacketRole::DialTo { call: "W7AUX-7".into(), path: vec![] },
+            role: PacketRole::DialTo {
+                call: "W7AUX-7".into(),
+                path: vec![],
+            },
         };
 
         // Watchdog: a handshake/connect deadlock must fail the test, not hang cargo.
@@ -5945,15 +6363,23 @@ mod native_read_state_tests {
 
         // The dialer's outbound message must have crossed the real TCP+KISS+AX.25
         // wire into the answerer's inbox (proves the full chain ran).
-        let inbox = Mailbox::new(answerer_dir.path()).list(MailboxFolder::Inbox).unwrap();
+        let inbox = Mailbox::new(answerer_dir.path())
+            .list(MailboxFolder::Inbox)
+            .unwrap();
         assert_eq!(
             inbox.len(),
             1,
             "answerer inbox should hold the one message that crossed the wire; got {inbox:?}"
         );
         // ...and the dialer must have filed it as Sent (proves the proposal was acked).
-        let sent = Mailbox::new(dialer_dir.path()).list(MailboxFolder::Sent).unwrap();
-        assert_eq!(sent.len(), 1, "dialer Sent should hold the acked message; got {sent:?}");
+        let sent = Mailbox::new(dialer_dir.path())
+            .list(MailboxFolder::Sent)
+            .unwrap();
+        assert_eq!(
+            sent.len(),
+            1,
+            "dialer Sent should hold the acked message; got {sent:?}"
+        );
     }
 
     // A reader that mimics Ax25Stream's defect-J behaviour: it returns Ok(0) for
@@ -5998,9 +6424,16 @@ mod native_read_state_tests {
         });
         let mut buf = [0u8; 8];
         let n = std::io::Read::read(&mut s, &mut buf).unwrap();
-        assert_eq!(&buf[..n], b"FF\r", "must block through transient Ok(0), not EOF early");
+        assert_eq!(
+            &buf[..n],
+            b"FF\r",
+            "must block through transient Ok(0), not EOF early"
+        );
         let n2 = std::io::Read::read(&mut s, &mut buf).unwrap();
-        assert_eq!(n2, 0, "Ok(0) while the link is closed must surface as a real EOF");
+        assert_eq!(
+            n2, 0,
+            "Ok(0) while the link is closed must surface as a real EOF"
+        );
     }
 
     #[test]
@@ -6008,7 +6441,10 @@ mod native_read_state_tests {
         use crate::identity::{Callsign, IdentityHandle, SessionIdentity};
         let backend = NativeBackend::new(offline_config(), tempfile::tempdir().unwrap().path());
         // Empty at construction -> NoActiveIdentity.
-        assert!(matches!(backend.active_identity(), Err(BackendError::NoActiveIdentity)));
+        assert!(matches!(
+            backend.active_identity(),
+            Err(BackendError::NoActiveIdentity)
+        ));
         let handle: IdentityHandle = IdentityHandle::for_test(Callsign::parse("N7CPZ").unwrap());
         backend.set_active_identity(SessionIdentity::full(handle));
         let active = backend.active_identity().expect("active set");
@@ -6089,20 +6525,32 @@ mod native_read_state_tests {
                 self.captured.extend_from_slice(buf);
                 Ok(buf.len())
             }
-            fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
         }
 
         struct ScriptedTransport {
             duplex: ScriptedDuplex,
         }
         impl ModemTransport for ScriptedTransport {
-            fn init(&mut self, _: &InitConfig) -> Result<(), SessionError> { Ok(()) }
-            fn connect_arq(&mut self, _: &str, _: u32, _: Option<Duration>)
-                -> Result<ConnectInfo, SessionError>
-            {
-                Ok(ConnectInfo { peer_call: "W7RMS-10".into(), bandwidth_hz: 500 })
+            fn init(&mut self, _: &InitConfig) -> Result<(), SessionError> {
+                Ok(())
             }
-            fn disconnect(&mut self, _: Duration) -> Result<(), SessionError> { Ok(()) }
+            fn connect_arq(
+                &mut self,
+                _: &str,
+                _: u32,
+                _: Option<Duration>,
+            ) -> Result<ConnectInfo, SessionError> {
+                Ok(ConnectInfo {
+                    peer_call: "W7RMS-10".into(),
+                    bandwidth_hz: 500,
+                })
+            }
+            fn disconnect(&mut self, _: Duration) -> Result<(), SessionError> {
+                Ok(())
+            }
             fn data_stream(&mut self) -> std::io::Result<&mut dyn ReadWrite> {
                 Ok(&mut self.duplex)
             }
@@ -6193,20 +6641,32 @@ mod native_read_state_tests {
                 self.captured.extend_from_slice(buf);
                 Ok(buf.len())
             }
-            fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
         }
 
         struct ScriptedTransport {
             duplex: ScriptedDuplex,
         }
         impl ModemTransport for ScriptedTransport {
-            fn init(&mut self, _: &InitConfig) -> Result<(), SessionError> { Ok(()) }
-            fn connect_arq(&mut self, _: &str, _: u32, _: Option<Duration>)
-                -> Result<ConnectInfo, SessionError>
-            {
-                Ok(ConnectInfo { peer_call: "W7AUX".into(), bandwidth_hz: 500 })
+            fn init(&mut self, _: &InitConfig) -> Result<(), SessionError> {
+                Ok(())
             }
-            fn disconnect(&mut self, _: Duration) -> Result<(), SessionError> { Ok(()) }
+            fn connect_arq(
+                &mut self,
+                _: &str,
+                _: u32,
+                _: Option<Duration>,
+            ) -> Result<ConnectInfo, SessionError> {
+                Ok(ConnectInfo {
+                    peer_call: "W7AUX".into(),
+                    bandwidth_hz: 500,
+                })
+            }
+            fn disconnect(&mut self, _: Duration) -> Result<(), SessionError> {
+                Ok(())
+            }
             fn data_stream(&mut self) -> std::io::Result<&mut dyn ReadWrite> {
                 Ok(&mut self.duplex)
             }

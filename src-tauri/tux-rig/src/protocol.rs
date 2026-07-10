@@ -13,9 +13,15 @@ pub fn cmd_set_freq(hz: u64) -> String {
     format!("F {hz}\n")
 }
 
-/// `M <mode> 0` — set mode; passband `0` = rig default.
+/// `M <mode> -1` — set mode, passband `-1` = NO CHANGE to the rig's current
+/// filter width. Passband `0` ("backend default") is NOT neutral: hamlib's
+/// per-backend default width for packet/data modes on Yaesu engages the
+/// NARROW DSP filter — an uncommanded RX-bandwidth change that crushes a
+/// 2.3 kHz VARA waveform (tuxlink-ntzzk, operator-observed on the FT-710).
+/// The operator's filter is the operator's; Tuxlink sets only what was
+/// commanded (mode), never the width.
 pub fn cmd_set_mode(mode: Mode) -> String {
-    format!("M {} 0\n", mode.rigctl_str())
+    format!("M {} -1\n", mode.rigctl_str())
 }
 
 /// `T 1` / `T 0` — set PTT.
@@ -58,7 +64,10 @@ mod tests {
 
     #[test]
     fn set_mode_pktusb() {
-        assert_eq!(cmd_set_mode(Mode::PktUsb), "M PKTUSB 0\n");
+        // tuxlink-ntzzk: passband MUST be -1 (no change). 0 = hamlib backend
+        // default, which is the NARROW filter for packet modes on Yaesu — an
+        // uncommanded RX-width change that breaks VARA/ARDOP decode.
+        assert_eq!(cmd_set_mode(Mode::PktUsb), "M PKTUSB -1\n");
     }
 
     #[test]

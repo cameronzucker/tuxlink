@@ -147,7 +147,9 @@ pub fn validate_body(s: &str) -> Result<(), ValidationError> {
 /// Validate an ARDOP drive level: `0..=100`.
 pub fn validate_drive_level(v: u8) -> Result<(), ValidationError> {
     if v > 100 {
-        return Err(ValidationError::OutOfRange("drive_level 0..=100".to_string()));
+        return Err(ValidationError::OutOfRange(
+            "drive_level 0..=100".to_string(),
+        ));
     }
     Ok(())
 }
@@ -280,7 +282,10 @@ mod tests {
     fn simple_relative_dest_is_accepted_and_under_base() {
         let base = tempfile::tempdir().unwrap();
         let out = validate_attachment_dest(base.path(), "roster.txt").unwrap();
-        assert!(out.starts_with(base.path()), "result must be under the base");
+        assert!(
+            out.starts_with(base.path()),
+            "result must be under the base"
+        );
     }
 
     #[test]

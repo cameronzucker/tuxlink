@@ -157,15 +157,16 @@ pub mod test_support {
     use crate::ports::{
         AbortPort, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto, AudioDevicesDto,
         BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto, ChannelReliabilityDto,
-        ComposeDraftDto, ComposePort, ConfigPort, ConfigViewDto, DevicePort, DocsHitDto, EgressPort,
-        EgressPortError, FolderDto, GatewayAntennaDto, GatewayDto, GribRequestDto, LogLineDto,
-        LogPort, MailboxPort, MessageMetaDto, ModemStatusDto, PacketConfigDto, PacketWriteDto,
-        ParsedMessageDto, PathPredictionDto, PlatformInfoDto, PortError, PositionStatusDto,
-        PredictRequestDto, PredictionPort, PrinterDto, ProvisionPort, QsyCandidateDto, RigConfigDto,
-        RigStatusDto, SearchPort, SearchQueryDto, SearchResultsDto, SendFormDto, SerialDeviceDto,
-        SessionIntentDto, SolarSnapshotDto, StationFilterDto, StationListDto, StationModeDto,
-        StationPort, StatusPort, VaraCheckpointDto, VaraConfigDto, VaraInstallStatusDto,
-        VaraInstallSummaryDto, VaraProbeDto, VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
+        ComposeDraftDto, ComposePort, ConfigPort, ConfigViewDto, DevicePort, DocsHitDto,
+        EgressPort, EgressPortError, FolderDto, GatewayAntennaDto, GatewayDto, GribRequestDto,
+        LogLineDto, LogPort, MailboxPort, MessageMetaDto, ModemStatusDto, PacketConfigDto,
+        PacketWriteDto, ParsedMessageDto, PathPredictionDto, PlatformInfoDto, PortError,
+        PositionStatusDto, PredictRequestDto, PredictionPort, PrinterDto, ProvisionPort,
+        QsyCandidateDto, RigConfigDto, RigStatusDto, SearchPort, SearchQueryDto, SearchResultsDto,
+        SendFormDto, SerialDeviceDto, SessionIntentDto, SolarSnapshotDto, StationFilterDto,
+        StationListDto, StationModeDto, StationPort, StatusPort, VaraCheckpointDto, VaraConfigDto,
+        VaraInstallStatusDto, VaraInstallSummaryDto, VaraProbeDto, VaraStatusDto, VaraWriteDto,
+        WritePort, WritePortError,
     };
     use crate::validate::{
         validate_address, validate_attachment_dest, validate_body, validate_drive_level,
@@ -401,10 +402,18 @@ pub mod test_support {
                 is_default: true,
             }])
         }
-        async fn print_document(&self, _printer: String, _filename: String) -> Result<(), PortError> {
+        async fn print_document(
+            &self,
+            _printer: String,
+            _filename: String,
+        ) -> Result<(), PortError> {
             Ok(())
         }
-        async fn export_report(&self, filename: String, _content: String) -> Result<String, PortError> {
+        async fn export_report(
+            &self,
+            filename: String,
+            _content: String,
+        ) -> Result<String, PortError> {
             Ok(format!("/mock/reports/{filename}"))
         }
     }
@@ -489,6 +498,12 @@ pub mod test_support {
             _qsy_candidates: Option<Vec<QsyCandidateDto>>,
         ) -> Result<(), EgressPortError> {
             self.gated("vara_b2f_exchange").await
+        }
+        async fn vara_open_session(
+            &self,
+            _intent: SessionIntentDto,
+        ) -> Result<(), EgressPortError> {
+            self.gated("vara_open_session").await
         }
         async fn packet_connect(
             &self,
@@ -638,10 +653,7 @@ pub mod test_support {
         pub fn new(staged: Arc<AtomicBool>) -> Self {
             Self { staged }
         }
-        fn validate_recipients(
-            to: &[String],
-            cc: &[String],
-        ) -> Result<(), WritePortError> {
+        fn validate_recipients(to: &[String], cc: &[String]) -> Result<(), WritePortError> {
             for addr in to.iter().chain(cc.iter()) {
                 validate_address(addr)?;
             }
@@ -944,9 +956,14 @@ mod tests {
     #[test]
     fn tainting_makes_view_report_tainted() {
         let state = state_with(EgressGuard::with_clock(fixed_1000));
-        state.guard.taint(tuxlink_security::TaintReason::MessageRead);
+        state
+            .guard
+            .taint(tuxlink_security::TaintReason::MessageRead);
         let dto = server_info_view(&state);
-        assert!(dto.tainted, "after taint() the view must report tainted=true");
+        assert!(
+            dto.tainted,
+            "after taint() the view must report tainted=true"
+        );
     }
 
     #[test]
@@ -954,7 +971,9 @@ mod tests {
         // Taint must not clear the arm grant, and vice versa: both can be true.
         let state = state_with(EgressGuard::with_clock(fixed_1000));
         state.guard.arm(30);
-        state.guard.taint(tuxlink_security::TaintReason::MessageRead);
+        state
+            .guard
+            .taint(tuxlink_security::TaintReason::MessageRead);
         let dto = server_info_view(&state);
         assert!(dto.armed);
         assert!(dto.tainted);
@@ -969,7 +988,9 @@ mod tests {
             None,
             "un-tainted view has no taint_reason"
         );
-        state.guard.taint(tuxlink_security::TaintReason::MailboxList);
+        state
+            .guard
+            .taint(tuxlink_security::TaintReason::MailboxList);
         assert_eq!(
             server_info_view(&state).taint_reason.as_deref(),
             Some("mailbox_list"),

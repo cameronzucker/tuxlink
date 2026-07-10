@@ -23,7 +23,7 @@
 //! [`vara_status`] reads the snapshot WITHOUT acquiring the transport, so a
 //! UI poll never blocks on an in-flight start/stop.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -44,6 +44,7 @@ use crate::winlink::session::SessionIntent;
 use crate::winlink_backend::{LogLevel, LogSource};
 
 use super::command::{Bandwidth, OutboundCommand};
+use super::ptt::{self, PttSink, SharedPtt, UnkeyGuard, VaraPtt};
 use super::transport::{VaraConfig, VaraTransport};
 
 /// Append a session-log line to the durable buffer (assigning its `seq`) and
@@ -52,12 +53,7 @@ use super::transport::{VaraConfig, VaraTransport};
 /// `_ = app.emit(...)` swallows the emit error: failure to broadcast is
 /// non-fatal — the buffer's snapshot still has the line for late-mounting
 /// consumers.
-fn emit_vara_log(
-    app: &AppHandle,
-    buffer: &SessionLogState,
-    level: LogLevel,
-    message: String,
-) {
+fn emit_vara_log(app: &AppHandle, buffer: &SessionLogState, level: LogLevel, message: String) {
     crate::session_log_emit::emit(app, buffer, level, LogSource::Transport, message);
 }
 
@@ -736,9 +732,7 @@ impl VaraSession {
                 guard.heartbeat_shutdown = None;
                 guard.status = VaraStatus {
                     state: VaraState::SocketLost,
-                    last_error: Some(
-                        "VARA connection lost — reopen to reconnect".to_string(),
-                    ),
+                    last_error: Some("VARA connection lost — reopen to reconnect".to_string()),
                     bound_host,
                     bound_cmd_port,
                     listener_armed: false,
@@ -879,9 +873,7 @@ impl VaraSession {
             match guard.transport_owner {
                 TransportOwner::None => return Err("session not open".into()),
                 TransportOwner::ListenerInbound => {
-                    return Err(
-                        "modem busy — inbound exchange in progress".into()
-                    )
+                    return Err("modem busy — inbound exchange in progress".into())
                 }
                 TransportOwner::OutboundPending | TransportOwner::Outbound => {
                     return Err("outbound exchange already in flight".into())
@@ -921,10 +913,7 @@ impl VaraSession {
                 if let Ok(mut guard) = self.inner.lock() {
                     guard.transport_owner = TransportOwner::None;
                 }
-                return Err(
-                    "listener consumer task exited; session needs Close + reopen"
-                        .into(),
-                );
+                return Err("listener consumer task exited; session needs Close + reopen".into());
             }
             Err(_elapsed) => {
                 // Timeout — consumer wedged. Reset to None so a clean
@@ -1000,7 +989,10 @@ impl VaraSession {
     /// took it (there can only be one consumer task per session).
     #[cfg(test)]
     pub fn take_transport_return_rx(&self) -> Option<mpsc::Receiver<VaraTransport>> {
-        self.transport_return_rx.lock().ok().and_then(|mut g| g.take())
+        self.transport_return_rx
+            .lock()
+            .ok()
+            .and_then(|mut g| g.take())
     }
 
     /// Send `LISTEN ON` over the cmd socket while briefly holding the
@@ -1098,9 +1090,7 @@ impl VaraSession {
         // and not required for the interrupt contract).
         let cooperative = {
             let writer = guard.abort_writer.as_mut().expect("checked above");
-            writer
-                .write_all(b"ABORT\r")
-                .and_then(|()| writer.flush())
+            writer.write_all(b"ABORT\r").and_then(|()| writer.flush())
         };
         if cooperative.is_ok() {
             return Ok(());
@@ -1442,9 +1432,7 @@ pub fn spawn_vara_socket_heartbeat(
             let bound_cmd_port = guard.status.bound_cmd_port;
             guard.status = VaraStatus {
                 state: VaraState::SocketLost,
-                last_error: Some(
-                    "VARA connection lost — reopen to reconnect".to_string(),
-                ),
+                last_error: Some("VARA connection lost — reopen to reconnect".to_string()),
                 bound_host,
                 bound_cmd_port,
                 listener_armed: false,
@@ -1641,7 +1629,10 @@ pub fn vara_open_session_inner(
     // `VaraTransport::connect` (TCP connect, ~ms on localhost; bounded by
     // the 5s connect_timeout) — calls from the UI side are serialized so a
     // double-press on Start doesn't open two transports.
-    let mut guard = session.inner.lock().map_err(|e| format!("session lock poisoned: {e}"))?;
+    let mut guard = session
+        .inner
+        .lock()
+        .map_err(|e| format!("session lock poisoned: {e}"))?;
 
     // tuxlink-6urh2 v2: reject on owner too, not just `transport.is_some()`.
     // A listener consumer (or the drop-detection heartbeat, or an in-flight
@@ -1887,7 +1878,10 @@ pub fn vara_close_session_inner(
 pub fn vara_stop_session_inner(
     session: &std::sync::Arc<VaraSession>,
 ) -> Result<VaraStatus, String> {
-    let mut guard = session.inner.lock().map_err(|e| format!("session lock poisoned: {e}"))?;
+    let mut guard = session
+        .inner
+        .lock()
+        .map_err(|e| format!("session lock poisoned: {e}"))?;
 
     // Drop the transport (closes both sockets — TcpStream::Drop sends FIN).
     // We don't send DISCONNECT first because (a) DISCONNECT could trigger
@@ -2073,6 +2067,34 @@ pub async fn modem_vara_b2f_exchange(
         ),
     );
 
+    // ─── Resolve the host-side PTT keyer — FAIL-CLOSED (tuxlink-yrrjq) ──
+    // VARA is a soundcard modem with no PTT of its own: it raises
+    // `PTT ON`/`PTT OFF` on the cmd socket and the HOST must key the rig.
+    // Resolve the keyer from the operator's persisted PTT config BEFORE any
+    // session state is disturbed — if nothing can key, refuse the dial here
+    // with an actionable error instead of dead-airing into an unkeyed radio.
+    let ptt_cfg = config::read_config().map_err(|e| format!("read config failed: {e}"))?;
+    let keyer = ptt::resolve_vara_ptt(
+        &ptt_cfg.modem_ardop.clone().unwrap_or_default(),
+        &ptt_cfg.rig,
+    )
+    .map_err(|e| format!("VARA PTT not available — refusing to dial: {e}"))?;
+    let keyer_is_vox = matches!(keyer, VaraPtt::Vox);
+    emit_vara_log(
+        &app,
+        &log,
+        if keyer_is_vox {
+            LogLevel::Warn
+        } else {
+            LogLevel::Info
+        },
+        format!("VARA PTT: {}", keyer.describe()),
+    );
+    let keyer: SharedPtt = std::sync::Mutex::new(Box::new(keyer));
+    // Unkey on EVERY exit from this command — success, error, or panic
+    // unwind — so no path can leave the transmitter keyed.
+    let _unkey_guard = UnkeyGuard::new(&keyer);
+
     // tuxlink-pdnw (Codex Phase 3-4 P1 #4): snapshot the close-generation
     // BEFORE the transport take. If `vara_close_session_inner` runs during
     // this exchange, it will bump the generation; the guarded install-back
@@ -2094,7 +2116,10 @@ pub async fn modem_vara_b2f_exchange(
     // restores the status DTO with the same connection details the
     // operator saw before the exchange.
     let (snapshot_intent, snapshot_kind, snapshot_bound_host, snapshot_bound_cmd_port) = {
-        let guard = session.inner.lock().map_err(|e| format!("session lock poisoned: {e}"))?;
+        let guard = session
+            .inner
+            .lock()
+            .map_err(|e| format!("session lock poisoned: {e}"))?;
         (
             guard.active_intent,
             guard.active_transport_kind,
@@ -2115,8 +2140,7 @@ pub async fn modem_vara_b2f_exchange(
     // needs to drop into a yield branch on notify before the wire-in
     // is deadlock-safe).
     let mut transport = session.take_transport().ok_or_else(|| {
-        "VARA session not open — press Open Session (VARA HF/FM) before Send/Receive"
-            .to_string()
+        "VARA session not open — press Open Session (VARA HF/FM) before Send/Receive".to_string()
     })?;
 
     // Codex Phase 3-4 boundary P2 #4 (tuxlink-u1r7): mark the exchange
@@ -2139,6 +2163,7 @@ pub async fn modem_vara_b2f_exchange(
         intent,
         freq_hz,
         qsy_candidates,
+        &keyer,
     );
 
     // Always clear the exchange marker before cleanup (operator can read
@@ -2160,6 +2185,7 @@ pub async fn modem_vara_b2f_exchange(
         snapshot_intent,
         snapshot_kind,
         outcome,
+        &keyer,
     );
 
     match &result {
@@ -2224,6 +2250,7 @@ fn finish_vara_b2f_exchange(
     snapshot_intent: Option<SessionIntent>,
     snapshot_kind: Option<TransportKind>,
     outcome: VaraExchangeOutcome,
+    ptt: &SharedPtt,
 ) -> Result<(), String> {
     match outcome {
         VaraExchangeOutcome::ConnectFailed(msg) => {
@@ -2238,7 +2265,9 @@ fn finish_vara_b2f_exchange(
         other => {
             // Link was up (success or mid-EXCHANGE failure): tear down the ARQ
             // LINK only + guarded re-install so the open session survives.
-            let _ = vara_dial_disconnect(&mut transport);
+            // The keyer rides along: VARA keys the radio to transmit the
+            // disconnect frames, so the wind-down loop must service PTT too.
+            let _ = vara_dial_disconnect(&mut transport, ptt);
             if let Err(dropped) = session.install_transport_if_generation_matches(
                 transport,
                 close_gen_snapshot,
@@ -2281,6 +2310,7 @@ fn run_vara_b2f_with_transport(
     intent: SessionIntent,
     freq_hz: Option<u64>,
     qsy_candidates: Option<Vec<DialCandidate>>,
+    keyer: &SharedPtt,
 ) -> VaraExchangeOutcome {
     // tuxlink-n95sr #2: every early return BELOW (setup + the candidate walk) is
     // a CONNECT-class failure — the ARQ link never came up — so it maps to
@@ -2408,7 +2438,7 @@ fn run_vara_b2f_with_transport(
             return false;
         }
 
-        match send_connect_and_wait(app, log, transport, &mycall, &c.target) {
+        match send_connect_and_wait(app, log, transport, &mycall, &c.target, keyer) {
             Ok(()) => {
                 // Hold the rig for the exchange (DRA-100); `None` if released.
                 kept_rig = rig;
@@ -2429,7 +2459,7 @@ fn run_vara_b2f_with_transport(
                 // transport, so the modem cannot end up dual-calling. Result is
                 // ignored: the next attempt drops the transport regardless and
                 // the TCP FIN forces VARA to notice if the wind-down stalls.
-                let _ = vara_dial_disconnect(transport);
+                let _ = vara_dial_disconnect(transport, keyer);
                 // Release this candidate's rig before the next attempt so no
                 // rigctld is left holding the CAT serial.
                 drop(rig);
@@ -2478,18 +2508,107 @@ fn run_vara_b2f_with_transport(
     // Past here the ARQ link is UP: any failure is a mid-EXCHANGE failure
     // (`ExchangeFailed`) — the caller keeps the session Open for a retry — NOT a
     // terminal connect failure (tuxlink-n95sr #2).
-    match crate::winlink_backend::run_vara_b2f_exchange(
-        transport,
-        target,
-        intent,
-        &cfg,
-        &session_id,
-        &mailbox,
-        Some(&arbiter),
-        Some(&progress),
-    ) {
+    //
+    // tuxlink-yrrjq: VARA raises `PTT ON`/`PTT OFF` on the CMD socket for the
+    // ENTIRE ARQ session — including while the B2F turns run on the DATA
+    // socket. Pre-clone the data halves and hand the whole transport (and
+    // with it the cmd socket) to a concurrent PTT pump for the exchange
+    // window, so mid-exchange keying requests actually key the rig instead
+    // of buffering unread (the pre-fix behavior left the radio unkeyed —
+    // or, after a link drop, keyed — with nobody listening). The pump stops
+    // within one cmd-socket read-timeout tick (2 s) of the exchange
+    // returning.
+    let data_writer = match transport.data_stream().try_clone() {
+        Ok(w) => w,
+        Err(e) => {
+            return VaraExchangeOutcome::ExchangeFailed(format!(
+                "VARA data-socket try_clone failed: {e}"
+            ))
+        }
+    };
+    let data_reader = match transport.data_stream().try_clone() {
+        Ok(r) => r,
+        Err(e) => {
+            return VaraExchangeOutcome::ExchangeFailed(format!(
+                "VARA data-socket try_clone (reader) failed: {e}"
+            ))
+        }
+    };
+    let stop_pump = AtomicBool::new(false);
+    let exchange_result = std::thread::scope(|s| {
+        let pump = s.spawn(|| pump_vara_ptt_during_exchange(transport, keyer, &stop_pump));
+        let r = crate::winlink_backend::run_vara_b2f_exchange_io(
+            std::io::BufReader::new(data_reader),
+            data_writer,
+            target,
+            intent,
+            &cfg,
+            &session_id,
+            &mailbox,
+            Some(&arbiter),
+            Some(&progress),
+        );
+        stop_pump.store(true, Ordering::SeqCst);
+        let _ = pump.join();
+        r
+    });
+    match exchange_result {
         Ok(()) => VaraExchangeOutcome::Completed,
         Err(e) => VaraExchangeOutcome::ExchangeFailed(format!("VARA B2F exchange failed: {e}")),
+    }
+}
+
+/// Service VARA cmd-socket events while the B2F exchange runs on the data
+/// socket (tuxlink-yrrjq). VARA keeps raising `PTT ON`/`PTT OFF` here for
+/// its ARQ turns; with no reader during the exchange, a keying request
+/// would strand the radio unkeyed mid-turn (dead-air) or — after a link
+/// drop — keyed with nobody left to unkey it. Runs on a scoped thread that
+/// owns `&mut transport` (the exchange drives pre-cloned data halves);
+/// exits within one cmd-socket read-timeout tick of `stop` being set.
+pub(crate) fn pump_vara_ptt_during_exchange(
+    transport: &mut VaraTransport,
+    ptt: &SharedPtt,
+    stop: &AtomicBool,
+) {
+    use crate::winlink::modem::vara::command::InboundCommand;
+
+    while !stop.load(Ordering::SeqCst) {
+        match transport.recv() {
+            Ok(Some(InboundCommand::Ptt(on))) => {
+                if let Err(e) = ptt::lock_ptt(ptt).set_ptt(on) {
+                    // A failed KEY dead-airs this turn (the exchange will
+                    // time out and fail — bounded). A failed UNKEY risks a
+                    // stuck transmitter: log loudly; the UnkeyGuard in the
+                    // outer command retries the unkey on every exit path.
+                    tracing::error!(
+                        target: "tuxlink::winlink::modem::vara",
+                        on,
+                        error = %e,
+                        "VARA PTT keying failed mid-exchange"
+                    );
+                }
+            }
+            Ok(Some(InboundCommand::Disconnected)) => {
+                // Link dropped mid-exchange: force an unkey NOW rather than
+                // waiting for the data-socket EOF to unwind the exchange.
+                let _ = ptt::lock_ptt(ptt).set_ptt(false);
+            }
+            // Other async events (BUFFER / IAMALIVE / setter echoes /
+            // Unknown): recv() already logs them at debug.
+            Ok(Some(_)) => {}
+            // Read-timeout tick (per VaraConfig.read_timeout, 2 s) or EOF —
+            // loop re-checks `stop`.
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(
+                    target: "tuxlink::winlink::modem::vara",
+                    error = %e,
+                    "VARA cmd-port read error during exchange; stopping PTT pump"
+                );
+                let _ = ptt::lock_ptt(ptt).set_ptt(false);
+                break;
+            }
+        }
     }
 }
 
@@ -2525,6 +2644,7 @@ fn send_connect_and_wait(
     transport: &mut VaraTransport,
     mycall: &str,
     target: &str,
+    ptt: &SharedPtt,
 ) -> Result<(), String> {
     emit_vara_log(
         app,
@@ -2539,14 +2659,17 @@ fn send_connect_and_wait(
         })
         .map_err(|e| format!("VARA cmd-port CONNECT write failed: {e}"))?;
 
-    wait_for_connected(transport, target, VARA_CONNECT_DEADLINE)
+    wait_for_connected(transport, target, VARA_CONNECT_DEADLINE, ptt)
         .map_err(|e| format!("VARA CONNECT to {target} failed: {e}"))
 }
 
 /// Wait for the `CONNECTED <mycall> <target> [bw]` async event on the
-/// VARA cmd port, bounded by `deadline`. Absorbs interleaved PTT /
-/// BUFFER / PENDING / CANCELPENDING / LINK REGISTERED / IAMALIVE /
-/// Unknown events and keeps polling.
+/// VARA cmd port, bounded by `deadline`. Services interleaved `PTT ON` /
+/// `PTT OFF` by keying the rig through `ptt` (tuxlink-yrrjq — VARA has no
+/// PTT mechanism of its own; the host keys, and these events were
+/// previously absorbed, so no VARA dial ever reached the air). Absorbs
+/// BUFFER / PENDING / LINK REGISTERED / IAMALIVE / Unknown events and
+/// keeps polling.
 ///
 /// `CANCELPENDING` arriving before `CONNECTED` is the cancel-during-call
 /// path — surface as Err so the caller does not proceed to a data-socket
@@ -2561,6 +2684,7 @@ fn wait_for_connected(
     transport: &mut VaraTransport,
     target: &str,
     deadline: Duration,
+    ptt: &SharedPtt,
 ) -> Result<(), String> {
     use crate::winlink::modem::vara::command::InboundCommand;
     use std::time::Instant;
@@ -2618,7 +2742,20 @@ fn wait_for_connected(
             Ok(Some(InboundCommand::Offline)) => {
                 return Err("VARA reported OFFLINE — modem is not ready to transmit".into());
             }
-            // Absorb every other async event (PTT / BUFFER / PENDING /
+            Ok(Some(InboundCommand::Ptt(on))) => {
+                // VARA asks the HOST to key/unkey for its ConReq frames
+                // (tuxlink-yrrjq). A failed KEY means the dial would be
+                // dead-air — abort the candidate. A failed UNKEY risks a
+                // stuck transmitter — abort too; the caller's UnkeyGuard
+                // retries the unkey on unwind.
+                if let Err(e) = ptt::lock_ptt(ptt).set_ptt(on) {
+                    return Err(format!(
+                        "PTT {} failed while dialing {target}: {e}",
+                        if on { "key" } else { "unkey" }
+                    ));
+                }
+            }
+            // Absorb every other async event (BUFFER / PENDING /
             // CANCELPENDING already handled / LINK REGISTERED /
             // IAMALIVE / Unknown) and keep waiting.
             Ok(Some(_)) => continue,
@@ -2626,7 +2763,9 @@ fn wait_for_connected(
             // EOF: tick — re-check the deadline.
             Ok(None) => continue,
             Err(e) => {
-                return Err(format!("VARA cmd-port read error while awaiting CONNECTED: {e}"));
+                return Err(format!(
+                    "VARA cmd-port read error while awaiting CONNECTED: {e}"
+                ));
             }
         }
     }
@@ -2642,7 +2781,10 @@ fn wait_for_connected(
 /// end of a successful exchange; the cooperative `ABORT\r` side-channel
 /// (Task 4.1) is the in-flight interrupt path for the operator's Close
 /// Session click. They serve distinct purposes.
-fn vara_dial_disconnect(transport: &mut VaraTransport) -> Result<(), String> {
+pub(crate) fn vara_dial_disconnect(
+    transport: &mut VaraTransport,
+    ptt: &SharedPtt,
+) -> Result<(), String> {
     use crate::winlink::modem::vara::command::InboundCommand;
     use std::time::Instant;
 
@@ -2665,6 +2807,21 @@ fn vara_dial_disconnect(transport: &mut VaraTransport) -> Result<(), String> {
         }
         match transport.recv() {
             Ok(Some(InboundCommand::Disconnected)) => return Ok(()),
+            Ok(Some(InboundCommand::Ptt(on))) => {
+                // VARA keys the radio to transmit its disconnect frames
+                // (tuxlink-yrrjq). Best-effort during wind-down: a keying
+                // failure here only dead-airs the graceful goodbye (the
+                // deadline bounds it and the caller drops the transport);
+                // the UnkeyGuard in the outer command is the unkey backstop.
+                if let Err(e) = ptt::lock_ptt(ptt).set_ptt(on) {
+                    tracing::warn!(
+                        target: "tuxlink::winlink::modem::vara",
+                        on,
+                        error = %e,
+                        "PTT keying failed during DISCONNECT wind-down"
+                    );
+                }
+            }
             Ok(Some(_)) => continue,
             Ok(None) => continue,
             Err(e) => return Err(format!("VARA cmd-port read error during DISCONNECT: {e}")),
@@ -2807,7 +2964,11 @@ mod tests {
         ];
         let assembled = vara_dial_candidates("IGNORED", Some(3_580_000), Some(supplied));
         let clamped = clamp_connect_candidates(assembled);
-        assert_eq!(clamped.len(), 1, "only the operator-chosen channel survives");
+        assert_eq!(
+            clamped.len(),
+            1,
+            "only the operator-chosen channel survives"
+        );
         assert_eq!(clamped[0].target, "GW1");
         assert_eq!(clamped[0].freq_hz, Some(14_105_000));
     }
@@ -2830,7 +2991,10 @@ mod tests {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         assert!(info.vara_supported, "x86 should report vara_supported=true");
         #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-        assert!(!info.vara_supported, "non-x86 should report vara_supported=false");
+        assert!(
+            !info.vara_supported,
+            "non-x86 should report vara_supported=false"
+        );
     }
 
     #[test]
@@ -2854,16 +3018,28 @@ mod tests {
     #[test]
     fn bandwidth_from_hz_maps_documented_values() {
         // Standard VARA HF bandwidths.
-        assert!(bandwidth_from_hz(500).is_some(), "500 Hz is a documented narrow-HF bandwidth");
-        assert!(bandwidth_from_hz(2300).is_some(), "2300 Hz is VARA HF Standard");
-        assert!(bandwidth_from_hz(2750).is_some(), "2750 Hz is VARA HF Tactical");
+        assert!(
+            bandwidth_from_hz(500).is_some(),
+            "500 Hz is a documented narrow-HF bandwidth"
+        );
+        assert!(
+            bandwidth_from_hz(2300).is_some(),
+            "2300 Hz is VARA HF Standard"
+        );
+        assert!(
+            bandwidth_from_hz(2750).is_some(),
+            "2750 Hz is VARA HF Tactical"
+        );
     }
 
     #[test]
     fn bandwidth_from_hz_returns_none_for_unknown_value() {
         // A nonsense value: caller should skip the BW setter rather than
         // sending an unparseable bandwidth to VARA.
-        assert!(bandwidth_from_hz(42).is_none(), "unknown values must return None");
+        assert!(
+            bandwidth_from_hz(42).is_none(),
+            "unknown values must return None"
+        );
     }
 
     #[test]
@@ -2908,8 +3084,14 @@ mod tests {
         assert_eq!(snap.bound_host.as_deref(), Some("127.0.0.1"));
         // Failed open must NOT populate active_intent / active_transport_kind —
         // the fields only carry meaning for an open transport.
-        assert_eq!(snap.active_intent, None, "intent must not leak on failed open");
-        assert_eq!(snap.active_transport_kind, None, "transport_kind must not leak on failed open");
+        assert_eq!(
+            snap.active_intent, None,
+            "intent must not leak on failed open"
+        );
+        assert_eq!(
+            snap.active_transport_kind, None,
+            "transport_kind must not leak on failed open"
+        );
     }
 
     #[test]
@@ -3094,11 +3276,7 @@ mod tests {
         assert_eq!(session.snapshot().state, VaraState::Closed);
 
         // Return: state restored to Open with the bound info preserved.
-        session.return_transport(
-            taken.unwrap(),
-            Some("127.0.0.1".into()),
-            Some(cmd_port),
-        );
+        session.return_transport(taken.unwrap(), Some("127.0.0.1".into()), Some(cmd_port));
         let snap = session.snapshot();
         assert_eq!(snap.state, VaraState::Open);
         assert_eq!(snap.bound_host.as_deref(), Some("127.0.0.1"));
@@ -3120,7 +3298,12 @@ mod tests {
     //    session-restart bug-hunt explicitly called out). ──────────────────
     fn loopback_vara_transport(
         write_disconnected: bool,
-    ) -> (VaraTransport, u16, std::thread::JoinHandle<()>, std::thread::JoinHandle<()>) {
+    ) -> (
+        VaraTransport,
+        u16,
+        std::thread::JoinHandle<()>,
+        std::thread::JoinHandle<()>,
+    ) {
         use std::io::Write;
         use std::net::TcpListener;
         use std::thread;
@@ -3184,8 +3367,12 @@ mod tests {
     /// data acceptor still holds its connection open briefly (mirroring
     /// the sibling helper's scaffolding); the heartbeat only ever drains
     /// the cmd socket.
-    fn loopback_vara_transport_cmd_dies_immediately(
-    ) -> (VaraTransport, u16, std::thread::JoinHandle<()>, std::thread::JoinHandle<()>) {
+    fn loopback_vara_transport_cmd_dies_immediately() -> (
+        VaraTransport,
+        u16,
+        std::thread::JoinHandle<()>,
+        std::thread::JoinHandle<()>,
+    ) {
         use std::net::TcpListener;
         use std::thread;
         use std::time::Duration;
@@ -3307,8 +3494,12 @@ mod tests {
     /// correctly classifies a genuinely-alive peer as alive across several
     /// heartbeat ticks (re-installing the transport each time) rather than
     /// false-triggering `SocketLost`.
-    fn loopback_vara_transport_alive_with_keepalives(
-    ) -> (VaraTransport, u16, std::thread::JoinHandle<()>, std::thread::JoinHandle<()>) {
+    fn loopback_vara_transport_alive_with_keepalives() -> (
+        VaraTransport,
+        u16,
+        std::thread::JoinHandle<()>,
+        std::thread::JoinHandle<()>,
+    ) {
         use std::io::Write;
         use std::net::TcpListener;
         use std::thread;
@@ -3513,6 +3704,7 @@ mod tests {
             VaraExchangeOutcome::ConnectFailed(
                 "VARA disconnected before CONNECTED (modem may have rejected the dial)".into(),
             ),
+            &vox_keyer(),
         );
 
         assert!(r.is_err(), "a connect failure surfaces an Err");
@@ -3547,6 +3739,7 @@ mod tests {
             None,
             None,
             VaraExchangeOutcome::ExchangeFailed("VARA B2F exchange failed: boom".into()),
+            &vox_keyer(),
         );
 
         assert!(r.is_err(), "a mid-exchange failure surfaces an Err");
@@ -3561,6 +3754,212 @@ mod tests {
         );
 
         drop(session);
+        ch.join().unwrap();
+        dh.join().unwrap();
+    }
+
+    // ── tuxlink-yrrjq: VARA host-side PTT keying ────────────────────────
+    //
+    // VARA cannot key a radio: it raises `PTT ON`/`PTT OFF` on the cmd
+    // socket and the HOST must key. Before this fix those events were
+    // parsed and discarded everywhere, so no VARA dial ever keyed a
+    // transmitter — the flagship path could not reach the air by
+    // construction. These tests drive the dial/wind-down/pump loops from a
+    // scripted mock-VARA cmd socket and assert the keyer sees the events.
+
+    /// Recording PTT sink: appends every `set_ptt` bool; optionally fails.
+    struct RecordingSink {
+        calls: Arc<Mutex<Vec<bool>>>,
+        fail_with: Option<String>,
+    }
+
+    impl PttSink for RecordingSink {
+        fn set_ptt(&mut self, on: bool) -> Result<(), String> {
+            self.calls.lock().unwrap().push(on);
+            match &self.fail_with {
+                Some(e) => Err(e.clone()),
+                None => Ok(()),
+            }
+        }
+        fn describe(&self) -> String {
+            "recording test sink".into()
+        }
+    }
+
+    fn recording_keyer() -> (SharedPtt, Arc<Mutex<Vec<bool>>>) {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        (
+            Mutex::new(Box::new(RecordingSink {
+                calls: calls.clone(),
+                fail_with: None,
+            })),
+            calls,
+        )
+    }
+
+    fn failing_keyer() -> SharedPtt {
+        Mutex::new(Box::new(RecordingSink {
+            calls: Arc::new(Mutex::new(Vec::new())),
+            fail_with: Some("serial gone".into()),
+        }))
+    }
+
+    fn vox_keyer() -> SharedPtt {
+        Mutex::new(Box::new(VaraPtt::Vox))
+    }
+
+    /// Like [`loopback_vara_transport`] but the cmd acceptor writes an
+    /// arbitrary pre-scripted byte sequence on accept.
+    fn scripted_cmd_vara_transport(
+        cmd_script: &'static [u8],
+    ) -> (
+        VaraTransport,
+        std::thread::JoinHandle<()>,
+        std::thread::JoinHandle<()>,
+    ) {
+        use std::io::Write;
+        use std::net::TcpListener;
+        use std::thread;
+        use std::time::Duration;
+
+        let cmd_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let cmd_port = cmd_l.local_addr().unwrap().port();
+        let data_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let data_port = data_l.local_addr().unwrap().port();
+        let cmd_handle = thread::spawn(move || {
+            if let Ok((mut c, _)) = cmd_l.accept() {
+                let _ = c.write_all(cmd_script);
+                let _ = c.flush();
+                thread::sleep(Duration::from_millis(700));
+            }
+        });
+        let data_handle = thread::spawn(move || {
+            let _ = data_l.accept();
+            thread::sleep(Duration::from_millis(700));
+        });
+        let cfg = VaraConfig {
+            host: "127.0.0.1".into(),
+            cmd_port,
+            data_port,
+            connect_timeout: Duration::from_secs(2),
+            read_timeout: Some(Duration::from_millis(100)),
+        };
+        let transport = VaraTransport::connect(cfg).expect("connect must succeed");
+        (transport, cmd_handle, data_handle)
+    }
+
+    #[test]
+    fn wait_for_connected_keys_rig_on_ptt_events() {
+        // VARA keys for its ConReq frames during the dial: PTT ON → PTT OFF
+        // → CONNECTED. The keyer must see [true, false] and the dial succeed.
+        let (mut transport, ch, dh) =
+            scripted_cmd_vara_transport(b"PTT ON\rPTT OFF\rCONNECTED N7CPZ W1AW 2300\r");
+        let (keyer, calls) = recording_keyer();
+
+        let r = wait_for_connected(&mut transport, "W1AW", Duration::from_secs(5), &keyer);
+        assert!(r.is_ok(), "dial must succeed: {r:?}");
+        assert_eq!(
+            calls.lock().unwrap().as_slice(),
+            &[true, false],
+            "the rig must be keyed then unkeyed for the ConReq window"
+        );
+
+        drop(transport);
+        ch.join().unwrap();
+        dh.join().unwrap();
+    }
+
+    #[test]
+    fn wait_for_connected_aborts_dial_when_keying_fails() {
+        // A failed KEY means the dial would be dead-air (VARA modulating
+        // into an unkeyed radio) — the candidate must abort, not proceed.
+        let (mut transport, ch, dh) =
+            scripted_cmd_vara_transport(b"PTT ON\rCONNECTED N7CPZ W1AW 2300\r");
+        let keyer = failing_keyer();
+
+        let r = wait_for_connected(&mut transport, "W1AW", Duration::from_secs(5), &keyer);
+        let err = r.expect_err("keying failure must abort the dial");
+        assert!(
+            err.contains("PTT key failed"),
+            "error must name the keying failure: {err}"
+        );
+
+        drop(transport);
+        ch.join().unwrap();
+        dh.join().unwrap();
+    }
+
+    #[test]
+    fn vara_dial_disconnect_services_ptt_during_wind_down() {
+        // VARA keys the radio to transmit its disconnect frames; the
+        // wind-down loop must service PTT (best-effort) and still resolve
+        // on DISCONNECTED.
+        let (mut transport, ch, dh) =
+            scripted_cmd_vara_transport(b"PTT ON\rPTT OFF\rDISCONNECTED\r");
+        let (keyer, calls) = recording_keyer();
+
+        let r = vara_dial_disconnect(&mut transport, &keyer);
+        assert!(r.is_ok(), "wind-down must resolve on DISCONNECTED: {r:?}");
+        assert_eq!(
+            calls.lock().unwrap().as_slice(),
+            &[true, false],
+            "the disconnect frames' keying must reach the rig"
+        );
+
+        drop(transport);
+        ch.join().unwrap();
+        dh.join().unwrap();
+    }
+
+    #[test]
+    fn ptt_pump_keys_and_unkeys_during_exchange_window() {
+        // Codex 2026-07-09 #1: VARA raises PTT for the ENTIRE ARQ session,
+        // including while B2F runs on the data socket. The pump must service
+        // keying with the exchange elsewhere, and stop when told.
+        let (mut transport, ch, dh) = scripted_cmd_vara_transport(b"PTT ON\rPTT OFF\r");
+        let (keyer, calls) = recording_keyer();
+        let stop = AtomicBool::new(false);
+
+        std::thread::scope(|s| {
+            let pump = s.spawn(|| pump_vara_ptt_during_exchange(&mut transport, &keyer, &stop));
+            // Give the pump a few read-timeout ticks (100 ms each) to drain
+            // the script, then stop it — mirroring the exchange returning.
+            std::thread::sleep(Duration::from_millis(400));
+            stop.store(true, Ordering::SeqCst);
+            pump.join().expect("pump thread must not panic");
+        });
+
+        assert_eq!(
+            calls.lock().unwrap().as_slice(),
+            &[true, false],
+            "mid-exchange keying requests must reach the rig"
+        );
+
+        ch.join().unwrap();
+        dh.join().unwrap();
+    }
+
+    #[test]
+    fn ptt_pump_forces_unkey_on_disconnected() {
+        // A link drop mid-exchange must force an unkey NOW — not wait for
+        // the data-socket EOF to unwind the exchange.
+        let (mut transport, ch, dh) = scripted_cmd_vara_transport(b"PTT ON\rDISCONNECTED\r");
+        let (keyer, calls) = recording_keyer();
+        let stop = AtomicBool::new(false);
+
+        std::thread::scope(|s| {
+            let pump = s.spawn(|| pump_vara_ptt_during_exchange(&mut transport, &keyer, &stop));
+            std::thread::sleep(Duration::from_millis(400));
+            stop.store(true, Ordering::SeqCst);
+            pump.join().expect("pump thread must not panic");
+        });
+
+        assert_eq!(
+            calls.lock().unwrap().as_slice(),
+            &[true, false],
+            "DISCONNECTED after PTT ON must force an immediate unkey"
+        );
+
         ch.join().unwrap();
         dh.join().unwrap();
     }
@@ -3621,11 +4020,14 @@ mod tests {
     #[test]
     fn vara_abort_in_flight_writes_abort_as_first_command() {
         let session = VaraSession::new();
-        let captured: Arc<std::sync::Mutex<Vec<u8>>> =
-            Arc::new(std::sync::Mutex::new(Vec::new()));
-        let writer = RecordingWriter { captured: captured.clone() };
+        let captured: Arc<std::sync::Mutex<Vec<u8>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let writer = RecordingWriter {
+            captured: captured.clone(),
+        };
         let shutdown_called = Arc::new(std::sync::Mutex::new(false));
-        let spy = ShutdownSpy { called: shutdown_called.clone() };
+        let spy = ShutdownSpy {
+            called: shutdown_called.clone(),
+        };
         session.install_abort_writer(
             Box::new(writer) as Box<dyn std::io::Write + Send>,
             Box::new(spy) as Box<dyn ShutdownableStream>,
@@ -3652,10 +4054,7 @@ mod tests {
                 .windows(b"ABORT\r".len())
                 .position(|w| w == b"ABORT\r")
                 .unwrap();
-            assert!(
-                abort_idx < disc_idx,
-                "ABORT must precede any DISCONNECT"
-            );
+            assert!(abort_idx < disc_idx, "ABORT must precede any DISCONNECT");
         }
         // Cooperative path succeeded → fallback must NOT have run.
         assert!(
@@ -3668,7 +4067,9 @@ mod tests {
     fn vara_abort_in_flight_falls_back_to_hard_close_when_write_fails() {
         let session = VaraSession::new();
         let shutdown_called = Arc::new(std::sync::Mutex::new(false));
-        let spy = ShutdownSpy { called: shutdown_called.clone() };
+        let spy = ShutdownSpy {
+            called: shutdown_called.clone(),
+        };
         session.install_abort_writer(
             Box::new(BlockedWriter) as Box<dyn std::io::Write + Send>,
             Box::new(spy) as Box<dyn ShutdownableStream>,
@@ -3914,7 +4315,10 @@ mod tests {
                 shutdown: Arc::new(AtomicBool::new(false)),
             });
         }
-        assert!(listen_state.is_armed(), "precondition: listener inserted as armed");
+        assert!(
+            listen_state.is_armed(),
+            "precondition: listener inserted as armed"
+        );
 
         vara_close_session_inner(&session, &listen_state).expect("close must succeed");
 
@@ -3937,7 +4341,10 @@ mod tests {
 
         let result = vara_close_session_inner(&session, &listen_state);
 
-        assert!(result.is_ok(), "close on un-armed listener must succeed: {result:?}");
+        assert!(
+            result.is_ok(),
+            "close on un-armed listener must succeed: {result:?}"
+        );
     }
 
     #[test]
@@ -3953,7 +4360,9 @@ mod tests {
         let listen_state = Arc::new(VaraListenState::default());
 
         let shutdown_called = Arc::new(std::sync::Mutex::new(false));
-        let spy = ShutdownSpy { called: shutdown_called.clone() };
+        let spy = ShutdownSpy {
+            called: shutdown_called.clone(),
+        };
         session.install_abort_writer(
             Box::new(BlockedWriter) as Box<dyn std::io::Write + Send>,
             Box::new(spy) as Box<dyn ShutdownableStream>,
@@ -4009,9 +4418,15 @@ mod tests {
         // (The matrix itself is also covered in session.rs::tests; this is
         // the integration-side guard so a refactor that decouples the call
         // site from the enum method has a unit-level alarm.)
-        assert!(!SessionIntent::Cms.auto_arms_listener(), "Cms is outbound-only");
+        assert!(
+            !SessionIntent::Cms.auto_arms_listener(),
+            "Cms is outbound-only"
+        );
         assert!(SessionIntent::P2p.auto_arms_listener(), "P2p auto-arms");
-        assert!(SessionIntent::RadioOnly.auto_arms_listener(), "RadioOnly auto-arms");
+        assert!(
+            SessionIntent::RadioOnly.auto_arms_listener(),
+            "RadioOnly auto-arms"
+        );
         assert!(
             !SessionIntent::PostOffice.auto_arms_listener(),
             "PostOffice not in alpha scope"
@@ -4042,8 +4457,11 @@ mod tests {
     /// per port and let VaraTransport::connect succeed against them. Returns
     /// the transport + the two thread handles the caller MUST join to release
     /// the accept threads cleanly.
-    fn build_real_transport_for_test() -> (VaraTransport, std::thread::JoinHandle<()>, std::thread::JoinHandle<()>)
-    {
+    fn build_real_transport_for_test() -> (
+        VaraTransport,
+        std::thread::JoinHandle<()>,
+        std::thread::JoinHandle<()>,
+    ) {
         use std::net::TcpListener;
         use std::thread;
         use std::time::Duration;
@@ -4128,10 +4546,7 @@ mod tests {
     #[tokio::test]
     async fn vara_take_transport_for_outbound_from_none_errs_session_not_open() {
         let session = VaraSession::new();
-        let err = unwrap_err_str(
-            session.take_transport_for_outbound().await,
-            "None → Err",
-        );
+        let err = unwrap_err_str(session.take_transport_for_outbound().await, "None → Err");
         assert!(
             err.contains("session not open"),
             "expected 'session not open', got: {err}"
@@ -4153,10 +4568,7 @@ mod tests {
             "expected 'modem busy — inbound exchange in progress', got: {err}"
         );
         // Owner unchanged.
-        assert_eq!(
-            session.transport_owner(),
-            TransportOwner::ListenerInbound
-        );
+        assert_eq!(session.transport_owner(), TransportOwner::ListenerInbound);
     }
 
     #[tokio::test]
@@ -4277,8 +4689,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn vara_return_transport_from_outbound_transitions_to_listener_armed_when_consumer_alive(
-    ) {
+    async fn vara_return_transport_from_outbound_transitions_to_listener_armed_when_consumer_alive()
+    {
         // Spin a stub consumer that holds the return-channel receiver. When
         // outbound returns the transport, the consumer receives it and
         // owner transitions to ListenerArmed.
@@ -4422,10 +4834,7 @@ mod tests {
             active_transport_kind: Some(TransportKind::VaraHf),
         };
         let json = serde_json::to_string(&snap).unwrap();
-        assert!(
-            json.contains("\"listenerArmed\":true"),
-            "got {json}"
-        );
+        assert!(json.contains("\"listenerArmed\":true"), "got {json}");
         assert!(
             json.contains("\"exchange\":\"outbound\""),
             "ExchangeState kebab-case; got {json}"
@@ -4483,10 +4892,7 @@ mod tests {
         // inner-mutex on top of the cached `inner.status`. Mirrors
         // ModemSession's parallel test.
         let session = VaraSession::new();
-        assert_eq!(
-            session.snapshot().transport_owner,
-            TransportOwner::None
-        );
+        assert_eq!(session.snapshot().transport_owner, TransportOwner::None);
         session.set_transport_owner_for_test(TransportOwner::ListenerArmed);
         assert_eq!(
             session.snapshot().transport_owner,
@@ -4614,9 +5020,7 @@ mod tests {
         // Drain any best-effort MYCALL/BW writes (open path sends none in
         // this test — None callsign + bandwidth_hz: None — but the read
         // below tolerates leading bytes via the contains() check below).
-        cmd_peer
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .ok();
+        cmd_peer.set_read_timeout(Some(Duration::from_secs(2))).ok();
 
         // Fire abort against the freshly-installed writer.
         let abort_result = session.abort_in_flight();
@@ -4654,9 +5058,7 @@ mod tests {
             loopback_open_with_cmd_peer(SessionIntent::Cms, TransportKind::VaraHf);
         let listen_state = Arc::new(VaraListenState::default());
 
-        cmd_peer
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .ok();
+        cmd_peer.set_read_timeout(Some(Duration::from_secs(2))).ok();
 
         let result = vara_close_session_inner(&session, &listen_state);
         assert!(result.is_ok(), "close must succeed: {result:?}");
@@ -5166,11 +5568,12 @@ mod tests {
 
         // Install an abort-writer pair (the same shape vara_open_session_inner
         // installs after a real TCP open). After stop, the pair must be cleared.
-        let captured: Arc<std::sync::Mutex<Vec<u8>>> =
-            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured: Arc<std::sync::Mutex<Vec<u8>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
         let writer = RecordingWriter { captured };
         let shutdown_called = Arc::new(std::sync::Mutex::new(false));
-        let spy = ShutdownSpy { called: shutdown_called };
+        let spy = ShutdownSpy {
+            called: shutdown_called,
+        };
         session.install_abort_writer(
             Box::new(writer) as Box<dyn std::io::Write + Send>,
             Box::new(spy) as Box<dyn ShutdownableStream>,
@@ -5317,8 +5720,7 @@ mod tests {
     #[test]
     fn legacy_string_intent_parser_helper_is_removed() {
         let source = include_str!("commands.rs");
-        let removed_symbol =
-            concat!("fn ", "parse_vara_b2f_", "intent(s:");
+        let removed_symbol = concat!("fn ", "parse_vara_b2f_", "intent(s:");
         assert!(
             !source.contains(removed_symbol),
             "P2 #2: the legacy string-parsing b2f-intent helper must be \
