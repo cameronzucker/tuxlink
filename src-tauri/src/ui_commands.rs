@@ -5850,6 +5850,11 @@ fn ardop_listener_consumer_task(
                     &peer_id,
                 );
                 let _ = event.append_to_log(&log_path);
+                // R3-F5: count the rejected inbound on the quarantine limiter's
+                // failed path (no roster record).
+                crate::peers::recorder::record_inbound_reject(
+                    crate::peers::model::ChannelTransport::Ardop,
+                );
                 let _ = arq_disconnect_via_cmd_writer(&*transport);
                 // Codex review 2026-06-03 [P1 #4] (tuxlink-61yg): after
                 // DISCONNECT, drain modem events for a bounded window so
@@ -6414,6 +6419,26 @@ pub(crate) fn disarm_vara_listener_inner(
 /// poisoned session) records nothing. Extracted from
 /// [`vara_listener_consumer_task`] so the gate is unit-testable without an
 /// `AppHandle` [CDX-7].
+/// Map a listener [`TransportKind`](crate::winlink::listener::TransportKind) to
+/// the peer-model [`ChannelTransport`](crate::peers::model::ChannelTransport)
+/// used as the quarantine-limiter bucket key at a reject site (R3-F5). Telnet
+/// and Pactor have no RF `ChannelTransport` variant → the `Unknown` bucket (a
+/// real RF transport never writes there, so it steals no RF budget; matches the
+/// recorder/limiter's own telnet→Unknown mapping).
+fn channel_transport_from_transport_kind(
+    kind: crate::winlink::listener::TransportKind,
+) -> crate::peers::model::ChannelTransport {
+    use crate::peers::model::ChannelTransport;
+    use crate::winlink::listener::TransportKind;
+    match kind {
+        TransportKind::Packet => ChannelTransport::Packet,
+        TransportKind::Ardop => ChannelTransport::Ardop,
+        TransportKind::VaraHf => ChannelTransport::VaraHf,
+        TransportKind::VaraFm => ChannelTransport::VaraFm,
+        TransportKind::Telnet | TransportKind::Pactor => ChannelTransport::Unknown,
+    }
+}
+
 fn vara_answer_observation_sink(
     active_intent: Option<SessionIntent>,
 ) -> Option<crate::peers::recorder::ObservationSink> {
@@ -6570,6 +6595,48 @@ fn vara_listener_consumer_task(
                 // Unkey on every exit from this exchange (incl. panic unwind).
                 let _unkey_guard = crate::winlink::modem::vara::ptt::UnkeyGuard::new(&keyer);
 
+                // Peer-observation recording (Task 13): arm a drop-guard for the
+                // inbound answer at `B2fStarted`. Record P2P answers only —
+                // `vara_answer_observation_sink` gates on the open session's
+                // intent. A rejected inbound (allowlist/expired) never reaches
+                // this Accepted branch — no record, by construction. The guard
+                // fires on drop with its last phase: `Accepted` on a clean
+                // exchange, `B2fFail` on failure, and — if an early return or
+                // wedge unwinds past here — the `B2fStarted` it was armed at,
+                // which classifies as Fail [R3-11].
+                //
+                // Task 16 (queued-decision 2): armed ABOVE the mailbox/tempdir
+                // resolution below — the branch standard (Task 14 adjudication,
+                // mirroring the ARDOP answer site at ui_commands.rs:5735). A peer
+                // that already connected therefore records even if a LOCAL fault
+                // (tempdir-creation failure → `continue`) stops the exchange,
+                // where the prior placement (below the resolution) recorded
+                // nothing for that path.
+                let obs_sink = vara_answer_observation_sink(vara_session.active_intent());
+                let obs_guard = obs_sink.map(|s| {
+                    crate::peers::recorder::ObservationGuard::new(
+                        s,
+                        crate::peers::recorder::PeerObservation {
+                            path: crate::peers::recorder::ObservedPath::Rf {
+                                transport: match vara_session.active_transport_kind() {
+                                    Some(
+                                        crate::winlink::listener::transport::TransportKind::VaraFm,
+                                    ) => crate::peers::model::ChannelTransport::VaraFm,
+                                    _ => crate::peers::model::ChannelTransport::VaraHf,
+                                },
+                                via: vec![],
+                                // No wire freq source on inbound (CONNECTED carries
+                                // bandwidth, not frequency) [R3-11].
+                                freq_hz: None,
+                                bandwidth: None,
+                            },
+                            direction: crate::peers::model::Direction::Incoming,
+                            presented_target: peer_call.clone(),
+                            phase: crate::peers::recorder::ObservationPhase::B2fStarted,
+                        },
+                    )
+                });
+
                 // Resolve the mailbox (real, or a private tempdir for a
                 // protocol-only exchange). The TempDir handle must outlive
                 // the exchange — Drop deletes the directory.
@@ -6598,40 +6665,6 @@ fn vara_listener_consumer_task(
                         }
                     }
                 };
-
-                // Peer-observation recording (Task 13): arm a drop-guard for the
-                // inbound answer at `B2fStarted`. Record P2P answers only —
-                // `vara_answer_observation_sink` gates on the open session's
-                // intent. A rejected inbound (allowlist/expired) never reaches
-                // this Accepted branch — no record, by construction. The guard
-                // fires on drop with its last phase: `Accepted` on a clean
-                // exchange, `B2fFail` on failure, and — if an early return or
-                // wedge unwinds past here — the `B2fStarted` it was armed at,
-                // which classifies as Fail [R3-11].
-                let obs_sink = vara_answer_observation_sink(vara_session.active_intent());
-                let obs_guard = obs_sink.map(|s| {
-                    crate::peers::recorder::ObservationGuard::new(
-                        s,
-                        crate::peers::recorder::PeerObservation {
-                            path: crate::peers::recorder::ObservedPath::Rf {
-                                transport: match vara_session.active_transport_kind() {
-                                    Some(
-                                        crate::winlink::listener::transport::TransportKind::VaraFm,
-                                    ) => crate::peers::model::ChannelTransport::VaraFm,
-                                    _ => crate::peers::model::ChannelTransport::VaraHf,
-                                },
-                                via: vec![],
-                                // No wire freq source on inbound (CONNECTED carries
-                                // bandwidth, not frequency) [R3-11].
-                                freq_hz: None,
-                                bandwidth: None,
-                            },
-                            direction: crate::peers::model::Direction::Incoming,
-                            presented_target: peer_call.clone(),
-                            phase: crate::peers::recorder::ObservationPhase::B2fStarted,
-                        },
-                    )
-                });
 
                 // Pre-clone the data halves: the PTT pump owns the cmd socket
                 // (and `transport`) while the answer turns run on the data
@@ -6725,6 +6758,12 @@ fn vara_listener_consumer_task(
                     &peer_id,
                 );
                 let _ = event.append_to_log(&log_path);
+                // R3-F5: count the rejected inbound on the quarantine limiter's
+                // failed path (no roster record). Bucket by the actual VARA sub-
+                // transport so an HF flood never exhausts an FM budget.
+                crate::peers::recorder::record_inbound_reject(
+                    channel_transport_from_transport_kind(transport_kind),
+                );
             }
             InboundOutcome::RejectedExpired { peer } => {
                 progress(&format!(
@@ -6739,6 +6778,9 @@ fn vara_listener_consumer_task(
                     &peer_id,
                 );
                 let _ = event.append_to_log(&log_path);
+                crate::peers::recorder::record_inbound_reject(
+                    channel_transport_from_transport_kind(transport_kind),
+                );
             }
         }
     }
@@ -7893,6 +7935,32 @@ pub async fn telnet_p2p_connect(
         intent: SessionIntent::P2p,
     };
 
+    // Peer-observation recording (Task 16): arm a drop-guard at `DialAttempted`
+    // for this outbound telnet dial. The operator TYPED this host → `Operator`
+    // provenance (this dial IS the out-of-band consent; the UI click is consent,
+    // spec §4). `ObservationGuard` is `Send`, so it rides the async continuation
+    // (NOT the `spawn_blocking` closure); its phase is advanced from the outcome
+    // match below and it fires on drop: `B2fOk` on success, `LoginFailed` for a
+    // login-class error, `B2fFail` for a B2F-exchange error, `AbortedOrWedged`
+    // when the operator aborted, and — if none of those set it — the
+    // `DialAttempted` it was armed at (a pre-connect Resolve/Connect failure),
+    // which classifies as Fail [R3-11].
+    let obs_guard = crate::peers::recorder::observation_sink().map(|s| {
+        crate::peers::recorder::ObservationGuard::new(
+            s,
+            crate::peers::recorder::PeerObservation {
+                path: crate::peers::recorder::ObservedPath::Telnet {
+                    host: req.host.clone(),
+                    port: req.port,
+                    provenance: crate::peers::model::Provenance::Operator,
+                },
+                direction: crate::peers::model::Direction::Outgoing,
+                presented_target: req.peer_callsign.clone(),
+                phase: crate::peers::recorder::ObservationPhase::DialAttempted,
+            },
+        )
+    });
+
     // Clone values for the spawn_blocking task.
     let host = req.host.clone();
     let port = req.port;
@@ -7945,6 +8013,10 @@ pub async fn telnet_p2p_connect(
 
     match result {
         Ok(exchange) => {
+            // Outbound telnet dial completed the B2F exchange → B2fOk.
+            if let Some(g) = &obs_guard {
+                g.set_phase(crate::peers::recorder::ObservationPhase::B2fOk);
+            }
             // tuxlink-l55l: file received messages into Inbox and move
             // successfully-sent MIDs from Outbox to Sent. Mirrors the
             // post-exchange handling in `native_telnet_exchange`. Failures
@@ -8010,6 +8082,29 @@ pub async fn telnet_p2p_connect(
             })
         }
         Err(e) => {
+            // Advance the peer-observation guard to the phase that matches how
+            // the dial ended (Task 16). Abort wins over the error class; then a
+            // login-class failure → LoginFailed, a B2F-exchange failure →
+            // B2fFail; a pre-connect Resolve/Connect failure leaves the guard at
+            // its armed `DialAttempted` (both classify Fail [R3-11]).
+            if let Some(g) = &obs_guard {
+                if was_aborted {
+                    g.set_phase(crate::peers::recorder::ObservationPhase::AbortedOrWedged);
+                } else {
+                    match &e {
+                        crate::winlink::telnet_p2p::P2pTelnetError::Login(_) => {
+                            g.set_phase(crate::peers::recorder::ObservationPhase::LoginFailed);
+                        }
+                        crate::winlink::telnet_p2p::P2pTelnetError::Exchange(_) => {
+                            g.set_phase(crate::peers::recorder::ObservationPhase::B2fFail);
+                        }
+                        crate::winlink::telnet_p2p::P2pTelnetError::Resolve { .. }
+                        | crate::winlink::telnet_p2p::P2pTelnetError::Connect { .. } => {
+                            // Never connected — leave the armed DialAttempted.
+                        }
+                    }
+                }
+            }
             if was_aborted {
                 emit_session_line(
                     &app,

@@ -1065,6 +1065,14 @@ pub fn run() {
                             .inner()
                             .clone();
                         let emit_handle = app.handle().clone();
+                        // R3-F5: install the SAME managed limiter as a second
+                        // process-global BEFORE the sink closure moves `limiter`,
+                        // so the allowlist-reject sites (telnet handle_one_session,
+                        // the VARA/ARDOP/packet listener gates) — which take no
+                        // AppHandle and whose NoRecord rejects never reach the
+                        // limiter through the sink — can still drive the
+                        // spoofing-loop quarantine counter via record_inbound_reject.
+                        crate::peers::recorder::install_inbound_limiter(limiter.clone());
                         crate::peers::recorder::install_observation_sink(std::sync::Arc::new(
                             move |obs: crate::peers::recorder::PeerObservation| {
                                 let effect = crate::peers::recorder::record_peer_observation(

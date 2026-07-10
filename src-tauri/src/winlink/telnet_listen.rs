@@ -377,6 +377,13 @@ where
             ));
             let _ = writer.write_all(WIRE_REJECT_ALLOWLIST);
             wire_log("> *** Your station is not authorized to connect.");
+            // R3-F5: a rejected inbound is not a peer (no roster record), but it
+            // IS a rejected burst the spoofing-loop quarantine counter must see.
+            // Telnet has no ChannelTransport of its own → the Unknown bucket
+            // (queued-decision 1; see the fn docs on that bucket).
+            crate::peers::recorder::record_inbound_reject(
+                crate::peers::model::ChannelTransport::Unknown,
+            );
             return Ok(ExchangeResult::default());
         }
         ListenerDecision::RejectExpired => {
@@ -385,6 +392,9 @@ where
             ));
             let _ = writer.write_all(WIRE_REJECT_EXPIRED);
             wire_log("> *** Listener is not armed");
+            crate::peers::recorder::record_inbound_reject(
+                crate::peers::model::ChannelTransport::Unknown,
+            );
             return Ok(ExchangeResult::default());
         }
         ListenerDecision::Accept => {}
@@ -451,6 +461,9 @@ where
             ));
             let _ = writer.write_all(WIRE_REJECT_PASSWORD);
             wire_log("> *** Incorrect station password specified");
+            crate::peers::recorder::record_inbound_reject(
+                crate::peers::model::ChannelTransport::Unknown,
+            );
             return Ok(ExchangeResult::default());
         }
         ListenerDecision::RejectExpired => {
@@ -466,6 +479,9 @@ where
             ));
             let _ = writer.write_all(WIRE_REJECT_EXPIRED);
             wire_log("> *** Listener is not armed");
+            crate::peers::recorder::record_inbound_reject(
+                crate::peers::model::ChannelTransport::Unknown,
+            );
             return Ok(ExchangeResult::default());
         }
         ListenerDecision::RejectAllowlist => {
@@ -479,9 +495,47 @@ where
                 "Rejecting {peer_addr} — allowlist re-check failed (race?)"
             ));
             let _ = writer.write_all(WIRE_REJECT_ALLOWLIST);
+            crate::peers::recorder::record_inbound_reject(
+                crate::peers::model::ChannelTransport::Unknown,
+            );
             return Ok(ExchangeResult::default());
         }
     }
+
+    // ── Peer-observation recording (Task 16): arm the inbound-answer
+    //    drop-guard at `B2fStarted`, ABOVE the B2F handoff — the branch
+    //    standard (Task 14 adjudication): a peer that already passed the
+    //    allowlist + password gate records even if the handoff / exchange
+    //    faults. No intent gate here: `handle_one_session` only runs for a
+    //    P2P listener. A rejected inbound (allowlist / password / TTL / IPv6)
+    //    returned BEFORE this point — never records, by construction. The
+    //    guard fires on drop with its last phase: `Accepted` on a clean
+    //    exchange, `B2fFail` on failure, and — if a wedge/panic unwinds past
+    //    here — the `B2fStarted` it was armed at, which classifies as Fail
+    //    [R3-11]. The peer's SOURCE port is ephemeral; record the telnet-P2P
+    //    convention port (`DEFAULT_PORT` = 8774, WLE parity) as the CLAIMED
+    //    back-dial endpoint — `ObservedIncoming`, agent-non-dialable,
+    //    "unverified" badge (spec §4).
+    let presented_target = if claimed.ssid == 0 {
+        claimed.call.clone()
+    } else {
+        format!("{}-{}", claimed.call, claimed.ssid)
+    };
+    let obs_guard = crate::peers::recorder::observation_sink().map(|s| {
+        crate::peers::recorder::ObservationGuard::new(
+            s,
+            crate::peers::recorder::PeerObservation {
+                path: crate::peers::recorder::ObservedPath::Telnet {
+                    host: peer_addr.ip().to_string(),
+                    port: DEFAULT_PORT,
+                    provenance: crate::peers::model::Provenance::ObservedIncoming,
+                },
+                direction: crate::peers::model::Direction::Incoming,
+                presented_target,
+                phase: crate::peers::recorder::ObservationPhase::B2fStarted,
+            },
+        )
+    });
 
     // ── Phase 3: Handoff to B2F answerer ──────────────────────────
     // Codex review 2026-06-03 [P2]: the master handshake (FBB/WLE-strict
@@ -492,7 +546,7 @@ where
     // `parse_telnet_callsign`).
     let mut per_session_config = config.clone();
     per_session_config.targetcall = claimed.call.clone();
-    run_b2f_answerer(
+    let result = run_b2f_answerer(
         reader,
         writer,
         &per_session_config,
@@ -500,7 +554,15 @@ where
         progress,
         wire_log,
         decide,
-    )
+    );
+    if let Some(g) = &obs_guard {
+        match &result {
+            Ok(_) => g.set_phase(crate::peers::recorder::ObservationPhase::Accepted),
+            Err(_) => g.set_phase(crate::peers::recorder::ObservationPhase::B2fFail),
+        }
+    }
+    drop(obs_guard);
+    result
 }
 
 /// Drive `run_exchange_with_role(ExchangeRole::Answer)` over the connected
@@ -1456,5 +1518,196 @@ mod tests {
             Duration::from_millis(500),
         );
         loop_handle.join().unwrap();
+    }
+
+    // ── Task 16 peer-observation record-site tests [CDX-7] ────────
+    //
+    // These drive the REAL `handle_one_session` path (it takes no `AppHandle`,
+    // so no core-extraction is needed) with the process-global observation sink
+    // + inbound limiter installed. #[serial] because both globals are
+    // process-wide RwLocks shared with the recorder-module tests.
+
+    /// Restore both process-globals to a clean state at the end of each serial
+    /// record-site test so a later test never inherits a stale sink/limiter.
+    fn reset_peer_globals() {
+        crate::peers::recorder::install_observation_sink(std::sync::Arc::new(|_| {}));
+        crate::peers::recorder::install_inbound_limiter(std::sync::Arc::new(std::sync::Mutex::new(
+            crate::peers::limiter::InboundCreateLimiter::new(
+                crate::peers::limiter::P2pLimitsConfig::default(),
+            ),
+        )));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn accepted_session_records_one_incoming_ok_observation() {
+        // Pair the REAL dialer (`telnet_p2p::connect_and_exchange`) against the
+        // REAL listener (`handle_one_session`) over loopback for a 0-message B2F
+        // exchange — the production pairing, no hand-scripted wire bytes. Assert
+        // the listener recorded EXACTLY one observation: Incoming, Telnet, port
+        // DEFAULT_PORT, ObservedIncoming, Classified::Ok. The dialer itself has
+        // no record site (that lives in the `telnet_p2p_connect` command), so
+        // exactly one observation is expected. 60s socket timeouts on both ends
+        // are the backstop against a hung exchange.
+        let seen: Arc<Mutex<Vec<crate::peers::recorder::PeerObservation>>> = Arc::default();
+        {
+            let seen = seen.clone();
+            crate::peers::recorder::install_observation_sink(Arc::new(move |o| {
+                seen.lock().unwrap().push(o)
+            }));
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let allowed = allowed_with(&[("N0CALL", 0)]);
+        let password = mock_password(); // never .set() → unconditional prompt, any pw accepted
+        let arms = fresh_arms();
+        let config = ExchangeConfig {
+            mycall: "TUXLINK".into(),
+            targetcall: "PEER".into(),
+            locator: "CN87".into(),
+            password: None,
+            intent: SessionIntent::P2p,
+        };
+
+        let server = thread::spawn(move || {
+            let (stream, peer_addr) = listener.accept().unwrap();
+            handle_one_session(
+                stream,
+                peer_addr,
+                &allowed,
+                &password,
+                &arms,
+                &config,
+                None,
+                &|_| {},
+                &|_| {},
+                |_, _| Ok(Vec::new()),
+            )
+        });
+
+        let dial_config = ExchangeConfig {
+            mycall: "N0CALL".into(),
+            targetcall: "TUXLINK".into(),
+            locator: "CN88".into(),
+            password: None,
+            intent: SessionIntent::P2p,
+        };
+        let client = thread::spawn(move || {
+            crate::winlink::telnet_p2p::connect_and_exchange(
+                "127.0.0.1",
+                port,
+                "TUXLINK",
+                None,
+                &dial_config,
+                Vec::new(),
+                &|_| {},
+                &|_| {},
+                |_, _| Ok(Vec::new()),
+            )
+        });
+
+        let server_res = server.join().unwrap();
+        let client_res = client.join().unwrap();
+        assert!(server_res.is_ok(), "listener answerer should complete: {server_res:?}");
+        assert!(client_res.is_ok(), "dialer should complete: {client_res:?}");
+
+        let obs = seen.lock().unwrap();
+        assert_eq!(obs.len(), 1, "exactly one inbound observation from the listener");
+        assert_eq!(obs[0].direction, crate::peers::model::Direction::Incoming);
+        match &obs[0].path {
+            crate::peers::recorder::ObservedPath::Telnet {
+                host,
+                port: p,
+                provenance,
+            } => {
+                assert_eq!(host, "127.0.0.1");
+                assert_eq!(*p, DEFAULT_PORT, "claimed back-dial port is the P2P convention, not the ephemeral source port");
+                assert_eq!(*provenance, crate::peers::model::Provenance::ObservedIncoming);
+            }
+            other => panic!("expected a Telnet path, got {other:?}"),
+        }
+        assert_eq!(
+            crate::peers::recorder::classify(obs[0].phase),
+            crate::peers::recorder::Classified::Ok,
+            "a completed inbound answer classifies Ok"
+        );
+        drop(obs);
+        reset_peer_globals();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn rejected_session_records_no_observation_but_counts_on_the_limiter() {
+        // An allowlist-rejected inbound records ZERO peer observations (spec §3:
+        // a rejected station is not a peer) AND drives the R3-F5 quarantine
+        // counter. `failed_per_minute = 0` makes the very first reject
+        // over-budget → quarantined() == 1, proving the REAL reject path invoked
+        // record_inbound_reject.
+        let seen: Arc<Mutex<Vec<crate::peers::recorder::PeerObservation>>> = Arc::default();
+        {
+            let seen = seen.clone();
+            crate::peers::recorder::install_observation_sink(Arc::new(move |o| {
+                seen.lock().unwrap().push(o)
+            }));
+        }
+        let limiter = Arc::new(Mutex::new(crate::peers::limiter::InboundCreateLimiter::new(
+            crate::peers::limiter::P2pLimitsConfig {
+                accepted_per_hour: 100,
+                failed_per_minute: 0,
+            },
+        )));
+        crate::peers::recorder::install_inbound_limiter(limiter.clone());
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let allowed = allowed_with(&[("N7CPZ", 0)]); // only N7CPZ allowed
+        let password = mock_password();
+        let arms = fresh_arms();
+        let config = ExchangeConfig {
+            mycall: "TUXLINK".into(),
+            targetcall: "PEER".into(),
+            locator: "CN87".into(),
+            password: None,
+            intent: SessionIntent::P2p,
+        };
+
+        let server = thread::spawn(move || {
+            let (stream, peer_addr) = listener.accept().unwrap();
+            handle_one_session(
+                stream,
+                peer_addr,
+                &allowed,
+                &password,
+                &arms,
+                &config,
+                None,
+                &|_| {},
+                &|_| {},
+                |_, _| Ok(Vec::new()),
+            )
+        });
+
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        client.set_read_timeout(Some(Duration::from_secs(5))).ok();
+        let mut prompt = [0u8; 64];
+        let n = client.read(&mut prompt).unwrap();
+        assert!(&prompt[..n].starts_with(WIRE_PROMPT_CALLSIGN));
+        client.write_all(b"W4PHS\r").unwrap(); // not on the allowlist
+        client.flush().ok();
+        let mut buf = Vec::new();
+        let _ = client.read_to_end(&mut buf);
+        let _ = server.join().unwrap();
+
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "an allowlist-rejected inbound must record NO peer observation"
+        );
+        assert_eq!(
+            limiter.lock().unwrap().quarantined(),
+            1,
+            "the real reject path invoked record_inbound_reject (failed_per_minute=0 → first reject over budget)"
+        );
+        reset_peer_globals();
     }
 }

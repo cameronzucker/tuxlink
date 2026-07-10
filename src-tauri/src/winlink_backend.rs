@@ -2865,6 +2865,12 @@ fn native_packet_connect(
                 let log_path = listener_forensics_log_path();
                 let event = ListenerRejectEvent::new(TransportKind::Packet, reason, &peer_id);
                 let _ = event.append_to_log(&log_path);
+                // R3-F5: count the rejected inbound on the quarantine limiter's
+                // failed path (no roster record) — the spoofing-loop counter's
+                // only real-burst source for packet.
+                crate::peers::recorder::record_inbound_reject(
+                    crate::peers::model::ChannelTransport::Packet,
+                );
 
                 let msg = format!(
                     "Rejected inbound from {} (reason: {}). Dropping link.",

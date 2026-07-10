@@ -111,6 +111,67 @@ pub fn observation_sink() -> Option<ObservationSink> {
     SINK.read().ok().and_then(|g| g.clone())
 }
 
+/// Process-global inbound-create limiter handle [R3-F5]. A SECOND global,
+/// parallel to [`SINK`]. The allowlist-reject sites (telnet
+/// `handle_one_session`, the VARA/ARDOP/packet listener gates) take no
+/// `AppHandle`, and a rejected inbound classifies as [`Classified::NoRecord`],
+/// so [`record_peer_observation`] bails on it BEFORE ever touching the limiter
+/// — routing rejects through the observation sink can therefore never increment
+/// the quarantine counter. This handle gives every reject site a zero-plumbing
+/// path to the SAME managed [`InboundCreateLimiter`](crate::peers::limiter::InboundCreateLimiter)
+/// the sink captures. Installed ONCE at app setup (`lib.rs`), immediately after
+/// the limiter is managed; reject sites are NO-OPS when `None` (unit tests,
+/// headless tools).
+static INBOUND_LIMITER: RwLock<Option<Arc<Mutex<crate::peers::limiter::InboundCreateLimiter>>>> =
+    RwLock::new(None);
+
+/// Install the global inbound-create limiter handle. Called once from `lib.rs`
+/// `.setup()` with the same `Arc<Mutex<InboundCreateLimiter>>` the observation
+/// sink captures. A poisoned lock leaves it uninstalled (reject sites no-op).
+pub fn install_inbound_limiter(
+    limiter: Arc<Mutex<crate::peers::limiter::InboundCreateLimiter>>,
+) {
+    if let Ok(mut g) = INBOUND_LIMITER.write() {
+        *g = Some(limiter);
+    }
+}
+
+/// The installed inbound-create limiter, or `None` (tests, headless tools, or a
+/// poisoned lock). [`record_inbound_reject`] reads it; a `None` return no-ops.
+fn inbound_limiter() -> Option<Arc<Mutex<crate::peers::limiter::InboundCreateLimiter>>> {
+    INBOUND_LIMITER.read().ok().and_then(|g| g.clone())
+}
+
+/// Record an allowlist / password / TTL-rejected inbound connection against the
+/// process-global limiter's FAILED path [R3-F5]. Creates NO roster record — a
+/// rejected inbound is an attacker knocking, not a peer — but it IS the only
+/// path by which the spoofing-loop quarantine counter (spec §223-229) sees real
+/// rejected bursts (the accepted-answer guard never does, and a `NoRecord`
+/// observation never reaches the limiter through the sink). Every allowlist-
+/// reject site calls this: telnet `handle_one_session`, and the VARA / ARDOP /
+/// packet listener gates. No `AppHandle` needed — the limiter is a
+/// process-global. Emits a visible `tracing::warn!`; a `None` limiter
+/// (tests / headless) is a silent no-op.
+pub fn record_inbound_reject(transport: ChannelTransport) {
+    let Some(limiter) = inbound_limiter() else {
+        return;
+    };
+    let (over_budget, quarantined_total) = match limiter.lock() {
+        Ok(mut l) => {
+            let over = !l.allow(transport, false, std::time::Instant::now());
+            (over, l.quarantined())
+        }
+        Err(_) => return,
+    };
+    tracing::warn!(
+        target: "tuxlink::peers",
+        transport = ?transport,
+        over_budget,
+        quarantined_total,
+        "inbound connection rejected (allowlist/password/TTL) — counted on the failed-path limiter; no roster record"
+    );
+}
+
 /// Drop-guard recorder [R3-11]: construct at attempt start (`DialAttempted`, or
 /// the `Accepted`-path initial for an inbound), advance the phase via
 /// [`ObservationGuard::set_phase`] as the exchange progresses, and the record
@@ -441,6 +502,32 @@ mod tests {
         assert_eq!(seen.lock().unwrap().len(), 1);
         assert_eq!(seen.lock().unwrap()[0].phase, ObservationPhase::B2fOk);
         install_observation_sink(Arc::new(|_| {})); // reset to a no-op sink
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn record_inbound_reject_drives_the_quarantine_counter() {
+        // R3-F5: N rejects on the failed path increment `quarantined()`. This is
+        // the process-global fn every allowlist-reject site calls. Default
+        // `failed_per_minute` = 10, so 40 rejects → 10 counted, 30 quarantined.
+        // #[serial] because INBOUND_LIMITER is a process-global RwLock shared
+        // with the observation-sink tests.
+        use crate::peers::limiter::{InboundCreateLimiter, P2pLimitsConfig};
+        let limiter = Arc::new(Mutex::new(InboundCreateLimiter::new(P2pLimitsConfig::default())));
+        install_inbound_limiter(limiter.clone());
+        for _ in 0..40u32 {
+            record_inbound_reject(ChannelTransport::Unknown);
+        }
+        assert_eq!(
+            limiter.lock().unwrap().quarantined(),
+            30,
+            "40 rejects − failed_per_minute(10) = 30 quarantined"
+        );
+        // A no-limiter install (None) makes the fn a silent no-op — restore a
+        // fresh limiter so a later serial test starts from a clean counter.
+        install_inbound_limiter(Arc::new(Mutex::new(InboundCreateLimiter::new(
+            P2pLimitsConfig::default(),
+        ))));
     }
 
     #[test]
