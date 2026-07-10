@@ -6772,7 +6772,7 @@ dependencies = [
 
 [[package]]
 name = "tuxlink"
-version = "0.87.1"
+version = "0.87.2"
 dependencies = [
  "async-trait",
  "axum",
