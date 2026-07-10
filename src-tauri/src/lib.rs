@@ -1054,7 +1054,9 @@ pub fn run() {
                     // (classify → inbound-create rate limit → store apply),
                     // emitting `peers:changed` only on a real roster write. Sites
                     // are no-ops until this runs (unit tests, headless tools).
-                    // Task 17 will add the favorites bridge inside this closure.
+                    // Task 17 (R5-7) adds the favorites bridge inside this
+                    // closure — the ONE bridge from a concluded outbound P2P
+                    // observation into the favorites/Recents attempt log.
                     {
                         let store = app
                             .state::<std::sync::Arc<std::sync::Mutex<crate::peers::store::PeersStore>>>()
@@ -1062,6 +1064,10 @@ pub fn run() {
                             .clone();
                         let limiter = app
                             .state::<std::sync::Arc<std::sync::Mutex<crate::peers::limiter::InboundCreateLimiter>>>()
+                            .inner()
+                            .clone();
+                        let favorites = app
+                            .state::<std::sync::Arc<std::sync::Mutex<crate::favorites::store::FavoritesStore>>>()
                             .inner()
                             .clone();
                         let emit_handle = app.handle().clone();
@@ -1075,6 +1081,12 @@ pub fn run() {
                         crate::peers::recorder::install_inbound_limiter(limiter.clone());
                         crate::peers::recorder::install_observation_sink(std::sync::Arc::new(
                             move |obs: crate::peers::recorder::PeerObservation| {
+                                // [R5-7] Bridge FIRST (borrows obs), then move obs
+                                // into record_peer_observation. Runs unconditionally
+                                // for every observation — bridge_to_favorites itself
+                                // filters to outbound Ok/Fail conclusions, so an
+                                // inbound or NoRecord observation is a no-op here.
+                                crate::peers::recorder::bridge_to_favorites(&favorites, &obs);
                                 let effect = crate::peers::recorder::record_peer_observation(
                                     &store, &limiter, obs,
                                 );

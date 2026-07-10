@@ -338,6 +338,69 @@ pub fn record_peer_observation(
     }
 }
 
+/// The ONE bridge from peer observations to the favorites attempt log [R5-7].
+/// The peer recorder is authoritative for P2P recents (this store, `PeersStore`,
+/// is the roster of record); this bridge is the sole path by which a concluded
+/// P2P attempt ALSO lands an empirical entry in the favorites/Recents log so the
+/// mode's Recent tab reflects P2P dials the same way it reflects CMS/gateway
+/// dials. Outbound conclusions only — recents = DIALS, so an inbound
+/// (`Direction::Incoming`) observation (someone dialing US) bridges nothing.
+/// The frontend's ribbon dispatcher (`connectDispatch.ts`) suppresses its own
+/// `recordRibbonAttempt` call for `p2p` sessions specifically so this is the
+/// ONLY writer for a P2P attempt — a second writer would double-count.
+pub fn bridge_to_favorites(
+    favorites: &Arc<Mutex<crate::favorites::store::FavoritesStore>>,
+    obs: &PeerObservation,
+) {
+    if obs.direction != Direction::Outgoing {
+        return;
+    }
+    let outcome = match classify(obs.phase) {
+        Classified::Ok => "reached",
+        Classified::Fail => "failed",
+        Classified::NoRecord => return,
+    };
+    let mode = match &obs.path {
+        ObservedPath::Rf { transport, .. } => match transport {
+            ChannelTransport::VaraHf => "vara-hf",
+            ChannelTransport::VaraFm => "vara-fm",
+            ChannelTransport::Ardop => "ardop-hf",
+            ChannelTransport::Packet => "packet",
+            // Unknown is never a real dialed mode (no favorites/Recent surface
+            // for it) — skip rather than mint a bogus "unknown" recent.
+            ChannelTransport::Unknown => return,
+        },
+        ObservedPath::Telnet { .. } => "telnet",
+    };
+    let ts_local = chrono::Local::now().to_rfc3339();
+    let now = chrono::Utc::now().to_rfc3339();
+    let dial = crate::favorites::store::FavoriteDial {
+        mode: mode.to_string(),
+        gateway: obs.presented_target.clone(),
+        // The bridge observes only mode/gateway/outcome — freq/transport/band/
+        // grid/peer_id are not carried by a `PeerObservation` today (it has no
+        // wire freq for RF conclusions, H1's freq-on-record-only rule, and no
+        // roster peer_id lookup here); every field is stated explicitly (the
+        // struct has NO `Default`) rather than defaulted implicitly.
+        freq: None,
+        transport: None,
+        band: None,
+        grid: None,
+        peer_id: None,
+    };
+    if let Ok(mut f) = favorites.lock() {
+        if let Err(e) = f.record_attempt(
+            dial,
+            outcome.to_string(),
+            ts_local,
+            || uuid::Uuid::new_v4().to_string(),
+            now,
+        ) {
+            tracing::warn!(target: "tuxlink::peers", "favorites bridge skipped: {e:?}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -542,5 +605,100 @@ mod tests {
             g.disarm(); // another site owns this attempt's record
         }
         assert!(seen.lock().unwrap().is_empty());
+    }
+
+    // ---- bridge_to_favorites [R5-7] ------------------------------------------
+
+    fn rf_obs(transport: ChannelTransport, direction: Direction, phase: ObservationPhase) -> PeerObservation {
+        PeerObservation {
+            path: ObservedPath::Rf { transport, via: vec![], freq_hz: None, bandwidth: None },
+            direction,
+            presented_target: "W6ABC".into(),
+            phase,
+        }
+    }
+
+    fn telnet_obs(direction: Direction, phase: ObservationPhase) -> PeerObservation {
+        PeerObservation {
+            path: ObservedPath::Telnet {
+                host: "cms.example".into(),
+                port: 8772,
+                provenance: Provenance::default(),
+            },
+            direction,
+            presented_target: "W6ABC".into(),
+            phase,
+        }
+    }
+
+    #[test]
+    fn bridge_maps_transport_to_radio_mode() {
+        use crate::favorites::store::FavoritesStore;
+
+        let cases: [(ChannelTransport, &str); 4] = [
+            (ChannelTransport::VaraHf, "vara-hf"),
+            (ChannelTransport::VaraFm, "vara-fm"),
+            (ChannelTransport::Ardop, "ardop-hf"),
+            (ChannelTransport::Packet, "packet"),
+        ];
+        for (transport, expected_mode) in cases {
+            let dir = tempfile::tempdir().unwrap();
+            let favorites = Arc::new(Mutex::new(FavoritesStore::open(
+                dir.path().join("stations.json"),
+            )));
+            let o = rf_obs(transport, Direction::Outgoing, ObservationPhase::B2fOk);
+            bridge_to_favorites(&favorites, &o);
+            let f = favorites.lock().unwrap();
+            let favs = f.favorites();
+            assert_eq!(favs.len(), 1, "{transport:?} must bridge exactly one recent");
+            assert_eq!(favs[0].mode, expected_mode, "{transport:?} → {expected_mode}");
+        }
+
+        // Telnet path → "telnet".
+        let dir = tempfile::tempdir().unwrap();
+        let favorites = Arc::new(Mutex::new(FavoritesStore::open(
+            dir.path().join("stations.json"),
+        )));
+        let o = telnet_obs(Direction::Outgoing, ObservationPhase::B2fOk);
+        bridge_to_favorites(&favorites, &o);
+        let f = favorites.lock().unwrap();
+        assert_eq!(f.favorites()[0].mode, "telnet");
+    }
+
+    #[test]
+    fn bridge_appends_one_reached_attempt_for_an_outbound_b2fok() {
+        use crate::favorites::store::FavoritesStore;
+
+        let dir = tempfile::tempdir().unwrap();
+        let favorites = Arc::new(Mutex::new(FavoritesStore::open(
+            dir.path().join("stations.json"),
+        )));
+        let o = rf_obs(ChannelTransport::VaraHf, Direction::Outgoing, ObservationPhase::B2fOk);
+        bridge_to_favorites(&favorites, &o);
+
+        let f = favorites.lock().unwrap();
+        assert_eq!(f.favorites().len(), 1, "one recent created");
+        let unit_id = f.favorites()[0].id.clone();
+        let attempts = f.attempts_for(&unit_id);
+        assert_eq!(attempts.len(), 1, "exactly one attempt appended");
+        assert_eq!(attempts[0].outcome, "reached");
+    }
+
+    #[test]
+    fn bridge_ignores_incoming_observations() {
+        // Recents = DIALS: an inbound (someone dialing US) must bridge nothing,
+        // even a successful B2fOk.
+        use crate::favorites::store::FavoritesStore;
+
+        let dir = tempfile::tempdir().unwrap();
+        let favorites = Arc::new(Mutex::new(FavoritesStore::open(
+            dir.path().join("stations.json"),
+        )));
+        let o = rf_obs(ChannelTransport::VaraHf, Direction::Incoming, ObservationPhase::B2fOk);
+        bridge_to_favorites(&favorites, &o);
+
+        let f = favorites.lock().unwrap();
+        assert!(f.favorites().is_empty(), "inbound observations must not bridge");
+        assert!(f.log().is_empty());
     }
 }

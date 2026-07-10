@@ -535,6 +535,7 @@ mod tests {
             transport: None,
             band: None,
             grid: None,
+            peer_id: None,
         }
     }
 

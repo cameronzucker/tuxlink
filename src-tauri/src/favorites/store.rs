@@ -60,6 +60,10 @@ const TOD_HINT_MIN_SUCCESSES: usize = 1;
 /// on every recorded attempt and is the LRU-dialed eviction key (M3). `freq` is
 /// RECORD-ONLY metadata (never read back into a form, H8). `transport` is the
 /// telnet-only `"CmsSsl" | "Telnet"` discriminator (H7 — NOT a free port).
+/// `peer_id` [R5-7] links this favorite to a P2P roster entry
+/// (`peers::model::Peer::id`) when the recent originated from (or was matched
+/// to) a peer; `#[serde(default)]` gives additive tolerance so an existing
+/// `stations.json` written before this field existed loads with `None`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Favorite {
     pub id: String,
@@ -70,6 +74,8 @@ pub struct Favorite {
     pub band: Option<String>,
     pub grid: Option<String>,
     pub note: Option<String>,
+    #[serde(default)]
+    pub peer_id: Option<String>,
     pub starred: bool,
     pub last_attempt_at: Option<String>,
     pub created_at: String,
@@ -115,6 +121,10 @@ pub struct RecentGateway {
 
 /// The record-path DTO (H3/Codex#8). Carries everything needed to upsert/find
 /// the unit; the client passes this (NOT a `unit_id`) to the record path.
+/// `peer_id` [R5-7] carries the P2P roster link through to a brand-new
+/// recent's [`Favorite::peer_id`]; it has NO `Default` impl (deliberately, so
+/// every construction site states its fields explicitly), so callers with no
+/// peer context (e.g. the CMS/telnet dial paths) pass `None`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FavoriteDial {
     pub mode: String,
@@ -123,6 +133,7 @@ pub struct FavoriteDial {
     pub transport: Option<String>,
     pub band: Option<String>,
     pub grid: Option<String>,
+    pub peer_id: Option<String>,
 }
 
 impl FavoriteDial {
@@ -543,9 +554,10 @@ impl FavoritesStore {
     /// Merge ONLY the operator-editable fields of `edited` into the existing
     /// favorite with the same `id`, preserving everything `favorite_star` and
     /// `record_attempt` own (M12). Editable fields: `gateway`, `freq`,
-    /// `transport`, `band`, `grid`, `note`. PRESERVED from the existing record:
-    /// `id`, `mode`, `starred`, `created_at`, `last_attempt_at` (and, in the
-    /// file, the whole `log` — untouched here). Bumps `updated_at` to `now`.
+    /// `transport`, `band`, `grid`, `note`, `peer_id` [R5-7]. PRESERVED from the
+    /// existing record: `id`, `mode`, `starred`, `created_at`, `last_attempt_at`
+    /// (and, in the file, the whole `log` — untouched here). Bumps `updated_at`
+    /// to `now`.
     ///
     /// This is the M12 anti-clobber guard: a STALE whole-object `favorite_upsert`
     /// carrying `starred:false` (or a stale `last_attempt_at`) can never revert a
@@ -575,6 +587,7 @@ impl FavoritesStore {
         existing.band = edited.band.clone();
         existing.grid = edited.grid.clone();
         existing.note = edited.note.clone();
+        existing.peer_id = edited.peer_id.clone();
         existing.updated_at = now;
         // starred, created_at, last_attempt_at, mode, id: PRESERVED (not touched).
         let merged = existing.clone();
@@ -657,6 +670,10 @@ impl FavoritesStore {
                     band: dial.band.clone(),
                     grid: dial.grid.clone(),
                     note: None,
+                    // [R5-7] carried through from the dial ONLY at creation —
+                    // mirrors freq/transport/band/grid, which likewise are not
+                    // re-applied to an already-existing recent on a repeat dial.
+                    peer_id: dial.peer_id.clone(),
                     starred: false,
                     last_attempt_at: Some(ts_local.clone()),
                     created_at: now.clone(),
@@ -766,6 +783,7 @@ mod tests {
             transport: None,
             band: None,
             grid: None,
+            peer_id: None,
         }
     }
 
@@ -777,6 +795,7 @@ mod tests {
             transport: Some(transport.to_string()),
             band: None,
             grid: None,
+            peer_id: None,
         }
     }
 
@@ -790,6 +809,7 @@ mod tests {
             band: Some("20m".to_string()),
             grid: Some("CN87".to_string()),
             note: None,
+            peer_id: None,
             starred: false,
             last_attempt_at: None,
             created_at: "2026-06-07T12:00:00+00:00".to_string(),
@@ -854,6 +874,60 @@ mod tests {
         let reopened = FavoritesStore::open(path);
         assert!(!reopened.favorites().is_empty());
         assert!(!reopened.log().is_empty());
+    }
+
+    #[test]
+    fn favorite_with_peer_id_round_trips() {
+        // [R5-7]: `peer_id` is a normal on-disk field, not record-path-only —
+        // a favorite constructed with a peer link survives a flush + reopen.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let mut store = FavoritesStore::open(path.clone());
+        let mut fav = favorite("f1", "vara-hf", "KK6XYZ");
+        fav.peer_id = Some("p1".to_string());
+        store.favorite_upsert(fav).unwrap();
+        drop(store);
+
+        let reopened = FavoritesStore::open(path);
+        assert_eq!(
+            reopened.favorites()[0].peer_id.as_deref(),
+            Some("p1"),
+            "peer_id must survive flush + reopen"
+        );
+    }
+
+    #[test]
+    fn stations_json_without_peer_id_loads_as_none() {
+        // [R5-7] additive-safety: a `stations.json` written before `peer_id`
+        // existed (the favorite row simply omits the key) must load with
+        // `peer_id: None`, not a deserialize error — `#[serde(default)]`.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let json = r#"{
+            "schema_version": 1,
+            "favorites": [{
+                "id": "f1",
+                "mode": "vara-hf",
+                "gateway": "KK6XYZ",
+                "freq": null,
+                "transport": null,
+                "band": null,
+                "grid": null,
+                "note": null,
+                "starred": false,
+                "last_attempt_at": null,
+                "created_at": "2026-06-07T12:00:00+00:00",
+                "updated_at": "2026-06-07T12:00:00+00:00"
+            }],
+            "log": []
+        }"#;
+        std::fs::write(&path, json).unwrap();
+        let store = FavoritesStore::open(path);
+        assert_eq!(store.favorites().len(), 1);
+        assert_eq!(
+            store.favorites()[0].peer_id, None,
+            "an old row with no peer_id key must deserialize to None, not fail"
+        );
     }
 
     #[test]
@@ -984,6 +1058,7 @@ mod tests {
             band: Some("40m".to_string()),
             grid: Some("CN88".to_string()),
             note: Some("edited note".to_string()),
+            peer_id: None,
             starred: false,                                  // stale — must be ignored
             last_attempt_at: None,                           // stale — must be ignored
             created_at: "2099-01-01T00:00:00+00:00".to_string(), // stale — must be ignored

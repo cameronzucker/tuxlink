@@ -44,6 +44,11 @@ import { tsLocal } from '../favorites/ts-local';
  *   sequence resolves; `failed` iff it throws at an ON-AIR step. Pre-air bails
  *   (missing target — guarded before any invoke; VARA transport-open failure)
  *   record nothing, matching the panels' honest-outcome rule.
+ * - [R5-7] P2P sessions are NOT recorded here — the backend peer recorder is
+ *   authoritative for P2P recents, bridged into this same favorites/Recents log
+ *   via the ONE `bridge_to_favorites` writer (`peers/recorder.rs`). Recording
+ *   here too would double-count a P2P attempt, so `connectFor` skips this call
+ *   entirely for `sessionType === 'p2p'` (see the `isP2p` guard below).
  */
 function recordRibbonAttempt(
   mode: RadioMode,
@@ -122,6 +127,10 @@ function intentOf(key: ConnectionKey): SessionTypeId {
 export async function connectFor(key: ConnectionKey): Promise<void> {
   const { sessionType, protocol } = key;
   const intent = intentOf(key);
+  // [R5-7] the backend peer-recorder is authoritative for p2p recents —
+  // recording here too would double-count the attempt (bridge_to_favorites is
+  // the sole writer for a P2P outcome).
+  const isP2p = sessionType === 'p2p';
 
   // Telnet-CMS — unchanged: cms_connect takes no args, no target needed.
   if (sessionType === 'cms' && protocol === 'telnet') {
@@ -150,7 +159,7 @@ export async function connectFor(key: ConnectionKey): Promise<void> {
     // (reached-at-link-up + failed-at-exchange are distinct empirical facts, as
     // ArdopRadioPanel records them).
     await invoke('modem_ardop_connect', { target });
-    recordRibbonAttempt('ardop-hf', target, 'reached');
+    if (!isP2p) recordRibbonAttempt('ardop-hf', target, 'reached');
     try {
       await invoke('modem_ardop_b2f_exchange', {
         target,
@@ -158,7 +167,7 @@ export async function connectFor(key: ConnectionKey): Promise<void> {
         transportKind: 'ardop',
       });
     } catch (e) {
-      recordRibbonAttempt('ardop-hf', target, 'failed');
+      if (!isP2p) recordRibbonAttempt('ardop-hf', target, 'failed');
       throw e;
     }
     return;
@@ -184,12 +193,12 @@ export async function connectFor(key: ConnectionKey): Promise<void> {
       // A "session not open" bail (transport vanished between open and exchange)
       // never went on-air — skip it, matching VaraRadioPanel.onSendReceive's
       // pre-air exclusion. Any other throw is an honest on-air `failed`.
-      if (!/session not open/i.test(String(e))) {
+      if (!/session not open/i.test(String(e)) && !isP2p) {
         recordRibbonAttempt(protocol, target, 'failed');
       }
       throw e;
     }
-    recordRibbonAttempt(protocol, target, 'reached');
+    if (!isP2p) recordRibbonAttempt(protocol, target, 'reached');
     return;
   }
 
@@ -205,10 +214,10 @@ export async function connectFor(key: ConnectionKey): Promise<void> {
     try {
       await invoke('packet_connect', { call: target, path: [] });
     } catch (e) {
-      recordRibbonAttempt('packet', target, 'failed');
+      if (!isP2p) recordRibbonAttempt('packet', target, 'failed');
       throw e;
     }
-    recordRibbonAttempt('packet', target, 'reached');
+    if (!isP2p) recordRibbonAttempt('packet', target, 'reached');
     return;
   }
 

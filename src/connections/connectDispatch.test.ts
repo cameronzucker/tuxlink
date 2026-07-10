@@ -39,6 +39,8 @@ const ARDOP: ConnectionKey = { sessionType: 'cms', protocol: 'ardop-hf' };
 const VARA: ConnectionKey = { sessionType: 'cms', protocol: 'vara-hf' };
 const PACKET: ConnectionKey = { sessionType: 'cms', protocol: 'packet' };
 const TELNET: ConnectionKey = { sessionType: 'cms', protocol: 'telnet' };
+const VARA_P2P: ConnectionKey = { sessionType: 'p2p', protocol: 'vara-hf' };
+const PACKET_P2P: ConnectionKey = { sessionType: 'p2p', protocol: 'packet' };
 
 beforeEach(() => {
   localStorage.clear();
@@ -144,5 +146,49 @@ describe('connectFor — records the ribbon Connect outcome into Recent (3b)', (
     await connectFor(TELNET);
     expect(mockInvoke).toHaveBeenCalledWith('cms_connect');
     expect(recordCalls()).toHaveLength(0);
+  });
+});
+
+describe('connectFor — p2p session outcomes are not ribbon-recorded ([R5-7])', () => {
+  // The backend peer-recorder bridges P2P outcomes into favorites/Recents
+  // itself (bridge_to_favorites, peers/recorder.rs) — recording here too would
+  // double-count the attempt. A `cms`-class (gateway) dial is unaffected and
+  // must still record exactly once (unchanged behavior, pinned above too).
+
+  it('a p2p VARA success records NOTHING via the ribbon', async () => {
+    writeLastTarget('vara-hf', 'KK6XYZ');
+    routeInvoke();
+    await connectFor(VARA_P2P);
+    expect(recordCalls()).toHaveLength(0);
+  });
+
+  it('a p2p VARA on-air failure still throws but records NOTHING via the ribbon', async () => {
+    writeLastTarget('vara-hf', 'KK6XYZ');
+    routeInvoke({ cmd: 'modem_vara_b2f_exchange', message: 'timeout' });
+    await expect(connectFor(VARA_P2P)).rejects.toThrow('timeout');
+    expect(recordCalls()).toHaveLength(0);
+  });
+
+  it('a p2p packet success/failure records NOTHING via the ribbon', async () => {
+    writeLastTarget('packet', 'N0CALL-7');
+    routeInvoke();
+    await connectFor(PACKET_P2P);
+    expect(recordCalls()).toHaveLength(0);
+
+    mockInvoke.mockReset();
+    routeInvoke({ cmd: 'packet_connect', message: 'link failure' });
+    await expect(connectFor(PACKET_P2P)).rejects.toThrow('link failure');
+    expect(recordCalls()).toHaveLength(0);
+  });
+
+  it('a gateway (cms-class) dial still records exactly once (unaffected by the p2p guard)', async () => {
+    writeLastTarget('vara-hf', 'KK6XYZ');
+    routeInvoke();
+    await connectFor(VARA);
+    expect(recordCalls()).toHaveLength(1);
+    expect(recordCalls()[0][1]).toMatchObject({
+      dial: { mode: 'vara-hf', gateway: 'KK6XYZ' },
+      outcome: 'reached',
+    });
   });
 });

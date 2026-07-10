@@ -339,7 +339,7 @@ pub fn p2p_capabilities() -> P2pCapabilities {
         agent_find_peers: false,
         agent_telnet_dial: false,
         vara_engine_split: false,
-        favorites_peer_link: false,
+        favorites_peer_link: true, // Task 17 (R5-7): the favorites↔peer bridge landed.
     }
 }
 
@@ -355,10 +355,11 @@ mod tests {
     }
 
     #[test]
-    fn capabilities_report_only_peer_store_true_at_task_11() {
-        // Task 11 lands rows 1-2 (store + recorder). Every other bit stays false
-        // until its own task flips it — this guards against an accidental early
-        // flip and pins Task 28's completeness baseline.
+    fn capabilities_report_only_landed_rows_true() {
+        // Task 11 lands rows 1-2 (store + recorder); Task 17 lands row 10 (the
+        // favorites↔peer bridge). Every OTHER bit stays false until its own task
+        // flips it — this guards against an accidental early flip and pins
+        // Task 28's completeness baseline.
         let c = p2p_capabilities();
         assert!(c.peer_store, "Task 11 lands the store + recorder");
         assert!(!c.finder_peers);
@@ -367,7 +368,7 @@ mod tests {
         assert!(!c.agent_find_peers);
         assert!(!c.agent_telnet_dial);
         assert!(!c.vara_engine_split);
-        assert!(!c.favorites_peer_link);
+        assert!(c.favorites_peer_link, "Task 17 lands the favorites↔peer bridge");
     }
 
     // ------------------------------------------------------------------
