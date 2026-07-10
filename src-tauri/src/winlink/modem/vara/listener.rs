@@ -644,6 +644,7 @@ mod tests {
             // Short read timeout so recv() returns None promptly when
             // the mock is idle — keeps the wire tests fast.
             read_timeout: Some(Duration::from_millis(100)),
+            data_read_timeout: Some(Duration::from_millis(100)),
         };
         VaraTransport::connect(cfg).unwrap()
     }

@@ -34,6 +34,20 @@ pub struct VaraConfig {
     /// Per-read timeout on the command socket. None = blocking
     /// indefinitely.
     pub read_timeout: Option<Duration>,
+    /// Per-read timeout on the DATA socket. None = blocking
+    /// indefinitely.
+    ///
+    /// Deliberately independent of `read_timeout`: the cmd socket ticks
+    /// at event cadence (a short timeout keeps status loops responsive),
+    /// but the data socket carries the B2F byte stream **paced by the RF
+    /// link**. At VARA 500 the observed throughput is tens of bps — a
+    /// gateway's SID banner takes 10–20+ s to arrive, and multi-second
+    /// inter-byte gaps are normal mid-transfer. The B2F reader maps any
+    /// read error (including a timeout tick) to ConnectionClosed, so a
+    /// cmd-scale timeout here tears down a healthy link: on 2026-07-10
+    /// the first-ever on-air gateway answer (KD6OAT, BW500, S/N −11.8 dB)
+    /// was disconnected 4 s after link-up by exactly this (tuxlink-xzxk1).
+    pub data_read_timeout: Option<Duration>,
 }
 
 impl Default for VaraConfig {
@@ -44,6 +58,10 @@ impl Default for VaraConfig {
             data_port: 8301,
             connect_timeout: Duration::from_secs(5),
             read_timeout: Some(Duration::from_secs(2)),
+            // RF-scale (see the field doc): bounds a dead-link read at the
+            // same order as VARA's own ARQ timeout regime while never
+            // expiring on a healthy slow link.
+            data_read_timeout: Some(Duration::from_secs(120)),
         }
     }
 }
@@ -96,7 +114,9 @@ impl VaraTransport {
         let cmd_reader = LineReader::new(cmd_stream);
 
         let data_stream = TcpStream::connect_timeout(&data_addr, cfg.connect_timeout)?;
-        data_stream.set_read_timeout(cfg.read_timeout)?;
+        // SO_RCVTIMEO lives on the socket, not the fd, so this also governs
+        // every `try_clone` handed to the B2F exchange (writer + reader).
+        data_stream.set_read_timeout(cfg.data_read_timeout)?;
 
         tracing::info!(
             target: "tuxlink::winlink::modem::vara",
@@ -340,6 +360,19 @@ impl VaraTransport {
             Box::new(stream_clone) as Box<dyn ShutdownableStream>,
         ))
     }
+
+    /// Clone a shutdown handle for the DATA socket (tuxlink-xzxk1 — Codex
+    /// adrev P1 #2 on the data_read_timeout fix). With the RF-scale
+    /// `data_read_timeout`, an exchange thread can be parked in a data-socket
+    /// read for up to that budget; the abort path must be able to
+    /// `shutdown_both` the data socket so the parked read returns EOF NOW
+    /// instead of after the timeout. `ABORT\r` kills the ARQ link anyway, so
+    /// the data stream is dead the moment an abort is issued — shutting it
+    /// down loses nothing.
+    pub fn try_clone_data_shutdown_handle(&self) -> io::Result<Box<dyn ShutdownableStream>> {
+        let data_clone = self.data_stream.try_clone()?;
+        Ok(Box::new(data_clone) as Box<dyn ShutdownableStream>)
+    }
 }
 
 /// Outcome of [`VaraTransport::recv_line_distinguishing_eof`] — a
@@ -536,6 +569,7 @@ mod tests {
             data_port: port,
             connect_timeout: Duration::from_secs(5),
             read_timeout: Some(Duration::from_millis(300)),
+            data_read_timeout: Some(Duration::from_millis(300)),
         }
     }
 
@@ -615,6 +649,7 @@ mod tests {
             data_port,
             connect_timeout: Duration::from_secs(2),
             read_timeout: Some(read_timeout),
+            data_read_timeout: Some(read_timeout),
         };
         let transport = VaraTransport::connect(cfg).expect("connect must succeed");
         let cmd_server = cmd_accept.join().unwrap();
@@ -675,5 +710,39 @@ mod tests {
             }
             other => panic!("expected Line(Unknown), got {other:?}"),
         }
+    }
+
+    /// tuxlink-xzxk1: the cmd and data sockets get INDEPENDENT read
+    /// timeouts — cmd at event cadence, data at RF scale. Asserted via the
+    /// kernel (`TcpStream::read_timeout`), not the config struct, so a
+    /// regression in `connect()`'s plumbing (e.g. reverting the data socket
+    /// to `cfg.read_timeout`) fails even if the config fields are right.
+    #[test]
+    fn data_socket_gets_its_own_rf_scale_read_timeout() {
+        let cmd_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let data_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let cfg = VaraConfig {
+            host: "127.0.0.1".into(),
+            cmd_port: cmd_l.local_addr().unwrap().port(),
+            data_port: data_l.local_addr().unwrap().port(),
+            connect_timeout: Duration::from_secs(2),
+            read_timeout: Some(Duration::from_millis(250)),
+            data_read_timeout: Some(Duration::from_secs(90)),
+        };
+        let cmd_accept = thread::spawn(move || cmd_l.accept().unwrap().0);
+        let data_accept = thread::spawn(move || data_l.accept().unwrap().0);
+        let mut transport = VaraTransport::connect(cfg).expect("connect must succeed");
+        let _cmd_server = cmd_accept.join().unwrap();
+        let _data_server = data_accept.join().unwrap();
+
+        assert_eq!(
+            transport.data_stream().read_timeout().unwrap(),
+            Some(Duration::from_secs(90)),
+            "data socket must carry data_read_timeout, not the cmd cadence"
+        );
+        // And the clone the B2F exchange actually reads from shares it
+        // (SO_RCVTIMEO is a socket option, not per-fd state).
+        let clone = transport.data_stream().try_clone().unwrap();
+        assert_eq!(clone.read_timeout().unwrap(), Some(Duration::from_secs(90)));
     }
 }
