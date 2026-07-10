@@ -838,13 +838,16 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
             data-testid="vara-tune"
             disabled={freqHz === null}
             onClick={() => {
-              if (freqHz !== null) void invoke('ardop_tune_rig', { freqHz });
+              // VARA FM: the listed frequency IS the RF frequency — no
+              // sideband center→dial offset (Codex adrev P2 #1).
+              if (freqHz !== null)
+                void invoke('ardop_tune_rig', { freqHz, sideband: mode.kind !== 'vara-fm' });
             }}
           >
             Tune…
           </Button>
         </div>
-        {freqHz !== null && (
+        {freqHz !== null && mode.kind !== 'vara-fm' && (
           <p className="radio-panel-radio-help" data-testid="vara-dial-hint">
             USB dial: {((freqHz - 1500) / 1_000_000).toFixed(4)} MHz
           </p>

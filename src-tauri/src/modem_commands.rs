@@ -729,7 +729,8 @@ where
     // AFTER init, BEFORE connect_arq (audio). Close-serial radios release the
     // serial here; DRA-100 keeps the rig and hands it back for session storage.
     // On a tune error, drop the transport first so ardopcf is reaped.
-    let live_rig = match tune_rig_for_connect(&cfg.rig, candidate.freq_hz) {
+    // ARDOP is HF sideband-data by definition — always convert center→dial.
+    let live_rig = match tune_rig_for_connect(&cfg.rig, candidate.freq_hz, true) {
         Ok(rig) => rig,
         Err(e) => {
             drop(transport);
@@ -2049,6 +2050,7 @@ pub(crate) fn should_release_after_tune(rig: &RigUiConfig) -> bool {
 pub(crate) fn tune_rig_for_connect(
     rig_cfg: &RigUiConfig,
     freq_hz: Option<u64>,
+    sideband: bool,
 ) -> Result<Option<tux_rig::ManagedRig>, String> {
     let (rc, hz) = match (rig_config_from(rig_cfg), freq_hz) {
         (Some(rc), Some(hz)) => (rc, hz),
@@ -2058,7 +2060,13 @@ pub(crate) fn tune_rig_for_connect(
     let mut rig =
         tux_rig::ManagedRig::spawn(rc).map_err(|e| format!("rigctld spawn failed: {e}"))?;
     let mode = rig_data_mode(rig_cfg);
-    let dial_hz = center_to_dial_hz(hz, mode);
+    // `sideband=false` (VARA FM / VHF-FM channels — Codex adrev P2 #1): FM
+    // channel listings ARE the RF frequency; no audio-center offset exists.
+    let dial_hz = if sideband {
+        center_to_dial_hz(hz, mode)
+    } else {
+        hz
+    };
     tracing::info!(
         target: "tuxlink::modem",
         center_hz = hz,
@@ -2140,8 +2148,13 @@ where
 /// like the dial path, so Tune… and Send/Receive land the VFO on the SAME
 /// spot for the same typed frequency. App-wide invariant: every frequency
 /// the app accepts is a Winlink channel center.
+///
+/// `sideband` (Codex adrev P2 #1): `None` defaults to `true` (HF sideband —
+/// the ARDOP panel and agent callers). The VARA panel passes `false` in FM
+/// mode, where the listed frequency IS the RF frequency and no audio-center
+/// offset exists.
 #[tauri::command]
-pub fn ardop_tune_rig(freq_hz: u64) -> Result<(), String> {
+pub fn ardop_tune_rig(freq_hz: u64, sideband: Option<bool>) -> Result<(), String> {
     let cfg = config::read_config().map_err(|e| format!("read failed: {e}"))?;
     // tuxlink-8fkkk: rig control is radio-level (Config.rig), shared by ARDOP +
     // VARA. This Tune-only command is mode-agnostic.
@@ -2149,8 +2162,12 @@ pub fn ardop_tune_rig(freq_hz: u64) -> Result<(), String> {
         .ok_or_else(|| "rig control not configured — set the rig model + CAT serial".to_string())?;
     let mut rig = tux_rig::ManagedRig::spawn(rc).map_err(|e| e.to_string())?;
     let mode = rig_data_mode(&cfg.rig);
-    rig.tune(center_to_dial_hz(freq_hz, mode), mode)
-        .map_err(|e| e.to_string())?;
+    let dial_hz = if sideband.unwrap_or(true) {
+        center_to_dial_hz(freq_hz, mode)
+    } else {
+        freq_hz
+    };
+    rig.tune(dial_hz, mode).map_err(|e| e.to_string())?;
     // Drop releases the serial (close-serial-safe for internal-codec radios).
     Ok(())
 }

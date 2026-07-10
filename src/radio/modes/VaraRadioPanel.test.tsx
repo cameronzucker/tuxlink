@@ -681,7 +681,7 @@ describe('<VaraRadioPanel> dial (Connect)', () => {
       expect(tune.disabled).toBe(true);
     });
 
-    it('Tune button fires ardop_tune_rig with freqHz when a valid frequency is entered', async () => {
+    it('Tune button fires ardop_tune_rig with freqHz + sideband on VARA HF (tuxlink-9pzaj)', async () => {
       const core = await import('@tauri-apps/api/core');
       const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
       renderPanel(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
@@ -691,8 +691,32 @@ describe('<VaraRadioPanel> dial (Connect)', () => {
       expect(tune.disabled).toBe(false);
       fireEvent.click(tune);
       await waitFor(() => {
-        expect(invokeSpy).toHaveBeenCalledWith('ardop_tune_rig', { freqHz: 14105000 });
+        // sideband:true → the backend converts this CENTER to the USB dial.
+        expect(invokeSpy).toHaveBeenCalledWith('ardop_tune_rig', {
+          freqHz: 14105000,
+          sideband: true,
+        });
       });
+      // The HF panel shows the derived USB dial next to the center field.
+      expect((await screen.findByTestId('vara-dial-hint')).textContent).toContain('14.1035');
+    });
+
+    it('Tune passes sideband:false on VARA FM — FM listings are the RF frequency (tuxlink-9pzaj)', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
+      renderPanel(<VaraRadioPanel mode={FM_MODE} onClose={() => {}} />);
+      const freq = (await screen.findByTestId('vara-freq')) as HTMLInputElement;
+      fireEvent.change(freq, { target: { value: '145.570' } });
+      const tune = (await screen.findByTestId('vara-tune')) as HTMLButtonElement;
+      fireEvent.click(tune);
+      await waitFor(() => {
+        expect(invokeSpy).toHaveBeenCalledWith('ardop_tune_rig', {
+          freqHz: 145570000,
+          sideband: false,
+        });
+      });
+      // No sideband offset on FM → no USB-dial hint.
+      expect(screen.queryByTestId('vara-dial-hint')).toBeNull();
     });
 
     it('prefill from Find a Station fills the frequency field (normalized MHz)', async () => {
