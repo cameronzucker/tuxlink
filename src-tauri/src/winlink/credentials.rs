@@ -567,6 +567,16 @@ pub enum LegacyMigration {
 /// The legacy entry is deleted strictly AFTER the new-key write succeeds —
 /// there is no window where the secret exists in neither location.
 ///
+/// A backend failure on that final legacy delete still returns
+/// `Ok(Migrated)`: the migration functionally succeeded (the new key holds
+/// the secret), and callers only attempt migration on a new-key read-miss,
+/// so an `Err` here would report failure for a success and the delete would
+/// never be re-attempted. The consequence is an ORPHANED legacy
+/// `p2p-peer:<CALLSIGN>` keyring entry; a `tracing::warn!` names the
+/// orphaned account (never the secret value) so the operator can remove it
+/// manually. Uninstall cleanup still enumerates it via
+/// `discover_peer_callsigns`.
+///
 /// Accepts an owned entry factory (matches the caller shape used by the
 /// migration test double, which builds a fresh closure per call).
 pub fn migrate_legacy_peer_secret_with_factory<F>(
@@ -598,10 +608,24 @@ where
         .map_err(|e| format!("keyring backend error: {e}"))?;
 
     // Delete-legacy happens strictly after the new-key write above succeeded.
+    // A backend failure here does NOT fail the migration: the secret is
+    // already safe under the new key, and this path is never re-entered
+    // (callers migrate only on a new-key read-miss), so Err would both
+    // misreport a success and guarantee the delete is never retried. Warn
+    // with the orphaned ACCOUNT name only — never the secret value.
     match legacy_entry.delete_password() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(LegacyMigration::Migrated),
-        Err(other) => Err(format!("keyring backend error: {other}")),
+        Ok(()) | Err(keyring::Error::NoEntry) => {}
+        Err(other) => {
+            tracing::warn!(
+                account = %legacy_account,
+                error = %other,
+                "legacy P2P peer secret migrated to the id-keyed account, but \
+                 deleting the legacy keyring entry failed; the legacy entry is \
+                 orphaned and can be removed manually"
+            );
+        }
     }
+    Ok(LegacyMigration::Migrated)
 }
 
 /// Conservative legacy re-key of a callsign-keyed P2P peer secret into the
@@ -762,6 +786,65 @@ mod tests {
             "legacy untouched"
         );
         assert!(!map.contains_key(&("tuxlink".into(), "p2p-endpoint:p1:e1".into())));
+    }
+
+    /// Like `FakeEntry`, but `delete_password` always fails with a backend
+    /// error (NOT `NoEntry`). Models a keyring whose store is readable and
+    /// writable but rejects deletions — the orphaned-legacy-entry scenario.
+    struct DeleteFailEntry(FakeEntry);
+
+    impl EntryLike for DeleteFailEntry {
+        fn get_password(&self) -> Result<String, keyring::Error> {
+            self.0.get_password()
+        }
+
+        fn set_password(&self, password: &str) -> Result<(), keyring::Error> {
+            self.0.set_password(password)
+        }
+
+        fn delete_password(&self) -> Result<(), keyring::Error> {
+            Err(keyring::Error::PlatformFailure(
+                "simulated delete failure".into(),
+            ))
+        }
+    }
+
+    #[test]
+    fn legacy_delete_failure_after_successful_write_still_reports_migrated() {
+        // Reviewer fix: if the new-key write succeeds but the legacy delete
+        // fails with a backend error, the migration DID succeed — callers
+        // only migrate on a new-key read-miss, so an Err here would report
+        // failure for a success and the delete would never be retried. The
+        // legacy entry is orphaned (and warned about), not an error.
+        let store = Arc::new(Mutex::new(HashMap::from([(
+            ("tuxlink".to_string(), "p2p-peer:W6ABC".to_string()),
+            "hunter2".to_string(),
+        )])));
+        let delete_fail_factory = {
+            let store = store.clone();
+            move |service: &str, account: &str| -> Box<dyn EntryLike> {
+                Box::new(DeleteFailEntry(FakeEntry {
+                    store: Arc::clone(&store),
+                    service: service.to_string(),
+                    account: account.to_string(),
+                }))
+            }
+        };
+        let out =
+            migrate_legacy_peer_secret_with_factory("W6ABC", "p1", "e1", true, delete_fail_factory)
+                .unwrap();
+        assert_eq!(out, LegacyMigration::Migrated);
+        let map = store.lock().unwrap();
+        assert_eq!(
+            map.get(&("tuxlink".into(), "p2p-endpoint:p1:e1".into()))
+                .map(String::as_str),
+            Some("hunter2"),
+            "new key holds the migrated secret"
+        );
+        assert!(
+            map.contains_key(&("tuxlink".into(), "p2p-peer:W6ABC".into())),
+            "legacy entry remains (orphaned) because its delete failed"
+        );
     }
 
     #[test]
