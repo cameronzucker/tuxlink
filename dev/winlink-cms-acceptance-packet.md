@@ -73,11 +73,12 @@ needs no new Winlink account. The **on-air callsign is per scanned channel**
 the CMS under the base call (`CmsLink.cs`). The WDT notification states both
 forms: site call `N7CPZ`, on-air channel call `N7CPZ-1`.
 
-**Hard prerequisite: `tuxlink-gbb05`** (dial path strips gateway SSIDs,
-KB2PCN-5→KB2PCN). With the RMS at `N7CPZ-1`, an SSID-stripping client
-transmits its ConReq to `N7CPZ` — a station that does not exist on the air —
-and the test cannot start. gbb05 blocks the OTA test (`tuxlink-iiqoy`) in the
-dependency graph.
+**Prerequisite `tuxlink-gbb05` — RESOLVED** (PR #1068, merged 2026-07-10).
+The dial path stripped gateway SSIDs (KB2PCN-5→KB2PCN), which would have sent
+the ConReq to `N7CPZ` — a station that does not exist on the air — with the
+RMS at `N7CPZ-1`. The parser now preserves the SSID end-to-end
+(catalog → finder → dial); the fix must be in the build used for the test
+(any release cut after 2026-07-10).
 
 - **Candidate A (primary): RMS Trimode + VARA HF under WINE on R2.** The
   [Winelink project](https://github.com/WheezyE/Winelink) installs
