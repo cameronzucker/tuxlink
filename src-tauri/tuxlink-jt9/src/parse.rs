@@ -42,6 +42,9 @@ pub fn parse_stdout_line(line: &str) -> ParsedLine {
         (snr.parse::<i32>(), dt.parse::<f64>(), freq.parse::<u32>()) else {
         return ParsedLine::Other;
     };
+    if !dt_s.is_finite() {
+        return ParsedLine::Other;
+    }
     ParsedLine::Decode { snr_db, dt_s, freq_hz, message }
 }
 
@@ -76,10 +79,11 @@ mod tests {
 
     #[test]
     fn hashed_callsign_message_survives_verbatim() {
-        let l = "000000 -12  0.3 1802 ~  <...> N4AHI EM73                        ";
+        // Real capture, jt9 2.7.0, ft8-20m-busier fixture, 2026-07-10.
+        let l = "000000 -19 -0.5 1071 ~  <...> N4AHI EM73                        ";
         assert_eq!(
             parse_stdout_line(l),
-            ParsedLine::Decode { snr_db: -12, dt_s: 0.3, freq_hz: 1802, message: "<...> N4AHI EM73".into() }
+            ParsedLine::Decode { snr_db: -19, dt_s: -0.5, freq_hz: 1071, message: "<...> N4AHI EM73".into() }
         );
     }
 
@@ -87,6 +91,15 @@ mod tests {
     fn malformed_lines_are_other_never_panic() {
         for l in ["", "garbage", "000000 -14", "000000 xx yy zz ~ MSG",
                   "Fortran runtime error: End of file", "~", "000000 -14 -0.6 2093 ~  "] {
+            assert_eq!(parse_stdout_line(l), ParsedLine::Other, "line: {l:?}");
+        }
+    }
+
+    #[test]
+    fn non_finite_dt_is_other() {
+        for l in ["000000 -14 NaN 2093 ~  CQ K1ABC PM53",
+                  "000000 -14 1e999 2093 ~  CQ K1ABC PM53",
+                  "000000 -14 inf 2093 ~  CQ K1ABC PM53"] {
             assert_eq!(parse_stdout_line(l), ParsedLine::Other, "line: {l:?}");
         }
     }
