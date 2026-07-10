@@ -1,6 +1,8 @@
 # P2P Peer Model & VARA Protocol Completeness Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+>
+> **Before executing any Task N, read the "Review-fold binding amendments" section below and apply Task N's amendment as part of that task** — it overrides the original task body where they conflict, and includes one NEW task (23a, the frontend connect seam). The amendments come from two independent plan-review rounds (R1 Codex, R2 Claude).
 
 **Goal:** Ship P2P as a complete, discoverable, verifiable mode: a first-class peer store auto-tracked at every transport's attempt-conclusion, a hardened trust boundary for the agent surface, peer rows in the finder and on both maps, and an engine-split (HF/SAT vs FM) VARA command plan that fixes the c39af/gbb05/m9kcd protocol defects.
 
@@ -21,6 +23,175 @@
 - **RADIO-1:** no task transmits. VARA behavior is verified against a scripted mock TCP server; the two-rig bench (spec §8) is operator-executed after merge.
 - **Timestamps:** on-disk peer timestamps are RFC3339 with local offset produced backend-side via `chrono::Local::now().to_rfc3339()` (chrono `clock` feature is enabled). Frontend-supplied `ts_local` continues to use `tsLocal()` where the favorites bridge crosses from the frontend.
 - **Commit discipline:** conventional commits, `Agent: <session-moniker>` trailer + `Co-Authored-By` line on every commit. Frequent small commits, one per task minimum.
+
+## Review-fold binding amendments (R1 Codex + R2 Claude — apply when executing the named task)
+
+> These amendments were folded after two independent plan-review rounds
+> (ledger: `dev/adversarial/2026-07-10-p2p-plan-fold-ledger.md`, gitignored).
+> **When executing Task N, apply its amendment here as part of the task** —
+> it overrides the original task body where they conflict. Each is grounded in
+> a verified `file:line`.
+
+**NEW Task 23a — Frontend P2P connect seam (the systemic gap; CLD-1, CLD-2, CDX-1, CLD-6).**
+The backend tracking is entirely gated on `SessionIntent::P2p`, but the frontend
+dispatch never sends it for a peer dial. `connectFor(key)` derives intent as
+`intentOf(key) = key.sessionType` (`src/connections/connectDispatch.ts:104-106`);
+the finder's `onUse(dial, candidates)` only prefills a target
+(`src/catalog/StationRail.tsx:82-107`) and never switches the session type; the
+packet branch hardcodes `packet_connect({ call, path: [] })` with no intent
+(`connectDispatch.ts:200-213`); the VARA/ARDOP branches send no `via`. Without a
+task here, a peer Connect dials as CMS → recorder skipped → store never
+populated → Task 28 wire-walk (correctly) fails the feature as a stub. This task:
+- Adds a peer-aware Connect entry: a peer-row Connect calls
+  `connectFor({ sessionType: 'p2p', protocol })` for the channel's protocol,
+  after persisting the channel's target **and** its `via`/`freq` (extend the
+  target-persistence the ribbon reads via `readLastTarget`, or thread an
+  explicit `{target, via, freqHz}` through a new peer-dial path — pick the one
+  that reaches the same backend command the panel uses).
+- Threads `via` into `modem_vara_b2f_exchange` (add a `via: string[]` arg;
+  backend command gains a `via: Vec<String>` param passed to the dial, Task 5)
+  and `packet_connect` (`intent: 'p2p'` + the channel's `path`, Task 12);
+  ARDOP carries `intent: 'p2p'` only (no digi path in scope). `freqHz` already
+  flows on the panel path; confirm the peer path uses that same command.
+- Test (frontend, vitest): a peer-row Connect for each protocol invokes the
+  backend command with `intent`/`sessionType` = p2p and (VARA/packet) the
+  channel's `via`. This is the producer→store seam Task 28 traces.
+- Files: `src/connections/connectDispatch.ts`, `src/catalog/StationRail.tsx`,
+  `src/catalog/StationFinderPanel.tsx`, and the two backend command signatures
+  (`modem_commands.rs` VARA/ARDOP b2f command args, `ui_commands.rs`
+  `packet_connect`). Landing this makes Tasks 13-16's record sites actually
+  reachable from the UI.
+
+**Task 1 (CDX-5).** Add a THIRD fn `validate_presented_callsign(s) -> Result<(),String>`
+— accepts base (3-7 A-Z0-9) + optional `/SUFFIX` (e.g. `/P`, `/M`, `/MM`) +
+optional SSID (`-1..-15`,`-T`,`-R`,`-L`). `sanitize_display` MUST reject `/`
+(spec §313-320: the broad injection floor rejects path separators). Division of
+labor: **wire target** → `validate_wire_callsign` (no `/`); **stored presented
+callsign** (write boundary, T8/T18) → `validate_presented_callsign` (so `W6ABC/P`
+can be stored); **agent-DTO floor** (T19) → `sanitize_display`. Add tests: `/P`
+passes `validate_presented_callsign`, fails `sanitize_display` and
+`validate_wire_callsign`.
+
+**Task 3 + Task 5 (PF-1, PF-2, CDX-6, CLD-5, CLD-10).**
+(a) Reuse the EXISTING test helpers — do NOT invent `loopback_transport_for_readiness`/
+`scripted_cmd_acceptor`/`SharedPtt::default()`. Use `scripted_cmd_vara_transport(cmd_script: &'static [u8])`
+(`commands.rs:3877`) and `recording_keyer() -> (SharedPtt, Arc<Mutex<Vec<bool>>>)`
+(`commands.rs:3853`) / `failing_keyer()` (`commands.rs:3864`). `SharedPtt =
+Mutex<Box<dyn PttSink>>` (`ptt.rs:249`) — not `Default`. `VaraTransport::connect`
+takes `VaraConfig` BY VALUE (`transport.rs:84`). For the `capturing_cmd_acceptor`
+(client-write capture, genuinely new — the existing helper only scripts
+server→client) keep it but fix `connect(cfg)` by value.
+(b) BOUNDED POLL: `wait_for_readiness` and the setter-WRONG drain must not
+depend on `VaraConfig.read_timeout` (2s default, and can be `None` = block
+forever → would wedge the "never wedge" path). Set a short read_timeout on the
+transport for the gate window (e.g. 100 ms) or use a deadline-checked poll;
+`t_max` becomes a real ceiling. Relax the fail-open test's upper bound to
+`< t_max + one_poll`.
+(c) GATE OUTSIDE THE LOCK (CLD-5): `vara_open_session_inner` holds
+`session.inner.lock()` from `commands.rs:1674` to fn end. Run `wait_for_readiness`
+on the `transport` BEFORE it is stashed into the locked session (or scope the
+lock so the multi-second wait is not inside it) — otherwise `vara_status` and
+concurrent ops block ~5-6s every HF P2P open.
+
+**Task 5 (CDX-1, CLD-6).** Do NOT add `via` to the shared
+`modem_commands::DialCandidate` (`modem_commands.rs:2097`; used by ARDOP, MCP
+`map_qsy_candidates`, `QsyCandidateDto`, TS `QsyCandidate`). VARA assembles via
+`vara_dial_candidates` then `clamp_connect_candidates` which CLAMPS to
+candidate[0] (tuxlink-qevsf, Part 97 — auto-QSY disabled), so the "walk" dials
+ONE candidate. Soften the multi-candidate QSY-walk language accordingly.
+`via` for the VARA dial comes from a VARA-local source: add a `via: Vec<String>`
+parameter to the VARA b2f command (Task 23a threads it from the peer channel) and
+pass it into `send_connect_and_wait`/`_inner` — not off `DialCandidate`.
+
+**Task 7 (CLD-8).** Reword the forward-compat claim: `#[serde(other)] Unknown`
+means the roster WON'T CRASH on a future variant — it does NOT preserve the
+value (Unknown re-serializes as `"unknown"` on the next flush, downgrading it).
+Document this as a known alpha limitation in the module doc; do not claim
+"quarantines the value." (The shapes are valid serde — keep them.)
+
+**Task 8 (CDX-4, CLD-4).**
+(a) Condition the Operator→ObservedIncoming provenance downgrade on
+`direction == Incoming` ONLY. An OUTBOUND operator dial legitimately records an
+`Operator` endpoint (that is how a telnet favorite is born, T16). The unconditional
+downgrade in the T8 snippet contradicts T16 and would leave T20's agent dial no
+Operator endpoint to resolve.
+(b) `conflict: true` records must be COUNTED and EVICTABLE — remove `!conflict`
+from `evict_over_cap`'s filter (or give conflict records their own small cap).
+Otherwise a spoofed-SSID loop on a split base grows unbounded un-evictable rows.
+Add a per-peer cap on `channels` and `presented_callsigns` (e.g. 64 each,
+oldest-`last_seen` evicted) so rotated observations on ONE peer cannot grow it
+without bound. Pin both with tests.
+
+**Task 9 (CDX-3, CLD-13).** `Config` is `#[serde(deny_unknown_fields, remote = "Self")]`
+(`config.rs:222`) — add the `p2p_limits` field to BOTH the remote and the shadow
+struct (still additive-safe for old files). The reject→limiter hook is folded
+into Task 16 (see below), not here.
+
+**Task 11 (CLD-12).** Narrow `P2pCapabilities` to the THREE UI-queried bits
+(`finder_peers`, `map_peers`, `settings_editor`) — those are the only rows a UI
+surface queries to hide. Drop the other five bits; the agent/store/protocol rows
+land ATOMICALLY (the tool/store/command exists in the binary or it doesn't —
+there is no half-state to hide), so a capability bit for them gates nothing.
+State this honestly (spec R5-8's "each row exposes a queried bit" applies to UI
+rows). Each remaining bit is flipped true only in the task that lands its UI, with
+an absence test (Tasks 23-25).
+
+**Tasks 13-16 (CDX-7).** Every record-site test MUST drive the real code path
+(the actual `run_vara_b2f_with_transport` walk / `run_ardop_connect_b2f_with_transport`
+/ `native_packet_connect` / `handle_one_session`), asserting the site RECORDS —
+not hand-construct-and-drop an `ObservationGuard` (that is false-green; it passes
+even if the site was never wired). Extract a testable core fn if the real fn's
+`AppHandle` blocks direct calling.
+
+**Task 16 (CDX-3, CLD-3-related).** Add a rejected-inbound hook at EVERY
+allowlist-reject site (telnet `handle_one_session` reject paths
+`telnet_listen.rs:371-389`; the VARA/ARDOP/packet listener gates) that calls the
+limiter's FAILED path + a visible `tracing::warn!` + session-log line, WITHOUT
+creating a roster record. This is the only way the spoofing-loop quarantine
+counter (spec §223-229) ever sees real rejected bursts — the accepted-path guard
+never does.
+
+**Task 17 (CDX-9, CLD-11).** `record_attempt`'s real signature is
+`record_attempt(&mut self, dial: FavoriteDial, outcome: String, ts_local: String,
+new_id: impl FnOnce() -> String, now: String)` (`favorites/store.rs:628`), and
+`FavoriteDial` (`favorites/store.rs:119`) has NO `Default`. Add `peer_id:
+Option<String>` to `FavoriteDial` (Rust + `src/favorites/types.ts:45-52`) so the
+bridge can carry it, and construct the `FavoriteDial` with every field explicit
+(no `..Default::default()`). Match the real `record_attempt` arg list.
+
+**Task 19 (CDX-8, CLD-9).**
+(a) Grid curation must validate Maidenhead SHAPE via `validate_grid`
+(`mcp_ports.rs:2319`, the same call `curate_gateway` uses) before clamping —
+not just length+ASCII.
+(b) Enumerate the `MonolithStationPort` ripple: it currently holds only `app`
+(`mcp_ports.rs:2361`); adding egress-gating to `find_peers` requires threading
+`guard: Arc<EgressGuard>` onto the struct and EVERY construction site. Note the
+trait-cohesion wrinkle (`find_stations` ungated vs `find_peers` gated on the same
+`StationPort`) and keep it — the gate is required by spec §R2-S5.
+
+**Task 20 (CDX-2, CLD-3).**
+(a) The router tool for `telnet_p2p_connect` is on `EgressPort` → use
+`.map_err(egress_err)?`, NOT `port_err` (`router.rs:34-54`; existing egress tools
+at 691-730). Re-check T21's VARA-engine edits for the same mapper.
+(b) Install an `ObservationGuard` in the `EgressPort::telnet_p2p_exchange` impl
+(the agent path is distinct from T16's UI-command guard) so agent dials populate
+the roster (spec §3: "agent dials populate the roster with no UI mounted").
+Provenance `Operator`, direction `Outgoing`.
+
+**Task 21 (CDX-2).** Verify the engine-aware egress edits keep `.map_err(egress_err)`
+on the two VARA `EgressPort` methods (they already use it — do not regress to
+`port_err`).
+
+**Task 22 (CLD-7).** Add a vitest that PINS each TS union to its kebab wire value
+(e.g. a `satisfies` table or an exhaustive round-trip against a Rust-emitted
+fixture) — `'observed-incoming'`, `'operator-pinned'`, `'vara-fm'`, etc. A TS
+union member with the wrong value (`'observed_incoming'`) typechecks but
+mismatches the wire at runtime; only a value-level test catches it.
+
+**Meta (CDX-10).** The plan is REVIEW-complete but EXECUTION-blocked on the
+operator wire-walk flows (Task 28 gate) — not a contradiction. Subagents do not
+start execution until the "Definition of done" section is filled verbatim by the
+operator.
 
 ## Definition of done — operator wire-walk flows (greenfield, verbatim)
 
@@ -4172,7 +4343,8 @@ Run before dispatching any execution. This is the author's own checklist (writin
 | §2 storage (PeersFile, dedup, caps, quarantine, keyring re-key) | 7, 8, 9, 10 |
 | §3 auto-tracking (recorder, 8 sites, packet intent) | 11, 12, 13, 14, 15, 16 |
 | §4 trust boundary (curate_peer, egress gate, agent dial, provenance) | 18, 19, 20 |
-| §5 finder (type filter, distinct aggregation, peer settings) | 22, 23, 25 |
+| §5 finder (type filter, distinct aggregation, peer settings) | 22, 23, 23a, 25 |
+| §5/§3 frontend Connect seam (peer dial carries p2p intent + via/freq) | **23a** (fold — the producer→store seam Task 28 traces) |
 | §6 map symbology (circle, escaped render) | 24 |
 | §7 VARA protocol (engine split, REGISTERED, SSID, WRONG, LISTEN, compression) | 2, 3, 4, 5, 6 |
 | §7.5 interop matrix | 4, 12, 21 (behavior); no standalone task (it is a description of other tasks' effects) |
