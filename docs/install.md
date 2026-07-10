@@ -77,6 +77,10 @@ cd tuxlink/src-tauri
 cargo build --release
 ```
 
+## Prerequisites
+
+FT8 Station Intelligence uses the `wsjtx` package's `jt9` decoder (`sudo apt install wsjtx`); AppImage users install it manually — the deb/rpm recommend it automatically.
+
 ## Runtime prerequisite: secret-service keyring
 
 On Linux, tuxlink stores the Winlink CMS password in the OS keyring via the

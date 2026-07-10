@@ -7,7 +7,7 @@ M3/M4): our clean-room decoder must recover **≥85% of these reference messages
 
 ## The reference is AP-DISABLED (this matters)
 
-The `.jt9-ap-off.txt` files are WSJT-X's decoder (`jt9`) run on the WAV with **no
+The `.jt9-d3-ap-off.txt` files are WSJT-X's decoder (`jt9`) run on the WAV with **no
 `--my-call` / DX context**, so **a-priori (AP) decoding is inert**. This is
 deliberate: AP decodes are messages WSJT-X only recovers by *assuming* known bits
 mid-QSO, which a passive unaided decoder structurally cannot reproduce. Diffing
@@ -15,8 +15,12 @@ against an AP-*enabled* reference would rig the ≥85% gate. Regenerate a refere
 with exactly:
 
 ```
-jt9 -8 <capture.wav>        # FT-8 mode, no my-call => AP disabled
+jt9 -8 -d 3 -p 15 -w 1 <capture.wav>   # FT-8 mode, production decode depth, no my-call => AP disabled
 ```
+
+References regenerated 2026-07-10 at the Station Intelligence production
+invocation (`jt9 -8 -d 3 -p 15 -w 1`, wsjtx 2.7.0). The depth-1 references were
+superseded when the L1 service pinned `-d 3` (delta §Revised L1).
 
 Match rule (per the plan): multiset on normalized message identity; standard msgs
 by callsign-pair+report+grid; free-text/telemetry by exact payload; hashed `<...>`
@@ -26,10 +30,10 @@ as their own class.
 
 | File | Band | Dial | UTC slot | Ref decodes |
 |---|---|---|---|---|
-| `ft8-40m-crowded-20260706T121300Z.wav`  | 40m | 7.074 MHz  | 12:13:00Z | 10 |
-| `ft8-40m-ordinary-20260706T121215Z.wav` | 40m | 7.074 MHz  | 12:12:15Z | 5  |
+| `ft8-40m-crowded-20260706T121300Z.wav`  | 40m | 7.074 MHz  | 12:13:00Z | 14 |
+| `ft8-40m-ordinary-20260706T121215Z.wav` | 40m | 7.074 MHz  | 12:12:15Z | 6  |
 | `ft8-20m-busier-20260706T121415Z.wav`   | 20m | 14.074 MHz | 12:14:15Z | 4  |
-| `ft8-20m-quiet-20260706T121400Z.wav`    | 20m | 14.074 MHz | 12:14:00Z | 2  |
+| `ft8-20m-quiet-20260706T121400Z.wav`    | 20m | 14.074 MHz | 12:14:00Z | 4  |
 
 WAVs are the WSJT-X standard: **12000 Hz, mono, 16-bit signed, exactly 15 s**
 (one FT-8 T/R slot, boundary-aligned).
@@ -52,7 +56,7 @@ now=$(date -u +%s); sleep $(( 15 - now % 15 ))            # align to :00/:15/:30
 timeout 16 rtl_fm -M usb -E direct2 -f <dial> -s 1024000 -r 12000 cap.s16
 sox -t raw -r 12000 -e signed -b 16 -c 1 cap.s16 cap_raw.wav
 sox cap_raw.wav slot.wav trim 0 15                        # exactly 15 s for jt9
-jt9 -8 slot.wav                                           # decode (AP disabled)
+jt9 -8 -d 3 -p 15 -w 1 slot.wav                           # decode (production depth, AP disabled)
 ```
 
 Tools on this Pi: `rtl_fm`, `sox`, `jt9` (all preinstalled). NTP must be synced

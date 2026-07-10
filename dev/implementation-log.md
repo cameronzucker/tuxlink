@@ -5,6 +5,29 @@ shipped, bug-hunt cycles, adversarial reviews). Keyed by date + topic.
 
 ---
 
+## 2026-07-10 — Station Intelligence L1: managed-jt9 decode service shipped (tuxlink-b026z.2, PR #1070)
+
+Executed the 3-round-reviewed L1 plan via subagent-driven development
+(agent redwood-hemlock-thistle): new std-only leaf crate `src-tauri/tuxlink-jt9`
+(parse / message / wav / types / discover / runner) — slot WAV in, structured
+FT8 decodes out, jt9 subprocess-only (GPL boundary). 46 tests (24 unit + 18
+fake-jt9 lifecycle pinning all 7 taxonomy arms and cross-arm tiebreaks + 4
+real-jt9 e2e on the committed SDR fixtures), clippy clean both crates. Fixture
+refs regenerated at the production flag set (`-8 -d 3 -p 15 -w 1`); CI installs
+wsjtx on both arches + `scripts/check-jt9-provenance.sh` guard (8/8
+deny-patterns live-trip-tested, closes b026z.7 scope); deb/rpm Recommend
+wsjtx >= 2.5; stale GPL bundle.license fixed to AGPL. Process: per-task
+spec+quality reviews, plan gates A/B/C (3–4 rounds each) + final whole-branch
+review; substantive gate catches included the sentinel-aware `partial` flag,
+bounded version probe, bounded clean-exit drains (decode_slot now returns on
+ALL paths), the warm shared e2e harness (arm64 CI flake preempted), and a
+fix-forward attributing the deb-install hamlib check to the wsjtx Recommends
+chain. Follow-ups filed: tuxlink-iy1av (2.5-era parser verification),
+tuxlink-b026z.8 (grandchild pipe-fd leak bound), tuxlink-gujnz
+(salvage-on-signal design question). Next: L2 capture subsystem (b026z.3).
+
+---
+
 ## 2026-07-01 — Freeze the React Button/Select/Field wrapper API (tuxlink-3m0vx)
 
 Design-system epic: built and froze typed `Button`/`Select`/`Field` wrappers over a

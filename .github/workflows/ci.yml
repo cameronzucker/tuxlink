@@ -67,10 +67,16 @@ jobs:
           # restore the transitive `.pc` providers, so `pkg-config glib-2.0` failed
           # ("Package glib-2.0 was not found") and every Rust build (glib-sys) broke.
           # libgtk-3-dev pulls the cairo/pango/gdk-pixbuf/atk/glib dev stack.
-          packages: libax25-dev libudev-dev libwebkit2gtk-4.1-dev libglib2.0-dev libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libheif-dev libde265-dev libwebp-dev
+          # wsjtx (jt9 decode oracle for the tuxlink-jt9 e2e tests, tuxlink-b026z.2
+          # T8): NOTE the action installs with plain `apt install` (recommends
+          # included), so a cold cache pulls wsjtx's full Qt closure once; cache
+          # hits amortize it. jt9 ships in the main wsjtx package via hard
+          # Depends on both amd64 and arm64 (noble universe).
+          packages: libax25-dev libudev-dev libwebkit2gtk-4.1-dev libglib2.0-dev libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libheif-dev libde265-dev libwebp-dev wsjtx
           # Salt bump forces a fresh apt closure. v3: v2 cached an EMPTY result
           # after the 404-aborted install, so it must be discarded too (tuxlink-84vzn).
-          version: tuxlink-ci-${{ matrix.arch }}-v3
+          # v4: adds wsjtx (tuxlink-b026z.2 T8).
+          version: tuxlink-ci-${{ matrix.arch }}-v4
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -118,11 +124,17 @@ jobs:
         # Catches Vite production-build failures that tsc + vitest miss.
         run: pnpm build
 
+      - name: jt9/WSJT-X provenance guard (tuxlink-b026z.7)
+        run: bash scripts/check-jt9-provenance.sh
+
       - name: Rust lint (clippy --workspace --all-targets --locked -D warnings)
         # --workspace lints ALL members (tuxlink-security, tuxlink-mcp-core,
         # tuxlink-mcp, tuxlink-mcp-testserver), not just the default-members=["."]
         # tuxlink package. The release build below stays package-scoped.
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets --locked -- -D warnings
+
+      - name: jt9 smoke check (decode oracle for tuxlink-jt9 e2e)
+        run: test -x /usr/bin/jt9
 
       - name: Rust tests
         # --workspace runs the new crates' unit tests too (without it,

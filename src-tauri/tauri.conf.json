@@ -29,7 +29,7 @@
     "active": true,
     "targets": "all",
     "category": "Productivity",
-    "license": "GPL-3.0-or-later",
+    "license": "AGPL-3.0-or-later",
     "licenseFile": "../LICENSE",
     "shortDescription": "Open-source Winlink-compatible amateur-radio email client",
     "longDescription": "Tuxlink is an open-source Winlink-compatible amateur-radio email client written in Rust + React. Replaces Pat (the prior fork dependency) with a native, no-credentials-on-disk implementation. Supports HF, VHF, and UHF transports including ARDOP, VARA, and AX.25.",
@@ -61,7 +61,8 @@
           "libcap2"
         ],
         "recommends": [
-          "direwolf (>= 1.6)"
+          "direwolf (>= 1.6)",
+          "wsjtx (>= 2.5)"
         ],
         "files": {
           "/usr/share/applications/tuxlink.desktop": "../scripts/tuxlink.desktop",
@@ -84,7 +85,8 @@
           "libcap"
         ],
         "recommends": [
-          "direwolf >= 1.6"
+          "direwolf >= 1.6",
+          "wsjtx >= 2.5"
         ],
         "files": {
           "/usr/libexec/tuxlink-gps-fix": "target/release/tuxlink-gps-fix",
