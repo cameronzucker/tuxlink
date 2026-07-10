@@ -1013,11 +1013,18 @@ impl VaraSession {
     }
 
     /// Send `LISTEN ON` over the cmd socket while briefly holding the
-    /// session lock. Returns Err if the transport isn't Open or the TCP
-    /// write fails. Mirrors `ModemSession::send_listen_command(true)` —
-    /// the listener arm command flips LISTEN before spawning the
-    /// consumer task so an arm failure surfaces synchronously without
-    /// leaving a dangling consumer.
+    /// session lock. Returns Err if an exchange is in flight, the
+    /// transport isn't Open, or the TCP write fails. Mirrors
+    /// `ModemSession::send_listen_command(true)` — the listener arm
+    /// command flips LISTEN before spawning the consumer task so an arm
+    /// failure surfaces synchronously without leaving a dangling
+    /// consumer.
+    ///
+    /// `LISTEN ON/OFF` force-disconnects an active ARQ link if VARA
+    /// receives it mid-connection, so this setter refuses while
+    /// [`VaraSessionInner::current_exchange`] shows an exchange in
+    /// flight `[R3-8]` — callers must wait for `end_exchange()` (post-
+    /// `DISCONNECTED`) before re-arming.
     ///
     /// Holds the lock only for the duration of one TCP write (~ms on
     /// localhost). Does NOT hold it across the consumer task spawn.
@@ -1026,6 +1033,13 @@ impl VaraSession {
             .inner
             .lock()
             .map_err(|e| format!("session lock poisoned: {e}"))?;
+        if guard.current_exchange.is_some() {
+            return Err(
+                "LISTEN deferred: an exchange is in flight — LISTEN mid-link \
+                 force-disconnects the ARQ session [R3-8]; re-arm after DISCONNECTED"
+                    .to_string(),
+            );
+        }
         let transport = guard
             .transport
             .as_mut()
@@ -6680,6 +6694,22 @@ mod tests {
             session.current_exchange().is_none(),
             "P2 #4: end_exchange must clear the marker"
         );
+    }
+
+    #[test]
+    fn send_listen_on_refuses_while_exchange_in_flight() {
+        // [R3-8]: LISTEN mid-link force-disconnects the ARQ session. The
+        // setter must refuse while an exchange is marked in flight.
+        let session = loopback_vara_open_session(SessionIntent::P2p, TransportKind::VaraHf);
+        session.begin_exchange(ExchangeState::Dialing);
+        let err = session
+            .send_listen_on()
+            .expect_err("LISTEN ON must refuse while an exchange is in flight");
+        assert!(err.contains("exchange"), "{err}");
+        session.end_exchange();
+        session
+            .send_listen_on()
+            .expect("LISTEN ON must succeed once the link is down");
     }
 
     #[test]
