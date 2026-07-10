@@ -1,14 +1,18 @@
 # Station Intelligence L2 — live audio capture + slot-timing decode service
 
-Status: v1 — DRAFT for adversarial review. Session: esker-sorrel-redwood.
-Issue: tuxlink-b026z.3 (epic tuxlink-b026z). Consumes: tuxlink-jt9 (L1, shipped
-PR #1070). Resolves: tuxlink-gujnz (salvage-on-signal), dispositions
+Status: v2 — hardened against adversarial rounds 1–3 (audio/DSP/timing,
+concurrency/lifecycle, product/contract; 10 P1 + 11 P2 + 12 P3 findings, all
+dispositioned — raw reports local-only under `dev/adversarial/`, consolidated
+at `dev/adversarial/2026-07-10-station-intel-l2-r1-r3-consolidated.md`).
+Rounds 4 (Codex) and 5 (fresh-eyes) pending. Session: esker-sorrel-redwood.
+Issue: tuxlink-b026z.3 (epic tuxlink-b026z). Consumes: tuxlink-jt9 (L1,
+shipped PR #1070). Resolves: tuxlink-gujnz (salvage-on-signal), dispositions
 tuxlink-b026z.8 (grandchild pipe-holder leak bound).
 Canonical design authority: `docs/design/2026-07-10-station-intel-jt9-engine-delta.md`
 (the delta) — this spec implements its L2 seam section and records the
-implementation decisions the delta left open. Where this spec amends the delta
-(taxonomy, state axis), the PR carries matching delta v3 notes; the delta stays
-canonical.
+implementation decisions the delta left open. Where this spec amends the
+delta or the types.rs contract, the PR carries the matching edits
+(§Delta v3 notes, §types.rs edits); the delta stays canonical for design.
 
 Operator decisions recorded 2026-07-10 (esker-sorrel-redwood session):
 
@@ -31,11 +35,19 @@ the full service state machine with health counters, the decode ring, Tauri
 events + snapshot/control commands, modem yield/resume arbitration, and
 opt-in CAT band sweep. Decoding runs independent of any window.
 
+**Epic sequencing sanction (explicit):** L2 merges with no UI caller by
+design — the commands exist for L3, autostart activates only after first use.
+The epic (tuxlink-b026z) sanctions layer-wise landing: this PR closes
+b026z.3 as a layer; the wire-walk gate runs when L3/L4 make FT8
+user-reachable (delta wire-walk note; same sanction L1 shipped under).
+
 Non-goals (delta §Non-goals plus L2-specific): no UI surface (L3), no MCP
 tools (L4), no heat map (L5), no PipeWire host, no 44.1 kHz resampler path,
 no TX of any kind, no persistent jt9 process, no bundling of wsjtx, no
 revival of the clean-room decoder, no full radio-provisioning unification
-(tuxlink-0nfe2 — L2's device identity is merely compatible with it).
+(tuxlink-0nfe2 — L2's device identity is merely compatible with it), no
+dsnoop/shared capture (exclusive-only; the base design's concurrency TBD is
+answered).
 
 ## User flow (primary framing — the design is derived from this)
 
@@ -43,33 +55,44 @@ revival of the clean-room decoder, no full radio-provisioning unification
 
 1. Operator plugs the rig/interface in, opens Station Intelligence, turns the
    listener on.
-2. Service enters `blocked(needs-device-selection)`: the snapshot carries the
-   enumerated capture-capable devices by human name. The L3 panel renders a
-   picker. **Always asks, even with one device present** (operator decision 2).
-3. Operator picks once. The choice persists as a `StableAudioId`. Every later
+2. Service lands in the first applicable blocked state. The common variant:
+   `blocked(needs-device-selection)` — no device identity is persisted.
+   **The snapshot carries `available_devices` whenever
+   `config.ft8.device == None`, regardless of which blocked state won**, so
+   the L3 picker renders (and `ft8_set_device` works) even when the service
+   is simultaneously blocked on wsjtx. The wsjtx-absent variant of first
+   contact (AppImage path, no Recommends metadata): operator sees both the
+   package guidance and the device picker in one visit, fixes both without
+   serialized round-trips.
+3. The picker **always asks, even with one device present** (operator
+   decision 2). Devices listed are filtered to capture-capable cards
+   (a capture substream exists: `/proc/asound/card<N>/pcm*c`), by human name.
+4. Operator picks once. The choice persists as a `StableAudioId`. Every later
    start is zero-question.
-4. No CAT configured → health flag `cat-fixed-band`. The band chip the
+5. No CAT configured → health flag `cat-fixed-band`. The band chip the
    operator selects is a STATEMENT ("the radio is on 20 m"), and the snapshot
    carries the dial frequency the panel should instruct
-   ("tune your dial to 14.074"). The service never claims a band it cannot
-   know; the label is the operator's assertion.
-5. Decodes flow. Slot phase moves `waiting-first-slot → decoded | band-dead`.
+   ("tune your dial to 14.074"). Band labels carry provenance
+   (§Band provenance): until the operator clicks a chip or CAT confirms, the
+   label is `default-unconfirmed` and downstream surfaces must render it as
+   unconfirmed — the service never claims a band nobody asserted.
+6. Decodes flow. Slot phase moves `waiting-first-slot → decoded | band-dead`.
 
 ### Configured radio
 
 - `Config.rig` present → CAT available. The band chip becomes a QSY command:
   selecting a band tunes the radio to that band's FT8 dial (USB mode) via the
   existing spawn-tune-drop `ManagedRig` pattern (serial is never held while
-  capturing — the FT-710 C-Media reset class of contention).
+  capturing — the FT-710 C-Media reset class of contention; the arbiter
+  serializes ALL rig sessions it owns, §Arbitration).
 - At listener start with CAT: one `ManagedRig` session reads the current dial
-  to label the starting band; if the configured band's dial differs, tune to
-  it (starting the listener is the consenting action; RX-only). Then drop the
-  rig session (serial released).
+  to label the starting band (`cat-confirmed`); if the configured band's dial
+  differs, tune to it (starting the listener is the consenting action;
+  RX-only). Then drop the session (serial released).
 - Sweep (opt-in): round-robin over the configured band list with a fixed
-  dwell. Detailed in §Sweep.
+  dwell (§Sweep).
 - Manual retune mid-listen makes the band label stale until the next
-  QSY/resume/start. Accepted v1 limitation; recorded in slot provenance as
-  `band_label_confirmed_utc_ms`.
+  QSY/resume/start; staleness is visible via `band_label_confirmed_utc_ms`.
 
 ### Later modem configuration
 
@@ -88,8 +111,9 @@ compiles and TDDs on the dev Pi in seconds:
 - `decimator.rs` — 48 k → 12 k polyphase FIR (§Decimator).
 - `slot.rs` — wall-clock-true slot assembler (§Slot assembly).
 - `wavwrite.rs` — canonical slot-WAV writer (§WAV).
-- `state.rs` — listener state machine + N/k counters (§State machine).
-- `bands.rs` — FT8 band → dial-frequency table (§Bands).
+- `state.rs` — listener state machine + N/k counters + sweep element
+  (§State machine).
+- `bands.rs` — FT8 band → dial-frequency table.
 
 Dev-dependency on `tuxlink-jt9` (also std-only) so the writer↔preflight
 round-trip is a unit test.
@@ -97,165 +121,267 @@ round-trip is a unit test.
 **Main-crate module `src/ft8/`** — everything that touches ALSA, tokio,
 Tauri, tux-rig, or process lifecycle:
 
-- `mod.rs` — `Ft8ListenerState` managed state (AprsState pattern:
-  `Mutex<Option<Handle>>` + `Arc<AtomicBool>` abort + snapshot).
+- `mod.rs` — `Ft8ListenerState` managed state.
 - `alsa_source.rs` — the one ALSA touchpoint; implements `SampleSource`.
-- `service.rs` — capture thread + decode thread + supervisor tick.
-- `arbiter.rs` — modem yield/resume (§Arbitration).
-- `sweep.rs` — dwell scheduler + QSY via tux-rig.
+- `service.rs` — capture thread + decode thread + supervisor thread.
+- `arbiter.rs` — modem yield/resume + rig-session serialization
+  (§Arbitration).
+- `sweep.rs` — dwell scheduler + QSY via tux-rig (driven by the arbiter).
 - `clock.rs` — `ClockProbe` trait + `timedatectl` impl.
 - `commands.rs` — Tauri commands.
 - `events.rs` — `EventSink` impl (AprsState precedent) + event names.
 
 ### Testability traits (all injected; production impls are thin)
 
-- `SampleSource`: `fn read(&mut self, buf: &mut [i16]) -> Result<ReadBatch, SourceError>`
-  where `ReadBatch` carries frames read plus an xrun/gap report;
-  `SourceError` distinguishes `Busy | Absent | UnsupportedFormat | Io(String)`.
+- `SampleSource`:
+  `fn read(&mut self, buf: &mut [i16]) -> Result<ReadBatch, SourceError>`.
+  `ReadBatch { frames: usize, mono_ts: MonoTs, gap: Option<GapReport> }` —
+  **time is data at this seam** (the assembler is pure; wall/monotonic time
+  arrive as values, never read ambiently).
+  `SourceError::{Busy, Absent, UnsupportedFormat, Suspended, Wedged,
+  Io(String)}` — `Suspended` covers `-ESTRPIPE`; `Wedged` is the
+  wait-timeout escalation (§ALSA read loop).
 - `ClockProbe`: `fn ntp_synchronized(&self) -> ClockSync` with
   `ClockSync::{Synced, Unsynced, Unknown}`.
-- `EventSink`: `emit_listening_change(..)`, `emit_slot(..)` (mirrors
-  `aprs/engine.rs:186`).
-- `DecodeEngine`: wraps `Jt9Runner` (`prewarm()`, `decode_slot(..)`) so
-  service tests inject fakes; the production impl delegates 1:1.
+- `EventSink`: `emit_listening_change(..)`, `emit_slot(..)`.
+- `DecodeEngine`: wraps `Jt9Runner` (`prewarm()`, `decode_slot(..)`);
+  production impl delegates 1:1.
 
 ## Capture pipeline
 
-### ALSA open (decision: `alsa` crate, not cpal)
+### ALSA open (decision: `alsa` crate, not cpal; device string: `hw:`)
 
 The `alsa` crate (alsa-rs) is used directly. Rationale over cpal: explicit hw
-params control; errno-level discrimination at open (`EBUSY` → yielded,
-`ENOENT`/`ENODEV` → device-absent, param rejection → unsupported-sample-rate);
-xrun surfaced as `EPIPE` from `readi` with recoverable `snd_pcm_recover`
-semantics for frame accounting; deterministic device release on drop (the
-yield handshake depends on it). cpal hides all four behind a callback
-abstraction and brings no benefit since the delta already pins Linux/ALSA
-only. New workspace dependency: `alsa` (links system libasound; CI gains
-`libasound2-dev`, §CI).
+params control; errno-level discrimination at open; xruns and stream errors
+surfaced as errno from `readi` for explicit handling; deterministic device
+release on drop (the yield handshake depends on it). cpal hides all four and
+brings no benefit since the delta pins Linux/ALSA only. New workspace
+dependency: `alsa` (links system libasound; CI gains `libasound2-dev`, §CI).
 
-Open parameters, in order of attempt:
+**The device is opened as `hw:CARD=<id>,DEV=0` — NOT `plughw:`.** The plug
+layer silently satisfies any rate/format/channel request by converting
+(including the linear resampling the delta bans), which would make
+`blocked(unsupported-sample-rate)` unreachable and channel policy plug's
+instead of ours. Opening `hw:` makes parameter negotiation real. The
+`StableAudioId` resolver gains an `alsa_hw` name alongside the existing
+`alsa_plughw` (`resolve_managed_device` region, `devices.rs:384`).
 
-- Device: the resolved `plughw:CARD=<id>,DEV=0` name from the persisted
-  `StableAudioId` (resolution reuses `resolve_managed_device`,
-  `src/winlink/ax25/devices.rs:384` region). Direct ALSA device only — never
-  a PipeWire compat PCM (delta pin: node-suspend timeout races the modems'
-  busy probe).
-- Format: S16_LE, rate **exactly 48000** (no `plug` resampling — set params
-  on the hw device; rate must be native), channels 1; if 1 rejected,
-  channels 2 with channel-0 extraction in the source impl. Any other
-  rejection → `blocked(unsupported-sample-rate)` carrying the ALSA
-  diagnostic (the axis name is delta-pinned; the diagnostic string
-  distinguishes rate vs channel vs format for the operator).
-- Period: 4800 frames (100 ms) — bounds abort-check latency; buffer 4 periods.
+Open parameters, negotiated on the hw device:
+
+- Format S16_LE, rate **exactly 48000** (native only), channels 1 preferred;
+  if 1 is rejected, channels 2 with channel-0 extraction inside
+  `alsa_source` (deinterleave, keep left). Any other rejection →
+  `blocked(unsupported-sample-rate)` carrying the ALSA diagnostic (the axis
+  name is delta-pinned; the diagnostic distinguishes rate vs channel vs
+  format). CM108-class codecs (Digirig/DRA) are natively S16_LE/48 k
+  mono-or-stereo, so the happy path is unaffected.
+- Period 4800 frames (100 ms), buffer 4 periods.
+
+### ALSA read loop (bounded; never parks unboundedly)
+
+`PCM::wait(200 ms)` + nonblocking `readi`, in a loop that checks the abort
+flag every iteration (worst-case abort latency ≈ one wait timeout). Errno
+handling:
+
+- `-EPIPE` (overrun): `snd_pcm_recover`-equivalent prepare + restart.
+  **EPIPE tells us THAT an overrun occurred, never how much was lost** —
+  recover also discards unread ring contents. Gap size therefore comes from
+  the monotonic expected-frame counter, evaluated at capture restart
+  (§Slot assembly), never from ALSA.
+- `-ESTRPIPE` (suspend): `SourceError::Suspended` → clock-anomaly discard
+  path (§Slot assembly).
+- `-ENODEV`/`-EBADFD`-class: `SourceError::Absent` → mid-run device-loss
+  path (§Device loss).
+- 10 consecutive wait-timeouts (2 s of a silent, non-erroring stream — the
+  C-Media wedge class): `SourceError::Wedged` → treated as device loss.
 
 ### Decimator (48 k → 12 k, 4:1 polyphase FIR)
 
-Per the delta pin: passband 0–4 kHz (jt9 decodes to 4007 Hz), stopband
-≥ 8 kHz at ≥ 60 dB, Kaiser window, ~45 taps, polyphase evaluated at the
-output rate (~0.5 M MAC/s). Implementation decisions:
+Delta pin: passband 0–4 kHz (jt9 decodes to 4007 Hz), stopband ≥ 8 kHz at
+≥ 60 dB, Kaiser window, polyphase at the output rate. Implementation:
 
-- Coefficients are a **committed const table** (f32) with a committed
-  generator note; a unit test numerically verifies the response (passband
-  ripple ≤ ±0.5 dB across 0–3.8 kHz, ≥ 60 dB attenuation at 8–24 kHz sampled
-  points) so the table cannot silently rot.
-- i16 in → i16 out; accumulate in f32, round-half-away, saturate to i16.
-- KATs: 9 kHz tone ≥ 60 dB down post-decimation (the delta's named vector);
-  1 kHz tone passband level within 0.5 dB; DC and impulse sanity; streaming
-  equivalence (chunked calls == one-shot call for identical input).
+- **51 taps** (the Kaiser estimate for these edges is ~44; 51 buys real
+  margin at the tested 8.0 kHz point instead of sitting on the estimate;
+  ~0.66 M MAC/s — still trivial).
+- Coefficients are a committed const f32 table with a committed generator
+  note; a unit test numerically verifies the response so the table cannot
+  rot: passband ripple ≤ ±0.5 dB across 0–3.8 kHz and ≤ ±1.0 dB across
+  3.8–4.0 kHz (jt9's ceiling is 4007 Hz — the edge is verified, loosely);
+  attenuation ≥ 60 dB at sampled points across 8.0–24 kHz, asserted
+  explicitly AT 8.0 kHz.
+- i16 in → i16 out; accumulate in f32, round-half-away, saturate.
+- **Filter state persists across slot boundaries** (continuity model; both
+  choices decode identically since 720,000 ≡ 0 mod 4, but the streaming-
+  equivalence test needs one pinned answer). Group delay (25 input samples
+  ≈ 520 µs at 51 taps) is a constant shift three orders of magnitude inside
+  jt9's ±2 s DT tolerance — recorded as a verified non-issue.
+- KATs: 9 kHz tone ≥ 60 dB down post-decimation (aliases to 3 kHz — the
+  delta's named vector); 1 kHz passband level within 0.5 dB; DC and impulse
+  sanity; streaming equivalence (chunked == one-shot) **including chunk
+  lengths ≢ 0 (mod 4)** — gap fills are clock-sized and arbitrary-length, so
+  input-phase tracking across odd chunks is load-bearing.
 
-### Slot assembly (the wall-clock-true invariant, delta-pinned as a design invariant)
+### Slot assembly (the wall-clock-true invariant; two clock domains, pinned)
 
-- The assembler is anchored per-slot to the UTC boundary: at each 15 s
-  boundary (UTC 0/15/30/45) it computes `slot_start_utc_ms` and expects
-  exactly **720,000 input frames** (48 k) for the slot, producing exactly
-  **180,000 output frames** (12 k).
-- An expected-frame counter runs against the slot-start anchor at the input
-  rate. Any discontinuity (xrun gap, device re-open gap) is **zero-filled in
-  place at the input side** before decimation, sized by the gap the source
-  reports (frames the wall clock says should exist minus frames delivered).
-  Empirical basis (delta): 0.25 s time-shift = 0 decodes; 0.25 s zero-filled
-  = 13/14.
-- Per-slot re-anchoring absorbs soundcard-vs-wall-clock drift (≤ ~50 ppm ≈
-  36 frames/slot); overflow frames at a boundary carry into the next slot,
-  shortfall is zero-filled at boundary close.
-- Provenance per slot: `lost_frames` (input-rate), `clip_fraction` and
-  `rms_dbfs` computed on the raw i16 input pre-decimation (true ADC-side
-  levels). **Drop the slot when `lost_frames` > 48,000 (1 s)** — counted as a
-  dropped slot toward the degraded counter (types.rs contract: L2 drops fold
-  into N).
-- The partial first slot after start/resume is discarded and is NOT counted
-  (scheduled discard; `waiting-first-slot` covers it).
-- Levels: i16 passthrough, never rescaled (delta pin: −30 dB and +18 dB clip
-  both decode; no normalization). CM108-class mic AGC disable is documented
-  at capture setup (docs task), not enforced in code.
+The assembler is pure; it receives `(utc_now_ms, mono_now)` with every push
+(threaded from `ReadBatch.mono_ts` + a UTC sample taken by the capture
+loop). The two domains have disjoint jobs:
+
+- **UTC (`SystemTime`)** labels slot identity only: sampled once at each
+  boundary detection to stamp `slot_start_utc_ms` and to choose the next
+  boundary (0/15/30/45 s, start within ±0.5 s — jt9 absorbs ±2 s DT).
+- **Monotonic** drives everything inside a slot: a per-slot monotonic anchor
+  is captured at the boundary; the expected-frame counter is
+  `(mono_now − anchor) × 48000`. NTP steps and slews therefore cannot
+  manufacture in-slot gaps.
+
+Rules:
+
+- **Gap fill (xrun):** on capture restart after `-EPIPE`, gap frames =
+  expected − delivered (monotonic), zero-filled in place immediately after
+  the last delivered frame. **Minimum fill threshold: 2400 frames (50 ms)**
+  — deficits below it are scheduling jitter, not loss; filling them is pure
+  signal damage. (Empirical basis for filling at all: 0.25 s time-shift = 0
+  decodes; 0.25 s zero-filled = 13/14.)
+- **Boundary close:** shortfall → zero-fill to exactly 720,000 input frames.
+  **Surplus (fast soundcard) → DROPPED, never carried**: carryover would
+  accumulate the card-vs-wall-clock skew without bound (+50 ppm ⇒ ~4.3 s/day
+  ⇒ zero decodes after ~11 h — the delta's time-shift kill mechanism,
+  self-inflicted). Dropped surplus is recorded as `boundary_skew_frames`
+  provenance; at ≤ 50 ppm it lands in FT8's inter-slot guard interval and is
+  harmless.
+- **Clock-anomaly rule:** on `Suspended`, on any negative computed gap, on
+  any single intra-slot gap > 1 s, or on UTC-vs-monotonic divergence > 1 s
+  observed at a boundary (NTP step): **abandon the slot** — discard as a
+  scheduled discard (class `clock-anomaly`, §Counter semantics), re-anchor
+  at the next UTC boundary. This one rule uniformly covers suspend/resume,
+  NTP step-forward/backward, and gross timing damage; a slot that survives
+  it is trustworthy.
+- Exactly 180,000 output frames per slot; per-slot re-anchor absorbs
+  bounded drift.
+- The partial first slot after start/resume is a scheduled discard
+  (`waiting-first-slot` covers it).
+- Provenance per slot: `lost_frames` (input-rate, filled), `boundary_skew_
+  frames`, `clip_fraction` and `rms_dbfs` — both computed on the
+  **post-extraction channel-0 i16 stream, delivered frames only**
+  (denominator 720,000 − lost; zero-fill excluded so degraded slots don't
+  read as quiet). **Drop the slot when `lost_frames` > 48,000 (1 s)** —
+  counted toward N (types.rs contract: L2 drops fold into the degraded
+  counter).
+- Levels: i16 passthrough, never rescaled (delta pin). CM108-class mic AGC
+  disable is documented at capture setup (docs task), not enforced in code.
+
+### Device loss mid-run (pinned; the FT-710 C-Media reset class is routine)
+
+`SourceError::Absent | Wedged` while `listening`: close the PCM, transition
+`listening → blocked(device-absent)`, emit the change event. The supervisor
+**retries device-absent every 5 s**: re-resolve the `StableAudioId` (the
+card index can change on re-enumeration — never reuse a cached name),
+re-probe, re-open; success re-enters `listening` with a scheduled first-slot
+discard. `device-absent` is therefore self-healing (USB replug recovers the
+listener without operator action); `needs-device-selection`, `wsjtx-absent`,
+and `unsupported-sample-rate` remain command-gated (they need operator
+input; retrying them is spin).
 
 ### WAV writeout + tmpfs + wisdom
 
-- Slot WAV: canonical 44-byte-header RIFF/WAVE, PCM16 mono 12 kHz,
-  exactly 180,000 frames — the writer's output must pass
-  `tuxlink_jt9::wav::preflight_slot_wav` (round-trip unit test).
-- Slot dir: `$XDG_RUNTIME_DIR/tuxlink/ft8/slot-<slot_utc_ms>/` (tmpfs; the
-  delta's ~2 GB/day must never hit the SD card). Fallback when
-  `XDG_RUNTIME_DIR` is unset: `/run/user/<uid>` if writable, else
-  `std::env::temp_dir()` + a startup log warning naming the SD-card risk.
-  The slot dir is deleted after its decode returns (all outcomes).
-- jt9 FFTW wisdom data dir (the runner's `-a`): persistent per audio source —
-  `<app local data dir>/jt9-wisdom/<stable-id-slug>/`, created at service
-  start. Survives restarts by design (wiped wisdom re-pays ~1.7 s planning
-  per slot).
-- `Jt9Runner::prewarm()` runs once per service process lifetime, during
-  `starting`, before the slot loop (delta pin; failure → the start sequence
-  maps the returned `SlotFailure` to a blocked/degraded outcome per
-  §Start sequence).
+- Slot WAV: canonical 44-byte-header RIFF/WAVE, PCM16 mono 12 kHz, exactly
+  180,000 frames — must pass `tuxlink_jt9::wav::preflight_slot_wav`
+  (round-trip unit test).
+- Slot dir: `$XDG_RUNTIME_DIR/tuxlink/ft8/slot-<slot_utc_ms>-<seq>/` (tmpfs;
+  ~2 GB/day must never hit the SD card). `<seq>` is a process-monotonic
+  counter making dir names collision-proof under backward clock steps.
+  Fallback when `XDG_RUNTIME_DIR` is unset: `/run/user/<uid>` if writable,
+  else `std::env::temp_dir()` + a startup warning naming the SD-card risk.
+- Slot-dir hygiene: deleted after decode returns (all outcomes) AND for
+  every dropped/discarded slot at drop time; **at service start, stale
+  `…/tuxlink/ft8/slot-*` dirs from crashed runs are swept**.
+- jt9 FFTW wisdom data dir (the runner's `-a`): **one machine-wide dir**
+  `<app local data dir>/jt9-wisdom/` — FFTW wisdom is keyed by FFT
+  size/CPU, not by audio device; per-device dirs would re-pay planning per
+  device for zero benefit.
+- `Jt9Runner::prewarm()` runs **once per runner construction** (service
+  start and any `set_device`-triggered restart — the runner is
+  reconstructed, wisdom persists so re-prewarm is ~2.4 s warm), during
+  `starting`, BEFORE the ALSA open (§Start sequence — prewarm must not run
+  while holding the PCM).
 
 ## Service structure
 
 ### Threads (std threads, named; AprsState-pattern lifecycle)
 
-- **capture thread** (`ft8-capture`): blocking `SampleSource::read` of 100 ms
-  periods → gap accounting → decimate → slot assembler. On slot completion:
-  write WAV, `try_send` the slot descriptor over a
-  `std::sync::mpsc::sync_channel(1)`.
-- **decode thread** (`ft8-decode`): `recv` slot descriptor → `DecodeEngine::
-  decode_slot` (blocking, up to 12 s) → fold outcome into counters/state →
-  push `SlotRecord` to ring → `emit_slot` → delete slot dir.
-- **supervisor tick** (inside the service run-loop, every 5 s): resume poll
-  while yielded (§Arbitration), clock re-probe every 20 slots (§Clock),
-  fd-watermark observability every 100 slots (§b026z.8), sweep dwell
-  bookkeeping (§Sweep).
-- Abort: one `Arc<AtomicBool>`; capture thread observes it between period
-  reads (≤ 100 ms), decode thread via a sentinel message after the in-flight
-  decode returns (bounded by the 12 s timeout). `stop()` joins both with a
-  15 s bound and force-detaches with a logged warning past it.
+- **capture thread** (`ft8-capture`): the ALSA read loop → gap accounting →
+  decimate → slot assembler. On slot completion: write WAV, `try_send` the
+  slot descriptor.
+- **decode thread** (`ft8-decode`): `recv` slot descriptor →
+  `DecodeEngine::decode_slot` (blocking; 12 s timeout + up to 2 s bounded
+  drain ≈ 14 s worst case) → fold outcome into counters/state → push
+  `SlotRecord` → `emit_slot` → delete slot dir.
+- **supervisor thread** (`ft8-supervisor`): a third named thread owned by
+  the same handle, observing the same abort flag, ticking every 5 s. Duties:
+  yielded-resume poll (§Arbitration), device-absent retry (§Device loss),
+  clock re-probe every 20 slots, pipe-fd watermark every 100 slots
+  (§b026z.8), sweep dwell bookkeeping + QSY execution (§Sweep), hold-latch
+  TTL. Slot counts arrive via shared atomics incremented on the decode
+  thread. (Neither worker thread can host these duties: capture is joined
+  while yielded — precisely when the resume poll must run — and decode parks
+  in `recv`.)
+- **Stop protocol:** set abort → join capture (bounded 2 s via
+  `is_finished()` poll; PCM closed on drop) → **drop the capture-side
+  `Sender`** (the decode thread's `recv` returns `Disconnected` — race-free;
+  no stop sentinel exists in this design) → join decode (bounded 16 s,
+  covering 14 s worst-case decode) → join supervisor (1 s). A join-bound
+  overrun force-detaches with a warning AND transitions the service to
+  **`blocked(capture-wedged)`** — a detached thread may still hold the PCM,
+  so the state must say "this process can no longer arbitrate the card"
+  rather than masquerade as self-healing `yielded`. Recovery from
+  capture-wedged is app restart; the snapshot names it.
 
-### Backpressure (types.rs contract)
+### Lock discipline (pinned)
 
-One in-flight decode per audio source. `sync_channel(1)` + `try_send`; on
-`Full`, the slot is dropped: WAV deleted immediately, counted toward N as a
-non-Decoded outcome (`types.rs:37-39` pins that L2 drops fold into the
-degraded counter), logged with the slot UTC. Never queue, never block the
-capture thread on the channel.
+Thread handles live outside the state mutex and are `take()`n before any
+join; the state mutex is leaf-level — never held across a join, an ALSA
+call, a rig session, or an event emit; arbiter lock > state lock everywhere
+both are taken. A named test drives `stop()` during an in-flight decode
+(slow fake engine) and asserts completion without the force-detach path.
+
+### Backpressure (types.rs contract; rendezvous, not queue-of-one)
+
+One in-flight decode per audio source, enforced by **`sync_channel(0)`**
+(rendezvous): `try_send` succeeds only when the decode thread is parked in
+`recv` — genuinely idle. `sync_channel(1)` would let slot N+1 queue behind a
+slow decode and only drop N+2, violating the delta pin "if slot N+1's WAV is
+ready while slot N's decode is still alive, drop slot N+1; never queue." On
+`try_send` failure the slot is dropped: dir deleted immediately, counted
+toward N, ring-recorded (§Ring), logged with slot UTC. The named test
+asserts **slot N+1 specifically** is the dropped slot.
 
 ### Decode budget fit
 
-Slot ends at T; WAV write to tmpfs is sub-millisecond-class; decode bounded
-by `SLOT_DECODE_TIMEOUT_SECS = 12`; next slot completes at T+15. The single
-in-flight rule plus the 12 s bound guarantees the decode thread is idle when
-slot N+1 lands except under overrun, which backpressure handles.
+Slot ends at T; WAV write to tmpfs is sub-millisecond-class; decode ≤ 14 s
+worst case (12 s timeout + 2 s bounded drain); next slot completes at T+15.
+The rendezvous rule guarantees a busy decode causes a drop, never a late
+decode of a stale slot.
 
 ## State machine (implemented pure in `tuxlink-capture::state`)
-
-Axes per the delta (three orthogonal axes), with one L2 addition:
 
 - **Service axis:** `stopped → starting → listening`,
   `yielded(device-busy)`,
   `blocked(device-absent | needs-device-selection | wsjtx-absent |
-  unsupported-sample-rate)`, `stopping`.
-  **`needs-device-selection` is new** (operator decision 2): no persisted
-  device identity exists — distinct from `device-absent` (a persisted
-  identity no longer resolves). Delta v3 note required.
+  unsupported-sample-rate | capture-wedged)`, `stopping`.
+  New vs the delta: **`needs-device-selection`** (no persisted identity —
+  distinct from `device-absent`, a persisted identity that no longer
+  resolves) and **`capture-wedged`** (a force-detached thread may hold the
+  PCM; arbitration is dead until app restart). Delta v3 notes required for
+  both.
 - **Health flags (orthogonal, coexist with `listening`):** `clock-unsynced`,
   `cat-fixed-band`, `jt9-degraded`.
+- **Sweep element (named part of the machine, not a flag):**
+  `Sweep::{Inactive, Active { band_idx, dwell_progress },
+  FallbackHold { failures }}`. Runtime state only — `config.sweep.enabled`
+  is never mutated by the machine; `FallbackHold` (entered after two
+  consecutive QSY failures) re-arms to `Active` at the next start or resume.
+  Delta v3 note (the delta's axis list lacks a sweep element).
 - **Slot phase (within `listening`):** `waiting-first-slot → decoded |
   band-dead`.
 
@@ -263,34 +389,47 @@ Axes per the delta (three orthogonal axes), with one L2 addition:
 
 - **N (jt9-degraded):** incremented by every `Failed(_)` outcome, every
   backpressure drop, and every lost-frames drop. Cleared by any `Decoded`
-  (including salvaged/partial — data flowed) and by `BandDead`: per types.rs
-  N counts consecutive non-`Decoded`/non-`BandDead` outcomes, and a clean
-  zero-decode exit is a *good* slot, so `BandDead` clears N.
+  (including salvaged/partial — data flowed) and by `BandDead` (types.rs: N
+  counts consecutive non-`Decoded`/non-`BandDead` outcomes; a clean
+  zero-decode exit is a good slot).
 - **k (band-dead phase):** incremented by `BandDead`, reset by `Decoded`.
   `Failed(_)` slots neither increment nor reset k (a failure is not evidence
   of a quiet band). k resets on band change (QSY) and on resume.
 - **Scheduled discards count toward NEITHER counter:** the partial first
-  slot after start/resume, and the QSY transition slot (§Sweep). These are
-  policy, not failures; folding them into N would degrade a healthy sweep.
-  Delta v3 note: the types.rs sentence "a slot L2 drops without ever calling
-  decode_slot still counts" is scoped to backpressure/lost-frames drops, not
-  scheduled discards.
-- Mid-run jt9 disappearance surfaces as `Failed(SpawnFailed(..))` outcomes
-  (and a vanished slot WAV as `Failed(BadWav("not found"))` — the types.rs
-  stable-string contract). Both increment N like any `Failed(_)`; the
-  snapshot carries the most recent failure's diagnostic so L3/L4 can name
-  the cause once N degrades.
+  slot after start/resume, the QSY transition slot, and clock-anomaly
+  abandonments. These are policy, not failures; folding them into N would
+  degrade a healthy sweep (one transition slot per dwell) and punish every
+  suspend/NTP-step recovery.
+- **types.rs edit (in this PR, not just a delta note):** the pinned sentence
+  at `types.rs:37-39` ("a slot L2 drops without ever calling decode_slot
+  still counts as a non-Decoded outcome toward N") reads as covering
+  scheduled discards. It is amended to: "…folds L2 backpressure and
+  lost-frames drops … Scheduled discards (partial first slot after
+  start/resume, QSY transition slot, clock-anomaly abandonment) count toward
+  neither N nor k." types.rs is the cross-crate contract surface; the
+  canonical statement lives there, the delta v3 note points at it.
+- Mid-run jt9 disappearance surfaces as `Failed(SpawnFailed(..))` (and a
+  vanished slot WAV as `Failed(BadWav("not found"))` — the stable-string
+  contract). Both increment N; the snapshot carries the most recent
+  failure's diagnostic so L3/L4 can name the cause once degraded.
 
 ## Device selection & persistence
 
-- Config: `device: Option<StableAudioId>` (§Config). `None` →
-  `blocked(needs-device-selection)`; snapshot embeds
-  `available_devices: Vec<{human_name, stable_id}>` from the existing
-  enumeration (`enumerate_audio_devices`, `devices.rs:323`).
-- `ft8_set_device(stable_id)` persists the choice (atomic config write) and,
-  if the service is in a blocked state, retriggers the start sequence.
+- Config: `device: Option<StableAudioId>`. `None` →
+  `blocked(needs-device-selection)`.
+- `available_devices: Vec<{human_name, stable_id}>` is embedded in the
+  snapshot **whenever `config.ft8.device == None`, regardless of service
+  axis** (§User flow — the picker must render while blocked on wsjtx too).
+  Enumeration reuses `enumerate_audio_devices` (`devices.rs:323`) filtered
+  to cards with a capture substream (`/proc/asound/card<N>/pcm*c` exists) —
+  the existing filter is USB-presence only and would list playback-only
+  cards.
+- `ft8_set_device(stable_id)` persists (atomic config write under the ft8
+  writer mutex, §Config) and, from any blocked state, retriggers the start
+  sequence.
 - Persisted-but-unresolvable at start → `blocked(device-absent)` naming the
-  stored identity; re-pick via the same command.
+  stored identity; self-healing via supervisor retry (§Device loss); re-pick
+  always available.
 - No ranking, no recommendation flag, no auto-pick (operator decision 2).
 
 ## Bands & CAT
@@ -301,154 +440,271 @@ Pinned FT8 dial frequencies (Hz), USB: 160 m 1 840 000; 80 m 3 573 000;
 40 m 7 074 000; 30 m 10 136 000; 20 m 14 074 000; 17 m 18 100 000;
 15 m 21 074 000; 12 m 24 915 000; 10 m 28 074 000.
 
+### Band provenance (the "never claims a band it cannot know" invariant, made real)
+
+`SlotRecord` and the snapshot carry
+`band_source: cat-confirmed | operator-asserted | default-unconfirmed` plus
+`band_label_confirmed_utc_ms: Option<u64>` (None until a CAT read or an
+explicit operator chip click). The serde default `band: "20m"` is a
+preselected chip, NOT an assertion: until confirmation, records are labeled
+`default-unconfirmed` and L3/L4 must render them as such.
+
 ### Hold-band (default) behavior
 
-- CAT present: at start, one `ManagedRig` session — read dial, label band
-  (nearest table entry within ±3 kHz of a dial, else `unknown`), tune to the
-  configured band's dial if it differs, drop the session. Serial is never
-  held while capturing (FT-710 contention class).
-- CAT absent: `cat-fixed-band` flag; band label = the operator's chip
-  statement; snapshot carries the instructed dial for the panel to display.
+- CAT present: at start, one arbiter-owned `ManagedRig` session — read dial,
+  label band (nearest table entry within ±3 kHz, else `unknown`,
+  `cat-confirmed`), tune to the configured band's dial if it differs, drop
+  the session.
+- CAT absent: `cat-fixed-band` flag; label = operator's chip statement
+  (`operator-asserted`) or `default-unconfirmed`; snapshot carries the
+  instructed dial.
 
 ### Sweep (opt-in round-robin; dwell decision recorded)
 
 - Config: `sweep.enabled` (default false), `sweep.bands` (default
-  80/40/20/15/10 m), `sweep.dwell_slots` (default **8** = 2 min/band;
-  valid 4–40). Dwell was the base design's open question; 8 balances
-  meaningful per-band sampling against rotation latency (5-band default
-  rotation = 10 min).
-- Requires CAT; sweep with `Config.rig` unset is a config validation error
-  surfaced at command level, and the flag `cat-fixed-band` implies sweep
-  inactive.
-- Mechanics: at each dwell boundary (counted in *decoded-or-band-dead*
-  slots, so failures do not silently shrink a dwell), immediately after a
-  slot boundary: spawn-tune-drop to the next band's dial. The slot in
-  progress during the QSY is the **transition slot: discarded, scheduled,
-  counted toward neither counter**. QSY failure: stay on the confirmed band,
-  log warn, retry at the next dwell boundary; two consecutive QSY failures
-  clear `sweep-active` back to hold (surfaced in snapshot; not a service-axis
-  change).
-- Sweep pauses while `yielded` and re-anchors its dwell on resume.
-- RX-only; QSY never transmits. Sweep opt-in is the consent to move the dial
-  (Part-97 TX concerns that removed auto-QSY-on-fail from the connect UI do
-  not apply to a receive-only retune, and the opt-in covers the
-  operator-surprise concern).
+  80/40/20/15/10 m), `sweep.dwell_slots` (default **8** = 2 min/band; valid
+  4–40). Dwell was the base design's open question; 8 balances meaningful
+  per-band sampling against rotation latency (5-band default = 10 min).
+- Requires CAT: `sweep.enabled` with `Config.rig` unset is a validation
+  error at the command layer; `cat-fixed-band` implies `Sweep::Inactive`.
+- Mechanics: dwell counted in decoded-or-band-dead slots (failures do not
+  shrink a dwell; **under a persistent failure streak the dwell freezes —
+  intended**: rotating a broken decode pipeline samples nothing, and
+  `jt9-degraded` is the operator's signal). At each dwell boundary,
+  immediately after a slot boundary, the **supervisor asks the arbiter** to
+  run a spawn-tune-drop QSY to the next band's dial. The slot in progress
+  during the QSY is the transition slot: a scheduled discard.
+- QSY failure: stay on the confirmed band, log warn, retry at the next
+  dwell boundary; two consecutive failures → `Sweep::FallbackHold`
+  (surfaced in snapshot; config untouched; re-arms at next start/resume).
+- Sweep never fires while `yielded`, while a pause is in progress, or
+  outside `listening`; dwell re-anchors on resume.
+- RX-only; QSY never transmits. Sweep opt-in is the consent to move the
+  dial (the Part-97 concern that removed auto-QSY-on-fail from the connect
+  UI was about TX on unseen frequencies; a receive-only retune under
+  explicit opt-in carries neither risk).
 
-## Arbitration (yield/resume)
+## Arbitration (yield/resume — positive hold token, single choke points)
 
-### Yield — synchronous pre-spawn hook (delta pin), two seams
+Design principle (from adversarial round 2): resume decisions must not rest
+on negative evidence alone (card-not-busy ∧ session-not-active sampled at
+5 s); every yield **latches a hold** that the resume poll honors.
 
-`Ft8Arbiter::pause_for_modem()` is called from both modem-spawn seams:
+### The arbiter
 
-- ardopcf: `dial_one_candidate` (`src/modem_commands.rs:691` region), before
-  the `make_transport` spawn.
-- managed Dire Wolf: `spawn_inner` (`managed_direwolf.rs:292`), before its
-  Step-2 busy probe (otherwise that probe would abort on FT8's own hold).
+`Ft8Arbiter` (main crate) owns: the pause/resume handshake, the hold latch,
+and **all rig sessions the FT8 service creates** (start-labeling QSY, band
+chip QSY, sweep QSY) — serializing them so a modem connect's pre-audio tune
+can never overlap an FT8 rig session (the FT-710 dual-CAT-user contention
+class).
 
-Sequence: set `yielded(device-busy)` → signal capture stop → join capture
-thread (bounded 2 s; ALSA PCM closed on drop) →
-`ManagedModem::confirm_audio_device_released(pcm_device_path, ..)`
-(`process.rs:286`) against `/dev/snd/pcmC<card>D<dev>c` → return. The hook is
-a no-op when the listener is not `listening`.
+### Yield — `pause_for_modem() -> Result<(), PauseError>`
+
+Called from every modem path that will open the audio device
+(**blocking-context-only contract** — all current call sites run under
+`spawn_blocking`; the doc comment pins it):
+
+- **ardopcf — a single choke wrapper `spawn_ardop_with_yield`** replaces the
+  four reachable `make_transport` spawn sites (`dial_one_candidate`
+  `modem_commands.rs:717`; legacy single-dial
+  `modem_ardop_connect_post_consume_with_factory` `:475`; listen-only
+  `start_modem_listen_only` `:822`; open-session `spawn_and_init_ardop_inner`
+  `:918`). A test asserts no ardopcf spawn is reachable without it.
+- **managed Dire Wolf** — `spawn_inner` (`managed_direwolf.rs:292`), before
+  its Step-2 busy probe (which would otherwise abort on FT8's own hold).
+- **VARA** — the tuxlink VARA session-open/connect command path (before the
+  TCP connect that starts a session). This covers tuxlink-initiated VARA
+  use. **Residual, disclosed:** VARA is an external process that may open
+  its audio device at its own launch, before any tuxlink involvement; if the
+  operator launches VARA while the listener holds the card, VARA's audio
+  open fails with the error surfacing in VARA's UI, not tuxlink's. The
+  listener must be stopped (or L3's pause affordance used) first. The
+  delta's "the conflict is self-inflicted" premise is true for
+  ardopcf/Dire Wolf only; this spec states the VARA exception rather than
+  claiming uniform coverage.
+
+Sequence (under the arbiter lock): cancel/await any in-flight rig session →
+if the service holds or may hold the PCM (states `listening`, or `starting`
+at-or-past its ALSA-open step — **the hook shares the service state mutex
+and is NOT a no-op during `starting`**; an in-flight start converts to
+`yielded`): abort capture → join (bounded 2 s, `is_finished()` poll) → on
+join success the PCM is closed by drop; set `yielded(device-busy)`, **latch
+the hold** → `confirm_audio_device_released(pcm_device_path, ..)`
+(`process.rs:286`) against `/dev/snd/pcmC<card>D<dev>c` → `Ok(())`.
+
+Join timeout (wedged capture thread — a hung USB device can park even the
+wait-loop): transition to `blocked(capture-wedged)`, return
+`Err(PauseError::CaptureWedged)`. The modem seam surfaces this as a clear
+"audio device is wedged; restart Tuxlink" error and does NOT proceed into a
+guaranteed-EBUSY spawn.
+
+### Hold latch
+
+Set by every successful pause. Cleared when the supervisor observes the card
+transition to busy (the modem actually acquired it — positive evidence), or
+after a **30 s TTL** (an aborted spawn must not wedge FT8). While latched,
+the resume poll never fires. This closes the window where a resume could
+steal the card between `pause_for_modem` returning and the modem's own
+device open (the packet path never touches `ModemSession`, so session-state
+alone gives it zero protection).
 
 ### Resume — supervisor poll (no teardown wiring)
 
-While `yielded`, the 5 s supervisor tick resumes capture when BOTH hold:
+While `yielded`, each 5 s tick resumes capture when ALL hold:
 
-1. `probe_device_busy(plughw, card_index)` (`direwolf_probe.rs:345`) reports
-   free (proc-status read, no device open), AND
-2. the modem session is not active (ModemSession snapshot state is
-   Stopped/None).
+1. the hold latch is clear;
+2. `probe_device_busy(plughw, card_index)` (`direwolf_probe.rs:345`) reads
+   free;
+3. the modem session is not active, defined **positively over the
+   `ModemState` enum: resume-eligible states are `Stopped`, `Error`, and
+   `SocketLost`** (a failed connect walk parks the session in `Error` with
+   the card long since released — requiring `Stopped` would leave FT8
+   yielded forever; `Idle` (listen-only, ardopcf holds the card) remains
+   active).
 
-Rationale: poll-resume needs no hooks in any modem teardown path and
-uniformly covers **VARA**, which tuxlink never spawns (external TCP peer
-holding its own device): FT8 start or resume while VARA runs sees the card
-busy → stays `yielded` until VARA exits. The base design's TBD ("can FT8 and
-a modem read the card concurrently?") is answered: **exclusive-only**; no
-dsnoop sharing in v1.
-
-FT8 start while a modem is active: the start sequence's busy probe lands in
-`yielded(device-busy)` and auto-resumes later — starting the listener during
-a Winlink session is safe and self-healing.
+Resume re-runs start steps 2–8 (§Start sequence) — device re-resolve,
+re-probe, re-open; prewarm is skipped (runner already constructed). FT8
+start while a modem is active lands in `yielded` via its busy probe and
+auto-resumes later — safe and self-healing.
 
 ## Clock probe
 
 - `ClockProbe` production impl: subprocess
   `timedatectl show -p NTPSynchronized --value` (bounded 2 s, kill on
-  overrun), parsed `yes`/`no`. Reads systemd-timedated's view of the kernel
-  sync flag — daemon-agnostic (chrony and systemd-timesyncd both drive it),
-  no new crate dependency (zbus stays transitive).
-- `Unknown` (binary missing / timeout / unparseable): the `clock-unsynced`
-  flag is NOT set; a startup log line records that clock sync is unverifiable
-  on this system. A false "unreliable decode" warning on every non-systemd
-  system is worse than a missing warning on an exotic one.
-- Cadence: probe at start, at resume, and every 20 slots (5 min) from the
-  supervisor. Flag sets/clears accordingly; flag changes emit
-  `ft8-listening:change`.
+  overrun), parsed `yes`/`no`. Daemon-agnostic (chrony and timesyncd both
+  drive the kernel sync flag it reports); no new crate dependency (zbus
+  stays transitive).
+- `Unknown` (binary missing / timeout / unparseable): flag NOT set; a
+  startup log records that clock sync is unverifiable. A false "decode
+  unreliable" warning on every non-systemd system is worse than a missing
+  warning on an exotic one.
+- Cadence: at start, at resume, every 20 slots. Flag changes emit
+  `ft8-listening:change`. (The in-slot timing model no longer depends on
+  wall-clock stability — §Slot assembly — so the flag is purely operator
+  information about decode-window alignment.)
 
 ## tuxlink-gujnz resolution — salvage-on-signal parity (L1 one-arm change)
 
 **Decision: salvage.** In `tuxlink-jt9`'s runner, a signal-death (or nonzero
-clean exit) with ≥ 1 parsed decode line returns `Decoded` with every record
-`partial = true` (sentinel-aware exactly like the timeout arm: salvage after
-`<DecodeFinished>` yields complete records); zero parsed lines keeps
-`Failed(Signal)`. `StderrEof` retains its priority over decode lines on the
-clean-exit path: jt9's EOF-on-input abort happens before decode output in
-practice, and a capture bug must never masquerade as decodes.
+clean exit) with ≥ 1 parsed decode line returns `Decoded` with
+**`partial = !saw_sentinel` — identical to the timeout arm** (a crash after
+`<DecodeFinished>` yields complete records, `partial = false`); zero parsed
+lines keeps `Failed(Signal)`. **Arm ordering pinned on ALL paths: the
+`StderrEof` check runs BEFORE salvage** — signal-death + `EOF on input
+file` + parsed lines is still `Failed(StderrEof)`; a capture bug must never
+masquerade as decodes (theoretical on the signal path — EOF-on-input exits 0
+empirically — but the ordering is pinned, not assumed).
+
+Timeout-vs-signal tiebreak: verified safe — the timeout path returns before
+signal classification is reachable (`runner.rs:181` vs `:194`), and
+post-salvage both arms return `Decoded` for ≥ 1 line while zero-line
+outcomes stay distinct (`Timeout` vs `Signal`).
 
 Rationale (recorded for the delta v3 note): jt9's dominant real failure mode
-IS decode-stream-then-SIGSEGV (delta grounded fact: kill at t=1 s had already
-delivered 10/14 lines); lines are printed only after jt9's internal CRC-14
-accepts a candidate, and the strict `parse_stdout_line` grammar guards
-corrupted output; the timeout path already trusts the identical stream;
-discarding biases band intelligence against exactly the slots that prove the
-band is alive. Counter effect: a salvaged slot is `Decoded` → clears N (a
-crashing-but-producing jt9 is degraded in fact but productive in output;
-crash frequency remains visible via the per-slot outcome log and ring
-provenance).
+IS decode-stream-then-SIGSEGV (kill at t=1 s had delivered 10/14 lines);
+lines print only after jt9's internal CRC-14 accepts a candidate; the strict
+parser guards corruption; the timeout path already trusts the identical
+stream; discarding biases band intelligence against exactly the slots
+proving the band alive. Counter effect: salvaged slots clear N; crash
+frequency stays visible via outcome logs and ring provenance. Downstream
+does NOT distinguish timeout-salvage from crash-salvage (stated; the
+distinction buys nothing at L3/L4).
 
-Changes: one classification arm in `runner.rs`, invert
-`signal_death_discards_prior_decodes_by_taxonomy` to
-`signal_death_salvages_parsed_decodes` (+ zero-line signal death still
-`Failed(Signal)` test), types.rs doc sentence, delta v3 taxonomy note.
-tuxlink-gujnz closes with this PR.
+Changes (all in this PR): the runner classification arm; test inversions —
+`signal_death_discards_prior_decodes_by_taxonomy` becomes
+`signal_death_salvages_parsed_decodes` (its doc prose flips too), plus new
+tests: zero-line signal death still `Failed(Signal)`,
+signal-death-after-sentinel yields `partial = false`, EOF-beats-salvage on
+the signal path; **`Ft8Decode::partial` doc comment** (currently "salvaged
+from a timed-out run") reworded to "salvaged from an abnormally-terminated
+run (timeout or signal/nonzero exit); false when the completeness sentinel
+was seen"; delta v3 taxonomy note. tuxlink-gujnz closes with this PR.
 
 ## tuxlink-b026z.8 disposition — accept + observe
 
 The residual bound (detached drain threads + pipe read-fds leak if a killed
 or cleanly-exited jt9 left a pipe-holding grandchild) is accepted for v1:
-jt9 does not fork in practice, and group-kill requires libc/nix in a crate
-that is deliberately std-only. L2 adds observability instead of mechanism:
-every 100 slots the supervisor counts `/proc/self/fd` entries; a count
-exceeding the service-start baseline by > 64 logs a warning naming
-tuxlink-b026z.8. The issue closes as "accepted bound + watermark
-observability in the L2 supervisor"; a real observation reopens it with
-data.
+jt9 does not fork in practice, and group-kill requires libc in a
+deliberately std-only crate. L2 adds observability matched to the leak's
+signature (2 pipe fds per event — a raw fd count would drown it in
+Tauri/tokio fd noise): every 100 slots the supervisor counts **pipe-type
+entries** in `/proc/self/fd` (readlink → `pipe:[...]`); a count exceeding
+the service-start baseline by > 16 logs a warning naming tuxlink-b026z.8.
+The issue closes as "accepted bound + pipe-fd watermark in the L2
+supervisor"; a real observation reopens it with data.
 
 ## Ring, events, commands
 
-- **Ring:** bounded 240-slot `VecDeque` (1 h) of
-  `SlotRecord { slot_utc_ms, band, dial_hz, outcome: SlotOutcomeKind,
-  decodes: Vec<Ft8Decode>, lost_frames, clip_fraction, rms_dbfs,
-  dwell_slot_index, band_label_confirmed_utc_ms, partial_salvage: bool }`
-  (SessionLogState pattern, `session_log.rs:23`). Decode ring IS the L3/L4
-  hydration source; slot phase is computed from ring recency (never resets
-  to `waiting-first-slot` on panel reopen — delta pin).
-- **Events** (delta-named): `ft8-decodes:slot` (one per slot, the
-  `SlotRecord`), `ft8-listening:change` (service axis + health flags + slot
-  phase + band/dial + sweep status). Emitted through `EventSink`; production
-  sink uses `AppHandle::emit` fire-and-forget (modem:status precedent).
-- **Commands:** `ft8_listener_start`, `ft8_listener_stop`,
-  `ft8_listener_snapshot` (full state + ring tail + `available_devices` when
-  selection is needed), `ft8_set_device(stable_id)`, `ft8_set_band(band)`
-  (QSY when CAT, relabel when not; resets k), `ft8_set_sweep(enabled)`.
-  Config-mutating commands persist via `write_config_atomic`.
-- **Autostart:** `lib.rs` setup hook starts the service when
-  `config.ft8.enabled && config.ft8.device.is_some()` (broadcast pattern
-  precedent, `lib.rs:1205` region). `ft8_listener_start` sets
-  `enabled = true`; `ft8_listener_stop` sets `enabled = false` (the toggle IS
-  the persistence; the listener is a persistent service, not a panel
-  lifetime).
+### Ring
+
+Bounded 240-slot `VecDeque` (1 h) of `SlotRecord` (SessionLogState pattern,
+`session_log.rs:23`). **Every slot boundary yields a ring record — including
+drops and discards** (L4's failure counters and honest recency need them):
+
+```
+SlotRecord {
+  slot_utc_ms, band, dial_hz,
+  band_source, band_label_confirmed_utc_ms,
+  outcome: Decoded | BandDead | Failed(kind)
+         | DroppedBackpressure | DroppedLostFrames
+         | Discarded(first-slot | qsy-transition | clock-anomaly),
+  decodes: Vec<Ft8Decode>,           // empty except Decoded
+  partial_salvage: bool,             // = any(decode.partial)
+  lost_frames, boundary_skew_frames, clip_fraction, rms_dbfs,
+  dwell_slot_index: Option<u8>,
+}
+```
+
+Slot phase is computed from ring recency (never resets to
+`waiting-first-slot` on panel reopen — delta pin).
+
+### Events (delta-named)
+
+`ft8-decodes:slot` (one per slot, the `SlotRecord`) and
+`ft8-listening:change` (snapshot summary: axis + flags + phase + band +
+sweep). Emitted through `EventSink`; production sink `AppHandle::emit`
+fire-and-forget (modem:status precedent).
+
+### Snapshot (field-by-field — this is the L3/L4 contract; delta §L4 requires each)
+
+```
+Ft8Snapshot {
+  service: ServiceAxis,                       // incl. blocked reason
+  flags: { clock_unsynced, cat_fixed_band, jt9_degraded },
+  slot_phase: WaitingFirstSlot | Decoded | BandDead,
+  band: String, dial_hz: u64,
+  band_source, band_label_confirmed_utc_ms,
+  sweep: SweepStatus { mode: Inactive|Active|FallbackHold,
+                       band_idx, dwell_progress },
+  engine_version: Option<String>,             // Jt9Binary::engine_version
+  n_consecutive: u8, k_consecutive: u8,       // live counter values
+  last_slot_utc_ms: Option<u64>,
+  last_failure: Option<String>,               // most recent diagnostic
+  available_devices: Option<Vec<AudioDeviceChoice>>, // when device==None
+  ring_tail: Vec<SlotRecord>,                 // bounded page
+}
+```
+
+### Commands
+
+`ft8_listener_start`, `ft8_listener_stop`, `ft8_listener_snapshot`,
+`ft8_set_device(stable_id)`, `ft8_set_band(band)`, `ft8_set_sweep(enabled)`.
+
+- `ft8_set_band`: validates against the band table BEFORE persisting
+  (rejects out-of-table); while `listening` with CAT → QSY + relabel
+  (`operator-asserted`/`cat-confirmed`) + reset k; while NOT `listening` →
+  **persist-only, never touches the radio** (the consent framing: only a
+  running listener the operator started moves the dial).
+- All config-mutating ft8 commands serialize their read-modify-write through
+  **one ft8 writer mutex** before `write_config_atomic` (atomic file replace
+  does not make concurrent RMW cycles atomic; the existing config layer does
+  not serialize writers).
+- **Autostart:** setup hook starts the service when `config.ft8.enabled`
+  alone — NOT gated on `device.is_some()`: a first-contact operator who
+  enabled the listener and got interrupted mid-pick must find it in
+  `blocked(needs-device-selection)` after restart (the state that resumes
+  their flow), not silently `stopped`. `ft8_listener_start` sets
+  `enabled = true`; `ft8_listener_stop` sets `enabled = false`.
 
 ## Config (`AprsConfig` pattern, serde defaults, no schema bump)
 
@@ -458,7 +714,8 @@ data.
 pub struct Ft8Config {
     pub enabled: bool,                    // default false
     pub device: Option<StableAudioId>,    // default None
-    pub band: String,                     // default "20m" (preselected chip)
+    pub band: String,                     // default "20m" (preselected chip,
+                                          //   NOT an assertion — §Band provenance)
     pub sweep: Ft8SweepConfig,            // { enabled: false,
                                           //   bands: ["80m","40m","20m","15m","10m"],
                                           //   dwell_slots: 8 }
@@ -466,77 +723,109 @@ pub struct Ft8Config {
 ```
 
 Added to `Config` with `#[serde(default, skip_serializing_if = ...is_default)]`
-(ElmerConfig precedent) — old config files stay byte-identical until first
-FT8 use. `validate()`: band + sweep.bands ∈ table, dwell_slots ∈ 4..=40.
+(ElmerConfig precedent). `validate()`: band + sweep.bands ∈ table,
+dwell_slots ∈ 4..=40, sweep.enabled ⇒ rig configured.
 
 ## Start sequence (pinned order; every arrow is a tested transition)
 
 `starting` →
 1. discover jt9 (`discover_jt9(config override)`) — absent →
-   `blocked(wsjtx-absent)` naming the package.
-2. resolve device: config `None` → `blocked(needs-device-selection)` (+
-   enumeration in snapshot); unresolvable → `blocked(device-absent)`.
-3. busy probe (`probe_device_busy`) — busy → `yielded(device-busy)`
-   (supervisor resumes later).
-4. ALSA open — `EBUSY` → `yielded`; absent-class → `blocked(device-absent)`;
-   param rejection → `blocked(unsupported-sample-rate)`.
-5. clock probe → flag.
-6. CAT presence (`Config.rig`) → flag `cat-fixed-band` if absent; else the
-   one start rig session (§Hold-band).
-7. wisdom dir create + `prewarm()` once per process — `Err(SlotFailure)`
-   maps: spawn/not-found class → `blocked(wsjtx-absent)` (binary vanished
-   between 1 and 7); anything else logs + proceeds (a failed prewarm costs
-   the first slots ~1.7 s planning, it does not block listening).
-8. spawn capture + decode threads → `listening` / `waiting-first-slot`.
+   `blocked(wsjtx-absent)` (snapshot still carries `available_devices` if
+   device is unset — §Device selection).
+2. resolve device: config `None` → `blocked(needs-device-selection)`;
+   unresolvable → `blocked(device-absent)` (supervisor-retried).
+3. clock probe → flag.
+4. wisdom dir create + `prewarm()` (once per runner construction) —
+   **before any PCM is held**; failure maps: spawn/not-found class →
+   `blocked(wsjtx-absent)`; anything else logs + proceeds (a failed prewarm
+   costs the first slots ~1.7 s planning; it does not block listening).
+5. CAT presence (`Config.rig`) → `cat-fixed-band` flag if absent; else the
+   one arbiter-owned start rig session (§Hold-band).
+6. busy probe (`probe_device_busy`) — busy → `yielded(device-busy)`.
+7. ALSA open (`hw:`) — `EBUSY` → `yielded`; absent-class →
+   `blocked(device-absent)`; param rejection →
+   `blocked(unsupported-sample-rate)`.
+8. spawn capture + decode + supervisor threads → `listening` /
+   `waiting-first-slot`.
 
-`blocked(*)` states are terminal until a command mutates the input that
-blocked them (set_device, config change) or `ft8_listener_start` retries;
-`yielded` is self-healing via the supervisor.
+Steps 4–5 (multi-second: prewarm, rig session) deliberately precede the PCM
+open so the held-but-not-yieldable window shrinks to milliseconds — and the
+pause hook covers `starting` past step 7 anyway (§Arbitration).
+
+Blocked-state recovery matrix: `device-absent` — supervisor retry;
+`needs-device-selection` / `wsjtx-absent` / `unsupported-sample-rate` —
+command-gated (`set_device`, config change, or `ft8_listener_start` retry);
+`capture-wedged` — app restart only. `yielded` — supervisor resume
+(conditions in §Arbitration; resume re-runs steps 2–8, skipping prewarm).
 
 ## Testing strategy
 
-- **Leaf (`tuxlink-capture`, Pi TDD):** decimator response + KATs;
-  assembler gap/zero-fill/boundary/drop/carryover; writer→`preflight_slot_wav`
-  round-trip; state machine — every axis transition, flag set/clear, counter
-  rule in §Counter semantics pinned by a named test (including
-  scheduled-discard exclusion and BandDead-clears-N).
-- **L1 (`tuxlink-jt9`):** the gujnz arm — salvage test + zero-line-still-
-  Failed test + sentinel-complete salvage test.
+- **Leaf (`tuxlink-capture`, Pi TDD):** decimator response + KATs (incl.
+  chunks ≢ 0 mod 4, state-across-slots pinning); assembler —
+  gap fill + threshold, boundary shortfall fill, **surplus drop (fast-clock
+  source, 1000 slots, slot-content-vs-UTC skew stays bounded < 1 period)**,
+  clock-anomaly abandonment (negative gap, > 1 s gap, UTC-vs-mono
+  divergence), lost-frames drop, carry-nothing invariant;
+  writer→`preflight_slot_wav` round-trip; state machine — every axis
+  transition, flag, sweep element transition (incl. FallbackHold entry +
+  re-arm), and counter rule in §Counter semantics pinned by a named test.
+- **L1 (`tuxlink-jt9`):** the gujnz arm — salvage, zero-line-still-Failed,
+  after-sentinel `partial = false`, EOF-beats-salvage; doc-prose flips.
 - **Main crate (`src/ft8/`, fakes for all four traits):** start sequence —
-  one test per numbered arrow above; backpressure drop (slow fake engine +
-  fast fake source → drop counted, WAV deleted); yield handshake (pause
-  joins capture + confirms release); resume poll (busy→free with modem
-  stopped); sweep dwell + transition-slot discard + QSY-failure fallback;
-  snapshot correctness incl. `available_devices` in needs-device-selection;
-  config round-trip + validation.
+  one test per numbered arrow; backpressure (slow fake engine → **slot N+1
+  specifically** dropped, dir deleted, N incremented, ring-recorded); yield
+  handshake (pause joins capture, confirms release, latches hold; pause
+  during `starting` converts to `yielded`; wedged join →
+  `blocked(capture-wedged)` + `Err`); resume (all three conditions,
+  including `Error`/`SocketLost` eligibility and hold-latch TTL); sweep
+  (dwell counting, transition-slot discard, QSY-failure → FallbackHold,
+  re-arm on resume, never-fires-while-yielded); device loss mid-run →
+  `blocked(device-absent)` → supervisor recovery; `stop()` during in-flight
+  decode (no force-detach); snapshot field completeness (every §Snapshot
+  field asserted); config command validation + writer-mutex serialization.
 - **E2E (CI, real jt9, both arches):** upsample a committed 12 kHz SDR
-  fixture to 48 kHz by 4× sample repetition (zero-order hold; the pipeline's
-  own FIR removes the ZOH images at ≥ 8 kHz, and the fixture content is
-  band-limited below 4 kHz by construction), run it through
-  `SampleSource`-faked capture → assembler → WAV → real jt9 decode;
-  assert ≥ 90 % of the fixture's reference decode count. This proves the
-  decimator+assembler+writer chain never degrades a known-good signal.
+  fixture to 48 kHz by 4× sample repetition, feed through
+  `SampleSource`-faked capture (synthetic time driving slot boundaries —
+  time is injected data, so the fixture aligns exactly to one slot) →
+  assembler → WAV → real jt9 decode; assert ≥ 90 % of the fixture's
+  reference decode count. Validity argument (not "band-limited by
+  construction", which is false for an SDR capture): ZOH images of ≤ 4 kHz
+  content land ≥ 8 kHz (FIR stopband, ≥ 60 dB); 4–6 kHz baseband content
+  stays above jt9's 4007 Hz ceiling; ZOH sinc droop at 4 kHz ≈ −0.10 dB —
+  negligible.
 - **On-air validation:** operator-run only (RADIO-1 posture; RX-only so no
-  TX consent needed, but the rig/audio bring-up is the operator's). The
-  feature gate for user-reachability remains L3/L4 (delta wire-walk note).
+  TX consent needed, but rig/audio bring-up is the operator's). The feature
+  gate for user-reachability remains L3/L4 (delta wire-walk note).
 
 ## CI / packaging
 
 - Add `libasound2-dev` to the apt step of every workflow that compiles the
   main crate (both arches) and to the release build images; `alsa` crate
-  enters the workspace lockfile (Cargo.lock regenerated — the project rule:
-  never `--locked` masking).
+  enters the workspace lockfile (Cargo.lock regenerated — never `--locked`
+  masking).
 - No packaging metadata change (wsjtx Recommends shipped with L1).
 - `.7` grep-guard: unaffected (no new jt9 spawn sites; the literal `"jt9"`
   stays confined to `tuxlink-jt9`).
 
-## Delta v3 notes carried by this PR
+## Contract edits carried by this PR (types.rs + delta v3)
 
-1. Taxonomy: salvage-on-signal parity (gujnz decision + rationale).
-2. Service axis: `needs-device-selection` added; `device-absent` narrowed to
-   "persisted identity unresolvable"; no-auto-pick pinned as a product rule.
-3. Counter scoping: scheduled discards (first partial slot, QSY transition)
-   excluded from N; the types.rs "drops fold into N" sentence scoped to
-   backpressure/lost-frames drops.
-4. Band-chip semantics under cat-absent: chip = operator statement +
-   instructed dial, never a claim.
+types.rs (`tuxlink-jt9`):
+1. `types.rs:37-39` counter-scoping sentence (§Counter semantics).
+2. `Ft8Decode::partial` doc comment (§gujnz).
+3. `SlotFailure::Signal` doc note: salvage-on-signal (≥ 1 parsed line →
+   `Decoded`), zero-line only.
+
+Delta v3 notes:
+1. Taxonomy: salvage-on-signal parity (gujnz decision + rationale +
+   sentinel semantics).
+2. Service axis: `needs-device-selection` and `capture-wedged` added;
+   `device-absent` narrowed to "persisted identity unresolvable" and made
+   supervisor-retried; no-auto-pick pinned as a product rule.
+3. Sweep element added to the state model (the delta's axes lack it).
+4. Counter scoping: scheduled discards excluded (pointer to the types.rs
+   canonical sentence).
+5. Band-chip semantics under cat-absent: chip = operator statement +
+   instructed dial + provenance; `default-unconfirmed` rendering duty.
+6. Arbitration: VARA exception disclosed (the "self-inflicted conflict"
+   premise holds for ardopcf/Dire Wolf only); hold-latch resume model
+   supersedes the delta's bare "FT8 auto-resumes on modem shutdown".
