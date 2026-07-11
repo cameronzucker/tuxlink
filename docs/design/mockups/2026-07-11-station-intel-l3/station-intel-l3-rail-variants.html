@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>L3 rail density variants — A / B / C</title>
+<link rel="stylesheet" href="../../../src/App.css">
+<link rel="stylesheet" href="../../../src/catalog/StationFinderPanel.css">
+<style>
+body { background: var(--bg); padding: 18px; display: flex; gap: 18px; align-items: flex-start; }
+.variant { width: 470px; flex: none; }
+.variant__cap {
+  font-family: var(--sans, Inter, sans-serif);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 0 2px 6px;
+}
+.variant__cap small { display: block; font-weight: 400; color: var(--text-dim); font-size: 11px; margin-top: 2px; }
+.railbox {
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.station-finder__rail { min-width: 0; }
+
+/* rail tabs (shared with mock v2) */
+.si-rail-tabs { display: flex; border-bottom: 1px solid var(--border); background: var(--panel); }
+.si-rail-tabs button {
+  font: inherit; font-size: 12px; flex: 1; padding: 9px 10px;
+  color: var(--text-dim); background: transparent; border: none;
+  border-bottom: 2px solid transparent; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+}
+.si-rail-tabs button.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+.si-rail-tabs .si-count { font-family: var(--mono); font-size: 10px; color: var(--reach-good); }
+
+/* ── A: densified one-line channel rows ── */
+.ch-a {
+  display: grid;
+  grid-template-columns: 10px 1fr auto auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 13px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.ch-a .station-finder__rel { width: 8px; height: 8px; border-radius: 50%; }
+.ch-a .f { font-family: var(--mono); font-size: 12px; color: var(--text); }
+.ch-a .f small { color: var(--text-faint); font-size: 10.5px; margin-left: 6px; }
+.ch-a .q { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+.ch-a .station-finder__save { font-size: 13px; background: none; border: none; color: var(--text-faint); cursor: pointer; padding: 0 2px; }
+.ch-a .station-finder__save.is-saved { color: var(--accent); }
+.ch-a .use-sm {
+  font: inherit; font-size: 10.5px; color: var(--text);
+  background: var(--surface-2); border: 1px solid var(--border-strong);
+  border-radius: 6px; padding: 2px 8px; cursor: pointer;
+}
+.chh-a {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--text-dim);
+  padding: 8px 13px 4px;
+}
+.chh-a .n { margin-left: auto; font-weight: 400; color: var(--text-faint); }
+
+/* ── B/C: unified band-matrix ── */
+.bm { padding: 6px 0 10px; }
+.bm__h {
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--text-dim);
+  padding: 9px 13px 7px;
+}
+.bm__h .best { margin-left: auto; font-weight: 600; color: var(--reach-good); text-transform: none; letter-spacing: 0; font-size: 11px; }
+.bandrow {
+  display: grid;
+  grid-template-columns: 34px 86px 34px 1fr;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 13px;
+  border-bottom: 1px solid var(--border-soft);
+  min-height: 34px;
+}
+.bandrow.is-best { background: rgba(65, 186, 108, 0.06); }
+.bandrow .bn { font-family: var(--mono); font-size: 11.5px; color: var(--text-dim); }
+.bandrow.is-best .bn { color: var(--text); font-weight: 700; }
+.bandrow .track { height: 5px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.bandrow .fill { height: 100%; border-radius: 3px; }
+.bandrow .pct { font-family: var(--mono); font-size: 10.5px; color: var(--text-faint); text-align: right; }
+.bandrow .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.chip-use {
+  font-family: var(--mono);
+  font-size: 11px;
+  display: inline-flex; align-items: center; gap: 5px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.chip-use:hover { border-color: var(--accent); }
+.chip-use .station-finder__sw { width: 9px; height: 9px; }
+.chip-use .star { color: var(--text-faint); font-size: 11px; margin-left: 1px; }
+.chip-use .star.is-saved { color: var(--accent); }
+.bandrow .none { font-size: 10.5px; color: var(--text-faint); opacity: .55; }
+
+/* ── C: inline aim header ── */
+.sta-c .station-finder__sta-top { flex-wrap: wrap; }
+.aim-inline {
+  display: flex; align-items: center; gap: 10px;
+  font-family: var(--mono); font-size: 12px; color: var(--text-dim);
+  padding: 7px 13px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+.aim-inline b { color: var(--text); font-size: 13px; }
+.aim-inline .mini-compass {
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  position: relative; flex: none;
+}
+.aim-inline .mini-needle {
+  position: absolute; left: 50%; top: 50%;
+  width: 2px; height: 9px;
+  background: var(--reach-unlikely);
+  transform-origin: 50% 100%;
+  transform: translate(-50%, -100%) rotate(291deg);
+  border-radius: 1px;
+}
+</style>
+</head>
+<body>
+
+<!-- ═══════════ VARIANT A ═══════════ -->
+<div class="variant">
+  <div class="variant__cap">A · Densify (conservative)
+    <small>Sections unchanged; channel rows go one-line (~30 px). All 7 channels need ~210 px — still scrolls on short windows.</small>
+  </div>
+  <div class="railbox"><div class="station-finder__rail">
+    <div class="si-rail-tabs"><button class="on">Station</button><button>Live decodes <span class="si-count">34/min</span></button></div>
+    <header class="station-finder__sta">
+      <div class="station-finder__sta-top">
+        <span class="station-finder__call">W7GTE</span>
+        <span class="station-finder__badges">
+          <span class="station-finder__mb"><span class="station-finder__sw station-finder__sw--vara-hf"></span>VARA HF</span>
+          <span class="station-finder__mb"><span class="station-finder__sw station-finder__sw--ardop-hf"></span>ARDOP HF</span>
+          <span class="station-finder__mb"><span class="station-finder__sw station-finder__sw--packet"></span>Packet</span>
+        </span>
+      </div>
+      <div class="station-finder__who">Gordon · Prescott, AZ · DM34un</div>
+    </header>
+    <div class="station-finder__aim">
+      <div class="station-finder__compass" style="--bearing: 291deg"><span class="station-finder__needle"></span></div>
+      <div><div class="station-finder__big">291°</div><div class="station-finder__lab">aim antenna</div></div>
+      <div class="station-finder__dist"><div class="station-finder__big">182 mi</div><div class="station-finder__lab">short path</div></div>
+    </div>
+    <div class="station-finder__prop">
+      <h4>Path forecast · you → W7GTE<span class="station-finder__best">best now: 20 m</span></h4>
+      <div class="station-finder__pbar"><span class="station-finder__bn">80 m</span><div class="station-finder__track"><div class="station-finder__fill" style="width:22%; background:var(--reach-poor)"></div></div><span class="station-finder__pct">22%</span></div>
+      <div class="station-finder__pbar"><span class="station-finder__bn">40 m</span><div class="station-finder__track"><div class="station-finder__fill" style="width:61%; background:var(--reach-fair)"></div></div><span class="station-finder__pct">61%</span></div>
+      <div class="station-finder__pbar"><span class="station-finder__bn">30 m</span><div class="station-finder__track"><div class="station-finder__fill" style="width:48%; background:var(--reach-marginal)"></div></div><span class="station-finder__pct">48%</span></div>
+      <div class="station-finder__pbar is-current"><span class="station-finder__bn">20 m</span><div class="station-finder__track"><div class="station-finder__fill" style="width:82%; background:var(--reach-good)"></div></div><span class="station-finder__pct">82%</span></div>
+      <div class="station-finder__pbar"><span class="station-finder__bn">17 m</span><div class="station-finder__track"><div class="station-finder__fill" style="width:35%; background:var(--reach-marginal)"></div></div><span class="station-finder__pct">35%</span></div>
+      <div class="station-finder__pbar"><span class="station-finder__bn">15 m</span><div class="station-finder__track"><div class="station-finder__fill" style="width:12%; background:var(--reach-unlikely)"></div></div><span class="station-finder__pct">12%</span></div>
+    </div>
+    <div>
+      <div class="chh-a"><span class="station-finder__sw station-finder__sw--vara-hf"></span>VARA HF<span class="n">4 ch</span></div>
+      <div class="ch-a"><span class="station-finder__rel" style="background:var(--reach-poor)"></span><span class="f">3.598 MHz<small>80 m</small></span><span class="q">22%</span><button class="station-finder__save">☆</button><button class="use-sm">Use →</button></div>
+      <div class="ch-a"><span class="station-finder__rel" style="background:var(--reach-fair)"></span><span class="f">7.104 MHz<small>40 m</small></span><span class="q">61%</span><button class="station-finder__save is-saved">★</button><button class="use-sm">Use →</button></div>
+      <div class="ch-a"><span class="station-finder__rel" style="background:var(--reach-marginal)"></span><span class="f">10.145 MHz<small>30 m</small></span><span class="q">48%</span><button class="station-finder__save">☆</button><button class="use-sm">Use →</button></div>
+      <div class="ch-a"><span class="station-finder__rel" style="background:var(--reach-good)"></span><span class="f">14.109 MHz<small>20 m</small></span><span class="q">82%</span><button class="station-finder__save">☆</button><button class="use-sm">Use →</button></div>
+      <div class="chh-a"><span class="station-finder__sw station-finder__sw--ardop-hf"></span>ARDOP HF<span class="n">2 ch</span></div>
+      <div class="ch-a"><span class="station-finder__rel" style="background:var(--reach-fair)"></span><span class="f">7.102 MHz<small>40 m</small></span><span class="q">58%</span><button class="station-finder__save">☆</button><button class="use-sm">Use →</button></div>
+      <div class="ch-a"><span class="station-finder__rel" style="background:var(--reach-good)"></span><span class="f">14.109 MHz<small>20 m</small></span><span class="q">74%</span><button class="station-finder__save">☆</button><button class="use-sm">Use →</button></div>
+      <div class="chh-a"><span class="station-finder__sw station-finder__sw--packet"></span>Packet<span class="n">1 ch</span></div>
+      <div class="ch-a"><span class="station-finder__rel" style="background:var(--text-faint)"></span><span class="f">145.050 MHz<small>VHF · LoS?</small></span><span class="q">—</span><button class="station-finder__save">☆</button><button class="use-sm">Use →</button></div>
+    </div>
+  </div></div>
+</div>
+
+<!-- ═══════════ VARIANT B ═══════════ -->
+<div class="variant">
+  <div class="variant__cap">B · Band matrix (unify forecast + channels)
+    <small>One row per band: forecast bar + this station's dials as Use-chips. Constant height, zero scroll, every channel visible.</small>
+  </div>
+  <div class="railbox"><div class="station-finder__rail">
+    <div class="si-rail-tabs"><button class="on">Station</button><button>Live decodes <span class="si-count">34/min</span></button></div>
+    <header class="station-finder__sta">
+      <div class="station-finder__sta-top">
+        <span class="station-finder__call">W7GTE</span>
+        <span class="station-finder__badges">
+          <span class="station-finder__mb"><span class="station-finder__sw station-finder__sw--vara-hf"></span>VARA HF</span>
+          <span class="station-finder__mb"><span class="station-finder__sw station-finder__sw--ardop-hf"></span>ARDOP HF</span>
+          <span class="station-finder__mb"><span class="station-finder__sw station-finder__sw--packet"></span>Packet</span>
+        </span>
+      </div>
+      <div class="station-finder__who">Gordon · Prescott, AZ · DM34un</div>
+    </header>
+    <div class="station-finder__aim">
+      <div class="station-finder__compass" style="--bearing: 291deg"><span class="station-finder__needle"></span></div>
+      <div><div class="station-finder__big">291°</div><div class="station-finder__lab">aim antenna</div></div>
+      <div class="station-finder__dist"><div class="station-finder__big">182 mi</div><div class="station-finder__lab">short path</div></div>
+    </div>
+    <div class="bm">
+      <div class="bm__h">Bands &amp; channels · you → W7GTE <span class="best">best now: 20 m</span></div>
+      <div class="bandrow"><span class="bn">80 m</span><div class="track"><div class="fill" style="width:22%; background:var(--reach-poor)"></div></div><span class="pct">22%</span><span class="chips"><button class="chip-use"><span class="station-finder__sw station-finder__sw--vara-hf"></span>3.598<span class="star">☆</span></button></span></div>
+      <div class="bandrow"><span class="bn">40 m</span><div class="track"><div class="fill" style="width:61%; background:var(--reach-fair)"></div></div><span class="pct">61%</span><span class="chips"><button class="chip-use"><span class="station-finder__sw station-finder__sw--vara-hf"></span>7.104<span class="star is-saved">★</span></button><button class="chip-use"><span class="station-finder__sw station-finder__sw--ardop-hf"></span>7.102<span class="star">☆</span></button></span></div>
+      <div class="bandrow"><span class="bn">30 m</span><div class="track"><div class="fill" style="width:48%; background:var(--reach-marginal)"></div></div><span class="pct">48%</span><span class="chips"><button class="chip-use"><span class="station-finder__sw station-finder__sw--vara-hf"></span>10.145<span class="star">☆</span></button></span></div>
+      <div class="bandrow is-best"><span class="bn">20 m</span><div class="track"><div class="fill" style="width:82%; background:var(--reach-good)"></div></div><span class="pct">82%</span><span class="chips"><button class="chip-use"><span class="station-finder__sw station-finder__sw--vara-hf"></span>14.109<span class="star">☆</span></button><button class="chip-use"><span class="station-finder__sw station-finder__sw--ardop-hf"></span>14.109<span class="star">☆</span></button></span></div>
+      <div class="bandrow"><span class="bn">17 m</span><div class="track"><div class="fill" style="width:35%; background:var(--reach-marginal)"></div></div><span class="pct">35%</span><span class="none">no channel</span></div>
+      <div class="bandrow"><span class="bn">15 m</span><div class="track"><div class="fill" style="width:12%; background:var(--reach-unlikely)"></div></div><span class="pct">12%</span><span class="none">no channel</span></div>
+      <div class="bandrow"><span class="bn">VHF</span><div class="track" style="opacity:.25"></div><span class="pct">LoS</span><span class="chips"><button class="chip-use"><span class="station-finder__sw station-finder__sw--packet"></span>145.050<span class="star">☆</span></button></span></div>
+    </div>
+  </div></div>
+</div>
+
+<!-- ═══════════ VARIANT C ═══════════ -->
+<div class="variant">
+  <div class="variant__cap">C · Band matrix + inline aim
+    <small>B, plus the compass hero folds into a one-line strip. Max headroom — the rail fits even with the live strip expanded below.</small>
+  </div>
+  <div class="railbox"><div class="station-finder__rail">
+    <div class="si-rail-tabs"><button class="on">Station</button><button>Live decodes <span class="si-count">34/min</span></button></div>
+    <header class="station-finder__sta sta-c">
+      <div class="station-finder__sta-top">
+        <span class="station-finder__call">W7GTE</span>
+        <span class="station-finder__badges">
+          <span class="station-finder__mb"><span class="station-finder__sw station-finder__sw--vara-hf"></span>VARA HF</span>
+          <span class="station-finder__mb"><span class="station-finder__sw station-finder__sw--ardop-hf"></span>ARDOP HF</span>
+          <span class="station-finder__mb"><span class="station-finder__sw station-finder__sw--packet"></span>Packet</span>
+        </span>
+      </div>
+      <div class="station-finder__who">Gordon · Prescott, AZ · DM34un</div>
+    </header>
+    <div class="aim-inline">
+      <span class="mini-compass"><span class="mini-needle"></span></span>
+      <span>aim <b>291°</b> NNW</span>
+      <span>·</span>
+      <span><b>182 mi</b> short path</span>
+    </div>
+    <div class="bm">
+      <div class="bm__h">Bands &amp; channels · you → W7GTE <span class="best">best now: 20 m</span></div>
+      <div class="bandrow"><span class="bn">80 m</span><div class="track"><div class="fill" style="width:22%; background:var(--reach-poor)"></div></div><span class="pct">22%</span><span class="chips"><button class="chip-use"><span class="station-finder__sw station-finder__sw--vara-hf"></span>3.598<span class="star">☆</span></button></span></div>
+      <div class="bandrow"><span class="bn">40 m</span><div class="track"><div class="fill" style="width:61%; background:var(--reach-fair)"></div></div><span class="pct">61%</span><span class="chips"><button class="chip-use"><span class="station-finder__sw station-finder__sw--vara-hf"></span>7.104<span class="star is-saved">★</span></button><button class="chip-use"><span class="station-finder__sw station-finder__sw--ardop-hf"></span>7.102<span class="star">☆</span></button></span></div>
+      <div class="bandrow"><span class="bn">30 m</span><div class="track"><div class="fill" style="width:48%; background:var(--reach-marginal)"></div></div><span class="pct">48%</span><span class="chips"><button class="chip-use"><span class="station-finder__sw station-finder__sw--vara-hf"></span>10.145<span class="star">☆</span></button></span></div>
+      <div class="bandrow is-best"><span class="bn">20 m</span><div class="track"><div class="fill" style="width:82%; background:var(--reach-good)"></div></div><span class="pct">82%</span><span class="chips"><button class="chip-use"><span class="station-finder__sw station-finder__sw--vara-hf"></span>14.109<span class="star">☆</span></button><button class="chip-use"><span class="station-finder__sw station-finder__sw--ardop-hf"></span>14.109<span class="star">☆</span></button></span></div>
+      <div class="bandrow"><span class="bn">17 m</span><div class="track"><div class="fill" style="width:35%; background:var(--reach-marginal)"></div></div><span class="pct">35%</span><span class="none">no channel</span></div>
+      <div class="bandrow"><span class="bn">15 m</span><div class="track"><div class="fill" style="width:12%; background:var(--reach-unlikely)"></div></div><span class="pct">12%</span><span class="none">no channel</span></div>
+      <div class="bandrow"><span class="bn">VHF</span><div class="track" style="opacity:.25"></div><span class="pct">LoS</span><span class="chips"><button class="chip-use"><span class="station-finder__sw station-finder__sw--packet"></span>145.050<span class="star">☆</span></button></span></div>
+    </div>
+  </div></div>
+</div>
+
+</body>
+</html>
