@@ -8,4 +8,5 @@
 pub mod bands;
 pub mod decimator;
 pub mod slot;
+pub mod state;
 pub mod wavwrite;
