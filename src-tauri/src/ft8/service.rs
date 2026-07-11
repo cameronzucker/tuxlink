@@ -1,7 +1,7 @@
 //! The FT8 listener service: managed state + the supervisor thread + the
 //! start sequence (spec §Service structure, §Start sequence, §Lifecycle
-//! ownership), plus the capture/decode thread bodies and the waterfall tap
-//! (part 2, Task 12). Stop + resume protocols land in part 3 (Task 13).
+//! ownership), the capture/decode thread bodies, the waterfall tap, and
+//! the stop + resume/recovery protocols.
 //!
 //! Lock discipline (spec §Lock discipline, pinned): thread handles live
 //! OUTSIDE the state mutex and are take()n before any join; the state mutex
@@ -720,10 +720,9 @@ impl Ft8ListenerState {
     /// Lock architecture (pinned): this helper OWNS the rig-lock
     /// acquisition; `Ft8Arbiter::rig_session` (T14) takes ONLY the arbiter
     /// lock and never the rig lock — lock order arbiter > rig > state, each
-    /// acquired at most once per thread. T14 routes the step-5 call through
-    /// `rig_session` (the arbiter cannot exist at this task's commit, so
-    /// that one-match routing edit lands in T14); until then the rig lock
-    /// alone serializes FT8 rig sessions against each other.
+    /// acquired at most once per thread. The supervisor's step-5 call
+    /// routes through `rig_session` when the arbiter is installed, so a
+    /// modem connect's pre-audio tune can never overlap this session.
     fn start_rig_labeling(self: &Arc<Self>) {
         let _rig = self.rig_lock.lock().unwrap_or_else(|p| p.into_inner());
         let configured_dial = {
@@ -1284,8 +1283,9 @@ fn test_completed_slot(slot_utc_ms: u64) -> tuxlink_capture::slot::CompletedSlot
 
 /// The ALSA read loop → gap accounting → tap → slot assembler (spec
 /// §Threads). The assembler owns the DECODE-path decimator; the tap runs a
-/// second identical `Decimator` (same COEFFS, bit-identical output — see
-/// the Phase C preamble's cross-cutting interface note).
+/// second `Decimator` over the same COEFFS (its display-only output can
+/// diverge from the decode path after a zero-fill — acceptable: the tap
+/// feeds the waterfall, never the decoder).
 fn capture_loop(
     state: Arc<Ft8ListenerState>,
     mut source: Box<dyn crate::ft8::traits::SampleSource>,

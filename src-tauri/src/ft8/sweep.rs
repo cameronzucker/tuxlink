@@ -19,7 +19,7 @@ pub(crate) fn tick(state: &Arc<Ft8ListenerState>) {
     if state.axis() != ServiceAxis::Listening || state.hold().is_latched() {
         return;
     }
-    let (dwell_done, band_idx, bands, dwell_slots) = {
+    let (dwell_done, band_idx, bands) = {
         let g = state.lock_inner_for_sweep();
         let (active_idx, cfg) = match g.machine_sweep() {
             Sweep::Active { band_idx, .. } => (band_idx, g.sweep_config()),
@@ -29,10 +29,8 @@ pub(crate) fn tick(state: &Arc<Ft8ListenerState>) {
             g.machine_dwell_complete(cfg.dwell_slots),
             active_idx,
             cfg.bands.clone(),
-            cfg.dwell_slots,
         )
     };
-    let _ = dwell_slots;
     if !dwell_done || bands.is_empty() {
         return;
     }
