@@ -233,7 +233,11 @@ pub(crate) fn ft8_device_meter_inner(
             "the FT8 listener is opening this device",
         ));
     };
-    Ok(open_and_meter(&dev.alsa_hw))
+    // Hold `_meter_guard` across the whole read; the read is PREEMPTIBLE — it
+    // polls the same reservation for a mid-flight listener priority claim and
+    // aborts to `in-use` rather than finishing its window, so the listener's
+    // acquire_priority wins within ~one read iteration.
+    Ok(open_and_meter(state.reservation(), &dev.stable_id, &dev.alsa_hw))
 }
 
 /// `ft8_list_devices` (spec §NewCommands). The same enumeration the snapshot's

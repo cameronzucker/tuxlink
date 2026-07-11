@@ -65,23 +65,35 @@ fn join_bounded(handle: JoinHandle<()>, timeout: Duration) -> Result<(), JoinHan
 // `hw:` device race to EBUSY; if the listener loses that race its open returns
 // `SourceError::Busy` and the service flips to `Yielded`/paused (step 7's
 // `on_pause` arm) — a spurious pause caused by a transient UI meter read. This
-// arbiter makes the LISTENER always win: it claims priority (blocking new
-// meters) and waits — bounded — for any in-flight meter read to finish before
-// it opens, so the open never hits that EBUSY.
+// arbiter makes the LISTENER always win via TWO cooperating halves:
+//   1. acquire_priority claims priority (blocking NEW meters) and waits —
+//      bounded — for any in-flight meter read to release.
+//   2. the in-flight meter is PREEMPTIBLE: it polls `listener_wants(id)`
+//      between read iterations and bails (→ maps to `in-use`) the instant the
+//      listener claims priority, instead of finishing its full ~200 ms window.
+// Preemption is what makes the clean win REAL: the meter's total hold (open +
+// discard period + measure) can approach the acquire bound, so a plain
+// "wait for the meter to finish" would often time out AT the bound and let the
+// listener's own open hit EBUSY — the exact spurious pause this prevents. With
+// preemption the meter releases within ~one read iteration (≤~200 ms, one ALSA
+// period/wait) of the claim, comfortably inside the bound.
 //
 // Lock discipline (mirrors the module's pinned rule): this is a DEDICATED leaf
 // mutex + condvar, NOT the `Inner` state lock and NOT the rig/arbiter locks. It
 // is acquired at most once per thread and is NEVER held across an ALSA open, an
-// ALSA read, or `open_source` — only across the O(1) flag flips. A meter read
-// and a priority acquire therefore cannot deadlock, and the acquire is bounded
-// so it can never wedge the start sequence.
+// ALSA read, or `open_source` — only across the O(1) flag flips + the poll. A
+// meter read and a priority acquire therefore cannot deadlock, and the acquire
+// is bounded so it can never wedge the start sequence.
 
 /// Bound on how long the listener's [`DeviceReservation::acquire_priority`]
 /// waits for an in-flight meter read to release before it proceeds to open the
-/// device anyway. Chosen > the meter's ~150 ms measurement window so a meter
-/// that started first releases in time and the listener wins cleanly. If a
-/// (buggy) meter overruns the bound, the listener still proceeds — worst case
-/// its own open hits `Busy` and pauses (recoverable), never a wedge.
+/// device anyway. The meter is PREEMPTIBLE (it polls `listener_wants` between
+/// reads and bails within ~one ALSA period of a priority claim), so an
+/// overlapping meter releases well inside this bound — NOT because the meter's
+/// full hold (discard period ~100 ms + measure ~100 ms + open overhead) fits
+/// under it, which it does not. The bound is the wedge-safety cap: if a (buggy)
+/// meter never releases, the listener still proceeds — worst case its own open
+/// hits `Busy` and pauses (recoverable), never a wedge.
 pub(crate) const RESERVATION_ACQUIRE_BOUND: Duration = Duration::from_millis(250);
 
 #[derive(Default)]
@@ -153,6 +165,16 @@ impl DeviceReservation {
         }
         s.meter_active = true;
         Some(MeterReservation { resv: self, id: id.clone() })
+    }
+
+    /// Cheap poll (meter path): has the listener claimed priority on this id?
+    /// The meter read loop calls this between reads and aborts the moment it
+    /// flips true, so the listener wins within ~one read iteration rather than
+    /// the meter finishing its full measurement window. O(1); takes the leaf
+    /// lock only for the flag read (never across an ALSA read).
+    pub fn listener_wants(&self, id: &StableAudioId) -> bool {
+        let map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        map.get(id).map(|s| s.listener_priority).unwrap_or(false)
     }
 
     /// Listener path (start sequence step 7). Claim priority immediately
@@ -830,6 +852,17 @@ impl Ft8ListenerState {
         // dedicated leaf lock (never the Inner lock) and is held across the
         // open; it drops when this sequence returns, after which the capture
         // thread owns the PCM and a meter open naturally maps to `in-use`.
+        //
+        // KEYING ASSUMPTION (pinned): we key the reservation on the
+        // persisted-config `stable_id` (from `ft8_cfg.device`), while the meter
+        // command keys on the freshly-enumerated `dev.stable_id`. For the same
+        // physical card these are `Eq` by the stable-id derivation contract, so
+        // the arbiter matches them. IF the id `kind` upgrades between save and
+        // now (e.g. a by-id symlink appears where only a card-hash existed), the
+        // two diverge and the reservation silently provides no arbitration for
+        // that one race — a degraded-but-safe fallback (the listener's own open
+        // still EBUSY-pauses recoverably; never a wedge). Not worth
+        // re-resolving the enumerated id here for that rare window.
         let _device_priority = self.reservation.acquire_priority(&stable_id);
         let source = match self.platform.open_source(&resolved.alsa_hw) {
             Ok(s) => s,
@@ -1898,6 +1931,14 @@ mod tests {
         assert!(
             waited < RESERVATION_ACQUIRE_BOUND,
             "listener acquired within the bound (never wedges): {waited:?}"
+        );
+        // ...but it DID actually wait for the in-flight meter (~50 ms sleep):
+        // a regression where acquire returns immediately (no arbitration at all)
+        // must not pass. 40 ms floor keeps a comfortable margin below the 50 ms
+        // hold so it won't flake.
+        assert!(
+            waited >= Duration::from_millis(40),
+            "listener genuinely waited for the in-flight meter to release: {waited:?}"
         );
 
         // While the listener holds priority, a concurrent meter is refused. The
