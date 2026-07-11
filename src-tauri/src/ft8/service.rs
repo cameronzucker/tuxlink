@@ -13,7 +13,6 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -76,18 +75,10 @@ pub struct Ft8Deps {
     pub sink: Arc<dyn EventSink>,
 }
 
-/// A completed slot handed from capture to decode (rendezvous channel).
-/// Constructed by the capture thread in Task 12; T11's reader is the
-/// stopped-state shape test (the plan bans allow(dead_code)).
-pub(crate) struct SlotJob {
-    pub slot_utc_ms: u64,
-    pub dir: PathBuf,
-    pub wav: PathBuf,
-    pub lost_frames: u64,
-    pub boundary_skew_frames: u64,
-    pub clip_fraction: f32,
-    pub rms_dbfs: f32,
-}
+// `SlotJob` (the rendezvous-channel payload) lands in Task 12 with its
+// first constructor (the capture loop) — dead-code discipline: a cfg(test)
+// reader does NOT cover the non-test lib target, so declaring it here would
+// fail clippy's denied dead_code on that target (T11 review, Critical 2).
 
 /// Everything behind the leaf-level state mutex.
 struct Inner {
@@ -107,25 +98,19 @@ struct Inner {
 }
 
 /// Thread handles — OUTSIDE the state mutex (lock discipline).
+/// `capture` + `decode` fields land in Task 12 with their readers
+/// (spawn_workers wires them; T13's stop protocol joins them) — dead-code
+/// discipline on the non-test target.
 #[derive(Default)]
 struct Handles {
     supervisor: Option<JoinHandle<()>>,
-    // `capture` and `decode` are populated + reaped starting in Task 12
-    // (spawn_workers wires them; the stop protocol in Task 13 joins them).
-    // T11's reader: the stopped-state shape test.
-    capture: Option<JoinHandle<()>>,
-    decode: Option<JoinHandle<()>>,
 }
 
 pub struct Ft8ListenerState {
     inner: Mutex<Inner>,
     handles: Mutex<Handles>,
-    /// The master SyncSender (spec §Lifecycle: lives here, cloned into each
-    /// capture thread; only stop() drops it — decode's recv sees
-    /// Disconnected, race-free). Read starting in Task 12 (capture_loop
-    /// clones it; stop() takes and drops it); T11's reader is the
-    /// stopped-state shape test.
-    master_tx: Mutex<Option<SyncSender<SlotJob>>>,
+    // `master_tx` (the master SyncSender<SlotJob>; spec §Lifecycle) lands in
+    // Task 12 with its readers — dead-code discipline on the non-test target.
     engine: Mutex<Option<Arc<dyn DecodeEngine>>>,
     pub(crate) platform: Arc<dyn Ft8Platform>,
     pub(crate) clock: Arc<dyn ClockProbe>,
@@ -166,7 +151,6 @@ impl Ft8ListenerState {
                 ring: VecDeque::with_capacity(RING_CAP),
             }),
             handles: Mutex::new(Handles::default()),
-            master_tx: Mutex::new(None),
             engine: Mutex::new(None),
             platform: deps.platform,
             clock: deps.clock,
@@ -468,12 +452,16 @@ impl Ft8ListenerState {
 
         // Step 8 / 8′: spawn workers → listening.
         self.spawn_workers(source, resume);
+        // Lock discipline: rig_configured() reads config (file I/O) — probe
+        // it BEFORE taking the state mutex (leaf-level, never held across
+        // I/O; step 5 already follows this shape).
+        let rig_ok = self.platform.rig_configured();
         {
             let mut g = self.lock_inner();
             g.machine.on_listening();
             // Sweep (re-)arms at start/resume when enabled + CAT (T16 wires
             // the dwell scheduler; arming is part of entering listening).
-            if g.ft8_cfg.sweep.enabled && self.platform.rig_configured() {
+            if g.ft8_cfg.sweep.enabled && rig_ok {
                 g.machine.sweep_activate();
             }
         }
@@ -1059,35 +1047,4 @@ mod tests {
         assert_eq!(v["service"]["axis"], "listening");
     }
 
-    /// T11 declares SlotJob + the worker handles + master_tx whose runtime
-    /// readers arrive in T12/T13, and the plan bans #[allow(dead_code)]:
-    /// this test IS their T11 reader. It pins the stopped-state invariant
-    /// (no worker threads, no live sender before any start) and the SlotJob
-    /// field shape the rendezvous channel will carry.
-    #[test]
-    fn stopped_state_holds_no_workers_and_slot_job_shape_is_complete() {
-        let state = test_state(FakePlatform::happy(), Ft8Config::default());
-        {
-            let h = state.handles.lock().unwrap();
-            assert!(h.capture.is_none(), "stopped: no capture thread");
-            assert!(h.decode.is_none(), "stopped: no decode thread");
-        }
-        assert!(
-            state.master_tx.lock().unwrap().is_none(),
-            "stopped: no live SyncSender"
-        );
-        let job = SlotJob {
-            slot_utc_ms: 15_000,
-            dir: PathBuf::from("/tmp/slot"),
-            wav: PathBuf::from("/tmp/slot/slot.wav"),
-            lost_frames: 1,
-            boundary_skew_frames: 2,
-            clip_fraction: 0.25,
-            rms_dbfs: -20.0,
-        };
-        assert_eq!(job.slot_utc_ms, 15_000);
-        assert_eq!((job.lost_frames, job.boundary_skew_frames), (1, 2));
-        assert!(job.clip_fraction > 0.0 && job.rms_dbfs < 0.0);
-        assert!(job.wav.starts_with(&job.dir), "wav lives inside the slot dir");
-    }
 }
