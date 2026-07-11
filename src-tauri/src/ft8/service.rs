@@ -1988,11 +1988,10 @@ mod tests {
         let state = test_state(p.clone(), cfg_with_device());
         run_sequence(&state); // spawns decode via spawn_workers
         assert_eq!(state.axis(), ServiceAxis::Listening);
-        let tx = state.master_tx.lock().unwrap().clone().unwrap();
-
+        // (No held Sender clone — see the stop-during-decode test's note.)
         // Slot 1: decode accepts it, then we gate the engine busy.
         eng.hold_gate();
-        state.handle_completed_slot(test_completed_slot(1_000), &tx);
+        state.test_complete_one_slot(1_000);
         // Wait until decode has STARTED slot 1 (parked on the gate).
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while eng.decodes_started.load(Ordering::SeqCst) < 1 {
@@ -2000,7 +1999,7 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         // Slot 2 (N+1): rendezvous refuses — dropped, dir deleted.
-        state.handle_completed_slot(test_completed_slot(2_000), &tx);
+        state.test_complete_one_slot(2_000);
         {
             let g = state.lock_inner();
             let dropped: Vec<_> = g
@@ -2031,7 +2030,7 @@ mod tests {
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        state.handle_completed_slot(test_completed_slot(3_000), &tx);
+        state.test_complete_one_slot(3_000);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while eng.decodes_finished.load(Ordering::SeqCst) < 2 {
             assert!(std::time::Instant::now() < deadline);
@@ -2048,9 +2047,8 @@ mod tests {
         let p = FakePlatform::happy();
         let state = test_state(p.clone(), cfg_with_device());
         run_sequence(&state);
-        let tx = state.master_tx.lock().unwrap().clone().unwrap();
         *p.wav_result.lock().unwrap() = Err("No space left on device (os error 28)".into());
-        state.handle_completed_slot(test_completed_slot(1_000), &tx);
+        state.test_complete_one_slot(1_000);
         {
             let g = state.lock_inner();
             assert!(matches!(
@@ -2062,7 +2060,7 @@ mod tests {
         }
         // Recovery: the next slot flows to decode.
         *p.wav_result.lock().unwrap() = Ok(());
-        state.handle_completed_slot(test_completed_slot(2_000), &tx);
+        state.test_complete_one_slot(2_000);
         let snap_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         loop {
             let done = {
@@ -2233,9 +2231,14 @@ mod tests {
         *p.engine.lock().unwrap() = eng.clone();
         let state = test_state(p, cfg_with_device());
         run_sequence(&state);
-        let tx = state.master_tx.lock().unwrap().clone().unwrap();
+        // NEVER hold a master-Sender clone across stop()/teardown: stop()'s
+        // decode-stop signal is "master dropped → recv Disconnected"; a live
+        // clone keeps the channel open, decode parks in recv forever, and
+        // the 16 s join overruns into a spurious capture-wedged (the exact
+        // CI failure at 080d9442, both arches). test_complete_one_slot
+        // clones transiently and drops.
         eng.hold_gate();
-        state.handle_completed_slot(test_completed_slot(1_000), &tx);
+        state.test_complete_one_slot(1_000);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while eng.decodes_started.load(Ordering::SeqCst) < 1 {
             assert!(std::time::Instant::now() < deadline);
