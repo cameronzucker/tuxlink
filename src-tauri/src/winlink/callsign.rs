@@ -54,6 +54,36 @@ pub fn validate_wire_callsign(s: &str) -> Result<(), String> {
     }
 }
 
+/// AX.25 address-field grammar for a packet target OR a digipeater via hop
+/// [FIX-3]: base 1-6 chars `A-Z0-9`, optional SSID `-0..-15`. An AX.25 address
+/// field encodes at most 6 base characters plus a 4-bit SSID, so this is
+/// STRICTER than [`validate_wire_callsign`] on base length (which permits 7 and
+/// is a MYCALL/CONNECT-target grammar, not the on-the-wire AX.25 address) and
+/// LOOSER on SSID (AX.25 permits SSID 0). Applied to the packet target and each
+/// via hop before `Address::encode` writes raw bytes to the RF address field,
+/// and when curating a peer-derived `via` into the agent DTO. A hop that fails
+/// this never reaches the wire.
+pub fn validate_ax25_hop(s: &str) -> Result<(), String> {
+    let s = s.trim().to_ascii_uppercase();
+    let (base, ssid) = match s.split_once('-') {
+        Some((b, t)) => (b, Some(t)),
+        None => (s.as_str(), None),
+    };
+    if !(1..=6).contains(&base.len()) {
+        return Err(format!("AX.25 address base must be 1-6 chars, got {:?}", base));
+    }
+    if !base.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(format!("AX.25 address base must be A-Z0-9, got {:?}", base));
+    }
+    match ssid {
+        None => Ok(()),
+        Some(t) => match t.parse::<u8>() {
+            Ok(n) if n <= 15 => Ok(()),
+            _ => Err(format!("invalid AX.25 SSID {:?} (allowed: 0-15)", t)),
+        },
+    }
+}
+
 /// Stored presented callsign validator: base 3-7 chars A-Z0-9, optional
 /// portable suffix `/SUFFIX`, and optional SSID `-1..-15` / `-T` / `-R` / `-L`.
 /// Applied at write boundaries (tasks 8/18) to preserve legitimate portable
@@ -191,6 +221,27 @@ mod tests {
         assert_eq!(sanitize_display("a/../b"), None);
         assert_eq!(sanitize_display(""), None);
         assert_eq!(sanitize_display(&"X".repeat(65)), None); // length cap 64
+    }
+
+    #[test]
+    fn ax25_hop_grammar_accepts_valid_and_rejects_malformed() {
+        // Valid AX.25 address fields: base 1-6 A-Z0-9, SSID 0-15.
+        assert!(validate_ax25_hop("RELAY").is_ok());
+        assert!(validate_ax25_hop("W6ABC-0").is_ok()); // SSID 0 allowed (unlike wire)
+        assert!(validate_ax25_hop("W6ABC-15").is_ok());
+        assert!(validate_ax25_hop("N0DAJ").is_ok());
+        assert!(validate_ax25_hop("AB").is_ok()); // short base OK for a hop
+        assert!(validate_ax25_hop("ABCDEF-7").is_ok()); // 6-char base
+        assert!(validate_ax25_hop("  relay-1  ").is_ok()); // trimmed + uppercased
+
+        // Malformed hops that must be rejected before the wire:
+        assert!(validate_ax25_hop("ABCDEFG").is_err()); // 7-char base > AX.25 max 6
+        assert!(validate_ax25_hop("W6ABC-16").is_err()); // SSID > 15
+        assert!(validate_ax25_hop("W6:ABC").is_err()); // control/charset
+        assert!(validate_ax25_hop("W6 ABC").is_err()); // whitespace in base
+        assert!(validate_ax25_hop("").is_err()); // empty
+        assert!(validate_ax25_hop("RELAY-").is_err()); // empty SSID token
+        assert!(validate_ax25_hop("RELAY-X").is_err()); // non-numeric SSID
     }
 
     #[test]

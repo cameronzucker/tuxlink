@@ -2470,7 +2470,16 @@ fn curate_peer(
                 }
                 .to_string(),
                 target_callsign,
-                via: ch.via.iter().filter_map(|v| sanitize_display(v)).collect(),
+                // FIX-3 [P3]: a via hop must clear BOTH the display/injection
+                // floor AND AX.25 address grammar; a hop that fails either is
+                // dropped from the curated agent DTO (never surfaced, never
+                // dialable).
+                via: ch
+                    .via
+                    .iter()
+                    .filter_map(|v| sanitize_display(v))
+                    .filter(|v| crate::winlink::callsign::validate_ax25_hop(v).is_ok())
+                    .collect(),
                 freq_hz: ch.freq_hz,
                 direction: match ch.direction {
                     crate::contacts::reachability::Direction::Incoming => "incoming",
@@ -3646,6 +3655,28 @@ mod tests {
         assert!(
             curate_peer(&contact, 4).is_none(),
             "[R5-10] sanitizer floor drops the whole record"
+        );
+    }
+
+    #[test]
+    fn curate_peer_drops_via_hops_failing_ax25_grammar() {
+        // FIX-3 [P3]: a peer-derived via hop that clears the display floor but
+        // fails AX.25 address grammar is dropped from the curated agent DTO;
+        // only well-formed hops survive.
+        let mut contact = hostile_test_contact();
+        contact.channels[0].transport =
+            crate::contacts::reachability::ChannelTransport::Packet;
+        contact.channels[0].via = vec![
+            "RELAY".into(),      // valid → kept
+            "TOOLONGHOP".into(), // 10-char base > AX.25 max 6 → dropped
+            "WIDE2-1".into(),    // valid → kept
+            "RELAY-16".into(),   // SSID > 15 → dropped
+        ];
+        let dto = curate_peer(&contact, 4).unwrap();
+        assert_eq!(
+            dto.channels[0].via,
+            vec!["RELAY".to_string(), "WIDE2-1".to_string()],
+            "only AX.25-valid via hops survive curation"
         );
     }
 

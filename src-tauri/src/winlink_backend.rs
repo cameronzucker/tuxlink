@@ -248,6 +248,18 @@ pub fn resolve_packet_endpoint(
                     path.len()
                 )));
             }
+            // FIX-3 [P3]: validate AX.25 address grammar on the target AND every
+            // via hop BEFORE any Address is built — a malformed peer-derived hop
+            // (lowercase, >6 base, SSID > 15, control char) must never reach
+            // `Address::encode` / the RF address field. `parse_call_ssid` alone
+            // only checks SSID range + non-empty; it would pass a bad base.
+            crate::winlink::callsign::validate_ax25_hop(&call)
+                .map_err(|e| BackendError::NotConfigured(format!("bad packet target: {e}")))?;
+            for hop in &path {
+                crate::winlink::callsign::validate_ax25_hop(hop).map_err(|e| {
+                    BackendError::NotConfigured(format!("bad digipeater hop {hop:?}: {e}"))
+                })?;
+            }
             let target = parse_call_ssid(&call)?;
             let digis = path
                 .iter()
@@ -5744,6 +5756,57 @@ mod native_read_state_tests {
         )
         .unwrap_err();
         assert!(matches!(err, BackendError::NotConfigured(_)));
+    }
+
+    #[test]
+    fn resolve_packet_endpoint_rejects_malformed_ax25_target_and_via() {
+        // FIX-3 [P3]: a malformed target or via hop is rejected BEFORE any
+        // Address is built, so a bad byte never reaches the RF address field.
+        // Malformed TARGET forms.
+        for bad_target in ["w7aux-16", "TOOLONGCALL", "W7:AUX", "W7 AUX", ""] {
+            let err = resolve_packet_endpoint(
+                "N7CPZ",
+                0,
+                PacketRole::DialTo {
+                    call: bad_target.into(),
+                    path: vec![],
+                },
+                SessionIntent::Cms,
+            )
+            .unwrap_err();
+            assert!(
+                matches!(err, BackendError::NotConfigured(_)),
+                "malformed target {bad_target:?} must be rejected"
+            );
+        }
+        // A malformed VIA hop (valid target) is rejected too.
+        for bad_hop in ["relay-16", "TOOLONGHOP", "A B"] {
+            let err = resolve_packet_endpoint(
+                "N7CPZ",
+                0,
+                PacketRole::DialTo {
+                    call: "W7AUX".into(),
+                    path: vec![bad_hop.into()],
+                },
+                SessionIntent::Cms,
+            )
+            .unwrap_err();
+            assert!(
+                matches!(err, BackendError::NotConfigured(_)),
+                "malformed via hop {bad_hop:?} must be rejected"
+            );
+        }
+        // A well-formed target + hops still resolves (no false rejection).
+        let ok = resolve_packet_endpoint(
+            "N7CPZ",
+            0,
+            PacketRole::DialTo {
+                call: "W7AUX-7".into(),
+                path: vec!["RELAY".into(), "WIDE2-1".into()],
+            },
+            SessionIntent::Cms,
+        );
+        assert!(ok.is_ok(), "valid AX.25 target + hops must not be rejected");
     }
 
     // =========================================================================
