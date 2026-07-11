@@ -313,9 +313,10 @@ pub fn declination_at(lat_deg: f64, lon_deg: f64, year: f64) -> Option<f64> {
     declination_at_alt(lat_deg, lon_deg, 0.0, year)
 }
 
-/// Altitude-aware declination, in degrees east-positive. Used by the NOAA
-/// test-vector assertions (whose published points span a range of altitudes) and
-/// by [`declination_at`] with `alt_km = 0`.
+/// Altitude-aware declination, in degrees east-positive. The full synthesis
+/// supports any altitude above the ellipsoid; [`declination_at`] pins `alt_km =
+/// 0` since the setup surface is a sea-level model and NOAA's published
+/// declination oracle rows used in the tests are height=0.
 fn declination_at_alt(lat_deg: f64, lon_deg: f64, alt_km: f64, year: f64) -> Option<f64> {
     let (x, y, _z) = field_components(lat_deg, lon_deg, alt_km, year)?;
     Some(y.atan2(x).to_degrees())
@@ -401,35 +402,37 @@ pub fn magnetic_declination(grid: String) -> Result<DeclDto, Ft8CmdError> {
 mod tests {
     use super::*;
 
-    /// Official NOAA WMM2025 test vectors (`WMM2025_TestValues.txt` from
-    /// `WMM2025COF.zip`): `(decimal_year, altitude_km, lat_deg, lon_deg,
-    /// published_declination_deg)`. Chosen to span hemispheres, latitudes, and
-    /// two epochs (2025.0 and 2027.5 exercise the secular-variation term).
-    const NOAA_VECTORS: &[(f64, f64, f64, f64, f64)] = &[
-        (2025.0, 28.0, 89.0, -121.0, -99.77), // high Arctic (large declination)
-        (2025.0, 65.0, 43.0, 93.0, 0.50),     // northern mid-latitude (Asia)
-        (2025.0, 51.0, -33.0, 109.0, -5.49),  // southern mid-latitude
-        (2025.0, 18.0, 0.0, 21.0, 1.29),      // equatorial (Africa)
-        (2027.5, 0.0, -13.0, -59.0, -17.49),  // southern, sea level, mid-epoch
+    /// GENUINE NOAA-published WMM2025 declination test values — the real,
+    /// independent oracle. These are the `D (Deg)` column of NOAA NCEI's
+    /// official "Test Values for WMM2025" table, height=0 (sea-level) rows:
+    /// <https://www.ncei.noaa.gov/sites/default/files/2025-02/WMM2025testvalues.pdf>
+    ///
+    /// `(decimal_year, lat_deg, lon_deg, published_D_deg)`. NOT computed by this
+    /// crate — asserting against them catches a systematic error the
+    /// implementation cannot influence. They span both hemispheres, high
+    /// latitude (±80° stresses the near-pole Legendre terms), and two epochs
+    /// (2025.0 and 2027.5 exercise the secular-variation term). Longitude 240
+    /// is +240°E; the synthesis uses `sin`/`cos` of `m·λ`, so 240°E and −120°E
+    /// are identical — the published 240 value is passed verbatim.
+    const NOAA_PUBLISHED: &[(f64, f64, f64, f64)] = &[
+        (2025.0, 80.0, 0.0, 1.28),    // Arctic, epoch start
+        (2025.0, 0.0, 120.0, -0.16),  // equator
+        (2025.0, -80.0, 240.0, 68.78), // Antarctic, large declination
+        (2027.5, 80.0, 0.0, 2.59),    // Arctic, mid-epoch (secular variation)
+        (2027.5, -80.0, 240.0, 68.49), // Antarctic, mid-epoch
     ];
 
     #[test]
-    fn declination_matches_noaa_vectors() {
-        for &(year, alt, lat, lon, expected) in NOAA_VECTORS {
-            let d = declination_at_alt(lat, lon, alt, year).expect("coefficients parse");
+    fn declination_matches_noaa_published_values() {
+        for &(year, lat, lon, expected) in NOAA_PUBLISHED {
+            // The public sea-level entry point is what production calls; assert
+            // it directly against NOAA's independently-published D.
+            let d = declination_at(lat, lon, year).expect("coefficients parse");
             assert!(
                 (d - expected).abs() < 0.1,
-                "WMM2025 ({lat},{lon}) alt={alt} yr={year}: got {d}, expected {expected}"
+                "WMM2025 ({lat},{lon}) yr={year}: got {d}, NOAA-published {expected}"
             );
         }
-    }
-
-    #[test]
-    fn declination_at_uses_sea_level() {
-        // The sole altitude-0 published vector must match through the public
-        // sea-level entry point too.
-        let d = declination_at(-13.0, -59.0, 2027.5).expect("coefficients parse");
-        assert!((d - (-17.49)).abs() < 0.1, "got {d}");
     }
 
     #[test]
