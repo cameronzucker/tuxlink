@@ -5,6 +5,30 @@ shipped, bug-hunt cycles, adversarial reviews). Keyed by date + topic.
 
 ---
 
+## 2026-07-11 — Station Intelligence L2: capture + slot-decode service (tuxlink-b026z.3)
+
+Plan `docs/superpowers/plans/2026-07-10-station-intel-l2-capture.md`
+executed (19 tasks, 3+3 review gates). Shipped: `tuxlink-capture` leaf crate
+(51-tap Kaiser 48k→12k decimator with response-verified const table,
+wall-clock-true 15 s slot assembler with two-clock-domain gap/anomaly rules,
+canonical slot-WAV writer, listener state machine with N=5/k=20 counters +
+sweep element, FT8 band table); salvage-on-signal parity in `tuxlink-jt9`
+(resolves tuxlink-gujnz) + 3 types.rs contract doc edits; main-crate
+`src/ft8/` service (ALSA hw:-only capture source, supervisor/capture/decode
+threads with rendezvous backpressure, waterfall tap, 240-slot ring, tmpfs
+slot dirs, timedatectl clock probe, pipe-fd watermark for b026z.8), modem
+yield/resume arbiter with positive hold latch + choke-point wiring into all
+ardopcf/Dire Wolf/VARA spawn paths, opt-in CAT band sweep with provenance
+downgrade, six `ft8_*` Tauri commands + `ft8-decodes:slot` /
+`ft8-listening:change` events + autostart. E2E: committed SDR fixture
+ZOH-upsampled through the faked-source capture path into real jt9, ≥ 90 %
+of reference decodes. CI: libasound2-dev in all compiling workflows,
+libasound2 runtime Depends. No UI caller by design — the epic's layer-wise
+sanction; wire-walk gate runs when L3/L4 make FT8 user-reachable. Delta v3
+notes appended (6 contract deltas + 2 implementation-pinned).
+
+---
+
 ## 2026-07-10 — Station Intelligence L1: managed-jt9 decode service shipped (tuxlink-b026z.2, PR #1070)
 
 Executed the 3-round-reviewed L1 plan via subagent-driven development

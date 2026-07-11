@@ -311,3 +311,69 @@ pane z-400 sits under markers at z-600 — gateway markers stay on top.)
   update — the only in-crate change).
 - Nothing in the existing gateway finder is removed or reflowed; the Use→ QSY
   flow stays one click from marker select.
+
+## v3 notes — L2 implementation deltas (2026-07-10, tuxlink-b026z.3)
+
+Recorded at L2 merge. Each note amends or pins a section above; where a
+canonical statement moved into code, the note points at it rather than
+restating (propagation contract).
+
+1. **Taxonomy: salvage-on-signal parity (tuxlink-gujnz, resolved).** A
+   signal-death or nonzero clean exit with ≥ 1 parsed decode line returns
+   `Decoded` with `partial = !saw_sentinel` — identical to the timeout arm;
+   zero parsed lines keeps `Failed(Signal)`. Arm ordering pinned on ALL
+   paths: the `StderrEof` check runs BEFORE salvage (a capture bug must
+   never masquerade as decodes). Rationale: jt9's dominant real failure mode
+   IS decode-stream-then-SIGSEGV; lines print only after jt9's internal
+   CRC-14 accepts a candidate; the strict parser guards corruption; the
+   timeout path already trusted the identical stream; discarding biased band
+   intelligence against exactly the slots proving the band alive. Sentinel
+   semantics: a crash AFTER `<DecodeFinished>` yields complete records
+   (`partial = false`). Downstream does not distinguish timeout-salvage from
+   crash-salvage. Canonical doc: `tuxlink-jt9/src/types.rs`
+   (`Ft8Decode::partial`, `SlotFailure::Signal`).
+2. **Service axis: two new blocked reasons.** `needs-device-selection` (no
+   persisted device identity — distinct from `device-absent`, a persisted
+   identity that no longer resolves) and `capture-wedged` (a force-detached
+   capture thread may still hold the PCM; arbitration is dead until app
+   restart). `device-absent` is narrowed to "persisted identity
+   unresolvable" and is supervisor-retried every 5 s (self-healing on USB
+   replug). No-auto-pick is a product rule: the picker always asks, even
+   with one device present (operator decision, L2 spec header).
+3. **Sweep element added to the state model.** The axis list above lacks
+   it: `Sweep::{Inactive, Active{band_idx, dwell_progress},
+   FallbackHold{failures}}` is a named part of the machine, runtime-only
+   (`config.sweep.enabled` is never mutated by the machine); `FallbackHold`
+   (two consecutive QSY failures) re-arms to `Active` at the next start or
+   resume.
+4. **Counter scoping: scheduled discards excluded.** The canonical sentence
+   lives at `tuxlink-jt9/src/types.rs` (the `SlotFailure` doc block): the
+   N=5 degraded counter folds L2 backpressure, lost-frames, and
+   storage-error drops; scheduled discards (partial first slot after
+   start/resume, QSY transition slot, clock-anomaly abandonment) count
+   toward neither N nor k.
+5. **Band-chip semantics under cat-absent.** The chip is an operator
+   STATEMENT, not a command: the service labels records
+   `operator-asserted` and the snapshot carries the dial the panel should
+   instruct. Until an operator click or a CAT read confirms, the label is
+   `default-unconfirmed` and downstream surfaces (L3/L4) MUST render it as
+   unconfirmed — the service never claims a band nobody asserted.
+   Provenance travels as `band_source` + `band_label_confirmed_utc_ms` on
+   every `SlotRecord` and snapshot.
+6. **Arbitration: VARA exception disclosed; hold-latch resume model.** The
+   "conflict is self-inflicted" premise holds for ardopcf/Dire Wolf only:
+   VARA launched standalone opens its audio device before any tuxlink
+   involvement, and that conflict surfaces in VARA's UI (the listener must
+   be stopped, or L3's pause affordance used, first). The bare "FT8
+   auto-resumes on modem shutdown" model above is superseded by the
+   positive hold latch: every yield latches a hold (30 s TTL, cleared on
+   observed card-busy — positive evidence); the resume poll requires latch
+   clear + card probe free + `ModemState ∈ {Stopped, Error, SocketLost}`.
+   L2 spec §Arbitration is canonical.
+
+Additional implementation-pinned deltas (not in the spec's six, recorded
+for completeness): the L2 spec's "no packaging metadata change" predates
+the `alsa` crate linking libasound — the .deb/.rpm gained a runtime
+`libasound2`/`alsa-lib` Depends at L2 (plan T18); CI's leaf-crate gates are
+satisfied by the existing `--workspace` clippy/test rather than new `-p`
+lines (plan T18 step 3d records the reality check).
