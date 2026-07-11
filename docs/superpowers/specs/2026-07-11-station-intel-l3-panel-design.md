@@ -1,6 +1,6 @@
 # Design: Station Intelligence L3 — panel integration
 
-- **Issue:** tuxlink-b026z.4 (epic tuxlink-b026z) · **Status:** DRAFT v4 (post adrev R1–R5; ONE open operator decision below)
+- **Issue:** tuxlink-b026z.4 (epic tuxlink-b026z) · **Status:** APPROVED (post adrev R1–R5; ready for planning)
 - **Agent:** owl-kestrel-lichen · **Date:** 2026-07-11
 - **Upstream contracts:** L2 spec `docs/superpowers/specs/2026-07-10-station-intel-l2-capture-design.md`
   (§Snapshot, §Commands, §Events, §Device selection, §Band provenance, §Sweep) —
@@ -25,20 +25,18 @@
   cannot carry the snapshot-only config fields). All serde changes are
   additive, completeness-tested like the existing fields.
 
-> **⚠ OPEN OPERATOR DECISION (adrev R5-F1) — WSJT-X framing.** The epic's L3
-> success criterion promises the operator sees live decodes "**with no WSJT-X
-> installed**." After the L0 clean-room decoder NO-GO, the shipped L1/L2 engine
-> is **managed jt9** — the `jt9` binary discovered on `PATH`
-> (`tuxlink-jt9/discover.rs:33,41`), which ships inside the WSJT-X package and
-> is NOT bundled by Tuxlink. So the shipped feature **requires WSJT-X (or at
-> least its `jt9`) installed**, directly contradicting the epic criterion, and
-> the spec's `wsjtx-absent` setup arm accordingly says "install wsjt-x". Two
-> coupled questions for the operator (NOT resolved autonomously): (a) is the
-> epic criterion stale post-pivot — should it read "no WSJT-X *GUI/config*
-> required" rather than "no WSJT-X installed"? (b) is "install the `wsjt-x`
-> package" the right user-facing guidance (on Debian jt9 ships in `wsjtx`; no
-> jt9-only subpackage exists — so likely yes, confirm)? This changes only
-> setup-arm copy + the epic doc; it does not block the rest of L3.
+> **Resolved note (adrev R5-F1) — WSJT-X wording, not a design choice.** The
+> managed-`jt9` decoder (the FT8/JT decoder binary from WSJT-X, K1JT, GPL) is
+> the open-source engine settled at the L0 NO-GO and shipped at L1 — a closed
+> decision, not reopened here. `jt9` is discovered on `PATH`
+> (`tuxlink-jt9/discover.rs:33,41`) and comes with the WSJT-X package (not
+> bundled by Tuxlink), so the feature requires WSJT-X installed. The only live
+> item is a stale *sentence* in the epic doc: its L3 criterion reads "with no
+> WSJT-X installed," written pre-pivot. Read that as "no WSJT-X **GUI or manual
+> configuration** required" — Tuxlink drives `jt9` headless; the operator never
+> opens WSJT-X. The `wsjtx-absent` setup arm's "install WSJT-X" guidance stands
+> (on Debian `jt9` ships in the `wsjtx` package; no jt9-only subpackage). No
+> bundling, no scope change.
 - **Epic design:** `~/.gstack/projects/cameronzucker-tuxlink/administrator-bd-tuxlink-ant8s-ardop-connect-fixes-design-20260705-034957-passive-ft8-listener.md` (APPROVED 2026-07-05)
 - **Approved mocks (operator, this session):** `docs/design/mockups/2026-07-11-station-intel-l3/`
   — `station-intel-l3-mock-v4.html` (layout baseline, "final shape — approved as
