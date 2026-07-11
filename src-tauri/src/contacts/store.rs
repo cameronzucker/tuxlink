@@ -36,6 +36,16 @@ use thiserror::Error;
 /// (R3-F4, carried over from the peers store).
 const PER_CONTACT_CHANNEL_CAP: usize = 64;
 
+/// FIX-2 [P2a]: max OBSERVED (`ObservedIncoming`/`Unknown`) endpoints per
+/// contact. Inbound observations on an EXISTING contact bypass the auto-create
+/// limiter (`exists == true`), so without this a rotating-source attacker
+/// spoofing a known callsign could append an observed endpoint per source IP,
+/// unbounded. Eviction is oldest-by-`last_seen` among OBSERVED endpoints only —
+/// `Operator` endpoints are operator-curated and are NEVER evicted by observed
+/// churn (they do not count against this cap). The evicted endpoints'
+/// `(contact_id, endpoint_id)` pairs are cascaded to the keyring by the caller.
+const PER_CONTACT_OBSERVED_ENDPOINT_CAP: usize = 32;
+
 /// On-disk schema version.
 ///
 /// - v1: the 2026-06-07 Contacts+Favorites shape (identity + mail fields).
@@ -202,6 +212,39 @@ pub fn unambiguous_operator_endpoint(
         return None; // multiple operator endpoints — ambiguous
     }
     Some((only.id.clone(), ep.id.clone()))
+}
+
+/// FIX-1 credential-exfil gate [R2-S7][I1]: decide whether a telnet dial to the
+/// endpoint identified by `(contact_id, endpoint_id)` is password-eligible.
+///
+/// Returns `true` ONLY when that EXACT endpoint exists on that EXACT contact,
+/// its provenance is [`Provenance::Operator`], AND its stored host/port match
+/// the dial's `host`/`port`. Every other case returns `false`, so the caller
+/// attaches NO stored password:
+/// - no such contact or endpoint id → `false` (a spoofed/attacker id),
+/// - an `ObservedIncoming`/`Unknown` endpoint → `false` (the claimed back-dial
+///   address of a spoofable callsign is NEVER password-bearing),
+/// - a host/port that does not match the resolved endpoint → `false`
+///   (defense-in-depth: a request that names an operator endpoint id but dials
+///   a different host cannot borrow that endpoint's credential).
+///
+/// This is the load-bearing backend invariant: the observed-endpoint dial
+/// (attach-by-exact-callsign records an attacker host as an `ObservedIncoming`
+/// endpoint) can never reach the keyring read, because the read is strictly
+/// gated behind this returning `true`.
+pub fn is_password_eligible_operator_endpoint(
+    file: &ContactsFile,
+    contact_id: &str,
+    endpoint_id: &str,
+    host: &str,
+    port: u16,
+) -> bool {
+    let host_n = host.trim().to_ascii_lowercase();
+    file.contacts
+        .iter()
+        .find(|c| c.id == contact_id)
+        .and_then(|c| c.endpoints.iter().find(|e| e.id == endpoint_id))
+        .is_some_and(|e| e.provenance == Provenance::Operator && e.host == host_n && e.port == port)
 }
 
 /// The contacts store: an in-memory [`ContactsFile`] plus the path it persists
@@ -451,7 +494,7 @@ impl ContactsStore {
 
         // ── Apply the observation to the record ──────────────────────────────
         let ok = matches!(bucket, Classified::Ok);
-        {
+        let observed_endpoint_evictions: Vec<(String, String)> = {
             let c = &mut self.file.contacts[idx];
             c.updated_at = now.clone();
             match &obs.path {
@@ -547,14 +590,27 @@ impl ContactsStore {
                 }
             }
             Self::enforce_channel_cap(c);
-        }
+            // FIX-2 [P2a]: bound OBSERVED endpoints per contact (this branch
+            // runs for an EXISTING contact too — the auto-create limiter does
+            // not). Operator endpoints are never evicted here. The evicted
+            // endpoint ids belong to THIS contact, so pair them with its id for
+            // the caller's keyring cascade.
+            Self::enforce_observed_endpoint_cap(c)
+                .into_iter()
+                .map(|ep_id| (c.id.clone(), ep_id))
+                .collect::<Vec<(String, String)>>()
+        };
 
         // Cap check only on creation — updates cannot grow the roster.
-        let evicted = if created {
+        let mut evicted = if created {
             self.evict_unconfirmed_over(AUTO_CONTACT_CAP)
         } else {
             vec![]
         };
+        // Merge the observed-endpoint-cap evictions (which happen on updates too)
+        // so their keyring secrets are cascaded alongside any whole-contact
+        // eviction above.
+        evicted.extend(observed_endpoint_evictions);
         self.flush()?;
         Ok(ApplyOutcome {
             effect: if created {
@@ -628,6 +684,42 @@ impl ContactsStore {
                     c.channels.remove(i);
                 }
                 None => break,
+            }
+        }
+    }
+
+    /// FIX-2 [P2a]: per-contact bound on OBSERVED
+    /// (`ObservedIncoming`/`Unknown`) endpoints. Evicts oldest-`last_seen`
+    /// OBSERVED endpoints until at most [`PER_CONTACT_OBSERVED_ENDPOINT_CAP`]
+    /// remain; `Operator` endpoints are operator-curated and are NEVER evicted
+    /// (nor do they count against the cap). Returns the evicted endpoints' ids
+    /// so the caller can cascade their keyring secrets — the store never
+    /// touches the keyring. Does NOT flush (the caller flushes once).
+    fn enforce_observed_endpoint_cap(c: &mut Contact) -> Vec<String> {
+        let mut evicted: Vec<String> = vec![];
+        loop {
+            let observed_count = c
+                .endpoints
+                .iter()
+                .filter(|e| e.provenance != Provenance::Operator)
+                .count();
+            if observed_count <= PER_CONTACT_OBSERVED_ENDPOINT_CAP {
+                return evicted;
+            }
+            // Oldest OBSERVED endpoint by last_seen (Operator endpoints excluded).
+            let victim = c
+                .endpoints
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| e.provenance != Provenance::Operator)
+                .min_by(|(_, a), (_, b)| a.last_seen.cmp(&b.last_seen))
+                .map(|(i, _)| i);
+            match victim {
+                Some(i) => {
+                    evicted.push(c.endpoints[i].id.clone());
+                    c.endpoints.remove(i);
+                }
+                None => return evicted,
             }
         }
     }
@@ -1434,5 +1526,162 @@ mod tests {
             .push(contact_with_endpoints("c1", "W6ABC-7", vec![ep("e1", Provenance::Operator)]));
         assert_eq!(unambiguous_operator_endpoint(&ssid, "W6ABC"), None);
         assert_eq!(unambiguous_operator_endpoint(&ssid, ""), None);
+    }
+
+    // ------------------------------------------------------------------
+    // FIX-1 [R2-S7][I1] — is_password_eligible_operator_endpoint: the
+    // credential-exfil gate. The dial-site keyring read runs ONLY when this
+    // returns true, so these pins ARE the "no password to an observed host"
+    // proof.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn password_eligible_only_for_matching_operator_endpoint() {
+        // One contact carrying BOTH an operator endpoint and an observed
+        // (attacker back-dial) endpoint on the SAME callsign — the exact exfil
+        // setup: attach-by-exact-callsign records an attacker host as an
+        // ObservedIncoming endpoint on a contact the operator has an operator
+        // endpoint (and, in production, a callsign secret) for.
+        let mut file = ContactsFile::default();
+        let mut op = ep("e-op", Provenance::Operator);
+        op.host = "operator.example".into();
+        op.port = 8772;
+        let mut obs = ep("e-obs", Provenance::ObservedIncoming);
+        obs.host = "attacker.example".into();
+        obs.port = 8772;
+        file.contacts
+            .push(contact_with_endpoints("c1", "W6ABC", vec![op, obs]));
+
+        // Operator endpoint, matching host/port → eligible (the only password
+        // case).
+        assert!(is_password_eligible_operator_endpoint(
+            &file, "c1", "e-op", "operator.example", 8772
+        ));
+
+        // EXFIL PIN: the observed endpoint is NEVER password-eligible, even
+        // though an operator endpoint (and a callsign secret) exist for this
+        // contact. Because the dial-site keyring read is gated behind this
+        // returning true, NO password is ever read or sent to the attacker host.
+        assert!(!is_password_eligible_operator_endpoint(
+            &file, "c1", "e-obs", "attacker.example", 8772
+        ));
+
+        // Defense-in-depth: the operator endpoint id cannot be borrowed to send
+        // its credential to a DIFFERENT host or port.
+        assert!(!is_password_eligible_operator_endpoint(
+            &file, "c1", "e-op", "attacker.example", 8772
+        ));
+        assert!(!is_password_eligible_operator_endpoint(
+            &file, "c1", "e-op", "operator.example", 9999
+        ));
+
+        // Unknown contact / endpoint id (a spoofed request) → not eligible.
+        assert!(!is_password_eligible_operator_endpoint(
+            &file, "nope", "e-op", "operator.example", 8772
+        ));
+        assert!(!is_password_eligible_operator_endpoint(
+            &file, "c1", "nope", "operator.example", 8772
+        ));
+
+        // Host is normalized (trim + lowercase) to the stored form.
+        assert!(is_password_eligible_operator_endpoint(
+            &file, "c1", "e-op", "  OPERATOR.EXAMPLE  ", 8772
+        ));
+    }
+
+    // ------------------------------------------------------------------
+    // FIX-2 [P2a] — per-contact observed-endpoint cap. Observed churn on an
+    // existing contact is bounded; operator endpoints are never evicted.
+    // ------------------------------------------------------------------
+
+    fn telnet_obs_host(
+        presented: &str,
+        host: &str,
+        dir: Direction,
+        provenance: Provenance,
+    ) -> PeerObservation {
+        PeerObservation {
+            path: ObservedPath::Telnet {
+                host: host.to_string(),
+                port: 8772,
+                provenance,
+            },
+            direction: dir,
+            presented_target: presented.to_string(),
+            phase: if dir == Direction::Outgoing {
+                ObservationPhase::B2fOk
+            } else {
+                ObservationPhase::Accepted
+            },
+        }
+    }
+
+    #[test]
+    fn observed_endpoints_capped_operator_endpoint_survives_churn() {
+        let dir = tempdir().unwrap();
+        let mut s = ContactsStore::open(dir.path().join("contacts.json"));
+
+        // Seed an operator endpoint (an OUTBOUND dial records Operator
+        // provenance; an inbound one would be downgraded to ObservedIncoming).
+        s.apply_observation(
+            &telnet_obs_host(
+                "W6ABC",
+                "operator.example",
+                Direction::Outgoing,
+                Provenance::Operator,
+            ),
+            "2026-07-11T00:00:00-07:00".into(),
+        )
+        .unwrap();
+
+        // Spoof N+1 distinct observed endpoints (rotating attacker IPs) on the
+        // SAME existing contact. Inbound observations bypass the auto-create
+        // limiter (the contact already exists), so without the cap these grow
+        // unbounded. Monotonic last_seen makes eviction order deterministic.
+        let n = PER_CONTACT_OBSERVED_ENDPOINT_CAP;
+        for i in 0..=n {
+            let ts = format!("2026-07-11T01:00:{i:02}-07:00");
+            s.apply_observation(
+                &telnet_obs_host(
+                    "W6ABC",
+                    &format!("10.0.0.{i}"),
+                    Direction::Incoming,
+                    Provenance::ObservedIncoming,
+                ),
+                ts,
+            )
+            .unwrap();
+        }
+
+        let c = &s.contacts()[0];
+        let observed = c
+            .endpoints
+            .iter()
+            .filter(|e| e.provenance != Provenance::Operator)
+            .count();
+        assert_eq!(
+            observed, PER_CONTACT_OBSERVED_ENDPOINT_CAP,
+            "observed endpoints are capped at PER_CONTACT_OBSERVED_ENDPOINT_CAP"
+        );
+        assert_eq!(
+            c.endpoints
+                .iter()
+                .filter(|e| e.provenance == Provenance::Operator)
+                .count(),
+            1,
+            "the operator endpoint survives observed-endpoint churn"
+        );
+        assert!(
+            c.endpoints.iter().any(|e| e.host == "operator.example"),
+            "operator endpoint preserved by host"
+        );
+        assert!(
+            !c.endpoints.iter().any(|e| e.host == "10.0.0.0"),
+            "oldest observed endpoint (10.0.0.0) evicted first"
+        );
+        assert!(
+            c.endpoints.iter().any(|e| e.host == format!("10.0.0.{n}")),
+            "newest observed endpoint retained"
+        );
     }
 }

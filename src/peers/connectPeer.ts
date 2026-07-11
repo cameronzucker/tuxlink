@@ -58,6 +58,7 @@ export function connectPeerEndpoint(
   callsign: string,
   endpoint: Endpoint,
   operatorGrid: string,
+  contactId?: string,
 ): void {
   void connectFor(
     { sessionType: 'p2p', protocol: 'telnet' },
@@ -66,6 +67,13 @@ export function connectPeerEndpoint(
       host: endpoint.host,
       port: endpoint.port,
       locator: operatorGrid || undefined,
+      // FIX-1: thread the contact + endpoint identity so the backend gates the
+      // stored password on Provenance::Operator. Both travel together or not at
+      // all — a manual / hand-typed dial (no `contactId`) sends neither, so the
+      // backend attaches no stored password. The backend is authoritative; this
+      // threading only enables the legitimate operator-endpoint dial.
+      contactId,
+      endpointId: contactId ? endpoint.id : undefined,
     },
   ).catch(() => {});
 }

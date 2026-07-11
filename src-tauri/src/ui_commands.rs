@@ -7700,6 +7700,19 @@ pub struct P2pDialRequest {
     pub my_callsign: String,
     /// Our Maidenhead grid locator for the B2F handshake.
     pub locator: String,
+    /// FIX-1 [R2-S7][I1]: the contacts-store id of the contact whose endpoint is
+    /// being dialed. Paired with `endpoint_id`; both are `None` for a
+    /// manual/hand-typed dial (the T-G manual-dial affordance and any ad-hoc
+    /// host). A stored password is attached ONLY when this pair resolves to a
+    /// `Provenance::Operator` endpoint whose host/port match the dial — a bare
+    /// dial (either id `None`) sends NO stored password.
+    #[serde(default)]
+    pub contact_id: Option<String>,
+    /// FIX-1 [R2-S7][I1]: the contacts-store id of the specific endpoint being
+    /// dialed (keyring key component `p2p-endpoint:<contact_id>:<endpoint_id>`).
+    /// See [`P2pDialRequest::contact_id`].
+    #[serde(default)]
+    pub endpoint_id: Option<String>,
 }
 
 /// Result returned by [`telnet_p2p_connect`].
@@ -7786,6 +7799,107 @@ fn p2p_password_lookup(app: &AppHandle, callsign: &str) -> Result<Option<String>
         Err(crate::winlink::credentials::KeyringError::NoEntry { .. }) => Ok(None),
         Err(e) => Err(e.to_string()),
     }
+}
+
+/// FIX-1 [R2-S7][I1] — the credential-exfil-safe telnet dial password decision,
+/// factory-injectable so the security invariant is unit-tested without a real
+/// keyring or an `AppHandle`.
+///
+/// A stored password is returned ONLY when the request names a
+/// `(contact_id, endpoint_id)` pair that resolves to a `Provenance::Operator`
+/// endpoint of that contact whose host/port match the dial
+/// ([`crate::contacts::store::is_password_eligible_operator_endpoint`]). In
+/// EVERY other case the result is `None`, so no stored password is sent:
+/// - either id absent (a manual/hand-typed dial) → `None`, WITHOUT any keyring
+///   read — the exact hole that let a bare host dial borrow a callsign secret;
+/// - an `ObservedIncoming`/`Unknown` endpoint (an attacker-recorded back-dial
+///   address) → `None`, even when a legacy callsign secret AND an operator
+///   endpoint exist for that contact;
+/// - a host/port that does not match the resolved operator endpoint → `None`.
+///
+/// The callsign-keyed [`p2p_password_lookup`] is NEVER reached from here — only
+/// the id-keyed `p2p-endpoint:<contact_id>:<endpoint_id>` account is read, and
+/// only after the operator-provenance gate passes.
+fn p2p_dial_password_decision<F>(
+    file: &crate::contacts::store::ContactsFile,
+    contact_id: Option<&str>,
+    endpoint_id: Option<&str>,
+    host: &str,
+    port: u16,
+    peer_callsign: &str,
+    factory: &F,
+) -> Result<Option<String>, String>
+where
+    F: Fn(&str, &str) -> Box<dyn crate::winlink::credentials::EntryLike>,
+{
+    use crate::winlink::credentials as creds;
+    // Bare / manual dial: no endpoint identity → never send a stored password.
+    let (contact_id, endpoint_id) = match (contact_id, endpoint_id) {
+        (Some(c), Some(e)) if !c.is_empty() && !e.is_empty() => (c, e),
+        _ => return Ok(None),
+    };
+    // The load-bearing gate: only a Provenance::Operator endpoint of this
+    // contact, matching the dialed host/port, is password-eligible.
+    if !crate::contacts::store::is_password_eligible_operator_endpoint(
+        file,
+        contact_id,
+        endpoint_id,
+        host,
+        port,
+    ) {
+        return Ok(None);
+    }
+    // Endpoint-scoped secret (id-keyed; no attacker-controlled bytes).
+    if let Some(secret) =
+        creds::p2p_endpoint_password_read_with_factory(contact_id, endpoint_id, factory)?
+    {
+        return Ok(Some(secret));
+    }
+    // Conservative legacy migration — ONLY when the callsign maps unambiguously
+    // to THIS exact operator endpoint (mirrors the pre-FIX-1 lookup's guard, so
+    // a shipped legacy `p2p-peer:<CALLSIGN>` secret still reaches its operator
+    // endpoint on first dial). Anything ambiguous leaves the legacy secret in
+    // place and sends nothing.
+    let unambiguous =
+        crate::contacts::store::unambiguous_operator_endpoint(file, peer_callsign)
+            .as_ref()
+            .is_some_and(|(c, e)| c.as_str() == contact_id && e.as_str() == endpoint_id);
+    match creds::migrate_legacy_peer_secret_with_factory(
+        peer_callsign,
+        contact_id,
+        endpoint_id,
+        unambiguous,
+        factory,
+    )? {
+        creds::LegacyMigration::Migrated => {
+            creds::p2p_endpoint_password_read_with_factory(contact_id, endpoint_id, factory)
+        }
+        creds::LegacyMigration::NoLegacySecret | creds::LegacyMigration::Ambiguous => Ok(None),
+    }
+}
+
+/// FIX-1: `AppHandle` wrapper over [`p2p_dial_password_decision`] — locks the
+/// contacts store and supplies the real OS-keyring entry factory. This is the
+/// ONLY password source on the telnet dial path.
+fn p2p_operator_dial_password(
+    app: &AppHandle,
+    req: &P2pDialRequest,
+) -> Result<Option<String>, String> {
+    let store = app.state::<std::sync::Arc<
+        std::sync::Mutex<crate::contacts::store::ContactsStore>,
+    >>();
+    let guard = store
+        .lock()
+        .map_err(|_| "contacts store poisoned".to_string())?;
+    p2p_dial_password_decision(
+        guard.file(),
+        req.contact_id.as_deref(),
+        req.endpoint_id.as_deref(),
+        &req.host,
+        req.port,
+        &req.peer_callsign,
+        &crate::winlink::credentials::real_entry_factory,
+    )
 }
 
 /// Write the per-peer station password to the OS keyring.
@@ -8023,11 +8137,14 @@ pub async fn telnet_p2p_connect(
         ),
     );
 
-    // Look up the peer password if configured (None = no password challenge
-    // attempted). Both keyring schemes: the contact-endpoint-keyed account
-    // (with the lazy legacy migration when unambiguous) + the legacy
-    // callsign-keyed fallback — see `p2p_password_lookup`.
-    let peer_password = match p2p_password_lookup(&app, &req.peer_callsign) {
+    // FIX-1 [R2-S7][I1]: a stored password is attached ONLY when this dial
+    // targets a `Provenance::Operator` endpoint of the identified contact whose
+    // host/port match (see `p2p_operator_dial_password`). An observed/unknown
+    // endpoint, an unresolvable id pair, a host/port mismatch, or a bare
+    // manual/hand-typed dial (no `endpoint_id`) sends NO stored password — the
+    // callsign-keyed lookup is unreachable from this path, closing the
+    // observed-endpoint credential-exfil vector.
+    let peer_password = match p2p_operator_dial_password(&app, &req) {
         Ok(p) => p,
         Err(detail) => {
             p2p_state.in_progress.store(false, Ordering::SeqCst);
@@ -14272,4 +14389,254 @@ pub async fn form_draft_library_delete(
     library: State<'_, std::sync::Arc<DraftLibrary>>,
 ) -> Result<(), String> {
     library.delete(&slot_id).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod fix1_password_gate_tests {
+    //! FIX-1 [R2-S7][I1] — the telnet dial password decision. These pins prove
+    //! the credential-exfil vector is closed: a stored password reaches the
+    //! wire ONLY for a Provenance::Operator endpoint of the identified contact
+    //! whose host/port match the dial. Factory-injected keyring so the decision
+    //! runs without a real OS keyring or an AppHandle.
+    use super::*;
+    use crate::contacts::store::ContactsFile;
+    use crate::winlink::credentials::{EntryLike, LegacyMigration};
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    type Store = Arc<Mutex<HashMap<(String, String), String>>>;
+
+    struct FakeEntry {
+        store: Store,
+        service: String,
+        account: String,
+    }
+    impl EntryLike for FakeEntry {
+        fn get_password(&self) -> Result<String, keyring::Error> {
+            self.store
+                .lock()
+                .unwrap()
+                .get(&(self.service.clone(), self.account.clone()))
+                .cloned()
+                .ok_or(keyring::Error::NoEntry)
+        }
+        fn set_password(&self, password: &str) -> Result<(), keyring::Error> {
+            self.store
+                .lock()
+                .unwrap()
+                .insert((self.service.clone(), self.account.clone()), password.to_string());
+            Ok(())
+        }
+        fn delete_password(&self) -> Result<(), keyring::Error> {
+            if self
+                .store
+                .lock()
+                .unwrap()
+                .remove(&(self.service.clone(), self.account.clone()))
+                .is_some()
+            {
+                Ok(())
+            } else {
+                Err(keyring::Error::NoEntry)
+            }
+        }
+    }
+    fn fake_factory(store: Store) -> impl Fn(&str, &str) -> Box<dyn EntryLike> {
+        move |service: &str, account: &str| -> Box<dyn EntryLike> {
+            Box::new(FakeEntry {
+                store: Arc::clone(&store),
+                service: service.to_string(),
+                account: account.to_string(),
+            })
+        }
+    }
+
+    /// A contact with an operator endpoint (operator.example) AND an observed
+    /// attacker endpoint (attacker.example) on the SAME callsign — the exfil
+    /// setup.
+    fn exfil_file() -> ContactsFile {
+        serde_json::from_str(
+            r#"{
+              "schema_version": 2,
+              "contacts": [{
+                "id": "c1", "name": "", "callsign": "W6ABC",
+                "tier": "unconfirmed", "origin": "outgoing",
+                "channels": [],
+                "endpoints": [
+                  {"id":"e-op","host":"operator.example","port":8772,
+                   "provenance":"operator","last_seen":"2026-07-11T00:00:00-07:00"},
+                  {"id":"e-obs","host":"attacker.example","port":8772,
+                   "provenance":"observed-incoming","last_seen":"2026-07-11T00:00:00-07:00"}
+                ],
+                "created_at":"2026-07-11T00:00:00-07:00",
+                "updated_at":"2026-07-11T00:00:00-07:00"
+              }],
+              "groups": []
+            }"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn exfil_pin_observed_endpoint_sends_no_password_even_with_secrets() {
+        // Both a legacy callsign secret AND the operator endpoint's own secret
+        // exist — the worst case. Dialing the OBSERVED (attacker) endpoint must
+        // send NOTHING and touch NEITHER secret.
+        let file = exfil_file();
+        let store: Store = Arc::new(Mutex::new(HashMap::from([
+            (("tuxlink".into(), "p2p-peer:W6ABC".into()), "legacy-secret".into()),
+            (("tuxlink".into(), "p2p-endpoint:c1:e-op".into()), "op-secret".into()),
+        ])));
+        let out = p2p_dial_password_decision(
+            &file,
+            Some("c1"),
+            Some("e-obs"),
+            "attacker.example",
+            8772,
+            "W6ABC",
+            &fake_factory(Arc::clone(&store)),
+        )
+        .unwrap();
+        assert_eq!(out, None, "an observed endpoint dial must send NO stored password");
+        // Neither secret was read, migrated, or deleted.
+        let g = store.lock().unwrap();
+        assert_eq!(g.get(&("tuxlink".into(), "p2p-peer:W6ABC".into())).map(String::as_str), Some("legacy-secret"));
+        assert_eq!(g.get(&("tuxlink".into(), "p2p-endpoint:c1:e-op".into())).map(String::as_str), Some("op-secret"));
+    }
+
+    #[test]
+    fn operator_endpoint_sends_its_endpoint_scoped_secret() {
+        let file = exfil_file();
+        let store: Store = Arc::new(Mutex::new(HashMap::from([(
+            ("tuxlink".into(), "p2p-endpoint:c1:e-op".into()),
+            "op-secret".into(),
+        )])));
+        let out = p2p_dial_password_decision(
+            &file,
+            Some("c1"),
+            Some("e-op"),
+            "operator.example",
+            8772,
+            "W6ABC",
+            &fake_factory(store),
+        )
+        .unwrap();
+        assert_eq!(out, Some("op-secret".to_string()));
+    }
+
+    #[test]
+    fn operator_endpoint_migrates_legacy_secret_on_endpoint_miss() {
+        // No endpoint-scoped secret yet, but a legacy callsign secret exists and
+        // the callsign maps unambiguously to THIS operator endpoint → the
+        // conservative migration copies it forward and sends it.
+        let file = exfil_file();
+        let store: Store = Arc::new(Mutex::new(HashMap::from([(
+            ("tuxlink".into(), "p2p-peer:W6ABC".into()),
+            "legacy-secret".into(),
+        )])));
+        let out = p2p_dial_password_decision(
+            &file,
+            Some("c1"),
+            Some("e-op"),
+            "operator.example",
+            8772,
+            "W6ABC",
+            &fake_factory(Arc::clone(&store)),
+        )
+        .unwrap();
+        assert_eq!(out, Some("legacy-secret".to_string()));
+        let g = store.lock().unwrap();
+        assert_eq!(
+            g.get(&("tuxlink".into(), "p2p-endpoint:c1:e-op".into())).map(String::as_str),
+            Some("legacy-secret"),
+            "migration wrote the id-keyed account"
+        );
+        assert!(
+            !g.contains_key(&("tuxlink".into(), "p2p-peer:W6ABC".into())),
+            "legacy account deleted after the new-key write"
+        );
+    }
+
+    #[test]
+    fn bare_manual_dial_no_ids_sends_no_password() {
+        // Even with a legacy secret present, a dial carrying no endpoint id
+        // (the T-G manual-dial affordance / a hand-typed host) sends nothing and
+        // never touches the keyring — the previous by-callsign hole.
+        let file = exfil_file();
+        let store: Store = Arc::new(Mutex::new(HashMap::from([(
+            ("tuxlink".into(), "p2p-peer:W6ABC".into()),
+            "legacy-secret".into(),
+        )])));
+        for (cid, eid) in [(None, None), (Some("c1"), None), (None, Some("e-op"))] {
+            let out = p2p_dial_password_decision(
+                &file, cid, eid, "operator.example", 8772, "W6ABC", &fake_factory(Arc::clone(&store)),
+            )
+            .unwrap();
+            assert_eq!(out, None, "a dial missing an id pair sends no stored password");
+        }
+        assert_eq!(
+            store.lock().unwrap().get(&("tuxlink".into(), "p2p-peer:W6ABC".into())).map(String::as_str),
+            Some("legacy-secret"),
+            "the legacy secret is never read on a bare dial"
+        );
+    }
+
+    #[test]
+    fn host_port_mismatch_on_operator_id_sends_no_password() {
+        // Naming the operator endpoint id but dialing a DIFFERENT host/port must
+        // not borrow the operator credential (defense-in-depth).
+        let file = exfil_file();
+        let store: Store = Arc::new(Mutex::new(HashMap::from([(
+            ("tuxlink".into(), "p2p-endpoint:c1:e-op".into()),
+            "op-secret".into(),
+        )])));
+        let out = p2p_dial_password_decision(
+            &file, Some("c1"), Some("e-op"), "attacker.example", 8772, "W6ABC",
+            &fake_factory(Arc::clone(&store)),
+        )
+        .unwrap();
+        assert_eq!(out, None);
+        let out2 = p2p_dial_password_decision(
+            &file, Some("c1"), Some("e-op"), "operator.example", 9999, "W6ABC",
+            &fake_factory(store),
+        )
+        .unwrap();
+        assert_eq!(out2, None);
+    }
+
+    #[test]
+    fn request_serde_shape_optional_id_fields_default_none() {
+        // Legacy shape (no contact_id/endpoint_id) → both None via #[serde(default)].
+        let legacy: P2pDialRequest = serde_json::from_str(
+            r#"{"host":"h","port":8772,"peer_callsign":"W6ABC","my_callsign":"","locator":""}"#,
+        )
+        .unwrap();
+        assert_eq!(legacy.contact_id, None);
+        assert_eq!(legacy.endpoint_id, None);
+
+        // snake_case fields present → Some.
+        let full: P2pDialRequest = serde_json::from_str(
+            r#"{"host":"h","port":8772,"peer_callsign":"W6ABC","my_callsign":"",
+                "locator":"","contact_id":"c1","endpoint_id":"e-op"}"#,
+        )
+        .unwrap();
+        assert_eq!(full.contact_id.as_deref(), Some("c1"));
+        assert_eq!(full.endpoint_id.as_deref(), Some("e-op"));
+
+        // Explicit nulls (what the frontend sends on a manual dial) → None.
+        let nulls: P2pDialRequest = serde_json::from_str(
+            r#"{"host":"h","port":8772,"peer_callsign":"W6ABC","my_callsign":"",
+                "locator":"","contact_id":null,"endpoint_id":null}"#,
+        )
+        .unwrap();
+        assert_eq!(nulls.contact_id, None);
+        assert_eq!(nulls.endpoint_id, None);
+    }
+
+    #[test]
+    fn legacy_migration_variant_is_referenced() {
+        // Guard: the decision matches on LegacyMigration explicitly; keep the
+        // import load-bearing so a variant rename surfaces here.
+        let _ = LegacyMigration::NoLegacySecret;
+    }
 }

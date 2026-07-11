@@ -353,7 +353,13 @@ describe('<ContactsPanel> — Recent section + reachability (Task T-F)', () => {
       expect(invoke).toHaveBeenCalledWith(
         'telnet_p2p_connect',
         expect.objectContaining({
-          req: expect.objectContaining({ host: '10.0.0.5', port: 8774, peer_callsign: 'W7TEL' }),
+          req: expect.objectContaining({
+            host: '10.0.0.5', port: 8774, peer_callsign: 'W7TEL',
+            // FIX-1: the contact-detail Connect threads the contact + endpoint
+            // identity so the backend gates the stored password on
+            // Provenance::Operator.
+            contact_id: 'c-telnet', endpoint_id: 'ep-9',
+          }),
         }),
       ),
     );

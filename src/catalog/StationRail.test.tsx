@@ -315,6 +315,10 @@ describe('StationRail — peer-row Connect fires a P2P dial (Task 23a)', () => {
         expect.objectContaining({
           req: expect.objectContaining({
             host: '10.0.0.5', port: 8774, peer_callsign: 'W7XYZ-5', locator: 'CN85nm',
+            // FIX-1: a peer-row Connect threads the contact + endpoint identity
+            // (peer.id / endpoint.id) so the backend can gate the stored
+            // password on Provenance::Operator.
+            contact_id: 'peer-1', endpoint_id: 'ep-1',
           }),
         }),
       ),
@@ -438,6 +442,9 @@ describe('StationRail — manual "Dial a station" affordance (Task T-G)', () => 
         expect.objectContaining({
           req: expect.objectContaining({
             host: '10.0.0.9', port: 8774, peer_callsign: 'W7XYZ-5', locator: 'CN85nm',
+            // FIX-1: a manual/hand-typed dial carries NO endpoint identity, so
+            // the backend attaches no stored password.
+            contact_id: null, endpoint_id: null,
           }),
         }),
       ),

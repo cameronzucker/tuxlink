@@ -165,7 +165,7 @@ export function StationRail(props: StationRailProps) {
         peers={peers ?? []}
         operatorGrid={operatorGrid}
         onConnectChannel={connectPeerChannel}
-        onConnectEndpoint={(peer, ep, grid) => connectPeerEndpoint(peer.callsign, ep, grid)}
+        onConnectEndpoint={(peer, ep, grid) => connectPeerEndpoint(peer.callsign, ep, grid, peer.id)}
       />
     </>
   );

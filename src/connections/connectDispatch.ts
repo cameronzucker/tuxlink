@@ -148,6 +148,15 @@ export interface PeerDial {
   port?: number;
   /** Operator Maidenhead locator for the telnet B2F handshake; unused for RF. */
   locator?: string;
+  /** FIX-1: contacts/types Contact.id owning the dialed telnet endpoint.
+   *  Threaded to the backend (as `contact_id`) so a stored password is attached
+   *  ONLY for a Provenance::Operator endpoint of this contact. A manual /
+   *  hand-typed dial omits it (and `endpointId`), so the backend sends no stored
+   *  password. Unused for RF transports. */
+  contactId?: string;
+  /** FIX-1: contacts/types Endpoint.id of the dialed telnet endpoint (as
+   *  `endpoint_id`). Paired with `contactId`; omitted for a manual dial. */
+  endpointId?: string;
 }
 
 /**
@@ -202,6 +211,12 @@ export async function connectFor(key: ConnectionKey, peer?: PeerDial): Promise<v
         peer_callsign: peer.target,
         my_callsign: '',
         locator: peer.locator ?? '',
+        // FIX-1: endpoint identity for the backend's operator-provenance
+        // password gate. `null` (not omitted) so the snake_case shape mirrors
+        // the Rust `Option<String>` #[serde(default)] fields exactly; a manual
+        // dial threads null → backend sends no stored password.
+        contact_id: peer.contactId ?? null,
+        endpoint_id: peer.endpointId ?? null,
       },
     });
     return;

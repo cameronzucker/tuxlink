@@ -810,7 +810,7 @@ function ReachEndpointRow({
         className="contact-detail-btn"
         data-testid={`reach-endpoint-connect-${endpoint.id}`}
         title={`Connect to ${contact.callsign} over telnet`}
-        onClick={() => connectPeerEndpoint(contact.callsign, endpoint, operatorGrid)}
+        onClick={() => connectPeerEndpoint(contact.callsign, endpoint, operatorGrid, contact.id)}
       >
         Connect →
       </button>

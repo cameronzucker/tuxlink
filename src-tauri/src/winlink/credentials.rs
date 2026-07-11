@@ -417,7 +417,7 @@ pub fn service_codes_write(codes: &str) -> Result<(), KeyringError> {
 }
 
 /// The production keyring entry factory (wraps `keyring::Entry::new`).
-fn real_entry_factory(service: &str, account: &str) -> Box<dyn EntryLike> {
+pub(crate) fn real_entry_factory(service: &str, account: &str) -> Box<dyn EntryLike> {
     let entry = keyring::Entry::new(service, account)
         .expect("keyring::Entry::new should not fail for valid service/account strings");
     Box::new(RealEntry(entry))

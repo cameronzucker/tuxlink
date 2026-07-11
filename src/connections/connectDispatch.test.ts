@@ -267,11 +267,43 @@ describe('connectFor — P2P peer dial threads intent=p2p + channel via/freq (Ta
         peer_callsign: 'W1AW',
         my_callsign: '',
         locator: 'FN31pr',
+        // FIX-1: a dial with no endpoint identity threads explicit nulls — the
+        // backend sends no stored password for a bare/manual dial.
+        contact_id: null,
+        endpoint_id: null,
       },
     });
     // The CMS-fallback bug this task removes: a p2p telnet dial must NEVER
     // reach cms_connect.
     expect(mockInvoke).not.toHaveBeenCalledWith('cms_connect');
+  });
+
+  it('telnet peer dial threads contact_id + endpoint_id when the endpoint identity is known', async () => {
+    routeInvoke();
+    await connectFor(
+      { sessionType: 'p2p', protocol: 'telnet' },
+      {
+        target: 'W1AW',
+        host: '10.0.0.5',
+        port: 8774,
+        locator: 'FN31pr',
+        contactId: 'c1',
+        endpointId: 'e-op',
+      },
+    );
+    // FIX-1: the backend gates the stored password on these ids resolving to a
+    // Provenance::Operator endpoint; the frontend threads them snake_cased.
+    expect(mockInvoke).toHaveBeenCalledWith('telnet_p2p_connect', {
+      req: {
+        host: '10.0.0.5',
+        port: 8774,
+        peer_callsign: 'W1AW',
+        my_callsign: '',
+        locator: 'FN31pr',
+        contact_id: 'c1',
+        endpoint_id: 'e-op',
+      },
+    });
   });
 
   it('telnet peer dial without an endpoint host/port throws (no silent CMS fallback)', async () => {
