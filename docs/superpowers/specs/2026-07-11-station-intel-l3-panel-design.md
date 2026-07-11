@@ -1,21 +1,44 @@
 # Design: Station Intelligence L3 — panel integration
 
-- **Issue:** tuxlink-b026z.4 (epic tuxlink-b026z) · **Status:** DRAFT v3 (post adrev R1–R3; R4–R5 pending)
+- **Issue:** tuxlink-b026z.4 (epic tuxlink-b026z) · **Status:** DRAFT v4 (post adrev R1–R5; ONE open operator decision below)
 - **Agent:** owl-kestrel-lichen · **Date:** 2026-07-11
 - **Upstream contracts:** L2 spec `docs/superpowers/specs/2026-07-10-station-intel-l2-capture-design.md`
   (§Snapshot, §Commands, §Events, §Device selection, §Band provenance, §Sweep) —
   consumed as shipped in PR #1072. **L3's additive changes on the L2 surface
-  (enumerated; the L2 state machine is untouched):** (1) the
-  `ft8_set_sweep_bands` command + dwell-boundary re-read semantics; (2) two
-  additive `Ft8Snapshot` fields — `sweepConfig { enabled, bands, dwellSlots }`
-  (config truth, distinct from the runtime `sweep` status) and
-  `configuredDeviceName: Option<String>` (for the "using <device>" arm); (3)
-  an additive `AudioDeviceChoice.alsaHw` field (`"hw:1"`) — the shipped DTO
-  carries only `humanName`+`stableId`, and identical C-Media-class cards are
-  otherwise indistinguishable; (4) `ft8_set_sweep` / `ft8_set_sweep_bands` /
-  `ft8_set_device` emit `ft8-listening:change` after persisting so the popover
-  and setup surfaces refresh from one source. All serde-additive,
-  completeness-tested like the existing fields.
+  (enumerated; the pure state machine is untouched — two items touch the
+  supervisor's I/O paths, flagged):** (1) the `ft8_set_sweep_bands` command
+  (dwell-boundary re-read is already how the shipped scheduler works — no
+  restructure); (2) two additive `Ft8Snapshot` fields — `sweepConfig
+  { enabled, bands, dwellSlots }` (config truth, distinct from the runtime
+  `sweep` status) and `configuredDeviceName: Option<String>` — the latter
+  **requires storing the resolved human name in `Inner` at resolve time**
+  (step 2 of the start sequence; `Inner.resolved` carries only hw/card ids
+  today, and recomputing the name would force enumeration on every snapshot,
+  against the render-hot-path warning) — a supervisor edit, not a state-machine
+  edit; (3) an additive `AudioDeviceChoice.alsaHw` field (`"hw:1"`) — the
+  shipped DTO carries only `humanName`+`stableId`, and identical
+  C-Media-class cards are otherwise indistinguishable; (4) the device
+  reservation (§NewCommands) **adds a check to `execute_start_sequence` step 7**
+  — a supervisor edit; (5) `ft8_set_sweep` / `ft8_set_sweep_bands` /
+  `ft8_set_device` emit `ft8-listening:change` after persisting, which the
+  hook treats as a re-hydrate trigger (§Frontend data layer — a bare `:change`
+  cannot carry the snapshot-only config fields). All serde changes are
+  additive, completeness-tested like the existing fields.
+
+> **⚠ OPEN OPERATOR DECISION (adrev R5-F1) — WSJT-X framing.** The epic's L3
+> success criterion promises the operator sees live decodes "**with no WSJT-X
+> installed**." After the L0 clean-room decoder NO-GO, the shipped L1/L2 engine
+> is **managed jt9** — the `jt9` binary discovered on `PATH`
+> (`tuxlink-jt9/discover.rs:33,41`), which ships inside the WSJT-X package and
+> is NOT bundled by Tuxlink. So the shipped feature **requires WSJT-X (or at
+> least its `jt9`) installed**, directly contradicting the epic criterion, and
+> the spec's `wsjtx-absent` setup arm accordingly says "install wsjt-x". Two
+> coupled questions for the operator (NOT resolved autonomously): (a) is the
+> epic criterion stale post-pivot — should it read "no WSJT-X *GUI/config*
+> required" rather than "no WSJT-X installed"? (b) is "install the `wsjt-x`
+> package" the right user-facing guidance (on Debian jt9 ships in `wsjtx`; no
+> jt9-only subpackage exists — so likely yes, confirm)? This changes only
+> setup-arm copy + the epic doc; it does not block the rest of L3.
 - **Epic design:** `~/.gstack/projects/cameronzucker-tuxlink/administrator-bd-tuxlink-ant8s-ardop-connect-fixes-design-20260705-034957-passive-ft8-listener.md` (APPROVED 2026-07-05)
 - **Approved mocks (operator, this session):** `docs/design/mockups/2026-07-11-station-intel-l3/`
   — `station-intel-l3-mock-v4.html` (layout baseline, "final shape — approved as
@@ -26,7 +49,9 @@
   `WEBKIT_DISABLE_COMPOSITING_MODE=1 LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe`.
   The mocks illustrate healthy/sampled conditions (dots on all bands, post-L5
   heat layer); the honest default render is mostly no-data dots — §Openness wins
-  where they differ.
+  where they differ. These four approved mocks SUPERSEDE the bd issue's
+  `dev/scratch/ft8-integrated-render.png` pointer (a pre-brainstorm concept
+  render; not in this worktree).
 
 ## Operator user flows (VERBATIM — the wire-walk gate traces these as stated)
 
@@ -73,7 +98,13 @@ first run flow that I think they're not worth litigating").
 - The FT-8 heat **layer itself** — that is L5 (tuxlink-b026z.6). L3 ships the
   map layer-control housing with the Gateways entry; **the "FT-8 heat" toggle
   entry appears only when L5 lands** — no dead control ships. The approved v4
-  mock illustrates the post-L5 end state.
+  mock illustrates the post-L5 end state. **This is NOT an ADR-0018
+  authorization-to-defer of a mandated slice:** a toggle wired to a nonexistent
+  layer would itself be the incomplete/dead control the no-incomplete-refs rule
+  bans, so the toggle is not independently shippable — its deferral is
+  completeness-preserving, not a phase-split. The bd issue lists the toggle as
+  a fold-in; shipping it dead would violate completeness, so the layer + its
+  toggle land together at L5.
 - MCP tools (L4). VOACAP/FT-8 fusion (never). Any TX path (never — RX-only;
   RADIO-1 trivially satisfied). Multi-receiver. Wizard changes.
 
@@ -95,6 +126,19 @@ registration would otherwise leave uiState stale indefinitely, since
 3. Replay the buffer over the snapshot: dedupe `ft8-decodes:slot` against
    `ring_tail` by `slotUtcMs`; apply any buffered `:change` received after the
    invoke resolved (last-writer-wins on the summary fields).
+   **Snapshot-only fields require a re-hydrate.** The `ft8-listening:change`
+   payload carries ONLY the summary set (`service, flags, slotPhase, band,
+   dialHz, sweep`-status); the config-truth fields the popover and setup
+   surfaces render — `sweepConfig`, `configuredDeviceName`, `availableDevices`
+   — live on `Ft8Snapshot` alone. Applying a bare `:change` therefore CANNOT
+   refresh them (the R3 "emit `:change` to refresh the popover" fix was
+   incomplete on its own). Rule: any `:change` triggers a **coalesced
+   re-invoke of `ft8_listener_snapshot`** (trailing-debounced ~150 ms so a
+   burst of deltas costs one snapshot), and the snapshot-only fields are taken
+   from that result. Enumeration cost stays bounded — the backend already
+   gates device I/O on `wantsDevices`, and `configuredDeviceName` is made
+   lock-cheap (§NewCommands / snapshot note), so a `listening`-state re-invoke
+   does no enumeration.
 4. **Generation-gated commits:** each hydrate effect owns a generation token;
    the snapshot resolution and buffer replay commit ONLY if the generation is
    still current (unmount or a newer hydrate bumps it). The buffer is cleared
@@ -250,6 +294,16 @@ doesn't have:
   non-interactive; a later CQ carrying the grid upgrades the row in place and
   enables click-to-pan. Chronological raw feed stays in the strip — two
   questions, two surfaces.
+- **Untrusted-input hardening (both the tab and the strip feed render callsigns
+  / grids / message text arriving over the air):** React escapes text nodes, so
+  the residual sinks are (a) grid→coordinate at every NEW `map.panTo` site —
+  MUST route through the existing null-guarded `gridToLatLon`
+  (`maidenhead.ts`, already rejects malformed/out-of-range) and skip the pan on
+  `null`, never feed `NaN` to Leaflet; (b) callsign-derived React keys/testids —
+  sanitize (the backend `is_grid`/message parser already validates, but a key
+  must tolerate any string); (c) the strip's chronological feed flattens up to
+  240 slots × ~30 decodes — **cap the rendered feed (e.g. last 200 rows) and/or
+  virtualize**; the aggregation tab is naturally bounded by distinct callsigns.
 
 ### Aim hero + magnetic declination (§Declination)
 
@@ -261,9 +315,18 @@ doesn't have:
   **normalized to [0°, 360°)**; display rounds to whole degrees; 0° renders
   as `360° M` (compass convention).
 - Backend: `magnetic_declination(grid) -> { declDeg, modelEpoch, validUntil }`
-  — pure-Rust WMM evaluation, bundled public-domain coefficients, fully
-  offline. Acceptance: NOAA-published WMM test vectors ±0.1°. Crate vs
-  from-coefficients is a plan-time call.
+  — pure-Rust WMM evaluation, fully offline; reuses the existing backend
+  `position::maidenhead::grid_to_lat_lon` parser (no new grid math).
+  Acceptance: NOAA-published WMM test vectors ±0.1°. **Implementation is a
+  plan-time call with a hard gate: no WMM crate is in the workspace today, so
+  either route is new.** (a) A maintained pure-Rust crate (`world-magnetic-model`
+  / `wmm`) — MUST clear the project's **MSRV 1.75** gate + both-arch CI before
+  adoption (verify the crate's rust-version FIRST; this is the real risk, not
+  the math). (b) From-coefficients: bundle public-domain `WMM.COF` (degree/order
+  12, ~2 KB), implement Schmidt semi-normalized associated Legendre + secular
+  variation with decimal-year epoch — ~a day of TDD; failure modes are Legendre
+  normalization + epoch handling + the 0°/360° wrap (already pinned). Prefer the
+  crate IF MSRV clears; else from-coefficients.
 - Frontend re-invokes whenever `useStatusData().grid` changes (the hero copy
   promises "updates with your location" — this is the wire).
 - `validUntil` in the past → keep rendering the value, append "· model
@@ -277,14 +340,21 @@ doesn't have:
   your dial to <dial>` / `CLOCK UNSYNCED` / `YIELDED` / `NEEDS SETUP` /
   **`SWEEP PAUSED — radio not responding`** for `sweep.mode ==
   "fallback-hold"`) · stats · `holding <band> ⌄` popover trigger · collapse.
+- **Stats (enumerated — the mock shows these):** `holding <band>` · `dial
+  <MHz>` (from `snapshot.dialHz`) · `<N> decodes/min` (the current band's
+  evidence-slot rate, §Openness math) · `<M> grids heard` = count of DISTINCT
+  4+-char grids across evidence slots in the 10-min window (a coverage sense,
+  not a decode count). All derive from the ring the hook already holds.
 - **Band-subset popover** (Flow 1: "limit FT-8 decode to a subset of bands or
   only one band"):
   - **Read contract:** the popover renders from `snapshot.sweepConfig`
     (config truth — the new additive field), NOT from the runtime `sweep`
     status: a saved one-band subset must reopen as saved while stopped, and
     the Sweep radio must stay checked (config) during `fallback-hold`
-    (runtime). The set commands emit `ft8-listening:change`, so the one
-    hydration source refreshes it.
+    (runtime). The set commands emit `ft8-listening:change`, which the hook
+    treats as a coalesced re-hydrate trigger (§Frontend data layer) — a bare
+    `:change` payload does NOT carry `sweepConfig`, so the re-invoked snapshot
+    is what actually refreshes the popover.
   - Multi-select band chips edit `config.ft8.sweep.bands` via the NEW
     `ft8_set_sweep_bands` command (§NewCommands) — never a raw config write;
     there is no generic config-write command and the field path is
@@ -334,25 +404,39 @@ doesn't have:
   a backstop, not the mechanism). Zero live tokens ⇒ zero FFT work — the L2
   tap's zero-cost-when-unsubscribed design is preserved 24/7. This assertion
   is PART of the perf exit gate.
-- Backend: consumer thread reads the L2 `WaterfallTap` (`state.tap()` →
-  `subscribe`/`take_blocks`/`unsubscribe`; 12 kHz i16, 1200-frame blocks,
-  32-deep lossy ring), computes magnitude columns, emits batched
-  `ft8-waterfall:columns` (u8 magnitudes; palette is frontend). Tap loss ⇒
-  visual gap only, never decode impact.
+- Backend: a SINGLE consumer thread (the tap's `take_blocks` drains
+  destructively — exactly one drainer is allowed; a second would steal blocks)
+  reads the L2 `WaterfallTap` (`state.tap()` → `subscribe`/`take_blocks`/
+  `unsubscribe`; 12 kHz i16, 1200-frame blocks, 32-deep lossy ring), computes
+  magnitude columns, emits batched `ft8-waterfall:columns` (u8 magnitudes;
+  palette is frontend). Tap loss ⇒ visual gap only, never decode impact.
+- **FFT window/hop + payload (pinned):** 2048-pt real FFT → 1024 bins over
+  0–6 kHz, cropped to 0–3000 Hz = **512 u8/column**; 4 columns/s, batch 4 ⇒
+  **~2 KB/event, 1 event/s** (sanity-checked against the Pi's event throughput).
+  Each column is the newest 2048 samples at the 4 Hz cadence (hop ≈ 3000
+  samples between columns at 12 kHz — no overlap needed at this cadence; the
+  plan states the exact hop). The thread wakes ~every 250 ms and drains ~2.5
+  blocks (≪ 32 capacity) — no gap under normal load; the real bound is "drain
+  at least every 3.2 s".
 - Frontend: Canvas 2D `putImageData` column write + self-copy `drawImage`
   scroll. **Probe-validated 2026-07-11** in the exact engine (WebKitGTK
   605.1.15 aarch64, software GL): getContext/putImageData/self-copy/readback
   all pass (`dev/scratch/canvas2d-waterfall-probe.html`). The station map's
   SVG decision was specific to Leaflet's `preferCanvas` path.
-- **Gap rendering:** after yield/resume or unsubscribe/resubscribe, the canvas
-  does NOT scroll-join discontinuous time — it draws an explicit gap marker
-  row (or clears) so adjacent columns are never minutes apart on a
-  continuous-looking scroll.
-- **Exit gate (unchanged from the bd issue):** a STATED budget — FFT size,
-  column cadence, event batch — under Pi software-GL, with a headroom
-  measurement proving paint never starves decode, PLUS the zero-subscriber ⇒
-  zero-FFT assertion. Initial numbers to validate: FFT 2048 @ 12 kHz, 4
-  columns/s, batch 4 (one event/s), ≤ 5 % CPU paint budget on the Pi.
+- **Gap rendering + discontinuity signal:** the tap carries no discontinuity
+  marker, so the backend thread stamps each emitted batch with a monotonic
+  `seq` + the wall-clock of its first column; the frontend draws an explicit
+  gap-marker row (not a scroll-join) whenever the inter-batch wall-gap exceeds
+  the expected cadence (yield/resume, unsubscribe/resubscribe, or a drain
+  stall) — adjacent columns are never minutes apart on a continuous-looking
+  scroll. Empty-drain alone is NOT the trigger (it is only a heuristic).
+- **Exit gate (see Exit gate 2):** a STATED budget — FFT size, column cadence,
+  event batch — measured against the REAL mounted `Waterfall.tsx` +
+  `LiveBandStrip` in the converged build under Pi software-GL (not the capability
+  probe), with BOTH a paint-side headroom number AND a decode-side
+  non-starvation metric, PLUS a backend-asserted zero-subscriber ⇒ zero-FFT.
+  Initial numbers to validate: FFT 2048 @ 12 kHz, 4 columns/s, batch 4 (one
+  event/s), ≤ 5 % CPU paint budget on the Pi.
 - Waterfall pauses with the service; slot boundaries as faint dashed lines;
   freq axis 0–3000 Hz fixed.
 
@@ -394,24 +478,32 @@ also reachable later via the strip header chip when blocked.
   Tuxlink"). Clicking Start must never silently re-render the same surface.
   Caption: "starts the decoder on the selected card · nothing ever transmits".
 
-### New backend commands (§NewCommands — additive; L2 state machine untouched)
+### New backend commands (§NewCommands)
+
+**L2-surface scope note:** the pure `ListenerMachine` (state.rs) is untouched.
+Two of these commands DO touch the L2 supervisor's I/O paths — the device
+reservation adds a check to `execute_start_sequence` step 7, and
+`configuredDeviceName` requires storing the resolved human name in `Inner` at
+resolve time (step 2). These are additive to the supervisor, not the state
+machine, but they are real edits to shipped L2 code and are called out here so
+they are planned, not discovered.
 
 **Execution + error discipline (applies to every row):** commands touching
 ALSA, serial, or sysfs (`ft8_device_meter`, `ft8_list_devices`,
 `ft8_cat_probe`) run under `spawn_blocking` with bounded timeouts (meter read
 ≤ 250 ms, enumeration ≤ 1 s, CAT probe ≤ 3 s) — never on the invoke worker.
 Every refusal is a machine-readable typed error (kebab-case `kind` tag +
-human `detail`): `device-reserved | device-in-use | modem-busy |
-rig-not-configured | probe-timeout | invalid-grid | invalid-band` — the UI
-copy branches on `kind`, never parses strings.
+human `detail`): `device-reserved | device-in-use | device-not-found |
+modem-busy | rig-not-configured | probe-timeout | invalid-grid | invalid-band`
+— the UI copy branches on `kind`, never parses strings.
 
 | Command | Contract | Notes |
 |---|---|---|
-| `ft8_device_meter(stable_id) -> { rmsDbfs, state }` | Poll: one short nonblocking ALSA read per call, no session held between calls | `state ∈ live \| silent \| in-use \| error`. **Reservation rule (backend-enforced): a per-device reservation keyed by `stable_id` is shared between the meter and the listener's open path. The listener's open takes the reservation with priority; a meter call finding the device reserved returns `device-reserved` immediately; a meter mid-read when the listener wants the device finishes its ≤250 ms read first (the open awaits the reservation, it never EBUSY-fails).** This covers BOTH the persisted-device case (supervisor 5 s reopen retry) and the first-run candidate case (user clicks Start while a meter read is in flight) — no phantom `yielded` from metering, ever. Metering unreserved devices is always safe. |
+| `ft8_device_meter(stable_id) -> { rmsDbfs, state }` | Open the candidate device (S16_LE 48 kHz, matching `alsa_source`), **discard until ≥1 full 100 ms period arrives, then RMS over a ~150 ms window, then close** — a single post-`start()` nonblocking read returns EAGAIN/zero frames and yields `NaN` dBFS, so the "wait a period" step is required. No session held between polls. | `state ∈ live \| silent \| in-use \| error`. **Reservation rule (backend-enforced): a `Mutex<HashMap<StableAudioId, ()>>` (or per-id lock) owned by `Ft8ListenerState`, consulted by BOTH this command AND the listener open path — `execute_start_sequence` step 7 (`open_source`) acquires the id with priority, bounded-awaiting (≤250 ms) any in-flight meter read rather than EBUSY-failing.** Covers the supervisor's 5 s reopen retry AND the first-run candidate-device race (Start clicked during a meter poll) — no phantom `yielded`. Stale `stable_id` (card unplugged between enumerate and meter) → `device-not-found`. Metering unreserved devices is always safe. |
 | `ft8_list_devices() -> Vec<AudioDeviceChoice>` | Same enumeration the snapshot embeds, exposed directly | Needed by the `unsupported-sample-rate` arm (snapshot omits the list there) and the Refresh action. DTO gains the additive `alsaHw` field (header note). |
-| `ft8_cat_probe() -> { dialHz, band } \| typed error` | One `Ft8Platform::rig_read_dial` spawn-read-drop, taken under the FT8 rig lock AND routed through `rig_session` exactly like the listener-start dial-read (`start_rig_labeling` path) | **REFUSES (`modem-busy`) while any modem session is active** (same `ModemState` positive-set the L2 resume poll uses: proceed only in `Stopped \| Error \| SocketLost`) — a second serial opener during a live session is the documented FT-710 C-Media reset class. Surface renders "radio busy with <mode> session — disconnect first". |
-| `magnetic_declination(grid) -> { declDeg, modelEpoch, validUntil }` | Pure function, offline WMM | §Declination. `invalid-grid` for unparseable locators. |
-| `ft8_set_sweep_bands(bands: Vec<String>) -> Result` | Validates every entry against the FT-8 band table BEFORE persisting (`invalid-band`; rejects empty); serializes through the ft8 writer mutex to `config.ft8.sweep.bands`; emits `ft8-listening:change` after persisting | **Live-sweep semantics (pinned):** the sweep scheduler re-reads the list at each dwell boundary; `band_idx` clamps/wraps against the new length; if the current band was deselected, the next boundary QSYs to `list[0]`. Mid-dwell the old band finishes its dwell — no immediate QSY. |
+| `ft8_cat_probe() -> { dialHz, band } \| typed error` | A NEW read-only method: acquire the FT8 rig lock + `rig_session`, call ONLY `platform.rig_read_dial()` (its own spawn-read-drop `ManagedRig`; works from any axis incl. never-started), touch NO `Inner` state. **NOT** `start_rig_labeling` — that path mutates `Inner.band/dial_hz/band_source` and may `rig_tune`; a probe must not. | **REFUSES (`modem-busy`) while any modem session is active** (same `ModemState` positive-set the L2 resume poll reads — proceed only in `Stopped \| Error \| SocketLost`) — a second serial opener during a live session is the documented FT-710 C-Media reset class. Surface renders "radio busy with <mode> session — disconnect first". `rig-not-configured` when no `Config.rig`. |
+| `magnetic_declination(grid) -> { declDeg, modelEpoch, validUntil }` | Pure function, offline WMM (§Declination); reuses the existing backend `position::maidenhead::grid_to_lat_lon` parser | `invalid-grid` for unparseable locators. |
+| `ft8_set_sweep_bands(bands: Vec<String>) -> Result` | Validates every entry against the FT-8 band table BEFORE persisting (`invalid-band`; rejects empty); serializes through the ft8 writer mutex to `config.ft8.sweep.bands`; emits `ft8-listening:change` after persisting | **Live-sweep semantics (matches the shipped scheduler — `sweep::tick` already re-reads `cfg.bands` fresh every tick and advances `(band_idx + 1) % len`, so no scheduler restructure):** editing the list takes effect at the next dwell boundary; the current band finishes its dwell, then rotation continues over the new list via the existing modulo advance (NOT a forced jump to `list[0]`). Empty is rejected + guarded. Plan-time nicety (P3): re-anchor `band_idx` to `Inner.band`'s position in the new list on a reorder so a same-length reorder doesn't skip/repeat — optional, note it. |
 | `ft8_waterfall_subscribe() -> { subscriptionId }` / `ft8_waterfall_unsubscribe(subscriptionId)` | Idempotent, token-counted (§Waterfall); tokens reaped on window close | FFT thread lives while ≥1 live token. |
 
 ### Ribbon badge (§Ribbon)
@@ -471,12 +563,33 @@ contract-safe; `station-finder__*` CSS namespace; component filenames):
   persisted collapse, popover (hold-mode disables chips, fallback-hold
   warning, persist-only caption), BandMatrix (sibling ☆ testids preserved,
   +N overflow), Live decodes grid-less rows, ribbon four states, menu parity.
-- **Map**: layer-control housing with real Leaflet in jsdom.
+- **Config writers (hoi1 guard)**: for each `config.ft8` writer
+  (`ft8_set_device`, `ft8_set_band`, `ft8_set_sweep`, `ft8_set_sweep_bands`)
+  the absent-field-erases two-face test — seed field X, call a setter that
+  omits X, assert X survives on disk (e.g. `ft8_set_sweep_bands` must not wipe
+  `device`; `ft8_set_device` must not wipe `sweep.bands`). Per-writer unit
+  passes are not sufficient; this is the multi-writer clobber class.
+- **Device reservation (concurrency)**: a barrier-synchronized test (not bare
+  `Promise.all`) driving a meter read and a listener open at the critical
+  section — assert the open wins with priority and the meter returns
+  `device-reserved`/`in-use`, never EBUSY → phantom `yielded`.
+- **Map**: layer-control housing with real Leaflet in jsdom; grid→pan null-guard
+  (malformed grid string does not pan / does not throw).
 - **Waterfall**: column-paint unit; subscribe/unsubscribe lifecycle unit
-  (collapse ⇒ unsubscribe); gap-marker on resume; perf-budget measurement on
-  the Pi (exit gate, not CI).
+  (collapse ⇒ frontend unsubscribe) AND a **backend assertion** that the FFT
+  work stopped — an instrumented `take_blocks`/FFT-invocation counter (or
+  thread-alive probe) reads zero after the last token is released and after
+  window close (this is the load-bearing half of "zero-subscriber ⇒ zero-FFT",
+  which the frontend unit alone does not prove); gap-marker on resume;
+  perf-budget measurement on the Pi (exit gate, not CI).
+- **Rename regression** (if added): scan `src/` via `import.meta.glob`, NOT
+  Node `fs` — an fs-based scan is shadow CI (TEST-1).
 - **Render harness**: smoke every uiState + firstrun arms + popover +
-  fallback-hold chip in real WebKitGTK. Note: the committed mocks show
+  fallback-hold chip in real WebKitGTK, INCLUDING a WebKit2GTK computed-style
+  check (`appearance`/`border`/`border-radius`) of the transparent/borderless
+  buttons L3 adds — rail tabs, `si-collapse`, `chip-use`, `rf-test` — per
+  WEBKIT-1: a transparent `<button>` falls back to native GTK chrome that a
+  Chromium screenshot cannot catch. Note: the committed mocks show
   sampled/healthy conditions; the honest default (hollow dots) is the
   expected real render — §Openness wins.
 - CI is the gate (both arches); no local cold cargo builds on the Pi.
@@ -487,12 +600,23 @@ contract-safe; `station-finder__*` CSS namespace; component filenames):
    `device-lost`, and each setup arm) renders distinctly in the real engine —
    including the `needs-setup` force-expanded layout at 1024×700 (picker +
    CTA fully visible, nothing clipped).
-2. Waterfall perf budget stated + measured on Pi software-GL; paint never
-   starves decode (headroom recorded in the PR); zero subscribers ⇒ zero FFT
-   work demonstrated.
-3. **Wire-walk of Flow 1 verbatim** on the shipped UI (runs when L3/L4 land;
-   Flow 2 traces at L4).
-4. Every dropdown is `.tux-select`-styled; zero native chrome.
+2. Waterfall perf budget measured against the REAL mounted component in the
+   converged build under Pi software-GL (not the probe): (a) paint-side
+   headroom number recorded in the PR; (b) **decode-side non-starvation** —
+   with the waterfall subscribed at full cadence, ZERO missed decode slots vs
+   an unsubscribed baseline, decode completes within its 15 s slot, L2 audio
+   ring shows no overflow (this is the falsifiable "never starves decode", not
+   a paint-only number); (c) zero-subscriber ⇒ zero-FFT proven by the backend
+   counter/thread-probe (testing strategy), not merely the frontend
+   unsubscribe call.
+3. **Wire-walk on the shipped UI:** Flow 1's non-heatmap clauses (open →
+   connect/CAT → dial-through-bands → waterfall → decodes → band-subset) trace
+   at L3/L4; **Flow 1's "optional heatmap" clause traces at L5** (the heat
+   layer is L5 — the gate is not unsatisfiable at L3 because the clause is
+   explicitly optional and L5-owned). Flow 2 traces at L4.
+4. Every dropdown is `.tux-select`-styled; **and every transparent/borderless
+   button passes the WebKit2GTK computed-style check** (testing strategy) —
+   zero native GTK chrome, verified in the real engine, not Chromium.
 5. Existing panel/AppShell tests green with only name-string updates
    (enumerated in §Renames); zero selector or semantic weakening.
 
@@ -501,7 +625,11 @@ contract-safe; `station-finder__*` CSS namespace; component filenames):
 Two lenses, never blended (VOACAP bars and FT-8 dots share rows but never a
 scale). Gateway finder untouched. RX-only forever — no L3 code path keys the
 radio beyond CAT frequency/mode set. ECT support target unaffected (no new
-system deps; WMM is bundled data). AGENTS.md parity check at PR time.
+system deps; WMM is bundled data or an MSRV-cleared crate). AGENTS.md parity
+check at PR time (confirmed no-op — AGENTS.md has no Station-Intel/FT-8 section
+and this work changes no CLAUDE.md rule). `dev/implementation-log.md` entry at
+ship time. The implementation plan's parallel-component dispatch prompts carry
+the mandatory ORCH-1 persistence block.
 
 ## Adversarial-review disposition log
 
@@ -540,3 +668,24 @@ system deps; WMM is bundled data). AGENTS.md parity check at PR time.
   + harness gate. Transcript:
   `dev/adversarial/2026-07-11-station-intel-l3-spec-codex.md` (local,
   gitignored).
+- **R4 (backend/hardware depth) + R5 (completeness/pitfalls), 2026-07-11, both
+  READY AFTER FIXES:** 1 P1 + 4 P2 + 5 P3 (R4), 1 P1-decision + 8 P2 + 6 P3
+  (R5). All dispositioned into this v4 EXCEPT the one genuine operator decision
+  (R5-F1, WSJT-X framing — the ⚠ box in the header). Fixes: the load-bearing
+  emit-to-refresh hole — `ft8-listening:change` cannot carry `sweepConfig`, so
+  the hook now coalesce-re-invokes the snapshot on any `:change` (R4-P1-1);
+  meter read model corrected to open→wait-period→RMS-window→close (R4-P2-2);
+  device reservation given a concrete home on `Ft8ListenerState` + step-7 open
+  edit, called out as a supervisor change not a state-machine one (R4-P2-3);
+  `configuredDeviceName` stored at resolve time to stay off the render-hot path
+  (R4-P2-4); sweep-bands semantics relaxed to match the shipped
+  `(band_idx+1)%len` scheduler (R4-P2-5); `device-not-found` kind + read-only
+  `cat_probe` method + backend grid parser reuse + WMM crate/MSRV-vs-
+  coefficients gate + untrusted-RF non-text-sink hardening + feed
+  cap/virtualize (R4 P3s). From R5: heatmap-clause wire-walk scoped to L5
+  (F2); WEBKIT-1 transparent-button computed-style gate (F3); hoi1 multi-writer
+  clobber test (F4); reservation-race concurrency test (F5); real-mounted-
+  component perf measurement (F6); decode-side non-starvation metric (F7);
+  backend zero-FFT assertion (F8); mock-supersede + ADR-0018 grounding +
+  grids-heard enumeration + import.meta.glob + implementation-log + ORCH-1
+  (F9–F14). Transcripts: R4 in-context; R5 in-context.
