@@ -31,6 +31,7 @@ pub mod winlink;
 pub mod winlink_backend;
 pub mod wizard;
 pub mod mcp_ports;
+pub mod ft8;
 pub mod modem_commands;
 pub mod modem_status;
 pub mod propagation;

@@ -6863,6 +6863,7 @@ dependencies = [
  "tuxlink-agent-frontend",
  "tuxlink-agent-runner",
  "tuxlink-capture",
+ "tuxlink-jt9",
  "tuxlink-mcp-core",
  "tuxlink-security",
  "urlencoding",

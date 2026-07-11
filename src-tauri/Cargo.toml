@@ -150,6 +150,12 @@ tuxlink-agent-frontend = { path = "tuxlink-agent-frontend" }
 # (src/ft8/alsa_source.rs). `alsa` links system libasound: CI/apt gains
 # libasound2-dev (Task 18) and the .deb a libasound2 runtime Depends.
 tuxlink-capture = { path = "tuxlink-capture" }
+# T10: main-crate `src/ft8/` consumes the L1 jt9 engine's types (Ft8Decode,
+# SlotOutcome, SlotFailure, Jt9Runner) directly (traits.rs's Jt9Engine +
+# records.rs's DecodeDto). tuxlink-capture already depends on it as a
+# dev-dependency (wavwrite.rs round-trip test); this is the main crate's own
+# first non-dev use.
+tuxlink-jt9 = { path = "tuxlink-jt9" }
 alsa = "0.9"
 # rmcp client (elmer/executor.rs in-process duplex invoker).  `client` +
 # `transport-async-rw` are the features d3zwe already uses; the lockfile already
