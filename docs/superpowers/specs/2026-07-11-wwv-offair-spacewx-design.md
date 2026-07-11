@@ -65,16 +65,19 @@ predates the propagation + rig work):
 | Offline STT | **Greenfield** — the one new subsystem | — |
 | ~70 s capture | **Greenfield** — no live-capture path exists | — |
 
-**Consequence:** the prediction engine already ingests WWV-derived SSN as a
-first-class RF input. Tuxlink does this **today** by fetching the WWV bulletin
-as Winlink catalog text (`PROP_WWV`) and calling `apply_rf_solar_reply`. This
-feature changes **only the transport**: the WWV *voice broadcast* replaces the
-Winlink-network text fetch. Everything downstream of the transcript
-(parse → derive SSN → write forecast → VOACAP) is the shipped, tested chain.
-There is **zero new engine work** and **no information-overload risk** — the
-architecture already separates the single engine input (`ssn-forecast.json`,
-SSN from SFI) from display-only context (`solar-snapshot.json`, A/K/provenance;
-explicitly "NOT a VOACAP input", per `solar_update.rs:10-13`).
+**Consequence:** the engine's *ingestion logic* for WWV-derived SSN is built and
+unit-tested (`parse_wwv` → `derive_ssn_from_sfi` → `apply_rf_solar_reply` →
+`ssn-forecast.json` → VOACAP `SUNSPOT`), and the predict path reads the forecast
+**fresh per call** — so once *something* writes the forecast, the next
+prediction uses it. That "something" does **not exist yet**:
+`apply_rf_solar_reply` has no caller (only tests), and there is no update command
+(internet or RF) and no frontend trigger/reader. So this feature reuses the
+**engine chain** but must **build the command + frontend that drives it** (§5
+scope note). There is **no new *engine* work** and **no information-overload
+risk** — the architecture already separates the single engine input
+(`ssn-forecast.json`, SSN from SFI) from display-only context
+(`solar-snapshot.json`, A/K/provenance; explicitly "NOT a VOACAP input", per
+`solar_update.rs:10-13`).
 
 ### Fidelity caveat (accepted, not papered over)
 
@@ -91,20 +94,32 @@ alternative is **zero** space-weather data.
 New components in **bold**; everything else reuses `origin/main`:
 
 ```
-operator hits "Refresh off-air"  (§9 UI)
+operator hits "Refresh off-air"  ← **new frontend button (§9) + new Tauri command**
   → scheduler computes nearest window (WWV :18 / WWVH :45), arms one-shot  ← **new: wwv_offair::schedule**
-  → at window:
-      ManagedRig::status()                 [save current VFO + mode]
-      ManagedRig::tune(wwv_freq, USB)       [tux-rig, existing]
-      release_serial() if C-Media/DRA       [tux-rig, existing — avoids codec reset]
+  → at window (ManagedRig spawned via reused rig_config_from(&config.rig)):
+      ManagedRig::status()                 [save current VFO + mode; tux-rig]
+      ManagedRig::tune(wwv_freq, Mode::Usb) [tux-rig]
+      IF close_serial_sequencing (FT-710 class): release_serial() → rigctld STOPS  [tux-rig]
       **arecord capture ~70 s → 16 kHz mono WAV**   ← **new: wwv_offair::capture** (reuses arecord + hound)
-      ManagedRig::tune(saved_freq, saved_mode)      [restore]
-      **tuxlink-stt::transcribe(wav, DecodeMode::WwvGrammar)**  ← **new crate**
+      RESTORE: re-spawn ManagedRig if released, then tune(saved_freq, saved_mode)
+               (DRA-100 path never releases, so no re-spawn) [tux-rig]
+      **tuxlink-stt::transcribe(wav, DecodeMode::WwvBiased)**  ← **new crate**
       **normalize_spoken_numbers(transcript)**       ← **new: wwv_offair::normalize**
-      parse_wwv(normalized)                 [solar.rs, unchanged]
-      apply_rf_solar_reply(text, y, m, now, dir) with source tag "rf-wwv-voice"  [solar_update.rs, +1 tag]
-  → conditions bar + propagation view stamped "off-air WWV HH:18 UTC"  [existing surface]
+      parse_wwv(normalized) + SFI sanity bound [50,500]  [solar.rs, unchanged] — the grammar enforcement
+      apply_rf_solar_reply(text, y, m, now, dir), snapshot source = "rf-wwv-voice"  [solar_update.rs, +1 tag]
+  → predictions read ssn-forecast.json fresh per call, so the next predict uses it  [existing predict path]
+  → **new frontend: conditions readout + "off-air WWV HH:18 UTC" provenance stamp**
 ```
+
+> **Scope note (grounded 2026-07-11):** `apply_rf_solar_reply` and the whole
+> `solar_update` module are **pure, unit-tested logic with no caller** — no
+> update command (internet or RF) and no frontend trigger/reader exist yet (the
+> internet "Update propagation data" feature, tuxlink-ot71, is also only
+> planned). So the engine *ingestion* is proven and reused, but the **Tauri
+> command and the frontend surface are NEW work this feature builds first**, not
+> an existing surface. The engine-compatibility guarantee still holds: the
+> predict path reads `ssn-forecast.json` fresh each call, so an off-air update
+> drives real predictions.
 
 ## 6. Component design
 
@@ -118,8 +133,8 @@ deliberate seam that lets Elmer voice-input reuse it later (operator's note).
 pub enum DecodeMode {
     /// General open-vocabulary decode (Elmer voice-input, future).
     General,
-    /// Grammar-constrained decode biased to the closed WWV vocabulary.
-    WwvGrammar,
+    /// Decode biased toward the closed WWV vocabulary via `set_initial_prompt`.
+    WwvBiased,
 }
 
 pub struct SttResult {
@@ -140,10 +155,17 @@ pub fn transcribe(wav_path: &Path, mode: DecodeMode, model: &WhisperModel)
   because it transcribes noisy HF voice better AND is the general-purpose model
   Elmer would reuse. Grammar constraint (below) recovers the accuracy a smaller
   model would lose on this vocabulary.
-- **Grammar-constrained decode (`WwvGrammar`):** a GBNF grammar encoding the
-  bulletin template forces the decoder to emit only valid tokens (numbers +
-  fixed NOAA phrases), sharply improving accuracy on this closed vocabulary and
-  shrinking the normalizer's job. Whisper is also configured to emit digits.
+- **Vocabulary biasing (`WwvBiased`):** `whisper-rs`'s `FullParams` does **NOT**
+  expose GBNF grammar-constrained decoding (verified against the binding — it
+  offers `set_initial_prompt` + token-level probs, not hard grammar). So the
+  "grammar" is achieved in two cooperating places instead of inside the decoder:
+  (1) `set_initial_prompt` primes the decoder with the WWV vocabulary ("NOAA
+  space weather: solar flux, planetary A-index, K-index, geomagnetic storm…") to
+  bias output; (2) the closed grammar is **enforced after decode** by
+  `parse_wwv`'s tolerant substring match + the existing SFI sanity bound
+  [50,500] + retry-next-window on parse failure. Same robustness outcome,
+  achieved post-decode. (If a future `whisper-rs` exposes grammar rules, it's a
+  drop-in upgrade to place (1).)
 - **Noise rejection:** port Geographica's tuned thresholds (config, ~5 lines,
   not the service): `no_speech_threshold=0.8`, `log_prob_threshold=-0.8`. On a
   low-SNR capture, return empty/low-confidence rather than a confident
@@ -173,14 +195,22 @@ pub fn transcribe(wav_path: &Path, mode: DecodeMode, model: &WhisperModel)
 Ordering matters for the DRA-100 / C-Media class where opening the CAT serial
 port while the audio codec is active can reset the codec:
 
-1. `status()` → save `{freq, mode}`.
-2. `tune(wwv_freq, USB)`.
-3. `release_serial()` (existing) so the serial port is closed before audio
-   capture opens the codec.
-4. `arecord` capture.
-5. `tune(saved_freq, saved_mode)` to restore the operator's original state.
+1. `ManagedRig::spawn(rig_config_from(&config.rig)?)` — reuse the existing
+   adapter (`crate::modem_commands::rig_config_from`).
+2. `status()` → save `{freq_hz, mode}` (`mode` is `Option<Mode>`).
+3. `tune(wwv_freq, Mode::Usb)`.
+4. **If `config.rig.close_serial_sequencing`** (FT-710 / internal-codec class):
+   `release_serial()` — this **stops rigctld**, freeing the CAT serial before
+   the audio codec opens. On the DRA-100 path (`close_serial_sequencing ==
+   false`) skip this — rigctld keeps running through capture.
+5. `arecord` capture.
+6. **Restore:** if `release_serial()` was called, `ManagedRig::spawn(...)` again
+   (rigctld was stopped; `tune`/`status` fail until re-spawn — see the
+   `release_serial` doc comment), then `tune(saved_freq_hz, saved_mode)`. On the
+   DRA path, the same `ManagedRig` is still live, so just `tune(...)` to restore.
 
-If rigctld/CAT is unavailable (`RigUiConfig.rig_hamlib_model == None`), degrade
+If rigctld/CAT is unavailable (`rig_config_from` returns `None` — no hamlib
+model or blank CAT serial), degrade
 to a **manual-tune** flow (mirrors the FT8 design's own fallback): prompt
 "tune your radio to WWV 10 MHz USB, then Capture," skip the tune/restore steps,
 and run capture → STT → parse directly.
@@ -252,9 +282,16 @@ engine chain. This keeps the wideband-SDR work (§13) cleanly separable.
 
 ## 9. UI surface
 
-- Enhance the **existing propagation / conditions surface** (do not add a new
-  window). A **"Refresh off-air"** action beside the existing internet "Update
-  propagation data" control.
+- Enhance the **existing station-finder conditions surface** (do not add a new
+  window): `src/catalog/StationFinderControls.tsx` — the topbar actions cluster
+  (`station-finder__actions`) has a code comment explicitly **reserving this row
+  for the "Update propagation data" action** once it ships. Add a **"Refresh
+  off-air"** button there (the internet update button does not exist yet either;
+  ours is the first update control).
+- Note: the conditions bar declares `sfi`/`kIndex` props but the parent never
+  passes them today, so SFI/K currently never render — this feature also wires
+  the off-air `SolarSnapshot` (SFI/A/K + provenance) into that readout (a new
+  `invoke` reading the persisted snapshot; none exists today).
 - Flow: click → "next WWV bulletin at HH:MM UTC (in N min) — arm capture?" →
   armed indicator → on completion, the conditions bar updates and stamps
   **"off-air WWV HH:18 UTC"** provenance next to the SFI/A/K readout.
@@ -324,16 +361,22 @@ the machine.
 
 ## 15. Reuse vs. new (build checklist)
 
-**Reuse (origin/main, unchanged):** `tux-rig` tune/status/release_serial ·
-`parse_wwv` · `derive_ssn_from_sfi` · `apply_rf_solar_reply` (+1 provenance
-tag) · arecord shell-out · `hound` WAV · propagation update path + conditions
-surface.
+**Reuse (origin/main, unchanged logic):** `tux-rig` (`ManagedRig::spawn/tune/
+status/release_serial`, `Mode`, `RigConfig`) · `rig_config_from(&config.rig)`
+adapter · `parse_wwv` · `derive_ssn_from_sfi` · `apply_rf_solar_reply`
+(first caller; +1 provenance tag) · `arecord` shell-out · `hound` WAV · the
+predict path's fresh `ssn-forecast.json` read.
 
-**New:** `tuxlink-stt` crate (whisper-rs, base.en q5_1, `DecodeMode`) · GBNF
-WWV grammar · `wwv_offair` module (capture, capture_cycle orchestration,
-normalize, schedule) · `CaptureSource` trait (+ `PrimaryRigSource` impl) ·
-`WwvOffairConfig` · UI "Refresh off-air" affordance + provenance stamp +
-low-SNR confirm · model-acquisition (setup download + manual-place).
+**New (this feature builds it):** `tuxlink-stt` path-dep crate (whisper-rs,
+base.en q5_1, `DecodeMode` — `set_initial_prompt` biasing, NO GBNF) ·
+`wwv_offair` module (capture, capture_cycle orchestration with the
+serial-sequencing branch, normalize, schedule) · `CaptureSource` trait (+
+`PrimaryRigSource` impl) · `WwvOffairConfig` (additive `Option<>` on `Config`) ·
+**the Tauri update command** (first command to call `apply_rf_solar_reply`;
+no update command exists today) · **frontend** "Refresh off-air" button in the
+reserved `station-finder__actions` row + snapshot `invoke` + conditions/
+provenance readout + low-SNR confirm · model-acquisition (setup download +
+manual-place).
 
 ## 16. Locked decisions
 
