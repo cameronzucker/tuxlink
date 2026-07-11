@@ -9,7 +9,8 @@
 // channels are listed but their Use → is disabled with a hint (RADIO-1: this
 // only fills a form — the operator still clicks Connect).
 
-import { useState, type CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { groupChannelsByMode, channelToDial, channelReliability } from './channelGrouping';
 import { rankedDialsFor } from './ranking';
 import { bestBandNow, relToTier, tierColorVar } from './reachability';
@@ -18,11 +19,12 @@ import { emitGatewayPrefill } from '../favorites/prefillEvent';
 import { distanceFromGrids, kmToMi } from './distance';
 import { gridToLatLon, type LatLon } from '../forms/position/maidenhead';
 import { LiveDecodesTab } from './LiveDecodesTab';
+import { useStatusData } from '../shell/useStatus';
 import type { Station, Channel } from './stationModel';
 import type { PathPrediction } from './propagationApi';
 import type { PredictionStatus } from './useStationPrediction';
 import type { RadioMode, FavoriteDial } from '../favorites/types';
-import type { SlotRecord } from '../ft8ui/ft8Types';
+import type { SlotRecord, DeclDto } from '../ft8ui/ft8Types';
 
 export interface StationRailProps {
   station: Station | null;
@@ -92,6 +94,30 @@ export function bearingFromGrids(a: string, b: string): number | null {
   return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
 }
 
+/** `true - decl` (declination east-positive), normalized to [0, 360) and
+ *  rounded to a whole degree for display. Compass convention: an exact-0
+ *  wrap renders as `360°`, never `0°` (a compass rose has no 0 tick — spec
+ *  §Declination). */
+function magneticBearing(trueDeg: number, declDeg: number): number {
+  const wrapped = (((trueDeg - declDeg) % 360) + 360) % 360;
+  const rounded = Math.round(wrapped) % 360;
+  return rounded === 0 ? 360 : rounded;
+}
+
+/** The aim hero's declination provenance line (spec §Declination example:
+ *  `declination +9.7° E · WMM2025 · from <operator grid> · updates with your
+ *  location`), with a drift note appended when the model's `validUntil` has
+ *  passed — the hero still renders the (now-stale) value, never blanks. */
+function declProvenance(decl: DeclDto, grid: string): string {
+  const dir = decl.declDeg >= 0 ? 'E' : 'W';
+  const sign = decl.declDeg >= 0 ? '+' : '-';
+  const mag = Math.abs(decl.declDeg).toFixed(1);
+  const base = `declination ${sign}${mag}° ${dir} · ${decl.modelEpoch} · from ${grid} · updates with your location`;
+  const validMs = Date.parse(decl.validUntil);
+  const expired = Number.isFinite(validMs) && validMs < Date.now();
+  return expired ? `${base} · model expired — declination may drift ~0.1°/yr` : base;
+}
+
 type RailTab = 'station' | 'live';
 
 export function StationRail(props: StationRailProps) {
@@ -134,6 +160,41 @@ export function StationRail(props: StationRailProps) {
 /** The Station tab's content — unchanged from pre-tab-shell StationRail behavior. */
 function StationTabPane(props: StationRailProps) {
   const { station, prediction, predictionStatus, operatorGrid, utcHour, activePrefillMode } = props;
+
+  // Task C6 (aim hero + magnetic declination, spec §Declination): the LIVE
+  // operator grid — useStatusData().grid, NOT config_read (the tuxlink-fnzr
+  // bug class: a one-shot config read misses a GPS fix that arrives after
+  // mount). Declination depends only on the operator's OWN position, not on
+  // the selected station, so this runs unconditionally (before the `!station`
+  // early return below) — by the time a station is picked, the declination is
+  // usually already resolved, no per-selection fetch latency.
+  const { grid: liveGrid } = useStatusData();
+  const [decl, setDecl] = useState<DeclDto | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!liveGrid) {
+      setDecl(null);
+      return;
+    }
+    invoke<DeclDto>('magnetic_declination', { grid: liveGrid })
+      .then((dto) => {
+        if (cancelled) return;
+        // Defensive shape check: a test double or a future backend contract
+        // drift that resolves something other than a real DeclDto degrades
+        // the same as an explicit error, rather than rendering "NaN° M".
+        setDecl(dto && typeof dto.declDeg === 'number' ? dto : null);
+      })
+      .catch(() => {
+        // invalid-grid / internal-error (Ft8CmdError), or no Tauri context
+        // (tests/dev browser) — degrade to the plain true-bearing display;
+        // never throw, never spin.
+        if (!cancelled) setDecl(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [liveGrid]);
 
   if (!station) {
     return (
@@ -200,26 +261,46 @@ function StationTabPane(props: StationRailProps) {
         </div>
       </header>
 
-      {/* Task C6 (aim hero + magnetic declination, spec §Declination) upgrades
-          this block in place: adds the magnetic/true bearing split + a
-          declination provenance line beneath. Runs AFTER C5, BEFORE C3. Left
-          as-is here — C5's scope is the tab shell, not the hero. */}
+      {/* Task C6 (aim hero + magnetic declination, spec §Declination): compass
+          needle stays TRUE-referenced (matches the map); the numeric readout
+          prefers magnetic (what a compass shows) once declination resolves,
+          falling back to the plain true bearing while decl is unavailable
+          (no live grid, still loading, or a degraded invoke) — never blanks a
+          bearing the rail already has. */}
       <div className="station-finder__aim">
-        <div
-          className="station-finder__compass"
-          style={bearing != null ? ({ ['--bearing']: `${bearing}deg` } as CSSProperties) : undefined}
-          aria-hidden
-        >
-          <span className="station-finder__needle" />
+        <div className="station-finder__aimrow">
+          <div
+            className="station-finder__compass"
+            style={bearing != null ? ({ ['--bearing']: `${bearing}deg` } as CSSProperties) : undefined}
+            aria-hidden
+          >
+            <span className="station-finder__needle" />
+          </div>
+          <div>
+            <div className="station-finder__big" data-testid="aim-bearing">
+              {bearing == null
+                ? '—'
+                : decl != null
+                  ? `${magneticBearing(bearing, decl.declDeg)}° M`
+                  : `${Math.round(bearing)}°`}
+            </div>
+            {bearing != null && decl != null && (
+              <div className="station-finder__aim-true" data-testid="aim-bearing-true">
+                {Math.round(bearing)}° T
+              </div>
+            )}
+            <div className="station-finder__lab">aim antenna</div>
+          </div>
+          <div className="station-finder__dist" data-testid="aim-distance">
+            <div className="station-finder__big">{distMi != null ? `${distMi} mi` : '—'}</div>
+            <div className="station-finder__lab">short path</div>
+          </div>
         </div>
-        <div>
-          <div className="station-finder__big">{bearing != null ? `${Math.round(bearing)}°` : '—'}</div>
-          <div className="station-finder__lab">aim antenna</div>
-        </div>
-        <div className="station-finder__dist" data-testid="aim-distance">
-          <div className="station-finder__big">{distMi != null ? `${distMi} mi` : '—'}</div>
-          <div className="station-finder__lab">short path</div>
-        </div>
+        {bearing != null && decl != null && liveGrid && (
+          <div className="station-finder__aim-decl" data-testid="aim-declination">
+            {declProvenance(decl, liveGrid)}
+          </div>
+        )}
       </div>
 
       {/* Task C3 (BandMatrix mount, spec §Rail Station tab) mounts BandMatrix

@@ -583,10 +583,15 @@
 
 .station-finder__aim {
   display: flex;
-  align-items: center;
-  gap: 14px;
+  flex-direction: column;
+  gap: 6px;
   padding: 11px 13px;
   border-bottom: 1px solid var(--border, #243a52);
+}
+.station-finder__aimrow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
 }
 .station-finder__compass {
   width: 58px;
@@ -622,6 +627,15 @@
 }
 .station-finder__dist .station-finder__big {
   font-size: 18px;
+}
+.station-finder__aim-true {
+  font-size: 12px;
+  color: var(--dim, #9fb6cc);
+  font-family: var(--mono, ui-monospace, monospace);
+}
+.station-finder__aim-decl {
+  font-size: 10.5px;
+  color: var(--faint, #6f8aa3);
 }
 
 .station-finder__prop {

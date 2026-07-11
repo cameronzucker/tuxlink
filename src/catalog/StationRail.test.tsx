@@ -1,9 +1,29 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { GATEWAY_PREFILL_EVENT } from '../favorites/prefillEvent';
 import { StationRail } from './StationRail';
 import type { Station } from './stationModel';
 import type { PathPrediction } from './propagationApi';
+import type { DeclDto } from '../ft8ui/ft8Types';
+
+// Task C6 (aim hero + magnetic declination): mock the Tauri invoke surface so
+// `magnetic_declination` resolves without a real backend. A far-future
+// `validUntil` keeps the default fixture "not expired" — the expired-model
+// test below overrides it per-case.
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
+import { invoke } from '@tauri-apps/api/core';
+
+// C6 sources the declination fetch's grid from the LIVE useStatusData().grid
+// (tuxlink-fnzr class — never a one-shot config read), independent of the
+// `operatorGrid` prop used for the pre-existing bearing/distance fallback.
+// Mock the hook directly (RequestCenter.test.tsx pattern) so these tests
+// control the live grid without standing up a QueryClientProvider.
+const statusMock = vi.hoisted(() => ({ grid: 'DM43bp' as string | null }));
+vi.mock('../shell/useStatus', () => ({
+  useStatusData: () => ({ grid: statusMock.grid }),
+}));
+
+const DEFAULT_DECL: DeclDto = { declDeg: 10, modelEpoch: 'WMM2025', validUntil: '2099-01-01' };
 
 const station: Station = {
   baseCallsign: 'N0DAJ', grid: 'DM34oa', sysopName: 'Doug Jarmuth', location: 'Wickenburg, AZ',
@@ -23,7 +43,14 @@ const prediction: PathPrediction = {
   ],
 };
 
-beforeEach(() => vi.restoreAllMocks());
+beforeEach(() => {
+  statusMock.grid = 'DM43bp';
+  vi.mocked(invoke).mockReset();
+  vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+    if (cmd === 'magnetic_declination') return DEFAULT_DECL;
+    return undefined;
+  });
+});
 afterEach(() => vi.restoreAllMocks());
 
 describe('StationRail', () => {
@@ -229,6 +256,94 @@ describe('StationRail', () => {
       render(<StationRail station={null} prediction={null} predictionStatus="idle" operatorGrid="DM43bp" utcHour={21} />);
       fireEvent.click(screen.getByTestId('rail-tab-live'));
       expect(screen.getByTestId('live-decodes-empty')).toBeTruthy();
+    });
+  });
+
+  // tuxlink-b026z.4 Task C6 — aim hero magnetic/true bearing split + declination
+  // provenance (spec §Declination). `prediction.bearingDeg` (318°, from the
+  // shared fixture) is the TRUE bearing the compass needle stays referenced to;
+  // declination shifts only the numeric readout.
+  describe('aim hero declination', () => {
+    it('shows the magnetic bearing primary and true bearing secondary once declination resolves', async () => {
+      vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+        if (cmd === 'magnetic_declination') {
+          return { declDeg: 10, modelEpoch: 'WMM2025', validUntil: '2099-01-01' } satisfies DeclDto;
+        }
+        return undefined;
+      });
+      render(<StationRail station={station} prediction={prediction} predictionStatus="ok" operatorGrid="DM43bp" utcHour={21} />);
+      // true 318 - decl 10 = magnetic 308.
+      await waitFor(() => expect(screen.getByTestId('aim-bearing').textContent).toBe('308° M'));
+      expect(screen.getByTestId('aim-bearing-true').textContent).toBe('318° T');
+      expect(screen.getByTestId('aim-declination').textContent).toMatch(/declination \+10\.0° E/);
+      expect(screen.getByTestId('aim-declination').textContent).toMatch(/WMM2025/);
+      expect(screen.getByTestId('aim-declination').textContent).toMatch(/from DM43bp/);
+      expect(invoke).toHaveBeenCalledWith('magnetic_declination', { grid: 'DM43bp' });
+    });
+
+    it('wraps a magnetic bearing that normalizes to exactly 0 to 360° M (compass convention)', async () => {
+      // true 318 - decl 318 = 0 → displays as 360, never 0.
+      vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+        if (cmd === 'magnetic_declination') {
+          return { declDeg: 318, modelEpoch: 'WMM2025', validUntil: '2099-01-01' } satisfies DeclDto;
+        }
+        return undefined;
+      });
+      render(<StationRail station={station} prediction={prediction} predictionStatus="ok" operatorGrid="DM43bp" utcHour={21} />);
+      await waitFor(() => expect(screen.getByTestId('aim-bearing').textContent).toBe('360° M'));
+    });
+
+    it('re-invokes magnetic_declination when useStatusData().grid changes', async () => {
+      statusMock.grid = 'DM43bp';
+      const { rerender } = render(
+        <StationRail station={station} prediction={prediction} predictionStatus="ok" operatorGrid="DM43bp" utcHour={21} />,
+      );
+      await waitFor(() =>
+        expect(invoke).toHaveBeenCalledWith('magnetic_declination', { grid: 'DM43bp' }),
+      );
+      statusMock.grid = 'CN87';
+      rerender(<StationRail station={station} prediction={prediction} predictionStatus="ok" operatorGrid="DM43bp" utcHour={21} />);
+      await waitFor(() =>
+        expect(invoke).toHaveBeenCalledWith('magnetic_declination', { grid: 'CN87' }),
+      );
+    });
+
+    it('appends a drift note when validUntil is in the past (model expired, never blanks the hero)', async () => {
+      vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+        if (cmd === 'magnetic_declination') {
+          return { declDeg: 10, modelEpoch: 'WMM2025', validUntil: '2020-01-01' } satisfies DeclDto;
+        }
+        return undefined;
+      });
+      render(<StationRail station={station} prediction={prediction} predictionStatus="ok" operatorGrid="DM43bp" utcHour={21} />);
+      await waitFor(() =>
+        expect(screen.getByTestId('aim-declination').textContent).toMatch(/model expired/),
+      );
+      // The hero keeps rendering the (now-stale) magnetic bearing — never blanks.
+      expect(screen.getByTestId('aim-bearing').textContent).toBe('308° M');
+    });
+
+    it('renders — with no declination line when there is no operator grid at all', () => {
+      statusMock.grid = null;
+      render(<StationRail station={station} prediction={null} predictionStatus="no-location" operatorGrid="" utcHour={21} />);
+      expect(screen.getByTestId('aim-bearing').textContent).toBe('—');
+      expect(screen.queryByTestId('aim-declination')).toBeNull();
+      expect(screen.queryByTestId('aim-bearing-true')).toBeNull();
+    });
+
+    it('degrades to the plain true bearing (no crash, no M suffix) when magnetic_declination rejects', async () => {
+      vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+        if (cmd === 'magnetic_declination') return Promise.reject(new Error('invalid-grid'));
+        return undefined;
+      });
+      render(<StationRail station={station} prediction={prediction} predictionStatus="ok" operatorGrid="DM43bp" utcHour={21} />);
+      await waitFor(() => expect(invoke).toHaveBeenCalledWith('magnetic_declination', { grid: 'DM43bp' }));
+      // Bearing is still known (from the prediction) — degrades to the plain
+      // true-bearing reading, never throws, never shows an M/T split it can't
+      // back with real declination.
+      expect(screen.getByTestId('aim-bearing').textContent).toBe('318°');
+      expect(screen.queryByTestId('aim-bearing-true')).toBeNull();
+      expect(screen.queryByTestId('aim-declination')).toBeNull();
     });
   });
 });
