@@ -28,6 +28,7 @@ export interface WwvRefreshOutcome {
   indices: SolarIndices | null;
   source: string;
   no_copy: boolean;
+  wav_path: string | null;
 }
 
 export interface SolarSnapshot {
@@ -45,4 +46,30 @@ export async function refreshOffair(nowMs: number): Promise<WwvRefreshOutcome> {
 /** Read the last-persisted solar snapshot, whatever its source (SWPC, RF, or off-air). */
 export async function readSnapshot(): Promise<SolarSnapshot | null> {
   return await invoke<SolarSnapshot | null>('wwv_offair_snapshot_read');
+}
+
+/** Read a captured off-air clip's raw WAV bytes for local playback (e.g. a no-copy capture). */
+export async function readClip(path: string): Promise<Uint8Array> {
+  const bytes = await invoke<number[]>('wwv_offair_read_clip', { path });
+  return new Uint8Array(bytes);
+}
+
+/** Manually ingest solar indices heard/read by ear when the automatic decode had no copy. */
+export async function manualIngest(
+  sfi: number,
+  aIndex: number | null,
+  kIndex: number | null,
+  nowMs: number,
+): Promise<WwvRefreshOutcome> {
+  return await invoke<WwvRefreshOutcome>('wwv_offair_manual_ingest', { sfi, aIndex, kIndex, nowMs });
+}
+
+/** Whether the operator's rig is CAT-controlled so an armed capture can auto-tune to WWV. */
+export async function catConfigured(): Promise<boolean> {
+  return await invoke<boolean>('wwv_offair_cat_configured');
+}
+
+/** Delete a kept no-copy capture WAV once it's no longer needed (manual entry done, or re-armed). */
+export async function discardClip(path: string): Promise<void> {
+  await invoke('wwv_offair_discard_clip', { path });
 }

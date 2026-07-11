@@ -50,7 +50,22 @@ pub fn normalize_spoken_numbers(transcript: &str) -> String {
                     if in_point {
                         frac.get_or_insert_with(String::new).push_str(&d.to_string());
                     } else if let Some(ten) = word_to_ten(w) {
-                        acc = Some(acc.unwrap_or(0) + ten);
+                        // A tens word (twenty..ninety) only combines with a
+                        // preceding value that is a clean hundreds multiple
+                        // ("one hundred fifty" -> 150). A bare units value before
+                        // a tens word is malformed shorthand ("one fifty"): flush
+                        // it and restart, so parse_wwv sees a broken number and
+                        // reports no-copy rather than fabricating a wrong SFI
+                        // (e.g. "one fifty" -> 51, which would pass the [50,500]
+                        // bound as a bogus quiet-sun reading).
+                        match acc {
+                            Some(a) if a >= 100 && a % 100 == 0 => acc = Some(a + ten),
+                            Some(_) => {
+                                flush(&mut acc, &mut frac, &mut out);
+                                acc = Some(ten);
+                            }
+                            None => acc = Some(ten),
+                        }
                     } else {
                         acc = Some(acc.unwrap_or(0) + d);
                     }
@@ -130,5 +145,24 @@ mod tests {
     #[test]
     fn passthrough_existing_digits() {
         assert!(normalize_spoken_numbers("Solar flux 142 reported").contains("142"));
+    }
+
+    #[test]
+    fn full_hundreds_form_combines() {
+        // WWV's actual phrasing: "one hundred fifty" -> 150.
+        let t = normalize_spoken_numbers("solar flux one hundred fifty");
+        assert!(t.contains("solar flux 150"), "got: {t}");
+        // and with a trailing unit: "one hundred twenty three" -> 123.
+        assert!(normalize_spoken_numbers("one hundred twenty three").contains("123"));
+    }
+
+    #[test]
+    fn shorthand_tens_does_not_fabricate_sfi() {
+        // "one fifty" (no "hundred") is malformed shorthand. It must NOT become
+        // 51 (which would pass the [50,500] SFI bound as a bogus reading); it
+        // degrades to a broken number so parse_wwv reports no-copy.
+        let t = normalize_spoken_numbers("solar flux one fifty");
+        assert!(!t.contains("51"), "must not fabricate 51 from 'one fifty': {t}");
+        assert!(t.contains('1') && t.contains("50"), "degrades to 1 50: {t}");
     }
 }
