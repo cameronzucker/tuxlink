@@ -846,6 +846,7 @@ mod tests {
             counts: AttemptCounts { ok: 1, fail: 0 },
             last_seen: "2026-07-11T12:00:00-07:00".into(),
             last_ok: Some("2026-07-11T12:00:00-07:00".into()),
+            last_ok_direction: Some(Direction::Incoming),
         }];
         stored.endpoints = vec![Endpoint {
             id: "e1".into(),

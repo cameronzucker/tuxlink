@@ -173,6 +173,13 @@ pub struct Channel {
     /// every pre-T-F record loads with `None`.
     #[serde(default)]
     pub last_ok: Option<String>,
+    /// Direction of the [`Channel::last_ok`] success — set atomically WITH
+    /// `last_ok`, on ok outcomes only. [`Channel::direction`] mutates on EVERY
+    /// observation (failures included), so it cannot truthfully flavor the
+    /// success verb ("heard" vs "reached"); this field can. `None` on pre-T-F
+    /// records and on channels that have never completed a session.
+    #[serde(default)]
+    pub last_ok_direction: Option<Direction>,
 }
 
 /// One network reachability row (telnet P2P).
@@ -283,6 +290,10 @@ mod tests {
         )
         .expect("a record without last_ok must load");
         assert_eq!(ch.last_ok, None, "absent last_ok defaults to None");
+        assert_eq!(
+            ch.last_ok_direction, None,
+            "absent last_ok_direction defaults to None"
+        );
 
         let ep: Endpoint = serde_json::from_str(
             r#"{"id":"e1","host":"peer.example","port":8772,
@@ -302,9 +313,14 @@ mod tests {
             counts: AttemptCounts { ok: 1, fail: 0 },
             last_seen: "2026-07-11T12:05:00-07:00".into(),
             last_ok: Some("2026-07-11T12:05:00-07:00".into()),
+            last_ok_direction: Some(Direction::Outgoing),
         };
         let json = serde_json::to_string(&ch).unwrap();
         assert!(json.contains(r#""last_ok":"2026-07-11T12:05:00-07:00""#), "{json}");
+        assert!(
+            json.contains(r#""last_ok_direction":"outgoing""#),
+            "last_ok_direction serializes as the kebab-case Direction tag: {json}"
+        );
         assert_eq!(serde_json::from_str::<Channel>(&json).unwrap(), ch);
     }
 

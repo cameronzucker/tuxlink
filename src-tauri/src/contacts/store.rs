@@ -474,8 +474,11 @@ impl ContactsStore {
                         if ok {
                             ch.counts.ok = ch.counts.ok.saturating_add(1);
                             // Success-only recency (T-F Part 0): only an OK bumps
-                            // last_ok; a fail leaves the prior success intact.
+                            // last_ok, and its direction is captured ATOMICALLY
+                            // with it — `ch.direction` below mutates on failures
+                            // too, so it cannot truthfully flavor the success verb.
                             ch.last_ok = Some(now.clone());
+                            ch.last_ok_direction = Some(obs.direction);
                         } else {
                             ch.counts.fail = ch.counts.fail.saturating_add(1);
                         }
@@ -494,8 +497,10 @@ impl ContactsStore {
                                 fail: u32::from(!ok),
                             },
                             last_seen: now.clone(),
-                            // last_ok is set ONLY on a successful first attempt.
+                            // last_ok (+ its direction) is set ONLY on a
+                            // successful first attempt, atomically.
                             last_ok: if ok { Some(now.clone()) } else { None },
+                            last_ok_direction: if ok { Some(obs.direction) } else { None },
                         });
                     }
                 }
@@ -1071,8 +1076,10 @@ mod tests {
         assert_eq!(ch.counts.fail, 1);
         assert_eq!(ch.last_seen, "2026-07-11T12:00:00-07:00");
         assert_eq!(ch.last_ok, None, "a fail must not set last_ok");
+        assert_eq!(ch.last_ok_direction, None, "a fail must not set last_ok_direction");
 
-        // A later SUCCESS: last_ok now set to the success instant.
+        // A later SUCCESS: last_ok now set to the success instant, and its
+        // direction captured atomically with it.
         s.apply_observation(
             &rf_obs("W6ABC", Direction::Outgoing, ObservationPhase::B2fOk),
             "2026-07-11T12:05:00-07:00".into(),
@@ -1081,8 +1088,10 @@ mod tests {
         let ch = &s.contacts()[0].channels[0];
         assert_eq!(ch.counts.ok, 1);
         assert_eq!(ch.last_ok.as_deref(), Some("2026-07-11T12:05:00-07:00"));
+        assert_eq!(ch.last_ok_direction, Some(Direction::Outgoing));
 
-        // A subsequent FAIL bumps last_seen but PRESERVES the earlier last_ok.
+        // A subsequent FAIL bumps last_seen but PRESERVES the earlier last_ok
+        // (and its direction).
         s.apply_observation(
             &rf_obs("W6ABC", Direction::Outgoing, ObservationPhase::AbortedOrWedged),
             "2026-07-11T12:10:00-07:00".into(),
@@ -1096,6 +1105,62 @@ mod tests {
             Some("2026-07-11T12:05:00-07:00"),
             "a later fail must not clobber the earlier success"
         );
+        assert_eq!(
+            ch.last_ok_direction,
+            Some(Direction::Outgoing),
+            "a later fail must not clobber the success direction"
+        );
+    }
+
+    #[test]
+    fn last_ok_direction_survives_an_opposite_direction_failure() {
+        // T-F review Finding 1: `direction` mutates on EVERY observation
+        // (failures included), so it cannot flavor the success verb. An
+        // incoming SUCCESS followed by an outgoing FAILED dial on the SAME
+        // channel key must keep last_ok_direction = Incoming — the "heard
+        // 3h ago" claim stays literally true even though `direction` now
+        // reads Outgoing.
+        let dir = tempdir().unwrap();
+        let mut s = ContactsStore::open(dir.path().join("contacts.json"));
+        s.apply_observation(
+            &rf_obs("W6ABC", Direction::Incoming, ObservationPhase::Accepted),
+            "2026-07-11T09:00:00-07:00".into(),
+        )
+        .unwrap();
+        s.apply_observation(
+            &rf_obs("W6ABC", Direction::Outgoing, ObservationPhase::B2fFail),
+            "2026-07-11T12:00:00-07:00".into(),
+        )
+        .unwrap();
+        let ch = &s.contacts()[0].channels[0];
+        assert_eq!(ch.direction, Direction::Outgoing, "direction mutated by the failed dial");
+        assert_eq!(ch.last_ok.as_deref(), Some("2026-07-11T09:00:00-07:00"));
+        assert_eq!(
+            ch.last_ok_direction,
+            Some(Direction::Incoming),
+            "the success's own direction survives the opposite-direction failure"
+        );
+
+        // The reverse ordering: outgoing success, then incoming failure
+        // (e.g. a later rejected-then-wedged inbound attempt on the same key).
+        s.apply_observation(
+            &rf_obs("K7XYZ", Direction::Outgoing, ObservationPhase::B2fOk),
+            "2026-07-11T09:00:00-07:00".into(),
+        )
+        .unwrap();
+        s.apply_observation(
+            &rf_obs("K7XYZ", Direction::Incoming, ObservationPhase::AbortedOrWedged),
+            "2026-07-11T12:00:00-07:00".into(),
+        )
+        .unwrap();
+        let ch = &s
+            .contacts()
+            .iter()
+            .find(|c| c.callsign == "K7XYZ")
+            .unwrap()
+            .channels[0];
+        assert_eq!(ch.direction, Direction::Incoming);
+        assert_eq!(ch.last_ok_direction, Some(Direction::Outgoing));
     }
 
     #[test]

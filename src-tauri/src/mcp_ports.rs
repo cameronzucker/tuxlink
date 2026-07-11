@@ -3567,6 +3567,7 @@ mod tests {
                 counts: AttemptCounts { ok: 3, fail: 1 },
                 last_seen: "2026-07-10T12:30:00-07:00".into(),
                 last_ok: Some("2026-07-10T12:30:00-07:00".into()),
+                last_ok_direction: Some(Direction::Outgoing),
             }],
             endpoints: vec![
                 Endpoint {
