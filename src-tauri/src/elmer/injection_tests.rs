@@ -193,6 +193,9 @@ fn minimal_args_for_tool(name: &str) -> serde_json::Value {
         "ardop_b2f_exchange" => serde_json::json!({ "target": "KX4Z-10" }),
         "vara_b2f_exchange" => serde_json::json!({ "target": "KX4Z-10" }),
         "packet_connect" => serde_json::json!({ "call": "KX4Z-10" }),
+        "telnet_p2p_connect" => {
+            serde_json::json!({ "peer_id": "p1", "endpoint_id": "e1" })
+        }
         _ => serde_json::json!({}),
     }
 }

@@ -1123,6 +1123,31 @@ fn map_qsy_candidates(
     })
 }
 
+/// The agent may dial ONLY an `Operator`-provenance endpoint, addressed by ids
+/// [R2-S3][R1-C4] — an `ObservedIncoming` (unverified claimed identity) or an
+/// unknown endpoint id is refused. Pure (no store, no I/O) so the resolution
+/// rule is unit-tested in isolation. The returned reference is the vetted
+/// endpoint whose `host`/`port` the caller resolves + denylists.
+fn resolve_agent_dialable_endpoint<'a>(
+    peer: &'a crate::peers::model::Peer,
+    endpoint_id: &str,
+) -> Result<&'a crate::peers::model::Endpoint, String> {
+    let ep = peer
+        .endpoints
+        .iter()
+        .find(|e| e.id == endpoint_id)
+        .ok_or_else(|| format!("no endpoint {endpoint_id} on peer {}", peer.id))?;
+    if ep.provenance != crate::peers::model::Provenance::Operator {
+        return Err(
+            "endpoint is not operator-verified (ObservedIncoming endpoints are \
+             agent-non-dialable; promote it in Settings → P2P Peers after \
+             out-of-band verification)"
+                .to_string(),
+        );
+    }
+    Ok(ep)
+}
+
 #[async_trait]
 impl EgressPort for MonolithEgressPort {
     async fn cms_connect(&self) -> Result<(), EgressPortError> {
@@ -1369,6 +1394,199 @@ impl EgressPort for MonolithEgressPort {
                 )
                 .await
                 .map_err(|e| EgressPortError::Failed(redact_err(format!("{e:?}"))))
+            },
+        )
+        .await
+        .map_err(|d| EgressPortError::Denied(d.to_string()))?
+    }
+
+    async fn telnet_p2p_exchange(
+        &self,
+        peer_id: String,
+        endpoint_id: String,
+    ) -> Result<(), EgressPortError> {
+        let audit = egress_audit_sink(self.app.clone());
+        let app = self.app.clone();
+        guarded_egress(
+            &self.guard,
+            EgressAuthority::Agent,
+            "telnet_p2p_exchange",
+            &audit,
+            || async move {
+                use crate::peers::recorder::{ObservationGuard, ObservationPhase, PeerObservation};
+                use crate::winlink::session::{ExchangeConfig, SessionIntent};
+                use crate::winlink::telnet_p2p::{self, P2pTelnetError};
+
+                // 1. Resolve host:port SERVER-SIDE from an Operator-provenance
+                //    endpoint on the saved peer. The agent supplied only ids
+                //    [R2-S3]; a raw host never crosses the tool boundary. Extract
+                //    the owned host/port/callsign, then drop the store lock.
+                let (host, port, peer_callsign) = {
+                    let store = app
+                        .state::<Arc<std::sync::Mutex<crate::peers::store::PeersStore>>>();
+                    let guard = store
+                        .lock()
+                        .map_err(|_| EgressPortError::Failed("peers store poisoned".into()))?;
+                    let peer = guard
+                        .file()
+                        .peers
+                        .iter()
+                        .find(|p| p.id == peer_id)
+                        .ok_or_else(|| {
+                            EgressPortError::Failed(format!("no saved peer with id {peer_id}"))
+                        })?;
+                    let ep = resolve_agent_dialable_endpoint(peer, &endpoint_id)
+                        .map_err(EgressPortError::Failed)?;
+                    // The wire target is the peer's exact presented callsign; fall
+                    // back to the canonical base if none was ever observed.
+                    let callsign = peer
+                        .presented_callsigns
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| peer.canonical_base.clone());
+                    (ep.host.clone(), ep.port, callsign)
+                };
+
+                // 2. Resolve DNS ONCE + apply the egress denylist to every
+                //    candidate. The returned addrs are the ONLY thing dialed —
+                //    no re-resolve between check and connect [R5-6].
+                let addrs = telnet_p2p::vet_peer_endpoint(&host, port)
+                    .map_err(|e| EgressPortError::Failed(redact_err(e.to_string())))?;
+
+                // 3. Password from the endpoint keyring — NEVER from the agent
+                //    [R2-S7]. A keyring miss (`Ok(None)`) means no password
+                //    challenge is attempted.
+                let peer_password =
+                    crate::winlink::credentials::p2p_endpoint_password_read(&peer_id, &endpoint_id)
+                        .map_err(|e| EgressPortError::Failed(redact_err(e)))?;
+
+                // 4. MYCALL authority is the authenticated active identity, never
+                //    an agent-supplied value.
+                let backend = app
+                    .state::<crate::app_backend::BackendState>()
+                    .current()
+                    .ok_or_else(|| EgressPortError::Failed("backend offline".into()))?;
+                let session_id = backend
+                    .active_identity()
+                    .map_err(|e| EgressPortError::Failed(redact_err(format!("{e:?}"))))?;
+                let mycall = session_id.mycall().as_str().to_string();
+                let locator = crate::config::read_config()
+                    .ok()
+                    .map(|cfg| crate::position::effective_broadcast_locator(&cfg, None))
+                    .unwrap_or_default();
+
+                // 5. Build the native mailbox at the same on-disk store the UI
+                //    dial uses (`<app_data>/native-mbox`).
+                let mbox_dir = app
+                    .path()
+                    .app_data_dir()
+                    .map_err(|e| EgressPortError::Failed(format!("app data dir: {e}")))?
+                    .join("native-mbox");
+                let mut mailbox = crate::native_mailbox::Mailbox::new(mbox_dir);
+                if let Some(full) = crate::ui_commands::sole_full_identity() {
+                    mailbox = mailbox.with_default_identity(&full);
+                }
+                if let Some(svc) = app.try_state::<crate::search::commands::SearchService>() {
+                    mailbox = mailbox.with_index(svc.index.clone());
+                }
+
+                // 6. Outbound proposals. P2p hits the outbound safety gate
+                //    (build_outbound_proposals rejects P2p) — degrade to an empty
+                //    outbound exactly like the UI dial, so the handshake still
+                //    completes and no proposal ships.
+                let outbound = match crate::winlink_backend::build_outbound_proposals(
+                    &mailbox,
+                    SessionIntent::P2p,
+                    None,
+                    Some(mycall.as_str()),
+                ) {
+                    Ok(v) => v,
+                    Err(crate::winlink_backend::BackendError::MessageRejected(_)) => Vec::new(),
+                    Err(e) => {
+                        return Err(EgressPortError::Failed(redact_err(format!("{e:?}"))))
+                    }
+                };
+
+                let config = ExchangeConfig {
+                    mycall,
+                    targetcall: peer_callsign.clone(),
+                    locator,
+                    // P2P never uses B2F secure-login (spec §4.3).
+                    password: None,
+                    intent: SessionIntent::P2p,
+                };
+
+                // 7. ObservationGuard (amendment b): the agent path installs its
+                //    OWN guard (distinct from the UI-command guard) so an agent
+                //    dial populates the roster with no UI mounted (spec §3).
+                //    Operator provenance (the endpoint was operator-verified),
+                //    direction Outgoing. Fires on drop with the latest phase.
+                let obs_guard = crate::peers::recorder::observation_sink().map(|s| {
+                    ObservationGuard::new(
+                        s,
+                        PeerObservation {
+                            path: crate::peers::recorder::ObservedPath::Telnet {
+                                host: host.clone(),
+                                port,
+                                provenance: crate::peers::model::Provenance::Operator,
+                            },
+                            direction: crate::peers::model::Direction::Outgoing,
+                            presented_target: peer_callsign.clone(),
+                            phase: ObservationPhase::DialAttempted,
+                        },
+                    )
+                });
+
+                // 8. Run the blocking exchange against the VETTED addrs — no
+                //    second lookup (DNS-rebinding-safe [R5-6]).
+                let addrs_moved = addrs;
+                let callsign_moved = peer_callsign.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    telnet_p2p::connect_and_exchange_to_addrs(
+                        &addrs_moved,
+                        &callsign_moved,
+                        peer_password.as_deref(),
+                        &config,
+                        outbound,
+                        &|_line: &str| {},
+                        &|_line: &str| {},
+                        |_proposals, _manifest| Ok(Vec::new()),
+                    )
+                })
+                .await
+                .map_err(|e| EgressPortError::Failed(format!("p2p task join: {e}")))?;
+
+                // 9. Advance the observation guard to match the outcome, then
+                //    file received/sent into the mailbox on success.
+                match result {
+                    Ok(exchange) => {
+                        if let Some(g) = &obs_guard {
+                            g.set_phase(ObservationPhase::B2fOk);
+                        }
+                        crate::ui_commands::file_p2p_exchange_result(
+                            &mailbox,
+                            &exchange,
+                            &|_level, _line| {},
+                        );
+                        Ok(())
+                    }
+                    Err(e) => {
+                        if let Some(g) = &obs_guard {
+                            match &e {
+                                P2pTelnetError::Login(_) => {
+                                    g.set_phase(ObservationPhase::LoginFailed)
+                                }
+                                P2pTelnetError::Exchange(_) => {
+                                    g.set_phase(ObservationPhase::B2fFail)
+                                }
+                                // Resolve / Connect / EgressDenied never connected
+                                // — leave the armed DialAttempted (classifies Fail).
+                                _ => {}
+                            }
+                        }
+                        Err(EgressPortError::Failed(redact_err(e.to_string())))
+                    }
+                }
             },
         )
         .await
@@ -3040,6 +3258,73 @@ mod tests {
         any_freq_in_bands, curate_gateway, curate_peer, is_plausible_callsign, khz_to_band,
         sanitize_channel, sort_gateways_by_distance,
     };
+
+    // ── Task 20: agent telnet dial resolution rule ──
+    mod agent_telnet_dial {
+        use crate::peers::model::{
+            Endpoint, IdentityKind, Origin, Peer, Provenance, RecordSource,
+        };
+
+        /// A peer carrying one Operator-verified endpoint and one
+        /// ObservedIncoming (unverified) endpoint.
+        fn peer_with_two_endpoints() -> Peer {
+            Peer {
+                id: "p1".to_string(),
+                canonical_base: "W6ABC".to_string(),
+                presented_callsigns: vec!["W6ABC-7".to_string()],
+                identity_kind: IdentityKind::Individual,
+                do_not_merge: false,
+                conflict: false,
+                source: RecordSource::Manual,
+                origin: Origin::Manual,
+                contact_id: None,
+                grid: None,
+                note: String::new(),
+                created_at: "2026-07-10T12:00:00-07:00".to_string(),
+                last_connected_at: None,
+                channels: vec![],
+                endpoints: vec![
+                    Endpoint {
+                        id: "op-ep".to_string(),
+                        host: "peer.example.org".to_string(),
+                        port: 8772,
+                        provenance: Provenance::Operator,
+                        last_seen: "2026-07-10T12:00:00-07:00".to_string(),
+                    },
+                    Endpoint {
+                        id: "obs-ep".to_string(),
+                        host: "10.0.0.9".to_string(),
+                        port: 8772,
+                        provenance: Provenance::ObservedIncoming,
+                        last_seen: "2026-07-10T12:00:00-07:00".to_string(),
+                    },
+                ],
+            }
+        }
+
+        #[test]
+        fn refuses_observed_incoming_and_unknown_ids() {
+            // Operator provenance only [R2-S3]; unknown ids are errors.
+            let peer = peer_with_two_endpoints();
+            let op_id = peer
+                .endpoints
+                .iter()
+                .find(|e| e.provenance == Provenance::Operator)
+                .unwrap()
+                .id
+                .clone();
+            let obs_id = peer
+                .endpoints
+                .iter()
+                .find(|e| e.provenance == Provenance::ObservedIncoming)
+                .unwrap()
+                .id
+                .clone();
+            assert!(super::super::resolve_agent_dialable_endpoint(&peer, &op_id).is_ok());
+            assert!(super::super::resolve_agent_dialable_endpoint(&peer, &obs_id).is_err());
+            assert!(super::super::resolve_agent_dialable_endpoint(&peer, "nope").is_err());
+        }
+    }
 
     // ── tuxlink-z2nwx Contract 3: print + report export ──
     mod z2nwx {

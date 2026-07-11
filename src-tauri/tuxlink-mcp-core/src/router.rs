@@ -739,6 +739,28 @@ impl TuxlinkMcp {
         Ok(CallToolResult::success(vec![ContentBlock::json("ok")?]))
     }
 
+    #[tool(
+        name = "telnet_p2p_connect",
+        description = "Run a Winlink P2P exchange with a saved peer over the internet (TCP, no RF). Takes a peer_id + endpoint_id from find_peers; only operator-verified endpoints are dialable (the agent never supplies a raw host:port). EGRESS: requires armed send-authority and an un-tainted session; denied otherwise."
+    )]
+    pub async fn telnet_p2p_connect(
+        &self,
+        params: Parameters<PeerEndpointParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(PeerEndpointParams {
+            peer_id,
+            endpoint_id,
+        }) = params;
+        self.state
+            .egress
+            .telnet_p2p_exchange(peer_id, endpoint_id)
+            .await
+            .map_err(egress_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::text(
+            "exchange complete",
+        )]))
+    }
+
     // ----- UNGATED abort (stopping is ALWAYS allowed) -----
     //
     // Pure-stop tools. Never gated by armed/taint state: a working abort is a
@@ -1195,6 +1217,17 @@ pub struct PacketConnectParams {
     /// Optional ordered digipeater path; empty for a direct connection.
     #[serde(default)]
     pub path: Vec<String>,
+}
+
+/// `{ "peer_id": "…", "endpoint_id": "…" }` — input for `telnet_p2p_connect`.
+/// Both ids come from `find_peers`; the agent supplies NO host or port
+/// [R2-S3][R5-6].
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct PeerEndpointParams {
+    /// The saved peer's stable id (from `find_peers`).
+    pub peer_id: String,
+    /// The operator-verified endpoint id on that peer (from `find_peers`).
+    pub endpoint_id: String,
 }
 
 /// `{ "drive_level": 80 }` — input for `config_set_ardop`.

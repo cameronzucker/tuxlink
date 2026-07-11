@@ -369,6 +369,13 @@ impl EgressPort for MockEgress {
     ) -> Result<(), EgressPortError> {
         self.gated("packet_connect").await
     }
+    async fn telnet_p2p_exchange(
+        &self,
+        _peer_id: String,
+        _endpoint_id: String,
+    ) -> Result<(), EgressPortError> {
+        self.gated("telnet_p2p_exchange").await
+    }
 }
 
 /// UNGATED abort mock. Flips a shared `aborted` flag; never gated.

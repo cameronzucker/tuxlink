@@ -46,7 +46,39 @@ use crate::winlink_backend::{
 /// `mailbox/<FULL>/` — matching the production read side + the startup
 /// `migrate_legacy_layout`. `None` (no identity yet, fresh install) leaves the
 /// mailbox un-defaulted (resolves the `_default` namespace).
-fn sole_full_identity() -> Option<crate::identity::Callsign> {
+/// File a completed P2P-Telnet exchange's results into the native mailbox: store
+/// received messages into Inbox and move successfully-sent MIDs from Outbox to
+/// Sent. Mirrors the post-exchange handling in `native_telnet_exchange`. Shared
+/// by the operator dial ([`telnet_p2p_connect`]) and the agent dial (the MCP
+/// `telnet_p2p_exchange` egress port). Each failure is reported via `on_line`
+/// but NEVER fails the exchange — the bytes are on disk either way; a duplicate
+/// send on the next dial is the worst case of a stuck Outbox→Sent move, and the
+/// operator is told about it via `on_line`.
+pub(crate) fn file_p2p_exchange_result(
+    mailbox: &crate::native_mailbox::Mailbox,
+    exchange: &crate::winlink::session::ExchangeResult,
+    on_line: &dyn Fn(LogLevel, String),
+) {
+    for message in &exchange.received {
+        if let Err(e) = mailbox.store(MailboxFolder::Inbox, &message.to_bytes()) {
+            on_line(LogLevel::Warn, format!("Inbox store failed: {e}"));
+        }
+    }
+    for mid in &exchange.sent {
+        if let Err(e) = mailbox.move_to(
+            MailboxFolder::Outbox,
+            MailboxFolder::Sent,
+            &MessageId(mid.clone()),
+        ) {
+            on_line(
+                LogLevel::Warn,
+                format!("Outbox→Sent move failed for {mid}: {e}"),
+            );
+        }
+    }
+}
+
+pub(crate) fn sole_full_identity() -> Option<crate::identity::Callsign> {
     crate::identity::IdentityStore::load(&crate::config::identity_store_path())
         .ok()
         .and_then(|s| s.full().first().map(|f| f.callsign.clone()))
@@ -8018,36 +8050,11 @@ pub async fn telnet_p2p_connect(
                 g.set_phase(crate::peers::recorder::ObservationPhase::B2fOk);
             }
             // tuxlink-l55l: file received messages into Inbox and move
-            // successfully-sent MIDs from Outbox to Sent. Mirrors the
-            // post-exchange handling in `native_telnet_exchange`. Failures
-            // here are logged but don't fail the exchange — the bytes are on
-            // disk either way; a duplicate-send next dial is the worst-case
-            // outcome of a stuck Outbox→Sent move and the operator is told
-            // about it via the session log.
-            for message in &exchange.received {
-                if let Err(e) = mailbox.store(MailboxFolder::Inbox, &message.to_bytes()) {
-                    emit_session_line(
-                        &app,
-                        &log,
-                        LogLevel::Warn,
-                        format!("Inbox store failed: {e}"),
-                    );
-                }
-            }
-            for mid in &exchange.sent {
-                if let Err(e) = mailbox.move_to(
-                    MailboxFolder::Outbox,
-                    MailboxFolder::Sent,
-                    &MessageId(mid.clone()),
-                ) {
-                    emit_session_line(
-                        &app,
-                        &log,
-                        LogLevel::Warn,
-                        format!("Outbox→Sent move failed for {mid}: {e}"),
-                    );
-                }
-            }
+            // successfully-sent MIDs from Outbox to Sent. Shared with the agent
+            // dial (MCP `telnet_p2p_exchange`) via `file_p2p_exchange_result`.
+            file_p2p_exchange_result(&mailbox, &exchange, &|level, line| {
+                emit_session_line(&app, &log, level, line);
+            });
 
             // Per-message movement detail (Received/Sent/Rejected/Deferred by
             // subject), mirroring the shared exchange filing paths so a Telnet

@@ -911,6 +911,21 @@ pub trait EgressPort: Send + Sync {
     /// Connect an AX.25 packet session to `call` over the optional digipeater
     /// `path`.
     async fn packet_connect(&self, call: String, path: Vec<String>) -> Result<(), EgressPortError>;
+    /// Run a Winlink P2P-Telnet B2F exchange with a SAVED peer over the internet
+    /// (TCP, no RF), addressed ONLY by `(peer_id, endpoint_id)` — the agent NEVER
+    /// supplies a raw host [R2-S3][R5-6]. The impl resolves `host:port` from an
+    /// `Operator`-provenance endpoint on that peer (an `ObservedIncoming` or
+    /// unknown endpoint is refused), resolves DNS ONCE, applies the egress
+    /// denylist to EVERY candidate (any denied ⇒ refuse — a mixed answer is
+    /// rebinding-shaped), and dials a vetted concrete address with NO second
+    /// lookup. The endpoint password comes from the keyring, never the agent
+    /// [R2-S7]. Gated egress: a disarmed / expired / tainted / poisoned session
+    /// is [`EgressPortError::Denied`] and nothing leaves the box.
+    async fn telnet_p2p_exchange(
+        &self,
+        peer_id: String,
+        endpoint_id: String,
+    ) -> Result<(), EgressPortError>;
 }
 
 /// UNGATED pure-stop capability. Stopping a transmission/connection is ALWAYS
