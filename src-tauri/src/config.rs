@@ -3073,7 +3073,7 @@ mod tests {
         );
         let cfg: Config =
             serde_json::from_str(&json).expect("Config with wwv_offair must deserialize");
-        let wwv = cfg.wwv_offair.expect("wwv_offair should be Some");
+        let wwv = cfg.wwv_offair.as_ref().expect("wwv_offair should be Some");
         assert_eq!(wwv.capture_device, "plughw:1,0");
         assert!(wwv.model_path.is_none(), "absent model_path defaults to None");
         assert!(
