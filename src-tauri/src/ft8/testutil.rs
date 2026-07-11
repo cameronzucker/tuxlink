@@ -218,6 +218,8 @@ mod tests {
         let clock = SyntheticClock::new(0);
         let steps = Arc::new(Mutex::new(VecDeque::from([
             SourceStep::Frames { frames: 48, value: 7, gap: None },
+            SourceStep::Idle, // explicit Idle step (constructs the variant —
+                              // an exhausted queue exercises only the None arm)
             SourceStep::Fail(SourceError::Busy),
         ])));
         let mut src = ScriptedSource { steps, clock: clock.clone() };
@@ -226,6 +228,8 @@ mod tests {
         assert_eq!(batch.frames, 48);
         assert_eq!(buf[0], 7);
         assert_eq!(batch.mono_ts_us, 1_000, "48 frames = 1 ms at 48 kHz");
+        let explicit_idle = src.read(&mut buf).unwrap();
+        assert_eq!(explicit_idle.frames, 0, "explicit Idle: empty batch");
         assert_eq!(src.read(&mut buf), Err(SourceError::Busy));
         // An exhausted queue behaves as Idle: empty batch, clock untouched.
         let idle = src.read(&mut buf).unwrap();
