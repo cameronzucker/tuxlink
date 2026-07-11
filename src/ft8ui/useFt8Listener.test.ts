@@ -446,7 +446,10 @@ describe('useFt8Listener — composed seam (golden fixture)', () => {
     // deriveBandActivity read ringTail[].band + outcome.kind + decodes (real keys).
     expect(result.current.bandActivity.get('20m')).toBeDefined();
     expect(result.current.bandActivity.get('40m')).toBeDefined();
-    expect(result.current.bandActivity.get('20m')?.active).toBe(true);
+    // 20m has a decoded, cat-confirmed slot in the golden ring_tail, so
+    // deriveBandActivity must read that evidence and produce a non-no-data tier
+    // (a wrong camelCase key would yield no evidence → 'no-data').
+    expect(result.current.bandActivity.get('20m')?.tier).not.toBe('no-data');
     // The golden ring_tail seeded the decodes ring.
     expect(result.current.decodesRing.length).toBeGreaterThanOrEqual(3);
   });

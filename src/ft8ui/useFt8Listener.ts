@@ -49,6 +49,8 @@ import {
   type Ft8UiState,
   type SlotRecord,
 } from './ft8Types';
+import { deriveUiState } from './deriveUiState';
+import { deriveBandActivity } from './deriveBandActivity';
 
 /** Ring capacity — oldest evicted past this (§Frontend data layer). */
 const RING_CAPACITY = 240;
@@ -69,69 +71,14 @@ export interface Ft8ListenerValue {
 const Ft8ListenerContext = createContext<Ft8ListenerValue | null>(null);
 
 // ---------------------------------------------------------------------------
-// Derivation stubs — Task B2 (deriveUiState) + B3 (deriveBandActivity) own the
-// authoritative implementations in their own modules and will replace these
-// imports. They are kept LOCAL for B1 so the data layer is self-contained and
-// the composed-seam golden-fixture test guards the Rust↔TS contract NOW: each
-// reads the REAL camelCase snapshot keys, so a Phase-A rename drift fails a test
-// rather than a user.
-// ---------------------------------------------------------------------------
-
-/** B2 stub — minimal axis/phase → Ft8UiState mapping (B2 finalizes 9-member logic). */
-function deriveUiState(snapshot: Ft8Snapshot | null): { state: Ft8UiState; flags: Ft8Flags } {
-  const flags: Ft8Flags = snapshot
-    ? {
-        clockUnsynced: snapshot.flags.clockUnsynced,
-        catFixedBand: snapshot.flags.catFixedBand,
-        jt9Degraded: snapshot.flags.jt9Degraded,
-      }
-    : { clockUnsynced: false, catFixedBand: false, jt9Degraded: false };
-
-  if (!snapshot) return { state: 'off', flags };
-
-  let state: Ft8UiState;
-  switch (snapshot.service.axis) {
-    case 'stopped':
-      state = 'off';
-      break;
-    case 'starting':
-    case 'stopping':
-      state = 'transitional';
-      break;
-    case 'yielded':
-      state = 'yielded';
-      break;
-    case 'blocked':
-      state = snapshot.service.reason === 'capture-wedged' ? 'wedged' : 'needs-setup';
-      break;
-    case 'listening':
-      state =
-        snapshot.slotPhase === 'waiting-first-slot'
-          ? 'waiting-first-slot'
-          : snapshot.slotPhase === 'band-dead'
-            ? 'band-dead'
-            : 'decoding';
-      break;
-    default:
-      state = 'transitional';
-  }
-  return { state, flags };
-}
-
-/** B3 stub — minimal per-band activity from the decode ring. */
-function deriveBandActivity(_snapshot: Ft8Snapshot | null, ring: SlotRecord[]): Map<string, BandDot> {
-  const map = new Map<string, BandDot>();
-  for (const rec of ring) {
-    const decoded = rec.outcome.kind === 'decoded' && rec.decodes.length > 0;
-    const prev = map.get(rec.band);
-    map.set(rec.band, {
-      band: rec.band,
-      active: decoded || (prev?.active ?? false),
-      lastDecodeUtcMs: decoded ? rec.slotUtcMs : (prev?.lastDecodeUtcMs ?? null),
-    });
-  }
-  return map;
-}
+// Loading-window default: before the first snapshot resolves, there is no
+// service state to derive. B2's deriveUiState is total over a real snapshot;
+// the null case is the pre-hydrate loading window (uiState 'off', all flags
+// clear). Consumers treat snapshot===null as loading (see the hook docs).
+const LOADING_UI_STATE: { state: Ft8UiState; flags: Ft8Flags } = {
+  state: 'off',
+  flags: { clockUnsynced: false, catFixedBand: false, jt9Degraded: false },
+};
 
 // ---------------------------------------------------------------------------
 // Ring helpers — pure, dedupe by slotUtcMs, chronological, bounded at 240.
@@ -271,8 +218,8 @@ export function Ft8ListenerProvider({ children }: { children: ReactNode }) {
     return {
       snapshot: merged,
       decodesRing: ring,
-      uiState: deriveUiState(merged),
-      bandActivity: deriveBandActivity(merged, ring),
+      uiState: merged ? deriveUiState(merged) : LOADING_UI_STATE,
+      bandActivity: deriveBandActivity(ring, Date.now()),
     };
   }, [snapshot, change, ring]);
 
