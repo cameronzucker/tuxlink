@@ -3102,6 +3102,7 @@ mod tests {
         // map "   " to None at the serde layer.
         let cfg = Config {
             elmer: crate::config::ElmerConfig::default(),
+            ft8: crate::config::Ft8Config::default(),
             schema_version: crate::config::CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: crate::config::ConnectConfig {
@@ -3822,6 +3823,7 @@ mod tests {
     fn test_config() -> Config {
         Config {
             elmer: crate::config::ElmerConfig::default(),
+            ft8: crate::config::Ft8Config::default(),
             schema_version: crate::config::CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: crate::config::ConnectConfig {
