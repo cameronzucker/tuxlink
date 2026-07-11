@@ -9,7 +9,10 @@ that issue's dangling "spec Part 2" pointer intended), tuxlink-sg5zw.2
 Status: DRAFT — operator-approved section by section in-session (2026-07-10);
 full 5-round adversarial review folded (R1 Codex, R2 security, R3 protocol, R4
 data-model/integration, R5 Codex re-attack) 2026-07-10. Ready for BRF Step 3
-(writing-plans).
+(writing-plans). **AMENDED 2026-07-11:** the operator design pivot at the
+Task-25 mock gate folds peers into Contacts and removes the agent telnet dial
+— see the binding AMENDMENT section immediately below, which supersedes
+Sections 1/2/4/5 where they conflict.
 
 > **Review-fold note.** This revision incorporates ~45 findings across all five
 > adversarial rounds (R5 re-attack confirmed the fold and added 10 refinements).
@@ -20,6 +23,88 @@ data-model/integration, R5 Codex re-attack) 2026-07-10. Ready for BRF Step 3
 > protocol, curate_peer, agent-tool signature change, keyring migration,
 > caps/quarantine). Per ADR 0018 the spec reflects the whole; a correct large
 > spec beats a wrong small one.
+
+## AMENDMENT — operator design pivot 2026-07-10/11: contacts are the superset (BINDING)
+
+> Status of this amendment: **operator decisions, recorded at the Task-25 mock
+> gate (2026-07-10, session oak-owl-taiga) and the follow-on design pass
+> (2026-07-11, session bluff-alder-kestrel).** Where this section conflicts
+> with Sections 1, 2, 4, 5, or Cross-store consistency below, **this section
+> wins.** The superseded text is retained for the review-finding record (the
+> `[R#-N]` security findings remain load-bearing where noted).
+
+### The decision
+
+**There is no separate peer entity and no `peers.json`. A peer is a contact.**
+The user model is "the stations I talk to," and Contacts already is that
+(2026-06-07 Contacts+Favorites design). The peer store re-implemented the
+Favorites reachability model with an identity-management layer on top —
+engineering parallelism, not a user need. Instead:
+
+1. **`Contact` becomes the superset of added + observed stations** via a tier
+   field: `confirmed` (operator added it — the curated address book, exactly
+   as before) and `unconfirmed` (auto-created from P2P session events or a
+   manual dial). Auto-creation NEVER lands in the curated tier, so the
+   2026-06-07 design's "no silent pollution" guarantee holds; its literal
+   "never auto-create" rule (§A.3) is amended to "never auto-create
+   `confirmed`."
+2. **Reachability lives ON the contact:** `channels` (RF: transport, exact
+   SSID'd wire target, via path, freq, bandwidth, direction, ok/fail counts,
+   last-seen) and `endpoints` (telnet: host, port, provenance, last-seen),
+   plus `grid`. Same shapes as the superseded §2 `Channel`/`Endpoint`; only
+   the parent entity changes. `contacts.json` schema_version bumps with
+   migration: existing records → `confirmed`, empty reachability.
+3. **"Verified" means curation, not authentication.** Pivot decision #2's
+   rationale stands: anyone can transmit any callsign, so no UI or doc copy
+   may imply identity verification. `confirmed` claims only "the operator
+   confirmed this entry into the address book." The "unverified claimed
+   identity" badge and the endpoint **promotion ceremony are removed**
+   (`peer_endpoint_promote` dies). Endpoint `provenance` survives with one
+   job: a stored password attaches to, and is only ever auto-sent to, an
+   operator-entered endpoint (`[R2-S7]` unchanged in force).
+4. **Identity merge machinery is deleted, not migrated:** `canonical_base` as
+   a merge key, `presented_callsigns`, merge/split, `do_not_merge`, conflict
+   records. Matching is **exact presented callsign only** — an observation
+   attaches to a contact iff the callsign matches exactly; otherwise it
+   creates its own `unconfirmed` contact. (The shared callsign module's
+   grammar validation + display sanitizer remain; `canonical_base` remains a
+   display/grouping helper where already used, never a merge key.)
+5. **The agent telnet P2P dial is removed entirely** (supersedes §4 "Agent
+   telnet dial"). Not for consent reasons — the armed egress gate is the
+   consent mechanism and works. The reason is destination-trust: a telnet
+   endpoint is a host:port that arming cannot vouch for, and the
+   DNS-rebinding denylist + provenance stack existed only to prop that up.
+   The tool, the denylist machinery, and the agent-path telnet observation
+   guard all go. The **radio (VARA/ARDOP) agent P2P dial stays** — no host to
+   distrust, the armed gate is complete (§4 RF-channel paragraph unchanged).
+   The **operator's** manual telnet dial is unchanged.
+6. **The agent curated read** (`find_peers`/`curate_peer`) re-reads from
+   contacts and **never reveals telnet `host:port` to the agent** under any
+   arm state (the agent cannot dial telnet, so it has no use for the
+   address). All other curation rules (`[R2-S1][R2-S9][R2-S11][R4-9]`)
+   carry over verbatim.
+7. **UI: no roster editor, no settings surface** (supersedes §5's "+ Add
+   peer" / "P2P Peers settings section"). ContactsPanel gains a **"Recent"**
+   section below the curated list (vocabulary shared with Favorites'
+   Recent). Within Recent, rows with a completed session carry the
+   **"Heard"** distinction ("dialed into my station" / reached); rows
+   without one read **"dialed · not reached yet"** — the row, not the
+   section, makes the RF claim (honest-record idiom, 2026-06-07 §B.3).
+   Contact detail shows live reachability rows with Connect (the Task-23a
+   seam). A **manual "dial a callsign" affordance lives in the finder** and
+   creates an `unconfirmed` contact. Promote = one-click add, same idiom as
+   mailbox suggestions.
+8. **Caps + limiter guard the `unconfirmed` tier only:** the inbound
+   rate-limit/quarantine (`[R2-S6]`) and the auto-record LRU cap apply to
+   auto-created `unconfirmed` contacts; `confirmed` contacts are never
+   auto-created and never evicted.
+9. **Cross-store consistency machinery dies with the second store** (the
+   `contacts:changed` → `reconcile_contact_links` listener). The favorites
+   bridge re-keys `Favorite.peer_id` → `Favorite.contact_id`.
+10. **Target model, out of scope here:** Favorites is conceptually an
+    elevated category of contacts; folding `stations.json` into contacts is
+    deliberately NOT in this feature (none of the definition-of-done flows
+    traverse it) and is filed as a follow-up bd issue.
 
 ## Problem
 

@@ -3,6 +3,8 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
 > **Before executing any Task N, read the "Review-fold binding amendments" section below and apply Task N's amendment as part of that task** — it overrides the original task body where they conflict, and includes one NEW task (23a, the frontend connect seam). The amendments come from two independent plan-review rounds (R1 Codex, R2 Claude).
+>
+> **THEN read "Operator pivot amendments (2026-07-10/11)"** — it supersedes Tasks 19/20/25/26 and replaces the peers.json storage model with a contacts-superset model. It outranks both the task bodies AND the review-fold amendments where they conflict. Canonical model: the spec's §AMENDMENT.
 
 **Goal:** Ship P2P as a complete, discoverable, verifiable mode: a first-class peer store auto-tracked at every transport's attempt-conclusion, a hardened trust boundary for the agent surface, peer rows in the finder and on both maps, and an engine-split (HF/SAT vs FM) VARA command plan that fixes the c39af/gbb05/m9kcd protocol defects.
 
@@ -23,6 +25,87 @@
 - **RADIO-1:** no task transmits. VARA behavior is verified against a scripted mock TCP server; the two-rig bench (spec §8) is operator-executed after merge.
 - **Timestamps:** on-disk peer timestamps are RFC3339 with local offset produced backend-side via `chrono::Local::now().to_rfc3339()` (chrono `clock` feature is enabled). Frontend-supplied `ts_local` continues to use `tsLocal()` where the favorites bridge crosses from the frontend.
 - **Commit discipline:** conventional commits, `Agent: <session-moniker>` trailer + `Co-Authored-By` line on every commit. Frequent small commits, one per task minimum.
+
+## Operator pivot amendments (2026-07-10/11) — BINDING, outranks task bodies + review-fold
+
+> Recorded at the Task-25 mock gate (mock rejected, 2026-07-10) and the
+> follow-on conversational design pass (2026-07-11). Canonical model:
+> `docs/superpowers/specs/2026-07-10-p2p-peer-model-design.md` §AMENDMENT.
+> Handoff record: `dev/handoffs/2026-07-10-oak-owl-taiga-p2p-design-pivot-fold-into-contacts.md`.
+> Tasks 1–18, 21–24, 23a, 27 are BUILT and stand; the pivot governs the
+> remaining work. Execution state ledger: `.superpowers/sdd/progress.md`.
+
+**The model change in one line:** no `peers.json`; `Contact` becomes the
+superset (tier `confirmed` | `unconfirmed`) and carries `channels` /
+`endpoints` / `grid`; identity merge machinery and the agent telnet dial are
+deleted; the UI is a "Recent" section (with per-row "Heard" distinction) in
+ContactsPanel plus reachability-with-Connect on contact detail, not a settings
+roster editor.
+
+### Remaining-work task list (replaces Tasks 19/20/25/26; T-H/T-I were Tasks 28/29)
+
+- **T-A — Remove the agent telnet dial (reverses built Task 20; consult
+  commits `ff5d0848` + `c7b3a77a`).** Delete: the `telnet_p2p_connect` MCP
+  tool; its `EgressPort` method + all 3 mock impls; the elmer arg-helper
+  ripple + `minimal_args` trip-wires; the IP denylist machinery
+  (`ip_is_denied`, `vet_candidates`, `connect_and_exchange_to_addrs`,
+  `resolve_agent_dialable_endpoint`); the `EgressDenied` variant + its
+  `ui_commands` match arm; the agent-path telnet `ObservationGuard`. KEEP the
+  operator-facing telnet dial (`winlink/telnet_p2p.rs::connect_and_exchange`
+  / `exchange_over_stream`, `ui_commands::telnet_p2p_connect`). Named-file
+  edits / `git revert` only (destructive-git ban).
+- **T-B — Contacts-superset backend (replaces the peers store; reworks built
+  Tasks 7/8/9/10/11/16/17/26 output).** `Contact` gains
+  `tier: confirmed | unconfirmed` (serde `#[serde(other)]`-safe), `channels`,
+  `endpoints`, `grid` — same `Channel`/`Endpoint` shapes as built, exact-SSID
+  wire-target rule intact. `contacts.json` schema bump + migration (existing
+  → `confirmed`, empty reachability). Observation API moves into the contacts
+  store: exact-callsign attach, else create `unconfirmed`; limiter/quarantine
+  + auto-record LRU cap guard `unconfirmed` creation only. DELETE
+  `peers/model.rs`+`store.rs` merge/split/conflict machinery,
+  `peer_endpoint_promote`, the `contacts:changed`→`reconcile_contact_links`
+  listener (single store now), `peers_read`/`peer_*` commands (replaced by
+  contacts equivalents + a promote-to-confirmed command). Re-point all 8
+  record sites. Keyring re-key `p2p-endpoint:<contact_id>:<endpoint_id>`;
+  legacy `p2p-peer:<CALLSIGN>` migration re-targets contacts, same
+  conservative unambiguous-only rule. Passwords attach only to
+  operator-entered endpoints; never auto-sent to observed ones (R2-S7).
+  Events: `peers:changed` dies; `contacts:changed` covers.
+- **T-C — Tighten the agent curated read (supersedes Task 19's built
+  output).** `find_peers`/`curate_peer` read contacts reachability; telnet
+  `host:port` is NEVER in the agent DTO under any arm state; all other
+  curation rules (no free text, grid clamp, sanitizer, egress-arm gate,
+  size caps) carry over verbatim.
+- **T-D — Capability reconciliation (adjusts built Task 26).** Remove
+  `agent_telnet_dial`; remove `settings_editor` (surface cancelled);
+  `finder_peers` + `map_peers` stay true, re-sourced. Add/rename a bit for
+  the contacts reachability surface only if the UI needs the gate.
+- **T-E — Frontend re-source (reworks built Tasks 22/23/24 data layer).**
+  Replace `usePeers`/`aggregatePeers` with a contacts-based reachability
+  source (aggregation keyed on exact callsign, gridless rows tolerated).
+  Finder peer rows, both map peer layers, and the Task-23a connect seam keep
+  their built UI/behavior — only the data source moves.
+- **T-F — ContactsPanel: Recent section + detail reachability (replaces
+  cancelled Task 25).** "Recent" section below the curated list (suggestion-
+  card idiom); per-row honest status: completed-session rows carry the
+  **"Heard"** distinction ("heard 2h ago" / "reached yesterday"),
+  attempt-only rows read "dialed · not reached yet". One-click promote.
+  Contact detail gains live reachability rows with Connect (Task-23a seam)
+  + telnet endpoint rows (operator dial). No identity-verification language
+  anywhere (spec §AMENDMENT pt. 3).
+- **T-G — Finder manual-dial affordance.** "Dial a callsign you have not
+  heard": callsign + transport + freq/host:port, dials via the existing
+  connect seam, persists an `unconfirmed` contact (origin manual) so retry
+  is one click. Lives in the finder next to where you dial — NOT in
+  Settings, NOT in Contacts.
+- **T-H — Wire-walk gate (= Task 28, unchanged flows).** Trace the
+  operator's verbatim Flow 0/1/2 (Definition of done below) against the
+  REDESIGNED surface; "manually define a peer to dial" lands on T-G's
+  affordance; "heard known peer" lands on Recent/finder rows.
+- **T-I — Final whole-branch review + mark PR #1069 ready (= Task 29).**
+
+Ordering: T-A ∥ T-B first (independent); then T-C/T-D/T-E (need T-B);
+then T-F/T-G (need T-E); then T-H → T-I.
 
 ## Review-fold binding amendments (R1 Codex + R2 Claude — apply when executing the named task)
 
