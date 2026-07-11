@@ -22,8 +22,9 @@ pub struct Ft8Decode {
     pub from_call: Option<String>,
     pub to_call: Option<String>,
     pub grid: Option<String>,
-    /// True when this record was salvaged from a timed-out run's partial
-    /// stdout (no `<DecodeFinished>` sentinel seen).
+    /// True when this record was salvaged from an abnormally-terminated
+    /// run (timeout or signal/nonzero exit); false when the completeness
+    /// sentinel was seen.
     pub partial: bool,
 }
 
@@ -34,9 +35,12 @@ pub struct Ft8Decode {
 /// delta requires them pinned here): jt9-degraded after N = 5 consecutive
 /// non-Decoded/non-BandDead outcomes, clearing on the first good slot;
 /// band-dead after k = 20 consecutive zero-decode slots (5 minutes). The N=5
-/// degraded counter also folds L2 backpressure drops — a slot L2 drops
-/// without ever calling `decode_slot` still counts as a non-Decoded outcome
-/// toward N.
+/// degraded counter also folds L2 backpressure, lost-frames, and
+/// storage-error drops — a slot L2 drops for one of those reasons without
+/// ever calling `decode_slot` still counts as a non-Decoded outcome toward
+/// N. Scheduled discards (the partial first slot after start/resume, the
+/// QSY transition slot, clock-anomaly abandonment) count toward neither N
+/// nor k.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SlotFailure {
     /// Preflight rejection — never spawned. STABLE-STRING CONTRACT: the exact
@@ -44,7 +48,11 @@ pub enum SlotFailure {
     /// disappearance detection (consecutive not-found → degraded) matches on
     /// them. Other WAV defects carry free-text diagnostics.
     BadWav(String),
-    /// jt9 died by signal (its common failure mode: Fortran error + SIGSEGV).
+    /// jt9 died by signal or nonzero exit (its common failure mode:
+    /// Fortran error + SIGSEGV) with ZERO parsed decode lines.
+    /// Salvage-on-signal (tuxlink-gujnz): ≥ 1 parsed line returns
+    /// `Decoded` (partial = no sentinel) instead — this variant is the
+    /// zero-line case only.
     Signal { signal: String, stderr_tail: String },
     /// Killed at the deadline with zero decode lines salvaged.
     Timeout,
