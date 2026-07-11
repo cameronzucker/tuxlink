@@ -481,11 +481,13 @@ decode of a stale slot.
 - **types.rs edit (in this PR, not just a delta note):** the pinned sentence
   at `types.rs:37-39` ("a slot L2 drops without ever calling decode_slot
   still counts as a non-Decoded outcome toward N") reads as covering
-  scheduled discards. It is amended to: "…folds L2 backpressure and
-  lost-frames drops … Scheduled discards (partial first slot after
-  start/resume, QSY transition slot, clock-anomaly abandonment) count toward
-  neither N nor k." types.rs is the cross-crate contract surface; the
-  canonical statement lives there, the delta v3 note points at it.
+  scheduled discards. It is amended to: "…folds L2 backpressure,
+  lost-frames, and storage-error drops … Scheduled discards (partial first
+  slot after start/resume, QSY transition slot, clock-anomaly abandonment)
+  count toward neither N nor k." (Storage-error drops are in this spec's
+  own N definition above; the earlier revision of this quote omitted them —
+  reconciled at T7 review.) types.rs is the cross-crate contract surface;
+  the canonical statement lives there, the delta v3 note points at it.
 - Mid-run jt9 disappearance surfaces as `Failed(SpawnFailed(..))` (and a
   vanished slot WAV as `Failed(BadWav("not found"))` — the stable-string
   contract). Both increment N; the snapshot carries the most recent
