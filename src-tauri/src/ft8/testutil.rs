@@ -49,6 +49,11 @@ impl SyntheticClock {
     pub fn mono_us(&self) -> u64 {
         self.mono_us.load(Ordering::SeqCst)
     }
+    /// Set the UTC value directly (test setup). Monotonic is untouched —
+    /// the assembler only ever DIFFERENCES monotonic values.
+    pub fn set_utc_ms(&self, utc_ms: u64) {
+        self.utc_ms.store(utc_ms, Ordering::SeqCst);
+    }
 }
 
 /// One scripted step for the ScriptedSource.
@@ -56,6 +61,9 @@ pub enum SourceStep {
     /// Deliver `frames` frames of `value`, advancing synthetic time by
     /// frames/48 ms.
     Frames { frames: usize, value: i16, gap: Option<GapReport> },
+    /// Deliver these exact samples (chunked by the caller to ≤ the read
+    /// buffer length, multiples of 48 for clean ms accounting).
+    Samples { samples: Vec<i16>, gap: Option<GapReport> },
     /// Return this error once.
     Fail(SourceError),
     /// Returns an EMPTY batch after a 1 ms sleep — models a wait timeout
@@ -95,6 +103,13 @@ impl SampleSource for ScriptedSource {
                     *s = value;
                 }
                 // 48 frames per ms at 48 kHz; scripts use multiples of 48.
+                self.clock.advance_ms((n as u64) / 48);
+                Ok(ReadBatch { frames: n, mono_ts_us: self.clock.mono_us(), gap })
+            }
+            Some(SourceStep::Samples { samples, gap }) => {
+                debug_assert!(samples.len() <= buf.len());
+                let n = samples.len().min(buf.len());
+                buf[..n].copy_from_slice(&samples[..n]);
                 self.clock.advance_ms((n as u64) / 48);
                 Ok(ReadBatch { frames: n, mono_ts_us: self.clock.mono_us(), gap })
             }
@@ -301,6 +316,15 @@ impl FakePlatform {
             clock: SyntheticClock::new(1_760_000_000_000), // an arbitrary UTC ms epoch
             tmp,
         })
+    }
+
+    /// Snap the shared synthetic clock's UTC back to the previous 15 s slot
+    /// boundary. happy()'s epoch (1_760_000_000_000 ms) sits 5 s PAST a
+    /// boundary (mod 15_000 = 5_000 — i.e. 10 s before the next one); the
+    /// e2e needs slot-aligned audio.
+    pub fn align_clock_to_slot_boundary(&self) {
+        let utc = self.clock.utc_ms();
+        self.clock.set_utc_ms(utc - (utc % 15_000));
     }
 }
 

@@ -20,3 +20,6 @@ pub mod traits;
 
 #[cfg(test)]
 pub mod testutil;
+
+#[cfg(test)]
+mod e2e_tests;
