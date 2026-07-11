@@ -104,7 +104,7 @@ mod tests {
     }
 
     #[test]
-    fn arecord_argv_omits_dashD_for_empty_device() {
+    fn arecord_argv_omits_dash_d_for_empty_device() {
         let args = arecord_args("", 70, std::path::Path::new("/tmp/x.wav"));
         assert_eq!(
             args,
