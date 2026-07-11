@@ -3,11 +3,16 @@
 // Task C9a (plan tuxlink-b026z.4): device-picker half of the FT-8 setup
 // surface. Covers the four blocked-reason arms + the meter/start handover
 // race-safety ordering (§FirstRun + §States).
+//
+// Task C9b: Step 2 (rig control / Test CAT) + the `Start listening on
+// <band> →` CTA. Covers commitNow-before-probe ordering, Test-CAT success/
+// error copy, and the CTA disable-reason matrix.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { Ft8SetupSurface } from './Ft8SetupSurface';
 import type { AudioDeviceChoice, Ft8Snapshot } from './ft8Types';
+import type { RigConfig } from '../radio/modes/RigControlSection';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 import { invoke } from '@tauri-apps/api/core';
@@ -21,6 +26,22 @@ const DEV_B: AudioDeviceChoice = {
   humanName: 'Digirig',
   stableId: { kind: 'usbVidPidSerial', value: '10c4:ea60:DR001' },
   alsaHw: 'hw:2,0',
+};
+
+/** Neutral RigConfig fixture — Step 2's RigControlSection loads this on
+ *  mount via config_get_rig. */
+const KNOWN_RIG_CONFIG: RigConfig = {
+  rig_hamlib_model: null,
+  rigctld_host: '127.0.0.1',
+  rigctld_port: 4534,
+  rigctld_binary: 'rigctld',
+  close_serial_sequencing: false,
+  live_vfo_poll: false,
+  qsy_on_fail: false,
+  cat_serial_path: '/dev/ttyUSB0',
+  cat_baud: 38400,
+  data_mode: 'PKTUSB',
+  rig_field_overrides: [],
 };
 
 /** Base snapshot builder — every field the component reads is filled with a
@@ -55,6 +76,12 @@ beforeEach(() => {
     if (cmd === 'ft8_list_devices') return [DEV_A];
     if (cmd === 'ft8_set_device') return undefined;
     if (cmd === 'ft8_listener_start') return undefined;
+    // Step 2's RigControlSection (third render site) mounts alongside Step 1
+    // and issues its own mount-time reads — a neutral, resolvable default so
+    // Step-1-focused tests above don't need to know about Step 2 at all.
+    if (cmd === 'config_get_rig') return KNOWN_RIG_CONFIG;
+    if (cmd === 'rig_list_models') return [];
+    if (cmd === 'packet_list_serial_devices') return [];
     return undefined;
   });
 });
@@ -293,6 +320,14 @@ describe('Ft8SetupSurface', () => {
       // set_device/start are NOT called until that meter read resolves.
       let resolveMeter: ((v: { rmsDbfs: number; state: string }) => void) | null = null;
       const callOrder: string[] = [];
+      // Task C9b: Step 2's RigControlSection mounts alongside Step 1 now and
+      // fires its own mount-time commands (config_get_rig / rig_list_models /
+      // packet_list_serial_devices) independently of the device-meter
+      // handover this test is about — filter the shared callOrder log down
+      // to the device/listener commands under test rather than asserting on
+      // the raw log, which would otherwise couple this C9a assertion to
+      // Step 2's unrelated mount ordering.
+      const deviceCallOrder = () => callOrder.filter((c) => c.startsWith('ft8_device') || c === 'ft8_set_device' || c === 'ft8_listener_start');
 
       vi.mocked(invoke).mockImplementation(async (cmd: string) => {
         callOrder.push(cmd);
@@ -312,7 +347,7 @@ describe('Ft8SetupSurface', () => {
       await act(async () => {
         await Promise.resolve();
       });
-      expect(callOrder).toEqual(['ft8_device_meter']);
+      expect(deviceCallOrder()).toEqual(['ft8_device_meter']);
 
       const useBtn = screen.getByTestId(
         `ft8-setup-device-use-${DEV_A.stableId.kind}:${DEV_A.stableId.value}`,
@@ -325,7 +360,7 @@ describe('Ft8SetupSurface', () => {
         await Promise.resolve();
         await Promise.resolve();
       });
-      expect(callOrder).toEqual(['ft8_device_meter']);
+      expect(deviceCallOrder()).toEqual(['ft8_device_meter']);
       expect(callOrder).not.toContain('ft8_set_device');
       expect(callOrder).not.toContain('ft8_listener_start');
 
@@ -338,7 +373,7 @@ describe('Ft8SetupSurface', () => {
         await Promise.resolve();
       });
 
-      expect(callOrder).toEqual(['ft8_device_meter', 'ft8_set_device', 'ft8_listener_start']);
+      expect(deviceCallOrder()).toEqual(['ft8_device_meter', 'ft8_set_device', 'ft8_listener_start']);
     });
 
     it('calls onStarted after a successful handover', async () => {
@@ -387,6 +422,248 @@ describe('Ft8SetupSurface', () => {
         <Ft8SetupSurface snapshot={makeSnapshot({ service: { axis: 'listening' } })} />,
       );
       expect(container.textContent).toBe('');
+    });
+  });
+
+  // ── Task C9b: Step 2 · Rig control (CAT) · Test CAT ──────────────────────
+
+  describe('Step 2 · Test CAT', () => {
+    it('renders the shared RigControlSection as Step 2, storageKeyPrefix="ft8"', async () => {
+      render(<Ft8SetupSurface snapshot={makeSnapshot()} />);
+      expect(screen.getByTestId('ft8-setup-step2-head').textContent).toMatch(/Step 2/);
+      await waitFor(() => {
+        expect(vi.mocked(invoke)).toHaveBeenCalledWith('config_get_rig');
+      });
+      // localStorage key is namespaced "ft8" — distinct from ardop/vara.
+      expect(screen.getByTestId('ft8-setup-test-cat')).toBeInTheDocument();
+    });
+
+    it('awaits commitNow (flushes an unblurred CAT-serial edit) BEFORE calling ft8_cat_probe', async () => {
+      const callOrder: string[] = [];
+      vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+        callOrder.push(cmd);
+        if (cmd === 'config_get_rig') return KNOWN_RIG_CONFIG;
+        if (cmd === 'rig_list_models') return [];
+        if (cmd === 'packet_list_serial_devices') return [];
+        if (cmd === 'ft8_cat_probe') return { dialHz: 14074000, band: '20m' };
+        return undefined;
+      });
+
+      render(<Ft8SetupSurface snapshot={makeSnapshot()} />);
+      const manual = (await screen.findByTestId('rig-cat-port-manual')) as HTMLInputElement;
+      await waitFor(() => expect(manual.value).toBe('/dev/ttyUSB0'));
+
+      callOrder.length = 0;
+      // Type a NEW value but do NOT blur — commitCatSerial only fires on
+      // blur or an explicit commitNow() call.
+      fireEvent.change(manual, { target: { value: '/dev/ttyUSB9' } });
+      expect(callOrder).not.toContain('config_set_rig');
+
+      fireEvent.click(screen.getByTestId('ft8-setup-test-cat'));
+
+      await waitFor(() => {
+        expect(callOrder).toContain('ft8_cat_probe');
+      });
+      // The unblurred edit reached the backend BEFORE the probe fired — a
+      // just-typed serial path must never false-fail the probe.
+      const setIdx = callOrder.indexOf('config_set_rig');
+      const probeIdx = callOrder.indexOf('ft8_cat_probe');
+      expect(setIdx).toBeGreaterThanOrEqual(0);
+      expect(setIdx).toBeLessThan(probeIdx);
+      const setCall = vi
+        .mocked(invoke)
+        .mock.calls.find(([cmd]) => cmd === 'config_set_rig');
+      expect((setCall?.[1] as { value: RigConfig }).value.cat_serial_path).toBe('/dev/ttyUSB9');
+    });
+
+    it('Test CAT success shows the dial/band from ft8_cat_probe', async () => {
+      vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+        if (cmd === 'config_get_rig') return KNOWN_RIG_CONFIG;
+        if (cmd === 'rig_list_models') return [];
+        if (cmd === 'packet_list_serial_devices') return [];
+        if (cmd === 'ft8_cat_probe') return { dialHz: 14074000, band: '20m' };
+        return undefined;
+      });
+      render(<Ft8SetupSurface snapshot={makeSnapshot()} />);
+      await screen.findByTestId('ft8-setup-test-cat');
+      fireEvent.click(screen.getByTestId('ft8-setup-test-cat'));
+      await waitFor(() => {
+        const success = screen.getByTestId('ft8-setup-cat-success');
+        expect(success.textContent).toMatch(/14\.074/);
+        expect(success.textContent).toMatch(/20m/);
+      });
+      expect(screen.queryByTestId('ft8-setup-cat-error')).toBeNull();
+    });
+
+    it('shows the modem-busy reason (never the raw detail) on a busy-radio probe failure', async () => {
+      vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+        if (cmd === 'config_get_rig') return KNOWN_RIG_CONFIG;
+        if (cmd === 'rig_list_models') return [];
+        if (cmd === 'packet_list_serial_devices') return [];
+        if (cmd === 'ft8_cat_probe') {
+          return Promise.reject({ kind: 'modem-busy', detail: 'ardop session active on ttyUSB0' });
+        }
+        return undefined;
+      });
+      render(<Ft8SetupSurface snapshot={makeSnapshot()} />);
+      await screen.findByTestId('ft8-setup-test-cat');
+      fireEvent.click(screen.getByTestId('ft8-setup-test-cat'));
+      await waitFor(() => {
+        const err = screen.getByTestId('ft8-setup-cat-error');
+        expect(err.textContent).toMatch(/busy/i);
+        expect(err.textContent).toMatch(/disconnect/i);
+        // Never parses/surfaces the raw detail string — kind-keyed copy only.
+        expect(err.textContent).not.toMatch(/ttyUSB0/);
+      });
+    });
+
+    it('shows the rig-not-configured reason on a probe failure with no Config.rig', async () => {
+      vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+        if (cmd === 'config_get_rig') return KNOWN_RIG_CONFIG;
+        if (cmd === 'rig_list_models') return [];
+        if (cmd === 'packet_list_serial_devices') return [];
+        if (cmd === 'ft8_cat_probe') {
+          return Promise.reject({ kind: 'rig-not-configured', detail: 'no Config.rig' });
+        }
+        return undefined;
+      });
+      render(<Ft8SetupSurface snapshot={makeSnapshot()} />);
+      await screen.findByTestId('ft8-setup-test-cat');
+      fireEvent.click(screen.getByTestId('ft8-setup-test-cat'));
+      await waitFor(() => {
+        expect(screen.getByTestId('ft8-setup-cat-error').textContent).toMatch(/no radio configured/i);
+      });
+    });
+
+    it('shows the probe-timeout reason on a timed-out probe', async () => {
+      vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+        if (cmd === 'config_get_rig') return KNOWN_RIG_CONFIG;
+        if (cmd === 'rig_list_models') return [];
+        if (cmd === 'packet_list_serial_devices') return [];
+        if (cmd === 'ft8_cat_probe') {
+          return Promise.reject({ kind: 'probe-timeout', detail: 'no response in 3s' });
+        }
+        return undefined;
+      });
+      render(<Ft8SetupSurface snapshot={makeSnapshot()} />);
+      await screen.findByTestId('ft8-setup-test-cat');
+      fireEvent.click(screen.getByTestId('ft8-setup-test-cat'));
+      await waitFor(() => {
+        const err = screen.getByTestId('ft8-setup-cat-error');
+        expect(err.textContent).toMatch(/didn.t respond/i);
+        expect(err.textContent).toMatch(/cat cable/i);
+      });
+    });
+  });
+
+  // ── Task C9b: CTA `Start listening on <band> →` disable-reason matrix ────
+
+  describe('CTA `Start listening on <band> →`', () => {
+    it('renders the band in the label', () => {
+      render(<Ft8SetupSurface snapshot={makeSnapshot({ band: '40m' })} />);
+      expect(screen.getByTestId('ft8-setup-start-cta').textContent).toMatch(/40m/);
+    });
+
+    it('disabled + "install wsjt-x" reason for the wsjtx-absent blocker', () => {
+      render(
+        <Ft8SetupSurface
+          snapshot={makeSnapshot({
+            service: { axis: 'blocked', reason: 'wsjtx-absent' },
+            configuredDeviceName: 'USB Audio CODEC',
+          })}
+        />,
+      );
+      const cta = screen.getByTestId('ft8-setup-start-cta') as HTMLButtonElement;
+      expect(cta.disabled).toBe(true);
+      expect(screen.getByTestId('ft8-setup-cta-blocked-reason').textContent).toMatch(/wsjt-x/i);
+    });
+
+    it('disabled + "choose a supported audio input" reason for unsupported-sample-rate', () => {
+      render(
+        <Ft8SetupSurface
+          snapshot={makeSnapshot({
+            service: { axis: 'blocked', reason: 'unsupported-sample-rate' },
+            configuredDeviceName: 'USB Audio CODEC',
+            availableDevices: null,
+          })}
+        />,
+      );
+      const cta = screen.getByTestId('ft8-setup-start-cta') as HTMLButtonElement;
+      expect(cta.disabled).toBe(true);
+      expect(screen.getByTestId('ft8-setup-cta-blocked-reason').textContent).toMatch(
+        /supported audio input/i,
+      );
+    });
+
+    it('disabled + "select an audio input" reason when no device is configured', () => {
+      render(
+        <Ft8SetupSurface
+          snapshot={makeSnapshot({
+            service: { axis: 'blocked', reason: 'needs-device-selection' },
+            configuredDeviceName: null,
+          })}
+        />,
+      );
+      const cta = screen.getByTestId('ft8-setup-start-cta') as HTMLButtonElement;
+      expect(cta.disabled).toBe(true);
+      expect(screen.getByTestId('ft8-setup-cta-blocked-reason').textContent).toMatch(
+        /select an audio input/i,
+      );
+    });
+
+    it('disabled + "restart Tuxlink" reason for capture-wedged (defensive — not reachable via the normal mounting contract)', () => {
+      render(
+        <Ft8SetupSurface
+          snapshot={makeSnapshot({
+            service: { axis: 'blocked', reason: 'capture-wedged' },
+            configuredDeviceName: 'USB Audio CODEC',
+          })}
+        />,
+      );
+      const cta = screen.getByTestId('ft8-setup-start-cta') as HTMLButtonElement;
+      expect(cta.disabled).toBe(true);
+      expect(screen.getByTestId('ft8-setup-cta-blocked-reason').textContent).toMatch(/restart tuxlink/i);
+    });
+
+    it('enabled once a device is resolved and no other blocker applies; clicking calls ft8_listener_start', async () => {
+      // A synthetic combination (device already configured while the arm is
+      // still needs-device-selection) — exercises the "no blocker" branch
+      // that a real snapshot only reaches transiently, right before this
+      // surface unmounts via onStarted.
+      const onStarted = vi.fn();
+      render(
+        <Ft8SetupSurface
+          snapshot={makeSnapshot({
+            service: { axis: 'blocked', reason: 'needs-device-selection' },
+            configuredDeviceName: 'USB Audio CODEC',
+          })}
+          onStarted={onStarted}
+        />,
+      );
+      const cta = screen.getByTestId('ft8-setup-start-cta') as HTMLButtonElement;
+      expect(cta.disabled).toBe(false);
+      expect(screen.queryByTestId('ft8-setup-cta-blocked-reason')).toBeNull();
+
+      fireEvent.click(cta);
+      await waitFor(() => {
+        expect(vi.mocked(invoke)).toHaveBeenCalledWith('ft8_listener_start');
+      });
+      await waitFor(() => {
+        expect(onStarted).toHaveBeenCalled();
+      });
+    });
+
+    it('a click while disabled never invokes ft8_listener_start (guarded, never a silent re-render)', () => {
+      render(
+        <Ft8SetupSurface
+          snapshot={makeSnapshot({
+            service: { axis: 'blocked', reason: 'wsjtx-absent' },
+            configuredDeviceName: null,
+          })}
+        />,
+      );
+      fireEvent.click(screen.getByTestId('ft8-setup-start-cta'));
+      expect(vi.mocked(invoke)).not.toHaveBeenCalledWith('ft8_listener_start');
     });
   });
 });
