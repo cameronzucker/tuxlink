@@ -216,9 +216,32 @@
   cursor: pointer;
 }
 
-.contacts-row--raw,
-.contacts-row--suggestion {
+.contacts-row--raw {
   grid-template-columns: auto 1fr auto auto;
+}
+
+/* Suggestion rows: a clickable main region (opens the detail) + a Save
+   button, mirroring the Recent-row layout. The whole row used to be a dead
+   <li> with only the Save button wired, so clicking a suggestion did nothing. */
+.contacts-row--suggestion {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.contacts-suggestion-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px 8px;
+  padding: 4px 0;
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
 }
 
 .contacts-row:hover {

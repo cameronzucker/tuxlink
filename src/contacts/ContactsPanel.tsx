@@ -67,6 +67,7 @@ type Selection =
   | { kind: 'none' }
   | { kind: 'contact'; id: string }
   | { kind: 'raw'; callsign: string }
+  | { kind: 'suggestion'; callsign: string; messageCount: number }
   | { kind: 'group'; id: string };
 
 /// The inline contact editor target (takes over the detail pane when open).
@@ -151,6 +152,7 @@ export function ContactsPanel() {
     [selection, groups],
   );
   const selectedRawCallsign = selection.kind === 'raw' ? selection.callsign : null;
+  const selectedSuggestion = selection.kind === 'suggestion' ? selection : null;
 
   const saveContact = async (c: Contact) => {
     await upsertContact(c);
@@ -185,6 +187,16 @@ export function ContactsPanel() {
   const selectRecent = (id: string) => {
     setSelected(new Set());
     setSelection({ kind: 'contact', id });
+    setEditor({ kind: 'closed' });
+  };
+
+  // A suggestion row (mailbox correspondent, not yet saved) is selectable into
+  // the detail pane like any other row — it was previously a dead body with a
+  // lone "Save" button, so clicking a suggestion did nothing. The detail offers
+  // New message + Save (add), carrying the message count for context.
+  const selectSuggestion = (callsign: string, messageCount: number) => {
+    setSelected(new Set());
+    setSelection({ kind: 'suggestion', callsign, messageCount });
     setEditor({ kind: 'closed' });
   };
 
@@ -337,6 +349,7 @@ export function ContactsPanel() {
                       setSelection({ kind: 'raw', callsign });
                       setEditor({ kind: 'closed' });
                     }}
+                    onSelectSuggestion={selectSuggestion}
                     onSaveSuggestion={addSuggestion}
                   />
                 ))}
@@ -412,6 +425,13 @@ export function ContactsPanel() {
             callsign={selectedRawCallsign}
             onNewMessage={() => void openComposeTo(selectedRawCallsign)}
             onSave={() => void addSuggestion(selectedRawCallsign)}
+          />
+        ) : selectedSuggestion ? (
+          <RawDetail
+            callsign={selectedSuggestion.callsign}
+            messageCount={selectedSuggestion.messageCount}
+            onNewMessage={() => void openComposeTo(selectedSuggestion.callsign)}
+            onSave={() => void addSuggestion(selectedSuggestion.callsign)}
           />
         ) : (
           <div className="contacts-detail-empty" data-testid="contacts-detail-empty">
@@ -541,6 +561,7 @@ function OutlineRowView({
   multiSelected,
   onContactRowClick,
   onSelectRaw,
+  onSelectSuggestion,
   onSaveSuggestion,
 }: {
   row: OutlineRow;
@@ -548,26 +569,39 @@ function OutlineRowView({
   multiSelected: Set<string>;
   onContactRowClick: (id: string, e: React.MouseEvent) => void;
   onSelectRaw: (callsign: string) => void;
+  onSelectSuggestion?: (callsign: string, messageCount: number) => void;
   onSaveSuggestion?: (callsign: string) => void;
 }) {
   if (row.kind === 'suggestion') {
+    const isSelected = selection.kind === 'suggestion' && selection.callsign === row.callsign;
     return (
-      <li className="contacts-row contacts-row--suggestion" data-testid={`suggestion-${row.callsign}`}>
-        <span className="contacts-row-callsign">{row.callsign}</span>
-        <span className="contacts-tag contacts-tag--new" data-testid={`suggestion-new-${row.callsign}`}>
-          New
-        </span>
-        <span className="contacts-row-meta">
-          {row.messageCount} {row.messageCount === 1 ? 'message' : 'messages'}
-        </span>
-        <button
-          type="button"
-          className="contacts-row-save"
-          data-testid={`suggestion-add-${row.callsign}`}
-          onClick={() => onSaveSuggestion?.(row.callsign)}
+      <li className="contacts-row-li">
+        <div
+          className={`contacts-row contacts-row--suggestion${isSelected ? ' contacts-row--selected' : ''}`}
         >
-          Save
-        </button>
+          <button
+            type="button"
+            className="contacts-suggestion-main"
+            data-testid={`suggestion-${row.callsign}`}
+            onClick={() => onSelectSuggestion?.(row.callsign, row.messageCount)}
+          >
+            <span className="contacts-row-callsign">{row.callsign}</span>
+            <span className="contacts-tag contacts-tag--new" data-testid={`suggestion-new-${row.callsign}`}>
+              New
+            </span>
+            <span className="contacts-row-meta">
+              {row.messageCount} {row.messageCount === 1 ? 'message' : 'messages'}
+            </span>
+          </button>
+          <button
+            type="button"
+            className="contacts-row-save"
+            data-testid={`suggestion-add-${row.callsign}`}
+            onClick={() => onSaveSuggestion?.(row.callsign)}
+          >
+            Save
+          </button>
+        </div>
       </li>
     );
   }
@@ -1085,20 +1119,28 @@ function ContactDetail({
 /// message. Mirrors a suggestion row's affordances at detail scale.
 function RawDetail({
   callsign,
+  messageCount,
   onNewMessage,
   onSave,
 }: {
   callsign: string;
+  /** When set (a suggestion), show "N messages" instead of the bare "not
+   *  saved" label — the correspondent has mailbox history worth surfacing. */
+  messageCount?: number;
   onNewMessage: () => void;
   onSave: () => void;
 }) {
   const { attempts, hint } = useContactConnectionRecord(callsign);
+  const subtitle =
+    messageCount != null
+      ? `not saved · ${messageCount} ${messageCount === 1 ? 'message' : 'messages'}`
+      : 'not saved';
   return (
     <div className="contact-detail" data-testid="raw-detail">
       <div className="contact-detail-header">
         <div className="contact-detail-id">
           <h2 className="contact-detail-callsign">{callsign}</h2>
-          <span className="contact-detail-name contact-detail-name--add">not saved</span>
+          <span className="contact-detail-name contact-detail-name--add">{subtitle}</span>
         </div>
       </div>
 

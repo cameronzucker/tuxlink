@@ -12,9 +12,11 @@
 //     refetches. Invoke arg-key names match the Rust `#[tauri::command]` params
 //     EXACTLY: `contact_upsert(contact)`, `contact_delete(id)`,
 //     `group_upsert(group)`, `group_delete(id)`.
-//   - Mutation errors are NON-BLOCKING (`.catch(() => {})`): they surface in the
-//     backend session log, not in React state — there is deliberately no error
-//     field in the return type (Cross-cutting §1).
+//   - Mutation errors are NON-BLOCKING (the query still invalidates + refetches
+//     so the UI reconciles to the real store), but they are LOGGED via
+//     `logMutationError`, never swallowed — a failed add must not look identical
+//     to nothing happening. There is deliberately no error field in the return
+//     type (Cross-cutting §1); surfacing is via the console / session log.
 //   - H9: a `useEffect` subscribes to the app-level `contacts:changed` event and
 //     invalidates `['contacts']` on fire, so a contact added/edited in the main
 //     window propagates to a separate Compose window's `useContacts` instance.
@@ -28,6 +30,17 @@ import type { Contact, ContactsFile, Group } from './types';
 /// Query key for the whole contacts file. A single key (not split per
 /// contacts/groups) because `contacts_read` returns both together.
 export const CONTACTS_QUERY_KEY = ['contacts'] as const;
+
+/// Mutations are non-blocking (they still invalidate + refetch on failure so
+/// the UI reconciles to the real store state), but a failure must NOT vanish:
+/// the previous `.catch(() => {})` swallowed every error, so an add that failed
+/// looked identical to nothing happening. Log it so the failure is visible in
+/// the console / captured session log instead.
+function logMutationError(command: string) {
+  return (err: unknown) => {
+    console.error(`[contacts] ${command} failed`, err);
+  };
+}
 
 /// App-level Tauri event the Rust command layer emits after every contacts
 /// mutation (H9). Mirrors `CONTACTS_CHANGED_EVENT` in
@@ -91,23 +104,23 @@ export function useContacts(): UseContacts {
     isLoading: query.isLoading,
 
     upsertContact: async (contact: Contact) => {
-      await invoke('contact_upsert', { contact }).catch(() => {});
+      await invoke('contact_upsert', { contact }).catch(logMutationError('contact_upsert'));
       await invalidate();
     },
     deleteContact: async (id: string) => {
-      await invoke('contact_delete', { id }).catch(() => {});
+      await invoke('contact_delete', { id }).catch(logMutationError('contact_delete'));
       await invalidate();
     },
     confirmContact: async (id: string) => {
-      await invoke('contact_confirm', { id }).catch(() => {});
+      await invoke('contact_confirm', { id }).catch(logMutationError('contact_confirm'));
       await invalidate();
     },
     upsertGroup: async (group: Group) => {
-      await invoke('group_upsert', { group }).catch(() => {});
+      await invoke('group_upsert', { group }).catch(logMutationError('group_upsert'));
       await invalidate();
     },
     deleteGroup: async (id: string) => {
-      await invoke('group_delete', { id }).catch(() => {});
+      await invoke('group_delete', { id }).catch(logMutationError('group_delete'));
       await invalidate();
     },
   };
