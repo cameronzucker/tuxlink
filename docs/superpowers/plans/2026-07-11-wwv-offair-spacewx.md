@@ -356,34 +356,40 @@ impl WhisperStt {
         let n = state.full_n_segments().map_err(|e| SttError::Transcribe(e.to_string()))?;
         let mut text = String::new();
         let mut min_logprob = 0.0f32;
-        let mut max_no_speech = 0.0f32;
         for i in 0..n {
             text.push_str(&state.full_get_segment_text(i).map_err(|e| SttError::Transcribe(e.to_string()))?);
             text.push(' ');
-            // Aggregate a worst-case confidence across segments.
-            if let Ok(ns) = state.full_get_segment_no_speech_prob(i) { max_no_speech = max_no_speech.max(ns); }
+            // Aggregate a worst-case (lowest mean-token-logprob) across segments.
+            // NOTE: whisper-rs 0.14.4 exposes NO per-segment no-speech probability
+            // getter (verified against the crate source), so confidence rests on
+            // token log-probs alone; no_speech_prob is reported as 0.0 (neutral).
             let toks = state.full_n_tokens(i).unwrap_or(0);
             if toks > 0 {
                 let mut sum = 0.0f32; let mut cnt = 0.0f32;
                 for j in 0..toks {
-                    if let Ok(p) = state.full_get_token_prob(i, j) { sum += p.ln(); cnt += 1.0; }
+                    if let Ok(p) = state.full_get_token_prob(i, j) {
+                        // token prob in (0,1]; guard ln(0).
+                        sum += p.max(1e-9).ln();
+                        cnt += 1.0;
+                    }
                 }
                 if cnt > 0.0 { min_logprob = min_logprob.min(sum / cnt); }
             }
         }
         Ok(SttResult { text: text.trim().to_string(),
-            confidence: SttConfidence { avg_logprob: min_logprob, no_speech_prob: max_no_speech } })
+            confidence: SttConfidence { avg_logprob: min_logprob, no_speech_prob: 0.0 } })
     }
 }
 ```
 
-> **API-verification step (not a placeholder):** the exact method names for
-> per-segment no-speech probability differ across whisper-rs minor versions
-> (`full_get_segment_no_speech_prob` vs a token-data field). Before running,
-> `cargo doc --open -p whisper-rs` (or read `~/.cargo/registry/.../whisper-rs-*/src`)
-> and adjust the two `full_get_segment_no_speech_prob` / `full_get_token_prob`
-> calls to the installed version's names. This is a 2-line adjustment; the shape
-> (aggregate worst-case confidence across segments) is fixed.
+> **API confirmed (gorge-fern-cedar, read whisper-rs 0.14.4 src):** used methods
+> all exist — `new_with_params`, `create_state`, `full(&mut self, params, &[f32])`,
+> `full_n_segments`, `full_get_segment_text`, `full_n_tokens`,
+> `full_get_token_prob(seg, tok) -> Result<f32>`, `set_initial_prompt(&str)`,
+> `set_language(Option<&str>)`, `SamplingStrategy::Greedy { best_of }`. There is
+> **no** no-speech-probability getter in 0.14.4, so `no_speech_prob` is fixed at
+> `0.0` and the confidence gate (Task 5) keys on `avg_logprob`. (0.14.4 *does*
+> ship `whisper_grammar` — a future GBNF upgrade point, not used in v1.)
 
 - [ ] **Step 3: Commit** (`feat(stt): WhisperStt model wrapper + transcribe with vocabulary biasing`).
 
