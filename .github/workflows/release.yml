@@ -244,6 +244,21 @@ jobs:
           kill "$dp" 2>/dev/null || true
           du -h "src-tauri/binaries/tuxlink-rigctl-${TRIPLE}" "src-tauri/binaries/tuxlink-rigctld-${TRIPLE}"
 
+      # tuxlink-5l49z: bundle the tuxlink-mcp stdio<->UDS shim so external MCP
+      # clients (Claude Code/Desktop) can attach on packaged installs. Unlike the
+      # third-party sidecars above, tuxlink-mcp is a cargo WORKSPACE MEMBER, so the
+      # app's own `tauri build` (default-members=["."]) never compiles it; build +
+      # stage it explicitly under its target-triple name for tauri's externalBin.
+      - name: Stage tuxlink-mcp sidecar (stdio<->UDS MCP shim, workspace member)
+        run: |
+          set -euxo pipefail
+          TRIPLE="$(rustc -vV | awk '/^host:/{print $2}')"
+          cargo build --release --locked -p tuxlink-mcp --manifest-path src-tauri/Cargo.toml
+          mkdir -p src-tauri/binaries
+          install -m 0755 src-tauri/target/release/tuxlink-mcp "src-tauri/binaries/tuxlink-mcp-${TRIPLE}"
+          file "src-tauri/binaries/tuxlink-mcp-${TRIPLE}" | grep -q ELF
+          du -h "src-tauri/binaries/tuxlink-mcp-${TRIPLE}"
+
       # Inject externalBin + the itshfbc/basemap resource globs — CI-ONLY, never
       # committed. tauri-build validates externalBin existence at cargo-build time,
       # so these entries in the committed tauri.conf.json would break the `verify`
@@ -255,7 +270,7 @@ jobs:
         run: |
           set -euxo pipefail
           cd src-tauri
-          jq '.bundle.externalBin = ["binaries/voacapl", "binaries/pmtiles", "binaries/ardopcf", "binaries/tuxlink-rigctl", "binaries/tuxlink-rigctld"]
+          jq '.bundle.externalBin = ["binaries/voacapl", "binaries/pmtiles", "binaries/ardopcf", "binaries/tuxlink-rigctl", "binaries/tuxlink-rigctld", "binaries/tuxlink-mcp"]
               | .bundle.resources = ["resources/wle-forms/**/*", "resources/itshfbc/**/*", "resources/propagation/ssn-forecast.json", "resources/basemap/**/*", "resources/licenses/**/*"]' \
              tauri.conf.json > tauri.conf.json.tmp
           mv tauri.conf.json.tmp tauri.conf.json
@@ -284,10 +299,11 @@ jobs:
           test -x "$(dirname "$main")/ardopcf"   # ARDOP HF modem, adjacent (tuxlink-vbpy)
           test -x "$(dirname "$main")/tuxlink-rigctl"
           test -x "$(dirname "$main")/tuxlink-rigctld"
+          test -x "$(dirname "$main")/tuxlink-mcp"   # tuxlink-5l49z: external MCP-client attach shim (mcp_connection_info hands out current_exe()/tuxlink-mcp)
           find /tmp/deb-extract -path '*resources/itshfbc/database/version.w32' | grep -q version.w32
           # tuxlink-ndi4: the bundled world overview must ship, or the map is blank.
           find /tmp/deb-extract -path '*resources/basemap/world-z0-6.pmtiles' | grep -q world-z0-6.pmtiles
-          echo "OK: voacapl + pmtiles + ardopcf + tuxlink-rigctl/rigctld adjacent to $main; itshfbc + basemap present under resources/"
+          echo "OK: voacapl + pmtiles + ardopcf + tuxlink-rigctl/rigctld + tuxlink-mcp adjacent to $main; itshfbc + basemap present under resources/"
 
       - name: Collect bundle artifacts
         run: |

@@ -199,6 +199,20 @@ jobs:
           kill "$dp" 2>/dev/null || true
           du -h "src-tauri/binaries/tuxlink-rigctl-${TRIPLE}" "src-tauri/binaries/tuxlink-rigctld-${TRIPLE}"
 
+      # tuxlink-5l49z: stage the tuxlink-mcp stdio<->UDS shim (a cargo WORKSPACE
+      # MEMBER the app's own `tauri build` never compiles) so external MCP clients
+      # can attach on packaged installs. Same as release.yml; built by the same
+      # toolchain/target as the app binary, so it inherits the ECT glibc floor.
+      - name: Stage tuxlink-mcp sidecar (stdio<->UDS MCP shim, workspace member)
+        run: |
+          set -euxo pipefail
+          TRIPLE="$(rustc -vV | awk '/^host:/{print $2}')"
+          cargo build --release --locked -p tuxlink-mcp --manifest-path src-tauri/Cargo.toml
+          mkdir -p src-tauri/binaries
+          install -m 0755 src-tauri/target/release/tuxlink-mcp "src-tauri/binaries/tuxlink-mcp-${TRIPLE}"
+          file "src-tauri/binaries/tuxlink-mcp-${TRIPLE}" | grep -q ELF
+          du -h "src-tauri/binaries/tuxlink-mcp-${TRIPLE}"
+
       # Same externalBin + resources inject as release.yml, PLUS a low-floor
       # Depends override: libc6 (>= 2.35) for the jammy build, and drop
       # libheif1/libde265-0 (heif off) and libwebp7 (webp vendored) which the
@@ -208,7 +222,7 @@ jobs:
         run: |
           set -euxo pipefail
           cd src-tauri
-          jq '.bundle.externalBin = ["binaries/voacapl", "binaries/pmtiles", "binaries/ardopcf", "binaries/tuxlink-rigctl", "binaries/tuxlink-rigctld"]
+          jq '.bundle.externalBin = ["binaries/voacapl", "binaries/pmtiles", "binaries/ardopcf", "binaries/tuxlink-rigctl", "binaries/tuxlink-rigctld", "binaries/tuxlink-mcp"]
               | .bundle.resources = ["resources/wle-forms/**/*", "resources/itshfbc/**/*", "resources/propagation/ssn-forecast.json", "resources/basemap/**/*", "resources/licenses/**/*"]
               | .bundle.linux.deb.depends = ["libc6 (>= 2.35)", "libsecret-1-0", "libusb-1.0-0", "libudev1", "libcap2"]' \
              tauri.conf.json > tauri.conf.json.tmp
@@ -245,6 +259,7 @@ jobs:
           test -x "$(dirname "$main")/ardopcf"   # tuxlink-vbpy: ARDOP HF modem must ship
           test -x "$(dirname "$main")/tuxlink-rigctl"
           test -x "$(dirname "$main")/tuxlink-rigctld"
+          test -x "$(dirname "$main")/tuxlink-mcp"   # tuxlink-5l49z: external MCP-client attach shim
           find /tmp/deb-extract -path '*resources/itshfbc/database/version.w32' | grep -q version.w32
           find /tmp/deb-extract -path '*resources/basemap/world-z0-6.pmtiles' | grep -q world-z0-6.pmtiles
 
