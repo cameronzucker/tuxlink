@@ -322,3 +322,147 @@ describe('StationRail — peer-row Connect fires a P2P dial (Task 23a)', () => {
     expect(mockInvoke).not.toHaveBeenCalledWith('cms_connect');
   });
 });
+
+// Task T-G — "Dial a station" manual-dial affordance (spec §AMENDMENT pt. 7):
+// dial a callsign the operator has never heard, through the SAME
+// connectPeerChannel/connectPeerEndpoint seam the peer rows above use, so the
+// backend observation recorder auto-creates the unconfirmed contact. Gated on
+// the finder_peers capability (`p2pDialEnabled`), mirroring StationFinderPanel's
+// existing showPeerType gating — NOT on whether any peers are visible, so it
+// still renders on an empty roster (Flow 2(b)).
+describe('StationRail — manual "Dial a station" affordance (Task T-G)', () => {
+  beforeEach(() => {
+    mockInvoke.mockReset();
+    mockInvoke.mockResolvedValue(undefined);
+  });
+  afterEach(() => mockInvoke.mockReset());
+
+  function renderDial(p2pDialEnabled = true) {
+    render(
+      <StationRail
+        station={null} prediction={null} predictionStatus="idle"
+        operatorGrid="CN85nm" utcHour={0} p2pDialEnabled={p2pDialEnabled}
+      />,
+    );
+  }
+
+  it('does not render when p2pDialEnabled is false/omitted (finder_peers gating)', () => {
+    render(<StationRail station={null} prediction={null} predictionStatus="idle" operatorGrid="CN85nm" utcHour={0} />);
+    expect(screen.queryByTestId('manual-dial-form')).toBeNull();
+  });
+
+  it('renders on an EMPTY roster when p2pDialEnabled is true (Flow 2(b) — the empty-roster case)', () => {
+    renderDial();
+    expect(screen.getByTestId('manual-dial-form')).toBeTruthy();
+    // No peer rows exist here — the affordance is not gated on peers.length.
+    expect(screen.queryByTestId('peer-rows')).toBeNull();
+  });
+
+  it('bad (whitespace-containing) callsign never dispatches', () => {
+    renderDial();
+    fireEvent.change(screen.getByTestId('manual-dial-callsign'), { target: { value: 'BAD CALL' } });
+    fireEvent.click(screen.getByTestId('manual-dial-connect'));
+    expect(screen.getByTestId('manual-dial-error')).toBeTruthy();
+    expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it('empty callsign never dispatches', () => {
+    renderDial();
+    fireEvent.click(screen.getByTestId('manual-dial-connect'));
+    expect(screen.getByTestId('manual-dial-error')).toBeTruthy();
+    expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it('uppercases the typed callsign as the operator types (exact SSID-bearing form preserved)', () => {
+    renderDial();
+    fireEvent.change(screen.getByTestId('manual-dial-callsign'), { target: { value: 'w7xyz-9' } });
+    expect((screen.getByTestId('manual-dial-callsign') as HTMLInputElement).value).toBe('W7XYZ-9');
+  });
+
+  it('VARA HF dial (default transport) → modem_vara_b2f_exchange with intent=p2p + typed target/freq, never cms_connect', async () => {
+    renderDial();
+    fireEvent.change(screen.getByTestId('manual-dial-callsign'), { target: { value: 'w7xyz-9' } });
+    fireEvent.change(screen.getByTestId('manual-dial-freq'), { target: { value: '7.102' } });
+    fireEvent.click(screen.getByTestId('manual-dial-connect'));
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith(
+        'modem_vara_b2f_exchange',
+        expect.objectContaining({
+          target: 'W7XYZ-9', intent: 'p2p', transportKind: 'vara-hf', freqHz: 7_102_000,
+        }),
+      ),
+    );
+    expect(mockInvoke).not.toHaveBeenCalledWith('cms_connect');
+    // Clears after dispatch (GroupEditor "+ Add" idiom — type, commit, clear).
+    await waitFor(() => expect((screen.getByTestId('manual-dial-callsign') as HTMLInputElement).value).toBe(''));
+    expect((screen.getByTestId('manual-dial-freq') as HTMLInputElement).value).toBe('');
+  });
+
+  it('ARDOP dial → modem_ardop_b2f_exchange with intent=p2p + typed target', async () => {
+    renderDial();
+    fireEvent.change(screen.getByTestId('manual-dial-transport'), { target: { value: 'ardop' } });
+    fireEvent.change(screen.getByTestId('manual-dial-callsign'), { target: { value: 'w7xyz' } });
+    fireEvent.click(screen.getByTestId('manual-dial-connect'));
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith(
+        'modem_ardop_b2f_exchange',
+        expect.objectContaining({ target: 'W7XYZ', intent: 'p2p', transportKind: 'ardop' }),
+      ),
+    );
+  });
+
+  it('packet dial → packet_connect with intent=p2p + typed via path (comma-separated, capped at 2)', async () => {
+    renderDial();
+    fireEvent.change(screen.getByTestId('manual-dial-transport'), { target: { value: 'packet' } });
+    fireEvent.change(screen.getByTestId('manual-dial-callsign'), { target: { value: 'w7xyz-1' } });
+    fireEvent.change(screen.getByTestId('manual-dial-via'), { target: { value: 'wide1-1, wide2-1, wide3-1' } });
+    fireEvent.click(screen.getByTestId('manual-dial-connect'));
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith(
+        'packet_connect',
+        expect.objectContaining({ call: 'W7XYZ-1', path: ['wide1-1', 'wide2-1'], intent: 'p2p' }),
+      ),
+    );
+  });
+
+  it('telnet dial → telnet_p2p_connect with typed host/port/callsign + operator grid as locator, never cms_connect', async () => {
+    renderDial();
+    fireEvent.change(screen.getByTestId('manual-dial-transport'), { target: { value: 'telnet' } });
+    fireEvent.change(screen.getByTestId('manual-dial-callsign'), { target: { value: 'w7xyz-5' } });
+    fireEvent.change(screen.getByTestId('manual-dial-host'), { target: { value: '10.0.0.9' } });
+    fireEvent.change(screen.getByTestId('manual-dial-port'), { target: { value: '8774' } });
+    fireEvent.click(screen.getByTestId('manual-dial-connect'));
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith(
+        'telnet_p2p_connect',
+        expect.objectContaining({
+          req: expect.objectContaining({
+            host: '10.0.0.9', port: 8774, peer_callsign: 'W7XYZ-5', locator: 'CN85nm',
+          }),
+        }),
+      ),
+    );
+    expect(mockInvoke).not.toHaveBeenCalledWith('cms_connect');
+  });
+
+  it('telnet dial with a missing host never dispatches', () => {
+    renderDial();
+    fireEvent.change(screen.getByTestId('manual-dial-transport'), { target: { value: 'telnet' } });
+    fireEvent.change(screen.getByTestId('manual-dial-callsign'), { target: { value: 'w7xyz-5' } });
+    fireEvent.change(screen.getByTestId('manual-dial-port'), { target: { value: '8774' } });
+    fireEvent.click(screen.getByTestId('manual-dial-connect'));
+    expect(screen.getByTestId('manual-dial-error')).toBeTruthy();
+    expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it('telnet dial with an out-of-range port never dispatches', () => {
+    renderDial();
+    fireEvent.change(screen.getByTestId('manual-dial-transport'), { target: { value: 'telnet' } });
+    fireEvent.change(screen.getByTestId('manual-dial-callsign'), { target: { value: 'w7xyz-5' } });
+    fireEvent.change(screen.getByTestId('manual-dial-host'), { target: { value: '10.0.0.9' } });
+    fireEvent.change(screen.getByTestId('manual-dial-port'), { target: { value: '999999' } });
+    fireEvent.click(screen.getByTestId('manual-dial-connect'));
+    expect(screen.getByTestId('manual-dial-error')).toBeTruthy();
+    expect(mockInvoke).not.toHaveBeenCalled();
+  });
+});

@@ -486,6 +486,12 @@ export function StationFinderPanel({ onClose, activePrefillMode, onUse }: Statio
             onSaveFavorite={onSaveFavorite}
             isSaved={isSaved}
             peers={visiblePeers}
+            // Task T-G: the manual-dial affordance is gated on the SAME
+            // finder_peers capability bit as the Peer type chip (showPeerType
+            // above) — not on `visiblePeers`, which is empty both when the
+            // capability is off AND when the operator toggled the Peer type
+            // off. It must still render for the empty-roster case (Flow 2(b)).
+            p2pDialEnabled={finderPeersEnabled}
           />
         </div>
       </div>
