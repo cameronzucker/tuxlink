@@ -5,6 +5,7 @@
 
 use crate::winlink::ax25::KissLinkConfig;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::sync::Mutex;
 
 /// Bumped 2 → 3 (tuxlink-ulrz): `trash_auto_purge` was added under
 /// `deny_unknown_fields` WITHOUT a version bump, so an older binary rejected the
@@ -983,6 +984,30 @@ pub fn write_config_atomic(config: &Config) -> Result<(), ConfigWriteError> {
     let parent_dir = std::fs::File::open(parent)?;
     parent_dir.sync_all()?;
     Ok(())
+}
+
+/// The crate-wide config writer gate (tuxlink-b026z.3): serializes every
+/// read-modify-validate-write cycle under ONE static lock.
+/// `write_config_atomic` makes the file REPLACE atomic; it does NOT make
+/// two concurrent read→mutate→write cycles atomic — without this gate the
+/// second writer silently reverts the first writer's field (lost update).
+///
+/// Scope note: the six ft8 commands route through this from day one. The
+/// ~10 pre-existing writers elsewhere in the crate still do bare
+/// read→mutate→write; migrating them is OUT OF SCOPE here and tracked by
+/// the follow-up bd issue T19 files — they migrate opportunistically as
+/// they are touched.
+static CONFIG_WRITER: Mutex<()> = Mutex::new(());
+
+pub fn update_config(
+    mutate: impl FnOnce(&mut Config) -> Result<(), String>,
+) -> Result<Config, String> {
+    let _g = CONFIG_WRITER.lock().unwrap_or_else(|p| p.into_inner());
+    let mut cfg = read_config().map_err(|e| format!("config read failed: {e}"))?;
+    mutate(&mut cfg)?;
+    cfg.validate().map_err(|e| e.to_string())?;
+    write_config_atomic(&cfg).map_err(|e| format!("config write failed: {e}"))?;
+    Ok(cfg)
 }
 
 #[derive(serde::Deserialize)]

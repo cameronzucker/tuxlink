@@ -1216,6 +1216,87 @@ pub fn run() {
                 },
             );
 
+            // tuxlink-b026z.3: FT8 Station Intelligence listener. Managed
+            // state + arbiter are constructed here (paths need the Tauri
+            // path API); the service starts ONLY via autostart (below) or
+            // the ft8_listener_start command.
+            {
+                use tauri::Manager as _;
+                // Slot dirs: tmpfs — ~2 GB/day must never hit the SD card
+                // (spec §WAV writeout: XDG_RUNTIME_DIR, /run/user/<uid>,
+                // temp_dir + warning, in that order).
+                let slot_root = if let Some(x) = std::env::var_os("XDG_RUNTIME_DIR") {
+                    std::path::PathBuf::from(x).join("tuxlink").join("ft8")
+                } else {
+                    // SAFETY: getuid is always successful (POSIX). libc 0.2
+                    // is already a direct dep (src-tauri/Cargo.toml:98);
+                    // nix 0.31's enabled feature set lacks `user`, so
+                    // nix::unistd::Uid is NOT available here.
+                    let uid = unsafe { libc::getuid() };
+                    let run_user = std::path::PathBuf::from(format!("/run/user/{uid}"));
+                    if run_user.is_dir()
+                        && std::fs::metadata(&run_user).map(|m| !m.permissions().readonly()).unwrap_or(false)
+                    {
+                        run_user.join("tuxlink").join("ft8")
+                    } else {
+                        eprintln!(
+                            "ft8: XDG_RUNTIME_DIR unset and /run/user unavailable — slot WAVs \
+                             fall back to {:?}; if that is SD-card-backed, sustained listening \
+                             writes ~2 GB/day to it",
+                            std::env::temp_dir()
+                        );
+                        std::env::temp_dir().join("tuxlink").join("ft8")
+                    }
+                };
+                // FFTW wisdom: ONE machine-wide dir (keyed by FFT size/CPU,
+                // not by audio device).
+                let wisdom_dir = app
+                    .path()
+                    .app_local_data_dir()
+                    .map(|d| d.join("jt9-wisdom"))
+                    .unwrap_or_else(|_| std::env::temp_dir().join("tuxlink-jt9-wisdom"));
+                let modem_session =
+                    (*app.state::<std::sync::Arc<crate::modem_status::ModemSession>>()).clone();
+                let platform = std::sync::Arc::new(crate::ft8::traits::ProdPlatform {
+                    wisdom_dir,
+                    slot_root,
+                    modem: modem_session,
+                });
+                let ft8_cfg = crate::config::read_config()
+                    .map(|c| c.ft8)
+                    .unwrap_or_default();
+                let autostart = ft8_cfg.enabled;
+                let ft8_state = crate::ft8::service::Ft8ListenerState::new(
+                    crate::ft8::service::Ft8Deps {
+                        platform,
+                        clock: std::sync::Arc::new(crate::ft8::clock::TimedatectlProbe),
+                        sink: std::sync::Arc::new(crate::ft8::events::TauriEventSink {
+                            app: app.handle().clone(),
+                        }),
+                    },
+                    ft8_cfg,
+                );
+                app.manage(ft8_state.clone());
+                // The arbiter: managed for command access AND installed
+                // globally for the modem seams (T15's choke points).
+                let arbiter = crate::ft8::arbiter::Ft8Arbiter::new(ft8_state.clone());
+                app.manage(arbiter.clone());
+                let _ = crate::ft8::arbiter::FT8_ARBITER.set(arbiter);
+                // Autostart on `enabled` ALONE — NOT gated on device
+                // presence: an interrupted first-contact operator must find
+                // blocked(needs-device-selection), not silent stopped.
+                if autostart {
+                    std::thread::Builder::new()
+                        .name("ft8-autostart".into())
+                        .spawn(move || {
+                            if let Err(e) = ft8_state.start() {
+                                tracing::warn!(target: "tuxlink::ft8", "autostart failed: {e}");
+                            }
+                        })
+                        .ok();
+                }
+            }
+
             // tuxlink-nx95: spawn the UV-Pro control status broadcaster — a
             // std::thread that, while a native control session is connected,
             // polls live status every 2 s and emits it as the `uvpro:status`
@@ -2185,6 +2266,15 @@ pub fn run() {
             crate::elmer::config_commands::elmer_key_status_for_origins,
             // T6: memory-fit estimate — Tauri UI command only, NOT an MCP tool.
             crate::elmer::memory_estimate::elmer_estimate_memory,
+            // tuxlink-b026z.3: FT8 Station Intelligence listener (L2). The
+            // UI caller is L3; the commands exist now per the epic's
+            // layer-wise sanction (spec §Scope).
+            crate::ft8::commands::ft8_listener_start,
+            crate::ft8::commands::ft8_listener_stop,
+            crate::ft8::commands::ft8_listener_snapshot,
+            crate::ft8::commands::ft8_set_device,
+            crate::ft8::commands::ft8_set_band,
+            crate::ft8::commands::ft8_set_sweep,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

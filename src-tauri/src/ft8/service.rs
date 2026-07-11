@@ -1052,6 +1052,14 @@ impl Ft8ListenerState {
     ) -> Result<(), String> {
         let dial = tuxlink_capture::bands::dial_hz(band)
             .ok_or_else(|| format!("{band:?} is not an FT8 band"))?;
+        {
+            // Set BEFORE the tune (T16 review): a slot completing while the
+            // radio is mid-retune must be discarded regardless of outcome —
+            // and on failure the dial may ALSO have moved (ManagedRig::tune
+            // sets freq before mode), so the flag stays set on both arms.
+            let mut g = self.lock_inner();
+            g.discard_next_slot = Some(DiscardClassDto::QsyTransition);
+        }
         let result = {
             let rig = self.rig_lock();
             let _g = rig.lock().unwrap_or_else(|p| p.into_inner());
@@ -1066,9 +1074,6 @@ impl Ft8ListenerState {
                     g.band_source = source;
                     g.band_label_confirmed_utc_ms = Some(self.platform.utc_now_ms());
                     g.machine.on_band_change(); // k resets on band change
-                    // The slot in progress during the QSY is the transition
-                    // slot: a scheduled discard.
-                    g.discard_next_slot = Some(DiscardClassDto::QsyTransition);
                 }
                 self.emit_listening_change();
                 Ok(())
@@ -1100,6 +1105,53 @@ impl Ft8ListenerState {
             self.lock_inner().machine.on_qsy_failure();
         }
         self.emit_listening_change();
+    }
+
+    /// Operator chip click with no CAT: a STATEMENT (spec §Band provenance —
+    /// an explicit click sets the confirmed timestamp), + instructed dial +
+    /// k reset.
+    pub(crate) fn assert_band_operator(self: &Arc<Self>, band: &str) -> Result<(), String> {
+        let dial = tuxlink_capture::bands::dial_hz(band)
+            .ok_or_else(|| format!("{band:?} is not an FT8 band"))?;
+        {
+            let mut g = self.lock_inner();
+            g.band = band.to_string();
+            g.dial_hz = dial;
+            g.band_source = BandSource::OperatorAsserted;
+            g.band_label_confirmed_utc_ms = Some(self.platform.utc_now_ms());
+            g.machine.on_band_change();
+        }
+        self.emit_listening_change();
+        Ok(())
+    }
+
+    /// Live sweep toggle: (de)activate the machine element when listening;
+    /// runtime state only, config already persisted by the command.
+    ///
+    /// Lock discipline: `rig_configured()` does config I/O in production
+    /// (file read) — probed BEFORE the state mutex is taken, never across it
+    /// (the same discipline `execute_start_sequence`'s step 8 rig-ok read
+    /// follows).
+    pub(crate) fn apply_sweep_enabled(self: &Arc<Self>, enabled: bool) {
+        let rig_ok = self.platform.rig_configured();
+        {
+            let mut g = self.lock_inner();
+            if enabled && matches!(g.machine.axis(), ServiceAxis::Listening) && rig_ok {
+                g.machine.sweep_activate();
+            } else if !enabled {
+                g.machine.sweep_deactivate();
+            }
+        }
+        self.emit_listening_change();
+    }
+
+    /// Test-only forced entry into `blocked(capture-wedged)` (T17): the
+    /// machine's `on_capture_wedged` writes the axis unconditionally (no
+    /// current-axis precondition), so this is safe to call directly from
+    /// `stopped` — no `on_start_requested`/`on_listening` detour needed.
+    #[cfg(test)]
+    pub(crate) fn test_force_capture_wedged(&self) {
+        self.lock_inner().machine.on_capture_wedged();
     }
 
     // Narrow read accessors for sweep::tick (keep Inner private).
@@ -1622,13 +1674,14 @@ mod tests {
     }
 
     fn cfg_with_device() -> Ft8Config {
-        let mut c = Ft8Config::default();
-        c.enabled = true;
-        c.device = Some(StableAudioId {
-            kind: StableIdKind::ByIdSymlink,
-            value: "usb-DRA-100-00".into(),
-        });
-        c
+        Ft8Config {
+            enabled: true,
+            device: Some(StableAudioId {
+                kind: StableIdKind::ByIdSymlink,
+                value: "usb-DRA-100-00".into(),
+            }),
+            ..Default::default()
+        }
     }
 
     fn run_sequence(state: &Arc<Ft8ListenerState>) {
@@ -1648,7 +1701,7 @@ mod tests {
         let snap = state.snapshot();
         let devs = snap.available_devices.expect("picker must render while blocked on wsjtx");
         assert_eq!(devs.len(), 1);
-        let _ = std::fs::remove_dir_all(&state.platform_tmp_for_test());
+        let _ = std::fs::remove_dir_all(state.platform_tmp_for_test());
     }
 
     // Arrow 2a: device None → needs-device-selection.

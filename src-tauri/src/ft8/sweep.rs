@@ -43,16 +43,39 @@ pub(crate) fn tick(state: &Arc<Ft8ListenerState>) {
     // lock alone never could. qsy_to_band owns the rig lock; rig_session
     // takes ONLY the arbiter lock (lock order arbiter > rig > state, each
     // acquired at most once per thread — T14's non-reentrancy contract).
-    let do_qsy = || state.qsy_to_band(&next_band, BandSource::CatConfirmed);
+    // The outer guard above raced pause_for_modem on the arbiter lock (T16
+    // review): a pause that wins the lock after the guard leaves the service
+    // yielded + latched, and tuning then would move the dial mid-handover.
+    // Re-validate INSIDE the closure — rig_session holds the arbiter lock,
+    // so this check is race-free against pause. A skip is neither success
+    // (no band advance) nor failure (no FallbackHold count); the next dwell
+    // boundary retries.
+    enum QsyOutcome {
+        Done,
+        Skipped,
+        Failed(String),
+    }
+    let do_qsy = || {
+        if !matches!(state.axis(), ServiceAxis::Listening) || state.hold().is_latched() {
+            return QsyOutcome::Skipped;
+        }
+        match state.qsy_to_band(&next_band, BandSource::CatConfirmed) {
+            Ok(()) => QsyOutcome::Done,
+            Err(e) => QsyOutcome::Failed(e),
+        }
+    };
     let result = match crate::ft8::arbiter::FT8_ARBITER.get() {
         Some(arb) => arb.rig_session(do_qsy),
         None => do_qsy(),
     };
     match result {
-        Ok(()) => {
+        QsyOutcome::Done => {
             state.on_sweep_qsy_success(next_idx);
         }
-        Err(e) => {
+        QsyOutcome::Skipped => {
+            tracing::debug!(target: "tuxlink::ft8", "sweep QSY skipped: yield won the arbiter race");
+        }
+        QsyOutcome::Failed(e) => {
             tracing::warn!(target: "tuxlink::ft8", "sweep QSY to {next_band} failed: {e} — retry next dwell boundary");
             state.on_sweep_qsy_failure(e);
         }
@@ -70,13 +93,16 @@ mod tests {
     use tuxlink_capture::state::{ServiceAxis, Sweep};
 
     fn sweep_cfg() -> Ft8Config {
-        let mut c = Ft8Config::default();
-        c.device = Some(StableAudioId { kind: StableIdKind::ByIdSymlink, value: "usb-X-00".into() });
-        c.band = "80m".into();
-        c.sweep.enabled = true;
-        c.sweep.bands = vec!["80m".into(), "40m".into(), "20m".into()];
-        c.sweep.dwell_slots = 4;
-        c
+        Ft8Config {
+            device: Some(StableAudioId { kind: StableIdKind::ByIdSymlink, value: "usb-X-00".into() }),
+            band: "80m".into(),
+            sweep: crate::config::Ft8SweepConfig {
+                enabled: true,
+                bands: vec!["80m".into(), "40m".into(), "20m".into()],
+                dwell_slots: 4,
+            },
+            ..Default::default()
+        }
     }
 
     fn listening_state_with_sweep() -> (Arc<Ft8ListenerState>, Arc<FakePlatform>) {

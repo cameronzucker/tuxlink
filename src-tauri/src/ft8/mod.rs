@@ -11,6 +11,7 @@
 pub mod alsa_source;
 pub mod arbiter;
 pub mod clock;
+pub mod commands;
 pub mod events;
 pub mod records;
 pub mod service;

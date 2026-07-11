@@ -2202,29 +2202,51 @@ pub fn ardop_tune_rig(freq_hz: u64, sideband: Option<bool>) -> Result<(), String
 // session's rig, or gate it) is tracked as a follow-up; `rig_status` reports
 // config-derived state only.
 
+/// Crate-shared TUXLINK_CONFIG_DIR test guard (tuxlink-b026z.3). ONE static
+/// lock serializes every env-mutating test in the binary (std::env::set_var
+/// is not thread-safe under parallel tests — tuxlink-j0ij), and the guard
+/// RESTORES the prior value on drop — a panicking test can no longer leak
+/// its tempdir into a neighbor. Both modem_commands' and ft8::commands' test
+/// modules route through this; local copies are banned.
+#[cfg(test)]
+pub(crate) mod test_env {
+    use std::sync::{Mutex, MutexGuard};
+
+    static LOCK: Mutex<()> = Mutex::new(());
+
+    pub(crate) struct ConfigDirGuard {
+        _lock: MutexGuard<'static, ()>,
+        prior: Option<std::ffi::OsString>,
+    }
+
+    /// Point TUXLINK_CONFIG_DIR at `dir` for the guard's lifetime.
+    pub(crate) fn lock_config_dir(dir: &std::path::Path) -> ConfigDirGuard {
+        let lock = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prior = std::env::var_os("TUXLINK_CONFIG_DIR");
+        // SAFETY: LOCK serializes every env mutation in this test binary.
+        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", dir) };
+        ConfigDirGuard { _lock: lock, prior }
+    }
+
+    impl Drop for ConfigDirGuard {
+        fn drop(&mut self) {
+            // SAFETY: still serialized — the lock is held by self._lock.
+            unsafe {
+                match self.prior.take() {
+                    Some(v) => std::env::set_var("TUXLINK_CONFIG_DIR", v),
+                    None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::CONFIG_SCHEMA_VERSION;
     use crate::modem_status::ModemState;
-    use std::sync::Mutex;
-
-    /// Serializes tests that mutate the process-global TUXLINK_CONFIG_DIR env
-    /// var. `std::env::set_var` is not thread-safe under parallel test
-    /// execution (cargo runs tests in a thread pool by default), so each test
-    /// that touches the env grabs this mutex for the duration of its
-    /// set→read→restore sequence. Without this gate, `init_config_from_...`
-    /// tests would race with `round_trip_persists_through_config` and other
-    /// concurrent env mutators in the same binary, sometimes reading from a
-    /// neighbor's tempdir or no dir at all (tuxlink-j0ij).
-    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: Mutex<()> = Mutex::new(());
-        // unwrap_or_else: if a previous test panicked while holding the lock,
-        // the mutex is poisoned but the env state is still well-defined for
-        // the next test (each test fully restores its env in a deferred-style
-        // tail). Recover and proceed.
-        LOCK.lock().unwrap_or_else(|e| e.into_inner())
-    }
+    use test_env::lock_config_dir;
 
     /// Minimal `ArdopConfig` for tests that need to hand one to
     /// [`spawn_ardop_with_yield`] directly (loopback defaults; no test in
@@ -2360,7 +2382,6 @@ mod tests {
 
     #[test]
     fn round_trip_persists_through_config() {
-        let _env_guard = env_lock();
         // Isolate this test from the operator's real config by pointing
         // TUXLINK_CONFIG_DIR at a fresh tempdir. `config_path()` will resolve
         // to `<tmpdir>/config.json` (per config.rs §294).
@@ -2371,15 +2392,11 @@ mod tests {
         // no callsign). `config_set_ardop` will then read it, inject `modem_ardop`,
         // and write it back atomically.
         //
-        // NOTE: std::env::set_var is not thread-safe under parallel test
-        // execution. This test must run serially (--test-threads=1 or via the
-        // `modem_commands::tests` filter). The existing `config.rs` tests avoid
-        // this race by using pure serde deserialization; this test exercises the
-        // file I/O path, so TUXLINK_CONFIG_DIR isolation is the correct approach.
+        // The crate-shared `test_env::lock_config_dir` guard (tuxlink-b026z.3)
+        // serializes this env mutation against every other env-mutating test
+        // in the binary and restores the prior value on drop.
         let tmp = tempfile::tempdir().expect("create tempdir");
-        let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
-        // SAFETY: single-threaded test; no concurrent env reads within this block.
-        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+        let _env_guard = lock_config_dir(tmp.path());
 
         // Seed a minimal valid config (offline path: connect_to_cms=false, no callsign).
         let seed = format!(
@@ -2416,15 +2433,6 @@ mod tests {
         config_set_ardop(initial.clone()).expect("config_set_ardop must succeed");
         let read = config_get_ardop();
         assert_eq!(read, initial);
-
-        // Restore env (best-effort).
-        // SAFETY: symmetric with the set_var above; single-threaded test.
-        unsafe {
-            match prior {
-                Some(v) => std::env::set_var("TUXLINK_CONFIG_DIR", v),
-                None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
-            }
-        }
     }
 
     #[test]
@@ -3273,11 +3281,8 @@ mod tests {
     /// (same pattern as round_trip_persists_through_config).
     #[test]
     fn init_config_from_session_passes_through_valid_bandwidth() {
-        let _env_guard = env_lock();
         let tmp = tempfile::tempdir().expect("create tempdir");
-        let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
-        // SAFETY: env_lock above serializes against other env-mutating tests.
-        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+        let _env_guard = lock_config_dir(tmp.path());
 
         let seed = format!(
             r#"{{
@@ -3306,15 +3311,6 @@ mod tests {
         // mycall is the SESSION call, NOT the config identifier "W1TEST".
         assert_eq!(init_cfg.mycall, "N7CPZ");
         assert_eq!(init_cfg.gridsquare, "CN87");
-
-        // Restore env (best-effort).
-        // SAFETY: symmetric with the set_var above; single-threaded test.
-        unsafe {
-            match prior {
-                Some(v) => std::env::set_var("TUXLINK_CONFIG_DIR", v),
-                None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
-            }
-        }
     }
 
     /// Focused proof: the config call/identifier is OVERRIDDEN by the session
@@ -3323,11 +3319,8 @@ mod tests {
     /// the load-bearing on-air station-ID assertion).
     #[test]
     fn init_config_mycall_is_session_call() {
-        let _env_guard = env_lock();
         let tmp = tempfile::tempdir().expect("create tempdir");
-        let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
-        // SAFETY: env_lock serializes env-mutating tests.
-        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+        let _env_guard = lock_config_dir(tmp.path());
 
         let seed = format!(
             r#"{{
@@ -3351,14 +3344,6 @@ mod tests {
         );
         // grid still comes from config.
         assert_eq!(init_cfg.gridsquare, "DN17");
-
-        // SAFETY: symmetric.
-        unsafe {
-            match prior {
-                Some(v) => std::env::set_var("TUXLINK_CONFIG_DIR", v),
-                None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
-            }
-        }
     }
 
     /// A hand-edited (or stale) `bandwidth_hz` outside the valid set drops
@@ -3366,11 +3351,8 @@ mod tests {
     /// Settings dropdown being bypassed.
     #[test]
     fn init_config_from_session_drops_invalid_bandwidth() {
-        let _env_guard = env_lock();
         let tmp = tempfile::tempdir().expect("create tempdir");
-        let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
-        // SAFETY: env_lock serializes env-mutating tests.
-        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+        let _env_guard = lock_config_dir(tmp.path());
 
         let seed = format!(
             r#"{{
@@ -3399,14 +3381,6 @@ mod tests {
             init_cfg.arq_bandwidth_hz, None,
             "invalid bandwidth_hz=750 must drop to None (defense in depth — tuxlink-j0ij)"
         );
-
-        // SAFETY: symmetric with set_var above.
-        unsafe {
-            match prior {
-                Some(v) => std::env::set_var("TUXLINK_CONFIG_DIR", v),
-                None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
-            }
-        }
     }
 
     // ── tuxlink-60wh: -G WebGUI flag in ardopcf extra_args ───────────────
@@ -3810,11 +3784,8 @@ mod tests {
     /// over. This is the migration path: pre-j0ij configs still init.
     #[test]
     fn init_config_from_session_yields_none_bandwidth_when_modem_ardop_absent() {
-        let _env_guard = env_lock();
         let tmp = tempfile::tempdir().expect("create tempdir");
-        let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
-        // SAFETY: env_lock serializes env-mutating tests.
-        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+        let _env_guard = lock_config_dir(tmp.path());
 
         let seed = format!(
             r#"{{
@@ -3836,14 +3807,6 @@ mod tests {
             init_cfg.arq_bandwidth_hz, None,
             "no modem_ardop section → no ARQBW override (migration path)"
         );
-
-        // SAFETY: symmetric.
-        unsafe {
-            match prior {
-                Some(v) => std::env::set_var("TUXLINK_CONFIG_DIR", v),
-                None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
-            }
-        }
     }
 
     // ── parse_b2f_intent (tuxlink-9ls2) ──────────────────────────────

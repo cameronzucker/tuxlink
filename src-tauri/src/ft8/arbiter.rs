@@ -189,9 +189,10 @@ mod tests {
     }
 
     fn cfg_with_device() -> Ft8Config {
-        let mut c = Ft8Config::default();
-        c.device = Some(StableAudioId { kind: StableIdKind::ByIdSymlink, value: "usb-X-00".into() });
-        c
+        Ft8Config {
+            device: Some(StableAudioId { kind: StableIdKind::ByIdSymlink, value: "usb-X-00".into() }),
+            ..Default::default()
+        }
     }
 
     /// Axis arm 1 — stopped: Ok, NO latch, NO state change.
