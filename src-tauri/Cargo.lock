@@ -6879,6 +6879,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tuxlink-capture"
+version = "0.1.0"
+dependencies = [
+ "tuxlink-jt9",
+]
+
+[[package]]
 name = "tuxlink-ft8"
 version = "0.1.0"
 dependencies = [
