@@ -13,18 +13,22 @@ import type { SolarSnapshot } from './wwvApi';
 // Module-level mock (hoisted above imports per vi.mock hoisting rules)
 // ---------------------------------------------------------------------------
 
-const mockArm = vi.fn((_nowMs: number) => Promise.resolve());
+const mockArm = vi.fn((_nowMs: number) => {});
+const mockCancel = vi.fn(() => {});
 const mockRefreshSnapshot = vi.fn(() => Promise.resolve());
 
 let mockStatus: WwvOffairStatus = 'idle';
 let mockSnapshot: SolarSnapshot | null = null;
+let mockWindowLabel: string | null = null;
 
 vi.mock('./useWwvOffair', () => ({
   useWwvOffair: (): UseWwvOffairResult => ({
     status: mockStatus,
     result: null,
     snapshot: mockSnapshot,
+    windowLabel: mockWindowLabel,
     arm: mockArm,
+    cancel: mockCancel,
     refreshSnapshot: mockRefreshSnapshot,
   }),
 }));
@@ -39,6 +43,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockStatus = 'idle';
   mockSnapshot = null;
+  mockWindowLabel = null;
 });
 
 describe('WwvOffairControl', () => {
@@ -102,6 +107,23 @@ describe('WwvOffairControl', () => {
     };
     render(<WwvOffairControl />);
     expect(screen.queryByTestId('wwv-offair-provenance')).toBeNull();
+  });
+
+  it('shows the window label and a working Cancel button when status is armed', () => {
+    mockStatus = 'armed';
+    mockWindowLabel = 'WWV :18';
+    render(<WwvOffairControl />);
+
+    const armedNote = screen.getByTestId('wwv-offair-armed');
+    expect(armedNote.textContent).toContain('WWV :18');
+
+    const cancelButton = screen.getByTestId('wwv-offair-cancel');
+    fireEvent.click(cancelButton);
+    expect(mockCancel).toHaveBeenCalledOnce();
+
+    // The "Refresh off-air" button is disabled while armed.
+    const refreshButton = screen.getByRole('button', { name: 'Refresh off-air' });
+    expect(refreshButton).toBeDisabled();
   });
 
   it('shows a no-copy note when status is nocopy', () => {

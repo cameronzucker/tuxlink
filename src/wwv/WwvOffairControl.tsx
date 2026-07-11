@@ -12,7 +12,7 @@ import { useEffect } from 'react';
 import { useWwvOffair } from './useWwvOffair';
 
 export function WwvOffairControl() {
-  const { status, snapshot, arm, refreshSnapshot } = useWwvOffair();
+  const { status, windowLabel, snapshot, arm, cancel, refreshSnapshot } = useWwvOffair();
 
   useEffect(() => {
     void refreshSnapshot().catch(() => {});
@@ -20,6 +20,7 @@ export function WwvOffairControl() {
   }, []);
 
   const capturing = status === 'capturing';
+  const armed = status === 'armed';
   // Narrowed together so TS carries the non-null `indices` through the JSX
   // below without a non-null assertion.
   const offairIndices =
@@ -30,11 +31,26 @@ export function WwvOffairControl() {
       <button
         type="button"
         className="station-finder__refresh-offair"
-        disabled={capturing}
-        onClick={() => void arm(Date.now())}
+        disabled={capturing || armed}
+        onClick={() => arm(Date.now())}
       >
         {capturing ? 'Capturing…' : 'Refresh off-air'}
       </button>
+      {armed && (
+        <>
+          <span className="station-finder__offair-note" data-testid="wwv-offair-armed">
+            Armed for {windowLabel} UTC
+          </span>
+          <button
+            type="button"
+            className="station-finder__cancel-offair"
+            data-testid="wwv-offair-cancel"
+            onClick={() => cancel()}
+          >
+            Cancel
+          </button>
+        </>
+      )}
       {offairIndices && snapshot && (
         <span
           className="station-finder__offair"
@@ -52,7 +68,7 @@ export function WwvOffairControl() {
       )}
       {status === 'nocopy' && (
         <span className="station-finder__offair-note" data-testid="wwv-offair-nocopy">
-          couldn't copy — retry next cycle
+          couldn't copy — will retry next cycle
         </span>
       )}
       {status === 'error' && (
