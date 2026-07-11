@@ -80,29 +80,41 @@ export interface WaterfallProps {
 /** Carries just enough state to detect the next batch's discontinuity. */
 export interface WaterfallGapState {
   seq: number;
-  /** Wall-clock UTC ms of the END of the last painted column. */
-  lastColEndUtcMs: number;
+  /**
+   * The EXPECTED wall-clock UTC ms of the NEXT batch's first column — i.e. one
+   * cadence tick PAST the last painted column of this batch. An exactly on-time
+   * next batch has `firstColUtcMs === expectedNextColUtcMs`, so `detectGap`
+   * measures a ~0 ms deviation against the 2× cadence threshold, giving a
+   * genuine 2× jitter slack (not the ~1× a "last column timestamp" baseline
+   * would leave). See fix round 1.
+   */
+  expectedNextColUtcMs: number;
 }
 
 /**
  * True when `batch` does not continue cleanly from `prev` — either the
- * monotonic `seq` skipped (missed batch) or the wall-clock gap between the
- * last painted column and this batch's first column exceeds the expected
- * column cadence by more than jitter slack. `prev === null` (first batch
- * ever, or the first batch after a fresh (re)subscribe) is never a gap —
- * there is nothing yet to be discontinuous FROM.
+ * monotonic `seq` skipped (missed batch) or this batch's first column arrives
+ * more than the expected column cadence (× slack) away from where the next
+ * column was due. `prev === null` (first batch ever, or the first batch after
+ * a fresh (re)subscribe) is never a gap — there is nothing yet to be
+ * discontinuous FROM.
  */
 export function detectGap(prev: WaterfallGapState | null, batch: WaterfallBatch): boolean {
   if (prev === null) return false;
   if (batch.seq !== prev.seq + 1) return true; // missed / reordered batch
-  const actualGapMs = batch.firstColUtcMs - prev.lastColEndUtcMs;
-  return actualGapMs > COLUMN_CADENCE_MS * GAP_SLACK_MULTIPLIER;
+  // Deviation from the EXPECTED first-column time (0 for an on-time batch).
+  const deviationMs = batch.firstColUtcMs - prev.expectedNextColUtcMs;
+  return deviationMs > COLUMN_CADENCE_MS * GAP_SLACK_MULTIPLIER;
 }
 
 /** The gap state to carry forward after painting `batch`. */
 export function nextGapState(batch: WaterfallBatch): WaterfallGapState {
-  const lastColEndUtcMs = batch.firstColUtcMs + Math.max(0, batch.cols.length - 1) * COLUMN_CADENCE_MS;
-  return { seq: batch.seq, lastColEndUtcMs };
+  // Expected next first-column time = one cadence PAST this batch's last
+  // column. For an N-column batch starting at t0, the last column is at
+  // t0 + (N-1)*cadence, and the next batch's first column is due one cadence
+  // later ⇒ t0 + N*cadence.
+  const expectedNextColUtcMs = batch.firstColUtcMs + Math.max(1, batch.cols.length) * COLUMN_CADENCE_MS;
+  return { seq: batch.seq, expectedNextColUtcMs };
 }
 
 // ---------------------------------------------------------------------------

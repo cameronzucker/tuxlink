@@ -192,6 +192,24 @@ describe('Waterfall — subscription lifecycle', () => {
     unmount();
   });
 
+  it('does not leak a subscription when unmounted BEFORE the subscribe/listen promises resolve (disposed-before-resolved race)', async () => {
+    // Render then unmount SYNCHRONOUSLY — no flush between — so the effect's
+    // cleanup runs while `subscriptionId`/`unlisten` are still null (their
+    // promises are pending). The post-dispose paths in the `.then` callbacks
+    // are the only thing that can prevent a leaked FFT-thread token here.
+    const { unmount } = render(<Waterfall expanded />);
+    unmount();
+
+    // Now let the pending subscribe + listen promises resolve, post-dispose.
+    await flush();
+
+    // The subscribe resolved after dispose → its own `.then` unsubscribes the
+    // token rather than leaking it; the listen resolved after dispose → its
+    // `.then` immediately unlistens.
+    expect(invokeMock).toHaveBeenCalledWith(WATERFALL_UNSUBSCRIBE_COMMAND, { subscriptionId: 'sub-1' });
+    expect(unlistenCalls).toBe(1);
+  });
+
   it('re-subscribes with a fresh listen registration on a collapse -> re-expand cycle', async () => {
     const { rerender, unmount } = render(<Waterfall expanded />);
     await flush();
@@ -282,22 +300,38 @@ describe('Waterfall — gap detection (pure)', () => {
   });
 
   it('is a gap when seq skips ahead', () => {
-    const prev: WaterfallGapState = { seq: 1, lastColEndUtcMs: 1_700_000_000_750 };
+    const prev: WaterfallGapState = { seq: 1, expectedNextColUtcMs: 1_700_000_001_000 };
     expect(detectGap(prev, mkBatch({ seq: 3, firstColUtcMs: 1_700_000_001_000 }))).toBe(true);
   });
 
-  it('is NOT a gap for consecutive seq at expected cadence', () => {
+  it('is NOT a gap for a consecutive seq batch arriving exactly on time (0ms deviation)', () => {
     const prevBatch = mkBatch({ seq: 1, firstColUtcMs: 1_700_000_000_000 });
     const prev = nextGapState(prevBatch);
-    // Next batch's first column begins one cadence tick after the last one ended.
-    const next = mkBatch({ seq: 2, firstColUtcMs: prev.lastColEndUtcMs + COLUMN_CADENCE_MS });
+    // An on-time next batch begins exactly at the expected first-column time.
+    const next = mkBatch({ seq: 2, firstColUtcMs: prev.expectedNextColUtcMs });
     expect(detectGap(prev, next)).toBe(false);
   });
 
-  it('is a gap when the wall-clock delta exceeds cadence + slack even with consecutive seq', () => {
+  it('tolerates jitter up to (but not exceeding) the 2× cadence slack', () => {
+    const prev = nextGapState(mkBatch({ seq: 1, firstColUtcMs: 1_700_000_000_000 }));
+    // 2× cadence (500ms) late is at the threshold — NOT a gap (strict >).
+    const atThreshold = mkBatch({
+      seq: 2,
+      firstColUtcMs: prev.expectedNextColUtcMs + COLUMN_CADENCE_MS * 2,
+    });
+    expect(detectGap(prev, atThreshold)).toBe(false);
+    // One ms past the 2× slack IS a gap — proves a real, documented 2× headroom.
+    const pastThreshold = mkBatch({
+      seq: 2,
+      firstColUtcMs: prev.expectedNextColUtcMs + COLUMN_CADENCE_MS * 2 + 1,
+    });
+    expect(detectGap(prev, pastThreshold)).toBe(true);
+  });
+
+  it('is a gap when the wall-clock delta far exceeds cadence + slack even with consecutive seq', () => {
     const prevBatch = mkBatch({ seq: 1, firstColUtcMs: 1_700_000_000_000 });
     const prev = nextGapState(prevBatch);
-    const next = mkBatch({ seq: 2, firstColUtcMs: prev.lastColEndUtcMs + 10_000 }); // 10s stall
+    const next = mkBatch({ seq: 2, firstColUtcMs: prev.expectedNextColUtcMs + 10_000 }); // 10s stall
     expect(detectGap(prev, next)).toBe(true);
   });
 });

@@ -1,11 +1,18 @@
 /* Waterfall.css — Task C8. The canvas is the whole surface; the eventual
- * strip host (LiveBandStrip, Task C7) positions it beside DecodeFeed. Tokens
- * match the rest of the ft8ui component family (App.css palette). */
+ * strip host (LiveBandStrip, Task C7) positions it beside DecodeFeed. The one
+ * color here is a deliberate true-black noise-floor exception, NOT an App.css
+ * palette token — see the note on `background` below. */
 
 .ft8-waterfall {
   display: block;
   width: 100%;
   height: 100%;
+  /* Deliberate true-black noise-floor exception, NOT a design token: the
+     canvas paints its own colormap (magnitudeToRgb, dark-navy floor → white
+     hot) and this background is only the pre-first-batch / letterbox fill.
+     It must sit at/below the colormap's darkest value so an empty canvas
+     reads as "no signal yet", which var(--surface-2) (a visibly lighter
+     panel token) would not. Kept a raw hex on purpose. */
   background: #04060b;
   /* Sharp column edges, not a blurred resample — a waterfall reads as
      discrete columns of time, not a smoothed image. */
