@@ -72,11 +72,12 @@ jobs:
           # included), so a cold cache pulls wsjtx's full Qt closure once; cache
           # hits amortize it. jt9 ships in the main wsjtx package via hard
           # Depends on both amd64 and arm64 (noble universe).
-          packages: libax25-dev libudev-dev libwebkit2gtk-4.1-dev libglib2.0-dev libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libheif-dev libde265-dev libwebp-dev wsjtx
+          packages: libax25-dev libudev-dev libwebkit2gtk-4.1-dev libglib2.0-dev libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libheif-dev libde265-dev libwebp-dev wsjtx libasound2-dev
           # Salt bump forces a fresh apt closure. v3: v2 cached an EMPTY result
           # after the 404-aborted install, so it must be discarded too (tuxlink-84vzn).
           # v4: adds wsjtx (tuxlink-b026z.2 T8).
-          version: tuxlink-ci-${{ matrix.arch }}-v4
+          # v5: adds libasound2-dev (alsa crate, tuxlink-b026z.3 — pulled forward from T18 at the Gate D CI failure).
+          version: tuxlink-ci-${{ matrix.arch }}-v5
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
