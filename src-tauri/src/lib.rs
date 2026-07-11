@@ -32,6 +32,7 @@ pub mod winlink_backend;
 pub mod wizard;
 pub mod mcp_ports;
 pub mod ft8;
+pub mod geomag;
 pub mod modem_commands;
 pub mod modem_status;
 pub mod propagation;
@@ -2279,6 +2280,7 @@ pub fn run() {
             crate::ft8::commands::ft8_device_meter,
             crate::ft8::commands::ft8_list_devices,
             crate::ft8::commands::ft8_cat_probe,
+            crate::geomag::magnetic_declination,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
