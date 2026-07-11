@@ -262,6 +262,76 @@
   cursor: pointer;
 }
 
+/* Off-air WWV control (WwvOffairControl.tsx) — clip playback + manual entry
+   + manual-tune prompt, styled to match .station-finder__refresh above. */
+.station-finder__refresh-offair {
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--dim, #9fb6cc);
+  background: var(--surface-2);
+  border: 1px solid var(--border2, #34556f);
+  border-radius: 7px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+.station-finder__refresh-offair:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.station-finder__cancel-offair {
+  font: inherit;
+  font-size: 11px;
+  color: var(--faint, #6f8aa3);
+  background: transparent;
+  border: 1px solid var(--border2, #34556f);
+  border-radius: 7px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.station-finder__offair-note {
+  font-size: 11px;
+  color: var(--dim, #9fb6cc);
+  font-family: var(--mono, ui-monospace, monospace);
+}
+.station-finder__offair {
+  font-size: 10.5px;
+  color: var(--dim, #9fb6cc);
+  font-family: var(--mono, ui-monospace, monospace);
+  padding-left: 8px;
+  border-left: 2px solid var(--accent, #4c86c6);
+}
+.station-finder__offair b {
+  color: var(--text, #e8f1fa);
+}
+.station-finder__offair-nocopy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #e0c060;
+  font-family: var(--mono, ui-monospace, monospace);
+}
+.station-finder__offair-manual {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.station-finder__offair-field {
+  width: 4.5em;
+  font: inherit;
+  font-size: 11px;
+  color: var(--text, #e8f1fa);
+  background: var(--surface-2);
+  border: 1px solid var(--border2, #34556f);
+  border-radius: 6px;
+  padding: 3px 6px;
+}
+.station-finder__offair-clip {
+  height: 28px;
+  max-width: 200px;
+}
+
 /* ── body: map + rail ─────────────────────────────────────────────────── */
 .station-finder__body {
   display: flex;

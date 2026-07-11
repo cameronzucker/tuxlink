@@ -13,7 +13,14 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { nextCapture } from './window';
-import { readSnapshot, refreshOffair, type SolarSnapshot, type WwvRefreshOutcome } from './wwvApi';
+import {
+  catConfigured as catConfiguredApi,
+  manualIngest as manualIngestApi,
+  readSnapshot,
+  refreshOffair,
+  type SolarSnapshot,
+  type WwvRefreshOutcome,
+} from './wwvApi';
 
 export type WwvOffairStatus = 'idle' | 'armed' | 'capturing' | 'done' | 'nocopy' | 'error';
 
@@ -22,9 +29,13 @@ export interface UseWwvOffairResult {
   result: WwvRefreshOutcome | null;
   snapshot: SolarSnapshot | null;
   windowLabel: string | null;
+  wavPath: string | null;
+  catConfigured: boolean | null;
   arm(nowMs: number): void;
   cancel(): void;
   refreshSnapshot(): Promise<void>;
+  refreshCat(): Promise<void>;
+  manualIngest(sfi: number, aIndex: number | null, kIndex: number | null): Promise<void>;
 }
 
 export function useWwvOffair(): UseWwvOffairResult {
@@ -32,6 +43,8 @@ export function useWwvOffair(): UseWwvOffairResult {
   const [result, setResult] = useState<WwvRefreshOutcome | null>(null);
   const [snapshot, setSnapshot] = useState<SolarSnapshot | null>(null);
   const [windowLabel, setWindowLabel] = useState<string | null>(null);
+  const [wavPath, setWavPath] = useState<string | null>(null);
+  const [catConfigured, setCatConfigured] = useState<boolean | null>(null);
 
   // Pending setTimeout handle for the armed capture — cleared on cancel(),
   // on a fresh arm(), and on unmount.
@@ -59,6 +72,31 @@ export function useWwvOffair(): UseWwvOffairResult {
     setSnapshot(snap);
   }, []);
 
+  // Fetched once (mount effect in the component), same swallow-errors shape
+  // as refreshSnapshot: this hits Tauri's invoke, which throws outside a real
+  // Tauri webview, and a failed background prefetch must never crash the
+  // host control.
+  const refreshCat = useCallback(async () => {
+    const configured = await catConfiguredApi();
+    if (!mountedRef.current) return;
+    setCatConfigured(configured);
+  }, []);
+
+  const manualIngest = useCallback(
+    async (sfi: number, aIndex: number | null, kIndex: number | null) => {
+      try {
+        await manualIngestApi(sfi, aIndex, kIndex, Date.now());
+        if (!mountedRef.current) return;
+        setStatus('done');
+        await refreshSnapshot();
+      } catch {
+        if (!mountedRef.current) return;
+        setStatus('error');
+      }
+    },
+    [refreshSnapshot],
+  );
+
   const clearTimer = useCallback(() => {
     if (timeoutRef.current != null) {
       clearTimeout(timeoutRef.current);
@@ -76,6 +114,7 @@ export function useWwvOffair(): UseWwvOffairResult {
       const outcome = await refreshOffair(Date.now());
       if (!mountedRef.current) return;
       setResult(outcome);
+      setWavPath(outcome.wav_path);
       if (outcome.no_copy) {
         // Retry-once default: mirrors the backend's
         // WwvOffairConfig.auto_retry_next_window (default true). The config
@@ -109,6 +148,12 @@ export function useWwvOffair(): UseWwvOffairResult {
     (nowMs: number, isRetry: boolean) => {
       if (!isRetry) {
         retriedRef.current = false;
+        // A fresh user-initiated arm starts a new capture cycle — any clip
+        // from a prior cycle is stale, so drop the reference. The internal
+        // auto-retry re-arm (isRetry === true) deliberately keeps it: there's
+        // no new clip yet, and the retry is still resolving the same user
+        // gesture.
+        setWavPath(null);
       }
       clearTimer();
       const next = nextCapture(nowMs);
@@ -150,5 +195,17 @@ export function useWwvOffair(): UseWwvOffairResult {
     [clearTimer],
   );
 
-  return { status, result, snapshot, windowLabel, arm, cancel, refreshSnapshot };
+  return {
+    status,
+    result,
+    snapshot,
+    windowLabel,
+    wavPath,
+    catConfigured,
+    arm,
+    cancel,
+    refreshSnapshot,
+    refreshCat,
+    manualIngest,
+  };
 }
