@@ -1,0 +1,1093 @@
+//! The FT8 listener service: managed state + the supervisor thread + the
+//! start sequence (spec §Service structure, §Start sequence, §Lifecycle
+//! ownership). Capture/decode thread bodies land in part 2 (Task 12); stop +
+//! resume protocols in part 3 (Task 13).
+//!
+//! Lock discipline (spec §Lock discipline, pinned): thread handles live
+//! OUTSIDE the state mutex and are take()n before any join; the state mutex
+//! is leaf-level — never held across a join, an ALSA call, a rig session, or
+//! an event emit; lock order arbiter > rig > state everywhere, each acquired
+//! AT MOST ONCE per thread (the arbiter's rig_session takes only the arbiter
+//! lock; rig-touching helpers own the rig lock themselves — T14).
+
+use std::collections::VecDeque;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::SyncSender;
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
+
+use crate::config::Ft8Config;
+use crate::ft8::clock::{ClockProbe, ClockSync};
+use crate::ft8::events::EventSink;
+// Dead-code discipline (Global Constraints §Push cadence): imports, fields,
+// and constants land in the task with their FIRST reader, so every commit in
+// the batch is clippy-clean. T12 adds `DiscardClassDto` + `RingOutcome`
+// here; T13 adds `devices::ResolvedManagedDevice` with the `resolved` field.
+use crate::ft8::records::{
+    AudioDeviceChoice, BandSource, Ft8ListeningChange, ServiceAxisDto, SlotRecord,
+};
+use crate::ft8::traits::{DecodeEngine, Ft8Platform, SourceError};
+use serde::Serialize;
+use tuxlink_capture::state::{BlockedReason, ListenerMachine, ServiceAxis};
+
+pub(crate) const SUPERVISOR_TICK: Duration = Duration::from_secs(5);
+pub(crate) const RING_CAP: usize = 240;
+pub(crate) const CLOCK_REPROBE_BOUNDARIES: u64 = 20;
+pub(crate) const PIPE_WATERMARK_BOUNDARIES: u64 = 100;
+pub(crate) const PIPE_WATERMARK_EXCESS: usize = 16;
+pub(crate) const HOLD_LATCH_TTL: Duration = Duration::from_secs(30);
+
+/// The positive hold token (spec §Hold latch). A lazily-evaluated timestamp:
+/// it needs no supervisor to expire. Shared between the service (start-
+/// sequence step 6 consults it) and the arbiter (every pause latches it).
+#[derive(Default)]
+pub struct SharedHold {
+    latched_at: Mutex<Option<Instant>>,
+}
+
+impl SharedHold {
+    pub fn latch_now(&self) {
+        *self.latched_at.lock().unwrap_or_else(|p| p.into_inner()) = Some(Instant::now());
+    }
+    pub fn clear(&self) {
+        *self.latched_at.lock().unwrap_or_else(|p| p.into_inner()) = None;
+    }
+    /// TTL-aware: a latch older than 30 s reads clear (an aborted modem
+    /// spawn must not wedge FT8) and is dropped on observation.
+    pub fn is_latched(&self) -> bool {
+        let mut g = self.latched_at.lock().unwrap_or_else(|p| p.into_inner());
+        match *g {
+            Some(t) if t.elapsed() < HOLD_LATCH_TTL => true,
+            Some(_) => {
+                *g = None;
+                false
+            }
+            None => false,
+        }
+    }
+}
+
+/// Injected seams, bundled (clippy too_many_arguments discipline).
+pub struct Ft8Deps {
+    pub platform: Arc<dyn Ft8Platform>,
+    pub clock: Arc<dyn ClockProbe>,
+    pub sink: Arc<dyn EventSink>,
+}
+
+/// A completed slot handed from capture to decode (rendezvous channel).
+/// Constructed by the capture thread in Task 12; T11's reader is the
+/// stopped-state shape test (the plan bans allow(dead_code)).
+pub(crate) struct SlotJob {
+    pub slot_utc_ms: u64,
+    pub dir: PathBuf,
+    pub wav: PathBuf,
+    pub lost_frames: u64,
+    pub boundary_skew_frames: u64,
+    pub clip_fraction: f32,
+    pub rms_dbfs: f32,
+}
+
+/// Everything behind the leaf-level state mutex.
+struct Inner {
+    machine: ListenerMachine,
+    ft8_cfg: Ft8Config,
+    band: String,
+    dial_hz: u64,
+    band_source: BandSource,
+    band_label_confirmed_utc_ms: Option<u64>,
+    engine_version: Option<String>,
+    last_slot_utc_ms: Option<u64>,
+    last_failure: Option<String>,
+    ring: VecDeque<SlotRecord>,
+    // Fields land with their first READER (dead-code discipline):
+    // `discard_next_slot` arrives in T12 (handle_completed_slot takes it);
+    // `resolved` arrives in T13 (resume_conditions_met reads it).
+}
+
+/// Thread handles — OUTSIDE the state mutex (lock discipline).
+#[derive(Default)]
+struct Handles {
+    supervisor: Option<JoinHandle<()>>,
+    // `capture` and `decode` are populated + reaped starting in Task 12
+    // (spawn_workers wires them; the stop protocol in Task 13 joins them).
+    // T11's reader: the stopped-state shape test.
+    capture: Option<JoinHandle<()>>,
+    decode: Option<JoinHandle<()>>,
+}
+
+pub struct Ft8ListenerState {
+    inner: Mutex<Inner>,
+    handles: Mutex<Handles>,
+    /// The master SyncSender (spec §Lifecycle: lives here, cloned into each
+    /// capture thread; only stop() drops it — decode's recv sees
+    /// Disconnected, race-free). Read starting in Task 12 (capture_loop
+    /// clones it; stop() takes and drops it); T11's reader is the
+    /// stopped-state shape test.
+    master_tx: Mutex<Option<SyncSender<SlotJob>>>,
+    engine: Mutex<Option<Arc<dyn DecodeEngine>>>,
+    pub(crate) platform: Arc<dyn Ft8Platform>,
+    pub(crate) clock: Arc<dyn ClockProbe>,
+    pub(crate) sink: Arc<dyn EventSink>,
+    hold: Arc<SharedHold>,
+    /// Serializes ALL FT8 rig sessions (start-labeling, band chip, sweep).
+    /// The arbiter (T14) holds a clone: "the arbiter owns all rig sessions"
+    /// is true by construction — one mutex, arbiter-visible.
+    rig_lock: Arc<Mutex<()>>,
+    stop_request: AtomicBool,
+    yield_request: AtomicBool,
+    start_rerun_request: AtomicBool,
+    // `capture_abort` + `slot_seq` land in T12 with their first readers
+    // (capture_loop / handle_completed_slot) — dead-code discipline.
+    /// Capture-side slot-boundary counter (spec: cadences count BOUNDARIES,
+    /// not decoded slots).
+    slot_boundaries: AtomicU64,
+    /// The supervisor's Thread handle for park_timeout interruption.
+    supervisor_thread: Mutex<Option<std::thread::Thread>>,
+    pipe_fd_baseline: Mutex<Option<usize>>,
+}
+
+impl Ft8ListenerState {
+    pub fn new(deps: Ft8Deps, ft8_cfg: Ft8Config) -> Arc<Self> {
+        let dial = tuxlink_capture::bands::dial_hz(&ft8_cfg.band).unwrap_or(14_074_000);
+        let band = ft8_cfg.band.clone();
+        Arc::new(Self {
+            inner: Mutex::new(Inner {
+                machine: ListenerMachine::new(),
+                ft8_cfg,
+                band,
+                dial_hz: dial,
+                band_source: BandSource::DefaultUnconfirmed,
+                band_label_confirmed_utc_ms: None,
+                engine_version: None,
+                last_slot_utc_ms: None,
+                last_failure: None,
+                ring: VecDeque::with_capacity(RING_CAP),
+            }),
+            handles: Mutex::new(Handles::default()),
+            master_tx: Mutex::new(None),
+            engine: Mutex::new(None),
+            platform: deps.platform,
+            clock: deps.clock,
+            sink: deps.sink,
+            hold: Arc::new(SharedHold::default()),
+            rig_lock: Arc::new(Mutex::new(())),
+            stop_request: AtomicBool::new(false),
+            yield_request: AtomicBool::new(false),
+            start_rerun_request: AtomicBool::new(false),
+            slot_boundaries: AtomicU64::new(0),
+            supervisor_thread: Mutex::new(None),
+            pipe_fd_baseline: Mutex::new(None),
+        })
+    }
+
+    pub fn hold(&self) -> Arc<SharedHold> {
+        self.hold.clone()
+    }
+    pub fn rig_lock(&self) -> Arc<Mutex<()>> {
+        self.rig_lock.clone()
+    }
+    pub fn set_ft8_config(&self, cfg: Ft8Config) {
+        let mut g = self.lock_inner();
+        // A device change invalidates the constructed runner (spec: "no
+        // runner reconstruction unless the device changed").
+        if g.ft8_cfg.device != cfg.device {
+            drop(g);
+            *self.engine.lock().unwrap_or_else(|p| p.into_inner()) = None;
+            g = self.lock_inner();
+        }
+        g.ft8_cfg = cfg;
+    }
+
+    fn lock_inner(&self) -> std::sync::MutexGuard<'_, Inner> {
+        self.inner.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    pub(crate) fn axis(&self) -> ServiceAxis {
+        self.lock_inner().machine.axis()
+    }
+
+    fn interrupted(&self) -> bool {
+        self.stop_request.load(Ordering::SeqCst) || self.yield_request.load(Ordering::SeqCst)
+    }
+
+    /// Emit the current listening-change summary (call OUTSIDE the state
+    /// lock — build the payload under the lock, emit after).
+    pub(crate) fn emit_listening_change(&self) {
+        let change = {
+            let g = self.lock_inner();
+            Ft8ListeningChange {
+                service: ServiceAxisDto::from(g.machine.axis()),
+                flags: g.machine.flags().into(),
+                slot_phase: g.machine.slot_phase().into(),
+                band: g.band.clone(),
+                dial_hz: g.dial_hz,
+                sweep: g.machine.sweep().into(),
+            }
+        };
+        self.sink.emit_listening_change(&change);
+    }
+
+    fn set_blocked(&self, reason: BlockedReason, diagnostic: Option<String>) {
+        {
+            let mut g = self.lock_inner();
+            g.machine.on_blocked(reason);
+            if let Some(d) = diagnostic {
+                g.last_failure = Some(d);
+            }
+        }
+        self.emit_listening_change();
+    }
+
+    /// start / autostart entry (spec §Lifecycle table): spawns the
+    /// supervisor from `stopped` ONLY; with a live supervisor it signals a
+    /// sequence re-run instead. Callers run under spawn_blocking (T17).
+    pub fn start(self: &Arc<Self>) -> Result<(), String> {
+        if matches!(self.axis(), ServiceAxis::Blocked(BlockedReason::CaptureWedged)) {
+            return Err(
+                "the FT8 capture thread is wedged and may still hold the sound card; \
+                 restart Tuxlink to recover"
+                    .into(),
+            );
+        }
+        let mut h = self.handles.lock().unwrap_or_else(|p| p.into_inner());
+        let live = h.supervisor.as_ref().map(|s| !s.is_finished()).unwrap_or(false);
+        if live {
+            // Idempotent start: signal a sequence re-run.
+            self.start_rerun_request.store(true, Ordering::SeqCst);
+            self.unpark_supervisor();
+            return Ok(());
+        }
+        // Reap a finished supervisor handle before respawn.
+        if let Some(old) = h.supervisor.take() {
+            let _ = old.join();
+        }
+        self.stop_request.store(false, Ordering::SeqCst);
+        self.yield_request.store(false, Ordering::SeqCst);
+        {
+            let mut g = self.lock_inner();
+            if !g.machine.on_start_requested() {
+                return Err(format!("cannot start from {:?}", g.machine.axis()));
+            }
+        }
+        let state = self.clone();
+        let handle = std::thread::Builder::new()
+            .name("ft8-supervisor".into())
+            .spawn(move || supervisor_loop(state))
+            .map_err(|e| format!("spawn ft8-supervisor: {e}"))?;
+        *self.supervisor_thread.lock().unwrap_or_else(|p| p.into_inner()) =
+            Some(handle.thread().clone());
+        h.supervisor = Some(handle);
+        drop(h);
+        self.emit_listening_change();
+        Ok(())
+    }
+
+    pub(crate) fn unpark_supervisor(&self) {
+        if let Some(t) = self
+            .supervisor_thread
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+        {
+            t.unpark();
+        }
+    }
+
+    // ---- start sequence (spec §Start sequence; executed BY the supervisor;
+    // pub(crate) so unit tests drive it synchronously) -----------------------
+
+    /// Steps 1–8 (fresh start) or 1–7 + 8′ capture-only (resume /
+    /// device-absent recovery). A yield/stop request is checked between
+    /// every step; the flags never write the axis (pause already did).
+    pub(crate) fn execute_start_sequence(self: &Arc<Self>, resume: bool) {
+        if !resume {
+            // Stale slot-dir sweep from crashed runs (spec §WAV writeout).
+            self.sweep_stale_slot_dirs();
+        }
+        {
+            let mut g = self.lock_inner();
+            match g.machine.axis() {
+                ServiceAxis::Starting => {}
+                // Resume re-enters via on_resume (yielded → starting; k
+                // reset; sweep re-arm).
+                ServiceAxis::Yielded => g.machine.on_resume(),
+                // Blocked re-entry (set_device retrigger, device-absent
+                // retry) MUST go through on_start_requested — T6 permits
+                // Blocked→Starting (+ sweep re-arm) there, while on_resume
+                // is a no-op outside Yielded. Without this, the sequence
+                // runs on a STALE blocked axis and a mid-sequence pause
+                // (step 6 busy) is silently swallowed (on_pause from
+                // blocked leaves the axis untouched).
+                ServiceAxis::Blocked(r) if r != BlockedReason::CaptureWedged => {
+                    let _ = g.machine.on_start_requested();
+                }
+                // Wedged / other axes: leave the machine alone (start()
+                // already refuses wedged; defensive no-op here).
+                _ => {}
+            }
+        }
+        self.emit_listening_change();
+
+        // Step 1: discover jt9 (start + resume — the delta's pinned probe
+        // timing keeps discovery at exactly these moments).
+        let bin = match self.platform.discover_jt9() {
+            Ok(b) => b,
+            Err(e) => return self.set_blocked(BlockedReason::WsjtxAbsent, Some(e)),
+        };
+        {
+            let mut g = self.lock_inner();
+            g.engine_version = Some(bin.engine_version.clone());
+        }
+        // No stored Jt9Binary: resume re-discovers (step 1 runs on both
+        // paths) and make_engine consumes the fresh local — a cached copy
+        // would be an unread field.
+        if self.interrupted() {
+            return;
+        }
+
+        // Step 2: resolve device.
+        let stable_id = { self.lock_inner().ft8_cfg.device.clone() };
+        let Some(stable_id) = stable_id else {
+            return self.set_blocked(BlockedReason::NeedsDeviceSelection, None);
+        };
+        let Some(resolved) = self.platform.resolve_device(&stable_id) else {
+            return self.set_blocked(
+                BlockedReason::DeviceAbsent,
+                Some(format!("configured device {:?} not found", stable_id.value)),
+            );
+        };
+        // T13 adds `Inner.resolved` (+ the store here) with its first
+        // reader, resume_conditions_met — dead-code discipline.
+        if self.interrupted() {
+            return;
+        }
+
+        // Step 3: clock probe → flag.
+        let sync = self.clock.ntp_synchronized();
+        {
+            let mut g = self.lock_inner();
+            g.machine.set_clock_unsynced(matches!(sync, ClockSync::Unsynced));
+        }
+        if matches!(sync, ClockSync::Unknown) {
+            tracing::info!(target: "tuxlink::ft8", "clock sync unverifiable (timedatectl absent/unparseable)");
+        }
+        if self.interrupted() {
+            return;
+        }
+
+        // Step 4: wisdom dir + prewarm — once per runner construction,
+        // BEFORE any PCM is held. Skipped on resume (runner survives).
+        let need_engine = self.engine.lock().unwrap_or_else(|p| p.into_inner()).is_none();
+        if need_engine {
+            let wisdom = self.platform.wisdom_dir();
+            if let Err(e) = std::fs::create_dir_all(&wisdom) {
+                tracing::warn!(target: "tuxlink::ft8", "wisdom dir create failed: {e} — proceeding (costs first-slot planning time)");
+            }
+            let engine = self.platform.make_engine(&bin, &wisdom);
+            match engine.prewarm() {
+                Ok(()) => {}
+                Err(e) if e.contains("SpawnFailed") || e.contains("not found") => {
+                    return self.set_blocked(BlockedReason::WsjtxAbsent, Some(e));
+                }
+                Err(e) => {
+                    // A failed prewarm costs ~1.7 s planning on the first
+                    // slots; it does not block listening (spec step 4).
+                    tracing::warn!(target: "tuxlink::ft8", "jt9 prewarm failed (non-fatal): {e}");
+                }
+            }
+            *self.engine.lock().unwrap_or_else(|p| p.into_inner()) = Some(engine);
+        }
+        if self.interrupted() {
+            return;
+        }
+
+        // Step 5: CAT presence → flag / start-labeling rig session.
+        if self.platform.rig_configured() {
+            {
+                self.lock_inner().machine.set_cat_fixed_band(false);
+            }
+            self.start_rig_labeling();
+        } else {
+            let mut g = self.lock_inner();
+            g.machine.set_cat_fixed_band(true);
+            // cat-absent: the snapshot instructs the dial for the chip band.
+            g.dial_hz =
+                tuxlink_capture::bands::dial_hz(&g.ft8_cfg.band).unwrap_or(g.dial_hz);
+            g.band = g.ft8_cfg.band.clone();
+        }
+        if self.interrupted() {
+            return;
+        }
+
+        // Step 6: busy probe — the hold latch is consulted here too (a fresh
+        // start inside a pause-to-modem-open window must not steal the card).
+        let busy = self.hold.is_latched()
+            || self
+                .platform
+                .probe_busy(&resolved.alsa_plughw, resolved.card_index)
+                .is_err();
+        if busy {
+            {
+                self.lock_inner().machine.on_pause();
+            }
+            self.emit_listening_change();
+            return;
+        }
+        if self.interrupted() {
+            return;
+        }
+
+        // Step 7: ALSA open (hw:).
+        let source = match self.platform.open_source(&resolved.alsa_hw) {
+            Ok(s) => s,
+            Err(SourceError::Busy) => {
+                {
+                    self.lock_inner().machine.on_pause();
+                }
+                self.emit_listening_change();
+                return;
+            }
+            Err(SourceError::Absent) | Err(SourceError::Wedged) => {
+                return self.set_blocked(BlockedReason::DeviceAbsent, None);
+            }
+            Err(SourceError::UnsupportedFormat(d)) => {
+                return self.set_blocked(BlockedReason::UnsupportedSampleRate, Some(d));
+            }
+            Err(e) => {
+                return self.set_blocked(BlockedReason::DeviceAbsent, Some(format!("{e:?}")));
+            }
+        };
+        if self.interrupted() {
+            // Past step 7 the supervisor holds the PCM: drop it BEFORE
+            // abandoning the sequence (spec §Arbitration, starting case).
+            drop(source);
+            return;
+        }
+
+        // Step 8 / 8′: spawn workers → listening.
+        self.spawn_workers(source, resume);
+        {
+            let mut g = self.lock_inner();
+            g.machine.on_listening();
+            // Sweep (re-)arms at start/resume when enabled + CAT (T16 wires
+            // the dwell scheduler; arming is part of entering listening).
+            if g.ft8_cfg.sweep.enabled && self.platform.rig_configured() {
+                g.machine.sweep_activate();
+            }
+        }
+        self.emit_listening_change();
+    }
+
+    /// Step-5 helper: one rig session — read dial, label band
+    /// (nearest table entry within ±3 kHz, else "unknown"), tune to the
+    /// configured band's dial if it differs, drop the session.
+    ///
+    /// Lock architecture (pinned): this helper OWNS the rig-lock
+    /// acquisition; `Ft8Arbiter::rig_session` (T14) takes ONLY the arbiter
+    /// lock and never the rig lock — lock order arbiter > rig > state, each
+    /// acquired at most once per thread. T14 routes the step-5 call through
+    /// `rig_session` (the arbiter cannot exist at this task's commit, so
+    /// that one-match routing edit lands in T14); until then the rig lock
+    /// alone serializes FT8 rig sessions against each other.
+    fn start_rig_labeling(self: &Arc<Self>) {
+        let _rig = self.rig_lock.lock().unwrap_or_else(|p| p.into_inner());
+        let configured_dial = {
+            let g = self.lock_inner();
+            tuxlink_capture::bands::dial_hz(&g.ft8_cfg.band)
+        };
+        match self.platform.rig_read_dial() {
+            Ok(dial) => {
+                let label = nearest_band(dial);
+                let now = self.platform.utc_now_ms();
+                let mut tune_target = None;
+                {
+                    let mut g = self.lock_inner();
+                    match label {
+                        Some((band, table_dial)) => {
+                            g.band = band.to_string();
+                            g.dial_hz = table_dial;
+                        }
+                        None => {
+                            g.band = "unknown".into();
+                            g.dial_hz = dial;
+                        }
+                    }
+                    g.band_source = BandSource::CatConfirmed;
+                    g.band_label_confirmed_utc_ms = Some(now);
+                    if let Some(cfg_dial) = configured_dial {
+                        if g.dial_hz != cfg_dial {
+                            tune_target = Some((g.ft8_cfg.band.clone(), cfg_dial));
+                        }
+                    }
+                }
+                if let Some((band, cfg_dial)) = tune_target {
+                    // Starting the listener is the consenting action (RX-only).
+                    match self.platform.rig_tune(cfg_dial) {
+                        Ok(()) => {
+                            let mut g = self.lock_inner();
+                            g.band = band;
+                            g.dial_hz = cfg_dial;
+                            g.band_source = BandSource::CatConfirmed;
+                            g.band_label_confirmed_utc_ms = Some(self.platform.utc_now_ms());
+                        }
+                        Err(e) => {
+                            // Partial tune ⇒ dial position unknown (T16 test
+                            // pins this downgrade).
+                            let mut g = self.lock_inner();
+                            g.band_source = BandSource::DefaultUnconfirmed;
+                            g.band_label_confirmed_utc_ms = None;
+                            g.last_failure = Some(format!("start QSY failed: {e}"));
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(target: "tuxlink::ft8", "start-labeling dial read failed: {e}");
+                let mut g = self.lock_inner();
+                g.band_source = BandSource::DefaultUnconfirmed;
+                g.band_label_confirmed_utc_ms = None;
+            }
+        }
+    }
+
+    fn sweep_stale_slot_dirs(&self) {
+        let root = self.platform.slot_dir_root();
+        let Ok(entries) = std::fs::read_dir(&root) else { return };
+        for e in entries.flatten() {
+            if e.file_name().to_string_lossy().starts_with("slot-") {
+                let _ = std::fs::remove_dir_all(e.path());
+            }
+        }
+    }
+
+    /// Placeholder in part 1; Task 12 replaces the body with the real
+    /// capture + decode spawns. Kept compiling so this task's tests (which
+    /// stop at the axis transition) run in CI.
+    fn spawn_workers(self: &Arc<Self>, source: Box<dyn crate::ft8::traits::SampleSource>, resume: bool) {
+        let _ = (source, resume); // Task 12 wires the threads.
+    }
+
+    // ---- snapshot -----------------------------------------------------------
+
+    pub fn snapshot(&self) -> Ft8Snapshot {
+        let g = self.lock_inner();
+        let axis = g.machine.axis();
+        // §Device selection is the ONE rule: devices embedded when device is
+        // unset OR blocked on device-absent/needs-device-selection.
+        let wants_devices = g.ft8_cfg.device.is_none()
+            || matches!(
+                axis,
+                ServiceAxis::Blocked(BlockedReason::DeviceAbsent)
+                    | ServiceAxis::Blocked(BlockedReason::NeedsDeviceSelection)
+            );
+        let ring_tail: Vec<SlotRecord> = g.ring.iter().rev().take(40).rev().cloned().collect();
+        let snap = Ft8Snapshot {
+            service: axis.into(),
+            flags: g.machine.flags().into(),
+            slot_phase: g.machine.slot_phase().into(),
+            band: g.band.clone(),
+            dial_hz: g.dial_hz,
+            band_source: g.band_source,
+            band_label_confirmed_utc_ms: g.band_label_confirmed_utc_ms,
+            sweep: g.machine.sweep().into(),
+            engine_version: g.engine_version.clone(),
+            n_consecutive: g.machine.n_consecutive(),
+            k_consecutive: g.machine.k_consecutive(),
+            last_slot_utc_ms: g.last_slot_utc_ms,
+            last_failure: g.last_failure.clone(),
+            available_devices: None,
+            ring_tail,
+        };
+        drop(g); // never hold the state lock across the enumeration I/O
+        Ft8Snapshot {
+            available_devices: wants_devices.then(|| self.platform.enumerate_capture()),
+            ..snap
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn platform_tmp_for_test(&self) -> PathBuf {
+        self.platform.slot_dir_root().parent().map(|p| p.to_path_buf()).unwrap_or_default()
+    }
+}
+
+/// Nearest FT8 band within ±3 kHz of a dial reading (spec §Hold-band).
+fn nearest_band(dial_hz: u64) -> Option<(&'static str, u64)> {
+    tuxlink_capture::bands::BANDS
+        .iter()
+        .find(|(_, hz)| dial_hz.abs_diff(*hz) <= 3_000)
+        .map(|&(b, hz)| (b, hz))
+}
+
+/// spec §Snapshot, field-for-field — the L3/L4 contract.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Ft8Snapshot {
+    pub service: ServiceAxisDto,
+    pub flags: crate::ft8::records::HealthFlagsDto,
+    pub slot_phase: crate::ft8::records::SlotPhaseDto,
+    pub band: String,
+    pub dial_hz: u64,
+    pub band_source: BandSource,
+    pub band_label_confirmed_utc_ms: Option<u64>,
+    pub sweep: crate::ft8::records::SweepStatusDto,
+    pub engine_version: Option<String>,
+    pub n_consecutive: u8,
+    pub k_consecutive: u8,
+    pub last_slot_utc_ms: Option<u64>,
+    pub last_failure: Option<String>,
+    pub available_devices: Option<Vec<AudioDeviceChoice>>,
+    pub ring_tail: Vec<SlotRecord>,
+}
+
+// ---- supervisor -------------------------------------------------------------
+
+/// The service's owner and the FIRST thread spawned (spec §Threads). It
+/// executes the start sequence, then ticks every 5 s: yielded-resume poll +
+/// device-absent retry (T13), clock re-probe every 20 slot boundaries,
+/// pipe-fd watermark every 100 (b026z.8), sweep dwell bookkeeping (T16),
+/// hold-latch TTL (lazy — nothing to do here). It outlives every blocked
+/// state; only stop() ends it.
+fn supervisor_loop(state: Arc<Ft8ListenerState>) {
+    {
+        let mut base = state.pipe_fd_baseline.lock().unwrap_or_else(|p| p.into_inner());
+        if base.is_none() {
+            *base = state.platform.count_pipe_fds();
+        }
+    }
+    state.execute_start_sequence(false);
+    let mut last_clock_probe = 0u64;
+    let mut last_watermark = 0u64;
+    loop {
+        std::thread::park_timeout(SUPERVISOR_TICK);
+        if state.stop_request.load(Ordering::SeqCst) {
+            return;
+        }
+        if state.start_rerun_request.swap(false, Ordering::SeqCst) {
+            state.execute_start_sequence(false);
+            continue;
+        }
+        match state.axis() {
+            ServiceAxis::Yielded => state.tick_yielded(),           // T13
+            ServiceAxis::Blocked(BlockedReason::DeviceAbsent) => state.tick_device_absent(), // T13
+            ServiceAxis::Listening => {
+                state.tick_listening(&mut last_clock_probe, &mut last_watermark)
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Ft8ListenerState {
+    /// T13 fills these in; part-1 stubs keep the supervisor compiling.
+    pub(crate) fn tick_yielded(self: &Arc<Self>) {}
+    pub(crate) fn tick_device_absent(self: &Arc<Self>) {}
+
+    /// The `listening`-axis supervisor tick body, extracted so the cadence
+    /// test drives it directly (no 5 s parks): clock re-probe every 20 slot
+    /// boundaries, pipe-fd watermark every 100 — cadences count BOUNDARIES
+    /// via the capture-side atomic, never decoded slots.
+    pub(crate) fn tick_listening(
+        self: &Arc<Self>,
+        last_clock_probe: &mut u64,
+        last_watermark: &mut u64,
+    ) {
+        let boundaries = self.slot_boundaries.load(Ordering::SeqCst);
+        if boundaries.saturating_sub(*last_clock_probe) >= CLOCK_REPROBE_BOUNDARIES {
+            *last_clock_probe = boundaries;
+            let sync = self.clock.ntp_synchronized();
+            let changed = {
+                let mut g = self.lock_inner();
+                let before = g.machine.flags().clock_unsynced;
+                g.machine
+                    .set_clock_unsynced(matches!(sync, ClockSync::Unsynced));
+                before != g.machine.flags().clock_unsynced
+            };
+            if changed {
+                self.emit_listening_change();
+            }
+        }
+        if boundaries.saturating_sub(*last_watermark) >= PIPE_WATERMARK_BOUNDARIES {
+            *last_watermark = boundaries;
+            self.check_pipe_watermark();
+        }
+        self.sweep_tick_stub(); // T16 swaps this for crate::ft8::sweep::tick(self)
+    }
+
+    /// Replaced by sweep::tick in Task 16 (which deletes this stub).
+    pub(crate) fn sweep_tick_stub(self: &Arc<Self>) {}
+
+    /// Returns whether the watermark tripped (testable seam — the spec's
+    /// named "pipe-fd watermark trip (fake /proc reader)" test drives this
+    /// return value; the caller logs).
+    pub(crate) fn check_pipe_watermark(&self) -> bool {
+        let (Some(base), Some(now)) = (
+            *self.pipe_fd_baseline.lock().unwrap_or_else(|p| p.into_inner()),
+            self.platform.count_pipe_fds(),
+        ) else {
+            return false;
+        };
+        let tripped = now > base + PIPE_WATERMARK_EXCESS;
+        if tripped {
+            tracing::warn!(
+                target: "tuxlink::ft8",
+                baseline = base,
+                current = now,
+                "pipe-fd watermark exceeded — possible jt9 grandchild pipe-holder leak (tuxlink-b026z.8)"
+            );
+        }
+        tripped
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Ft8Config;
+    use crate::ft8::testutil::{FakeClock, FakePlatform, RecordingSink};
+    use crate::winlink::ax25::devices::{StableAudioId, StableIdKind};
+    use tuxlink_capture::state::{BlockedReason, ServiceAxis};
+
+    fn test_state(platform: Arc<FakePlatform>, cfg: Ft8Config) -> Arc<Ft8ListenerState> {
+        Ft8ListenerState::new(
+            Ft8Deps {
+                platform,
+                clock: FakeClock::new(crate::ft8::clock::ClockSync::Synced),
+                sink: Arc::new(RecordingSink::default()),
+            },
+            cfg,
+        )
+    }
+
+    fn cfg_with_device() -> Ft8Config {
+        let mut c = Ft8Config::default();
+        c.enabled = true;
+        c.device = Some(StableAudioId {
+            kind: StableIdKind::ByIdSymlink,
+            value: "usb-DRA-100-00".into(),
+        });
+        c
+    }
+
+    fn run_sequence(state: &Arc<Ft8ListenerState>) {
+        {
+            state.lock_inner().machine.on_start_requested();
+        }
+        state.execute_start_sequence(false);
+    }
+
+    // Arrow 1: jt9 absent → blocked(wsjtx-absent); the snapshot still
+    // carries available_devices when device is ALSO unset (§Device
+    // selection's one rule — both first-contact blockers in one visit).
+    #[test]
+    fn arrow1_jt9_absent_blocks_wsjtx_absent_and_still_offers_devices() {
+        let p = FakePlatform::happy();
+        *p.jt9.lock().unwrap() = Err("NotOnPath".into());
+        let state = test_state(p, Ft8Config::default()); // device: None
+        run_sequence(&state);
+        assert_eq!(state.axis(), ServiceAxis::Blocked(BlockedReason::WsjtxAbsent));
+        let snap = state.snapshot();
+        let devs = snap.available_devices.expect("picker must render while blocked on wsjtx");
+        assert_eq!(devs.len(), 1);
+        let _ = std::fs::remove_dir_all(&state.platform_tmp_for_test());
+    }
+
+    // Arrow 2a: device None → needs-device-selection.
+    #[test]
+    fn arrow2_no_device_blocks_needs_device_selection() {
+        let p = FakePlatform::happy();
+        let state = test_state(p, Ft8Config::default());
+        run_sequence(&state);
+        assert_eq!(
+            state.axis(),
+            ServiceAxis::Blocked(BlockedReason::NeedsDeviceSelection)
+        );
+    }
+
+    // Arrow 2b: persisted-but-unresolvable → device-absent (supervisor-
+    // retried; the retry itself is T13's test).
+    #[test]
+    fn arrow2_unresolvable_device_blocks_device_absent() {
+        let p = FakePlatform::happy();
+        *p.resolved.lock().unwrap() = None;
+        let state = test_state(p, cfg_with_device());
+        run_sequence(&state);
+        assert_eq!(state.axis(), ServiceAxis::Blocked(BlockedReason::DeviceAbsent));
+        // Stale-device snapshot ALSO offers the picker (§Device selection).
+        assert!(state.snapshot().available_devices.is_some());
+    }
+
+    // Arrow 3: clock probe sets the flag; Unknown does NOT.
+    #[test]
+    fn arrow3_clock_probe_drives_the_flag() {
+        for (sync, want) in [
+            (crate::ft8::clock::ClockSync::Unsynced, true),
+            (crate::ft8::clock::ClockSync::Synced, false),
+            (crate::ft8::clock::ClockSync::Unknown, false),
+        ] {
+            let p = FakePlatform::happy();
+            let state = Ft8ListenerState::new(
+                Ft8Deps {
+                    platform: p,
+                    clock: FakeClock::new(sync),
+                    sink: Arc::new(RecordingSink::default()),
+                },
+                cfg_with_device(),
+            );
+            run_sequence(&state);
+            assert_eq!(state.snapshot().flags.clock_unsynced, want, "{sync:?}");
+        }
+    }
+
+    // Arrow 4: prewarm spawn-class failure → wsjtx-absent; any other
+    // prewarm failure proceeds to listening.
+    #[test]
+    fn arrow4_prewarm_failure_classes() {
+        use crate::ft8::testutil::FakeEngine;
+        let p = FakePlatform::happy();
+        let eng = FakeEngine::band_dead();
+        *eng.prewarm_result.lock().unwrap() =
+            Err("SpawnFailed(\"No such file\")".into());
+        *p.engine.lock().unwrap() = eng;
+        let state = test_state(p, cfg_with_device());
+        run_sequence(&state);
+        assert_eq!(state.axis(), ServiceAxis::Blocked(BlockedReason::WsjtxAbsent));
+
+        let p2 = FakePlatform::happy();
+        let eng2 = FakeEngine::band_dead();
+        *eng2.prewarm_result.lock().unwrap() = Err("Timeout".into());
+        *p2.engine.lock().unwrap() = eng2;
+        let state2 = test_state(p2, cfg_with_device());
+        run_sequence(&state2);
+        assert_eq!(state2.axis(), ServiceAxis::Listening, "non-spawn prewarm failure proceeds");
+    }
+
+    // Arrow 5: CAT absent → cat-fixed-band + instructed dial; CAT present →
+    // start-labeling (cat-confirmed) + tune-if-differs.
+    #[test]
+    fn arrow5_cat_presence_labels_or_flags() {
+        // Absent.
+        let p = FakePlatform::happy();
+        let state = test_state(p, cfg_with_device());
+        run_sequence(&state);
+        let snap = state.snapshot();
+        assert!(snap.flags.cat_fixed_band);
+        assert_eq!(snap.band, "20m");
+        assert_eq!(snap.dial_hz, 14_074_000, "instructed dial for the chip band");
+        assert_eq!(snap.band_source, crate::ft8::records::BandSource::DefaultUnconfirmed);
+
+        // Present, radio on 40m, configured chip 20m → labeled then retuned.
+        let p2 = FakePlatform::happy();
+        *p2.rig_configured.lock().unwrap() = true;
+        *p2.rig_dial.lock().unwrap() = Ok(7_074_000);
+        let state2 = test_state(p2.clone(), cfg_with_device());
+        run_sequence(&state2);
+        let snap2 = state2.snapshot();
+        assert!(!snap2.flags.cat_fixed_band);
+        assert_eq!(snap2.band_source, crate::ft8::records::BandSource::CatConfirmed);
+        assert!(snap2.band_label_confirmed_utc_ms.is_some());
+        assert_eq!(*p2.tuned_to.lock().unwrap(), vec![14_074_000], "tuned to the configured band");
+        assert_eq!(snap2.band, "20m");
+    }
+
+    // Arrow 6: busy probe busy → yielded; hold latch latched → treated as
+    // busy even when the probe reads free.
+    #[test]
+    fn arrow6_busy_or_latched_yields() {
+        let p = FakePlatform::happy();
+        *p.busy.lock().unwrap() = Err("plughw:CARD=DRA,DEV=0 is in use".into());
+        let state = test_state(p, cfg_with_device());
+        run_sequence(&state);
+        assert_eq!(state.axis(), ServiceAxis::Yielded);
+
+        let p2 = FakePlatform::happy();
+        let state2 = test_state(p2, cfg_with_device());
+        state2.hold().latch_now();
+        run_sequence(&state2);
+        assert_eq!(state2.axis(), ServiceAxis::Yielded, "latched hold is treated as busy");
+    }
+
+    // Arrow 7: open errors map EBUSY→yielded, absent→device-absent,
+    // param→unsupported-sample-rate (with diagnostic).
+    #[test]
+    fn arrow7_open_error_mapping() {
+        use crate::ft8::traits::SourceError;
+        let cases = [
+            (SourceError::Busy, None),
+            (SourceError::Absent, Some(BlockedReason::DeviceAbsent)),
+            (
+                SourceError::UnsupportedFormat("rate 44100 only".into()),
+                Some(BlockedReason::UnsupportedSampleRate),
+            ),
+        ];
+        for (err, want_block) in cases {
+            let p = FakePlatform::happy();
+            p.open_results.lock().unwrap().push_back(Err(err.clone()));
+            let state = test_state(p, cfg_with_device());
+            run_sequence(&state);
+            match want_block {
+                None => assert_eq!(state.axis(), ServiceAxis::Yielded, "{err:?}"),
+                Some(b) => assert_eq!(state.axis(), ServiceAxis::Blocked(b), "{err:?}"),
+            }
+        }
+        // The diagnostic surfaces.
+        let p = FakePlatform::happy();
+        p.open_results
+            .lock()
+            .unwrap()
+            .push_back(Err(SourceError::UnsupportedFormat("rate 44100 only".into())));
+        let state = test_state(p, cfg_with_device());
+        run_sequence(&state);
+        assert_eq!(state.snapshot().last_failure.as_deref(), Some("rate 44100 only"));
+    }
+
+    // Arrow 8: happy path lands listening / waiting-first-slot.
+    #[test]
+    fn arrow8_happy_path_reaches_listening() {
+        let p = FakePlatform::happy();
+        let state = test_state(p, cfg_with_device());
+        run_sequence(&state);
+        assert_eq!(state.axis(), ServiceAxis::Listening);
+        assert_eq!(
+            state.snapshot().slot_phase,
+            crate::ft8::records::SlotPhaseDto::WaitingFirstSlot
+        );
+    }
+
+    // Autostart contract: enabled=true, device=None → the supervisor lands
+    // blocked(needs-device-selection) — the state that RESUMES the
+    // interrupted first-contact flow (never silently stopped).
+    #[test]
+    fn autostart_with_no_device_lands_needs_device_selection() {
+        let p = FakePlatform::happy();
+        let state = test_state(p, Ft8Config { enabled: true, ..Ft8Config::default() });
+        state.start().expect("start spawns the supervisor");
+        // The supervisor runs the sequence async; poll briefly.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            if state.axis() == ServiceAxis::Blocked(BlockedReason::NeedsDeviceSelection) {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "axis: {:?}", state.axis());
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        // Idempotent start: a second start() with a live supervisor is Ok
+        // and does not spawn a second supervisor.
+        state.start().expect("idempotent start");
+        state.stop_request.store(true, Ordering::SeqCst);
+        state.unpark_supervisor();
+        let h = state.handles.lock().unwrap().supervisor.take().unwrap();
+        let _ = h.join();
+    }
+
+    /// Pipe-fd watermark trip via the fake /proc reader (spec §Testing:
+    /// named test; tuxlink-b026z.8). Baseline is captured at supervisor
+    /// spawn; here we seed it directly and drive the counter.
+    #[test]
+    fn pipe_fd_watermark_trips_only_past_the_excess_threshold() {
+        let p = FakePlatform::happy();
+        let state = test_state(p.clone(), cfg_with_device());
+        *state.pipe_fd_baseline.lock().unwrap() = Some(8);
+        *p.pipe_fds.lock().unwrap() = Some(8 + PIPE_WATERMARK_EXCESS); // == threshold: no trip
+        assert!(!state.check_pipe_watermark());
+        *p.pipe_fds.lock().unwrap() = Some(8 + PIPE_WATERMARK_EXCESS + 1); // > threshold: trip
+        assert!(state.check_pipe_watermark());
+        *p.pipe_fds.lock().unwrap() = None; // /proc unreadable: never trips
+        assert!(!state.check_pipe_watermark());
+    }
+
+    /// Supervisor cadence wiring (spec: cadences count BOUNDARIES): driving
+    /// the capture-side boundary atomic through tick_listening, the clock is
+    /// probed once per 20-boundary window and the pipe watermark read once
+    /// per 100-boundary window — pinned via the fakes' call counters.
+    #[test]
+    fn supervisor_cadences_fire_per_boundary_window() {
+        let p = FakePlatform::happy();
+        let clock = FakeClock::new(crate::ft8::clock::ClockSync::Synced);
+        let state = Ft8ListenerState::new(
+            Ft8Deps {
+                platform: p.clone(),
+                clock: clock.clone(),
+                sink: Arc::new(RecordingSink::default()),
+            },
+            cfg_with_device(),
+        );
+        run_sequence(&state);
+        assert_eq!(state.axis(), ServiceAxis::Listening);
+        *state.pipe_fd_baseline.lock().unwrap() = Some(8);
+        // Deltas from here: run_sequence already probed the clock once
+        // (step 3) and never read the pipe count.
+        let probes_before = clock.probe_calls.load(Ordering::SeqCst);
+        let fd_reads_before = p.pipe_fd_calls.load(Ordering::SeqCst);
+        let (mut last_probe, mut last_watermark) = (0u64, 0u64);
+        for boundary in 1..=200u64 {
+            state.slot_boundaries.store(boundary, Ordering::SeqCst);
+            state.tick_listening(&mut last_probe, &mut last_watermark);
+        }
+        assert_eq!(
+            clock.probe_calls.load(Ordering::SeqCst) - probes_before,
+            10, // boundaries 20, 40, …, 200: one probe per 20-boundary window
+            "clock re-probe cadence"
+        );
+        assert_eq!(
+            p.pipe_fd_calls.load(Ordering::SeqCst) - fd_reads_before,
+            2, // boundaries 100 and 200: one read per 100-boundary window
+            "pipe watermark cadence"
+        );
+        let _ = std::fs::remove_dir_all(state.platform_tmp_for_test());
+    }
+
+    // Snapshot completeness: every §Snapshot field is present + serializes.
+    #[test]
+    fn snapshot_carries_every_contract_field() {
+        let p = FakePlatform::happy();
+        let state = test_state(p, cfg_with_device());
+        run_sequence(&state);
+        let snap = state.snapshot();
+        let v = serde_json::to_value(&snap).unwrap();
+        for field in [
+            "service", "flags", "slotPhase", "band", "dialHz", "bandSource",
+            "bandLabelConfirmedUtcMs", "sweep", "engineVersion", "nConsecutive",
+            "kConsecutive", "lastSlotUtcMs", "lastFailure", "availableDevices",
+            "ringTail",
+        ] {
+            assert!(v.get(field).is_some(), "snapshot missing {field}: {v}");
+        }
+        assert_eq!(v["engineVersion"], "WSJT-X test 0.0");
+        assert_eq!(v["service"]["axis"], "listening");
+    }
+
+    /// T11 declares SlotJob + the worker handles + master_tx whose runtime
+    /// readers arrive in T12/T13, and the plan bans #[allow(dead_code)]:
+    /// this test IS their T11 reader. It pins the stopped-state invariant
+    /// (no worker threads, no live sender before any start) and the SlotJob
+    /// field shape the rendezvous channel will carry.
+    #[test]
+    fn stopped_state_holds_no_workers_and_slot_job_shape_is_complete() {
+        let state = test_state(FakePlatform::happy(), Ft8Config::default());
+        {
+            let h = state.handles.lock().unwrap();
+            assert!(h.capture.is_none(), "stopped: no capture thread");
+            assert!(h.decode.is_none(), "stopped: no decode thread");
+        }
+        assert!(
+            state.master_tx.lock().unwrap().is_none(),
+            "stopped: no live SyncSender"
+        );
+        let job = SlotJob {
+            slot_utc_ms: 15_000,
+            dir: PathBuf::from("/tmp/slot"),
+            wav: PathBuf::from("/tmp/slot/slot.wav"),
+            lost_frames: 1,
+            boundary_skew_frames: 2,
+            clip_fraction: 0.25,
+            rms_dbfs: -20.0,
+        };
+        assert_eq!(job.slot_utc_ms, 15_000);
+        assert_eq!((job.lost_frames, job.boundary_skew_frames), (1, 2));
+        assert!(job.clip_fraction > 0.0 && job.rms_dbfs < 0.0);
+        assert!(job.wav.starts_with(&job.dir), "wav lives inside the slot dir");
+    }
+}

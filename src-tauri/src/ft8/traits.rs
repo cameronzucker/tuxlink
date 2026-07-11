@@ -1,11 +1,20 @@
 //! Testability seams (spec §Testability traits). All four production impls
 //! are thin; everything above them is driven by fakes in unit tests.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::ft8::records::AudioDeviceChoice;
+use crate::modem_status::{ModemSession, ModemState};
+use crate::winlink::ax25::devices::{
+    enumerate_capture_devices, read_sys_snapshot, resolve_managed_device, ResolvedManagedDevice,
+    StableAudioId,
+};
 use tuxlink_capture::slot::GapReport;
+use tuxlink_jt9::discover::Jt9Binary;
 use tuxlink_jt9::runner::Jt9Runner;
-use tuxlink_jt9::types::SlotOutcome;
+use tuxlink_jt9::types::{SlotOutcome, SLOT_DECODE_TIMEOUT_SECS};
 
 /// One capture read's result. **Time is data at this seam**: the monotonic
 /// timestamp arrives as a value so the slot assembler stays pure and tests
@@ -92,4 +101,144 @@ pub(crate) fn process_mono_us() -> u64 {
     static EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
     let epoch = EPOCH.get_or_init(std::time::Instant::now);
     u64::try_from(epoch.elapsed().as_micros()).unwrap_or(u64::MAX)
+}
+
+/// The impure-probe seam: every filesystem/process/CAT touchpoint the
+/// service needs, bundled so tests fake ONE object. Errors are `String`s
+/// (result_large_err discipline). Production is [`ProdPlatform`]; the test
+/// double is `testutil::FakePlatform`.
+pub trait Ft8Platform: Send + Sync {
+    fn discover_jt9(&self) -> Result<Jt9Binary, String>;
+    /// Re-resolve the persisted identity against a FRESH snapshot — the card
+    /// index can change on re-enumeration; never reuse a cached name
+    /// (spec §Device loss).
+    fn resolve_device(&self, id: &StableAudioId) -> Option<ResolvedManagedDevice>;
+    fn enumerate_capture(&self) -> Vec<AudioDeviceChoice>;
+    fn probe_busy(&self, plughw: &str, card_index: u32) -> Result<(), String>;
+    fn open_source(&self, alsa_hw: &str) -> Result<Box<dyn SampleSource>, SourceError>;
+    /// ADR-0015 release confirm against `/dev/snd/pcmC<card>D0c`.
+    fn confirm_released(&self, card_index: u32) -> bool;
+    fn write_slot_wav(&self, path: &Path, samples: &[i16]) -> std::io::Result<()>;
+    fn make_engine(&self, bin: &Jt9Binary, wisdom_dir: &Path) -> Arc<dyn DecodeEngine>;
+    fn rig_configured(&self) -> bool;
+    /// One spawn-read-drop `ManagedRig` session (serial NEVER held while
+    /// capturing). Caller serializes via the service's rig lock.
+    fn rig_read_dial(&self) -> Result<u64, String>;
+    /// One spawn-tune-drop session. Same serialization contract.
+    fn rig_tune(&self, dial_hz: u64) -> Result<(), String>;
+    /// Positive resume eligibility over ModemState: `Stopped | Error |
+    /// SocketLost` (spec §Resume — `Idle` means ardopcf holds the card).
+    fn modem_resume_eligible(&self) -> bool;
+    fn wisdom_dir(&self) -> PathBuf;
+    fn slot_dir_root(&self) -> PathBuf;
+    fn utc_now_ms(&self) -> u64;
+    fn mono_now_us(&self) -> u64;
+    /// Pipe-type entries in /proc/self/fd (readlink → "pipe:[...]"), or None
+    /// when /proc is unreadable. tuxlink-b026z.8 watermark.
+    fn count_pipe_fds(&self) -> Option<usize>;
+}
+
+/// Production platform. Paths are injected at construction (lib.rs setup
+/// resolves them from Tauri's path API) so this struct stays Tauri-free and
+/// the setup wiring stays trivial.
+pub struct ProdPlatform {
+    pub wisdom_dir: PathBuf,
+    pub slot_root: PathBuf,
+    pub modem: Arc<ModemSession>,
+}
+
+// Monotonic stamps: `process_mono_us` (defined above in this file, T10) is
+// THE process epoch — ProdPlatform and AlsaSource share it, because the
+// assembler DIFFERENCES monotonic values across both producers.
+
+impl Ft8Platform for ProdPlatform {
+    fn discover_jt9(&self) -> Result<Jt9Binary, String> {
+        tuxlink_jt9::discover::discover_jt9(None).map_err(|e| format!("{e:?}"))
+    }
+    fn resolve_device(&self, id: &StableAudioId) -> Option<ResolvedManagedDevice> {
+        resolve_managed_device(id, &read_sys_snapshot())
+    }
+    fn enumerate_capture(&self) -> Vec<AudioDeviceChoice> {
+        enumerate_capture_devices(&read_sys_snapshot())
+            .into_iter()
+            .map(|d| AudioDeviceChoice { human_name: d.human_name, stable_id: d.stable_id })
+            .collect()
+    }
+    fn probe_busy(&self, plughw: &str, card_index: u32) -> Result<(), String> {
+        crate::winlink::ax25::direwolf_probe::probe_device_busy(plughw, card_index)
+    }
+    fn open_source(&self, alsa_hw: &str) -> Result<Box<dyn SampleSource>, SourceError> {
+        crate::ft8::alsa_source::AlsaSource::open(alsa_hw).map(|s| Box::new(s) as Box<dyn SampleSource>)
+    }
+    fn confirm_released(&self, card_index: u32) -> bool {
+        crate::winlink::modem::process::ManagedModem::confirm_audio_device_released(
+            std::path::Path::new(&format!("/dev/snd/pcmC{card_index}D0c")),
+            Duration::from_secs(2),
+        )
+    }
+    fn write_slot_wav(&self, path: &std::path::Path, samples: &[i16]) -> std::io::Result<()> {
+        tuxlink_capture::wavwrite::write_slot_wav(path, samples)
+    }
+    fn make_engine(&self, bin: &Jt9Binary, wisdom_dir: &std::path::Path) -> Arc<dyn DecodeEngine> {
+        Arc::new(Jt9Engine::new(Jt9Runner::new(
+            bin.clone(),
+            wisdom_dir.to_path_buf(),
+            Duration::from_secs(SLOT_DECODE_TIMEOUT_SECS),
+        )))
+    }
+    fn rig_configured(&self) -> bool {
+        crate::config::read_config().map(|c| c.rig.is_configured()).unwrap_or(false)
+    }
+    fn rig_read_dial(&self) -> Result<u64, String> {
+        let cfg = crate::config::read_config().map_err(|e| e.to_string())?;
+        let rc = crate::modem_commands::rig_config_from(&cfg.rig)
+            .ok_or_else(|| "rig not configured".to_string())?;
+        let mut rig = tux_rig::ManagedRig::spawn(rc).map_err(|e| e.to_string())?;
+        let status = rig.status().map_err(|e| e.to_string())?;
+        Ok(status.freq_hz)
+        // rig drops here → rigctld killed → serial released.
+    }
+    fn rig_tune(&self, dial_hz: u64) -> Result<(), String> {
+        let cfg = crate::config::read_config().map_err(|e| e.to_string())?;
+        let rc = crate::modem_commands::rig_config_from(&cfg.rig)
+            .ok_or_else(|| "rig not configured".to_string())?;
+        let mode = crate::modem_commands::rig_data_mode(&cfg.rig);
+        let mut rig = tux_rig::ManagedRig::spawn(rc).map_err(|e| e.to_string())?;
+        rig.tune(dial_hz, mode).map_err(|e| e.to_string())
+        // rig drops here → serial released.
+    }
+    fn modem_resume_eligible(&self) -> bool {
+        matches!(
+            self.modem.status_snapshot().state,
+            ModemState::Stopped | ModemState::Error | ModemState::SocketLost
+        )
+    }
+    fn wisdom_dir(&self) -> PathBuf {
+        self.wisdom_dir.clone()
+    }
+    fn slot_dir_root(&self) -> PathBuf {
+        self.slot_root.clone()
+    }
+    fn utc_now_ms(&self) -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+            .unwrap_or(0)
+    }
+    fn mono_now_us(&self) -> u64 {
+        process_mono_us()
+    }
+    fn count_pipe_fds(&self) -> Option<usize> {
+        let entries = std::fs::read_dir("/proc/self/fd").ok()?;
+        Some(
+            entries
+                .flatten()
+                .filter(|e| {
+                    std::fs::read_link(e.path())
+                        .map(|t| t.to_string_lossy().starts_with("pipe:["))
+                        .unwrap_or(false)
+                })
+                .count(),
+        )
+    }
 }

@@ -12,6 +12,7 @@ pub mod alsa_source;
 pub mod clock;
 pub mod events;
 pub mod records;
+pub mod service;
 pub mod traits;
 
 #[cfg(test)]

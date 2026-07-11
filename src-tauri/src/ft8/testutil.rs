@@ -3,16 +3,18 @@
 //! `#[cfg(test)]`-gated via the mod declaration in mod.rs.
 
 use std::collections::VecDeque;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use super::clock::{ClockProbe, ClockSync};
 use super::events::EventSink;
-use super::records::{Ft8ListeningChange, SlotRecord};
-use super::traits::{DecodeEngine, ReadBatch, SampleSource, SourceError};
+use super::records::{AudioDeviceChoice, Ft8ListeningChange, SlotRecord};
+use super::traits::{DecodeEngine, Ft8Platform, ReadBatch, SampleSource, SourceError};
+use crate::winlink::ax25::devices::{ResolvedManagedDevice, StableAudioId};
 use tuxlink_capture::slot::GapReport;
+use tuxlink_jt9::discover::Jt9Binary;
 use tuxlink_jt9::types::SlotOutcome;
 
 /// Shared synthetic time. UTC and monotonic advance in lockstep; tests (and
@@ -190,6 +192,152 @@ impl DecodeEngine for FakeEngine {
             .unwrap_or_else(|| self.default_outcome.clone());
         self.decodes_finished.fetch_add(1, Ordering::SeqCst);
         out
+    }
+}
+
+/// Composite fake for the impure-probe seam. Every knob is a Mutex/Atomic so
+/// tests reconfigure it mid-scenario (device replug, card busy, ENOSPC).
+pub struct FakePlatform {
+    pub jt9: Mutex<Result<Jt9Binary, String>>,
+    pub resolved: Mutex<Option<ResolvedManagedDevice>>,
+    pub capture_devices: Mutex<Vec<AudioDeviceChoice>>,
+    pub busy: Mutex<Result<(), String>>,
+    /// Factory: each open_source call builds a fresh ScriptedSource over the
+    /// shared step queue + clock. `Err` steps here model open failures.
+    pub open_results: Mutex<VecDeque<Result<(), super::traits::SourceError>>>,
+    pub source_steps: Arc<Mutex<VecDeque<SourceStep>>>,
+    pub wav_result: Mutex<Result<(), String>>, // Err("ENOSPC...") → io::Error
+    pub engine: Mutex<Arc<dyn DecodeEngine>>,
+    pub rig_configured: Mutex<bool>,
+    pub rig_dial: Mutex<Result<u64, String>>,
+    pub rig_tune_results: Mutex<VecDeque<Result<(), String>>>,
+    pub tuned_to: Mutex<Vec<u64>>,
+    pub modem_eligible: Mutex<bool>,
+    pub released: Mutex<bool>,
+    pub pipe_fds: Mutex<Option<usize>>,
+    /// count_pipe_fds call counter — the supervisor-cadence test asserts
+    /// one watermark read per 100-boundary window through this.
+    pub pipe_fd_calls: AtomicU64,
+    pub clock: Arc<SyntheticClock>,
+    pub tmp: PathBuf, // pid-suffixed test root; wisdom + slot dirs under it
+}
+
+impl FakePlatform {
+    /// Happy-path default: jt9 present, device resolves, card free, rig
+    /// absent, band-dead engine, synthetic clock at a slot boundary.
+    pub fn happy() -> Arc<Self> {
+        let tmp = std::env::temp_dir().join(format!(
+            "tuxlink-ft8-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        Arc::new(Self {
+            jt9: Mutex::new(Ok(Jt9Binary {
+                jt9_path: PathBuf::from("/usr/bin/jt9"),
+                engine_version: "WSJT-X test 0.0".into(),
+            })),
+            resolved: Mutex::new(Some(ResolvedManagedDevice {
+                alsa_plughw: "plughw:CARD=DRA,DEV=0".into(),
+                alsa_hw: "hw:1,0".into(),
+                card_index: 1,
+            })),
+            capture_devices: Mutex::new(vec![AudioDeviceChoice {
+                human_name: "DRA-100 USB Audio".into(),
+                stable_id: StableAudioId {
+                    kind: crate::winlink::ax25::devices::StableIdKind::ByIdSymlink,
+                    value: "usb-DRA-100-00".into(),
+                },
+            }]),
+            busy: Mutex::new(Ok(())),
+            open_results: Mutex::new(VecDeque::new()), // empty = always Ok
+            source_steps: Arc::new(Mutex::new(VecDeque::new())),
+            wav_result: Mutex::new(Ok(())),
+            engine: Mutex::new(FakeEngine::band_dead() as Arc<dyn DecodeEngine>),
+            rig_configured: Mutex::new(false),
+            rig_dial: Mutex::new(Ok(14_074_000)),
+            rig_tune_results: Mutex::new(VecDeque::new()), // empty = always Ok
+            tuned_to: Mutex::new(Vec::new()),
+            modem_eligible: Mutex::new(true),
+            released: Mutex::new(true),
+            pipe_fds: Mutex::new(Some(8)),
+            pipe_fd_calls: AtomicU64::new(0),
+            clock: SyntheticClock::new(1_760_000_000_000), // an arbitrary UTC ms epoch
+            tmp,
+        })
+    }
+}
+
+impl Ft8Platform for FakePlatform {
+    fn discover_jt9(&self) -> Result<Jt9Binary, String> {
+        self.jt9.lock().unwrap().clone()
+    }
+    fn resolve_device(&self, _id: &StableAudioId) -> Option<ResolvedManagedDevice> {
+        self.resolved.lock().unwrap().clone()
+    }
+    fn enumerate_capture(&self) -> Vec<AudioDeviceChoice> {
+        self.capture_devices.lock().unwrap().clone()
+    }
+    fn probe_busy(&self, _plughw: &str, _card_index: u32) -> Result<(), String> {
+        self.busy.lock().unwrap().clone()
+    }
+    fn open_source(
+        &self,
+        _alsa_hw: &str,
+    ) -> Result<Box<dyn super::traits::SampleSource>, super::traits::SourceError> {
+        if let Some(Err(e)) = self.open_results.lock().unwrap().pop_front() {
+            return Err(e);
+        }
+        Ok(Box::new(ScriptedSource { steps: self.source_steps.clone(), clock: self.clock.clone() }))
+    }
+    fn confirm_released(&self, _card_index: u32) -> bool {
+        *self.released.lock().unwrap()
+    }
+    fn write_slot_wav(&self, path: &std::path::Path, samples: &[i16]) -> std::io::Result<()> {
+        match &*self.wav_result.lock().unwrap() {
+            Ok(()) => tuxlink_capture::wavwrite::write_slot_wav(path, samples),
+            // Error::other, NOT ErrorKind::StorageFull — see the MSRV note
+            // below this block.
+            Err(msg) => Err(std::io::Error::other(msg.clone())),
+        }
+    }
+    fn make_engine(&self, _bin: &Jt9Binary, _wisdom: &std::path::Path) -> Arc<dyn DecodeEngine> {
+        self.engine.lock().unwrap().clone()
+    }
+    fn rig_configured(&self) -> bool {
+        *self.rig_configured.lock().unwrap()
+    }
+    fn rig_read_dial(&self) -> Result<u64, String> {
+        self.rig_dial.lock().unwrap().clone()
+    }
+    fn rig_tune(&self, dial_hz: u64) -> Result<(), String> {
+        let r = self.rig_tune_results.lock().unwrap().pop_front().unwrap_or(Ok(()));
+        if r.is_ok() {
+            self.tuned_to.lock().unwrap().push(dial_hz);
+        }
+        r
+    }
+    fn modem_resume_eligible(&self) -> bool {
+        *self.modem_eligible.lock().unwrap()
+    }
+    fn wisdom_dir(&self) -> PathBuf {
+        self.tmp.join("wisdom")
+    }
+    fn slot_dir_root(&self) -> PathBuf {
+        self.tmp.join("slots")
+    }
+    fn utc_now_ms(&self) -> u64 {
+        self.clock.utc_ms()
+    }
+    fn mono_now_us(&self) -> u64 {
+        self.clock.mono_us()
+    }
+    fn count_pipe_fds(&self) -> Option<usize> {
+        self.pipe_fd_calls.fetch_add(1, Ordering::SeqCst);
+        *self.pipe_fds.lock().unwrap()
     }
 }
 
