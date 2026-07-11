@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeMode { General, WwvBiased }
 
@@ -51,6 +53,89 @@ pub fn load_wav_16k_mono_f32(path: &Path) -> Result<Vec<f32>, SttError> {
     Ok(out)
 }
 
+/// A loaded `whisper.cpp` model, ready to transcribe 16 kHz mono `f32` PCM.
+pub struct WhisperStt {
+    ctx: WhisperContext,
+}
+
+impl WhisperStt {
+    /// Loads a GGML/GGUF whisper model from disk.
+    pub fn load(model_path: &Path) -> Result<Self, SttError> {
+        let ctx = WhisperContext::new_with_params(
+            model_path
+                .to_str()
+                .ok_or_else(|| SttError::ModelLoad("non-utf8 path".into()))?,
+            WhisperContextParameters::default(),
+        )
+        .map_err(|e| SttError::ModelLoad(e.to_string()))?;
+        Ok(Self { ctx })
+    }
+
+    /// Transcribes a 16 kHz mono WAV file, optionally biasing decoding via
+    /// `mode`'s initial prompt (see [`DecodeMode::initial_prompt`]).
+    pub fn transcribe(&self, wav: &Path, mode: DecodeMode) -> Result<SttResult, SttError> {
+        let audio = load_wav_16k_mono_f32(wav)?;
+        let mut state = self
+            .ctx
+            .create_state()
+            .map_err(|e| SttError::Transcribe(e.to_string()))?;
+        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+        params.set_language(Some("en"));
+        params.set_print_special(false);
+        params.set_print_progress(false);
+        params.set_print_realtime(false);
+        params.set_print_timestamps(false);
+        if let Some(p) = mode.initial_prompt() {
+            params.set_initial_prompt(p);
+        }
+        state
+            .full(params, &audio)
+            .map_err(|e| SttError::Transcribe(e.to_string()))?;
+
+        let n = state
+            .full_n_segments()
+            .map_err(|e| SttError::Transcribe(e.to_string()))?;
+        let mut text = String::new();
+        // Aggregate a worst-case (lowest mean-token-logprob) across segments.
+        // NOTE: whisper-rs 0.14.4 exposes NO per-segment no-speech probability
+        // getter (verified against the crate source), so confidence rests on
+        // token log-probs alone; no_speech_prob is reported as 0.0 (neutral).
+        let mut min_logprob = 0.0f32;
+        for i in 0..n {
+            text.push_str(
+                &state
+                    .full_get_segment_text(i)
+                    .map_err(|e| SttError::Transcribe(e.to_string()))?,
+            );
+            text.push(' ');
+
+            let toks = state.full_n_tokens(i).unwrap_or(0);
+            if toks > 0 {
+                let mut sum = 0.0f32;
+                let mut cnt = 0.0f32;
+                for j in 0..toks {
+                    if let Ok(p) = state.full_get_token_prob(i, j) {
+                        // token prob in (0,1]; guard ln(0).
+                        sum += p.max(1e-9).ln();
+                        cnt += 1.0;
+                    }
+                }
+                if cnt > 0.0 {
+                    min_logprob = min_logprob.min(sum / cnt);
+                }
+            }
+        }
+
+        Ok(SttResult {
+            text: text.trim().to_string(),
+            confidence: SttConfidence {
+                avg_logprob: min_logprob,
+                no_speech_prob: 0.0,
+            },
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,5 +166,15 @@ mod tests {
         w.write_sample(0i16).unwrap();
         w.finalize().unwrap();
         assert!(load_wav_16k_mono_f32(&path).is_err());
+    }
+
+    #[test]
+    #[ignore = "requires ggml base.en model + fixture WAV; run where present"]
+    fn transcribes_fixture() {
+        let model = std::path::PathBuf::from(std::env::var("TUXLINK_STT_MODEL").unwrap());
+        let stt = WhisperStt::load(&model).unwrap();
+        let wav = std::path::PathBuf::from("tests/fixtures/wwv_clean_16k.wav");
+        let r = stt.transcribe(&wav, DecodeMode::WwvBiased).unwrap();
+        assert!(r.text.to_lowercase().contains("solar flux"));
     }
 }
