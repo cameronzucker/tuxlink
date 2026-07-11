@@ -23,10 +23,18 @@
 //! `path.with_extension("tmp")`, which would drop `.json`) → `fs::rename`;
 //! `create_dir_all(parent)` first. Mirrors `user_folders.rs:182-192`.
 
-use super::reachability::{Channel, ContactGrid, ContactTier, Endpoint, Origin};
+use super::reachability::{
+    AttemptCounts, Channel, ContactGrid, ContactTier, Direction, Endpoint, Origin, Provenance,
+    AUTO_CONTACT_CAP,
+};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use thiserror::Error;
+
+/// Max `channels` per contact. Rotated observations (via/freq churn) on ONE
+/// contact must not grow it without bound; oldest-`last_seen` is evicted
+/// (R3-F4, carried over from the peers store).
+const PER_CONTACT_CHANNEL_CAP: usize = 64;
 
 /// On-disk schema version.
 ///
@@ -125,6 +133,75 @@ pub enum ContactsError {
     Io(String),
     #[error("serde: {0}")]
     Serde(String),
+    #[error("validation: {0}")]
+    Validation(String),
+}
+
+/// The roster effect of a [`ContactsStore::apply_observation`] call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApplyEffect {
+    /// The observation created a new `Unconfirmed` contact.
+    CreatedContact,
+    /// The observation attached to an existing contact (any tier).
+    UpdatedContact,
+    /// A rejected/unauthorized inbound or an invalid callsign — no write.
+    NoRecord,
+}
+
+/// The full outcome of a [`ContactsStore::apply_observation`] call: the roster
+/// effect plus the `(contact_id, endpoint_id)` pairs whose contacts were
+/// LRU-evicted over [`AUTO_CONTACT_CAP`] — the caller cascades their keyring
+/// secrets (spec §AMENDMENT pt. 8; the store never touches the keyring).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApplyOutcome {
+    pub effect: ApplyEffect,
+    pub evicted_endpoint_secrets: Vec<(String, String)>,
+}
+
+impl ApplyOutcome {
+    /// The no-write outcome (rejected inbound, invalid callsign, or a store
+    /// failure surfaced by the caller).
+    pub fn no_record() -> Self {
+        Self {
+            effect: ApplyEffect::NoRecord,
+            evicted_endpoint_secrets: vec![],
+        }
+    }
+}
+
+/// Resolve the SINGLE `(contact_id, endpoint_id)` pair a legacy
+/// `p2p-peer:<CALLSIGN>` keyring secret may be conservatively re-keyed to
+/// [R5-5]: exactly one contact whose callsign matches `callsign` exactly
+/// (case-insensitive, no base normalization) AND exactly one
+/// `Provenance::Operator` endpoint on it. Any ambiguity — zero or multiple
+/// matching contacts, zero or multiple operator endpoints — returns `None`,
+/// and the caller leaves the legacy secret in place (the manual-reassignment
+/// signal is the legacy key still answering by callsign).
+pub fn unambiguous_operator_endpoint(
+    file: &ContactsFile,
+    callsign: &str,
+) -> Option<(String, String)> {
+    let wanted = callsign.trim();
+    if wanted.is_empty() {
+        return None;
+    }
+    let mut matches = file
+        .contacts
+        .iter()
+        .filter(|c| c.callsign.trim().eq_ignore_ascii_case(wanted));
+    let only = matches.next()?;
+    if matches.next().is_some() {
+        return None; // multiple contacts on this callsign — ambiguous
+    }
+    let mut ops = only
+        .endpoints
+        .iter()
+        .filter(|e| e.provenance == Provenance::Operator);
+    let ep = ops.next()?;
+    if ops.next().is_some() {
+        return None; // multiple operator endpoints — ambiguous
+    }
+    Some((only.id.clone(), ep.id.clone()))
 }
 
 /// The contacts store: an in-memory [`ContactsFile`] plus the path it persists
@@ -252,9 +329,34 @@ impl ContactsStore {
         self.flush()
     }
 
-    /// Remove a contact by id (no-op if absent). Flushes on success.
-    pub fn contact_delete(&mut self, id: &str) -> Result<(), ContactsError> {
-        self.file.contacts.retain(|c| c.id != id);
+    /// Remove a contact by id (no-op if absent). Returns the removed contact's
+    /// endpoint ids so the `contact_delete` command can cascade the id-keyed
+    /// keyring secrets [R2-S7] — no roster mutation ever orphans a stored
+    /// password. Flushes when a record was actually removed.
+    pub fn contact_delete(&mut self, id: &str) -> Result<Vec<String>, ContactsError> {
+        match self.file.contacts.iter().position(|c| c.id == id) {
+            Some(idx) => {
+                let removed = self.file.contacts.remove(idx);
+                let endpoint_ids = removed.endpoints.iter().map(|e| e.id.clone()).collect();
+                self.flush()?;
+                Ok(endpoint_ids)
+            }
+            None => Ok(vec![]),
+        }
+    }
+
+    /// Flip a contact's tier `Unconfirmed → Confirmed` — the one-click promote
+    /// (spec §AMENDMENT pt. 7: "Promote = one-click add"). Idempotent on an
+    /// already-confirmed record. Errors when the id is unknown. Flushes.
+    pub fn contact_confirm(&mut self, id: &str, now: String) -> Result<(), ContactsError> {
+        let c = self
+            .file
+            .contacts
+            .iter_mut()
+            .find(|c| c.id == id)
+            .ok_or_else(|| ContactsError::Validation(format!("contact {id:?} not found")))?;
+        c.tier = ContactTier::Confirmed;
+        c.updated_at = now;
         self.flush()
     }
 
@@ -271,6 +373,247 @@ impl ContactsStore {
     pub fn group_delete(&mut self, id: &str) -> Result<(), ContactsError> {
         self.file.groups.retain(|g| g.id != id);
         self.flush()
+    }
+
+    /// Route a concluded connection observation to its contact record and
+    /// apply it (spec §3 + §AMENDMENT pts. 1/4/8).
+    ///
+    /// **Exact presented-callsign match only** (pt. 4): the observation
+    /// attaches to the contact whose callsign equals the presented form
+    /// exactly (case-insensitive; ANY tier — a confirmed address-book entry
+    /// accrues reachability like an unconfirmed one). No base-normalization
+    /// merging: `W6ABC-7` and `W6ABC` are distinct records. Otherwise it
+    /// creates an `Unconfirmed` contact (name empty, callsign = the exact
+    /// presented form, origin from the observation's direction).
+    ///
+    /// The caller (the recorder) has already classified rejected-inbound via
+    /// `observation::classify`; the `NoRecord` re-check here is
+    /// defense-in-depth — a `NoRecord` phase is never a roster write. The
+    /// write boundary gates on
+    /// [`crate::winlink::callsign::validate_presented_callsign`] (NOT
+    /// `sanitize_display`) so a legitimate portable form like `W6ABC/P` is
+    /// stored rather than dropped [R3-F2].
+    ///
+    /// Caps guard `Unconfirmed` ONLY (pt. 8): creation may LRU-evict the
+    /// stalest unconfirmed record over [`AUTO_CONTACT_CAP`] (`Confirmed` is
+    /// never evicted); the returned [`ApplyOutcome`] carries the evicted
+    /// `(contact_id, endpoint_id)` pairs for the caller's keyring cascade.
+    pub fn apply_observation(
+        &mut self,
+        obs: &crate::contacts::observation::PeerObservation,
+        now: String,
+    ) -> Result<ApplyOutcome, ContactsError> {
+        use crate::contacts::observation::{classify, Classified, ObservedPath};
+        let bucket = classify(obs.phase);
+        if matches!(bucket, Classified::NoRecord) {
+            return Ok(ApplyOutcome::no_record());
+        }
+        let presented = obs.presented_target.trim().to_ascii_uppercase();
+        // Write-boundary floor [R3-F2]: gate on the PRESENTED validator, not
+        // `sanitize_display`, so a legit portable form (`W6ABC/P`) is stored.
+        if crate::winlink::callsign::validate_presented_callsign(&presented).is_err() {
+            return Ok(ApplyOutcome::no_record());
+        }
+
+        // ── Routing (§AMENDMENT pt. 4): exact presented-callsign only ───────
+        let idx = self
+            .file
+            .contacts
+            .iter()
+            .position(|c| c.callsign.trim().eq_ignore_ascii_case(&presented));
+        let created = idx.is_none();
+        let idx = match idx {
+            Some(i) => i,
+            None => {
+                self.file.contacts.push(Contact {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    name: String::new(),
+                    callsign: presented.clone(),
+                    email: None,
+                    tactical: None,
+                    notes: None,
+                    // Auto-creation NEVER lands in the curated tier (pt. 1).
+                    tier: ContactTier::Unconfirmed,
+                    origin: match obs.direction {
+                        Direction::Incoming => Origin::Incoming,
+                        Direction::Outgoing => Origin::Outgoing,
+                        Direction::Unknown => Origin::Unknown,
+                    },
+                    grid: None,
+                    channels: vec![],
+                    endpoints: vec![],
+                    created_at: now.clone(),
+                    updated_at: now.clone(),
+                });
+                self.file.contacts.len() - 1
+            }
+        };
+
+        // ── Apply the observation to the record ──────────────────────────────
+        let ok = matches!(bucket, Classified::Ok);
+        {
+            let c = &mut self.file.contacts[idx];
+            c.updated_at = now.clone();
+            match &obs.path {
+                ObservedPath::Rf {
+                    transport,
+                    via,
+                    freq_hz,
+                    bandwidth,
+                } => {
+                    // Channel dedup key: (transport, target_callsign, via,
+                    // freq_hz exact, bandwidth) [R4-11].
+                    let key_match = |ch: &Channel| {
+                        ch.transport == *transport
+                            && ch.target_callsign == presented
+                            && ch.via == *via
+                            && ch.freq_hz == *freq_hz
+                            && ch.bandwidth == *bandwidth
+                    };
+                    if let Some(ch) = c.channels.iter_mut().find(|ch| key_match(ch)) {
+                        if ok {
+                            ch.counts.ok = ch.counts.ok.saturating_add(1);
+                        } else {
+                            ch.counts.fail = ch.counts.fail.saturating_add(1);
+                        }
+                        ch.direction = obs.direction;
+                        ch.last_seen = now.clone();
+                    } else {
+                        c.channels.push(Channel {
+                            transport: *transport,
+                            target_callsign: presented.clone(),
+                            via: via.clone(),
+                            freq_hz: *freq_hz,
+                            bandwidth: *bandwidth,
+                            direction: obs.direction,
+                            counts: AttemptCounts {
+                                ok: u32::from(ok),
+                                fail: u32::from(!ok),
+                            },
+                            last_seen: now.clone(),
+                        });
+                    }
+                }
+                ObservedPath::Telnet {
+                    host,
+                    port,
+                    provenance,
+                } => {
+                    // Monotonic provenance [R4-4]: an INBOUND observation NEVER
+                    // creates or mutates an `Operator` endpoint (the downgrade
+                    // is conditioned on direction == Incoming — an outbound
+                    // operator dial legitimately records `Operator`; that is
+                    // how a password-bearing endpoint is born).
+                    let prov = if *provenance == Provenance::Operator
+                        && obs.direction == Direction::Incoming
+                    {
+                        Provenance::ObservedIncoming
+                    } else {
+                        *provenance
+                    };
+                    let hostn = host.trim().to_ascii_lowercase();
+                    // Endpoint dedup key: (host_normalized, port, provenance).
+                    if let Some(ep) = c
+                        .endpoints
+                        .iter_mut()
+                        .find(|e| e.host == hostn && e.port == *port && e.provenance == prov)
+                    {
+                        ep.last_seen = now.clone();
+                    } else {
+                        c.endpoints.push(Endpoint {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            host: hostn,
+                            port: *port,
+                            provenance: prov,
+                            last_seen: now.clone(),
+                        });
+                    }
+                }
+            }
+            Self::enforce_channel_cap(c);
+        }
+
+        // Cap check only on creation — updates cannot grow the roster.
+        let evicted = if created {
+            self.evict_unconfirmed_over(AUTO_CONTACT_CAP)
+        } else {
+            vec![]
+        };
+        self.flush()?;
+        Ok(ApplyOutcome {
+            effect: if created {
+                ApplyEffect::CreatedContact
+            } else {
+                ApplyEffect::UpdatedContact
+            },
+            evicted_endpoint_secrets: evicted,
+        })
+    }
+
+    /// A contact's LRU key for unconfirmed-cap eviction: the most recent
+    /// `last_seen` across its channels + endpoints, falling back to
+    /// `created_at` (a never-connected record ages from its creation).
+    fn last_seen_key(c: &Contact) -> String {
+        c.channels
+            .iter()
+            .map(|ch| ch.last_seen.as_str())
+            .chain(c.endpoints.iter().map(|e| e.last_seen.as_str()))
+            .max()
+            .unwrap_or(c.created_at.as_str())
+            .to_string()
+    }
+
+    /// LRU eviction among `Unconfirmed` records only (spec §AMENDMENT pt. 8):
+    /// `Confirmed` contacts are never auto-created and never evicted. Returns
+    /// the evicted records' `(contact_id, endpoint_id)` pairs so the caller
+    /// can cascade their keyring secrets — the store never touches the
+    /// keyring itself. Does NOT flush (the caller flushes once).
+    fn evict_unconfirmed_over(&mut self, cap: usize) -> Vec<(String, String)> {
+        let mut evicted: Vec<(String, String)> = vec![];
+        loop {
+            let unconfirmed: Vec<usize> = self
+                .file
+                .contacts
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| c.tier == ContactTier::Unconfirmed)
+                .map(|(i, _)| i)
+                .collect();
+            if unconfirmed.len() <= cap {
+                return evicted;
+            }
+            let lru = unconfirmed
+                .into_iter()
+                .min_by(|&a, &b| {
+                    Self::last_seen_key(&self.file.contacts[a])
+                        .cmp(&Self::last_seen_key(&self.file.contacts[b]))
+                })
+                .expect("non-empty by the cap check");
+            let victim = self.file.contacts.remove(lru);
+            for e in &victim.endpoints {
+                evicted.push((victim.id.clone(), e.id.clone()));
+            }
+        }
+    }
+
+    /// Per-contact channel bounding (R3-F4): rotated observations (via/freq
+    /// churn) on one contact cannot grow it without bound; oldest-`last_seen`
+    /// is evicted.
+    fn enforce_channel_cap(c: &mut Contact) {
+        while c.channels.len() > PER_CONTACT_CHANNEL_CAP {
+            let victim = c
+                .channels
+                .iter()
+                .enumerate()
+                .min_by(|(_, a), (_, b)| a.last_seen.cmp(&b.last_seen))
+                .map(|(i, _)| i);
+            match victim {
+                Some(i) => {
+                    c.channels.remove(i);
+                }
+                None => break,
+            }
+        }
     }
 }
 
@@ -539,5 +882,406 @@ mod tests {
             .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
             .collect();
         assert!(tmps.is_empty(), "no .tmp file should remain after flush");
+    }
+
+    // ------------------------------------------------------------------
+    // Observation routing + reachability (spec §AMENDMENT pts. 1/4/8) —
+    // the peers-store suite, ported to exact-callsign contact semantics.
+    // ------------------------------------------------------------------
+
+    use crate::contacts::observation::{ObservationPhase, ObservedPath, PeerObservation};
+    use crate::contacts::reachability::{ChannelBandwidth, ChannelTransport};
+
+    fn now() -> String {
+        "2026-07-11T12:00:00-07:00".to_string()
+    }
+
+    fn rf_obs(presented: &str, dir: Direction, phase: ObservationPhase) -> PeerObservation {
+        PeerObservation {
+            path: ObservedPath::Rf {
+                transport: ChannelTransport::VaraHf,
+                via: vec![],
+                freq_hz: Some(7_101_000),
+                bandwidth: Some(ChannelBandwidth::Hz { hz: 2300 }),
+            },
+            direction: dir,
+            presented_target: presented.to_string(),
+            phase,
+        }
+    }
+
+    fn telnet_obs(
+        presented: &str,
+        dir: Direction,
+        provenance: Provenance,
+        phase: ObservationPhase,
+    ) -> PeerObservation {
+        PeerObservation {
+            path: ObservedPath::Telnet {
+                host: "203.0.113.5".into(),
+                port: 8772,
+                provenance,
+            },
+            direction: dir,
+            presented_target: presented.to_string(),
+            phase,
+        }
+    }
+
+    #[test]
+    fn attach_is_exact_callsign_only_no_base_merge() {
+        // §AMENDMENT pt. 4: NO base-normalization merging. `W6ABC-7` and
+        // `W6ABC` are DISTINCT records; a repeat of the same exact form
+        // attaches to its record.
+        let dir = tempdir().unwrap();
+        let mut s = ContactsStore::open(dir.path().join("contacts.json"));
+        let o1 = s
+            .apply_observation(&rf_obs("W6ABC-7", Direction::Outgoing, ObservationPhase::B2fOk), now())
+            .unwrap();
+        assert_eq!(o1.effect, ApplyEffect::CreatedContact);
+        let o2 = s
+            .apply_observation(&rf_obs("W6ABC", Direction::Incoming, ObservationPhase::Accepted), now())
+            .unwrap();
+        assert_eq!(o2.effect, ApplyEffect::CreatedContact, "different exact form → new record");
+        assert_eq!(s.contacts().len(), 2, "no base merge: two distinct records");
+        // A repeat of the exact form ATTACHES (case-insensitively).
+        let o3 = s
+            .apply_observation(&rf_obs("w6abc-7", Direction::Outgoing, ObservationPhase::B2fOk), now())
+            .unwrap();
+        assert_eq!(o3.effect, ApplyEffect::UpdatedContact);
+        assert_eq!(s.contacts().len(), 2);
+        let c7 = s.contacts().iter().find(|c| c.callsign == "W6ABC-7").unwrap();
+        assert_eq!(c7.tier, ContactTier::Unconfirmed, "auto-created never lands curated");
+        assert_eq!(c7.origin, Origin::Outgoing);
+        assert!(c7.name.is_empty(), "auto-created has no fabricated name");
+        assert_eq!(c7.channels.len(), 1, "same dedup key → counts, not rows");
+        assert_eq!(c7.channels[0].counts.ok, 2);
+    }
+
+    #[test]
+    fn observation_attaches_to_a_confirmed_contact_without_flipping_tier() {
+        // An observation whose callsign exactly equals an existing CONFIRMED
+        // contact's callsign attaches to it (any tier) — and never mutates
+        // the tier.
+        let dir = tempdir().unwrap();
+        let mut s = ContactsStore::open(dir.path().join("contacts.json"));
+        s.contact_upsert(contact("c1")).unwrap(); // callsign W6ABC-7, Confirmed
+        let out = s
+            .apply_observation(&rf_obs("W6ABC-7", Direction::Outgoing, ObservationPhase::B2fOk), now())
+            .unwrap();
+        assert_eq!(out.effect, ApplyEffect::UpdatedContact, "attached, not created");
+        assert_eq!(s.contacts().len(), 1);
+        let c = &s.contacts()[0];
+        assert_eq!(c.tier, ContactTier::Confirmed, "tier untouched by observations");
+        assert_eq!(c.name, "Pat Example", "identity fields untouched");
+        assert_eq!(c.channels.len(), 1, "reachability accrued on the contact");
+    }
+
+    #[test]
+    fn channel_key_distinguishes_via_freq_and_bandwidth() {
+        let dir = tempdir().unwrap();
+        let mut s = ContactsStore::open(dir.path().join("contacts.json"));
+        let mut o1 = rf_obs("W6ABC", Direction::Outgoing, ObservationPhase::B2fOk);
+        s.apply_observation(&o1, now()).unwrap();
+        s.apply_observation(&o1, now()).unwrap(); // same key → counts, not a new row
+        assert_eq!(s.contacts()[0].channels.len(), 1);
+        assert_eq!(s.contacts()[0].channels[0].counts.ok, 2);
+        if let ObservedPath::Rf { ref mut via, .. } = o1.path {
+            *via = vec!["DIGI1".into()];
+        }
+        s.apply_observation(&o1, now()).unwrap(); // different via → distinct channel [R3-6]
+        assert_eq!(s.contacts()[0].channels.len(), 2);
+    }
+
+    #[test]
+    fn rejected_inbound_never_populates_the_roster() {
+        let dir = tempdir().unwrap();
+        let mut s = ContactsStore::open(dir.path().join("contacts.json"));
+        let out = s
+            .apply_observation(&rf_obs("EVIL-1", Direction::Incoming, ObservationPhase::Rejected), now())
+            .unwrap();
+        assert_eq!(out.effect, ApplyEffect::NoRecord);
+        assert!(s.contacts().is_empty(), "an attacker knocking is not a contact");
+    }
+
+    #[test]
+    fn hostile_callsigns_never_reach_the_roster() {
+        // [R2-S2][R2-S10]: the write boundary gates on
+        // `validate_presented_callsign` — every injection shape below fails it
+        // and is dropped as NoRecord before any roster write.
+        let dir = tempdir().unwrap();
+        let mut s = ContactsStore::open(dir.path().join("contacts.json"));
+        for evil in [
+            "<img src=x onerror=alert(1)>",
+            "W6ABC:extra",
+            "A\u{0}B",
+            "../../etc/passwd",
+            "W6 ABC",
+            "`rm -rf`",
+        ] {
+            let out = s
+                .apply_observation(
+                    &rf_obs(evil, Direction::Incoming, ObservationPhase::Accepted),
+                    now(),
+                )
+                .unwrap();
+            assert_eq!(out.effect, ApplyEffect::NoRecord, "{evil:?} must be dropped");
+        }
+        assert!(s.contacts().is_empty());
+    }
+
+    #[test]
+    fn wedged_or_aborted_records_a_fail() {
+        let dir = tempdir().unwrap();
+        let mut s = ContactsStore::open(dir.path().join("contacts.json"));
+        s.apply_observation(
+            &rf_obs("W6ABC", Direction::Outgoing, ObservationPhase::AbortedOrWedged),
+            now(),
+        )
+        .unwrap();
+        assert_eq!(s.contacts()[0].channels[0].counts.fail, 1);
+        assert_eq!(s.contacts()[0].channels[0].counts.ok, 0);
+    }
+
+    #[test]
+    fn slash_p_presented_form_is_stored() {
+        // [R3-F2]: the write boundary gates on validate_presented_callsign, so
+        // a legit portable form survives rather than being dropped.
+        let dir = tempdir().unwrap();
+        let mut s = ContactsStore::open(dir.path().join("contacts.json"));
+        let out = s
+            .apply_observation(&rf_obs("W6ABC/P", Direction::Outgoing, ObservationPhase::B2fOk), now())
+            .unwrap();
+        assert_eq!(out.effect, ApplyEffect::CreatedContact);
+        assert_eq!(s.contacts()[0].callsign, "W6ABC/P");
+    }
+
+    #[test]
+    fn inbound_observation_never_writes_an_operator_endpoint() {
+        // Monotonic provenance [R4-4][R2-S8]: an inbound observation claiming
+        // Operator provenance is downgraded to ObservedIncoming at the write
+        // boundary; an OUTBOUND operator dial legitimately records Operator
+        // (how a password-bearing endpoint is born).
+        let dir = tempdir().unwrap();
+        let mut s = ContactsStore::open(dir.path().join("contacts.json"));
+        s.apply_observation(
+            &telnet_obs("W6ABC", Direction::Incoming, Provenance::Operator, ObservationPhase::Accepted),
+            now(),
+        )
+        .unwrap();
+        assert_eq!(
+            s.contacts()[0].endpoints[0].provenance,
+            Provenance::ObservedIncoming,
+            "inbound can never mint Operator"
+        );
+        s.apply_observation(
+            &telnet_obs("K7XYZ", Direction::Outgoing, Provenance::Operator, ObservationPhase::B2fOk),
+            now(),
+        )
+        .unwrap();
+        let dialed = s.contacts().iter().find(|c| c.callsign == "K7XYZ").unwrap();
+        assert_eq!(dialed.endpoints[0].provenance, Provenance::Operator);
+        // A later inbound observation of the same host:port must NOT touch the
+        // Operator endpoint (distinct provenance in the dedup key).
+        s.apply_observation(
+            &telnet_obs("K7XYZ", Direction::Incoming, Provenance::ObservedIncoming, ObservationPhase::Accepted),
+            now(),
+        )
+        .unwrap();
+        let dialed = s.contacts().iter().find(|c| c.callsign == "K7XYZ").unwrap();
+        assert_eq!(
+            dialed.endpoints.iter().filter(|e| e.provenance == Provenance::Operator).count(),
+            1
+        );
+        assert_eq!(dialed.endpoints.len(), 2, "observed row is a distinct endpoint");
+    }
+
+    #[test]
+    fn per_contact_channel_cap_holds() {
+        // R3-F4: rotated observations (distinct via) on ONE contact cannot
+        // grow it without bound — the per-contact channel cap holds.
+        let dir = tempdir().unwrap();
+        let mut s = ContactsStore::open(dir.path().join("contacts.json"));
+        for i in 0..80u32 {
+            let mut o = rf_obs("W6ABC", Direction::Outgoing, ObservationPhase::B2fOk);
+            if let ObservedPath::Rf { ref mut via, .. } = o.path {
+                *via = vec![format!("DIGI{i}")];
+            }
+            let ts = format!("2026-07-11T12:{:02}:{:02}-07:00", i / 60, i % 60);
+            s.apply_observation(&o, ts).unwrap();
+        }
+        assert_eq!(s.contacts().len(), 1, "all observations on one contact");
+        assert_eq!(s.contacts()[0].channels.len(), PER_CONTACT_CHANNEL_CAP);
+    }
+
+    #[test]
+    fn lru_eviction_evicts_stalest_unconfirmed_only_and_reports_secrets() {
+        // §AMENDMENT pt. 8: the auto cap guards Unconfirmed ONLY — Confirmed
+        // is never evicted regardless of age — and eviction reports the
+        // victims' (contact_id, endpoint_id) pairs for the keyring cascade.
+        // Exercises the private eviction helper directly with a small cap
+        // (the production AUTO_CONTACT_CAP=1000 path calls the same helper
+        // from apply_observation on every create).
+        let dir = tempdir().unwrap();
+        let mut s = ContactsStore::open(dir.path().join("contacts.json"));
+        // A Confirmed contact OLDER than everything else.
+        let mut old_confirmed = contact("c-conf");
+        old_confirmed.created_at = "2026-01-01T00:00:00-07:00".to_string();
+        s.contact_upsert(old_confirmed).unwrap();
+        // Four unconfirmed records with ascending last-seen; the second one
+        // carries a telnet endpoint (its secret pair must be reported).
+        for (i, call) in ["K1AAA", "K2BBB", "K3CCC", "K4DDD"].iter().enumerate() {
+            let ts = format!("2026-07-11T12:00:0{i}-07:00");
+            if *call == "K2BBB" {
+                s.apply_observation(
+                    &telnet_obs(call, Direction::Incoming, Provenance::ObservedIncoming, ObservationPhase::Accepted),
+                    ts,
+                )
+                .unwrap();
+            } else {
+                s.apply_observation(&rf_obs(call, Direction::Incoming, ObservationPhase::Accepted), ts)
+                    .unwrap();
+            }
+        }
+        assert_eq!(s.contacts().len(), 5);
+        let k2_pair = {
+            let k2 = s.contacts().iter().find(|c| c.callsign == "K2BBB").unwrap();
+            (k2.id.clone(), k2.endpoints[0].id.clone())
+        };
+
+        let evicted = s.evict_unconfirmed_over(2);
+        // K1AAA (oldest, no endpoints) and K2BBB (next-oldest, one endpoint)
+        // are evicted; K3CCC/K4DDD stay; the Confirmed record — the OLDEST in
+        // the whole file — is untouched.
+        assert_eq!(s.contacts().len(), 3);
+        assert!(s.contacts().iter().any(|c| c.id == "c-conf"), "Confirmed never evicted");
+        assert!(!s.contacts().iter().any(|c| c.callsign == "K1AAA"));
+        assert!(!s.contacts().iter().any(|c| c.callsign == "K2BBB"));
+        assert_eq!(evicted, vec![k2_pair], "endpoint secret pairs reported for cascade");
+    }
+
+    #[test]
+    fn contact_delete_returns_endpoint_ids_for_the_keyring_cascade() {
+        let dir = tempdir().unwrap();
+        let mut s = ContactsStore::open(dir.path().join("contacts.json"));
+        s.apply_observation(
+            &telnet_obs("W6ABC", Direction::Outgoing, Provenance::Operator, ObservationPhase::B2fOk),
+            now(),
+        )
+        .unwrap();
+        let (cid, eid) = {
+            let c = &s.contacts()[0];
+            (c.id.clone(), c.endpoints[0].id.clone())
+        };
+        let ids = s.contact_delete(&cid).unwrap();
+        assert_eq!(ids, vec![eid], "delete reports its endpoints for the cascade");
+        assert!(s.contacts().is_empty());
+        // Absent id → no-op, empty cascade.
+        assert!(s.contact_delete("ghost").unwrap().is_empty());
+    }
+
+    #[test]
+    fn contact_confirm_flips_tier_and_errors_on_unknown_id() {
+        let dir = tempdir().unwrap();
+        let mut s = ContactsStore::open(dir.path().join("contacts.json"));
+        s.apply_observation(&rf_obs("W6ABC-7", Direction::Incoming, ObservationPhase::Accepted), now())
+            .unwrap();
+        let id = s.contacts()[0].id.clone();
+        assert_eq!(s.contacts()[0].tier, ContactTier::Unconfirmed);
+        s.contact_confirm(&id, "2026-07-11T13:00:00-07:00".into()).unwrap();
+        assert_eq!(s.contacts()[0].tier, ContactTier::Confirmed);
+        assert_eq!(s.contacts()[0].updated_at, "2026-07-11T13:00:00-07:00");
+        // Idempotent on an already-confirmed record.
+        s.contact_confirm(&id, "2026-07-11T13:00:01-07:00".into()).unwrap();
+        assert_eq!(s.contacts()[0].tier, ContactTier::Confirmed);
+        // Unknown id → Validation error.
+        assert!(matches!(
+            s.contact_confirm("ghost", now()),
+            Err(ContactsError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn observation_write_round_trips_through_reopen() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("contacts.json");
+        let mut s = ContactsStore::open(path.clone());
+        s.apply_observation(&rf_obs("W6ABC-7", Direction::Outgoing, ObservationPhase::B2fOk), now())
+            .unwrap();
+        let reopened = ContactsStore::open(path);
+        assert_eq!(reopened.contacts().len(), 1);
+        assert_eq!(reopened.contacts()[0].callsign, "W6ABC-7");
+        assert_eq!(reopened.contacts()[0].tier, ContactTier::Unconfirmed);
+        assert_eq!(reopened.contacts()[0].channels.len(), 1);
+    }
+
+    // ------------------------------------------------------------------
+    // unambiguous_operator_endpoint — the conservative legacy-keyring
+    // migration resolver [R5-5], re-targeted from peers to contacts.
+    // ------------------------------------------------------------------
+
+    fn contact_with_endpoints(id: &str, callsign: &str, endpoints: Vec<Endpoint>) -> Contact {
+        let mut c = contact(id);
+        c.callsign = callsign.to_string();
+        c.endpoints = endpoints;
+        c
+    }
+
+    fn ep(id: &str, provenance: Provenance) -> Endpoint {
+        Endpoint {
+            id: id.to_string(),
+            host: "peer.example.org".to_string(),
+            port: 8772,
+            provenance,
+            last_seen: "2026-07-11T12:00:00-07:00".to_string(),
+        }
+    }
+
+    #[test]
+    fn unambiguous_resolver_finds_the_single_operator_endpoint() {
+        let mut file = ContactsFile::default();
+        file.contacts.push(contact_with_endpoints(
+            "c1",
+            "W6ABC",
+            vec![ep("e-op", Provenance::Operator), ep("e-obs", Provenance::ObservedIncoming)],
+        ));
+        assert_eq!(
+            unambiguous_operator_endpoint(&file, "w6abc"),
+            Some(("c1".to_string(), "e-op".to_string())),
+            "one contact + one Operator endpoint → unambiguous (case-insensitive)"
+        );
+    }
+
+    #[test]
+    fn ambiguous_resolver_cases_return_none() {
+        // Multiple contacts on the callsign → ambiguous.
+        let mut two = ContactsFile::default();
+        two.contacts.push(contact_with_endpoints("c1", "W6ABC", vec![ep("e1", Provenance::Operator)]));
+        two.contacts.push(contact_with_endpoints("c2", "W6ABC", vec![]));
+        assert_eq!(unambiguous_operator_endpoint(&two, "W6ABC"), None);
+
+        // Zero Operator endpoints (observed-only) → ambiguous.
+        let mut observed = ContactsFile::default();
+        observed
+            .contacts
+            .push(contact_with_endpoints("c1", "W6ABC", vec![ep("e1", Provenance::ObservedIncoming)]));
+        assert_eq!(unambiguous_operator_endpoint(&observed, "W6ABC"), None);
+
+        // Multiple Operator endpoints → ambiguous.
+        let mut multi = ContactsFile::default();
+        multi.contacts.push(contact_with_endpoints(
+            "c1",
+            "W6ABC",
+            vec![ep("e1", Provenance::Operator), ep("e2", Provenance::Operator)],
+        ));
+        assert_eq!(unambiguous_operator_endpoint(&multi, "W6ABC"), None);
+
+        // No matching contact at all, and the exact-match rule: an SSID'd
+        // record does NOT answer for the base form.
+        let mut ssid = ContactsFile::default();
+        ssid.contacts
+            .push(contact_with_endpoints("c1", "W6ABC-7", vec![ep("e1", Provenance::Operator)]));
+        assert_eq!(unambiguous_operator_endpoint(&ssid, "W6ABC"), None);
+        assert_eq!(unambiguous_operator_endpoint(&ssid, ""), None);
     }
 }
