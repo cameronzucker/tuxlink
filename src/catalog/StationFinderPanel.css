@@ -19,6 +19,12 @@
   --m-vara: #4aa3ff;
   --m-ardop: #b07cf0;
   --m-packet: #34d0d0;
+  /* OPENNESS (§Openness) — "how much FT-8 activity was heard recently on this
+     band," a third axis distinct from SIGNAL (path reliability) and MODES
+     (protocol). A dedicated warm-red→amber ramp so it never reads as either. */
+  --open-hot: #ff5470;
+  --open-warm: #ffcf5c;
+  --open-quiet: #5c92b3;
 }
 
 .station-finder-overlay {
@@ -167,6 +173,33 @@
 .station-finder__bandtab:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+/* Openness dot (§Openness) — a non-interactive live-activity indicator inside
+   each HF band chip. `no-data` is deliberately hollow (border only, no fill)
+   so it never reads as "activity" — the dot never claims knowledge it lacks.
+   Never-sampleable bands (60m, VHF/UHF) omit this span entirely (component
+   logic), not just style it away, so there's nothing here to hide for them. */
+.station-finder__dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 5px;
+  border-radius: 50%;
+  vertical-align: middle;
+  flex: none;
+}
+.station-finder__dot--hot {
+  background: var(--open-hot);
+}
+.station-finder__dot--warm {
+  background: var(--open-warm);
+}
+.station-finder__dot--quiet {
+  background: var(--open-quiet);
+}
+.station-finder__dot--no-data {
+  background: transparent;
+  border: 1px solid var(--border2, #34556f);
 }
 .station-finder__modes {
   margin-left: auto;

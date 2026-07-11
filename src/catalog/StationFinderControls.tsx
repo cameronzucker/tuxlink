@@ -5,6 +5,7 @@
 
 import type { ReactNode } from 'react';
 import { HF_BANDS, bandLabel, type Band } from './bandPlan';
+import type { BandDot } from '../ft8ui/ft8Types';
 
 export type FilterMode = 'vara-hf' | 'ardop-hf' | 'packet';
 
@@ -49,6 +50,52 @@ export interface StationFinderControlsProps {
    *  presets + Apply), so they share the filter line instead of a row of their
    *  own (tuxlink-obpa compaction). */
   filterExtra?: ReactNode;
+  /** Live per-band FT-8 openness dots (design §Openness), keyed by `Band`
+   *  string — `useFt8Listener().bandActivity`, itself `deriveBandActivity`'s
+   *  output (Task B3). A band absent from the map (never sampled inside the
+   *  10-minute window) renders the same as an explicit `no-data` entry — a
+   *  hollow dot, not an omitted one; only the never-sampleable `60m` and
+   *  `vhf-uhf` chips omit the dot entirely (see `NEVER_SAMPLEABLE` below).
+   *  Optional so this stays a pure presentational component pre-D1-wiring:
+   *  omitting the prop renders every eligible chip with a hollow no-data dot,
+   *  identical to an empty map. */
+  bandActivity?: Map<string, BandDot>;
+}
+
+/** Bands the FT-8 engine structurally cannot sample (design §Openness) — the
+ *  openness invariant: a dot never claims knowledge it lacks, so these chips
+ *  render NO dot at all (not even a hollow no-data one). */
+const NEVER_SAMPLEABLE = new Set<Band>(['60m', 'vhf-uhf']);
+
+/** The default dot for a band absent from `bandActivity` — identical to what
+ *  `deriveBandActivity` returns for an in-window band with zero evidence. */
+const NO_DATA_DOT: BandDot = { tier: 'no-data', opacity: 0, sampledAgoMs: null, dwellSlots: 0 };
+
+function dotFor(band: Band, bandActivity: Map<string, BandDot> | undefined): BandDot {
+  return bandActivity?.get(band) ?? NO_DATA_DOT;
+}
+
+/** Tooltip text for the openness dot (design §Openness): recency + sample
+ *  size when there's evidence, the honest "not sampled" caption otherwise. */
+function dotTitle(dot: BandDot): string {
+  if (dot.tier === 'no-data' || dot.sampledAgoMs === null) {
+    return 'not sampled in the last 10 min';
+  }
+  const ageMin = Math.round(dot.sampledAgoMs / 60_000);
+  return `sampled ${ageMin}m ago · dwell ${dot.dwellSlots} slots`;
+}
+
+/** One band-chip openness dot — non-interactive (never a button; D3 gate). */
+function BandOpennessDot({ band, dot }: { band: Band; dot: BandDot }) {
+  return (
+    <span
+      className={`station-finder__dot station-finder__dot--${dot.tier}`}
+      style={{ opacity: dot.opacity }}
+      title={dotTitle(dot)}
+      aria-hidden="true"
+      data-testid={`band-dot-${band}`}
+    />
+  );
 }
 
 /** Radius options (miles) for the search-radius selector; null = All. */
@@ -138,6 +185,9 @@ export function StationFinderControls(props: StationFinderControlsProps) {
             onClick={() => props.onToggleBand(b)}
           >
             {bandLabel(b)}
+            {/* 60m is structurally outside the FT-8 band table — never-sampleable,
+                so it gets no dot at all (§Openness), unlike the other HF chips. */}
+            {!NEVER_SAMPLEABLE.has(b) && <BandOpennessDot band={b} dot={dotFor(b, props.bandActivity)} />}
           </button>
         ))}
         {/* VHF/UHF is a selectable filter (line-of-sight packet) but is never

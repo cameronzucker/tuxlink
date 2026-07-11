@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { StationFinderControls } from './StationFinderControls';
 import type { Band } from './bandPlan';
+import type { BandDot } from '../ft8ui/ft8Types';
 
 const baseProps = {
   enabledBands: new Set<Band>(['40m']),
@@ -109,5 +110,64 @@ describe('StationFinderControls', () => {
     const status = screen.getByTestId('reach-recomputing');
     expect(status.textContent).toMatch(/updating reachability/i);
     expect(status.getAttribute('role')).toBe('status');
+  });
+
+  describe('openness dots (§Openness)', () => {
+    const hotDot: BandDot = { tier: 'hot', opacity: 1, sampledAgoMs: 5_000, dwellSlots: 12 };
+    const warmDot: BandDot = { tier: 'warm', opacity: 0.7, sampledAgoMs: 180_000, dwellSlots: 8 };
+    const quietDot: BandDot = { tier: 'quiet', opacity: 0.4, sampledAgoMs: 590_000, dwellSlots: 3 };
+    const noDataDot: BandDot = { tier: 'no-data', opacity: 0, sampledAgoMs: null, dwellSlots: 0 };
+
+    it('renders distinct classes for hot/warm/quiet/no-data tiers', () => {
+      const bandActivity = new Map<string, BandDot>([
+        ['40m', hotDot],
+        ['30m', warmDot],
+        ['20m', quietDot],
+        ['17m', noDataDot],
+      ]);
+      render(<StationFinderControls {...baseProps} bandActivity={bandActivity} />);
+      expect(screen.getByTestId('band-dot-40m').className).toContain('station-finder__dot--hot');
+      expect(screen.getByTestId('band-dot-30m').className).toContain('station-finder__dot--warm');
+      expect(screen.getByTestId('band-dot-20m').className).toContain('station-finder__dot--quiet');
+      expect(screen.getByTestId('band-dot-17m').className).toContain('station-finder__dot--no-data');
+    });
+
+    it('defaults an HF band absent from bandActivity to a hollow no-data dot', () => {
+      render(<StationFinderControls {...baseProps} bandActivity={new Map()} />);
+      const dot = screen.getByTestId('band-dot-15m');
+      expect(dot.className).toContain('station-finder__dot--no-data');
+      expect(dot.style.opacity).toBe('0');
+    });
+
+    it('renders no dot at all for 60m (never-sampleable), even if bandActivity has an entry for it', () => {
+      const bandActivity = new Map<string, BandDot>([['60m', hotDot]]);
+      render(<StationFinderControls {...baseProps} bandActivity={bandActivity} />);
+      expect(screen.queryByTestId('band-dot-60m')).toBeNull();
+    });
+
+    it('renders no dot at all for VHF/UHF (never-sampleable)', () => {
+      const bandActivity = new Map<string, BandDot>([['vhf-uhf', hotDot]]);
+      render(
+        <StationFinderControls
+          {...baseProps}
+          enabledBands={new Set<Band>(['40m', 'vhf-uhf'])}
+          bandActivity={bandActivity}
+        />,
+      );
+      expect(screen.queryByTestId('band-dot-vhf-uhf')).toBeNull();
+    });
+
+    it('applies the dot opacity from the derived fade value', () => {
+      const bandActivity = new Map<string, BandDot>([['40m', quietDot]]);
+      render(<StationFinderControls {...baseProps} bandActivity={bandActivity} />);
+      expect(screen.getByTestId('band-dot-40m').style.opacity).toBe('0.4');
+    });
+
+    it('omits dots entirely without a crash when bandActivity is not supplied', () => {
+      render(<StationFinderControls {...baseProps} />);
+      // Every HF band except 60m still gets a hollow no-data dot by default.
+      expect(screen.getByTestId('band-dot-40m').className).toContain('station-finder__dot--no-data');
+      expect(screen.queryByTestId('band-dot-60m')).toBeNull();
+    });
   });
 });
