@@ -12,6 +12,13 @@
 // `feedback_react_leaflet_marker_children_false_green`). A full
 // clear+rebuild each reconcile (not diff-based) mirrors WinlinkGatewayLayer's
 // simplicity — peer counts are small, so churn is cheap.
+//
+// COLOR IS PER-MAP, NOT INVENTED HERE (spec §6): color keeps its established
+// meaning on each map, so PeerLayer is scheme-agnostic — the parent supplies a
+// `visualFor(peer)` resolver. The finder passes the six-step propagation
+// reachability ramp (the same `ReachTier` stations use); the tac-chat map
+// passes the WinlinkGatewayLayer outcome-tier vocabulary (reached / failed /
+// stale / live). PeerLayer only owns the SHAPE (circle) + the escape boundary.
 import { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import { useLeafletMap } from './LeafletMapContext';
@@ -28,35 +35,29 @@ import './PeerLayer.css';
 const esc = (s: string): string =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-/// Coarse outcome tier from the peer's own recorded channel attempts — the
-/// only reachability signal a peer carries (no propagation model, unlike
-/// `Station`). Color stays reserved for this ramp (spec §6): 'good' (reached
-/// at least once), 'attempted' (tried, never succeeded), 'unknown' (no
-/// attempts recorded yet).
-type PeerTier = 'good' | 'attempted' | 'unknown';
-function peerTier(p: AggregatedPeer): PeerTier {
-  let ok = 0;
-  let fail = 0;
-  for (const ch of p.channels) {
-    ok += ch.counts.ok;
-    fail += ch.counts.fail;
-  }
-  if (ok > 0) return 'good';
-  if (fail > 0) return 'attempted';
-  return 'unknown';
+/// The per-map visual for one peer pin: the color-tier CSS modifier class
+/// (appended to `.peer-pin`) and whether the pin renders dashed. The parent
+/// map computes this from its own established color axis (spec §6) — PeerLayer
+/// never derives color itself.
+export interface PeerVisual {
+  /// A `.peer-pin--*` modifier class. Finder: a reachability-ramp class
+  /// (`peer-pin--good`…`--skip`/`--untiered`). Tac-chat: an outcome class
+  /// (`peer-pin--reached`/`--failed`/`--stale`/`--live`/`--unknown`).
+  tierClass: string;
+  /// Dashed outline. Finder: a peer without a prediction. Tac-chat: a
+  /// never-connected MANUAL peer (spec §6).
+  dashed: boolean;
 }
 
-/// Build the peer pin `divIcon`: a circle, dashed when never connected, tinted
-/// by `peerTier`, with an escaped callsign label beneath it (mirrors the APRS
-/// pin's label idiom).
-function peerIcon(p: AggregatedPeer, selected: boolean): L.DivIcon {
+/// Build the peer pin `divIcon`: a circle, styled by the parent-supplied
+/// `visual`, with an escaped callsign label beneath it (mirrors the APRS pin's
+/// label idiom).
+function peerIcon(p: AggregatedPeer, selected: boolean, visual: PeerVisual): L.DivIcon {
   const call = p.presentedCallsigns[0] ?? p.canonicalBase;
-  const connected = p.lastConnectedAt != null;
-  const tier = peerTier(p);
   const cls = [
     'peer-pin',
-    `peer-pin--${tier}`,
-    connected ? '' : 'peer-pin--dashed',
+    visual.tierClass,
+    visual.dashed ? 'peer-pin--dashed' : '',
     selected ? 'peer-pin--selected' : '',
   ]
     .filter(Boolean)
@@ -68,27 +69,31 @@ function peerIcon(p: AggregatedPeer, selected: boolean): L.DivIcon {
 }
 
 export interface PeerLayerProps {
-  /// The aggregated peer roster (Task 22's `aggregatePeers`). Only
-  /// map-placeable peers (`mapPlaceable` + a resolvable grid) get a pin —
-  /// rail-only (gridless/telnet-only) peers are surfaced elsewhere, never here.
+  /// The aggregated peer roster (Task 22's `aggregatePeers`). Only peers with a
+  /// resolvable grid get a pin — rail-only (gridless/telnet-only) peers are
+  /// surfaced elsewhere, never here (`mapPlaceable` is `Boolean(grid)`, so the
+  /// grid check alone suffices).
   peers: AggregatedPeer[];
   /// Gated on `useP2pCapabilities().map_peers` [R5-8] — false renders NO peer
   /// markers at all (capability-hide, not a dimmed/disabled state).
   enabled: boolean;
+  /// Per-map color/dashed resolver (spec §6) — see `PeerVisual`.
+  visualFor: (peer: AggregatedPeer) => PeerVisual;
   onSelect: (peer: AggregatedPeer) => void;
   /// The currently-selected peer id, if any — re-styles that pin in place
   /// (`peer-pin--selected`) without changing selection semantics elsewhere.
   selectedId?: string | null;
-  /// Callsigns (canonical base, uppercased) currently live on APRS. A peer
-  /// matching one is skipped here — the APRS sprite already represents that
-  /// station on the map, and live RF truth wins over the stored peer record
-  /// (spec §6). Tac-chat only; the finder map has no live APRS feed.
+  /// Callsigns (base, uppercased) currently live on APRS. A peer matching one
+  /// is skipped here — the APRS sprite already represents that station on the
+  /// map, and live RF truth wins over the stored peer record (spec §6).
+  /// Tac-chat only; the finder map has no live APRS feed.
   liveAprsCallsigns?: Set<string>;
 }
 
 export function PeerLayer({
   peers,
   enabled,
+  visualFor,
   onSelect,
   selectedId,
   liveAprsCallsigns,
@@ -103,11 +108,11 @@ export function PeerLayer({
     group.clearLayers();
     if (enabled) {
       for (const p of peers) {
-        if (!p.mapPlaceable || !p.grid) continue; // rail-only — no pin
+        if (!p.grid) continue; // rail-only (gridless/telnet-only) — no pin
         if (liveAprsCallsigns?.has(p.canonicalBase.toUpperCase())) continue; // APRS sprite wins
         const ll = gridToLatLon(p.grid);
         if (!ll) continue;
-        const m = L.marker([ll.lat, ll.lon], { icon: peerIcon(p, p.id === selectedId) });
+        const m = L.marker([ll.lat, ll.lon], { icon: peerIcon(p, p.id === selectedId, visualFor(p)) });
         m.on('click', () => onSelectRef.current(p));
         group.addLayer(m);
       }
@@ -115,7 +120,7 @@ export function PeerLayer({
     return () => {
       group.clearLayers();
     };
-  }, [group, enabled, peers, selectedId, liveAprsCallsigns]);
+  }, [group, enabled, peers, selectedId, liveAprsCallsigns, visualFor]);
 
   return null;
 }

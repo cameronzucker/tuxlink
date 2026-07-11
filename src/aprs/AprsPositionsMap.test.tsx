@@ -11,12 +11,24 @@ import { STOPPED } from '../modem/types';
 
 // LeafletMap fetches packs via invoke('basemap_list_packs') (wants {packs}); the
 // SITREP button calls invoke('compose_window_open'). useRecentGateways calls
-// contacts_recent_gateways; useModemStatus calls modem_get_status.
+// contacts_recent_gateways; useModemStatus calls modem_get_status. Task 24 wired
+// the peer circle layer (gated on map_peers) into AprsPositionsMap, so it now
+// also calls peers_read + p2p_capabilities — return safe defaults (no peers,
+// every capability bit false) so those queries resolve a value instead of
+// throwing "Query data cannot be undefined" on every test.
 const invokeMock = vi.hoisted(() =>
   vi.fn(async (cmd: string) => {
     if (cmd === 'basemap_list_packs') return { packs: [] };
     if (cmd === 'contacts_recent_gateways') return [];
     if (cmd === 'modem_get_status') return STOPPED;
+    if (cmd === 'peers_read') return { schema_version: 1, peers: [] };
+    if (cmd === 'p2p_capabilities') {
+      return {
+        peer_store: false, finder_peers: false, map_peers: false, settings_editor: false,
+        agent_find_peers: false, agent_telnet_dial: false, vara_engine_split: false,
+        favorites_peer_link: false,
+      };
+    }
     return undefined;
   }),
 );

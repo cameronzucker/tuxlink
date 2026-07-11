@@ -24,7 +24,7 @@ vi.mock('../map/basemapLeaflet', () => ({
 }));
 
 import { LeafletMap } from './LeafletMap';
-import { PeerLayer } from './PeerLayer';
+import { PeerLayer, type PeerVisual } from './PeerLayer';
 
 // Leaflet sizes from clientWidth/Height; jsdom reports 0. Shim the prototype.
 const origW = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
@@ -87,11 +87,16 @@ function peerFixture(over: Partial<AggregatedPeer> = {}): AggregatedPeer {
   };
 }
 
+// A trivial reachability-style resolver for tests that don't exercise the
+// per-map color logic (that logic lives in StationFinderMap / AprsPositionsMap;
+// PeerLayer only applies whatever the resolver returns).
+const goodVisual: (p: AggregatedPeer) => PeerVisual = () => ({ tierClass: 'peer-pin--good', dashed: false });
+
 describe('PeerLayer (Task 24)', () => {
   it('places one circle divIcon pin per map-placeable peer when enabled', async () => {
     await renderMap(
       <LeafletMap>
-        <PeerLayer peers={[peerFixture()]} enabled onSelect={() => {}} />
+        <PeerLayer peers={[peerFixture()]} enabled visualFor={goodVisual} onSelect={() => {}} />
       </LeafletMap>,
     );
     const markers = peerMarkers();
@@ -100,11 +105,30 @@ describe('PeerLayer (Task 24)', () => {
     expect(html).toContain('peer-pin'); // the circle shape class
   });
 
+  it('applies the parent-supplied per-map visual (tier class + dashed) to the divIcon', async () => {
+    // Spec §6: color is per-map, resolved by the parent; PeerLayer only renders
+    // what `visualFor` returns. A finder "no prediction" peer is dashed untiered;
+    // this proves both the tier class and the dashed modifier flow through.
+    const untieredDashed: (p: AggregatedPeer) => PeerVisual = () => ({
+      tierClass: 'peer-pin--untiered',
+      dashed: true,
+    });
+    await renderMap(
+      <LeafletMap>
+        <PeerLayer peers={[peerFixture()]} enabled visualFor={untieredDashed} onSelect={() => {}} />
+      </LeafletMap>,
+    );
+    const html = (peerMarkers()[0].options.icon as L.DivIcon).options.html as string;
+    expect(html).toContain('peer-pin--untiered');
+    expect(html).toContain('peer-pin--dashed');
+    expect(html).not.toContain('peer-pin--good'); // the resolver, not an invented default, decides color
+  });
+
   it('escapes a hostile callsign at the divIcon HTML boundary', async () => {
     const hostile = peerFixture({ presentedCallsigns: ['<img src=x>'] });
     await renderMap(
       <LeafletMap>
-        <PeerLayer peers={[hostile]} enabled onSelect={() => {}} />
+        <PeerLayer peers={[hostile]} enabled visualFor={goodVisual} onSelect={() => {}} />
       </LeafletMap>,
     );
     const html = (peerMarkers()[0].options.icon as L.DivIcon).options.html as string;
@@ -117,7 +141,7 @@ describe('PeerLayer (Task 24)', () => {
     const peer = peerFixture();
     const { rerender } = await renderMap(
       <LeafletMap>
-        <PeerLayer peers={[peer]} enabled onSelect={() => {}} />
+        <PeerLayer peers={[peer]} enabled visualFor={goodVisual} onSelect={() => {}} />
       </LeafletMap>,
     );
     // Re-render with a fresh onSelect identity (as a parent re-render would pass)
@@ -126,7 +150,7 @@ describe('PeerLayer (Task 24)', () => {
     await act(async () => {
       rerender(
         <LeafletMap>
-          <PeerLayer peers={[peer]} enabled onSelect={onSelect} />
+          <PeerLayer peers={[peer]} enabled visualFor={goodVisual} onSelect={onSelect} />
         </LeafletMap>,
       );
       await Promise.resolve();
@@ -140,7 +164,12 @@ describe('PeerLayer (Task 24)', () => {
   it('hides every peer marker when map_peers is disabled (capability-hide, absence test)', async () => {
     await renderMap(
       <LeafletMap>
-        <PeerLayer peers={[peerFixture(), peerFixture({ id: 'p2', canonicalBase: 'N0XYZ', grid: 'EN34' })]} enabled={false} onSelect={() => {}} />
+        <PeerLayer
+          peers={[peerFixture(), peerFixture({ id: 'p2', canonicalBase: 'N0XYZ', grid: 'EN34' })]}
+          enabled={false}
+          visualFor={goodVisual}
+          onSelect={() => {}}
+        />
       </LeafletMap>,
     );
     expect(peerMarkers()).toHaveLength(0);
@@ -152,6 +181,7 @@ describe('PeerLayer (Task 24)', () => {
         <PeerLayer
           peers={[peerFixture({ id: 'p2', mapPlaceable: false, grid: undefined })]}
           enabled
+          visualFor={goodVisual}
           onSelect={() => {}}
         />
       </LeafletMap>,
@@ -165,6 +195,7 @@ describe('PeerLayer (Task 24)', () => {
         <PeerLayer
           peers={[peerFixture()]}
           enabled
+          visualFor={goodVisual}
           onSelect={() => {}}
           liveAprsCallsigns={new Set(['W6ABC'])}
         />

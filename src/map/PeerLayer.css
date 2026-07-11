@@ -1,9 +1,14 @@
 /* Peer pin (Task 24, spec §6): a CIRCLE — distinct from the Winlink diamond
    (WinlinkGatewayLayer.css) and the APRS sprite, so a peer reads as its own
-   entity class on the map. Colour vocabulary is SHARED with the reachability
-   ramp (--reach-*), the shape is what differs. divIcon html carries NO inline
-   style (CSP) — fallback hex values match --reach-good/poor/skip exactly in
-   case this stylesheet loads before StationFinderPanel.css defines the vars. */
+   entity class on the map. SHAPE is the entity discriminator; COLOR keeps its
+   established per-map meaning, so this file carries BOTH color families and the
+   parent map picks which modifier class each pin gets (PeerVisual.tierClass):
+     - Finder map: the six-step propagation reachability ramp (the same
+       --reach-* vocabulary stations use). No prediction ⇒ --untiered + dashed.
+     - Tac-chat map: the WinlinkGatewayLayer session-outcome vocabulary
+       (reached / failed / stale / live), same hexes as WinlinkGatewayLayer.css.
+   divIcon html carries NO inline style (CSP); --reach-* fallbacks match
+   StationFinderPanel.css in case this sheet loads before those vars resolve. */
 .peer-pin-icon {
   background: transparent;
   border: none;
@@ -16,17 +21,55 @@
   border: 2px solid #eafff2;
   box-sizing: border-box;
 }
+
+/* Finder: propagation reachability ramp (mirror src/catalog/reachability.ts +
+   StationFinderMap TIER_COLOR; --reach-* fallbacks match StationFinderPanel.css). */
 .peer-pin--good {
   background: var(--reach-good, #41ba6c);
 }
-.peer-pin--attempted {
+.peer-pin--fair {
+  background: var(--reach-fair, #8cc23f);
+}
+.peer-pin--marginal {
+  background: var(--reach-marginal, #d9b13a);
+}
+.peer-pin--poor {
   background: var(--reach-poor, #e2862f);
 }
-.peer-pin--unknown {
+.peer-pin--unlikely {
+  background: var(--reach-unlikely, #d64a40);
+}
+.peer-pin--skip {
   background: var(--reach-skip, #6c5a5a);
 }
-/* A never-connected peer renders dashed — the pin exists (a stored record)
-   but no successful contact backs it yet. */
+/* No propagation prediction (finder) — StationFinderMap UNTIERED_COLOR. */
+.peer-pin--untiered {
+  background: #9fb6cc;
+}
+
+/* Tac-chat: session-outcome tiers (reuse WinlinkGatewayLayer.css hexes). */
+.peer-pin--live {
+  background: #46d07f;
+  box-shadow: 0 0 0 6px rgba(70, 208, 127, 0.18);
+}
+.peer-pin--reached {
+  background: #46d07f;
+}
+.peer-pin--failed {
+  background: #e0913a;
+  border-color: #e0913a;
+}
+.peer-pin--stale {
+  background: rgba(70, 208, 127, 0.45);
+  border-color: rgba(234, 255, 242, 0.5);
+}
+/* Never-connected, no prior attempt outcome (tac-chat) — neutral. */
+.peer-pin--unknown {
+  background: #6c5a5a;
+}
+
+/* Dashed outline — finder: a peer with no prediction; tac-chat: a
+   never-connected MANUAL peer (spec §6). The parent decides via PeerVisual.dashed. */
 .peer-pin--dashed {
   border-style: dashed;
   background: transparent;

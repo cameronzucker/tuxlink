@@ -24,7 +24,7 @@
 // re-renders (no churn). Pin sprite identity is grim-verified; jsdom asserts the
 // stable sprite id via the data attribute.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import { LeafletMap } from '../map/LeafletMap';
 import { useLeafletMap } from '../map/LeafletMapContext';
@@ -55,7 +55,7 @@ import { WinlinkLinkLayer } from '../winlink/WinlinkLinkLayer';
 import { useContactConnectionRecord } from '../contacts/useContactConnectionRecord';
 import { ConnectionRecord } from '../favorites/ConnectionRecord';
 import { useModemStatus } from '../modem/useModemStatus';
-import { PeerLayer } from '../map/PeerLayer';
+import { PeerLayer, type PeerVisual } from '../map/PeerLayer';
 import { usePeers, useP2pCapabilities } from '../peers/usePeers';
 import { aggregatePeers, type AggregatedPeer } from '../peers/peerModel';
 import { baseCallsign } from '../catalog/stationModel';
@@ -647,6 +647,32 @@ export function AprsPositionsMap({ positions, operatorGrid, envStations, onFocus
   const liveAprsCallsigns = useMemo(() => new Set(positions.map((p) => baseCallsign(p.call))), [positions]);
   const [selectedPeer, setSelectedPeer] = useState<AggregatedPeer | null>(null);
 
+  // Tac-chat color axis is SESSION OUTCOME (spec §6), reusing the
+  // WinlinkGatewayLayer tier vocabulary (`toWinlinkPins` priority: live → failed
+  // → reached → stale) applied to the peer's own fields — NOT a propagation
+  // ramp and NOT an invented scheme. `livePeer` is the currently-connected modem
+  // peer (`status.peer`, base-normalized). Dashed is reserved for a
+  // never-connected MANUAL peer (`origin === 'manual'` AND no `last_connected_at`).
+  const livePeerBase = status.peer ? baseCallsign(status.peer) : null;
+  const peerVisualFor = useCallback(
+    (peer: AggregatedPeer): PeerVisual => {
+      const dashed = peer.origin === 'manual' && peer.lastConnectedAt == null;
+      let tierClass: string;
+      if (livePeerBase && baseCallsign(peer.canonicalBase) === livePeerBase) {
+        tierClass = 'peer-pin--live';
+      } else if (peer.lastConnectedAt) {
+        const ageMs = Date.now() - Date.parse(peer.lastConnectedAt);
+        tierClass = ageMs <= 3_600_000 ? 'peer-pin--reached' : 'peer-pin--stale';
+      } else if (peer.channels.some((c) => c.counts.fail > 0)) {
+        tierClass = 'peer-pin--failed';
+      } else {
+        tierClass = 'peer-pin--unknown';
+      }
+      return { tierClass, dashed };
+    },
+    [livePeerBase],
+  );
+
   // Live per-bucket counts over heard stations (wx drives the weather override).
   const { counts, total } = useMemo(() => {
     const wxCalls = new Set(wx.map((w) => w.call));
@@ -689,6 +715,7 @@ export function AprsPositionsMap({ positions, operatorGrid, envStations, onFocus
         <PeerLayer
           peers={aggregatedPeers}
           enabled={mapPeersEnabled}
+          visualFor={peerVisualFor}
           onSelect={setSelectedPeer}
           selectedId={selectedPeer?.id ?? null}
           liveAprsCallsigns={liveAprsCallsigns}

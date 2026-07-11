@@ -13,14 +13,14 @@
 // Markers are created once per station and updated in place across re-renders
 // (no churn). Render fidelity is grim-verified; the unit test proves the marker
 // wiring (count, tier style, selection emphasis, click→onSelect, operator pin).
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import { LeafletMap } from '../map/LeafletMap';
 import { useLeafletMap } from '../map/LeafletMapContext';
 import { useLeafletLayerGroup } from '../map/leafletHooks';
 import { usePersistedViewport } from '../map/usePersistedViewport';
 import { LeafletRecenterControl } from '../map/LeafletRecenterControl';
-import { PeerLayer } from '../map/PeerLayer';
+import { PeerLayer, type PeerVisual } from '../map/PeerLayer';
 import { gridToLatLon } from '../forms/position/maidenhead';
 import { reportFrontendError } from '../frontendErrorLog';
 import { type ReachTier } from './reachability';
@@ -293,6 +293,24 @@ export function StationFinderMap(props: StationFinderMapProps) {
   const aggregatedPeers = useMemo(() => aggregatePeers(peersData.peers), [peersData.peers]);
   const [selectedPeer, setSelectedPeer] = useState<AggregatedPeer | null>(null);
 
+  // Finder color axis is PROPAGATION REACHABILITY (spec §6), never a peer's
+  // attempt history — peers take the SAME six-step ramp stations use. A peer
+  // shares a predicted tier only when its base+grid coincides with a predicted
+  // station key (the finder runs voacap over `stations`, not peers); otherwise
+  // the peer has no prediction and renders dashed-outline untiered grey, exactly
+  // as the spec prescribes for a peer without prediction. This is the reuse the
+  // reviewer required — no invented peer-color scheme.
+  const peerVisualFor = useCallback(
+    (peer: AggregatedPeer): PeerVisual => {
+      const tier = peer.grid
+        ? props.tiers.get(`${peer.canonicalBase.toUpperCase()}|${peer.grid}`)
+        : undefined;
+      if (!tier) return { tierClass: 'peer-pin--untiered', dashed: true };
+      return { tierClass: `peer-pin--${tier}`, dashed: false };
+    },
+    [props.tiers],
+  );
+
   return (
     <div className="station-finder__map" data-testid="station-map">
       <LeafletMap initialCenter={initialCenter} initialZoom={initialZoom} onViewportChange={onViewportChange}>
@@ -306,6 +324,7 @@ export function StationFinderMap(props: StationFinderMapProps) {
         <PeerLayer
           peers={aggregatedPeers}
           enabled={mapPeersEnabled}
+          visualFor={peerVisualFor}
           onSelect={setSelectedPeer}
           selectedId={selectedPeer?.id ?? null}
         />
