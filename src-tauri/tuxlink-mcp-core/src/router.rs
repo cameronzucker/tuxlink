@@ -500,7 +500,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "find_peers",
-        description = "List saved P2P peer stations (callsigns, RF channels, last-connected). Endpoint host:port appears only for operator-verified endpoints while the egress window is armed. Requires the egress arm — the peer roster is the operator's private station data, not public directory data. Read-only; does not transmit."
+        description = "List the stations this operator talks to directly (contacts with P2P reachability: exact callsign, tier, RF channels). Telnet endpoint addresses are never included — the agent dials radio channels only. Requires the egress arm — the roster is the operator's private station data, not public directory data. Read-only; does not transmit."
     )]
     pub async fn find_peers(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.stations.find_peers().await.map_err(port_err)?;

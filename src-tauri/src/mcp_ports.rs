@@ -41,7 +41,7 @@ use tuxlink_mcp_core::ports::{
     ComposePort, ConfigPort, ConfigViewDto, DevicePort, DocsHitDto, EgressPort, EgressPortError,
     FolderDto, GatewayAntennaDto, GatewayDto, GribRequestDto, LogLineDto, LogPort, MailboxPort,
     MessageMetaDto, ModemStatusDto, OutboxReadPort, PacketConfigDto, PacketWriteDto,
-    ParsedMessageDto, PathPredictionDto, PeerChannelDto, PeerDto, PeerEndpointDto, PeerListDto,
+    ParsedMessageDto, PathPredictionDto, PeerChannelDto, PeerDto, PeerListDto,
     PlatformInfoDto, PortError, PositionStatusDto,
     PredictRequestDto, PredictionPort, PrinterDto, ProvisionPort, QsyCandidateDto, RigConfigDto,
     RigStatusDto, RunningModemDto, SearchPort, SearchQueryDto, SearchResultsDto,
@@ -2418,39 +2418,33 @@ fn sort_gateways_by_distance(gateways: &mut [GatewayDto]) {
     });
 }
 
-/// Curate ONE [`Peer`](crate::peers::model::Peer) into the agent-facing
-/// [`PeerDto`], or `None` to DROP the whole record.
+/// Curate ONE [`Contact`](crate::contacts::store::Contact) into the
+/// agent-facing [`PeerDto`], or `None` to DROP the whole record.
 ///
-/// A CURATION, not a DTO mirror [R2-S1]:
+/// A CURATION, not a DTO mirror [R2-S1] (rules carried verbatim across the
+/// contacts-superset pivot, spec §AMENDMENT pt. 6):
 /// - Every callsign string crosses the broad [`sanitize_display`] injection
-///   floor [R5-10][R2-S2]; a record whose `canonical_base` fails is DROPPED, and
-///   individual presented-callsigns / channel targets / digipeater hops that fail
-///   are dropped from their lists. `sanitize_display` (NOT
-///   `validate_presented_callsign`) is deliberate: the agent surface may drop
-///   portable `/`-forms; the floor's job is injection safety, not preserving
-///   portable suffixes (Task 1 R3-F2).
-/// - Free text NEVER crosses: `note`, `contact_id` (and anything reachable
-///   through it), `do_not_merge`/`conflict`/`source` internals are not copied
-///   [R2-S11][R4-9].
+///   floor [R5-10][R2-S2]; a record whose `callsign` fails is DROPPED, and
+///   individual channel targets / digipeater hops that fail are dropped from
+///   their lists. `sanitize_display` (NOT `validate_presented_callsign`) is
+///   deliberate: the agent surface may drop portable `/`-forms; the floor's
+///   job is injection safety, not preserving portable suffixes (Task 1 R3-F2).
+/// - Free text NEVER crosses: `name`, `notes`, `email`, `tactical` are not
+///   copied [R2-S11][R4-9].
 /// - `grid` is SHAPE-validated as a Maidenhead locator via [`validate_grid`]
 ///   (the same call `curate_gateway` uses) and clamped to the operator's
 ///   configured broadcast precision [R2-S9].
-/// - Endpoint `host`/`port` are REDACTED unless the endpoint is
-///   Operator-provenance AND the egress arm is active (`armed`) [R2-S3]; an
-///   `ObservedIncoming` endpoint stays redacted even when armed.
+/// - **Telnet endpoints never cross, under ANY arm state** (spec §AMENDMENT
+///   pt. 6): the agent cannot dial telnet (the tool died with the T-A pivot),
+///   so it has no use for a host:port — the DTO carries no endpoint data at
+///   all. This supersedes the pre-pivot Operator+armed reveal [R2-S3].
 fn curate_peer(
-    p: &crate::peers::model::Peer,
+    c: &crate::contacts::store::Contact,
     grid_precision: usize,
-    armed: bool,
 ) -> Option<PeerDto> {
     use crate::winlink::callsign::sanitize_display;
-    let canonical_base = sanitize_display(&p.canonical_base)?;
-    let presented_callsigns: Vec<String> = p
-        .presented_callsigns
-        .iter()
-        .filter_map(|c| sanitize_display(c))
-        .collect();
-    let grid = p.grid.as_ref().and_then(|g| {
+    let callsign = sanitize_display(&c.callsign)?;
+    let grid = c.grid.as_ref().and_then(|g| {
         let v = g.value.trim().to_ascii_uppercase();
         // `validate_grid` accepts ONLY 4- or 6-char Maidenhead locators; clamp the
         // operator's configured broadcast precision into that set and to what the
@@ -2460,78 +2454,54 @@ fn curate_peer(
         let clamped = v.get(..want)?;
         validate_grid(clamped).ok().map(|()| clamped.to_string())
     });
-    let channels = p
+    let channels = c
         .channels
         .iter()
-        .filter_map(|c| {
-            let target_callsign = sanitize_display(&c.target_callsign)?;
+        .filter_map(|ch| {
+            let target_callsign = sanitize_display(&ch.target_callsign)?;
             Some(PeerChannelDto {
-                transport: match c.transport {
-                    crate::peers::model::ChannelTransport::Packet => "packet",
-                    crate::peers::model::ChannelTransport::Ardop => "ardop",
-                    crate::peers::model::ChannelTransport::VaraHf => "vara-hf",
-                    crate::peers::model::ChannelTransport::VaraFm => "vara-fm",
-                    crate::peers::model::ChannelTransport::Unknown => return None,
+                transport: match ch.transport {
+                    crate::contacts::reachability::ChannelTransport::Packet => "packet",
+                    crate::contacts::reachability::ChannelTransport::Ardop => "ardop",
+                    crate::contacts::reachability::ChannelTransport::VaraHf => "vara-hf",
+                    crate::contacts::reachability::ChannelTransport::VaraFm => "vara-fm",
+                    crate::contacts::reachability::ChannelTransport::Unknown => return None,
                 }
                 .to_string(),
                 target_callsign,
-                via: c.via.iter().filter_map(|v| sanitize_display(v)).collect(),
-                freq_hz: c.freq_hz,
-                direction: match c.direction {
-                    crate::peers::model::Direction::Incoming => "incoming",
-                    crate::peers::model::Direction::Outgoing => "outgoing",
-                    crate::peers::model::Direction::Unknown => "incoming",
+                via: ch.via.iter().filter_map(|v| sanitize_display(v)).collect(),
+                freq_hz: ch.freq_hz,
+                direction: match ch.direction {
+                    crate::contacts::reachability::Direction::Incoming => "incoming",
+                    crate::contacts::reachability::Direction::Outgoing => "outgoing",
+                    crate::contacts::reachability::Direction::Unknown => "incoming",
                 }
                 .to_string(),
-                ok: c.counts.ok,
-                fail: c.counts.fail,
-                last_seen: c.last_seen.clone(),
+                ok: ch.counts.ok,
+                fail: ch.counts.fail,
+                last_seen: ch.last_seen.clone(),
             })
         })
         .collect();
-    let endpoints = p
-        .endpoints
-        .iter()
-        .map(|e| {
-            let is_operator = e.provenance == crate::peers::model::Provenance::Operator;
-            let reveal = is_operator && armed; // [R2-S3]
-            PeerEndpointDto {
-                id: e.id.clone(),
-                provenance: if is_operator {
-                    "operator"
-                } else {
-                    "observed-incoming"
-                }
-                .to_string(),
-                host: reveal.then(|| e.host.clone()),
-                port: reveal.then_some(e.port),
-                last_seen: e.last_seen.clone(),
-            }
-        })
-        .collect();
     Some(PeerDto {
-        id: p.id.clone(),
-        canonical_base,
-        presented_callsigns,
-        identity_kind: match p.identity_kind {
-            crate::peers::model::IdentityKind::Individual => "individual",
-            crate::peers::model::IdentityKind::Tactical => "tactical",
-            crate::peers::model::IdentityKind::Club => "club",
-            crate::peers::model::IdentityKind::Unknown => "unknown",
+        id: c.id.clone(),
+        callsign,
+        tier: match c.tier {
+            crate::contacts::reachability::ContactTier::Confirmed => "confirmed",
+            crate::contacts::reachability::ContactTier::Unconfirmed => "unconfirmed",
+            crate::contacts::reachability::ContactTier::Unknown => "unknown",
         }
         .to_string(),
-        origin: match p.origin {
-            crate::peers::model::Origin::Incoming => "incoming",
-            crate::peers::model::Origin::Outgoing => "outgoing",
-            crate::peers::model::Origin::Manual => "added",
-            crate::peers::model::Origin::Aprs => "aprs",
-            crate::peers::model::Origin::Unknown => "unknown",
+        origin: match c.origin {
+            crate::contacts::reachability::Origin::Incoming => "incoming",
+            crate::contacts::reachability::Origin::Outgoing => "outgoing",
+            crate::contacts::reachability::Origin::Manual => "added",
+            crate::contacts::reachability::Origin::Aprs => "aprs",
+            crate::contacts::reachability::Origin::Unknown => "unknown",
         }
         .to_string(),
         grid,
-        last_connected_at: p.last_connected_at.clone(),
         channels,
-        endpoints,
     })
 }
 
@@ -2667,9 +2637,10 @@ impl StationPort for MonolithStationPort {
     /// DELIBERATE asymmetry with `find_stations` above (ungated public directory)
     /// — the gate is spec-required, so the trait carries one gated + one ungated
     /// read. A disarmed / expired / tainted / poisoned session is refused and NO
-    /// roster crosses the boundary. When the gate passes, the session is armed +
-    /// un-tainted, so operator-provenance endpoint host:port may be revealed
-    /// (`armed = true`).
+    /// roster crosses the boundary. Since the contacts-superset pivot the read
+    /// sources from the CONTACTS store (a peer is a contact, spec §AMENDMENT
+    /// pt. 6) — and telnet endpoint host:port is never in the DTO under any arm
+    /// state (the agent cannot dial telnet, so it has no use for the address).
     async fn find_peers(&self) -> Result<PeerListDto, PortError> {
         self.guard
             .authorize(EgressAuthority::Agent)
@@ -2679,21 +2650,20 @@ impl StationPort for MonolithStationPort {
                      operator to ARM the Agent-send control, then retry."
                 ))
             })?;
-        let armed = true; // authorize() passed ⇒ armed and un-tainted [R2-S3]
         let precision = self.resolve_grid_precision();
         let store = self
             .app
-            .state::<Arc<std::sync::Mutex<crate::peers::store::PeersStore>>>();
+            .state::<Arc<std::sync::Mutex<crate::contacts::store::ContactsStore>>>();
         let file = store
             .lock()
-            .map_err(|_| PortError::Internal("peers store poisoned".into()))?
+            .map_err(|_| PortError::Internal("contacts store poisoned".into()))?
             .file()
             .clone();
         Ok(PeerListDto {
             peers: file
-                .peers
+                .contacts
                 .iter()
-                .filter_map(|p| curate_peer(p, precision, armed))
+                .filter_map(|c| curate_peer(c, precision))
                 .collect(),
         })
     }
@@ -3567,28 +3537,25 @@ mod tests {
 
     // --- curate_peer curation floors (Task 19) -------------------------------
 
-    /// A hostile peer fixture: valid `canonical_base`, an over-precise grid to
-    /// clamp, operator free-text `note` and a `contact_id` reach-through that
-    /// must NOT cross the agent surface. Every field explicit.
-    fn hostile_test_peer() -> crate::peers::model::Peer {
-        use crate::peers::model::*;
-        Peer {
-            id: "p-hostile".into(),
-            canonical_base: "W6ABC".into(),
-            presented_callsigns: vec!["W6ABC-7".into()],
-            identity_kind: IdentityKind::Individual,
-            do_not_merge: false,
-            conflict: false,
-            source: RecordSource::Auto,
+    /// A hostile contact fixture: valid callsign, an over-precise grid to
+    /// clamp, operator free-text (`name` / `notes` / `email`) that must NOT
+    /// cross the agent surface, and telnet endpoints (which must never cross
+    /// under any arm state). Every field explicit.
+    fn hostile_test_contact() -> crate::contacts::store::Contact {
+        use crate::contacts::reachability::*;
+        crate::contacts::store::Contact {
+            id: "c-hostile".into(),
+            name: "Pat Privacy".into(),
+            callsign: "W6ABC-7".into(),
+            email: Some("secret@example.org".into()),
+            tactical: None,
+            notes: Some("meet at repeater".into()),
+            tier: ContactTier::Unconfirmed,
             origin: Origin::Incoming,
-            contact_id: Some("contact-should-not-cross".into()),
-            grid: Some(PeerGrid {
+            grid: Some(ContactGrid {
                 value: "CN87xk91".into(),
                 source: GridSource::Manual,
             }),
-            note: "meet at repeater".into(),
-            created_at: "2026-07-10T12:00:00-07:00".into(),
-            last_connected_at: Some("2026-07-10T12:30:00-07:00".into()),
             channels: vec![Channel {
                 transport: ChannelTransport::VaraHf,
                 target_callsign: "W6ABC-7".into(),
@@ -3599,87 +3566,78 @@ mod tests {
                 counts: AttemptCounts { ok: 3, fail: 1 },
                 last_seen: "2026-07-10T12:30:00-07:00".into(),
             }],
-            endpoints: vec![],
+            endpoints: vec![
+                Endpoint {
+                    id: "e-op".into(),
+                    host: "10.0.0.5".into(),
+                    port: 8772,
+                    provenance: Provenance::Operator,
+                    last_seen: "2026-07-10T12:30:00-07:00".into(),
+                },
+                Endpoint {
+                    id: "e-obs".into(),
+                    host: "203.0.113.9".into(),
+                    port: 8773,
+                    provenance: Provenance::ObservedIncoming,
+                    last_seen: "2026-07-10T12:31:00-07:00".into(),
+                },
+            ],
+            created_at: "2026-07-10T12:00:00-07:00".into(),
+            updated_at: "2026-07-10T12:30:00-07:00".into(),
         }
-    }
-
-    /// A peer with two endpoints — one Operator-provenance, one ObservedIncoming
-    /// — both carrying a host:port, to exercise the redaction gate [R2-S3].
-    fn peer_with_two_endpoints() -> crate::peers::model::Peer {
-        use crate::peers::model::*;
-        let mut p = hostile_test_peer();
-        p.id = "p-endpoints".into();
-        p.endpoints = vec![
-            Endpoint {
-                id: "e-op".into(),
-                host: "10.0.0.5".into(),
-                port: 8772,
-                provenance: Provenance::Operator,
-                last_seen: "2026-07-10T12:30:00-07:00".into(),
-            },
-            Endpoint {
-                id: "e-obs".into(),
-                host: "203.0.113.9".into(),
-                port: 8773,
-                provenance: Provenance::ObservedIncoming,
-                last_seen: "2026-07-10T12:31:00-07:00".into(),
-            },
-        ];
-        p
     }
 
     #[test]
     fn curate_peer_drops_free_text_and_clamps_grid() {
-        let peer = hostile_test_peer();
-        let dto = curate_peer(&peer, 4, /* armed = */ false).expect("valid callsign → Some");
+        let contact = hostile_test_contact();
+        let dto = curate_peer(&contact, 4).expect("valid callsign → Some");
         let json = serde_json::to_string(&dto).unwrap();
-        // [R2-S11] free text never crosses; [R4-9] contact link not resolved.
+        // [R2-S11] free text never crosses: name / notes / email.
         assert!(!json.contains("meet at repeater"));
-        assert!(!json.contains("contact"));
+        assert!(!json.contains("Pat Privacy"));
+        assert!(!json.contains("secret@example.org"));
         // [R2-S9] grid SHAPE-validated + clamped to operator precision (4-char).
         assert_eq!(dto.grid.as_deref(), Some("CN87"));
+        // Tier + origin cross as plain-language strings.
+        assert_eq!(dto.tier, "unconfirmed");
+        assert_eq!(dto.origin, "incoming");
     }
 
     #[test]
     fn curate_peer_serialized_dto_has_no_note_key() {
-        // Shape pin: the curated DTO carries no `note` key by construction.
-        let dto = curate_peer(&hostile_test_peer(), 4, false).unwrap();
+        // Shape pin: the curated DTO carries no free-text keys by construction.
+        let dto = curate_peer(&hostile_test_contact(), 4).unwrap();
         let json = serde_json::to_string(&dto).unwrap();
-        assert!(!json.contains("\"note\""), "curated PeerDto must not carry a note key");
+        assert!(!json.contains("\"notes\""), "curated PeerDto must not carry a notes key");
+        assert!(!json.contains("\"name\""), "curated PeerDto must not carry a name key");
+        assert!(!json.contains("\"email\""), "curated PeerDto must not carry an email key");
     }
 
     #[test]
-    fn curate_peer_redacts_endpoints_unless_operator_and_armed() {
-        let peer = peer_with_two_endpoints();
-        let unarmed = curate_peer(&peer, 4, false).unwrap();
-        assert!(unarmed
-            .endpoints
-            .iter()
-            .all(|e| e.host.is_none() && e.port.is_none()));
-        let armed = curate_peer(&peer, 4, true).unwrap();
-        let op = armed
-            .endpoints
-            .iter()
-            .find(|e| e.provenance == "operator")
-            .unwrap();
-        assert!(op.host.is_some() && op.port.is_some());
-        let obs = armed
-            .endpoints
-            .iter()
-            .find(|e| e.provenance == "observed-incoming")
-            .unwrap();
-        assert!(
-            obs.host.is_none(),
-            "ObservedIncoming stays redacted even when armed [R2-S3]"
-        );
+    fn curate_peer_never_exposes_telnet_endpoints_under_any_state() {
+        // Spec §AMENDMENT pt. 6: telnet host:port is NEVER in the agent DTO —
+        // the agent cannot dial telnet, so it has no use for the address. The
+        // fixture carries BOTH an Operator and an ObservedIncoming endpoint
+        // with real host:port values; neither may appear in the serialized
+        // DTO, and the DTO has no endpoint-shaped keys at all.
+        let contact = hostile_test_contact();
+        let dto = curate_peer(&contact, 4).unwrap();
+        let json = serde_json::to_string(&dto).unwrap();
+        assert!(!json.contains("10.0.0.5"), "operator endpoint host leaked: {json}");
+        assert!(!json.contains("203.0.113.9"), "observed endpoint host leaked: {json}");
+        assert!(!json.contains("8772") && !json.contains("8773"), "endpoint port leaked: {json}");
+        assert!(!json.contains("\"host\""), "no host key in the DTO: {json}");
+        assert!(!json.contains("\"port\""), "no port key in the DTO: {json}");
+        assert!(!json.contains("\"endpoints\""), "no endpoints key in the DTO: {json}");
+        assert!(!json.contains("provenance"), "no endpoint provenance in the DTO: {json}");
     }
 
     #[test]
     fn curate_peer_drops_records_with_unsanitizable_callsigns() {
-        let mut peer = hostile_test_peer();
-        peer.canonical_base = "<script>".into();
+        let mut contact = hostile_test_contact();
+        contact.callsign = "<script>".into();
         assert!(
-            curate_peer(&peer, 4, false).is_none(),
+            curate_peer(&contact, 4).is_none(),
             "[R5-10] sanitizer floor drops the whole record"
         );
     }

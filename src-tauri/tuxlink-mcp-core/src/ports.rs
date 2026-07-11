@@ -561,40 +561,30 @@ pub struct PeerChannelDto {
     pub last_seen: String,
 }
 
-/// One curated network-reachability endpoint on a peer. `host`/`port` are a
-/// dialable-secret surface: they are present ONLY when the endpoint is
-/// operator-provenance AND the egress arm is active [R2-S3]; otherwise redacted
-/// (`None`). An `ObservedIncoming` endpoint stays redacted even when armed.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct PeerEndpointDto {
-    pub id: String,
-    /// `"operator"` | `"observed-incoming"`.
-    pub provenance: String,
-    /// Present ONLY when provenance is Operator AND the egress arm is active
-    /// [R2-S3]; otherwise `None`.
-    pub host: Option<String>,
-    pub port: Option<u16>,
-    pub last_seen: String,
-}
-
-/// One curated peer roster entry (spec §1/§2). A CURATION, not a DTO mirror
-/// [R2-S1]: free text (`note`), the `contact_id` reach-through, and the
-/// `do_not_merge`/`conflict`/`source` internals are DROPPED on purpose
-/// [R2-S11][R4-9]; every callsign is sanitizer-floored by the impl.
+/// One curated peer-station roster entry — since the contacts-superset pivot
+/// (spec §AMENDMENT), a row is a CONTACT with reachability. A CURATION, not a
+/// DTO mirror [R2-S1]: free text (name, notes, email) is DROPPED on purpose
+/// [R2-S11][R4-9], every callsign is sanitizer-floored by the impl, and
+/// **telnet endpoint data never crosses the agent surface under ANY arm
+/// state** (spec §AMENDMENT pt. 6: the agent cannot dial telnet, so it has no
+/// use for an address).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PeerDto {
     pub id: String,
-    pub canonical_base: String,
-    pub presented_callsigns: Vec<String>,
-    pub identity_kind: String,
+    /// The exact SSID-bearing callsign — the contact's primary identity and
+    /// the wire target of any dial [R3-9].
+    pub callsign: String,
+    /// `"confirmed"` | `"unconfirmed"` | `"unknown"` — CURATION tier, not
+    /// identity authentication (anyone can transmit any callsign).
+    pub tier: String,
+    /// `"incoming"` | `"outgoing"` | `"added"` | `"aprs"` | `"unknown"`.
     pub origin: String,
     /// Clamped to the operator's configured broadcast precision [R2-S9].
     pub grid: Option<String>,
-    pub last_connected_at: Option<String>,
     pub channels: Vec<PeerChannelDto>,
-    pub endpoints: Vec<PeerEndpointDto>,
-    // DROPPED on purpose: note, contact_id (and anything reachable through
-    // it), do_not_merge/conflict/source internals [R2-S11][R4-9].
+    // DROPPED on purpose: name/notes/email free text [R2-S11], and the
+    // telnet endpoints wholesale — host:port is never agent-visible
+    // (spec §AMENDMENT pt. 6).
 }
 
 /// Output of [`StationPort::find_peers`]: the curated peer roster.
