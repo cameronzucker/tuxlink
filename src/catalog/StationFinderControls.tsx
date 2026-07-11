@@ -5,6 +5,7 @@
 
 import type { ReactNode } from 'react';
 import { HF_BANDS, bandLabel, type Band } from './bandPlan';
+import { WwvOffairControl } from '../wwv/WwvOffairControl';
 
 export type FilterMode = 'vara-hf' | 'ardop-hf' | 'packet';
 
@@ -94,9 +95,10 @@ export function StationFinderControls(props: StationFinderControlsProps) {
   return (
     <div className="station-finder__controls">
       {/* Row 1 (directly under the title): data-update actions on the left,
-          live conditions/time pushed to the right. The "Update propagation data"
-          action lands here beside "Update station list" once that feature ships
-          (deferred — a non-functional button would be a placeholder stub). */}
+          live conditions/time pushed to the right. The off-air WWV control
+          (Task 15) lives here beside "Update station list" — a self-contained
+          component that owns its own hook, so no propagation state is
+          threaded through this presentational panel's props. */}
       <div className="station-finder__topbar">
         <div className="station-finder__actions">
           <button
@@ -112,6 +114,7 @@ export function StationFinderControls(props: StationFinderControlsProps) {
               {listAgeLabel(props.listFetchedAtMs)}
             </span>
           )}
+          <WwvOffairControl />
         </div>
         <div className="station-finder__cond" data-testid="conditions">
           <span>
