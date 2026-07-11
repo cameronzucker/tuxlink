@@ -359,7 +359,11 @@ pub fn p2p_capabilities() -> P2pCapabilities {
         map_peers: true,    // Task 26 (R5-8 row 6): peer pins on the map layer landed (Task 24).
         settings_editor: false, // Task 25 flips this when the peers settings editor lands.
         agent_find_peers: true, // Task 19 (R5-8 row 4): the find_peers agent tool landed.
-        agent_telnet_dial: true, // Task 20 (R5-8 row 7): the agent telnet-dial path landed.
+        // Task 20 landed the agent telnet-dial path, then Task T-A reverted it
+        // (operator pivot: a telnet host:port is destination-trust the armed
+        // egress gate cannot vouch for). Row 7 is false again pending a
+        // redesign, if any.
+        agent_telnet_dial: false,
         vara_engine_split: true, // Task 21 (R5-8 row 9): agent VARA egress dispatches on engine.
         favorites_peer_link: true, // Task 17 (R5-7): the favorites↔peer bridge landed.
     }
@@ -380,19 +384,22 @@ mod tests {
     fn capabilities_report_only_landed_rows_true() {
         // Task 11 lands rows 1-2 (store + recorder); Task 17 lands row 10 (the
         // favorites↔peer bridge); Task 19 lands row 4 (the find_peers agent tool);
-        // Task 20 lands row 7 (the agent telnet-dial path); Task 21 lands row 9
-        // (the VARA engine split); Task 26 lands rows 3+5 (Finder peers surface,
-        // Tasks 22-23) and row 6 (map peer pins, Task 24).
+        // Task 21 lands row 9 (the VARA engine split); Task 26 lands rows 3+5
+        // (Finder peers surface, Tasks 22-23) and row 6 (map peer pins, Task 24).
         // `settings_editor` stays false until Task 25 lands its own row — this
         // guards against an accidental early flip and pins Task 28's completeness
-        // baseline.
+        // baseline. Row 7 (`agent_telnet_dial`) landed in Task 20 and was
+        // reverted by Task T-A (operator pivot); it stays false.
         let c = p2p_capabilities();
         assert!(c.peer_store, "Task 11 lands the store + recorder");
         assert!(c.finder_peers, "Task 26 lands the Finder's peers surface");
         assert!(c.map_peers, "Task 26 lands the map layer's peer pins");
         assert!(!c.settings_editor, "Task 25 has not landed yet");
         assert!(c.agent_find_peers, "Task 19 lands the find_peers agent tool");
-        assert!(c.agent_telnet_dial, "Task 20 lands the agent telnet-dial path");
+        assert!(
+            !c.agent_telnet_dial,
+            "Task 20's agent telnet-dial path was reverted by Task T-A"
+        );
         assert!(c.vara_engine_split, "Task 21 lands the VARA engine split");
         assert!(c.favorites_peer_link, "Task 17 lands the favorites↔peer bridge");
     }

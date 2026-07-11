@@ -41,12 +41,11 @@ use crate::winlink_backend::{
 
 /// File a completed P2P-Telnet exchange's results into the native mailbox: store
 /// received messages into Inbox and move successfully-sent MIDs from Outbox to
-/// Sent. Mirrors the post-exchange handling in `native_telnet_exchange`. Shared
-/// by the operator dial ([`telnet_p2p_connect`]) and the agent dial (the MCP
-/// `telnet_p2p_exchange` egress port). Each failure is reported via `on_line`
-/// but NEVER fails the exchange — the bytes are on disk either way; a duplicate
-/// send on the next dial is the worst case of a stuck Outbox→Sent move, and the
-/// operator is told about it via `on_line`.
+/// Sent. Mirrors the post-exchange handling in `native_telnet_exchange`. Used by
+/// the operator dial ([`telnet_p2p_connect`]). Each failure is reported via
+/// `on_line` but NEVER fails the exchange — the bytes are on disk either way; a
+/// duplicate send on the next dial is the worst case of a stuck Outbox→Sent
+/// move, and the operator is told about it via `on_line`.
 pub(crate) fn file_p2p_exchange_result(
     mailbox: &crate::native_mailbox::Mailbox,
     exchange: &crate::winlink::session::ExchangeResult,
@@ -8050,8 +8049,8 @@ pub async fn telnet_p2p_connect(
                 g.set_phase(crate::peers::recorder::ObservationPhase::B2fOk);
             }
             // tuxlink-l55l: file received messages into Inbox and move
-            // successfully-sent MIDs from Outbox to Sent. Shared with the agent
-            // dial (MCP `telnet_p2p_exchange`) via `file_p2p_exchange_result`.
+            // successfully-sent MIDs from Outbox to Sent, via
+            // `file_p2p_exchange_result`.
             file_p2p_exchange_result(&mailbox, &exchange, &|level, line| {
                 emit_session_line(&app, &log, level, line);
             });
@@ -8106,8 +8105,7 @@ pub async fn telnet_p2p_connect(
                             g.set_phase(crate::peers::recorder::ObservationPhase::B2fFail);
                         }
                         crate::winlink::telnet_p2p::P2pTelnetError::Resolve { .. }
-                        | crate::winlink::telnet_p2p::P2pTelnetError::Connect { .. }
-                        | crate::winlink::telnet_p2p::P2pTelnetError::EgressDenied { .. } => {
+                        | crate::winlink::telnet_p2p::P2pTelnetError::Connect { .. } => {
                             // Never connected — leave the armed DialAttempted.
                         }
                     }

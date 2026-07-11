@@ -34,11 +34,6 @@ pub enum P2pTelnetError {
     Login(DialerLoginError),
     /// The B2F exchange failed once connected and logged in.
     Exchange(ExchangeError),
-    /// The resolved peer address(es) failed the egress denylist
-    /// (loopback / private / link-local / ULA / cloud-metadata / v4-mapped),
-    /// or the hostname resolved to no addresses. The agent dial is refused
-    /// BEFORE any socket is opened [R2-S4][R5-6].
-    EgressDenied { reason: String },
 }
 
 impl std::fmt::Display for P2pTelnetError {
@@ -52,9 +47,6 @@ impl std::fmt::Display for P2pTelnetError {
             }
             P2pTelnetError::Login(e) => write!(f, "P2P login failed: {e}"),
             P2pTelnetError::Exchange(e) => write!(f, "B2F exchange failed: {e}"),
-            P2pTelnetError::EgressDenied { reason } => {
-                write!(f, "egress denied: {reason}")
-            }
         }
     }
 }
@@ -133,113 +125,8 @@ fn connect_stream(host: &str, port: u16) -> Result<TcpStream, P2pTelnetError> {
     Err(P2pTelnetError::Connect { addr, source })
 }
 
-/// Egress denylist [R2-S4][R5-6]. Returns true for any address the agent dial
-/// must never reach: loopback, RFC1918 private, link-local (which INCLUDES the
-/// `169.254.169.254` cloud-metadata endpoint), unspecified, IPv4 broadcast, IPv6
-/// ULA (`fc00::/7`), and IPv6 link-local (`fe80::/10`). IPv4-mapped IPv6
-/// addresses are unwrapped and judged as their v4 form so a `::ffff:10.0.0.1`
-/// cannot smuggle a private target past the check.
-///
-/// The IPv6 ULA / link-local range checks are done by hand because
-/// `Ipv6Addr::is_unique_local` / `is_unicast_link_local` are unstable at
-/// MSRV 1.75.
-pub(crate) fn ip_is_denied(ip: std::net::IpAddr) -> bool {
-    use std::net::IpAddr;
-    match ip {
-        IpAddr::V4(v4) => {
-            v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local() // 169.254.0.0/16, includes 169.254.169.254 metadata
-                || v4.is_unspecified()
-                || v4.is_broadcast()
-                // CGNAT 100.64.0.0/10 (RFC 6598): routable carrier-side
-                // infrastructure `is_private()` deliberately excludes.
-                || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xc0) == 64)
-        }
-        IpAddr::V6(v6) => {
-            if let Some(mapped) = v6.to_ipv4_mapped() {
-                return ip_is_denied(IpAddr::V4(mapped));
-            }
-            let seg = v6.segments();
-            v6.is_loopback()
-                || v6.is_unspecified()
-                || (seg[0] & 0xfe00) == 0xfc00 // fc00::/7 ULA
-                || (seg[0] & 0xffc0) == 0xfe80 // fe80::/10 link-local
-        }
-    }
-}
-
-/// All-must-pass vetting: a SINGLE denied candidate refuses the whole dial
-/// [R5-6]. A mixed public+private DNS answer is rebinding-shaped, so "connect to
-/// the good one" is unsafe — the vetted list is returned intact only when EVERY
-/// candidate passes. An empty candidate list is also refused.
-pub(crate) fn vet_candidates(
-    addrs: &[SocketAddr],
-) -> Result<Vec<SocketAddr>, P2pTelnetError> {
-    if addrs.is_empty() {
-        return Err(P2pTelnetError::EgressDenied {
-            reason: "hostname resolved to no addresses".into(),
-        });
-    }
-    for a in addrs {
-        if ip_is_denied(a.ip()) {
-            return Err(P2pTelnetError::EgressDenied {
-                reason: format!(
-                    "resolved address {a} is in a denied range \
-                     (loopback/private/link-local/ULA/metadata)"
-                ),
-            });
-        }
-    }
-    Ok(addrs.to_vec())
-}
-
-/// Resolve `host:port` to concrete addresses ONCE and vet them. The returned
-/// list is the ONLY thing the agent dial connects to — the caller passes it to
-/// [`connect_stream_to_addrs`] with NO second lookup, so a DNS answer cannot
-/// change between the denylist check and the connect (DNS-rebinding-safe)
-/// [R5-6].
-pub fn vet_peer_endpoint(host: &str, port: u16) -> Result<Vec<SocketAddr>, P2pTelnetError> {
-    let addrs: Vec<SocketAddr> = (host, port)
-        .to_socket_addrs()
-        .map_err(|source| P2pTelnetError::Resolve {
-            host: host.to_string(),
-            port,
-            source,
-        })?
-        .collect();
-    vet_candidates(&addrs)
-}
-
-/// Connect to PRE-VETTED concrete addresses (agent path). Mirrors
-/// [`connect_stream`]'s timeout behavior but takes the already-resolved,
-/// already-denylisted [`SocketAddr`] list and NEVER re-resolves — the vetted IP
-/// is exactly the IP dialed [R5-6].
-pub(crate) fn connect_stream_to_addrs(
-    addrs: &[SocketAddr],
-) -> Result<TcpStream, P2pTelnetError> {
-    let mut last_err: Option<(SocketAddr, io::Error)> = None;
-    for addr in addrs {
-        match TcpStream::connect_timeout(addr, CONNECT_TIMEOUT) {
-            Ok(stream) => {
-                stream.set_read_timeout(Some(TIMEOUT)).ok();
-                stream.set_write_timeout(Some(TIMEOUT)).ok();
-                return Ok(stream);
-            }
-            Err(e) => last_err = Some((*addr, e)),
-        }
-    }
-    let (addr, source) = last_err.expect("vet_candidates rejects empty lists");
-    Err(P2pTelnetError::Connect { addr, source })
-}
-
-/// Dial a P2P peer's TCP listener (resolving `host:port` at connect time), run
-/// the telnet-login wrapper, then a full B2F message exchange in slave role.
-///
-/// This is the UI/operator path — the operator TYPED the host, so a live
-/// resolve here is consent-backed. The agent path
-/// ([`connect_and_exchange_to_addrs`]) instead pre-vets a resolved address list
-/// and never re-resolves.
+/// Dial a P2P peer's TCP listener, run the telnet-login wrapper, then a full
+/// B2F message exchange in slave role.
 #[allow(clippy::too_many_arguments)]
 pub fn connect_and_exchange<F>(
     host: &str,
@@ -269,44 +156,8 @@ where
     )
 }
 
-/// Agent path: dial a P2P peer over a PRE-VETTED, already-resolved address list
-/// (see [`vet_peer_endpoint`]), run the telnet-login wrapper, then a full B2F
-/// exchange in slave role. Connects only to the concrete `addrs` — NO second
-/// DNS lookup, so the denylist decision cannot be undone by a rebinding answer
-/// [R5-6]. Body is shared with [`connect_and_exchange`] via
-/// [`exchange_over_stream`].
-#[allow(clippy::too_many_arguments)]
-pub fn connect_and_exchange_to_addrs<F>(
-    addrs: &[SocketAddr],
-    peer_callsign: &str,
-    peer_password: Option<&str>,
-    config: &ExchangeConfig,
-    outbound: Vec<OutboundMessage>,
-    progress: &dyn Fn(&str),
-    wire_log: &dyn Fn(&str),
-    decide: F,
-) -> Result<ExchangeResult, P2pTelnetError>
-where
-    F: Fn(&[Proposal], &[PendingMessage]) -> Result<Vec<Answer>, ExchangeError>,
-{
-    progress("Connecting to vetted peer address (P2P-Telnet)…");
-    let stream = connect_stream_to_addrs(addrs)?;
-    exchange_over_stream(
-        stream,
-        peer_callsign,
-        peer_password,
-        config,
-        outbound,
-        progress,
-        wire_log,
-        decide,
-    )
-}
-
-/// Shared login + B2F exchange over an already-connected [`TcpStream`]. Both
-/// [`connect_and_exchange`] (resolve-at-connect) and
-/// [`connect_and_exchange_to_addrs`] (pre-vetted addrs) delegate here so the
-/// login/exchange logic is written once.
+/// Shared login + B2F exchange over an already-connected [`TcpStream`].
+/// [`connect_and_exchange`] delegates here after establishing the connection.
 #[allow(clippy::too_many_arguments)]
 fn exchange_over_stream<F>(
     stream: TcpStream,
@@ -447,53 +298,6 @@ mod tests {
         let res = result.expect("exchange should succeed");
         assert_eq!(res.sent.len(), 0);
         assert_eq!(res.received.len(), 0);
-    }
-
-    #[test]
-    fn denylist_rejects_private_loopback_linklocal_ula_metadata_and_mapped() {
-        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-        let denied: Vec<IpAddr> = vec![
-            Ipv4Addr::new(127, 0, 0, 1).into(),
-            Ipv4Addr::new(10, 1, 2, 3).into(),
-            Ipv4Addr::new(172, 16, 0, 1).into(),
-            Ipv4Addr::new(192, 168, 1, 1).into(),
-            Ipv4Addr::new(169, 254, 169, 254).into(), // cloud metadata (link-local)
-            Ipv4Addr::new(169, 254, 0, 9).into(),
-            Ipv4Addr::new(100, 64, 0, 1).into(), // CGNAT low edge (RFC 6598)
-            Ipv4Addr::new(100, 127, 255, 254).into(), // CGNAT high edge
-            Ipv6Addr::LOCALHOST.into(),
-            "fe80::1".parse::<Ipv6Addr>().unwrap().into(),
-            "fc00::1".parse::<Ipv6Addr>().unwrap().into(),
-            "fd12:3456::1".parse::<Ipv6Addr>().unwrap().into(),
-            "::ffff:192.168.1.5".parse::<Ipv6Addr>().unwrap().into(), // v4-mapped private
-        ];
-        for ip in denied {
-            assert!(ip_is_denied(ip), "{ip} must be denied");
-        }
-        let allowed: Vec<IpAddr> = vec![
-            Ipv4Addr::new(203, 0, 113, 5).into(),
-            Ipv4Addr::new(100, 63, 255, 255).into(), // just below the CGNAT /10
-            Ipv4Addr::new(100, 128, 0, 1).into(),    // just above the CGNAT /10
-            "2001:db8::5".parse::<Ipv6Addr>().unwrap().into(),
-        ];
-        for ip in allowed {
-            assert!(!ip_is_denied(ip), "{ip} must be allowed");
-        }
-    }
-
-    #[test]
-    fn vet_refuses_when_any_candidate_is_denied() {
-        // [R5-6] a mixed public+private DNS answer is rebinding-shaped —
-        // refuse entirely rather than "connect to the good one".
-        let addrs = vec![
-            "203.0.113.5:8774".parse().unwrap(),
-            "169.254.169.254:8774".parse().unwrap(),
-        ];
-        assert!(vet_candidates(&addrs).is_err());
-        let clean: Vec<SocketAddr> = vec!["203.0.113.5:8774".parse().unwrap()];
-        assert!(vet_candidates(&clean).is_ok());
-        // An empty resolution is also refused (no address to dial).
-        assert!(vet_candidates(&[]).is_err());
     }
 
     #[test]

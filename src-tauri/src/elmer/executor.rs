@@ -196,10 +196,6 @@ mod tests {
             "vara_b2f_exchange" => serde_json::json!({ "target": "KX4Z-10" }),
             // call is required; path is serde(default).
             "packet_connect" => serde_json::json!({ "call": "KX4Z-10" }),
-            // peer_id + endpoint_id are both required (no raw host from the agent).
-            "telnet_p2p_connect" => {
-                serde_json::json!({ "peer_id": "p1", "endpoint_id": "e1" })
-            }
             // Unknown / no-arg tools: safe default.
             _ => serde_json::json!({}),
         }
