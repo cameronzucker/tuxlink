@@ -226,6 +226,13 @@ struct Inner {
     /// The device the last successful resolution produced — live handles for
     /// probes + release-confirm. Refreshed by every sequence run.
     resolved: Option<ResolvedManagedDevice>,
+    /// The human-readable name of the device `resolved` refers to (L3
+    /// station-intel panel: `Ft8Snapshot::configured_device_name`). Captured
+    /// ONCE, alongside `resolved`, from `Ft8Platform::enumerate_capture`'s
+    /// `human_name` at resolve time — `snapshot()` never re-enumerates.
+    /// Refreshed on the same cadence as `resolved`; `None` until the first
+    /// successful resolve.
+    resolved_name: Option<String>,
 }
 
 /// Thread handles — OUTSIDE the state mutex (lock discipline). `capture` +
@@ -289,6 +296,7 @@ impl Ft8ListenerState {
                 ring: VecDeque::with_capacity(RING_CAP),
                 discard_next_slot: None,
                 resolved: None,
+                resolved_name: None,
             }),
             handles: Mutex::new(Handles::default()),
             master_tx: Mutex::new(None),
@@ -578,8 +586,21 @@ impl Ft8ListenerState {
                 Some(format!("configured device {:?} not found", stable_id.value)),
             );
         };
+        // The human name for the L3 snapshot's `configuredDeviceName` — same
+        // enumeration `snapshot()` uses for the picker, captured HERE (once,
+        // at resolve) rather than re-enumerated on every snapshot() call.
+        // `resolve_device` itself returns no human_name (spec: it hands back
+        // only the live plughw/hw/card-index handles).
+        let resolved_name = self
+            .platform
+            .enumerate_capture()
+            .into_iter()
+            .find(|d| d.stable_id == stable_id)
+            .map(|d| d.human_name);
         {
-            self.lock_inner().resolved = Some(resolved.clone());
+            let mut g = self.lock_inner();
+            g.resolved = Some(resolved.clone());
+            g.resolved_name = resolved_name;
         }
         if self.interrupted() {
             return;
@@ -1188,6 +1209,8 @@ impl Ft8ListenerState {
             last_failure: g.last_failure.clone(),
             available_devices: None,
             ring_tail,
+            sweep_config: (&g.ft8_cfg.sweep).into(),
+            configured_device_name: g.resolved_name.clone(),
         };
         drop(g); // never hold the state lock across the enumeration I/O
         Ft8Snapshot {
@@ -1470,6 +1493,15 @@ pub struct Ft8Snapshot {
     pub last_failure: Option<String>,
     pub available_devices: Option<Vec<AudioDeviceChoice>>,
     pub ring_tail: Vec<SlotRecord>,
+    /// The operator-configured CAT sweep (spec header additive-changes (1)):
+    /// mirrors `config.ft8.sweep`, independent of `sweep`'s LIVE
+    /// mode/band-idx/dwell-progress above.
+    pub sweep_config: crate::ft8::records::SweepConfigDto,
+    /// The human-readable name of the currently-configured device, resolved
+    /// once at start-sequence resolve time (`None` when no device has ever
+    /// resolved successfully — e.g. never configured, or configured but
+    /// never yet resolvable).
+    pub configured_device_name: Option<String>,
 }
 
 // ---- supervisor -------------------------------------------------------------
@@ -1954,10 +1986,21 @@ mod tests {
     }
 
     // Snapshot completeness: every §Snapshot field is present + serializes.
+    //
+    // Also covers the L3 additive fields (tuxlink-b026z.4 Task A1, spec
+    // header additive-changes (1)(2)): `sweepConfig` mirrors the CONFIGURED
+    // sweep (independent of the live `sweep` status above it),
+    // `configuredDeviceName` is the resolve-time-captured human name for a
+    // successfully-resolved device, and a picker-scenario snapshot's
+    // `availableDevices[].alsaHw` carries the live ALSA device string.
     #[test]
     fn snapshot_carries_every_contract_field() {
         let p = FakePlatform::happy();
-        let state = test_state(p, cfg_with_device());
+        let mut cfg = cfg_with_device();
+        cfg.sweep.enabled = true;
+        cfg.sweep.bands = vec!["20m".into(), "40m".into()];
+        cfg.sweep.dwell_slots = 8;
+        let state = test_state(p, cfg);
         run_sequence(&state);
         let snap = state.snapshot();
         let v = serde_json::to_value(&snap).unwrap();
@@ -1965,12 +2008,46 @@ mod tests {
             "service", "flags", "slotPhase", "band", "dialHz", "bandSource",
             "bandLabelConfirmedUtcMs", "sweep", "engineVersion", "nConsecutive",
             "kConsecutive", "lastSlotUtcMs", "lastFailure", "availableDevices",
-            "ringTail",
+            "ringTail", "sweepConfig", "configuredDeviceName",
         ] {
             assert!(v.get(field).is_some(), "snapshot missing {field}: {v}");
         }
         assert_eq!(v["engineVersion"], "WSJT-X test 0.0");
         assert_eq!(v["service"]["axis"], "listening");
+
+        // sweepConfig mirrors config.ft8.sweep, camelCase.
+        assert!(v["sweepConfig"]["bands"].is_array());
+        assert_eq!(v["sweepConfig"]["enabled"], true);
+        assert_eq!(v["sweepConfig"]["bands"][0], "20m");
+        assert_eq!(v["sweepConfig"]["bands"][1], "40m");
+        assert_eq!(v["sweepConfig"]["dwellSlots"], 8);
+
+        // configuredDeviceName is the resolve-time-captured human name — the
+        // FakePlatform::happy() fixture's device is "DRA-100 USB Audio",
+        // matching cfg_with_device()'s stable_id.
+        assert_eq!(v["configuredDeviceName"], "DRA-100 USB Audio");
+        teardown(&state);
+    }
+
+    /// `None` when no device has ever resolved (the never-configured case):
+    /// distinguishes "not yet resolved" from "resolved to an empty name".
+    /// The same unconfigured snapshot also carries `availableDevices`, whose
+    /// entries carry the live `alsaHw` ALSA device string (L3 setup rows /
+    /// Task C9a).
+    #[test]
+    fn snapshot_configured_device_name_is_none_before_any_resolve() {
+        let p = FakePlatform::happy();
+        let state = test_state(p, Ft8Config::default()); // device: None
+        run_sequence(&state);
+        assert_eq!(
+            state.axis(),
+            ServiceAxis::Blocked(BlockedReason::NeedsDeviceSelection)
+        );
+        let snap = state.snapshot();
+        let v = serde_json::to_value(&snap).unwrap();
+        assert!(v["configuredDeviceName"].is_null());
+        let dev = &v["availableDevices"][0];
+        assert_eq!(dev["alsaHw"], "hw:1,0");
         teardown(&state);
     }
 

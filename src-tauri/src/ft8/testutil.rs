@@ -299,6 +299,7 @@ impl FakePlatform {
                     kind: crate::winlink::ax25::devices::StableIdKind::ByIdSymlink,
                     value: "usb-DRA-100-00".into(),
                 },
+                alsa_hw: "hw:1,0".into(),
             }]),
             busy: Mutex::new(Ok(())),
             open_results: Mutex::new(VecDeque::new()), // empty = always Ok

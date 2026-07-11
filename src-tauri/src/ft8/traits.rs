@@ -8,8 +8,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::ft8::records::AudioDeviceChoice;
 use crate::modem_status::{ModemSession, ModemState};
 use crate::winlink::ax25::devices::{
-    enumerate_capture_devices, read_sys_snapshot, resolve_managed_device, ResolvedManagedDevice,
-    StableAudioId,
+    alsa_hw_name, enumerate_capture_devices, read_sys_snapshot, resolve_managed_device,
+    ResolvedManagedDevice, StableAudioId,
 };
 use tuxlink_capture::slot::GapReport;
 use tuxlink_jt9::discover::Jt9Binary;
@@ -161,7 +161,11 @@ impl Ft8Platform for ProdPlatform {
     fn enumerate_capture(&self) -> Vec<AudioDeviceChoice> {
         enumerate_capture_devices(&read_sys_snapshot())
             .into_iter()
-            .map(|d| AudioDeviceChoice { human_name: d.human_name, stable_id: d.stable_id })
+            .map(|d| AudioDeviceChoice {
+                human_name: d.human_name,
+                alsa_hw: alsa_hw_name(d.card_index),
+                stable_id: d.stable_id,
+            })
             .collect()
     }
     fn probe_busy(&self, plughw: &str, card_index: u32) -> Result<(), String> {
