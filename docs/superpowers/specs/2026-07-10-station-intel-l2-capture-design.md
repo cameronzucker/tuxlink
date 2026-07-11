@@ -896,7 +896,10 @@ Blocked-state recovery matrix: `device-absent` — supervisor retry;
 `needs-device-selection` / `wsjtx-absent` / `unsupported-sample-rate` —
 command-gated (`set_device`, config change, or `ft8_listener_start` retry);
 `capture-wedged` — app restart only. `yielded` — supervisor resume
-(conditions in §Arbitration; resume re-runs steps 2–8, skipping prewarm).
+(conditions in §Arbitration; resume re-runs steps 1–7 + the capture-only
+spawn, skipping prewarm — §Lifecycle ownership is the canonical statement;
+this line previously said "2–8", a leftover from before the R5 lifecycle
+consolidation, caught at Gate E).
 
 ## Testing strategy
 
