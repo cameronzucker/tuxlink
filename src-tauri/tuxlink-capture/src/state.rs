@@ -388,10 +388,18 @@ mod tests {
 
     #[test]
     fn scheduled_discards_count_toward_neither_counter() {
+        // Order matters: BandDead FIRST (k=1), then Failed (n=1; Failed is
+        // k-neutral so k stays 1) — BOTH counters are nonzero at the
+        // snapshot, so a Discarded that wrongly incremented OR cleared
+        // either counter fails. (BandDead-after-Failed would clear n back
+        // to 0 and make the n half of this assertion vacuous — a Discarded
+        // that cleared a real degraded streak, e.g. every sweep dwell's QSY
+        // transition slot, would have passed unnoticed.)
         let mut m = listening();
-        m.on_slot_outcome(Failed);
         m.on_slot_outcome(BandDead);
+        m.on_slot_outcome(Failed);
         let (n, k) = (m.n_consecutive(), m.k_consecutive());
+        assert_eq!((n, k), (1, 1), "precondition: both counters nonzero");
         for _ in 0..10 {
             m.on_slot_outcome(Discarded); // first-slot / QSY / clock-anomaly
         }
