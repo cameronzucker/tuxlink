@@ -60,7 +60,7 @@ describe('aggregatePeers', () => {
           {
             transport: 'vara-hf', target_callsign: 'W6ABC-7', via: [], freq_hz: null,
             bandwidth: null, direction: 'outgoing', counts: { ok: 1, fail: 0 },
-            last_seen: '2026-07-01T00:00:00Z', last_ok: null,
+            last_seen: '2026-07-01T00:00:00Z', last_ok: null, last_ok_direction: null,
           },
         ],
         endpoints: [endpoint({ last_seen: '2026-07-05T00:00:00Z' })],
@@ -78,7 +78,7 @@ describe('aggregatePeers', () => {
     const ch: Channel = {
       transport: 'vara-hf', target_callsign: 'W6ABC-7', via: [], freq_hz: null,
       bandwidth: null, direction: 'outgoing', counts: { ok: 1, fail: 3 },
-      last_seen: '2026-07-09T00:00:00Z', last_ok: '2026-07-05T00:00:00Z',
+      last_seen: '2026-07-09T00:00:00Z', last_ok: '2026-07-05T00:00:00Z', last_ok_direction: 'outgoing',
     };
     const out = aggregatePeers([
       contact({ channels: [ch], endpoints: [endpoint({ last_ok: '2026-07-07T00:00:00Z' })] }),
@@ -92,7 +92,7 @@ describe('aggregatePeers', () => {
     const ch: Channel = {
       transport: 'ardop', target_callsign: 'W6ABC-7', via: [], freq_hz: null,
       bandwidth: null, direction: 'outgoing', counts: { ok: 0, fail: 4 },
-      last_seen: '2026-07-09T00:00:00Z', last_ok: null,
+      last_seen: '2026-07-09T00:00:00Z', last_ok: null, last_ok_direction: null,
     };
     const out = aggregatePeers([contact({ channels: [ch] })]);
     expect(out[0].lastOk).toBeNull();
@@ -108,7 +108,7 @@ describe('peerTacChatTier — success-only tier chain', () => {
   const failChannel: Channel = {
     transport: 'vara-hf', target_callsign: 'W6ABC', via: [], freq_hz: null,
     bandwidth: null, direction: 'outgoing', counts: { ok: 0, fail: 3 },
-    last_seen: '2026-07-11T11:59:00-07:00', last_ok: null,
+    last_seen: '2026-07-11T11:59:00-07:00', last_ok: null, last_ok_direction: null,
   };
   function agg(over: Partial<AggregatedPeer> = {}): AggregatedPeer {
     return {

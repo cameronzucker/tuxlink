@@ -84,6 +84,12 @@ export interface Channel {
   /// sets it. `#[serde(default)]` on the Rust side → present as `null` when
   /// absent.
   last_ok: string | null;
+  /// Direction of the `last_ok` success, set atomically WITH it (ok outcomes
+  /// only). `direction` mutates on every observation — failures included — so
+  /// the "heard" (incoming) vs "reached" (outgoing) verb MUST key on this
+  /// field, never on `direction`. `null` on pre-T-F records / never-succeeded
+  /// channels: render a direction-neutral form rather than guessing.
+  last_ok_direction: Direction | null;
 }
 
 /// Mirrors `reachability.rs::Endpoint` — one network reachability row (telnet

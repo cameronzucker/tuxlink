@@ -13,20 +13,26 @@
 //   - "worked" is BANNED; "verified/confirmed" is CURATION, never identity
 //     authentication, and never appears here.
 //
-// Truth rests entirely on `last_ok` (success-only, T-F Part 0): a failed dial
-// bumps `last_seen` but never `last_ok`, so nothing here can mislabel a failure
-// as a success.
+// Truth rests entirely on `last_ok` + `last_ok_direction` (success-only, T-F
+// Part 0 + review Finding 1): a failed dial bumps `last_seen` AND mutates
+// `Channel.direction`, but never touches the `last_ok*` pair — so neither the
+// timestamp nor the verb can be contaminated by a failure. When a success has
+// no recorded direction (pre-T-F record, forward-compat `unknown`), the verb
+// degrades to the direction-neutral "connected" — a completed session is
+// literally a connection — rather than guessing a direction.
 
-import type { Channel, ChannelTransport, Contact, Endpoint, Origin } from '../contacts/types';
+import type { Channel, ChannelTransport, Contact, Endpoint } from '../contacts/types';
 import { relativeAgo } from '../favorites/record-format';
 
-/** Whether a success was an INCOMING ("heard") or OUTGOING ("reached") event. */
-type Flavor = 'heard' | 'reached';
+/** The verb a success carries: "heard" (incoming), "reached" (outgoing), or
+ *  the direction-neutral "connected" when the success's direction is unknown. */
+type Flavor = 'heard' | 'reached' | 'connected';
 
 /** The honest status of a reachability-bearing contact row. */
 export type RecentStatus =
   | { kind: 'heard'; when: string; summary: string | null }
   | { kind: 'reached'; when: string; summary: string | null }
+  | { kind: 'connected'; when: string; summary: string | null }
   | { kind: 'dialed-not-reached' }
   | { kind: 'none' };
 
@@ -45,22 +51,25 @@ export function channelSummary(ch: Channel): string {
   return `${label} · ${(ch.freq_hz / 1_000_000).toFixed(3)} MHz`;
 }
 
-/** Fall back to the record's origin when a success carries no direction of its
- *  own (a forward-compat `unknown` direction, or a telnet endpoint). */
-function flavorFromOrigin(origin: Origin | undefined): Flavor {
-  return origin === 'incoming' ? 'heard' : 'reached';
+/** The verb for a channel's success. Keys on `last_ok_direction` — the
+ *  direction captured atomically WITH the success — NEVER on
+ *  `Channel.direction`, which mutates on failures too (review Finding 1: an
+ *  incoming success followed by an outgoing failed dial must still read
+ *  "heard"). Absent/unknown → direction-neutral, no guessing. */
+function channelFlavor(ch: Channel): Flavor {
+  if (ch.last_ok_direction === 'incoming') return 'heard';
+  if (ch.last_ok_direction === 'outgoing') return 'reached';
+  return 'connected';
 }
 
-function channelFlavor(ch: Channel, origin: Origin | undefined): Flavor {
-  if (ch.direction === 'incoming') return 'heard';
-  if (ch.direction === 'outgoing') return 'reached';
-  return flavorFromOrigin(origin);
-}
-
-function endpointFlavor(ep: Endpoint, origin: Origin | undefined): Flavor {
+/** The verb for an endpoint's success. Provenance is part of the endpoint
+ *  dedup key (never failure-mutated), so it is a truthful flavor source:
+ *  `observed-incoming` = they dialed us; `operator` = we dialed them.
+ *  Unknown provenance → direction-neutral. */
+function endpointFlavor(ep: Endpoint): Flavor {
   if (ep.provenance === 'observed-incoming') return 'heard';
   if (ep.provenance === 'operator') return 'reached';
-  return flavorFromOrigin(origin);
+  return 'connected';
 }
 
 /**
@@ -83,10 +92,10 @@ export function deriveRecentStatus(contact: Contact): RecentStatus {
   };
 
   for (const ch of channels) {
-    consider(ch.last_ok, channelFlavor(ch, contact.origin), channelSummary(ch));
+    consider(ch.last_ok, channelFlavor(ch), channelSummary(ch));
   }
   for (const ep of endpoints) {
-    consider(ep.last_ok, endpointFlavor(ep, contact.origin), 'telnet');
+    consider(ep.last_ok, endpointFlavor(ep), 'telnet');
   }
 
   if (best) {
@@ -97,12 +106,12 @@ export function deriveRecentStatus(contact: Contact): RecentStatus {
   return { kind: 'none' };
 }
 
-/** A single RF channel's honest status line: "reached 3 h ago" / "heard …"
- *  when it has a success, else "dialed · not reached yet". No transport/freq
- *  summary — the channel row already shows those. */
-export function channelStatusLine(ch: Channel, origin?: Origin, now: Date = new Date()): string {
+/** A single RF channel's honest status line: "reached 3 h ago" / "heard …" /
+ *  "connected …" when it has a success, else "dialed · not reached yet". No
+ *  transport/freq summary — the channel row already shows those. */
+export function channelStatusLine(ch: Channel, now: Date = new Date()): string {
   if (ch.last_ok) {
-    const verb = channelFlavor(ch, origin);
+    const verb = channelFlavor(ch);
     const rel = relativeAgo(ch.last_ok, now);
     return rel ? `${verb} ${rel}` : verb;
   }
@@ -111,9 +120,9 @@ export function channelStatusLine(ch: Channel, origin?: Origin, now: Date = new 
 
 /** A single telnet endpoint's honest status line (same rule as
  *  [`channelStatusLine`]). */
-export function endpointStatusLine(ep: Endpoint, origin?: Origin, now: Date = new Date()): string {
+export function endpointStatusLine(ep: Endpoint, now: Date = new Date()): string {
   if (ep.last_ok) {
-    const verb = endpointFlavor(ep, origin);
+    const verb = endpointFlavor(ep);
     const rel = relativeAgo(ep.last_ok, now);
     return rel ? `${verb} ${rel}` : verb;
   }
@@ -123,14 +132,16 @@ export function endpointStatusLine(ep: Endpoint, origin?: Origin, now: Date = ne
 /**
  * The one-line label a Recent row / detail shows, rendered from a
  * [`RecentStatus`]. "heard 3 h ago · VARA HF · 7.101 MHz" (incoming),
- * "reached 3 h ago · …" (outgoing), or the honest "dialed · not reached yet".
+ * "reached 3 h ago · …" (outgoing), "connected 3 h ago · …"
+ * (direction-unknown success), or the honest "dialed · not reached yet".
  * `none` renders empty (the caller omits the line).
  */
 export function recentStatusLine(status: RecentStatus, now: Date = new Date()): string {
   switch (status.kind) {
     case 'heard':
-    case 'reached': {
-      const verb = status.kind; // 'heard' | 'reached' — both are literal claims
+    case 'reached':
+    case 'connected': {
+      const verb = status.kind; // all three are literal claims
       const rel = relativeAgo(status.when, now);
       const base = rel ? `${verb} ${rel}` : verb;
       return status.summary ? `${base} · ${status.summary}` : base;

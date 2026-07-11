@@ -228,17 +228,17 @@ describe('StationRail — peer-row Connect fires a P2P dial (Task 23a)', () => {
       {
         transport: 'vara-fm', target_callsign: 'W7XYZ-5', via: ['RELAY1'],
         freq_hz: 145_030_000, bandwidth: null, direction: 'outgoing',
-        counts: { ok: 0, fail: 0 }, last_seen: '2026-07-10T00:00:00Z', last_ok: null,
+        counts: { ok: 0, fail: 0 }, last_seen: '2026-07-10T00:00:00Z', last_ok: null, last_ok_direction: null,
       },
       {
         transport: 'ardop', target_callsign: 'W7XYZ', via: [],
         freq_hz: 7_105_000, bandwidth: null, direction: 'outgoing',
-        counts: { ok: 0, fail: 0 }, last_seen: '2026-07-10T00:00:00Z', last_ok: null,
+        counts: { ok: 0, fail: 0 }, last_seen: '2026-07-10T00:00:00Z', last_ok: null, last_ok_direction: null,
       },
       {
         transport: 'packet', target_callsign: 'W7XYZ-1', via: ['WIDE1-1'],
         freq_hz: 144_390_000, bandwidth: null, direction: 'outgoing',
-        counts: { ok: 0, fail: 0 }, last_seen: '2026-07-10T00:00:00Z', last_ok: null,
+        counts: { ok: 0, fail: 0 }, last_seen: '2026-07-10T00:00:00Z', last_ok: null, last_ok_direction: null,
       },
     ],
     endpoints: [

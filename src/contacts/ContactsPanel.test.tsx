@@ -56,6 +56,7 @@ function routeInvoke(opts: {
   const suggestions = opts.suggestions ?? [];
   vi.mocked(invoke).mockImplementation((async (cmd: string, args?: Record<string, unknown>) => {
     if (cmd === 'contacts_read') return { schema_version: 1, contacts, groups };
+    if (cmd === 'config_read') return { grid: 'CN85nm' };
     if (cmd === 'contacts_suggestions') return suggestions;
     if (cmd === 'contact_upsert') return args?.contact as Contact;
     if (cmd === 'contact_delete') return undefined;
@@ -237,7 +238,7 @@ const RECENT_VARA: Contact = {
       transport: 'vara-hf', target_callsign: 'W7XYZ-5', via: ['RELAY1'],
       freq_hz: 7_101_000, bandwidth: null, direction: 'incoming',
       counts: { ok: 1, fail: 0 }, last_seen: '2026-07-11T09:00:00-07:00',
-      last_ok: '2026-07-11T09:00:00-07:00',
+      last_ok: '2026-07-11T09:00:00-07:00', last_ok_direction: 'incoming',
     },
   ],
   endpoints: [],
@@ -255,7 +256,7 @@ const RECENT_DIALED: Contact = {
       transport: 'ardop', target_callsign: 'K1DIAL', via: [],
       freq_hz: 7_105_000, bandwidth: null, direction: 'outgoing',
       counts: { ok: 0, fail: 2 }, last_seen: '2026-07-11T09:00:00-07:00',
-      last_ok: null,
+      last_ok: null, last_ok_direction: null,
     },
   ],
   endpoints: [],

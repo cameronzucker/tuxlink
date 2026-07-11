@@ -750,7 +750,7 @@ function ReachChannelRow({
   const sub = [
     channel.via.length > 0 ? `via ${channel.via.join(', ')}` : '',
     bandwidthText(channel.bandwidth),
-    channelStatusLine(channel, contact.origin),
+    channelStatusLine(channel),
   ]
     .filter(Boolean)
     .join(' · ');
@@ -792,7 +792,7 @@ function ReachEndpointRow({
   endpoint: ReachEndpoint;
   operatorGrid: string;
 }) {
-  const sub = [PROVENANCE_LABEL[endpoint.provenance], endpointStatusLine(endpoint, contact.origin)]
+  const sub = [PROVENANCE_LABEL[endpoint.provenance], endpointStatusLine(endpoint)]
     .filter(Boolean)
     .join(' · ');
   return (
@@ -1057,9 +1057,11 @@ function ContactDetail({
             + Add to contacts
           </button>
         )}
+        {/* One primary per detail: promote (when present) IS the tier action,
+            so New message demotes to a plain button on unconfirmed contacts. */}
         <button
           type="button"
-          className="contact-detail-btn contact-detail-btn-primary"
+          className={`contact-detail-btn${onPromote ? '' : ' contact-detail-btn-primary'}`}
           data-testid="contact-new-message"
           onClick={onNewMessage}
         >
