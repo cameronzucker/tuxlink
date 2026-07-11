@@ -40,6 +40,10 @@ export interface UseContacts {
   isLoading: boolean;
   upsertContact: (contact: Contact) => Promise<void>;
   deleteContact: (id: string) => Promise<void>;
+  /// Promote an `Unconfirmed` contact into the curated tier — the one-click
+  /// "+ Add" (spec §AMENDMENT pt. 7). Flips `tier → Confirmed` via
+  /// `contact_confirm`; a curation act, NOT identity authentication.
+  confirmContact: (id: string) => Promise<void>;
   upsertGroup: (group: Group) => Promise<void>;
   deleteGroup: (id: string) => Promise<void>;
 }
@@ -92,6 +96,10 @@ export function useContacts(): UseContacts {
     },
     deleteContact: async (id: string) => {
       await invoke('contact_delete', { id }).catch(() => {});
+      await invalidate();
+    },
+    confirmContact: async (id: string) => {
+      await invoke('contact_confirm', { id }).catch(() => {});
       await invalidate();
     },
     upsertGroup: async (group: Group) => {

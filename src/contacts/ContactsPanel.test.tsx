@@ -221,6 +221,146 @@ describe('<ContactsPanel> — multi-select', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Task T-F — the Recent section + contact-detail reachability. Unconfirmed
+// contacts live in "Recent" (never the curated list); each row makes its OWN
+// honest RF claim; promote flips tier via contact_confirm; the detail Connect
+// dispatches the Task-23a p2p seam (never a CMS fallback); the operator UI shows
+// telnet host:port.
+const RECENT_VARA: Contact = {
+  id: 'c-recent',
+  name: '',
+  callsign: 'W7XYZ-5',
+  tier: 'unconfirmed',
+  origin: 'incoming',
+  channels: [
+    {
+      transport: 'vara-hf', target_callsign: 'W7XYZ-5', via: ['RELAY1'],
+      freq_hz: 7_101_000, bandwidth: null, direction: 'incoming',
+      counts: { ok: 1, fail: 0 }, last_seen: '2026-07-11T09:00:00-07:00',
+      last_ok: '2026-07-11T09:00:00-07:00',
+    },
+  ],
+  endpoints: [],
+  created_at: NOW,
+  updated_at: NOW,
+};
+const RECENT_DIALED: Contact = {
+  id: 'c-dialed',
+  name: '',
+  callsign: 'K1DIAL',
+  tier: 'unconfirmed',
+  origin: 'outgoing',
+  channels: [
+    {
+      transport: 'ardop', target_callsign: 'K1DIAL', via: [],
+      freq_hz: 7_105_000, bandwidth: null, direction: 'outgoing',
+      counts: { ok: 0, fail: 2 }, last_seen: '2026-07-11T09:00:00-07:00',
+      last_ok: null,
+    },
+  ],
+  endpoints: [],
+  created_at: NOW,
+  updated_at: NOW,
+};
+const RECENT_TELNET: Contact = {
+  id: 'c-telnet',
+  name: '',
+  callsign: 'W7TEL',
+  tier: 'unconfirmed',
+  origin: 'outgoing',
+  channels: [],
+  endpoints: [
+    {
+      id: 'ep-9', host: '10.0.0.5', port: 8774, provenance: 'operator',
+      last_seen: '2026-07-11T09:00:00-07:00', last_ok: null,
+    },
+  ],
+  created_at: NOW,
+  updated_at: NOW,
+};
+
+describe('<ContactsPanel> — Recent section + reachability (Task T-F)', () => {
+  it('routes unconfirmed contacts to Recent and keeps confirmed ones in the curated tree', async () => {
+    routeInvoke({ contacts: [ALICE, RECENT_VARA] });
+    renderPanel();
+    // Confirmed ALICE → curated row; never a Recent row.
+    expect(await screen.findByTestId('contact-row-c-alice')).toBeInTheDocument();
+    // Unconfirmed RECENT_VARA → Recent section; never the curated tree.
+    const recent = await screen.findByTestId('contacts-recent');
+    expect(within(recent).getByTestId('recent-row-c-recent')).toBeInTheDocument();
+    expect(screen.queryByTestId('contact-row-c-recent')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('recent-row-c-alice')).not.toBeInTheDocument();
+  });
+
+  it('hides the Recent section entirely when there are no unconfirmed contacts', async () => {
+    routeInvoke({ contacts: [ALICE] });
+    renderPanel();
+    await screen.findByTestId('contact-row-c-alice');
+    expect(screen.queryByTestId('contacts-recent')).not.toBeInTheDocument();
+  });
+
+  it('a completed (last_ok) row carries the Heard distinction; a fail-only row reads dialed-not-reached', async () => {
+    routeInvoke({ contacts: [RECENT_VARA, RECENT_DIALED] });
+    renderPanel();
+    expect(await screen.findByTestId('recent-status-c-recent')).toHaveTextContent(/^heard/);
+    expect(screen.getByTestId('recent-status-c-dialed')).toHaveTextContent('dialed · not reached yet');
+  });
+
+  it('the "+ Add" promote calls contact_confirm', async () => {
+    routeInvoke({ contacts: [RECENT_VARA] });
+    renderPanel();
+    fireEvent.click(await screen.findByTestId('recent-add-c-recent'));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('contact_confirm', expect.objectContaining({ id: 'c-recent' })),
+    );
+  });
+
+  it('selecting a Recent row opens its detail with the reachability block + promote', async () => {
+    routeInvoke({ contacts: [RECENT_VARA] });
+    renderPanel();
+    fireEvent.click(await screen.findByTestId('recent-row-c-recent'));
+    expect(await screen.findByTestId('contact-detail')).toBeInTheDocument();
+    expect(screen.getByTestId('contact-reachability')).toBeInTheDocument();
+    expect(screen.getByTestId('contact-promote')).toBeInTheDocument();
+  });
+
+  it('detail RF Connect dispatches the p2p seam with exact target/via/freq (never CMS)', async () => {
+    routeInvoke({ contacts: [RECENT_VARA] });
+    renderPanel();
+    fireEvent.click(await screen.findByTestId('recent-row-c-recent'));
+    fireEvent.click(await screen.findByTestId('reach-channel-connect-c-recent-0'));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith(
+        'modem_vara_b2f_exchange',
+        expect.objectContaining({
+          target: 'W7XYZ-5', intent: 'p2p', transportKind: 'vara-hf',
+          via: ['RELAY1'], freqHz: 7_101_000,
+        }),
+      ),
+    );
+    expect(invoke).not.toHaveBeenCalledWith('cms_connect', expect.anything());
+  });
+
+  it('detail telnet endpoint shows host:port to the operator and Connect dials telnet_p2p_connect', async () => {
+    routeInvoke({ contacts: [RECENT_TELNET] });
+    renderPanel();
+    fireEvent.click(await screen.findByTestId('recent-row-c-telnet'));
+    const epRow = await screen.findByTestId('reach-endpoint-ep-9');
+    expect(epRow).toHaveTextContent('10.0.0.5:8774'); // operator UI shows the address
+    fireEvent.click(screen.getByTestId('reach-endpoint-connect-ep-9'));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith(
+        'telnet_p2p_connect',
+        expect.objectContaining({
+          req: expect.objectContaining({ host: '10.0.0.5', port: 8774, peer_callsign: 'W7TEL' }),
+        }),
+      ),
+    );
+    expect(invoke).not.toHaveBeenCalledWith('cms_connect', expect.anything());
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 describe('<ContactsPanel> — editor', () => {
   it('+ New opens the editor; saving an entered callsign calls contact_upsert', async () => {
     routeInvoke({});
