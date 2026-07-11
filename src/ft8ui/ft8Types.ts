@@ -303,12 +303,26 @@ export interface Ft8Flags {
 }
 
 /**
- * Per-band activity dot (plan §Frontend data layer). PLACEHOLDER shape — Task B3
- * (`deriveBandActivity`) owns the authoritative definition. Declared minimally
- * so the hook's `bandActivity: Map<string, BandDot>` return type resolves now.
+ * Per-band openness dot (plan §Frontend data layer, §Openness). AUTHORITATIVE
+ * shape — finalized by Task B3 (`deriveBandActivity` in `deriveBandActivity.ts`).
+ * Consumed by C4 (chip dots), C3 (BandMatrix row dots), C7 (strip stats).
+ *
+ * - `tier`: 'hot' (>=8 decodes/min), 'warm' (>=1 decodes/min), 'quiet' (sampled,
+ *   evidence present, but below 1/min), or 'no-data' (no evidence — either
+ *   nothing sampled yet, or every slot for this band was non-evidence
+ *   (`discarded` / `dropped-*`) or provenance-excluded (`default-unconfirmed`)).
+ *   A dot never claims knowledge it lacks: only `decoded` / `band-dead` ring
+ *   outcomes on a provenance-confirmed band count as evidence.
+ * - `opacity`: fades with `sampledAgoMs`, floored at 0.4 — never fully invisible
+ *   once there IS evidence, but `no-data` renders at 0 (nothing to show).
+ * - `sampledAgoMs`: `nowMs - lastEvidenceSlotUtcMs`; `null` when `tier` is
+ *   `'no-data'` (no evidence slot to measure from).
+ * - `dwellSlots`: count of provenance-confirmed ring slots attributed to this
+ *   band (any outcome) — the sample size backing the dot, for consumer context.
  */
 export interface BandDot {
-  band: string;
-  active: boolean;
-  lastDecodeUtcMs: number | null;
+  tier: 'hot' | 'warm' | 'quiet' | 'no-data';
+  opacity: number;
+  sampledAgoMs: number | null;
+  dwellSlots: number;
 }
