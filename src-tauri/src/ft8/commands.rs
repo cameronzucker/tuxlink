@@ -842,6 +842,21 @@ mod tests {
         assert_eq!(dto.dial_hz, 9_000_000);
     }
 
+    /// Refusal PRECEDENCE: when BOTH the rig is unconfigured AND a modem
+    /// session is active, `modem-busy` wins — it is checked first (pins the
+    /// documented order against a future reordering that would leak
+    /// `rig-not-configured` while a modem holds the rig).
+    #[test]
+    fn cat_probe_modem_busy_precedes_rig_not_configured() {
+        let (_env, _dir) = seed_config();
+        let p = FakePlatform::happy();
+        *p.rig_configured.lock().unwrap() = false; // also unconfigured
+        *p.modem_eligible.lock().unwrap() = false; // active modem session
+        let state = state_with_platform(p, Ft8Config::default());
+        let e = ft8_cat_probe_inner(&state).unwrap_err();
+        assert_eq!(e.kind, "modem-busy", "modem-busy is checked before rig-not-configured");
+    }
+
     /// A `rig_read_dial` I/O failure surfaces as `internal-error` (a genuine
     /// infrastructure failure, not a rejected input) — the eight
     /// validation-facing kinds stay reserved per this module's top

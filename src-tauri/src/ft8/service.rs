@@ -1641,11 +1641,18 @@ fn decode_loop(
 }
 
 /// Nearest FT8 band within ±3 kHz of a dial reading (spec §Hold-band).
+///
+/// Delegates the ±3 kHz table scan to `tuxlink_capture::bands::band_for_dial`
+/// (the single source of the tolerance + table), then recovers the matched
+/// canonical dial via the forward `bands::dial_hz` lookup — preserving this
+/// helper's `(label, table_dial)` return shape byte-for-byte. All BANDS gaps
+/// exceed 6 kHz, so first-within-tolerance is unambiguously the nearest and
+/// this is behavior-identical to the prior inline scan. Kept as a thin
+/// adapter so CAT start-labeling and `ft8_cat_probe` can never diverge on
+/// the same dial (a tolerance/table edit lands in ONE place now).
 fn nearest_band(dial_hz: u64) -> Option<(&'static str, u64)> {
-    tuxlink_capture::bands::BANDS
-        .iter()
-        .find(|(_, hz)| dial_hz.abs_diff(*hz) <= 3_000)
-        .map(|&(b, hz)| (b, hz))
+    tuxlink_capture::bands::band_for_dial(dial_hz)
+        .map(|b| (b, tuxlink_capture::bands::dial_hz(b).expect("band_for_dial returns a table label")))
 }
 
 /// spec §Snapshot, field-for-field — the L3/L4 contract.
