@@ -136,6 +136,12 @@ impl WhisperStt {
     }
 }
 
+/// Ported from Geographica's tuned Whisper thresholds: reject hallucinated
+/// transcripts from noise instead of emitting confident nonsense.
+pub fn is_confident(c: &SttConfidence) -> bool {
+    c.no_speech_prob < 0.8 && c.avg_logprob > -0.8
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -176,5 +182,12 @@ mod tests {
         let wav = std::path::PathBuf::from("tests/fixtures/wwv_clean_16k.wav");
         let r = stt.transcribe(&wav, DecodeMode::WwvBiased).unwrap();
         assert!(r.text.to_lowercase().contains("solar flux"));
+    }
+
+    #[test]
+    fn rejects_low_confidence() {
+        assert!(!is_confident(&SttConfidence { avg_logprob: -1.2, no_speech_prob: 0.2 }));
+        assert!(!is_confident(&SttConfidence { avg_logprob: -0.3, no_speech_prob: 0.9 }));
+        assert!(is_confident(&SttConfidence { avg_logprob: -0.3, no_speech_prob: 0.2 }));
     }
 }
