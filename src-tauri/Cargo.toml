@@ -145,6 +145,12 @@ tuxlink-mcp-core = { path = "tuxlink-mcp-core" }
 tux-rig = { path = "tux-rig" }
 tuxlink-agent-runner = { path = "tuxlink-agent-runner" }
 tuxlink-agent-frontend = { path = "tuxlink-agent-frontend" }
+# FT8 Station Intelligence L2 (tuxlink-b026z.3): pure capture logic (leaf,
+# std-only) + the ALSA binding for the one hardware touchpoint
+# (src/ft8/alsa_source.rs). `alsa` links system libasound: CI/apt gains
+# libasound2-dev (Task 18) and the .deb a libasound2 runtime Depends.
+tuxlink-capture = { path = "tuxlink-capture" }
+alsa = "0.9"
 # rmcp client (elmer/executor.rs in-process duplex invoker).  `client` +
 # `transport-async-rw` are the features d3zwe already uses; the lockfile already
 # has rmcp 0.8.5 so this does not introduce a new crate or version.  `server` +
