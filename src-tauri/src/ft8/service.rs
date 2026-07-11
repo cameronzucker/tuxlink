@@ -766,7 +766,7 @@ impl Ft8ListenerState {
         }
         let job = SlotJob {
             slot_utc_ms: slot.slot_utc_ms,
-            dir: dir.clone(),
+            dir,
             wav,
             lost_frames: slot.lost_frames,
             boundary_skew_frames: slot.boundary_skew_frames,
