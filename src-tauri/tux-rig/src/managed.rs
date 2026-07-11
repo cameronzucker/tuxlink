@@ -96,6 +96,13 @@ impl ManagedRig {
         Ok(())
     }
 
+    /// Set frequency (Hz) only, leaving mode untouched. Used to restore the
+    /// operator's VFO when the saved mode is unknown (outside `tux_rig::Mode`,
+    /// e.g. AM/CW/FM) so at least the frequency comes back.
+    pub fn set_freq(&mut self, hz: u64) -> Result<(), RigError> {
+        self.client.set_freq(hz)
+    }
+
     /// Read the current rig state.
     pub fn status(&mut self) -> Result<RigStatus, RigError> {
         self.client.read_status()

@@ -75,6 +75,16 @@ impl WhisperStt {
     /// `mode`'s initial prompt (see [`DecodeMode::initial_prompt`]).
     pub fn transcribe(&self, wav: &Path, mode: DecodeMode) -> Result<SttResult, SttError> {
         let audio = load_wav_16k_mono_f32(wav)?;
+        // Guard: a near-silent capture (dead device / squelched radio) must
+        // not be fed to Whisper, where the WwvBiased prompt can hallucinate a
+        // plausible-looking bulletin. Short-circuit to an unconfident result
+        // so `is_confident` rejects it downstream.
+        if is_silent(&audio) {
+            return Ok(SttResult {
+                text: String::new(),
+                confidence: SttConfidence { avg_logprob: -10.0, no_speech_prob: 1.0 },
+            });
+        }
         let mut state = self
             .ctx
             .create_state()
@@ -142,6 +152,22 @@ pub fn is_confident(c: &SttConfidence) -> bool {
     c.no_speech_prob < 0.8 && c.avg_logprob > -0.8
 }
 
+/// RMS floor below which `samples` counts as digital silence (dead capture
+/// device, squelched/unkeyed radio). Well below any real received-audio
+/// level, so it only trips on effectively-zero input.
+const SILENCE_FLOOR: f32 = 1e-4;
+
+/// Pure RMS silence check, extracted from `transcribe` so it can be
+/// unit-tested without a loaded Whisper model.
+pub(crate) fn is_silent(samples: &[f32]) -> bool {
+    let rms = if samples.is_empty() {
+        0.0
+    } else {
+        (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt()
+    };
+    rms < SILENCE_FLOOR
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,5 +215,12 @@ mod tests {
         assert!(!is_confident(&SttConfidence { avg_logprob: -1.2, no_speech_prob: 0.2 }));
         assert!(!is_confident(&SttConfidence { avg_logprob: -0.3, no_speech_prob: 0.9 }));
         assert!(is_confident(&SttConfidence { avg_logprob: -0.3, no_speech_prob: 0.2 }));
+    }
+
+    #[test]
+    fn is_silent_detects_digital_silence_not_real_audio() {
+        assert!(is_silent(&[0.0; 100]));
+        assert!(is_silent(&[]));
+        assert!(!is_silent(&[0.5, -0.5, 0.5]));
     }
 }

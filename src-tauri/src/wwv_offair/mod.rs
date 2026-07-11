@@ -30,6 +30,7 @@ pub enum WwvError {
 pub(crate) trait TuneRig {
     fn status(&self) -> Result<RigStatus, RigError>;
     fn tune(&self, hz: u64, mode: Mode) -> Result<(), RigError>;
+    fn set_freq(&self, hz: u64) -> Result<(), RigError>;
     fn release_serial(&self);
     fn respawn(&self) -> Result<(), RigError>;
 }
@@ -51,17 +52,31 @@ pub(crate) fn run_cycle<R: TuneRig, C: CaptureSource>(
     if close_serial {
         rig.release_serial();
     }
-    let out = capture
-        .capture(freq_hz, dwell)
-        .map_err(|e| WwvError::Capture(e.to_string()))?;
-    if close_serial {
-        rig.respawn().map_err(|e| WwvError::Rig(e.to_string()))?;
-    }
-    // Restore original VFO+mode (mode may be unknown → leave as-is).
-    if let Some(m) = saved.mode {
-        rig.tune(saved.freq_hz, m)
-            .map_err(|e| WwvError::Rig(e.to_string()))?;
-    }
+
+    // Capture; DO NOT early-return — we must restore the operator's rig either way.
+    let cap_result = capture.capture(freq_hz, dwell);
+
+    // Restore sequence (best-effort; runs on success AND capture failure).
+    let restore_result = (|| -> Result<(), WwvError> {
+        if close_serial {
+            rig.respawn().map_err(|e| WwvError::Rig(e.to_string()))?;
+        }
+        // Restore mode+freq when the saved mode is known; otherwise restore at
+        // least the frequency (saved mode was outside tux_rig::Mode, e.g. AM/CW/FM).
+        match saved.mode {
+            Some(m) => rig
+                .tune(saved.freq_hz, m)
+                .map_err(|e| WwvError::Rig(e.to_string())),
+            None => rig
+                .set_freq(saved.freq_hz)
+                .map_err(|e| WwvError::Rig(e.to_string())),
+        }
+    })();
+
+    // Capture is the primary operation: surface its error first if it failed
+    // (restore was still attempted above). Otherwise surface any restore error.
+    let out = cap_result.map_err(|e| WwvError::Capture(e.to_string()))?;
+    restore_result?;
     Ok(out)
 }
 
@@ -87,6 +102,14 @@ impl TuneRig for ManagedTuneRig {
             .as_mut()
             .ok_or_else(|| RigError::Spawn("no rig".into()))?
             .tune(hz, mode)
+    }
+
+    fn set_freq(&self, hz: u64) -> Result<(), RigError> {
+        self.inner
+            .borrow_mut()
+            .as_mut()
+            .ok_or_else(|| RigError::Spawn("no rig".into()))?
+            .set_freq(hz)
     }
 
     fn release_serial(&self) {
@@ -160,6 +183,11 @@ mod tests {
             Ok(())
         }
 
+        fn set_freq(&self, hz: u64) -> Result<(), RigError> {
+            self.log.borrow_mut().push(format!("set_freq {hz}"));
+            Ok(())
+        }
+
         fn release_serial(&self) {
             self.log.borrow_mut().push("release_serial".into());
         }
@@ -171,20 +199,30 @@ mod tests {
     }
 
     /// Records its `capture()` invocation into the same shared log as
-    /// `MockRig` — see `CallLog` doc comment above.
+    /// `MockRig` — see `CallLog` doc comment above. `fail` lets a test force
+    /// `capture()` to return an error while still recording the call, so
+    /// `run_cycle`'s restore-on-error behavior can be observed.
     struct MockCapture {
         log: CallLog,
+        fail: bool,
     }
 
     impl MockCapture {
         fn new(log: CallLog) -> Self {
-            Self { log }
+            Self { log, fail: false }
+        }
+
+        fn failing(log: CallLog) -> Self {
+            Self { log, fail: true }
         }
     }
 
     impl CaptureSource for MockCapture {
         fn capture(&self, _freq_hz: u64, _dwell: Duration) -> Result<PathBuf, CaptureError> {
             self.log.borrow_mut().push("capture".into());
+            if self.fail {
+                return Err(CaptureError::Arecord("boom".into()));
+            }
             Ok(PathBuf::from("/mock/wwv.wav"))
         }
     }
@@ -236,6 +274,87 @@ mod tests {
                 "capture".to_string(),
                 "respawn".to_string(),
                 "tune 14074000 PktUsb".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn cycle_restores_on_capture_error() {
+        // close_serial = false: capture fails, but restore still runs and the
+        // capture error is what's surfaced to the caller.
+        let log: CallLog = Rc::new(RefCell::new(Vec::new()));
+        let mock = MockRig::new(
+            RigStatus {
+                freq_hz: 14_074_000,
+                mode: Some(Mode::PktUsb),
+                ptt: false,
+            },
+            Rc::clone(&log),
+        );
+        let cap = MockCapture::failing(Rc::clone(&log));
+        let err = run_cycle(&mock, false, 10_000_000, Duration::from_secs(70), &cap).unwrap_err();
+        assert!(matches!(err, WwvError::Capture(_)));
+        assert_eq!(
+            log.borrow().clone(),
+            vec![
+                "status".to_string(),
+                "tune 10000000 Usb".to_string(),
+                "capture".to_string(),
+                "tune 14074000 PktUsb".to_string(), // restore still ran
+            ]
+        );
+
+        // close_serial = true: release_serial precedes capture, respawn
+        // precedes the restore tune, despite the capture error.
+        let log2: CallLog = Rc::new(RefCell::new(Vec::new()));
+        let mock2 = MockRig::new(
+            RigStatus {
+                freq_hz: 14_074_000,
+                mode: Some(Mode::PktUsb),
+                ptt: false,
+            },
+            Rc::clone(&log2),
+        );
+        let cap2 = MockCapture::failing(Rc::clone(&log2));
+        let err2 =
+            run_cycle(&mock2, true, 10_000_000, Duration::from_secs(70), &cap2).unwrap_err();
+        assert!(matches!(err2, WwvError::Capture(_)));
+        assert_eq!(
+            log2.borrow().clone(),
+            vec![
+                "status".to_string(),
+                "tune 10000000 Usb".to_string(),
+                "release_serial".to_string(),
+                "capture".to_string(),
+                "respawn".to_string(), // rig re-spawned despite capture error
+                "tune 14074000 PktUsb".to_string(), // restore still ran
+            ]
+        );
+    }
+
+    #[test]
+    fn cycle_restores_freq_only_when_saved_mode_unknown() {
+        // Saved mode is None (operator was on AM/CW/FM — outside tux_rig::Mode).
+        // Restore must still bring the frequency back via set_freq, not tune.
+        let log: CallLog = Rc::new(RefCell::new(Vec::new()));
+        let mock = MockRig::new(
+            RigStatus {
+                freq_hz: 14_074_000,
+                mode: None,
+                ptt: false,
+            },
+            Rc::clone(&log),
+        );
+        let cap = MockCapture::new(Rc::clone(&log));
+        let out = run_cycle(&mock, false, 10_000_000, Duration::from_secs(70), &cap).unwrap();
+        assert_eq!(out, PathBuf::from("/mock/wwv.wav"));
+        assert_eq!(
+            log.borrow().clone(),
+            vec![
+                "status".to_string(),
+                "tune 10000000 Usb".to_string(),
+                "capture".to_string(),
+                "set_freq 14074000".to_string(), // freq-only restore, no tune
             ]
         );
     }

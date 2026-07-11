@@ -97,10 +97,13 @@ pub async fn wwv_offair_refresh(now_ms: u64) -> Result<WwvRefreshOutcome, UiErro
     let freq_hz = crate::wwv_offair::freq::freq_for_utc_hour(hour);
 
     let outcome = tokio::task::spawn_blocking(move || -> Result<WwvRefreshOutcome, String> {
-        let stt = WhisperStt::load(&model).map_err(|e| e.to_string())?;
+        // Capture FIRST, then load the Whisper model: model load can take
+        // long enough to eat the pre-roll pad and start `arecord` after the
+        // bulletin has already begun.
         let cap = crate::wwv_offair::capture::ArecordCapture { device, out_dir: std::env::temp_dir() };
         let wav = crate::wwv_offair::capture_cycle(rig_cfg, close_serial, freq_hz, Duration::from_secs(70), &cap)
             .map_err(|e| e.to_string())?;
+        let stt = WhisperStt::load(&model).map_err(|e| e.to_string())?;
         match decode_and_ingest(&stt, &wav, year, month, now_ms, &config_dir).map_err(|e| e.to_string())? {
             DecodeOutcome::Ingested(o) => Ok(WwvRefreshOutcome {
                 updated: o.forecast_updated,
