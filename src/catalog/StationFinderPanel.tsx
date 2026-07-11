@@ -18,7 +18,9 @@ import { useReachabilityMap, stationKey } from './useReachabilityMap';
 import { useDebouncedCommit } from './useDebouncedCommit';
 import { useStationPrediction } from './useStationPrediction';
 import { distanceFromGrids, kmToMi } from './distance';
-import { StationFinderControls, type FilterMode } from './StationFinderControls';
+import { StationFinderControls, type FilterMode, type StationType } from './StationFinderControls';
+import { useP2pCapabilities, usePeers } from '../peers/usePeers';
+import { aggregatePeers } from '../peers/peerModel';
 import { ServiceCodesField } from './ServiceCodesField';
 import { StationFinderMap } from './StationFinderMap';
 import { StationRail } from './StationRail';
@@ -45,6 +47,10 @@ export interface StationFinderPanelProps {
 }
 
 const FILTER_MODES: FilterMode[] = ['vara-hf', 'ardop-hf', 'packet'];
+// Task 23 (spec §5): station-type filter, both on by default. Forced to
+// {'gateway'} when useP2pCapabilities().finder_peers is false (R5-8) — see
+// `effectiveTypes` below.
+const STATION_TYPES: StationType[] = ['gateway', 'peer'];
 
 // Coalesce an antenna-control gesture (a height-slider drag, SNR/power typing)
 // into ONE persist + ONE reachability re-sweep once the operator settles, rather
@@ -77,6 +83,7 @@ interface PersistedFinderView {
   search: string;
   bands: Band[];
   modes: FilterMode[];
+  types: StationType[];
   radiusMi: number | null;
   selectedKey: string | null;
 }
@@ -103,6 +110,9 @@ function readFinderView(): Partial<PersistedFinderView> {
     if (Array.isArray(v.bands)) out.bands = v.bands.filter((b) => typeof b === 'string') as Band[];
     if (Array.isArray(v.modes)) {
       out.modes = v.modes.filter((m) => typeof m === 'string') as FilterMode[];
+    }
+    if (Array.isArray(v.types)) {
+      out.types = v.types.filter((t) => t === 'gateway' || t === 'peer') as StationType[];
     }
     if (typeof v.radiusMi === 'number' || v.radiusMi === null) {
       out.radiusMi = v.radiusMi as number | null;
@@ -141,6 +151,14 @@ export function StationFinderPanel({ onClose, activePrefillMode, onUse }: Statio
   const [enabledModes, setEnabledModes] = useState<Set<FilterMode>>(
     () => new Set(persisted0.modes ?? FILTER_MODES),
   );
+  // Task 23 (spec §5): the operator's raw type-filter preference. This is NOT
+  // necessarily what's rendered/filtered — `effectiveTypes` below forces
+  // gateway-only when the finder_peers capability bit is off, without
+  // clobbering the persisted preference (so it takes effect the moment the
+  // capability flips on).
+  const [enabledTypes, setEnabledTypes] = useState<Set<StationType>>(
+    () => new Set(persisted0.types ?? STATION_TYPES),
+  );
   const [selectedKey, setSelectedKey] = useState<string | null>(persisted0.selectedKey ?? null);
   const [utcHour] = useState(currentUtcHour);
   // `null` is a valid "no radius" choice, so distinguish it from "not persisted".
@@ -163,11 +181,29 @@ export function StationFinderPanel({ onClose, activePrefillMode, onUse }: Statio
       search,
       bands: [...enabledBands],
       modes: [...enabledModes],
+      types: [...enabledTypes],
       radiusMi,
       selectedKey,
     });
-  }, [search, enabledBands, enabledModes, radiusMi, selectedKey]);
+  }, [search, enabledBands, enabledModes, enabledTypes, radiusMi, selectedKey]);
   const stations = useStations();
+
+  // Task 23 (spec §5): the P2P capability-matrix bit gating this dimension,
+  // and the peer roster to aggregate into rail rows. `finder_peers` false
+  // HIDES the type chips + peer rows entirely (R5-8) — it does not merely
+  // disable them. Undefined (capabilities still loading) is treated as
+  // false — see `finderPeersEnabled` — so there is no flash of the chip
+  // before the read resolves.
+  const p2pCapabilities = useP2pCapabilities();
+  const finderPeersEnabled = p2pCapabilities.capabilities?.finder_peers === true;
+  const peersData = usePeers();
+  const aggregatedPeers = useMemo(() => aggregatePeers(peersData.peers), [peersData.peers]);
+  // The EFFECTIVE type set used for filtering: forces gateway-only when the
+  // capability is off, regardless of the operator's persisted preference.
+  const effectiveTypes = useMemo(
+    () => (finderPeersEnabled ? enabledTypes : new Set<StationType>(['gateway'])),
+    [finderPeersEnabled, enabledTypes],
+  );
 
   // Resolve the operator's EFFECTIVE location the way the rest of the app does
   // (CheckInForm / PositionFormV2): the PositionArbiter (`position_current_fix`)
@@ -232,6 +268,9 @@ export function StationFinderPanel({ onClose, activePrefillMode, onUse }: Statio
   // without one it is a no-op (the whole list shows, and the controls disable
   // the selector + prompt the operator to set their location).
   const visible = useMemo(() => {
+    // Task 23: the Gateway type toggle hides every gateway station/pin (a
+    // Peer-only view) rather than merely dimming them.
+    if (!effectiveTypes.has('gateway')) return [];
     const q = search.trim().toUpperCase();
     return bandModeVisible.filter((s) => {
       if (q && !s.baseCallsign.includes(q)) return false;
@@ -241,7 +280,25 @@ export function StationFinderPanel({ onClose, activePrefillMode, onUse }: Statio
       }
       return true;
     });
-  }, [bandModeVisible, search, radiusMi, grid]);
+  }, [bandModeVisible, search, radiusMi, grid, effectiveTypes]);
+
+  // Task 23 (spec §5): peer rows, shown only when Peer is enabled (and
+  // finder_peers is on — effectiveTypes already reflects that). Peers do NOT
+  // reuse aggregateStations/stationMatchesBandMode [R4-8] — aggregatePeers
+  // tolerates a missing grid and never drops a gridless/telnet-only peer, so
+  // it renders untiered in the rail rather than disappearing. The callsign
+  // search applies for parity with the gateway list; band/mode/radius do not
+  // (peer channels aren't filtered by the gateway catalog's band-plan model).
+  const visiblePeers = useMemo(() => {
+    if (!effectiveTypes.has('peer')) return [];
+    const q = search.trim().toUpperCase();
+    if (!q) return aggregatedPeers;
+    return aggregatedPeers.filter(
+      (p) =>
+        p.canonicalBase.toUpperCase().includes(q) ||
+        p.presentedCallsigns.some((c) => c.toUpperCase().includes(q)),
+    );
+  }, [aggregatedPeers, effectiveTypes, search]);
 
   // `predictReload` (bumped after a prefs save persists) also re-runs the map
   // tiers, so changing power / antenna / height / ground / noise / SNR refreshes
@@ -361,6 +418,14 @@ export function StationFinderPanel({ onClose, activePrefillMode, onUse }: Statio
       return next;
     });
 
+  const toggleType = (t: StationType) =>
+    setEnabledTypes((prev) => {
+      const next = new Set(prev);
+      if (next.has(t)) next.delete(t);
+      else next.add(t);
+      return next;
+    });
+
   return (
     <div
       className="station-finder-overlay"
@@ -382,6 +447,9 @@ export function StationFinderPanel({ onClose, activePrefillMode, onUse }: Statio
           onToggleBand={toggleBand}
           enabledModes={enabledModes}
           onToggleMode={toggleMode}
+          enabledTypes={enabledTypes}
+          onToggleType={toggleType}
+          showPeerType={finderPeersEnabled}
           utcHour={utcHour}
           localTime={localTimeLabel()}
           ssn={pred.prediction?.ssn ?? null}
@@ -421,6 +489,7 @@ export function StationFinderPanel({ onClose, activePrefillMode, onUse }: Statio
             onUse={onUse}
             onSaveFavorite={onSaveFavorite}
             isSaved={isSaved}
+            peers={visiblePeers}
           />
         </div>
       </div>

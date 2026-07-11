@@ -17,6 +17,13 @@ import type { Station, Channel } from './stationModel';
 import type { PathPrediction } from './propagationApi';
 import type { PredictionStatus } from './useStationPrediction';
 import type { RadioMode, FavoriteDial } from '../favorites/types';
+import type { AggregatedPeer } from '../peers/peerModel';
+import type {
+  Channel as PeerChannel,
+  ChannelTransport,
+  Origin,
+  Provenance,
+} from '../peers/types';
 
 export interface StationRailProps {
   station: Station | null;
@@ -43,6 +50,75 @@ export interface StationRailProps {
   onSaveFavorite?: (dial: FavoriteDial) => void;
   /** Whether a channel's dial is already a STARRED favorite (drives the ★ fill). */
   isSaved?: (dial: FavoriteDial) => boolean;
+  /**
+   * P2P peer rows (Task 23, spec §5) — the panel's `aggregatePeers(usePeers().peers)`
+   * output, already filtered by the type toggle + capability hide. Rendered as a
+   * distinct list, independent of `station`/`selectedKey`: a gridless/telnet-only
+   * peer has no map pin to select, so it must still show up here (untiered) or it
+   * is invisible entirely. Omitted/empty renders nothing (no section).
+   *
+   * Connect here reuses the EXISTING `onUse` prefill path (R3-F6 boundary with
+   * Task 23a, which owns actual `intent: 'p2p'` / `via` / `freq` dial threading).
+   * `FavoriteDial` has no `intent` field — this task does not invent one.
+   */
+  peers?: AggregatedPeer[];
+}
+
+/** Plain-language origin labels (spec §5): no "worked", never the raw enum. */
+const ORIGIN_LABEL: Record<Origin, string> = {
+  incoming: 'incoming',
+  outgoing: 'outgoing',
+  manual: 'added',
+  aprs: 'APRS',
+  unknown: 'unknown origin',
+};
+
+const PROVENANCE_LABEL: Record<Provenance, string> = {
+  operator: 'operator-added',
+  'observed-incoming': 'observed',
+  unknown: 'unknown provenance',
+};
+
+const PEER_TRANSPORT_LABEL: Record<ChannelTransport, string> = {
+  packet: 'Packet',
+  ardop: 'ARDOP HF',
+  'vara-hf': 'VARA HF',
+  'vara-fm': 'VARA FM',
+  unknown: 'Unknown',
+};
+
+/** Peer ChannelTransport → modem RadioMode; null for a transport with no
+ *  prefillable modem (mirrors channelGrouping.ts's radioModeFor, but the
+ *  peer wire vocabulary differs from the catalog ListingMode one — 'ardop'
+ *  not 'ardop-hf', plus 'vara-fm'). */
+function radioModeForPeerTransport(t: ChannelTransport): RadioMode | null {
+  if (t === 'ardop') return 'ardop-hf';
+  if (t === 'vara-hf' || t === 'vara-fm' || t === 'packet') return t;
+  return null;
+}
+
+/**
+ * Best-effort FavoriteDial for a peer RF channel (Task 23 chrome only). Does
+ * NOT thread `via` — FavoriteDial has no field for it, and the repeater-path /
+ * center-frequency semantics are Task 23a's job (R3-F6). `peer_id` is an
+ * EXISTING FavoriteDial field (R5-7), not new dial wiring, so it's set here.
+ */
+function peerChannelToDial(peer: AggregatedPeer, channel: PeerChannel): FavoriteDial | null {
+  const mode = radioModeForPeerTransport(channel.transport);
+  if (!mode) return null;
+  return {
+    mode,
+    gateway: channel.target_callsign,
+    freq: channel.freq_hz != null ? (channel.freq_hz / 1_000_000).toFixed(3) : undefined,
+    grid: peer.grid,
+    peer_id: peer.id,
+  };
+}
+
+function formatLastConnected(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString();
 }
 
 const mhz = (khz: number): string => (khz / 1000).toFixed(3);
@@ -68,10 +144,30 @@ function bearingFromGrids(a: string, b: string): number | null {
 }
 
 export function StationRail(props: StationRailProps) {
-  const { station, prediction, predictionStatus, operatorGrid, utcHour, activePrefillMode } = props;
+  const { station, prediction, predictionStatus, operatorGrid, utcHour, activePrefillMode, peers } = props;
+
+  // Task 23 (R3-F6 boundary): reuse the SAME existing prefill/onUse path a
+  // gateway channel's Use → already goes through. AppShell's handler
+  // currently hardcodes sessionType 'cms' for anything arriving via onUse
+  // (see handleStationUse's own comment) — routing a peer channel as a P2P
+  // connect instead of a CMS gateway connect is Task 23a's job, not this
+  // task's. This is chrome: the button renders + calls the existing path.
+  const onUsePeerChannel = (peer: AggregatedPeer, channel: PeerChannel) => {
+    const dial = peerChannelToDial(peer, channel);
+    if (!dial) return;
+    if (props.onUse) props.onUse(dial);
+    else emitGatewayPrefill(dial);
+  };
+
+  const peerRows = <PeerRows peers={peers ?? []} onUse={onUsePeerChannel} />;
 
   if (!station) {
-    return <div className="station-finder__rail station-finder__rail--empty">Select a station on the map.</div>;
+    return (
+      <div className="station-finder__rail">
+        <div className="station-finder__rail--empty">Select a station on the map.</div>
+        {peerRows}
+      </div>
+    );
   }
 
   const bearing = prediction?.bearingDeg ?? (operatorGrid ? bearingFromGrids(operatorGrid, station.grid) : null);
@@ -267,6 +363,95 @@ export function StationRail(props: StationRailProps) {
           </div>
         ))}
       </div>
+      {peerRows}
+    </div>
+  );
+}
+
+/**
+ * P2P peer rows (Task 23, spec §5) — rendered as a list independent of the
+ * map-pin `station` selection, since a gridless/telnet-only peer has no pin
+ * to click. `null` when there are no peers to show (no empty section chrome).
+ */
+function PeerRows({
+  peers,
+  onUse,
+}: {
+  peers: AggregatedPeer[];
+  onUse: (peer: AggregatedPeer, channel: PeerChannel) => void;
+}) {
+  if (peers.length === 0) return null;
+  return (
+    <div className="station-finder__peers" data-testid="peer-rows">
+      <div className="station-finder__chh">
+        Peers
+        <span className="station-finder__chh-n">{peers.length}</span>
+      </div>
+      {peers.map((peer) => (
+        <div key={peer.id} className="station-finder__peer" data-testid={`peer-row-${peer.id}`}>
+          <div className="station-finder__peer-top">
+            <span className="station-finder__call">{peer.presentedCallsigns[0] ?? peer.canonicalBase}</span>
+            <span className="station-finder__peer-origin" data-testid={`peer-origin-${peer.id}`}>
+              {ORIGIN_LABEL[peer.origin]}
+            </span>
+          </div>
+          <div className="station-finder__who">
+            {peer.grid ? peer.grid : <span data-testid={`peer-untiered-${peer.id}`}>no grid — untiered</span>}
+            {peer.lastConnectedAt && ` · last connected ${formatLastConnected(peer.lastConnectedAt)}`}
+          </div>
+
+          {peer.endpoints.length > 0 && (
+            <div className="station-finder__peer-endpoints">
+              {peer.endpoints.map((ep) => (
+                <div key={ep.id} className="station-finder__peer-endpoint" data-testid={`peer-endpoint-${ep.id}`}>
+                  <span className="station-finder__peer-badge">{PROVENANCE_LABEL[ep.provenance]}</span>
+                  <span className="station-finder__peer-ep-addr">
+                    {ep.host}:{ep.port}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {peer.channels.length > 0 && (
+            <div className="station-finder__peer-channels">
+              {peer.channels.map((ch, i) => {
+                const dial = peerChannelToDial(peer, ch);
+                return (
+                  <div
+                    key={`${ch.transport}-${ch.target_callsign}-${ch.freq_hz ?? 'nofreq'}-${i}`}
+                    className="station-finder__peer-channel"
+                    data-testid={`peer-channel-${peer.id}-${i}`}
+                  >
+                    <div>
+                      <div className="station-finder__f">
+                        {PEER_TRANSPORT_LABEL[ch.transport] ?? ch.transport} · {ch.target_callsign}
+                      </div>
+                      <div className="station-finder__sub">
+                        {ch.freq_hz != null ? `${(ch.freq_hz / 1_000_000).toFixed(3)} MHz` : 'freq unknown'}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      data-testid={`peer-use-${peer.id}-${i}`}
+                      className="station-finder__use"
+                      disabled={!dial}
+                      title={
+                        !dial
+                          ? 'No tuxlink modem for this transport'
+                          : 'Use this channel (existing per-mode prefill — full P2P dial threading lands in a follow-up task)'
+                      }
+                      onClick={() => dial && onUse(peer, ch)}
+                    >
+                      Use →
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }

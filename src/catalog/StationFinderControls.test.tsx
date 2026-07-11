@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { StationFinderControls } from './StationFinderControls';
+import { StationFinderControls, type StationType } from './StationFinderControls';
 import type { Band } from './bandPlan';
 
 const baseProps = {
@@ -8,6 +8,12 @@ const baseProps = {
   onToggleBand: vi.fn(),
   enabledModes: new Set<'vara-hf' | 'ardop-hf' | 'packet'>(['vara-hf', 'ardop-hf', 'packet']),
   onToggleMode: vi.fn(),
+  // Task 23: station-type filter. Defaults mirror the panel's default (both
+  // on); showPeerType false here matches these pre-Task-23 tests' intent —
+  // Task 23's own StationFinderControls.test.tsx covers the peer-chip cases.
+  enabledTypes: new Set<StationType>(['gateway', 'peer']),
+  onToggleType: vi.fn(),
+  showPeerType: false,
   utcHour: 21,
   localTime: '14:20',
   ssn: 118,
