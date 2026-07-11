@@ -45,9 +45,17 @@ export function useWwvOffair(): UseWwvOffairResult {
   // below) can call it for the auto-retry re-arm without a textual forward
   // reference. Populated by the effect right after armInternal is created.
   const armInternalRef = useRef<(nowMs: number, isRetry: boolean) => void>(() => {});
+  // Tracks whether the hook is still mounted. fireCapture's async chain
+  // (await refreshOffair, await refreshSnapshot) can still be in flight when
+  // the component unmounts; every setState after an await checks this guard
+  // before dispatching, so a late-resolving promise never touches state on
+  // an unmounted hook (React dev "setState after unmount" warning + wasted
+  // update). Set false in the unmount effect below.
+  const mountedRef = useRef(true);
 
   const refreshSnapshot = useCallback(async () => {
     const snap = await readSnapshot();
+    if (!mountedRef.current) return;
     setSnapshot(snap);
   }, []);
 
@@ -66,6 +74,7 @@ export function useWwvOffair(): UseWwvOffairResult {
     setStatus('capturing');
     try {
       const outcome = await refreshOffair(Date.now());
+      if (!mountedRef.current) return;
       setResult(outcome);
       if (outcome.no_copy) {
         // Retry-once default: mirrors the backend's
@@ -83,13 +92,16 @@ export function useWwvOffair(): UseWwvOffairResult {
         setStatus('done');
       }
     } catch {
+      if (!mountedRef.current) return;
       setResult(null);
       setStatus('error');
     }
     // Refresh the snapshot regardless of outcome: even a no_copy/error
     // capture doesn't change persisted state, but keeping the read on the
     // same path as the write keeps the panel's displayed data honest with
-    // whatever's actually on disk.
+    // whatever's actually on disk. Skip entirely once unmounted — no point
+    // firing the IPC read just to discard the result.
+    if (!mountedRef.current) return;
     await refreshSnapshot();
   }, [refreshSnapshot]);
 
@@ -127,8 +139,16 @@ export function useWwvOffair(): UseWwvOffairResult {
   }, [clearTimer]);
 
   // Clear any pending timer on unmount so a fire-after-unmount never
-  // dispatches state updates on an unmounted component.
-  useEffect(() => () => clearTimer(), [clearTimer]);
+  // dispatches state updates on an unmounted component, and flip
+  // mountedRef so fireCapture's async chain — already in flight and past
+  // the timer entirely — also stops short of calling setState.
+  useEffect(
+    () => () => {
+      clearTimer();
+      mountedRef.current = false;
+    },
+    [clearTimer],
+  );
 
   return { status, result, snapshot, windowLabel, arm, cancel, refreshSnapshot };
 }

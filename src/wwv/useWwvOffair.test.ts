@@ -208,4 +208,54 @@ describe('useWwvOffair', () => {
 
     expect(refreshOffairMock).not.toHaveBeenCalled();
   });
+
+  it('does not touch state (or fire the follow-on snapshot read) when the in-flight fireCapture chain resolves after unmount', async () => {
+    // A deferred refreshOffair: the timer fires and fireCapture starts (so
+    // it's genuinely in-flight, past the timer-clearing cleanup entirely)
+    // before we unmount and only THEN resolve it — this is the case the
+    // timeoutRef cleanup can't catch, only the mountedRef guard can.
+    let resolveOffair: (o: WwvRefreshOutcome) => void = () => {};
+    refreshOffairMock.mockImplementation(
+      () =>
+        new Promise<WwvRefreshOutcome>((resolve) => {
+          resolveOffair = resolve;
+        }),
+    );
+    readSnapshotMock.mockResolvedValue(null);
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const { result, unmount } = renderHook(() => useWwvOffair());
+
+    act(() => {
+      result.current.arm(HOUR_BOUNDARY_MS);
+    });
+    expect(result.current.status).toBe('armed');
+
+    // Fire the timer: fireCapture runs synchronously up to and including
+    // `await refreshOffair(...)`, which parks on our still-pending promise.
+    await advance(WWV_START_S * 1000);
+    expect(refreshOffairMock).toHaveBeenCalledOnce();
+    expect(result.current.status).toBe('capturing');
+
+    unmount();
+
+    // Resolve the outcome AFTER unmount and flush the resulting microtask
+    // chain. Without the mountedRef guard, fireCapture would call
+    // setResult/setStatus and then `await refreshSnapshot()` (which itself
+    // calls readSnapshot()/setSnapshot) on the unmounted hook.
+    await act(async () => {
+      resolveOffair(outcome(false));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // The guarded tail of fireCapture bails before `await refreshSnapshot()`
+    // once unmounted, so the follow-on IPC read never fires.
+    expect(readSnapshotMock).not.toHaveBeenCalled();
+    // No React "state update on unmounted component" dev warning.
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+
+    consoleErrorSpy.mockRestore();
+  });
 });
