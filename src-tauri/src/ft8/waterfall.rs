@@ -34,7 +34,6 @@ use realfft::num_complex::Complex;
 use realfft::{RealFftPlanner, RealToComplex};
 use serde::Serialize;
 
-use crate::ft8::events::EventSink;
 use crate::ft8::service::Ft8ListenerState;
 
 /// FFT window length (samples @ 12 kHz): a 2048-pt real FFT yields 1025 bins

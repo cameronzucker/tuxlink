@@ -325,7 +325,8 @@ pub(crate) fn ft8_cat_probe_inner(state: &Arc<Ft8ListenerState>) -> Result<CatPr
         return Err(Ft8CmdError::new("rig-not-configured", "no rig is configured"));
     }
     let read_dial = || -> Result<CatProbeDto, Ft8CmdError> {
-        let _rig = state.rig_lock().lock().unwrap_or_else(|p| p.into_inner());
+        let rig = state.rig_lock();
+        let _rig = rig.lock().unwrap_or_else(|p| p.into_inner());
         let dial_hz = state
             .platform
             .rig_read_dial()
