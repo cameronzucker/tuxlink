@@ -162,10 +162,18 @@ function dotFor(agg: BandAggregate, nowMs: number): BandDot {
  * Derive one openness dot per band that appears (with provenance-confirmed
  * attribution) inside the 10-minute window. Bands with NO in-window confirmed
  * slot at all — never seen, or last seen more than 10 min ago — are simply
- * absent from the returned Map; the consumer treats an absent key the same as
- * "never sampleable" and renders no dot. A band present in-window only via
- * non-evidence slots (`discarded` / `dropped-*` / `failed`) is an explicit
- * `no-data` entry.
+ * absent from the returned Map. A band present in-window only via non-evidence
+ * slots (`discarded` / `dropped-*` / `failed`) is an explicit `no-data` entry.
+ *
+ * CONSUMER CONTRACT (spec §Openness): an absent key means "no in-window
+ * evidence for this band" — NOT "never sampleable". Per the spec, `no-data` is
+ * the DEFAULT for every sampleable HF band, so a consumer rendering per-band
+ * chips/rows MUST treat an absent HF-band key as a hollow `no-data` dot (that
+ * is C4's behavior). Only the genuinely never-sampleable bands (60m, VHF/UHF)
+ * render NO dot at all, and that distinction is the CONSUMER's (by band
+ * identity), not encoded by Map absence here. Do not collapse "absent key" to
+ * "omit the dot" for HF bands — that would blank the openness affordance for
+ * nearly every chip most of the time (a single RX samples one band at a time).
  */
 export function deriveBandActivity(ring: SlotRecord[], nowMs: number): Map<string, BandDot> {
   const inScope = slotsInScope(ring, nowMs);
