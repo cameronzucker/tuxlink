@@ -2,7 +2,9 @@
 //! frequency/normalize/schedule helpers.
 
 pub mod capture;
+pub mod commands;
 pub mod freq;
+pub mod model;
 pub mod normalize;
 pub mod schedule;
 

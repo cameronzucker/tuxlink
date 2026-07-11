@@ -29,7 +29,8 @@ pub struct SolarSnapshot {
     pub indices: Option<SolarIndices>,
     /// Unix ms when captured (drives the freshness caption).
     pub updated_at_ms: u64,
-    /// Provenance: `"swpc"` (internet) | `"rf-wwv"` (over radio).
+    /// Provenance: `"swpc"` (internet) | `"rf-wwv"` (over radio, Winlink catalog
+    /// text) | `"rf-wwv-voice"` (off-air WWV voice decode, no radio-network hop).
     pub source: String,
     /// True when this update also refreshed the SSN forecast table (the internet
     /// smoothed-SSN path always does; an RF reply does too, via a derived value).
