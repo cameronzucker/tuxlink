@@ -428,20 +428,39 @@ impl Ft8ListenerState {
 
     /// Full stop protocol (spec §Lifecycle ownership). Blocking-context
     /// only — the Tauri command wraps it in spawn_blocking (T17).
+    ///
+    /// Gate E P1 fix (tuxlink-qea6r): `capture-wedged` is a sticky, terminal
+    /// axis — spec §Lifecycle ownership: "recovery from capture-wedged is
+    /// app restart"; `start()` already refuses to run from it (:378-384).
+    /// `stop()` has no such refusal (a defensive/second stop() is legitimate
+    /// — it must still join whatever handles are live), so instead it seeds
+    /// its local `wedged` decision from the PRE-CALL axis: a call that finds
+    /// the axis already wedged stays wedged even if every handle it
+    /// personally joins happens to land inside its bound.
     pub fn stop(&self) {
-        {
+        let was_wedged = {
             let mut g = self.lock_inner();
             if matches!(g.machine.axis(), ServiceAxis::Stopped) {
                 return;
             }
+            let was_wedged = matches!(
+                g.machine.axis(),
+                ServiceAxis::Blocked(BlockedReason::CaptureWedged)
+            );
             g.machine.on_stopping();
-        }
+            was_wedged
+        };
         self.emit_listening_change();
         self.stop_request.store(true, Ordering::SeqCst);
         self.capture_abort.store(true, Ordering::SeqCst);
         self.unpark_supervisor();
 
-        let mut wedged = false;
+        // Seeded from the pre-call axis (see the fn doc comment) rather than
+        // unconditional `false` — the prior bug: a wedge recorded by a
+        // DIFFERENT path (e.g. `pause_capture_for_yield`'s force-detach) was
+        // invisible to a later stop() call, which could then silently heal
+        // the axis back to `Stopped`.
+        let mut wedged = was_wedged;
 
         // 1. capture (if present): ≤ 2 s; PCM closes on drop.
         let capture = self.handles.lock().unwrap_or_else(|p| p.into_inner()).capture.take();
@@ -779,12 +798,37 @@ impl Ft8ListenerState {
     /// Step 8 / 8′ (spec §Lifecycle): capture is spawned on every entry to
     /// listening; decode + the channel are spawned ONCE and survive yield
     /// and device loss (only stop() drops the master sender).
+    ///
+    /// Gate E P2 fix (tuxlink-qea6r): the last `interrupted()` check the
+    /// start sequence makes before calling this function (immediately
+    /// above, post-step-7 PCM-open) runs BEFORE this function's lock
+    /// acquisition, so a stop() landing in that gap used to be lost — this
+    /// function would still register live handles that stop() (already
+    /// past its own capture/decode/supervisor takes) never joins, orphaning
+    /// them. `handles` is the one lock both sides touch (stop() take()s
+    /// capture/decode/supervisor under it, one field at a time; see
+    /// `stop()`), so it is the serialization point: re-check `stop_request`
+    /// immediately after taking it, before any handle is registered or
+    /// `capture_abort` is reset, and hold it for the whole decision — both
+    /// handles are assigned before the lock is released.
     fn spawn_workers(
         self: &Arc<Self>,
         source: Box<dyn crate::ft8::traits::SampleSource>,
         resume: bool,
     ) {
         let mut h = self.handles.lock().unwrap_or_else(|p| p.into_inner());
+        if self.stop_request.load(Ordering::SeqCst) {
+            // A stop() call landed between the caller's interrupted() check
+            // and this lock acquisition. Close the PCM and bail without
+            // spawning or touching capture_abort/master_tx — stop() already
+            // owns those (it set capture_abort BEFORE taking this lock's
+            // first field, and will drop master_tx itself). Not spawning
+            // means stop()'s capture/decode/supervisor take()s — whichever
+            // haven't already run — simply find nothing to join, same as any
+            // other never-started sequence.
+            drop(source);
+            return;
+        }
         // Reap a finished capture handle (post-yield / post-device-loss).
         if let Some(old) = h.capture.take() {
             if old.is_finished() {
@@ -2038,6 +2082,110 @@ mod tests {
         releaser.join().unwrap();
         assert_eq!(state.axis(), ServiceAxis::Stopped, "no capture-wedged");
         assert_thread_liveness(&state);
+        let _ = std::fs::remove_dir_all(state.platform_tmp_for_test());
+    }
+
+    /// Gate E P1 regression (tuxlink-qea6r): stop() must never heal a
+    /// wedged axis back to `Stopped`. Force a REAL wedge — a Park'd capture
+    /// read past `CAPTURE_JOIN`'s 2 s bound, the same mechanism as
+    /// `arbiter.rs`'s `wedged_capture_join_yields_capture_wedged_error` —
+    /// via stop()'s OWN capture join overrunning, then call stop() again.
+    /// Pre-fix, the second call's local `wedged` flag reset to `false` and
+    /// found nothing left to join (capture + decode were already reaped by
+    /// the first call), so it silently wrote `Stopped` over a still-wedged
+    /// axis.
+    #[test]
+    fn stop_preserves_capture_wedged_across_repeated_calls() {
+        let p = FakePlatform::happy();
+        let state = test_state(p.clone(), cfg_with_device());
+        run_sequence(&state);
+        assert_eq!(state.axis(), ServiceAxis::Listening);
+
+        // Park the capture read: the abort flag cannot reach a blocked read
+        // (testutil::SourceStep::Park), so stop()'s own capture join
+        // overruns CAPTURE_JOIN and force-detaches.
+        let park = crate::ft8::testutil::park_flag();
+        p.source_steps
+            .lock()
+            .unwrap()
+            .push_back(crate::ft8::testutil::SourceStep::Park(park.clone()));
+        std::thread::sleep(std::time::Duration::from_millis(100)); // capture enters the parked read
+
+        // Release the park ~2.5 s in — comfortably past CAPTURE_JOIN's 2 s
+        // bound (a wide-enough margin that scheduler jitter on a loaded CI
+        // runner can't make the release race the join_bounded deadline
+        // check), so the capture join reliably overruns first — from a
+        // helper thread. Without this, the detached zombie keeps holding its
+        // own `tx` clone forever and decode's SEPARATE 16 s join bound would
+        // also overrun (a second, unrelated wedge this test isn't about).
+        let releaser = {
+            let park = park.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(2_500));
+                park.store(false, Ordering::SeqCst);
+            })
+        };
+        state.stop();
+        releaser.join().unwrap();
+        assert_eq!(
+            state.axis(),
+            ServiceAxis::Blocked(BlockedReason::CaptureWedged),
+            "capture join overran its bound at stop() — axis must read wedged"
+        );
+
+        // The regression: a second stop() call must NOT heal the axis.
+        state.stop();
+        assert_eq!(
+            state.axis(),
+            ServiceAxis::Blocked(BlockedReason::CaptureWedged),
+            "a second stop() call must not heal a wedged axis back to Stopped"
+        );
+
+        let _ = std::fs::remove_dir_all(state.platform_tmp_for_test());
+    }
+
+    /// Gate E P2 regression (tuxlink-qea6r): spawn_workers must re-check
+    /// `stop_request` under the SAME `handles` lock stop() takes when it
+    /// take()s — the one point both sides touch. This pins the deterministic
+    /// half of the fix: a `stop_request` that is already set by the time
+    /// spawn_workers acquires the lock must abort cleanly (no spawn, no
+    /// `capture_abort` reset, no channel registration).
+    ///
+    /// What this test does NOT pin: calling `spawn_workers` directly with
+    /// `stop_request` pre-set is not a true concurrent race against a live
+    /// `stop()` call landing inside the interrupted()-check→lock-acquisition
+    /// gap — this crate's fakes have no seam to pause `spawn_workers`
+    /// mid-acquisition, so the narrow interleaving window itself (the
+    /// TOCTOU the finding describes) is not independently exercised here,
+    /// only the recheck's effect once the flag is observed.
+    #[test]
+    fn spawn_workers_aborts_without_spawning_when_stop_already_requested() {
+        let p = FakePlatform::happy();
+        let state = test_state(p.clone(), cfg_with_device());
+        let source = p.open_source("hw:1,0").expect("fake source always opens");
+
+        // Simulates stop() having already run its pre-lock store()s (the
+        // first three lines of stop()'s body) before spawn_workers reaches
+        // the handles lock.
+        state.stop_request.store(true, Ordering::SeqCst);
+        state.capture_abort.store(true, Ordering::SeqCst);
+
+        state.spawn_workers(source, false);
+
+        let h = state.handles.lock().unwrap();
+        assert!(h.capture.is_none(), "no capture thread once stop_request is observed");
+        assert!(h.decode.is_none(), "no decode thread once stop_request is observed");
+        drop(h);
+        assert!(
+            state.capture_abort.load(Ordering::SeqCst),
+            "spawn_workers must not clear capture_abort once stop_request is observed \
+             — stop() owns that flag from this point on"
+        );
+        assert!(
+            state.master_tx.lock().unwrap().is_none(),
+            "no channel/master_tx registered once stop_request is observed"
+        );
+
         let _ = std::fs::remove_dir_all(state.platform_tmp_for_test());
     }
 
