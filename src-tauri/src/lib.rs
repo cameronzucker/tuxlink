@@ -2276,6 +2276,8 @@ pub fn run() {
             crate::ft8::commands::ft8_set_band,
             crate::ft8::commands::ft8_set_sweep,
             crate::ft8::commands::ft8_set_sweep_bands,
+            crate::ft8::commands::ft8_device_meter,
+            crate::ft8::commands::ft8_list_devices,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -9,6 +9,8 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::config::{self, Config};
+use crate::ft8::meter::{open_and_meter, MeterDto};
+use crate::ft8::records::AudioDeviceChoice;
 use crate::ft8::service::{Ft8ListenerState, Ft8Snapshot};
 use crate::winlink::ax25::devices::StableAudioId;
 use tuxlink_capture::state::{BlockedReason, ServiceAxis};
@@ -195,6 +197,55 @@ pub(crate) fn ft8_set_sweep_bands_inner(
     Ok(())
 }
 
+/// `ft8_device_meter` (spec §NewCommands). The `stable_id` arg is the
+/// [`StableAudioId::value`] string of a currently-enumerated capture device
+/// (the setup rows pass the value the picker showed). Resolves it against a
+/// FRESH enumeration (never a cached name — the card index can change), takes
+/// the meter reservation, opens the device, and reads a short level window.
+///
+/// Error mapping: no enumerated match → `device-not-found`; the listener holds
+/// the device (reservation) → `device-reserved`. A device that is open-but-busy
+/// or errors surfaces as an `Ok(MeterDto)` with `state:"in-use"`/`"error"` (the
+/// live bar shows the condition) — NEVER an unhandled EBUSY.
+pub(crate) fn ft8_device_meter_inner(
+    state: &Arc<Ft8ListenerState>,
+    stable_id: String,
+) -> Result<MeterDto, Ft8CmdError> {
+    // Fresh enumeration (≤1 s; sysfs read) — resolve the value to a live device.
+    let Some(dev) = state
+        .platform
+        .enumerate_capture()
+        .into_iter()
+        .find(|d| d.stable_id.value == stable_id)
+    else {
+        return Err(Ft8CmdError::new(
+            "device-not-found",
+            format!("no capture device with stable id {stable_id:?}"),
+        ));
+    };
+    // Reservation check: if the listener claimed priority, refuse rather than
+    // race its open (spec §NewCommands reservation rule). Hold the guard across
+    // the whole ALSA session so a concurrent listener acquire_priority waits for
+    // us to finish instead of EBUSY-ing its open into a spurious pause.
+    let Some(_meter_guard) = state.reservation().try_meter(&dev.stable_id) else {
+        return Err(Ft8CmdError::new(
+            "device-reserved",
+            "the FT8 listener is opening this device",
+        ));
+    };
+    Ok(open_and_meter(&dev.alsa_hw))
+}
+
+/// `ft8_list_devices` (spec §NewCommands). The same enumeration the snapshot's
+/// `availableDevices` uses, incl. `alsaHw`. Enumeration is infallible; the
+/// `Ft8CmdError` result arm exists only for the `spawn_blocking` panic path in
+/// the shell.
+pub(crate) fn ft8_list_devices_inner(
+    state: &Arc<Ft8ListenerState>,
+) -> Result<Vec<AudioDeviceChoice>, Ft8CmdError> {
+    Ok(state.platform.enumerate_capture())
+}
+
 // ---- tauri shells -------------------------------------------------------
 
 #[tauri::command]
@@ -271,6 +322,30 @@ pub async fn ft8_set_sweep_bands(
         .map_err(|e| {
             Ft8CmdError::new("internal-error", format!("set-sweep-bands task failed: {e}"))
         })?
+}
+
+#[tauri::command]
+pub async fn ft8_device_meter(
+    state: State<'_, Arc<Ft8ListenerState>>,
+    stable_id: String,
+) -> Result<MeterDto, Ft8CmdError> {
+    let s = (*state).clone();
+    // spawn_blocking: the meter opens ALSA + reads a ~250 ms window — blocking
+    // work that must stay off the async runtime. A JoinError is a panicked task
+    // (infrastructure), so it maps to `internal-error`, not a device tag.
+    tauri::async_runtime::spawn_blocking(move || ft8_device_meter_inner(&s, stable_id))
+        .await
+        .map_err(|e| Ft8CmdError::new("internal-error", format!("meter task failed: {e}")))?
+}
+
+#[tauri::command]
+pub async fn ft8_list_devices(
+    state: State<'_, Arc<Ft8ListenerState>>,
+) -> Result<Vec<AudioDeviceChoice>, Ft8CmdError> {
+    let s = (*state).clone();
+    tauri::async_runtime::spawn_blocking(move || ft8_list_devices_inner(&s))
+        .await
+        .map_err(|e| Ft8CmdError::new("internal-error", format!("list-devices task failed: {e}")))?
 }
 
 #[cfg(test)]
@@ -552,5 +627,46 @@ mod tests {
         assert_eq!(obj.len(), 2, "exactly kind + detail, no extra fields");
         assert_eq!(v["kind"], "invalid-band");
         assert_eq!(v["detail"], "\"60m\" is not an FT8 band");
+    }
+
+    // ---- ft8_device_meter + ft8_list_devices (spec §NewCommands) -----------
+
+    /// A `stable_id` that matches no enumerated device → `device-not-found`
+    /// (before any ALSA open is attempted).
+    #[test]
+    fn device_meter_unknown_stable_id_is_not_found() {
+        let (_env, _dir) = seed_config();
+        let state = state_with(Ft8Config::default());
+        let e = ft8_device_meter_inner(&state, "nonexistent-card-99".into()).unwrap_err();
+        assert_eq!(e.kind, "device-not-found");
+    }
+
+    /// While the listener holds priority on the device, a concurrent meter is
+    /// refused with `device-reserved` — it never reaches the ALSA open, so it
+    /// cannot race the listener into a spurious pause. This is the command-level
+    /// face of the reservation barrier (service.rs owns the barrier-race unit).
+    #[test]
+    fn device_meter_is_reserved_while_listener_holds_priority() {
+        let (_env, _dir) = seed_config();
+        let state = state_with(Ft8Config::default());
+        // FakePlatform::happy() enumerates one device: value "usb-DRA-100-00".
+        let id = test_stable_id();
+        let _prio = state.reservation().acquire_priority(&id);
+        let e = ft8_device_meter_inner(&state, id.value.clone()).unwrap_err();
+        assert_eq!(e.kind, "device-reserved");
+    }
+
+    /// `ft8_list_devices` returns the same shape as the snapshot's
+    /// `availableDevices`, including the camelCase `alsaHw` key.
+    #[test]
+    fn list_devices_returns_enumeration_with_alsa_hw() {
+        let (_env, _dir) = seed_config();
+        let state = state_with(Ft8Config::default());
+        let devices = ft8_list_devices_inner(&state).unwrap();
+        assert_eq!(devices.len(), 1, "FakePlatform::happy enumerates one device");
+        assert_eq!(devices[0].alsa_hw, "hw:1,0");
+        let v = serde_json::to_value(&devices).unwrap();
+        assert_eq!(v[0]["alsaHw"], "hw:1,0", "camelCase wire key");
+        assert!(v[0]["stableId"].is_object(), "stable id serialized as {{kind,value}}");
     }
 }
