@@ -10,11 +10,11 @@
 //! AT MOST ONCE per thread (the arbiter's rig_session takes only the arbiter
 //! lock; rig-touching helpers own the rig lock themselves — T14).
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::SyncSender;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -26,7 +26,7 @@ use crate::ft8::records::{
     ServiceAxisDto, SlotRecord,
 };
 use crate::ft8::traits::{DecodeEngine, Ft8Platform, SourceError};
-use crate::winlink::ax25::devices::ResolvedManagedDevice;
+use crate::winlink::ax25::devices::{ResolvedManagedDevice, StableAudioId};
 use serde::Serialize;
 use tuxlink_capture::state::{BlockedReason, ListenerMachine, ServiceAxis};
 
@@ -56,6 +56,128 @@ fn join_bounded(handle: JoinHandle<()>, timeout: Duration) -> Result<(), JoinHan
     }
     let _ = handle.join();
     Ok(())
+}
+
+// ---- device reservation (spec §NewCommands reservation rule) ---------------
+//
+// The setup-surface live meter (`ft8_device_meter`) and the listener start
+// sequence both open the SAME ALSA capture device. Two simultaneous opens of a
+// `hw:` device race to EBUSY; if the listener loses that race its open returns
+// `SourceError::Busy` and the service flips to `Yielded`/paused (step 7's
+// `on_pause` arm) — a spurious pause caused by a transient UI meter read. This
+// arbiter makes the LISTENER always win: it claims priority (blocking new
+// meters) and waits — bounded — for any in-flight meter read to finish before
+// it opens, so the open never hits that EBUSY.
+//
+// Lock discipline (mirrors the module's pinned rule): this is a DEDICATED leaf
+// mutex + condvar, NOT the `Inner` state lock and NOT the rig/arbiter locks. It
+// is acquired at most once per thread and is NEVER held across an ALSA open, an
+// ALSA read, or `open_source` — only across the O(1) flag flips. A meter read
+// and a priority acquire therefore cannot deadlock, and the acquire is bounded
+// so it can never wedge the start sequence.
+
+/// Bound on how long the listener's [`DeviceReservation::acquire_priority`]
+/// waits for an in-flight meter read to release before it proceeds to open the
+/// device anyway. Chosen > the meter's ~150 ms measurement window so a meter
+/// that started first releases in time and the listener wins cleanly. If a
+/// (buggy) meter overruns the bound, the listener still proceeds — worst case
+/// its own open hits `Busy` and pauses (recoverable), never a wedge.
+pub(crate) const RESERVATION_ACQUIRE_BOUND: Duration = Duration::from_millis(250);
+
+#[derive(Default)]
+struct ReservState {
+    /// The listener has claimed (or is claiming) this device: new meters are
+    /// refused. Set by `acquire_priority`, cleared when its guard drops.
+    listener_priority: bool,
+    /// A meter read is in flight on this device. Set by `try_meter`, cleared
+    /// when its guard drops; `acquire_priority` waits on this.
+    meter_active: bool,
+}
+
+/// Per-device open arbiter between the live meter and the listener, keyed by
+/// [`StableAudioId`]. See the module comment above for the invariant + the
+/// lock discipline. `Default` yields an empty map (no device reserved).
+#[derive(Default)]
+pub struct DeviceReservation {
+    inner: Mutex<HashMap<StableAudioId, ReservState>>,
+    cv: Condvar,
+}
+
+/// RAII: a meter read is in flight while this is live. Drop releases the
+/// device and wakes any waiting `acquire_priority`.
+pub struct MeterReservation<'a> {
+    resv: &'a DeviceReservation,
+    id: StableAudioId,
+}
+
+impl Drop for MeterReservation<'_> {
+    fn drop(&mut self) {
+        let mut map = self.resv.inner.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(s) = map.get_mut(&self.id) {
+            s.meter_active = false;
+        }
+        drop(map);
+        self.resv.cv.notify_all();
+    }
+}
+
+/// RAII: the listener holds priority on the device while this is live (across
+/// the step-7 `open_source` call). Drop releases priority so meters resume.
+pub struct PriorityReservation<'a> {
+    resv: &'a DeviceReservation,
+    id: StableAudioId,
+}
+
+impl Drop for PriorityReservation<'_> {
+    fn drop(&mut self) {
+        let mut map = self.resv.inner.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(s) = map.get_mut(&self.id) {
+            s.listener_priority = false;
+        }
+        drop(map);
+        self.resv.cv.notify_all();
+    }
+}
+
+impl DeviceReservation {
+    /// Meter path. Reserve the device for a short read UNLESS the listener has
+    /// claimed priority — then return `None`, which the meter command maps to
+    /// `device-reserved` (NOT an EBUSY that would pause the service). While the
+    /// returned guard is live, `meter_active` is set so a concurrent
+    /// `acquire_priority` waits for it.
+    pub fn try_meter(&self, id: &StableAudioId) -> Option<MeterReservation<'_>> {
+        let mut map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        let s = map.entry(id.clone()).or_default();
+        if s.listener_priority {
+            return None;
+        }
+        s.meter_active = true;
+        Some(MeterReservation { resv: self, id: id.clone() })
+    }
+
+    /// Listener path (start sequence step 7). Claim priority immediately
+    /// (refusing new meters), then wait — bounded by [`RESERVATION_ACQUIRE_BOUND`]
+    /// — for any in-flight meter read to finish before returning. ALWAYS
+    /// returns a guard: the listener wins. The bound guarantees this call can
+    /// never wedge the start sequence. The caller holds the returned guard
+    /// across `open_source` and drops it when the sequence returns.
+    pub fn acquire_priority(&self, id: &StableAudioId) -> PriorityReservation<'_> {
+        let mut map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        map.entry(id.clone()).or_default().listener_priority = true;
+        let deadline = Instant::now() + RESERVATION_ACQUIRE_BOUND;
+        while map.get(id).map(|s| s.meter_active).unwrap_or(false) {
+            let now = Instant::now();
+            if now >= deadline {
+                break; // bound reached — proceed regardless (listener wins)
+            }
+            let (g, _timed_out) = self
+                .cv
+                .wait_timeout(map, deadline - now)
+                .unwrap_or_else(|p| p.into_inner());
+            map = g;
+        }
+        PriorityReservation { resv: self, id: id.clone() }
+    }
 }
 
 /// Capture join overran at pause: the arbiter maps this to
@@ -276,6 +398,10 @@ pub struct Ft8ListenerState {
     /// The supervisor's Thread handle for park_timeout interruption.
     supervisor_thread: Mutex<Option<std::thread::Thread>>,
     pipe_fd_baseline: Mutex<Option<usize>>,
+    /// Device-open arbiter between the setup-surface live meter and the
+    /// listener start sequence (spec §NewCommands reservation rule). See
+    /// [`DeviceReservation`].
+    reservation: DeviceReservation,
 }
 
 impl Ft8ListenerState {
@@ -315,7 +441,14 @@ impl Ft8ListenerState {
             slot_boundaries: AtomicU64::new(0),
             supervisor_thread: Mutex::new(None),
             pipe_fd_baseline: Mutex::new(None),
+            reservation: DeviceReservation::default(),
         })
+    }
+
+    /// The device-open arbiter (spec §NewCommands reservation rule). The meter
+    /// command calls `try_meter`; the start sequence calls `acquire_priority`.
+    pub(crate) fn reservation(&self) -> &DeviceReservation {
+        &self.reservation
     }
 
     pub fn hold(&self) -> Arc<SharedHold> {
@@ -689,7 +822,15 @@ impl Ft8ListenerState {
             return;
         }
 
-        // Step 7: ALSA open (hw:).
+        // Step 7: ALSA open (hw:). Claim the device reservation IMMEDIATELY
+        // before the open (spec §NewCommands reservation rule): this blocks new
+        // meter reads and waits — bounded ≤250 ms — for any in-flight meter to
+        // release, so the open below cannot lose the EBUSY race to a transient
+        // UI meter and spuriously flip the service to Yielded. The guard is a
+        // dedicated leaf lock (never the Inner lock) and is held across the
+        // open; it drops when this sequence returns, after which the capture
+        // thread owns the PCM and a meter open naturally maps to `in-use`.
+        let _device_priority = self.reservation.acquire_priority(&stable_id);
         let source = match self.platform.open_source(&resolved.alsa_hw) {
             Ok(s) => s,
             Err(SourceError::Busy) => {
@@ -1718,6 +1859,88 @@ mod tests {
 
     fn run_sequence(state: &Arc<Ft8ListenerState>) {
         state.test_run_sequence();
+    }
+
+    // ---- device reservation (spec §NewCommands reservation rule) -----------
+    //
+    // The trickiest concurrency unit in Phase A: barrier-synchronized (NOT a
+    // naive join) so the meter read is provably in flight when the listener
+    // acquires. Asserts the listener WINS and a concurrent meter is refused
+    // with the mapping that becomes `device-reserved`, never an EBUSY that
+    // would flip the service to `yielded`.
+    #[test]
+    fn listener_open_wins_reservation_over_meter() {
+        use std::sync::Barrier;
+
+        let resv = Arc::new(DeviceReservation::default());
+        let id = StableAudioId { kind: StableIdKind::ByIdSymlink, value: "usb-DRA-100-00".into() };
+        let barrier = Arc::new(Barrier::new(2));
+
+        // Thread 1 (meter): acquire a meter reservation, then hold it across a
+        // short in-flight read (~50 ms) before releasing.
+        let (r1, id1, b1) = (resv.clone(), id.clone(), barrier.clone());
+        let meter = std::thread::spawn(move || {
+            let g = r1.try_meter(&id1).expect("meter reserves a free device");
+            b1.wait(); // rendezvous: the meter guard is HELD past this point
+            std::thread::sleep(Duration::from_millis(50));
+            drop(g); // in-flight read finishes → releases the device
+        });
+
+        // Thread 2 (this thread) = listener.
+        barrier.wait(); // meter is guaranteed in flight before we acquire
+        let t0 = Instant::now();
+        let prio = resv.acquire_priority(&id); // waits for the meter, then WINS
+        let waited = t0.elapsed();
+
+        // The listener acquired (a guard, not an error / not a Busy) within the
+        // bound — proof it never blocks the start sequence and its subsequent
+        // open cannot hit the EBUSY→yielded arm because of a meter read.
+        assert!(
+            waited < RESERVATION_ACQUIRE_BOUND,
+            "listener acquired within the bound (never wedges): {waited:?}"
+        );
+
+        // While the listener holds priority, a concurrent meter is refused. The
+        // meter command maps this `None` to `device-reserved` — the only two
+        // outcomes the concurrent meter may see are `device-reserved` (here) or,
+        // once the device is actually open, `device-in-use`; never an EBUSY that
+        // maps to `yielded`.
+        assert!(
+            resv.try_meter(&id).is_none(),
+            "concurrent meter refused (→ device-reserved) while the listener holds priority"
+        );
+
+        drop(prio); // listener releases (sequence returns)
+        meter.join().unwrap();
+
+        // After the listener releases, meters resume normally.
+        assert!(
+            resv.try_meter(&id).is_some(),
+            "reservation clears once the listener releases priority"
+        );
+    }
+
+    // A meter reservation alone does NOT block a later meter (only the listener
+    // does): two sequential meter reads on a free device both succeed.
+    #[test]
+    fn meter_reservation_does_not_block_a_later_meter() {
+        let resv = DeviceReservation::default();
+        let id = StableAudioId { kind: StableIdKind::ByIdSymlink, value: "usb-DRA-100-00".into() };
+        {
+            let _g = resv.try_meter(&id).expect("first meter reserves");
+        } // released
+        assert!(resv.try_meter(&id).is_some(), "a second meter reserves after the first released");
+    }
+
+    // With no in-flight meter, acquire_priority returns effectively immediately
+    // (well under the bound) — the common start-sequence case adds no latency.
+    #[test]
+    fn acquire_priority_is_immediate_when_no_meter_in_flight() {
+        let resv = DeviceReservation::default();
+        let id = StableAudioId { kind: StableIdKind::ByIdSymlink, value: "usb-DRA-100-00".into() };
+        let t0 = Instant::now();
+        let _prio = resv.acquire_priority(&id);
+        assert!(t0.elapsed() < Duration::from_millis(50), "no wait when the device is free");
     }
 
     // Arrow 1: jt9 absent → blocked(wsjtx-absent); the snapshot still
