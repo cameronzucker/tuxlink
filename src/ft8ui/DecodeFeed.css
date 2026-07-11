@@ -1,0 +1,59 @@
+/* DecodeFeed.css — Task C11. Standalone chronological decode table; the
+ * eventual strip host (LiveBandStrip, Task C7) positions it beside the
+ * waterfall. Tokens match the rest of the ft8ui + catalog component
+ * families (App.css palette). */
+
+.decode-feed {
+  overflow: auto;
+  min-height: 0;
+}
+
+.decode-feed--empty {
+  padding: 10px 12px;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+.decode-feed table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.decode-feed th {
+  text-align: left;
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  padding: 6px 10px 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.decode-feed td {
+  padding: 4px 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.decode-feed__message {
+  color: var(--text);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.decode-feed__db--good {
+  color: var(--reach-good);
+}
+
+.decode-feed__db--mid {
+  color: var(--reach-marginal);
+}
+
+.decode-feed__db--weak {
+  color: var(--reach-unlikely);
+}

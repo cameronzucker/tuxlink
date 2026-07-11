@@ -207,6 +207,46 @@ describe('StationFinderMap (Leaflet)', () => {
   });
 });
 
+describe('StationFinderMap layer control (tuxlink-b026z.4 Task C11, §Scope map layer-control)', () => {
+  it('renders a layer control housing a Gateways entry ONLY — no FT-8/heat entry (L5 owns that)', async () => {
+    await renderMap(
+      <StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
+    );
+    const control = screen.getByTestId('map-layer-control');
+    expect(control).toBeInTheDocument();
+    expect(screen.getByTestId('map-layer-gateways')).toBeInTheDocument();
+    expect(control.textContent).toMatch(/gateways/i);
+    // No dead/disabled heat-layer control ships at L3 — the housing carries
+    // exactly one entry until L5 adds its own.
+    expect(control.textContent).not.toMatch(/heat|ft-?8/i);
+    expect(control.querySelectorAll('button')).toHaveLength(1);
+  });
+
+  it('Gateways entry defaults on and is a real, non-transparent toggle (aria-pressed truthy, opaque background)', async () => {
+    await renderMap(
+      <StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
+    );
+    const btn = screen.getByTestId('map-layer-gateways');
+    expect(btn).toHaveAttribute('aria-pressed', 'true');
+    expect(btn.className).toContain('on');
+  });
+
+  it('toggling Gateways off hides the whole station-pin layer group; toggling back on restores it', async () => {
+    await renderMap(
+      <StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
+    );
+    expect(stationPins()).toHaveLength(2); // DM34oa + EN34 (NOGRID dropped)
+
+    fireEvent.click(screen.getByTestId('map-layer-gateways'));
+    expect(screen.getByTestId('map-layer-gateways')).toHaveAttribute('aria-pressed', 'false');
+    expect(stationPins()).toHaveLength(0); // group removed from the map entirely
+
+    fireEvent.click(screen.getByTestId('map-layer-gateways'));
+    expect(screen.getByTestId('map-layer-gateways')).toHaveAttribute('aria-pressed', 'true');
+    expect(stationPins()).toHaveLength(2); // restored, same station set
+  });
+});
+
 describe('StationFinderMap viewport persistence (tuxlink-dwzu)', () => {
   const KEY = 'tuxlink:map-viewport:station-finder';
 

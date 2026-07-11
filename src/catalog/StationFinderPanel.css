@@ -496,6 +496,48 @@
   border: 3px solid var(--accent, #2f86f0);
   box-shadow: 0 0 0 3px rgba(47, 134, 240, 0.3);
 }
+/* ── map layer-control housing (tuxlink-b026z.4 Task C11, §Scope map
+   layer-control) — Gateways entry ONLY; the FT-8 heat entry is L5-owned and
+   is not present here (no dead toggle). Non-transparent pill button (D3
+   gate): `.station-finder__layer-btn` carries an opaque background, never
+   bare/transparent chrome. ────────────────────────────────────────────── */
+.station-finder__layers {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  z-index: 7;
+  display: flex;
+  gap: 6px;
+  font-size: 10.5px;
+  background: rgba(8, 16, 24, 0.74);
+  border: 1px solid var(--border, #243a52);
+  border-radius: 6px;
+  padding: 5px 7px;
+}
+.station-finder__layer-btn {
+  font: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-dim, #94a0ad);
+  background: var(--surface-2, #131f2b);
+  border: 1px solid var(--border-strong, #2c3a47);
+  border-radius: 12px;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+.station-finder__layer-btn.on {
+  color: var(--text, #eaf3fb);
+  border-color: var(--reach-good, #41ba6c);
+}
+.station-finder__layer-swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--m-vara, #4aa3ff);
+}
+
 .station-finder__reachkey {
   position: absolute;
   left: 10px;
@@ -784,6 +826,104 @@
 .station-finder__save:disabled {
   opacity: 0.3;
   cursor: not-allowed;
+}
+
+/* ── BandMatrix (tuxlink-b026z.4 Task C3, spec §Rail) ───────────────────
+   One row per finder HF band + VHF: band label · openness dot · VOACAP
+   bar+% · dial chips. Supersedes the old .station-finder__prop (path
+   forecast bars) + .station-finder__ch (channels-grouped-by-mode) blocks —
+   those classes stay defined above for any other consumer, but StationRail
+   no longer renders them. */
+.station-finder__bandmatrix {
+  flex: 1;
+}
+.station-finder__bmheader {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 13px 7px;
+  font-size: 11px;
+  color: var(--faint, #6f8aa3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.station-finder__bmrow {
+  display: grid;
+  grid-template-columns: 40px 12px 100px 1fr;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 13px;
+  border-bottom: 1px solid #16293a;
+  min-height: 34px;
+}
+.station-finder__bmrow.is-best {
+  background: rgba(65, 186, 108, 0.06);
+}
+.station-finder__bmrow.is-best .station-finder__bn {
+  color: var(--text, #e8f1fa);
+  font-weight: 700;
+}
+.station-finder__bmrow.is-empty .station-finder__bmnone {
+  opacity: 0.55;
+}
+.station-finder__bmdotslot {
+  width: 7px;
+  height: 7px;
+  display: inline-block;
+}
+.station-finder__bmforecast {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.station-finder__bmforecast .station-finder__track {
+  flex: 1;
+}
+.station-finder__bmchips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.station-finder__bmchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.station-finder__chipuse {
+  font: inherit;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text, #e8f1fa);
+  background: var(--surface-2);
+  border: 1px solid var(--border2, #34556f);
+  border-radius: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.station-finder__chipuse:hover:not(:disabled) {
+  border-color: var(--accent, #2f86f0);
+}
+.station-finder__chipuse:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.station-finder__more {
+  font: inherit;
+  font-size: 11px;
+  color: var(--dim, #9fb6cc);
+  background: var(--surface-2);
+  border: 1px dashed var(--border2, #34556f);
+  border-radius: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.station-finder__bmnone {
+  font-size: 10.5px;
+  color: var(--faint, #6f8aa3);
 }
 
 /* ── FZ-M1 compact: stack map over rail on the rugged screen ───────────── */
