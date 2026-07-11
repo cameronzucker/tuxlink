@@ -11,20 +11,16 @@
 
 import { useEffect, useState, type CSSProperties } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { groupChannelsByMode, channelToDial, channelReliability } from './channelGrouping';
-import { rankedDialsFor } from './ranking';
-import { bestBandNow, relToTier, tierColorVar } from './reachability';
-import { bandLabel, bandForKhz, HF_BANDS } from './bandPlan';
-import { emitGatewayPrefill } from '../favorites/prefillEvent';
+import { BandMatrix } from './BandMatrix';
 import { distanceFromGrids, kmToMi } from './distance';
 import { gridToLatLon, type LatLon } from '../forms/position/maidenhead';
 import { LiveDecodesTab } from './LiveDecodesTab';
 import { useStatusData } from '../shell/useStatus';
-import type { Station, Channel } from './stationModel';
+import type { Station } from './stationModel';
 import type { PathPrediction } from './propagationApi';
 import type { PredictionStatus } from './useStationPrediction';
 import type { RadioMode, FavoriteDial } from '../favorites/types';
-import type { SlotRecord, DeclDto } from '../ft8ui/ft8Types';
+import type { SlotRecord, DeclDto, BandDot } from '../ft8ui/ft8Types';
 
 export interface StationRailProps {
   station: Station | null;
@@ -68,9 +64,16 @@ export interface StationRailProps {
    * (Task D1 wires the real map pan); never throws either way.
    */
   onPanToGrid?: (ll: LatLon) => void;
+  /**
+   * Live per-band FT-8 openness dots (design §Openness) for the Station tab's
+   * BandMatrix rows (tuxlink-b026z.4 Task C3) — `useFt8Listener().bandActivity`,
+   * itself Task B3's `deriveBandActivity` output. Optional so BandMatrix stays
+   * presentational pre-D1-wiring; omitting it renders every eligible row with
+   * a hollow no-data dot.
+   */
+  bandActivity?: Map<string, BandDot>;
 }
 
-const mhz = (khz: number): string => (khz / 1000).toFixed(3);
 const MODE_LABEL: Record<string, string> = {
   'vara-hf': 'VARA HF',
   'ardop-hf': 'ARDOP HF',
@@ -159,7 +162,7 @@ export function StationRail(props: StationRailProps) {
 
 /** The Station tab's content — unchanged from pre-tab-shell StationRail behavior. */
 function StationTabPane(props: StationRailProps) {
-  const { station, prediction, predictionStatus, operatorGrid, utcHour, activePrefillMode } = props;
+  const { station, prediction, predictionStatus, operatorGrid, utcHour } = props;
 
   // Task C6 (aim hero + magnetic declination, spec §Declination): the LIVE
   // operator grid — useStatusData().grid, NOT config_read (the tuxlink-fnzr
@@ -207,40 +210,6 @@ function StationTabPane(props: StationRailProps) {
   const bearing = prediction?.bearingDeg ?? (operatorGrid ? bearingFromGrids(operatorGrid, station.grid) : null);
   const distKm = prediction?.distanceKm ?? (operatorGrid ? distanceFromGrids(operatorGrid, station.grid) : null);
   const distMi = distKm != null ? Math.round(kmToMi(distKm)) : null;
-  const best = prediction ? bestBandNow(prediction, utcHour) : null;
-
-  const onUse = (channel: Channel) => {
-    const dial = channelToDial(station, channel);
-    if (!dial) return;
-    // tuxlink-8fkkk Task B: the QSY-on-fail walk needs the station's OTHER
-    // channels for this mode, ranked best-first. Compute them here where the
-    // station + prediction + utcHour are in scope and pass them alongside the
-    // primary dial.
-    //
-    // The clicked `dial` MUST be the PRIMARY candidate (index 0): the backend
-    // treats a non-empty `qsyCandidates` list as OVERRIDING the form's
-    // target/freq, so it dials candidates[0] first. `rankedDialsFor` returns
-    // channels ranked best-first (and capped), which may NOT be the clicked
-    // channel — and could even omit it under the cap. Force the clicked dial to
-    // the front, then append the ranked channels minus a duplicate of it, so
-    // "Use" on channel X always dials X first and only QSYs to others on
-    // failure.
-    const ranked = rankedDialsFor(station, dial.mode, prediction, utcHour);
-    const sameDial = (a: FavoriteDial, b: FavoriteDial) =>
-      a.gateway === b.gateway && a.freq === b.freq;
-    const candidates = [dial, ...ranked.filter((d) => !sameDial(d, dial))];
-    // Arm-on-demand (tuxlink-s0r1): AppShell opens the matching modem panel then
-    // prefills it. Fall back to a bare emit for an already-open panel in contexts
-    // that don't supply the handler (e.g. tests/standalone harness).
-    if (props.onUse) props.onUse(dial, candidates);
-    else emitGatewayPrefill(dial, candidates);
-  };
-
-  const onSave = (channel: Channel) => {
-    const dial = channelToDial(station, channel);
-    if (!dial || !props.onSaveFavorite) return;
-    props.onSaveFavorite(dial);
-  };
 
   return (
     <div className="station-finder__railpane" data-testid="rail-pane-station">
@@ -303,130 +272,21 @@ function StationTabPane(props: StationRailProps) {
         )}
       </div>
 
-      {/* Task C3 (BandMatrix mount, spec §Rail Station tab) mounts BandMatrix
-          here, below the aim hero — one row per HF band + VHF (openness dot ·
-          VOACAP bar+% · dial chips), superseding the two blocks immediately
-          below (path-forecast bars, then channels-grouped-by-mode) once C3
-          lands. Left intact for now — C5 preserves existing Station-tab
-          behavior verbatim; C3 owns removing/replacing them. */}
-      {predictionStatus === 'ok' && prediction ? (
-        <div className="station-finder__prop">
-          <h4>
-            Path forecast · you → {station.baseCallsign}
-            {best && <span className="station-finder__best">best now: {bandLabel(best.band)}</span>}
-          </h4>
-          {HF_BANDS.map((b) => {
-            const pc = prediction.channels.find((c) => bandForKhz(c.frequencyKhz) === b);
-            const rel = pc ? pc.relByHour[utcHour] ?? 0 : null;
-            return (
-              <div key={b} className={`station-finder__pbar${best?.band === b ? ' is-current' : ''}`}>
-                <span className="station-finder__bn">{bandLabel(b)}</span>
-                <div className="station-finder__track">
-                  <div
-                    className="station-finder__fill"
-                    style={{
-                      width: `${Math.round((rel ?? 0) * 100)}%`,
-                      // Colour the bar by reachability tier (good→green … skip→red),
-                      // matching the per-channel pip and mock D — not a static fill.
-                      background: rel != null ? tierColorVar(relToTier(rel)) : undefined,
-                    }}
-                  />
-                </div>
-                <span className="station-finder__pct">{rel != null ? `${Math.round(rel * 100)}%` : '—'}</span>
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="station-finder__prop station-finder__prop--degraded">
-          {predictionStatus === 'no-location'
-            ? 'Set your location in the status bar to see the path forecast.'
-            : 'Forecast unavailable — showing channels without reliability.'}
-        </div>
-      )}
-
-      <div className="station-finder__channels">
-        {groupChannelsByMode(station).map((group) => (
-          <div key={group.mode}>
-            <div className="station-finder__chh">
-              <span className={`station-finder__sw station-finder__sw--${group.mode}`} />
-              {MODE_LABEL[group.mode] ?? group.mode}
-              <span className="station-finder__chh-n">{group.channels.length} ch</span>
-            </div>
-            {group.channels.map((ch) => {
-              const rel = prediction ? channelReliability(ch, prediction, utcHour) : null;
-              const dialable = channelToDial(station, ch) != null;
-              // The matching modem is already open — purely informational now that
-              // Use → arms on demand (tuxlink-s0r1); kept for the "armed" affordance.
-              const active = activePrefillMode != null && ch.mode === activePrefillMode;
-              return (
-                <div
-                  key={`${ch.mode}-${ch.frequencyKhz}-${ch.ssid ?? ''}`}
-                  className={`station-finder__ch${rel?.tier === 'skip' ? ' is-dim' : ''}`}
-                >
-                  <span
-                    className="station-finder__rel"
-                    style={rel ? { background: `var(--reach-${rel.tier})` } : undefined}
-                  />
-                  <div>
-                    <div className="station-finder__f">{mhz(ch.frequencyKhz)} MHz</div>
-                    <div className="station-finder__sub">
-                      {ch.band === 'vhf-uhf'
-                        ? `VHF/UHF · local${ch.ssid ? ` · connect ${ch.ssid}` : ''}`
-                        : bandLabel(ch.band ?? '40m')}
-                    </div>
-                  </div>
-                  <span className="station-finder__q">
-                    {rel ? `${Math.round(rel.rel * 100)}%` : ch.band === 'vhf-uhf' ? 'LoS?' : '—'}
-                  </span>
-                  {props.onSaveFavorite && (() => {
-                    // Save / unsave this channel as a starred favorite (tuxlink-5016).
-                    // Only meaningful for dialable channels (a non-tuxlink mode has
-                    // no per-mode favorite to hold). The dial is non-null here
-                    // because dialable === (channelToDial != null).
-                    const saved = dialable && props.isSaved ? props.isSaved(channelToDial(station, ch)!) : false;
-                    return (
-                      <button
-                        type="button"
-                        data-testid={`save-${ch.mode}-${ch.frequencyKhz}`}
-                        className={`station-finder__save${saved ? ' is-saved' : ''}`}
-                        disabled={!dialable}
-                        aria-pressed={saved}
-                        title={
-                          !dialable
-                            ? 'No tuxlink modem for this mode'
-                            : saved
-                              ? 'Remove from favorites'
-                              : 'Save to favorites'
-                        }
-                        onClick={() => onSave(ch)}
-                      >
-                        {saved ? '★' : '☆'}
-                      </button>
-                    );
-                  })()}
-                  <button
-                    type="button"
-                    data-testid={`use-${ch.mode}-${ch.frequencyKhz}`}
-                    className="station-finder__use"
-                    disabled={!dialable}
-                    title={
-                      !dialable
-                        ? 'No tuxlink modem for this mode'
-                        : active
-                          ? `Prefill the open ${MODE_LABEL[ch.mode]} modem`
-                          : `Open the ${MODE_LABEL[ch.mode]} modem and prefill this channel`
-                    }
-                    onClick={() => onUse(ch)}
-                  >
-                    Use →
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        ))}
-      </div>
+      {/* Task C3 (BandMatrix mount, spec §Rail Station tab): one row per HF
+          band + VHF — openness dot · VOACAP bar+% · dial chips. Supersedes
+          the pre-C3 "path forecast" bars + "channels grouped by mode" list
+          (moved into BandMatrix verbatim — see BandMatrix.tsx for the
+          rankedDialsFor/channelToDial + candidates[0] + sibling-☆ contracts). */}
+      <BandMatrix
+        station={station}
+        prediction={prediction}
+        predictionStatus={predictionStatus}
+        utcHour={utcHour}
+        bandActivity={props.bandActivity}
+        onUse={props.onUse}
+        onSaveFavorite={props.onSaveFavorite}
+        isSaved={props.isSaved}
+      />
     </div>
   );
 }
