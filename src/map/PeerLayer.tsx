@@ -24,6 +24,7 @@ import L from 'leaflet';
 import { useLeafletMap } from './LeafletMapContext';
 import { useLeafletLayerGroup } from './leafletHooks';
 import { gridToLatLon } from '../forms/position/maidenhead';
+import { baseCallsign } from '../catalog/stationModel';
 import type { AggregatedPeer } from '../peers/peerModel';
 import './PeerLayer.css';
 
@@ -53,7 +54,7 @@ export interface PeerVisual {
 /// `visual`, with an escaped callsign label beneath it (mirrors the APRS pin's
 /// label idiom).
 function peerIcon(p: AggregatedPeer, selected: boolean, visual: PeerVisual): L.DivIcon {
-  const call = p.presentedCallsigns[0] ?? p.canonicalBase;
+  const call = p.callsign;
   const cls = [
     'peer-pin',
     visual.tierClass,
@@ -109,7 +110,7 @@ export function PeerLayer({
     if (enabled) {
       for (const p of peers) {
         if (!p.grid) continue; // rail-only (gridless/telnet-only) — no pin
-        if (liveAprsCallsigns?.has(p.canonicalBase.toUpperCase())) continue; // APRS sprite wins
+        if (liveAprsCallsigns?.has(baseCallsign(p.callsign))) continue; // APRS sprite wins
         const ll = gridToLatLon(p.grid);
         if (!ll) continue;
         const m = L.marker([ll.lat, ll.lon], { icon: peerIcon(p, p.id === selectedId, visualFor(p)) });

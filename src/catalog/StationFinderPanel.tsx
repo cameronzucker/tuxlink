@@ -293,11 +293,7 @@ export function StationFinderPanel({ onClose, activePrefillMode, onUse }: Statio
     if (!effectiveTypes.has('peer')) return [];
     const q = search.trim().toUpperCase();
     if (!q) return aggregatedPeers;
-    return aggregatedPeers.filter(
-      (p) =>
-        p.canonicalBase.toUpperCase().includes(q) ||
-        p.presentedCallsigns.some((c) => c.toUpperCase().includes(q)),
-    );
+    return aggregatedPeers.filter((p) => p.callsign.toUpperCase().includes(q));
   }, [aggregatedPeers, effectiveTypes, search]);
 
   // `predictReload` (bumped after a prefs save persists) also re-runs the map

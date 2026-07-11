@@ -13,15 +13,16 @@ import { STOPPED } from '../modem/types';
 // SITREP button calls invoke('compose_window_open'). useRecentGateways calls
 // contacts_recent_gateways; useModemStatus calls modem_get_status. Task 24 wired
 // the peer circle layer (gated on map_peers) into AprsPositionsMap, so it now
-// also calls peers_read + p2p_capabilities — return safe defaults (no peers,
-// every capability bit false) so those queries resolve a value instead of
-// throwing "Query data cannot be undefined" on every test.
+// also calls contacts_read + p2p_capabilities (T-E: usePeers re-sourced onto
+// contacts_read; peers_read died with the peers store) — return safe defaults
+// (no contacts, every capability bit false) so those queries resolve a value
+// instead of throwing "Query data cannot be undefined" on every test.
 const invokeMock = vi.hoisted(() =>
   vi.fn(async (cmd: string) => {
     if (cmd === 'basemap_list_packs') return { packs: [] };
     if (cmd === 'contacts_recent_gateways') return [];
     if (cmd === 'modem_get_status') return STOPPED;
-    if (cmd === 'peers_read') return { schema_version: 1, peers: [] };
+    if (cmd === 'contacts_read') return { schema_version: 2, contacts: [], groups: [] };
     if (cmd === 'p2p_capabilities') {
       return {
         peer_store: false, finder_peers: false, map_peers: false,

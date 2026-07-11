@@ -25,7 +25,7 @@ import { gridToLatLon } from '../forms/position/maidenhead';
 import { reportFrontendError } from '../frontendErrorLog';
 import { type ReachTier } from './reachability';
 import { stationKey } from './useReachabilityMap';
-import type { Station } from './stationModel';
+import { baseCallsign, type Station } from './stationModel';
 import { usePeers, useP2pCapabilities } from '../peers/usePeers';
 import { aggregatePeers, type AggregatedPeer } from '../peers/peerModel';
 
@@ -303,7 +303,7 @@ export function StationFinderMap(props: StationFinderMapProps) {
   const peerVisualFor = useCallback(
     (peer: AggregatedPeer): PeerVisual => {
       const tier = peer.grid
-        ? props.tiers.get(`${peer.canonicalBase.toUpperCase()}|${peer.grid}`)
+        ? props.tiers.get(`${baseCallsign(peer.callsign)}|${peer.grid}`)
         : undefined;
       if (!tier) return { tierClass: 'peer-pin--untiered', dashed: true };
       return { tierClass: `peer-pin--${tier}`, dashed: false };

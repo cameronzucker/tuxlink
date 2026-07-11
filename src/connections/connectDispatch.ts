@@ -133,7 +133,7 @@ export interface PeerDial {
   /** RF target callsign (Channel.target_callsign), or — for a telnet endpoint
    *  dial — the peer's callsign used in the login/handshake. */
   target: string;
-  /** Digipeater / relay path (peers/types Channel.via). Threaded into VARA's
+  /** Digipeater / relay path (contacts/types Channel.via). Threaded into VARA's
    *  `via` (`CONNECT … VIA …`) and packet's `path`; unused for ARDOP (no digi
    *  path in scope) and telnet. */
   via?: string[];
@@ -141,10 +141,10 @@ export interface PeerDial {
    *  tune. Threaded as `freqHz` into the VARA/ARDOP commands; unused for
    *  packet + telnet. */
   freqHz?: number;
-  /** Telnet peer endpoint host (peers/types Endpoint.host). Required for a
+  /** Telnet peer endpoint host (contacts/types Endpoint.host). Required for a
    *  p2p-telnet dial; unused for RF transports. */
   host?: string;
-  /** Telnet peer endpoint TCP port (peers/types Endpoint.port). */
+  /** Telnet peer endpoint TCP port (contacts/types Endpoint.port). */
   port?: number;
   /** Operator Maidenhead locator for the telnet B2F handshake; unused for RF. */
   locator?: string;

@@ -25,7 +25,7 @@ import type {
   ChannelTransport,
   Origin,
   Provenance,
-} from '../peers/types';
+} from '../contacts/types';
 
 export interface StationRailProps {
   station: Station | null;
@@ -141,7 +141,7 @@ function connectPeerEndpoint(
   void connectFor(
     { sessionType: 'p2p', protocol: 'telnet' },
     {
-      target: peer.presentedCallsigns[0] ?? peer.canonicalBase,
+      target: peer.callsign,
       host: endpoint.host,
       port: endpoint.port,
       locator: operatorGrid || undefined,
@@ -427,14 +427,14 @@ function PeerRows({
       {peers.map((peer) => (
         <div key={peer.id} className="station-finder__peer" data-testid={`peer-row-${peer.id}`}>
           <div className="station-finder__peer-top">
-            <span className="station-finder__call">{peer.presentedCallsigns[0] ?? peer.canonicalBase}</span>
+            <span className="station-finder__call">{peer.callsign}</span>
             <span className="station-finder__peer-origin" data-testid={`peer-origin-${peer.id}`}>
               {ORIGIN_LABEL[peer.origin]}
             </span>
           </div>
           <div className="station-finder__who">
             {peer.grid ? peer.grid : <span data-testid={`peer-untiered-${peer.id}`}>no grid — untiered</span>}
-            {peer.lastConnectedAt && ` · last connected ${formatLastConnected(peer.lastConnectedAt)}`}
+            {peer.lastSeen && ` · last connected ${formatLastConnected(peer.lastSeen)}`}
           </div>
 
           {peer.endpoints.length > 0 && (
@@ -451,7 +451,7 @@ function PeerRows({
                     type="button"
                     data-testid={`peer-endpoint-connect-${ep.id}`}
                     className="station-finder__use"
-                    title={`Connect to ${peer.presentedCallsigns[0] ?? peer.canonicalBase} over telnet`}
+                    title={`Connect to ${peer.callsign} over telnet`}
                     onClick={() => onConnectEndpoint(peer, ep, operatorGrid)}
                   >
                     Connect →

@@ -44,14 +44,15 @@ beforeEach(() => {
     // Task 23: the panel now also reads the P2P capability bits + peer roster
     // (usePeers/useP2pCapabilities). Default to capability-off + an empty
     // roster for tests that don't care about peers, for the same "no bare
-    // undefined" reason as favorites_read above.
+    // undefined" reason as favorites_read above. T-E re-sourced usePeers onto
+    // contacts_read (peers_read/peers:changed died with the peers store).
     if (cmd === 'p2p_capabilities')
       return {
         peer_store: false, finder_peers: false, map_peers: false,
         agent_find_peers: false, vara_engine_split: false,
         favorites_contact_link: false,
       } as unknown as never;
-    if (cmd === 'peers_read') return { schema_version: 1, peers: [] } as unknown as never;
+    if (cmd === 'contacts_read') return { schema_version: 2, contacts: [], groups: [] } as unknown as never;
     return undefined as unknown as never;
   });
 });
@@ -170,18 +171,11 @@ describe('StationFinderPanel', () => {
   // wires into the panel.
   const GRIDLESS_TELNET_PEER = {
     id: 'peer-1',
-    canonical_base: 'W6XYZ',
-    presented_callsigns: ['W6XYZ'],
-    identity_kind: 'unknown',
-    do_not_merge: false,
-    conflict: false,
-    source: 'auto',
+    name: '',
+    callsign: 'W6XYZ',
+    tier: 'unconfirmed',
     origin: 'incoming',
-    contact_id: null,
     grid: null,
-    note: '',
-    created_at: '2026-07-01T00:00:00Z',
-    last_connected_at: null,
     channels: [],
     endpoints: [
       {
@@ -192,6 +186,8 @@ describe('StationFinderPanel', () => {
         last_seen: '2026-07-01T00:00:00Z',
       },
     ],
+    created_at: '2026-07-01T00:00:00Z',
+    updated_at: '2026-07-01T00:00:00Z',
   };
 
   function mockInvokeWithPeers(finderPeers: boolean) {
@@ -210,7 +206,8 @@ describe('StationFinderPanel', () => {
           agent_find_peers: true, vara_engine_split: true,
           favorites_contact_link: true,
         } as unknown as never;
-      if (cmd === 'peers_read') return { schema_version: 1, peers: [GRIDLESS_TELNET_PEER] } as unknown as never;
+      if (cmd === 'contacts_read')
+        return { schema_version: 2, contacts: [GRIDLESS_TELNET_PEER], groups: [] } as unknown as never;
       return undefined as unknown as never;
     });
   }
@@ -240,7 +237,7 @@ describe('StationFinderPanel', () => {
     renderPanel(<StationFinderPanel onClose={() => {}} />);
     await screen.findByRole('dialog', { name: /find a station/i });
 
-    // (d) NO peer chip and NO peer row — even though peers_read still
+    // (d) NO peer chip and NO peer row — even though contacts_read still
     // returned a peer. This is the capability HIDE, not a data-empty state.
     await waitFor(() => expect(invoke).toHaveBeenCalledWith('p2p_capabilities'));
     expect(screen.queryByTestId('type-chip-peer')).toBeNull();

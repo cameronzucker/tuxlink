@@ -1,13 +1,100 @@
-// Frontend DTOs for the Contacts feature — Task A4.
+// Frontend DTOs for the Contacts feature — Task A4, grown to the v2
+// reachability superset by Task T-E (operator pivot 2026-07-10/11: a peer IS a
+// contact; the separate peers.json entity died — see
+// docs/superpowers/specs/2026-07-10-p2p-peer-model-design.md §AMENDMENT).
 //
 // These MUST mirror the Rust serde shapes EXACTLY (snake_case; the codebase has
-// no `rename_all`). Sources of truth:
+// no `rename_all` EXCEPT the enums below, which mirror `reachability.rs`'s
+// `#[serde(rename_all = "kebab-case")]`). Sources of truth:
 //   - `src-tauri/src/contacts/store.rs` — Contact / GroupMember / Group / ContactsFile
+//   - `src-tauri/src/contacts/reachability.rs` — ContactTier / Origin / GridSource /
+//     ContactGrid / ChannelTransport / Direction / Provenance / ChannelBandwidth /
+//     AttemptCounts / Channel / Endpoint (the v2 reachability fields on Contact)
 //   - `src-tauri/src/contacts/suggest.rs` — Suggestion
 // When a Rust shape changes, this file MUST be updated in the same PR.
+//
+// The v2 fields (`tier`, `origin`, `grid`, `channels`, `endpoints`) all carry
+// `#[serde(default)]` on the Rust side, so a `contact_upsert` write payload MAY
+// omit them (the backend backfills the default) — hence `?` optional here,
+// mirroring this file's own existing convention for `email`/`tactical`/`notes`
+// (Option<String> fields) rather than peers/types.ts's stricter `| null`
+// idiom. `contacts_read` always emits all five keys explicitly (tier/origin as
+// their concrete kebab-case value, channels/endpoints as `[]` when empty, grid
+// as `null` when absent) — callers on the read path should not assume absence.
 
-/// One address-book entry. `callsign` is the primary, SSID-bearing identity —
-/// never strip the SSID. `created_at` / `updated_at` are RFC3339 UTC strings.
+/// Mirrors `reachability.rs::ContactTier`. `Confirmed` = curated (operator
+/// added/confirmed) — the pre-pivot Contact semantics. `Unconfirmed` =
+/// auto-created from a P2P observation or manual dial.
+export type ContactTier = 'confirmed' | 'unconfirmed' | 'unknown';
+
+/// Mirrors `reachability.rs::Origin` — plain-language provenance of the record.
+export type Origin = 'incoming' | 'outgoing' | 'manual' | 'aprs' | 'unknown';
+
+/// Mirrors `reachability.rs::GridSource`. NOTE: the pivot DROPPED the
+/// peer-model's `'contact'` variant (a contact sourcing its grid "from a
+/// contact" is meaningless now that the grid lives ON the contact) — this is
+/// NOT the same union as the deleted `peers/types.ts::GridSource`.
+export type GridSource = 'aprs' | 'manual' | 'unknown';
+
+/// Mirrors `reachability.rs::ChannelTransport`.
+export type ChannelTransport = 'packet' | 'ardop' | 'vara-hf' | 'vara-fm' | 'unknown';
+
+/// Mirrors `reachability.rs::Direction`.
+export type Direction = 'incoming' | 'outgoing' | 'unknown';
+
+/// Mirrors `reachability.rs::Provenance`. `'operator'` is the ONLY
+/// agent-dialable provenance — never derive dialability from any other value.
+export type Provenance = 'operator' | 'observed-incoming' | 'unknown';
+
+/// Mirrors `reachability.rs::ChannelBandwidth` — internally tagged on `"kind"`
+/// (`#[serde(tag = "kind", rename_all = "kebab-case")]`).
+export type ChannelBandwidth =
+  | { kind: 'hz'; hz: number }
+  | { kind: 'wide' }
+  | { kind: 'narrow' }
+  | { kind: 'unknown' };
+
+/// Mirrors `reachability.rs::ContactGrid`.
+export interface ContactGrid {
+  value: string;
+  source: GridSource;
+}
+
+/// Mirrors `reachability.rs::AttemptCounts`.
+export interface AttemptCounts {
+  ok: number;
+  fail: number;
+}
+
+/// Mirrors `reachability.rs::Channel` — one RF reachability observation row.
+/// Dedup key (backend): `(transport, target_callsign, via, freq_hz, bandwidth)`.
+export interface Channel {
+  transport: ChannelTransport;
+  target_callsign: string;
+  via: string[];
+  freq_hz: number | null;
+  bandwidth: ChannelBandwidth | null;
+  direction: Direction;
+  counts: AttemptCounts;
+  last_seen: string;
+}
+
+/// Mirrors `reachability.rs::Endpoint` — one network reachability row (telnet
+/// P2P).
+export interface Endpoint {
+  id: string;
+  host: string;
+  port: number;
+  provenance: Provenance;
+  last_seen: string;
+}
+
+/// One address-book entry — since schema v2 the SUPERSET of added + observed
+/// stations. `callsign` is the primary, SSID-bearing identity — never strip
+/// the SSID; observation routing matches on the EXACT presented callsign only
+/// (no base-normalization merging). `created_at` / `updated_at` are RFC3339
+/// UTC strings. There is NO `last_connected_at` — recency derives from the
+/// `last_seen` on `channels`/`endpoints`.
 export interface Contact {
   id: string;
   name: string;
@@ -15,6 +102,16 @@ export interface Contact {
   email?: string;
   tactical?: string;
   notes?: string;
+  /// `Confirmed` (curated) vs `Unconfirmed` (auto-created). Absent on a write
+  /// payload defaults to `Confirmed` (the v1→v2 migration semantics).
+  tier?: ContactTier;
+  /// Plain-language provenance: incoming / outgoing / added.
+  origin?: Origin;
+  grid?: ContactGrid;
+  /// Observed RF reachability rows.
+  channels?: Channel[];
+  /// Observed / operator-entered network reachability rows (telnet P2P).
+  endpoints?: Endpoint[];
   created_at: string;
   updated_at: string;
 }

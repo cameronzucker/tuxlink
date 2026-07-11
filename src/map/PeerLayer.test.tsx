@@ -75,12 +75,12 @@ function peerMarkers(): L.Marker[] {
 function peerFixture(over: Partial<AggregatedPeer> = {}): AggregatedPeer {
   return {
     id: 'p1',
-    canonicalBase: 'W6ABC',
-    presentedCallsigns: ['W6ABC-7'],
+    callsign: 'W6ABC',
     origin: 'outgoing',
+    tier: 'unconfirmed',
     grid: 'CN87',
     mapPlaceable: true,
-    lastConnectedAt: null,
+    lastSeen: null,
     channels: [],
     endpoints: [],
     ...over,
@@ -125,7 +125,7 @@ describe('PeerLayer (Task 24)', () => {
   });
 
   it('escapes a hostile callsign at the divIcon HTML boundary', async () => {
-    const hostile = peerFixture({ presentedCallsigns: ['<img src=x>'] });
+    const hostile = peerFixture({ callsign: '<img src=x>' });
     await renderMap(
       <LeafletMap>
         <PeerLayer peers={[hostile]} enabled visualFor={goodVisual} onSelect={() => {}} />
@@ -165,7 +165,7 @@ describe('PeerLayer (Task 24)', () => {
     await renderMap(
       <LeafletMap>
         <PeerLayer
-          peers={[peerFixture(), peerFixture({ id: 'p2', canonicalBase: 'N0XYZ', grid: 'EN34' })]}
+          peers={[peerFixture(), peerFixture({ id: 'p2', callsign: 'N0XYZ', grid: 'EN34' })]}
           enabled={false}
           visualFor={goodVisual}
           onSelect={() => {}}

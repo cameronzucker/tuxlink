@@ -217,12 +217,12 @@ describe('StationRail — peer-row Connect fires a P2P dial (Task 23a)', () => {
   // endpoint, so every protocol has a clickable peer-dial path.
   const peer: AggregatedPeer = {
     id: 'peer-1',
-    canonicalBase: 'W7XYZ',
-    presentedCallsigns: ['W7XYZ-5'],
+    callsign: 'W7XYZ-5',
     origin: 'incoming',
+    tier: 'unconfirmed',
     grid: 'CN87',
     mapPlaceable: true,
-    lastConnectedAt: null,
+    lastSeen: null,
     channels: [
       {
         transport: 'vara-fm', target_callsign: 'W7XYZ-5', via: ['RELAY1'],

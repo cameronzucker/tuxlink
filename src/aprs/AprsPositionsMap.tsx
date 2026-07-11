@@ -652,16 +652,18 @@ export function AprsPositionsMap({ positions, operatorGrid, envStations, onFocus
   // → reached → stale) applied to the peer's own fields — NOT a propagation
   // ramp and NOT an invented scheme. `livePeer` is the currently-connected modem
   // peer (`status.peer`, base-normalized). Dashed is reserved for a
-  // never-connected MANUAL peer (`origin === 'manual'` AND no `last_connected_at`).
+  // never-connected MANUAL peer (`origin === 'manual'` AND no derived `lastSeen`
+  // — Contact carries no `last_connected_at`; recency comes from
+  // channel/endpoint `last_seen` via `aggregatePeers`).
   const livePeerBase = status.peer ? baseCallsign(status.peer) : null;
   const peerVisualFor = useCallback(
     (peer: AggregatedPeer): PeerVisual => {
-      const dashed = peer.origin === 'manual' && peer.lastConnectedAt == null;
+      const dashed = peer.origin === 'manual' && peer.lastSeen == null;
       let tierClass: string;
-      if (livePeerBase && baseCallsign(peer.canonicalBase) === livePeerBase) {
+      if (livePeerBase && baseCallsign(peer.callsign) === livePeerBase) {
         tierClass = 'peer-pin--live';
-      } else if (peer.lastConnectedAt) {
-        const ageMs = Date.now() - Date.parse(peer.lastConnectedAt);
+      } else if (peer.lastSeen) {
+        const ageMs = Date.now() - Date.parse(peer.lastSeen);
         tierClass = ageMs <= 3_600_000 ? 'peer-pin--reached' : 'peer-pin--stale';
       } else if (peer.channels.some((c) => c.counts.fail > 0)) {
         tierClass = 'peer-pin--failed';

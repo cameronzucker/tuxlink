@@ -15,11 +15,13 @@ import type { Station } from './stationModel';
 
 // LeafletMap fetches packs via invoke('basemap_list_packs') (wants {packs}). Task
 // 24 wired StationFinderMap to its own usePeers()/useP2pCapabilities() (the peer
-// circle layer, gated on map_peers) — those call peers_read/p2p_capabilities.
+// circle layer, gated on map_peers) — those call contacts_read/p2p_capabilities
+// (T-E: usePeers re-sourced onto contacts_read; peers_read died with the peers
+// store).
 const invokeMock = vi.hoisted(() =>
   vi.fn(async (cmd: string) => {
     if (cmd === 'basemap_list_packs') return { packs: [] };
-    if (cmd === 'peers_read') return { schema_version: 1, peers: [] };
+    if (cmd === 'contacts_read') return { schema_version: 2, contacts: [], groups: [] };
     if (cmd === 'p2p_capabilities') {
       return {
         peer_store: false, finder_peers: false, map_peers: false,
