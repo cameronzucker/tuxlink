@@ -154,7 +154,11 @@ pub fn is_confident(c: &SttConfidence) -> bool {
 
 /// RMS floor below which `samples` counts as digital silence (dead capture
 /// device, squelched/unkeyed radio). Well below any real received-audio
-/// level, so it only trips on effectively-zero input.
+/// level, so it only trips on effectively-zero input. The exact floor is a
+/// tuning constant against real received-audio levels: 1e-4 is a conservative
+/// dead-input default that ships now; it is refined against the operator's
+/// first on-air captures (there is no synthetic substitute for real HF RX
+/// levels — same class as on-air validation, not a deferred feature).
 const SILENCE_FLOOR: f32 = 1e-4;
 
 /// Pure RMS silence check, extracted from `transcribe` so it can be
