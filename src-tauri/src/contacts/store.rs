@@ -17,22 +17,34 @@
 //!   DEGRADE-on-error pattern of `user_folders.rs::load_registry`, extended
 //!   with corrupt-file preservation.)
 //! - Hand-written `impl Default for ContactsFile` sets `schema_version:
-//!   SCHEMA_VERSION` (= 1); NO `#[derive(Default)]` (it would write 0).
+//!   SCHEMA_VERSION`; NO `#[derive(Default)]` (it would write 0).
 //!
 //! **Atomic write:** serialize → write to `format!("{}.tmp", path_str)` (NOT
 //! `path.with_extension("tmp")`, which would drop `.json`) → `fs::rename`;
 //! `create_dir_all(parent)` first. Mirrors `user_folders.rs:182-192`.
 
+use super::reachability::{Channel, ContactGrid, ContactTier, Endpoint, Origin};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use thiserror::Error;
 
-/// On-disk schema version. Bumped only on a non-additive shape change.
-pub const SCHEMA_VERSION: u32 = 1;
+/// On-disk schema version.
+///
+/// - v1: the 2026-06-07 Contacts+Favorites shape (identity + mail fields).
+/// - v2: the contacts-superset pivot (spec §AMENDMENT, 2026-07-10/11) —
+///   Contact gains `tier` / `origin` / `grid` / `channels` / `endpoints`.
+///   Loading a v1 file (or one with no `schema_version` at all) yields v2
+///   semantics via the serde defaults: every existing record is
+///   `tier: Confirmed` with empty reachability. [`ContactsStore::open`]
+///   normalizes the in-memory version to v2 so the next flush stamps it.
+pub const SCHEMA_VERSION: u32 = 2;
 
-/// A single address-book contact. The callsign is the SSID-bearing primary
-/// identity — NEVER strip the SSID. Timestamps are RFC3339 UTC; id/timestamp
-/// STAMPING is the command layer's job (Task A2), not the store's.
+/// A single address-book contact — since schema v2 the SUPERSET of added +
+/// observed stations (spec §AMENDMENT pt. 1). The callsign is the SSID-bearing
+/// primary identity — NEVER strip the SSID; observation routing matches on the
+/// EXACT presented callsign only (pt. 4 — no base-normalization merging).
+/// Timestamps are RFC3339 UTC on the operator path; id/timestamp STAMPING is
+/// the command layer's job (Task A2), not the store's.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Contact {
     pub id: String,
@@ -41,6 +53,22 @@ pub struct Contact {
     pub email: Option<String>,
     pub tactical: Option<String>,
     pub notes: Option<String>,
+    /// `Confirmed` (curated — operator added/confirmed) vs `Unconfirmed`
+    /// (auto-created from an observation or manual dial). Default `Confirmed`
+    /// so every v1 record loads as confirmed (the v1→v2 migration).
+    #[serde(default)]
+    pub tier: ContactTier,
+    /// Plain-language provenance of the record: incoming / outgoing / added.
+    #[serde(default)]
+    pub origin: Origin,
+    #[serde(default)]
+    pub grid: Option<ContactGrid>,
+    /// Observed RF reachability rows (spec §2 shapes, unchanged by the pivot).
+    #[serde(default)]
+    pub channels: Vec<Channel>,
+    /// Observed / operator-entered network reachability rows (telnet P2P).
+    #[serde(default)]
+    pub endpoints: Vec<Endpoint>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -119,7 +147,14 @@ impl ContactsStore {
     pub fn open(path: PathBuf) -> Self {
         let file = match std::fs::read(&path) {
             Ok(bytes) => match serde_json::from_slice::<ContactsFile>(&bytes) {
-                Ok(parsed) => parsed,
+                Ok(mut parsed) => {
+                    // v1→v2 migration is the serde defaults themselves (every
+                    // pre-tier record loads `Confirmed` with empty
+                    // reachability); normalize the version stamp so the next
+                    // flush writes v2.
+                    parsed.schema_version = SCHEMA_VERSION;
+                    parsed
+                }
                 Err(e) => {
                     Self::quarantine_corrupt(&path, &bytes);
                     eprintln!(
@@ -252,6 +287,11 @@ mod tests {
             email: Some("w6abc@winlink.org".to_string()),
             tactical: None,
             notes: None,
+            tier: ContactTier::Confirmed,
+            origin: Origin::Manual,
+            grid: None,
+            channels: vec![],
+            endpoints: vec![],
             created_at: "2026-06-07T12:00:00+00:00".to_string(),
             updated_at: "2026-06-07T12:00:00+00:00".to_string(),
         }
@@ -280,8 +320,8 @@ mod tests {
     }
 
     #[test]
-    fn fresh_empty_store_has_schema_version_1() {
-        // M1: a brand-new store written to disk persists schema_version:1,
+    fn fresh_empty_store_has_current_schema_version() {
+        // M1: a brand-new store written to disk persists schema_version:2,
         // NOT 0 (guards against an accidental derive(Default)).
         let dir = tempdir().unwrap();
         let path = dir.path().join("contacts.json");
@@ -290,12 +330,57 @@ mod tests {
         store.contact_upsert(contact("c1")).unwrap();
         let raw = std::fs::read_to_string(&path).unwrap();
         assert!(
-            raw.contains("\"schema_version\": 1"),
-            "expected schema_version 1 on disk, got: {raw}"
+            raw.contains("\"schema_version\": 2"),
+            "expected schema_version 2 on disk, got: {raw}"
         );
-        // And reopening yields version 1.
+        // And reopening yields version 2.
         let reopened = ContactsStore::open(path);
-        assert_eq!(reopened.file().schema_version, 1);
+        assert_eq!(reopened.file().schema_version, 2);
+    }
+
+    #[test]
+    fn v1_file_migrates_to_v2_semantics() {
+        // The v1→v2 migration (spec §AMENDMENT pt. 1): a LITERAL v1 fixture —
+        // written by the shipped 2026-06-07 binary, no tier/origin/grid/
+        // channels/endpoints keys anywhere — loads with every record
+        // `tier: Confirmed`, empty reachability, and the in-memory version
+        // normalized to v2 so the next flush stamps schema_version 2.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("contacts.json");
+        let v1 = r#"{
+            "schema_version": 1,
+            "contacts": [
+                {
+                    "id": "c1", "name": "Pat", "callsign": "W6ABC-7",
+                    "email": "w6abc@winlink.org", "tactical": null, "notes": null,
+                    "created_at": "2026-06-07T12:00:00+00:00",
+                    "updated_at": "2026-06-07T12:00:00+00:00"
+                }
+            ],
+            "groups": []
+        }"#;
+        std::fs::write(&path, v1).unwrap();
+
+        let mut store = ContactsStore::open(path.clone());
+        assert_eq!(store.file().schema_version, SCHEMA_VERSION, "normalized to v2");
+        assert_eq!(store.contacts().len(), 1, "v1 records all survive");
+        let c = &store.contacts()[0];
+        assert_eq!(c.tier, ContactTier::Confirmed, "existing records → confirmed");
+        assert_eq!(c.origin, Origin::Unknown, "no fabricated provenance");
+        assert!(c.channels.is_empty(), "empty reachability");
+        assert!(c.endpoints.is_empty(), "empty reachability");
+        assert!(c.grid.is_none());
+        // No quarantine sidecar — a v1 file is NOT corrupt.
+        let sidecars = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".corrupt-"))
+            .count();
+        assert_eq!(sidecars, 0, "v1 load must not quarantine");
+        // The next flush stamps v2 on disk.
+        store.contact_upsert(contact("c2")).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("\"schema_version\": 2"), "flush writes v2: {raw}");
     }
 
     #[test]

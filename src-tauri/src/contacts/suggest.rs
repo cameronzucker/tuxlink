@@ -136,6 +136,11 @@ mod tests {
             email: email.map(|e| e.to_string()),
             tactical: None,
             notes: None,
+            tier: crate::contacts::reachability::ContactTier::Confirmed,
+            origin: crate::contacts::reachability::Origin::Manual,
+            grid: None,
+            channels: vec![],
+            endpoints: vec![],
             created_at: "2026-06-07T12:00:00+00:00".to_string(),
             updated_at: "2026-06-07T12:00:00+00:00".to_string(),
         }

@@ -347,6 +347,7 @@ pub fn contacts_recent_gateways(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::contacts::reachability::{ContactTier, Origin};
     use crate::contacts::store::GroupMember;
     use crate::winlink_backend::MessageId;
     use tempfile::tempdir;
@@ -373,6 +374,11 @@ mod tests {
             email: None,
             tactical: None,
             notes: None,
+            tier: ContactTier::Confirmed,
+            origin: Origin::Manual,
+            grid: None,
+            channels: vec![],
+            endpoints: vec![],
             created_at: String::new(),
             updated_at: String::new(),
         }
