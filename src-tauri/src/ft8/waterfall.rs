@@ -201,8 +201,15 @@ pub(crate) fn compute_column(
         .iter()
         .take(CROP_BINS)
         .map(|c| {
-            // dB relative to unity magnitude, mapped [0, 96] dB → [0, 255].
-            let db = 20.0 * c.norm().max(1.0).log10();
+            // Normalize the raw FFT bin magnitude to single-sided amplitude
+            // (÷ WINDOW/2) BEFORE the dB conversion. Without this, the raw
+            // magnitude of a full-scale i16 tone is ~32768·(WINDOW/2) ≈ 3.4e7 →
+            // ~150 dB → every strong signal saturates to 255 (a solid-white
+            // waterfall). After normalization a full-scale tone maps near the
+            // top of the [0, 96] dB → [0, 255] ramp and weaker FT-8 signals keep
+            // usable contrast. Exact dB range is tunable at the D4 visual gate.
+            let amp = c.norm() / (WINDOW as f32 / 2.0);
+            let db = 20.0 * amp.max(1.0).log10();
             (db / 96.0 * 255.0).clamp(0.0, 255.0) as u8
         })
         .collect()
@@ -387,6 +394,25 @@ mod tests {
         let col = compute_column(fft.as_ref(), &window, &mut scratch_in, &mut scratch_out);
         assert_eq!(col.len(), CROP_BINS, "0–3000 Hz crop of the 1025-bin FFT");
         assert_eq!(CROP_BINS, 512);
+    }
+
+    #[test]
+    fn strong_tone_does_not_saturate_after_magnitude_normalization() {
+        // A strong (amplitude 8000) tone. Pre-normalization the peak bin pinned
+        // at 255 (solid white); after ÷(WINDOW/2) it must land strictly below
+        // full-scale so the waterfall keeps dynamic range, while still clearly
+        // registering above the floor.
+        let mut planner = RealFftPlanner::<f32>::new();
+        let fft = planner.plan_fft_forward(WINDOW);
+        let mut scratch_in = fft.make_input_vec();
+        let mut scratch_out = fft.make_output_vec();
+        let window: Vec<i16> = (0..WINDOW)
+            .map(|i| ((i as f32 * 0.05).sin() * 8000.0) as i16)
+            .collect();
+        let col = compute_column(fft.as_ref(), &window, &mut scratch_in, &mut scratch_out);
+        let peak = *col.iter().max().unwrap();
+        assert!(peak < 255, "strong tone must not saturate to 255 (got {peak})");
+        assert!(peak > 0, "strong tone must still register above the floor (got {peak})");
     }
 
     #[test]
