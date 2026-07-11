@@ -56,3 +56,18 @@ export function panelTitle(mode: RadioPanelMode): string {
     case 'vara-fm':  return `VARA FM ${intentSuffix}`;
   }
 }
+
+/**
+ * Label for the RF-dial "Find a Station" affordance in `RadioPanel`'s
+ * command row (design §Renames, Station Intelligence L3 panel): a CMS
+ * (Winlink gateway) intent asks the operator to find a *gateway*; a
+ * peer-to-peer or radio-only intent has no CMS gateway concept, so it
+ * asks the operator to find a *station*. Sourced by each RF-dial mode
+ * panel (ARDOP / Packet / VARA) from its session `intent` — never
+ * hardcoded in the shared `RadioPanel` chrome.
+ */
+export function findGatewayLabelForIntent(
+  intent: 'cms' | 'p2p' | 'radio-only',
+): string {
+  return intent === 'cms' ? 'Find a Gateway' : 'Find a Station';
+}

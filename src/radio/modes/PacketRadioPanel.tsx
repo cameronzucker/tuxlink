@@ -31,6 +31,7 @@ import { listen } from '@tauri-apps/api/event';
 import { readLastTarget, writeLastTarget } from '../../connections/connectDispatch';
 import { Button, Select, Field } from '../../controls';
 import { RadioPanel } from '../RadioPanel';
+import { findGatewayLabelForIntent } from '../types';
 import { SessionLogSection } from '../sections/SessionLogSection';
 import { useSessionLog } from '../sections/useSessionLog';
 import { ModemLinkSection, type ModemLinkFields } from '../sections/ModemLinkSection';
@@ -385,6 +386,7 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
       sub={headerSub}
       onClose={onClose}
       onFindGateway={onFindGateway}
+      findGatewayLabel={findGatewayLabelForIntent(intent)}
     >
       <section className="radio-panel-sec">
         <h5>Connection</h5>

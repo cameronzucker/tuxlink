@@ -49,6 +49,7 @@ import { listenGatewayPrefill } from '../../favorites/prefillEvent';
 import { tsLocal } from '../../favorites/ts-local';
 import type { FavoriteDial } from '../../favorites/types';
 import type { RadioPanelMode } from '../types';
+import { findGatewayLabelForIntent } from '../types';
 import { RigControlSection } from './RigControlSection';
 import type { RigConfig } from './RigControlSection';
 import { getRigProfile } from './rigProfiles';
@@ -929,6 +930,7 @@ export function ArdopRadioPanel({
       sub={headerSub}
       onClose={onClose}
       onFindGateway={onFindGateway}
+      findGatewayLabel={findGatewayLabelForIntent(mode.intent)}
     >
       {/* Connect surface — Favorites / Recent / Manual (Task B6-ARDOP). The
           hand-entry Target + Bandwidth fields are the Manual tab's content;

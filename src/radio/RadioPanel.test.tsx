@@ -41,24 +41,41 @@ describe('<RadioPanel>', () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  // tuxlink-6jpf: RF dial modes get a "Find a gateway" affordance in the panel
-  // chrome (opens the station finder). Telnet/P2P do not pass onFindGateway.
-  it('renders a Find a gateway button that calls onFindGateway when provided', () => {
+  // tuxlink-6jpf: RF dial modes get a "Find a Station"/"Find a Gateway"
+  // affordance in the panel chrome (opens the station finder). Telnet/P2P
+  // do not pass onFindGateway. The label is sourced by the caller from the
+  // session intent (design §Renames) — RadioPanel never hardcodes it.
+  it('renders a Find a Gateway button that calls onFindGateway when provided', () => {
     const onFindGateway = vi.fn();
     render(
       <RadioPanel
         mode={{ kind: 'ardop-hf', intent: 'cms' }}
         onClose={() => {}}
         onFindGateway={onFindGateway}
+        findGatewayLabel="Find a Gateway"
       >
         <div />
       </RadioPanel>,
     );
     const btn = screen.getByTestId('radio-panel-find-gateway');
     expect(btn.closest('.radio-panel-command-row')).toBe(screen.getByTestId('radio-panel-command-row'));
-    expect(btn).toHaveTextContent('Find a gateway');
+    expect(btn).toHaveTextContent('Find a Gateway');
     btn.click();
     expect(onFindGateway).toHaveBeenCalledOnce();
+  });
+
+  it('renders the "Find a Station" label instead when findGatewayLabel says so (p2p/radio-only intent)', () => {
+    render(
+      <RadioPanel
+        mode={{ kind: 'ardop-hf', intent: 'radio-only' }}
+        onClose={() => {}}
+        onFindGateway={() => {}}
+        findGatewayLabel="Find a Station"
+      >
+        <div />
+      </RadioPanel>,
+    );
+    expect(screen.getByTestId('radio-panel-find-gateway')).toHaveTextContent('Find a Station');
   });
 
   it('omits the Find a gateway button when onFindGateway is not provided', () => {

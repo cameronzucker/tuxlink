@@ -366,12 +366,12 @@ export function StationFinderPanel({ onClose, activePrefillMode, onUse }: Statio
       className="station-finder-overlay"
       data-testid="station-finder-overlay"
       role="dialog"
-      aria-label="Find a Station"
+      aria-label="Station Intelligence"
       onClick={onClose}
     >
       <div className="station-finder" onClick={(e) => e.stopPropagation()}>
         <header className="station-finder__header">
-          <h2>Find a Station</h2>
+          <h2>Station Intelligence</h2>
           <button className="station-finder__close" onClick={onClose} aria-label="Close">
             ×
           </button>

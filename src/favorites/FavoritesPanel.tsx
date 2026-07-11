@@ -123,7 +123,7 @@ export function FavoritesPanel({ onConnect }: FavoritesPanelProps) {
 
   const emptyMessage =
     tab === 'favorites'
-      ? 'No saved stations yet — star one from a radio panel or Find a Station.'
+      ? 'No saved stations yet — star one from a radio panel or Station Intelligence.'
       : 'No recent connections yet.';
 
   return (

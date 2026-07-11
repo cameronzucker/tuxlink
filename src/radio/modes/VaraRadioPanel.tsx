@@ -27,6 +27,7 @@ import { useSessionLog } from '../sections/useSessionLog';
 import { useVaraConfig } from '../useVaraConfig';
 import type { VaraUiConfig } from '../useVaraConfig';
 import type { RadioPanelMode } from '../types';
+import { findGatewayLabelForIntent } from '../types';
 import { AllowedStationsEditor } from '../sections/AllowedStationsEditor';
 import { ListenArmButton } from '../sections/ListenArmButton';
 import { useListenerState } from '../sections/useListenerState';
@@ -619,6 +620,13 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
       sub={headerSub}
       onClose={onClose}
       onFindGateway={onFindGateway}
+      // VARA is RF-only (vara-hf/vara-fm), whose intent is 'cms' | 'p2p' |
+      // 'radio-only'; the ternary narrows away the telnet-only
+      // post-office/network-po members that `mode: RadioPanelMode` admits
+      // structurally but VARA never actually receives.
+      findGatewayLabel={findGatewayLabelForIntent(
+        mode.intent === 'radio-only' || mode.intent === 'p2p' ? mode.intent : 'cms',
+      )}
     >
       {platformBlocked && (
         <p

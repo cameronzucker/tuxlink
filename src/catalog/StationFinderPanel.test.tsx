@@ -48,7 +48,7 @@ beforeEach(() => {
 describe('StationFinderPanel', () => {
   it('renders the Find a Station dialog with the controls bar', async () => {
     renderPanel(<StationFinderPanel onClose={() => {}} />);
-    expect(await screen.findByRole('dialog', { name: /find a station/i })).toBeTruthy();
+    expect(await screen.findByRole('dialog', { name: /station intelligence/i })).toBeTruthy();
     expect(screen.getByRole('button', { name: /40 m/ })).toBeTruthy();
   });
 
@@ -82,9 +82,9 @@ describe('StationFinderPanel', () => {
     renderPanel(<StationFinderPanel onClose={() => {}} />);
     // The dialog renders on first paint; the crash (if any) is on the post-fetch
     // re-render. Wait a tick so the fetch resolves, then assert still mounted.
-    expect(await screen.findByRole('dialog', { name: /find a station/i })).toBeTruthy();
+    expect(await screen.findByRole('dialog', { name: /station intelligence/i })).toBeTruthy();
     await waitFor(() => expect(invoke).toHaveBeenCalledWith('catalog_fetch_stations', expect.anything()));
-    expect(screen.getByRole('dialog', { name: /find a station/i })).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: /station intelligence/i })).toBeTruthy();
   });
 
   it('closes on Escape', async () => {
@@ -118,7 +118,7 @@ describe('StationFinderPanel', () => {
       return undefined as unknown as never;
     });
     renderPanel(<StationFinderPanel onClose={() => {}} />);
-    await screen.findByRole('dialog', { name: /find a station/i });
+    await screen.findByRole('dialog', { name: /station intelligence/i });
     // The GPS grid resolved → the "set your location" degraded hint is absent.
     await waitFor(() =>
       expect(screen.queryByText(/set your location \(status bar\)/i)).toBeNull(),
@@ -133,7 +133,7 @@ describe('StationFinderPanel', () => {
   // write and coalesces the burst into a single persist.
   it('debounces + coalesces a burst of antenna-control changes into one persist', async () => {
     renderPanel(<StationFinderPanel onClose={() => {}} />);
-    await screen.findByRole('dialog', { name: /find a station/i });
+    await screen.findByRole('dialog', { name: /station intelligence/i });
     const slider = await screen.findByTestId('antenna-height-slider');
 
     // Fire a rapid burst (a slider drag across several grid stops).

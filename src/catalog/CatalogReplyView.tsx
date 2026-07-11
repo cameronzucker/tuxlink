@@ -145,7 +145,7 @@ function IngestStationsAction({ body }: { body: string }) {
   if (state.kind === 'done') {
     return (
       <p className="catalog-reply__ingest-done" data-testid="ingest-done">
-        Added {state.count} {state.mode} gateway{state.count === 1 ? '' : 's'} to Find a Station.
+        Added {state.count} {state.mode} gateway{state.count === 1 ? '' : 's'} to Station Intelligence.
       </p>
     );
   }
@@ -158,7 +158,7 @@ function IngestStationsAction({ body }: { body: string }) {
         disabled={state.kind === 'busy'}
         onClick={add}
       >
-        {state.kind === 'busy' ? 'Adding…' : 'Add to Find a Station'}
+        {state.kind === 'busy' ? 'Adding…' : 'Add to Station Intelligence'}
       </button>
       {state.kind === 'error' && (
         <span className="catalog-reply__ingest-err" role="alert" data-testid="ingest-error">
