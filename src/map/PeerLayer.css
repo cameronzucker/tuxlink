@@ -1,0 +1,49 @@
+/* Peer pin (Task 24, spec §6): a CIRCLE — distinct from the Winlink diamond
+   (WinlinkGatewayLayer.css) and the APRS sprite, so a peer reads as its own
+   entity class on the map. Colour vocabulary is SHARED with the reachability
+   ramp (--reach-*), the shape is what differs. divIcon html carries NO inline
+   style (CSP) — fallback hex values match --reach-good/poor/skip exactly in
+   case this stylesheet loads before StationFinderPanel.css defines the vars. */
+.peer-pin-icon {
+  background: transparent;
+  border: none;
+  overflow: visible;
+}
+.peer-pin {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid #eafff2;
+  box-sizing: border-box;
+}
+.peer-pin--good {
+  background: var(--reach-good, #41ba6c);
+}
+.peer-pin--attempted {
+  background: var(--reach-poor, #e2862f);
+}
+.peer-pin--unknown {
+  background: var(--reach-skip, #6c5a5a);
+}
+/* A never-connected peer renders dashed — the pin exists (a stored record)
+   but no successful contact backs it yet. */
+.peer-pin--dashed {
+  border-style: dashed;
+  background: transparent;
+}
+.peer-pin--selected {
+  box-shadow: 0 0 0 4px rgba(234, 255, 242, 0.35);
+}
+.peer-pin-label {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 1px;
+  font: 600 10px/1 ui-sans-serif, system-ui, sans-serif;
+  white-space: nowrap;
+  color: #eafff2;
+  text-shadow:
+    0 0 2px #0c1620,
+    0 0 2px #0c1620;
+}

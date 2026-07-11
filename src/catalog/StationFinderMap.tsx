@@ -13,18 +13,21 @@
 // Markers are created once per station and updated in place across re-renders
 // (no churn). Render fidelity is grim-verified; the unit test proves the marker
 // wiring (count, tier style, selection emphasis, click→onSelect, operator pin).
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import { LeafletMap } from '../map/LeafletMap';
 import { useLeafletMap } from '../map/LeafletMapContext';
 import { useLeafletLayerGroup } from '../map/leafletHooks';
 import { usePersistedViewport } from '../map/usePersistedViewport';
 import { LeafletRecenterControl } from '../map/LeafletRecenterControl';
+import { PeerLayer } from '../map/PeerLayer';
 import { gridToLatLon } from '../forms/position/maidenhead';
 import { reportFrontendError } from '../frontendErrorLog';
 import { type ReachTier } from './reachability';
 import { stationKey } from './useReachabilityMap';
 import type { Station } from './stationModel';
+import { usePeers, useP2pCapabilities } from '../peers/usePeers';
+import { aggregatePeers, type AggregatedPeer } from '../peers/peerModel';
 
 export interface StationFinderMapProps {
   stations: Station[];
@@ -278,6 +281,18 @@ export function StationFinderMap(props: StationFinderMapProps) {
   const { saved, onViewportChange } = usePersistedViewport('tuxlink:map-viewport:station-finder');
   const initialCenter = saved ? saved.center : (me ?? undefined);
   const initialZoom = saved ? saved.zoom : me ? OPERATOR_ZOOM : 2;
+
+  // Task 24 (spec §6): the peer circle layer, gated end-to-end on
+  // `map_peers` [R5-8] — false (or still loading) HIDES every peer pin, not
+  // merely dims it. Reads its own peers/capabilities (like AprsPositionsMap
+  // reads its own Winlink layer state) rather than threading them through
+  // StationFinderPanel's props.
+  const p2pCapabilities = useP2pCapabilities();
+  const mapPeersEnabled = p2pCapabilities.capabilities?.map_peers === true;
+  const peersData = usePeers();
+  const aggregatedPeers = useMemo(() => aggregatePeers(peersData.peers), [peersData.peers]);
+  const [selectedPeer, setSelectedPeer] = useState<AggregatedPeer | null>(null);
+
   return (
     <div className="station-finder__map" data-testid="station-map">
       <LeafletMap initialCenter={initialCenter} initialZoom={initialZoom} onViewportChange={onViewportChange}>
@@ -288,6 +303,12 @@ export function StationFinderMap(props: StationFinderMapProps) {
           onSelect={props.onSelect}
         />
         <OperatorPin location={me} />
+        <PeerLayer
+          peers={aggregatedPeers}
+          enabled={mapPeersEnabled}
+          onSelect={setSelectedPeer}
+          selectedId={selectedPeer?.id ?? null}
+        />
         <LeafletRecenterControl target={me} zoom={OPERATOR_ZOOM} />
       </LeafletMap>
       <div className="station-finder__reachkey" aria-hidden>

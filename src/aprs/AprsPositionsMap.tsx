@@ -55,6 +55,10 @@ import { WinlinkLinkLayer } from '../winlink/WinlinkLinkLayer';
 import { useContactConnectionRecord } from '../contacts/useContactConnectionRecord';
 import { ConnectionRecord } from '../favorites/ConnectionRecord';
 import { useModemStatus } from '../modem/useModemStatus';
+import { PeerLayer } from '../map/PeerLayer';
+import { usePeers, useP2pCapabilities } from '../peers/usePeers';
+import { aggregatePeers, type AggregatedPeer } from '../peers/peerModel';
+import { baseCallsign } from '../catalog/stationModel';
 import './AprsPositionsMap.css';
 
 export interface AprsPositionsMapProps {
@@ -630,6 +634,19 @@ export function AprsPositionsMap({ positions, operatorGrid, envStations, onFocus
     return p ? { lat: p.lat, lon: p.lon } : null;
   }, [winlinkPins]);
 
+  // Task 24 (spec §6): the peer circle layer, gated end-to-end on
+  // `map_peers` [R5-8] — false (or still loading) HIDES every peer pin, not
+  // merely dims it. `liveAprsCallsigns` is every base callsign heard RIGHT
+  // NOW on this open channel — a peer matching one is skipped in the layer
+  // (the APRS sprite already represents that station; live RF truth wins over
+  // the stored peer record).
+  const p2pCapabilities = useP2pCapabilities();
+  const mapPeersEnabled = p2pCapabilities.capabilities?.map_peers === true;
+  const peersData = usePeers();
+  const aggregatedPeers = useMemo(() => aggregatePeers(peersData.peers), [peersData.peers]);
+  const liveAprsCallsigns = useMemo(() => new Set(positions.map((p) => baseCallsign(p.call))), [positions]);
+  const [selectedPeer, setSelectedPeer] = useState<AggregatedPeer | null>(null);
+
   // Live per-bucket counts over heard stations (wx drives the weather override).
   const { counts, total } = useMemo(() => {
     const wxCalls = new Set(wx.map((w) => w.call));
@@ -669,6 +686,13 @@ export function AprsPositionsMap({ positions, operatorGrid, envStations, onFocus
         {selectedGateway != null && (
           <WinlinkGatewayPopup gateway={selectedGateway} onClose={() => setSelectedGateway(null)} />
         )}
+        <PeerLayer
+          peers={aggregatedPeers}
+          enabled={mapPeersEnabled}
+          onSelect={setSelectedPeer}
+          selectedId={selectedPeer?.id ?? null}
+          liveAprsCallsigns={liveAprsCallsigns}
+        />
         <WxSitrepControl wx={wx} operatorGrid={operatorGrid || undefined} />
         <LeafletRecenterControl target={me} zoom={OPERATOR_ZOOM} />
       </LeafletMap>
