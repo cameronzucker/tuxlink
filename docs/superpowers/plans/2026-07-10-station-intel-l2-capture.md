@@ -8221,39 +8221,12 @@ mod tests {
         state.test_teardown();
     }
 
-    /// The non-reentrancy composition pin (the pre-fix design deadlocked
-    /// EXACTLY here and no test drove it): rig_session takes ONLY the
-    /// arbiter lock; the closure owns the rig lock via qsy_to_band. If
-    /// rig_session ever re-acquires the rig lock, this composition hangs —
-    /// the deadline poll turns the hang into a failure. LOCAL arbiter, not
-    /// the process-global OnceLock.
-    #[test]
-    fn rig_session_composed_with_qsy_does_not_deadlock() {
-        let p = FakePlatform::happy();
-        *p.rig_configured.lock().unwrap() = true;
-        let (state, arb) = setup(p.clone(), cfg_with_device());
-        state.test_run_sequence();
-        assert_eq!(state.axis(), ServiceAxis::Listening);
-        let s2 = state.clone();
-        let arb2 = arb.clone();
-        let worker = std::thread::spawn(move || {
-            arb2.rig_session(|| {
-                s2.qsy_to_band("40m", crate::ft8::records::BandSource::CatConfirmed)
-            })
-        });
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while !worker.is_finished() {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "rig_session(qsy_to_band) deadlocked — the non-reentrancy \
-                 contract is broken (rig_session must not take the rig lock)"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        worker.join().unwrap().unwrap();
-        assert_eq!(*p.tuned_to.lock().unwrap().last().unwrap(), 7_074_000);
-        state.test_teardown();
-    }
+    // NOTE: the non-reentrancy composition pin
+    // (`rig_session_composed_with_qsy_does_not_deadlock`) lives in Task 16's
+    // sweep tests — it drives `qsy_to_band`, which does not exist until T16.
+    // T14 pins the arbiter half of the contract (rig_session takes ONLY the
+    // arbiter lock) via the doc comment + the sites above; the composed
+    // deadline test lands with its missing half.
 
     /// Negative resume gate (spec §Resume — ALL conditions must hold): an
     /// INELIGIBLE modem session (e.g. ConnectedIss) blocks resume even with
@@ -8415,9 +8388,9 @@ arbiter > rig > state, each acquired at most once per thread, holds at every
 site (audit: `rig_session` takes ONLY the arbiter lock — the closure owns
 the rig lock; no arbiter method touches `lock_inner()` while holding the rig
 lock except through service methods that take state last); the composition
-test `rig_session_composed_with_qsy_does_not_deadlock` exists and drives a
-LOCAL arbiter end-to-end under a deadline; the negative resume test covers
-modem-ineligibility as the sole blocker.
+test `rig_session_composed_with_qsy_does_not_deadlock` is DEFERRED to Task
+16 (it drives `qsy_to_band`, which T16 produces — Gate F verifies it); the
+negative resume test covers modem-ineligibility as the sole blocker.
 
 ---
 
@@ -8710,6 +8683,8 @@ holds; no site's error TYPE changed (String / DwLifecycleError as before).
 - Modify: `src-tauri/src/ft8/mod.rs` (`pub mod sweep;`)
 - Modify: `src-tauri/src/ft8/service.rs` (supervisor call-site swap + the
   `set_band_live` helper the T17 command reuses)
+- Modify: `src-tauri/src/ft8/arbiter.rs` (test module only — the deferred
+  composition pin, Step 2b)
 
 **Interfaces:**
 - Consumes: `ListenerMachine` sweep methods (`sweep_activate`,
@@ -9117,6 +9092,48 @@ Supporting test-only service helpers (service.rs, `#[cfg(test)]`):
 ```
 (hoist T12's local `completed()` fixture into a module-level
 `#[cfg(test)] fn test_completed_slot(..)` so both test modules share it.)
+
+- [ ] **Step 2b: the deferred non-reentrancy composition pin (append to
+  `src-tauri/src/ft8/arbiter.rs`'s `#[cfg(test)]` module — T14's helpers
+  `setup`/`cfg_with_device` live there; the test could not land in T14
+  because `qsy_to_band` did not exist until this task)**
+
+```rust
+    /// The non-reentrancy composition pin (the pre-fix design deadlocked
+    /// EXACTLY here and no test drove it): rig_session takes ONLY the
+    /// arbiter lock; the closure owns the rig lock via qsy_to_band. If
+    /// rig_session ever re-acquires the rig lock, this composition hangs —
+    /// the deadline poll turns the hang into a failure. LOCAL arbiter, not
+    /// the process-global OnceLock. (Deferred from T14: qsy_to_band is a
+    /// T16 product; Gate F checks this test exists and fails-on-deadlock.)
+    #[test]
+    fn rig_session_composed_with_qsy_does_not_deadlock() {
+        let p = FakePlatform::happy();
+        *p.rig_configured.lock().unwrap() = true;
+        let (state, arb) = setup(p.clone(), cfg_with_device());
+        state.test_run_sequence();
+        assert_eq!(state.axis(), ServiceAxis::Listening);
+        let s2 = state.clone();
+        let arb2 = arb.clone();
+        let worker = std::thread::spawn(move || {
+            arb2.rig_session(|| {
+                s2.qsy_to_band("40m", crate::ft8::records::BandSource::CatConfirmed)
+            })
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !worker.is_finished() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "rig_session(qsy_to_band) deadlocked — the non-reentrancy \
+                 contract is broken (rig_session must not take the rig lock)"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        worker.join().unwrap().unwrap();
+        assert_eq!(*p.tuned_to.lock().unwrap().last().unwrap(), 7_074_000);
+        state.test_teardown();
+    }
+```
 
 - [ ] **Step 3: [CI-side] verification** — workspace clippy + tests.
 
@@ -10291,7 +10308,11 @@ as the record of why no `-p` gates were added.
 ---
 
 **REVIEW GATE F (after Tasks 15–18):** review the integration batch.
-Perspectives: (1) **seam completeness** — enumerate every path that opens an
+Perspectives: (0) **the deferred composition pin** — T16 Step 2b's
+`rig_session_composed_with_qsy_does_not_deadlock` exists in arbiter.rs's
+test module, drives a LOCAL arbiter end-to-end under a deadline, and its
+assertion would fail if `rig_session` re-acquired the rig lock;
+(1) **seam completeness** — enumerate every path that opens an
 audio device for a modem (ardopcf ×4 via the wrapper, Dire Wolf spawn_inner,
 VARA open) and confirm each hits `pause_for_modem_global` BEFORE the open;
 confirm the coverage test's needle discipline (no self-match, no
