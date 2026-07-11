@@ -11,7 +11,6 @@ import { rankedDialsFor } from './ranking';
 import { bestBandNow, relToTier, tierColorVar } from './reachability';
 import { bandLabel, bandForKhz, HF_BANDS } from './bandPlan';
 import { emitGatewayPrefill } from '../favorites/prefillEvent';
-import { connectFor } from '../connections/connectDispatch';
 import { distanceFromGrids, kmToMi } from './distance';
 import { gridToLatLon } from '../forms/position/maidenhead';
 import type { Station, Channel } from './stationModel';
@@ -19,6 +18,11 @@ import type { PathPrediction } from './propagationApi';
 import type { PredictionStatus } from './useStationPrediction';
 import type { RadioMode, FavoriteDial } from '../favorites/types';
 import type { AggregatedPeer } from '../peers/peerModel';
+import {
+  connectPeerChannel,
+  connectPeerEndpoint,
+  radioModeForPeerTransport,
+} from '../peers/connectPeer';
 import type {
   Channel as PeerChannel,
   Endpoint as PeerEndpoint,
@@ -91,65 +95,10 @@ const PEER_TRANSPORT_LABEL: Record<ChannelTransport, string> = {
   unknown: 'Unknown',
 };
 
-/** Peer ChannelTransport → modem RadioMode; null for a transport with no
- *  prefillable modem (mirrors channelGrouping.ts's radioModeFor, but the
- *  peer wire vocabulary differs from the catalog ListingMode one — 'ardop'
- *  not 'ardop-hf', plus 'vara-fm'). */
-function radioModeForPeerTransport(t: ChannelTransport): RadioMode | null {
-  if (t === 'ardop') return 'ardop-hf';
-  if (t === 'vara-hf' || t === 'vara-fm' || t === 'packet') return t;
-  return null;
-}
-
-/**
- * Task 23a (Flow 2): fire a REAL outbound P2P dial for a peer RF channel.
- * Reaches the SAME backend command the mode's panel uses via `connectFor`, with
- * `intent = 'p2p'` (so the backend peer recorder, gated on `SessionIntent::P2p`,
- * runs) and the channel's `target`/`via`/`freq` threaded explicitly. `null`
- * transport → no dialable modem, so the caller disables the button.
- *
- * Fire-and-forget: the finder has no inline error surface (it runs with the RF
- * pane closed, like the ribbon Connect), and the backend emits the dial's
- * outcome to the session log. A rejection is swallowed here so an RF failure
- * never throws into React's event handler.
- */
-function connectPeerChannel(channel: PeerChannel): void {
-  const protocol = radioModeForPeerTransport(channel.transport);
-  if (!protocol) return;
-  void connectFor(
-    { sessionType: 'p2p', protocol },
-    {
-      target: channel.target_callsign,
-      via: channel.via,
-      freqHz: channel.freq_hz ?? undefined,
-    },
-  ).catch(() => {});
-}
-
-/**
- * Task 23a (Flow 2): fire a REAL outbound P2P telnet dial for a peer network
- * endpoint. Reaches `telnet_p2p_connect` (the TelnetP2pRadioPanel's command)
- * with the endpoint's host/port and the peer's callsign; `locator` carries the
- * operator grid for the B2F handshake. Fire-and-forget, same rationale as
- * `connectPeerChannel`.
- */
-function connectPeerEndpoint(
-  peer: AggregatedPeer,
-  endpoint: PeerEndpoint,
-  operatorGrid: string,
-): void {
-  void connectFor(
-    { sessionType: 'p2p', protocol: 'telnet' },
-    {
-      target: peer.callsign,
-      host: endpoint.host,
-      port: endpoint.port,
-      locator: operatorGrid || undefined,
-    },
-  ).catch(() => {});
-}
-
-function formatLastConnected(iso: string): string {
+/** Format a SUCCESS timestamp (`last_ok`) for display. Renamed from
+ *  `formatLastConnected` (T-F Part 3): its input is now the success-only
+ *  `lastOk`, not the failure-bumping `lastSeen`, so the name states the truth. */
+function formatReachedAt(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString();
@@ -190,7 +139,7 @@ export function StationRail(props: StationRailProps) {
       peers={peers ?? []}
       operatorGrid={operatorGrid}
       onConnectChannel={connectPeerChannel}
-      onConnectEndpoint={connectPeerEndpoint}
+      onConnectEndpoint={(peer, ep, grid) => connectPeerEndpoint(peer.callsign, ep, grid)}
     />
   );
 
@@ -434,7 +383,12 @@ function PeerRows({
           </div>
           <div className="station-finder__who">
             {peer.grid ? peer.grid : <span data-testid={`peer-untiered-${peer.id}`}>no grid — untiered</span>}
-            {peer.lastSeen && ` · last connected ${formatLastConnected(peer.lastSeen)}`}
+            {/* Success-only recency (T-F Part 0): a failed dial must never show
+                as "reached". `lastOk` is the honest instant; absent it, the row
+                says so plainly rather than mislabeling a failed-attempt time. */}
+            {peer.lastOk
+              ? ` · last reached ${formatReachedAt(peer.lastOk)}`
+              : ' · not reached yet'}
           </div>
 
           {peer.endpoints.length > 0 && (

@@ -184,6 +184,7 @@ describe('StationFinderPanel', () => {
         port: 8772,
         provenance: 'observed-incoming',
         last_seen: '2026-07-01T00:00:00Z',
+        last_ok: null,
       },
     ],
     created_at: '2026-07-01T00:00:00Z',

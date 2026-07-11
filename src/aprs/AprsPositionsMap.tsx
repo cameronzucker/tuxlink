@@ -57,7 +57,7 @@ import { ConnectionRecord } from '../favorites/ConnectionRecord';
 import { useModemStatus } from '../modem/useModemStatus';
 import { PeerLayer, type PeerVisual } from '../map/PeerLayer';
 import { usePeers, useP2pCapabilities } from '../peers/usePeers';
-import { aggregatePeers, type AggregatedPeer } from '../peers/peerModel';
+import { aggregatePeers, peerTacChatTier, type AggregatedPeer } from '../peers/peerModel';
 import { baseCallsign } from '../catalog/stationModel';
 import './AprsPositionsMap.css';
 
@@ -651,27 +651,13 @@ export function AprsPositionsMap({ positions, operatorGrid, envStations, onFocus
   // WinlinkGatewayLayer tier vocabulary (`toWinlinkPins` priority: live → failed
   // → reached → stale) applied to the peer's own fields — NOT a propagation
   // ramp and NOT an invented scheme. `livePeer` is the currently-connected modem
-  // peer (`status.peer`, base-normalized). Dashed is reserved for a
-  // never-connected MANUAL peer (`origin === 'manual'` AND no derived `lastSeen`
-  // — Contact carries no `last_connected_at`; recency comes from
-  // channel/endpoint `last_seen` via `aggregatePeers`).
+  // peer (`status.peer`, base-normalized). The reached/stale tier keys on
+  // `lastOk` (success-only, T-F Part 0) so a failed dial can never masquerade
+  // as reached and the `peer-pin--failed` tier is actually reachable; the whole
+  // chain lives in `peerTacChatTier` (pure, unit-tested).
   const livePeerBase = status.peer ? baseCallsign(status.peer) : null;
   const peerVisualFor = useCallback(
-    (peer: AggregatedPeer): PeerVisual => {
-      const dashed = peer.origin === 'manual' && peer.lastSeen == null;
-      let tierClass: string;
-      if (livePeerBase && baseCallsign(peer.callsign) === livePeerBase) {
-        tierClass = 'peer-pin--live';
-      } else if (peer.lastSeen) {
-        const ageMs = Date.now() - Date.parse(peer.lastSeen);
-        tierClass = ageMs <= 3_600_000 ? 'peer-pin--reached' : 'peer-pin--stale';
-      } else if (peer.channels.some((c) => c.counts.fail > 0)) {
-        tierClass = 'peer-pin--failed';
-      } else {
-        tierClass = 'peer-pin--unknown';
-      }
-      return { tierClass, dashed };
-    },
+    (peer: AggregatedPeer): PeerVisual => peerTacChatTier(peer, { livePeerBase, nowMs: Date.now() }),
     [livePeerBase],
   );
 

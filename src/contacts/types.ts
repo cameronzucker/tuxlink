@@ -76,7 +76,14 @@ export interface Channel {
   bandwidth: ChannelBandwidth | null;
   direction: Direction;
   counts: AttemptCounts;
+  /// Most recent attempt (OK or FAIL) — bumps on failures too, so NEVER derive
+  /// a "reached / heard" claim from it. Use `last_ok`.
   last_seen: string;
+  /// Most recent SUCCESSFUL attempt; `null` until one completes (T-F Part 0).
+  /// The ONLY honest source for a reachability label — a failed dial never
+  /// sets it. `#[serde(default)]` on the Rust side → present as `null` when
+  /// absent.
+  last_ok: string | null;
 }
 
 /// Mirrors `reachability.rs::Endpoint` — one network reachability row (telnet
@@ -87,6 +94,8 @@ export interface Endpoint {
   port: number;
   provenance: Provenance;
   last_seen: string;
+  /// Most recent SUCCESSFUL attempt; `null` until one completes (T-F Part 0).
+  last_ok: string | null;
 }
 
 /// One address-book entry — since schema v2 the SUPERSET of added + observed

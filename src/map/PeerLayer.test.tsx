@@ -81,6 +81,7 @@ function peerFixture(over: Partial<AggregatedPeer> = {}): AggregatedPeer {
     grid: 'CN87',
     mapPlaceable: true,
     lastSeen: null,
+    lastOk: null,
     channels: [],
     endpoints: [],
     ...over,
