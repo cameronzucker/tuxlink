@@ -7808,25 +7808,36 @@ fn p2p_password_lookup(app: &AppHandle, callsign: &str) -> Result<Option<String>
 /// A stored password is returned ONLY when the request names a
 /// `(contact_id, endpoint_id)` pair that resolves to a `Provenance::Operator`
 /// endpoint of that contact whose host/port match the dial
-/// ([`crate::contacts::store::is_password_eligible_operator_endpoint`]). In
-/// EVERY other case the result is `None`, so no stored password is sent:
+/// ([`crate::contacts::store::is_password_eligible_operator_endpoint`]) AND an
+/// explicitly-set id-keyed `p2p-endpoint:<contact_id>:<endpoint_id>` secret
+/// exists. In EVERY other case the result is `None`, so no stored password is
+/// sent:
 /// - either id absent (a manual/hand-typed dial) → `None`, WITHOUT any keyring
-///   read — the exact hole that let a bare host dial borrow a callsign secret;
+///   read — the bare-host hole;
 /// - an `ObservedIncoming`/`Unknown` endpoint (an attacker-recorded back-dial
-///   address) → `None`, even when a legacy callsign secret AND an operator
-///   endpoint exist for that contact;
-/// - a host/port that does not match the resolved operator endpoint → `None`.
+///   address) → `None`, even when a legacy callsign secret exists;
+/// - a host/port that does not match the resolved operator endpoint → `None`;
+/// - no id-keyed secret set for the endpoint → `None`.
 ///
-/// The callsign-keyed [`p2p_password_lookup`] is NEVER reached from here — only
-/// the id-keyed `p2p-endpoint:<contact_id>:<endpoint_id>` account is read, and
-/// only after the operator-provenance gate passes.
+/// The dial path reads ONLY the id-keyed secret, which is bound to that
+/// endpoint's stored host, so it cannot be redirected to another host. Legacy
+/// callsign-keyed `p2p-peer:<CALLSIGN>` secrets are NEVER auto-migrated or sent
+/// on a dial — they stay in the keyring, unused (fail-safe: orphaned, not
+/// leaked). This closes the legacy-only two-step: any outbound telnet dial
+/// auto-stamps its request host as a `Provenance::Operator` endpoint (even a
+/// socially-engineered dial to an attacker host), so callsign→endpoint
+/// migration on the send path could redirect a host-unbound legacy secret to
+/// that freshly-minted attacker endpoint on a second dial. A legacy user
+/// re-enters the password via the explicit endpoint-password affordance
+/// ([`p2p_peer_password_set`]), which writes the id-keyed account this path
+/// reads. The callsign-keyed [`p2p_password_lookup`] is only reached by the
+/// read-only status probe, never a dial.
 fn p2p_dial_password_decision<F>(
     file: &crate::contacts::store::ContactsFile,
     contact_id: Option<&str>,
     endpoint_id: Option<&str>,
     host: &str,
     port: u16,
-    peer_callsign: &str,
     factory: &F,
 ) -> Result<Option<String>, String>
 where
@@ -7849,33 +7860,10 @@ where
     ) {
         return Ok(None);
     }
-    // Endpoint-scoped secret (id-keyed; no attacker-controlled bytes).
-    if let Some(secret) =
-        creds::p2p_endpoint_password_read_with_factory(contact_id, endpoint_id, factory)?
-    {
-        return Ok(Some(secret));
-    }
-    // Conservative legacy migration — ONLY when the callsign maps unambiguously
-    // to THIS exact operator endpoint (mirrors the pre-FIX-1 lookup's guard, so
-    // a shipped legacy `p2p-peer:<CALLSIGN>` secret still reaches its operator
-    // endpoint on first dial). Anything ambiguous leaves the legacy secret in
-    // place and sends nothing.
-    let unambiguous =
-        crate::contacts::store::unambiguous_operator_endpoint(file, peer_callsign)
-            .as_ref()
-            .is_some_and(|(c, e)| c.as_str() == contact_id && e.as_str() == endpoint_id);
-    match creds::migrate_legacy_peer_secret_with_factory(
-        peer_callsign,
-        contact_id,
-        endpoint_id,
-        unambiguous,
-        factory,
-    )? {
-        creds::LegacyMigration::Migrated => {
-            creds::p2p_endpoint_password_read_with_factory(contact_id, endpoint_id, factory)
-        }
-        creds::LegacyMigration::NoLegacySecret | creds::LegacyMigration::Ambiguous => Ok(None),
-    }
+    // Send ONLY an explicitly-set id-keyed secret (bound to the endpoint's
+    // stored host; cannot be redirected). On a miss, send nothing — a legacy
+    // callsign-keyed secret is NEVER auto-migrated or sent on the dial path.
+    creds::p2p_endpoint_password_read_with_factory(contact_id, endpoint_id, factory)
 }
 
 /// FIX-1: `AppHandle` wrapper over [`p2p_dial_password_decision`] — locks the
@@ -7897,7 +7885,6 @@ fn p2p_operator_dial_password(
         req.endpoint_id.as_deref(),
         &req.host,
         req.port,
-        &req.peer_callsign,
         &crate::winlink::credentials::real_entry_factory,
     )
 }
@@ -14400,7 +14387,7 @@ mod fix1_password_gate_tests {
     //! runs without a real OS keyring or an AppHandle.
     use super::*;
     use crate::contacts::store::ContactsFile;
-    use crate::winlink::credentials::{EntryLike, LegacyMigration};
+    use crate::winlink::credentials::EntryLike;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
@@ -14493,7 +14480,6 @@ mod fix1_password_gate_tests {
             Some("e-obs"),
             "attacker.example",
             8772,
-            "W6ABC",
             &fake_factory(Arc::clone(&store)),
         )
         .unwrap();
@@ -14517,7 +14503,6 @@ mod fix1_password_gate_tests {
             Some("e-op"),
             "operator.example",
             8772,
-            "W6ABC",
             &fake_factory(store),
         )
         .unwrap();
@@ -14525,10 +14510,15 @@ mod fix1_password_gate_tests {
     }
 
     #[test]
-    fn operator_endpoint_migrates_legacy_secret_on_endpoint_miss() {
-        // No endpoint-scoped secret yet, but a legacy callsign secret exists and
-        // the callsign maps unambiguously to THIS operator endpoint → the
-        // conservative migration copies it forward and sends it.
+    fn operator_endpoint_with_only_legacy_secret_sends_nothing_legacy_untouched() {
+        // Residual-close pin (legacy-only two-step): an operator endpoint is
+        // auto-minted by any outbound dial — including a socially-engineered dial
+        // to an attacker host, which becomes the SOLE operator endpoint on a
+        // contact carrying a shipped legacy `p2p-peer:<CALLSIGN>` secret. A second
+        // dial to that endpoint passes the operator+host gate, but the id-keyed
+        // read misses. The dial path must send NOTHING and NEVER migrate/send the
+        // host-unbound legacy secret. (Pre-fix, the migration block would have
+        // redirected `p2p-peer:W6ABC` to the attacker endpoint here.)
         let file = exfil_file();
         let store: Store = Arc::new(Mutex::new(HashMap::from([(
             ("tuxlink".into(), "p2p-peer:W6ABC".into()),
@@ -14540,20 +14530,22 @@ mod fix1_password_gate_tests {
             Some("e-op"),
             "operator.example",
             8772,
-            "W6ABC",
             &fake_factory(Arc::clone(&store)),
         )
         .unwrap();
-        assert_eq!(out, Some("legacy-secret".to_string()));
+        assert_eq!(
+            out, None,
+            "an operator endpoint with only a legacy callsign secret sends NOTHING on a dial"
+        );
         let g = store.lock().unwrap();
         assert_eq!(
-            g.get(&("tuxlink".into(), "p2p-endpoint:c1:e-op".into())).map(String::as_str),
+            g.get(&("tuxlink".into(), "p2p-peer:W6ABC".into())).map(String::as_str),
             Some("legacy-secret"),
-            "migration wrote the id-keyed account"
+            "the legacy secret is neither migrated nor deleted — orphaned, not leaked"
         );
         assert!(
-            !g.contains_key(&("tuxlink".into(), "p2p-peer:W6ABC".into())),
-            "legacy account deleted after the new-key write"
+            !g.contains_key(&("tuxlink".into(), "p2p-endpoint:c1:e-op".into())),
+            "no id-keyed account is written by a dial"
         );
     }
 
@@ -14569,7 +14561,7 @@ mod fix1_password_gate_tests {
         )])));
         for (cid, eid) in [(None, None), (Some("c1"), None), (None, Some("e-op"))] {
             let out = p2p_dial_password_decision(
-                &file, cid, eid, "operator.example", 8772, "W6ABC", &fake_factory(Arc::clone(&store)),
+                &file, cid, eid, "operator.example", 8772, &fake_factory(Arc::clone(&store)),
             )
             .unwrap();
             assert_eq!(out, None, "a dial missing an id pair sends no stored password");
@@ -14591,13 +14583,13 @@ mod fix1_password_gate_tests {
             "op-secret".into(),
         )])));
         let out = p2p_dial_password_decision(
-            &file, Some("c1"), Some("e-op"), "attacker.example", 8772, "W6ABC",
+            &file, Some("c1"), Some("e-op"), "attacker.example", 8772,
             &fake_factory(Arc::clone(&store)),
         )
         .unwrap();
         assert_eq!(out, None);
         let out2 = p2p_dial_password_decision(
-            &file, Some("c1"), Some("e-op"), "operator.example", 9999, "W6ABC",
+            &file, Some("c1"), Some("e-op"), "operator.example", 9999,
             &fake_factory(store),
         )
         .unwrap();
@@ -14631,12 +14623,5 @@ mod fix1_password_gate_tests {
         .unwrap();
         assert_eq!(nulls.contact_id, None);
         assert_eq!(nulls.endpoint_id, None);
-    }
-
-    #[test]
-    fn legacy_migration_variant_is_referenced() {
-        // Guard: the decision matches on LegacyMigration explicitly; keep the
-        // import load-bearing so a variant rename surfaces here.
-        let _ = LegacyMigration::NoLegacySecret;
     }
 }
