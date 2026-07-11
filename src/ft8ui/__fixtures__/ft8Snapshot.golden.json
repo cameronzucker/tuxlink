@@ -1,0 +1,101 @@
+{
+  "__provenance__": "COMPOSED-SEAM GOLDEN FIXTURE. TRANSCRIBED BY HAND from the Rust serde structs (this Pi cannot run a cold `cargo` build, so a serializer round-trip golden cannot be produced locally — see task-B1-report.md). Source of truth: Ft8Snapshot in src-tauri/src/ft8/service.rs, plus SlotRecord/AudioDeviceChoice/SweepConfigDto/ServiceAxisDto/HealthFlagsDto/SweepStatusDto/RingOutcome/DecodeDto in src-tauri/src/ft8/records.rs and StableAudioId/StableIdKind in src-tauri/src/winlink/ax25/devices.rs. Every key is the exact camelCase serde name; a rename drift in Phase A fails useFt8Listener.test.ts (composed-seam), not a user. A CI-side Rust-serializer golden is a candidate Phase-D hardening. The __provenance__ key is not part of Ft8Snapshot; derivations ignore it.",
+  "service": { "axis": "listening" },
+  "flags": { "clockUnsynced": false, "catFixedBand": true, "jt9Degraded": false },
+  "slotPhase": "decoded",
+  "band": "20m",
+  "dialHz": 14074000,
+  "bandSource": "cat-confirmed",
+  "bandLabelConfirmedUtcMs": 1700000000000,
+  "sweep": { "mode": "active", "bandIdx": 1, "dwellProgress": 3 },
+  "engineVersion": "jt9 2.6.1",
+  "nConsecutive": 4,
+  "kConsecutive": 0,
+  "lastSlotUtcMs": 1700000030000,
+  "lastFailure": null,
+  "availableDevices": [
+    {
+      "humanName": "USB Audio CODEC",
+      "stableId": { "kind": "byIdSymlink", "value": "usb-Burr-Brown_USB_Audio_CODEC-00" },
+      "alsaHw": "hw:1,0"
+    },
+    {
+      "humanName": "Digirig",
+      "stableId": { "kind": "usbVidPidSerial", "value": "10c4:ea60:DR001" },
+      "alsaHw": "hw:2,0"
+    }
+  ],
+  "ringTail": [
+    {
+      "slotUtcMs": 1700000000000,
+      "band": "20m",
+      "dialHz": 14074000,
+      "bandSource": "cat-confirmed",
+      "bandLabelConfirmedUtcMs": 1700000000000,
+      "outcome": { "kind": "decoded" },
+      "decodes": [
+        {
+          "slotUtcMs": 1700000000000,
+          "snrDb": -12,
+          "dtS": 0.2,
+          "freqHz": 1500,
+          "message": "CQ W4PHS EM75",
+          "fromCall": "W4PHS",
+          "toCall": null,
+          "grid": "EM75",
+          "partial": false
+        }
+      ],
+      "partialSalvage": false,
+      "lostFrames": 0,
+      "boundarySkewFrames": 0,
+      "clipFraction": 0.0,
+      "rmsDbfs": -18.5,
+      "dwellSlotIndex": 1
+    },
+    {
+      "slotUtcMs": 1700000015000,
+      "band": "20m",
+      "dialHz": 14074000,
+      "bandSource": "cat-confirmed",
+      "bandLabelConfirmedUtcMs": 1700000000000,
+      "outcome": { "kind": "band-dead" },
+      "decodes": [],
+      "partialSalvage": false,
+      "lostFrames": 0,
+      "boundarySkewFrames": 0,
+      "clipFraction": 0.0,
+      "rmsDbfs": -42.0,
+      "dwellSlotIndex": 2
+    },
+    {
+      "slotUtcMs": 1700000030000,
+      "band": "40m",
+      "dialHz": 7074000,
+      "bandSource": "operator-asserted",
+      "bandLabelConfirmedUtcMs": null,
+      "outcome": { "kind": "decoded" },
+      "decodes": [
+        {
+          "slotUtcMs": 1700000030000,
+          "snrDb": -3,
+          "dtS": -0.1,
+          "freqHz": 1200,
+          "message": "K7ABC W4PHS -05",
+          "fromCall": "K7ABC",
+          "toCall": "W4PHS",
+          "grid": null,
+          "partial": false
+        }
+      ],
+      "partialSalvage": false,
+      "lostFrames": 0,
+      "boundarySkewFrames": 0,
+      "clipFraction": 0.01,
+      "rmsDbfs": -15.0,
+      "dwellSlotIndex": 0
+    }
+  ],
+  "sweepConfig": { "enabled": true, "bands": ["20m", "40m"], "dwellSlots": 8 },
+  "configuredDeviceName": "USB Audio CODEC"
+}
