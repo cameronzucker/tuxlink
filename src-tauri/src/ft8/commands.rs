@@ -126,6 +126,13 @@ pub(crate) fn ft8_set_device_inner(
         Ok(())
     })?;
     state.set_ft8_config(ft8);
+    // Emit unconditionally right after persist (Task A7), same pattern as
+    // set_sweep_bands (~line 219): the L3 panel re-hydrates on every
+    // config.ft8 write, not just the ones that also happen to retrigger the
+    // start sequence below. `state.start()`'s own emit (when it fires) is a
+    // second, later event describing the axis transition — not a
+    // substitute for this persist-time one.
+    state.emit_listening_change();
     // From any blocked state except capture-wedged (refused above), a
     // device pick retriggers the start sequence; from stopped it stays
     // persist-only (the operator's start click is the trigger).
@@ -181,6 +188,10 @@ pub(crate) fn ft8_set_sweep_inner(
         Ok(()) // validate() enforces sweep.enabled ⇒ rig configured
     })?;
     state.set_ft8_config(ft8);
+    // Verified (Task A7): `apply_sweep_enabled` already calls
+    // `self.emit_listening_change()` unconditionally at its end
+    // (service.rs), so this setter already emits on every call — no
+    // separate emit needed here.
     state.apply_sweep_enabled(enabled);
     Ok(())
 }
@@ -742,6 +753,102 @@ mod tests {
         );
         ft8_set_sweep_bands_inner(&state, vec!["40m".into()]).unwrap();
         assert_eq!(sink.listening_changes.lock().unwrap().len(), 1);
+    }
+
+    // ---- Task A7: emit on set_device + hoi1 two-face guards on ALL FOUR
+    // config.ft8 writers (set_device, set_band, set_sweep — set_sweep_bands
+    // already covered above). ------------------------------------------------
+
+    /// (a) a successful `ft8_set_device` write emits ft8-listening:change,
+    /// same as the sibling setters — closes the Task A7 emit gap (the L3
+    /// panel re-hydrates on every config.ft8 writer, not just
+    /// `set_sweep_bands`).
+    #[test]
+    fn set_device_emits_listening_change() {
+        let (_env, _dir) = seed_config();
+        let sink = Arc::new(RecordingSink::default());
+        let state = crate::ft8::service::Ft8ListenerState::new(
+            Ft8Deps {
+                platform: FakePlatform::happy(),
+                clock: FakeClock::new(crate::ft8::clock::ClockSync::Synced),
+                sink: sink.clone(),
+            },
+            Ft8Config::default(),
+        );
+        ft8_set_device_inner(&state, test_stable_id()).unwrap();
+        assert_eq!(sink.listening_changes.lock().unwrap().len(), 1);
+    }
+
+    /// (b) hoi1 for `ft8_set_device`: a sweep.bands list seeded on disk
+    /// BEFORE the call survives an unrelated device-pick write untouched
+    /// (testing-pitfalls §7 absent-field-erases / multi-writer clobber).
+    #[test]
+    fn set_device_preserves_sweep_bands() {
+        let (_env, _dir) = seed_config();
+        crate::config::update_config(|c| {
+            c.ft8.sweep.bands = vec!["20m".into(), "40m".into()];
+            Ok(())
+        })
+        .unwrap();
+        let state = state_with(Ft8Config::default());
+        ft8_set_device_inner(&state, test_stable_id()).unwrap();
+        let after = crate::config::read_config().unwrap();
+        assert_eq!(
+            after.ft8.sweep.bands,
+            vec!["20m".to_string(), "40m".to_string()],
+            "hoi1: sweep.bands survives an unrelated set_device write"
+        );
+    }
+
+    /// (c) hoi1 for `ft8_set_band`: a device seeded on disk BEFORE the call
+    /// survives an unrelated band write untouched (not-listening path, so
+    /// the write is persist-only — mirrors
+    /// `set_band_not_listening_is_persist_only`).
+    #[test]
+    fn set_band_preserves_device() {
+        let (_env, _dir) = seed_config();
+        crate::config::update_config(|c| {
+            c.ft8.device = Some(test_stable_id());
+            Ok(())
+        })
+        .unwrap();
+        let state = state_with(Ft8Config::default());
+        ft8_set_band_inner(&state, "40m".into()).unwrap();
+        let after = crate::config::read_config().unwrap();
+        assert_eq!(
+            after.ft8.device,
+            Some(test_stable_id()),
+            "hoi1: device survives an unrelated set_band write"
+        );
+    }
+
+    /// (d) hoi1 for `ft8_set_sweep`: a device AND sweep.bands seeded on disk
+    /// BEFORE the call BOTH survive an unrelated sweep-enabled write
+    /// untouched. Uses `seed_config_with_rig` because `validate()` enforces
+    /// sweep.enabled ⇒ rig configured (mirrors
+    /// `set_sweep_without_rig_is_rejected`'s negative case).
+    #[test]
+    fn set_sweep_preserves_device_and_bands() {
+        let (_env, _dir) = seed_config_with_rig();
+        crate::config::update_config(|c| {
+            c.ft8.device = Some(test_stable_id());
+            c.ft8.sweep.bands = vec!["20m".into(), "40m".into()];
+            Ok(())
+        })
+        .unwrap();
+        let state = state_with(Ft8Config::default());
+        ft8_set_sweep_inner(&state, true).unwrap();
+        let after = crate::config::read_config().unwrap();
+        assert_eq!(
+            after.ft8.device,
+            Some(test_stable_id()),
+            "hoi1: device survives an unrelated set_sweep write"
+        );
+        assert_eq!(
+            after.ft8.sweep.bands,
+            vec!["20m".to_string(), "40m".to_string()],
+            "hoi1: sweep.bands survives an unrelated set_sweep write"
+        );
     }
 
     /// camelCase wire contract: Ft8CmdError's serialized keys are `kind`
