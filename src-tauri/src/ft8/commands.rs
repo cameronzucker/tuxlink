@@ -44,6 +44,19 @@ impl Ft8CmdError {
     }
 }
 
+/// `ft8_cat_probe` result (spec §NewCommands `ft8_cat_probe` row,
+/// tuxlink-b026z.4 Task A4): the rig's current VFO dial, mapped to the
+/// nearest FT8 band table entry (`"unknown"` when the dial falls outside
+/// every band's ±3 kHz window — mirrors the label `start_rig_labeling`
+/// assigns on the same miss). Consumed by the setup surface's "Test CAT"
+/// button (Task C9b) and the sweep-enable gate (Task C10).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatProbeDto {
+    pub dial_hz: u64,
+    pub band: String,
+}
+
 /// One serialized ft8 RMW cycle, delegating to the CRATE-WIDE gate
 /// (`config::update_config`, Step 2a): read → mutate → validate → atomic
 /// write under config.rs's one static writer lock. Returns the updated
@@ -250,6 +263,57 @@ pub(crate) fn ft8_list_devices_inner(
     Ok(state.platform.enumerate_capture())
 }
 
+/// `ft8_cat_probe` (spec §NewCommands): read-only rig-dial probe. Reads the
+/// rig's current VFO via `Ft8Platform::rig_read_dial()` ONLY — no `Inner`
+/// state is touched (unlike `start_rig_labeling`'s step-5 QSY, this never
+/// writes `band` / `dial_hz` / `band_source`; a "Test CAT" click must not
+/// silently relabel the listener's live band out from under it).
+///
+/// Refusal order (both checks are config/state reads, not rig I/O, so they
+/// run before either lock — mirrors the `wedged_refusal` fail-fast shape
+/// above and step 5's `rig_configured()` probe at service.rs:804):
+/// 1. `modem-busy` when `!platform.modem_resume_eligible()` — a live modem
+///    session holds the proceed-set complement (spec's "active set"); the
+///    probe refuses rather than contend the rig with it.
+/// 2. `rig-not-configured` when `!platform.rig_configured()`.
+///
+/// **Lock architecture (pinned):** the actual rig read acquires ONLY
+/// `state.rig_lock()` — the same leaf lock `start_rig_labeling` and
+/// `qsy_to_band` each own internally — wrapped in the arbiter's
+/// `rig_session` when installed (arbiter lock only, never the rig lock;
+/// same composition as `ft8_set_band_inner`'s CAT-confirmed QSY block
+/// above and the supervisor's step 5). Lock order stays arbiter > rig >
+/// state, each acquired at most once per thread, so this cannot deadlock
+/// against `pause_for_modem` (arbiter, then briefly rig) — the probe never
+/// takes the state (`Inner`) mutex at all, so there is no state-lock leg to
+/// order against either.
+pub(crate) fn ft8_cat_probe_inner(state: &Arc<Ft8ListenerState>) -> Result<CatProbeDto, Ft8CmdError> {
+    if !state.platform.modem_resume_eligible() {
+        return Err(Ft8CmdError::new(
+            "modem-busy",
+            "a modem session is active; stop it before probing CAT",
+        ));
+    }
+    if !state.platform.rig_configured() {
+        return Err(Ft8CmdError::new("rig-not-configured", "no rig is configured"));
+    }
+    let read_dial = || -> Result<CatProbeDto, Ft8CmdError> {
+        let _rig = state.rig_lock().lock().unwrap_or_else(|p| p.into_inner());
+        let dial_hz = state
+            .platform
+            .rig_read_dial()
+            .map_err(|e| Ft8CmdError::new("internal-error", e))?;
+        let band = tuxlink_capture::bands::band_for_dial(dial_hz)
+            .unwrap_or("unknown")
+            .to_string();
+        Ok(CatProbeDto { dial_hz, band })
+    };
+    match crate::ft8::arbiter::FT8_ARBITER.get() {
+        Some(arb) => arb.rig_session(read_dial),
+        None => read_dial(),
+    }
+}
+
 // ---- tauri shells -------------------------------------------------------
 
 #[tauri::command]
@@ -350,6 +414,30 @@ pub async fn ft8_list_devices(
     tauri::async_runtime::spawn_blocking(move || ft8_list_devices_inner(&s))
         .await
         .map_err(|e| Ft8CmdError::new("internal-error", format!("list-devices task failed: {e}")))?
+}
+
+/// `ft8_cat_probe` (spec §NewCommands). `spawn_blocking` (the rig read is a
+/// blocking spawn-read-drop `ManagedRig` session, per `Ft8Platform::
+/// rig_read_dial`'s doc-comment) bounded to 3 s: a wedged/unresponsive CAT
+/// serial link surfaces as `probe-timeout` instead of hanging the "Test
+/// CAT" button forever. The blocking task itself is not cancelled on
+/// timeout (std threads cannot be preempted) — it finishes or errors on its
+/// own and its result is simply discarded once the command has already
+/// returned `probe-timeout`.
+#[tauri::command]
+pub async fn ft8_cat_probe(
+    state: State<'_, Arc<Ft8ListenerState>>,
+) -> Result<CatProbeDto, Ft8CmdError> {
+    let s = (*state).clone();
+    let task = tauri::async_runtime::spawn_blocking(move || ft8_cat_probe_inner(&s));
+    match tokio::time::timeout(std::time::Duration::from_secs(3), task).await {
+        Ok(join_result) => join_result
+            .map_err(|e| Ft8CmdError::new("internal-error", format!("cat-probe task failed: {e}")))?,
+        Err(_elapsed) => Err(Ft8CmdError::new(
+            "probe-timeout",
+            "CAT probe did not complete within 3s",
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -672,5 +760,100 @@ mod tests {
         let v = serde_json::to_value(&devices).unwrap();
         assert_eq!(v[0]["alsaHw"], "hw:1,0", "camelCase wire key");
         assert!(v[0]["stableId"].is_object(), "stable id serialized as {{kind,value}}");
+    }
+
+    // ---- ft8_cat_probe (spec §NewCommands, tuxlink-b026z.4 Task A4) --------
+
+    /// (a) happy path: rig configured, dial at the pinned 20m frequency, no
+    /// active modem session → Ok, camelCase `dialHz` on the wire.
+    #[test]
+    fn cat_probe_happy_path_reads_dial_and_labels_band() {
+        let (_env, _dir) = seed_config();
+        let p = FakePlatform::happy();
+        *p.rig_configured.lock().unwrap() = true;
+        // FakePlatform::happy() already seeds rig_dial = Ok(14_074_000) and
+        // modem_eligible = true (proceed-set default: Stopped/Error/SocketLost).
+        let state = state_with_platform(p, Ft8Config::default());
+        let dto = ft8_cat_probe_inner(&state).unwrap();
+        assert_eq!(dto.dial_hz, 14_074_000);
+        assert_eq!(dto.band, "20m");
+        let v = serde_json::to_value(&dto).unwrap();
+        assert_eq!(v["dialHz"], 14_074_000, "camelCase wire key");
+        assert_eq!(v["band"], "20m");
+    }
+
+    /// (b) an ACTIVE modem session (state NOT in the proceed set —
+    /// `modem_resume_eligible()` false) refuses with `modem-busy`; the term
+    /// split is spec-pinned: proceed set = `{Stopped, Error, SocketLost}`,
+    /// active set = its complement.
+    #[test]
+    fn cat_probe_refuses_modem_busy_during_active_modem_session() {
+        let (_env, _dir) = seed_config();
+        let p = FakePlatform::happy();
+        *p.rig_configured.lock().unwrap() = true;
+        *p.modem_eligible.lock().unwrap() = false; // active set: modem session live
+        let state = state_with_platform(p, Ft8Config::default());
+        let e = ft8_cat_probe_inner(&state).unwrap_err();
+        assert_eq!(e.kind, "modem-busy");
+    }
+
+    /// (c) no `Config.rig` (`platform.rig_configured()` false) →
+    /// `rig-not-configured`.
+    #[test]
+    fn cat_probe_refuses_rig_not_configured() {
+        let (_env, _dir) = seed_config();
+        // FakePlatform::happy() defaults rig_configured to false.
+        let state = state_with(Ft8Config::default());
+        let e = ft8_cat_probe_inner(&state).unwrap_err();
+        assert_eq!(e.kind, "rig-not-configured");
+    }
+
+    /// (d) the probe is read-only: `Inner`'s band/dial_hz/band_source
+    /// (surfaced via the snapshot — `Inner` itself is private to
+    /// service.rs) are unchanged before and after — unlike
+    /// `start_rig_labeling`'s step-5 QSY, a "Test CAT" click must never
+    /// relabel the listener's live band out from under it.
+    #[test]
+    fn cat_probe_does_not_mutate_inner_state() {
+        let (_env, _dir) = seed_config();
+        let p = FakePlatform::happy();
+        *p.rig_configured.lock().unwrap() = true;
+        let state = state_with_platform(p, Ft8Config::default());
+        let before = state.snapshot();
+        ft8_cat_probe_inner(&state).unwrap();
+        let after = state.snapshot();
+        assert_eq!(before.band, after.band, "band unchanged");
+        assert_eq!(before.dial_hz, after.dial_hz, "dial_hz unchanged");
+        assert_eq!(before.band_source, after.band_source, "band_source unchanged");
+    }
+
+    /// A dial outside every band's ±3 kHz window labels `"unknown"` rather
+    /// than erroring — mirrors the label `start_rig_labeling` assigns on the
+    /// same miss (service.rs's `nearest_band` fallback).
+    #[test]
+    fn cat_probe_out_of_band_dial_labels_unknown() {
+        let (_env, _dir) = seed_config();
+        let p = FakePlatform::happy();
+        *p.rig_configured.lock().unwrap() = true;
+        *p.rig_dial.lock().unwrap() = Ok(9_000_000); // between 40m and 30m, outside tolerance
+        let state = state_with_platform(p, Ft8Config::default());
+        let dto = ft8_cat_probe_inner(&state).unwrap();
+        assert_eq!(dto.band, "unknown");
+        assert_eq!(dto.dial_hz, 9_000_000);
+    }
+
+    /// A `rig_read_dial` I/O failure surfaces as `internal-error` (a genuine
+    /// infrastructure failure, not a rejected input) — the eight
+    /// validation-facing kinds stay reserved per this module's top
+    /// doc-comment.
+    #[test]
+    fn cat_probe_rig_read_failure_is_internal_error() {
+        let (_env, _dir) = seed_config();
+        let p = FakePlatform::happy();
+        *p.rig_configured.lock().unwrap() = true;
+        *p.rig_dial.lock().unwrap() = Err("rigctld spawn failed".into());
+        let state = state_with_platform(p, Ft8Config::default());
+        let e = ft8_cat_probe_inner(&state).unwrap_err();
+        assert_eq!(e.kind, "internal-error");
     }
 }
