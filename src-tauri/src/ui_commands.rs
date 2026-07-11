@@ -10533,6 +10533,7 @@ hw:CARD=Device,DEV=0
             elmer: crate::config::ElmerConfig::default(),
             p2p_limits: crate::contacts::limiter::P2pLimitsConfig::default(),
             ft8: crate::config::Ft8Config::default(),
+            wwv_offair: None,
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: ConnectConfig {
@@ -10888,6 +10889,7 @@ hw:CARD=Device,DEV=0
             elmer: crate::config::ElmerConfig::default(),
             p2p_limits: crate::contacts::limiter::P2pLimitsConfig::default(),
             ft8: crate::config::Ft8Config::default(),
+            wwv_offair: None,
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: ConnectConfig {
@@ -12466,6 +12468,7 @@ hw:CARD=Device,DEV=0
             elmer: crate::config::ElmerConfig::default(),
             p2p_limits: crate::contacts::limiter::P2pLimitsConfig::default(),
             ft8: crate::config::Ft8Config::default(),
+            wwv_offair: None,
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: ConnectConfig {

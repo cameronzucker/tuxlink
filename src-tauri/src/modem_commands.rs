@@ -3310,6 +3310,7 @@ mod tests {
             elmer: crate::config::ElmerConfig::default(),
             p2p_limits: crate::contacts::limiter::P2pLimitsConfig::default(),
             ft8: crate::config::Ft8Config::default(),
+            wwv_offair: None,
             schema_version: crate::config::CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: crate::config::ConnectConfig {
@@ -3987,6 +3988,7 @@ mod tests {
             elmer: crate::config::ElmerConfig::default(),
             p2p_limits: crate::contacts::limiter::P2pLimitsConfig::default(),
             ft8: crate::config::Ft8Config::default(),
+            wwv_offair: None,
             schema_version: crate::config::CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: crate::config::ConnectConfig {
