@@ -317,6 +317,15 @@
   background: var(--error);
   animation: tux-pulse 0.8s ease-in-out infinite;
 }
+/* FT-8 'blocked' ribbon state (Task C2): needs the operator's attention but
+   isn't actively transmitting/erroring, so it gets its own static amber dot
+   rather than reusing .tx's red TX-pulse (which would misleadingly read as
+   "keying now") or .connecting's pulse (which would misleadingly read as
+   "in progress" for a state that will NOT resolve on its own). */
+.layout-b .dashboard .dash-status-dot.blocked {
+  background: var(--warn, #f0c24a);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--warn, #f0c24a) 55%, transparent);
+}
 /* Connect control (tuxlink-0ic): right-aligned action in the ribbon. */
 .layout-b .dashboard .dash-connect {
   margin-left: auto;
@@ -440,6 +449,42 @@
   font-weight: 700;
   border-radius: var(--radius-pill);
   padding: 0 5px;
+}
+/* Station Intelligence (FT-8) listener control (Task C2, plan
+   tuxlink-b026z.4 §Ribbon) — mirrors .dash-aprs-control byte-for-byte
+   (dot + state word, transparent/borderless, hover accent, disabled fade).
+   A bare <button> would render invisible native GTK chrome under WebKitGTK
+   (D3 computed-style gate); this reuses the aprs control's exact idiom. */
+.layout-b .dashboard .dash-ft8 {
+  flex: 0 0 auto;
+}
+.layout-b .dashboard .dash-ft8-control {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  font: inherit;
+  font-size: var(--type-control);
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  padding: 2px 0;
+  color: var(--text, #cbd5e1);
+}
+.layout-b .dashboard .dash-ft8-control:hover:not(:disabled) {
+  color: var(--modem-accent, #4ade80);
+}
+.layout-b .dashboard .dash-ft8-control:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+.layout-b .dashboard .dash-ft8-state {
+  font-variant-numeric: tabular-nums;
+}
+.layout-b .dashboard .dash-ft8-caption {
+  margin-left: 6px;
+  color: var(--text-dim, var(--text-faint));
+  font-size: var(--type-meta);
+  font-variant-numeric: tabular-nums;
 }
 /* Egress ARM surface (MCP phase 3.6) — the operator arms/disarms agent
    send-authority and sees its live state. Reuses the .dash-status-dot tones

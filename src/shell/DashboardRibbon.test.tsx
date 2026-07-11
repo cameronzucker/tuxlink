@@ -18,11 +18,12 @@ import {
   type RenderOptions,
 } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { DashboardRibbon } from './DashboardRibbon';
+import { DashboardRibbon, type DashboardRibbonProps } from './DashboardRibbon';
 import type { StatusBarData, StatusTone } from './useStatus';
 import type { PacketUiState } from '../packet/packetStatus';
 import type { ActiveIdentityDto, IdentityListDto } from './identityTypes';
 import { EGRESS_STATUS_DISARMED } from '../security/egressTypes';
+import type { Ft8UiState } from '../ft8ui/ft8Types';
 
 // Task 14 (tuxlink-c79g): the optimistic-update tests below exercise the
 // invoke('config_set_grid') and invoke('position_set_source') write paths and
@@ -472,5 +473,144 @@ describe('<DashboardRibbon> — merged Elmer × Agent-send chip', () => {
     render(<DashboardRibbon data={makeData()} onOpenElmer={vi.fn()} egress={armEgress(EGRESS_STATUS_DISARMED)} />);
     expect(screen.queryByTestId('egress-chip')).toBeNull();
     expect(screen.queryByTestId('egress-presets')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task C2 (plan tuxlink-b026z.4 §Ribbon): Station Intelligence (FT-8)
+// listener control. The `ft8` prop takes the RAW 9-member uiState (never
+// pre-reduced by the caller) — `ft8RibbonState` owns the 9→4 map, so these
+// tests drive every one of the 9 `Ft8UiState` members directly and assert
+// the rendered `data-state` lands on the right one of the 4.
+// ---------------------------------------------------------------------------
+
+describe('<DashboardRibbon> — FT-8 status control (Task C2, tuxlink-b026z.4)', () => {
+  function makeFt8(overrides: Partial<DashboardRibbonProps['ft8']> = {}) {
+    return {
+      uiState: 'off' as Ft8UiState,
+      onOpen: vi.fn(),
+      onToggleListening: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  it('does not render the control when the ft8 prop is absent', () => {
+    render(<DashboardRibbon data={makeData()} />);
+    expect(screen.queryByTestId('dash-ft8-control')).not.toBeInTheDocument();
+  });
+
+  // The 9→4 map (exhaustive — every Ft8UiState member is exercised).
+  const CASES: Array<{ uiState: Ft8UiState; expected: 'off' | 'starting' | 'listening' | 'blocked' }> = [
+    { uiState: 'off', expected: 'off' },
+    { uiState: 'transitional', expected: 'starting' },
+    { uiState: 'decoding', expected: 'listening' },
+    { uiState: 'waiting-first-slot', expected: 'listening' },
+    { uiState: 'band-dead', expected: 'listening' },
+    { uiState: 'needs-setup', expected: 'blocked' },
+    { uiState: 'device-lost', expected: 'blocked' },
+    { uiState: 'wedged', expected: 'blocked' },
+    { uiState: 'yielded', expected: 'blocked' },
+  ];
+
+  it.each(CASES)('uiState "$uiState" renders data-state "$expected"', ({ uiState, expected }) => {
+    render(<DashboardRibbon data={makeData()} ft8={makeFt8({ uiState })} />);
+    expect(screen.getByTestId('dash-ft8-control')).toHaveAttribute('data-state', expected);
+  });
+
+  it('the four rendered states show distinct data-state + copy', () => {
+    const { unmount: u1 } = render(<DashboardRibbon data={makeData()} ft8={makeFt8({ uiState: 'off' })} />);
+    let btn = screen.getByTestId('dash-ft8-control');
+    expect(btn).toHaveAttribute('data-state', 'off');
+    expect(btn).toHaveTextContent(/off/i);
+    u1();
+
+    const { unmount: u2 } = render(<DashboardRibbon data={makeData()} ft8={makeFt8({ uiState: 'transitional' })} />);
+    btn = screen.getByTestId('dash-ft8-control');
+    expect(btn).toHaveAttribute('data-state', 'starting');
+    expect(btn).toHaveTextContent(/starting/i);
+    u2();
+
+    const { unmount: u3 } = render(
+      <DashboardRibbon
+        data={makeData()}
+        ft8={makeFt8({ uiState: 'decoding', band: '20m', decodesPerMin: 4.5 })}
+      />,
+    );
+    btn = screen.getByTestId('dash-ft8-control');
+    expect(btn).toHaveAttribute('data-state', 'listening');
+    expect(btn).toHaveTextContent(/listening/i);
+    expect(screen.getByTestId('dash-ft8-caption')).toHaveTextContent('20m');
+    expect(screen.getByTestId('dash-ft8-caption')).toHaveTextContent('4.5/min');
+    u3();
+
+    render(<DashboardRibbon data={makeData()} ft8={makeFt8({ uiState: 'needs-setup' })} />);
+    btn = screen.getByTestId('dash-ft8-control');
+    expect(btn).toHaveAttribute('data-state', 'blocked');
+    expect(btn).toHaveTextContent(/needs setup/i);
+  });
+
+  // Blocked sub-labels (spec §Ribbon: "needs setup" / "disconnected" / "restart" / "paused").
+  const BLOCKED_LABELS: Array<{ uiState: Ft8UiState; label: string }> = [
+    { uiState: 'needs-setup', label: 'needs setup' },
+    { uiState: 'device-lost', label: 'disconnected' },
+    { uiState: 'wedged', label: 'restart' },
+    { uiState: 'yielded', label: 'paused' },
+  ];
+
+  it.each(BLOCKED_LABELS)('blocked uiState "$uiState" shows sub-label "$label"', ({ uiState, label }) => {
+    render(<DashboardRibbon data={makeData()} ft8={makeFt8({ uiState })} />);
+    expect(screen.getByTestId('dash-ft8-control')).toHaveTextContent(label);
+  });
+
+  it('a blocked click calls the open handler, not the toggle', () => {
+    const onOpen = vi.fn();
+    const onToggleListening = vi.fn();
+    render(
+      <DashboardRibbon data={makeData()} ft8={makeFt8({ uiState: 'needs-setup', onOpen, onToggleListening })} />,
+    );
+    fireEvent.click(screen.getByTestId('dash-ft8-control'));
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    expect(onToggleListening).not.toHaveBeenCalled();
+  });
+
+  it('an "off" click calls the toggle, not the open handler', () => {
+    const onOpen = vi.fn();
+    const onToggleListening = vi.fn();
+    render(<DashboardRibbon data={makeData()} ft8={makeFt8({ uiState: 'off', onOpen, onToggleListening })} />);
+    fireEvent.click(screen.getByTestId('dash-ft8-control'));
+    expect(onToggleListening).toHaveBeenCalledTimes(1);
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it('a "listening" click calls the toggle (to stop), not the open handler', () => {
+    const onOpen = vi.fn();
+    const onToggleListening = vi.fn();
+    render(
+      <DashboardRibbon data={makeData()} ft8={makeFt8({ uiState: 'decoding', onOpen, onToggleListening })} />,
+    );
+    fireEvent.click(screen.getByTestId('dash-ft8-control'));
+    expect(onToggleListening).toHaveBeenCalledTimes(1);
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it('falls back to onOpen when onToggleListening is omitted (prop-light consumers)', () => {
+    const onOpen = vi.fn();
+    render(<DashboardRibbon data={makeData()} ft8={{ uiState: 'off', onOpen }} />);
+    fireEvent.click(screen.getByTestId('dash-ft8-control'));
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it('the "starting" state disables the control', () => {
+    render(<DashboardRibbon data={makeData()} ft8={makeFt8({ uiState: 'transitional' })} />);
+    expect(screen.getByTestId('dash-ft8-control')).toBeDisabled();
+  });
+
+  it('a "blocked" state stays clickable even when toggleBusy is set', () => {
+    const onOpen = vi.fn();
+    render(<DashboardRibbon data={makeData()} ft8={makeFt8({ uiState: 'needs-setup', onOpen, toggleBusy: true })} />);
+    const btn = screen.getByTestId('dash-ft8-control');
+    expect(btn).not.toBeDisabled();
+    fireEvent.click(btn);
+    expect(onOpen).toHaveBeenCalledTimes(1);
   });
 });

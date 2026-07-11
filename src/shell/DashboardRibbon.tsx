@@ -23,6 +23,7 @@ import {
   type EgressStatusDto,
 } from '../security/egressTypes';
 import { Button } from '../controls';
+import type { Ft8UiState } from '../ft8ui/ft8Types';
 
 /**
  * Self-contained clock cell (tuxlink-sndh). Lives in its own subtree so the
@@ -60,6 +61,54 @@ function dashDotClass(tone: StatusTone): string {
       return 'connecting';
     case 'error':
       return 'tx';
+  }
+}
+
+/** The 4 ribbon-visible FT-8 states (Task C2, plan tuxlink-b026z.4 §Ribbon). */
+export type Ft8RibbonState = 'off' | 'starting' | 'listening' | 'blocked';
+
+/**
+ * The 9→4 ribbon-state map (explicit — the hook exposes 9 `Ft8UiState`
+ * members, the ribbon shows 4). A switch with no `default` over the full
+ * `Ft8UiState` union: TypeScript enforces exhaustiveness here, so a future
+ * 10th member added to `Ft8UiState` is a compile error in THIS function, not
+ * a silent gap that falls through to some arbitrary branch.
+ */
+export function ft8RibbonState(state: Ft8UiState): Ft8RibbonState {
+  switch (state) {
+    case 'off':
+      return 'off';
+    case 'transitional':
+      return 'starting';
+    case 'decoding':
+    case 'waiting-first-slot':
+    case 'band-dead':
+      return 'listening';
+    case 'needs-setup':
+    case 'device-lost':
+    case 'wedged':
+    case 'yielded':
+      return 'blocked';
+  }
+}
+
+/**
+ * Sub-label for the 'blocked' ribbon state (spec §Ribbon). Only meaningful
+ * when `ft8RibbonState(state) === 'blocked'`; returns null for the other 5
+ * raw states (the caller only renders this alongside a 'blocked' badge).
+ */
+export function ft8BlockedLabel(state: Ft8UiState): string | null {
+  switch (state) {
+    case 'needs-setup':
+      return 'needs setup';
+    case 'device-lost':
+      return 'disconnected';
+    case 'wedged':
+      return 'restart';
+    case 'yielded':
+      return 'paused';
+    default:
+      return null;
   }
 }
 
@@ -102,6 +151,39 @@ export interface DashboardRibbonProps {
     unread: number;
     onOpen: () => void;
     onToggleListening?: () => void;
+    toggleBusy?: boolean;
+  };
+  /** Station Intelligence (FT-8) listener status control (Task C2, plan
+   *  tuxlink-b026z.4 §Ribbon). Mirrors the `aprs` shape above: a dot + state
+   *  word rendered after the APRS block. `uiState` is the RAW 9-member value
+   *  from `useFt8Listener().uiState.state` — DashboardRibbon owns the 9→4
+   *  reduction (see `ft8RibbonState` below) so the mapping is testable
+   *  directly off this prop, one uiState at a time. Absent → the control is
+   *  not rendered (keeps prop-free consumers/tests unchanged). */
+  ft8?: {
+    /** One of the hook's 9 states — never pre-reduced by the caller. */
+    uiState: Ft8UiState;
+    /** `snapshot.band` for the listening caption (e.g. "20m"), or null/undefined
+     *  before a snapshot exists. Only consulted when the reduced state is
+     *  'listening'. */
+    band?: string | null;
+    /** Decodes/min for the listening caption (deriveBandActivity.stripStats),
+     *  or null/undefined when there's no rate to show yet. Only consulted
+     *  when the reduced state is 'listening'. */
+    decodesPerMin?: number | null;
+    /** Opens the Station Intelligence panel. A 'blocked' click ALWAYS calls
+     *  this — never `onToggleListening` (spec §Ribbon: blocked needs the
+     *  operator's attention in the panel, not a toggle attempt that would
+     *  just fail again). */
+    onOpen: () => void;
+    /** Starts/stops the FT-8 listener (off→start, listening→stop). Falls back
+     *  to `onOpen` for prop-light consumers/tests that don't pass it (mirrors
+     *  the `aprs` control's `onToggleListening ?? onOpen` fallback). Never
+     *  invoked while the reduced state is 'blocked' — see `onOpen` above. */
+    onToggleListening?: () => void;
+    /** True while a start/stop is in flight OR the raw uiState is
+     *  'transitional'. Disables the control EXCEPT in the 'blocked' state,
+     *  which must always stay clickable so the operator can reach the panel. */
     toggleBusy?: boolean;
   };
   /** Phase 7 (tuxlink-noa0): the full identity list for the inline switcher
@@ -219,7 +301,7 @@ function ElmerAgentChip({
 // via useStatusData's useMemo) and other shell-level renders skip the ribbon
 // when its props haven't changed. The 1s clock tick already lives inside the
 // scoped ClockCell subtree, so a memo'd ribbon stays still while time advances.
-export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, connecting, onAbort, packet, radioConn, reviewInbound, onReviewInboundChange, aprs, identities, activeIdentity, onSwitchIdentity, egress, onOpenElmer, elmerOpen }: DashboardRibbonProps) {
+export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, connecting, onAbort, packet, radioConn, reviewInbound, onReviewInboundChange, aprs, ft8, identities, activeIdentity, onSwitchIdentity, egress, onOpenElmer, elmerOpen }: DashboardRibbonProps) {
   const { callsign, grid, state, connection: connectionFromData } = data;
   // Task 14 (tuxlink-c79g, spec §4.3 + Codex P1 #4): after a grid commit or a
   // source flip resolves, invalidate the config_read query so the source chip
@@ -415,6 +497,74 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
           </div>
         </>
       )}
+
+      {/* Station Intelligence (FT-8) listener control (Task C2, plan
+          tuxlink-b026z.4 §Ribbon). Rendered AFTER the APRS block, mirroring
+          its dot+label pattern. `rstate` reduces the raw 9-member uiState to
+          one of the 4 ribbon states; the 'blocked' click ALWAYS opens the
+          panel (never a toggle), even if `toggleBusy` is set — the operator
+          must always be able to reach the panel to fix a blocked listener. */}
+      {ft8 && (() => {
+        const rstate = ft8RibbonState(ft8.uiState);
+        const blockedLabel = ft8BlockedLabel(ft8.uiState);
+        const busy = rstate !== 'blocked' && (rstate === 'starting' || !!ft8.toggleBusy);
+        const caption =
+          rstate === 'listening'
+            ? [ft8.band ?? null, ft8.decodesPerMin != null ? `${ft8.decodesPerMin.toFixed(1)}/min` : null]
+                .filter((part): part is string => !!part)
+                .join(' · ')
+            : '';
+        const label =
+          rstate === 'off'
+            ? 'Off'
+            : rstate === 'starting'
+              ? 'Starting…'
+              : rstate === 'listening'
+                ? 'Listening'
+                : (blockedLabel ?? 'Blocked');
+        const title =
+          rstate === 'off'
+            ? 'Start FT-8 listening'
+            : rstate === 'starting'
+              ? 'Starting FT-8…'
+              : rstate === 'listening'
+                ? 'FT-8 listening — click to stop'
+                : `FT-8 blocked (${blockedLabel ?? 'needs attention'}) — click to open the panel`;
+        const dotClass =
+          rstate === 'listening'
+            ? ''
+            : rstate === 'starting'
+              ? 'connecting'
+              : rstate === 'blocked'
+                ? 'blocked'
+                : 'idle';
+        return (
+          <>
+            <div className="dash-divider" />
+            <div className="dash-item dash-ft8">
+              <div className="dash-label">FT-8</div>
+              <button
+                type="button"
+                className="dash-ft8-control"
+                data-testid="dash-ft8-control"
+                data-state={rstate}
+                aria-pressed={rstate === 'listening'}
+                disabled={busy}
+                onClick={rstate === 'blocked' ? ft8.onOpen : (ft8.onToggleListening ?? ft8.onOpen)}
+                title={title}
+              >
+                <span className={`dash-status-dot ${dotClass}`} aria-hidden="true" />
+                <span className="dash-ft8-state">{label}</span>
+                {caption && (
+                  <span className="dash-ft8-caption" data-testid="dash-ft8-caption">
+                    {caption}
+                  </span>
+                )}
+              </button>
+            </div>
+          </>
+        );
+      })()}
 
       {/* Merged Elmer × Agent-send control — ONE ribbon slot. Display-only:
           shows arm/taint state at a glance and opens the Elmer drawer on click.
