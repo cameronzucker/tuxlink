@@ -18,11 +18,17 @@ use tuxlink_capture::state::{BlockedReason, ServiceAxis};
 /// Machine-readable error for every FT8 Tauri command in this phase (spec
 /// §NewCommands). A2 owns this definition; A3/A4/A5/A7 `use` it — none
 /// re-defines it. `kind` is a bare `String` (not an enum) so new tags can
-/// land without a breaking type change; the FULL kebab-case vocabulary for
-/// the whole phase is: `device-reserved | device-in-use | device-not-found
-/// | modem-busy | rig-not-configured | probe-timeout | invalid-grid |
-/// invalid-band`. The UI branches on `kind`, never parses `detail` —
-/// `detail` is human-readable text only.
+/// land without a breaking type change; the FULL kebab-case vocabulary of
+/// error kinds actually EMITTED in this phase is: `device-reserved |
+/// device-not-found | modem-busy | rig-not-configured | probe-timeout |
+/// invalid-grid | invalid-band`. The UI branches on `kind`, never parses
+/// `detail` — `detail` is human-readable text only.
+///
+/// NOTE: a device being busy is NOT an error kind. `ft8_device_meter`
+/// surfaces a contended/busy device as `Ok(MeterDto { state: "in-use" })`
+/// (an Ok value, never an EBUSY `Err`), so the frontend reads busy from the
+/// meter's `state`, not from an `Ft8CmdError { kind: "device-in-use" }` —
+/// that error kind is never produced.
 ///
 /// One additional generic tag, `internal-error`, is reserved for genuine
 /// infrastructure failures (a real `write_config_atomic` disk/permission
