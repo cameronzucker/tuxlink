@@ -1,0 +1,203 @@
+/* LiveBandStrip.css — Task C7. Class names transcribed from the approved
+ * mocks (docs/design/mockups/2026-07-11-station-intel-l3/station-intel-l3-
+ * mock-v4.html + -states-v1.html) — `si-strip` / `si-dot` / `si-prov` /
+ * `si-collapse` / `si-banner` / `si-wf` / `si-feed` are the mock's own
+ * vocabulary, not invented here. Tokens are the global App.css palette plus
+ * the `--reach-*` ramp defined at `:root` in StationFinderPanel.css (both
+ * load globally in the real app; this file does not redefine either). */
+
+.si-strip {
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border-top: 1px solid var(--border-strong);
+}
+
+.si-strip__hdr {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 14px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  flex-wrap: wrap;
+}
+
+.si-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--reach-good);
+  box-shadow: 0 0 6px rgba(65, 186, 108, 0.8);
+  flex: none;
+}
+
+.si-dot--amber {
+  background: var(--reach-marginal);
+  box-shadow: 0 0 6px rgba(217, 177, 58, 0.8);
+}
+
+.si-dot--red {
+  background: var(--reach-unlikely);
+  box-shadow: 0 0 6px rgba(214, 74, 64, 0.8);
+}
+
+.si-dot--off {
+  background: var(--text-faint);
+  box-shadow: none;
+  opacity: 0.6;
+}
+
+.si-strip__title {
+  color: var(--text);
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.si-strip__chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.si-prov {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--reach-good);
+  border: 1px solid rgba(65, 186, 108, 0.4);
+  border-radius: 4px;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
+
+.si-prov--warn {
+  color: var(--reach-marginal);
+  border-color: rgba(217, 177, 58, 0.45);
+}
+
+.si-prov--unconf {
+  color: var(--text-faint);
+  border-color: var(--border-strong);
+  border-style: dashed;
+}
+
+.si-strip__stats {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 14px;
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.si-strip__stats b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.si-strip__popover-anchor {
+  position: relative;
+}
+
+.si-strip__holding-trigger {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.si-strip__popover {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 6px;
+  z-index: 20;
+}
+
+.si-collapse {
+  font-size: 11px;
+}
+
+.si-banner {
+  margin: 0 12px 8px;
+  padding: 9px 12px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  display: flex;
+  gap: 9px;
+  align-items: baseline;
+}
+
+.si-banner b {
+  font-weight: 600;
+}
+
+.si-banner--warn {
+  background: rgba(217, 177, 58, 0.08);
+  border: 1px solid rgba(217, 177, 58, 0.35);
+  color: var(--text-dim);
+}
+
+.si-banner--err {
+  background: rgba(214, 74, 64, 0.08);
+  border: 1px solid rgba(214, 74, 64, 0.35);
+  color: var(--text-dim);
+}
+
+.si-strip__body {
+  display: flex;
+  border-top: 1px solid var(--border);
+  min-height: 0;
+}
+
+.si-strip__notice {
+  padding: 14px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.si-wf {
+  flex: 1 1 55%;
+  min-width: 0;
+  padding: 8px 0 4px 14px;
+  position: relative;
+}
+
+.si-wf canvas {
+  display: block;
+  width: 100%;
+  height: 168px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.si-wf__overlay {
+  position: absolute;
+  inset: 8px 4px 24px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(4, 6, 11, 0.55);
+  color: var(--text-dim);
+  font-size: 11.5px;
+  border-radius: 4px;
+  text-align: center;
+  padding: 8px;
+}
+
+.si-wf__axis {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--text-faint);
+  padding: 3px 2px 0;
+}
+
+.si-feed {
+  flex: 1 1 45%;
+  min-width: 360px;
+  border-left: 1px solid var(--border);
+  margin-left: 14px;
+  overflow: hidden;
+}
