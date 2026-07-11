@@ -8106,7 +8106,8 @@ pub async fn telnet_p2p_connect(
                             g.set_phase(crate::peers::recorder::ObservationPhase::B2fFail);
                         }
                         crate::winlink::telnet_p2p::P2pTelnetError::Resolve { .. }
-                        | crate::winlink::telnet_p2p::P2pTelnetError::Connect { .. } => {
+                        | crate::winlink::telnet_p2p::P2pTelnetError::Connect { .. }
+                        | crate::winlink::telnet_p2p::P2pTelnetError::EgressDenied { .. } => {
                             // Never connected — leave the armed DialAttempted.
                         }
                     }
