@@ -230,8 +230,9 @@ impl SlotAssembler {
 
         // Waiting: open at the first push at/after the chosen boundary.
         if let Phase::Waiting { next_boundary_utc_ms } = &mut self.phase {
-            let next = *next_boundary_utc_ms
-                .get_or_insert((utc_now_ms / slot_ms + 1) * slot_ms);
+            let next = *next_boundary_utc_ms.get_or_insert(
+                (utc_now_ms / slot_ms).saturating_add(1).saturating_mul(slot_ms),
+            );
             if utc_now_ms < next {
                 return events; // pre-boundary partial: scheduled discard
             }
@@ -261,7 +262,7 @@ impl SlotAssembler {
             Phase::InSlot(c) => (c.slot_utc_ms, c.anchor_mono_us),
             Phase::Waiting { .. } => unreachable!("handled above"),
         };
-        if utc_now_ms >= slot_utc + slot_ms {
+        if utc_now_ms >= slot_utc.saturating_add(slot_ms) {
             // Clock-anomaly rule: UTC-vs-monotonic divergence observed at
             // the boundary (an NTP step) abandons the slot.
             let mono_elapsed_ms = mono_now_us.saturating_sub(anchor) / 1_000;
@@ -862,6 +863,58 @@ mod tests {
         }
         assert_eq!(sim.completed().len(), 1);
         assert_eq!(sim.completed()[0].slot_utc_ms, 30_000);
+    }
+
+    #[test]
+    fn push_with_utc_near_u64_max_does_not_panic_on_boundary_selection() {
+        // Gate B P2 (slot.rs:234): `(utc_now_ms / slot_ms + 1) * slot_ms`
+        // panics `attempt to multiply with overflow` when `utc_now_ms` is
+        // within one `slot_ms` of `u64::MAX`. This test FAILS (panics)
+        // before the `saturating_add`/`saturating_mul` fix and PASSES
+        // after — boundary selection saturates to `u64::MAX` instead of
+        // wrapping. A boundary this far out is never reachable via any
+        // real wall clock (~584M years of continuous uptime); saturation
+        // is the sane "cannot represent it, so pin to the ceiling"
+        // behavior rather than a panic or silent wraparound.
+        let mut asm = SlotAssembler::new(BoundaryConfig::default());
+        let utc_now_ms = u64::MAX - 10;
+        let events = asm.push(&[], utc_now_ms, 0, None);
+        assert!(events.is_empty(), "pre-boundary partial: still a scheduled discard");
+        assert!(
+            matches!(
+                asm.phase,
+                Phase::Waiting { next_boundary_utc_ms: Some(u64::MAX) }
+            ),
+            "boundary must saturate to u64::MAX, not wrap"
+        );
+    }
+
+    #[test]
+    fn boundary_close_add_overflow_when_slot_utc_near_max_does_not_panic() {
+        // Gate B P2 (slot.rs:264): `slot_utc + slot_ms` panics `attempt to
+        // add with overflow` once `slot_utc` is within one `slot_ms` of
+        // `u64::MAX`, reachable independently of the line-234 site by
+        // constructing an in-slot assembler directly (private-field
+        // access from this same-file test submodule). This test FAILS
+        // (panics) before the `saturating_add` fix and PASSES after.
+        let mut asm = SlotAssembler::new(BoundaryConfig::default());
+        asm.phase = Phase::InSlot(Current::open(u64::MAX - 100, 0));
+        // utc_now_ms == u64::MAX is >= any saturated slot_utc + slot_ms,
+        // so the boundary-crossing branch fires deterministically.
+        let events = asm.push(&[], u64::MAX, 0, None);
+        // Sane clamped behavior, not just "didn't panic": with
+        // mono_now_us == anchor == 0, mono_elapsed_ms is 0 and
+        // utc_elapsed_ms is 100 (u64::MAX − (u64::MAX − 100)) — well
+        // under the 1 s divergence bound, so this is NOT flagged as a
+        // clock anomaly. The slot closes with zero real content (the
+        // synthetic setup never delivered samples), so it fills entirely
+        // and is correctly dropped as a real failure (lost_frames far
+        // exceeds max_lost_frames), not silently swallowed.
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0],
+            SlotEvent::Dropped { class: DropClass::LostFrames, .. }
+        ));
     }
 
     #[test]

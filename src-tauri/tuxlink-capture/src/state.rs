@@ -427,6 +427,29 @@ mod tests {
         assert_eq!(m.k_consecutive(), 0);
     }
 
+    #[test]
+    fn n_consecutive_and_jt9_degraded_persist_across_resume() {
+        // Gate B P3: N/`jt9_degraded` are asymmetric with k — spec says "k
+        // resets on band change (QSY) and on resume" and says nothing
+        // about N resetting on resume, so `on_resume()` correctly touches
+        // only `k_consecutive` (see `k_resets_on_resume` above). This test
+        // PASSES immediately — it pins existing behavior, not new
+        // behavior — so a future "resume should clear all counters"
+        // refactor (a plausible-looking simplification given k DOES
+        // reset) fails loudly instead of silently regressing a
+        // spec-mandated asymmetry.
+        let mut m = listening();
+        for _ in 0..N_DEGRADED {
+            m.on_slot_outcome(Failed);
+        }
+        assert_eq!(m.n_consecutive(), N_DEGRADED);
+        assert!(m.flags().jt9_degraded);
+        m.on_pause();
+        m.on_resume();
+        assert_eq!(m.n_consecutive(), N_DEGRADED, "N must persist across resume");
+        assert!(m.flags().jt9_degraded, "jt9_degraded must persist across resume");
+    }
+
     // ================= slot phase (recency; Dropped/Discarded neutral) ==
 
     #[test]
@@ -461,6 +484,50 @@ mod tests {
             m.on_slot_outcome(o);
             assert_eq!(m.slot_phase(), SlotPhase::Decoded, "{o:?} must be phase-neutral");
         }
+    }
+
+    #[test]
+    fn slot_phase_decoded_persists_across_stop_and_pause_resume() {
+        // Gate B P2: `slot_phase` "never resets on reopen" is stated
+        // twice in comments (module doc + `on_stopped()`) but had zero
+        // test coverage. This test PASSES immediately — it pins existing
+        // behavior — closing the hole where a future `on_stopped()`
+        // "simplification" (every other field in that function DOES
+        // reset) would silently violate the named delta pin.
+        let mut m1 = listening();
+        m1.on_slot_outcome(Decoded);
+        m1.on_stopping();
+        m1.on_stopped();
+        assert_eq!(m1.slot_phase(), SlotPhase::Decoded, "on_stopped must not reset phase");
+
+        let mut m2 = listening();
+        m2.on_slot_outcome(Decoded);
+        m2.on_pause();
+        m2.on_resume();
+        assert_eq!(m2.slot_phase(), SlotPhase::Decoded, "pause/resume must not reset phase");
+    }
+
+    #[test]
+    fn slot_phase_band_dead_persists_across_stop_and_pause_resume() {
+        // Same pin as `slot_phase_decoded_persists_across_stop_and_pause_resume`,
+        // reached via the k=20 BandDead path instead of Decoded. Passes
+        // immediately.
+        let mut m1 = listening();
+        for _ in 0..K_BAND_DEAD {
+            m1.on_slot_outcome(BandDead);
+        }
+        assert_eq!(m1.slot_phase(), SlotPhase::BandDead);
+        m1.on_stopping();
+        m1.on_stopped();
+        assert_eq!(m1.slot_phase(), SlotPhase::BandDead, "on_stopped must not reset phase");
+
+        let mut m2 = listening();
+        for _ in 0..K_BAND_DEAD {
+            m2.on_slot_outcome(BandDead);
+        }
+        m2.on_pause();
+        m2.on_resume();
+        assert_eq!(m2.slot_phase(), SlotPhase::BandDead, "pause/resume must not reset phase");
     }
 
     // ================= service axis =====================================
