@@ -1,0 +1,5 @@
+Releases frozen 2026-07-11: Station Intelligence (FT-8 L3) and the peers/P2P finder epic collide on the same finder/station-catalog surface — core finder features are in a broken/conflicting state pending a render-approved reconciliation.
+
+Do not remove until: the L3 <-> peers reconciliation is (1) design-render-approved by the operator, (2) merged, and (3) CI-verified green on both arches. This governs only the release PR + promotion; feature-branch PRs merge as normal.
+
+Set by session vetch-juniper-badger on branch bd-tuxlink-b026z.4/station-intel-l3-panel.
