@@ -82,10 +82,25 @@ pub enum DiscardClass {
     ClockAnomaly,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DropClass {
+    /// `lost_frames` exceeded the per-slot bound (48 000 = 1 s): too much
+    /// of the slot is synthetic zeros to trust a decode.
+    LostFrames,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum SlotEvent {
     Completed(CompletedSlot),
     Abandoned { class: DiscardClass },
+    /// A REAL failure (counts toward N upstream, unlike scheduled
+    /// discards): the slot is discarded with provenance so the ring can
+    /// record it honestly.
+    Dropped {
+        class: DropClass,
+        slot_utc_ms: u64,
+        lost_frames: u64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -321,7 +336,18 @@ impl SlotAssembler {
         if shortfall > 0 {
             cur.fill_zeros(shortfall);
         }
-        // Task 5 inserts the lost-frames drop check HERE.
+        if cur.lost_frames > self.cfg.max_lost_frames {
+            // Spec §Slot assembly: drop the slot when lost_frames > 48 000
+            // (1 s). A real failure — counted toward N upstream. The
+            // decimator is NOT fed: its state continuity covers emitted
+            // slots only (same as abandoned slots).
+            events.push(SlotEvent::Dropped {
+                class: DropClass::LostFrames,
+                slot_utc_ms: cur.slot_utc_ms,
+                lost_frames: cur.lost_frames,
+            });
+            return;
+        }
         let mut samples = Vec::with_capacity(OUT_SLOT_FRAMES);
         self.decimator.process(&cur.buf, &mut samples);
         debug_assert_eq!(samples.len(), OUT_SLOT_FRAMES);
@@ -637,5 +663,223 @@ mod tests {
             "rms_dbfs {} want {want_rms_dbfs:.4}",
             slot.rms_dbfs
         );
+    }
+
+    #[test]
+    fn surplus_is_dropped_at_close_never_carried() {
+        // A 1% fast card: 4 800 frames arrive in 99 ms of wall time. Every
+        // slot sheds its own bounded surplus as boundary_skew_frames and
+        // the NEXT slot starts clean — no inherited offset, no later
+        // shortfall (the carry-nothing invariant).
+        let mut sim = Sim::new(10_030);
+        for _ in 0..1_000 {
+            sim.deliver_wall(BATCH, 4_752, 0, None);
+        }
+        let done = sim.completed();
+        assert!(done.len() >= 5, "got {} slots", done.len());
+        for (i, slot) in done.iter().enumerate() {
+            assert_eq!(
+                slot.lost_frames, 0,
+                "slot {i}: dropped surplus must never resurface as fill"
+            );
+            assert!(
+                slot.boundary_skew_frames > 0,
+                "slot {i}: a fast card must shed surplus every slot"
+            );
+            assert!(
+                slot.boundary_skew_frames <= 2 * BATCH as u64,
+                "slot {i}: skew {} not bounded",
+                slot.boundary_skew_frames
+            );
+            assert_eq!(slot.samples.len(), OUT_SLOT_FRAMES, "slot {i}");
+        }
+    }
+
+    #[test]
+    fn fast_clock_1000_slots_keeps_skew_bounded_never_carried() {
+        // +50 ppm soundcard: 4 800 frames delivered every 99 995 µs. Spec
+        // §Testing strategy pins 1 000 slots: slot-content-vs-UTC skew
+        // stays bounded (carryover would accumulate ~4.3 s/day — the
+        // delta's time-shift kill mechanism, self-inflicted; zero decodes
+        // after ~11 h). NOTE: this test decimates 180 M output samples —
+        // ~25 s in release, ~5 MINUTES in a debug build on the dev Pi. It
+        // is not hung; `cargo test --release -p tuxlink-capture` is a
+        // legitimate iteration shortcut (CI runs the debug profile).
+        let mut asm = SlotAssembler::new(BoundaryConfig::default());
+        let mut utc_us: u64 = 10_030_000;
+        let mut mono_us: u64 = 5_000_000;
+        let batch = vec![0i16; BATCH];
+        let mut completed = 0usize;
+        let mut max_skew = 0u64;
+        let mut total_skew = 0u64;
+        while completed < 1_000 {
+            utc_us += 99_995;
+            mono_us += 99_995;
+            for ev in asm.push(&batch, utc_us / 1_000, mono_us, None) {
+                match ev {
+                    SlotEvent::Completed(c) => {
+                        completed += 1;
+                        assert_eq!(c.samples.len(), OUT_SLOT_FRAMES);
+                        assert_eq!(c.lost_frames, 0, "slot {completed}");
+                        max_skew = max_skew.max(c.boundary_skew_frames);
+                        total_skew += c.boundary_skew_frames;
+                    }
+                    SlotEvent::Abandoned { class } => {
+                        assert_eq!(
+                            class,
+                            DiscardClass::FirstSlot,
+                            "only the scheduled first-slot discard is allowed"
+                        );
+                    }
+                    SlotEvent::Dropped { .. } => {
+                        panic!("a healthy fast clock must never drop a slot")
+                    }
+                }
+            }
+        }
+        // Bounded per slot: never more than one delivery batch of surplus.
+        assert!(max_skew <= BATCH as u64, "max per-slot skew {max_skew}");
+        // And the surplus is real (~36 frames/slot at +50 ppm): if closes
+        // silently carried instead of dropping, this would read 0 while
+        // slot content drifted ~0.75 s by slot 1 000.
+        assert!(total_skew >= 20_000, "total dropped surplus {total_skew}");
+    }
+
+    #[test]
+    fn negative_computed_gap_is_a_clock_anomaly() {
+        let mut sim = Sim::new(10_030);
+        for _ in 0..60 {
+            sim.deliver(BATCH, 0); // opens at 15.03 s + 10 in-slot batches
+        }
+        // An Overrun report whose batch arrives with ZERO wall advance:
+        // delivered exceeds the monotonic expectation → negative gap.
+        sim.deliver_wall(BATCH, 0, 0, Some(GapReport { kind: GapKind::Overrun }));
+        assert_eq!(
+            sim.abandoned(),
+            vec![DiscardClass::FirstSlot, DiscardClass::ClockAnomaly]
+        );
+        assert!(sim.completed().is_empty());
+        // Re-anchor at the NEXT boundary (30 s); the following slot
+        // completes — and no second FirstSlot record appears (the anomaly
+        // was its own record).
+        for _ in 0..320 {
+            sim.deliver(BATCH, 0);
+        }
+        assert_eq!(sim.completed().len(), 1);
+        assert_eq!(sim.completed()[0].slot_utc_ms, 30_000);
+        assert_eq!(
+            sim.abandoned(),
+            vec![DiscardClass::FirstSlot, DiscardClass::ClockAnomaly]
+        );
+    }
+
+    #[test]
+    fn single_gap_over_one_second_is_a_clock_anomaly() {
+        let mut sim = Sim::new(10_030);
+        for _ in 0..60 {
+            sim.deliver(BATCH, 0);
+        }
+        sim.stall_frames(50_400); // a single 1.05 s dropout
+        sim.deliver_gap(BATCH, 0, Some(GapReport { kind: GapKind::Overrun }));
+        assert_eq!(
+            sim.abandoned(),
+            vec![DiscardClass::FirstSlot, DiscardClass::ClockAnomaly]
+        );
+        assert!(sim.completed().is_empty());
+    }
+
+    #[test]
+    fn utc_vs_mono_divergence_at_boundary_is_a_clock_anomaly() {
+        let mut sim = Sim::new(10_030);
+        for _ in 0..100 {
+            sim.deliver(BATCH, 0); // utc 20.03 s, mid-slot
+        }
+        sim.utc_us += 2_000_000; // NTP step: UTC jumps +2 s; monotonic does not
+        for _ in 0..80 {
+            sim.deliver(BATCH, 0); // reaches the (stepped) boundary
+        }
+        assert!(
+            sim.abandoned().contains(&DiscardClass::ClockAnomaly),
+            "the step must be observed at the boundary"
+        );
+        assert!(sim.completed().is_empty());
+        // Recovery: re-anchored at the next boundary, a full clean slot
+        // completes (300 pushes cover waiting out the partial interval plus
+        // one whole slot).
+        for _ in 0..310 {
+            sim.deliver(BATCH, 0);
+        }
+        assert_eq!(sim.completed().len(), 1);
+    }
+
+    #[test]
+    fn cumulative_lost_frames_over_one_second_drops_the_slot() {
+        // Two 0.6 s gaps: each under the 48 000-frame single-gap anomaly
+        // bound, together 57 600 filled frames — over the 48 000
+        // lost-frames bound. The slot is EMITTED AS A DROP (a real failure,
+        // counts toward N upstream), not completed, not a scheduled
+        // discard.
+        let mut sim = Sim::new(10_030);
+        for _ in 0..50 {
+            sim.deliver(BATCH, 1_000); // opens at 15.03 s
+        }
+        for _ in 0..40 {
+            sim.deliver(BATCH, 1_000);
+        }
+        sim.stall_frames(28_800); // gap 1: 0.6 s
+        sim.deliver_gap(BATCH, 1_000, Some(GapReport { kind: GapKind::Overrun }));
+        for _ in 0..40 {
+            sim.deliver(BATCH, 1_000);
+        }
+        sim.stall_frames(28_800); // gap 2: 0.6 s
+        sim.deliver_gap(BATCH, 1_000, Some(GapReport { kind: GapKind::Overrun }));
+        for _ in 0..60 {
+            sim.deliver(BATCH, 1_000); // crosses the 30 s boundary
+        }
+        let drops: Vec<_> = sim
+            .events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    SlotEvent::Dropped { class: DropClass::LostFrames, .. }
+                )
+            })
+            .collect();
+        assert_eq!(drops.len(), 1);
+        match drops[0] {
+            SlotEvent::Dropped { slot_utc_ms, lost_frames, .. } => {
+                assert_eq!(*slot_utc_ms, 15_000);
+                assert!(*lost_frames > 48_000, "lost {lost_frames}");
+            }
+            _ => unreachable!(),
+        }
+        assert!(sim.completed().is_empty());
+        // The next slot completes normally — the drop did not poison the
+        // stream.
+        for _ in 0..160 {
+            sim.deliver(BATCH, 1_000);
+        }
+        assert_eq!(sim.completed().len(), 1);
+        assert_eq!(sim.completed()[0].slot_utc_ms, 30_000);
+    }
+
+    #[test]
+    fn suspended_abandons_and_reanchors() {
+        let mut sim = Sim::new(10_030);
+        for _ in 0..60 {
+            sim.deliver(BATCH, 0);
+        }
+        sim.deliver_gap(BATCH, 0, Some(GapReport { kind: GapKind::Suspended }));
+        assert_eq!(
+            sim.abandoned(),
+            vec![DiscardClass::FirstSlot, DiscardClass::ClockAnomaly]
+        );
+        // Recovery into the next boundary; the following slot completes.
+        for _ in 0..320 {
+            sim.deliver(BATCH, 0);
+        }
+        assert_eq!(sim.completed().len(), 1);
+        assert_eq!(sim.completed()[0].slot_utc_ms, 30_000);
     }
 }
