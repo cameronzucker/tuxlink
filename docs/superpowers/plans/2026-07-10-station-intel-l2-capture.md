@@ -38,6 +38,8 @@
 - **BEFORE starting work on any task:** read `.claude/skills/test-driven-development` or invoke `/test-driven-development`; read `docs/pitfalls/testing-pitfalls.md`. Follow TDD: failing test → minimal code → green.
 - **BEFORE marking any task complete:** review the task's tests against `docs/pitfalls/testing-pitfalls.md`; verify error-path and edge-case coverage; run the task's test commands and confirm green.
 - After every review-gate marker below: review the batch from multiple perspectives, minimum three rounds; keep going past three if the third still finds substantive issues.
+- **Review-gate protocol (Gates A–F).** Every finding is recorded in the gate's findings file with: a severity — **P1** (blocks merge), **P2** (fix before the next gate), **P3** (note) — plus `file:line`, a short verbatim quote of the offending code/text, why it is wrong, and the proposed fix. P1 and P2 findings are FIXED via normal commits before the next task starts; P3s are recorded in the findings file with their disposition. Each gate lists its **Files under review** (derived from the batch's tasks) so a round cannot silently skip a file. Each gate's outcome is also summarized — one line per finding + disposition — in the eventual PR body; the `dev/scratch/` findings files are gitignored and stay local.
+- **Push cadence (Phase C).** The parent pushes the branch at the **Gate D, Gate E, and Gate F boundaries**, after that gate's P1/P2 fixes are committed. Each gate push's CI run is that batch's red-green: the per-task **[CI-side]** steps execute at the batch's gate push, not per task. Phases A–B need no interim push (they red-green locally on the Pi). After Gate F, the final push carries T19's docs commit. Fix-forward on CI findings from each push before starting the next batch.
 
 ---
 
@@ -805,7 +807,7 @@ git commit -m "feat(ft8): 51-tap Kaiser 4:1 decimator with response-verified com
 
 ---
 
-**REVIEW GATE A (after Tasks 1–3):** review the DSP + writer batch from multiple perspectives: (1) numeric honesty — the response tests derive everything from `COEFFS` itself, no magic expected-values that could mask a mistyped table; (2) contract fidelity — writer output vs `tuxlink_jt9::wav::preflight_slot_wav` byte layout, `OUT_SLOT_FRAMES`/`OUT_RATE_HZ` vs the L1 crate's `SLOT_FRAMES`/`SLOT_RATE_HZ`; (3) state-machine honesty of the decimator — phase/history across odd chunks, saturation, clippy/MSRV. Minimum three rounds; persist findings to `dev/scratch/b026z.3-gate-A-findings.md` before proceeding.
+**REVIEW GATE A (after Tasks 1–3):** review the DSP + writer batch from multiple perspectives: (1) numeric honesty — the response tests derive everything from `COEFFS` itself, no magic expected-values that could mask a mistyped table; (2) contract fidelity — writer output vs `tuxlink_jt9::wav::preflight_slot_wav` byte layout, `OUT_SLOT_FRAMES`/`OUT_RATE_HZ` vs the L1 crate's `SLOT_FRAMES`/`SLOT_RATE_HZ`; (3) state-machine honesty of the decimator — phase/history across odd chunks, saturation, clippy/MSRV. Minimum three rounds; persist findings to `dev/scratch/b026z.3-gate-A-findings.md` before proceeding. Files under review: `src-tauri/tuxlink-capture/Cargo.toml`, `src-tauri/tuxlink-capture/src/lib.rs`, `src-tauri/tuxlink-capture/src/bands.rs`, `src-tauri/tuxlink-capture/src/wavwrite.rs`, `src-tauri/tuxlink-capture/src/decimator.rs`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`.
 
 ---
 
@@ -1820,7 +1822,10 @@ pub enum SlotEvent {
 }
 ```
 
-Re-run. Expected: `cumulative_lost_frames_over_one_second_drops_the_slot` FAILS (the slot is still emitted as `Completed`); the anomaly/skew tests pass (they pin Task 4's control flow — verify each failure message would be meaningful by reading them once against the implementation). The fast-clock test takes ~5 min in debug on the Pi (~25 s with `--release`).
+Re-run. Expected: `cumulative_lost_frames_over_one_second_drops_the_slot` FAILS (the slot is still emitted as `Completed`); the anomaly/skew tests pass (they pin Task 4's control flow — verify each failure message would be meaningful by reading them once against the implementation).
+
+Iteration loop for the 1000-slot test (pinned — ~5 min in debug on the Pi, ~25 s in release; CI runs the debug profile, so the release run is a local shortcut only):
+Run: `cargo test --manifest-path "$WT/src-tauri/Cargo.toml" -p tuxlink-capture --release --locked fast_clock`
 
 - [ ] **Step 3: Implement the lost-frames drop**
 
@@ -1846,8 +1851,11 @@ with:
 
 - [ ] **Step 4: Run tests green + clippy clean**
 
-Run: `cargo test --manifest-path "$WT/src-tauri/Cargo.toml" -p tuxlink-capture --locked`
-Expected: all pass. Run: `cargo clippy --manifest-path "$WT/src-tauri/Cargo.toml" -p tuxlink-capture --all-targets --locked -- -D warnings`
+Run (iteration loop, while red-greening — the 1000-slot test is the slow one):
+`cargo test --manifest-path "$WT/src-tauri/Cargo.toml" -p tuxlink-capture --release --locked fast_clock`
+Run (final, ONCE, full suite in the CI profile):
+`cargo test --manifest-path "$WT/src-tauri/Cargo.toml" -p tuxlink-capture --locked`
+Expected: all pass (the debug run takes ~5 min — dominated by the fast-clock test; it is not hung). Run: `cargo clippy --manifest-path "$WT/src-tauri/Cargo.toml" -p tuxlink-capture --all-targets --locked -- -D warnings`
 Expected: clean.
 
 - [ ] **Step 5: Commit**
@@ -2715,8 +2723,10 @@ Replace the stubbed methods inside `impl ListenerMachine` (keep `new` and the ac
 
 - [ ] **Step 4: Run tests green + clippy clean**
 
-Run: `cargo test --manifest-path "$WT/src-tauri/Cargo.toml" -p tuxlink-capture --locked`
-Expected: the full crate suite passes (bands + wavwrite + decimator + slot + state).
+Run (iteration loop while red-greening the state tests — skips the ~5 min debug fast-clock test):
+`cargo test --manifest-path "$WT/src-tauri/Cargo.toml" -p tuxlink-capture --locked state`
+Run (final, ONCE, full suite): `cargo test --manifest-path "$WT/src-tauri/Cargo.toml" -p tuxlink-capture --locked`
+Expected: the full crate suite passes (bands + wavwrite + decimator + slot + state; the slot suite's fast-clock test dominates the wall time — `cargo test -p tuxlink-capture --release --locked fast_clock` remains the legitimate release shortcut for THAT test only).
 Run: `cargo clippy --manifest-path "$WT/src-tauri/Cargo.toml" -p tuxlink-capture --all-targets --locked -- -D warnings`
 Expected: clean.
 
@@ -2730,7 +2740,7 @@ git commit -m "feat(ft8): listener state machine — axes, health flags, sweep e
 
 ---
 
-**REVIEW GATE B (after Tasks 4–6):** review the assembler + machine batch. Perspectives: (1) spec-rule tracing — walk every rule in spec §Slot assembly and §Counter semantics to its named test (a rule without a test is a finding); (2) clock-domain honesty — no ambient time reads, UTC only labels, monotonic only measures, the anchor convention consistent between open sites; (3) event taxonomy — Completed vs Abandoned (counter-neutral) vs Dropped (counts toward N) map 1:1 onto the spec's outcome classes and Phase C's `RingOutcomeKind`; (4) saturating arithmetic + no panics on adversarial inputs (empty batches, huge mono jumps, u64 edges). Minimum three rounds; persist findings to `dev/scratch/b026z.3-gate-B-findings.md` before proceeding.
+**REVIEW GATE B (after Tasks 4–6):** review the assembler + machine batch. Perspectives: (1) spec-rule tracing — walk every rule in spec §Slot assembly and §Counter semantics to its named test (a rule without a test is a finding); (2) clock-domain honesty — no ambient time reads, UTC only labels, monotonic only measures, the anchor convention consistent between open sites; (3) event taxonomy — Completed vs Abandoned (counter-neutral) vs Dropped (counts toward N) map 1:1 onto the spec's outcome classes and Phase C's `RingOutcomeKind`; (4) saturating arithmetic + no panics on adversarial inputs (empty batches, huge mono jumps, u64 edges). Minimum three rounds; persist findings to `dev/scratch/b026z.3-gate-B-findings.md` before proceeding. Files under review: `src-tauri/tuxlink-capture/src/slot.rs`, `src-tauri/tuxlink-capture/src/state.rs`, `src-tauri/tuxlink-capture/src/lib.rs`.
 
 ---
 
@@ -3018,7 +3028,7 @@ git commit -m "feat(ft8): salvage-on-signal parity in the jt9 runner + contract 
 
 ---
 
-**REVIEW GATE C (after Task 7 — Phase A+B complete):** perspectives: (1) classification-order walk — trace every `SlotOutcome` arm of the modified runner against the fake-jt9 suite and the spec's pinned ordering (StderrEof → salvage → Signal, on BOTH the signal and nonzero-exit paths); (2) contract-surface audit — the three types.rs doc edits match the spec §Contract edits verbatim in substance, and no OTHER doc in tuxlink-jt9 still claims timeout-only salvage (grep `timed-out` across the crate); (3) leaf-crate purity — `tuxlink-capture/Cargo.toml` `[dependencies]` is still empty, no `std::time`/`SystemTime` reads anywhere in `tuxlink-capture` (time is injected data); (4) cross-crate constant agreement — 180,000/12,000 in `wavwrite.rs` vs `tuxlink_jt9::wav`, N/k in `state.rs` vs the types.rs doc. Minimum three rounds; persist findings to `dev/scratch/b026z.3-gate-C-findings.md` before proceeding to Phase C.
+**REVIEW GATE C (after Task 7 — Phase A+B complete):** perspectives: (1) classification-order walk — trace every `SlotOutcome` arm of the modified runner against the fake-jt9 suite and the spec's pinned ordering (StderrEof → salvage → Signal, on BOTH the signal and nonzero-exit paths); (2) contract-surface audit — the three types.rs doc edits match the spec §Contract edits verbatim in substance, and no OTHER doc in tuxlink-jt9 still claims timeout-only salvage (grep `timed-out` across the crate); (3) leaf-crate purity — `tuxlink-capture/Cargo.toml` `[dependencies]` is still empty, no `std::time`/`SystemTime` reads anywhere in `tuxlink-capture` (time is injected data); (4) cross-crate constant agreement — 180,000/12,000 in `wavwrite.rs` vs `tuxlink_jt9::wav`, N/k in `state.rs` vs the types.rs doc. Minimum three rounds; persist findings to `dev/scratch/b026z.3-gate-C-findings.md` before proceeding to Phase C. Files under review: `src-tauri/tuxlink-jt9/src/runner.rs`, `src-tauri/tuxlink-jt9/src/types.rs`, `src-tauri/tuxlink-jt9/tests/fake_jt9.rs` (plus the `tuxlink-capture` purity re-check named in perspective 3).
 
 ---
 
@@ -3039,10 +3049,11 @@ subagent:
    `tuxlink-capture`/`tuxlink-jt9` (none of Tasks 8–19 do, except Task 18's
    fixture-prep sanity step which is pure Python/shell).
 4. Stages + commits per the task's commit step (heredoc trailer form from
-   Global Constraints); the PARENT pushes and CI (amd64 + arm64,
+   Global Constraints); the PARENT pushes **at the Gate D / Gate E / Gate F
+   boundaries** (Global Constraints §Push cadence) and CI (amd64 + arm64,
    `cargo clippy/test --workspace --all-targets --locked`) is the compile +
-   test verdict. If a subagent cannot commit in the worktree, it stops after
-   staging and reports — the parent commits.
+   test verdict for each pushed batch. If a subagent cannot commit in the
+   worktree, it stops after staging and reports — the parent commits.
 
 **Clippy traps (CI runs `-D warnings` on the whole workspace; every Phase C
 task must write around these up front — there is no local red-green to catch
@@ -3086,6 +3097,11 @@ semantically (one filter DESIGN, one signal path shape); the duplicate
 instance exists only because the assembler's filter state must stay private
 for gap-fill continuity. This resolution is recorded here so no reviewer
 "fixes" it by exposing assembler internals.
+
+**Module-placement deviation (recorded):** the spec's module sketch places
+`Ft8ListenerState` in `src/ft8/mod.rs`; the implementation puts it in
+`src/ft8/service.rs` (mod.rs stays a declaration-only façade). Deliberate —
+recorded here so no reviewer "restores" the sketch's location.
 
 ---
 
@@ -3216,6 +3232,10 @@ style):
         assert!(enumerate_audio_devices(&snap).is_empty());
     }
 ```
+NB: these fixtures use `..Default::default()` on `SysSnapshot` — verify
+`SysSnapshot` derives (or manually implements) `Default`; if it does not,
+construct every field explicitly instead of adding a derive to released
+code.
 
 - [ ] **Step 3: Implement — new field, new handle, new function**
 
@@ -3321,8 +3341,9 @@ existing resolver tests construct expected values) and add the matching
 `alsa_hw: alsa_hw_name(<index>)` / literal string.
 
 **(3e)** `enumerate_capture_devices`, directly below
-`enumerate_audio_devices` (quote of the existing function is at Step 2 of
-this file's Task-8 preamble; the new function reuses its body shape):
+`enumerate_audio_devices` — read `enumerate_audio_devices` in devices.rs
+and mirror its body (the new function reuses its shape, adding only the
+capture filter):
 ```rust
 /// Enumerate the CAPTURE-capable audio devices from a snapshot — the FT8
 /// listener's picker source (spec §Device selection). Same stable-identity
@@ -3634,7 +3655,7 @@ impl RigUiConfig {
     /// `modem_commands::rig_config_from` WITHOUT importing the modem layer —
     /// config-level validation (Ft8SweepRequiresRig) needs the predicate
     /// here. If rig_config_from's conditions ever change, change this too
-    /// (both cite each other).
+    /// (this side cites rig_config_from; the citation is one-way).
     pub fn is_configured(&self) -> bool {
         self.rig_hamlib_model.is_some()
             && self.cat_serial_path.as_deref().is_some_and(|p| !p.trim().is_empty())
@@ -3801,6 +3822,11 @@ re-derive them:
 - **Time is data:** `ReadBatch.mono_ts_us` comes from the source;
   `AlsaSource` derives it from a process-epoch `Instant`. Nothing in the
   service reads ambient time except through `Ft8Platform` (Task 11).
+- **`ReadBatch.mono_ts_us: u64` flattens the spec's `MonoTs` newtype** — a
+  deliberate contract-shape deviation, recorded: the leaf-crate assembler
+  already consumes bare `u64` micros (Tasks 4–5 manifest), and a one-field
+  newtype crossing the crate boundary bought no safety the tests do not
+  already pin. Do not "restore" MonoTs for spec conformance.
 
 **TDD note:** records.rs serde-shape tests and the fakes' self-tests are
 authored before their impls. `alsa_source.rs` has NO unit tests (hardware) —
@@ -3932,6 +3958,19 @@ impl DecodeEngine for Jt9Engine {
         self.runner.decode_slot(wav, slot_tmp, slot_utc_ms)
     }
 }
+
+/// THE process-lifetime monotonic epoch (µs). ONE epoch for the whole
+/// process, by contract: **assembler mono values MUST come from one epoch**
+/// — the slot assembler DIFFERENCES monotonic stamps across producers
+/// (`AlsaSource` read batches and `Ft8Platform::mono_now_us` during gap
+/// handling), so a second epoch would read as a giant clock anomaly on the
+/// first mixed push. Every production monotonic stamp in `src/ft8/` calls
+/// this; no other `OnceLock<Instant>` epoch may exist in the module.
+pub(crate) fn process_mono_us() -> u64 {
+    static EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let epoch = EPOCH.get_or_init(std::time::Instant::now);
+    u64::try_from(epoch.elapsed().as_micros()).unwrap_or(u64::MAX)
+}
 ```
 
 - [ ] **Step 3: records.rs — the wire shapes, with serde-shape tests FIRST**
@@ -4008,6 +4047,11 @@ pub enum DiscardClassDto {
 
 /// Per-slot outcome on the wire (spec §Ring). Internally tagged; variant
 /// tags kebab-case; payload fields explicitly camelCase-named.
+///
+/// Deviation from the spec's `Failed(kind)` sketch, recorded: `Failed`
+/// carries the Debug-formatted failure STRING so L3/L4 receive the full
+/// diagnostic; kind-level matching happens via [`RingOutcome::kind`] /
+/// `RingOutcomeKind`, so nothing the spec's kind enum carried is lost.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum RingOutcome {
@@ -4356,11 +4400,17 @@ impl ClockProbe for TimedatectlProbe {
         if let Some(mut stdout) = child.stdout.take() {
             let _ = stdout.read_to_string(&mut out);
         }
-        match out.trim() {
-            "yes" => ClockSync::Synced,
-            "no" => ClockSync::Unsynced,
-            _ => ClockSync::Unknown,
-        }
+        parse_ntp_value(&out)
+    }
+}
+
+/// The parse contract, extracted as PRODUCTION code so the unit test drives
+/// the real mapping rather than a test-body re-implementation.
+pub(crate) fn parse_ntp_value(raw: &str) -> ClockSync {
+    match raw.trim() {
+        "yes" => ClockSync::Synced,
+        "no" => ClockSync::Unsynced,
+        _ => ClockSync::Unknown,
     }
 }
 
@@ -4368,19 +4418,18 @@ impl ClockProbe for TimedatectlProbe {
 mod tests {
     use super::*;
 
-    /// The parse contract, driven through the enum (the subprocess itself is
+    /// Drives the extracted production parse fn (the subprocess itself is
     /// environment-dependent and not unit-tested; parse + fallback are).
     #[test]
     fn parse_values_map_to_sync_states() {
-        // The impl inlines the parse; pin the mapping table here so a
-        // refactor that extracts it keeps the contract.
-        for (raw, want) in [("yes", ClockSync::Synced), ("no", ClockSync::Unsynced), ("maybe", ClockSync::Unknown), ("", ClockSync::Unknown)] {
-            let got = match raw.trim() {
-                "yes" => ClockSync::Synced,
-                "no" => ClockSync::Unsynced,
-                _ => ClockSync::Unknown,
-            };
-            assert_eq!(got, want, "raw {raw:?}");
+        for (raw, want) in [
+            ("yes", ClockSync::Synced),
+            ("no", ClockSync::Unsynced),
+            ("maybe", ClockSync::Unknown),
+            ("", ClockSync::Unknown),
+            (" yes\n", ClockSync::Synced),
+        ] {
+            assert_eq!(parse_ntp_value(raw), want, "raw {raw:?}");
         }
     }
 }
@@ -4421,13 +4470,10 @@ pub trait EventSink: Send + Sync {
 //! real ALSA hardware); logic is kept minimal and every decision above the
 //! errno mapping lives in the testable capture loop (service.rs).
 
-use std::sync::OnceLock;
-use std::time::Instant;
-
 use alsa::pcm::{Access, Format, HwParams, PCM};
 use alsa::{Direction, ValueOr};
 
-use super::traits::{ReadBatch, SampleSource, SourceError};
+use super::traits::{process_mono_us, ReadBatch, SampleSource, SourceError};
 use tuxlink_capture::slot::{GapKind, GapReport};
 
 /// Open parameters (spec §ALSA open): S16_LE, exactly 48 000 Hz, mono
@@ -4441,13 +4487,8 @@ const BUFFER_FRAMES: i64 = PERIOD_FRAMES * 4;
 const WEDGE_TIMEOUTS: u32 = 10;
 const WAIT_MS: i32 = 200;
 
-/// Process-epoch for monotonic µs stamps ("time is data": the assembler
-/// receives this value; it never reads a clock).
-fn mono_now_us() -> u64 {
-    static EPOCH: OnceLock<Instant> = OnceLock::new();
-    let epoch = EPOCH.get_or_init(Instant::now);
-    u64::try_from(epoch.elapsed().as_micros()).unwrap_or(u64::MAX)
-}
+// Monotonic stamps come from `traits::process_mono_us` — the ONE process
+// epoch (its doc pins why; no second OnceLock epoch may exist here).
 
 pub struct AlsaSource {
     pcm: PCM,
@@ -4544,7 +4585,7 @@ impl SampleSource for AlsaSource {
                 if self.consecutive_wait_timeouts >= WEDGE_TIMEOUTS {
                     return Err(SourceError::Wedged);
                 }
-                return Ok(ReadBatch { frames: 0, mono_ts_us: mono_now_us(), gap: self.pending_gap.take() });
+                return Ok(ReadBatch { frames: 0, mono_ts_us: process_mono_us(), gap: self.pending_gap.take() });
             }
             Err(e) => {
                 if e.errno() == libc::EPIPE {
@@ -4553,29 +4594,29 @@ impl SampleSource for AlsaSource {
                     let _ = self.pcm.prepare();
                     let _ = self.pcm.start();
                     self.pending_gap = Some(GapReport { kind: GapKind::Overrun });
-                    return Ok(ReadBatch { frames: 0, mono_ts_us: mono_now_us(), gap: None });
+                    return Ok(ReadBatch { frames: 0, mono_ts_us: process_mono_us(), gap: None });
                 }
                 if let Some(err) = self.map_read_err(&e) {
                     return Err(err);
                 }
-                return Ok(ReadBatch { frames: 0, mono_ts_us: mono_now_us(), gap: self.pending_gap.take() });
+                return Ok(ReadBatch { frames: 0, mono_ts_us: process_mono_us(), gap: self.pending_gap.take() });
             }
         }
 
         let io = self.pcm.io_i16().map_err(|e| SourceError::Io(e.to_string()))?;
         if self.channels == 1 {
             match io.readi(buf) {
-                Ok(frames) => Ok(ReadBatch { frames, mono_ts_us: mono_now_us(), gap: self.pending_gap.take() }),
+                Ok(frames) => Ok(ReadBatch { frames, mono_ts_us: process_mono_us(), gap: self.pending_gap.take() }),
                 Err(e) if e.errno() == libc::EPIPE => {
                     drop(io);
                     let _ = self.pcm.prepare();
                     let _ = self.pcm.start();
                     self.pending_gap = Some(GapReport { kind: GapKind::Overrun });
-                    Ok(ReadBatch { frames: 0, mono_ts_us: mono_now_us(), gap: None })
+                    Ok(ReadBatch { frames: 0, mono_ts_us: process_mono_us(), gap: None })
                 }
                 Err(e) => match self.map_read_err(&e) {
                     Some(err) => Err(err),
-                    None => Ok(ReadBatch { frames: 0, mono_ts_us: mono_now_us(), gap: self.pending_gap.take() }),
+                    None => Ok(ReadBatch { frames: 0, mono_ts_us: process_mono_us(), gap: self.pending_gap.take() }),
                 },
             }
         } else {
@@ -4586,18 +4627,18 @@ impl SampleSource for AlsaSource {
                     for i in 0..frames.min(buf.len()) {
                         buf[i] = self.stereo_buf[i * 2];
                     }
-                    Ok(ReadBatch { frames: frames.min(buf.len()), mono_ts_us: mono_now_us(), gap: self.pending_gap.take() })
+                    Ok(ReadBatch { frames: frames.min(buf.len()), mono_ts_us: process_mono_us(), gap: self.pending_gap.take() })
                 }
                 Err(e) if e.errno() == libc::EPIPE => {
                     drop(io);
                     let _ = self.pcm.prepare();
                     let _ = self.pcm.start();
                     self.pending_gap = Some(GapReport { kind: GapKind::Overrun });
-                    Ok(ReadBatch { frames: 0, mono_ts_us: mono_now_us(), gap: None })
+                    Ok(ReadBatch { frames: 0, mono_ts_us: process_mono_us(), gap: None })
                 }
                 Err(e) => match self.map_read_err(&e) {
                     Some(err) => Err(err),
-                    None => Ok(ReadBatch { frames: 0, mono_ts_us: mono_now_us(), gap: self.pending_gap.take() }),
+                    None => Ok(ReadBatch { frames: 0, mono_ts_us: process_mono_us(), gap: self.pending_gap.take() }),
                 },
             }
         }
@@ -4675,9 +4716,10 @@ pub enum SourceStep {
     Frames { frames: usize, value: i16, gap: Option<GapReport> },
     /// Return this error once.
     Fail(SourceError),
-    /// Park until the test unblocks or the step queue is refilled — models
-    /// "no more audio"; read returns empty batches (like a wait timeout
-    /// without wedging) so the capture loop keeps polling its abort flag.
+    /// Returns an EMPTY batch after a 1 ms sleep — models a wait timeout
+    /// WITHOUT wedging: the read always RETURNS, so the capture loop keeps
+    /// polling its abort flag (contrast `Park`, added in T14, whose read
+    /// blocks — the hung-USB class the abort flag cannot reach).
     Idle,
 }
 
@@ -4713,16 +4755,20 @@ impl SampleSource for ScriptedSource {
 
 pub struct FakeClock {
     pub sync: Mutex<ClockSync>,
+    /// Probe-call counter — the supervisor-cadence test (T11) asserts one
+    /// probe per 20-boundary window through this.
+    pub probe_calls: AtomicU64,
 }
 
 impl FakeClock {
     pub fn new(sync: ClockSync) -> Arc<Self> {
-        Arc::new(Self { sync: Mutex::new(sync) })
+        Arc::new(Self { sync: Mutex::new(sync), probe_calls: AtomicU64::new(0) })
     }
 }
 
 impl ClockProbe for FakeClock {
     fn ntp_synchronized(&self) -> ClockSync {
+        self.probe_calls.fetch_add(1, Ordering::SeqCst);
         *self.sync.lock().unwrap()
     }
 }
@@ -4806,6 +4852,101 @@ impl DecodeEngine for FakeEngine {
         out
     }
 }
+
+/// Self-tests: each fake is exercised minimally HERE so the T8–T10 batch
+/// carries its own consumers (dead-code discipline at the Gate D push) and
+/// a broken fake fails fast instead of surfacing as a confusing service-test
+/// failure in T11+.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ft8::records::{BandSource, Ft8ListeningChange, RingOutcome, SlotRecord};
+
+    #[test]
+    fn synthetic_clock_advances_domains_in_lockstep_and_steps_utc_alone() {
+        let c = SyntheticClock::new(30_000);
+        c.advance_ms(1_500);
+        assert_eq!(c.utc_ms(), 31_500);
+        assert_eq!(c.mono_us(), 1_500_000);
+        c.step_utc_ms(-2_000); // NTP step: UTC moves, monotonic does not
+        assert_eq!(c.utc_ms(), 29_500);
+        assert_eq!(c.mono_us(), 1_500_000);
+    }
+
+    #[test]
+    fn scripted_source_replays_frames_fails_then_idles() {
+        let clock = SyntheticClock::new(0);
+        let steps = Arc::new(Mutex::new(VecDeque::from([
+            SourceStep::Frames { frames: 48, value: 7, gap: None },
+            SourceStep::Fail(SourceError::Busy),
+        ])));
+        let mut src = ScriptedSource { steps, clock: clock.clone() };
+        let mut buf = vec![0i16; 96];
+        let batch = src.read(&mut buf).unwrap();
+        assert_eq!(batch.frames, 48);
+        assert_eq!(buf[0], 7);
+        assert_eq!(batch.mono_ts_us, 1_000, "48 frames = 1 ms at 48 kHz");
+        assert_eq!(src.read(&mut buf), Err(SourceError::Busy));
+        // An exhausted queue behaves as Idle: empty batch, clock untouched.
+        let idle = src.read(&mut buf).unwrap();
+        assert_eq!(idle.frames, 0);
+        assert_eq!(clock.mono_us(), 1_000);
+    }
+
+    #[test]
+    fn fake_clock_reports_its_sync_and_counts_probes() {
+        let c = FakeClock::new(ClockSync::Unsynced);
+        assert_eq!(c.ntp_synchronized(), ClockSync::Unsynced);
+        *c.sync.lock().unwrap() = ClockSync::Synced;
+        assert_eq!(c.ntp_synchronized(), ClockSync::Synced);
+        assert_eq!(c.probe_calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn recording_sink_records_both_event_kinds() {
+        let sink = RecordingSink::default();
+        sink.emit_listening_change(&Ft8ListeningChange {
+            service: tuxlink_capture::state::ServiceAxis::Stopped.into(),
+            flags: tuxlink_capture::state::HealthFlags::default().into(),
+            slot_phase: tuxlink_capture::state::SlotPhase::WaitingFirstSlot.into(),
+            band: "20m".into(),
+            dial_hz: 14_074_000,
+            sweep: tuxlink_capture::state::Sweep::Inactive.into(),
+        });
+        sink.emit_slot(&SlotRecord {
+            slot_utc_ms: 15_000,
+            band: "20m".into(),
+            dial_hz: 14_074_000,
+            band_source: BandSource::DefaultUnconfirmed,
+            band_label_confirmed_utc_ms: None,
+            outcome: RingOutcome::BandDead,
+            decodes: Vec::new(),
+            partial_salvage: false,
+            lost_frames: 0,
+            boundary_skew_frames: 0,
+            clip_fraction: 0.0,
+            rms_dbfs: -60.0,
+            dwell_slot_index: None,
+        });
+        assert_eq!(sink.listening_changes.lock().unwrap().len(), 1);
+        assert_eq!(sink.slots.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn fake_engine_pops_queued_outcomes_then_repeats_the_default() {
+        let eng = FakeEngine::band_dead();
+        assert_eq!(eng.prewarm(), Ok(()));
+        eng.outcomes
+            .lock()
+            .unwrap()
+            .push_back(SlotOutcome::Decoded(Vec::new()));
+        let p = Path::new("unused.wav");
+        assert!(matches!(eng.decode_slot(p, p, 0), SlotOutcome::Decoded(_)));
+        assert!(matches!(eng.decode_slot(p, p, 1), SlotOutcome::BandDead));
+        assert_eq!(eng.decodes_started.load(Ordering::SeqCst), 2);
+        assert_eq!(eng.decodes_finished.load(Ordering::SeqCst), 2);
+    }
+}
 ```
 (`FakePlatform` — the composite impure-probe fake — is added by Task 11
 alongside the `Ft8Platform` trait it fakes.)
@@ -4847,7 +4988,17 @@ the only open path; (4) **clippy-trap sweep** — grep the new files for
 `.clone()` on subsequently-moved values, `collect()` feeding a loop,
 `Result<_, SlotFailure>`-shaped large-err surfaces. Minimum three rounds;
 persist findings to `dev/scratch/b026z.3-gate-D-findings.md` before
-proceeding.
+proceeding. Files under review: `src-tauri/src/winlink/ax25/devices.rs`,
+`src-tauri/src/winlink/ax25/mod.rs`, `src-tauri/src/mcp_ports.rs`,
+`src-tauri/src/config.rs`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`,
+`src-tauri/src/lib.rs`, and all of `src-tauri/src/ft8/` as of T10 (`mod.rs`,
+`traits.rs`, `records.rs`, `clock.rs`, `events.rs`, `alsa_source.rs`,
+`testutil.rs`).
+
+**Gate D push:** after this gate's P1/P2 fixes are committed, the parent
+pushes the branch (Global Constraints §Push cadence). This push's CI run
+executes T8–T10's **[CI-side]** steps; fix-forward on its findings before
+starting Task 11.
 
 ---
 ### Task 11: service.rs part 1 — managed state, platform seam, supervisor + start sequence, snapshot, ring
@@ -4974,14 +5125,9 @@ pub struct ProdPlatform {
     pub modem: Arc<ModemSession>,
 }
 
-/// Process-epoch monotonic (same convention as alsa_source's stamps: both
-/// count from a process-lifetime epoch; the assembler only ever DIFFERENCES
-/// monotonic values, so the shared epoch is what matters).
-fn prod_mono_now_us() -> u64 {
-    static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
-    let epoch = EPOCH.get_or_init(Instant::now);
-    u64::try_from(epoch.elapsed().as_micros()).unwrap_or(u64::MAX)
-}
+// Monotonic stamps: `process_mono_us` (defined above in this file, T10) is
+// THE process epoch — ProdPlatform and AlsaSource share it, because the
+// assembler DIFFERENCES monotonic values across both producers.
 
 impl Ft8Platform for ProdPlatform {
     fn discover_jt9(&self) -> Result<Jt9Binary, String> {
@@ -5058,7 +5204,7 @@ impl Ft8Platform for ProdPlatform {
             .unwrap_or(0)
     }
     fn mono_now_us(&self) -> u64 {
-        prod_mono_now_us()
+        process_mono_us()
     }
     fn count_pipe_fds(&self) -> Option<usize> {
         let entries = std::fs::read_dir("/proc/self/fd").ok()?;
@@ -5108,6 +5254,9 @@ pub struct FakePlatform {
     pub modem_eligible: Mutex<bool>,
     pub released: Mutex<bool>,
     pub pipe_fds: Mutex<Option<usize>>,
+    /// count_pipe_fds call counter — the supervisor-cadence test asserts
+    /// one watermark read per 100-boundary window through this.
+    pub pipe_fd_calls: AtomicU64,
     pub clock: Arc<SyntheticClock>,
     pub tmp: PathBuf, // pid-suffixed test root; wisdom + slot dirs under it
 }
@@ -5154,6 +5303,7 @@ impl FakePlatform {
             modem_eligible: Mutex::new(true),
             released: Mutex::new(true),
             pipe_fds: Mutex::new(Some(8)),
+            pipe_fd_calls: AtomicU64::new(0),
             clock: SyntheticClock::new(1_760_000_000_000), // an arbitrary UTC ms epoch
             tmp,
         })
@@ -5188,7 +5338,9 @@ impl Ft8Platform for FakePlatform {
     fn write_slot_wav(&self, path: &std::path::Path, samples: &[i16]) -> std::io::Result<()> {
         match &*self.wav_result.lock().unwrap() {
             Ok(()) => tuxlink_capture::wavwrite::write_slot_wav(path, samples),
-            Err(msg) => Err(std::io::Error::new(std::io::ErrorKind::StorageFull, msg.clone())),
+            // Error::other, NOT ErrorKind::StorageFull — see the MSRV note
+            // below this block.
+            Err(msg) => Err(std::io::Error::other(msg.clone())),
         }
     }
     fn make_engine(&self, _bin: &Jt9Binary, _wisdom: &std::path::Path) -> Arc<dyn DecodeEngine> {
@@ -5223,14 +5375,15 @@ impl Ft8Platform for FakePlatform {
         self.clock.mono_us()
     }
     fn count_pipe_fds(&self) -> Option<usize> {
+        self.pipe_fd_calls.fetch_add(1, Ordering::SeqCst);
         *self.pipe_fds.lock().unwrap()
     }
 }
 ```
-(MSRV check: `io::ErrorKind::StorageFull` is stable since 1.83 — ABOVE MSRV
-1.75. Use `std::io::Error::other(msg.clone())` instead — stable 1.74 — and
-match on the message, not the kind, in the ENOSPC test. The subagent applies
-this substitution; it is called out here so the trap is pre-armed.)
+(MSRV note — already applied in the block above: `io::ErrorKind::StorageFull`
+is stable since 1.83, ABOVE MSRV 1.75, so the fake uses
+`std::io::Error::other` — stable 1.74 — and the ENOSPC test matches on the
+MESSAGE, not the kind.)
 
 - [ ] **Step 3: service.rs — state struct, SharedHold, supervisor, start sequence, snapshot**
 
@@ -5243,7 +5396,9 @@ this substitution; it is called out here so the trap is pre-armed.)
 //! Lock discipline (spec §Lock discipline, pinned): thread handles live
 //! OUTSIDE the state mutex and are take()n before any join; the state mutex
 //! is leaf-level — never held across a join, an ALSA call, a rig session, or
-//! an event emit; arbiter lock > state lock everywhere both are taken.
+//! an event emit; lock order arbiter > rig > state everywhere, each acquired
+//! AT MOST ONCE per thread (the arbiter's rig_session takes only the arbiter
+//! lock; rig-touching helpers own the rig lock themselves — T14).
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -5256,12 +5411,14 @@ use std::time::{Duration, Instant};
 use crate::config::Ft8Config;
 use crate::ft8::clock::{ClockProbe, ClockSync};
 use crate::ft8::events::EventSink;
+// Dead-code discipline (Global Constraints §Push cadence): imports, fields,
+// and constants land in the task with their FIRST reader, so every commit in
+// the batch is clippy-clean. T12 adds `DiscardClassDto` + `RingOutcome`
+// here; T13 adds `devices::ResolvedManagedDevice` with the `resolved` field.
 use crate::ft8::records::{
-    AudioDeviceChoice, BandSource, DiscardClassDto, Ft8ListeningChange, RingOutcome,
-    ServiceAxisDto, SlotRecord,
+    AudioDeviceChoice, BandSource, Ft8ListeningChange, ServiceAxisDto, SlotRecord,
 };
 use crate::ft8::traits::{DecodeEngine, Ft8Platform, SourceError};
-use crate::winlink::ax25::devices::ResolvedManagedDevice;
 use serde::Serialize;
 use tuxlink_capture::state::{BlockedReason, ListenerMachine, ServiceAxis};
 
@@ -5332,11 +5489,9 @@ struct Inner {
     last_slot_utc_ms: Option<u64>,
     last_failure: Option<String>,
     ring: VecDeque<SlotRecord>,
-    /// Set by QSY (T16): the next completed slot is a scheduled discard.
-    discard_next_slot: Option<DiscardClassDto>,
-    /// The device the last successful resolution produced — live handles for
-    /// probes + release-confirm. Refreshed by every sequence run.
-    resolved: Option<ResolvedManagedDevice>,
+    // Fields land with their first READER (dead-code discipline):
+    // `discard_next_slot` arrives in T12 (handle_completed_slot takes it);
+    // `resolved` arrives in T13 (resume_conditions_met reads it).
 }
 
 /// Thread handles — OUTSIDE the state mutex (lock discipline).
@@ -5355,7 +5510,6 @@ pub struct Ft8ListenerState {
     /// Disconnected, race-free).
     master_tx: Mutex<Option<SyncSender<SlotJob>>>,
     engine: Mutex<Option<Arc<dyn DecodeEngine>>>,
-    jt9_bin: Mutex<Option<tuxlink_jt9::discover::Jt9Binary>>,
     pub(crate) platform: Arc<dyn Ft8Platform>,
     pub(crate) clock: Arc<dyn ClockProbe>,
     pub(crate) sink: Arc<dyn EventSink>,
@@ -5367,11 +5521,11 @@ pub struct Ft8ListenerState {
     stop_request: AtomicBool,
     yield_request: AtomicBool,
     start_rerun_request: AtomicBool,
-    capture_abort: Arc<AtomicBool>,
+    // `capture_abort` + `slot_seq` land in T12 with their first readers
+    // (capture_loop / handle_completed_slot) — dead-code discipline.
     /// Capture-side slot-boundary counter (spec: cadences count BOUNDARIES,
     /// not decoded slots).
     slot_boundaries: AtomicU64,
-    slot_seq: AtomicU64,
     /// The supervisor's Thread handle for park_timeout interruption.
     supervisor_thread: Mutex<Option<std::thread::Thread>>,
     pipe_fd_baseline: Mutex<Option<usize>>,
@@ -5393,13 +5547,10 @@ impl Ft8ListenerState {
                 last_slot_utc_ms: None,
                 last_failure: None,
                 ring: VecDeque::with_capacity(RING_CAP),
-                discard_next_slot: None,
-                resolved: None,
             }),
             handles: Mutex::new(Handles::default()),
             master_tx: Mutex::new(None),
             engine: Mutex::new(None),
-            jt9_bin: Mutex::new(None),
             platform: deps.platform,
             clock: deps.clock,
             sink: deps.sink,
@@ -5408,9 +5559,7 @@ impl Ft8ListenerState {
             stop_request: AtomicBool::new(false),
             yield_request: AtomicBool::new(false),
             start_rerun_request: AtomicBool::new(false),
-            capture_abort: Arc::new(AtomicBool::new(false)),
             slot_boundaries: AtomicU64::new(0),
-            slot_seq: AtomicU64::new(0),
             supervisor_thread: Mutex::new(None),
             pipe_fd_baseline: Mutex::new(None),
         })
@@ -5542,9 +5691,24 @@ impl Ft8ListenerState {
         }
         {
             let mut g = self.lock_inner();
-            if !matches!(g.machine.axis(), ServiceAxis::Starting) {
-                // Resume/retry paths re-enter via on_resume.
-                g.machine.on_resume();
+            match g.machine.axis() {
+                ServiceAxis::Starting => {}
+                // Resume re-enters via on_resume (yielded → starting; k
+                // reset; sweep re-arm).
+                ServiceAxis::Yielded => g.machine.on_resume(),
+                // Blocked re-entry (set_device retrigger, device-absent
+                // retry) MUST go through on_start_requested — T6 permits
+                // Blocked→Starting (+ sweep re-arm) there, while on_resume
+                // is a no-op outside Yielded. Without this, the sequence
+                // runs on a STALE blocked axis and a mid-sequence pause
+                // (step 6 busy) is silently swallowed (on_pause from
+                // blocked leaves the axis untouched).
+                ServiceAxis::Blocked(r) if r != BlockedReason::CaptureWedged => {
+                    let _ = g.machine.on_start_requested();
+                }
+                // Wedged / other axes: leave the machine alone (start()
+                // already refuses wedged; defensive no-op here).
+                _ => {}
             }
         }
         self.emit_listening_change();
@@ -5559,7 +5723,9 @@ impl Ft8ListenerState {
             let mut g = self.lock_inner();
             g.engine_version = Some(bin.engine_version.clone());
         }
-        *self.jt9_bin.lock().unwrap_or_else(|p| p.into_inner()) = Some(bin.clone());
+        // No stored Jt9Binary: resume re-discovers (step 1 runs on both
+        // paths) and make_engine consumes the fresh local — a cached copy
+        // would be an unread field.
         if self.interrupted() {
             return;
         }
@@ -5575,9 +5741,8 @@ impl Ft8ListenerState {
                 Some(format!("configured device {:?} not found", stable_id.value)),
             );
         };
-        {
-            self.lock_inner().resolved = Some(resolved.clone());
-        }
+        // T13 adds `Inner.resolved` (+ the store here) with its first
+        // reader, resume_conditions_met — dead-code discipline.
         if self.interrupted() {
             return;
         }
@@ -5700,8 +5865,15 @@ impl Ft8ListenerState {
 
     /// Step-5 helper: one rig session — read dial, label band
     /// (nearest table entry within ±3 kHz, else "unknown"), tune to the
-    /// configured band's dial if it differs, drop the session. Serialized
-    /// through the rig lock the arbiter shares.
+    /// configured band's dial if it differs, drop the session.
+    ///
+    /// Lock architecture (pinned): this helper OWNS the rig-lock
+    /// acquisition; `Ft8Arbiter::rig_session` (T14) takes ONLY the arbiter
+    /// lock and never the rig lock — lock order arbiter > rig > state, each
+    /// acquired at most once per thread. T14 routes the step-5 call through
+    /// `rig_session` (the arbiter cannot exist at this task's commit, so
+    /// that one-match routing edit lands in T14); until then the rig lock
+    /// alone serializes FT8 rig sessions against each other.
     fn start_rig_labeling(self: &Arc<Self>) {
         let _rig = self.rig_lock.lock().unwrap_or_else(|p| p.into_inner());
         let configured_dial = {
@@ -5879,26 +6051,7 @@ fn supervisor_loop(state: Arc<Ft8ListenerState>) {
             ServiceAxis::Yielded => state.tick_yielded(),           // T13
             ServiceAxis::Blocked(BlockedReason::DeviceAbsent) => state.tick_device_absent(), // T13
             ServiceAxis::Listening => {
-                let boundaries = state.slot_boundaries.load(Ordering::SeqCst);
-                if boundaries.saturating_sub(last_clock_probe) >= CLOCK_REPROBE_BOUNDARIES {
-                    last_clock_probe = boundaries;
-                    let sync = state.clock.ntp_synchronized();
-                    let changed = {
-                        let mut g = state.lock_inner();
-                        let before = g.machine.flags().clock_unsynced;
-                        g.machine
-                            .set_clock_unsynced(matches!(sync, ClockSync::Unsynced));
-                        before != g.machine.flags().clock_unsynced
-                    };
-                    if changed {
-                        state.emit_listening_change();
-                    }
-                }
-                if boundaries.saturating_sub(last_watermark) >= PIPE_WATERMARK_BOUNDARIES {
-                    last_watermark = boundaries;
-                    state.check_pipe_watermark();
-                }
-                crate::ft8::sweep::tick(&state); // T16 (stub until then)
+                state.tick_listening(&mut last_clock_probe, &mut last_watermark)
             }
             _ => {}
         }
@@ -5909,6 +6062,40 @@ impl Ft8ListenerState {
     /// T13 fills these in; part-1 stubs keep the supervisor compiling.
     pub(crate) fn tick_yielded(self: &Arc<Self>) {}
     pub(crate) fn tick_device_absent(self: &Arc<Self>) {}
+
+    /// The `listening`-axis supervisor tick body, extracted so the cadence
+    /// test drives it directly (no 5 s parks): clock re-probe every 20 slot
+    /// boundaries, pipe-fd watermark every 100 — cadences count BOUNDARIES
+    /// via the capture-side atomic, never decoded slots.
+    pub(crate) fn tick_listening(
+        self: &Arc<Self>,
+        last_clock_probe: &mut u64,
+        last_watermark: &mut u64,
+    ) {
+        let boundaries = self.slot_boundaries.load(Ordering::SeqCst);
+        if boundaries.saturating_sub(*last_clock_probe) >= CLOCK_REPROBE_BOUNDARIES {
+            *last_clock_probe = boundaries;
+            let sync = self.clock.ntp_synchronized();
+            let changed = {
+                let mut g = self.lock_inner();
+                let before = g.machine.flags().clock_unsynced;
+                g.machine
+                    .set_clock_unsynced(matches!(sync, ClockSync::Unsynced));
+                before != g.machine.flags().clock_unsynced
+            };
+            if changed {
+                self.emit_listening_change();
+            }
+        }
+        if boundaries.saturating_sub(*last_watermark) >= PIPE_WATERMARK_BOUNDARIES {
+            *last_watermark = boundaries;
+            self.check_pipe_watermark();
+        }
+        self.sweep_tick_stub(); // T16 swaps this for crate::ft8::sweep::tick(self)
+    }
+
+    /// Replaced by sweep::tick in Task 16 (which deletes this stub).
+    pub(crate) fn sweep_tick_stub(self: &Arc<Self>) {}
 
     /// Returns whether the watermark tripped (testable seam — the spec's
     /// named "pipe-fd watermark trip (fake /proc reader)" test drives this
@@ -5933,22 +6120,10 @@ impl Ft8ListenerState {
     }
 }
 ```
-Also add `pub mod service;` to `mod.rs` and a TEMPORARY
-`pub(crate) mod sweep;` stub file is NOT created — instead, until Task 16
-lands, give `supervisor_loop` a local no-op:
-```rust
-                crate::ft8::sweep::tick(&state); // T16 (stub until then)
-```
-→ for THIS task write it as a method stub instead:
-```rust
-                state.sweep_tick_stub();
-```
-with
-```rust
-    /// Replaced by sweep::tick in Task 16.
-    pub(crate) fn sweep_tick_stub(self: &Arc<Self>) {}
-```
-(Task 16 swaps the call site. Do not create an empty sweep.rs here.)
+Also add `pub mod service;` to `mod.rs`. Do NOT create an empty sweep.rs in
+this task: `sweep_tick_stub` (in the block above) is the placeholder; Task
+16 swaps the `tick_listening` call site to `crate::ft8::sweep::tick(self)`
+and deletes the stub method.
 
 - [ ] **Step 4: Tests — one per numbered start arrow + autostart + snapshot completeness**
 
@@ -6211,6 +6386,47 @@ mod tests {
         assert!(!state.check_pipe_watermark());
     }
 
+    /// Supervisor cadence wiring (spec: cadences count BOUNDARIES): driving
+    /// the capture-side boundary atomic through tick_listening, the clock is
+    /// probed once per 20-boundary window and the pipe watermark read once
+    /// per 100-boundary window — pinned via the fakes' call counters.
+    #[test]
+    fn supervisor_cadences_fire_per_boundary_window() {
+        let p = FakePlatform::happy();
+        let clock = FakeClock::new(crate::ft8::clock::ClockSync::Synced);
+        let state = Ft8ListenerState::new(
+            Ft8Deps {
+                platform: p.clone(),
+                clock: clock.clone(),
+                sink: Arc::new(RecordingSink::default()),
+            },
+            cfg_with_device(),
+        );
+        run_sequence(&state);
+        assert_eq!(state.axis(), ServiceAxis::Listening);
+        *state.pipe_fd_baseline.lock().unwrap() = Some(8);
+        // Deltas from here: run_sequence already probed the clock once
+        // (step 3) and never read the pipe count.
+        let probes_before = clock.probe_calls.load(Ordering::SeqCst);
+        let fd_reads_before = p.pipe_fd_calls.load(Ordering::SeqCst);
+        let (mut last_probe, mut last_watermark) = (0u64, 0u64);
+        for boundary in 1..=200u64 {
+            state.slot_boundaries.store(boundary, Ordering::SeqCst);
+            state.tick_listening(&mut last_probe, &mut last_watermark);
+        }
+        assert_eq!(
+            clock.probe_calls.load(Ordering::SeqCst) - probes_before,
+            10, // boundaries 20, 40, …, 200: one probe per 20-boundary window
+            "clock re-probe cadence"
+        );
+        assert_eq!(
+            p.pipe_fd_calls.load(Ordering::SeqCst) - fd_reads_before,
+            2, // boundaries 100 and 200: one read per 100-boundary window
+            "pipe watermark cadence"
+        );
+        let _ = std::fs::remove_dir_all(state.platform_tmp_for_test());
+    }
+
     // Snapshot completeness: every §Snapshot field is present + serializes.
     #[test]
     fn snapshot_carries_every_contract_field() {
@@ -6299,6 +6515,33 @@ process-monotonic `<seq>` (collision-proof under backward clock steps);
 capture-side boundary atomic counts EVERY slot event.
 
 **TDD note:** Step 3's tests are authored before Steps 1–2's bodies.
+
+- [ ] **Step 0: Land the fields + imports deferred from T11 (dead-code discipline)**
+
+T11 deferred these to the task with their first READER so every commit in
+the batch stays clippy-clean (Global Constraints §Push cadence). In
+service.rs:
+
+- The `crate::ft8::records::{...}` import list gains `DiscardClassDto` and
+  `RingOutcome` (readers: `fold_slot_events`, `handle_completed_slot`).
+- `Ft8ListenerState` gains, after `start_rerun_request` (replacing the T11
+  placeholder comment there):
+```rust
+    capture_abort: Arc<AtomicBool>,
+    slot_seq: AtomicU64,
+```
+  initialized in `new()`:
+```rust
+            capture_abort: Arc::new(AtomicBool::new(false)),
+            slot_seq: AtomicU64::new(0),
+```
+- `Inner` gains, after `ring` (replacing the T11 placeholder comment's
+  `discard_next_slot` line; the `resolved` line stays a comment until T13):
+```rust
+    /// Set by QSY (T16): the next completed slot is a scheduled discard.
+    discard_next_slot: Option<DiscardClassDto>,
+```
+  initialized `discard_next_slot: None,` in `new()`.
 
 - [ ] **Step 1: WaterfallTap + the second decimator note**
 
@@ -6915,11 +7158,14 @@ sleeps longer than poll loops with deadlines.
         let p = FakePlatform::happy();
         let state = test_state(p.clone(), cfg_with_device());
         state.tap().subscribe(); // subscribed but never drained = max pressure
-        // Script: 2 slots of audio + idle. Clock starts ON a boundary; the
-        // first full slot is Completed (anchored at start), per the Phase-A
-        // assembler's start-at-boundary behavior — if Phase A anchors at the
-        // NEXT boundary instead, feed 3 slots and expect 2 events; adjust to
-        // the leaf crate's tested semantics (read its tests, don't guess).
+        // Script: 30 s of audio (2 slots' worth) + idle. happy()'s clock
+        // epoch is 1_760_000_000_000 ms; mod 15_000 = 5_000, so synthetic
+        // time starts 5 s PAST a boundary — 10 s BEFORE the next one. The
+        // assembler anchors at the NEXT boundary (T4 pinned next-boundary
+        // semantics): boundary 1 lands at +10 s and emits the scheduled
+        // FirstSlot discard; boundary 2 lands at +25 s and emits one
+        // Completed slot. 30 s of audio therefore produces exactly 2
+        // boundary events — the `>= 2` assertion below.
         for _ in 0..(2 * 720_000 / 4_800) {
             p.source_steps
                 .lock()
@@ -6970,6 +7216,28 @@ sleeps longer than poll loops with deadlines.
         assert_eq!(g.machine.n_consecutive(), 4, "scheduled discard is counter-neutral");
     }
 
+    /// Ring eviction: capacity 240 — the 241st record evicts the OLDEST.
+    #[test]
+    fn ring_evicts_oldest_at_capacity() {
+        let p = FakePlatform::happy();
+        let state = test_state(p, cfg_with_device());
+        for i in 0..241u64 {
+            state.record_slot(state.base_record(
+                i,
+                RingOutcome::BandDead,
+                Vec::new(),
+                0,
+                0,
+                0.0,
+                -60.0,
+            ));
+        }
+        let g = state.lock_inner();
+        assert_eq!(g.ring.len(), RING_CAP);
+        assert_eq!(g.ring.front().unwrap().slot_utc_ms, 1, "slot 0 evicted");
+        assert_eq!(g.ring.back().unwrap().slot_utc_ms, 240);
+    }
+
     fn teardown(state: &Arc<Ft8ListenerState>) {
         state.stop_request.store(true, Ordering::SeqCst);
         state.capture_abort.store(true, Ordering::SeqCst);
@@ -6989,6 +7257,28 @@ sleeps longer than poll loops with deadlines.
 `state.stop()` once the real protocol exists. `run_sequence` in these tests
 drives the sequence synchronously — no supervisor is spawned except in the
 autostart test, so `h.supervisor` is usually `None` and the loop skips it.)
+
+- [ ] **Step 3b: Retrofit `teardown(&state)` into every T11 test that reaches Listening**
+
+Until this task, `spawn_workers` was a stub, so T11's Listening-reaching
+tests leaked nothing. Now they spawn REAL capture + decode threads and must
+tear down, or the test binary accumulates parked threads and temp dirs.
+Append `teardown(&state);` (or `teardown(&state2);` for the second state)
+as the final line of EACH of these T11 tests — this is a checklist, verify
+every one:
+
+- `arrow4_prewarm_failure_classes` — the SECOND case only (`state2` reaches
+  Listening; the first case ends Blocked).
+- `arrow5_cat_presence_labels_or_flags` — BOTH cases (`state` and `state2`
+  both reach Listening).
+- `arrow8_happy_path_reaches_listening`.
+- `snapshot_carries_every_contract_field`.
+- `supervisor_cadences_fire_per_boundary_window` (replace its trailing
+  `remove_dir_all` line with `teardown(&state);`).
+- `autostart_with_no_device_lands_needs_device_selection` — replace its
+  manual shutdown block (the `stop_request.store` / `unpark_supervisor` /
+  handle-join lines) with `teardown(&state);` (equivalent, and it now also
+  covers the temp dir).
 
 - [ ] **Step 4: [CI-side] verification** — workspace clippy + tests on the PR.
 
@@ -7012,6 +7302,7 @@ disconnected).
 
 **Files:**
 - Modify: `src-tauri/src/ft8/service.rs`
+- Modify: `src-tauri/src/ft8/testutil.rs` (adds `FakeEngine::band_dead_with_prewarm_gate()` — T14's tests reuse it)
 
 **Interfaces:**
 - Consumes: T11/T12's service internals; `SharedHold`; `Ft8Platform`.
@@ -7043,6 +7334,46 @@ then spawn CAPTURE ONLY (8′) — never a second decode thread or supervisor;
 prewarm skipped (once per runner construction).
 
 **TDD note:** Step 3's tests first.
+
+- [ ] **Step 0: Land the `resolved` field deferred from T11 (dead-code discipline) + the prewarm-gate constructor**
+
+**(0a)** service.rs — `Inner` gains, replacing T11's placeholder comment
+line for it (first readers land in this task: `resume_conditions_met`,
+`tick_yielded`):
+```rust
+    /// The device the last successful resolution produced — live handles for
+    /// probes + release-confirm. Refreshed by every sequence run.
+    resolved: Option<ResolvedManagedDevice>,
+```
+initialized `resolved: None,` in `new()`; the import block gains
+`use crate::winlink::ax25::devices::ResolvedManagedDevice;`; and in
+`execute_start_sequence` step 2, replace the T11 placeholder comment
+("T13 adds `Inner.resolved` …") with the store:
+```rust
+        {
+            self.lock_inner().resolved = Some(resolved.clone());
+        }
+```
+
+**(0b)** testutil.rs — `FakeEngine` gains the prewarm-gated constructor
+(this task's mid-prewarm test and T14's pause-during-starting test both use
+it):
+```rust
+    /// `band_dead()` with the prewarm gate armed: `prewarm()` parks on the
+    /// gate until the test releases it — the stop/pause-during-starting
+    /// scenarios need a sequence deterministically parked at step 4.
+    pub fn band_dead_with_prewarm_gate() -> Arc<Self> {
+        Arc::new(Self {
+            outcomes: Mutex::new(VecDeque::new()),
+            default_outcome: SlotOutcome::BandDead,
+            prewarm_result: Mutex::new(Ok(())),
+            gate: Arc::new((Mutex::new(false), Condvar::new())),
+            gate_prewarm: true,
+            decodes_started: AtomicU64::new(0),
+            decodes_finished: AtomicU64::new(0),
+        })
+    }
+```
 
 - [ ] **Step 1: bounded join + stop()**
 
@@ -7308,26 +7639,28 @@ columns there; tests that spawn via `start()` get the full check.)
     /// Stop during `starting`, mid-prewarm: the stop-request is honored at
     /// the next between-step check; the supervisor join bound covers the
     /// blocking prewarm; NO capture-wedged (no capture thread ever existed).
+    /// Deterministic by construction: the gate is held BEFORE start(), so
+    /// the sequence parks INSIDE prewarm at step 4.
     #[test]
     fn stop_during_starting_mid_prewarm_completes_clean() {
         let p = FakePlatform::happy();
-        let eng = FakeEngine::band_dead();
-        // Make PREWARM park on the gate.
-        let eng = {
-            let mut e = std::sync::Arc::try_unwrap(eng).ok().expect("fresh engine");
-            e.gate_prewarm = true;
-            std::sync::Arc::new(e)
-        };
+        let eng = FakeEngine::band_dead_with_prewarm_gate(); // Step 0b
+        eng.hold_gate(); // BEFORE start(): the sequence parks at step 4
         *p.engine.lock().unwrap() = eng.clone();
         let state = test_state(p, cfg_with_device());
         state.start().expect("supervisor spawns");
-        // Wait until the supervisor is inside prewarm (gate held from the
-        // start: hold BEFORE start so the sequence parks at step 4).
-        eng.hold_gate();
-        // (Ordering note: hold_gate() before the sequence reaches step 4 —
-        // to be deterministic, hold the gate BEFORE start(). Rewrite:)
-        // -- see the canonical ordering in the code block note below.
+        // Parked inside prewarm: axis holds Starting and no decode ever
+        // starts while a short window elapses.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while state.axis() != ServiceAxis::Starting {
+            assert!(std::time::Instant::now() < deadline, "never reached Starting");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
         std::thread::sleep(std::time::Duration::from_millis(50));
+        assert_eq!(state.axis(), ServiceAxis::Starting, "parked in prewarm");
+        assert_eq!(eng.decodes_started.load(Ordering::SeqCst), 0);
+        // Release the gate ~200 ms into the stop, well inside the 16 s
+        // supervisor join bound.
         let eng2 = eng.clone();
         let releaser = std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(200));
@@ -7335,19 +7668,14 @@ columns there; tests that spawn via `start()` get the full check.)
         });
         state.stop();
         releaser.join().unwrap();
-        assert_eq!(state.axis(), ServiceAxis::Stopped, "mid-prewarm stop is clean — never capture-wedged");
+        assert_eq!(
+            state.axis(),
+            ServiceAxis::Stopped,
+            "mid-prewarm stop is clean — never capture-wedged"
+        );
         let _ = std::fs::remove_dir_all(state.platform_tmp_for_test());
     }
-```
-**Canonical ordering note for the mid-prewarm test (the inline comments
-above flag it):** construct the engine with `gate_prewarm = true`, call
-`eng.hold_gate()` BEFORE `state.start()`, then poll until
-`state.axis() == ServiceAxis::Starting` and the supervisor thread is parked
-in prewarm (poll `eng.decodes_started` stays 0 while a short sleep elapses),
-then spawn the releaser + call `stop()`. The subagent writes it in that
-order; the fragment above shows the assertions that matter, not the final
-line order.
-```rust
+
     /// Pause from stopped = stateless no-op (spec §Arbitration first arm):
     /// no latch, no state change, no thread interaction.
     #[test]
@@ -7437,11 +7765,44 @@ line order.
         assert_thread_liveness(&state);
         teardown(&state);
     }
+
+    /// Blocked re-entry with a BUSY card lands `Yielded`, never a stale
+    /// blocked axis (the set_device-from-blocked path): the sequence entry
+    /// re-enters Starting from every non-wedged blocked reason
+    /// (on_start_requested — T11 entry match), so step 6's pause writes
+    /// Yielded; on_pause from Blocked would have been silently swallowed.
+    /// tick_yielded then recovers once the card frees.
+    #[test]
+    fn set_device_from_blocked_with_busy_card_lands_yielded_then_recovers() {
+        let p = FakePlatform::happy();
+        *p.resolved.lock().unwrap() = None;
+        let state = test_state(p.clone(), cfg_with_device());
+        run_sequence(&state);
+        assert_eq!(state.axis(), ServiceAxis::Blocked(BlockedReason::DeviceAbsent));
+
+        // Device replugs, but a modem holds the card.
+        *p.resolved.lock().unwrap() =
+            Some(crate::winlink::ax25::devices::ResolvedManagedDevice {
+                alsa_plughw: "plughw:CARD=DRA,DEV=0".into(),
+                alsa_hw: "hw:1,0".into(),
+                card_index: 1,
+            });
+        *p.busy.lock().unwrap() = Err("card busy".into());
+        state.execute_start_sequence(false); // the set_device retrigger path
+        assert_eq!(
+            state.axis(),
+            ServiceAxis::Yielded,
+            "busy re-entry must yield — a stale blocked axis strands the operator"
+        );
+
+        // Card frees (modem already eligible in happy()): the supervisor
+        // tick recovers.
+        *p.busy.lock().unwrap() = Ok(());
+        state.tick_yielded();
+        assert_eq!(state.axis(), ServiceAxis::Listening);
+        teardown(&state);
+    }
 ```
-(`Arc::try_unwrap` on the fresh FakeEngine in the mid-prewarm test works
-because `band_dead()` just constructed it — refcount 1. If the subagent
-prefers, add a `FakeEngine::band_dead_with_prewarm_gate()` constructor to
-testutil instead; either is acceptable, the constructor is cleaner.)
 
 - [ ] **Step 4: [CI-side] verification** — workspace clippy + tests.
 
@@ -7468,6 +7829,8 @@ line).
 **Files:**
 - Create: `src-tauri/src/ft8/arbiter.rs`
 - Modify: `src-tauri/src/ft8/mod.rs` (`pub mod arbiter;`)
+- Modify: `src-tauri/src/ft8/service.rs` (the two arbiter accessors, the step-5 `start_rig_labeling` arbiter routing, the `#[cfg(test)]` helpers)
+- Modify: `src-tauri/src/ft8/testutil.rs` (the `Park` step + `park_flag`; `band_dead_with_prewarm_gate` was already added in T13)
 
 **Interfaces:**
 - Consumes: `Ft8ListenerState` internals via its pub(crate) surface (T11–13),
@@ -7499,10 +7862,13 @@ pub fn pause_for_modem_global() -> Result<(), PauseError>;     // Ok(()) when un
 //! acquired it) or a 30 s TTL (an aborted spawn must not wedge FT8).
 //!
 //! The arbiter also owns ALL rig sessions the FT8 service creates
-//! (start-labeling QSY, band-chip QSY, sweep QSY) via [`Ft8Arbiter::
-//! rig_session`] — one mutex, shared with the service, so a modem connect's
-//! pre-audio tune can never overlap an FT8 rig session (the FT-710
-//! dual-CAT-user contention class).
+//! (start-labeling QSY, band-chip QSY, sweep QSY) via
+//! [`Ft8Arbiter::rig_session`]: rig_session holds the ARBITER lock (only)
+//! around the closure, and pause_for_modem takes the same arbiter lock plus
+//! a brief rig-lock await — so a modem connect's pre-audio tune can never
+//! overlap an FT8 rig session (the FT-710 dual-CAT-user contention class).
+//! The closure itself owns the rig lock; lock order arbiter > rig > state,
+//! each acquired at most once per thread.
 
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -7624,11 +7990,21 @@ impl Ft8Arbiter {
     }
 
     /// Serialize an FT8-owned rig session (start-labeling, band chip QSY,
-    /// sweep QSY) against pause and against each other.
+    /// sweep QSY) against pause_for_modem and against other rig sessions.
+    ///
+    /// **Lock architecture (pinned):** this takes ONLY the arbiter lock —
+    /// the closure `f` OWNS the rig-lock acquisition itself (`qsy_to_band`
+    /// and `start_rig_labeling` each take the rig lock internally). Lock
+    /// order: arbiter > rig > state, each acquired AT MOST ONCE per thread.
+    /// `rig_session` must never take the rig lock: std's `Mutex` is
+    /// non-reentrant, so taking it here and again inside `f` deadlocks —
+    /// the exact composition `rig_session(|| qsy_to_band(..))` that the
+    /// pre-fix design deadlocked on and that
+    /// `rig_session_composed_with_qsy_does_not_deadlock` pins. The arbiter
+    /// lock is what excludes a concurrent `pause_for_modem`; the rig lock
+    /// alone never could.
     pub fn rig_session<R>(&self, f: impl FnOnce() -> R) -> R {
         let _arb = self.lock.lock().unwrap_or_else(|p| p.into_inner());
-        let rig = self.service.rig_lock();
-        let _rig_guard = rig.lock().unwrap_or_else(|p| p.into_inner());
         f()
     }
 }
@@ -7657,6 +8033,25 @@ Add the two small service accessors the arbiter needs (service.rs):
     pub(crate) fn resolved_card_index(&self) -> Option<u32> {
         self.lock_inner().resolved.as_ref().map(|r| r.card_index)
     }
+```
+
+Also route the step-5 start-labeling call through the arbiter (T11 called
+it bare because the arbiter did not exist at that commit — the T11 doc on
+`start_rig_labeling` records this). In `execute_start_sequence` step 5:
+```rust
+            self.start_rig_labeling();
+```
+becomes:
+```rust
+            // Through the arbiter when installed: the ARBITER lock is what
+            // excludes a concurrent pause_for_modem; start_rig_labeling
+            // itself owns the rig lock (lock order arbiter > rig > state,
+            // each acquired at most once per thread).
+            let label = || self.start_rig_labeling();
+            match crate::ft8::arbiter::FT8_ARBITER.get() {
+                Some(arb) => arb.rig_session(label),
+                None => label(),
+            }
 ```
 
 - [ ] **Step 2: Tests (in arbiter.rs)**
@@ -7826,6 +8221,65 @@ mod tests {
         state.test_teardown();
     }
 
+    /// The non-reentrancy composition pin (the pre-fix design deadlocked
+    /// EXACTLY here and no test drove it): rig_session takes ONLY the
+    /// arbiter lock; the closure owns the rig lock via qsy_to_band. If
+    /// rig_session ever re-acquires the rig lock, this composition hangs —
+    /// the deadline poll turns the hang into a failure. LOCAL arbiter, not
+    /// the process-global OnceLock.
+    #[test]
+    fn rig_session_composed_with_qsy_does_not_deadlock() {
+        let p = FakePlatform::happy();
+        *p.rig_configured.lock().unwrap() = true;
+        let (state, arb) = setup(p.clone(), cfg_with_device());
+        state.test_run_sequence();
+        assert_eq!(state.axis(), ServiceAxis::Listening);
+        let s2 = state.clone();
+        let arb2 = arb.clone();
+        let worker = std::thread::spawn(move || {
+            arb2.rig_session(|| {
+                s2.qsy_to_band("40m", crate::ft8::records::BandSource::CatConfirmed)
+            })
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !worker.is_finished() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "rig_session(qsy_to_band) deadlocked — the non-reentrancy \
+                 contract is broken (rig_session must not take the rig lock)"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        worker.join().unwrap().unwrap();
+        assert_eq!(*p.tuned_to.lock().unwrap().last().unwrap(), 7_074_000);
+        state.test_teardown();
+    }
+
+    /// Negative resume gate (spec §Resume — ALL conditions must hold): an
+    /// INELIGIBLE modem session (e.g. ConnectedIss) blocks resume even with
+    /// the latch clear and the card free; eligibility flipping back is what
+    /// releases it.
+    #[test]
+    fn resume_blocked_while_modem_ineligible() {
+        let p = FakePlatform::happy();
+        let (state, arb) = setup(p.clone(), cfg_with_device());
+        state.test_run_sequence();
+        arb.pause_for_modem().unwrap();
+        assert_eq!(state.axis(), ServiceAxis::Yielded);
+        state.hold().clear(); // latch clear + card free (happy default) ...
+        *p.modem_eligible.lock().unwrap() = false; // ... but modem ineligible
+        state.tick_yielded();
+        assert_eq!(
+            state.axis(),
+            ServiceAxis::Yielded,
+            "an ineligible modem must block resume on its own"
+        );
+        *p.modem_eligible.lock().unwrap() = true;
+        state.tick_yielded();
+        assert_eq!(state.axis(), ServiceAxis::Listening);
+        state.test_teardown();
+    }
+
     /// Wedged join (spec §Testing: "wedged join → blocked(capture-wedged) +
     /// Err"): a capture thread whose READ blocks past the 2 s join bound —
     /// the hung-USB class the abort flag cannot reach — force-detaches;
@@ -7860,6 +8314,14 @@ mod tests {
     /// ProdPlatform's positive modem-eligibility set (spec §Resume): the
     /// resume-eligible ModemStates are EXACTLY Stopped, Error, SocketLost —
     /// `Idle` (listen-only, ardopcf holds the card) stays active.
+    ///
+    /// BEFORE writing this test, read `modem_status.rs`: the `ModemState`
+    /// variant list and the status-constructor/setter names below
+    /// (`ModemStatus::stopped()`, `ModemSession::{new, set_status}`) must
+    /// match the REAL enum and impl — adjust the code to the file, not the
+    /// file to this sketch. Extend the loop to cover EVERY `ModemState`
+    /// variant (not just the seven listed), so adding a variant later fails
+    /// this test until its eligibility is deliberately classified.
     #[test]
     fn prod_platform_modem_eligibility_is_the_pinned_set() {
         use crate::ft8::traits::{Ft8Platform, ProdPlatform};
@@ -7908,8 +8370,8 @@ Supporting test-only helpers to add:
   call these shared helpers instead of their local copies).
 - `SharedHold::test_backdate(d: Duration)` under `#[cfg(test)]`:
   `*latched_at = Some(Instant::now() - d)`.
-- testutil.rs: `FakeEngine::band_dead_with_prewarm_gate()` — same as
-  `band_dead()` with `gate_prewarm: true`.
+- testutil.rs: `FakeEngine::band_dead_with_prewarm_gate()` — **already added
+  in T13 (Step 0b)**; no edit here, just use it.
 - testutil.rs: the wedge primitive for the hung-read test:
   ```rust
   pub fn park_flag() -> Arc<std::sync::atomic::AtomicBool> {
@@ -7949,9 +8411,13 @@ listening / starting) plus both error paths (wedged join is covered by T13's
 mechanics test; ReleaseTimeout here); latch has BOTH clear paths tested (TTL
 + positive-evidence); the blocking-context contract is a doc comment on
 `pause_for_modem` (verbatim "BLOCKING-CONTEXT-ONLY CONTRACT"); lock order
-arbiter > rig > state holds at every site (audit: no arbiter method touches
-`lock_inner()` while holding the rig lock except through service methods
-that take state last).
+arbiter > rig > state, each acquired at most once per thread, holds at every
+site (audit: `rig_session` takes ONLY the arbiter lock — the closure owns
+the rig lock; no arbiter method touches `lock_inner()` while holding the rig
+lock except through service methods that take state last); the composition
+test `rig_session_composed_with_qsy_does_not_deadlock` exists and drives a
+LOCAL arbiter end-to-end under a deadline; the negative resume test covers
+modem-ineligibility as the sole blocker.
 
 ---
 
@@ -7970,6 +8436,14 @@ drop classes; k untouched by Failed/Dropped; scheduled discards neutral);
 before busy probe, latch consulted at step 6, interrupt checks between every
 step, post-step-7 interrupt drops the PCM. Minimum three rounds; persist
 findings to `dev/scratch/b026z.3-gate-E-findings.md` before proceeding.
+Files under review: `src-tauri/src/ft8/service.rs`,
+`src-tauri/src/ft8/traits.rs`, `src-tauri/src/ft8/testutil.rs`,
+`src-tauri/src/ft8/arbiter.rs`, `src-tauri/src/ft8/mod.rs`.
+
+**Gate E push:** after this gate's P1/P2 fixes are committed, the parent
+pushes the branch (Global Constraints §Push cadence). This push's CI run
+executes T11–T14's **[CI-side]** steps; fix-forward on its findings before
+starting Task 15.
 
 ---
 ### Task 15: Modem seam wiring — ardopcf choke wrapper, Dire Wolf pre-probe hook, VARA seam
@@ -8280,7 +8754,7 @@ transmits (sweep opt-in is the consent to move the dial).
 
 use std::sync::Arc;
 
-use super::records::{BandSource, DiscardClassDto};
+use super::records::BandSource;
 use super::service::Ft8ListenerState;
 use tuxlink_capture::state::{ServiceAxis, Sweep};
 
@@ -8313,7 +8787,17 @@ pub(crate) fn tick(state: &Arc<Ft8ListenerState>) {
     }
     let next_idx = (band_idx + 1) % bands.len();
     let next_band = bands[next_idx].clone();
-    match state.qsy_to_band(&next_band, BandSource::CatConfirmed) {
+    // Through the arbiter when installed (mirrors T17's ft8_set_band): the
+    // ARBITER lock is what excludes a concurrent pause_for_modem — the rig
+    // lock alone never could. qsy_to_band owns the rig lock; rig_session
+    // takes ONLY the arbiter lock (lock order arbiter > rig > state, each
+    // acquired at most once per thread — T14's non-reentrancy contract).
+    let do_qsy = || state.qsy_to_band(&next_band, BandSource::CatConfirmed);
+    let result = match crate::ft8::arbiter::FT8_ARBITER.get() {
+        Some(arb) => arb.rig_session(do_qsy),
+        None => do_qsy(),
+    };
+    match result {
         Ok(()) => {
             state.on_sweep_qsy_success(next_idx);
         }
@@ -8328,11 +8812,15 @@ service.rs additions (the helper both sweep and `ft8_set_band` (T17) use,
 plus the narrow sweep accessors — keeping `Inner` private):
 ```rust
 impl Ft8ListenerState {
-    /// Spawn-tune-drop QSY to a table band + relabel + k-reset. Serialized
-    /// through the rig lock (callers inside the supervisor use it directly;
-    /// T17's command path routes via the arbiter's rig_session — both end
-    /// at the same mutex). On failure the band label DOWNGRADES: a failed
-    /// tune may have moved the dial anyway (freq-before-mode).
+    /// Spawn-tune-drop QSY to a table band + relabel + k-reset. This helper
+    /// OWNS the rig-lock acquisition; every caller (sweep::tick, T17's
+    /// ft8_set_band) ADDITIONALLY wraps the call in the arbiter's
+    /// rig_session (arbiter-lock-only, T14) — the ARBITER lock is what
+    /// excludes a concurrent pause_for_modem; the rig lock only serializes
+    /// rig sessions against each other. Lock order arbiter > rig > state,
+    /// each acquired at most once per thread. On failure the band label
+    /// DOWNGRADES: a failed tune may have moved the dial anyway
+    /// (freq-before-mode).
     pub(crate) fn qsy_to_band(
         self: &Arc<Self>,
         band: &str,
@@ -8412,11 +8900,18 @@ impl SweepView<'_> {
     }
 }
 ```
-Swap the supervisor call site: `state.sweep_tick_stub();` (T11) becomes
-`crate::ft8::sweep::tick(&state);` and delete the stub method.
+Swap the supervisor call site: in `tick_listening` (T11),
+`self.sweep_tick_stub();` becomes `crate::ft8::sweep::tick(self);` — and
+delete the `sweep_tick_stub` method.
 (NOTE: if `Sweep` does not derive `Copy`/`Clone` in Phase A, adjust the view
 methods to return by clone — a leaf edit adding `Clone`+`Copy` derives is
 also acceptable and locally testable.)
+
+Accepted timing skew, recorded (spec §Sweep): the QSY fires on the 5 s
+supervisor tick after the dwell completes, so the dial can move up to ~5 s
+past the slot boundary — safe by construction, because the slot in progress
+during the QSY is the transition slot (scheduled discard), so mid-slot dial
+movement never contaminates a counted slot.
 
 - [ ] **Step 2: Tests (in sweep.rs)**
 
@@ -8648,6 +9143,9 @@ BEFORE returning Err.
 - Create: `src-tauri/src/ft8/commands.rs`
 - Modify: `src-tauri/src/ft8/events.rs` (event names + `TauriEventSink`)
 - Modify: `src-tauri/src/ft8/mod.rs` (`pub mod commands;`)
+- Modify: `src-tauri/src/ft8/service.rs` (`assert_band_operator`, `apply_sweep_enabled`, the `#[cfg(test)]` wedged helper)
+- Modify: `src-tauri/src/config.rs` (the crate-wide `update_config` RMW gate — Step 2a)
+- Modify: `src-tauri/src/modem_commands.rs` (hoist the TUXLINK_CONFIG_DIR test guard into a crate-visible `test_env` module — Step 3a)
 - Modify: `src-tauri/src/lib.rs` (managed state + setup autostart + command registration)
 
 **Interfaces:**
@@ -8668,8 +9166,10 @@ pub struct TauriEventSink { pub app: tauri::AppHandle }
 against the band table BEFORE persisting; while listening with CAT → QSY +
 relabel + reset k; while NOT listening → persist-only, never touches the
 radio (consent framing). ALL config-mutating ft8 commands serialize their
-read-modify-write through ONE ft8 writer mutex before `write_config_atomic`
-(atomic file replace does not make concurrent RMW cycles atomic).
+read-modify-validate-write through the CRATE-WIDE gate
+`config::update_config` (one static writer lock in config.rs — Step 2a;
+atomic file replace does not make concurrent RMW cycles atomic, and an
+ft8-only mutex would not protect against non-ft8 writers).
 `ft8_set_device` and `ft8_listener_start` refuse from `capture-wedged` with
 a restart-required error. `ft8_listener_start` is idempotent and sets
 `enabled = true`; `ft8_listener_stop` sets `enabled = false`. Autostart
@@ -8712,7 +9212,7 @@ impl EventSink for TauriEventSink {
 //! service's blocking-context surface. Testable bodies live in the
 //! `_inner` fns; the `#[tauri::command]` shells only extract state.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use tauri::State;
 
@@ -8721,22 +9221,14 @@ use crate::ft8::service::{Ft8ListenerState, Ft8Snapshot};
 use crate::winlink::ax25::devices::StableAudioId;
 use tuxlink_capture::state::{BlockedReason, ServiceAxis};
 
-/// THE ft8 writer mutex (spec §Commands): serializes every ft8
-/// read-modify-write cycle. `write_config_atomic` makes the file REPLACE
-/// atomic; it does not serialize concurrent RMW readers — this does.
-static FT8_CONFIG_WRITER: Mutex<()> = Mutex::new(());
-
-/// One serialized RMW cycle: read → mutate → validate → atomic write.
-/// Returns the updated Ft8Config so callers can push it into the service.
+/// One serialized ft8 RMW cycle, delegating to the CRATE-WIDE gate
+/// (`config::update_config`, Step 2a): read → mutate → validate → atomic
+/// write under config.rs's one static writer lock. Returns the updated
+/// Ft8Config so callers can push it into the service.
 fn with_ft8_config_writer(
     mutate: impl FnOnce(&mut Config) -> Result<(), String>,
 ) -> Result<crate::config::Ft8Config, String> {
-    let _g = FT8_CONFIG_WRITER.lock().unwrap_or_else(|p| p.into_inner());
-    let mut cfg = config::read_config().map_err(|e| format!("config read failed: {e}"))?;
-    mutate(&mut cfg)?;
-    cfg.validate().map_err(|e| e.to_string())?;
-    config::write_config_atomic(&cfg).map_err(|e| format!("config write failed: {e}"))?;
-    Ok(cfg.ft8)
+    config::update_config(mutate).map(|cfg| cfg.ft8)
 }
 
 fn wedged_refusal(state: &Ft8ListenerState) -> Result<(), String> {
@@ -8813,8 +9305,11 @@ pub(crate) fn ft8_set_band_inner(
     if state.axis() == ServiceAxis::Listening {
         if state.platform.rig_configured() {
             // Listening + CAT: the chip is a QSY command. Through the
-            // arbiter when installed (serializes against modem pauses);
-            // qsy_to_band itself still takes the rig lock either way.
+            // arbiter when installed — the ARBITER lock (rig_session) is
+            // what excludes a concurrent pause_for_modem; qsy_to_band owns
+            // the RIG lock itself (rig_session takes ONLY the arbiter lock:
+            // lock order arbiter > rig > state, each at most once — T14's
+            // non-reentrancy contract).
             let do_qsy = || state.qsy_to_band(&band, crate::ft8::records::BandSource::CatConfirmed);
             match crate::ft8::arbiter::FT8_ARBITER.get() {
                 Some(arb) => arb.rig_session(do_qsy)?,
@@ -8946,13 +9441,98 @@ platform call happens BEFORE taking the lock, mirroring the lock-discipline
 rule: read the flag into a local first. The subagent applies this; it is the
 same discipline every other helper follows.)
 
-- [ ] **Step 3: Tests (commands.rs) — validation + writer-mutex serialization**
+- [ ] **Step 2a: config.rs — the crate-wide `update_config` RMW gate**
 
-Config-touching tests need the `TUXLINK_CONFIG_DIR` env-isolation pattern —
-COPY the `env_lock()` helper convention from `modem_commands.rs`'s test
-module (quoted there at `:~2199`) rather than inventing a new one; seed a
-minimal valid config file first (mirror `round_trip_persists_through_config`
-in the same file for the fixture shape).
+Add to `src-tauri/src/config.rs`, next to `write_config_atomic` (add
+`use std::sync::Mutex;` if the file lacks it):
+```rust
+/// The crate-wide config writer gate (tuxlink-b026z.3): serializes every
+/// read-modify-validate-write cycle under ONE static lock.
+/// `write_config_atomic` makes the file REPLACE atomic; it does NOT make
+/// two concurrent read→mutate→write cycles atomic — without this gate the
+/// second writer silently reverts the first writer's field (lost update).
+///
+/// Scope note: the six ft8 commands route through this from day one. The
+/// ~10 pre-existing writers elsewhere in the crate still do bare
+/// read→mutate→write; migrating them is OUT OF SCOPE here and tracked by
+/// the follow-up bd issue T19 files — they migrate opportunistically as
+/// they are touched.
+static CONFIG_WRITER: Mutex<()> = Mutex::new(());
+
+pub fn update_config(
+    mutate: impl FnOnce(&mut Config) -> Result<(), String>,
+) -> Result<Config, String> {
+    let _g = CONFIG_WRITER.lock().unwrap_or_else(|p| p.into_inner());
+    let mut cfg = read_config().map_err(|e| format!("config read failed: {e}"))?;
+    mutate(&mut cfg)?;
+    cfg.validate().map_err(|e| e.to_string())?;
+    write_config_atomic(&cfg).map_err(|e| format!("config write failed: {e}"))?;
+    Ok(cfg)
+}
+```
+(Adjust `read_config`/`write_config_atomic` call shapes to their real
+signatures in config.rs — read them first; the gate semantics above are the
+contract.)
+
+- [ ] **Step 3: Tests (commands.rs) — validation + writer-gate serialization**
+
+Config-touching tests need `TUXLINK_CONFIG_DIR` env isolation. ONE
+crate-visible guard owns it (Step 3a below) — do NOT write a local copy in
+this module.
+
+**(3a) Hoist modem_commands' env helper into the crate-visible guard.** In
+`modem_commands.rs`, add at TOP level (outside its `#[cfg(test)] mod tests`):
+```rust
+/// Crate-shared TUXLINK_CONFIG_DIR test guard (tuxlink-b026z.3). ONE static
+/// lock serializes every env-mutating test in the binary (std::env::set_var
+/// is not thread-safe under parallel tests — tuxlink-j0ij), and the guard
+/// RESTORES the prior value on drop — a panicking test can no longer leak
+/// its tempdir into a neighbor. Both modem_commands' and ft8::commands'
+/// test modules route through this; local copies are banned.
+#[cfg(test)]
+pub(crate) mod test_env {
+    use std::sync::{Mutex, MutexGuard};
+
+    static LOCK: Mutex<()> = Mutex::new(());
+
+    pub(crate) struct ConfigDirGuard {
+        _lock: MutexGuard<'static, ()>,
+        prior: Option<std::ffi::OsString>,
+    }
+
+    /// Point TUXLINK_CONFIG_DIR at `dir` for the guard's lifetime.
+    pub(crate) fn lock_config_dir(dir: &std::path::Path) -> ConfigDirGuard {
+        let lock = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prior = std::env::var_os("TUXLINK_CONFIG_DIR");
+        // SAFETY: LOCK serializes every env mutation in this test binary.
+        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", dir) };
+        ConfigDirGuard { _lock: lock, prior }
+    }
+
+    impl Drop for ConfigDirGuard {
+        fn drop(&mut self) {
+            // SAFETY: still serialized — the lock is held by self._lock.
+            unsafe {
+                match self.prior.take() {
+                    Some(v) => std::env::set_var("TUXLINK_CONFIG_DIR", v),
+                    None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
+                }
+            }
+        }
+    }
+}
+```
+Then migrate modem_commands' OWN test module onto it: delete its private
+`env_lock()` fn (currently `modem_commands.rs:~2198`) and rewrite every
+manual set→restore sequence
+(`grep -n "TUXLINK_CONFIG_DIR" src-tauri/src/modem_commands.rs` finds them
+all) to `let _env = test_env::lock_config_dir(tmp.path());`, deleting each
+test's hand-rolled `prior` capture and tail-restore lines. (NB the existing
+code wraps `set_var` in `unsafe` — match the file's edition posture; if the
+crate's edition has a safe `set_var`, drop the `unsafe` blocks and SAFETY
+comments.) Seed a minimal valid config file after taking the guard (mirror
+`round_trip_persists_through_config` in modem_commands.rs for the fixture
+shape).
 
 ```rust
 #[cfg(test)]
@@ -8961,29 +9541,23 @@ mod tests {
     use crate::config::Ft8Config;
     use crate::ft8::service::Ft8Deps;
     use crate::ft8::testutil::{FakeClock, FakePlatform, RecordingSink};
-    // + the env_lock/seed-config helpers per the note above.
+    use crate::modem_commands::test_env::{lock_config_dir, ConfigDirGuard};
 
-    /// Serializes TUXLINK_CONFIG_DIR mutation across parallel tests — the
-    /// SAME discipline as modem_commands.rs's env_lock (read that comment;
-    /// this is a local copy because test modules cannot share private
-    /// helpers across files).
-    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        LOCK.lock().unwrap_or_else(|p| p.into_inner())
-    }
-
-    /// Point TUXLINK_CONFIG_DIR at a fresh pid-suffixed tempdir and write a
-    /// minimal VALID config there (mirror the config_json fixture shape in
-    /// config.rs tests — read it; the exact JSON body is copied from there
-    /// with the current CONFIG_SCHEMA_VERSION).
-    fn seed_config() -> std::path::PathBuf {
+    /// Point TUXLINK_CONFIG_DIR at a fresh pid-suffixed tempdir — via the
+    /// crate-shared guard (Step 3a), which serializes env mutation AND
+    /// restores the prior value on drop — and write a minimal VALID config
+    /// there (mirror the config_json fixture shape in config.rs tests —
+    /// read it; the exact JSON body is copied from there with the current
+    /// CONFIG_SCHEMA_VERSION). Callers hold the returned guard for the
+    /// whole test: `let (_env, _dir) = seed_config();`.
+    fn seed_config() -> (ConfigDirGuard, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!(
             "tuxlink-ft8-cmd-test-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
         std::fs::create_dir_all(&dir).unwrap();
-        std::env::set_var("TUXLINK_CONFIG_DIR", &dir);
+        let guard = lock_config_dir(&dir);
         let body = serde_json::json!({
             "schema_version": crate::config::CONFIG_SCHEMA_VERSION,
             "wizard_completed": true,
@@ -8993,18 +9567,20 @@ mod tests {
         });
         std::fs::write(dir.join("config.json"), serde_json::to_vec_pretty(&body).unwrap())
             .unwrap();
-        dir
+        (guard, dir)
     }
 
     /// seed_config + a configured rig (model + serial) so sweep/QSY
-    /// validation passes.
-    fn seed_config_with_rig() -> std::path::PathBuf {
-        let dir = seed_config();
-        let mut cfg = crate::config::read_config().unwrap();
-        cfg.rig.rig_hamlib_model = Some(1043);
-        cfg.rig.cat_serial_path = Some("/dev/ttyUSB0".into());
-        crate::config::write_config_atomic(&cfg).unwrap();
-        dir
+    /// validation passes — through the crate-wide gate, like production.
+    fn seed_config_with_rig() -> (ConfigDirGuard, std::path::PathBuf) {
+        let (guard, dir) = seed_config();
+        crate::config::update_config(|c| {
+            c.rig.rig_hamlib_model = Some(1043);
+            c.rig.cat_serial_path = Some("/dev/ttyUSB0".into());
+            Ok(())
+        })
+        .unwrap();
+        (guard, dir)
     }
     // (Verify the config layer honors TUXLINK_CONFIG_DIR by reading how
     // modem_commands.rs's round_trip_persists_through_config seeds its dir;
@@ -9043,8 +9619,7 @@ mod tests {
     /// set_band rejects out-of-table BEFORE any persistence.
     #[test]
     fn set_band_rejects_unknown_bands_without_persisting() {
-        let _env = env_lock();
-        seed_config();
+        let (_env, _dir) = seed_config();
         let state = state_with(Ft8Config::default());
         assert!(ft8_set_band_inner(&state, "23cm".into()).is_err());
         let on_disk = crate::config::read_config().unwrap();
@@ -9055,8 +9630,7 @@ mod tests {
     /// touched (zero rig_tune calls on the platform fake).
     #[test]
     fn set_band_not_listening_is_persist_only() {
-        let _env = env_lock();
-        seed_config();
+        let (_env, _dir) = seed_config();
         let p = FakePlatform::happy();
         *p.rig_configured.lock().unwrap() = true;
         let state = state_with_platform(p.clone(), Ft8Config::default());
@@ -9068,8 +9642,7 @@ mod tests {
     /// set_band while listening + CAT: QSY + relabel + k reset.
     #[test]
     fn set_band_listening_with_cat_qsys_and_relabels() {
-        let _env = env_lock();
-        seed_config_with_rig(); // rig model + serial in the seeded file
+        let (_env, _dir) = seed_config_with_rig(); // rig model + serial in the seeded file
         let p = FakePlatform::happy();
         *p.rig_configured.lock().unwrap() = true;
         let state = state_with_platform(p.clone(), cfg_with_device());
@@ -9091,8 +9664,7 @@ mod tests {
     /// restart-required error.
     #[test]
     fn wedged_refuses_start_and_set_device() {
-        let _env = env_lock();
-        seed_config();
+        let (_env, _dir) = seed_config();
         let state = state_with(cfg_with_device());
         state.test_force_capture_wedged(); // helper: machine.on_capture_wedged()
         let e1 = ft8_listener_start_inner(&state).unwrap_err();
@@ -9105,8 +9677,7 @@ mod tests {
     /// Idempotent start: two starts in a row both Ok; one supervisor.
     #[test]
     fn start_is_idempotent() {
-        let _env = env_lock();
-        seed_config();
+        let (_env, _dir) = seed_config();
         let state = state_with(cfg_with_device());
         ft8_listener_start_inner(&state).unwrap();
         ft8_listener_start_inner(&state).unwrap();
@@ -9118,8 +9689,7 @@ mod tests {
     /// loom (per the plan: loom not required).
     #[test]
     fn writer_mutex_serializes_concurrent_rmw() {
-        let _env = env_lock();
-        seed_config();
+        let (_env, _dir) = seed_config();
         let state = state_with(Ft8Config::default());
         let s1 = state.clone();
         let s2 = state.clone();
@@ -9134,12 +9704,37 @@ mod tests {
         assert!(on_disk.ft8.device.is_some(), "device write survived (no lost update)");
     }
 
+    /// CRATE-WIDE gate (Step 2a): an ft8 write racing a NON-ft8 config
+    /// write — both fields survive. An ft8-only mutex could not protect
+    /// this pairing; config::update_config's one static lock does.
+    #[test]
+    fn ft8_write_racing_non_ft8_write_loses_neither() {
+        let (_env, _dir) = seed_config();
+        let state = state_with(Ft8Config::default());
+        let s1 = state.clone();
+        let t1 = std::thread::spawn(move || ft8_set_band_inner(&s1, "40m".into()));
+        let t2 = std::thread::spawn(|| {
+            crate::config::update_config(|c| {
+                c.rig.rig_hamlib_model = Some(1043);
+                Ok(())
+            })
+        });
+        t1.join().unwrap().unwrap();
+        t2.join().unwrap().unwrap();
+        let on_disk = crate::config::read_config().unwrap();
+        assert_eq!(on_disk.ft8.band, "40m", "ft8 write survived");
+        assert_eq!(
+            on_disk.rig.rig_hamlib_model,
+            Some(1043),
+            "non-ft8 write survived (no cross-subsystem lost update)"
+        );
+    }
+
     /// set_sweep(enabled=true) without a rig is rejected by validate()
     /// inside the writer cycle — nothing persists.
     #[test]
     fn set_sweep_without_rig_is_rejected() {
-        let _env = env_lock();
-        seed_config(); // no rig in the seed
+        let (_env, _dir) = seed_config(); // no rig in the seed
         let state = state_with(Ft8Config::default());
         assert!(ft8_set_sweep_inner(&state, true).is_err());
         assert!(!crate::config::read_config().unwrap().ft8.sweep.enabled);
@@ -9178,10 +9773,12 @@ end of that block):
                 let slot_root = if let Some(x) = std::env::var_os("XDG_RUNTIME_DIR") {
                     std::path::PathBuf::from(x).join("tuxlink").join("ft8")
                 } else {
-                    let run_user = std::path::PathBuf::from(format!(
-                        "/run/user/{}",
-                        nix::unistd::Uid::current().as_raw()
-                    ));
+                    // SAFETY: getuid is always successful (POSIX). libc 0.2
+                    // is already a direct dep (src-tauri/Cargo.toml:98);
+                    // nix 0.31's enabled feature set lacks `user`, so
+                    // nix::unistd::Uid is NOT available here.
+                    let uid = unsafe { libc::getuid() };
+                    let run_user = std::path::PathBuf::from(format!("/run/user/{uid}"));
                     if run_user.is_dir()
                         && std::fs::metadata(&run_user).map(|m| !m.permissions().readonly()).unwrap_or(false)
                     {
@@ -9275,13 +9872,17 @@ becomes:
 
 ```bash
 cd "$WT" && pwd
-git add src-tauri/src/ft8 src-tauri/src/lib.rs
+git add src-tauri/src/ft8 src-tauri/src/lib.rs src-tauri/src/config.rs src-tauri/src/modem_commands.rs
 git commit -m "feat(ft8): Tauri commands, events, managed state + autostart (tuxlink-b026z.3 T17)"
 ```
 
 **Completion check:** all six commands registered; every config-mutating
-command routes through `with_ft8_config_writer` (grep: no direct
-`write_config_atomic` call in commands.rs outside the helper); blocking
+command routes through `with_ft8_config_writer` →
+`config::update_config` (grep: ZERO `write_config_atomic` calls in
+commands.rs — the only caller in this task's diff is `update_config`
+itself); the cross-writer race test exists; modem_commands' tests route
+through the shared `test_env` guard and its private `env_lock` is gone;
+blocking
 service calls are inside `spawn_blocking`; autostart reads `enabled` alone;
 the arbiter is BOTH managed and OnceLock-installed; event names match the
 delta exactly (`ft8-decodes:slot`, `ft8-listening:change`).
@@ -9336,7 +9937,36 @@ and the matching `read` arm (before the `Idle` arm):
 (If `n < samples.len()` the tail would be silently lost — the e2e chunks to
 exactly 4,800 so it never happens; add a `debug_assert!(samples.len() <= buf.len())`.)
 
+Also in testutil.rs — the boundary-alignment helpers (the e2e aligns the ONE
+shared clock; it must never construct a second `SyntheticClock`, which would
+split the platform's and the source's time). `SyntheticClock` gains:
+```rust
+    /// Set the UTC value directly (test setup). Monotonic is untouched —
+    /// the assembler only ever DIFFERENCES monotonic values.
+    pub fn set_utc_ms(&self, utc_ms: u64) {
+        self.utc_ms.store(utc_ms, Ordering::SeqCst);
+    }
+```
+and `FakePlatform` gains:
+```rust
+    /// Snap the shared synthetic clock's UTC back to the previous 15 s slot
+    /// boundary. happy()'s epoch (1_760_000_000_000 ms) sits 5 s PAST a
+    /// boundary (mod 15_000 = 5_000 — i.e. 10 s before the next one); the
+    /// e2e needs slot-aligned audio.
+    pub fn align_clock_to_slot_boundary(&self) {
+        let utc = self.clock.utc_ms();
+        self.clock.set_utc_ms(utc - (utc % 15_000));
+    }
+```
+
 - [ ] **Step 2: the e2e test**
+
+Declare the module in `src-tauri/src/ft8/mod.rs` (one line, alongside the
+existing `#[cfg(test)] pub mod testutil;`):
+```rust
+#[cfg(test)]
+mod e2e_tests;
+```
 
 `src-tauri/src/ft8/e2e_tests.rs`:
 ```rust
@@ -9358,7 +9988,7 @@ use crate::config::Ft8Config;
 use crate::ft8::records::RingOutcome;
 use crate::ft8::service::{Ft8Deps, Ft8ListenerState};
 use crate::ft8::testutil::{FakeClock, FakePlatform, RecordingSink, SourceStep};
-use crate::ft8::traits::Jt9Engine;
+use crate::ft8::traits::{Ft8Platform, Jt9Engine}; // trait in scope: p.wisdom_dir() below
 use crate::winlink::ax25::devices::{StableAudioId, StableIdKind};
 use tuxlink_jt9::runner::Jt9Runner;
 use tuxlink_jt9::types::SLOT_DECODE_TIMEOUT_SECS;
@@ -9425,13 +10055,13 @@ fn e2e_fixture_through_capture_path_decodes_90_percent_of_reference() {
     )));
     *p.engine.lock().unwrap() = engine;
 
-    // Synthetic time starts EXACTLY on a UTC slot boundary; the fixture
-    // aligns to one slot by construction (time is injected data).
-    let aligned = p.clock.utc_ms() - (p.clock.utc_ms() % SLOT_MS);
-    let clock = crate::ft8::testutil::SyntheticClock::new(aligned);
-    // Rebuild the platform's clock reference (FakePlatform::happy() made
-    // its own): give FakePlatform a `set_clock`-style construction instead —
-    // see the NOTE below this block.
+    // happy()'s clock epoch (1_760_000_000_000 ms) does NOT start on a
+    // boundary: mod 15_000 = 5_000, so it sits 5 s past one (10 s before
+    // the next). Snap the ONE shared clock (platform + source both hold
+    // it) back onto the boundary so the fixture audio is slot-aligned —
+    // time is injected data (Step 1's helper).
+    p.align_clock_to_slot_boundary();
+    assert_eq!(p.clock.utc_ms() % SLOT_MS, 0);
 
     // Script: slot A = silence (absorbs whichever first-slot semantics the
     // Phase-A assembler pinned: full-silence BandDead or first-slot
@@ -9501,18 +10131,13 @@ fn e2e_fixture_through_capture_path_decodes_90_percent_of_reference() {
     state.test_teardown();
 }
 ```
-**NOTE — clock plumbing:** `FakePlatform::happy()` constructs its own
-`SyntheticClock`; the boundary alignment above must apply to THE clock the
-platform + source share. Give `FakePlatform` a
-`pub fn align_clock_to_slot_boundary(&self)` helper in testutil (subtract
-`utc % 15_000` from the stored value — add a `SyntheticClock::set_utc_ms`
-or rebuild style method) instead of constructing a second clock; delete the
-orphan `clock` local above accordingly. The fragment shows intent; the
-subagent wires it through the ONE shared clock. Flake-mitigation escape
-hatch: if CI shows a wsjtx-version delta on the crowded fixture (the L1
-suite floors at depth-1 counts for exactly this reason), floor at
-`reference_count` of the DEPTH-1 subset per L1 precedent and file a bd
-issue — do not delete the 90 % assertion silently.
+**NOTE — flake-mitigation escape hatch:** if CI shows a wsjtx-version delta
+on the crowded fixture (the L1 suite floors at depth-1 counts for exactly
+this reason), floor at `reference_count` of the DEPTH-1 subset per L1
+precedent and file a bd issue — do not delete the 90 % assertion silently.
+(Clock alignment is handled by Step 1's `align_clock_to_slot_boundary`
+helper on the ONE shared clock — never construct a second `SyntheticClock`
+here.)
 
 - [ ] **Step 3: CI apt edits**
 
@@ -9679,7 +10304,22 @@ fire, autostart on `enabled` alone, arbiter OnceLock installed exactly once;
 includes lib unit tests; confirm no accidental `#[ignore]`), salts bumped so
 the apt cache refreshes, Cargo.lock consistent with `--locked` everywhere
 after Task 9's single regen. Minimum three rounds; persist findings to
-`dev/scratch/b026z.3-gate-F-findings.md` before proceeding.
+`dev/scratch/b026z.3-gate-F-findings.md` before proceeding. Files under
+review: `src-tauri/src/modem_commands.rs`,
+`src-tauri/src/winlink/ax25/managed_direwolf.rs`,
+`src-tauri/src/winlink/modem/vara/commands.rs`, `src-tauri/src/ft8/sweep.rs`,
+`src-tauri/src/ft8/service.rs`, `src-tauri/src/ft8/commands.rs`,
+`src-tauri/src/ft8/events.rs`, `src-tauri/src/ft8/e2e_tests.rs`,
+`src-tauri/src/ft8/testutil.rs`, `src-tauri/src/ft8/mod.rs`,
+`src-tauri/src/config.rs`, `src-tauri/src/lib.rs`,
+`.github/workflows/ci.yml`, `.github/workflows/release.yml`,
+`.github/workflows/ect-build.yml`, `src-tauri/tauri.conf.json`.
+
+**Gate F push:** after this gate's P1/P2 fixes are committed, the parent
+pushes the branch (Global Constraints §Push cadence). This push's CI run
+executes T15–T18's **[CI-side]** steps — including the e2e against real jt9
+and the packaged-artifact builds; fix-forward on its findings before
+starting Task 19.
 
 ---
 ### Task 19: Docs + issue closes — delta v3 notes, implementation log, bd
@@ -9688,7 +10328,8 @@ after Task 9's single regen. Minimum three rounds; persist findings to
 - Modify: `docs/design/2026-07-10-station-intel-jt9-engine-delta.md` (append the v3 notes section)
 - Modify: `docs/superpowers/specs/2026-07-10-station-intel-l2-capture-design.md` (status line only)
 - Modify: `dev/implementation-log.md` (new entry at top)
-- bd operations (no file): close `tuxlink-gujnz`, update `tuxlink-b026z.8`, note on `tuxlink-b026z.3`
+- Modify: `docs/user-guide/11-signalink-and-others.md` (capture-side AGC note — Step 3b)
+- bd operations (no file): close `tuxlink-gujnz`, update `tuxlink-b026z.8`, note on `tuxlink-b026z.3`, file the config-writer migration issue
 
 **TDD note:** docs task — no tests; the completion check is the doc-lint +
 grep pass in Step 5.
@@ -9810,6 +10451,42 @@ sanction; wire-walk gate runs when L3/L4 make FT8 user-reachable. Delta v3
 notes appended (6 contract deltas + 2 implementation-pinned).
 ```
 
+- [ ] **Step 3b: Capture-setup AGC note (user guide)**
+
+The FT8 listener records THROUGH the codec's capture path, and CM108-class
+codecs (DigiRig / DRA / SignaLink-generation interfaces) ship with mic Auto
+Gain Control enabled by default — AGC pumps the receive level with band
+activity, burying weak signals. The user guide's audio-interface chapter is
+where operators do capture setup; `docs/user-guide/11-signalink-and-others.md`
+already carries the "## Audio calibration" section, so the note lands there.
+Append to the END of that section (before "## Picking an interface"):
+
+```markdown
+### Capture-side AGC on CM108-class codecs
+
+Many USB audio interfaces in the DigiRig / DRA / SignaLink class are built
+on C-Media CM108/CM119 codecs, and most ship with the codec's microphone
+**Auto Gain Control enabled by default**. AGC continuously rewrites the
+capture level: weak-signal decoders (the FT8 listener, ARDOP, VARA) see a
+receive audio floor that pumps up and down with band activity, which buries
+weak signals and invalidates any level calibration.
+
+Disable it once per interface, at capture setup:
+
+1. Run `alsamixer`, press `F6`, and select the USB codec card.
+2. Press `F4` (capture view). If a control named `Auto Gain Control` (or
+   `AGC`) shows `[on]`, press `m` to switch it off.
+3. Persist it across replug/reboot: `sudo alsactl store`.
+
+Then set the capture level itself to a fixed value (start near 60–70 %) and
+leave it there — a steady, slightly-low level decodes better than a hot or
+moving one.
+```
+
+(Reading check: confirm the section heading names in 11-signalink-and-others.md
+still match before inserting; if the chapter gained an FT8-specific section
+since this plan was written, put the note there instead — one location only.)
+
 - [ ] **Step 4: bd operations**
 
 ```bash
@@ -9820,6 +10497,8 @@ bd update tuxlink-b026z.8 --notes "Disposition (tuxlink-b026z.3): ACCEPTED BOUND
 bd close tuxlink-b026z.8
 
 bd update tuxlink-b026z.3 --notes "L2 shipped per plan docs/superpowers/plans/2026-07-10-station-intel-l2-capture.md: tuxlink-capture leaf (T1–6), gujnz salvage (T7), src/ft8 service + arbiter + sweep + commands (T8–17), e2e + CI (T18), docs (T19). No UI caller by design (epic layer-wise sanction; wire-walk deferred to L3/L4 reachability). Delta v3 notes appended; spec flipped to IMPLEMENTED. Close on PR merge."
+
+bd create "Migrate the pre-existing bare config read→mutate→write sites onto config::update_config" -t chore -p 3 -d "tuxlink-b026z.3 T17 added the crate-wide RMW gate (config.rs update_config: one static writer lock around read→mutate→validate→write_config_atomic) and routed the six ft8 commands through it. The ~10 pre-existing writers elsewhere in the crate (grep 'write_config_atomic(' outside config.rs) still run unserialized read→mutate→write cycles and can lose updates against ANY concurrent writer. Migrate opportunistically as each site is touched; each migration is mechanical (wrap the mutation in config::update_config). Cross-writer race pinned by ft8_write_racing_non_ft8_write_loses_neither in src/ft8/commands.rs."
 ```
 (Adjust flag names to the installed bd version if `--reason`/`--notes`
 differ — `bd close --help` / `bd update --help` first; the TEXT above is
@@ -9843,16 +10522,17 @@ Expected: clean (the delta + spec + log edits carry no broken links; run
 node_modules).
 ```bash
 cd "$WT" && pwd
-git add docs/design/2026-07-10-station-intel-jt9-engine-delta.md docs/superpowers/specs/2026-07-10-station-intel-l2-capture-design.md dev/implementation-log.md
-git commit -m "docs(ft8): delta v3 notes, spec status, implementation log (tuxlink-b026z.3 T19, resolves tuxlink-gujnz)"
+git add docs/design/2026-07-10-station-intel-jt9-engine-delta.md docs/superpowers/specs/2026-07-10-station-intel-l2-capture-design.md dev/implementation-log.md docs/user-guide/11-signalink-and-others.md
+git commit -m "docs(ft8): delta v3 notes, spec status, implementation log, capture AGC note (tuxlink-b026z.3 T19, resolves tuxlink-gujnz)"
 ```
 
 **Completion check:** all six spec-listed delta notes present verbatim in
 substance + the two implementation-pinned extras; the types.rs edits are
-NOT restated in the delta (pointers only — propagation contract); bd ops
-executed (or their exact text handed to the parent if bd is unavailable in
-the subagent's shell); AGENTS.md disposition recorded; `pnpm lint:docs`
-green.
+NOT restated in the delta (pointers only — propagation contract); the
+capture-AGC note landed in the user guide (Step 3b); bd ops executed
+including the config-writer migration issue (or their exact text handed to
+the parent if bd is unavailable in the subagent's shell); AGENTS.md
+disposition recorded; `pnpm lint:docs` green.
 
 ---
 
@@ -9860,10 +10540,13 @@ green.
 
 After Task 19 + Review Gate F findings are resolved:
 
-1. **Parent pushes** the branch; CI (amd64 + arm64) is the compile+test
-   verdict for everything Phase C authored. Fix-forward on CI findings —
-   clippy nits and API-name drift in the `alsa` crate surface are expected
-   first-push classes; each fix is a normal commit on the branch.
+1. **Parent pushes the final commits** (T19's docs commit + any Gate-F
+   fixes). The Gate D / E / F pushes already ran each batch's CI red-green
+   (Global Constraints §Push cadence); this final push is the last CI run
+   (amd64 + arm64) and the branch-complete verdict. Fix-forward on CI
+   findings — clippy nits and API-name drift in the `alsa` crate surface
+   are expected classes at the Gate D/E pushes; each fix is a normal commit
+   on the branch.
 2. **Wire-walk disposition (explicit):** per spec §Scope, L2 merges with no
    UI caller BY DESIGN — the epic (tuxlink-b026z) sanctions layer-wise
    landing and the wire-walk gate runs when L3/L4 make FT8 user-reachable.
