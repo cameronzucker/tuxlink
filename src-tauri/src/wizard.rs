@@ -179,7 +179,6 @@ pub async fn persist_cms_impl(
     let new_config = crate::config::Config {
         elmer: crate::config::ElmerConfig::default(),
         p2p_limits: crate::contacts::limiter::P2pLimitsConfig::default(),
-        ft8: crate::config::Ft8Config::default(),
         schema_version: crate::config::CONFIG_SCHEMA_VERSION,
         wizard_completed: true,
         connect: crate::config::ConnectConfig {
@@ -428,7 +427,6 @@ pub async fn persist_offline_impl(
     let new_config = crate::config::Config {
         elmer: crate::config::ElmerConfig::default(),
         p2p_limits: crate::contacts::limiter::P2pLimitsConfig::default(),
-        ft8: crate::config::Ft8Config::default(),
         schema_version: crate::config::CONFIG_SCHEMA_VERSION,
         wizard_completed: true,
         connect: crate::config::ConnectConfig {

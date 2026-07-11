@@ -702,7 +702,6 @@ fn config_skips_pat_mbo_address_on_write() {
     // the key "pat_mbo_address" at all, regardless of the field value.
     let cfg = Config {
         elmer: tuxlink_lib::config::ElmerConfig::default(),
-        p2p_limits: tuxlink_lib::contacts::limiter::P2pLimitsConfig::default(),
         ft8: tuxlink_lib::config::Ft8Config::default(),
         schema_version: CONFIG_SCHEMA_VERSION,
         wizard_completed: true,
