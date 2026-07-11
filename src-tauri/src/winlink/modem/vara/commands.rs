@@ -43,7 +43,7 @@ use crate::winlink::listener::transport::TransportKind;
 use crate::winlink::session::SessionIntent;
 use crate::winlink_backend::{LogLevel, LogSource};
 
-use super::command::{Bandwidth, OutboundCommand};
+use super::command::{Bandwidth, Compression, OutboundCommand, VaraSessionType};
 use super::ptt::{self, PttSink, SharedPtt, UnkeyGuard, VaraPtt};
 use super::transport::{VaraConfig, VaraTransport};
 
@@ -1013,11 +1013,18 @@ impl VaraSession {
     }
 
     /// Send `LISTEN ON` over the cmd socket while briefly holding the
-    /// session lock. Returns Err if the transport isn't Open or the TCP
-    /// write fails. Mirrors `ModemSession::send_listen_command(true)` —
-    /// the listener arm command flips LISTEN before spawning the
-    /// consumer task so an arm failure surfaces synchronously without
-    /// leaving a dangling consumer.
+    /// session lock. Returns Err if an exchange is in flight, the
+    /// transport isn't Open, or the TCP write fails. Mirrors
+    /// `ModemSession::send_listen_command(true)` — the listener arm
+    /// command flips LISTEN before spawning the consumer task so an arm
+    /// failure surfaces synchronously without leaving a dangling
+    /// consumer.
+    ///
+    /// `LISTEN ON/OFF` force-disconnects an active ARQ link if VARA
+    /// receives it mid-connection, so this setter refuses while
+    /// [`VaraSessionInner::current_exchange`] shows an exchange in
+    /// flight `[R3-8]` — callers must wait for `end_exchange()` (post-
+    /// `DISCONNECTED`) before re-arming.
     ///
     /// Holds the lock only for the duration of one TCP write (~ms on
     /// localhost). Does NOT hold it across the consumer task spawn.
@@ -1026,6 +1033,13 @@ impl VaraSession {
             .inner
             .lock()
             .map_err(|e| format!("session lock poisoned: {e}"))?;
+        if guard.current_exchange.is_some() {
+            return Err(
+                "LISTEN deferred: an exchange is in flight — LISTEN mid-link \
+                 force-disconnects the ARQ session [R3-8]; re-arm after DISCONNECTED"
+                    .to_string(),
+            );
+        }
         let transport = guard
             .transport
             .as_mut()
@@ -1681,10 +1695,16 @@ pub fn vara_open_session_inner(
     intent: SessionIntent,
     transport_kind: TransportKind,
 ) -> Result<VaraStatus, String> {
-    // Acquire the lock for the duration of the open. We hold the lock across
-    // `VaraTransport::connect` (TCP connect, ~ms on localhost; bounded by
-    // the 5s connect_timeout) — calls from the UI side are serialized so a
-    // double-press on Start doesn't open two transports.
+    // ── Phase 1 (LOCKED): claim the open, connect, send the identity setters ─
+    // We hold the session lock across `VaraTransport::connect` (TCP connect,
+    // ~ms on localhost; bounded by the 5s connect_timeout) plus the quick
+    // MYCALL / BW setter writes, so a double-press on Start can't open two
+    // transports. The lock is then DROPPED for the readiness gate (amendment c
+    // / R3-F3): the gate can block up to `VARA_READY_T_MAX` (5s) reading the
+    // cmd socket, and holding the session lock across it would stall every
+    // status poll for the whole gate window. The double-open invariant is
+    // preserved by the `Connecting` fast-reject below (a racing open sees the
+    // in-flight state) PLUS the re-validation on re-acquire in Phase 3.
     let mut guard = session
         .inner
         .lock()
@@ -1697,12 +1717,24 @@ pub fn vara_open_session_inner(
     // session for the duration of that borrow) — the pre-fix check would
     // let a reopen race in during exactly that window, installing a second
     // transport while the first one is still owned elsewhere.
-    if guard.transport.is_some() || guard.transport_owner != TransportOwner::None {
+    //
+    // amendment c: ALSO reject while `status.state == Connecting`. This arm is
+    // load-bearing now that the readiness gate runs with the lock DROPPED —
+    // without it a second open racing the gate window would see
+    // `transport == None && transport_owner == None` and open a second socket
+    // underneath the first. The `Connecting` marker (set just below and left
+    // in place for the whole open, including the unlocked gate window) is the
+    // claim that fast-rejects that racer before it connects.
+    if guard.transport.is_some()
+        || guard.transport_owner != TransportOwner::None
+        || guard.status.state == VaraState::Connecting
+    {
         return Err("VARA session already started — call vara_close_session first".into());
     }
 
-    // Mark Connecting so any concurrent vara_status sees the in-flight state.
-    // (The lock prevents true concurrency on the start path itself.)
+    // Mark Connecting so any concurrent vara_status — and a racing open (the
+    // check above) — sees the in-flight state for the WHOLE open, including
+    // the unlocked readiness-gate window.
     guard.status = VaraStatus {
         state: VaraState::Connecting,
         last_error: None,
@@ -1743,26 +1775,123 @@ pub fn vara_open_session_inner(
     // treats the socket as half-attached. Pre-wizard / no callsign:
     // skip; the operator sees the VARA-side warning and knows to
     // complete identity setup.
+    //
+    // Validate before sending: an invalid stored identity (e.g. a
+    // partially-typed callsign persisted before the wizard completed)
+    // must NOT brick the open — skip the MYCALL send with a logged
+    // warning and let VARA surface its own not-connected notice.
     if let Some(call) = callsign {
         let trimmed = call.trim();
         if !trimmed.is_empty() {
-            let _ = transport.send(&OutboundCommand::MyCall(trimmed.to_string()));
+            match crate::winlink::callsign::validate_wire_callsign(trimmed) {
+                Ok(()) => {
+                    let _ = transport.send(&OutboundCommand::MyCall(trimmed.to_string()));
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        target: "tuxlink::winlink::modem::vara",
+                        callsign = %trimmed,
+                        "VARA: stored callsign failed validation ({e}) — skipping MYCALL \
+                         setter; VARA will warn it is not connected to an App",
+                    );
+                }
+            }
         }
     }
 
-    // Best-effort: send BW if the operator configured a known bandwidth.
-    // VARA echoes setter commands on success; we don't wait for the echo
-    // here (the read would block up to the 2s read_timeout) — the operator
-    // is responsible for verifying the configuration matches what the VARA
-    // instance accepted. A future enhancement could surface the echo in a
-    // status field.
-    if let Some(hz) = ui_cfg.bandwidth_hz {
-        if let Some(bw) = bandwidth_from_hz(hz) {
-            // Ignore send errors here — the transport is open and usable
-            // even if the BW setter didn't take. The status reflects "open"
-            // not "fully configured."
-            let _ = transport.send(&OutboundCommand::Bw(bw));
+    // NOTE: the BW setter and the engine-split HF setter chain (PUBLIC ON →
+    // SessionType → COMPRESSION TEXT → RETRIES 10 → optional BW) are sent in
+    // Phase 2 (UNLOCKED), AFTER the readiness gate — never here under the
+    // lock. Only MYCALL (the identity handshake) is sent while the lock is
+    // held; every mode-configuring setter belongs to the unlocked window.
+
+    // Snapshot the close-generation BEFORE dropping the lock so Phase 3 can
+    // detect a close that raced the unlocked readiness-gate window and abort
+    // THIS open rather than resurrecting a torn-down session (mirrors the
+    // worker install-back generation check, tuxlink-pdnw). Lock-free atomic
+    // load — safe to call while holding `guard`.
+    let open_gen = session.current_close_generation();
+
+    // ── DROP the lock for the readiness gate (amendment c step 2) ──────────
+    drop(guard);
+
+    // ── Phase 2 (UNLOCKED): engine-split setter sequence ───────────────────
+    // (amendment c step 3; spec §7, [R3-1][R1-C1]). Runs on the LOCAL
+    // `transport` with NO session lock held — both the setter writes and the
+    // readiness gate touch the cmd socket only (never key TX — RADIO-1 safe).
+    //
+    // HF/SAT: readiness gate (up to `VARA_READY_T_MAX`, honoring the
+    //   `VARA_READY_T_MIN` settle; fail-OPEN on expiry), then PUBLIC ON →
+    //   SessionType → COMPRESSION TEXT → RETRIES 10 → optional BW. Every
+    //   setter after MYCALL is fire-and-forget: a WRONG reply is absorbed by
+    //   the wait loops / Task 5 dial-window drain and logged, never fatal
+    //   [R3-3].
+    // FM: WLE's VaraFMSession sends ONLY MYCALL/LISTEN/CONNECT/ABORT/
+    //   DISCONNECT — no setters, no BW [R3-1]. A `VARA_READY_T_MIN` settle
+    //   replaces the gate (FM emits REGISTERED too, but it is log-only there).
+    // CWID: intentionally NOT sent — CW station ID is a per-station
+    //   regulatory choice the operator configures in VARA itself (VARA.ini
+    //   persists it); WLE's own CWID setter draws WRONG across versions, so
+    //   owning it adds a failure mode without adding capability. [R3-5] is
+    //   satisfied by PUBLIC ON below + CWID delegated to VARA's own config.
+    if transport_kind == TransportKind::VaraFm {
+        std::thread::sleep(VARA_READY_T_MIN);
+    } else {
+        if wait_for_readiness(&mut transport, VARA_READY_T_MIN, VARA_READY_T_MAX)
+            == Readiness::Unconfirmed
+        {
+            // Fail OPEN [R3-2]: proceed with a warning, never a wedge.
+            tracing::warn!(
+                target: "tuxlink::winlink::modem::vara",
+                host = %ui_cfg.host,
+                cmd_port = ui_cfg.cmd_port,
+                "VARA: modem readiness unconfirmed (no REGISTERED within the readiness \
+                 ceiling) — proceeding (fail-open)",
+            );
         }
+        // Fire-and-forget setter chain (matches the prior BW posture) — a
+        // WRONG reply to any of these is absorbed by the wait loops and
+        // logged, never fatal [R3-3].
+        let _ = transport.send(&OutboundCommand::Public(true)); // [R3-5]
+        let _ = transport.send(&OutboundCommand::SessionType(
+            VaraSessionType::from_intent(intent),
+        ));
+        let _ = transport.send(&OutboundCommand::Compression(Compression::Text));
+        let _ = transport.send(&OutboundCommand::Retries(10)); // [R3-4] HF-only
+        if let Some(hz) = ui_cfg.bandwidth_hz {
+            if let Some(bw) = bandwidth_from_hz(hz) {
+                let _ = transport.send(&OutboundCommand::Bw(bw));
+            }
+        }
+    }
+
+    // ── Phase 3 (RE-LOCKED): re-validate the double-open invariant + stash ──
+    // (amendment c step 4)
+    let mut guard = session
+        .inner
+        .lock()
+        .map_err(|e| format!("session lock poisoned: {e}"))?;
+
+    // Re-validate the double-open invariant (amendment c step 4). The
+    // load-bearing guard is Phase 1's `Connecting` fast-reject: it holds for
+    // the whole open, including the unlocked gate window, so a second open
+    // cannot reach this point while this one is in flight. This re-check is
+    // defensive belt-and-suspenders — if some future path installs a
+    // transport or takes ownership during the gate window anyway, ABORT this
+    // open (dropping the local `transport` on return FINs its sockets) rather
+    // than clobbering that state.
+    if guard.transport.is_some() || guard.transport_owner != TransportOwner::None {
+        return Err(
+            "VARA session already started during readiness gate — aborting redundant open".into(),
+        );
+    }
+
+    // Re-validate: a close that raced the gate window bumped the
+    // close-generation and already set the session Closed. Honor it — dropping
+    // the local `transport` on return FINs the sockets instead of resurrecting
+    // the session.
+    if session.current_close_generation() != open_gen {
+        return Err("VARA session closed during readiness gate — aborting open".into());
     }
 
     // Install the ABORT side-channel BEFORE stashing the transport so any
@@ -2004,6 +2133,131 @@ pub fn vara_status(session: State<'_, std::sync::Arc<VaraSession>>) -> VaraStatu
     session.snapshot()
 }
 
+/// Readiness-gate settle floor: always waited after transport open, whether
+/// or not a `REGISTERED` token arrives. Defeats the 464 ms m9kcd race where
+/// the first dial fires before the modem has finished coming up [R3-2].
+pub(crate) const VARA_READY_T_MIN: Duration = Duration::from_millis(600);
+
+/// Readiness-gate ceiling: on expiry the open proceeds with a warning
+/// (fail OPEN — anti-wedge posture per the ARDOP ARQTimeout lesson). An
+/// unregistered VARA that never emits `REGISTERED` is the common, fully
+/// functional case, so the ceiling must never harden into an error [R3-2].
+pub(crate) const VARA_READY_T_MAX: Duration = Duration::from_secs(5);
+
+/// Per-poll cmd-socket read budget for the readiness gate. Bounds each `recv`
+/// tick INDEPENDENTLY of [`VaraConfig::read_timeout`] (2 s in production, and
+/// permitted to be `None` = block forever) so `t_max` is a real wall-clock
+/// ceiling and the fail-open path can never wedge. The gate restores the
+/// transport's configured cadence before returning.
+const VARA_READY_POLL: Duration = Duration::from_millis(100);
+
+/// Outcome of the VARA readiness gate ([`wait_for_readiness`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Readiness {
+    /// A `REGISTERED …` (bare or SSID'd) or `LINK REGISTERED` token arrived
+    /// within `t_max`.
+    Confirmed,
+    /// `t_max` expired with no token — the caller logs "modem readiness
+    /// unconfirmed" and PROCEEDS (fail OPEN). Never an error, never a wedge.
+    Unconfirmed,
+}
+
+/// Wait for any readiness token (`REGISTERED` bare or SSID'd, or
+/// `LINK REGISTERED`) up to `t_max`, always honoring the `t_min` settle even
+/// when the token arrives instantly. Runs ONCE per transport-open (from
+/// [`vara_open_session_inner`]); dials never re-wait — `REGISTERED` does not
+/// repeat per dial [R3-2].
+///
+/// **Fails OPEN:** `t_max` expiry — or a mid-gate cmd-socket close (peer FIN,
+/// detected via the EOF-distinguishing read so a dead socket exits promptly
+/// instead of spinning to the ceiling) — returns [`Readiness::Unconfirmed`],
+/// never an error. The gate only READS the cmd socket — it never keys TX — so
+/// a concurrent close/abort during the (unlocked) gate window is harmless
+/// (RADIO-1).
+///
+/// Bounds each poll at [`VARA_READY_POLL`] regardless of the transport's
+/// configured `read_timeout`, restoring the configured cadence before
+/// returning so the heartbeat / exchange that reuse the transport see the
+/// normal cmd tick (amendment b).
+pub(crate) fn wait_for_readiness(
+    transport: &mut VaraTransport,
+    t_min: Duration,
+    t_max: Duration,
+) -> Readiness {
+    // Bound the poll independently of the configured cmd read_timeout: a 2 s /
+    // None cadence would let a silent modem overshoot t_max by up to one full
+    // read, or block forever. Restore on the way out so downstream reuse of
+    // the transport keeps its configured cadence.
+    let prior_timeout = transport.config().read_timeout;
+    let _ = transport.cmd_writer().set_read_timeout(Some(VARA_READY_POLL));
+
+    let outcome = poll_for_readiness(transport, t_min, t_max);
+
+    let _ = transport.cmd_writer().set_read_timeout(prior_timeout);
+    outcome
+}
+
+/// Inner poll loop for [`wait_for_readiness`], factored out so the caller can
+/// restore the transport's `read_timeout` on every exit path.
+///
+/// Reads via [`VaraTransport::recv_line_distinguishing_eof`] rather than
+/// `recv` (task-review fix): `recv` folds a peer FIN into the same `Ok(None)`
+/// as an idle timeout, and a FIN'd socket returns `Ok(0)` IMMEDIATELY on every
+/// subsequent read — the loop would hot-spin a core at 100% until `t_max`
+/// (up to 5 s) on the executor thread. The EOF-distinguishing read lets a
+/// mid-gate socket close break out promptly: fail OPEN (`Unconfirmed`, same
+/// outcome as `t_max` expiry), still honoring the `t_min` settle.
+fn poll_for_readiness(
+    transport: &mut VaraTransport,
+    t_min: Duration,
+    t_max: Duration,
+) -> Readiness {
+    use super::command::InboundCommand;
+    use super::transport::RecvOutcome;
+
+    let start = std::time::Instant::now();
+    // The T_min settle floor is honored on EVERY early exit — token arrival
+    // AND mid-gate FIN — so a modem restarting underneath the open can never
+    // re-arm the 464 ms m9kcd race [R3-2].
+    let settle_to_floor = |outcome: Readiness| {
+        let settle = t_min.saturating_sub(start.elapsed());
+        if !settle.is_zero() {
+            std::thread::sleep(settle);
+        }
+        outcome
+    };
+    loop {
+        if start.elapsed() >= t_max {
+            return Readiness::Unconfirmed; // fail OPEN — caller logs + proceeds
+        }
+        match transport.recv_line_distinguishing_eof() {
+            RecvOutcome::Line(InboundCommand::Registered(_))
+            | RecvOutcome::Line(InboundCommand::LinkRegistered) => {
+                return settle_to_floor(Readiness::Confirmed);
+            }
+            // Absorb IAMALIVE / BUFFER / setter echoes / Unknown lines and
+            // keep polling to t_max.
+            RecvOutcome::Line(_) => {}
+            // Idle tick: the bounded VARA_READY_POLL read timed out with
+            // nothing buffered — socket open, peer quiet, keep polling.
+            RecvOutcome::Idle => {}
+            // Peer FIN mid-gate: the socket is dead and every further read
+            // returns instantly — polling to t_max would spin a core for
+            // nothing. Fail OPEN now (same outcome as t_max expiry); the
+            // open path proceeds and downstream I/O surfaces the dead
+            // transport through its normal error handling.
+            RecvOutcome::Eof => {
+                return settle_to_floor(Readiness::Unconfirmed);
+            }
+            RecvOutcome::Err(_) => {
+                // Hard I/O error (timeouts are Idle, not Err): never wedge,
+                // never spin — brief backoff, keep polling to t_max.
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+}
+
 /// Worst-case `CONNECT` wall-clock budget for the VARA dial path
 /// (tuxlink-0ye6 Task 3.4). 120 s cap — matches the legacy 120 s connect
 /// cap that `modem_ardop_connect` (Start-button, slated for Phase 6
@@ -2102,7 +2356,14 @@ pub async fn modem_vara_b2f_exchange(
     // and the walk visits each candidate (operator-gated by `config.rig.qsy_on_fail`).
     freq_hz: Option<u64>,
     qsy_candidates: Option<Vec<DialCandidate>>,
+    // tuxlink-0ye6 Task 5: digipeater path for the VARA FM `CONNECT … VIA …`
+    // dial [R3-6]. VARA-LOCAL (NOT a `DialCandidate` field — CDX-1/CLD-6): Task
+    // 23a threads real digis here from the peer channel. `Option` so existing
+    // callers (VaraRadioPanel, connectDispatch, MCP) that omit `via` deserialize
+    // to `None` → empty path = direct dial (mirrors `qsy_candidates`).
+    via: Option<Vec<String>>,
 ) -> Result<(), String> {
+    let via = via.unwrap_or_default();
     // Codex Phase 3-4 boundary P2 #2 (tuxlink-u1r7): defensive
     // validation — the VARA b2f command must be invoked with a VARA
     // transport kind. Mirrors the ARDOP-side validation in
@@ -2225,6 +2486,7 @@ pub async fn modem_vara_b2f_exchange(
         &mut transport,
         &target_clean,
         intent,
+        &via,
         freq_hz,
         qsy_candidates,
         &keyer,
@@ -2372,6 +2634,7 @@ fn run_vara_b2f_with_transport(
     transport: &mut VaraTransport,
     target: &str,
     intent: SessionIntent,
+    via: &[String],
     freq_hz: Option<u64>,
     qsy_candidates: Option<Vec<DialCandidate>>,
     keyer: &SharedPtt,
@@ -2451,99 +2714,171 @@ fn run_vara_b2f_with_transport(
     // advance to regardless of this operator flag (tuxlink-8fkkk).
     let qsy_on_fail = cfg.rig.qsy_on_fail;
 
+    // ─── Pre-dial wire-grammar validation [R3-9] (tuxlink-0ye6 Task 5) ──
+    // Reject an invalid MYCALL or dial target BEFORE any tune or wire write,
+    // so a malformed callsign is a clean CONNECT-class failure and never
+    // reaches the cmd socket (no `CONNECT <garbage>` on the air). Uses the
+    // shared transport-grammar validator (Task 1), not a re-implementation.
+    if let Err(e) = crate::winlink::callsign::validate_wire_callsign(&mycall) {
+        return VaraExchangeOutcome::ConnectFailed(format!("invalid MYCALL {mycall:?}: {e}"));
+    }
+    for c in &candidates {
+        if let Err(e) = crate::winlink::callsign::validate_wire_callsign(&c.target) {
+            return VaraExchangeOutcome::ConnectFailed(format!(
+                "invalid dial target {:?}: {e}",
+                c.target
+            ));
+        }
+    }
+
+    // Session mode drives the per-dial `SessionType` prefix (HF/SAT sends it,
+    // FM does not [R3-9-placement]). Mirrors the sideband discriminator below:
+    // a None (pre-open) active kind is treated as HF (prefix sent), matching
+    // the `!VaraFm` sideband default.
+    let engine = session
+        .active_transport_kind()
+        .unwrap_or(TransportKind::VaraHf);
+
     // The last candidate's failure message — surfaced if no candidate connects.
-    let mut last_err: Option<String> = None;
+    // RefCell: the walk's pre-TX and connect stage closures (below) both write it.
+    let last_err: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
     // Holds the winning candidate's kept rig (DRA-100) across the post-walk B2F
     // exchange. `None` on the close-serial path or when no rig is configured.
     let mut kept_rig: Option<tux_rig::ManagedRig> = None;
     // The connected target (winning candidate) for the post-walk log + exchange.
     let mut connected_target: Option<String> = None;
+    // Rig handoff across the walk's stage boundary: the pre-TX stage tunes and
+    // parks the kept handle here; the connect stage takes it. RefCell because
+    // both stage closures capture it (the walk is single-threaded).
+    let staged_rig: std::cell::RefCell<Option<tux_rig::ManagedRig>> =
+        std::cell::RefCell::new(None);
 
-    let outcome = walk_candidates(&candidates, qsy_on_fail, |_idx, c| {
-        // Abort recheck (C2 for VARA): if the operator closed the session
-        // mid-walk, the close generation bumps; stop attempting rather than
-        // QSY-ing to the next candidate after a Close. The remaining
-        // candidates also observe the bumped generation and no-op, so the
-        // walk drains to `None` and surfaces a connect failure — same
-        // outcome-consistency as ARDOP's walk (intentional).
-        if session.current_close_generation() != close_gen_snapshot {
-            last_err = Some("VARA CONNECT aborted".into());
-            return false;
-        }
+    // ─── Peer-observation recording (Task 13) ─────────────────────────
+    // Record P2P outbound dials only [spec §3] — `dial_observation_sink`
+    // returns `None` for CMS/gateway/RadioOnly/PostOffice, so those dials
+    // never construct a guard. The channel-transport label mirrors the
+    // sideband discriminator below (a None pre-open kind → HF).
+    let engine_transport = match session.active_transport_kind() {
+        Some(TransportKind::VaraFm) => crate::contacts::reachability::ChannelTransport::VaraFm,
+        _ => crate::contacts::reachability::ChannelTransport::VaraHf,
+    };
+    let sink = dial_observation_sink(intent);
 
-        // Pre-CONNECT (pre-audio) CAT tune. `tune_rig_for_connect` honors
-        // close-serial (returns `None` once the serial is released) vs the
-        // DRA-100 keep-serial path (returns `Some(rig)` to hold for the
-        // session). Spawn/tune failures abort THIS candidate.
-        // Sideband center→dial conversion applies to VARA HF only — a VARA FM
-        // channel's listed frequency IS the RF frequency (Codex adrev P2 #1).
-        let sideband = !matches!(
-            session.active_transport_kind(),
-            Some(crate::winlink::listener::transport::TransportKind::VaraFm)
-        );
-        let rig = match tune_rig_for_connect(&cfg.rig, c.freq_hz, sideband) {
-            Ok(r) => r,
-            Err(e) => {
-                emit_vara_log(
-                    app,
-                    log,
-                    LogLevel::Error,
-                    format!("VARA tune failed for {}: {e}", c.target),
-                );
-                last_err = Some(e);
+    // `run_recorded_dial_walk` arms one `ObservationGuard` per candidate at
+    // `DialAttempted` BETWEEN the two stage closures — after the abort-rechecks
+    // + CAT tune, immediately before the CONNECT send — so a pre-TX bail
+    // (operator Stop, tune failure) never records a phantom fail (review fix).
+    // On connect success the guard advances to `Connected` and is returned as
+    // `live_guard` (advanced to `B2fOk`/`B2fFail` after the exchange, then
+    // dropped); on connect failure it drops in-place, recording the
+    // per-candidate fail [R3-11].
+    let (outcome, live_guard) = run_recorded_dial_walk(
+        &candidates,
+        qsy_on_fail,
+        engine_transport,
+        via,
+        sink,
+        // ── Stage 1: pre-TX (nothing transmitted; a bail records nothing) ──
+        |_idx, c| {
+            // Abort recheck (C2 for VARA): if the operator closed the session
+            // mid-walk, the close generation bumps; stop attempting rather than
+            // QSY-ing to the next candidate after a Close. The remaining
+            // candidates also observe the bumped generation and no-op, so the
+            // walk drains to `None` and surfaces a connect failure — same
+            // outcome-consistency as ARDOP's walk (intentional).
+            if session.current_close_generation() != close_gen_snapshot {
+                *last_err.borrow_mut() = Some("VARA CONNECT aborted".into());
                 return false;
             }
-        };
 
-        // tuxlink-8fkkk C2 (VARA): re-check the close-generation AFTER the tune
-        // returns and BEFORE `send_connect_and_wait`. The pre-CONNECT tune
-        // (rigctld spawn + CAT round-trips) can block for seconds; if the
-        // operator hit Stop during the tune the generation bumps, and without
-        // this guard the path would still send CONNECT — VARA would transmit
-        // after the session was closed. Release the just-spawned rig and bail.
-        // Mirror of the ARDOP post-tune guard in `dial_one_candidate`.
-        if session.current_close_generation() != close_gen_snapshot {
-            last_err = Some("VARA CONNECT aborted".into());
-            drop(rig);
-            return false;
-        }
+            // Pre-CONNECT (pre-audio) CAT tune. `tune_rig_for_connect` honors
+            // close-serial (returns `None` once the serial is released) vs the
+            // DRA-100 keep-serial path (returns `Some(rig)` to hold for the
+            // session). Spawn/tune failures abort THIS candidate.
+            // Sideband center→dial conversion applies to VARA HF only — a VARA
+            // FM channel's listed frequency IS the RF frequency (Codex adrev
+            // P2 #1).
+            let sideband = !matches!(
+                session.active_transport_kind(),
+                Some(crate::winlink::listener::transport::TransportKind::VaraFm)
+            );
+            let rig = match tune_rig_for_connect(&cfg.rig, c.freq_hz, sideband) {
+                Ok(r) => r,
+                Err(e) => {
+                    emit_vara_log(
+                        app,
+                        log,
+                        LogLevel::Error,
+                        format!("VARA tune failed for {}: {e}", c.target),
+                    );
+                    *last_err.borrow_mut() = Some(e);
+                    return false;
+                }
+            };
 
-        match send_connect_and_wait(app, log, transport, &mycall, &c.target, keyer) {
-            Ok(()) => {
-                // Hold the rig for the exchange (DRA-100); `None` if released.
-                kept_rig = rig;
-                connected_target = Some(c.target.clone());
-                true
-            }
-            Err(e) => {
-                emit_vara_log(
-                    app,
-                    log,
-                    LogLevel::Error,
-                    format!("VARA CONNECT to {} failed: {e}", c.target),
-                );
-                // A failed CONNECT (especially a timeout with no
-                // DISCONNECTED/CANCELPENDING) may leave VARA still calling the
-                // previous target. Best-effort DISCONNECT it back to idle BEFORE
-                // the walk retunes + dials the next candidate on this same
-                // transport, so the modem cannot end up dual-calling. Result is
-                // ignored: the next attempt drops the transport regardless and
-                // the TCP FIN forces VARA to notice if the wind-down stalls.
-                let _ = vara_dial_disconnect(transport, keyer);
-                // Release this candidate's rig before the next attempt so no
-                // rigctld is left holding the CAT serial.
+            // tuxlink-8fkkk C2 (VARA): re-check the close-generation AFTER the
+            // tune returns and BEFORE `send_connect_and_wait`. The pre-CONNECT
+            // tune (rigctld spawn + CAT round-trips) can block for seconds; if
+            // the operator hit Stop during the tune the generation bumps, and
+            // without this guard the path would still send CONNECT — VARA
+            // would transmit after the session was closed. Release the
+            // just-spawned rig and bail. Mirror of the ARDOP post-tune guard
+            // in `dial_one_candidate`.
+            if session.current_close_generation() != close_gen_snapshot {
+                *last_err.borrow_mut() = Some("VARA CONNECT aborted".into());
                 drop(rig);
-                last_err = Some(e);
-                false
+                return false;
             }
-        }
-    });
+
+            // Park the kept rig for the connect stage to take.
+            *staged_rig.borrow_mut() = rig;
+            true
+        },
+        // ── Stage 2: CONNECT send + CONNECTED wait (guard is now armed) ──
+        |_idx, c| {
+            let rig = staged_rig.borrow_mut().take();
+            match send_connect_and_wait(
+                app, log, transport, &mycall, &c.target, via, engine, intent, keyer,
+            ) {
+                Ok(()) => {
+                    // Hold the rig for the exchange (DRA-100); `None` if released.
+                    kept_rig = rig;
+                    connected_target = Some(c.target.clone());
+                    true
+                }
+                Err(e) => {
+                    emit_vara_log(
+                        app,
+                        log,
+                        LogLevel::Error,
+                        format!("VARA CONNECT to {} failed: {e}", c.target),
+                    );
+                    // A failed CONNECT (especially a timeout with no
+                    // DISCONNECTED/CANCELPENDING) may leave VARA still calling
+                    // the previous target. Best-effort DISCONNECT it back to
+                    // idle BEFORE the walk retunes + dials the next candidate
+                    // on this same transport, so the modem cannot end up
+                    // dual-calling. Result is ignored: the next attempt drops
+                    // the transport regardless and the TCP FIN forces VARA to
+                    // notice if the wind-down stalls.
+                    let _ = vara_dial_disconnect(transport, keyer);
+                    // Release this candidate's rig before the next attempt so
+                    // no rigctld is left holding the CAT serial.
+                    drop(rig);
+                    *last_err.borrow_mut() = Some(e);
+                    false
+                }
+            }
+        },
+    );
 
     if outcome.is_none() {
         // No candidate connected — CONNECT-class failure (terminal). Surface the
         // last useful error; the caller frees the modem (tuxlink-n95sr #2).
         return VaraExchangeOutcome::ConnectFailed(
-            last_err.unwrap_or_else(|| "VARA CONNECT failed for all candidates".to_string()),
+            last_err
+                .into_inner()
+                .unwrap_or_else(|| "VARA CONNECT failed for all candidates".to_string()),
         );
     }
 
@@ -2622,10 +2957,119 @@ fn run_vara_b2f_with_transport(
         let _ = pump.join();
         r
     });
-    match exchange_result {
-        Ok(()) => VaraExchangeOutcome::Completed,
-        Err(e) => VaraExchangeOutcome::ExchangeFailed(format!("VARA B2F exchange failed: {e}")),
+    // Advance the surviving dial guard to its terminal exchange phase, then drop
+    // it so the observation records with that phase. An abort/wedge that unwinds
+    // past here (or an early return above, e.g. the data-socket try_clone
+    // failures) instead drops `live_guard` at whatever phase it last reached —
+    // `Connected` classifies as Fail, so the fail still records [R3-11].
+    let outcome = match exchange_result {
+        Ok(()) => {
+            if let Some(g) = &live_guard {
+                g.set_phase(crate::contacts::observation::ObservationPhase::B2fOk);
+            }
+            VaraExchangeOutcome::Completed
+        }
+        Err(e) => {
+            if let Some(g) = &live_guard {
+                g.set_phase(crate::contacts::observation::ObservationPhase::B2fFail);
+            }
+            VaraExchangeOutcome::ExchangeFailed(format!("VARA B2F exchange failed: {e}"))
+        }
+    };
+    drop(live_guard);
+    outcome
+}
+
+/// The dial-site intent gate (Task 13): only a `SessionIntent::P2p` dial
+/// resolves the global observation sink — CMS/gateway/RadioOnly/PostOffice
+/// dials return `None` and never construct a guard [spec §3]. Extracted from
+/// [`run_vara_b2f_with_transport`] so the gate is unit-testable without an
+/// `AppHandle` [CDX-7].
+fn dial_observation_sink(
+    intent: SessionIntent,
+) -> Option<crate::contacts::observation::ObservationSink> {
+    if intent == SessionIntent::P2p {
+        crate::contacts::observation::observation_sink()
+    } else {
+        None
     }
+}
+
+/// The recording half of the VARA dial walk (Task 13), extracted so a unit test
+/// can drive the REAL guard-construction path without an `AppHandle` [CDX-7].
+///
+/// Each candidate runs in two stages, and the walk arms the
+/// [`crate::contacts::observation::ObservationGuard`] BETWEEN them (review fix — the
+/// guard-arm must not precede the pre-TX exits):
+///
+/// 1. `pre_tx(idx, c)` — the abort-rechecks + pre-CONNECT CAT tune. A `false`
+///    here means NOTHING was transmitted, so no guard is armed and nothing
+///    records: an operator Stop or a rig-tune failure is not a peer-roster
+///    event, and recording it would pollute the roster with a phantom fail
+///    for a dial that never went out over the air.
+/// 2. The guard is armed at `DialAttempted` — immediately before the CONNECT
+///    send, per the brief's placement — then `connect(idx, c)` sends CONNECT
+///    and awaits `CONNECTED`. From here every exit records: a connect fail
+///    drops the guard in-place (per-candidate fail), a wedge/panic-unwind
+///    drops it at its latest phase [R3-11], and a success advances it to
+///    `Connected` and returns it as the live guard — the caller advances it
+///    to `B2fOk`/`B2fFail` after the exchange and drops it.
+///
+/// `sink` is `None` for non-P2P intents (via [`dial_observation_sink`]) and in
+/// headless/unit contexts with no sink installed — then the walk runs with no
+/// recording. `via` is the shared dial via-list (a [`DialCandidate`] carries
+/// only target + freq); the guard mirrors what the CONNECT actually threads.
+fn run_recorded_dial_walk<P, F>(
+    candidates: &[DialCandidate],
+    qsy_on_fail: bool,
+    engine_transport: crate::contacts::reachability::ChannelTransport,
+    via: &[String],
+    sink: Option<crate::contacts::observation::ObservationSink>,
+    mut pre_tx: P,
+    mut connect: F,
+) -> (Option<usize>, Option<crate::contacts::observation::ObservationGuard>)
+where
+    P: FnMut(usize, &DialCandidate) -> bool,
+    F: FnMut(usize, &DialCandidate) -> bool,
+{
+    let mut live_guard: Option<crate::contacts::observation::ObservationGuard> = None;
+    let outcome = walk_candidates(candidates, qsy_on_fail, |idx, c| {
+        // Stage 1 — pre-TX: abort-rechecks + CAT tune. Nothing has gone out
+        // over the air yet, so a bail here must not touch the roster: no guard.
+        if !pre_tx(idx, c) {
+            return false;
+        }
+        // Arm between the stages — immediately before the CONNECT send.
+        let guard = sink.clone().map(|s| {
+            crate::contacts::observation::ObservationGuard::new(
+                s,
+                crate::contacts::observation::PeerObservation {
+                    path: crate::contacts::observation::ObservedPath::Rf {
+                        transport: engine_transport,
+                        via: via.to_vec(),
+                        freq_hz: c.freq_hz,
+                        bandwidth: None,
+                    },
+                    direction: crate::contacts::reachability::Direction::Outgoing,
+                    presented_target: c.target.clone(),
+                    phase: crate::contacts::observation::ObservationPhase::DialAttempted,
+                },
+            )
+        });
+        // Stage 2 — the CONNECT send + CONNECTED wait.
+        let connected = connect(idx, c);
+        if connected {
+            if let Some(g) = &guard {
+                g.set_phase(crate::contacts::observation::ObservationPhase::Connected);
+            }
+            // The winning candidate's guard survives into the exchange; the
+            // caller owns its terminal phase + drop.
+            live_guard = guard;
+        }
+        // On failure `guard` drops here → records the per-candidate fail [R3-11].
+        connected
+    });
+    (outcome, live_guard)
 }
 
 /// Service VARA cmd-socket events while the B2F exchange runs on the data
@@ -2702,18 +3146,90 @@ fn vara_dial_candidates(
     }
 }
 
-/// Send `CONNECT <mycall> <target>` on the cmd port and wait for the
-/// `CONNECTED` event (bounded by [`VARA_CONNECT_DEADLINE`]). Factored out of
-/// the candidate-walk closure so the two primitives (the existing cmd-port
-/// write + [`wait_for_connected`]) stay together and the closure body reads
-/// cleanly. Emits the per-candidate "VARA CONNECT {mycall} {target}" line so
-/// the operator sees each dialed target during a QSY walk.
+/// Testable core of the dial (tuxlink-0ye6 Task 5): optional per-candidate
+/// `SessionType` prefix (HF/SAT only — VARA FM has no session-type command
+/// [R3-9-placement]), a short setter-WRONG drain [R3-3], then `CONNECT` (with
+/// optional `VIA` digis [R3-6]) and the `CONNECTED` wait.
+///
+/// **`SessionType` before EACH `CONNECT`** [R3-9-placement]: re-sent inside the
+/// dial (not just at open) so a candidate never dials in a stale session mode.
+/// The clamp (tuxlink-qevsf, Part 97) leaves a single candidate today, but the
+/// per-dial placement keeps the invariant if auto-QSY is ever restored.
+///
+/// **Setter-WRONG drain** [R3-3]: after `SessionType`, drain the cmd socket
+/// briefly — a `WRONG` in that window is the setter's rejection (WLE
+/// suppression-list parity), logged and NON-fatal. Draining it here means a
+/// `WRONG` later seen by [`wait_for_connected`] is attributable to the
+/// `CONNECT` itself and fails fast [R3-6-wrong]. The drain bounds its poll
+/// independently of the configured cmd `read_timeout` (2 s default, or `None` =
+/// block forever) by mirroring the readiness gate: short poll, deadline-checked,
+/// restore (amendment b).
+#[allow(clippy::too_many_arguments)]
+fn send_connect_and_wait_inner(
+    transport: &mut VaraTransport,
+    mycall: &str,
+    target: &str,
+    via: &[String],
+    engine: TransportKind,
+    intent: SessionIntent,
+    deadline: Duration,
+    ptt: &SharedPtt,
+) -> Result<(), String> {
+    use crate::winlink::modem::vara::command::InboundCommand;
+
+    if engine != TransportKind::VaraFm {
+        transport
+            .send(&OutboundCommand::SessionType(VaraSessionType::from_intent(
+                intent,
+            )))
+            .map_err(|e| format!("VARA cmd-port SESSION write failed: {e}"))?;
+        // Setter-WRONG drain [R3-3]. Bound the poll independently of the
+        // configured cmd read_timeout — mirror `wait_for_readiness` (amendment
+        // b): save prior, set the short poll, deadline-check, restore.
+        let prior_timeout = transport.config().read_timeout;
+        let _ = transport.cmd_writer().set_read_timeout(Some(VARA_READY_POLL));
+        let drain_until = std::time::Instant::now() + Duration::from_millis(250);
+        while std::time::Instant::now() < drain_until {
+            match transport.recv() {
+                Ok(Some(InboundCommand::Wrong)) => {
+                    tracing::warn!(
+                        target: "tuxlink::winlink::modem::vara",
+                        "VARA: SessionType setter drew WRONG before CONNECT (non-fatal [R3-3])"
+                    );
+                }
+                Ok(Some(_)) | Ok(None) => {}
+                Err(_) => break,
+            }
+        }
+        let _ = transport.cmd_writer().set_read_timeout(prior_timeout);
+    }
+
+    transport
+        .send(&OutboundCommand::Connect {
+            mycall: mycall.to_string(),
+            target: target.to_string(),
+            via: via.to_vec(),
+        })
+        .map_err(|e| format!("VARA cmd-port CONNECT write failed: {e}"))?;
+
+    wait_for_connected(transport, target, deadline, ptt)
+        .map_err(|e| format!("VARA CONNECT to {target} failed: {e}"))
+}
+
+/// Emit the per-candidate "VARA CONNECT {mycall} {target}" line, then run the
+/// dial core against the full [`VARA_CONNECT_DEADLINE`]. Factored so the
+/// candidate-walk closure reads cleanly and the AppHandle/log concerns stay out
+/// of the testable [`send_connect_and_wait_inner`].
+#[allow(clippy::too_many_arguments)]
 fn send_connect_and_wait(
     app: &AppHandle,
     log: &Arc<SessionLogState>,
     transport: &mut VaraTransport,
     mycall: &str,
     target: &str,
+    via: &[String],
+    engine: TransportKind,
+    intent: SessionIntent,
     ptt: &SharedPtt,
 ) -> Result<(), String> {
     emit_vara_log(
@@ -2722,15 +3238,16 @@ fn send_connect_and_wait(
         LogLevel::Info,
         format!("VARA CONNECT {mycall} {target}"),
     );
-    transport
-        .send(&OutboundCommand::Connect {
-            mycall: mycall.to_string(),
-            target: target.to_string(),
-        })
-        .map_err(|e| format!("VARA cmd-port CONNECT write failed: {e}"))?;
-
-    wait_for_connected(transport, target, VARA_CONNECT_DEADLINE, ptt)
-        .map_err(|e| format!("VARA CONNECT to {target} failed: {e}"))
+    send_connect_and_wait_inner(
+        transport,
+        mycall,
+        target,
+        via,
+        engine,
+        intent,
+        VARA_CONNECT_DEADLINE,
+        ptt,
+    )
 }
 
 /// Wait for the `CONNECTED <mycall> <target> [bw]` async event on the
@@ -2769,11 +3286,16 @@ fn wait_for_connected(
         }
         match transport.recv() {
             Ok(Some(InboundCommand::Connected { target: peer, .. })) => {
-                // CONNECTED — the dial succeeded. Match-tolerance: VARA's
-                // CONNECTED reports the peer as-typed (case-preserving),
-                // so we compare case-insensitively to absorb a target
-                // like "w7rms-10" vs "W7RMS-10".
-                if peer.eq_ignore_ascii_case(target) {
+                // gbb05 [R3-3-echo]: VARA's CONNECTED echoes the BARE
+                // callsign even when the dial string was SSID'd (dial
+                // "N0DAJ-7" → echo "CONNECTED W6ABC N0DAJ 2300"). Compare on
+                // canonical base; the wire dial string stays SSID'd. The base
+                // fold is uppercase + SSID/portable strip, so it also subsumes
+                // the prior case-insensitive tolerance ("w7rms-10" vs
+                // "W7RMS-10").
+                if crate::winlink::callsign::canonical_base(&peer)
+                    == crate::winlink::callsign::canonical_base(target)
+                {
                     return Ok(());
                 }
                 // Unexpected peer — VARA may be reporting a stray
@@ -2782,6 +3304,14 @@ fn wait_for_connected(
                 return Err(format!(
                     "unexpected CONNECTED peer={peer} (expected {target})"
                 ));
+            }
+            Ok(Some(InboundCommand::Wrong)) => {
+                // [R3-6-wrong]: a bare WRONG AFTER CONNECT is a rejected /
+                // malformed dial. `send_connect_and_wait_inner` already drained
+                // any SessionType-setter WRONG before sending CONNECT, so a
+                // WRONG reaching here is attributable to the CONNECT itself —
+                // fail fast instead of eating the 120 s VARA_CONNECT_DEADLINE.
+                return Err("VARA rejected CONNECT (WRONG)".to_string());
             }
             Ok(Some(InboundCommand::Disconnected)) => {
                 return Err(format!(
@@ -3968,6 +4498,298 @@ mod tests {
         dh.join().unwrap();
     }
 
+    // ── Task 5: SSID echo base-match, WRONG fail-fast, per-dial SessionType ──
+
+    #[test]
+    fn wait_for_connected_matches_ssid_dial_against_bare_echo() {
+        // gbb05 [R3-3-echo]: dial "N0DAJ-7", VARA echoes the BARE callsign
+        // "CONNECTED W6ABC N0DAJ 2300". The base-match accepts it; the wire
+        // dial string stays SSID'd.
+        let (mut t, ch, dh) = scripted_cmd_vara_transport(b"CONNECTED W6ABC N0DAJ 2300\r");
+        let (keyer, _calls) = recording_keyer();
+        wait_for_connected(&mut t, "N0DAJ-7", Duration::from_secs(3), &keyer)
+            .expect("SSID'd dial must accept bare-callsign CONNECTED echo");
+        drop(t);
+        ch.join().unwrap();
+        dh.join().unwrap();
+    }
+
+    #[test]
+    fn wait_for_connected_still_rejects_a_different_peer() {
+        // A genuinely different base (K7XYZ vs N0DAJ) is NOT accepted by the
+        // base-match — the dial must not silently bind to the wrong link.
+        let (mut t, ch, dh) = scripted_cmd_vara_transport(b"CONNECTED W6ABC K7XYZ 2300\r");
+        let (keyer, _calls) = recording_keyer();
+        let err = wait_for_connected(&mut t, "N0DAJ-7", Duration::from_secs(3), &keyer)
+            .unwrap_err();
+        assert!(err.contains("unexpected CONNECTED peer"), "{err}");
+        drop(t);
+        ch.join().unwrap();
+        dh.join().unwrap();
+    }
+
+    #[test]
+    fn wait_for_connected_fails_fast_on_bare_wrong() {
+        // [R3-6-wrong]: a WRONG after CONNECT is a rejected/malformed dial —
+        // fail in ms, not after the 120 s VARA_CONNECT_DEADLINE.
+        let (mut t, ch, dh) = scripted_cmd_vara_transport(b"WRONG\r");
+        let (keyer, _calls) = recording_keyer();
+        let start = std::time::Instant::now();
+        let err = wait_for_connected(&mut t, "N0DAJ-7", Duration::from_secs(30), &keyer)
+            .unwrap_err();
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "WRONG must fail fast, not eat the deadline; elapsed {:?}",
+            start.elapsed()
+        );
+        assert!(err.contains("WRONG"), "{err}");
+        drop(t);
+        ch.join().unwrap();
+        dh.join().unwrap();
+    }
+
+    #[test]
+    fn send_connect_prefixes_session_type_for_hf_but_not_fm() {
+        // Captures the cmd stream for an HF dial and an FM dial.
+        // HF: ["P2P SESSION", "CONNECT W6ABC N0DAJ-7"] — per-dial SessionType
+        //     prefix [R3-9-placement].
+        // FM: ["CONNECT W6ABC N0DAJ-7 VIA DIGI1"] — no SessionType (FM has no
+        //     session-type command [R3-1]); VIA digi threaded [R3-6].
+        // No CONNECTED reply, so the wait times out — a 1 s deadline bounds it
+        // and the Err is ignored; only the captured wire lines matter.
+        use std::net::TcpListener;
+        for (kind, expected) in [
+            (
+                TransportKind::VaraHf,
+                vec!["P2P SESSION".to_string(), "CONNECT W6ABC N0DAJ-7".to_string()],
+            ),
+            (
+                TransportKind::VaraFm,
+                vec!["CONNECT W6ABC N0DAJ-7 VIA DIGI1".to_string()],
+            ),
+        ] {
+            let cmd_l = TcpListener::bind("127.0.0.1:0").unwrap();
+            let cmd_port = cmd_l.local_addr().unwrap().port();
+            let data_l = TcpListener::bind("127.0.0.1:0").unwrap();
+            let data_port = data_l.local_addr().unwrap().port();
+            let rx = capturing_cmd_acceptor(cmd_l, None, Duration::from_secs(2));
+            let _dh = std::thread::spawn(move || {
+                let (_c, _) = data_l.accept().unwrap();
+                std::thread::sleep(Duration::from_secs(2));
+            });
+            let cfg = VaraConfig {
+                host: "127.0.0.1".into(),
+                cmd_port,
+                data_port,
+                read_timeout: Some(Duration::from_millis(100)),
+                ..VaraConfig::default()
+            };
+            let mut t = VaraTransport::connect(cfg).unwrap();
+            let (keyer, _calls) = recording_keyer();
+            let via: Vec<String> = if kind == TransportKind::VaraFm {
+                vec!["DIGI1".into()]
+            } else {
+                vec![]
+            };
+            let _ = send_connect_and_wait_inner(
+                &mut t,
+                "W6ABC",
+                "N0DAJ-7",
+                &via,
+                kind,
+                SessionIntent::P2p,
+                Duration::from_secs(1),
+                &keyer,
+            );
+            let lines = rx.recv_timeout(Duration::from_secs(4)).unwrap();
+            assert_eq!(lines, expected, "kind={kind:?}");
+        }
+    }
+
+    // ── Task 13: dial-site peer-observation recording ──
+
+    #[test]
+    #[serial_test::serial]
+    fn vara_dial_walk_records_fail_per_failed_candidate() {
+        // [CDX-7] Drive the REAL recording path, not a hand-built guard:
+        // `run_recorded_dial_walk` is the production dial-walk recorder, and the
+        // attempt closure runs the REAL `send_connect_and_wait_inner` against a
+        // loopback cmd server that never sends CONNECTED. The single candidate
+        // fails at the shortened deadline, so the walk's own per-candidate
+        // guard-drop records exactly one Fail [R3-11]. The sink is process-global,
+        // so this test is #[serial].
+        let seen: Arc<Mutex<Vec<crate::contacts::observation::PeerObservation>>> = Arc::default();
+        {
+            let seen = seen.clone();
+            crate::contacts::observation::install_observation_sink(Arc::new(move |o| {
+                seen.lock().unwrap().push(o)
+            }));
+        }
+
+        // Empty cmd script → no CONNECTED ever arrives → the dial times out.
+        let (mut t, ch, dh) = scripted_cmd_vara_transport(b"");
+        let (ptt, _calls) = recording_keyer();
+        let candidates = vec![DialCandidate {
+            target: "N0DAJ-7".into(),
+            freq_hz: Some(7_101_000),
+        }];
+
+        let (outcome, live_guard) = run_recorded_dial_walk(
+            &candidates,
+            false,
+            crate::contacts::reachability::ChannelTransport::VaraHf,
+            &[],
+            crate::contacts::observation::observation_sink(),
+            |_idx, _c| true, // pre-TX (abort-rechecks + tune) passes
+            |_idx, c| {
+                send_connect_and_wait_inner(
+                    &mut t,
+                    "W6ABC",
+                    &c.target,
+                    &[],
+                    TransportKind::VaraHf,
+                    SessionIntent::P2p,
+                    Duration::from_millis(200),
+                    &ptt,
+                )
+                .is_ok()
+            },
+        );
+
+        assert!(outcome.is_none(), "no candidate connected");
+        assert!(live_guard.is_none(), "no surviving guard on an all-fail walk");
+        {
+            let recs = seen.lock().unwrap();
+            assert_eq!(recs.len(), 1, "exactly one per-candidate fail recorded");
+            assert_eq!(
+                crate::contacts::observation::classify(recs[0].phase),
+                crate::contacts::observation::Classified::Fail
+            );
+            assert_eq!(recs[0].presented_target, "N0DAJ-7");
+            assert_eq!(recs[0].direction, crate::contacts::reachability::Direction::Outgoing);
+        }
+
+        crate::contacts::observation::install_observation_sink(Arc::new(|_| {})); // reset
+        drop(t);
+        ch.join().unwrap();
+        dh.join().unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn vara_dial_walk_pre_tx_abort_records_nothing() {
+        // Review fix: a pre-TX bail — operator Stop (close-generation bump) or a
+        // rig-tune failure — happens BEFORE anything goes out over the air, so it
+        // must arm no guard and record nothing. A phantom "fail" here would
+        // pollute the roster with a peer record for a dial that never
+        // transmitted. The pre-TX stage runs the REAL close-generation check
+        // against a real VaraSession whose generation was bumped (the operator's
+        // Stop), mirroring the production stage-1 closure.
+        let seen: Arc<Mutex<Vec<crate::contacts::observation::PeerObservation>>> = Arc::default();
+        {
+            let seen = seen.clone();
+            crate::contacts::observation::install_observation_sink(Arc::new(move |o| {
+                seen.lock().unwrap().push(o)
+            }));
+        }
+
+        let session = VaraSession::new();
+        let close_gen_snapshot = session.current_close_generation();
+        // Operator hits Stop between the snapshot and the walk: generation bumps.
+        session.bump_close_generation();
+
+        let candidates = vec![DialCandidate {
+            target: "N0DAJ-7".into(),
+            freq_hz: Some(7_101_000),
+        }];
+        let mut connect_ran = false;
+        let (outcome, live_guard) = run_recorded_dial_walk(
+            &candidates,
+            false,
+            crate::contacts::reachability::ChannelTransport::VaraHf,
+            &[],
+            crate::contacts::observation::observation_sink(),
+            // Production stage-1 abort recheck (C2 for VARA), verbatim shape.
+            |_idx, _c| session.current_close_generation() == close_gen_snapshot,
+            |_idx, _c| {
+                connect_ran = true;
+                true
+            },
+        );
+
+        assert!(outcome.is_none(), "aborted walk connects nothing");
+        assert!(live_guard.is_none());
+        assert!(!connect_ran, "CONNECT stage must never run after a pre-TX abort");
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "a dial that never transmitted must not touch the roster"
+        );
+
+        crate::contacts::observation::install_observation_sink(Arc::new(|_| {})); // reset
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn vara_dial_cms_intent_records_nothing_even_with_sink_installed() {
+        // The production intent gate (`dial_observation_sink`, used by
+        // `run_vara_b2f_with_transport`): a CMS/gateway dial resolves NO sink
+        // even when the global sink IS installed, so the walk arms no guard and
+        // a failed CMS dial never touches the peer roster. P2p resolves the
+        // installed sink; the auto-arming-but-non-peer RadioOnly does not.
+        let seen: Arc<Mutex<Vec<crate::contacts::observation::PeerObservation>>> = Arc::default();
+        {
+            let seen = seen.clone();
+            crate::contacts::observation::install_observation_sink(Arc::new(move |o| {
+                seen.lock().unwrap().push(o)
+            }));
+        }
+        assert!(dial_observation_sink(SessionIntent::P2p).is_some());
+        assert!(dial_observation_sink(SessionIntent::Cms).is_none());
+        assert!(dial_observation_sink(SessionIntent::RadioOnly).is_none());
+        assert!(dial_observation_sink(SessionIntent::PostOffice).is_none());
+
+        // Drive the real walk + real dial core with the CMS-gated sink: the
+        // single candidate fails at the deadline, and nothing records.
+        let (mut t, ch, dh) = scripted_cmd_vara_transport(b"");
+        let (ptt, _calls) = recording_keyer();
+        let candidates = vec![DialCandidate {
+            target: "N0DAJ-7".into(),
+            freq_hz: Some(7_101_000),
+        }];
+        let (outcome, live_guard) = run_recorded_dial_walk(
+            &candidates,
+            false,
+            crate::contacts::reachability::ChannelTransport::VaraHf,
+            &[],
+            dial_observation_sink(SessionIntent::Cms),
+            |_idx, _c| true,
+            |_idx, c| {
+                send_connect_and_wait_inner(
+                    &mut t,
+                    "W6ABC",
+                    &c.target,
+                    &[],
+                    TransportKind::VaraHf,
+                    SessionIntent::Cms,
+                    Duration::from_millis(200),
+                    &ptt,
+                )
+                .is_ok()
+            },
+        );
+        assert!(outcome.is_none());
+        assert!(live_guard.is_none());
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "a CMS dial must not record even with the global sink installed"
+        );
+
+        crate::contacts::observation::install_observation_sink(Arc::new(|_| {})); // reset
+        drop(t);
+        ch.join().unwrap();
+        dh.join().unwrap();
+    }
+
     #[test]
     fn vara_dial_disconnect_services_ptt_during_wind_down() {
         // VARA keys the radio to transmit its disconnect frames; the
@@ -4039,6 +4861,125 @@ mod tests {
             "DISCONNECTED after PTT ON must force an immediate unkey"
         );
 
+        ch.join().unwrap();
+        dh.join().unwrap();
+    }
+
+    // ── Task 3: REGISTERED readiness gate (fail-open, T_min settle) ─────────
+    //
+    // Drives `wait_for_readiness` against the shared `scripted_cmd_vara_transport`
+    // loopback helper (amendment a — no bespoke helper). Covers: (1) confirm on
+    // a bare REGISTERED with the T_min settle honored even though the token
+    // arrives instantly; (2) confirm on REGISTERED-with-callsign AND on
+    // LINK REGISTERED (no callsign match; both release the gate [R3-2]); (3)
+    // fail OPEN — a silent modem returns Unconfirmed at ~T_max, bounded (never
+    // the 2s cmd read_timeout, never a wedge).
+
+    #[test]
+    fn readiness_confirms_on_bare_registered_after_t_min_settle() {
+        let (mut t, ch, dh) = scripted_cmd_vara_transport(b"REGISTERED\r");
+        let start = std::time::Instant::now();
+        let r = wait_for_readiness(
+            &mut t,
+            Duration::from_millis(300),
+            Duration::from_secs(3),
+        );
+        assert_eq!(r, Readiness::Confirmed);
+        // T_min settle honored even though the token arrived at ~0ms.
+        assert!(
+            start.elapsed() >= Duration::from_millis(300),
+            "settle floor must be honored; elapsed {:?}",
+            start.elapsed()
+        );
+        drop(t);
+        ch.join().unwrap();
+        dh.join().unwrap();
+    }
+
+    #[test]
+    fn readiness_confirms_on_registered_with_callsign_and_on_link_registered() {
+        // REGISTERED with an SSID'd callsign: no callsign match — any
+        // REGISTERED line releases the gate.
+        let (mut t, ch, dh) = scripted_cmd_vara_transport(b"REGISTERED W6ABC-7\r");
+        assert_eq!(
+            wait_for_readiness(&mut t, Duration::from_millis(50), Duration::from_secs(3)),
+            Readiness::Confirmed
+        );
+        drop(t);
+        ch.join().unwrap();
+        dh.join().unwrap();
+
+        // LINK REGISTERED is the distinct link-layer token; it also releases
+        // the gate.
+        let (mut t2, ch2, dh2) = scripted_cmd_vara_transport(b"LINK REGISTERED\r");
+        assert_eq!(
+            wait_for_readiness(&mut t2, Duration::from_millis(50), Duration::from_secs(3)),
+            Readiness::Confirmed
+        );
+        drop(t2);
+        ch2.join().unwrap();
+        dh2.join().unwrap();
+    }
+
+    #[test]
+    fn readiness_fails_open_on_t_max_expiry() {
+        // Silent modem: NO token. Must return Unconfirmed at ~T_max — a
+        // warning outcome, never an error, never a wedge [R3-2].
+        let (mut t, ch, dh) = scripted_cmd_vara_transport(b"");
+        let start = std::time::Instant::now();
+        let r = wait_for_readiness(
+            &mut t,
+            Duration::from_millis(100),
+            Duration::from_millis(600),
+        );
+        assert_eq!(r, Readiness::Unconfirmed);
+        assert!(
+            start.elapsed() >= Duration::from_millis(600),
+            "must wait out t_max before failing open; elapsed {:?}",
+            start.elapsed()
+        );
+        // Bounded poll (amendment b): must return within roughly t_max + one
+        // poll, NOT at the transport's read_timeout. The 500ms headroom over
+        // the one-poll (100ms) ceiling absorbs CI scheduling jitter while still
+        // proving the gate does not fall back to a multi-second read.
+        assert!(
+            start.elapsed() < Duration::from_millis(600) + Duration::from_millis(500),
+            "gate must not fall back to the cmd read_timeout; elapsed {:?}",
+            start.elapsed()
+        );
+        drop(t);
+        ch.join().unwrap();
+        dh.join().unwrap();
+    }
+
+    #[test]
+    fn readiness_fails_open_promptly_on_mid_gate_socket_close() {
+        // Task-review fix: a modem that closes the cmd socket during the gate
+        // window must break the gate out promptly (fail OPEN, Unconfirmed) —
+        // not hot-spin instant `Ok(0)` reads until the t_max ceiling. The
+        // shared helper's cmd acceptor writes nothing and drops the socket
+        // after ~700ms, so the gate sees Idle ticks then a FIN well before
+        // t_max (5s). The t_min settle (900ms > the ~700ms FIN arrival) must
+        // still be honored on the early exit.
+        let (mut t, ch, dh) = scripted_cmd_vara_transport(b"");
+        let start = std::time::Instant::now();
+        let r = wait_for_readiness(
+            &mut t,
+            Duration::from_millis(900),
+            Duration::from_secs(5),
+        );
+        assert_eq!(r, Readiness::Unconfirmed, "mid-gate FIN fails open");
+        assert!(
+            start.elapsed() >= Duration::from_millis(900),
+            "settle floor must be honored even on the EOF early exit; elapsed {:?}",
+            start.elapsed()
+        );
+        assert!(
+            start.elapsed() < Duration::from_millis(2500),
+            "gate must exit promptly on EOF, not poll to the 5s ceiling; elapsed {:?}",
+            start.elapsed()
+        );
+        drop(t);
         ch.join().unwrap();
         dh.join().unwrap();
     }
@@ -4308,14 +5249,22 @@ mod tests {
         let data_port = data_l.local_addr().unwrap().port();
 
         // Acceptors hold the sockets open long enough for the inner to
-        // complete TCP connect + the MYCALL/BW best-effort writes.
+        // complete TCP connect + the MYCALL/BW best-effort writes + the
+        // readiness gate. The cmd acceptor emits `REGISTERED\r` on accept so
+        // the readiness gate confirms after the `VARA_READY_T_MIN` settle
+        // (~600ms) instead of stalling the full `VARA_READY_T_MAX` (5s)
+        // fail-open ceiling — every open now runs the gate.
         let cmd_handle = thread::spawn(move || {
-            let (_c, _) = cmd_l.accept().unwrap();
-            thread::sleep(Duration::from_millis(500));
+            use std::io::Write;
+            if let Ok((mut c, _)) = cmd_l.accept() {
+                let _ = c.write_all(b"REGISTERED\r");
+                let _ = c.flush();
+                thread::sleep(Duration::from_millis(900));
+            }
         });
         let data_handle = thread::spawn(move || {
             let (_c, _) = data_l.accept().unwrap();
-            thread::sleep(Duration::from_millis(500));
+            thread::sleep(Duration::from_millis(900));
         });
 
         let session = Arc::new(VaraSession::new());
@@ -4330,9 +5279,131 @@ mod tests {
 
         // Detach the acceptors — they finish on their own after the sleep.
         // Tests that need post-open assertions read the session before the
-        // acceptors exit; the brief 500ms window is plenty for an assertion.
+        // acceptors exit; the window covers the readiness-gate settle.
         std::mem::drop((cmd_handle, data_handle));
         session
+    }
+
+    /// Acceptor that records every "\r"-terminated line the client writes
+    /// to the cmd socket, optionally replying to the first line with
+    /// `reply` (e.g. "REGISTERED"). Returns the captured lines via mpsc.
+    fn capturing_cmd_acceptor(
+        listener: std::net::TcpListener,
+        reply: Option<&'static str>,
+        capture_for: std::time::Duration,
+    ) -> std::sync::mpsc::Receiver<Vec<String>> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            let (mut s, _) = listener.accept().unwrap();
+            s.set_read_timeout(Some(std::time::Duration::from_millis(50)))
+                .unwrap();
+            let mut buf = Vec::new();
+            let mut lines: Vec<String> = Vec::new();
+            let start = std::time::Instant::now();
+            let mut replied = false;
+            while start.elapsed() < capture_for {
+                let mut b = [0u8; 256];
+                match s.read(&mut b) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        buf.extend_from_slice(&b[..n]);
+                        while let Some(pos) = buf.iter().position(|&c| c == b'\r') {
+                            let line: Vec<u8> = buf.drain(..=pos).collect();
+                            lines.push(
+                                String::from_utf8_lossy(&line[..line.len() - 1]).into_owned(),
+                            );
+                            if !replied {
+                                if let Some(r) = reply {
+                                    let _ = s.write_all(format!("{r}\r").as_bytes());
+                                    replied = true;
+                                }
+                            }
+                        }
+                    }
+                    Err(_) => {} // read timeout — keep capturing
+                }
+            }
+            let _ = tx.send(lines);
+        });
+        rx
+    }
+
+    #[test]
+    fn hf_open_sends_full_setter_sequence_in_order() {
+        use std::net::TcpListener;
+        let cmd_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let cmd_port = cmd_l.local_addr().unwrap().port();
+        let data_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let data_port = data_l.local_addr().unwrap().port();
+        let rx =
+            capturing_cmd_acceptor(cmd_l, Some("REGISTERED"), std::time::Duration::from_secs(3));
+        let _dh = std::thread::spawn(move || {
+            let (_c, _) = data_l.accept().unwrap();
+            std::thread::sleep(std::time::Duration::from_secs(3));
+        });
+        let session = Arc::new(VaraSession::new());
+        let ui_cfg = VaraUiConfig {
+            host: "127.0.0.1".into(),
+            cmd_port,
+            data_port,
+            bandwidth_hz: Some(2300),
+        };
+        vara_open_session_inner(
+            &session,
+            &ui_cfg,
+            Some("W6ABC"),
+            SessionIntent::P2p,
+            TransportKind::VaraHf,
+        )
+        .expect("open");
+        let lines = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        // Spec §7 open order: MYCALL → (gate) → PUBLIC ON → SessionType →
+        // COMPRESSION TEXT → RETRIES 10 → BW. (CWID intentionally absent.)
+        assert_eq!(
+            lines,
+            vec![
+                "MYCALL W6ABC",
+                "PUBLIC ON",
+                "P2P SESSION",
+                "COMPRESSION TEXT",
+                "RETRIES 10",
+                "BW2300",
+            ]
+        );
+    }
+
+    #[test]
+    fn fm_open_sends_mycall_only() {
+        use std::net::TcpListener;
+        let cmd_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let cmd_port = cmd_l.local_addr().unwrap().port();
+        let data_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let data_port = data_l.local_addr().unwrap().port();
+        let rx = capturing_cmd_acceptor(cmd_l, None, std::time::Duration::from_secs(2));
+        let _dh = std::thread::spawn(move || {
+            let (_c, _) = data_l.accept().unwrap();
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        });
+        let session = Arc::new(VaraSession::new());
+        let ui_cfg = VaraUiConfig {
+            host: "127.0.0.1".into(),
+            cmd_port,
+            data_port,
+            bandwidth_hz: Some(2300), // set, but FM must NOT send BW [R3-1]
+        };
+        vara_open_session_inner(
+            &session,
+            &ui_cfg,
+            Some("W6ABC"),
+            SessionIntent::P2p,
+            TransportKind::VaraFm,
+        )
+        .expect("open");
+        let lines = rx.recv_timeout(std::time::Duration::from_secs(4)).unwrap();
+        // FM command set is MYCALL/LISTEN/CONNECT/ABORT/DISCONNECT only —
+        // no SessionType, COMPRESSION, RETRIES, PUBLIC, or BW [R3-1].
+        assert_eq!(lines, vec!["MYCALL W6ABC"]);
     }
 
     #[test]
@@ -5062,11 +6133,19 @@ mod tests {
 
         // Spawn acceptors that hand the accepted peer sockets back to the
         // test thread via a channel. Once accepted, the acceptor thread
-        // exits — the test owns the sockets and controls their lifetime.
+        // exits — the test owns the sockets and controls their lifetime. The
+        // cmd acceptor first emits `REGISTERED\r` (server→client) so the
+        // readiness gate inside `vara_open_session_inner` confirms after the
+        // settle instead of stalling the 5s fail-open ceiling. That token is
+        // consumed by the gate's client-side read and never appears in the
+        // client→server bytes the test reads back from `cmd_peer`.
         let (cmd_tx, cmd_rx) = std_mpsc::channel::<std::net::TcpStream>();
         let (data_tx, data_rx) = std_mpsc::channel::<std::net::TcpStream>();
         thread::spawn(move || {
-            let (s, _) = cmd_l.accept().unwrap();
+            use std::io::Write;
+            let (mut s, _) = cmd_l.accept().unwrap();
+            let _ = s.write_all(b"REGISTERED\r");
+            let _ = s.flush();
             let _ = cmd_tx.send(s);
         });
         thread::spawn(move || {
@@ -5096,6 +6175,38 @@ mod tests {
             .expect("data-port acceptor must hand off socket");
 
         (session, cmd_peer, data_peer)
+    }
+
+    /// Read from `sock`, accumulating bytes across reads until the decoded
+    /// string contains `needle` or `deadline` elapses; returns whatever was
+    /// accumulated. The Task 4 engine-split HF open emits a setter prelude
+    /// (PUBLIC ON → SessionType → COMPRESSION TEXT → RETRIES 10) on the cmd
+    /// socket ahead of anything a test sends, so a single `read()` can land
+    /// mid-stream — accumulate rather than assert on one segment.
+    fn read_until_contains(
+        sock: &mut std::net::TcpStream,
+        needle: &str,
+        deadline: std::time::Duration,
+    ) -> String {
+        use std::io::Read;
+        sock.set_read_timeout(Some(std::time::Duration::from_millis(100)))
+            .ok();
+        let start = std::time::Instant::now();
+        let mut acc: Vec<u8> = Vec::new();
+        while start.elapsed() < deadline {
+            let mut buf = [0u8; 64];
+            match sock.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    acc.extend_from_slice(&buf[..n]);
+                    if String::from_utf8_lossy(&acc).contains(needle) {
+                        break;
+                    }
+                }
+                Err(_) => {} // read timeout — keep polling until the deadline
+            }
+        }
+        String::from_utf8_lossy(&acc).into_owned()
     }
 
     #[test]
@@ -5131,17 +6242,16 @@ mod tests {
         // version of `vara_open_session_installs_abort_writer` — proves
         // not just "installed" but "installed pointing at the right
         // socket."
-        use std::io::Read;
         use std::time::Duration;
 
         let (session, mut cmd_peer, _data_peer) =
             loopback_open_with_cmd_peer(SessionIntent::Cms, TransportKind::VaraHf);
 
-        // Drain any best-effort MYCALL/BW writes (open path sends none in
-        // this test — None callsign + bandwidth_hz: None — but the read
-        // below tolerates leading bytes via the contains() check below).
-        cmd_peer.set_read_timeout(Some(Duration::from_secs(2))).ok();
-
+        // The HF open path emits a setter prelude (PUBLIC ON → SessionType →
+        // COMPRESSION TEXT → RETRIES 10) on the cmd socket ahead of the
+        // ABORT this test triggers (Task 4 engine-split open). Accumulate
+        // across reads until ABORT appears rather than asserting on a single
+        // possibly-mid-stream segment.
         // Fire abort against the freshly-installed writer.
         let abort_result = session.abort_in_flight();
         assert!(
@@ -5150,11 +6260,7 @@ mod tests {
             abort_result
         );
 
-        // Read what arrived at the peer cmd socket. Read enough bytes to
-        // cover any incidental prelude + the "ABORT\r" itself.
-        let mut buf = [0u8; 64];
-        let n = cmd_peer.read(&mut buf).expect("peer read must yield bytes");
-        let s = String::from_utf8_lossy(&buf[..n]);
+        let s = read_until_contains(&mut cmd_peer, "ABORT\r", Duration::from_secs(2));
         assert!(
             s.contains("ABORT\r"),
             "expected peer cmd-port to receive 'ABORT\\r' from the installed \
@@ -5171,14 +6277,11 @@ mod tests {
         // close path's abort no longer hits the "no writer installed"
         // fast-out path).
         use crate::ui_commands::VaraListenState;
-        use std::io::Read;
         use std::time::Duration;
 
         let (session, mut cmd_peer, _data_peer) =
             loopback_open_with_cmd_peer(SessionIntent::Cms, TransportKind::VaraHf);
         let listen_state = Arc::new(VaraListenState::default());
-
-        cmd_peer.set_read_timeout(Some(Duration::from_secs(2))).ok();
 
         let result = vara_close_session_inner(&session, &listen_state);
         assert!(result.is_ok(), "close must succeed: {result:?}");
@@ -5186,10 +6289,11 @@ mod tests {
         // The close path's step 2 (abort_in_flight) MUST have sent ABORT\r
         // through the installed writer to the peer cmd socket. Without
         // Task 4.2's install, the abort would have returned Err("no
-        // writer") and no bytes would arrive.
-        let mut buf = [0u8; 64];
-        let n = cmd_peer.read(&mut buf).expect("peer read must yield bytes");
-        let s = String::from_utf8_lossy(&buf[..n]);
+        // writer") and no bytes would arrive. The HF open path first emits a
+        // setter prelude (PUBLIC ON → SessionType → COMPRESSION TEXT →
+        // RETRIES 10), so accumulate across reads until ABORT appears rather
+        // than asserting on a single possibly-mid-stream segment.
+        let s = read_until_contains(&mut cmd_peer, "ABORT\r", Duration::from_secs(2));
         assert!(
             s.contains("ABORT\r"),
             "Task 4.2: vara_close_session_inner must abort via the installed \
@@ -5942,6 +7046,22 @@ mod tests {
             session.current_exchange().is_none(),
             "P2 #4: end_exchange must clear the marker"
         );
+    }
+
+    #[test]
+    fn send_listen_on_refuses_while_exchange_in_flight() {
+        // [R3-8]: LISTEN mid-link force-disconnects the ARQ session. The
+        // setter must refuse while an exchange is marked in flight.
+        let session = loopback_vara_open_session(SessionIntent::P2p, TransportKind::VaraHf);
+        session.begin_exchange(ExchangeState::Dialing);
+        let err = session
+            .send_listen_on()
+            .expect_err("LISTEN ON must refuse while an exchange is in flight");
+        assert!(err.contains("exchange"), "{err}");
+        session.end_exchange();
+        session
+            .send_listen_on()
+            .expect("LISTEN ON must succeed once the link is down");
     }
 
     #[test]

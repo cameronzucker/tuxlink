@@ -60,6 +60,10 @@ const TOD_HINT_MIN_SUCCESSES: usize = 1;
 /// on every recorded attempt and is the LRU-dialed eviction key (M3). `freq` is
 /// RECORD-ONLY metadata (never read back into a form, H8). `transport` is the
 /// telnet-only `"CmsSsl" | "Telnet"` discriminator (H7 — NOT a free port).
+/// `contact_id` [R5-7] links this favorite to a P2P roster entry
+/// (`peers::model::Peer::id`) when the recent originated from (or was matched
+/// to) a peer; `#[serde(default)]` gives additive tolerance so an existing
+/// `stations.json` written before this field existed loads with `None`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Favorite {
     pub id: String,
@@ -70,6 +74,8 @@ pub struct Favorite {
     pub band: Option<String>,
     pub grid: Option<String>,
     pub note: Option<String>,
+    #[serde(default)]
+    pub contact_id: Option<String>,
     pub starred: bool,
     pub last_attempt_at: Option<String>,
     pub created_at: String,
@@ -115,6 +121,10 @@ pub struct RecentGateway {
 
 /// The record-path DTO (H3/Codex#8). Carries everything needed to upsert/find
 /// the unit; the client passes this (NOT a `unit_id`) to the record path.
+/// `contact_id` [R5-7] carries the P2P roster link through to a brand-new
+/// recent's [`Favorite::contact_id`]; it has NO `Default` impl (deliberately, so
+/// every construction site states its fields explicitly), so callers with no
+/// peer context (e.g. the CMS/telnet dial paths) pass `None`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FavoriteDial {
     pub mode: String,
@@ -123,6 +133,7 @@ pub struct FavoriteDial {
     pub transport: Option<String>,
     pub band: Option<String>,
     pub grid: Option<String>,
+    pub contact_id: Option<String>,
 }
 
 impl FavoriteDial {
@@ -544,13 +555,21 @@ impl FavoritesStore {
     /// favorite with the same `id`, preserving everything `favorite_star` and
     /// `record_attempt` own (M12). Editable fields: `gateway`, `freq`,
     /// `transport`, `band`, `grid`, `note`. PRESERVED from the existing record:
-    /// `id`, `mode`, `starred`, `created_at`, `last_attempt_at` (and, in the
-    /// file, the whole `log` — untouched here). Bumps `updated_at` to `now`.
+    /// `id`, `mode`, `starred`, `created_at`, `last_attempt_at`, `contact_id`
+    /// (and, in the file, the whole `log` — untouched here). Bumps `updated_at`
+    /// to `now`.
     ///
     /// This is the M12 anti-clobber guard: a STALE whole-object `favorite_upsert`
     /// carrying `starred:false` (or a stale `last_attempt_at`) can never revert a
     /// concurrent star or rewind the dial clock, because those fields are read
     /// from the LIVE record, not the caller's payload.
+    ///
+    /// `contact_id` [R5-7] is preserved, NOT merged, for the same reason: it is a
+    /// system-derived back-link to the P2P roster (like `id`), not
+    /// operator-typed metadata. The edit form round-trips the client's cached
+    /// whole-object snapshot, so merging it would let a stale edit payload
+    /// (touching just `note`) resurrect a peer link the system had since
+    /// cleared — or clobber one it had since written.
     ///
     /// Returns `None` (and does NOT flush) when no favorite with `edited.id`
     /// exists — the command layer treats that as a brand-new mint. On a hit, the
@@ -576,7 +595,9 @@ impl FavoritesStore {
         existing.grid = edited.grid.clone();
         existing.note = edited.note.clone();
         existing.updated_at = now;
-        // starred, created_at, last_attempt_at, mode, id: PRESERVED (not touched).
+        // starred, created_at, last_attempt_at, mode, id, contact_id: PRESERVED
+        // (not touched). contact_id is a system-derived roster back-link [R5-7];
+        // a round-tripped edit snapshot must never resurrect or clobber it.
         let merged = existing.clone();
         self.flush()?;
         Ok(Some(merged))
@@ -603,6 +624,35 @@ impl FavoritesStore {
     pub fn favorite_delete(&mut self, id: &str) -> Result<(), FavoritesError> {
         self.file.favorites.retain(|f| f.id != id);
         self.file.log.retain(|a| a.unit_id != id);
+        self.flush()
+    }
+
+    /// Remove every favorite whose [`Favorite::contact_id`] equals `contact_id`
+    /// (no-op if none match) AND sweep their orphaned log entries — the same
+    /// M2 cleanup [`Self::favorite_delete`] performs, generalized to every
+    /// unit a deleted peer's starred/recent channel back-links to [R4-12].
+    ///
+    /// A `contact_id` can legitimately back multiple favorites (e.g. the same
+    /// peer dialed in two modes each mint their own `Favorite`, per
+    /// [`Self::record_attempt`]'s [R5-7] carry-through) — every one of them is
+    /// removed, not just the first match, so a peer delete never orphans a
+    /// star. Flushes once, after all removals, iff at least one favorite
+    /// matched (a no-op call does not touch the file's mtime).
+    pub fn delete_by_contact_id(&mut self, contact_id: &str) -> Result<(), FavoritesError> {
+        let dropped_ids: Vec<String> = self
+            .file
+            .favorites
+            .iter()
+            .filter(|f| f.contact_id.as_deref() == Some(contact_id))
+            .map(|f| f.id.clone())
+            .collect();
+        if dropped_ids.is_empty() {
+            return Ok(());
+        }
+        self.file
+            .favorites
+            .retain(|f| f.contact_id.as_deref() != Some(contact_id));
+        self.file.log.retain(|a| !dropped_ids.contains(&a.unit_id));
         self.flush()
     }
 
@@ -657,6 +707,10 @@ impl FavoritesStore {
                     band: dial.band.clone(),
                     grid: dial.grid.clone(),
                     note: None,
+                    // [R5-7] carried through from the dial ONLY at creation —
+                    // mirrors freq/transport/band/grid, which likewise are not
+                    // re-applied to an already-existing recent on a repeat dial.
+                    contact_id: dial.contact_id.clone(),
                     starred: false,
                     last_attempt_at: Some(ts_local.clone()),
                     created_at: now.clone(),
@@ -766,6 +820,7 @@ mod tests {
             transport: None,
             band: None,
             grid: None,
+            contact_id: None,
         }
     }
 
@@ -777,6 +832,7 @@ mod tests {
             transport: Some(transport.to_string()),
             band: None,
             grid: None,
+            contact_id: None,
         }
     }
 
@@ -790,6 +846,7 @@ mod tests {
             band: Some("20m".to_string()),
             grid: Some("CN87".to_string()),
             note: None,
+            contact_id: None,
             starred: false,
             last_attempt_at: None,
             created_at: "2026-06-07T12:00:00+00:00".to_string(),
@@ -854,6 +911,60 @@ mod tests {
         let reopened = FavoritesStore::open(path);
         assert!(!reopened.favorites().is_empty());
         assert!(!reopened.log().is_empty());
+    }
+
+    #[test]
+    fn favorite_with_contact_id_round_trips() {
+        // [R5-7]: `contact_id` is a normal on-disk field, not record-path-only —
+        // a favorite constructed with a peer link survives a flush + reopen.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let mut store = FavoritesStore::open(path.clone());
+        let mut fav = favorite("f1", "vara-hf", "KK6XYZ");
+        fav.contact_id = Some("p1".to_string());
+        store.favorite_upsert(fav).unwrap();
+        drop(store);
+
+        let reopened = FavoritesStore::open(path);
+        assert_eq!(
+            reopened.favorites()[0].contact_id.as_deref(),
+            Some("p1"),
+            "contact_id must survive flush + reopen"
+        );
+    }
+
+    #[test]
+    fn stations_json_without_contact_id_loads_as_none() {
+        // [R5-7] additive-safety: a `stations.json` written before `contact_id`
+        // existed (the favorite row simply omits the key) must load with
+        // `contact_id: None`, not a deserialize error — `#[serde(default)]`.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let json = r#"{
+            "schema_version": 1,
+            "favorites": [{
+                "id": "f1",
+                "mode": "vara-hf",
+                "gateway": "KK6XYZ",
+                "freq": null,
+                "transport": null,
+                "band": null,
+                "grid": null,
+                "note": null,
+                "starred": false,
+                "last_attempt_at": null,
+                "created_at": "2026-06-07T12:00:00+00:00",
+                "updated_at": "2026-06-07T12:00:00+00:00"
+            }],
+            "log": []
+        }"#;
+        std::fs::write(&path, json).unwrap();
+        let store = FavoritesStore::open(path);
+        assert_eq!(store.favorites().len(), 1);
+        assert_eq!(
+            store.favorites()[0].contact_id, None,
+            "an old row with no contact_id key must deserialize to None, not fail"
+        );
     }
 
     #[test]
@@ -984,6 +1095,7 @@ mod tests {
             band: Some("40m".to_string()),
             grid: Some("CN88".to_string()),
             note: Some("edited note".to_string()),
+            contact_id: None,
             starred: false,                                  // stale — must be ignored
             last_attempt_at: None,                           // stale — must be ignored
             created_at: "2099-01-01T00:00:00+00:00".to_string(), // stale — must be ignored
@@ -1009,6 +1121,54 @@ mod tests {
         assert_eq!(merged.freq.as_deref(), Some("7102.0"));
         assert_eq!(merged.grid.as_deref(), Some("CN88"));
         assert_eq!(merged.updated_at, "2026-06-08T12:00:00+00:00");
+    }
+
+    #[test]
+    fn favorite_merge_editable_preserves_contact_id_both_directions() {
+        // [R5-7] contact_id is a system-derived roster back-link (like `id`), NOT
+        // operator-typed metadata — the merge must read it from the LIVE record,
+        // never the caller's payload. The edit form round-trips the client's
+        // cached whole-object snapshot, so an editable contact_id would let a stale
+        // Edit (touching just `note`) resurrect a link the system had since
+        // cleared, or clobber one it had since written. Pin BOTH directions.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let mut store = FavoritesStore::open(path);
+
+        // Direction 1: live Some survives an edit carrying None.
+        let mut seed = favorite("f1", "vara-hf", "KK6XYZ");
+        seed.contact_id = Some("p1".to_string());
+        store.favorite_upsert(seed).unwrap();
+        let mut edit = favorite("f1", "vara-hf", "KK6XYZ");
+        edit.contact_id = None; // stale snapshot from before the system linked p1
+        edit.note = Some("edited note".to_string());
+        let merged = store
+            .favorite_merge_editable(&edit, "2026-06-08T12:00:00+00:00".to_string())
+            .unwrap()
+            .expect("merge over an existing id returns Some");
+        assert_eq!(
+            merged.contact_id.as_deref(),
+            Some("p1"),
+            "a live peer link must survive an edit payload carrying None"
+        );
+        assert_eq!(merged.note.as_deref(), Some("edited note"), "the edit itself landed");
+
+        // Direction 2: live None survives an edit carrying Some.
+        let seed2 = favorite("f2", "vara-hf", "W6ABC"); // contact_id: None (cleared/never linked)
+        store.favorite_upsert(seed2).unwrap();
+        let mut edit2 = favorite("f2", "vara-hf", "W6ABC");
+        edit2.contact_id = Some("p-ghost".to_string()); // stale snapshot from before a cleanup
+        let merged2 = store
+            .favorite_merge_editable(&edit2, "2026-06-08T13:00:00+00:00".to_string())
+            .unwrap()
+            .expect("merge over an existing id returns Some");
+        assert_eq!(
+            merged2.contact_id, None,
+            "a cleared peer link must not be resurrected by a stale edit payload"
+        );
+        // And the live store agrees on both.
+        assert_eq!(store.favorites()[0].contact_id.as_deref(), Some("p1"));
+        assert_eq!(store.favorites()[1].contact_id, None);
     }
 
     #[test]
@@ -1050,6 +1210,58 @@ mod tests {
             store.log().is_empty(),
             "delete must sweep the unit's orphaned log entries (M2)"
         );
+    }
+
+    #[test]
+    fn deleting_a_contact_id_favorite_does_not_orphan_the_star() {
+        // [R4-12]: a starred peer channel carries contact_id; the favorite is
+        // resolvable back to its peer and cleaned on peer delete.
+        // (Exercises FavoritesStore's contact_id-aware delete helper.)
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let mut store = FavoritesStore::open(path);
+
+        // A starred favorite linked to the peer, plus an attempt on it.
+        let mut starred = favorite("f-star", "vara-hf", "KK6XYZ");
+        starred.contact_id = Some("p1".to_string());
+        starred.starred = true;
+        store.favorite_upsert(starred).unwrap();
+        store.file.log.push(attempt("f-star", "2026-07-10T10:00:00-07:00", "reached"));
+
+        // A second favorite for the SAME contact_id in a different mode (the
+        // same peer dialed under two modes mints two favorites, R5-7) — both
+        // must be removed, not just the first match.
+        let mut telnet_fav = favorite("f-telnet", "telnet", "KK6XYZ");
+        telnet_fav.contact_id = Some("p1".to_string());
+        store.favorite_upsert(telnet_fav).unwrap();
+
+        // An unrelated favorite for a DIFFERENT peer must survive untouched.
+        let mut other = favorite("f-other", "vara-hf", "W6ABC");
+        other.contact_id = Some("p2".to_string());
+        store.favorite_upsert(other).unwrap();
+        store.file.log.push(attempt("f-other", "2026-07-10T11:00:00-07:00", "reached"));
+        store.flush().unwrap();
+
+        store.delete_by_contact_id("p1").unwrap();
+
+        let remaining_ids: Vec<&str> = store.favorites().iter().map(|f| f.id.as_str()).collect();
+        assert_eq!(
+            remaining_ids,
+            vec!["f-other"],
+            "both p1-linked favorites removed; the p2 favorite survives"
+        );
+        assert!(
+            store.log().iter().all(|a| a.unit_id != "f-star"),
+            "the deleted peer's starred channel's log entries are swept, not orphaned"
+        );
+        assert!(
+            store.log().iter().any(|a| a.unit_id == "f-other"),
+            "an unrelated peer's log entries are untouched"
+        );
+
+        // A contact_id with no matching favorite is a silent no-op.
+        store.delete_by_contact_id("p-never-existed").unwrap();
+        assert_eq!(store.favorites().len(), 1);
     }
 
     // ---- Record path: server-stamped unit_id + ts_local verbatim ------------

@@ -44,6 +44,11 @@ import { tsLocal } from '../favorites/ts-local';
  *   sequence resolves; `failed` iff it throws at an ON-AIR step. Pre-air bails
  *   (missing target — guarded before any invoke; VARA transport-open failure)
  *   record nothing, matching the panels' honest-outcome rule.
+ * - [R5-7] P2P sessions are NOT recorded here — the backend peer recorder is
+ *   authoritative for P2P recents, bridged into this same favorites/Recents log
+ *   via the ONE `bridge_to_favorites` writer (`peers/recorder.rs`). Recording
+ *   here too would double-count a P2P attempt, so `connectFor` skips this call
+ *   entirely for `sessionType === 'p2p'` (see the `isP2p` guard below).
  */
 function recordRibbonAttempt(
   mode: RadioMode,
@@ -106,22 +111,83 @@ function intentOf(key: ConnectionKey): SessionTypeId {
 }
 
 /**
+ * tuxlink-c39af Task 23a: explicit dial parameters for a P2P peer Connect.
+ *
+ * The ribbon Connect path reads its target back from `localStorage`
+ * (`readLastTarget`) and carries NO digipeater path or center frequency — it
+ * only ever redials the operator's last-configured GATEWAY. A peer dial needs
+ * the exact channel the finder row represents: its target callsign, its
+ * `via`/relay path, and its center frequency. Rather than round-trip those
+ * through `localStorage` (which cannot hold a `via` list or a per-dial freq),
+ * the peer Connect threads them EXPLICITLY here — the second alternative the
+ * Task 23a brief offers — so the dial reaches the same backend command the
+ * panel uses (`modem_vara_b2f_exchange` / `packet_connect` / `modem_ardop_*` /
+ * `telnet_p2p_connect`) with full channel fidelity and no CMS fallback.
+ *
+ * When `connectFor` receives a `PeerDial`, it uses `target` in place of the
+ * persisted last-target and threads `via`/`freqHz` per protocol. For a telnet
+ * peer endpoint the RF fields are unused and `host`/`port`/`locator` address
+ * the peer's TCP listener instead.
+ */
+export interface PeerDial {
+  /** RF target callsign (Channel.target_callsign), or — for a telnet endpoint
+   *  dial — the peer's callsign used in the login/handshake. */
+  target: string;
+  /** Digipeater / relay path (contacts/types Channel.via). Threaded into VARA's
+   *  `via` (`CONNECT … VIA …`) and packet's `path`; unused for ARDOP (no digi
+   *  path in scope) and telnet. */
+  via?: string[];
+  /** Channel center frequency in Hz (Channel.freq_hz), for the pre-audio CAT
+   *  tune. Threaded as `freqHz` into the VARA/ARDOP commands; unused for
+   *  packet + telnet. */
+  freqHz?: number;
+  /** Telnet peer endpoint host (contacts/types Endpoint.host). Required for a
+   *  p2p-telnet dial; unused for RF transports. */
+  host?: string;
+  /** Telnet peer endpoint TCP port (contacts/types Endpoint.port). */
+  port?: number;
+  /** Operator Maidenhead locator for the telnet B2F handshake; unused for RF. */
+  locator?: string;
+  /** FIX-1: contacts/types Contact.id owning the dialed telnet endpoint.
+   *  Threaded to the backend (as `contact_id`) so a stored password is attached
+   *  ONLY for a Provenance::Operator endpoint of this contact. A manual /
+   *  hand-typed dial omits it (and `endpointId`), so the backend sends no stored
+   *  password. Unused for RF transports. */
+  contactId?: string;
+  /** FIX-1: contacts/types Endpoint.id of the dialed telnet endpoint (as
+   *  `endpoint_id`). Paired with `contactId`; omitted for a manual dial. */
+  endpointId?: string;
+}
+
+/**
  * Fire the last-selected mode's FULL connect + exchange.
  *
  * Per-mode replication (verbatim invoke shapes from the panels):
  *  - Telnet-CMS  → cms_connect (no args).
+ *  - Telnet-P2P  → telnet_p2p_connect{req} (peer endpoint dial; Task 23a).
  *  - ARDOP       → modem_ardop_connect{target}, THEN
  *                  modem_ardop_b2f_exchange{target, intent, transportKind:'ardop'}.
  *  - VARA HF/FM  → vara_open_session{intent, transportKind}, THEN
  *                  modem_vara_b2f_exchange{target, intent, transportKind}.
- *  - packet      → packet_connect{call, path} (single blocking connect→B2F).
+ *  - packet      → packet_connect{call, path, intent} (single blocking connect→B2F).
  *
  * RF modes require a persisted target; a missing one throws MissingTargetError
  * BEFORE any backend invoke (no half-open transport on the missing-target path).
+ *
+ * tuxlink-c39af Task 23a: an optional `peer: PeerDial` switches this into the
+ * outbound-peer-dial path (Flow 2). When present, the dial uses `peer.target`
+ * (not the persisted ribbon target), threads the channel's `via`/`freqHz`, and
+ * — because `key.sessionType` is `'p2p'` — sends `intent = 'p2p'` to the SAME
+ * backend command the panel uses, so the backend peer recorder (gated on
+ * `SessionIntent::P2p`) runs. NO CMS fallback exists on the peer path.
  */
-export async function connectFor(key: ConnectionKey): Promise<void> {
+export async function connectFor(key: ConnectionKey, peer?: PeerDial): Promise<void> {
   const { sessionType, protocol } = key;
   const intent = intentOf(key);
+  // [R5-7] the backend peer-recorder is authoritative for p2p recents —
+  // recording here too would double-count the attempt (bridge_to_favorites is
+  // the sole writer for a P2P outcome).
+  const isP2p = sessionType === 'p2p';
 
   // Telnet-CMS — unchanged: cms_connect takes no args, no target needed.
   if (sessionType === 'cms' && protocol === 'telnet') {
@@ -129,8 +195,35 @@ export async function connectFor(key: ConnectionKey): Promise<void> {
     return;
   }
 
+  // Telnet-P2P (Task 23a) — a peer telnet ENDPOINT dial. Reaches
+  // telnet_p2p_connect (the TelnetP2pRadioPanel's command), NEVER cms_connect:
+  // a p2p telnet Connect that fell through to the cms_connect fallback below
+  // would dial the operator's CMS gateway instead of the peer — the exact
+  // CMS-fallback bug this task removes. The peer payload's host/port address
+  // the peer's TCP listener; `my_callsign` is advisory (the backend uses the
+  // authenticated active identity), so it is left empty here.
+  if (sessionType === 'p2p' && protocol === 'telnet') {
+    if (!peer?.host || !peer.port) throw new MissingTargetError('telnet');
+    await invoke('telnet_p2p_connect', {
+      req: {
+        host: peer.host,
+        port: peer.port,
+        peer_callsign: peer.target,
+        my_callsign: '',
+        locator: peer.locator ?? '',
+        // FIX-1: endpoint identity for the backend's operator-provenance
+        // password gate. `null` (not omitted) so the snake_case shape mirrors
+        // the Rust `Option<String>` #[serde(default)] fields exactly; a manual
+        // dial threads null → backend sends no stored password.
+        contact_id: peer.contactId ?? null,
+        endpoint_id: peer.endpointId ?? null,
+      },
+    });
+    return;
+  }
+
   if (protocol === 'ardop-hf') {
-    const target = readLastTarget('ardop-hf');
+    const target = peer ? peer.target : readLastTarget('ardop-hf');
     if (!target) throw new MissingTargetError('ardop-hf');
     // Connect (spawn ardopcf + dial the ARQ link), then run the B2F exchange.
     // The panel splits these across two operator clicks because the link takes
@@ -149,8 +242,12 @@ export async function connectFor(key: ConnectionKey): Promise<void> {
     // honest on-air `reached`; a B2F throw after that is an honest `failed`
     // (reached-at-link-up + failed-at-exchange are distinct empirical facts, as
     // ArdopRadioPanel records them).
-    await invoke('modem_ardop_connect', { target });
-    recordRibbonAttempt('ardop-hf', target, 'reached');
+    // Task 23a: thread the peer channel's center frequency for the pre-audio
+    // CAT tune (freqHz Option on modem_ardop_connect); undefined on the ribbon
+    // path reproduces the legacy no-tune single-dial behavior. ARDOP carries no
+    // digipeater path (out of scope), so `via` is not threaded here.
+    await invoke('modem_ardop_connect', { target, freqHz: peer?.freqHz });
+    if (!isP2p) recordRibbonAttempt('ardop-hf', target, 'reached');
     try {
       await invoke('modem_ardop_b2f_exchange', {
         target,
@@ -158,14 +255,14 @@ export async function connectFor(key: ConnectionKey): Promise<void> {
         transportKind: 'ardop',
       });
     } catch (e) {
-      recordRibbonAttempt('ardop-hf', target, 'failed');
+      if (!isP2p) recordRibbonAttempt('ardop-hf', target, 'failed');
       throw e;
     }
     return;
   }
 
   if (protocol === 'vara-hf' || protocol === 'vara-fm') {
-    const target = readLastTarget(protocol);
+    const target = peer ? peer.target : readLastTarget(protocol);
     if (!target) throw new MissingTargetError(protocol);
     // Open the TCP transport (no transmit), then the SINGLE blocking
     // connect→B2F→disconnect exchange. transportKind is the panel's mode.kind
@@ -175,40 +272,47 @@ export async function connectFor(key: ConnectionKey): Promise<void> {
     // on-air exchange records an outcome (tuxlink-ypz3 3b).
     await invoke('vara_open_session', { intent, transportKind: protocol });
     try {
+      // Task 23a: thread the peer channel's digipeater path (`via` →
+      // CONNECT … VIA … [R3-6]) and center frequency (`freqHz` for the
+      // pre-audio CAT tune). Both are undefined on the ribbon path → the
+      // backend `Option`s deserialize to None = direct dial, no tune.
       await invoke('modem_vara_b2f_exchange', {
         target,
         intent,
         transportKind: protocol,
+        freqHz: peer?.freqHz,
+        via: peer?.via,
       });
     } catch (e) {
       // A "session not open" bail (transport vanished between open and exchange)
       // never went on-air — skip it, matching VaraRadioPanel.onSendReceive's
       // pre-air exclusion. Any other throw is an honest on-air `failed`.
-      if (!/session not open/i.test(String(e))) {
+      if (!/session not open/i.test(String(e)) && !isP2p) {
         recordRibbonAttempt(protocol, target, 'failed');
       }
       throw e;
     }
-    recordRibbonAttempt(protocol, target, 'reached');
+    if (!isP2p) recordRibbonAttempt(protocol, target, 'reached');
     return;
   }
 
   if (protocol === 'packet') {
-    const target = readLastTarget('packet');
+    const target = peer ? peer.target : readLastTarget('packet');
     if (!target) throw new MissingTargetError('packet');
-    // packet_connect is a single blocking connect→B2F. The panel also carries a
-    // 0–2 relay path; the ribbon dials a direct path (no relays) since relays
-    // are panel-local transient state, not a persisted per-target attribute.
-    // Mirrors PacketRadioPanel.onConnect's invoke shape (path defaults to []).
-    // packet_connect is a single blocking connect→B2F: resolve = honest reach,
-    // reject = honest fail (tuxlink-ypz3 3b).
+    // packet_connect is a single blocking connect→B2F. On the ribbon path the
+    // relay path is panel-local transient state (not persisted per-target), so
+    // the ribbon dials direct (path []). On the Task 23a peer path the channel's
+    // `via` IS the persisted digipeater path, so it is threaded here. `intent`
+    // (Task 12) selects the message pool + gates the P2P recorder: 'p2p' for a
+    // peer dial, 'cms' otherwise (deserializes to the backend's default Cms —
+    // unchanged ribbon behavior).
     try {
-      await invoke('packet_connect', { call: target, path: [] });
+      await invoke('packet_connect', { call: target, path: peer?.via ?? [], intent });
     } catch (e) {
-      recordRibbonAttempt('packet', target, 'failed');
+      if (!isP2p) recordRibbonAttempt('packet', target, 'failed');
       throw e;
     }
-    recordRibbonAttempt('packet', target, 'reached');
+    if (!isP2p) recordRibbonAttempt('packet', target, 'reached');
     return;
   }
 

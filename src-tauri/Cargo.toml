@@ -5,12 +5,12 @@
 # app, and `default-run = "tuxlink"` is unchanged. The sibling xtask/ and tools/
 # crates are OUTSIDE src-tauri and are not pulled into this workspace.
 [workspace]
-members = [".", "tuxlink-security", "tuxlink-mcp-core", "tuxlink-mcp", "tuxlink-mcp-testserver", "tux-rig", "tuxlink-agent-runner", "tuxlink-agent-frontend", "d3zwe", "tuxlink-ft8", "tuxlink-jt9", "tuxlink-capture"]
+members = [".", "tuxlink-security", "tuxlink-mcp-core", "tuxlink-mcp", "tuxlink-mcp-testserver", "tux-rig", "tuxlink-agent-runner", "tuxlink-agent-frontend", "d3zwe", "tuxlink-ft8", "tuxlink-jt9", "tuxlink-capture", "tuxlink-stt"]
 default-members = ["."]
 
 [package]
 name = "tuxlink"
-version = "0.87.2"
+version = "0.88.0"
 description = "Linux-native full-capability Winlink client"
 authors = ["Cameron Zucker"]
 edition = "2021"
@@ -162,6 +162,10 @@ alsa = "0.9"
 # resolved transitively at 3.5.0 in Cargo.lock, so promoting it to a direct dep
 # is lock-neutral.
 realfft = "3.5.0"
+# WWV off-air space-weather decode (tuxlink-xscum, Task 1): whisper-rs-backed
+# STT crate. DecodeMode/SttResult/SttError types only at this stage — later
+# tasks wire model loading + transcription.
+tuxlink-stt = { path = "tuxlink-stt" }
 # rmcp client (elmer/executor.rs in-process duplex invoker).  `client` +
 # `transport-async-rw` are the features d3zwe already uses; the lockfile already
 # has rmcp 0.8.5 so this does not introduce a new crate or version.  `server` +

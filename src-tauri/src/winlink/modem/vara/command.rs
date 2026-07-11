@@ -51,40 +51,47 @@ pub enum OutboundCommand {
     Bw(Bandwidth),
     /// `LISTEN ON` / `LISTEN OFF` — toggle listen mode.
     Listen(bool),
-    /// `CONNECT <mycall> <target>` — initiate ARQ connection. The
-    /// `target` is the peer callsign (Winlink RMS or peer station).
+    /// `CONNECT <mycall> <target> [VIA <digi1> [<digi2>]]` — initiate ARQ
+    /// connection. `via` is the digipeater path (VARA FM; max 2) [R3-6];
+    /// empty = direct.
     Connect {
         /// Local callsign (must match a previously-set `MYCALL`).
         mycall: String,
         /// Peer callsign to dial.
         target: String,
+        /// Digipeater path (VARA FM only); empty means direct.
+        via: Vec<String>,
     },
     /// `DISCONNECT` — graceful tear-down of the current ARQ link.
     Disconnect,
     /// `ABORT` — hard tear-down (interrupts any in-flight TX).
     Abort,
     /// `COMPRESSION <mode>` — set payload compression (`TEXT`,
-    /// `BINARY`, `AUTO`, `OFF`).
+    /// `FILES`, `OFF`).
     Compression(Compression),
     /// `CWID ON/OFF` — toggle CW identifier transmission.
     CwId(bool),
     /// `PUBLIC ON/OFF` — toggle public mode (advertised on busy
     /// channels).
     Public(bool),
+    /// `P2P SESSION` / `WINLINK SESSION` — HF/SAT only [R3-1].
+    SessionType(VaraSessionType),
+    /// `RETRIES <n>` — undocumented-but-WLE-used; HF P2P branch only [R3-4].
+    Retries(u8),
     /// Arbitrary verbatim command (escape hatch for commands the
     /// enum doesn't model yet).
     Raw(String),
 }
 
-/// VARA payload compression mode.
+/// VARA payload compression mode. Doc-exact vocabulary (EA5HVK "VARA
+/// Protocol Native TNC Commands"): OFF / TEXT / FILES. The previous
+/// `Binary` / `Auto` variants were invalid vocabulary and drew `WRONG`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Compression {
-    /// Plain text compression (LZ-class for ASCII).
+    /// Plain text compression — the doc's "Recommended for Winlink" mode.
     Text,
-    /// Binary compression.
-    Binary,
-    /// Auto-select per payload.
-    Auto,
+    /// File-oriented compression.
+    Files,
     /// No compression.
     Off,
 }
@@ -94,9 +101,34 @@ impl Compression {
     pub fn as_wire(self) -> &'static str {
         match self {
             Self::Text => "TEXT",
-            Self::Binary => "BINARY",
-            Self::Auto => "AUTO",
+            Self::Files => "FILES",
             Self::Off => "OFF",
+        }
+    }
+}
+
+/// VARA session type (HF/SAT ONLY — VARA FM has no session-type command
+/// [R3-1]). Sent at open and re-sent immediately before each CONNECT
+/// [R3-9-placement]. Sets the 4.6 s (P2P) vs 4.0 s (RMS) retry cycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VaraSessionType {
+    P2p,
+    Winlink,
+}
+
+impl VaraSessionType {
+    /// `P2p` intent → `P2P SESSION`; every other intent → `WINLINK SESSION`.
+    pub fn from_intent(intent: crate::winlink::session::SessionIntent) -> Self {
+        match intent {
+            crate::winlink::session::SessionIntent::P2p => Self::P2p,
+            _ => Self::Winlink,
+        }
+    }
+
+    pub fn as_wire(self) -> &'static str {
+        match self {
+            Self::P2p => "P2P SESSION",
+            Self::Winlink => "WINLINK SESSION",
         }
     }
 }
@@ -111,7 +143,13 @@ impl OutboundCommand {
             Self::Bw(bw) => bw.as_wire().to_string(),
             Self::Listen(true) => "LISTEN ON".into(),
             Self::Listen(false) => "LISTEN OFF".into(),
-            Self::Connect { mycall, target } => format!("CONNECT {mycall} {target}"),
+            Self::Connect { mycall, target, via } => {
+                if via.is_empty() {
+                    format!("CONNECT {mycall} {target}")
+                } else {
+                    format!("CONNECT {mycall} {target} VIA {}", via.join(" "))
+                }
+            }
             Self::Disconnect => "DISCONNECT".into(),
             Self::Abort => "ABORT".into(),
             Self::Compression(c) => format!("COMPRESSION {}", c.as_wire()),
@@ -119,9 +157,20 @@ impl OutboundCommand {
             Self::CwId(false) => "CWID OFF".into(),
             Self::Public(true) => "PUBLIC ON".into(),
             Self::Public(false) => "PUBLIC OFF".into(),
+            Self::SessionType(t) => t.as_wire().to_string(),
+            Self::Retries(n) => format!("RETRIES {n}"),
             Self::Raw(s) => s.clone(),
         }
     }
+}
+
+/// Bandwidth token on a `CONNECTED` line: HF reports Hz (`2300`); FM
+/// reports `WIDE` / `NARROW` [R3-7].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectedBandwidth {
+    Hz(u32),
+    Wide,
+    Narrow,
 }
 
 /// Inbound message received on the VARA cmd socket. Covers the
@@ -132,15 +181,24 @@ pub enum InboundCommand {
     /// `READY` — modem ready for commands (sent after startup
     /// handshake completes).
     Ready,
-    /// `CONNECTED <mycall> <target> [bw]` — ARQ link established.
+    /// `CONNECTED <mycall> <target> [VIA <digi>…] [bw]` — ARQ link
+    /// established. `via` digis are preserved (FM) [R3-7].
     Connected {
         /// Local callsign (matches the MYCALL set before CONNECT).
         mycall: String,
         /// Peer callsign on the established ARQ link.
         target: String,
-        /// Negotiated bandwidth in Hz, if VARA reports it.
-        bandwidth_hz: Option<u32>,
+        /// Negotiated bandwidth, if VARA reports it.
+        bandwidth: Option<ConnectedBandwidth>,
+        /// Digipeater path (VARA FM only); empty means direct.
+        via: Vec<String>,
     },
+    /// `REGISTERED [<call>]` — modem readiness token [R3-2]. Bare =
+    /// unregistered tier (fully functional). Distinct from `LINK REGISTERED`.
+    Registered(Option<String>),
+    /// Bare `WRONG` — a rejected/malformed command. During a dial this
+    /// fails fast instead of eating the connect deadline [R3-6-wrong].
+    Wrong,
     /// `DISCONNECTED` — ARQ link torn down.
     Disconnected,
     /// `PTT ON` / `PTT OFF` — modem's request to assert / release PTT.
@@ -238,13 +296,34 @@ impl InboundCommand {
                         detail: format!("need at least 2 args (mycall target), got {tokens:?}"),
                     });
                 }
-                let bandwidth_hz = tokens.get(2).and_then(|t| t.parse::<u32>().ok());
+                let mut bandwidth = None;
+                let mut via: Vec<String> = Vec::new();
+                let mut in_via = false;
+                for t in &tokens[2..] {
+                    if t.eq_ignore_ascii_case("VIA") {
+                        in_via = true;
+                    } else if t.eq_ignore_ascii_case("WIDE") {
+                        bandwidth = Some(ConnectedBandwidth::Wide);
+                        in_via = false;
+                    } else if t.eq_ignore_ascii_case("NARROW") {
+                        bandwidth = Some(ConnectedBandwidth::Narrow);
+                        in_via = false;
+                    } else if let Ok(hz) = t.parse::<u32>() {
+                        bandwidth = Some(ConnectedBandwidth::Hz(hz));
+                        in_via = false;
+                    } else if in_via {
+                        via.push(t.to_string());
+                    }
+                    // Unknown trailing token outside VIA: ignore (forward-compat).
+                }
                 Self::Connected {
                     mycall: tokens[0].to_string(),
                     target: tokens[1].to_string(),
-                    bandwidth_hz,
+                    bandwidth,
+                    via,
                 }
             }
+            "REGISTERED" => Self::Registered(rest.map(str::to_string)),
             "LINK" => match rest {
                 Some(rest) if rest.eq_ignore_ascii_case("REGISTERED") => Self::LinkRegistered,
                 _ => Self::Unknown(line.to_string()),
@@ -255,6 +334,7 @@ impl InboundCommand {
             },
             "WRONG" => match rest {
                 Some(rest) if rest.eq_ignore_ascii_case("CALLSIGN") => Self::WrongCallsign,
+                None => Self::Wrong,
                 _ => Self::Unknown(line.to_string()),
             },
             _ => Self::Unknown(line.to_string()),
@@ -283,6 +363,7 @@ mod tests {
         let c = OutboundCommand::Connect {
             mycall: "N0CALL".into(),
             target: "W1AW".into(),
+            via: vec![],
         };
         assert_eq!(c.as_wire(), "CONNECT N0CALL W1AW");
     }
@@ -296,8 +377,8 @@ mod tests {
     #[test]
     fn outbound_compression_modes() {
         assert_eq!(
-            OutboundCommand::Compression(Compression::Auto).as_wire(),
-            "COMPRESSION AUTO"
+            OutboundCommand::Compression(Compression::Text).as_wire(),
+            "COMPRESSION TEXT"
         );
         assert_eq!(
             OutboundCommand::Compression(Compression::Off).as_wire(),
@@ -329,7 +410,8 @@ mod tests {
             InboundCommand::Connected {
                 mycall: "N0CALL".into(),
                 target: "W1AW".into(),
-                bandwidth_hz: Some(2300),
+                bandwidth: Some(ConnectedBandwidth::Hz(2300)),
+                via: vec![],
             }
         );
     }
@@ -342,7 +424,8 @@ mod tests {
             InboundCommand::Connected {
                 mycall: "N0CALL".into(),
                 target: "W1AW".into(),
-                bandwidth_hz: None,
+                bandwidth: None,
+                via: vec![],
             }
         );
     }
@@ -380,5 +463,119 @@ mod tests {
             InboundCommand::parse("  READY  ").unwrap(),
             InboundCommand::Ready
         );
+    }
+
+    #[test]
+    fn parses_registered_bare_and_with_callsign() {
+        // [R3-2] any REGISTERED line releases the readiness gate; bare =
+        // unregistered tier (fully functional, the project's common case).
+        assert_eq!(
+            InboundCommand::parse("REGISTERED").unwrap(),
+            InboundCommand::Registered(None)
+        );
+        assert_eq!(
+            InboundCommand::parse("REGISTERED W6ABC-7").unwrap(),
+            InboundCommand::Registered(Some("W6ABC-7".to_string()))
+        );
+        // Disambiguation: LINK REGISTERED stays its own variant.
+        assert_eq!(
+            InboundCommand::parse("LINK REGISTERED").unwrap(),
+            InboundCommand::LinkRegistered
+        );
+    }
+
+    #[test]
+    fn parses_bare_wrong_distinct_from_wrong_callsign() {
+        assert_eq!(InboundCommand::parse("WRONG").unwrap(), InboundCommand::Wrong);
+        assert_eq!(
+            InboundCommand::parse("WRONG CALLSIGN").unwrap(),
+            InboundCommand::WrongCallsign
+        );
+    }
+
+    #[test]
+    fn parses_connected_hf_numeric_bandwidth() {
+        assert_eq!(
+            InboundCommand::parse("CONNECTED W6ABC N0DAJ 2300").unwrap(),
+            InboundCommand::Connected {
+                mycall: "W6ABC".into(),
+                target: "N0DAJ".into(),
+                bandwidth: Some(ConnectedBandwidth::Hz(2300)),
+                via: vec![],
+            }
+        );
+    }
+
+    #[test]
+    fn parses_connected_fm_wide_narrow_and_via() {
+        // [R3-7] FM bandwidth token is WIDE/NARROW, not Hz; via-digis kept.
+        assert_eq!(
+            InboundCommand::parse("CONNECTED W6ABC N0DAJ WIDE").unwrap(),
+            InboundCommand::Connected {
+                mycall: "W6ABC".into(),
+                target: "N0DAJ".into(),
+                bandwidth: Some(ConnectedBandwidth::Wide),
+                via: vec![],
+            }
+        );
+        assert_eq!(
+            InboundCommand::parse("CONNECTED W6ABC N0DAJ VIA DIGI1 DIGI2 NARROW").unwrap(),
+            InboundCommand::Connected {
+                mycall: "W6ABC".into(),
+                target: "N0DAJ".into(),
+                bandwidth: Some(ConnectedBandwidth::Narrow),
+                via: vec!["DIGI1".into(), "DIGI2".into()],
+            }
+        );
+        // No bandwidth token at all: still a valid CONNECTED.
+        assert_eq!(
+            InboundCommand::parse("CONNECTED W6ABC N0DAJ").unwrap(),
+            InboundCommand::Connected {
+                mycall: "W6ABC".into(),
+                target: "N0DAJ".into(),
+                bandwidth: None,
+                via: vec![],
+            }
+        );
+    }
+
+    #[test]
+    fn renders_session_type_retries_and_connect_via() {
+        assert_eq!(
+            OutboundCommand::SessionType(VaraSessionType::P2p).as_wire(),
+            "P2P SESSION"
+        );
+        assert_eq!(
+            OutboundCommand::SessionType(VaraSessionType::Winlink).as_wire(),
+            "WINLINK SESSION"
+        );
+        assert_eq!(OutboundCommand::Retries(10).as_wire(), "RETRIES 10");
+        assert_eq!(
+            OutboundCommand::Connect {
+                mycall: "W6ABC".into(),
+                target: "N0DAJ-7".into(),
+                via: vec![],
+            }
+            .as_wire(),
+            "CONNECT W6ABC N0DAJ-7"
+        );
+        assert_eq!(
+            OutboundCommand::Connect {
+                mycall: "W6ABC".into(),
+                target: "N0DAJ-7".into(),
+                via: vec!["DIGI1".into(), "DIGI2".into()],
+            }
+            .as_wire(),
+            "CONNECT W6ABC N0DAJ-7 VIA DIGI1 DIGI2"
+        );
+    }
+
+    #[test]
+    fn compression_vocabulary_is_doc_exact() {
+        // [R3-10 / dispositions "Compression (confirmed)"]: OFF/TEXT/FILES
+        // only. TEXT is the doc-"Recommended for Winlink" mode.
+        assert_eq!(Compression::Off.as_wire(), "OFF");
+        assert_eq!(Compression::Text.as_wire(), "TEXT");
+        assert_eq!(Compression::Files.as_wire(), "FILES");
     }
 }

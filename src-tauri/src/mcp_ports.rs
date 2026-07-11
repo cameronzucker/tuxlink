@@ -41,13 +41,14 @@ use tuxlink_mcp_core::ports::{
     ComposePort, ConfigPort, ConfigViewDto, DevicePort, DocsHitDto, EgressPort, EgressPortError,
     FolderDto, GatewayAntennaDto, GatewayDto, GribRequestDto, LogLineDto, LogPort, MailboxPort,
     MessageMetaDto, ModemStatusDto, OutboxReadPort, PacketConfigDto, PacketWriteDto,
-    ParsedMessageDto, PathPredictionDto, PlatformInfoDto, PortError, PositionStatusDto,
+    ParsedMessageDto, PathPredictionDto, PeerChannelDto, PeerDto, PeerListDto,
+    PlatformInfoDto, PortError, PositionStatusDto,
     PredictRequestDto, PredictionPort, PrinterDto, ProvisionPort, QsyCandidateDto, RigConfigDto,
     RigStatusDto, RunningModemDto, SearchPort, SearchQueryDto, SearchResultsDto,
     SelectedConnectionDto, SendFormDto, SerialDeviceDto, SessionIntentDto, SolarSnapshotDto,
     StagedRecordDto, StationFilterDto, StationListDto, StationModeDto, StationPort, StatusPort,
-    VaraCheckpointDto, VaraConfigDto, VaraInstallStatusDto, VaraInstallSummaryDto, VaraProbeDto,
-    VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
+    VaraCheckpointDto, VaraConfigDto, VaraEngineDto, VaraInstallStatusDto, VaraInstallSummaryDto,
+    VaraProbeDto, VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
 };
 use tuxlink_mcp_core::validate::{
     validate_address, validate_attachment_dest, validate_body, validate_drive_level,
@@ -76,6 +77,45 @@ use tuxlink_security::{guarded_egress, EgressAudit, EgressAuthority, EgressGuard
 /// are policy strings (arm/taint/poison state), never underlying protocol text.
 fn redact_err(s: String) -> String {
     crate::winlink::redaction::redact_freeform(&s).into_owned()
+}
+
+// ---------------------------------------------------------------------------
+// VARA engine dispatch [R5-1].
+// ---------------------------------------------------------------------------
+
+/// Map the agent-facing [`VaraEngineDto`] onto the monolith's
+/// [`TransportKind`](crate::winlink::listener::transport::TransportKind).
+/// `None` (every caller before this task, and any caller that omits the new
+/// `engine` param) defaults to `VaraHf` — backward-compatible with the
+/// pre-split HF-only pin.
+fn map_vara_engine(
+    engine: Option<VaraEngineDto>,
+) -> crate::winlink::listener::transport::TransportKind {
+    match engine {
+        Some(VaraEngineDto::VaraFm) => crate::winlink::listener::transport::TransportKind::VaraFm,
+        _ => crate::winlink::listener::transport::TransportKind::VaraHf,
+    }
+}
+
+#[cfg(test)]
+mod vara_engine_dispatch_tests {
+    use super::*;
+
+    #[test]
+    fn vara_engine_dto_maps_to_transport_kind_with_hf_default() {
+        assert_eq!(
+            map_vara_engine(None),
+            crate::winlink::listener::transport::TransportKind::VaraHf
+        );
+        assert_eq!(
+            map_vara_engine(Some(VaraEngineDto::VaraHf)),
+            crate::winlink::listener::transport::TransportKind::VaraHf
+        );
+        assert_eq!(
+            map_vara_engine(Some(VaraEngineDto::VaraFm)),
+            crate::winlink::listener::transport::TransportKind::VaraFm
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -387,9 +427,10 @@ impl StatusPort for MonolithStatusPort {
 
     async fn p2p_peer_password_status(&self, callsign: &str) -> Result<bool, PortError> {
         use crate::ui_commands::PeerPasswordStatus;
-        let status = crate::ui_commands::p2p_peer_password_status(callsign.to_string())
-            .await
-            .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
+        let status =
+            crate::ui_commands::p2p_peer_password_status(self.app.clone(), callsign.to_string())
+                .await
+                .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
         // Return ONLY the set/not-set boolean — never the password.
         Ok(matches!(status, PeerPasswordStatus::Set))
     }
@@ -1272,10 +1313,12 @@ impl EgressPort for MonolithEgressPort {
         intent: SessionIntentDto,
         freq_hz: Option<u64>,
         qsy_candidates: Option<Vec<QsyCandidateDto>>,
+        engine: Option<VaraEngineDto>,
     ) -> Result<(), EgressPortError> {
         let audit = egress_audit_sink(self.app.clone());
         let app = self.app.clone();
         let qsy = map_qsy_candidates(qsy_candidates);
+        let transport_kind = map_vara_engine(engine);
         guarded_egress(
             &self.guard,
             EgressAuthority::Agent,
@@ -1283,9 +1326,12 @@ impl EgressPort for MonolithEgressPort {
             &audit,
             || async move {
                 // vara/commands.rs:1548 modem_vara_b2f_exchange — VARA CONNECT
-                // is LIVE here; the gate runs the real path. Pin VARA-HF (the
-                // operationally-confirmed G90 + VARA HF Standard path); the
-                // command validates the kind is VaraHf | VaraFm.
+                // is LIVE here; the gate runs the real path. `map_vara_engine`
+                // dispatches on the caller-supplied `engine` DTO (`None` →
+                // VaraHf, the backward-compatible default) [R5-1]: an agent
+                // acting on a `vara-fm` peer channel must dial FM, not the
+                // operationally-confirmed G90 + VARA HF Standard path. The
+                // command still validates the kind is VaraHf | VaraFm.
                 // tuxlink-wxwlr: thread the agent-supplied freq_hz + QSY
                 // candidate list (tuxlink-8fkkk freq_hz / qsy_candidates params);
                 // `None`/empty → single dial of `target`.
@@ -1295,9 +1341,13 @@ impl EgressPort for MonolithEgressPort {
                     app.state::<Arc<crate::winlink::modem::vara::VaraSession>>(),
                     target,
                     map_session_intent(intent),
-                    crate::winlink::listener::transport::TransportKind::VaraHf,
+                    transport_kind,
                     freq_hz,
                     qsy,
+                    // tuxlink-0ye6 Task 5: no digipeater path from the agent
+                    // egress port — direct dial (VIA is VARA-FM peer-channel
+                    // only, threaded by Task 23a; MCP HF dials are direct).
+                    None,
                 )
                 .await
                 .map_err(|e| EgressPortError::Failed(redact_err(e)))
@@ -1307,9 +1357,14 @@ impl EgressPort for MonolithEgressPort {
         .map_err(|d| EgressPortError::Denied(d.to_string()))?
     }
 
-    async fn vara_open_session(&self, intent: SessionIntentDto) -> Result<(), EgressPortError> {
+    async fn vara_open_session(
+        &self,
+        intent: SessionIntentDto,
+        engine: Option<VaraEngineDto>,
+    ) -> Result<(), EgressPortError> {
         let audit = egress_audit_sink(self.app.clone());
         let app = self.app.clone();
+        let transport_kind = map_vara_engine(engine);
         guarded_egress(
             &self.guard,
             EgressAuthority::Agent,
@@ -1321,15 +1376,17 @@ impl EgressPort for MonolithEgressPort {
                 // identity. PRE-AIR (no RF leaves the radio), but it stands up
                 // transmit-capable state, so it runs behind the same Agent
                 // egress gate as the dial (the rig_status posture: no un-armed
-                // agent opens a transmit-capable surface). Pin VaraHf —
-                // parity with vara_b2f_exchange's pin (tuxlink-cgna5).
+                // agent opens a transmit-capable surface). `map_vara_engine`
+                // dispatches on the caller-supplied `engine` DTO (`None` →
+                // VaraHf) — parity with vara_b2f_exchange's dispatch
+                // [R5-1] (tuxlink-cgna5).
                 crate::winlink::modem::vara::commands::vara_open_session(
                     app.clone(),
                     app.state::<Arc<crate::winlink::modem::vara::VaraSession>>(),
                     app.state::<Arc<crate::session_log::SessionLogState>>(),
                     app.state::<Arc<crate::ui_commands::VaraListenState>>(),
                     map_session_intent(intent),
-                    crate::winlink::listener::transport::TransportKind::VaraHf,
+                    transport_kind,
                 )
                 .await
                 .map(|_status| ())
@@ -1350,12 +1407,17 @@ impl EgressPort for MonolithEgressPort {
             &audit,
             || async move {
                 // ui_commands.rs:4534 packet_connect.
+                // tuxlink-c39af Task 12: the MCP egress port has no `intent`
+                // arg of its own (agent-initiated packet dials are always a
+                // CMS gateway dial today) — `None` → `SessionIntent::Cms`
+                // default, unchanged behavior.
                 crate::ui_commands::packet_connect(
                     app.clone(),
                     app.state::<crate::app_backend::BackendState>(),
                     app.state::<Arc<crate::session_log::SessionLogState>>(),
                     call,
                     path,
+                    None,
                 )
                 .await
                 .map_err(|e| EgressPortError::Failed(redact_err(format!("{e:?}"))))
@@ -2357,14 +2419,132 @@ fn sort_gateways_by_distance(gateways: &mut [GatewayDto]) {
     });
 }
 
-/// [`StationPort`] adapter over the catalog station-list poll + offline cache.
+/// Curate ONE [`Contact`](crate::contacts::store::Contact) into the
+/// agent-facing [`PeerDto`], or `None` to DROP the whole record.
+///
+/// A CURATION, not a DTO mirror [R2-S1] (rules carried verbatim across the
+/// contacts-superset pivot, spec §AMENDMENT pt. 6):
+/// - Every callsign string crosses the broad [`sanitize_display`] injection
+///   floor [R5-10][R2-S2]; a record whose `callsign` fails is DROPPED, and
+///   individual channel targets / digipeater hops that fail are dropped from
+///   their lists. `sanitize_display` (NOT `validate_presented_callsign`) is
+///   deliberate: the agent surface may drop portable `/`-forms; the floor's
+///   job is injection safety, not preserving portable suffixes (Task 1 R3-F2).
+/// - Free text NEVER crosses: `name`, `notes`, `email`, `tactical` are not
+///   copied [R2-S11][R4-9].
+/// - `grid` is SHAPE-validated as a Maidenhead locator via [`validate_grid`]
+///   (the same call `curate_gateway` uses) and clamped to the operator's
+///   configured broadcast precision [R2-S9].
+/// - **Telnet endpoints never cross, under ANY arm state** (spec §AMENDMENT
+///   pt. 6): the agent cannot dial telnet (the tool died with the T-A pivot),
+///   so it has no use for a host:port — the DTO carries no endpoint data at
+///   all. This supersedes the pre-pivot Operator+armed reveal [R2-S3].
+fn curate_peer(
+    c: &crate::contacts::store::Contact,
+    grid_precision: usize,
+) -> Option<PeerDto> {
+    use crate::winlink::callsign::sanitize_display;
+    let callsign = sanitize_display(&c.callsign)?;
+    let grid = c.grid.as_ref().and_then(|g| {
+        let v = g.value.trim().to_ascii_uppercase();
+        // `validate_grid` accepts ONLY 4- or 6-char Maidenhead locators; clamp the
+        // operator's configured broadcast precision into that set and to what the
+        // value can supply, then SHAPE-validate the clamped prefix [R2-S9]. `get`
+        // is panic-safe on a non-char-boundary/short value (returns None).
+        let want = if grid_precision >= 6 && v.len() >= 6 { 6 } else { 4 };
+        let clamped = v.get(..want)?;
+        validate_grid(clamped).ok().map(|()| clamped.to_string())
+    });
+    let channels = c
+        .channels
+        .iter()
+        .filter_map(|ch| {
+            let target_callsign = sanitize_display(&ch.target_callsign)?;
+            Some(PeerChannelDto {
+                transport: match ch.transport {
+                    crate::contacts::reachability::ChannelTransport::Packet => "packet",
+                    crate::contacts::reachability::ChannelTransport::Ardop => "ardop",
+                    crate::contacts::reachability::ChannelTransport::VaraHf => "vara-hf",
+                    crate::contacts::reachability::ChannelTransport::VaraFm => "vara-fm",
+                    crate::contacts::reachability::ChannelTransport::Unknown => return None,
+                }
+                .to_string(),
+                target_callsign,
+                // FIX-3 [P3]: a via hop must clear BOTH the display/injection
+                // floor AND AX.25 address grammar; a hop that fails either is
+                // dropped from the curated agent DTO (never surfaced, never
+                // dialable).
+                via: ch
+                    .via
+                    .iter()
+                    .filter_map(|v| sanitize_display(v))
+                    .filter(|v| crate::winlink::callsign::validate_ax25_hop(v).is_ok())
+                    .collect(),
+                freq_hz: ch.freq_hz,
+                direction: match ch.direction {
+                    crate::contacts::reachability::Direction::Incoming => "incoming",
+                    crate::contacts::reachability::Direction::Outgoing => "outgoing",
+                    crate::contacts::reachability::Direction::Unknown => "incoming",
+                }
+                .to_string(),
+                ok: ch.counts.ok,
+                fail: ch.counts.fail,
+                last_seen: ch.last_seen.clone(),
+            })
+        })
+        .collect();
+    Some(PeerDto {
+        id: c.id.clone(),
+        callsign,
+        tier: match c.tier {
+            crate::contacts::reachability::ContactTier::Confirmed => "confirmed",
+            crate::contacts::reachability::ContactTier::Unconfirmed => "unconfirmed",
+            crate::contacts::reachability::ContactTier::Unknown => "unknown",
+        }
+        .to_string(),
+        origin: match c.origin {
+            crate::contacts::reachability::Origin::Incoming => "incoming",
+            crate::contacts::reachability::Origin::Outgoing => "outgoing",
+            crate::contacts::reachability::Origin::Manual => "added",
+            crate::contacts::reachability::Origin::Aprs => "aprs",
+            crate::contacts::reachability::Origin::Unknown => "unknown",
+        }
+        .to_string(),
+        grid,
+        channels,
+    })
+}
+
+/// [`StationPort`] adapter over the catalog station-list poll + offline cache
+/// (`find_stations`) PLUS the egress-arm-gated peer-roster read (`find_peers`).
+///
+/// It holds an `Arc<EgressGuard>` SOLELY for `find_peers`: `find_stations` is
+/// ungated public directory data, but the peer roster is the operator's private
+/// station graph and its whole read gates behind the egress arm [R2-S5]. The
+/// two-methods-one-trait gating asymmetry is intentional and spec-required (see
+/// the trait doc + the `find_peers` impl note).
 pub struct MonolithStationPort {
     app: AppHandle,
+    guard: Arc<EgressGuard>,
 }
 
 impl MonolithStationPort {
-    pub fn new(app: AppHandle) -> Self {
-        Self { app }
+    pub fn new(app: AppHandle, guard: Arc<EgressGuard>) -> Self {
+        Self { app, guard }
+    }
+
+    /// Resolve the operator's configured broadcast precision as a Maidenhead
+    /// char count (4 default, 6 opt-in) [R2-S9]. A config-read failure degrades
+    /// to the privacy-safe 4-char default rather than erroring.
+    fn resolve_grid_precision(&self) -> usize {
+        use crate::config::PositionPrecision;
+        match crate::config::read_config() {
+            Ok(cfg) => match cfg.privacy.position_precision {
+                PositionPrecision::FourCharGrid => 4,
+                PositionPrecision::SixCharGrid => 6,
+            },
+            Err(_) => 4,
+        }
     }
 
     /// Resolve the operator's own 4-char broadcast grid for local distance ranking.
@@ -2459,6 +2639,42 @@ impl StationPort for MonolithStationPort {
             gateways,
             fetched_at_ms,
             operator_grid,
+        })
+    }
+
+    /// GATE the WHOLE peer read behind the egress arm [R2-S5]: the roster is the
+    /// operator's private social graph, not public directory data. This is the
+    /// DELIBERATE asymmetry with `find_stations` above (ungated public directory)
+    /// — the gate is spec-required, so the trait carries one gated + one ungated
+    /// read. A disarmed / expired / tainted / poisoned session is refused and NO
+    /// roster crosses the boundary. Since the contacts-superset pivot the read
+    /// sources from the CONTACTS store (a peer is a contact, spec §AMENDMENT
+    /// pt. 6) — and telnet endpoint host:port is never in the DTO under any arm
+    /// state (the agent cannot dial telnet, so it has no use for the address).
+    async fn find_peers(&self) -> Result<PeerListDto, PortError> {
+        self.guard
+            .authorize(EgressAuthority::Agent)
+            .map_err(|d| {
+                PortError::Unavailable(format!(
+                    "the peer roster requires armed send authority: {d}. Ask the \
+                     operator to ARM the Agent-send control, then retry."
+                ))
+            })?;
+        let precision = self.resolve_grid_precision();
+        let store = self
+            .app
+            .state::<Arc<std::sync::Mutex<crate::contacts::store::ContactsStore>>>();
+        let file = store
+            .lock()
+            .map_err(|_| PortError::Internal("contacts store poisoned".into()))?
+            .file()
+            .clone();
+        Ok(PeerListDto {
+            peers: file
+                .contacts
+                .iter()
+                .filter_map(|c| curate_peer(c, precision))
+                .collect(),
         })
     }
 }
@@ -2852,8 +3068,8 @@ pub(crate) async fn approval_gated_flush(
 mod tests {
     use super::minimize_bt_mac;
     use super::{
-        any_freq_in_bands, curate_gateway, is_plausible_callsign, khz_to_band, sanitize_channel,
-        sort_gateways_by_distance,
+        any_freq_in_bands, curate_gateway, curate_peer, is_plausible_callsign, khz_to_band,
+        sanitize_channel, sort_gateways_by_distance,
     };
 
     // ── tuxlink-z2nwx Contract 3: print + report export ──
@@ -3329,6 +3545,139 @@ mod tests {
         let order: Vec<&str> = v.iter().map(|g| g.callsign.as_str()).collect();
         // nearest-first; None entries keep their input order at the end (stable)
         assert_eq!(order, vec!["NEAR", "MID", "FAR", "NONE1", "NONE2"]);
+    }
+
+    // --- curate_peer curation floors (Task 19) -------------------------------
+
+    /// A hostile contact fixture: valid callsign, an over-precise grid to
+    /// clamp, operator free-text (`name` / `notes` / `email`) that must NOT
+    /// cross the agent surface, and telnet endpoints (which must never cross
+    /// under any arm state). Every field explicit.
+    fn hostile_test_contact() -> crate::contacts::store::Contact {
+        use crate::contacts::reachability::*;
+        crate::contacts::store::Contact {
+            id: "c-hostile".into(),
+            name: "Pat Privacy".into(),
+            callsign: "W6ABC-7".into(),
+            email: Some("secret@example.org".into()),
+            tactical: None,
+            notes: Some("meet at repeater".into()),
+            tier: ContactTier::Unconfirmed,
+            origin: Origin::Incoming,
+            grid: Some(ContactGrid {
+                value: "CN87xk91".into(),
+                source: GridSource::Manual,
+            }),
+            channels: vec![Channel {
+                transport: ChannelTransport::VaraHf,
+                target_callsign: "W6ABC-7".into(),
+                via: vec![],
+                freq_hz: Some(7104000),
+                bandwidth: Some(ChannelBandwidth::Hz { hz: 2300 }),
+                direction: Direction::Outgoing,
+                counts: AttemptCounts { ok: 3, fail: 1 },
+                last_seen: "2026-07-10T12:30:00-07:00".into(),
+                last_ok: Some("2026-07-10T12:30:00-07:00".into()),
+                last_ok_direction: Some(Direction::Outgoing),
+            }],
+            endpoints: vec![
+                Endpoint {
+                    id: "e-op".into(),
+                    host: "10.0.0.5".into(),
+                    port: 8772,
+                    provenance: Provenance::Operator,
+                    last_seen: "2026-07-10T12:30:00-07:00".into(),
+                    last_ok: None,
+                },
+                Endpoint {
+                    id: "e-obs".into(),
+                    host: "203.0.113.9".into(),
+                    port: 8773,
+                    provenance: Provenance::ObservedIncoming,
+                    last_seen: "2026-07-10T12:31:00-07:00".into(),
+                    last_ok: None,
+                },
+            ],
+            created_at: "2026-07-10T12:00:00-07:00".into(),
+            updated_at: "2026-07-10T12:30:00-07:00".into(),
+        }
+    }
+
+    #[test]
+    fn curate_peer_drops_free_text_and_clamps_grid() {
+        let contact = hostile_test_contact();
+        let dto = curate_peer(&contact, 4).expect("valid callsign → Some");
+        let json = serde_json::to_string(&dto).unwrap();
+        // [R2-S11] free text never crosses: name / notes / email.
+        assert!(!json.contains("meet at repeater"));
+        assert!(!json.contains("Pat Privacy"));
+        assert!(!json.contains("secret@example.org"));
+        // [R2-S9] grid SHAPE-validated + clamped to operator precision (4-char).
+        assert_eq!(dto.grid.as_deref(), Some("CN87"));
+        // Tier + origin cross as plain-language strings.
+        assert_eq!(dto.tier, "unconfirmed");
+        assert_eq!(dto.origin, "incoming");
+    }
+
+    #[test]
+    fn curate_peer_serialized_dto_has_no_note_key() {
+        // Shape pin: the curated DTO carries no free-text keys by construction.
+        let dto = curate_peer(&hostile_test_contact(), 4).unwrap();
+        let json = serde_json::to_string(&dto).unwrap();
+        assert!(!json.contains("\"notes\""), "curated PeerDto must not carry a notes key");
+        assert!(!json.contains("\"name\""), "curated PeerDto must not carry a name key");
+        assert!(!json.contains("\"email\""), "curated PeerDto must not carry an email key");
+    }
+
+    #[test]
+    fn curate_peer_never_exposes_telnet_endpoints_under_any_state() {
+        // Spec §AMENDMENT pt. 6: telnet host:port is NEVER in the agent DTO —
+        // the agent cannot dial telnet, so it has no use for the address. The
+        // fixture carries BOTH an Operator and an ObservedIncoming endpoint
+        // with real host:port values; neither may appear in the serialized
+        // DTO, and the DTO has no endpoint-shaped keys at all.
+        let contact = hostile_test_contact();
+        let dto = curate_peer(&contact, 4).unwrap();
+        let json = serde_json::to_string(&dto).unwrap();
+        assert!(!json.contains("10.0.0.5"), "operator endpoint host leaked: {json}");
+        assert!(!json.contains("203.0.113.9"), "observed endpoint host leaked: {json}");
+        assert!(!json.contains("8772") && !json.contains("8773"), "endpoint port leaked: {json}");
+        assert!(!json.contains("\"host\""), "no host key in the DTO: {json}");
+        assert!(!json.contains("\"port\""), "no port key in the DTO: {json}");
+        assert!(!json.contains("\"endpoints\""), "no endpoints key in the DTO: {json}");
+        assert!(!json.contains("provenance"), "no endpoint provenance in the DTO: {json}");
+    }
+
+    #[test]
+    fn curate_peer_drops_records_with_unsanitizable_callsigns() {
+        let mut contact = hostile_test_contact();
+        contact.callsign = "<script>".into();
+        assert!(
+            curate_peer(&contact, 4).is_none(),
+            "[R5-10] sanitizer floor drops the whole record"
+        );
+    }
+
+    #[test]
+    fn curate_peer_drops_via_hops_failing_ax25_grammar() {
+        // FIX-3 [P3]: a peer-derived via hop that clears the display floor but
+        // fails AX.25 address grammar is dropped from the curated agent DTO;
+        // only well-formed hops survive.
+        let mut contact = hostile_test_contact();
+        contact.channels[0].transport =
+            crate::contacts::reachability::ChannelTransport::Packet;
+        contact.channels[0].via = vec![
+            "RELAY".into(),      // valid → kept
+            "TOOLONGHOP".into(), // 10-char base > AX.25 max 6 → dropped
+            "WIDE2-1".into(),    // valid → kept
+            "RELAY-16".into(),   // SSID > 15 → dropped
+        ];
+        let dto = curate_peer(&contact, 4).unwrap();
+        assert_eq!(
+            dto.channels[0].via,
+            vec!["RELAY".to_string(), "WIDE2-1".to_string()],
+            "only AX.25-valid via hops survive curation"
+        );
     }
 
     // --- OutboxReadPort seam tests (Task 5, tuxlink-13v2l) -------------------

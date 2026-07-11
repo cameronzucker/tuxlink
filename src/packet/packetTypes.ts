@@ -11,7 +11,9 @@
 // Command signatures (P3 Rust param names → JS invoke arg keys):
 //   packet_config_get() → PacketConfigDto
 //   packet_config_set(dto: PacketConfigDto) → void
-//   packet_connect(call: string, path: string[]) → void
+//   packet_connect(call: string, path: string[], intent?: 'cms'|'radio-only'|'post-office'|'mesh'|'p2p') → void
+//     — intent omitted → Rust-side default 'cms' (tuxlink-c39af Task 12).
+//     Task 23a's peer-channel Connect passes intent: 'p2p'.
 //   packet_set_listen(enabled: boolean) → void
 
 /** KISS link kind. "Tcp" | "Serial" | "Bluetooth" | null (no link configured).

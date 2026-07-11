@@ -703,6 +703,7 @@ fn config_skips_pat_mbo_address_on_write() {
     let cfg = Config {
         elmer: tuxlink_lib::config::ElmerConfig::default(),
         ft8: tuxlink_lib::config::Ft8Config::default(),
+        wwv_offair: None,
         schema_version: CONFIG_SCHEMA_VERSION,
         wizard_completed: true,
         connect: tuxlink_lib::config::ConnectConfig {
@@ -736,6 +737,7 @@ fn config_skips_pat_mbo_address_on_write() {
         close_to_tray: true,
         close_prompt_seen: false,
         active_connection: None,
+        p2p_limits: tuxlink_lib::contacts::limiter::P2pLimitsConfig::default(),
     };
     let json = serde_json::to_string(&cfg).unwrap();
     assert!(

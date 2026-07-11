@@ -24,8 +24,9 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
+use super::reachability::{ContactTier, Origin, Provenance};
 use super::store::{Contact, ContactsError, ContactsFile, ContactsStore, Group};
 use super::suggest::{derive_suggestions, Suggestion};
 use crate::app_backend::BackendState;
@@ -91,7 +92,37 @@ pub fn contacts_read(
     Ok(store.file().clone())
 }
 
-/// Insert or update a contact. Stamps id (if empty) + timestamps, persists,
+/// Merge an operator upsert with the stored record (tier + reachability
+/// preservation, spec §AMENDMENT pt. 1). Pure + deterministic.
+///
+/// - NEW record (no stored match): `tier = Confirmed` and `origin = Manual` —
+///   the operator-created ("added") path; auto-creation is the observation
+///   recorder's job and NEVER lands confirmed, this path ALWAYS does.
+/// - UPDATE: `tier` / `origin` / `grid` / `channels` / `endpoints` are taken
+///   FROM THE STORED record. The editor owns identity fields only; an upsert
+///   must not silently flip an existing record's tier ([`contact_confirm`] is
+///   the only tier writer) nor wipe observed reachability with the editor's
+///   snapshot.
+pub fn merge_for_upsert(stored: Option<&Contact>, mut incoming: Contact) -> Contact {
+    match stored {
+        Some(s) => {
+            incoming.tier = s.tier;
+            incoming.origin = s.origin;
+            incoming.grid = s.grid.clone();
+            incoming.channels = s.channels.clone();
+            incoming.endpoints = s.endpoints.clone();
+        }
+        None => {
+            incoming.tier = ContactTier::Confirmed;
+            incoming.origin = Origin::Manual;
+        }
+    }
+    incoming
+}
+
+/// Insert or update a contact. Stamps id (if empty) + timestamps, merges tier
+/// + reachability per [`merge_for_upsert`] (a new record is Confirmed/added;
+/// an update never flips tier or wipes observed reachability), persists,
 /// emits `contacts:changed`, and returns the STORED contact (so the caller
 /// learns the assigned id + timestamps).
 #[tauri::command]
@@ -101,26 +132,142 @@ pub fn contact_upsert(
     app: tauri::AppHandle,
 ) -> Result<Contact, ContactsError> {
     let stamped = stamp_contact(contact, &now_utc(), new_id);
-    {
+    let merged = {
         let mut store = svc.lock().expect("contacts store mutex poisoned");
-        store.contact_upsert(stamped.clone())?;
-    }
+        let stored = store
+            .file()
+            .contacts
+            .iter()
+            .find(|c| c.id == stamped.id)
+            .cloned();
+        let merged = merge_for_upsert(stored.as_ref(), stamped);
+        store.contact_upsert(merged.clone())?;
+        merged
+    };
     emit_changed(&app);
-    Ok(stamped)
+    Ok(merged)
 }
 
-/// Delete a contact by id (no-op if absent). Persists + emits `contacts:changed`.
+/// Delete a contact by id (no-op if absent). Cascades the id-keyed endpoint
+/// keyring secrets [R2-S7] for every endpoint the store reports removed (no
+/// roster mutation ever orphans a stored password), then cascades into the
+/// favorites store [R4-12]: every favorite back-linked to this contact id is
+/// removed so a deleted contact never leaves an orphaned star. Persists +
+/// emits `contacts:changed`. A keyring or favorites-cascade failure is logged
+/// but does not fail the command — the roster write already succeeded.
+///
+/// Lock order is contacts→favorites and nowhere reversed: the contacts lock
+/// is released before the favorites lock is taken.
 #[tauri::command]
 pub fn contact_delete(
+    id: String,
+    svc: tauri::State<Arc<Mutex<ContactsStore>>>,
+    favorites: tauri::State<Arc<Mutex<FavoritesStore>>>,
+    app: tauri::AppHandle,
+) -> Result<(), ContactsError> {
+    let endpoint_ids = {
+        let mut store = svc.lock().expect("contacts store mutex poisoned");
+        store.contact_delete(&id)?
+    };
+    for endpoint_id in &endpoint_ids {
+        if let Err(e) = crate::winlink::credentials::p2p_endpoint_password_delete(&id, endpoint_id)
+        {
+            tracing::warn!(
+                target: "tuxlink::contacts",
+                contact_id = %id,
+                endpoint_id = %endpoint_id,
+                "contact delete: clearing endpoint keyring secret failed: {e}"
+            );
+        }
+    }
+    {
+        let mut store = favorites.lock().expect("favorites store mutex poisoned");
+        if let Err(e) = store.delete_by_contact_id(&id) {
+            tracing::warn!(
+                target: "tuxlink::contacts",
+                contact_id = %id,
+                "contact delete: clearing back-linked favorites failed: {e:?}"
+            );
+        }
+    }
+    emit_changed(&app);
+    Ok(())
+}
+
+/// Flip a contact `Unconfirmed → Confirmed` — the one-click promote (spec
+/// §AMENDMENT pt. 7). Idempotent on an already-confirmed record; errors on an
+/// unknown id. Persists + emits `contacts:changed`.
+#[tauri::command]
+pub fn contact_confirm(
     id: String,
     svc: tauri::State<Arc<Mutex<ContactsStore>>>,
     app: tauri::AppHandle,
 ) -> Result<(), ContactsError> {
     {
         let mut store = svc.lock().expect("contacts store mutex poisoned");
-        store.contact_delete(&id)?;
+        store.contact_confirm(&id, now_utc())?;
     }
     emit_changed(&app);
+    Ok(())
+}
+
+/// Validate that a password may be attached to `(contact_id, endpoint_id)`:
+/// the pair must exist AND the endpoint must be `Provenance::Operator` — a
+/// stored password attaches only to an operator-entered endpoint and is never
+/// usable with an observed one (spec [R2-S7], §AMENDMENT pt. 3). Pure over
+/// the file so the trust boundary is unit-testable without a Tauri harness.
+pub fn endpoint_password_set_guard(
+    file: &ContactsFile,
+    contact_id: &str,
+    endpoint_id: &str,
+) -> Result<(), ContactsError> {
+    let ep = file
+        .contacts
+        .iter()
+        .find(|c| c.id == contact_id)
+        .and_then(|c| c.endpoints.iter().find(|e| e.id == endpoint_id));
+    match ep {
+        None => Err(ContactsError::Validation(format!(
+            "no endpoint {endpoint_id:?} on contact {contact_id:?}"
+        ))),
+        Some(e) if e.provenance == Provenance::Operator => Ok(()),
+        Some(_) => Err(ContactsError::Validation(
+            "passwords attach only to operator-entered endpoints".to_string(),
+        )),
+    }
+}
+
+/// Set the keyring password for a specific contact endpoint. Enforces the
+/// [R2-S7] boundary via [`endpoint_password_set_guard`] (pair must exist and
+/// be operator-provenance) so a secret is never written for a non-existent or
+/// observed endpoint. No `contacts:changed` emit — the roster is unchanged;
+/// only the keyring is touched.
+#[tauri::command]
+pub fn contact_endpoint_password_set(
+    svc: tauri::State<Arc<Mutex<ContactsStore>>>,
+    contact_id: String,
+    endpoint_id: String,
+    password: String,
+) -> Result<(), ContactsError> {
+    {
+        let store = svc.lock().expect("contacts store mutex poisoned");
+        endpoint_password_set_guard(store.file(), &contact_id, &endpoint_id)?;
+    }
+    crate::winlink::credentials::p2p_endpoint_password_write(&contact_id, &endpoint_id, &password)
+        .map_err(ContactsError::Io)?;
+    Ok(())
+}
+
+/// Clear the keyring password for a specific contact endpoint. Idempotent (a
+/// missing entry is success; no existence lookup required). No
+/// `contacts:changed` emit — the roster is unchanged.
+#[tauri::command]
+pub fn contact_endpoint_password_clear(
+    contact_id: String,
+    endpoint_id: String,
+) -> Result<(), ContactsError> {
+    crate::winlink::credentials::p2p_endpoint_password_delete(&contact_id, &endpoint_id)
+        .map_err(ContactsError::Io)?;
     Ok(())
 }
 
@@ -344,9 +491,65 @@ pub fn contacts_recent_gateways(
     Ok(store.recent_gateways(within_hours, now))
 }
 
+/// The P2P integration-matrix capability flags [R5-8], reconciled by Task
+/// T-D against the post-pivot surface (the peers store folded into
+/// contacts; the agent telnet dial and the settings-roster editor were both
+/// cancelled). One bool per surviving matrix row.
+///
+/// **Two kinds of bit — read this before adding a query site.** Exactly TWO
+/// bits are UI-QUERIED and drive the render-hide mechanism (spec R5-8: a
+/// false bit HIDES its row so a half-wired feature is never
+/// operator-reachable): `finder_peers` and `map_peers`.
+///
+/// The other FOUR — `peer_store`, `agent_find_peers`, `vara_engine_split`,
+/// and `favorites_contact_link` — are INFORMATIONAL only: the agent tool /
+/// store / protocol code either exists in the binary or it does not (there
+/// is no half-rendered state to hide), so nothing queries them to gate
+/// rendering.
+///
+/// No bit hides the Contacts reachability surface (T-F): capability bits
+/// exist to hide unshipped integration rows, and Contacts ships wired in
+/// this same branch, so it needs no hiding bit.
+///
+/// Convention: each bit starts `false` and is hardcoded `true` ONLY in the
+/// task that lands its row, in that task's own commit.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct P2pCapabilities {
+    /// Rows 1-2 — the roster store + the observation recorder (now the
+    /// contacts superset). INFORMATIONAL.
+    pub peer_store: bool,
+    /// Rows 3, 5 — the roster read + Finder aggregation + filter.
+    /// UI-QUERIED (hides the Finder's peers surface when false).
+    pub finder_peers: bool,
+    /// Row 6 — peer pins on the map layer. UI-QUERIED (hides the map layer).
+    pub map_peers: bool,
+    /// Row 4 — the `find_peers` agent tool. INFORMATIONAL.
+    pub agent_find_peers: bool,
+    /// Row 9 — the VARA engine split. INFORMATIONAL.
+    pub vara_engine_split: bool,
+    /// Row 10 — the favorites↔contact link (T-B renamed the substrate
+    /// peer_id→contact_id). INFORMATIONAL.
+    pub favorites_contact_link: bool,
+}
+
+/// Report the P2P integration-matrix capability bits [R5-8]. See
+/// [`P2pCapabilities`] for the UI-queried-vs-informational distinction.
+#[tauri::command]
+pub fn p2p_capabilities() -> P2pCapabilities {
+    P2pCapabilities {
+        peer_store: true,
+        finder_peers: true, // Task 26 (R5-8 rows 3+5): the Finder's peers surface landed (Tasks 22-23).
+        map_peers: true,    // Task 26 (R5-8 row 6): peer pins on the map layer landed (Task 24).
+        agent_find_peers: true, // Task 19 (R5-8 row 4): the find_peers agent tool (re-sourced to contacts in T-B).
+        vara_engine_split: true, // Task 21 (R5-8 row 9): agent VARA egress dispatches on engine.
+        favorites_contact_link: true, // Task 17 (R5-7); T-D renamed the bit alongside T-B's peer_id→contact_id rename.
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::contacts::reachability::{ContactTier, Origin};
     use crate::contacts::store::GroupMember;
     use crate::winlink_backend::MessageId;
     use tempfile::tempdir;
@@ -373,6 +576,11 @@ mod tests {
             email: None,
             tactical: None,
             notes: None,
+            tier: ContactTier::Confirmed,
+            origin: Origin::Manual,
+            grid: None,
+            channels: vec![],
+            endpoints: vec![],
             created_at: String::new(),
             updated_at: String::new(),
         }
@@ -535,6 +743,7 @@ mod tests {
             transport: None,
             band: None,
             grid: None,
+            contact_id: None,
         }
     }
 
@@ -605,5 +814,149 @@ mod tests {
         let v = serde_json::to_value(&rg).unwrap();
         assert!(v.get("last_attempt_at").is_some(), "snake_case on the wire");
         assert!(v.get("lastAttemptAt").is_none());
+    }
+
+    // ------------------------------------------------------------------
+    // merge_for_upsert — the tier + reachability preservation contract
+    // (spec §AMENDMENT pt. 1: upsert never silently flips tier).
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn upsert_new_record_is_confirmed_and_added() {
+        let merged = merge_for_upsert(None, blank_contact());
+        assert_eq!(merged.tier, ContactTier::Confirmed, "operator-created → curated tier");
+        assert_eq!(merged.origin, Origin::Manual, "operator-created → added");
+    }
+
+    #[test]
+    fn upsert_does_not_flip_tier_and_preserves_reachability() {
+        use crate::contacts::reachability::*;
+        // The STORED record: unconfirmed, with an observed channel + endpoint.
+        let mut stored = blank_contact();
+        stored.id = "c1".to_string();
+        stored.tier = ContactTier::Unconfirmed;
+        stored.origin = Origin::Incoming;
+        stored.channels = vec![Channel {
+            transport: ChannelTransport::VaraHf,
+            target_callsign: "W6ABC-7".into(),
+            via: vec![],
+            freq_hz: Some(7_101_000),
+            bandwidth: None,
+            direction: Direction::Incoming,
+            counts: AttemptCounts { ok: 1, fail: 0 },
+            last_seen: "2026-07-11T12:00:00-07:00".into(),
+            last_ok: Some("2026-07-11T12:00:00-07:00".into()),
+            last_ok_direction: Some(Direction::Incoming),
+        }];
+        stored.endpoints = vec![Endpoint {
+            id: "e1".into(),
+            host: "203.0.113.5".into(),
+            port: 8772,
+            provenance: Provenance::ObservedIncoming,
+            last_seen: "2026-07-11T12:00:00-07:00".into(),
+            last_ok: None,
+        }];
+        // The editor's snapshot: identity edits, EMPTY reachability, and a
+        // (stale/hostile) Confirmed tier + Manual origin.
+        let mut incoming = blank_contact();
+        incoming.id = "c1".to_string();
+        incoming.name = "Pat Renamed".to_string();
+        incoming.tier = ContactTier::Confirmed;
+        incoming.origin = Origin::Manual;
+
+        let merged = merge_for_upsert(Some(&stored), incoming);
+        assert_eq!(merged.name, "Pat Renamed", "identity edits land");
+        assert_eq!(merged.tier, ContactTier::Unconfirmed, "upsert must not flip tier");
+        assert_eq!(merged.origin, Origin::Incoming, "origin preserved");
+        assert_eq!(merged.channels.len(), 1, "observed channels preserved");
+        assert_eq!(merged.endpoints.len(), 1, "observed endpoints preserved");
+    }
+
+    // ------------------------------------------------------------------
+    // endpoint_password_set_guard — the [R2-S7] attach boundary.
+    // ------------------------------------------------------------------
+
+    fn file_with_endpoint(provenance: crate::contacts::reachability::Provenance) -> ContactsFile {
+        use crate::contacts::reachability::Endpoint;
+        let mut c = blank_contact();
+        c.id = "c1".to_string();
+        c.endpoints = vec![Endpoint {
+            id: "e1".into(),
+            host: "peer.example.org".into(),
+            port: 8772,
+            provenance,
+            last_seen: "2026-07-11T12:00:00-07:00".into(),
+            last_ok: None,
+        }];
+        let mut f = ContactsFile::default();
+        f.contacts.push(c);
+        f
+    }
+
+    #[test]
+    fn password_set_guard_allows_operator_endpoints_only() {
+        use crate::contacts::reachability::Provenance;
+        let operator = file_with_endpoint(Provenance::Operator);
+        assert!(endpoint_password_set_guard(&operator, "c1", "e1").is_ok());
+
+        // [R2-S7]: a password may never attach to an observed endpoint.
+        let observed = file_with_endpoint(Provenance::ObservedIncoming);
+        assert!(matches!(
+            endpoint_password_set_guard(&observed, "c1", "e1"),
+            Err(ContactsError::Validation(_))
+        ));
+
+        // A non-existent pair is refused (never orphan a fresh secret).
+        assert!(matches!(
+            endpoint_password_set_guard(&operator, "c1", "ghost"),
+            Err(ContactsError::Validation(_))
+        ));
+        assert!(matches!(
+            endpoint_password_set_guard(&operator, "ghost", "e1"),
+            Err(ContactsError::Validation(_))
+        ));
+    }
+
+    // ------------------------------------------------------------------
+    // p2p_capabilities — relocated verbatim from the deleted peers module;
+    // bit values unchanged (T-D reconciles the set).
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn capabilities_report_only_landed_rows_true() {
+        let c = p2p_capabilities();
+        assert!(c.peer_store, "store + recorder landed (now the contacts superset)");
+        assert!(c.finder_peers, "Task 26 landed the Finder's peers surface");
+        assert!(c.map_peers, "Task 26 landed the map layer's peer pins");
+        assert!(c.agent_find_peers, "find_peers agent tool (re-sourced to contacts)");
+        assert!(c.vara_engine_split, "Task 21 landed the VARA engine split");
+        assert!(c.favorites_contact_link, "Task 17 landed the favorites bridge; T-D renamed the bit");
+    }
+
+    #[test]
+    fn capabilities_serialize_camelless_snake_case_on_the_wire() {
+        // The struct carries no serde(rename_all), so the field names ARE the
+        // wire keys — the contract the UI query sites read. Pin the exact
+        // post-pivot field set (T-D): two cancelled-surface bits are gone
+        // and the favorites-link bit carries its new contact_id-era name.
+        let v = serde_json::to_value(p2p_capabilities()).unwrap();
+        let obj = v.as_object().expect("P2pCapabilities serializes to a JSON object");
+        let mut keys: Vec<&str> = obj.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec![
+                "agent_find_peers",
+                "favorites_contact_link",
+                "finder_peers",
+                "map_peers",
+                "peer_store",
+                "vara_engine_split",
+            ],
+            "exact post-pivot wire-key set (T-D) — cancelled-surface bits removed, favorites bit renamed"
+        );
+        assert_eq!(v.get("peer_store").and_then(|b| b.as_bool()), Some(true));
+        assert_eq!(v.get("finder_peers").and_then(|b| b.as_bool()), Some(true));
+        assert_eq!(v.get("favorites_contact_link").and_then(|b| b.as_bool()), Some(true));
     }
 }

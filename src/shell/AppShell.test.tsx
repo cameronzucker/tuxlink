@@ -527,11 +527,16 @@ describe('<AppShell> — Mock B topology', () => {
     vi.mocked(invoke).mockClear();
     fireEvent.click(screen.getByTestId('connect-button'));
 
-    // Connect dispatches the Packet connect→B2F with the persisted target …
+    // Connect dispatches the Packet connect→B2F with the persisted target.
+    // Since Task 23a the ribbon threads `intent` (='cms' here) on every
+    // packet_connect for consistency with the VARA/ARDOP branches; 'cms'
+    // deserializes to the backend's default Cms, so ribbon behavior is
+    // unchanged.
     await waitFor(() =>
       expect(vi.mocked(invoke)).toHaveBeenCalledWith('packet_connect', {
         call: 'W7RMS-10',
         path: [],
+        intent: 'cms',
       }),
     );
     // … never the Telnet/CMS path …

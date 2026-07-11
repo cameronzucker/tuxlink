@@ -51,10 +51,23 @@ Group {
 - Members can be saved contacts (resolved at expansion time, so edits propagate) or raw callsigns (frozen literals).
 - Hover/expand reveals members for inspection.
 
-### A.3 Population — manual + suggest-from-history (never auto-create)
+### A.3 Population — manual + suggest-from-history (never auto-create) — AMENDED 2026-07-11
 
 - **Manual:** a New-contact form; "Add to contacts" action on a message's sender.
 - **Suggest-from-history:** correspondents found in mailbox `From`/`To` who are **not** yet contacts surface as one-click **"+ Add"** cards inside the Contacts surface, annotated with why ("exchanged 5 messages with KE7XYZ"). Tuxlink **never** auto-creates a contact — no clutter, no privacy surprise.
+
+> **Amendment (operator decision, 2026-07-11, P2P pivot):** Contacts becomes
+> the superset of added + observed stations via a tier field —
+> **`confirmed`** (operator-added; the curated list this section describes,
+> unchanged) and **`unconfirmed`** (auto-created from P2P session events or a
+> manual dial, shown in a separate **"Recent"** section, never mixed into the
+> curated list). "Never auto-create" is amended to **"never auto-create
+> `confirmed`"** — the no-silent-pollution guarantee this rule protected is
+> preserved by the tier split. Contacts also gain reachability data
+> (channels/endpoints/grid). Canonical model:
+> `docs/superpowers/specs/2026-07-10-p2p-peer-model-design.md` §AMENDMENT.
+> Target model (out of scope there): Favorites is conceptually an elevated
+> category of contacts; a stations.json→contacts fold is a filed follow-up.
 
 ### A.4 UI — sidebar destination **and** Compose quick-picker (both)
 

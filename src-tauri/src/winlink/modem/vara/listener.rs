@@ -91,6 +91,15 @@ use super::transport::{RecvOutcome, VaraTransport};
 /// `winlink_backend::parse_call_ssid`'s strict variant minus the error
 /// propagation — we are downstream of an already-on-air event; tolerate
 /// and route to the gate's reject path rather than panicking.
+///
+/// NOTE (spec §4 write boundary): this parser deliberately applies NO
+/// charset filter — accept policy belongs to `AllowedStations`, and WLE
+/// parity means a malformed claimed callsign may still get a session.
+/// The ROSTER is protected downstream: `ContactsStore::apply_observation`
+/// drops any presented callsign failing `callsign::validate_presented_callsign`
+/// [R2-S2], and keyring accounts are id-keyed, never callsign-keyed
+/// [R2-S10]. Render surfaces escape everything (frontend hostile-callsign
+/// tests).
 pub fn parse_peer_call(s: &str) -> Address {
     let trimmed = s.trim();
     if let Some((call, ssid_str)) = trimmed.rsplit_once('-') {

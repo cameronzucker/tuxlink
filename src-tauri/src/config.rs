@@ -361,6 +361,18 @@ pub struct Config {
     /// byte-identical to its pre-elmer shape.
     #[serde(default, skip_serializing_if = "ElmerConfig::is_default")]
     pub elmer: ElmerConfig,
+    /// P2P inbound auto-create rate limits (spec §2 caps [R5-9], Task 9).
+    /// `#[serde(default)]` migrates configs that predate this field (absent
+    /// → `P2pLimitsConfig::default()`); the field is now KNOWN, satisfying
+    /// `deny_unknown_fields`. `skip_serializing_if` keeps a default-config
+    /// byte-identical to its pre-`p2p_limits` shape (mirrors the `elmer`
+    /// field's `ElmerConfig::is_default` pattern above), so this addition
+    /// does NOT bump `CONFIG_SCHEMA_VERSION`.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::contacts::limiter::P2pLimitsConfig::is_default"
+    )]
+    pub p2p_limits: crate::contacts::limiter::P2pLimitsConfig,
     /// FT8 Station Intelligence listener settings (tuxlink-b026z.3).
     /// `#[serde(default)]` migrates configs that predate this field (absent →
     /// `Ft8Config::default()`); the field is now KNOWN, satisfying
@@ -368,6 +380,14 @@ pub struct Config {
     /// config byte-identical to its pre-FT8 shape.
     #[serde(default, skip_serializing_if = "Ft8Config::is_default")]
     pub ft8: Ft8Config,
+    /// Off-air WWV space-weather decode settings (tuxlink-xscum).
+    /// `#[serde(default)]` migrates configs that predate this field (absent →
+    /// `None`), and the field is now KNOWN, satisfying `deny_unknown_fields`.
+    /// `skip_serializing_if` keeps a never-touched config byte-identical to
+    /// its pre-`wwv_offair` shape (mirrors the `modem_ardop` `Option` field
+    /// pattern), so this addition does NOT bump `CONFIG_SCHEMA_VERSION`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wwv_offair: Option<WwvOffairConfig>,
 }
 
 impl Config {
@@ -1603,6 +1623,34 @@ impl Ft8Config {
     }
 }
 
+/// Off-air WWV space-weather decode settings (tuxlink-xscum). Additive and
+/// `Option`-wrapped on [`Config`] (mirrors `modem_ardop`): absent until the
+/// operator configures it, so a never-touched config stays byte-identical to
+/// its pre-`wwv_offair` shape and this addition does NOT bump
+/// `CONFIG_SCHEMA_VERSION`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WwvOffairConfig {
+    /// ALSA capture device string (e.g. "plughw:1,0"). Empty → use the rig's
+    /// configured capture device / operator picker.
+    pub capture_device: String,
+    /// Override path to the ggml base.en model; None → resolved default data dir.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_path: Option<String>,
+    /// Auto-retry the next window once on no-copy.
+    pub auto_retry_next_window: bool,
+}
+
+impl Default for WwvOffairConfig {
+    fn default() -> Self {
+        Self {
+            capture_device: String::new(),
+            model_path: None,
+            auto_retry_next_window: true,
+        }
+    }
+}
+
 /// Opt-in CAT band sweep (spec §Sweep). Requires a configured rig:
 /// `sweep.enabled` with `Config.rig` unset is a validation error. Dwell
 /// default 8 slots = 2 min/band (5-band default rotation = 10 min);
@@ -1896,6 +1944,57 @@ mod tests {
                 session_type: "cms".into(),
                 protocol: "vara-hf".into()
             })
+        );
+    }
+
+    // Task 9: an old config file (predating `p2p_limits`) has no
+    // `[p2p_limits]` key at all — `#[serde(default)]` migrates it to
+    // `P2pLimitsConfig::default()` (100/hr accepted, 10/min failed) rather
+    // than rejecting the load.
+    #[test]
+    fn p2p_limits_defaults_when_absent_from_config() {
+        let cfg: Config = serde_json::from_str(&config_json(CONFIG_SCHEMA_VERSION, ""))
+            .expect("a config without [p2p_limits] deserializes additively");
+        assert_eq!(
+            cfg.p2p_limits,
+            crate::contacts::limiter::P2pLimitsConfig::default()
+        );
+    }
+
+    // A default (unconfigured) p2p_limits section is omitted from the
+    // serialized config entirely (`skip_serializing_if`), keeping a
+    // no-customization config byte-identical to its pre-`p2p_limits` shape —
+    // mirrors `elmer_config_fully_default_is_default` below.
+    #[test]
+    fn p2p_limits_default_is_omitted_from_serialized_config() {
+        let cfg: Config = serde_json::from_str(&config_json(CONFIG_SCHEMA_VERSION, "")).unwrap();
+        let value = serde_json::to_value(&cfg).unwrap();
+        assert!(
+            !value.as_object().unwrap().contains_key("p2p_limits"),
+            "default p2p_limits must not appear in the serialized config"
+        );
+    }
+
+    // A customized p2p_limits section round-trips through serialize →
+    // deserialize, and IS present in the serialized output once it differs
+    // from the default.
+    #[test]
+    fn p2p_limits_round_trips_when_customized() {
+        let mut cfg: Config =
+            serde_json::from_str(&config_json(CONFIG_SCHEMA_VERSION, "")).unwrap();
+        cfg.p2p_limits = crate::contacts::limiter::P2pLimitsConfig {
+            accepted_per_hour: 250,
+            failed_per_minute: 3,
+        };
+        let s = serde_json::to_string(&cfg).unwrap();
+        assert!(s.contains("p2p_limits"), "a customized section is serialized");
+        let back: Config = serde_json::from_str(&s).unwrap();
+        assert_eq!(
+            back.p2p_limits,
+            crate::contacts::limiter::P2pLimitsConfig {
+                accepted_per_hour: 250,
+                failed_per_minute: 3,
+            }
         );
     }
 
@@ -2945,6 +3044,51 @@ mod tests {
         let cfg_no_ardop: Config = serde_json::from_str(&json_no_ardop)
             .expect("old config without modem_ardop must deserialize (migration)");
         assert!(cfg_no_ardop.modem_ardop.is_none(), "modem_ardop must default to None when absent");
+    }
+
+    // tuxlink-xscum Task 11: WwvOffairConfig is additive and Option-wrapped
+    // (mirrors modem_ardop) — a config written before this field existed must
+    // load additively (absent → None), no CONFIG_SCHEMA_VERSION bump required.
+    #[test]
+    fn config_without_wwv_offair_is_none_and_roundtrips() {
+        let cfg: Config = serde_json::from_str(&config_json(CONFIG_SCHEMA_VERSION, ""))
+            .expect("minimal config without wwv_offair must deserialize");
+        assert!(cfg.wwv_offair.is_none(), "wwv_offair must default to None when absent");
+
+        // Round-trip: a never-touched config stays byte-identical (skip_serializing_if).
+        let reserialized = serde_json::to_string(&cfg).unwrap();
+        assert!(
+            !reserialized.contains("wwv_offair"),
+            "a never-touched config must NOT carry wwv_offair on re-save: {reserialized}"
+        );
+        let reloaded: Config = serde_json::from_str(&reserialized).unwrap();
+        assert!(reloaded.wwv_offair.is_none());
+    }
+
+    #[test]
+    fn config_with_wwv_offair_parses() {
+        let json = config_json(
+            CONFIG_SCHEMA_VERSION,
+            r#", "wwv_offair": {"capture_device": "plughw:1,0"}"#,
+        );
+        let cfg: Config =
+            serde_json::from_str(&json).expect("Config with wwv_offair must deserialize");
+        let wwv = cfg.wwv_offair.as_ref().expect("wwv_offair should be Some");
+        assert_eq!(wwv.capture_device, "plughw:1,0");
+        assert!(wwv.model_path.is_none(), "absent model_path defaults to None");
+        assert!(
+            wwv.auto_retry_next_window,
+            "absent auto_retry_next_window defaults to true (WwvOffairConfig::default)"
+        );
+
+        // Round-trip: serialize and reload.
+        let reserialized = serde_json::to_string(&cfg).unwrap();
+        let reloaded: Config = serde_json::from_str(&reserialized).unwrap();
+        assert_eq!(
+            reloaded.wwv_offair.unwrap().capture_device,
+            "plughw:1,0",
+            "capture_device must survive a serialize→deserialize round-trip"
+        );
     }
 
     // --- tuxlink-dfmf: VaraUiConfig persistence + migration tests ---
