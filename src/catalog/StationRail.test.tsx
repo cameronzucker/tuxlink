@@ -1,9 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { invoke } from '@tauri-apps/api/core';
 import { GATEWAY_PREFILL_EVENT } from '../favorites/prefillEvent';
 import { StationRail } from './StationRail';
 import type { Station } from './stationModel';
 import type { PathPrediction } from './propagationApi';
+import type { AggregatedPeer } from '../peers/peerModel';
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
+const mockInvoke = vi.mocked(invoke);
 
 const station: Station = {
   baseCallsign: 'N0DAJ', grid: 'DM34oa', sysopName: 'Doug Jarmuth', location: 'Wickenburg, AZ',
@@ -199,5 +204,120 @@ describe('StationRail', () => {
     expect(onSaveFavorite).toHaveBeenCalledWith(
       expect.objectContaining({ mode: 'packet', gateway: 'N0DAJ-10' }),
     );
+  });
+});
+
+// tuxlink-c39af Task 23a — the peer-row Connect fires a REAL outbound P2P dial
+// (Flow 2) through connectFor, reaching the same backend command the mode's
+// panel uses with intent/sessionType=p2p and the channel's via/path/freq
+// threaded. This is the click→backend seam Task 28 traces; a CMS-defaulting
+// dial here would silence the peer recorder and leave the store empty.
+describe('StationRail — peer-row Connect fires a P2P dial (Task 23a)', () => {
+  // A peer with one RF channel per transport (VARA/ARDOP/packet) + a telnet
+  // endpoint, so every protocol has a clickable peer-dial path.
+  const peer: AggregatedPeer = {
+    id: 'peer-1',
+    canonicalBase: 'W7XYZ',
+    presentedCallsigns: ['W7XYZ-5'],
+    origin: 'incoming',
+    grid: 'CN87',
+    mapPlaceable: true,
+    lastConnectedAt: null,
+    channels: [
+      {
+        transport: 'vara-fm', target_callsign: 'W7XYZ-5', via: ['RELAY1'],
+        freq_hz: 145_030_000, bandwidth: null, direction: 'outgoing',
+        counts: { ok: 0, fail: 0 }, last_seen: '2026-07-10T00:00:00Z',
+      },
+      {
+        transport: 'ardop', target_callsign: 'W7XYZ', via: [],
+        freq_hz: 7_105_000, bandwidth: null, direction: 'outgoing',
+        counts: { ok: 0, fail: 0 }, last_seen: '2026-07-10T00:00:00Z',
+      },
+      {
+        transport: 'packet', target_callsign: 'W7XYZ-1', via: ['WIDE1-1'],
+        freq_hz: 144_390_000, bandwidth: null, direction: 'outgoing',
+        counts: { ok: 0, fail: 0 }, last_seen: '2026-07-10T00:00:00Z',
+      },
+    ],
+    endpoints: [
+      {
+        id: 'ep-1', host: '10.0.0.5', port: 8774,
+        provenance: 'operator', last_seen: '2026-07-10T00:00:00Z',
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    mockInvoke.mockReset();
+    mockInvoke.mockResolvedValue(undefined);
+  });
+  afterEach(() => mockInvoke.mockReset());
+
+  function renderPeer() {
+    // station=null still renders the peer rows (they are independent of the
+    // map-pin selection); operatorGrid feeds the telnet handshake locator.
+    render(
+      <StationRail
+        station={null} prediction={null} predictionStatus="idle"
+        operatorGrid="CN85nm" utcHour={0} peers={[peer]}
+      />,
+    );
+  }
+
+  it('VARA peer Connect → modem_vara_b2f_exchange with intent=p2p + the channel via/freq', async () => {
+    renderPeer();
+    fireEvent.click(screen.getByTestId('peer-use-peer-1-0'));
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith(
+        'modem_vara_b2f_exchange',
+        expect.objectContaining({
+          target: 'W7XYZ-5', intent: 'p2p', transportKind: 'vara-fm',
+          via: ['RELAY1'], freqHz: 145_030_000,
+        }),
+      ),
+    );
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'vara_open_session',
+      expect.objectContaining({ intent: 'p2p', transportKind: 'vara-fm' }),
+    );
+  });
+
+  it('ARDOP peer Connect → modem_ardop_b2f_exchange with intent=p2p', async () => {
+    renderPeer();
+    fireEvent.click(screen.getByTestId('peer-use-peer-1-1'));
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith(
+        'modem_ardop_b2f_exchange',
+        expect.objectContaining({ target: 'W7XYZ', intent: 'p2p', transportKind: 'ardop' }),
+      ),
+    );
+  });
+
+  it('packet peer Connect → packet_connect with intent=p2p + the channel path', async () => {
+    renderPeer();
+    fireEvent.click(screen.getByTestId('peer-use-peer-1-2'));
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith(
+        'packet_connect',
+        expect.objectContaining({ call: 'W7XYZ-1', path: ['WIDE1-1'], intent: 'p2p' }),
+      ),
+    );
+  });
+
+  it('telnet peer endpoint Connect → telnet_p2p_connect (never cms_connect)', async () => {
+    renderPeer();
+    fireEvent.click(screen.getByTestId('peer-endpoint-connect-ep-1'));
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith(
+        'telnet_p2p_connect',
+        expect.objectContaining({
+          req: expect.objectContaining({
+            host: '10.0.0.5', port: 8774, peer_callsign: 'W7XYZ-5', locator: 'CN85nm',
+          }),
+        }),
+      ),
+    );
+    expect(mockInvoke).not.toHaveBeenCalledWith('cms_connect');
   });
 });

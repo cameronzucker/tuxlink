@@ -11,6 +11,7 @@ import { rankedDialsFor } from './ranking';
 import { bestBandNow, relToTier, tierColorVar } from './reachability';
 import { bandLabel, bandForKhz, HF_BANDS } from './bandPlan';
 import { emitGatewayPrefill } from '../favorites/prefillEvent';
+import { connectFor } from '../connections/connectDispatch';
 import { distanceFromGrids, kmToMi } from './distance';
 import { gridToLatLon } from '../forms/position/maidenhead';
 import type { Station, Channel } from './stationModel';
@@ -20,6 +21,7 @@ import type { RadioMode, FavoriteDial } from '../favorites/types';
 import type { AggregatedPeer } from '../peers/peerModel';
 import type {
   Channel as PeerChannel,
+  Endpoint as PeerEndpoint,
   ChannelTransport,
   Origin,
   Provenance,
@@ -57,9 +59,11 @@ export interface StationRailProps {
    * peer has no map pin to select, so it must still show up here (untiered) or it
    * is invisible entirely. Omitted/empty renders nothing (no section).
    *
-   * Connect here reuses the EXISTING `onUse` prefill path (R3-F6 boundary with
-   * Task 23a, which owns actual `intent: 'p2p'` / `via` / `freq` dial threading).
-   * `FavoriteDial` has no `intent` field — this task does not invent one.
+   * Connect here fires a REAL outbound peer dial (Task 23a, Flow 2): the row's
+   * Connect invokes `connectFor({ sessionType: 'p2p', protocol })` directly —
+   * NOT the gateway `onUse` prefill path — so the dial reaches the same backend
+   * command the mode's panel uses with `intent = 'p2p'` and the channel's
+   * `via`/`freq` threaded. There is NO CMS fallback on the peer path.
    */
   peers?: AggregatedPeer[];
 }
@@ -98,21 +102,51 @@ function radioModeForPeerTransport(t: ChannelTransport): RadioMode | null {
 }
 
 /**
- * Best-effort FavoriteDial for a peer RF channel (Task 23 chrome only). Does
- * NOT thread `via` — FavoriteDial has no field for it, and the repeater-path /
- * center-frequency semantics are Task 23a's job (R3-F6). `peer_id` is an
- * EXISTING FavoriteDial field (R5-7), not new dial wiring, so it's set here.
+ * Task 23a (Flow 2): fire a REAL outbound P2P dial for a peer RF channel.
+ * Reaches the SAME backend command the mode's panel uses via `connectFor`, with
+ * `intent = 'p2p'` (so the backend peer recorder, gated on `SessionIntent::P2p`,
+ * runs) and the channel's `target`/`via`/`freq` threaded explicitly. `null`
+ * transport → no dialable modem, so the caller disables the button.
+ *
+ * Fire-and-forget: the finder has no inline error surface (it runs with the RF
+ * pane closed, like the ribbon Connect), and the backend emits the dial's
+ * outcome to the session log. A rejection is swallowed here so an RF failure
+ * never throws into React's event handler.
  */
-function peerChannelToDial(peer: AggregatedPeer, channel: PeerChannel): FavoriteDial | null {
-  const mode = radioModeForPeerTransport(channel.transport);
-  if (!mode) return null;
-  return {
-    mode,
-    gateway: channel.target_callsign,
-    freq: channel.freq_hz != null ? (channel.freq_hz / 1_000_000).toFixed(3) : undefined,
-    grid: peer.grid,
-    peer_id: peer.id,
-  };
+function connectPeerChannel(channel: PeerChannel): void {
+  const protocol = radioModeForPeerTransport(channel.transport);
+  if (!protocol) return;
+  void connectFor(
+    { sessionType: 'p2p', protocol },
+    {
+      target: channel.target_callsign,
+      via: channel.via,
+      freqHz: channel.freq_hz ?? undefined,
+    },
+  ).catch(() => {});
+}
+
+/**
+ * Task 23a (Flow 2): fire a REAL outbound P2P telnet dial for a peer network
+ * endpoint. Reaches `telnet_p2p_connect` (the TelnetP2pRadioPanel's command)
+ * with the endpoint's host/port and the peer's callsign; `locator` carries the
+ * operator grid for the B2F handshake. Fire-and-forget, same rationale as
+ * `connectPeerChannel`.
+ */
+function connectPeerEndpoint(
+  peer: AggregatedPeer,
+  endpoint: PeerEndpoint,
+  operatorGrid: string,
+): void {
+  void connectFor(
+    { sessionType: 'p2p', protocol: 'telnet' },
+    {
+      target: peer.presentedCallsigns[0] ?? peer.canonicalBase,
+      host: endpoint.host,
+      port: endpoint.port,
+      locator: operatorGrid || undefined,
+    },
+  ).catch(() => {});
 }
 
 function formatLastConnected(iso: string): string {
@@ -146,20 +180,19 @@ function bearingFromGrids(a: string, b: string): number | null {
 export function StationRail(props: StationRailProps) {
   const { station, prediction, predictionStatus, operatorGrid, utcHour, activePrefillMode, peers } = props;
 
-  // Task 23 (R3-F6 boundary): reuse the SAME existing prefill/onUse path a
-  // gateway channel's Use → already goes through. AppShell's handler
-  // currently hardcodes sessionType 'cms' for anything arriving via onUse
-  // (see handleStationUse's own comment) — routing a peer channel as a P2P
-  // connect instead of a CMS gateway connect is Task 23a's job, not this
-  // task's. This is chrome: the button renders + calls the existing path.
-  const onUsePeerChannel = (peer: AggregatedPeer, channel: PeerChannel) => {
-    const dial = peerChannelToDial(peer, channel);
-    if (!dial) return;
-    if (props.onUse) props.onUse(dial);
-    else emitGatewayPrefill(dial);
-  };
-
-  const peerRows = <PeerRows peers={peers ?? []} onUse={onUsePeerChannel} />;
+  // Task 23a (Flow 2): a peer row's Connect fires a REAL P2P dial via
+  // connectFor — NOT the gateway `onUse` prefill path AppShell hardcodes to
+  // sessionType 'cms'. The dial reaches the mode's backend command with
+  // intent='p2p' + the channel's via/freq (connectPeerChannel /
+  // connectPeerEndpoint). operatorGrid supplies the telnet handshake locator.
+  const peerRows = (
+    <PeerRows
+      peers={peers ?? []}
+      operatorGrid={operatorGrid}
+      onConnectChannel={connectPeerChannel}
+      onConnectEndpoint={connectPeerEndpoint}
+    />
+  );
 
   if (!station) {
     return (
@@ -375,10 +408,14 @@ export function StationRail(props: StationRailProps) {
  */
 function PeerRows({
   peers,
-  onUse,
+  operatorGrid,
+  onConnectChannel,
+  onConnectEndpoint,
 }: {
   peers: AggregatedPeer[];
-  onUse: (peer: AggregatedPeer, channel: PeerChannel) => void;
+  operatorGrid: string;
+  onConnectChannel: (channel: PeerChannel) => void;
+  onConnectEndpoint: (peer: AggregatedPeer, endpoint: PeerEndpoint, operatorGrid: string) => void;
 }) {
   if (peers.length === 0) return null;
   return (
@@ -408,6 +445,17 @@ function PeerRows({
                   <span className="station-finder__peer-ep-addr">
                     {ep.host}:{ep.port}
                   </span>
+                  {/* Task 23a: a telnet peer-endpoint dial (Flow 2) — dials the
+                      peer's TCP listener over P2P telnet via connectFor. */}
+                  <button
+                    type="button"
+                    data-testid={`peer-endpoint-connect-${ep.id}`}
+                    className="station-finder__use"
+                    title={`Connect to ${peer.presentedCallsigns[0] ?? peer.canonicalBase} over telnet`}
+                    onClick={() => onConnectEndpoint(peer, ep, operatorGrid)}
+                  >
+                    Connect →
+                  </button>
                 </div>
               ))}
             </div>
@@ -416,7 +464,8 @@ function PeerRows({
           {peer.channels.length > 0 && (
             <div className="station-finder__peer-channels">
               {peer.channels.map((ch, i) => {
-                const dial = peerChannelToDial(peer, ch);
+                const protocol = radioModeForPeerTransport(ch.transport);
+                const label = PEER_TRANSPORT_LABEL[ch.transport] ?? ch.transport;
                 return (
                   <div
                     key={`${ch.transport}-${ch.target_callsign}-${ch.freq_hz ?? 'nofreq'}-${i}`}
@@ -425,7 +474,7 @@ function PeerRows({
                   >
                     <div>
                       <div className="station-finder__f">
-                        {PEER_TRANSPORT_LABEL[ch.transport] ?? ch.transport} · {ch.target_callsign}
+                        {label} · {ch.target_callsign}
                       </div>
                       <div className="station-finder__sub">
                         {ch.freq_hz != null ? `${(ch.freq_hz / 1_000_000).toFixed(3)} MHz` : 'freq unknown'}
@@ -435,15 +484,15 @@ function PeerRows({
                       type="button"
                       data-testid={`peer-use-${peer.id}-${i}`}
                       className="station-finder__use"
-                      disabled={!dial}
+                      disabled={!protocol}
                       title={
-                        !dial
+                        !protocol
                           ? 'No tuxlink modem for this transport'
-                          : 'Use this channel (existing per-mode prefill — full P2P dial threading lands in a follow-up task)'
+                          : `Connect to ${ch.target_callsign} over ${label}`
                       }
-                      onClick={() => dial && onUse(peer, ch)}
+                      onClick={() => protocol && onConnectChannel(ch)}
                     >
-                      Use →
+                      Connect →
                     </button>
                   </div>
                 );

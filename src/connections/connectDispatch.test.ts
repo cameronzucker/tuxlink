@@ -192,3 +192,101 @@ describe('connectFor — p2p session outcomes are not ribbon-recorded ([R5-7])',
     });
   });
 });
+
+// tuxlink-c39af Task 23a — the peer-dial seam. A PeerDial payload switches
+// connectFor into the outbound-peer path (Flow 2): it uses the channel's
+// target (NOT the persisted ribbon target), sends intent='p2p' to the SAME
+// backend command the panel uses, and threads the channel's via/path + freq.
+// This is the producer→store seam Task 28 traces; no CMS fallback may remain.
+describe('connectFor — P2P peer dial threads intent=p2p + channel via/freq (Task 23a)', () => {
+  function invokeArgs(cmd: string): Record<string, unknown> | undefined {
+    const call = mockInvoke.mock.calls.find((c) => c[0] === cmd);
+    return call?.[1] as Record<string, unknown> | undefined;
+  }
+
+  it('VARA peer dial → modem_vara_b2f_exchange with intent=p2p + the channel via + freqHz (NOT localStorage)', async () => {
+    // No persisted target — a CMS fallback would MissingTargetError here; the
+    // peer payload supplies the target directly, proving the peer path does not
+    // read localStorage.
+    routeInvoke();
+    await connectFor(
+      { sessionType: 'p2p', protocol: 'vara-fm' },
+      { target: 'W7XYZ', via: ['RELAY1', 'RELAY2'], freqHz: 145_030_000 },
+    );
+    expect(invokeArgs('vara_open_session')).toMatchObject({ intent: 'p2p', transportKind: 'vara-fm' });
+    expect(invokeArgs('modem_vara_b2f_exchange')).toEqual({
+      target: 'W7XYZ',
+      intent: 'p2p',
+      transportKind: 'vara-fm',
+      freqHz: 145_030_000,
+      via: ['RELAY1', 'RELAY2'],
+    });
+    // [R5-7] the p2p guard still skips the ribbon record (backend recorder owns it).
+    expect(recordCalls()).toHaveLength(0);
+  });
+
+  it('packet peer dial → packet_connect with intent=p2p + the channel path', async () => {
+    routeInvoke();
+    await connectFor(
+      { sessionType: 'p2p', protocol: 'packet' },
+      { target: 'K1ABC-7', via: ['WIDE1-1'] },
+    );
+    expect(invokeArgs('packet_connect')).toEqual({
+      call: 'K1ABC-7',
+      path: ['WIDE1-1'],
+      intent: 'p2p',
+    });
+    expect(recordCalls()).toHaveLength(0);
+  });
+
+  it('ARDOP peer dial → modem_ardop_b2f_exchange with intent=p2p (freqHz threaded, no digi path)', async () => {
+    routeInvoke();
+    await connectFor(
+      { sessionType: 'p2p', protocol: 'ardop-hf' },
+      { target: 'N0CALL', freqHz: 7_105_000 },
+    );
+    expect(invokeArgs('modem_ardop_connect')).toEqual({ target: 'N0CALL', freqHz: 7_105_000 });
+    expect(invokeArgs('modem_ardop_b2f_exchange')).toMatchObject({
+      target: 'N0CALL',
+      intent: 'p2p',
+      transportKind: 'ardop',
+    });
+    expect(recordCalls()).toHaveLength(0);
+  });
+
+  it('telnet peer dial → telnet_p2p_connect with the endpoint host/port (NOT cms_connect)', async () => {
+    routeInvoke();
+    await connectFor(
+      { sessionType: 'p2p', protocol: 'telnet' },
+      { target: 'W1AW', host: '10.0.0.5', port: 8774, locator: 'FN31pr' },
+    );
+    expect(mockInvoke).toHaveBeenCalledWith('telnet_p2p_connect', {
+      req: {
+        host: '10.0.0.5',
+        port: 8774,
+        peer_callsign: 'W1AW',
+        my_callsign: '',
+        locator: 'FN31pr',
+      },
+    });
+    // The CMS-fallback bug this task removes: a p2p telnet dial must NEVER
+    // reach cms_connect.
+    expect(mockInvoke).not.toHaveBeenCalledWith('cms_connect');
+  });
+
+  it('telnet peer dial without an endpoint host/port throws (no silent CMS fallback)', async () => {
+    routeInvoke();
+    await expect(
+      connectFor({ sessionType: 'p2p', protocol: 'telnet' }, { target: 'W1AW' }),
+    ).rejects.toBeInstanceOf(MissingTargetError);
+    expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it('a VARA peer on-air failure still propagates (records nothing via the ribbon)', async () => {
+    routeInvoke({ cmd: 'modem_vara_b2f_exchange', message: 'no answer' });
+    await expect(
+      connectFor({ sessionType: 'p2p', protocol: 'vara-hf' }, { target: 'W7XYZ' }),
+    ).rejects.toThrow('no answer');
+    expect(recordCalls()).toHaveLength(0);
+  });
+});
