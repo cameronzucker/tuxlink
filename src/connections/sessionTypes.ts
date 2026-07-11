@@ -81,6 +81,16 @@ export const SESSION_TYPES: SessionTypeEntry[] = [
     protocols: [
       { ...PKT, built: true },
       { ...TEL, built: true },
+      // tuxlink-c39af wire-walk: P2P ARDOP HF flipped to built:true. The
+      // operator's inbound flow names ARDOP as a P2P listener mode, and the
+      // whole downstream chain is already P2P-aware and intent-agnostic —
+      // computePanelMode returns { kind:'ardop-hf', intent:'p2p' }, AppShell
+      // mounts the shared ArdopRadioPanel for it, ardop_listen threads the
+      // P2p intent, and ardop_answer_observation_sink records only under P2p.
+      // The catalog entry was the one missing hop (radio-only already carries
+      // { ...ARD, built:true }); without it the sidebar could never surface a
+      // selectable "P2P · ARDOP HF" row and the built listener was unreachable.
+      { ...ARD, built: true },
       // tuxlink-kb3s: P2P VARA HF/FM flipped to built:true. The Phase 2
       // surface (TCP open/close + bandwidth config, no transmit) is the
       // same panel rendered for CMS VARA — VaraRadioPanel + useVaraConfig

@@ -142,10 +142,38 @@ pub fn connect_and_exchange<F>(
 where
     F: Fn(&[Proposal], &[PendingMessage]) -> Result<Vec<Answer>, ExchangeError>,
 {
-    let _ = peer_callsign; // PR 1 doesn't use this; PR 2 listener-side will.
-
     progress(&format!("Connecting to {host}:{port} (P2P-Telnet)…"));
     let stream = connect_stream(host, port)?;
+    exchange_over_stream(
+        stream,
+        peer_callsign,
+        peer_password,
+        config,
+        outbound,
+        progress,
+        wire_log,
+        decide,
+    )
+}
+
+/// Shared login + B2F exchange over an already-connected [`TcpStream`].
+/// [`connect_and_exchange`] delegates here after establishing the connection.
+#[allow(clippy::too_many_arguments)]
+fn exchange_over_stream<F>(
+    stream: TcpStream,
+    peer_callsign: &str,
+    peer_password: Option<&str>,
+    config: &ExchangeConfig,
+    outbound: Vec<OutboundMessage>,
+    progress: &dyn Fn(&str),
+    wire_log: &dyn Fn(&str),
+    decide: F,
+) -> Result<ExchangeResult, P2pTelnetError>
+where
+    F: Fn(&[Proposal], &[PendingMessage]) -> Result<Vec<Answer>, ExchangeError>,
+{
+    let _ = peer_callsign; // PR 1 doesn't use this; PR 2 listener-side will.
+
     progress("TCP connection open. Running login…");
 
     let shared: Shared = Arc::new(Mutex::new(Box::new(stream)));

@@ -13,6 +13,7 @@
 pub mod aprs;
 pub mod auth_taxonomy;
 pub mod ax25;
+pub mod callsign;
 pub mod b2f_events;
 pub mod cms_account;
 pub mod credentials;

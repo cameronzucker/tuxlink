@@ -1025,6 +1025,81 @@ pub fn run() {
                         ),
                     )));
 
+                    // P2P inbound auto-create rate limiter (contacts-superset
+                    // pivot: observations land on the CONTACTS store — there is
+                    // no separate peers store or peers.json). The limiter seeds
+                    // its thresholds from `config.p2p_limits` (absent →
+                    // P2pLimitsConfig::default()); its quarantine counter is
+                    // in-memory only, never persisted.
+                    app.manage(std::sync::Arc::new(std::sync::Mutex::new(
+                        crate::contacts::limiter::InboundCreateLimiter::new(
+                            crate::config::read_config()
+                                .map(|c| c.p2p_limits)
+                                .unwrap_or_default(),
+                        ),
+                    )));
+
+                    // Install the process-global observation sink, immediately
+                    // after the contacts store + limiter are managed so every
+                    // record site can resolve it. The sink captures the managed
+                    // store + limiter and routes each concluded observation
+                    // through `record_contact_observation` (classify →
+                    // inbound-create rate limit → store apply → evicted-endpoint
+                    // keyring cascade), emitting `contacts:changed` only on a
+                    // real roster write (the `peers:changed` event died with the
+                    // peers store). Sites are no-ops until this runs (unit
+                    // tests, headless tools). The favorites bridge [R5-7] rides
+                    // inside this closure — the ONE bridge from a concluded
+                    // outbound P2P observation into the favorites/Recents log.
+                    {
+                        let store = app
+                            .state::<std::sync::Arc<std::sync::Mutex<crate::contacts::store::ContactsStore>>>()
+                            .inner()
+                            .clone();
+                        let limiter = app
+                            .state::<std::sync::Arc<std::sync::Mutex<crate::contacts::limiter::InboundCreateLimiter>>>()
+                            .inner()
+                            .clone();
+                        let favorites = app
+                            .state::<std::sync::Arc<std::sync::Mutex<crate::favorites::store::FavoritesStore>>>()
+                            .inner()
+                            .clone();
+                        let emit_handle = app.handle().clone();
+                        // R3-F5: install the SAME managed limiter as a second
+                        // process-global BEFORE the sink closure moves `limiter`,
+                        // so the allowlist-reject sites (telnet handle_one_session,
+                        // the VARA/ARDOP/packet listener gates) — which take no
+                        // AppHandle and whose NoRecord rejects never reach the
+                        // limiter through the sink — can still drive the
+                        // spoofing-loop quarantine counter via record_inbound_reject.
+                        crate::contacts::observation::install_inbound_limiter(limiter.clone());
+                        crate::contacts::observation::install_observation_sink(std::sync::Arc::new(
+                            move |obs: crate::contacts::observation::PeerObservation| {
+                                // [R5-7] Bridge FIRST (borrows obs), then move obs
+                                // into record_contact_observation. Runs
+                                // unconditionally for every observation —
+                                // bridge_to_favorites itself filters to outbound
+                                // Ok/Fail conclusions, so an inbound or NoRecord
+                                // observation is a no-op here.
+                                crate::contacts::observation::bridge_to_favorites(&favorites, &obs);
+                                let effect =
+                                    crate::contacts::observation::record_contact_observation(
+                                        &store, &limiter, obs,
+                                    );
+                                if !matches!(
+                                    effect,
+                                    crate::contacts::store::ApplyEffect::NoRecord
+                                ) {
+                                    use tauri::Emitter;
+                                    let _ = emit_handle.emit(
+                                        crate::contacts::commands::CONTACTS_CHANGED_EVENT,
+                                        (),
+                                    );
+                                }
+                            },
+                        ));
+                    }
+
                     // forms sequence counters (tuxlink-2tom / G12-C): per-form
                     // serial numbers for SeqInc forms. `SeqCounterStore::open` is
                     // INFALLIBLE (degrade-to-empty on read error) like the stores
@@ -1537,8 +1612,12 @@ pub fn run() {
                         // through the polite offline cache; prediction/solar are
                         // offline compute. The prediction port injects the
                         // operator's OWN tx_grid from config (never agent-supplied).
+                        // find_stations is an ungated public read; find_peers gates
+                        // the private peer roster behind the SAME shared guard the
+                        // operator arms/disarms (spec R2-S5).
                         stations: std::sync::Arc::new(crate::mcp_ports::MonolithStationPort::new(
                             h.clone(),
+                            guard.clone(),
                         )),
                         prediction: std::sync::Arc::new(
                             crate::mcp_ports::MonolithPredictionPort::new(h.clone()),
@@ -1633,7 +1712,7 @@ pub fn run() {
                     abort: std::sync::Arc::new(crate::mcp_ports::MonolithAbortPort::new(h_elmer.clone())),
                     write: std::sync::Arc::new(crate::mcp_ports::MonolithWritePort::new(h_elmer.clone(), guard_elmer.clone())),
                     compose: std::sync::Arc::new(crate::mcp_ports::MonolithComposePort::new(h_elmer.clone())),
-                    stations: std::sync::Arc::new(crate::mcp_ports::MonolithStationPort::new(h_elmer.clone())),
+                    stations: std::sync::Arc::new(crate::mcp_ports::MonolithStationPort::new(h_elmer.clone(), guard_elmer.clone())),
                     prediction: std::sync::Arc::new(crate::mcp_ports::MonolithPredictionPort::new(h_elmer.clone())),
                     provision: std::sync::Arc::new(crate::mcp_ports::MonolithProvisionPort::new(h_elmer.clone())),
                 });
@@ -2220,6 +2299,15 @@ pub fn run() {
             crate::contacts::commands::contacts_connection_record,
             // tuxlink-s1o1: recent gateways for Winlink map layer pin rendering.
             crate::contacts::commands::contacts_recent_gateways,
+            // contacts-superset pivot (Task T-B, spec §AMENDMENT): the tier
+            // promote + contact-endpoint keyring commands + the capability
+            // bits. `contact_delete` above cascades endpoint keyring secrets
+            // and back-linked favorites; observation writes emit
+            // `contacts:changed` from the sink installed in .setup().
+            crate::contacts::commands::contact_confirm,
+            crate::contacts::commands::contact_endpoint_password_set,
+            crate::contacts::commands::contact_endpoint_password_clear,
+            crate::contacts::commands::p2p_capabilities,
             // favorites (tuxlink-egmp, Task B2): per-radio-mode Favorites/Recents
             // CRUD + the honest connection record, over the managed
             // `Arc<Mutex<FavoritesStore>>`. `favorite_upsert` MERGES only

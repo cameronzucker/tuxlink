@@ -32,6 +32,13 @@ describe('session-type catalog', () => {
     expect(protos.find((p) => p.id === 'vara-hf')?.built).toBe(true);
     expect(protos.find((p) => p.id === 'vara-fm')?.built).toBe(true);
   });
+  it('p2p offers a built ARDOP HF row (wire-walk: the inbound flow names ARDOP)', () => {
+    // tuxlink-c39af: the P2P ARDOP listener/answer/dial backend is complete
+    // and P2P-intent-aware; this catalog entry is the hop that makes the
+    // sidebar surface a selectable "P2P · ARDOP HF" row. Regression-pin it so
+    // the built listener never becomes unreachable again.
+    expect(isBuilt({ sessionType: 'p2p', protocol: 'ardop-hf' })).toBe(true);
+  });
   it('isBuilt is false for any protocol under an unbuilt intent (radio-only)', () => {
     const key: ConnectionKey = { sessionType: 'radio-only', protocol: 'packet' };
     expect(isBuilt(key)).toBe(false);

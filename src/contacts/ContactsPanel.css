@@ -792,3 +792,110 @@
   background: var(--error);
   border-color: var(--error);
 }
+
+/* ---- Recent section (auto-observed, Unconfirmed-tier contacts) — T-F ---- */
+.contacts-recent {
+  margin-top: 4px;
+}
+
+/* Recent rows override the identity-row grid with a flex layout (main body +
+   Add + delete). min-width:0 on the text column keeps the WebKitGTK flex from
+   overflowing (house pitfall). */
+.contacts-row--recent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.contacts-recent-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px 8px;
+  padding: 4px 0;
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.contacts-recent-grid {
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.contacts-recent-status {
+  flex-basis: 100%;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contacts-recent-delete {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-faint);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.contacts-recent-delete:hover {
+  color: var(--bg);
+  background: var(--danger, #c0554e);
+  border-color: var(--danger, #c0554e);
+}
+
+/* ---- contact-detail reachability block (T-F Part 2) ---- */
+.contact-reach-card {
+  margin-bottom: 18px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.contact-reach-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  border-top: 1px solid var(--border);
+}
+
+.contact-reach-row:first-of-type {
+  border-top: none;
+}
+
+.contact-reach-info {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.contact-reach-primary {
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contact-reach-sub {
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

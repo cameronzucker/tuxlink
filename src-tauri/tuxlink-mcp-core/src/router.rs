@@ -24,7 +24,7 @@ use crate::content;
 use crate::ports::{
     ArdopWriteDto, ComposeDraftDto, EgressPortError, GribRequestDto, PacketWriteDto, PortError,
     PredictRequestDto, QsyCandidateDto, SearchQueryDto, SendFormDto, SessionIntentDto,
-    StationFilterDto, VaraWriteDto, WritePortError,
+    StationFilterDto, VaraEngineDto, VaraWriteDto, WritePortError,
 };
 use crate::{server_info_view, McpState};
 
@@ -499,6 +499,15 @@ impl TuxlinkMcp {
     }
 
     #[tool(
+        name = "find_peers",
+        description = "List the stations this operator talks to directly (contacts with P2P reachability: exact callsign, tier, RF channels). Telnet endpoint addresses are never included — the agent dials radio channels only. Requires the egress arm — the roster is the operator's private station data, not public directory data. Read-only; does not transmit."
+    )]
+    pub async fn find_peers(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self.state.stations.find_peers().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
         name = "predict_path",
         description = "Predict HF path reliability/SNR/MUFday by UTC hour from your station to a target grid across the given dials. Offline VOACAP. Read-only."
     )]
@@ -676,7 +685,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "vara_b2f_exchange",
-        description = "Run a VARA B2F message exchange with a target for the given routing intent (cms/radio-only/post-office/mesh/p2p; defaults to cms). Optional freq_hz (audio-CENTER frequency, Winlink catalog convention — converted to the sideband dial internally on VARA HF; do NOT pre-subtract) / qsy_candidates pre-tune + QSY-walk the dial (VARA connects + tunes + exchanges in one call). EGRESS (keys the transmitter): requires armed send-authority and an un-tainted session; denied otherwise."
+        description = "Run a VARA B2F message exchange with a target for the given routing intent (cms/radio-only/post-office/mesh/p2p; defaults to cms). Optional freq_hz (audio-CENTER frequency, Winlink catalog convention — converted to the sideband dial internally on VARA HF; do NOT pre-subtract) / qsy_candidates pre-tune + QSY-walk the dial (VARA connects + tunes + exchanges in one call). Optional engine (vara-hf default, vara-fm for FM peers) selects which VARA engine dials — take it from the target peer channel's transport field. EGRESS (keys the transmitter): requires armed send-authority and an un-tainted session; denied otherwise."
     )]
     pub async fn vara_b2f_exchange(
         &self,
@@ -687,10 +696,11 @@ impl TuxlinkMcp {
             intent,
             freq_hz,
             qsy_candidates,
+            engine,
         }) = params;
         self.state
             .egress
-            .vara_b2f_exchange(target, intent, freq_hz, qsy_candidates)
+            .vara_b2f_exchange(target, intent, freq_hz, qsy_candidates, engine)
             .await
             .map_err(egress_err)?;
         Ok(CallToolResult::success(vec![ContentBlock::json("ok")?]))
@@ -698,16 +708,16 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "vara_open_session",
-        description = "Open the VARA HF session: connect the TCP transport to the local VARA engine and register the station callsign (MYCALL). Pre-air by itself (no RF), but it stands up a transmit-capable surface: requires armed send-authority and an un-tainted session; denied otherwise. Required before vara_b2f_exchange; close with vara_stop_session."
+        description = "Open the VARA session: connect the TCP transport to the local VARA engine and register the station callsign (MYCALL). Optional engine (vara-hf default, vara-fm for FM peers) selects which VARA engine to open — take it from the target peer channel's transport field. Pre-air by itself (no RF), but it stands up a transmit-capable surface: requires armed send-authority and an un-tainted session; denied otherwise. Required before vara_b2f_exchange; close with vara_stop_session."
     )]
     pub async fn vara_open_session(
         &self,
         params: Parameters<VaraOpenSessionParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let Parameters(VaraOpenSessionParams { intent }) = params;
+        let Parameters(VaraOpenSessionParams { intent, engine }) = params;
         self.state
             .egress
-            .vara_open_session(intent)
+            .vara_open_session(intent, engine)
             .await
             .map_err(egress_err)?;
         Ok(CallToolResult::success(vec![ContentBlock::json("ok")?]))
@@ -1168,6 +1178,10 @@ pub struct VaraExchangeParams {
     /// overrides `target`/`freq_hz` with a frequency walk.
     #[serde(default)]
     pub qsy_candidates: Option<Vec<QsyCandidateDto>>,
+    /// Which VARA engine the target channel uses (`vara-hf` default, `vara-fm`
+    /// for FM peers) — take it from the peer channel's `transport` field.
+    #[serde(default)]
+    pub engine: Option<VaraEngineDto>,
 }
 
 /// `{ "intent": "cms" }` — input for `vara_open_session` (tuxlink-cgna5).
@@ -1176,6 +1190,10 @@ pub struct VaraOpenSessionParams {
     /// The routing pool for the session; defaults to `cms` when omitted.
     #[serde(default)]
     pub intent: SessionIntentDto,
+    /// Which VARA engine the target channel uses (`vara-hf` default, `vara-fm`
+    /// for FM peers) — take it from the peer channel's `transport` field.
+    #[serde(default)]
+    pub engine: Option<VaraEngineDto>,
 }
 
 /// `{ "call": "W1AW-5", "path": ["WIDE1-1"] }` — input for `packet_connect`.
@@ -2118,6 +2136,7 @@ mod tests {
             intent: SessionIntentDto::Cms,
             freq_hz: None,
             qsy_candidates: None,
+            engine: None,
         }))
         .await
         .expect("fresh arm after clear_taint must allow");
@@ -2136,6 +2155,7 @@ mod tests {
         let err = h
             .vara_open_session(Parameters(VaraOpenSessionParams {
                 intent: SessionIntentDto::Cms,
+                engine: None,
             }))
             .await
             .expect_err("unarmed vara_open_session must deny");
@@ -2148,6 +2168,7 @@ mod tests {
         h.state.guard.arm(30);
         h.vara_open_session(Parameters(VaraOpenSessionParams {
             intent: SessionIntentDto::Cms,
+            engine: None,
         }))
         .await
         .expect("armed vara_open_session must run");

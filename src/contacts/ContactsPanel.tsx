@@ -46,6 +46,15 @@ import { ContactEditor, emptyContact } from './ContactEditor';
 import { openComposeTo } from './composeTo';
 import { ConnectionRecord } from '../favorites/ConnectionRecord';
 import { useContactConnectionRecord } from './useContactConnectionRecord';
+import { connectPeerChannel, connectPeerEndpoint, radioModeForPeerTransport } from '../peers/connectPeer';
+import {
+  channelStatusLine,
+  channelSummary,
+  deriveRecentStatus,
+  endpointStatusLine,
+  recentStatusLine,
+} from '../peers/recentStatus';
+import type { Channel as ReachChannel, Endpoint as ReachEndpoint, Provenance } from './types';
 
 /// Query key for the suggest-from-history rows. Distinct from the contacts file
 /// key (`['contacts']`) so a Save can re-derive suggestions without forcing a
@@ -65,7 +74,8 @@ type EditorState = { kind: 'closed' } | { kind: 'new'; seed: Contact } | { kind:
 
 export function ContactsPanel() {
   const qc = useQueryClient();
-  const { contacts, groups, upsertContact, deleteContact, upsertGroup, deleteGroup } = useContacts();
+  const { contacts, groups, upsertContact, deleteContact, confirmContact, upsertGroup, deleteGroup } =
+    useContacts();
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<SortKey>('last-heard');
   const [selection, setSelection] = useState<Selection>({ kind: 'none' });
@@ -81,18 +91,43 @@ export function ContactsPanel() {
   });
   const suggestions = suggestionsQuery.data ?? [];
 
+  // Operator grid for a telnet-endpoint Connect's B2F locator (best-effort;
+  // empty means the dial simply carries no locator). Mirrors StationFinderPanel.
+  const gridQuery = useQuery({
+    queryKey: ['config', 'grid'],
+    queryFn: () => invoke<{ grid: string | null }>('config_read'),
+  });
+  const operatorGrid = gridQuery.data?.grid ?? '';
+
   const q = query.trim().toLowerCase();
 
+  // The curated address book (`Confirmed`, plus any forward-compat tier) vs the
+  // auto-observed "Recent" tier (`Unconfirmed`). The tree renders ONLY curated
+  // contacts; the Recent section (spec §AMENDMENT pt. 7) renders the unconfirmed
+  // ones below it, so an auto-created record never silently pollutes the roster.
+  const curatedContacts = useMemo(
+    () => contacts.filter((c) => (c.tier ?? 'confirmed') !== 'unconfirmed'),
+    [contacts],
+  );
+  const recentContacts = useMemo(
+    () =>
+      contacts
+        .filter((c) => (c.tier ?? 'confirmed') === 'unconfirmed')
+        .filter((c) => recentMatchesQuery(c, q))
+        .sort((a, b) => recentRecency(b) - recentRecency(a)),
+    [contacts, q],
+  );
+
   const tree = useMemo(
-    () => buildContactTree({ contacts, groups, suggestions, query: q, sort }),
-    [contacts, groups, suggestions, q, sort],
+    () => buildContactTree({ contacts: curatedContacts, groups, suggestions, query: q, sort }),
+    [curatedContacts, groups, suggestions, q, sort],
   );
 
   // Under a query, groups containing a match auto-expand (overrides manual
   // collapse). With no query, manual collapse state governs.
   const autoExpand = useMemo(
-    () => groupsMatchingQuery({ contacts, groups, suggestions, query: q, sort }),
-    [contacts, groups, suggestions, q, sort],
+    () => groupsMatchingQuery({ contacts: curatedContacts, groups, suggestions, query: q, sort }),
+    [curatedContacts, groups, suggestions, q, sort],
   );
 
   const isExpanded = (groupId: string): boolean =>
@@ -130,6 +165,27 @@ export function ContactsPanel() {
     // create a DUPLICATE, since each empty id gets a fresh uuid).
     await upsertContact({ ...emptyContact(callsign), name: callsign });
     await qc.invalidateQueries({ queryKey: SUGGESTIONS_QUERY_KEY });
+  };
+
+  // ---- Recent (unconfirmed-tier) row actions ----
+  // Promote = one-click "+ Add" (spec §AMENDMENT pt. 7): flip tier via
+  // contact_confirm so the row moves into the curated list. CURATION, not
+  // identity authentication.
+  const promoteContact = async (id: string) => {
+    await confirmContact(id);
+  };
+  // Delete an auto-observed record (cascades its keyring endpoints backend-side).
+  const deleteRecent = async (id: string) => {
+    await deleteContact(id);
+    if (selection.kind === 'contact' && selection.id === id) setSelection({ kind: 'none' });
+  };
+  // A Recent row IS a real Contact (has an id) → selectable into the detail
+  // pane exactly like a curated row. `selectedContact` resolves it from the
+  // full contacts list, so its ContactDetail (reachability + promote) shows.
+  const selectRecent = (id: string) => {
+    setSelected(new Set());
+    setSelection({ kind: 'contact', id });
+    setEditor({ kind: 'closed' });
   };
 
   // ---- multi-select (Ctrl/Shift) over contact rows ----
@@ -287,6 +343,31 @@ export function ContactsPanel() {
               </ul>
             )}
           </section>
+
+          {/* RECENT — auto-observed (unconfirmed-tier) stations, below the
+              curated list. Vocabulary shared with Favorites' Recent tab. Each
+              row makes its OWN honest RF claim (Heard vs dialed-not-reached);
+              the section makes none. Empty ⇒ hidden (no empty-state chrome). */}
+          {recentContacts.length > 0 && (
+            <section className="contacts-recent" data-testid="contacts-recent">
+              <div className="contacts-ungrouped-head" data-testid="contacts-recent-head">
+                <span className="contacts-ungrouped-label">Recent</span>
+                <span className="contacts-ungrouped-count">{recentContacts.length}</span>
+              </div>
+              <ul className="contacts-rows">
+                {recentContacts.map((c) => (
+                  <RecentRowView
+                    key={c.id}
+                    contact={c}
+                    selected={selection.kind === 'contact' && selection.id === c.id}
+                    onSelect={() => selectRecent(c.id)}
+                    onPromote={() => void promoteContact(c.id)}
+                    onDelete={() => void deleteRecent(c.id)}
+                  />
+                ))}
+              </ul>
+            </section>
+          )}
         </div>
 
         {selected.size > 0 && (
@@ -307,8 +388,14 @@ export function ContactsPanel() {
           <ContactDetail
             contact={selectedContact}
             groups={groups}
+            operatorGrid={operatorGrid}
             onNewMessage={() => void openComposeTo(selectedContact.callsign)}
             onEdit={() => setEditor({ kind: 'edit', contact: selectedContact })}
+            onPromote={
+              (selectedContact.tier ?? 'confirmed') === 'unconfirmed'
+                ? () => void promoteContact(selectedContact.id)
+                : undefined
+            }
           />
         ) : selectedGroup ? (
           <GroupManagement
@@ -537,6 +624,219 @@ function OutlineRowView({
   );
 }
 
+// ===========================================================================
+// Recent section (auto-observed, Unconfirmed-tier contacts)
+// ===========================================================================
+
+/** Most-recent ACTIVITY instant (ms) across a contact's channels + endpoints —
+ *  `last_seen` (ok OR fail), since Recent orders by recency of contact
+ *  regardless of outcome. Falls back to `updated_at`. */
+function recentRecency(c: Contact): number {
+  const times: number[] = [];
+  for (const ch of c.channels ?? []) {
+    const t = Date.parse(ch.last_seen);
+    if (!Number.isNaN(t)) times.push(t);
+  }
+  for (const ep of c.endpoints ?? []) {
+    const t = Date.parse(ep.last_seen);
+    if (!Number.isNaN(t)) times.push(t);
+  }
+  if (times.length > 0) return Math.max(...times);
+  const u = Date.parse(c.updated_at);
+  return Number.isNaN(u) ? 0 : u;
+}
+
+/** Recent-row search: matches callsign or grid (unconfirmed rows are usually
+ *  nameless). Empty query matches all. */
+function recentMatchesQuery(c: Contact, q: string): boolean {
+  if (!q) return true;
+  const hay = [c.callsign, c.grid?.value].filter(Boolean).join(' ').toLowerCase();
+  return hay.includes(q);
+}
+
+/** Provenance labels for endpoint rows. CURATION vocabulary — "operator-added"
+ *  vs "observed"; NEVER "verified" (which would imply identity authentication,
+ *  spec §AMENDMENT pt. 3). */
+const PROVENANCE_LABEL: Record<Provenance, string> = {
+  operator: 'operator-added',
+  'observed-incoming': 'observed',
+  unknown: 'unknown',
+};
+
+/** A Recent (Unconfirmed) row: callsign · optional grid · honest per-row status
+ *  (Heard vs dialed-not-reached) + one-click "+ Add" (promote) and delete. The
+ *  row body selects the contact into the detail pane. */
+function RecentRowView({
+  contact,
+  selected,
+  onSelect,
+  onPromote,
+  onDelete,
+}: {
+  contact: Contact;
+  selected: boolean;
+  onSelect: () => void;
+  onPromote: () => void;
+  onDelete: () => void;
+}) {
+  const statusLine = recentStatusLine(deriveRecentStatus(contact));
+  return (
+    <li className="contacts-row-li">
+      <div className={`contacts-row contacts-row--recent${selected ? ' contacts-row--selected' : ''}`}>
+        <button
+          type="button"
+          className="contacts-recent-main"
+          data-testid={`recent-row-${contact.id}`}
+          onClick={onSelect}
+        >
+          <span className="contacts-row-callsign">{contact.callsign}</span>
+          {contact.grid?.value && <span className="contacts-recent-grid">{contact.grid.value}</span>}
+          {statusLine && (
+            <span className="contacts-recent-status" data-testid={`recent-status-${contact.id}`}>
+              {statusLine}
+            </span>
+          )}
+        </button>
+        <button
+          type="button"
+          className="contacts-row-save"
+          data-testid={`recent-add-${contact.id}`}
+          title="Add to contacts"
+          onClick={onPromote}
+        >
+          + Add
+        </button>
+        <button
+          type="button"
+          className="contacts-recent-delete"
+          data-testid={`recent-delete-${contact.id}`}
+          aria-label="Delete"
+          title="Delete"
+          onClick={onDelete}
+        >
+          ×
+        </button>
+      </div>
+    </li>
+  );
+}
+
+// ===========================================================================
+// Reachability block (contact detail, Task T-F Part 2)
+// ===========================================================================
+
+/** Kebab-case bandwidth → display text (empty when absent). */
+function bandwidthText(bw: ReachChannel['bandwidth']): string {
+  if (!bw) return '';
+  if (bw.kind === 'hz') return `${bw.hz} Hz`;
+  if (bw.kind === 'wide') return 'wide';
+  if (bw.kind === 'narrow') return 'narrow';
+  return '';
+}
+
+/** One RF channel row: transport · freq · target callsign, via/bandwidth/honest
+ *  status, and a Connect that dispatches the Task-23a p2p seam (never a
+ *  reimplemented dial, never a CMS fallback). */
+function ReachChannelRow({
+  contact,
+  channel,
+  index,
+}: {
+  contact: Contact;
+  channel: ReachChannel;
+  index: number;
+}) {
+  const protocol = radioModeForPeerTransport(channel.transport);
+  const sub = [
+    channel.via.length > 0 ? `via ${channel.via.join(', ')}` : '',
+    bandwidthText(channel.bandwidth),
+    channelStatusLine(channel),
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  return (
+    <div className="contact-reach-row" data-testid={`reach-channel-${contact.id}-${index}`}>
+      <div className="contact-reach-info">
+        <div className="contact-reach-primary">
+          {channelSummary(channel)} · {channel.target_callsign}
+        </div>
+        <div className="contact-reach-sub" data-testid={`reach-channel-status-${contact.id}-${index}`}>
+          {sub}
+        </div>
+      </div>
+      <button
+        type="button"
+        className="contact-detail-btn"
+        data-testid={`reach-channel-connect-${contact.id}-${index}`}
+        disabled={!protocol}
+        title={
+          !protocol ? 'No tuxlink modem for this transport' : `Connect to ${channel.target_callsign}`
+        }
+        onClick={() => protocol && connectPeerChannel(channel)}
+      >
+        Connect →
+      </button>
+    </div>
+  );
+}
+
+/** One telnet endpoint row. host:port IS shown — this is the OPERATOR's UI
+ *  (only the AGENT surface must never see the address). Connect dispatches the
+ *  operator telnet p2p dial (the click is RADIO-1 consent). */
+function ReachEndpointRow({
+  contact,
+  endpoint,
+  operatorGrid,
+}: {
+  contact: Contact;
+  endpoint: ReachEndpoint;
+  operatorGrid: string;
+}) {
+  const sub = [PROVENANCE_LABEL[endpoint.provenance], endpointStatusLine(endpoint)]
+    .filter(Boolean)
+    .join(' · ');
+  return (
+    <div className="contact-reach-row" data-testid={`reach-endpoint-${endpoint.id}`}>
+      <div className="contact-reach-info">
+        <div className="contact-reach-primary">
+          telnet · {endpoint.host}:{endpoint.port}
+        </div>
+        <div className="contact-reach-sub" data-testid={`reach-endpoint-status-${endpoint.id}`}>
+          {sub}
+        </div>
+      </div>
+      <button
+        type="button"
+        className="contact-detail-btn"
+        data-testid={`reach-endpoint-connect-${endpoint.id}`}
+        title={`Connect to ${contact.callsign} over telnet`}
+        onClick={() => connectPeerEndpoint(contact.callsign, endpoint, operatorGrid, contact.id)}
+      >
+        Connect →
+      </button>
+    </div>
+  );
+}
+
+/** The reachability block: RF channel rows + telnet endpoint rows. Hidden when
+ *  the contact carries neither (spec: heard stations appear when they happen). */
+function ReachabilityBlock({ contact, operatorGrid }: { contact: Contact; operatorGrid: string }) {
+  const channels = contact.channels ?? [];
+  const endpoints = contact.endpoints ?? [];
+  if (channels.length === 0 && endpoints.length === 0) return null;
+  return (
+    <section className="contact-reach-card" data-testid="contact-reachability">
+      <h3 className="contact-card-label">Reachability</h3>
+      {channels.map((ch, i) => (
+        <ReachChannelRow key={`ch-${i}`} contact={contact} channel={ch} index={i} />
+      ))}
+      {endpoints.map((ep) => (
+        <ReachEndpointRow key={ep.id} contact={contact} endpoint={ep} operatorGrid={operatorGrid} />
+      ))}
+    </section>
+  );
+}
+
 function BulkBar({
   count,
   groups,
@@ -666,13 +966,19 @@ function BulkBar({
 function ContactDetail({
   contact,
   groups,
+  operatorGrid,
   onNewMessage,
   onEdit,
+  onPromote,
 }: {
   contact: Contact;
   groups: Group[];
+  operatorGrid: string;
   onNewMessage: () => void;
   onEdit: () => void;
+  /// Present ONLY for an Unconfirmed contact — the one-click promote ("+ Add
+  /// to contacts"). Absent ⇒ the contact is already curated.
+  onPromote?: () => void;
 }) {
   const named = hasDisplayName(contact);
   const { attempts, hint } = useContactConnectionRecord(contact.callsign);
@@ -708,6 +1014,10 @@ function ContactDetail({
         <ConnectionRecord attempts={attempts} hint={hint} />
       </section>
 
+      {/* Reachability (Task T-F Part 2): live RF/telnet rows with Connect —
+          hidden when the contact has neither. */}
+      <ReachabilityBlock contact={contact} operatorGrid={operatorGrid} />
+
       <dl className="contact-detail-fields">
         {contact.tactical && (
           <>
@@ -736,9 +1046,22 @@ function ContactDetail({
       </dl>
 
       <div className="contact-detail-actions">
+        {onPromote && (
+          <button
+            type="button"
+            className="contact-detail-btn contact-detail-btn-primary"
+            data-testid="contact-promote"
+            title="Add this recent station to your contacts"
+            onClick={onPromote}
+          >
+            + Add to contacts
+          </button>
+        )}
+        {/* One primary per detail: promote (when present) IS the tier action,
+            so New message demotes to a plain button on unconfirmed contacts. */}
         <button
           type="button"
-          className="contact-detail-btn contact-detail-btn-primary"
+          className={`contact-detail-btn${onPromote ? '' : ' contact-detail-btn-primary'}`}
           data-testid="contact-new-message"
           onClick={onNewMessage}
         >

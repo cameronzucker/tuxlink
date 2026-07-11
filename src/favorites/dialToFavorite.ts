@@ -18,6 +18,9 @@ export function dialToNewFavorite(dial: FavoriteDial): Favorite {
     transport: dial.transport,
     band: dial.band,
     grid: dial.grid,
+    // [R5-7] carry the P2P roster link through when the dial has one; absent
+    // for ordinary CMS/gateway dials.
+    contact_id: dial.contact_id,
     starred: false,
     created_at: '',
     updated_at: '',

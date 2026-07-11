@@ -14,6 +14,17 @@ const FILTER_MODES: { mode: FilterMode; label: string }[] = [
   { mode: 'packet', label: 'Packet' },
 ];
 
+/// Station-type filter (Task 23, spec §5): a new dimension on the existing
+/// finder, orthogonal to band/mode. Gateway = the RMS-catalog stations this
+/// panel already showed; Peer = the P2P roster (Task 22's usePeers/
+/// aggregatePeers). Both on by default.
+export type StationType = 'gateway' | 'peer';
+
+const STATION_TYPES: { type: StationType; label: string }[] = [
+  { type: 'gateway', label: 'Gateway' },
+  { type: 'peer', label: 'Peer' },
+];
+
 export interface StationFinderControlsProps {
   /** Selected bands — a multi-select FILTER: a station shows only if it has a
    *  channel on one of these bands (∩ enabledModes). Includes 'vhf-uhf' when the
@@ -22,6 +33,14 @@ export interface StationFinderControlsProps {
   onToggleBand: (band: Band) => void;
   enabledModes: Set<FilterMode>;
   onToggleMode: (mode: FilterMode) => void;
+  /** Station-type filter state (Task 23): Gateway / Peer. */
+  enabledTypes: Set<StationType>;
+  onToggleType: (type: StationType) => void;
+  /** Whether the Peer type + its chip render at all — gated on
+   *  `useP2pCapabilities().finder_peers` [R5-8]. `false` HIDES the whole type
+   *  chip cluster (not just the Peer chip): with peers unavailable, showing a
+   *  single-option Gateway toggle would be confusing chrome for no benefit. */
+  showPeerType: boolean;
   utcHour: number;
   localTime: string;
   ssn: number | null;
@@ -166,6 +185,25 @@ export function StationFinderControls(props: StationFinderControlsProps) {
             </button>
           ))}
         </span>
+
+        {/* Station-type filter (Task 23, spec §5): Gateway/Peer. Hidden — not
+            disabled — when the P2P finder_peers capability is off (R5-8). */}
+        {props.showPeerType && (
+          <span className="station-finder__types" data-testid="type-chips">
+            {STATION_TYPES.map(({ type, label }) => (
+              <button
+                key={type}
+                type="button"
+                data-testid={`type-chip-${type}`}
+                className={`station-finder__chip${props.enabledTypes.has(type) ? ' on' : ' off'}`}
+                aria-pressed={props.enabledTypes.has(type)}
+                onClick={() => props.onToggleType(type)}
+              >
+                {label}
+              </button>
+            ))}
+          </span>
+        )}
 
         {/* Search group merged onto the band-bar row (reclaims the old filter
             row); pushed to the right of the bands/modes via margin-left:auto. */}

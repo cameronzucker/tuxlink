@@ -25,6 +25,14 @@ describe('dialToNewFavorite (tuxlink-5016)', () => {
     expect(fav.transport).toBe('CmsSsl');
     expect(fav.band).toBe('internet');
   });
+
+  it('carries contact_id through when present ([R5-7]); absent for an ordinary dial', () => {
+    const withPeer = dialToNewFavorite({ mode: 'vara-hf', gateway: 'N0DAJ', contact_id: 'p1' });
+    expect(withPeer.contact_id).toBe('p1');
+
+    const withoutPeer = dialToNewFavorite({ mode: 'vara-hf', gateway: 'N0DAJ' });
+    expect(withoutPeer.contact_id).toBeUndefined();
+  });
 });
 
 describe('favoriteKey', () => {

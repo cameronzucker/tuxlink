@@ -40,8 +40,10 @@ fn hex_preview(bytes: &[u8]) -> String {
 /// `spawn_blocking` worker; cheap to clone (an `Arc`).
 pub type FrameLogger = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
 
-/// Format a callsign-SSID for a trace line (`N7CPZ` when SSID 0, else `N7CPZ-7`).
-fn fmt_addr(a: &Address) -> String {
+/// Format a callsign-SSID (`N7CPZ` when SSID 0, else `N7CPZ-7`) — the single
+/// source of truth for CALL-SSID rendering wherever an [`Address`] crosses to
+/// a string surface (frame traces, the peers roster's `ObservedPath::Rf.via`).
+pub(crate) fn fmt_addr(a: &Address) -> String {
     if a.ssid == 0 {
         a.call.clone()
     } else {

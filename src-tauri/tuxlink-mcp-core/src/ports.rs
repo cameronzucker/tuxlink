@@ -456,6 +456,18 @@ pub enum StationModeDto {
     RobustPacket,
 }
 
+/// Which VARA engine an agent egress dial should use. Mirrors the monolith's
+/// `TransportKind::VaraHf` / `TransportKind::VaraFm` split (Task 4); `None` at
+/// the call site maps to [`VaraEngineDto::VaraHf`] (backward-compatible with
+/// every existing caller). Take this from the target peer channel's
+/// `transport` field — do not guess.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum VaraEngineDto {
+    VaraHf,
+    VaraFm,
+}
+
 /// A gateway's antenna type, used as an optional prediction parameter. Lowercase
 /// on the wire (`beam` / `dipole` / `vertical`).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
@@ -530,6 +542,55 @@ pub struct StationListDto {
     /// The operator's own 4-char grid used to compute per-gateway distances (provenance).
     /// `None` when unresolved — lets the agent explain why all distances are null.
     pub operator_grid: Option<String>,
+}
+
+/// One curated RF-reachability observation on a peer (spec §2). Structured-only:
+/// callsigns are sanitizer-floored by the impl (bogus tokens dropped); no
+/// free-text crosses.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PeerChannelDto {
+    /// `"packet"` | `"ardop"` | `"vara-hf"` | `"vara-fm"`.
+    pub transport: String,
+    pub target_callsign: String,
+    pub via: Vec<String>,
+    pub freq_hz: Option<u64>,
+    /// `"incoming"` | `"outgoing"`.
+    pub direction: String,
+    pub ok: u32,
+    pub fail: u32,
+    pub last_seen: String,
+}
+
+/// One curated peer-station roster entry — since the contacts-superset pivot
+/// (spec §AMENDMENT), a row is a CONTACT with reachability. A CURATION, not a
+/// DTO mirror [R2-S1]: free text (name, notes, email) is DROPPED on purpose
+/// [R2-S11][R4-9], every callsign is sanitizer-floored by the impl, and
+/// **telnet endpoint data never crosses the agent surface under ANY arm
+/// state** (spec §AMENDMENT pt. 6: the agent cannot dial telnet, so it has no
+/// use for an address).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PeerDto {
+    pub id: String,
+    /// The exact SSID-bearing callsign — the contact's primary identity and
+    /// the wire target of any dial [R3-9].
+    pub callsign: String,
+    /// `"confirmed"` | `"unconfirmed"` | `"unknown"` — CURATION tier, not
+    /// identity authentication (anyone can transmit any callsign).
+    pub tier: String,
+    /// `"incoming"` | `"outgoing"` | `"added"` | `"aprs"` | `"unknown"`.
+    pub origin: String,
+    /// Clamped to the operator's configured broadcast precision [R2-S9].
+    pub grid: Option<String>,
+    pub channels: Vec<PeerChannelDto>,
+    // DROPPED on purpose: name/notes/email free text [R2-S11], and the
+    // telnet endpoints wholesale — host:port is never agent-visible
+    // (spec §AMENDMENT pt. 6).
+}
+
+/// Output of [`StationPort::find_peers`]: the curated peer roster.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PeerListDto {
+    pub peers: Vec<PeerDto>,
 }
 
 /// Agent-supplied request for [`PredictionPort::predict_path`]. Carries NO
@@ -713,10 +774,20 @@ pub trait LogPort: Send + Sync {
 /// Winlink RMS gateway directory lookups. Public directory data, cached. Does
 /// NOT taint (app-owned/public content) and is NOT gated (read-only; never
 /// transmits).
+///
+/// [`StationPort::find_peers`] is the DELIBERATE asymmetry on this trait: unlike
+/// `find_stations` (public directory data, ungated), the peer roster is the
+/// operator's PRIVATE station graph, so its impl gates the whole read behind the
+/// egress arm [R2-S5]. Two methods on one trait with different gating postures is
+/// intentional and required by spec — see the impl's asymmetry note.
 #[async_trait]
 pub trait StationPort: Send + Sync {
     /// List RMS gateways matching `filter`. Read-only; does not taint or gate.
     async fn find_stations(&self, filter: StationFilterDto) -> Result<StationListDto, PortError>;
+    /// List saved P2P peer stations. UNLIKE `find_stations`, this GATES the whole
+    /// read behind the egress arm [R2-S5] (the roster is the operator's private
+    /// social graph, not public directory data). Read-only; never transmits.
+    async fn find_peers(&self) -> Result<PeerListDto, PortError>;
 }
 
 /// Offline HF propagation prediction + space-weather reads. Both methods are
@@ -821,13 +892,17 @@ pub trait EgressPort: Send + Sync {
     /// Run a VARA B2F message exchange with `target` for the given `intent`.
     /// VARA differs from ARDOP: its B2F connects + tunes + exchanges in a single
     /// call, so `freq_hz` / `qsy_candidates` are live here (same pre-tune + QSY
-    /// semantics as [`EgressPort::ardop_connect`]).
+    /// semantics as [`EgressPort::ardop_connect`]). `engine` selects which VARA
+    /// engine the target uses (`None` → [`VaraEngineDto::VaraHf`], the
+    /// backward-compatible default) — take it from the target peer channel's
+    /// `transport` field, never guess.
     async fn vara_b2f_exchange(
         &self,
         target: String,
         intent: SessionIntentDto,
         freq_hz: Option<u64>,
         qsy_candidates: Option<Vec<QsyCandidateDto>>,
+        engine: Option<VaraEngineDto>,
     ) -> Result<(), EgressPortError>;
     /// Open the VARA session: install the TCP transport to the local VARA
     /// engine and register MYCALL (the on-air station ID). PRE-AIR by itself
@@ -836,9 +911,15 @@ pub trait EgressPort: Send + Sync {
     /// `rig_status` posture: an un-armed agent must not be able to open
     /// transmit-capable state). Required before
     /// [`EgressPort::vara_b2f_exchange`]; closed via the ungated
-    /// [`AbortPort::vara_stop_session`]. Pins VARA-HF (parity with the
-    /// exchange tool's pin).
-    async fn vara_open_session(&self, intent: SessionIntentDto) -> Result<(), EgressPortError>;
+    /// [`AbortPort::vara_stop_session`]. `engine` selects which VARA engine to
+    /// open (`None` → [`VaraEngineDto::VaraHf`], parity with the exchange
+    /// tool's default) — take it from the target peer channel's `transport`
+    /// field, never guess.
+    async fn vara_open_session(
+        &self,
+        intent: SessionIntentDto,
+        engine: Option<VaraEngineDto>,
+    ) -> Result<(), EgressPortError>;
     /// Connect an AX.25 packet session to `call` over the optional digipeater
     /// `path`.
     async fn packet_connect(&self, call: String, path: Vec<String>) -> Result<(), EgressPortError>;

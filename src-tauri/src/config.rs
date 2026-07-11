@@ -361,6 +361,18 @@ pub struct Config {
     /// byte-identical to its pre-elmer shape.
     #[serde(default, skip_serializing_if = "ElmerConfig::is_default")]
     pub elmer: ElmerConfig,
+    /// P2P inbound auto-create rate limits (spec §2 caps [R5-9], Task 9).
+    /// `#[serde(default)]` migrates configs that predate this field (absent
+    /// → `P2pLimitsConfig::default()`); the field is now KNOWN, satisfying
+    /// `deny_unknown_fields`. `skip_serializing_if` keeps a default-config
+    /// byte-identical to its pre-`p2p_limits` shape (mirrors the `elmer`
+    /// field's `ElmerConfig::is_default` pattern above), so this addition
+    /// does NOT bump `CONFIG_SCHEMA_VERSION`.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::contacts::limiter::P2pLimitsConfig::is_default"
+    )]
+    pub p2p_limits: crate::contacts::limiter::P2pLimitsConfig,
     /// FT8 Station Intelligence listener settings (tuxlink-b026z.3).
     /// `#[serde(default)]` migrates configs that predate this field (absent →
     /// `Ft8Config::default()`); the field is now KNOWN, satisfying
@@ -1896,6 +1908,57 @@ mod tests {
                 session_type: "cms".into(),
                 protocol: "vara-hf".into()
             })
+        );
+    }
+
+    // Task 9: an old config file (predating `p2p_limits`) has no
+    // `[p2p_limits]` key at all — `#[serde(default)]` migrates it to
+    // `P2pLimitsConfig::default()` (100/hr accepted, 10/min failed) rather
+    // than rejecting the load.
+    #[test]
+    fn p2p_limits_defaults_when_absent_from_config() {
+        let cfg: Config = serde_json::from_str(&config_json(CONFIG_SCHEMA_VERSION, ""))
+            .expect("a config without [p2p_limits] deserializes additively");
+        assert_eq!(
+            cfg.p2p_limits,
+            crate::contacts::limiter::P2pLimitsConfig::default()
+        );
+    }
+
+    // A default (unconfigured) p2p_limits section is omitted from the
+    // serialized config entirely (`skip_serializing_if`), keeping a
+    // no-customization config byte-identical to its pre-`p2p_limits` shape —
+    // mirrors `elmer_config_fully_default_is_default` below.
+    #[test]
+    fn p2p_limits_default_is_omitted_from_serialized_config() {
+        let cfg: Config = serde_json::from_str(&config_json(CONFIG_SCHEMA_VERSION, "")).unwrap();
+        let value = serde_json::to_value(&cfg).unwrap();
+        assert!(
+            !value.as_object().unwrap().contains_key("p2p_limits"),
+            "default p2p_limits must not appear in the serialized config"
+        );
+    }
+
+    // A customized p2p_limits section round-trips through serialize →
+    // deserialize, and IS present in the serialized output once it differs
+    // from the default.
+    #[test]
+    fn p2p_limits_round_trips_when_customized() {
+        let mut cfg: Config =
+            serde_json::from_str(&config_json(CONFIG_SCHEMA_VERSION, "")).unwrap();
+        cfg.p2p_limits = crate::contacts::limiter::P2pLimitsConfig {
+            accepted_per_hour: 250,
+            failed_per_minute: 3,
+        };
+        let s = serde_json::to_string(&cfg).unwrap();
+        assert!(s.contains("p2p_limits"), "a customized section is serialized");
+        let back: Config = serde_json::from_str(&s).unwrap();
+        assert_eq!(
+            back.p2p_limits,
+            crate::contacts::limiter::P2pLimitsConfig {
+                accepted_per_hour: 250,
+                failed_per_minute: 3,
+            }
         );
     }
 

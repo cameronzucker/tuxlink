@@ -52,5 +52,6 @@ pub fn native_test_config() -> Config {
         close_to_tray: true,
         close_prompt_seen: false,
         active_connection: None,
+        p2p_limits: crate::contacts::limiter::P2pLimitsConfig::default(),
     }
 }

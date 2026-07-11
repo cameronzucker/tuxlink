@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, act, screen, fireEvent, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import L from 'leaflet';
 import { gridToLatLon } from '../forms/position/maidenhead';
 import { stationKey } from './useReachabilityMap';
@@ -12,9 +13,24 @@ import type { Station } from './stationModel';
 // tier style, selection emphasis applied in place (no marker churn), the operator
 // pin, and click→onSelect. Render fidelity is grim-verified.
 
-// LeafletMap fetches packs via invoke('basemap_list_packs') (wants {packs}).
+// LeafletMap fetches packs via invoke('basemap_list_packs') (wants {packs}). Task
+// 24 wired StationFinderMap to its own usePeers()/useP2pCapabilities() (the peer
+// circle layer, gated on map_peers) — those call contacts_read/p2p_capabilities
+// (T-E: usePeers re-sourced onto contacts_read; peers_read died with the peers
+// store).
 const invokeMock = vi.hoisted(() =>
-  vi.fn(async (cmd: string) => (cmd === 'basemap_list_packs' ? { packs: [] } : undefined)),
+  vi.fn(async (cmd: string) => {
+    if (cmd === 'basemap_list_packs') return { packs: [] };
+    if (cmd === 'contacts_read') return { schema_version: 2, contacts: [], groups: [] };
+    if (cmd === 'p2p_capabilities') {
+      return {
+        peer_store: false, finder_peers: false, map_peers: false,
+        agent_find_peers: false, vara_engine_split: false,
+        favorites_contact_link: false,
+      };
+    }
+    return undefined;
+  }),
 );
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
 
@@ -55,7 +71,12 @@ afterEach(() => {
 
 /** Render and flush LeafletMap's whenReady (sync) + async pack fetch. */
 async function renderMap(ui: React.ReactElement) {
-  const result = render(ui);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // Use the `wrapper` option so RTL's `rerender` keeps the QueryClientProvider
+  // intact when tests call result.rerender(<StationFinderMap .../>).
+  const result = render(ui, {
+    wrapper: ({ children }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>,
+  });
   await act(async () => {
     await Promise.resolve();
   });
@@ -233,8 +254,11 @@ describe('StationFinderMap viewport persistence (tuxlink-dwzu)', () => {
   it('persists the viewport after the operator pans (debounced)', async () => {
     vi.useFakeTimers();
     try {
+      const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
       render(
-        <StationFinderMap stations={[]} operatorGrid="DM43bp" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
+        <QueryClientProvider client={qc}>
+          <StationFinderMap stations={[]} operatorGrid="DM43bp" tiers={new Map()} selectedKey={null} onSelect={() => {}} />
+        </QueryClientProvider>,
       );
       await act(async () => {
         await Promise.resolve();

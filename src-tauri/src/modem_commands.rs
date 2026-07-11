@@ -1762,6 +1762,7 @@ pub async fn modem_ardop_b2f_exchange(
 /// CONNECT-class failure (the ARQ link never came up — terminal, free the
 /// modem) from a mid-EXCHANGE failure (the link was up — keep the open session
 /// for retry). The caller, [`finish_b2f_exchange`], branches cleanup on it.
+#[derive(Debug)]
 enum ExchangeOutcome {
     /// `connect_arq` + the full B2F exchange completed.
     Completed,
@@ -1861,20 +1862,122 @@ fn run_ardop_connect_b2f_with_transport(
     target: &str,
     intent: SessionIntent,
 ) -> ExchangeOutcome {
-    // ─── ARQ connect FIRST (Codex R1 P1 #1: ARQCALL before any B2F byte) ──
+    // ─── ARQ connect stage — arms the peer-observation guard [R5-2] ──────
+    let obs_guard = match run_ardop_connect_stage(transport, target, intent) {
+        Err(failed) => return failed,
+        Ok(guard) => guard,
+    };
+
+    // ─── Run the B2F exchange over the now-connected data stream ─────────
+    let outcome = match run_b2f_with_transport(app, transport, target, intent) {
+        Ok(()) => {
+            if let Some(g) = &obs_guard {
+                g.set_phase(crate::contacts::observation::ObservationPhase::B2fOk);
+            }
+            ExchangeOutcome::Completed
+        }
+        Err(e) => {
+            if let Some(g) = &obs_guard {
+                g.set_phase(crate::contacts::observation::ObservationPhase::B2fFail);
+            }
+            ExchangeOutcome::ExchangeFailed(e)
+        }
+    };
+    drop(obs_guard);
+    outcome
+}
+
+/// The ARDOP outer dial-site intent gate (Task 14): mirrors the VARA dial gate
+/// (`dial_observation_sink`, Task 13) — only a `SessionIntent::P2p` dial
+/// resolves the global observation sink; Cms/RadioOnly/PostOffice/Mesh dials
+/// never record [spec §3]. Extracted so a unit test can assert the gating
+/// without constructing a transport or an `AppHandle` [CDX-7].
+fn ardop_dial_observation_sink(
+    intent: SessionIntent,
+) -> Option<crate::contacts::observation::ObservationSink> {
+    if intent == SessionIntent::P2p {
+        crate::contacts::observation::observation_sink()
+    } else {
+        None
+    }
+}
+
+/// The ARQ-connect stage of the ARDOP outer record site (Task 14, `[R5-2]`).
+/// Arms the [`crate::contacts::observation::ObservationGuard`] at `DialAttempted`
+/// immediately before `connect_arq` — the actual CONNECT transmission — so
+/// nothing before this point (there is no pre-TX stage on the ARDOP outer
+/// path; `connect_arq` itself is the first and only transmission attempt)
+/// records a phantom fail, per the BINDING AMENDMENTS.
+///
+/// - `connect_arq` fails: the guard is dropped here (fn returns before
+///   `obs_guard` would otherwise survive) and fires at `DialAttempted` →
+///   `Fail` — this IS the `[R5-2]` outer connect-fail site.
+/// - `connect_arq` succeeds: the guard advances to `Connected` and is handed
+///   back to the caller, which carries it through the B2F exchange and
+///   advances it to `B2fOk`/`B2fFail` before dropping it.
+///
+/// Extracted from [`run_ardop_connect_b2f_with_transport`] so a unit test can
+/// drive the REAL `connect_arq` failure path — including the real guard
+/// construction and drop — without needing an `AppHandle` [CDX-7]; the
+/// production fn's B2F stage is the only part that needs `app`, and it never
+/// runs when `connect_arq` fails.
+fn run_ardop_connect_stage(
+    transport: &mut dyn ModemTransport,
+    target: &str,
+    intent: SessionIntent,
+) -> Result<Option<crate::contacts::observation::ObservationGuard>, ExchangeOutcome> {
+    let obs_guard = ardop_dial_observation_sink(intent).map(|sink| {
+        crate::contacts::observation::ObservationGuard::new(
+            sink,
+            crate::contacts::observation::PeerObservation {
+                path: crate::contacts::observation::ObservedPath::Rf {
+                    transport: crate::contacts::reachability::ChannelTransport::Ardop,
+                    via: vec![],
+                    // rig/CAT freq not threaded here; never fabricated [R3-11].
+                    freq_hz: None,
+                    bandwidth: None,
+                },
+                direction: crate::contacts::reachability::Direction::Outgoing,
+                presented_target: target.to_string(),
+                phase: crate::contacts::observation::ObservationPhase::DialAttempted,
+            },
+        )
+    });
+
+    // ─── ARQ connect (Codex R1 P1 #1: ARQCALL before any B2F byte) ────────
     let attempts = connect_attempts_from_config();
     if let Err(e) =
         transport.connect_arq(target, attempts, Some(connect_backstop_deadline(attempts)))
     {
-        return ExchangeOutcome::ConnectFailed(format!(
+        // `obs_guard` drops here (out of scope on return) at `DialAttempted`
+        // → records Fail [R5-2].
+        return Err(ExchangeOutcome::ConnectFailed(format!(
             "ARDOP connect to {target} failed after {attempts} attempts ({e}) — modem stopped"
-        ));
+        )));
     }
+    if let Some(g) = &obs_guard {
+        g.set_phase(crate::contacts::observation::ObservationPhase::Connected);
+    }
+    Ok(obs_guard)
+}
 
-    // ─── Run the B2F exchange over the now-connected data stream ─────────
-    match run_b2f_with_transport(app, transport, target, intent) {
-        Ok(()) => ExchangeOutcome::Completed,
-        Err(e) => ExchangeOutcome::ExchangeFailed(e),
+/// Test-only wrapper around [`run_ardop_connect_stage`] with the exact shape
+/// the record-site test drives: takes the outer `ExchangeOutcome` directly
+/// rather than the `Result<Option<ObservationGuard>, ExchangeOutcome>` the
+/// production caller unwraps, since the connect-fail test never reaches the
+/// B2F stage (which needs an `AppHandle` the test harness cannot build).
+#[cfg(test)]
+fn run_ardop_connect_b2f_for_test(
+    transport: &mut dyn ModemTransport,
+    target: &str,
+    intent: SessionIntent,
+) -> ExchangeOutcome {
+    match run_ardop_connect_stage(transport, target, intent) {
+        Err(failed) => failed,
+        // A connect success has no B2F outcome in this harness (no
+        // `AppHandle`) — the guard fires at `Connected` (classifies Fail) on
+        // drop, which is honest: no B2F ran, so nothing observed it landed.
+        Ok(_guard) => ExchangeOutcome::Completed,
     }
 }
 
@@ -3205,6 +3308,7 @@ mod tests {
         // map "   " to None at the serde layer.
         let cfg = Config {
             elmer: crate::config::ElmerConfig::default(),
+            p2p_limits: crate::contacts::limiter::P2pLimitsConfig::default(),
             ft8: crate::config::Ft8Config::default(),
             schema_version: crate::config::CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
@@ -3881,6 +3985,7 @@ mod tests {
     fn test_config() -> Config {
         Config {
             elmer: crate::config::ElmerConfig::default(),
+            p2p_limits: crate::contacts::limiter::P2pLimitsConfig::default(),
             ft8: crate::config::Ft8Config::default(),
             schema_version: crate::config::CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
@@ -4888,5 +4993,135 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(super::rig_data_mode(&rig), tux_rig::Mode::DataU);
+    }
+
+    // ── Task 14: ARDOP outer connect-fail record site [R5-2] ───────────
+
+    /// A `ModemTransport` whose `connect_arq` always fails. Mirrors
+    /// `StubTransport` — never spawns a real process or opens a real socket.
+    struct FailingConnectTransport;
+
+    impl ModemTransport for FailingConnectTransport {
+        fn init(&mut self, _cfg: &InitConfig) -> Result<(), SessionError> {
+            Ok(())
+        }
+
+        fn connect_arq(
+            &mut self,
+            _target: &str,
+            _repeat: u32,
+            _deadline: Option<Duration>,
+        ) -> Result<ConnectInfo, SessionError> {
+            Err(SessionError::Fault("simulated connect_arq failure".into()))
+        }
+
+        fn disconnect(&mut self, _deadline: Duration) -> Result<(), SessionError> {
+            Ok(())
+        }
+
+        fn data_stream(&mut self) -> std::io::Result<&mut dyn ReadWrite> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                "failing-connect transport has no data stream",
+            ))
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn ardop_connect_fail_records_a_dial_attempt_fail() {
+        // [R5-2] [CDX-7]: drives the REAL `run_ardop_connect_stage` — the
+        // production connect stage `run_ardop_connect_b2f_with_transport`
+        // calls — against a transport whose `connect_arq` genuinely fails, so
+        // the guard-arm + drop-fire is the real code path, not a hand-built
+        // guard. #[serial]: the sink is process-global.
+        let seen: Arc<std::sync::Mutex<Vec<crate::contacts::observation::PeerObservation>>> =
+            Arc::default();
+        {
+            let seen = seen.clone();
+            crate::contacts::observation::install_observation_sink(Arc::new(move |o| {
+                seen.lock().unwrap().push(o)
+            }));
+        }
+        let mut failing = FailingConnectTransport;
+        let out = run_ardop_connect_b2f_for_test(&mut failing, "N0DAJ-7", SessionIntent::P2p);
+        assert!(matches!(out, ExchangeOutcome::ConnectFailed(_)));
+        let obs = seen.lock().unwrap();
+        assert_eq!(obs.len(), 1);
+        assert_eq!(obs[0].presented_target, "N0DAJ-7");
+        assert_eq!(obs[0].direction, crate::contacts::reachability::Direction::Outgoing);
+        assert_eq!(
+            crate::contacts::observation::classify(obs[0].phase),
+            crate::contacts::observation::Classified::Fail
+        );
+        crate::contacts::observation::install_observation_sink(Arc::new(|_| {})); // reset
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn ardop_dial_non_p2p_intents_record_nothing_even_with_sink_installed() {
+        // The production intent gate (`ardop_dial_observation_sink`, used by
+        // `run_ardop_connect_stage`): Cms/RadioOnly/PostOffice dials resolve NO
+        // sink even when the global sink IS installed, so a failed non-P2P
+        // ARDOP dial never touches the peer roster [spec §3].
+        let seen: Arc<std::sync::Mutex<Vec<crate::contacts::observation::PeerObservation>>> =
+            Arc::default();
+        {
+            let seen = seen.clone();
+            crate::contacts::observation::install_observation_sink(Arc::new(move |o| {
+                seen.lock().unwrap().push(o)
+            }));
+        }
+        assert!(ardop_dial_observation_sink(SessionIntent::P2p).is_some());
+        assert!(ardop_dial_observation_sink(SessionIntent::Cms).is_none());
+        assert!(ardop_dial_observation_sink(SessionIntent::RadioOnly).is_none());
+        assert!(ardop_dial_observation_sink(SessionIntent::PostOffice).is_none());
+
+        // Drive the real connect stage with a CMS intent and a failing
+        // connect: nothing records even though the global sink is installed.
+        let mut failing = FailingConnectTransport;
+        let out = run_ardop_connect_b2f_for_test(&mut failing, "N0DAJ-7", SessionIntent::Cms);
+        assert!(matches!(out, ExchangeOutcome::ConnectFailed(_)));
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "a CMS ARDOP dial must not record even with the global sink installed"
+        );
+
+        crate::contacts::observation::install_observation_sink(Arc::new(|_| {})); // reset
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn ardop_connect_success_arms_and_advances_the_guard_to_connected() {
+        // The connect-success half of `run_ardop_connect_stage`: the guard
+        // survives the call (returned, not dropped) and has been advanced
+        // past `DialAttempted` to `Connected` before hand-back — the
+        // production caller then carries it into the B2F stage. Uses the
+        // existing `StubTransport` (connect_arq always Ok).
+        let seen: Arc<std::sync::Mutex<Vec<crate::contacts::observation::PeerObservation>>> =
+            Arc::default();
+        {
+            let seen = seen.clone();
+            crate::contacts::observation::install_observation_sink(Arc::new(move |o| {
+                seen.lock().unwrap().push(o)
+            }));
+        }
+        let mut ok_transport = StubTransport::new();
+        let result =
+            run_ardop_connect_stage(&mut ok_transport, "N0DAJ-7", SessionIntent::P2p);
+        let guard = result.expect("connect_arq succeeded — Ok(guard)");
+        let guard = guard.expect("P2p intent + installed sink arms a guard");
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "nothing records until the guard is dropped"
+        );
+        drop(guard); // fires with whatever phase was last set (Connected)
+        let obs = seen.lock().unwrap();
+        assert_eq!(obs.len(), 1);
+        assert_eq!(
+            obs[0].phase,
+            crate::contacts::observation::ObservationPhase::Connected
+        );
+        crate::contacts::observation::install_observation_sink(Arc::new(|_| {})); // reset
     }
 }

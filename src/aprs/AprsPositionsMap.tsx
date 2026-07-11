@@ -24,7 +24,7 @@
 // re-renders (no churn). Pin sprite identity is grim-verified; jsdom asserts the
 // stable sprite id via the data attribute.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import { LeafletMap } from '../map/LeafletMap';
 import { useLeafletMap } from '../map/LeafletMapContext';
@@ -55,6 +55,10 @@ import { WinlinkLinkLayer } from '../winlink/WinlinkLinkLayer';
 import { useContactConnectionRecord } from '../contacts/useContactConnectionRecord';
 import { ConnectionRecord } from '../favorites/ConnectionRecord';
 import { useModemStatus } from '../modem/useModemStatus';
+import { PeerLayer, type PeerVisual } from '../map/PeerLayer';
+import { usePeers, useP2pCapabilities } from '../peers/usePeers';
+import { aggregatePeers, peerTacChatTier, type AggregatedPeer } from '../peers/peerModel';
+import { baseCallsign } from '../catalog/stationModel';
 import './AprsPositionsMap.css';
 
 export interface AprsPositionsMapProps {
@@ -630,6 +634,33 @@ export function AprsPositionsMap({ positions, operatorGrid, envStations, onFocus
     return p ? { lat: p.lat, lon: p.lon } : null;
   }, [winlinkPins]);
 
+  // Task 24 (spec §6): the peer circle layer, gated end-to-end on
+  // `map_peers` [R5-8] — false (or still loading) HIDES every peer pin, not
+  // merely dims it. `liveAprsCallsigns` is every base callsign heard RIGHT
+  // NOW on this open channel — a peer matching one is skipped in the layer
+  // (the APRS sprite already represents that station; live RF truth wins over
+  // the stored peer record).
+  const p2pCapabilities = useP2pCapabilities();
+  const mapPeersEnabled = p2pCapabilities.capabilities?.map_peers === true;
+  const peersData = usePeers();
+  const aggregatedPeers = useMemo(() => aggregatePeers(peersData.peers), [peersData.peers]);
+  const liveAprsCallsigns = useMemo(() => new Set(positions.map((p) => baseCallsign(p.call))), [positions]);
+  const [selectedPeer, setSelectedPeer] = useState<AggregatedPeer | null>(null);
+
+  // Tac-chat color axis is SESSION OUTCOME (spec §6), reusing the
+  // WinlinkGatewayLayer tier vocabulary (`toWinlinkPins` priority: live → failed
+  // → reached → stale) applied to the peer's own fields — NOT a propagation
+  // ramp and NOT an invented scheme. `livePeer` is the currently-connected modem
+  // peer (`status.peer`, base-normalized). The reached/stale tier keys on
+  // `lastOk` (success-only, T-F Part 0) so a failed dial can never masquerade
+  // as reached and the `peer-pin--failed` tier is actually reachable; the whole
+  // chain lives in `peerTacChatTier` (pure, unit-tested).
+  const livePeerBase = status.peer ? baseCallsign(status.peer) : null;
+  const peerVisualFor = useCallback(
+    (peer: AggregatedPeer): PeerVisual => peerTacChatTier(peer, { livePeerBase, nowMs: Date.now() }),
+    [livePeerBase],
+  );
+
   // Live per-bucket counts over heard stations (wx drives the weather override).
   const { counts, total } = useMemo(() => {
     const wxCalls = new Set(wx.map((w) => w.call));
@@ -669,6 +700,14 @@ export function AprsPositionsMap({ positions, operatorGrid, envStations, onFocus
         {selectedGateway != null && (
           <WinlinkGatewayPopup gateway={selectedGateway} onClose={() => setSelectedGateway(null)} />
         )}
+        <PeerLayer
+          peers={aggregatedPeers}
+          enabled={mapPeersEnabled}
+          visualFor={peerVisualFor}
+          onSelect={setSelectedPeer}
+          selectedId={selectedPeer?.id ?? null}
+          liveAprsCallsigns={liveAprsCallsigns}
+        />
         <WxSitrepControl wx={wx} operatorGrid={operatorGrid || undefined} />
         <LeafletRecenterControl target={me} zoom={OPERATOR_ZOOM} />
       </LeafletMap>

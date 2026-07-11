@@ -41,6 +41,18 @@ beforeEach(() => {
     // affordance. Return an empty file so the query RESOLVES (a bare undefined
     // would trip react-query's "Query data cannot be undefined").
     if (cmd === 'favorites_read') return { favorites: [] } as unknown as never;
+    // Task 23: the panel now also reads the P2P capability bits + peer roster
+    // (usePeers/useP2pCapabilities). Default to capability-off + an empty
+    // roster for tests that don't care about peers, for the same "no bare
+    // undefined" reason as favorites_read above. T-E re-sourced usePeers onto
+    // contacts_read (peers_read/peers:changed died with the peers store).
+    if (cmd === 'p2p_capabilities')
+      return {
+        peer_store: false, finder_peers: false, map_peers: false,
+        agent_find_peers: false, vara_engine_split: false,
+        favorites_contact_link: false,
+      } as unknown as never;
+    if (cmd === 'contacts_read') return { schema_version: 2, contacts: [], groups: [] } as unknown as never;
     return undefined as unknown as never;
   });
 });
@@ -150,6 +162,89 @@ describe('StationFinderPanel', () => {
     );
     const writes = vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'propagation_prefs_write');
     expect(writes.length).toBe(1);
+  });
+
+  // Task 23 (spec §5, R5-8 capability hide): the P2P peer roster joins the
+  // finder as a Gateway/Peer type filter. A gridless telnet-only peer has no
+  // map pin, so it must still surface in the rail (untiered) or it's
+  // invisible entirely — that's the aggregatePeers contract [R4-8] this task
+  // wires into the panel.
+  const GRIDLESS_TELNET_PEER = {
+    id: 'peer-1',
+    name: '',
+    callsign: 'W6XYZ',
+    tier: 'unconfirmed',
+    origin: 'incoming',
+    grid: null,
+    channels: [],
+    endpoints: [
+      {
+        id: 'ep-1',
+        host: '203.0.113.5',
+        port: 8772,
+        provenance: 'observed-incoming',
+        last_seen: '2026-07-01T00:00:00Z',
+        last_ok: null,
+      },
+    ],
+    created_at: '2026-07-01T00:00:00Z',
+    updated_at: '2026-07-01T00:00:00Z',
+  };
+
+  function mockInvokeWithPeers(finderPeers: boolean) {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_read') return { grid: 'DM43bp' } as unknown as never;
+      if (cmd === 'propagation_prefs_read')
+        return {
+          antenna_preset: 'efhw-sloper', req_snr_db: 22, tx_power_w: 100,
+          antenna_height_m: 9, ground_type: 'average', noise_environment: 'residential',
+        } as unknown as never;
+      if (cmd === 'catalog_fetch_stations') return [] as unknown as never;
+      if (cmd === 'favorites_read') return { favorites: [] } as unknown as never;
+      if (cmd === 'p2p_capabilities')
+        return {
+          peer_store: true, finder_peers: finderPeers, map_peers: true,
+          agent_find_peers: true, vara_engine_split: true,
+          favorites_contact_link: true,
+        } as unknown as never;
+      if (cmd === 'contacts_read')
+        return { schema_version: 2, contacts: [GRIDLESS_TELNET_PEER], groups: [] } as unknown as never;
+      return undefined as unknown as never;
+    });
+  }
+
+  it('renders the Gateway/Peer type chips + a gridless peer untiered in the rail; toggling Peer off hides it', async () => {
+    mockInvokeWithPeers(true);
+    renderPanel(<StationFinderPanel onClose={() => {}} />);
+    await screen.findByRole('dialog', { name: /find a station/i });
+
+    // (a) the Gateway/Peer type chips render.
+    expect(await screen.findByTestId('type-chip-gateway')).toBeTruthy();
+    expect(screen.getByTestId('type-chip-peer')).toBeTruthy();
+
+    // (c) the gridless peer appears in the rail, untiered, even though it has
+    // no grid to be map-placeable with.
+    expect(await screen.findByTestId('peer-row-peer-1')).toBeTruthy();
+    expect(screen.getByTestId('peer-untiered-peer-1')).toBeTruthy();
+
+    // (b) toggling Peer off hides the peer row (hide, not disable — it's gone
+    // from the DOM, not merely dimmed/disabled).
+    fireEvent.click(screen.getByTestId('type-chip-peer'));
+    await waitFor(() => expect(screen.queryByTestId('peer-row-peer-1')).toBeNull());
+  });
+
+  it('capability-hides the type chips and peer rows entirely when finder_peers is false', async () => {
+    mockInvokeWithPeers(false);
+    renderPanel(<StationFinderPanel onClose={() => {}} />);
+    await screen.findByRole('dialog', { name: /find a station/i });
+
+    // (d) NO peer chip and NO peer row — even though contacts_read still
+    // returned a peer. This is the capability HIDE, not a data-empty state.
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('p2p_capabilities'));
+    expect(screen.queryByTestId('type-chip-peer')).toBeNull();
+    expect(screen.queryByTestId('type-chip-gateway')).toBeNull();
+    expect(screen.queryByTestId('peer-row-peer-1')).toBeNull();
+    expect(screen.queryByTestId('peer-rows')).toBeNull();
   });
 
   it('shows the "set your location" hint only when neither GPS nor a manual grid is available', async () => {

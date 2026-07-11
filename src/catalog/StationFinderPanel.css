@@ -284,6 +284,12 @@
   background: var(--surface, #0c1620);
 }
 .station-finder__rail--empty {
+  /* Task 23: peer rows can now render alongside this empty state (a peer with
+     no map pin has nothing else to select), so this is a CHILD of
+     .station-finder__rail rather than reusing its display:flex directly —
+     declare its own flex context to keep the same centered look. */
+  display: flex;
+  flex: 1;
   align-items: center;
   justify-content: center;
   color: var(--faint, #6f8aa3);
@@ -625,6 +631,120 @@
 .station-finder__save:disabled {
   opacity: 0.3;
   cursor: not-allowed;
+}
+
+/* Station-type filter chips (Task 23, spec §5) — reuses .station-finder__chip
+   styling; the cluster itself is only rendered when finder_peers is on. */
+.station-finder__types {
+  display: inline-flex;
+  gap: 6px;
+}
+
+/* ── Manual-dial affordance (Task T-G, spec §AMENDMENT pt. 7) ────────────
+   "Dial a station" — dial a callsign the operator has not heard, through the
+   same connect seam as the peer rows below. Sits above the Peers list so it
+   still renders on an empty roster (Flow 2(b)); gated on the SAME
+   finder_peers capability bit, not on whether any peers are visible. */
+.station-finder__dial {
+  border-top: 1px solid var(--border, #243a52);
+  padding: 9px 13px;
+}
+.station-finder__dial-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.station-finder__dial-call,
+.station-finder__dial-freq,
+.station-finder__dial-via,
+.station-finder__dial-host,
+.station-finder__dial-port,
+.station-finder__dial-transport {
+  font: inherit;
+  font-size: 12px;
+  color: var(--text, #e8f1fa);
+  background: var(--surface-2);
+  border: 1px solid var(--border2, #34556f);
+  border-radius: 7px;
+  padding: 5px 8px;
+}
+.station-finder__dial-call {
+  flex: 1 1 96px;
+  min-width: 84px;
+  text-transform: uppercase;
+  font-family: var(--mono, ui-monospace, monospace);
+}
+.station-finder__dial-freq,
+.station-finder__dial-port {
+  width: 68px;
+}
+.station-finder__dial-host,
+.station-finder__dial-via {
+  flex: 1 1 100px;
+  min-width: 84px;
+}
+.station-finder__dial-error {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--danger, #f87171);
+}
+
+/* ── P2P peer rows (Task 23, spec §5) ────────────────────────────────────
+   A distinct list, independent of the map-pin station selection: a
+   gridless/telnet-only peer has no pin to click, so it renders here
+   directly — untiered (no reachability pip), same as the gateway
+   channel list's visual language where it applies. */
+.station-finder__peers {
+  border-top: 1px solid var(--border, #243a52);
+}
+.station-finder__peer {
+  padding: 9px 13px;
+  border-bottom: 1px solid #16293a;
+}
+.station-finder__peer-top {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+.station-finder__peer-origin {
+  margin-left: auto;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--faint, #6f8aa3);
+}
+.station-finder__peer-endpoints,
+.station-finder__peer-channels {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.station-finder__peer-endpoint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.station-finder__peer-badge {
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 4px;
+  padding: 2px 6px;
+  color: #cfe3f2;
+  background: #13283b;
+  border: 1px solid var(--border2, #34556f);
+}
+.station-finder__peer-ep-addr {
+  font-family: var(--mono, ui-monospace, monospace);
+  color: var(--dim, #9fb6cc);
+}
+.station-finder__peer-channel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
 }
 
 /* ── FZ-M1 compact: stack map over rail on the rugged screen ───────────── */

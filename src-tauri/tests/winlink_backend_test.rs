@@ -115,6 +115,7 @@ fn native_test_config() -> tuxlink_lib::config::Config {
         close_to_tray: true,
         close_prompt_seen: false,
         active_connection: None,
+        p2p_limits: tuxlink_lib::contacts::limiter::P2pLimitsConfig::default(),
     }
 }
 

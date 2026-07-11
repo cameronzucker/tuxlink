@@ -159,6 +159,11 @@ pub enum TransportConfig {
         link: KissLinkConfig,
         ssid: u8,
         role: PacketRole,
+        /// [R4-3][R1-C15][R5-3] Which message pool this packet session
+        /// belongs to. A dial defaults to `Cms` (existing callers); an
+        /// armed Listen is always `P2p` (an inbound packet call is by
+        /// definition a peer session — this station is not an RMS).
+        intent: SessionIntent,
     },
 }
 
@@ -182,6 +187,11 @@ pub struct ResolvedPacket {
     pub role: ExchangeRole,
     /// `Some((target, digis))` for a dial; `None` for listen.
     pub dial: Option<(Address, Vec<Address>)>,
+    /// [R4-3][R1-C15][R5-3] Carried through from the `TransportConfig::Packet`
+    /// the operator (or `packet_listen_transport_from_config`) built; travels
+    /// alongside `role` so `native_packet_connect` can build an intent-aware
+    /// `PacketConnectCtx` without re-deriving it.
+    pub intent: SessionIntent,
 }
 
 /// Parse a `CALL` or `CALL-SSID` string into an [`Address`]. A bare call has
@@ -207,10 +217,16 @@ fn parse_call_ssid(s: &str) -> Result<Address, BackendError> {
 
 /// Resolve identity + role into the concrete addresses + exchange role. Enforces
 /// the 0–2 digipeater cap (spec §1) and the identity split (spec §4.4).
+///
+/// `intent` [R4-3][R1-C15][R5-3] rides straight through to [`ResolvedPacket::intent`]
+/// unexamined — this function resolves *addressing*, not message-pool policy; the
+/// caller (`packet_connect_inner`) is the one that knows whether this is a dial
+/// (operator-selected intent, default `Cms`) or a Listen answer (always `P2p`).
 pub fn resolve_packet_endpoint(
     base_mycall: &str,
     ssid: u8,
     role: PacketRole,
+    intent: SessionIntent,
 ) -> Result<ResolvedPacket, BackendError> {
     let base = base_mycall.trim().to_uppercase();
     let link_mycall = Address {
@@ -223,6 +239,7 @@ pub fn resolve_packet_endpoint(
             base_mycall: base,
             role: ExchangeRole::Answer,
             dial: None,
+            intent,
         }),
         PacketRole::DialTo { call, path } => {
             if path.len() > 2 {
@@ -230,6 +247,18 @@ pub fn resolve_packet_endpoint(
                     "at most 2 digipeaters allowed (got {})",
                     path.len()
                 )));
+            }
+            // FIX-3 [P3]: validate AX.25 address grammar on the target AND every
+            // via hop BEFORE any Address is built — a malformed peer-derived hop
+            // (lowercase, >6 base, SSID > 15, control char) must never reach
+            // `Address::encode` / the RF address field. `parse_call_ssid` alone
+            // only checks SSID range + non-empty; it would pass a bad base.
+            crate::winlink::callsign::validate_ax25_hop(&call)
+                .map_err(|e| BackendError::NotConfigured(format!("bad packet target: {e}")))?;
+            for hop in &path {
+                crate::winlink::callsign::validate_ax25_hop(hop).map_err(|e| {
+                    BackendError::NotConfigured(format!("bad digipeater hop {hop:?}: {e}"))
+                })?;
             }
             let target = parse_call_ssid(&call)?;
             let digis = path
@@ -241,6 +270,7 @@ pub fn resolve_packet_endpoint(
                 base_mycall: base,
                 role: ExchangeRole::Dial,
                 dial: Some((target, digis)),
+                intent,
             })
         }
     }
@@ -1845,8 +1875,14 @@ impl WinlinkBackend for NativeBackend {
     ) -> Result<Session, BackendError> {
         // Dispatch to per-transport paths. The packet path runs no CMS inbound
         // selection, so it drops `selection` (callers pass `None` there anyway).
-        if let TransportConfig::Packet { link, ssid, role } = transport {
-            return self.packet_connect_inner(link, ssid, role).await;
+        if let TransportConfig::Packet {
+            link,
+            ssid,
+            role,
+            intent,
+        } = transport
+        {
+            return self.packet_connect_inner(link, ssid, role, intent).await;
         }
         let mode = match transport {
             TransportConfig::Cms { mode } => mode,
@@ -2191,6 +2227,7 @@ impl NativeBackend {
         link: KissLinkConfig,
         ssid: u8,
         role: PacketRole,
+        intent: SessionIntent,
     ) -> Result<Session, BackendError> {
         // Single-flight guard (same as the CMS arm).
         if self
@@ -2226,7 +2263,7 @@ impl NativeBackend {
         // Decide the armed-state status before `role` is moved into resolve
         // (tuxlink-orj): Listen → Listening (armed), DialTo → Connecting (dial).
         let initial_status = initial_packet_status(&role, ssid);
-        let resolved = resolve_packet_endpoint(&base, ssid, role)?;
+        let resolved = resolve_packet_endpoint(&base, ssid, role, intent)?;
 
         let config = self.live_config();
         let mailbox = self.mailbox.clone();
@@ -2319,6 +2356,22 @@ struct PacketConnectCtx<'a> {
     role: ExchangeRole,
     /// Grid locator at configured broadcast precision.
     locator: &'a str,
+    /// [R4-3][R1-C15][R5-3] Which message pool this session belongs to.
+    /// Carried through to [`session::ExchangeConfig::intent`] via
+    /// [`exchange_config_for_packet`].
+    intent: SessionIntent,
+}
+
+/// The [`session::ExchangeConfig`] for a packet session — pure, so the intent
+/// contract [R5-3] is pinned without a KISS link.
+fn exchange_config_for_packet(ctx: &PacketConnectCtx<'_>) -> session::ExchangeConfig {
+    session::ExchangeConfig {
+        mycall: ctx.base_mycall.to_string(), // BASE call — no SSID in B2F identity
+        targetcall: ctx.targetcall.to_string(),
+        locator: ctx.locator.to_string(),
+        password: ctx.password.clone(),
+        intent: ctx.intent,
+    }
 }
 
 /// Streams whose `read()` returns `Ok(0)` for "no data yet" rather than EOF (the
@@ -2379,12 +2432,15 @@ fn native_packet_exchange<S: std::io::Read + std::io::Write + Send + 'static>(
     progress: &dyn Fn(&str),
     wire_log: &dyn Fn(&str),
 ) -> Result<(), BackendError> {
+    // [R4-3][R1-C15][R5-3] Build the exchange config off `ctx` BEFORE destructuring
+    // it below — `exchange_config_for_packet` takes `&ctx` (clones what it needs),
+    // so this must run before `role`/`base_mycall`/`intent` are moved out of `ctx`.
+    let exchange_config = exchange_config_for_packet(&ctx);
     let PacketConnectCtx {
         base_mycall,
-        targetcall,
-        password,
         role,
-        locator,
+        intent,
+        ..
     } = ctx;
     // Split the owned stream into simultaneous read + write halves via a shared
     // Arc<Mutex> (the same pattern as telnet's shared-socket approach). The
@@ -2413,31 +2469,20 @@ fn native_packet_exchange<S: std::io::Read + std::io::Write + Send + 'static>(
     let mut reader = std::io::BufReader::new(ReadHalf(shared.clone()));
     let mut writer = WriteHalf(shared.clone());
 
-    // TODO(tuxlink-u5hl follow-up): migrate to build_outbound_proposals for skip-not-abort parity
-    // Build outbox proposals (mirrors native_connect).
-    let mut outbound = Vec::new();
-    for meta in mailbox.list(MailboxFolder::Outbox)? {
-        let body = mailbox.read(MailboxFolder::Outbox, &meta.id)?;
-        if let Ok(message) = Message::from_bytes(&body.raw_rfc5322) {
-            if let Some((proposal, compressed)) = message.to_proposal() {
-                let title = message.header("Subject").unwrap_or_default().to_string();
-                outbound.push(session::OutboundMessage {
-                    proposal,
-                    title,
-                    compressed,
-                });
-            }
-        }
-    }
+    // [R4-3][R1-C15][R5-3] intent-aware outbound drain (resolves the prior
+    // TODO(tuxlink-u5hl follow-up)): mirrors the CMS/VARA/ARDOP dial paths'
+    // skip-not-abort degrade — the safety gate for P2p/RadioOnly (§5.5) means
+    // this legitimately returns an empty outbound for a P2P packet session
+    // today; the exchange still runs (and still receives), it just proposes
+    // nothing outbound until tuxlink-u5hl re-scopes the gate.
+    let outbound = build_outbound_proposals(mailbox, intent, None, Some(base_mycall))
+        .unwrap_or_else(|e| {
+            eprintln!(
+                "native_packet_exchange: outbound drain skipped ({e}); exchange continues with empty outbound"
+            );
+            Vec::new()
+        });
     let outbound_log = outbound_log_items(&outbound);
-
-    let exchange_config = session::ExchangeConfig {
-        mycall: base_mycall.to_string(), // BASE call — no SSID in B2F identity
-        targetcall: targetcall.to_string(),
-        locator: locator.to_string(), // config-derived locator (controller directive)
-        password,
-        intent: SessionIntent::Cms,
-    };
 
     progress("AX.25 connected; negotiating messages…");
     let result = session::run_exchange_with_role(
@@ -2655,7 +2700,41 @@ fn native_packet_connect(
 
     match resolved.dial {
         Some((target, digis)) => {
+            let intent = resolved.intent;
             progress(&format!("Connecting to {}…", target.call));
+
+            // ─── Peer-observation recording (Task 15) ──────────────────────
+            // Arm the drop-guard BEFORE the AX.25 connect (`connect_with_logger`
+            // — the actual CONNECT transmission), gated on P2P intent [spec §3]:
+            // a link-level connect failure (below) still records `DialAttempted`
+            // → Fail on the guard's drop [R3-11]. CMS/gateway/RadioOnly/
+            // PostOffice dials resolve no sink and never construct a guard.
+            // Mirrors the VARA (`dial_observation_sink`) / ARDOP
+            // (`ardop_dial_observation_sink`) dial gates (Tasks 13-14).
+            let obs_guard = if intent == SessionIntent::P2p {
+                crate::contacts::observation::observation_sink().map(|s| {
+                    crate::contacts::observation::ObservationGuard::new(
+                        s,
+                        crate::contacts::observation::PeerObservation {
+                            path: crate::contacts::observation::ObservedPath::Rf {
+                                transport: crate::contacts::reachability::ChannelTransport::Packet,
+                                via: digis
+                                    .iter()
+                                    .map(crate::winlink::ax25::datalink::fmt_addr)
+                                    .collect(),
+                                freq_hz: None,
+                                bandwidth: None,
+                            },
+                            direction: crate::contacts::reachability::Direction::Outgoing,
+                            presented_target: target.call.clone(),
+                            phase: crate::contacts::observation::ObservationPhase::DialAttempted,
+                        },
+                    )
+                })
+            } else {
+                None
+            };
+
             let stream = crate::winlink::ax25::connect_with_logger(
                 bytelink,
                 resolved.link_mycall,
@@ -2668,6 +2747,12 @@ fn native_packet_connect(
                 reason: format!("AX.25 connect: {e}"),
                 source: None,
             })?;
+            // `obs_guard` (if armed) fired above on the `?` early-return, at
+            // `DialAttempted` → Fail [R3-11]. Past this point the AX.25 link is
+            // up — advance to `Connected`.
+            if let Some(g) = &obs_guard {
+                g.set_phase(crate::contacts::observation::ObservationPhase::Connected);
+            }
             // P1.3 (Codex post-impl review): read_password is deferred until AFTER
             // the KISS link is established. The prior placement (before connect_link)
             // caused the OS-keyring migration to run even when the link failed — e.g.
@@ -2678,7 +2763,7 @@ fn native_packet_connect(
             let password = crate::winlink::credentials::read_password(&base)
                 .ok()
                 .filter(|p| !p.is_empty());
-            native_packet_exchange(
+            let result = native_packet_exchange(
                 BlockingB2fStream(stream),
                 PacketConnectCtx {
                     base_mycall: &base,
@@ -2686,11 +2771,19 @@ fn native_packet_connect(
                     password,
                     role: ExchangeRole::Dial,
                     locator: &locator,
+                    intent,
                 },
                 mailbox,
                 progress,
                 wire_log,
-            )
+            );
+            if let Some(g) = &obs_guard {
+                g.set_phase(match &result {
+                    Ok(()) => crate::contacts::observation::ObservationPhase::B2fOk,
+                    Err(_) => crate::contacts::observation::ObservationPhase::B2fFail,
+                });
+            }
+            result
         }
         None => {
             // ── Listener-arms gate (tuxlink-inde) — armed BEFORE answer()
@@ -2784,6 +2877,12 @@ fn native_packet_connect(
                 let log_path = listener_forensics_log_path();
                 let event = ListenerRejectEvent::new(TransportKind::Packet, reason, &peer_id);
                 let _ = event.append_to_log(&log_path);
+                // R3-F5: count the rejected inbound on the quarantine limiter's
+                // failed path (no roster record) — the spoofing-loop counter's
+                // only real-burst source for packet.
+                crate::contacts::observation::record_inbound_reject(
+                    crate::contacts::reachability::ChannelTransport::Packet,
+                );
 
                 let msg = format!(
                     "Rejected inbound from {} (reason: {}). Dropping link.",
@@ -2802,9 +2901,40 @@ fn native_packet_connect(
                 });
             }
 
+            // ─── Peer-observation recording (Task 15) ──────────────────────
+            // Arm the drop-guard for the inbound answer at `B2fStarted`, ABOVE
+            // the exchange call — mirrors the ARDOP/VARA answer-site placement
+            // standard (arm above local mailbox/tempdir resolution; the packet
+            // answer path takes its mailbox as a caller-supplied `Arc`, so a
+            // peer that already answered records even if the exchange call
+            // itself fails). No intent check needed here:
+            // `packet_listen_transport_from_config` pins every Listen role to
+            // `SessionIntent::P2p` (Task 12), and a rejected inbound (allowlist/
+            // expired) already returned above — never reaches this point, so
+            // never records, by construction. The guard fires on drop with its
+            // last phase: `Accepted` on a clean exchange, `B2fFail` on failure,
+            // and — if a wedge/panic-unwind unwinds past here — the
+            // `B2fStarted` it was armed at, which classifies as Fail [R3-11].
+            let obs_guard = crate::contacts::observation::observation_sink().map(|s| {
+                crate::contacts::observation::ObservationGuard::new(
+                    s,
+                    crate::contacts::observation::PeerObservation {
+                        path: crate::contacts::observation::ObservedPath::Rf {
+                            transport: crate::contacts::reachability::ChannelTransport::Packet,
+                            via: vec![],
+                            freq_hz: None,
+                            bandwidth: None,
+                        },
+                        direction: crate::contacts::reachability::Direction::Incoming,
+                        presented_target: peer.call.clone(),
+                        phase: crate::contacts::observation::ObservationPhase::B2fStarted,
+                    },
+                )
+            });
+
             // Listen (Answer role) does not need a password — peers do not challenge.
             // password: None is intentional; no read_password call here.
-            native_packet_exchange(
+            let result = native_packet_exchange(
                 BlockingB2fStream(stream),
                 PacketConnectCtx {
                     base_mycall: &base,
@@ -2812,11 +2942,19 @@ fn native_packet_connect(
                     password: None,
                     role: ExchangeRole::Answer,
                     locator: &locator,
+                    intent: resolved.intent,
                 },
                 mailbox,
                 progress,
                 wire_log,
-            )
+            );
+            if let Some(g) = &obs_guard {
+                g.set_phase(match &result {
+                    Ok(()) => crate::contacts::observation::ObservationPhase::Accepted,
+                    Err(_) => crate::contacts::observation::ObservationPhase::B2fFail,
+                });
+            }
+            result
         }
     }
 }
@@ -4273,6 +4411,7 @@ mod native_read_state_tests {
     fn offline_config() -> Config {
         Config {
             elmer: crate::config::ElmerConfig::default(),
+            p2p_limits: crate::contacts::limiter::P2pLimitsConfig::default(),
             ft8: crate::config::Ft8Config::default(),
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
@@ -5003,6 +5142,7 @@ mod native_read_state_tests {
                         call: "W7AUX".into(),
                         path: vec![],
                     },
+                    intent: SessionIntent::Cms,
                 },
                 None,
             )
@@ -5557,6 +5697,7 @@ mod native_read_state_tests {
                 call: "W7AUX".into(),
                 path: vec!["RELAY-1".into()],
             },
+            SessionIntent::Cms,
         )
         .unwrap();
         assert_eq!(
@@ -5587,7 +5728,8 @@ mod native_read_state_tests {
 
     #[test]
     fn resolve_packet_endpoint_listen_yields_answer_role_and_no_target() {
-        let resolved = resolve_packet_endpoint("N7CPZ", 7, PacketRole::Listen).unwrap();
+        let resolved =
+            resolve_packet_endpoint("N7CPZ", 7, PacketRole::Listen, SessionIntent::P2p).unwrap();
         assert_eq!(
             resolved.link_mycall,
             Address {
@@ -5598,6 +5740,7 @@ mod native_read_state_tests {
         assert_eq!(resolved.base_mycall, "N7CPZ");
         assert_eq!(resolved.role, ExchangeRole::Answer);
         assert!(resolved.dial.is_none());
+        assert_eq!(resolved.intent, SessionIntent::P2p);
     }
 
     #[test]
@@ -5609,9 +5752,61 @@ mod native_read_state_tests {
                 call: "W7AUX".into(),
                 path: vec!["A-1".into(), "B-2".into(), "C-3".into()],
             },
+            SessionIntent::Cms,
         )
         .unwrap_err();
         assert!(matches!(err, BackendError::NotConfigured(_)));
+    }
+
+    #[test]
+    fn resolve_packet_endpoint_rejects_malformed_ax25_target_and_via() {
+        // FIX-3 [P3]: a malformed target or via hop is rejected BEFORE any
+        // Address is built, so a bad byte never reaches the RF address field.
+        // Malformed TARGET forms.
+        for bad_target in ["w7aux-16", "TOOLONGCALL", "W7:AUX", "W7 AUX", ""] {
+            let err = resolve_packet_endpoint(
+                "N7CPZ",
+                0,
+                PacketRole::DialTo {
+                    call: bad_target.into(),
+                    path: vec![],
+                },
+                SessionIntent::Cms,
+            )
+            .unwrap_err();
+            assert!(
+                matches!(err, BackendError::NotConfigured(_)),
+                "malformed target {bad_target:?} must be rejected"
+            );
+        }
+        // A malformed VIA hop (valid target) is rejected too.
+        for bad_hop in ["relay-16", "TOOLONGHOP", "A B"] {
+            let err = resolve_packet_endpoint(
+                "N7CPZ",
+                0,
+                PacketRole::DialTo {
+                    call: "W7AUX".into(),
+                    path: vec![bad_hop.into()],
+                },
+                SessionIntent::Cms,
+            )
+            .unwrap_err();
+            assert!(
+                matches!(err, BackendError::NotConfigured(_)),
+                "malformed via hop {bad_hop:?} must be rejected"
+            );
+        }
+        // A well-formed target + hops still resolves (no false rejection).
+        let ok = resolve_packet_endpoint(
+            "N7CPZ",
+            0,
+            PacketRole::DialTo {
+                call: "W7AUX-7".into(),
+                path: vec!["RELAY".into(), "WIDE2-1".into()],
+            },
+            SessionIntent::Cms,
+        );
+        assert!(ok.is_ok(), "valid AX.25 target + hops must not be rejected");
     }
 
     // =========================================================================
@@ -5637,6 +5832,7 @@ mod native_read_state_tests {
                 call: "W7AUX".into(),
                 path: vec![],
             },
+            SessionIntent::Cms,
         )
         .unwrap();
         assert_eq!(
@@ -5709,6 +5905,7 @@ mod native_read_state_tests {
             },
             ssid: 7,
             role: PacketRole::Listen,
+            intent: SessionIntent::Cms,
         };
         let dial = TransportConfig::Packet {
             link: KissLinkConfig::Tcp {
@@ -5720,6 +5917,7 @@ mod native_read_state_tests {
                 call: "W7AUX-7".into(),
                 path: vec![],
             },
+            intent: SessionIntent::Cms,
         };
 
         let outcome = tokio::time::timeout(std::time::Duration::from_secs(15), async {
@@ -5747,6 +5945,35 @@ mod native_read_state_tests {
             "N7CPZ",
             "packet base call must be the SESSION call (N7CPZ), not the config call (W7AUX)"
         );
+    }
+
+    // =========================================================================
+    // Task 12 (tuxlink-c39af): packet SessionIntent plumbing
+    // =========================================================================
+
+    #[test]
+    fn packet_dial_default_intent_is_cms_and_p2p_is_not_cms() {
+        // [R5-3] pins both directions of the contract: existing callers are
+        // untouched (Cms default), and a P2P packet session is not
+        // classified as CMS.
+        //
+        // Assert on `cms` BEFORE building `p2p` via struct-update (`..cms`):
+        // `PacketConnectCtx::password` is `Option<String>` (not `Copy`), so
+        // `..cms` partially moves `cms` and a later `&cms` would not compile.
+        let cms = PacketConnectCtx {
+            base_mycall: "W6ABC",
+            targetcall: "N0DAJ-10",
+            password: None,
+            role: ExchangeRole::Dial,
+            locator: "CN87",
+            intent: SessionIntent::Cms,
+        };
+        assert_eq!(exchange_config_for_packet(&cms).intent, SessionIntent::Cms);
+        let p2p = PacketConnectCtx {
+            intent: SessionIntent::P2p,
+            ..cms
+        };
+        assert_eq!(exchange_config_for_packet(&p2p).intent, SessionIntent::P2p);
     }
 
     // =========================================================================
@@ -5798,6 +6025,7 @@ mod native_read_state_tests {
                 password: Some("MYPASS".into()),
                 role: ExchangeRole::Dial,
                 locator: "CN87", // controller directive: pass cms_locator
+                intent: SessionIntent::Cms,
             },
             &mailbox,
             &|_| {},
@@ -5851,6 +6079,7 @@ mod native_read_state_tests {
                 password: None,
                 role: ExchangeRole::Answer,
                 locator: "CN87",
+                intent: SessionIntent::Cms,
             },
             &mailbox,
             &|_| {},
@@ -5917,6 +6146,7 @@ mod native_read_state_tests {
                 password: None,
                 role: ExchangeRole::Dial,
                 locator: "CN87",
+                intent: SessionIntent::Cms,
             },
             &mailbox,
             &|_| {},
@@ -5993,6 +6223,7 @@ mod native_read_state_tests {
                 password: None,
                 role: ExchangeRole::Dial,
                 locator: "CN87",
+                intent: SessionIntent::Cms,
             },
             &mailbox,
             &|_| {},
@@ -6052,6 +6283,7 @@ mod native_read_state_tests {
     fn offline_config_with_callsign() -> Config {
         Config {
             elmer: crate::config::ElmerConfig::default(),
+            p2p_limits: crate::contacts::limiter::P2pLimitsConfig::default(),
             ft8: crate::config::Ft8Config::default(),
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
@@ -6118,6 +6350,7 @@ mod native_read_state_tests {
                         call: "W7AUX".into(),
                         path: vec![],
                     },
+                    intent: SessionIntent::Cms,
                 },
                 None,
             )
@@ -6174,6 +6407,7 @@ mod native_read_state_tests {
                         call: "W7AUX".into(),
                         path: vec![],
                     },
+                    intent: SessionIntent::Cms,
                 },
                 None,
             )
@@ -6200,14 +6434,15 @@ mod native_read_state_tests {
                 PacketRole::DialTo {
                     call: "W7AUX".into(),
                     path: vec![]
-                }
+                },
+                SessionIntent::Cms,
             )
             .unwrap()
             .role,
             ExchangeRole::Dial
         );
         assert_eq!(
-            resolve_packet_endpoint("N7CPZ", 7, PacketRole::Listen)
+            resolve_packet_endpoint("N7CPZ", 7, PacketRole::Listen, SessionIntent::P2p)
                 .unwrap()
                 .role,
             ExchangeRole::Answer
@@ -6339,6 +6574,7 @@ mod native_read_state_tests {
             },
             ssid: 7,
             role: PacketRole::Listen,
+            intent: SessionIntent::Cms,
         };
         let dial = TransportConfig::Packet {
             link: KissLinkConfig::Tcp {
@@ -6350,6 +6586,7 @@ mod native_read_state_tests {
                 call: "W7AUX-7".into(),
                 path: vec![],
             },
+            intent: SessionIntent::Cms,
         };
 
         // Watchdog: a handshake/connect deadlock must fail the test, not hang cargo.
@@ -7005,5 +7242,279 @@ mod native_read_state_tests {
             !written.contains(";FW: W7AUX"),
             "run_vara_b2f_answer must NOT use the config callsign W7AUX in ;FW:; got:\n{written}"
         );
+    }
+
+    // =========================================================================
+    // Task 15 (tuxlink-c39af): packet record sites (dial + answer)
+    // =========================================================================
+
+    /// A KISS TCP stand-in that accepts the connection and IMMEDIATELY closes
+    /// it. The client's TCP open succeeds (so `connect_link_with_abort` — which
+    /// runs BEFORE the record guard arms — passes and the guard IS armed), then
+    /// the very next link read inside `datalink::connect`'s poll loop sees the
+    /// FIN: `recv_frame` maps a 0-byte read to `Err(ConnectionAborted)`
+    /// (datalink.rs "link closed" arm), which `connect`'s `recv_frame()?`
+    /// propagates on the FIRST poll iteration. That makes the AX.25 connect
+    /// failure DETERMINISTIC and sub-second — no reliance on retry timing.
+    ///
+    /// Why not a silent (accept-and-sink) wire: `datalink::connect` listens for
+    /// a slow UA until `params.connect_timeout`, and
+    /// `Ax25ParamsConfig::into_params` hard-codes that ceiling to the 25 s
+    /// `Ax25Params::default()` (a RADIO-1 safety default, deliberately not
+    /// config-tunable) — `t1_ms`/`n2_retries` only pace the ≤2 SABMs, they do
+    /// NOT end the wait. A silent wire therefore always costs the full 25 s,
+    /// which blew past the test timeout on a loaded CI runner
+    /// (run 29129290795, both arches).
+    fn spawn_closing_kiss_wire() -> std::net::SocketAddr {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((sock, _)) = listener.accept() {
+                // Drop immediately → FIN to the client. Nothing is ever read
+                // or written on this side.
+                drop(sock);
+            }
+        });
+        addr
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial_test::serial]
+    async fn packet_answer_p2p_intent_records_incoming_accepted_observation() {
+        // [CDX-7]: drives the REAL `native_packet_connect` answer path — via
+        // `NativeBackend::connect` → `packet_connect_inner` → `spawn_blocking` —
+        // over a genuine TCP+KISS+AX.25 loopback wire (mirrors the Task 12
+        // `packet_two_real_peers_complete_a_connect_and_b2f_over_tcp_kiss`
+        // fixture), never a hand-constructed `ObservationGuard`. #[serial]:
+        // the recorder sink is process-global.
+        use crate::identity::{Callsign, IdentityHandle, SessionIdentity};
+
+        let seen: Arc<std::sync::Mutex<Vec<crate::contacts::observation::PeerObservation>>> =
+            Arc::default();
+        {
+            let seen = seen.clone();
+            crate::contacts::observation::install_observation_sink(Arc::new(move |o| {
+                seen.lock().unwrap().push(o)
+            }));
+        }
+
+        let wire = spawn_kiss_wire();
+
+        let dialer_dir = tempdir().unwrap();
+        let answerer_dir = tempdir().unwrap();
+        let seed = Mailbox::new(dialer_dir.path());
+        let raw = compose_message(
+            "N7CPZ",
+            &["W7AUX"],
+            &[],
+            "P2P record site",
+            "task 15 observation",
+            1_716_200_000,
+        )
+        .to_bytes();
+        seed.store(MailboxFolder::Outbox, &raw).unwrap();
+
+        let dialer = NativeBackend::new(config_with_call("N7CPZ"), dialer_dir.path());
+        dialer.set_active_identity(SessionIdentity::full(IdentityHandle::for_test(
+            Callsign::parse("N7CPZ").unwrap(),
+        )));
+        let answerer = NativeBackend::new(config_with_call("W7AUX"), answerer_dir.path())
+            .with_packet_allowlist(
+                crate::winlink::listener::AllowedStations::new().with_allow_all(true),
+            );
+        answerer.set_active_identity(SessionIdentity::full(IdentityHandle::for_test(
+            Callsign::parse("W7AUX").unwrap(),
+        )));
+
+        let listen = TransportConfig::Packet {
+            link: KissLinkConfig::Tcp {
+                host: wire.ip().to_string(),
+                port: wire.port(),
+            },
+            ssid: 7,
+            role: PacketRole::Listen,
+            intent: SessionIntent::P2p,
+        };
+        let dial = TransportConfig::Packet {
+            link: KissLinkConfig::Tcp {
+                host: wire.ip().to_string(),
+                port: wire.port(),
+            },
+            ssid: 7,
+            role: PacketRole::DialTo {
+                call: "W7AUX-7".into(),
+                path: vec![],
+            },
+            intent: SessionIntent::P2p,
+        };
+
+        // 60 s: the full loopback exchange completes in ~1-2 s locally; the
+        // margin covers spawn_blocking scheduling on a loaded 2-core CI runner
+        // (the dial-fail twins' original 10 s wrapper proved too tight there).
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            tokio::join!(answerer.connect(listen, None), dialer.connect(dial, None))
+        })
+        .await;
+        let (ans_res, dial_res) =
+            outcome.expect("packet P2P answer record-site test timed out");
+        ans_res.expect("answerer (Listen/Answer role) connect+exchange failed");
+        dial_res.expect("dialer (DialTo/Dial role) connect+exchange failed");
+
+        let obs = seen.lock().unwrap();
+        let incoming: Vec<_> = obs
+            .iter()
+            .filter(|o| o.direction == crate::contacts::reachability::Direction::Incoming)
+            .collect();
+        assert_eq!(
+            incoming.len(),
+            1,
+            "exactly one Incoming observation from the answer arm; got {obs:?}"
+        );
+        let o = incoming[0];
+        match &o.path {
+            crate::contacts::observation::ObservedPath::Rf { transport, .. } => {
+                assert_eq!(*transport, crate::contacts::reachability::ChannelTransport::Packet);
+            }
+            other => panic!("expected an Rf path for the packet answer site; got {other:?}"),
+        }
+        assert_eq!(
+            o.presented_target, "N7CPZ",
+            "the answerer's observation must present the dialer's base call"
+        );
+        assert_eq!(
+            crate::contacts::observation::classify(o.phase),
+            crate::contacts::observation::Classified::Ok,
+            "a clean accepted exchange must classify Ok; got phase {:?}",
+            o.phase
+        );
+        drop(obs);
+
+        crate::contacts::observation::install_observation_sink(Arc::new(|_| {})); // reset
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial_test::serial]
+    async fn packet_dial_connect_fail_p2p_intent_records_one_fail_observation() {
+        // [CDX-7] [R3-11]: drives the REAL `native_packet_connect` dial path
+        // (via `NativeBackend::connect`) against a KISS wire that accepts the
+        // TCP link and immediately closes it — the FIN surfaces as
+        // `ConnectionAborted` on `datalink::connect`'s first poll, the dial
+        // arm's `?` fires, and the guard armed immediately before that call
+        // drops recording `DialAttempted` → Fail. Deterministic sub-second
+        // failure (see `spawn_closing_kiss_wire` for why a silent wire is NOT
+        // usable: the 25 s non-configurable `connect_timeout` governs that
+        // path). #[serial]: the recorder sink is process-global.
+        let seen: Arc<std::sync::Mutex<Vec<crate::contacts::observation::PeerObservation>>> =
+            Arc::default();
+        {
+            let seen = seen.clone();
+            crate::contacts::observation::install_observation_sink(Arc::new(move |o| {
+                seen.lock().unwrap().push(o)
+            }));
+        }
+
+        let wire = spawn_closing_kiss_wire();
+
+        let dir = tempdir().unwrap();
+        let dialer = NativeBackend::new(config_with_call("N7CPZ"), dir.path());
+        dialer.set_active_identity(crate::identity::SessionIdentity::full(
+            crate::identity::IdentityHandle::for_test(
+                crate::identity::Callsign::parse("N7CPZ").unwrap(),
+            ),
+        ));
+
+        let dial = TransportConfig::Packet {
+            link: KissLinkConfig::Tcp {
+                host: wire.ip().to_string(),
+                port: wire.port(),
+            },
+            ssid: 7,
+            role: PacketRole::DialTo {
+                call: "W7AUX-7".into(),
+                path: vec![],
+            },
+            intent: SessionIntent::P2p,
+        };
+
+        // Expected wall clock is sub-second (FIN on the first poll); 60 s gives
+        // order-of-magnitude headroom for a loaded 2-core CI runner and would
+        // even survive a regression back to the 25 s connect_timeout ceiling.
+        let result = tokio::time::timeout(std::time::Duration::from_secs(60), dialer.connect(dial, None))
+            .await
+            .expect("packet dial-fail record-site test timed out");
+        assert!(
+            result.is_err(),
+            "a dial into an immediately-closed KISS wire must fail the AX.25 connect, got {result:?}"
+        );
+
+        let obs = seen.lock().unwrap();
+        assert_eq!(
+            obs.len(),
+            1,
+            "exactly one observation for the failed P2P dial; got {obs:?}"
+        );
+        assert_eq!(obs[0].direction, crate::contacts::reachability::Direction::Outgoing);
+        assert_eq!(obs[0].presented_target, "W7AUX");
+        assert_eq!(
+            crate::contacts::observation::classify(obs[0].phase),
+            crate::contacts::observation::Classified::Fail
+        );
+        drop(obs);
+
+        crate::contacts::observation::install_observation_sink(Arc::new(|_| {})); // reset
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial_test::serial]
+    async fn packet_dial_connect_fail_cms_intent_records_nothing_even_with_sink_installed() {
+        // [spec §3]: the packet dial gate mirrors the VARA/ARDOP dial gates —
+        // only `SessionIntent::P2p` dials resolve the global sink. A CMS dial
+        // that fails its AX.25 connect must not touch the peer roster even
+        // though the global sink IS installed. Same deterministic
+        // accept-then-close wire as the P2p twin (sub-second failure).
+        let seen: Arc<std::sync::Mutex<Vec<crate::contacts::observation::PeerObservation>>> =
+            Arc::default();
+        {
+            let seen = seen.clone();
+            crate::contacts::observation::install_observation_sink(Arc::new(move |o| {
+                seen.lock().unwrap().push(o)
+            }));
+        }
+
+        let wire = spawn_closing_kiss_wire();
+
+        let dir = tempdir().unwrap();
+        let dialer = NativeBackend::new(config_with_call("N7CPZ"), dir.path());
+        dialer.set_active_identity(crate::identity::SessionIdentity::full(
+            crate::identity::IdentityHandle::for_test(
+                crate::identity::Callsign::parse("N7CPZ").unwrap(),
+            ),
+        ));
+
+        let dial = TransportConfig::Packet {
+            link: KissLinkConfig::Tcp {
+                host: wire.ip().to_string(),
+                port: wire.port(),
+            },
+            ssid: 7,
+            role: PacketRole::DialTo {
+                call: "W7AUX-7".into(),
+                path: vec![],
+            },
+            intent: SessionIntent::Cms,
+        };
+
+        // Same 60 s order-of-magnitude margin as the P2p twin.
+        let result = tokio::time::timeout(std::time::Duration::from_secs(60), dialer.connect(dial, None))
+            .await
+            .expect("packet dial-fail CMS-intent test timed out");
+        assert!(result.is_err(), "expected the AX.25 connect to fail, got {result:?}");
+
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "a CMS packet dial must not record even with the global sink installed"
+        );
+
+        crate::contacts::observation::install_observation_sink(Arc::new(|_| {})); // reset
     }
 }
