@@ -81,6 +81,7 @@ fn native_test_config() -> tuxlink_lib::config::Config {
     };
     Config {
         elmer: tuxlink_lib::config::ElmerConfig::default(),
+        ft8: tuxlink_lib::config::Ft8Config::default(),
         schema_version: tuxlink_lib::config::CONFIG_SCHEMA_VERSION,
         wizard_completed: true,
         connect: ConnectConfig {

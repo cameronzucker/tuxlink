@@ -29,8 +29,9 @@ pub use link::wrap_disconnectable;
 // Managed-Dire-Wolf device discovery (Slice B, Phase 1): stable audio-device
 // identity + same-USB-parent PTT resolution.
 pub use devices::{
-    discover_ptt, enumerate_audio_devices, read_sys_snapshot, resolve_managed_device, AudioDevice,
-    PttChoice, ResolvedManagedDevice, StableAudioId, SysSnapshot,
+    discover_ptt, enumerate_audio_devices, enumerate_capture_devices, read_sys_snapshot,
+    resolve_managed_device, AudioDevice, PttChoice, ResolvedManagedDevice, StableAudioId,
+    SysSnapshot,
 };
 
 // Managed-Dire-Wolf config generation (Slice B, Phase 2): pure direwolf.conf

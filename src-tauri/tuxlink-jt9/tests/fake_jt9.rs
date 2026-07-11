@@ -248,17 +248,21 @@ fn nonzero_exit_without_signal_is_exit_code_signal() {
 }
 
 #[test]
-fn signal_death_discards_prior_decodes_by_taxonomy() {
-    // Signal beats decodes in the failure taxonomy (delta §failure
-    // taxonomy): even when jt9 emitted a decode line before dying, a
-    // signal death still reports Failed(Signal) — the decodes are
-    // discarded, not salvaged. (Salvage-on-decodes is a timeout-path-only
-    // behavior; a signal death is never partial-salvaged.)
+fn signal_death_salvages_parsed_decodes() {
+    // Salvage-on-signal (tuxlink-gujnz; L2 spec §gujnz): jt9's dominant
+    // real failure mode IS decode-stream-then-SIGSEGV, and decode lines
+    // print only after jt9's internal CRC-14 accepts a candidate — parsed
+    // lines from a signal death are trustworthy. ≥ 1 parsed line →
+    // Decoded with partial = !saw_sentinel, identical to the timeout arm;
+    // zero lines keeps Failed(Signal).
     let (runner, wav, tmp) = setup("segv-with-decodes", &format!(
         "#!/bin/sh\necho '{DECODE_LINE}'\necho 'dying now' 1>&2\nkill -SEGV $$\n"));
     match runner.decode_slot(&wav, &tmp, 0) {
-        SlotOutcome::Failed(SlotFailure::Signal { .. }) => {}
-        other => panic!("want Signal (decodes discarded), got {other:?}"),
+        SlotOutcome::Decoded(recs) => {
+            assert_eq!(recs.len(), 1);
+            assert!(recs[0].partial, "no sentinel before the signal => partial");
+        }
+        other => panic!("want salvaged Decoded, got {other:?}"),
     }
     let _ = std::fs::remove_dir_all(wav.parent().unwrap());
 }
@@ -298,5 +302,67 @@ fn arg_builder_never_emits_shmem() {
     let (runner, wav, tmp) = setup("noshm", &format!(
         "#!/bin/sh\nfor a in \"$@\"; do case \"$a\" in -s|--shmem) exit 97;; esac; done\necho '{SENTINEL}'\nexit 0\n"));
     assert_eq!(runner.decode_slot(&wav, &tmp, 0), SlotOutcome::BandDead);
+    let _ = std::fs::remove_dir_all(wav.parent().unwrap());
+}
+
+#[test]
+fn zero_line_signal_death_is_still_failed_signal() {
+    // The salvage arm requires ≥ 1 PARSED decode line; a bare signal death
+    // stays Failed(Signal) (spec §gujnz: "zero parsed lines keeps
+    // Failed(Signal)").
+    let (runner, wav, tmp) = setup("segv-zero-lines", "#!/bin/sh\nkill -SEGV $$\n");
+    assert!(matches!(
+        runner.decode_slot(&wav, &tmp, 0),
+        SlotOutcome::Failed(SlotFailure::Signal { .. })
+    ));
+    let _ = std::fs::remove_dir_all(wav.parent().unwrap());
+}
+
+#[test]
+fn signal_death_after_sentinel_salvages_complete_records() {
+    // A crash AFTER <DecodeFinished> yields complete records:
+    // partial = !saw_sentinel = false (spec §gujnz — identical semantics
+    // to the timeout-after-sentinel arm).
+    let (runner, wav, tmp) = setup("segv-post-sentinel", &format!(
+        "#!/bin/sh\necho '{DECODE_LINE}'\necho '{SENTINEL}'\nkill -SEGV $$\n"));
+    match runner.decode_slot(&wav, &tmp, 0) {
+        SlotOutcome::Decoded(recs) => {
+            assert_eq!(recs.len(), 1);
+            assert!(!recs[0].partial, "sentinel seen => complete records");
+        }
+        other => panic!("want salvaged Decoded, got {other:?}"),
+    }
+    let _ = std::fs::remove_dir_all(wav.parent().unwrap());
+}
+
+#[test]
+fn stderr_eof_beats_salvage_on_the_signal_path() {
+    // Arm ordering pinned on ALL paths (spec §gujnz): StderrEof BEFORE
+    // salvage — signal death + "EOF on input file" + parsed lines is
+    // still Failed(StderrEof). A capture bug must never masquerade as
+    // decodes (theoretical on the signal path, pinned not assumed).
+    let (runner, wav, tmp) = setup("segv-eof-with-decodes", &format!(
+        "#!/bin/sh\necho '{DECODE_LINE}'\necho 'EOF on input file' 1>&2\nkill -SEGV $$\n"));
+    assert_eq!(
+        runner.decode_slot(&wav, &tmp, 0),
+        SlotOutcome::Failed(SlotFailure::StderrEof)
+    );
+    let _ = std::fs::remove_dir_all(wav.parent().unwrap());
+}
+
+#[test]
+fn nonzero_exit_with_decodes_salvages_too() {
+    // The salvage arm covers nonzero clean exits as well as signals
+    // (spec §gujnz: "signal-death (or nonzero clean exit)"). With the
+    // sentinel present the records are complete.
+    let (runner, wav, tmp) = setup("exit3-with-decodes", &format!(
+        "#!/bin/sh\necho '{DECODE_LINE}'\necho '{SENTINEL}'\nexit 3\n"));
+    match runner.decode_slot(&wav, &tmp, 0) {
+        SlotOutcome::Decoded(recs) => {
+            assert_eq!(recs.len(), 1);
+            assert!(!recs[0].partial, "sentinel seen => complete records");
+        }
+        other => panic!("want salvaged Decoded, got {other:?}"),
+    }
     let _ = std::fs::remove_dir_all(wav.parent().unwrap());
 }

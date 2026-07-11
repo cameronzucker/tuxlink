@@ -122,6 +122,26 @@ For 1200-baud Packet, the calibration is looser — Dire Wolf will report
 a usable signal across a wide level range — but it's not zero. See
 [Packet on AX.25](14-packet-on-ax25.md).
 
+### Capture-side AGC on CM108-class codecs
+
+Many USB audio interfaces in the DigiRig / DRA / SignaLink class are built
+on C-Media CM108/CM119 codecs, and most ship with the codec's microphone
+**Auto Gain Control enabled by default**. AGC continuously rewrites the
+capture level: weak-signal decoders (the FT8 listener, ARDOP, VARA) see a
+receive audio floor that pumps up and down with band activity, which buries
+weak signals and invalidates any level calibration.
+
+Disable it once per interface, at capture setup:
+
+1. Run `alsamixer`, press `F6`, and select the USB codec card.
+2. Press `F4` (capture view). If a control named `Auto Gain Control` (or
+   `AGC`) shows `[on]`, press `m` to switch it off.
+3. Persist it across replug/reboot: `sudo alsactl store`.
+
+Then set the capture level itself to a fixed value (start near 60–70 %) and
+leave it there — a steady, slightly-low level decodes better than a hot or
+moving one.
+
 ## Picking an interface
 
 | Use case | Recommendation |

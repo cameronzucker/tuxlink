@@ -2922,6 +2922,7 @@ mod tests {
                         serial: None,
                     }),
                     usb_parent: Some("/sys/devices/platform/usb2/2-1".into()),
+                    has_capture: true,
                 }],
                 ..Default::default()
             };
@@ -2947,6 +2948,7 @@ mod tests {
                     by_id_basename: None,
                     usb: None,
                     usb_parent: None,
+                    has_capture: true,
                 }],
                 ..Default::default()
             };

@@ -138,6 +138,12 @@ pub struct SnapshotCard {
     /// keep distinct device-node strings and never cross-match. (The field name
     /// is historical; the value is the device node, not a hub-parent.)
     pub usb_parent: Option<String>,
+    /// True when the card exposes at least one CAPTURE substream
+    /// (`/proc/asound/card<N>/pcm*c` exists). The packet picker ignores this
+    /// (playback-only cards were never a packet hazard in practice); the FT8
+    /// capture picker (`enumerate_capture_devices`) filters on it so the
+    /// operator is never offered a card that cannot record (tuxlink-b026z.3).
+    pub has_capture: bool,
 }
 
 /// A `/dev/hidraw*` node and the USB parent it hangs off — the topology PTT
@@ -313,6 +319,12 @@ fn plughw_name(card: &SnapshotCard) -> String {
     format!("plughw:CARD={},DEV=0", card.card_id)
 }
 
+/// The ALSA `hw:<index>,0` device name for a live card index. Numeric-index
+/// form on purpose — see [`ResolvedManagedDevice::alsa_hw`].
+pub fn alsa_hw_name(card_index: u32) -> String {
+    format!("hw:{card_index},0")
+}
+
 /// Enumerate the packet-usable audio devices from a snapshot, each resolved to
 /// a stable identity (NOT the `card N` index). Onboard (non-USB) cards are
 /// excluded. The returned order follows snapshot order among usable cards; the
@@ -325,6 +337,29 @@ pub fn enumerate_audio_devices(snapshot: &SysSnapshot) -> Vec<AudioDevice> {
         .cards
         .iter()
         .filter(|c| is_usable_packet_card(c))
+        .map(|card| AudioDevice {
+            human_name: card.card_name.clone(),
+            alsa_plughw: plughw_name(card),
+            stable_id: derive_stable_id(card),
+            usb_parent: card.usb_parent.clone(),
+            card_index: card.card_index,
+        })
+        .collect()
+}
+
+/// Enumerate the CAPTURE-capable audio devices from a snapshot — the FT8
+/// listener's picker source (spec §Device selection). Same stable-identity
+/// resolution as [`enumerate_audio_devices`], plus the capture-substream
+/// filter (`SnapshotCard::has_capture`). The packet picker's function is
+/// deliberately untouched: its USB-presence-only filter is released
+/// behavior.
+///
+/// Pure over `snapshot` — no `/dev`, no ALSA, no I/O.
+pub fn enumerate_capture_devices(snapshot: &SysSnapshot) -> Vec<AudioDevice> {
+    snapshot
+        .cards
+        .iter()
+        .filter(|c| is_usable_packet_card(c) && c.has_capture)
         .map(|card| AudioDevice {
             human_name: card.card_name.clone(),
             alsa_plughw: plughw_name(card),
@@ -393,7 +428,14 @@ pub fn discover_ptt(card: &AudioDevice, snapshot: &SysSnapshot) -> Vec<PttChoice
 pub struct ResolvedManagedDevice {
     /// The live ALSA `plughw:CARD=<id>,DEV=0` name for `ADEVICE`.
     pub alsa_plughw: String,
-    /// The live boot-order `card<N>` index backing `alsa_plughw`.
+    /// The live ALSA `hw:<card_index>,0` name, derived from the FRESHLY
+    /// resolved boot-order index (tuxlink-b026z.3). The FT8 capture path
+    /// opens THIS name: `plughw:` would silently resample (masking
+    /// `blocked(unsupported-sample-rate)`), and `CARD=<id>` collides when
+    /// two same-model codecs share a card id (see
+    /// `cardid_hash_disambiguates_same_card_id_via_device_node`).
+    pub alsa_hw: String,
+    /// The live boot-order `card<N>` index backing both names.
     pub card_index: u32,
 }
 
@@ -416,6 +458,7 @@ pub fn resolve_managed_device(
         .find(|d| d.stable_id == *stable_id)
         .map(|d| ResolvedManagedDevice {
             alsa_plughw: d.alsa_plughw,
+            alsa_hw: alsa_hw_name(d.card_index),
             card_index: d.card_index,
         })
 }
@@ -460,6 +503,7 @@ pub fn read_sys_snapshot() -> SysSnapshot {
                 by_id_basename: None,
                 usb: None,
                 usb_parent: None,
+                has_capture: card_has_capture_substream(card_index),
             })
             .collect(),
         Err(_) => Vec::new(),
@@ -598,6 +642,22 @@ pub fn read_sys_snapshot() -> SysSnapshot {
         hidraws,
         ttys,
     }
+}
+
+/// IMPURE: true when `/proc/asound/card<N>` contains a `pcm*` entry whose
+/// name ends in `c` (a capture substream directory, e.g. `pcm0c`). Part of
+/// the read_sys_snapshot shim — untested by design; the pure filter over the
+/// resulting flag IS tested (`enumerate_capture_devices`).
+fn card_has_capture_substream(card_index: u32) -> bool {
+    let dir = format!("/proc/asound/card{card_index}");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return false;
+    };
+    entries.flatten().any(|e| {
+        let name = e.file_name();
+        let name = name.to_string_lossy();
+        name.starts_with("pcm") && name.ends_with('c')
+    })
 }
 
 /// IMPURE helper: walk a canonicalized sysfs path UP until a directory that holds
@@ -776,6 +836,7 @@ mod tests {
                 serial: Some("DIGIRIG123".into()),
             }),
             usb_parent: Some(parent.into()),
+            has_capture: true,
         }
     }
 
@@ -793,6 +854,7 @@ mod tests {
                 serial: Some("DRA100XYZ".into()),
             }),
             usb_parent: Some(parent.into()),
+            has_capture: true,
         }
     }
 
@@ -805,6 +867,7 @@ mod tests {
             by_id_basename: None,
             usb: None,
             usb_parent: None,
+            has_capture: true,
         }
     }
 
@@ -999,6 +1062,7 @@ mod tests {
                     serial: Some("COMBO1".into()),
                 }),
                 usb_parent: Some(parent.into()),
+                has_capture: true,
             }],
             hidraws: vec![HidrawNode {
                 path: "/dev/hidraw5".into(),
@@ -1163,6 +1227,7 @@ mod tests {
                 serial: None, // no USB serial reported
             }),
             usb_parent: Some(device_node(port)),
+            has_capture: true,
         };
         let a = mk("2-1");
         let b = mk("2-2");
@@ -1201,6 +1266,11 @@ mod tests {
         // Resolved to b's live index (9), not a's (4) — no collision, right card.
         assert_eq!(resolved.card_index, 9);
         assert_eq!(resolved.alsa_plughw, "plughw:CARD=Device,DEV=0");
+        // L2 (tuxlink-b026z.3): the hw: handle is derived from the FRESHLY
+        // resolved index — the id-collision case is exactly where an id-based
+        // open ("hw:CARD=Device") would grab the wrong card. The plughw name
+        // is ambiguous here (both cards share the id); alsa_hw is not.
+        assert_eq!(resolved.alsa_hw, "hw:9,0");
     }
 
     // ---- P6.A: resolve_managed_device (pure) --------------------------------
@@ -1312,5 +1382,70 @@ mod tests {
         assert_eq!(id1.kind, StableIdKind::CardIdHash);
         assert_eq!(id1, id2);
         assert!(id1.value.starts_with("cardid:"));
+    }
+
+    /// L2 capture enumeration (spec §Device selection): the FT8 picker lists
+    /// only cards with a capture substream; the PACKET picker keeps its
+    /// USB-presence-only filter. A playback-only USB card (has_capture:
+    /// false) appears in enumerate_audio_devices but NOT in
+    /// enumerate_capture_devices.
+    #[test]
+    fn capture_enumeration_excludes_playback_only_cards() {
+        let capture_card = SnapshotCard {
+            card_index: 1,
+            card_id: "DRA".into(),
+            card_name: "DRA-100 USB Audio".into(),
+            by_id_basename: Some("usb-DRA-100-00".into()),
+            usb: Some(UsbIdentity {
+                vid: CMEDIA_VID.into(),
+                pid: "013a".into(),
+                serial: None,
+            }),
+            usb_parent: Some(device_node("2-1")),
+            has_capture: true,
+        };
+        let playback_only = SnapshotCard {
+            card_index: 2,
+            card_id: "Headset".into(),
+            card_name: "USB Playback-Only Headset".into(),
+            by_id_basename: Some("usb-Headset-00".into()),
+            usb: Some(UsbIdentity {
+                vid: "1234".into(),
+                pid: "5678".into(),
+                serial: Some("HS1".into()),
+            }),
+            usb_parent: Some(device_node("2-2")),
+            has_capture: false,
+        };
+        let snap = SysSnapshot {
+            cards: vec![capture_card, playback_only],
+            ..Default::default()
+        };
+
+        // Packet picker: unchanged — both USB cards listed.
+        assert_eq!(enumerate_audio_devices(&snap).len(), 2);
+
+        // FT8 capture picker: playback-only card filtered out.
+        let cap = enumerate_capture_devices(&snap);
+        assert_eq!(cap.len(), 1);
+        assert_eq!(cap[0].human_name, "DRA-100 USB Audio");
+    }
+
+    /// Onboard (non-USB) cards stay excluded from capture enumeration even
+    /// when they report a capture substream (the bcm2835 class).
+    #[test]
+    fn capture_enumeration_still_excludes_onboard_cards() {
+        let onboard = SnapshotCard {
+            card_index: 0,
+            card_id: "vc4hdmi".into(),
+            card_name: "vc4-hdmi".into(),
+            by_id_basename: None,
+            usb: None,
+            usb_parent: None,
+            has_capture: true,
+        };
+        let snap = SysSnapshot { cards: vec![onboard], ..Default::default() };
+        assert!(enumerate_capture_devices(&snap).is_empty());
+        assert!(enumerate_audio_devices(&snap).is_empty());
     }
 }

@@ -197,6 +197,23 @@ impl Jt9Runner {
         {
             use std::os::unix::process::ExitStatusExt;
             if let Some(sig) = status.signal() {
+                // Arm ordering pinned by the L2 spec (§gujnz): StderrEof
+                // BEFORE salvage on ALL abnormal-termination arms — a
+                // capture bug must never masquerade as decodes.
+                if stderr_text.contains("EOF on input file") {
+                    return SlotOutcome::Failed(SlotFailure::StderrEof);
+                }
+                if !decodes.is_empty() {
+                    // Salvage-on-signal (tuxlink-gujnz): jt9's dominant
+                    // real failure mode is decode-stream-then-SIGSEGV, and
+                    // lines print only after jt9's internal CRC-14 accepts
+                    // a candidate. partial mirrors the timeout arm: true
+                    // iff the completeness sentinel was never seen.
+                    for d in &mut decodes {
+                        d.partial = !saw_sentinel;
+                    }
+                    return SlotOutcome::Decoded(decodes);
+                }
                 return SlotOutcome::Failed(SlotFailure::Signal {
                     signal: format!("signal {sig}"),
                     stderr_tail: tail(&stderr_text, 300),
@@ -207,6 +224,17 @@ impl Jt9Runner {
             return SlotOutcome::Failed(SlotFailure::StderrEof);
         }
         if !status.success() {
+            if !decodes.is_empty() {
+                // Nonzero-exit salvage: same rationale as the signal arm
+                // (jt9 has no documented nonzero exits; a crash after
+                // decodes is evidence the band is alive, not that the
+                // parsed data is bad). The StderrEof check above already
+                // ran — ordering pinned.
+                for d in &mut decodes {
+                    d.partial = !saw_sentinel;
+                }
+                return SlotOutcome::Decoded(decodes);
+            }
             return SlotOutcome::Failed(SlotFailure::Signal {
                 signal: format!("exit {}", status.code().unwrap_or(-1)),
                 stderr_tail: tail(&stderr_text, 300),
