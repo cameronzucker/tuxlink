@@ -157,6 +157,20 @@ impl FakeEngine {
             decodes_finished: AtomicU64::new(0),
         })
     }
+    /// `band_dead()` with the prewarm gate armed: `prewarm()` parks on the
+    /// gate until the test releases it — the stop/pause-during-starting
+    /// scenarios need a sequence deterministically parked at step 4.
+    pub fn band_dead_with_prewarm_gate() -> Arc<Self> {
+        Arc::new(Self {
+            outcomes: Mutex::new(VecDeque::new()),
+            default_outcome: SlotOutcome::BandDead,
+            prewarm_result: Mutex::new(Ok(())),
+            gate: Arc::new((Mutex::new(false), Condvar::new())),
+            gate_prewarm: true,
+            decodes_started: AtomicU64::new(0),
+            decodes_finished: AtomicU64::new(0),
+        })
+    }
     pub fn hold_gate(&self) {
         *self.gate.0.lock().unwrap() = true;
     }

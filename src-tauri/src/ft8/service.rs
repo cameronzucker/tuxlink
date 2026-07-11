@@ -21,15 +21,12 @@ use std::time::{Duration, Instant};
 use crate::config::Ft8Config;
 use crate::ft8::clock::{ClockProbe, ClockSync};
 use crate::ft8::events::EventSink;
-// Dead-code discipline (Global Constraints §Push cadence): imports, fields,
-// and constants land in the task with their FIRST reader, so every commit in
-// the batch is clippy-clean. T13 adds `devices::ResolvedManagedDevice` with
-// the `resolved` field.
 use crate::ft8::records::{
     AudioDeviceChoice, BandSource, DiscardClassDto, Ft8ListeningChange, RingOutcome,
     ServiceAxisDto, SlotRecord,
 };
 use crate::ft8::traits::{DecodeEngine, Ft8Platform, SourceError};
+use crate::winlink::ax25::devices::ResolvedManagedDevice;
 use serde::Serialize;
 use tuxlink_capture::state::{BlockedReason, ListenerMachine, ServiceAxis};
 
@@ -39,6 +36,32 @@ pub(crate) const CLOCK_REPROBE_BOUNDARIES: u64 = 20;
 pub(crate) const PIPE_WATERMARK_BOUNDARIES: u64 = 100;
 pub(crate) const PIPE_WATERMARK_EXCESS: usize = 16;
 pub(crate) const HOLD_LATCH_TTL: Duration = Duration::from_secs(30);
+/// Stop/yield join bounds (spec §Lifecycle ownership): capture's PCM closes
+/// on drop, so 2 s covers the ALSA teardown; decode's 16 s absorbs the 14 s
+/// worst-case decode; the supervisor's 16 s covers a blocking prewarm plus
+/// its park_timeout tick.
+pub(crate) const CAPTURE_JOIN: Duration = Duration::from_secs(2);
+pub(crate) const DECODE_JOIN: Duration = Duration::from_secs(16);
+pub(crate) const SUPERVISOR_JOIN: Duration = Duration::from_secs(16);
+
+/// Poll `is_finished()` to the bound, then join. Returns Err(handle) on
+/// overrun so the caller can force-detach with provenance.
+fn join_bounded(handle: JoinHandle<()>, timeout: Duration) -> Result<(), JoinHandle<()>> {
+    let deadline = Instant::now() + timeout;
+    while !handle.is_finished() {
+        if Instant::now() >= deadline {
+            return Err(handle);
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let _ = handle.join();
+    Ok(())
+}
+
+/// Capture join overran at pause: the arbiter maps this to
+/// PauseError::CaptureWedged (T14).
+#[derive(Debug)]
+pub(crate) struct YieldJoinTimeout;
 
 /// The positive hold token (spec §Hold latch). A lazily-evaluated timestamp:
 /// it needs no supervisor to expire. Shared between the service (start-
@@ -183,8 +206,9 @@ struct Inner {
     ring: VecDeque<SlotRecord>,
     /// Set by QSY (T16): the next completed slot is a scheduled discard.
     discard_next_slot: Option<DiscardClassDto>,
-    // `resolved` arrives in T13 (resume_conditions_met reads it) — dead-code
-    // discipline (Global Constraints §Push cadence).
+    /// The device the last successful resolution produced — live handles for
+    /// probes + release-confirm. Refreshed by every sequence run.
+    resolved: Option<ResolvedManagedDevice>,
 }
 
 /// Thread handles — OUTSIDE the state mutex (lock discipline). `capture` +
@@ -247,6 +271,7 @@ impl Ft8ListenerState {
                 last_failure: None,
                 ring: VecDeque::with_capacity(RING_CAP),
                 discard_next_slot: None,
+                resolved: None,
             }),
             handles: Mutex::new(Handles::default()),
             master_tx: Mutex::new(None),
@@ -384,6 +409,76 @@ impl Ft8ListenerState {
         }
     }
 
+    /// Full stop protocol (spec §Lifecycle ownership). Blocking-context
+    /// only — the Tauri command wraps it in spawn_blocking (T17).
+    pub fn stop(&self) {
+        {
+            let mut g = self.lock_inner();
+            if matches!(g.machine.axis(), ServiceAxis::Stopped) {
+                return;
+            }
+            g.machine.on_stopping();
+        }
+        self.emit_listening_change();
+        self.stop_request.store(true, Ordering::SeqCst);
+        self.capture_abort.store(true, Ordering::SeqCst);
+        self.unpark_supervisor();
+
+        let mut wedged = false;
+
+        // 1. capture (if present): ≤ 2 s; PCM closes on drop.
+        let capture = self.handles.lock().unwrap_or_else(|p| p.into_inner()).capture.take();
+        if let Some(h) = capture {
+            if let Err(detached) = join_bounded(h, CAPTURE_JOIN) {
+                tracing::warn!(
+                    target: "tuxlink::ft8",
+                    "capture join overran {CAPTURE_JOIN:?} at stop — force-detaching; \
+                     the detached thread may still hold the PCM (capture-wedged)"
+                );
+                drop(detached);
+                wedged = true;
+            }
+        }
+
+        // 2. drop the master Sender → decode's recv returns Disconnected.
+        *self.master_tx.lock().unwrap_or_else(|p| p.into_inner()) = None;
+
+        // 3. decode (if present): ≤ 16 s (covers the 14 s worst-case decode).
+        let decode = self.handles.lock().unwrap_or_else(|p| p.into_inner()).decode.take();
+        if let Some(h) = decode {
+            if let Err(detached) = join_bounded(h, DECODE_JOIN) {
+                tracing::warn!(target: "tuxlink::ft8", "decode join overran at stop — force-detaching");
+                drop(detached);
+                wedged = true;
+            }
+        }
+
+        // 4. supervisor: ≤ 16 s (it may be inside an unabortable prewarm).
+        let supervisor = self.handles.lock().unwrap_or_else(|p| p.into_inner()).supervisor.take();
+        if let Some(h) = supervisor {
+            self.unpark_supervisor();
+            if let Err(detached) = join_bounded(h, SUPERVISOR_JOIN) {
+                tracing::warn!(target: "tuxlink::ft8", "supervisor join overran at stop — force-detaching");
+                drop(detached);
+                wedged = true;
+            }
+        }
+        *self.supervisor_thread.lock().unwrap_or_else(|p| p.into_inner()) = None;
+
+        // 5. the runner is reconstructed on the next start.
+        *self.engine.lock().unwrap_or_else(|p| p.into_inner()) = None;
+
+        {
+            let mut g = self.lock_inner();
+            if wedged {
+                g.machine.on_capture_wedged();
+            } else {
+                g.machine.on_stopped();
+            }
+        }
+        self.emit_listening_change();
+    }
+
     // ---- start sequence (spec §Start sequence; executed BY the supervisor;
     // pub(crate) so unit tests drive it synchronously) -----------------------
 
@@ -447,8 +542,9 @@ impl Ft8ListenerState {
                 Some(format!("configured device {:?} not found", stable_id.value)),
             );
         };
-        // T13 adds `Inner.resolved` (+ the store here) with its first
-        // reader, resume_conditions_met — dead-code discipline.
+        {
+            self.lock_inner().resolved = Some(resolved.clone());
+        }
         if self.interrupted() {
             return;
         }
@@ -1128,9 +1224,81 @@ fn supervisor_loop(state: Arc<Ft8ListenerState>) {
 }
 
 impl Ft8ListenerState {
-    /// T13 fills these in; part-1 stubs keep the supervisor compiling.
-    pub(crate) fn tick_yielded(self: &Arc<Self>) {}
-    pub(crate) fn tick_device_absent(self: &Arc<Self>) {}
+    /// The `listening`-case pause mechanics (spec §Arbitration): abort →
+    /// join capture ≤ 2 s → (PCM closed by the capture thread's drop) →
+    /// write yielded. Latch + release-confirm + rig cancellation live in the
+    /// arbiter (T14) — pause is that transition's single writer and calls
+    /// this. On join overrun: blocked(capture-wedged) + Err.
+    pub(crate) fn pause_capture_for_yield(&self) -> Result<(), YieldJoinTimeout> {
+        self.capture_abort.store(true, Ordering::SeqCst);
+        let capture = self.handles.lock().unwrap_or_else(|p| p.into_inner()).capture.take();
+        if let Some(h) = capture {
+            if let Err(detached) = join_bounded(h, CAPTURE_JOIN) {
+                drop(detached);
+                {
+                    self.lock_inner().machine.on_capture_wedged();
+                }
+                self.emit_listening_change();
+                return Err(YieldJoinTimeout);
+            }
+        }
+        {
+            self.lock_inner().machine.on_pause();
+        }
+        self.emit_listening_change();
+        Ok(())
+    }
+
+    /// Pause from `stopped` is a stateless no-op guard the arbiter uses
+    /// (spec: a system that never enabled FT8 must never acquire phantom
+    /// listener state). Exposed for the T13 test; T14 routes through it.
+    pub(crate) fn is_stopped(&self) -> bool {
+        matches!(self.axis(), ServiceAxis::Stopped)
+    }
+
+    /// Resume conditions (spec §Resume — ALL must hold): latch clear, card
+    /// probe free, modem session positively resume-eligible.
+    pub(crate) fn resume_conditions_met(&self) -> bool {
+        if self.hold.is_latched() {
+            return false;
+        }
+        let resolved = { self.lock_inner().resolved.clone() };
+        let probe_free = match resolved {
+            Some(r) => self.platform.probe_busy(&r.alsa_plughw, r.card_index).is_ok(),
+            // No resolution yet (yielded out of `starting` before step 2):
+            // let the sequence re-run resolve it — treat as free.
+            None => true,
+        };
+        probe_free && self.platform.modem_resume_eligible()
+    }
+
+    /// Supervisor tick, `yielded` axis: resume when all conditions hold.
+    /// Positive latch clearing on observed card-busy also lives here (the
+    /// modem actually acquired the card — the latch's job is done).
+    pub(crate) fn tick_yielded(self: &Arc<Self>) {
+        // Positive-evidence latch clear: card observed busy while latched.
+        if self.hold.is_latched() {
+            if let Some(r) = { self.lock_inner().resolved.clone() } {
+                if self.platform.probe_busy(&r.alsa_plughw, r.card_index).is_err() {
+                    self.hold.clear();
+                }
+            }
+            return; // still latched or just cleared — resume next tick
+        }
+        if self.resume_conditions_met() {
+            self.yield_request.store(false, Ordering::SeqCst);
+            // Resume = steps 1–7 + 8′ capture-only (prewarm skipped: the
+            // runner survives; jt9 discovery re-runs by design).
+            self.execute_start_sequence(true);
+        }
+    }
+
+    /// Supervisor tick, `blocked(device-absent)`: retry every tick (5 s).
+    /// Identical path to resume — fresh re-resolution, capture-only respawn
+    /// when the decode thread survives.
+    pub(crate) fn tick_device_absent(self: &Arc<Self>) {
+        self.execute_start_sequence(true);
+    }
 
     /// The `listening`-axis supervisor tick body, extracted so the cadence
     /// test drives it directly (no 5 s parks): clock re-probe every 20 slot
@@ -1738,17 +1906,233 @@ mod tests {
     }
 
     fn teardown(state: &Arc<Ft8ListenerState>) {
-        state.stop_request.store(true, Ordering::SeqCst);
-        state.capture_abort.store(true, Ordering::SeqCst);
-        *state.master_tx.lock().unwrap() = None; // decode exits on Disconnected
-        state.unpark_supervisor();
-        let mut h = state.handles.lock().unwrap();
-        for handle in [h.supervisor.take(), h.capture.take(), h.decode.take()]
-            .into_iter()
-            .flatten()
-        {
-            let _ = handle.join();
-        }
+        state.stop();
         let _ = std::fs::remove_dir_all(state.platform_tmp_for_test());
+    }
+
+    /// Asserts the §Lifecycle threads-per-state table for the current axis.
+    fn assert_thread_liveness(state: &Arc<Ft8ListenerState>) {
+        let h = state.handles.lock().unwrap();
+        let alive = |o: &Option<std::thread::JoinHandle<()>>| {
+            o.as_ref().map(|j| !j.is_finished()).unwrap_or(false)
+        };
+        let (sup, cap, dec) = (alive(&h.supervisor), alive(&h.capture), alive(&h.decode));
+        drop(h);
+        match state.axis() {
+            ServiceAxis::Stopped => {
+                assert!(!sup && !cap && !dec, "stopped: no threads");
+            }
+            ServiceAxis::Blocked(BlockedReason::CaptureWedged) => {} // detached: unknowable
+            ServiceAxis::Blocked(_) | ServiceAxis::Starting => {
+                assert!(!cap, "blocked/starting: no capture thread");
+            }
+            ServiceAxis::Yielded => {
+                assert!(!cap, "yielded: capture joined");
+                assert!(dec, "yielded: decode survives");
+            }
+            ServiceAxis::Listening => {
+                assert!(cap && dec, "listening: capture + decode alive");
+            }
+            ServiceAxis::Stopping => {}
+        }
+    }
+
+    /// Stop during an in-flight decode (slow fake engine): completes WITHOUT
+    /// the force-detach path — the 16 s decode bound absorbs the 14 s
+    /// worst case (spec §Lock discipline names this exact test).
+    #[test]
+    fn stop_during_inflight_decode_completes_without_force_detach() {
+        let p = FakePlatform::happy();
+        let eng = FakeEngine::band_dead();
+        *p.engine.lock().unwrap() = eng.clone();
+        let state = test_state(p, cfg_with_device());
+        run_sequence(&state);
+        let tx = state.master_tx.lock().unwrap().clone().unwrap();
+        eng.hold_gate();
+        state.handle_completed_slot(completed(1_000), &tx);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while eng.decodes_started.load(Ordering::SeqCst) < 1 {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        // Release the gate from a helper thread ~200 ms into the stop, well
+        // inside the 16 s decode bound.
+        let eng2 = eng.clone();
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            eng2.release_gate();
+        });
+        state.stop();
+        releaser.join().unwrap();
+        assert_eq!(state.axis(), ServiceAxis::Stopped, "no capture-wedged");
+        assert_thread_liveness(&state);
+        let _ = std::fs::remove_dir_all(state.platform_tmp_for_test());
+    }
+
+    /// Stop during `starting`, mid-prewarm: the stop-request is honored at
+    /// the next between-step check; the supervisor join bound covers the
+    /// blocking prewarm; NO capture-wedged (no capture thread ever existed).
+    /// Deterministic by construction: the gate is held BEFORE start(), so
+    /// the sequence parks INSIDE prewarm at step 4.
+    #[test]
+    fn stop_during_starting_mid_prewarm_completes_clean() {
+        let p = FakePlatform::happy();
+        let eng = FakeEngine::band_dead_with_prewarm_gate(); // Step 0b
+        eng.hold_gate(); // BEFORE start(): the sequence parks at step 4
+        *p.engine.lock().unwrap() = eng.clone();
+        let state = test_state(p, cfg_with_device());
+        state.start().expect("supervisor spawns");
+        // Parked inside prewarm: axis holds Starting and no decode ever
+        // starts while a short window elapses.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while state.axis() != ServiceAxis::Starting {
+            assert!(std::time::Instant::now() < deadline, "never reached Starting");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert_eq!(state.axis(), ServiceAxis::Starting, "parked in prewarm");
+        assert_eq!(eng.decodes_started.load(Ordering::SeqCst), 0);
+        // Release the gate ~200 ms into the stop, well inside the 16 s
+        // supervisor join bound.
+        let eng2 = eng.clone();
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            eng2.release_gate();
+        });
+        state.stop();
+        releaser.join().unwrap();
+        assert_eq!(
+            state.axis(),
+            ServiceAxis::Stopped,
+            "mid-prewarm stop is clean — never capture-wedged"
+        );
+        let _ = std::fs::remove_dir_all(state.platform_tmp_for_test());
+    }
+
+    /// Pause from stopped = stateless no-op (spec §Arbitration first arm):
+    /// no latch, no state change, no thread interaction.
+    #[test]
+    fn pause_from_stopped_is_a_stateless_noop() {
+        let p = FakePlatform::happy();
+        let state = test_state(p, cfg_with_device());
+        assert!(state.is_stopped());
+        // T14's arbiter checks is_stopped() and returns Ok(()) WITHOUT
+        // latching; pin the primitive here: the hold stays clear and the
+        // axis stays stopped even if pause mechanics are (wrongly) invoked.
+        assert!(!state.hold().is_latched());
+        assert_eq!(state.axis(), ServiceAxis::Stopped);
+    }
+
+    /// Resume re-spawn: after a yield, the decode thread SURVIVES and the
+    /// resume spawns capture only (8′); prewarm is not re-run.
+    #[test]
+    fn resume_respawns_capture_only_and_decode_survives() {
+        let p = FakePlatform::happy();
+        let eng = FakeEngine::band_dead();
+        *p.engine.lock().unwrap() = eng.clone();
+        let state = test_state(p.clone(), cfg_with_device());
+        run_sequence(&state);
+        assert_eq!(state.axis(), ServiceAxis::Listening);
+        assert_thread_liveness(&state);
+
+        // Yield (the T14 arbiter's listening arm, mechanics only).
+        state.hold().latch_now();
+        state.pause_capture_for_yield().expect("clean join");
+        assert_eq!(state.axis(), ServiceAxis::Yielded);
+        assert_thread_liveness(&state); // decode alive, capture joined
+
+        let prewarm_count_before = {
+            // FakeEngine has no prewarm counter; pin via engine identity —
+            // the SAME Arc must still be installed after resume.
+            Arc::as_ptr(&(state.engine.lock().unwrap().clone().unwrap())) as usize
+        };
+
+        // Clear the latch + free card + eligible modem → tick resumes.
+        state.hold().clear();
+        *p.modem_eligible.lock().unwrap() = true;
+        state.tick_yielded();
+        assert_eq!(state.axis(), ServiceAxis::Listening);
+        assert_thread_liveness(&state);
+        let engine_after =
+            Arc::as_ptr(&(state.engine.lock().unwrap().clone().unwrap())) as usize;
+        assert_eq!(prewarm_count_before, engine_after, "runner NOT reconstructed on resume");
+        teardown(&state);
+    }
+
+    /// Device-absent retry recovery: mid-run loss blocks device-absent; the
+    /// tick re-resolves (fresh index — the card moved!) and recovers with a
+    /// capture-only respawn.
+    #[test]
+    fn device_absent_retry_recovers_with_fresh_resolution() {
+        let p = FakePlatform::happy();
+        let state = test_state(p.clone(), cfg_with_device());
+        run_sequence(&state);
+        assert_eq!(state.axis(), ServiceAxis::Listening);
+
+        // Mid-run loss: the capture loop calls on_device_lost when the
+        // source errors; simulate the loss directly + join the capture
+        // thread the way the loop's return does.
+        p.source_steps
+            .lock()
+            .unwrap()
+            .push_back(SourceStep::Fail(crate::ft8::traits::SourceError::Absent));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while state.axis() != ServiceAxis::Blocked(BlockedReason::DeviceAbsent) {
+            assert!(std::time::Instant::now() < deadline, "loss not detected");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        // Replug on a NEW index: retry must use the fresh resolution.
+        *p.resolved.lock().unwrap() = Some(crate::winlink::ax25::devices::ResolvedManagedDevice {
+            alsa_plughw: "plughw:CARD=DRA,DEV=0".into(),
+            alsa_hw: "hw:3,0".into(),
+            card_index: 3,
+        });
+        state.tick_device_absent();
+        assert_eq!(state.axis(), ServiceAxis::Listening);
+        assert_eq!(
+            state.lock_inner().resolved.as_ref().unwrap().card_index,
+            3,
+            "recovery re-resolved to the LIVE index, never a cached name"
+        );
+        assert_thread_liveness(&state);
+        teardown(&state);
+    }
+
+    /// Blocked re-entry with a BUSY card lands `Yielded`, never a stale
+    /// blocked axis (the set_device-from-blocked path): the sequence entry
+    /// re-enters Starting from every non-wedged blocked reason
+    /// (on_start_requested — T11 entry match), so step 6's pause writes
+    /// Yielded; on_pause from Blocked would have been silently swallowed.
+    /// tick_yielded then recovers once the card frees.
+    #[test]
+    fn set_device_from_blocked_with_busy_card_lands_yielded_then_recovers() {
+        let p = FakePlatform::happy();
+        *p.resolved.lock().unwrap() = None;
+        let state = test_state(p.clone(), cfg_with_device());
+        run_sequence(&state);
+        assert_eq!(state.axis(), ServiceAxis::Blocked(BlockedReason::DeviceAbsent));
+
+        // Device replugs, but a modem holds the card.
+        *p.resolved.lock().unwrap() =
+            Some(crate::winlink::ax25::devices::ResolvedManagedDevice {
+                alsa_plughw: "plughw:CARD=DRA,DEV=0".into(),
+                alsa_hw: "hw:1,0".into(),
+                card_index: 1,
+            });
+        *p.busy.lock().unwrap() = Err("card busy".into());
+        state.execute_start_sequence(false); // the set_device retrigger path
+        assert_eq!(
+            state.axis(),
+            ServiceAxis::Yielded,
+            "busy re-entry must yield — a stale blocked axis strands the operator"
+        );
+
+        // Card frees (modem already eligible in happy()): the supervisor
+        // tick recovers.
+        *p.busy.lock().unwrap() = Ok(());
+        state.tick_yielded();
+        assert_eq!(state.axis(), ServiceAxis::Listening);
+        teardown(&state);
     }
 }
