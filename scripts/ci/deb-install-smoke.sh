@@ -7,10 +7,13 @@
 #     Mirrors docs/install.md: `apt-get update && apt-get install -y ./*.deb`,
 #     then asserts apt resolved every Depends, the binary is present, and its
 #     shared libraries ALL resolve (ldd has no "not found"). Additionally
-#     asserts the hamlib sidecar bundling contract (tuxlink-hs2k): system
-#     hamlib was NOT pulled in as a transitive Depends, the bundled
-#     tuxlink-rigctld binary is present + fully linked, and a live
-#     dummy-backend rigctl round-trip (set/get frequency) works end to end.
+#     asserts the hamlib sidecar bundling contract (tuxlink-hs2k): the
+#     tuxlink .deb's own Depends field does NOT declare hamlib (system
+#     hamlib may still land on the box via the `Recommends: wsjtx`
+#     chain — tuxlink-b026z.2's jt9 decode oracle — which is legitimate
+#     and asserted-for, not forbidden), the bundled tuxlink-rigctld binary
+#     is present + fully linked, and a live dummy-backend rigctl
+#     round-trip (set/get frequency) works end to end.
 #   hamlib-present — the machine that actually breaks: a container that
 #     ALREADY has libhamlib-utils installed (so /usr/bin/rigctld exists)
 #     before Tuxlink is installed. Asserts the Tuxlink .deb still installs
@@ -105,13 +108,28 @@ echo "::endgroup::"
 if [ "$MODE" = "install" ]; then
   # tuxlink-hs2k: the clean-container case is the ONE state that was never
   # broken (a machine that never had hamlib installed can't hit the R2
-  # collision). Prove the bundled hamlib sidecar contract here instead: no
-  # system hamlib got dragged in as a transitive Depends, the bundled
-  # tuxlink-rigctld binary is present, fully linked, and actually runs a
-  # dummy-backend rigctl round-trip.
-  echo "::group::assert no system hamlib pulled + bundled tuxlink-rigctld runs"
-  if dpkg -s libhamlib-utils >/dev/null 2>&1; then
-    echo "FAIL: system hamlib (libhamlib-utils) was pulled in by the Tuxlink install"
+  # collision). Prove the bundled hamlib sidecar contract here instead: the
+  # tuxlink .deb's own Depends field must not require system hamlib. That
+  # contract is about tuxlink's OWN declared dependency, not about whether
+  # libhamlib-utils ends up on the box by any means — since
+  # `Recommends: wsjtx` (tuxlink-b026z.2, the jt9 decode oracle), apt's
+  # default install-recommends legitimately pulls Debian's wsjtx package,
+  # whose own dependency chain drags in libhamlib-utils for wsjtx's rig
+  # control. That's an attributable, expected side effect, not a violation.
+  # If libhamlib-utils shows up WITHOUT wsjtx present, something else is
+  # pulling it in and the contract is actually broken. Either way, the
+  # bundled tuxlink-rigctld assertions below prove the sidecar still works
+  # correctly with system hamlib present on the box — the same guarantee
+  # the hamlib-present mode pins explicitly.
+  echo "::group::assert no system-hamlib Depends + bundled tuxlink-rigctld runs"
+  deb_depends="$(dpkg-deb -f "$DEB" Depends || true)"
+  if printf '%s' "$deb_depends" | grep -qiE 'hamlib'; then
+    echo "FAIL: tuxlink .deb declares a hamlib Depends — the bundled-sidecar contract (tuxlink-hs2k) forbids it"
+    echo "Depends: $deb_depends"
+    exit 1
+  fi
+  if dpkg -s libhamlib-utils >/dev/null 2>&1 && ! dpkg -s wsjtx >/dev/null 2>&1; then
+    echo "FAIL: system hamlib present but not attributable to the wsjtx recommends chain"
     exit 1
   fi
   test -x /usr/bin/tuxlink-rigctld

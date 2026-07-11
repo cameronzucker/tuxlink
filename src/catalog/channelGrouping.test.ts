@@ -28,6 +28,12 @@ describe('channelToDial', () => {
   it('uses the SSID as the packet connect target', () => {
     expect(channelToDial(station, channels[3])).toEqual({ mode: 'packet', gateway: 'N0DAJ-10', freq: '145.710', grid: 'DM34oa' });
   });
+  it('uses the SSID as the HF connect target when the channel carries one', () => {
+    // KB2PCN-5 case (tuxlink-gbb05): an SSID'd VARA HF gateway answers only as
+    // its SSID'd call. The catalog now preserves the SSID; the dial must too.
+    const hfSsid: Channel = { mode: 'vara-hf', frequencyKhz: 14108, ssid: 'N0DAJ-5', band: '20m' };
+    expect(channelToDial(station, hfSsid)).toEqual({ mode: 'vara-hf', gateway: 'N0DAJ-5', freq: '14.108', grid: 'DM34oa' });
+  });
   it('returns null for a non-prefillable mode', () => {
     const pactor: Channel = { mode: 'pactor', frequencyKhz: 7103, band: '40m' };
     expect(channelToDial(station, pactor)).toBeNull();

@@ -5,6 +5,7 @@
 
 use crate::winlink::ax25::KissLinkConfig;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::sync::Mutex;
 
 /// Bumped 2 → 3 (tuxlink-ulrz): `trash_auto_purge` was added under
 /// `deny_unknown_fields` WITHOUT a version bump, so an older binary rejected the
@@ -372,6 +373,13 @@ pub struct Config {
         skip_serializing_if = "crate::contacts::limiter::P2pLimitsConfig::is_default"
     )]
     pub p2p_limits: crate::contacts::limiter::P2pLimitsConfig,
+    /// FT8 Station Intelligence listener settings (tuxlink-b026z.3).
+    /// `#[serde(default)]` migrates configs that predate this field (absent →
+    /// `Ft8Config::default()`); the field is now KNOWN, satisfying
+    /// `deny_unknown_fields`. `skip_serializing_if` keeps a never-touched
+    /// config byte-identical to its pre-FT8 shape.
+    #[serde(default, skip_serializing_if = "Ft8Config::is_default")]
+    pub ft8: Ft8Config,
 }
 
 impl Config {
@@ -800,6 +808,14 @@ pub enum ConfigValidationError {
     InvalidIdentity { field: &'static str, rule: &'static str },
     #[error("packet.ssid {ssid} is out of the 0–15 AX.25 range")]
     PacketSsidOutOfRange { ssid: u8 },
+    #[error("ft8.band {band:?} is not an FT8 band (see the band table)")]
+    Ft8UnknownBand { band: String },
+    #[error("ft8.sweep.bands entry {band:?} is not an FT8 band")]
+    Ft8SweepUnknownBand { band: String },
+    #[error("ft8.sweep.dwell_slots {dwell_slots} is outside the valid 4–40 range")]
+    Ft8DwellOutOfRange { dwell_slots: u8 },
+    #[error("ft8.sweep.enabled requires a configured rig (CAT) — set the rig model + serial first")]
+    Ft8SweepRequiresRig,
 }
 
 impl Config {
@@ -826,6 +842,24 @@ impl Config {
         }
         if self.packet.ssid > 15 {
             return Err(ConfigValidationError::PacketSsidOutOfRange { ssid: self.packet.ssid });
+        }
+        // FT8 listener rules (tuxlink-b026z.3, spec §Config). The band table
+        // is the leaf crate's — one source for chips, QSY targets, and this.
+        if tuxlink_capture::bands::dial_hz(&self.ft8.band).is_none() {
+            return Err(ConfigValidationError::Ft8UnknownBand { band: self.ft8.band.clone() });
+        }
+        for band in &self.ft8.sweep.bands {
+            if tuxlink_capture::bands::dial_hz(band).is_none() {
+                return Err(ConfigValidationError::Ft8SweepUnknownBand { band: band.clone() });
+            }
+        }
+        if !(4..=40).contains(&self.ft8.sweep.dwell_slots) {
+            return Err(ConfigValidationError::Ft8DwellOutOfRange {
+                dwell_slots: self.ft8.sweep.dwell_slots,
+            });
+        }
+        if self.ft8.sweep.enabled && !self.rig.is_configured() {
+            return Err(ConfigValidationError::Ft8SweepRequiresRig);
         }
         Ok(())
     }
@@ -962,6 +996,30 @@ pub fn write_config_atomic(config: &Config) -> Result<(), ConfigWriteError> {
     let parent_dir = std::fs::File::open(parent)?;
     parent_dir.sync_all()?;
     Ok(())
+}
+
+/// The crate-wide config writer gate (tuxlink-b026z.3): serializes every
+/// read-modify-validate-write cycle under ONE static lock.
+/// `write_config_atomic` makes the file REPLACE atomic; it does NOT make
+/// two concurrent read→mutate→write cycles atomic — without this gate the
+/// second writer silently reverts the first writer's field (lost update).
+///
+/// Scope note: the six ft8 commands route through this from day one. The
+/// ~10 pre-existing writers elsewhere in the crate still do bare
+/// read→mutate→write; migrating them is OUT OF SCOPE here and tracked by
+/// the follow-up bd issue T19 files — they migrate opportunistically as
+/// they are touched.
+static CONFIG_WRITER: Mutex<()> = Mutex::new(());
+
+pub fn update_config(
+    mutate: impl FnOnce(&mut Config) -> Result<(), String>,
+) -> Result<Config, String> {
+    let _g = CONFIG_WRITER.lock().unwrap_or_else(|p| p.into_inner());
+    let mut cfg = read_config().map_err(|e| format!("config read failed: {e}"))?;
+    mutate(&mut cfg)?;
+    cfg.validate().map_err(|e| e.to_string())?;
+    write_config_atomic(&cfg).map_err(|e| format!("config write failed: {e}"))?;
+    Ok(cfg)
 }
 
 #[derive(serde::Deserialize)]
@@ -1417,6 +1475,19 @@ impl Default for RigUiConfig {
     }
 }
 
+impl RigUiConfig {
+    /// True when a usable CAT link is configured: hamlib model present AND a
+    /// non-blank serial path. Mirrors the Some-conditions of
+    /// `modem_commands::rig_config_from` WITHOUT importing the modem layer —
+    /// config-level validation (Ft8SweepRequiresRig) needs the predicate
+    /// here. If rig_config_from's conditions ever change, change this too
+    /// (this side cites rig_config_from; the citation is one-way).
+    pub fn is_configured(&self) -> bool {
+        self.rig_hamlib_model.is_some()
+            && self.cat_serial_path.as_deref().is_some_and(|p| !p.trim().is_empty())
+    }
+}
+
 // ============================================================================
 // Telnet-P2P listener config (tuxlink-xehu)
 // ============================================================================
@@ -1489,6 +1560,80 @@ pub struct AprsConfig {
 impl Default for AprsConfig {
     fn default() -> Self {
         Self { source_ssid: 0, tocall: "APZTUX".into(), path: "WIDE1-1,WIDE2-1".into() }
+    }
+}
+
+// ============================================================================
+// FT8 Station Intelligence listener config (tuxlink-b026z.3)
+// ============================================================================
+
+/// FT8 listener settings, persisted under `ft8` in config.json.
+///
+/// Spec: docs/superpowers/specs/2026-07-10-station-intel-l2-capture-design.md
+/// §Config. Additive section (`#[serde(default)]` migrates configs that
+/// predate it; no schema bump). `deny_unknown_fields` is intentionally
+/// absent, matching the other additive UI-config sections.
+///
+/// - `enabled`: autostart flag. `ft8_listener_start` sets it true;
+///   `ft8_listener_stop` sets it false. Autostart fires on `enabled` ALONE —
+///   NOT gated on `device.is_some()` (a first-contact operator interrupted
+///   mid-pick must find `blocked(needs-device-selection)` after restart, not
+///   a silent `stopped`).
+/// - `device`: the operator-picked capture card. `None` →
+///   `blocked(needs-device-selection)`. No auto-selection, ever (operator
+///   decision 2 in the spec header).
+/// - `band`: the selected band chip. The serde default `"20m"` is a
+///   PRESELECTED CHIP, not an assertion — until CAT confirms or the operator
+///   clicks, records carry `band_source = default-unconfirmed`
+///   (spec §Band provenance).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Ft8Config {
+    pub enabled: bool,
+    pub device: Option<crate::winlink::ax25::devices::StableAudioId>,
+    pub band: String,
+    pub sweep: Ft8SweepConfig,
+}
+
+impl Default for Ft8Config {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            device: None,
+            band: "20m".into(),
+            sweep: Ft8SweepConfig::default(),
+        }
+    }
+}
+
+impl Ft8Config {
+    /// True when byte-for-byte equivalent to the default — the
+    /// `skip_serializing_if` predicate (ElmerConfig precedent): a never-
+    /// touched ft8 section is omitted so pre-FT8 configs stay byte-identical.
+    pub fn is_default(&self) -> bool {
+        *self == Ft8Config::default()
+    }
+}
+
+/// Opt-in CAT band sweep (spec §Sweep). Requires a configured rig:
+/// `sweep.enabled` with `Config.rig` unset is a validation error. Dwell
+/// default 8 slots = 2 min/band (5-band default rotation = 10 min);
+/// valid 4–40.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Ft8SweepConfig {
+    pub enabled: bool,
+    pub bands: Vec<String>,
+    pub dwell_slots: u8,
+}
+
+impl Default for Ft8SweepConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bands: vec!["80m".into(), "40m".into(), "20m".into(), "15m".into(), "10m".into()],
+            dwell_slots: 8,
+        }
     }
 }
 
@@ -3206,5 +3351,106 @@ mod tests {
             ..ElmerConfig::default()
         };
         assert!(!cfg.is_default(), "non-default endpoint must make is_default() return false");
+    }
+
+    // ---- tuxlink-b026z.3: Ft8Config ------------------------------------
+
+    /// A default Config serializes WITHOUT an "ft8" key (skip_serializing_if
+    /// — the ElmerConfig precedent): pre-FT8 config files stay byte-identical
+    /// after a load→save cycle.
+    #[test]
+    fn ft8_config_default_is_skipped_on_serialize() {
+        let cfg: Config = serde_json::from_str(&config_json(CONFIG_SCHEMA_VERSION, "")).unwrap();
+        assert!(cfg.ft8.is_default());
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(!json.contains("\"ft8\""), "default ft8 section must be omitted: {json}");
+    }
+
+    /// A non-default Ft8Config round-trips every field, including the
+    /// persisted StableAudioId and the sweep block.
+    #[test]
+    fn ft8_config_round_trips_when_customized() {
+        use crate::winlink::ax25::devices::{StableAudioId, StableIdKind};
+        let mut cfg: Config = serde_json::from_str(&config_json(CONFIG_SCHEMA_VERSION, "")).unwrap();
+        cfg.ft8.enabled = true;
+        cfg.ft8.device = Some(StableAudioId {
+            kind: StableIdKind::ByIdSymlink,
+            value: "usb-DRA-100-00".into(),
+        });
+        cfg.ft8.band = "40m".into();
+        cfg.ft8.sweep.enabled = false;
+        cfg.ft8.sweep.bands = vec!["40m".into(), "20m".into()];
+        cfg.ft8.sweep.dwell_slots = 12;
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("\"ft8\""));
+        let back: Config = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.ft8, cfg.ft8);
+    }
+
+    /// Absent-from-disk ft8 section deserializes to the full default (serde
+    /// migration — no schema bump; matches the AprsConfig pattern).
+    #[test]
+    fn ft8_config_defaults_when_absent() {
+        let cfg: Config = serde_json::from_str(&config_json(CONFIG_SCHEMA_VERSION, "")).unwrap();
+        assert!(!cfg.ft8.enabled);
+        assert_eq!(cfg.ft8.device, None);
+        assert_eq!(cfg.ft8.band, "20m");
+        assert!(!cfg.ft8.sweep.enabled);
+        assert_eq!(cfg.ft8.sweep.bands, ["80m", "40m", "20m", "15m", "10m"]);
+        assert_eq!(cfg.ft8.sweep.dwell_slots, 8);
+    }
+
+    /// validate() rules (spec §Config): band ∈ table, sweep.bands ∈ table,
+    /// dwell_slots ∈ 4..=40, sweep.enabled ⇒ rig configured. Every rule has
+    /// a rejecting case AND the default config passes.
+    #[test]
+    fn ft8_config_validation_rules() {
+        let base = || -> Config {
+            serde_json::from_str(&config_json(CONFIG_SCHEMA_VERSION, "")).unwrap()
+        };
+        assert!(base().validate().is_ok(), "the default ft8 config must validate");
+
+        let mut c = base();
+        c.ft8.band = "6m".into(); // not in the FT8 table
+        assert!(matches!(c.validate(), Err(ConfigValidationError::Ft8UnknownBand { .. })));
+
+        let mut c = base();
+        c.ft8.sweep.bands = vec!["20m".into(), "23cm".into()];
+        assert!(matches!(c.validate(), Err(ConfigValidationError::Ft8SweepUnknownBand { .. })));
+
+        let mut c = base();
+        c.ft8.sweep.dwell_slots = 3;
+        assert!(matches!(c.validate(), Err(ConfigValidationError::Ft8DwellOutOfRange { .. })));
+        let mut c = base();
+        c.ft8.sweep.dwell_slots = 41;
+        assert!(matches!(c.validate(), Err(ConfigValidationError::Ft8DwellOutOfRange { .. })));
+
+        // sweep.enabled with NO rig configured → rejected.
+        let mut c = base();
+        c.ft8.sweep.enabled = true;
+        assert!(!c.rig.is_configured());
+        assert!(matches!(c.validate(), Err(ConfigValidationError::Ft8SweepRequiresRig)));
+
+        // sweep.enabled WITH a rig → accepted.
+        let mut c = base();
+        c.rig.rig_hamlib_model = Some(1043);
+        c.rig.cat_serial_path = Some("/dev/ttyUSB0".into());
+        c.ft8.sweep.enabled = true;
+        assert!(c.validate().is_ok());
+    }
+
+    /// is_configured mirrors modem_commands::rig_config_from's Some-conditions
+    /// (model present AND a non-blank CAT serial path) without importing the
+    /// modem layer into config.
+    #[test]
+    fn rig_is_configured_predicate() {
+        let mut rig = RigUiConfig::default();
+        assert!(!rig.is_configured());
+        rig.rig_hamlib_model = Some(1043);
+        assert!(!rig.is_configured(), "model alone is not a usable CAT link");
+        rig.cat_serial_path = Some("   ".into());
+        assert!(!rig.is_configured(), "blank serial path is not configured");
+        rig.cat_serial_path = Some("/dev/ttyUSB0".into());
+        assert!(rig.is_configured());
     }
 }

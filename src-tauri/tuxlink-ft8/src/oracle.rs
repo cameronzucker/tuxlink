@@ -3,7 +3,7 @@
 //! by an independent decoder (WSJT-X `jt9 -8`, AP disabled).
 //!
 //! The harness is passive, reproducible, and TX-free: it parses a committed
-//! `.jt9-ap-off.txt` reference log, compares it against [`crate::sync::decode_samples`]
+//! `.jt9-d3-ap-off.txt` reference log, compares it against [`crate::sync::decode_samples`]
 //! output as a **multiset on normalized message identity**, and reports parity %
 //! (recall against the reference) plus the false-decode count. The L0 exit gate
 //! (plan §M3/M4) is `parity ≥ 85 %` with **zero false decodes** on each capture.
@@ -94,13 +94,17 @@ fn match_key(msg: &str) -> String {
     message_identity(msg)
 }
 
-/// Parse a WSJT-X `jt9 -8` reference log into its list of decoded messages.
+/// Parse a WSJT-X `jt9 -8 -d 3 -p 15 -w 1` reference log into its list of
+/// decoded messages.
 ///
-/// Each decode line is `"<SNR> <DT> <FREQ> ~ <MESSAGE>"`; the `~` is the FT-8
-/// sync-mode marker and never appears inside a message (FT-8 messages are
-/// upper-case alphanumerics plus `/ < > + - .` and spaces), so splitting on the
-/// first `~` cleanly separates the metadata from the message. Blank lines and
-/// lines without a `~` marker are ignored.
+/// Each decode line is `"<HHMMSS> <SNR> <DT> <FREQ> ~ <MESSAGE>"` (jt9 emits a
+/// leading `000000` time column for non-WSJT-X-named input files); the `~` is
+/// the FT-8 sync-mode marker and never appears inside a message (FT-8 messages
+/// are upper-case alphanumerics plus `/ < > + - .` and spaces), so splitting on
+/// the first `~` cleanly separates the metadata (time + SNR + DT + freq,
+/// discarded wholesale) from the message. Blank lines, the trailing
+/// `<DecodeFinished>` summary line, and any other line without a `~` marker
+/// are ignored.
 pub fn parse_reference_log(text: &str) -> Vec<String> {
     text.lines()
         .filter_map(|line| {

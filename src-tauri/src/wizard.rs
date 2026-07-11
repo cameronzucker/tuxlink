@@ -179,6 +179,7 @@ pub async fn persist_cms_impl(
     let new_config = crate::config::Config {
         elmer: crate::config::ElmerConfig::default(),
         p2p_limits: crate::contacts::limiter::P2pLimitsConfig::default(),
+        ft8: crate::config::Ft8Config::default(),
         schema_version: crate::config::CONFIG_SCHEMA_VERSION,
         wizard_completed: true,
         connect: crate::config::ConnectConfig {
@@ -216,6 +217,7 @@ pub async fn persist_cms_impl(
         map_tile_source: None,
         aredn_master_node_host: None,
         aprs: crate::config::AprsConfig::default(),
+        ft8: crate::config::Ft8Config::default(),
         trash_auto_purge: true,
         trash_retention_days: 30,
         close_to_tray: true,
@@ -426,6 +428,7 @@ pub async fn persist_offline_impl(
     let new_config = crate::config::Config {
         elmer: crate::config::ElmerConfig::default(),
         p2p_limits: crate::contacts::limiter::P2pLimitsConfig::default(),
+        ft8: crate::config::Ft8Config::default(),
         schema_version: crate::config::CONFIG_SCHEMA_VERSION,
         wizard_completed: true,
         connect: crate::config::ConnectConfig {
@@ -459,6 +462,7 @@ pub async fn persist_offline_impl(
         map_tile_source: None,
         aredn_master_node_host: None,
         aprs: crate::config::AprsConfig::default(),
+        ft8: crate::config::Ft8Config::default(),
         trash_auto_purge: true,
         trash_retention_days: 30,
         close_to_tray: true,

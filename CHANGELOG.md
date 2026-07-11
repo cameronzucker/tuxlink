@@ -31,6 +31,21 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.87.2](https://github.com/cameronzucker/tuxlink/compare/v0.87.1...v0.87.2) (2026-07-10)
+
+
+### Bug Fixes
+
+* **catalog:** preserve gateway SSID in parsed callsign — dial the station that actually answers ([002b5fc](https://github.com/cameronzucker/tuxlink/commit/002b5fc12e74fc42bc120b2d153437783c765825))
+* **lint:** allow result_large_err on the transport give-back — VaraConfig growth crossed clippy's 128-byte Err threshold ([8a0955e](https://github.com/cameronzucker/tuxlink/commit/8a0955eed2da363430189bcea0cca92dccfeb7da))
+* **mcp:** pass sideband default through the rig_tune port — ardop_tune_rig grew a second argument ([71bf98c](https://github.com/cameronzucker/tuxlink/commit/71bf98c72cfb93c5c6b566cd4456872d40c16cfe))
+* **rig:** convert catalog CENTER to sideband DIAL at the CAT tune — every catalog dial transmitted 1.5 kHz off-channel ([80f70bd](https://github.com/cameronzucker/tuxlink/commit/80f70bdd8d094c5e54befb556b2eaf84fcca8f6c))
+* **rig:** gate sideband conversion off FM, preserve fractional-kHz centers, pin center semantics in MCP docs (Codex adrev round) ([657befb](https://github.com/cameronzucker/tuxlink/commit/657befb72dd300c36218c692671c4372485bd094))
+* **rig:** set_mode passband -1 — never change the operator's filter width ([86055ba](https://github.com/cameronzucker/tuxlink/commit/86055ba1a59236cdb11297f743735c81506c5a2d))
+* **vara:** give the data socket an RF-scale read timeout — 2s cmd cadence disconnected the first on-air gateway answer ([8e53a2f](https://github.com/cameronzucker/tuxlink/commit/8e53a2f49ad72fb7b3572cf188048f4e77fd5546))
+* **vara:** hold PTT 250ms after VARA's PTT OFF — stop amputating frame tails ([acbdcf0](https://github.com/cameronzucker/tuxlink/commit/acbdcf01da4d26bf1fd2e55a24e809822dfe8d17))
+* **vara:** shut down the data socket on abort + harden xzxk1 tests (Codex adrev round) ([ae4a4a7](https://github.com/cameronzucker/tuxlink/commit/ae4a4a70a6c911e8988a7d65a8e0a080071f002c))
+
 ## [0.87.1](https://github.com/cameronzucker/tuxlink/compare/v0.87.0...v0.87.1) (2026-07-09)
 
 

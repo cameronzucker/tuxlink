@@ -4400,6 +4400,7 @@ mod native_read_state_tests {
         Config {
             elmer: crate::config::ElmerConfig::default(),
             p2p_limits: crate::contacts::limiter::P2pLimitsConfig::default(),
+            ft8: crate::config::Ft8Config::default(),
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: ConnectConfig {
@@ -6220,6 +6221,7 @@ mod native_read_state_tests {
         Config {
             elmer: crate::config::ElmerConfig::default(),
             p2p_limits: crate::contacts::limiter::P2pLimitsConfig::default(),
+            ft8: crate::config::Ft8Config::default(),
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: ConnectConfig {

@@ -1592,6 +1592,20 @@ pub async fn vara_open_session(
     // Inner-returned status is intentionally discarded — we re-snapshot
     // after the optional auto-arm so the wire-returned status reflects
     // `listener_armed = true` when auto-arm fires.
+    // tuxlink-b026z.3: yield the FT8 listener before VARA opens its audio
+    // path. pause_for_modem is blocking-context-only (2 s join + lsof
+    // poll), and this command is async — spawn_blocking honors the
+    // contract instead of parking a tokio worker.
+    //
+    // Residual, disclosed (spec §Arbitration): this covers TUXLINK-initiated
+    // VARA use only. VARA launched standalone opens its audio device at its
+    // own startup, before any tuxlink involvement — that conflict surfaces
+    // in VARA's UI, not here.
+    tauri::async_runtime::spawn_blocking(crate::ft8::arbiter::pause_for_modem_global)
+        .await
+        .map_err(|e| format!("FT8 yield task failed: {e}"))?
+        .map_err(|e| e.device_busy_message())?;
+
     match vara_open_session_inner(
         &session,
         &ui_cfg,

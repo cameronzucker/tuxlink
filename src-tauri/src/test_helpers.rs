@@ -46,6 +46,7 @@ pub fn native_test_config() -> Config {
         map_tile_source: None,
         aredn_master_node_host: None,
         aprs: crate::config::AprsConfig::default(),
+        ft8: crate::config::Ft8Config::default(),
         trash_auto_purge: true,
         trash_retention_days: 30,
         close_to_tray: true,

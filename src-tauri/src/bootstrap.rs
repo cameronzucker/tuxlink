@@ -785,6 +785,7 @@ mod tests {
         Config {
             elmer: crate::config::ElmerConfig::default(),
             p2p_limits: crate::contacts::limiter::P2pLimitsConfig::default(),
+            ft8: crate::config::Ft8Config::default(),
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: ConnectConfig {
@@ -813,6 +814,7 @@ mod tests {
             map_tile_source: None,
             aredn_master_node_host: None,
             aprs: crate::config::AprsConfig::default(),
+            ft8: crate::config::Ft8Config::default(),
             trash_auto_purge: true,
             trash_retention_days: 30,
             close_to_tray: true,

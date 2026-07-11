@@ -57,7 +57,7 @@ fn load_capture(stem: &str) -> Vec<f32> {
         .collect()
 }
 
-/// Decode a capture and score it against its `.jt9-ap-off.txt` reference log,
+/// Decode a capture and score it against its `.jt9-d3-ap-off.txt` reference log,
 /// printing a full report (visible with `--nocapture`).
 fn score_capture(stem: &str) -> ParityResult {
     let samples = load_capture(stem);
@@ -67,7 +67,7 @@ fn score_capture(stem: &str) -> ParityResult {
         .collect();
 
     let mut ref_path = sdr_dir();
-    ref_path.push(format!("{stem}.jt9-ap-off.txt"));
+    ref_path.push(format!("{stem}.jt9-d3-ap-off.txt"));
     let ref_text = std::fs::read_to_string(&ref_path)
         .unwrap_or_else(|e| panic!("read {}: {e}", ref_path.display()));
     let reference = parse_reference_log(&ref_text);
@@ -116,15 +116,21 @@ fn floor_calibration_diag() {
         }
         // Metric of the strongest candidate near each reference carrier.
         let mut ref_path = sdr_dir();
-        ref_path.push(format!("{stem}.jt9-ap-off.txt"));
+        ref_path.push(format!("{stem}.jt9-d3-ap-off.txt"));
         let ref_text = std::fs::read_to_string(&ref_path).unwrap();
         println!("candidate nearest each reference-log carrier:");
         for line in ref_text.lines() {
-            let toks: Vec<&str> = line.split_whitespace().collect();
-            if toks.len() < 3 {
+            // Decode lines are `HHMMSS SNR DT FREQ ~ MESSAGE`; the `~` gate also
+            // skips the `<DecodeFinished>` trailer (whose 4th token would
+            // otherwise parse as a bogus 0 Hz carrier).
+            if !line.contains('~') {
                 continue;
             }
-            if let Ok(freq) = toks[2].parse::<f64>() {
+            let toks: Vec<&str> = line.split_whitespace().collect();
+            if toks.len() < 4 {
+                continue;
+            }
+            if let Ok(freq) = toks[3].parse::<f64>() {
                 let near = cands
                     .iter()
                     .min_by(|a, b| {
@@ -153,11 +159,15 @@ fn floor_calibration_diag() {
         let mut hash = HashTable::new();
         let mut targeted: Vec<String> = Vec::new();
         for line in ref_text.lines() {
-            let toks: Vec<&str> = line.split_whitespace().collect();
-            if toks.len() < 3 {
+            // Same line grammar + `<DecodeFinished>` skip as above.
+            if !line.contains('~') {
                 continue;
             }
-            let Ok(freq) = toks[2].parse::<f64>() else { continue };
+            let toks: Vec<&str> = line.split_whitespace().collect();
+            if toks.len() < 4 {
+                continue;
+            }
+            let Ok(freq) = toks[3].parse::<f64>() else { continue };
             let mut got: Option<String> = None;
             for c in cands.iter().filter(|c| (c.freq_hz - freq).abs() <= 8.0) {
                 if let Some(d) = try_decode_candidate(&samples, c, &mut hash) {
