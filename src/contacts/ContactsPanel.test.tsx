@@ -184,6 +184,24 @@ describe('<ContactsPanel> — suggestions dissolve into Ungrouped', () => {
       ),
     );
   });
+
+  // Regression: the suggestion row body used to have NO click handler — only the
+  // "Save" button was wired — so clicking a mailbox correspondent did nothing.
+  // On an empty store the whole Contacts list is suggestion rows, which read as
+  // "clicking a contact does nothing / the feature is broken". The body now
+  // opens a detail (callsign + message count + New message + Save).
+  it('clicking a suggestion row body opens its detail (New message + Save), not a dead click', async () => {
+    routeInvoke({ suggestions: [{ callsign: 'AE7PT', message_count: 3 }] });
+    renderPanel();
+    // No detail before the click — just the prompt.
+    expect(screen.queryByTestId('raw-detail')).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByTestId('suggestion-AE7PT'));
+    const detail = await screen.findByTestId('raw-detail');
+    expect(within(detail).getByText('AE7PT')).toBeInTheDocument();
+    expect(within(detail).getByText(/3 messages/)).toBeInTheDocument();
+    expect(within(detail).getByTestId('raw-new-message')).toBeInTheDocument();
+    expect(within(detail).getByTestId('raw-save-contact')).toBeInTheDocument();
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
