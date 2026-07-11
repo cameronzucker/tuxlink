@@ -1,7 +1,7 @@
 //! The FT8 listener service: managed state + the supervisor thread + the
 //! start sequence (spec §Service structure, §Start sequence, §Lifecycle
-//! ownership). Capture/decode thread bodies land in part 2 (Task 12); stop +
-//! resume protocols in part 3 (Task 13).
+//! ownership), plus the capture/decode thread bodies and the waterfall tap
+//! (part 2, Task 12). Stop + resume protocols land in part 3 (Task 13).
 //!
 //! Lock discipline (spec §Lock discipline, pinned): thread handles live
 //! OUTSIDE the state mutex and are take()n before any join; the state mutex
@@ -13,6 +13,7 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -22,10 +23,11 @@ use crate::ft8::clock::{ClockProbe, ClockSync};
 use crate::ft8::events::EventSink;
 // Dead-code discipline (Global Constraints §Push cadence): imports, fields,
 // and constants land in the task with their FIRST reader, so every commit in
-// the batch is clippy-clean. T12 adds `DiscardClassDto` + `RingOutcome`
-// here; T13 adds `devices::ResolvedManagedDevice` with the `resolved` field.
+// the batch is clippy-clean. T13 adds `devices::ResolvedManagedDevice` with
+// the `resolved` field.
 use crate::ft8::records::{
-    AudioDeviceChoice, BandSource, Ft8ListeningChange, ServiceAxisDto, SlotRecord,
+    AudioDeviceChoice, BandSource, DiscardClassDto, Ft8ListeningChange, RingOutcome,
+    ServiceAxisDto, SlotRecord,
 };
 use crate::ft8::traits::{DecodeEngine, Ft8Platform, SourceError};
 use serde::Serialize;
@@ -75,10 +77,97 @@ pub struct Ft8Deps {
     pub sink: Arc<dyn EventSink>,
 }
 
-// `SlotJob` (the rendezvous-channel payload) lands in Task 12 with its
-// first constructor (the capture loop) — dead-code discipline: a cfg(test)
-// reader does NOT cover the non-test lib target, so declaring it here would
-// fail clippy's denied dead_code on that target (T11 review, Critical 2).
+/// The rendezvous-channel payload (spec §Threads): capture hands this to
+/// decode over the `sync_channel(0)` master channel once the slot's WAV is
+/// on disk.
+pub(crate) struct SlotJob {
+    pub slot_utc_ms: u64,
+    pub dir: PathBuf,
+    pub wav: PathBuf,
+    pub lost_frames: u64,
+    pub boundary_skew_frames: u64,
+    pub clip_fraction: f32,
+    pub rms_dbfs: f32,
+}
+
+/// The waterfall tap (spec §Waterfall tap): a bounded lossy ring of
+/// decimated 12 kHz i16 blocks, 1200 frames (100 ms) per block, capacity 32
+/// (3.2 s). Drop-OLDEST under a stalled/absent consumer; pushes never block
+/// and never backpressure capture. L2's whole contract is "the 12 kHz
+/// stream is subscribable, bounded, and never backpressures capture" — FFT,
+/// column cadence, and events are L3's.
+pub struct WaterfallTap {
+    inner: Mutex<TapInner>,
+}
+
+struct TapInner {
+    blocks: VecDeque<Vec<i16>>,
+    /// Partial block being accumulated to the 1200-frame boundary.
+    pending: Vec<i16>,
+    subscribed: bool,
+}
+
+pub(crate) const TAP_BLOCK_FRAMES: usize = 1_200;
+pub(crate) const TAP_CAPACITY_BLOCKS: usize = 32;
+
+impl Default for WaterfallTap {
+    fn default() -> Self {
+        Self {
+            inner: Mutex::new(TapInner {
+                blocks: VecDeque::with_capacity(TAP_CAPACITY_BLOCKS),
+                pending: Vec::with_capacity(TAP_BLOCK_FRAMES),
+                subscribed: false,
+            }),
+        }
+    }
+}
+
+impl WaterfallTap {
+    pub fn push_samples(&self, samples_12k: &[i16]) {
+        let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        if !g.subscribed {
+            // No subscriber (the common state): keep the ring warm at zero
+            // cost — reset pending and skip block assembly entirely.
+            g.pending.clear();
+            g.blocks.clear();
+            return;
+        }
+        let mut rest = samples_12k;
+        while !rest.is_empty() {
+            let need = TAP_BLOCK_FRAMES - g.pending.len();
+            let take = need.min(rest.len());
+            g.pending.extend_from_slice(&rest[..take]);
+            rest = &rest[take..];
+            if g.pending.len() == TAP_BLOCK_FRAMES {
+                if g.blocks.len() == TAP_CAPACITY_BLOCKS {
+                    g.blocks.pop_front(); // drop-oldest
+                }
+                let full = std::mem::replace(
+                    &mut g.pending,
+                    Vec::with_capacity(TAP_BLOCK_FRAMES),
+                );
+                g.blocks.push_back(full);
+            }
+        }
+    }
+    pub fn subscribe(&self) {
+        self.inner.lock().unwrap_or_else(|p| p.into_inner()).subscribed = true;
+    }
+    pub fn unsubscribe(&self) {
+        let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        g.subscribed = false;
+        g.blocks.clear();
+        g.pending.clear();
+    }
+    pub fn take_blocks(&self) -> Vec<Vec<i16>> {
+        self.inner
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .blocks
+            .drain(..)
+            .collect()
+    }
+}
 
 /// Everything behind the leaf-level state mutex.
 struct Inner {
@@ -92,25 +181,28 @@ struct Inner {
     last_slot_utc_ms: Option<u64>,
     last_failure: Option<String>,
     ring: VecDeque<SlotRecord>,
-    // Fields land with their first READER (dead-code discipline):
-    // `discard_next_slot` arrives in T12 (handle_completed_slot takes it);
-    // `resolved` arrives in T13 (resume_conditions_met reads it).
+    /// Set by QSY (T16): the next completed slot is a scheduled discard.
+    discard_next_slot: Option<DiscardClassDto>,
+    // `resolved` arrives in T13 (resume_conditions_met reads it) — dead-code
+    // discipline (Global Constraints §Push cadence).
 }
 
-/// Thread handles — OUTSIDE the state mutex (lock discipline).
-/// `capture` + `decode` fields land in Task 12 with their readers
-/// (spawn_workers wires them; T13's stop protocol joins them) — dead-code
-/// discipline on the non-test target.
+/// Thread handles — OUTSIDE the state mutex (lock discipline). `capture` +
+/// `decode` are joined by T13's stop protocol; `spawn_workers` wires them.
 #[derive(Default)]
 struct Handles {
     supervisor: Option<JoinHandle<()>>,
+    capture: Option<JoinHandle<()>>,
+    decode: Option<JoinHandle<()>>,
 }
 
 pub struct Ft8ListenerState {
     inner: Mutex<Inner>,
     handles: Mutex<Handles>,
-    // `master_tx` (the master SyncSender<SlotJob>; spec §Lifecycle) lands in
-    // Task 12 with its readers — dead-code discipline on the non-test target.
+    /// The master `SyncSender<SlotJob>` (spec §Lifecycle): survives yield
+    /// and device loss; only stop() drops it (T13), which is decode's sole
+    /// exit signal.
+    master_tx: Mutex<Option<SyncSender<SlotJob>>>,
     engine: Mutex<Option<Arc<dyn DecodeEngine>>>,
     pub(crate) platform: Arc<dyn Ft8Platform>,
     pub(crate) clock: Arc<dyn ClockProbe>,
@@ -123,8 +215,13 @@ pub struct Ft8ListenerState {
     stop_request: AtomicBool,
     yield_request: AtomicBool,
     start_rerun_request: AtomicBool,
-    // `capture_abort` + `slot_seq` land in T12 with their first readers
-    // (capture_loop / handle_completed_slot) — dead-code discipline.
+    /// Signals the capture thread to exit on its next poll (T13's stop
+    /// protocol; checked every read-loop iteration).
+    capture_abort: Arc<AtomicBool>,
+    /// Process-monotonic per-slot-dir sequence (collision-proof under
+    /// backward clock steps) — `slot-<utc_ms>-<seq>`.
+    slot_seq: AtomicU64,
+    tap: WaterfallTap,
     /// Capture-side slot-boundary counter (spec: cadences count BOUNDARIES,
     /// not decoded slots).
     slot_boundaries: AtomicU64,
@@ -149,8 +246,10 @@ impl Ft8ListenerState {
                 last_slot_utc_ms: None,
                 last_failure: None,
                 ring: VecDeque::with_capacity(RING_CAP),
+                discard_next_slot: None,
             }),
             handles: Mutex::new(Handles::default()),
+            master_tx: Mutex::new(None),
             engine: Mutex::new(None),
             platform: deps.platform,
             clock: deps.clock,
@@ -160,6 +259,9 @@ impl Ft8ListenerState {
             stop_request: AtomicBool::new(false),
             yield_request: AtomicBool::new(false),
             start_rerun_request: AtomicBool::new(false),
+            capture_abort: Arc::new(AtomicBool::new(false)),
+            slot_seq: AtomicU64::new(0),
+            tap: WaterfallTap::default(),
             slot_boundaries: AtomicU64::new(0),
             supervisor_thread: Mutex::new(None),
             pipe_fd_baseline: Mutex::new(None),
@@ -171,6 +273,9 @@ impl Ft8ListenerState {
     }
     pub fn rig_lock(&self) -> Arc<Mutex<()>> {
         self.rig_lock.clone()
+    }
+    pub fn tap(&self) -> &WaterfallTap {
+        &self.tap
     }
     pub fn set_ft8_config(&self, cfg: Ft8Config) {
         let mut g = self.lock_inner();
@@ -550,11 +655,214 @@ impl Ft8ListenerState {
         }
     }
 
-    /// Placeholder in part 1; Task 12 replaces the body with the real
-    /// capture + decode spawns. Kept compiling so this task's tests (which
-    /// stop at the axis transition) run in CI.
-    fn spawn_workers(self: &Arc<Self>, source: Box<dyn crate::ft8::traits::SampleSource>, resume: bool) {
-        let _ = (source, resume); // Task 12 wires the threads.
+    /// Step 8 / 8′ (spec §Lifecycle): capture is spawned on every entry to
+    /// listening; decode + the channel are spawned ONCE and survive yield
+    /// and device loss (only stop() drops the master sender).
+    fn spawn_workers(
+        self: &Arc<Self>,
+        source: Box<dyn crate::ft8::traits::SampleSource>,
+        resume: bool,
+    ) {
+        let mut h = self.handles.lock().unwrap_or_else(|p| p.into_inner());
+        // Reap a finished capture handle (post-yield / post-device-loss).
+        if let Some(old) = h.capture.take() {
+            if old.is_finished() {
+                let _ = old.join();
+            } else {
+                // Should be unreachable: pause/stop join before respawn.
+                tracing::warn!(target: "tuxlink::ft8", "capture respawn with live predecessor — detaching old");
+            }
+        }
+        let decode_alive = h.decode.as_ref().map(|d| !d.is_finished()).unwrap_or(false);
+        if !resume || !decode_alive {
+            // Fresh channel + decode thread. sync_channel(0) = rendezvous:
+            // try_send succeeds ONLY when decode is parked in recv (spec
+            // §Backpressure — a 1-slot queue would drop N+2, not N+1).
+            let (tx, rx) = std::sync::mpsc::sync_channel::<SlotJob>(0);
+            *self.master_tx.lock().unwrap_or_else(|p| p.into_inner()) = Some(tx);
+            let engine = self
+                .engine
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone()
+                .expect("engine constructed at step 4 before step 8");
+            let state = self.clone();
+            if let Some(old) = h.decode.take() {
+                let _ = old.join(); // finished (checked above)
+            }
+            h.decode = Some(
+                std::thread::Builder::new()
+                    .name("ft8-decode".into())
+                    .spawn(move || decode_loop(state, engine, rx))
+                    .expect("spawn ft8-decode"),
+            );
+        }
+        self.capture_abort.store(false, Ordering::SeqCst);
+        let tx = self
+            .master_tx
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+            .expect("master sender lives until stop()");
+        let state = self.clone();
+        let abort = self.capture_abort.clone();
+        h.capture = Some(
+            std::thread::Builder::new()
+                .name("ft8-capture".into())
+                .spawn(move || capture_loop(state, source, tx, abort))
+                .expect("spawn ft8-capture"),
+        );
+    }
+
+    /// One completed slot: tmpfs dir + WAV + rendezvous handoff, with the
+    /// three drop paths (storage / backpressure / scheduled QSY discard).
+    fn handle_completed_slot(
+        &self,
+        slot: tuxlink_capture::slot::CompletedSlot,
+        tx: &SyncSender<SlotJob>,
+    ) {
+        // Scheduled QSY-transition discard (T16 sets the flag).
+        let discard = { self.lock_inner().discard_next_slot.take() };
+        if let Some(class) = discard {
+            self.record_slot(self.base_record(
+                slot.slot_utc_ms,
+                RingOutcome::Discarded { class },
+                Vec::new(),
+                slot.lost_frames,
+                slot.boundary_skew_frames,
+                slot.clip_fraction,
+                slot.rms_dbfs,
+            ));
+            return;
+        }
+        let seq = self.slot_seq.fetch_add(1, Ordering::SeqCst);
+        let dir = self
+            .platform
+            .slot_dir_root()
+            .join(format!("slot-{}-{}", slot.slot_utc_ms, seq));
+        let wav = dir.join("slot.wav");
+        let write = std::fs::create_dir_all(&dir)
+            .and_then(|()| self.platform.write_slot_wav(&wav, &slot.samples));
+        if let Err(e) = write {
+            // Storage failure is a DEFINED outcome (spec §WAV writeout):
+            // counted toward N, best-effort cleanup, capture continues.
+            let _ = std::fs::remove_dir_all(&dir);
+            let diag = format!("slot WAV write failed: {e}");
+            let mut rec = self.base_record(
+                slot.slot_utc_ms,
+                RingOutcome::DroppedStorageError { diagnostic: diag.clone() },
+                Vec::new(),
+                slot.lost_frames,
+                slot.boundary_skew_frames,
+                slot.clip_fraction,
+                slot.rms_dbfs,
+            );
+            rec.partial_salvage = false;
+            {
+                self.lock_inner().last_failure = Some(diag);
+            }
+            self.record_slot(rec);
+            return;
+        }
+        let job = SlotJob {
+            slot_utc_ms: slot.slot_utc_ms,
+            dir: dir.clone(),
+            wav,
+            lost_frames: slot.lost_frames,
+            boundary_skew_frames: slot.boundary_skew_frames,
+            clip_fraction: slot.clip_fraction,
+            rms_dbfs: slot.rms_dbfs,
+        };
+        match tx.try_send(job) {
+            Ok(()) => {}
+            Err(std::sync::mpsc::TrySendError::Full(job)) => {
+                // Decode busy → THIS slot (N+1) drops; never queue.
+                let _ = std::fs::remove_dir_all(&job.dir);
+                tracing::info!(
+                    target: "tuxlink::ft8",
+                    slot_utc_ms = job.slot_utc_ms,
+                    "slot dropped: decode still busy (backpressure)"
+                );
+                self.record_slot(self.base_record(
+                    job.slot_utc_ms,
+                    RingOutcome::DroppedBackpressure,
+                    Vec::new(),
+                    job.lost_frames,
+                    job.boundary_skew_frames,
+                    job.clip_fraction,
+                    job.rms_dbfs,
+                ));
+            }
+            Err(std::sync::mpsc::TrySendError::Disconnected(job)) => {
+                // stop() dropped the master sender mid-flight: clean up.
+                let _ = std::fs::remove_dir_all(&job.dir);
+            }
+        }
+    }
+
+    /// Ring-record constructor stamped with the current band identity.
+    fn base_record(
+        &self,
+        slot_utc_ms: u64,
+        outcome: RingOutcome,
+        decodes: Vec<crate::ft8::records::DecodeDto>,
+        lost_frames: u64,
+        boundary_skew_frames: u64,
+        clip_fraction: f32,
+        rms_dbfs: f32,
+    ) -> SlotRecord {
+        let g = self.lock_inner();
+        let partial_salvage = decodes.iter().any(|d| d.partial);
+        SlotRecord {
+            slot_utc_ms,
+            band: g.band.clone(),
+            dial_hz: g.dial_hz,
+            band_source: g.band_source,
+            band_label_confirmed_utc_ms: g.band_label_confirmed_utc_ms,
+            outcome,
+            decodes,
+            partial_salvage,
+            lost_frames,
+            boundary_skew_frames,
+            clip_fraction,
+            rms_dbfs,
+            dwell_slot_index: match g.machine.sweep() {
+                tuxlink_capture::state::Sweep::Active { dwell_progress, .. } => {
+                    Some(dwell_progress)
+                }
+                _ => None,
+            },
+        }
+    }
+
+    /// Counter fold + ring push + emits. EVERY slot boundary lands here
+    /// (spec §Ring: drops and discards included).
+    pub(crate) fn record_slot(&self, rec: SlotRecord) {
+        let flags_changed = {
+            let mut g = self.lock_inner();
+            let before = (g.machine.flags(), g.machine.slot_phase());
+            g.machine.on_slot_outcome(rec.outcome.kind());
+            if let RingOutcome::Failed { failure } = &rec.outcome {
+                g.last_failure = Some(failure.clone());
+            }
+            g.last_slot_utc_ms = Some(rec.slot_utc_ms);
+            if g.ring.len() == RING_CAP {
+                g.ring.pop_front();
+            }
+            g.ring.push_back(rec.clone());
+            before != (g.machine.flags(), g.machine.slot_phase())
+        };
+        self.sink.emit_slot(&rec);
+        if flags_changed {
+            self.emit_listening_change();
+        }
+    }
+
+    /// Mid-run device loss (spec §Device loss): the capture thread calls
+    /// this and returns; the PCM closes on drop; the supervisor retries
+    /// every 5 s.
+    pub(crate) fn on_device_lost(&self, diagnostic: Option<String>) {
+        self.set_blocked(BlockedReason::DeviceAbsent, diagnostic);
     }
 
     // ---- snapshot -----------------------------------------------------------
@@ -598,6 +906,157 @@ impl Ft8ListenerState {
     #[cfg(test)]
     pub(crate) fn platform_tmp_for_test(&self) -> PathBuf {
         self.platform.slot_dir_root().parent().map(|p| p.to_path_buf()).unwrap_or_default()
+    }
+}
+
+/// The ALSA read loop → gap accounting → tap → slot assembler (spec
+/// §Threads). The assembler owns the DECODE-path decimator; the tap runs a
+/// second identical `Decimator` (same COEFFS, bit-identical output — see
+/// the Phase C preamble's cross-cutting interface note).
+fn capture_loop(
+    state: Arc<Ft8ListenerState>,
+    mut source: Box<dyn crate::ft8::traits::SampleSource>,
+    tx: SyncSender<SlotJob>,
+    abort: Arc<AtomicBool>,
+) {
+    use tuxlink_capture::decimator::Decimator;
+    use tuxlink_capture::slot::{BoundaryConfig, SlotAssembler};
+
+    let mut asm = SlotAssembler::new(BoundaryConfig::default());
+    let mut tap_decim = Decimator::new();
+    let mut tap_out: Vec<i16> = Vec::new();
+    let mut buf = vec![0i16; 4_800]; // one 100 ms period
+
+    loop {
+        if abort.load(Ordering::SeqCst) {
+            return; // PCM closes on source drop
+        }
+        let batch = match source.read(&mut buf) {
+            Ok(b) => b,
+            Err(SourceError::Suspended) => {
+                // Clock-anomaly path: an empty push carrying the Suspended
+                // gap makes the assembler abandon the slot; the source
+                // already recovered its PCM.
+                let events = asm.push(
+                    &[],
+                    state.platform.utc_now_ms(),
+                    state.platform.mono_now_us(),
+                    Some(tuxlink_capture::slot::GapReport {
+                        kind: tuxlink_capture::slot::GapKind::Suspended,
+                    }),
+                );
+                state.fold_slot_events(events, &tx);
+                continue;
+            }
+            Err(SourceError::Absent) | Err(SourceError::Wedged) => {
+                state.on_device_lost(None);
+                return;
+            }
+            Err(e) => {
+                state.on_device_lost(Some(format!("{e:?}")));
+                return;
+            }
+        };
+        let samples = &buf[..batch.frames];
+        if !samples.is_empty() {
+            tap_out.clear();
+            tap_decim.process(samples, &mut tap_out);
+            state.tap.push_samples(&tap_out);
+        }
+        let events = asm.push(samples, state.platform.utc_now_ms(), batch.mono_ts_us, batch.gap);
+        state.fold_slot_events(events, &tx);
+    }
+}
+
+impl Ft8ListenerState {
+    pub(crate) fn fold_slot_events(
+        &self,
+        events: Vec<tuxlink_capture::slot::SlotEvent>,
+        tx: &SyncSender<SlotJob>,
+    ) {
+        use tuxlink_capture::slot::{DiscardClass, DropClass, SlotEvent};
+        for ev in events {
+            self.slot_boundaries.fetch_add(1, Ordering::SeqCst);
+            match ev {
+                SlotEvent::Completed(slot) => self.handle_completed_slot(slot, tx),
+                SlotEvent::Abandoned { class } => {
+                    let dto = match class {
+                        DiscardClass::FirstSlot => DiscardClassDto::FirstSlot,
+                        DiscardClass::ClockAnomaly => DiscardClassDto::ClockAnomaly,
+                    };
+                    let utc = self.platform.utc_now_ms();
+                    self.record_slot(self.base_record(
+                        utc,
+                        RingOutcome::Discarded { class: dto },
+                        Vec::new(),
+                        0,
+                        0,
+                        0.0,
+                        f32::NEG_INFINITY,
+                    ));
+                }
+                SlotEvent::Dropped { class: DropClass::LostFrames, slot_utc_ms, lost_frames } => {
+                    self.record_slot(self.base_record(
+                        slot_utc_ms,
+                        RingOutcome::DroppedLostFrames,
+                        Vec::new(),
+                        lost_frames,
+                        0,
+                        0.0,
+                        f32::NEG_INFINITY,
+                    ));
+                }
+            }
+        }
+    }
+}
+
+/// recv → decode → outcome fold → ring/event → slot-dir delete (spec
+/// §Threads). Exits when the master sender drops (stop) — Disconnected is
+/// the ONLY exit; no stop sentinel exists in this design.
+fn decode_loop(
+    state: Arc<Ft8ListenerState>,
+    engine: Arc<dyn DecodeEngine>,
+    rx: std::sync::mpsc::Receiver<SlotJob>,
+) {
+    use tuxlink_jt9::types::SlotOutcome;
+    while let Ok(job) = rx.recv() {
+        let outcome = engine.decode_slot(&job.wav, &job.dir, job.slot_utc_ms);
+        let rec = match outcome {
+            SlotOutcome::Decoded(decodes) => {
+                let dtos: Vec<crate::ft8::records::DecodeDto> =
+                    decodes.iter().map(Into::into).collect();
+                state.base_record(
+                    job.slot_utc_ms,
+                    RingOutcome::Decoded,
+                    dtos,
+                    job.lost_frames,
+                    job.boundary_skew_frames,
+                    job.clip_fraction,
+                    job.rms_dbfs,
+                )
+            }
+            SlotOutcome::BandDead => state.base_record(
+                job.slot_utc_ms,
+                RingOutcome::BandDead,
+                Vec::new(),
+                job.lost_frames,
+                job.boundary_skew_frames,
+                job.clip_fraction,
+                job.rms_dbfs,
+            ),
+            SlotOutcome::Failed(f) => state.base_record(
+                job.slot_utc_ms,
+                RingOutcome::Failed { failure: format!("{f:?}") },
+                Vec::new(),
+                job.lost_frames,
+                job.boundary_skew_frames,
+                job.clip_fraction,
+                job.rms_dbfs,
+            ),
+        };
+        state.record_slot(rec);
+        let _ = std::fs::remove_dir_all(&job.dir);
     }
 }
 
@@ -826,6 +1285,9 @@ mod tests {
             );
             run_sequence(&state);
             assert_eq!(state.snapshot().flags.clock_unsynced, want, "{sync:?}");
+            // Reaches Listening 3x — spawn_workers is real since T12: reap
+            // the worker threads + tmp dir each iteration.
+            teardown(&state);
         }
     }
 
@@ -850,6 +1312,7 @@ mod tests {
         let state2 = test_state(p2, cfg_with_device());
         run_sequence(&state2);
         assert_eq!(state2.axis(), ServiceAxis::Listening, "non-spawn prewarm failure proceeds");
+        teardown(&state2);
     }
 
     // Arrow 5: CAT absent → cat-fixed-band + instructed dial; CAT present →
@@ -865,6 +1328,7 @@ mod tests {
         assert_eq!(snap.band, "20m");
         assert_eq!(snap.dial_hz, 14_074_000, "instructed dial for the chip band");
         assert_eq!(snap.band_source, crate::ft8::records::BandSource::DefaultUnconfirmed);
+        teardown(&state);
 
         // Present, radio on 40m, configured chip 20m → labeled then retuned.
         let p2 = FakePlatform::happy();
@@ -878,6 +1342,7 @@ mod tests {
         assert!(snap2.band_label_confirmed_utc_ms.is_some());
         assert_eq!(*p2.tuned_to.lock().unwrap(), vec![14_074_000], "tuned to the configured band");
         assert_eq!(snap2.band, "20m");
+        teardown(&state2);
     }
 
     // Arrow 6: busy probe busy → yielded; hold latch latched → treated as
@@ -942,6 +1407,7 @@ mod tests {
             state.snapshot().slot_phase,
             crate::ft8::records::SlotPhaseDto::WaitingFirstSlot
         );
+        teardown(&state);
     }
 
     // Autostart contract: enabled=true, device=None → the supervisor lands
@@ -964,10 +1430,7 @@ mod tests {
         // Idempotent start: a second start() with a live supervisor is Ok
         // and does not spawn a second supervisor.
         state.start().expect("idempotent start");
-        state.stop_request.store(true, Ordering::SeqCst);
-        state.unpark_supervisor();
-        let h = state.handles.lock().unwrap().supervisor.take().unwrap();
-        let _ = h.join();
+        teardown(&state);
     }
 
     /// Pipe-fd watermark trip via the fake /proc reader (spec §Testing:
@@ -1024,7 +1487,7 @@ mod tests {
             2, // boundaries 100 and 200: one read per 100-boundary window
             "pipe watermark cadence"
         );
-        let _ = std::fs::remove_dir_all(state.platform_tmp_for_test());
+        teardown(&state);
     }
 
     // Snapshot completeness: every §Snapshot field is present + serializes.
@@ -1045,6 +1508,247 @@ mod tests {
         }
         assert_eq!(v["engineVersion"], "WSJT-X test 0.0");
         assert_eq!(v["service"]["axis"], "listening");
+        teardown(&state);
     }
 
+    use crate::ft8::records::RingOutcome;
+    use crate::ft8::testutil::{FakeEngine, SourceStep};
+    use tuxlink_capture::slot::CompletedSlot;
+
+    fn completed(slot_utc_ms: u64) -> CompletedSlot {
+        CompletedSlot {
+            slot_utc_ms,
+            samples: vec![0i16; tuxlink_capture::slot::OUT_SLOT_FRAMES],
+            lost_frames: 0,
+            boundary_skew_frames: 0,
+            clip_fraction: 0.0,
+            rms_dbfs: -60.0,
+        }
+    }
+
+    /// Backpressure (spec §Backpressure): with decode parked busy, slot N
+    /// decodes, slot N+1 SPECIFICALLY drops (dir deleted, N incremented,
+    /// ring-recorded), N+2 decodes after release.
+    #[test]
+    fn backpressure_drops_slot_n_plus_1_specifically() {
+        let p = FakePlatform::happy();
+        let eng = FakeEngine::band_dead();
+        *p.engine.lock().unwrap() = eng.clone();
+        let state = test_state(p.clone(), cfg_with_device());
+        run_sequence(&state); // spawns decode via spawn_workers
+        assert_eq!(state.axis(), ServiceAxis::Listening);
+        let tx = state.master_tx.lock().unwrap().clone().unwrap();
+
+        // Slot 1: decode accepts it, then we gate the engine busy.
+        eng.hold_gate();
+        state.handle_completed_slot(completed(1_000), &tx);
+        // Wait until decode has STARTED slot 1 (parked on the gate).
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while eng.decodes_started.load(Ordering::SeqCst) < 1 {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        // Slot 2 (N+1): rendezvous refuses — dropped, dir deleted.
+        state.handle_completed_slot(completed(2_000), &tx);
+        {
+            let g = state.lock_inner();
+            let dropped: Vec<_> = g
+                .ring
+                .iter()
+                .filter(|r| r.outcome == RingOutcome::DroppedBackpressure)
+                .collect();
+            assert_eq!(dropped.len(), 1);
+            assert_eq!(dropped[0].slot_utc_ms, 2_000, "slot N+1 specifically");
+            assert_eq!(g.machine.n_consecutive(), 1, "backpressure drop counts toward N");
+        }
+        // No orphan dir for the dropped slot.
+        let root = state.platform.slot_dir_root();
+        let leftovers: Vec<_> = std::fs::read_dir(&root)
+            .map(|it| it.flatten().collect())
+            .unwrap_or_default();
+        assert!(
+            leftovers.iter().all(|e: &std::fs::DirEntry| {
+                !e.file_name().to_string_lossy().starts_with("slot-2000-")
+            }),
+            "dropped slot dir must be deleted immediately"
+        );
+        // Release: slot 1 finishes (BandDead clears nothing here — BandDead
+        // clears N per types.rs), slot 3 flows.
+        eng.release_gate();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while eng.decodes_finished.load(Ordering::SeqCst) < 1 {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        state.handle_completed_slot(completed(3_000), &tx);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while eng.decodes_finished.load(Ordering::SeqCst) < 2 {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        teardown(&state);
+    }
+
+    /// Storage failure (spec §WAV writeout): ENOSPC-class write error →
+    /// DroppedStorageError recorded, N incremented, last_failure set, no
+    /// panic, capture path continues (the next slot writes fine).
+    #[test]
+    fn storage_failure_is_a_defined_outcome_and_no_stall() {
+        let p = FakePlatform::happy();
+        let state = test_state(p.clone(), cfg_with_device());
+        run_sequence(&state);
+        let tx = state.master_tx.lock().unwrap().clone().unwrap();
+        *p.wav_result.lock().unwrap() = Err("No space left on device (os error 28)".into());
+        state.handle_completed_slot(completed(1_000), &tx);
+        {
+            let g = state.lock_inner();
+            assert!(matches!(
+                g.ring.back().unwrap().outcome,
+                RingOutcome::DroppedStorageError { .. }
+            ));
+            assert_eq!(g.machine.n_consecutive(), 1);
+            assert!(g.last_failure.as_deref().unwrap().contains("No space left"));
+        }
+        // Recovery: the next slot flows to decode.
+        *p.wav_result.lock().unwrap() = Ok(());
+        state.handle_completed_slot(completed(2_000), &tx);
+        let snap_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            let done = {
+                let g = state.lock_inner();
+                g.ring.iter().any(|r| r.slot_utc_ms == 2_000 && r.outcome == RingOutcome::BandDead)
+            };
+            if done {
+                break;
+            }
+            assert!(std::time::Instant::now() < snap_deadline, "capture stalled after ENOSPC");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        teardown(&state);
+    }
+
+    /// Tap (spec §Waterfall tap): drop-oldest under a stalled consumer; and
+    /// pushing through the tap never slips a slot boundary (the assembler
+    /// sees the identical sample stream).
+    #[test]
+    fn tap_drops_oldest_and_never_blocks() {
+        let tap = WaterfallTap::default();
+        tap.subscribe();
+        // 40 blocks' worth: 8 oldest must be gone, newest 32 retained.
+        for i in 0..40 {
+            let block = vec![i as i16; TAP_BLOCK_FRAMES];
+            tap.push_samples(&block);
+        }
+        let blocks = tap.take_blocks();
+        assert_eq!(blocks.len(), TAP_CAPACITY_BLOCKS);
+        assert_eq!(blocks[0][0], 8, "oldest 8 dropped");
+        assert_eq!(blocks[31][0], 39);
+        // Unsubscribed: pushes are free and retain nothing.
+        tap.unsubscribe();
+        tap.push_samples(&vec![1i16; TAP_BLOCK_FRAMES * 2]);
+        assert!(tap.take_blocks().is_empty());
+    }
+
+    /// No boundary slip: a full scripted slot through capture_loop with a
+    /// stalled tap consumer still emits exactly its slots on the synthetic
+    /// boundaries.
+    #[test]
+    fn tap_pressure_does_not_slip_slot_boundaries() {
+        let p = FakePlatform::happy();
+        let state = test_state(p.clone(), cfg_with_device());
+        state.tap().subscribe(); // subscribed but never drained = max pressure
+        // Script: 30 s of audio (2 slots' worth) + idle. happy()'s clock
+        // epoch is 1_760_000_000_000 ms; mod 15_000 = 5_000, so synthetic
+        // time starts 5 s PAST a boundary — 10 s BEFORE the next one. The
+        // assembler anchors at the NEXT boundary (T4 pinned next-boundary
+        // semantics): boundary 1 lands at +10 s and emits the scheduled
+        // FirstSlot discard; boundary 2 lands at +25 s and emits one
+        // Completed slot. 30 s of audio therefore produces exactly 2
+        // boundary events — the `>= 2` assertion below.
+        for _ in 0..(2 * 720_000 / 4_800) {
+            p.source_steps
+                .lock()
+                .unwrap()
+                .push_back(SourceStep::Frames { frames: 4_800, value: 100, gap: None });
+        }
+        run_sequence(&state);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while state.slot_boundaries.load(Ordering::SeqCst) < 2 {
+            assert!(std::time::Instant::now() < deadline, "boundary slipped under tap pressure");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        teardown(&state);
+    }
+
+    /// The ring records ALL outcome kinds (spec §Ring: every boundary yields
+    /// a record — drops and discards included) and the counters fold per
+    /// §Counter semantics.
+    #[test]
+    fn ring_records_every_outcome_kind() {
+        let p = FakePlatform::happy();
+        let state = test_state(p, cfg_with_device());
+        let recs = [
+            RingOutcome::Decoded,
+            RingOutcome::BandDead,
+            RingOutcome::Failed { failure: "Timeout".into() },
+            RingOutcome::DroppedBackpressure,
+            RingOutcome::DroppedLostFrames,
+            RingOutcome::DroppedStorageError { diagnostic: "ENOSPC".into() },
+            RingOutcome::Discarded { class: DiscardClassDto::ClockAnomaly },
+        ];
+        for (i, o) in recs.iter().enumerate() {
+            state.record_slot(state.base_record(
+                i as u64,
+                o.clone(),
+                Vec::new(),
+                0,
+                0,
+                0.0,
+                -60.0,
+            ));
+        }
+        let g = state.lock_inner();
+        assert_eq!(g.ring.len(), recs.len());
+        // Counter spot-checks: the trailing Failed+drops streak after the
+        // last BandDead: Failed, DroppedBackpressure, DroppedLostFrames,
+        // DroppedStorageError count toward N; the final Discarded does NOT.
+        assert_eq!(g.machine.n_consecutive(), 4, "scheduled discard is counter-neutral");
+    }
+
+    /// Ring eviction: capacity 240 — the 241st record evicts the OLDEST.
+    #[test]
+    fn ring_evicts_oldest_at_capacity() {
+        let p = FakePlatform::happy();
+        let state = test_state(p, cfg_with_device());
+        for i in 0..241u64 {
+            state.record_slot(state.base_record(
+                i,
+                RingOutcome::BandDead,
+                Vec::new(),
+                0,
+                0,
+                0.0,
+                -60.0,
+            ));
+        }
+        let g = state.lock_inner();
+        assert_eq!(g.ring.len(), RING_CAP);
+        assert_eq!(g.ring.front().unwrap().slot_utc_ms, 1, "slot 0 evicted");
+        assert_eq!(g.ring.back().unwrap().slot_utc_ms, 240);
+    }
+
+    fn teardown(state: &Arc<Ft8ListenerState>) {
+        state.stop_request.store(true, Ordering::SeqCst);
+        state.capture_abort.store(true, Ordering::SeqCst);
+        *state.master_tx.lock().unwrap() = None; // decode exits on Disconnected
+        state.unpark_supervisor();
+        let mut h = state.handles.lock().unwrap();
+        for handle in [h.supervisor.take(), h.capture.take(), h.decode.take()]
+            .into_iter()
+            .flatten()
+        {
+            let _ = handle.join();
+        }
+        let _ = std::fs::remove_dir_all(state.platform_tmp_for_test());
+    }
 }
