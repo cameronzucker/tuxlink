@@ -38,6 +38,7 @@ pub mod propagation;
 pub mod mesh;
 pub mod mcp_connection;
 pub mod elmer;
+pub mod wwv_offair;
 
 #[cfg(test)]
 pub mod test_helpers;
@@ -2170,6 +2171,9 @@ pub fn run() {
             // tuxlink-s0r1: operator antenna preset + REQ.SNR + power prefs.
             crate::propagation::commands::propagation_prefs_read,
             crate::propagation::commands::propagation_prefs_write,
+            // tuxlink-xscum: off-air WWV/WWVH space-weather decode (RX-only).
+            crate::wwv_offair::commands::wwv_offair_refresh,
+            crate::wwv_offair::commands::wwv_offair_snapshot_read,
             // tuxlink-9xy1 slice 1: GPS source detection probes (unprivileged).
             crate::position::probe::gps_probe_gpsd,
             crate::position::probe::gps_probe_serial_devices,

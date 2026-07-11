@@ -380,6 +380,14 @@ pub struct Config {
     /// config byte-identical to its pre-FT8 shape.
     #[serde(default, skip_serializing_if = "Ft8Config::is_default")]
     pub ft8: Ft8Config,
+    /// Off-air WWV space-weather decode settings (tuxlink-xscum).
+    /// `#[serde(default)]` migrates configs that predate this field (absent →
+    /// `None`), and the field is now KNOWN, satisfying `deny_unknown_fields`.
+    /// `skip_serializing_if` keeps a never-touched config byte-identical to
+    /// its pre-`wwv_offair` shape (mirrors the `modem_ardop` `Option` field
+    /// pattern), so this addition does NOT bump `CONFIG_SCHEMA_VERSION`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wwv_offair: Option<WwvOffairConfig>,
 }
 
 impl Config {
@@ -1612,6 +1620,34 @@ impl Ft8Config {
     /// touched ft8 section is omitted so pre-FT8 configs stay byte-identical.
     pub fn is_default(&self) -> bool {
         *self == Ft8Config::default()
+    }
+}
+
+/// Off-air WWV space-weather decode settings (tuxlink-xscum). Additive and
+/// `Option`-wrapped on [`Config`] (mirrors `modem_ardop`): absent until the
+/// operator configures it, so a never-touched config stays byte-identical to
+/// its pre-`wwv_offair` shape and this addition does NOT bump
+/// `CONFIG_SCHEMA_VERSION`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WwvOffairConfig {
+    /// ALSA capture device string (e.g. "plughw:1,0"). Empty → use the rig's
+    /// configured capture device / operator picker.
+    pub capture_device: String,
+    /// Override path to the ggml base.en model; None → resolved default data dir.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_path: Option<String>,
+    /// Auto-retry the next window once on no-copy.
+    pub auto_retry_next_window: bool,
+}
+
+impl Default for WwvOffairConfig {
+    fn default() -> Self {
+        Self {
+            capture_device: String::new(),
+            model_path: None,
+            auto_retry_next_window: true,
+        }
     }
 }
 
@@ -3008,6 +3044,51 @@ mod tests {
         let cfg_no_ardop: Config = serde_json::from_str(&json_no_ardop)
             .expect("old config without modem_ardop must deserialize (migration)");
         assert!(cfg_no_ardop.modem_ardop.is_none(), "modem_ardop must default to None when absent");
+    }
+
+    // tuxlink-xscum Task 11: WwvOffairConfig is additive and Option-wrapped
+    // (mirrors modem_ardop) — a config written before this field existed must
+    // load additively (absent → None), no CONFIG_SCHEMA_VERSION bump required.
+    #[test]
+    fn config_without_wwv_offair_is_none_and_roundtrips() {
+        let cfg: Config = serde_json::from_str(&config_json(CONFIG_SCHEMA_VERSION, ""))
+            .expect("minimal config without wwv_offair must deserialize");
+        assert!(cfg.wwv_offair.is_none(), "wwv_offair must default to None when absent");
+
+        // Round-trip: a never-touched config stays byte-identical (skip_serializing_if).
+        let reserialized = serde_json::to_string(&cfg).unwrap();
+        assert!(
+            !reserialized.contains("wwv_offair"),
+            "a never-touched config must NOT carry wwv_offair on re-save: {reserialized}"
+        );
+        let reloaded: Config = serde_json::from_str(&reserialized).unwrap();
+        assert!(reloaded.wwv_offair.is_none());
+    }
+
+    #[test]
+    fn config_with_wwv_offair_parses() {
+        let json = config_json(
+            CONFIG_SCHEMA_VERSION,
+            r#", "wwv_offair": {"capture_device": "plughw:1,0"}"#,
+        );
+        let cfg: Config =
+            serde_json::from_str(&json).expect("Config with wwv_offair must deserialize");
+        let wwv = cfg.wwv_offair.as_ref().expect("wwv_offair should be Some");
+        assert_eq!(wwv.capture_device, "plughw:1,0");
+        assert!(wwv.model_path.is_none(), "absent model_path defaults to None");
+        assert!(
+            wwv.auto_retry_next_window,
+            "absent auto_retry_next_window defaults to true (WwvOffairConfig::default)"
+        );
+
+        // Round-trip: serialize and reload.
+        let reserialized = serde_json::to_string(&cfg).unwrap();
+        let reloaded: Config = serde_json::from_str(&reserialized).unwrap();
+        assert_eq!(
+            reloaded.wwv_offair.unwrap().capture_device,
+            "plughw:1,0",
+            "capture_device must survive a serialize→deserialize round-trip"
+        );
     }
 
     // --- tuxlink-dfmf: VaraUiConfig persistence + migration tests ---
