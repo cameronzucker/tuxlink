@@ -59,28 +59,34 @@ summarizes; the ledger has the detail. Helper scripts live in `.superpowers/sdd/
   ed1213de), **backend FFT magnitude normalize (de97e4bd, CI-PENDING Rust)**,
   C9b rig-control+TestCAT+CTA (2ff260c7).
 
-## IN-FLIGHT / uncommitted at handoff (COLLECT THESE FIRST)
+## Status update: both in-flight items landed at session end
 
-1. **C7 LiveBandStrip — uncommitted, mid-finalization.** Files written in the
-   worktree (unstaged): `src/ft8ui/LiveBandStrip.tsx`, `.css`, `.test.tsx`. The
-   C7 implementer agent had written the files and was running tests when the
-   session ended — **no `task-C7-report.md` yet**, so it is NOT verified. NEXT:
-   `pnpm vitest run src/ft8ui/LiveBandStrip.test.tsx` + `pnpm typecheck`, confirm
-   green (if not, resume/fix), then commit (parent), then review-package + task
-   reviewer. C7 must satisfy: **wedged = RED dot + restart banner** (strip
-   distinguishes severity, unlike the ribbon's flat amber); flags-overlay renders
-   OVER the live body (clockUnsynced amber banner + dot; jt9Degraded dot + chip
-   showing `snapshot.lastFailure`; catFixedBand OPERATOR-ASSERTED/UNCONFIRMED
-   chip); force-expand on needs-setup/wedged/device-lost beats persisted-collapse
-   (`tuxlink:ft8:strip`); composes Waterfall/DecodeFeed/BandSubsetPopover; accepts
-   an optional `blockingSessionMode` prop to pass to the popover.
-2. **C9b review — verdict uncollected.** C9b code is committed (2ff260c7) and
-   green (61/61 + 165/165 consumer suites; commitNow optional/backward-compat,
-   commitNow-before-probe, CTA disable-reason matrix all confirmed by the
-   implementer). A task-reviewer subagent was running its verdict when the
-   session ended. NEXT: re-dispatch the C9b task reviewer (base `de97e4bd`, head
-   `2ff260c7`, package already at `.superpowers/sdd/review-de97e4bd..2ff260c7.diff`)
-   and disposition, OR read its agent output if recoverable.
+**All 11 Phase C components are now COMMITTED** (HEAD is now `1ee37e5c`, pushed
+below). The single remaining Phase-C task-level item is the **C7 task-review**.
+
+1. **C7 LiveBandStrip — COMMITTED `1ee37e5c`, task-review PENDING.** 204/204 ft8ui
+   (zero regressions), typecheck clean; force-expand-beats-collapse,
+   clockUnsynced-banner-over-live-body, and wedged=RED all confirmed by the
+   implementer. Props-driven (hook once at AppShell, props down); exposes optional
+   `blockingSessionMode` + `setupSurface`/`onOpenFullSetup` slot props for D1.
+   **NEXT: dispatch the C7 task reviewer** — package already generated at
+   `.superpowers/sdd/review-a3afd767..1ee37e5c.diff` (base `a3afd767`, head
+   `1ee37e5c`); check the flags-overlay-over-live-body, wedged=RED, force-expand,
+   and no-bare-button (D3) contracts; disposition, then Phase C gate. C7 concerns
+   for D1 (in the ledger): D1 must pass `<Ft8SetupSurface/>` into the `setupSurface`
+   slot; the provenance chip combines `flags.catFixedBand` + `snapshot.bandSource`;
+   the 640px auto-collapse is jsdom-unexercised.
+2. **C9b review — DONE ✅ Approved** (landed at session end; no action needed).
+   Independently verified: commitNow backward-compat (Ardop/Vara unchanged),
+   commitNow-before-probe ordering, CTA disable-reason matrix exhaustive over the
+   5-member BlockedReasonDto, no bare button (D3 honored); 186/186 + 165/165
+   consumer suites reproduce. Two cosmetic **Minors to fold in during D-phase**:
+   (a) two new classNames `ft8-setup__cat-test` + `ft8-setup__cta-row` have NO CSS
+   rules → Test CAT/CTA render as unstyled block-stacking, not the row layout the
+   names imply — needs a small CSS pass in `Ft8SetupSurface.css` before D2/D3
+   visual gates; (b) `formatDialMHz` uses `.toFixed(6)+' MHz'` vs the spec's
+   literal `"14.074.00 MHz"` (which reads as a typo) — **operator confirm** the
+   copy. So the ONLY genuine in-flight item is C7 (item 1).
 
 ## CI — verify before trusting Phase C
 
