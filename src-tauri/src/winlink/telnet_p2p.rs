@@ -152,6 +152,9 @@ pub(crate) fn ip_is_denied(ip: std::net::IpAddr) -> bool {
                 || v4.is_link_local() // 169.254.0.0/16, includes 169.254.169.254 metadata
                 || v4.is_unspecified()
                 || v4.is_broadcast()
+                // CGNAT 100.64.0.0/10 (RFC 6598): routable carrier-side
+                // infrastructure `is_private()` deliberately excludes.
+                || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xc0) == 64)
         }
         IpAddr::V6(v6) => {
             if let Some(mapped) = v6.to_ipv4_mapped() {
@@ -456,6 +459,8 @@ mod tests {
             Ipv4Addr::new(192, 168, 1, 1).into(),
             Ipv4Addr::new(169, 254, 169, 254).into(), // cloud metadata (link-local)
             Ipv4Addr::new(169, 254, 0, 9).into(),
+            Ipv4Addr::new(100, 64, 0, 1).into(), // CGNAT low edge (RFC 6598)
+            Ipv4Addr::new(100, 127, 255, 254).into(), // CGNAT high edge
             Ipv6Addr::LOCALHOST.into(),
             "fe80::1".parse::<Ipv6Addr>().unwrap().into(),
             "fc00::1".parse::<Ipv6Addr>().unwrap().into(),
@@ -467,6 +472,8 @@ mod tests {
         }
         let allowed: Vec<IpAddr> = vec![
             Ipv4Addr::new(203, 0, 113, 5).into(),
+            Ipv4Addr::new(100, 63, 255, 255).into(), // just below the CGNAT /10
+            Ipv4Addr::new(100, 128, 0, 1).into(),    // just above the CGNAT /10
             "2001:db8::5".parse::<Ipv6Addr>().unwrap().into(),
         ];
         for ip in allowed {

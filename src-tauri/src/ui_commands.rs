@@ -39,13 +39,6 @@ use crate::winlink_backend::{
     MessageMeta, OutboundMessage, TransportConfig,
 };
 
-/// Resolve the operator's sole FULL identity (tuxlink-2ns7). Phase 4 has exactly
-/// one FULL (Phase 2 promoted the single config callsign). The inbound-mail /
-/// exchange mailbox sites use this to set the mailbox's default received-mail
-/// namespace so a bare `store`/`list` resolves Inbox/Archive under
-/// `mailbox/<FULL>/` — matching the production read side + the startup
-/// `migrate_legacy_layout`. `None` (no identity yet, fresh install) leaves the
-/// mailbox un-defaulted (resolves the `_default` namespace).
 /// File a completed P2P-Telnet exchange's results into the native mailbox: store
 /// received messages into Inbox and move successfully-sent MIDs from Outbox to
 /// Sent. Mirrors the post-exchange handling in `native_telnet_exchange`. Shared
@@ -78,6 +71,13 @@ pub(crate) fn file_p2p_exchange_result(
     }
 }
 
+/// Resolve the operator's sole FULL identity (tuxlink-2ns7). Phase 4 has exactly
+/// one FULL (Phase 2 promoted the single config callsign). The inbound-mail /
+/// exchange mailbox sites use this to set the mailbox's default received-mail
+/// namespace so a bare `store`/`list` resolves Inbox/Archive under
+/// `mailbox/<FULL>/` — matching the production read side + the startup
+/// `migrate_legacy_layout`. `None` (no identity yet, fresh install) leaves the
+/// mailbox un-defaulted (resolves the `_default` namespace).
 pub(crate) fn sole_full_identity() -> Option<crate::identity::Callsign> {
     crate::identity::IdentityStore::load(&crate::config::identity_store_path())
         .ok()
