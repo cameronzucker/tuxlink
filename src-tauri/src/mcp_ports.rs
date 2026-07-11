@@ -3566,6 +3566,7 @@ mod tests {
                 direction: Direction::Outgoing,
                 counts: AttemptCounts { ok: 3, fail: 1 },
                 last_seen: "2026-07-10T12:30:00-07:00".into(),
+                last_ok: Some("2026-07-10T12:30:00-07:00".into()),
             }],
             endpoints: vec![
                 Endpoint {
@@ -3574,6 +3575,7 @@ mod tests {
                     port: 8772,
                     provenance: Provenance::Operator,
                     last_seen: "2026-07-10T12:30:00-07:00".into(),
+                    last_ok: None,
                 },
                 Endpoint {
                     id: "e-obs".into(),
@@ -3581,6 +3583,7 @@ mod tests {
                     port: 8773,
                     provenance: Provenance::ObservedIncoming,
                     last_seen: "2026-07-10T12:31:00-07:00".into(),
+                    last_ok: None,
                 },
             ],
             created_at: "2026-07-10T12:00:00-07:00".into(),

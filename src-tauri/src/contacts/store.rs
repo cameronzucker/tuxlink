@@ -473,6 +473,9 @@ impl ContactsStore {
                     if let Some(ch) = c.channels.iter_mut().find(|ch| key_match(ch)) {
                         if ok {
                             ch.counts.ok = ch.counts.ok.saturating_add(1);
+                            // Success-only recency (T-F Part 0): only an OK bumps
+                            // last_ok; a fail leaves the prior success intact.
+                            ch.last_ok = Some(now.clone());
                         } else {
                             ch.counts.fail = ch.counts.fail.saturating_add(1);
                         }
@@ -491,6 +494,8 @@ impl ContactsStore {
                                 fail: u32::from(!ok),
                             },
                             last_seen: now.clone(),
+                            // last_ok is set ONLY on a successful first attempt.
+                            last_ok: if ok { Some(now.clone()) } else { None },
                         });
                     }
                 }
@@ -519,6 +524,11 @@ impl ContactsStore {
                         .find(|e| e.host == hostn && e.port == *port && e.provenance == prov)
                     {
                         ep.last_seen = now.clone();
+                        if ok {
+                            // Success-only recency (T-F Part 0): a fail never
+                            // bumps last_ok, so a "reached" label stays honest.
+                            ep.last_ok = Some(now.clone());
+                        }
                     } else {
                         c.endpoints.push(Endpoint {
                             id: uuid::Uuid::new_v4().to_string(),
@@ -526,6 +536,7 @@ impl ContactsStore {
                             port: *port,
                             provenance: prov,
                             last_seen: now.clone(),
+                            last_ok: if ok { Some(now.clone()) } else { None },
                         });
                     }
                 }
@@ -1044,6 +1055,75 @@ mod tests {
     }
 
     #[test]
+    fn last_ok_is_success_only_on_channels() {
+        // T-F Part 0: last_ok is set ONLY by an OK outcome; a FAIL never sets
+        // it and never clears a prior success. last_seen bumps on both.
+        let dir = tempdir().unwrap();
+        let mut s = ContactsStore::open(dir.path().join("contacts.json"));
+
+        // A first FAILED attempt: last_seen set, last_ok still None.
+        s.apply_observation(
+            &rf_obs("W6ABC", Direction::Outgoing, ObservationPhase::B2fFail),
+            "2026-07-11T12:00:00-07:00".into(),
+        )
+        .unwrap();
+        let ch = &s.contacts()[0].channels[0];
+        assert_eq!(ch.counts.fail, 1);
+        assert_eq!(ch.last_seen, "2026-07-11T12:00:00-07:00");
+        assert_eq!(ch.last_ok, None, "a fail must not set last_ok");
+
+        // A later SUCCESS: last_ok now set to the success instant.
+        s.apply_observation(
+            &rf_obs("W6ABC", Direction::Outgoing, ObservationPhase::B2fOk),
+            "2026-07-11T12:05:00-07:00".into(),
+        )
+        .unwrap();
+        let ch = &s.contacts()[0].channels[0];
+        assert_eq!(ch.counts.ok, 1);
+        assert_eq!(ch.last_ok.as_deref(), Some("2026-07-11T12:05:00-07:00"));
+
+        // A subsequent FAIL bumps last_seen but PRESERVES the earlier last_ok.
+        s.apply_observation(
+            &rf_obs("W6ABC", Direction::Outgoing, ObservationPhase::AbortedOrWedged),
+            "2026-07-11T12:10:00-07:00".into(),
+        )
+        .unwrap();
+        let ch = &s.contacts()[0].channels[0];
+        assert_eq!(ch.counts.fail, 1);
+        assert_eq!(ch.last_seen, "2026-07-11T12:10:00-07:00", "fail bumps last_seen");
+        assert_eq!(
+            ch.last_ok.as_deref(),
+            Some("2026-07-11T12:05:00-07:00"),
+            "a later fail must not clobber the earlier success"
+        );
+    }
+
+    #[test]
+    fn last_ok_is_success_only_on_endpoints() {
+        // T-F Part 0, endpoint mirror: an operator-dialed telnet endpoint's
+        // last_ok tracks successes only.
+        let dir = tempdir().unwrap();
+        let mut s = ContactsStore::open(dir.path().join("contacts.json"));
+        // A failed operator dial: endpoint recorded, last_ok None.
+        s.apply_observation(
+            &telnet_obs("W6ABC", Direction::Outgoing, Provenance::Operator, ObservationPhase::LoginFailed),
+            "2026-07-11T12:00:00-07:00".into(),
+        )
+        .unwrap();
+        assert_eq!(s.contacts()[0].endpoints[0].last_ok, None);
+        // A successful operator dial on the SAME endpoint sets last_ok.
+        s.apply_observation(
+            &telnet_obs("W6ABC", Direction::Outgoing, Provenance::Operator, ObservationPhase::B2fOk),
+            "2026-07-11T12:05:00-07:00".into(),
+        )
+        .unwrap();
+        assert_eq!(
+            s.contacts()[0].endpoints[0].last_ok.as_deref(),
+            Some("2026-07-11T12:05:00-07:00")
+        );
+    }
+
+    #[test]
     fn slash_p_presented_form_is_stored() {
         // [R3-F2]: the write boundary gates on validate_presented_callsign, so
         // a legit portable form survives rather than being dropped.
@@ -1234,6 +1314,7 @@ mod tests {
             port: 8772,
             provenance,
             last_seen: "2026-07-11T12:00:00-07:00".to_string(),
+            last_ok: None,
         }
     }
 

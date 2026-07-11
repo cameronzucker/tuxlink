@@ -161,7 +161,18 @@ pub struct Channel {
     pub direction: Direction,
     #[serde(default)]
     pub counts: AttemptCounts,
+    /// Timestamp of the most recent attempt on this channel, OK or FAIL (bumps
+    /// on every observation). Recency for the map/rail must NOT derive from
+    /// this — a failed dial bumps it too. Use [`Channel::last_ok`] for any
+    /// "reached / heard" truth-claim.
     pub last_seen: String,
+    /// Timestamp of the most recent SUCCESSFUL (`Classified::Ok`) attempt on
+    /// this channel; `None` until one completes. This is the only honest
+    /// source for a "reached / heard" label — a failed attempt never sets it
+    /// and never clears a prior success (T-F Part 0). `#[serde(default)]` so
+    /// every pre-T-F record loads with `None`.
+    #[serde(default)]
+    pub last_ok: Option<String>,
 }
 
 /// One network reachability row (telnet P2P).
@@ -173,7 +184,13 @@ pub struct Endpoint {
     pub port: u16,
     #[serde(default)]
     pub provenance: Provenance,
+    /// Most recent attempt on this endpoint, OK or FAIL. See
+    /// [`Channel::last_seen`] — not a reachability truth-source.
     pub last_seen: String,
+    /// Most recent SUCCESSFUL attempt on this endpoint; `None` until one
+    /// completes. The only honest "reached / heard" source (T-F Part 0).
+    #[serde(default)]
+    pub last_ok: Option<String>,
 }
 
 #[cfg(test)]
@@ -254,6 +271,41 @@ mod tests {
             serde_json::from_str::<ChannelBandwidth>(r#"{"kind":"hz","hz":2300}"#).unwrap(),
             ChannelBandwidth::Hz { hz: 2300 }
         );
+    }
+
+    #[test]
+    fn last_ok_defaults_to_none_and_round_trips() {
+        // T-F Part 0: `last_ok` is `#[serde(default)]`, so a pre-T-F record
+        // (no `last_ok` key) loads as None; and a present value round-trips.
+        let ch: Channel = serde_json::from_str(
+            r#"{"transport":"vara-hf","target_callsign":"W6ABC-7",
+                "last_seen":"2026-07-11T12:00:00-07:00"}"#,
+        )
+        .expect("a record without last_ok must load");
+        assert_eq!(ch.last_ok, None, "absent last_ok defaults to None");
+
+        let ep: Endpoint = serde_json::from_str(
+            r#"{"id":"e1","host":"peer.example","port":8772,
+                "last_seen":"2026-07-11T12:00:00-07:00"}"#,
+        )
+        .expect("an endpoint without last_ok must load");
+        assert_eq!(ep.last_ok, None);
+
+        // A present value round-trips and serializes as the RFC3339 string.
+        let ch = Channel {
+            transport: ChannelTransport::VaraHf,
+            target_callsign: "W6ABC-7".into(),
+            via: vec![],
+            freq_hz: Some(7_101_000),
+            bandwidth: None,
+            direction: Direction::Outgoing,
+            counts: AttemptCounts { ok: 1, fail: 0 },
+            last_seen: "2026-07-11T12:05:00-07:00".into(),
+            last_ok: Some("2026-07-11T12:05:00-07:00".into()),
+        };
+        let json = serde_json::to_string(&ch).unwrap();
+        assert!(json.contains(r#""last_ok":"2026-07-11T12:05:00-07:00""#), "{json}");
+        assert_eq!(serde_json::from_str::<Channel>(&json).unwrap(), ch);
     }
 
     #[test]

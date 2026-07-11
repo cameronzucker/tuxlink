@@ -845,6 +845,7 @@ mod tests {
             direction: Direction::Incoming,
             counts: AttemptCounts { ok: 1, fail: 0 },
             last_seen: "2026-07-11T12:00:00-07:00".into(),
+            last_ok: Some("2026-07-11T12:00:00-07:00".into()),
         }];
         stored.endpoints = vec![Endpoint {
             id: "e1".into(),
@@ -852,6 +853,7 @@ mod tests {
             port: 8772,
             provenance: Provenance::ObservedIncoming,
             last_seen: "2026-07-11T12:00:00-07:00".into(),
+            last_ok: None,
         }];
         // The editor's snapshot: identity edits, EMPTY reachability, and a
         // (stale/hostile) Confirmed tier + Manual origin.
@@ -883,6 +885,7 @@ mod tests {
             port: 8772,
             provenance,
             last_seen: "2026-07-11T12:00:00-07:00".into(),
+            last_ok: None,
         }];
         let mut f = ContactsFile::default();
         f.contacts.push(c);
