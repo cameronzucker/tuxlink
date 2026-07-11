@@ -2051,6 +2051,53 @@ mod tests {
         teardown(&state);
     }
 
+    /// The unplug/reconnect overlap window (Task C9a consumes
+    /// `configuredDeviceName` + `alsaHw` TOGETHER): a mid-run device loss
+    /// blocks the axis on `DeviceAbsent` WITHOUT clearing `resolved_name`
+    /// (`on_device_lost` → `set_blocked` touches only the machine axis +
+    /// `last_failure`). In that window BOTH fields are populated at once —
+    /// `availableDevices` is `Some(non-empty)` (the `wants_devices` rule
+    /// fires on `Blocked(DeviceAbsent)`) AND `configuredDeviceName` still
+    /// holds the STALE pre-loss name. Mirrors the setup in
+    /// `device_absent_retry_recovers_with_fresh_resolution`, stopping at the
+    /// blocked window rather than re-resolving.
+    #[test]
+    fn snapshot_carries_stale_name_and_devices_during_device_loss() {
+        let p = FakePlatform::happy();
+        let state = test_state(p.clone(), cfg_with_device());
+        run_sequence(&state);
+        assert_eq!(state.axis(), ServiceAxis::Listening);
+
+        // Mid-run loss: the capture loop calls on_device_lost when the source
+        // errors; drive it via a scripted Absent failure like the recovery
+        // test does, and wait for the blocked window to open.
+        p.source_steps
+            .lock()
+            .unwrap()
+            .push_back(SourceStep::Fail(crate::ft8::traits::SourceError::Absent));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while state.axis() != ServiceAxis::Blocked(BlockedReason::DeviceAbsent) {
+            assert!(std::time::Instant::now() < deadline, "loss not detected");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        // Snapshot IN the blocked window — before any re-resolve.
+        let snap = state.snapshot();
+        let v = serde_json::to_value(&snap).unwrap();
+
+        // Both fields populated simultaneously.
+        let devs = v["availableDevices"].as_array().expect("availableDevices is an array");
+        assert!(!devs.is_empty(), "picker offered during device loss: {v}");
+        assert_eq!(devs[0]["alsaHw"], "hw:1,0");
+        assert_eq!(
+            v["configuredDeviceName"], "DRA-100 USB Audio",
+            "stale pre-loss name survives the DeviceAbsent block: {v}"
+        );
+        assert_eq!(v["service"]["axis"], "blocked");
+        assert_eq!(v["service"]["reason"], "device-absent");
+        teardown(&state);
+    }
+
     use crate::ft8::records::RingOutcome;
     use crate::ft8::testutil::{FakeEngine, SourceStep};
 
