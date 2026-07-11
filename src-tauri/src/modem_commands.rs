@@ -329,6 +329,28 @@ pub async fn modem_ardop_disconnect(
     result
 }
 
+/// The SINGLE choke point between "a code path decided to spawn ardopcf"
+/// and the factory that does it (tuxlink-b026z.3, spec §Arbitration).
+/// Yields the FT8 listener's audio device (join + release-confirm) BEFORE
+/// the spawn; a pause failure surfaces as the device-busy-class String the
+/// existing sites already propagate, and the spawn DOES NOT proceed.
+///
+/// Blocking-context contract: all four call sites run under spawn_blocking
+/// (the `pause_for_modem` doc pins it). Every ardopcf spawn MUST route
+/// through here — `no_ardop_spawn_path_bypasses_the_ft8_yield_wrapper`
+/// (below) enforces it structurally.
+pub(crate) fn spawn_ardop_with_yield<F>(
+    make_transport: F,
+    ardop_cfg: ArdopConfig,
+    target: &str,
+) -> Result<Box<dyn ModemTransport>, String>
+where
+    F: FnOnce(ArdopConfig, &str) -> Result<Box<dyn ModemTransport>, String>,
+{
+    crate::ft8::arbiter::pause_for_modem_global().map_err(|e| e.device_busy_message())?;
+    make_transport(ardop_cfg, target)
+}
+
 /// Inner helper with a factory seam — ARDOP connect with in-process busy guard.
 ///
 /// The factory closure constructs the `Box<dyn ModemTransport>` given an
@@ -471,8 +493,8 @@ where
     snap.last_error = None;
     session.set_status(snap);
 
-    // ─── Spawn ───────────────────────────────────────────────────────────
-    let mut transport = match make_transport(ardop_cfg, target) {
+    // ─── Spawn (via the FT8 yield choke point) ───────────────────────────
+    let mut transport = match spawn_ardop_with_yield(make_transport, ardop_cfg, target) {
         Ok(t) => t,
         Err(e) => {
             let mut s = ModemStatus::stopped();
@@ -713,8 +735,8 @@ where
     snap.last_error = None;
     session.set_status(snap);
 
-    // ─── Spawn ───────────────────────────────────────────────────────────
-    let mut transport = make_transport(ardop_cfg, target)?;
+    // ─── Spawn (via the FT8 yield choke point) ───────────────────────────
+    let mut transport = spawn_ardop_with_yield(&mut *make_transport, ardop_cfg, target)?;
 
     // ─── Init the TNC ────────────────────────────────────────────────────
     let init_cfg = init_config_from_session(session_id, cfg);
@@ -819,7 +841,7 @@ where
     snap.last_error = None;
     session.set_status(snap);
 
-    let mut transport = match make_transport(ardop_cfg, "") {
+    let mut transport = match spawn_ardop_with_yield(make_transport, ardop_cfg, "") {
         Ok(t) => t,
         Err(e) => {
             let mut s = ModemStatus::stopped();
@@ -915,7 +937,7 @@ where
     snap.last_error = None;
     session.set_status(snap);
 
-    let mut transport = match make_transport(ardop_cfg, "") {
+    let mut transport = match spawn_ardop_with_yield(make_transport, ardop_cfg, "") {
         Ok(t) => t,
         Err(e) => {
             let mut s = ModemStatus::stopped();
@@ -2202,6 +2224,74 @@ mod tests {
         // the next test (each test fully restores its env in a deferred-style
         // tail). Recover and proceed.
         LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Minimal `ArdopConfig` for tests that need to hand one to
+    /// [`spawn_ardop_with_yield`] directly (loopback defaults; no test in
+    /// this file constructs one via [`ardop_config_for`] because that
+    /// requires a full `ArdopUiConfig`/`RigUiConfig` pair).
+    fn test_ardop_config() -> ArdopConfig {
+        ArdopConfig {
+            binary: std::path::PathBuf::from("ardopcf"),
+            extra_args: Vec::new(),
+            cmd_port: 8515,
+            data_port: 8516,
+            audio_device_path: None,
+            cat_bridge: None,
+        }
+    }
+
+    // ── tuxlink-b026z.3 (T15) — the FT8 yield choke point ───────────────
+
+    /// tuxlink-b026z.3 (spec §Arbitration): NO ardopcf spawn path may bypass
+    /// the FT8 yield choke point. Structural enforcement: in this file, the
+    /// factory may be INVOKED — the identifier immediately followed by an
+    /// open paren — only inside `spawn_ardop_with_yield` itself. Everything
+    /// else must route through the wrapper. Passing the factory BY VALUE
+    /// (identifier followed by `,` or `)`) is fine — only invocation is
+    /// choked.
+    #[test]
+    fn no_ardop_spawn_path_bypasses_the_ft8_yield_wrapper() {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/modem_commands.rs"),
+        )
+        .expect("read own source");
+        // Built via concat! so THIS test's own source never matches itself.
+        let needle = concat!("make_", "transport(");
+        let invocations: Vec<usize> = src.match_indices(needle).map(|(i, _)| i).collect();
+        assert_eq!(
+            invocations.len(),
+            1,
+            "expected exactly ONE raw factory invocation (inside \
+             spawn_ardop_with_yield); every other spawn site must call \
+             spawn_ardop_with_yield. Found {} — a new ardopcf spawn path \
+             bypassed the FT8 yield choke point.",
+            invocations.len()
+        );
+        // And that one invocation lives inside the wrapper fn.
+        let wrapper_start = src
+            .find("fn spawn_ardop_with_yield")
+            .expect("wrapper exists");
+        let wrapper_end = src[wrapper_start..]
+            .find("\npub")
+            .map(|off| wrapper_start + off)
+            .unwrap_or(src.len());
+        assert!(
+            invocations[0] > wrapper_start && invocations[0] < wrapper_end,
+            "the raw factory invocation is OUTSIDE spawn_ardop_with_yield"
+        );
+    }
+
+    /// The wrapper is transparent when no arbiter is installed (unit-test
+    /// context) — factory errors pass through untouched.
+    #[test]
+    fn yield_wrapper_is_transparent_without_an_arbiter() {
+        let out = spawn_ardop_with_yield(
+            |_cfg, _t| Err::<Box<dyn crate::winlink::modem::ModemTransport>, String>("boom".into()),
+            test_ardop_config(),
+            "N0CALL",
+        );
+        assert_eq!(out.unwrap_err(), "boom");
     }
 
     #[test]

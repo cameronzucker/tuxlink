@@ -283,11 +283,14 @@ impl ManagedDireWolf {
     ///
     /// Steps (RADIO-1 + ADR-0015 ordering matters):
     /// 1. Generate the conf and write it to a temp file.
-    /// 2. Pre-spawn device-busy probe — return [`DwLifecycleError::DeviceBusy`]
+    /// 2. Yield the FT8 listener (tuxlink-b026z.3) — BEFORE the busy probe,
+    ///    which would otherwise read FT8's own PCM hold as "device busy" and
+    ///    abort a spawn that a yield would have permitted.
+    /// 3. Pre-spawn device-busy probe — return [`DwLifecycleError::DeviceBusy`]
     ///    WITHOUT spawning if the card is held.
-    /// 3. `build_cmd(&conf_path)` → `(program, args)`; spawn via
+    /// 4. `build_cmd(&conf_path)` → `(program, args)`; spawn via
     ///    [`ManagedModem::spawn`], mapping failures through [`map_spawn_error`].
-    /// 4. Bind-wait the KISS port; on timeout stop the child (no leak) and return
+    /// 5. Bind-wait the KISS port; on timeout stop the child (no leak) and return
     ///    [`DwLifecycleError::BindTimeout`].
     fn spawn_inner(
         cfg: ManagedDireWolfCfg,
@@ -300,7 +303,14 @@ impl ManagedDireWolf {
             .map_err(|e| DwLifecycleError::ConfWrite(e.to_string()))?;
         let conf_path = conf_file.path().to_string_lossy().into_owned();
 
-        // Step 2: pre-spawn device-busy probe — DO NOT spawn against a held card.
+        // Step 2 (tuxlink-b026z.3): yield the FT8 listener BEFORE the busy
+        // probe — the probe would otherwise read FT8's own PCM hold as
+        // "device busy" and abort a spawn that a yield would have permitted.
+        if let Err(e) = crate::ft8::arbiter::pause_for_modem_global() {
+            return Err(DwLifecycleError::DeviceBusy(e.device_busy_message()));
+        }
+
+        // Step 3: pre-spawn device-busy probe — DO NOT spawn against a held card.
         if let Err(named_msg) = probe_device_busy(&cfg.adevice, cfg.card_index) {
             tracing::warn!(
                 target: "tuxlink::winlink::ax25::managed_direwolf",
@@ -310,7 +320,7 @@ impl ManagedDireWolf {
             return Err(DwLifecycleError::DeviceBusy(named_msg));
         }
 
-        // Step 3: build the command vector and spawn. The closure returns owned
+        // Step 4: build the command vector and spawn. The closure returns owned
         // String/Vec<String>; borrow `&[&str]` from the owned Vec right here so no
         // reference dangles past the spawn call.
         let (program, args) = build_cmd(&conf_path);
@@ -323,7 +333,7 @@ impl ManagedDireWolf {
         );
         let mut modem = ManagedModem::spawn(&program, &arg_refs).map_err(map_spawn_error)?;
 
-        // Step 4: bind-wait the single KISS port. On timeout, stop the child so we
+        // Step 5: bind-wait the single KISS port. On timeout, stop the child so we
         // do not leak it, then return BindTimeout.
         if let Err(err) = wait_for_kiss_port(cfg.kiss_port, bind_wait) {
             // Stop the just-spawned child before surfacing the timeout (no leak).
