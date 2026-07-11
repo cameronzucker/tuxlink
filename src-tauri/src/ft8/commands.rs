@@ -21,6 +21,14 @@ use tuxlink_capture::state::{BlockedReason, ServiceAxis};
 /// | modem-busy | rig-not-configured | probe-timeout | invalid-grid |
 /// invalid-band`. The UI branches on `kind`, never parses `detail` —
 /// `detail` is human-readable text only.
+///
+/// One additional generic tag, `internal-error`, is reserved for genuine
+/// infrastructure failures (a real `write_config_atomic` disk/permission
+/// error, a panicked `spawn_blocking` task) — NOT a rejected input. The UI
+/// shows a generic "couldn't save" message for `internal-error` and does
+/// NOT tell the user to fix their input; the real cause travels in
+/// `detail`. Keep the eight validation-facing tags strictly for actual
+/// input rejections so the UI never misdirects troubleshooting.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Ft8CmdError {
@@ -168,20 +176,20 @@ pub(crate) fn ft8_set_sweep_bands_inner(
             return Err(Ft8CmdError::new("invalid-band", format!("{band:?} is not an FT8 band")));
         }
     }
-    let ft8 = with_ft8_config_writer(|c| {
+    let ft8 = with_ft8_config_writer(move |c| {
         // RMW the FULL ft8 config through the crate-wide writer: only
         // .sweep.bands is assigned, every sibling field (device, band,
         // sweep.enabled, sweep.dwell_slots) survives untouched (hoi1
         // two-face guard — a partial replace here would wipe device).
-        c.ft8.sweep.bands = bands.clone();
+        c.ft8.sweep.bands = bands;
         Ok(())
     })
-    // The only realistic failure left after the pre-check above is a
-    // physical config-write failure (disk full, permissions); no other
-    // Ft8CmdError kind in the phase's vocabulary fits a bands-write
-    // failure, so it is tagged with this command's own "invalid-band" kind
-    // and the real cause travels in `detail`.
-    .map_err(|e| Ft8CmdError::new("invalid-band", e))?;
+    // The bands are already validated above, so any error here is a
+    // genuine infrastructure failure (disk full, permissions) — NOT a bad
+    // band. Tagging it "invalid-band" would misdirect the operator to
+    // reselect a band; "internal-error" carries the real cause in `detail`
+    // and the UI shows a generic "couldn't save" message instead.
+    .map_err(|e| Ft8CmdError::new("internal-error", e))?;
     state.set_ft8_config(ft8);
     state.emit_listening_change();
     Ok(())
@@ -255,10 +263,13 @@ pub async fn ft8_set_sweep_bands(
     bands: Vec<String>,
 ) -> Result<(), Ft8CmdError> {
     let s = (*state).clone();
+    // A JoinError here means the blocking task panicked — an infrastructure
+    // failure, not a bad band, so it maps to "internal-error" (the eight
+    // validation kinds stay reserved for actual input rejections).
     tauri::async_runtime::spawn_blocking(move || ft8_set_sweep_bands_inner(&s, bands))
         .await
         .map_err(|e| {
-            Ft8CmdError::new("invalid-band", format!("set-sweep-bands task failed: {e}"))
+            Ft8CmdError::new("internal-error", format!("set-sweep-bands task failed: {e}"))
         })?
 }
 
