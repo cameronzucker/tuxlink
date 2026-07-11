@@ -532,6 +532,65 @@ pub struct StationListDto {
     pub operator_grid: Option<String>,
 }
 
+/// One curated RF-reachability observation on a peer (spec §2). Structured-only:
+/// callsigns are sanitizer-floored by the impl (bogus tokens dropped); no
+/// free-text crosses.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PeerChannelDto {
+    /// `"packet"` | `"ardop"` | `"vara-hf"` | `"vara-fm"`.
+    pub transport: String,
+    pub target_callsign: String,
+    pub via: Vec<String>,
+    pub freq_hz: Option<u64>,
+    /// `"incoming"` | `"outgoing"`.
+    pub direction: String,
+    pub ok: u32,
+    pub fail: u32,
+    pub last_seen: String,
+}
+
+/// One curated network-reachability endpoint on a peer. `host`/`port` are a
+/// dialable-secret surface: they are present ONLY when the endpoint is
+/// operator-provenance AND the egress arm is active [R2-S3]; otherwise redacted
+/// (`None`). An `ObservedIncoming` endpoint stays redacted even when armed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PeerEndpointDto {
+    pub id: String,
+    /// `"operator"` | `"observed-incoming"`.
+    pub provenance: String,
+    /// Present ONLY when provenance is Operator AND the egress arm is active
+    /// [R2-S3]; otherwise `None`.
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub last_seen: String,
+}
+
+/// One curated peer roster entry (spec §1/§2). A CURATION, not a DTO mirror
+/// [R2-S1]: free text (`note`), the `contact_id` reach-through, and the
+/// `do_not_merge`/`conflict`/`source` internals are DROPPED on purpose
+/// [R2-S11][R4-9]; every callsign is sanitizer-floored by the impl.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PeerDto {
+    pub id: String,
+    pub canonical_base: String,
+    pub presented_callsigns: Vec<String>,
+    pub identity_kind: String,
+    pub origin: String,
+    /// Clamped to the operator's configured broadcast precision [R2-S9].
+    pub grid: Option<String>,
+    pub last_connected_at: Option<String>,
+    pub channels: Vec<PeerChannelDto>,
+    pub endpoints: Vec<PeerEndpointDto>,
+    // DROPPED on purpose: note, contact_id (and anything reachable through
+    // it), do_not_merge/conflict/source internals [R2-S11][R4-9].
+}
+
+/// Output of [`StationPort::find_peers`]: the curated peer roster.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PeerListDto {
+    pub peers: Vec<PeerDto>,
+}
+
 /// Agent-supplied request for [`PredictionPort::predict_path`]. Carries NO
 /// `tx_grid`: the operator's own grid is injected by the Chunk-2 impl, never
 /// agent-supplied (see module note).
@@ -713,10 +772,20 @@ pub trait LogPort: Send + Sync {
 /// Winlink RMS gateway directory lookups. Public directory data, cached. Does
 /// NOT taint (app-owned/public content) and is NOT gated (read-only; never
 /// transmits).
+///
+/// [`StationPort::find_peers`] is the DELIBERATE asymmetry on this trait: unlike
+/// `find_stations` (public directory data, ungated), the peer roster is the
+/// operator's PRIVATE station graph, so its impl gates the whole read behind the
+/// egress arm [R2-S5]. Two methods on one trait with different gating postures is
+/// intentional and required by spec — see the impl's asymmetry note.
 #[async_trait]
 pub trait StationPort: Send + Sync {
     /// List RMS gateways matching `filter`. Read-only; does not taint or gate.
     async fn find_stations(&self, filter: StationFilterDto) -> Result<StationListDto, PortError>;
+    /// List saved P2P peer stations. UNLIKE `find_stations`, this GATES the whole
+    /// read behind the egress arm [R2-S5] (the roster is the operator's private
+    /// social graph, not public directory data). Read-only; never transmits.
+    async fn find_peers(&self) -> Result<PeerListDto, PortError>;
 }
 
 /// Offline HF propagation prediction + space-weather reads. Both methods are

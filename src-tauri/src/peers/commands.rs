@@ -336,7 +336,7 @@ pub fn p2p_capabilities() -> P2pCapabilities {
         finder_peers: false,
         map_peers: false,
         settings_editor: false,
-        agent_find_peers: false,
+        agent_find_peers: true, // Task 19 (R5-8 row 4): the find_peers agent tool landed.
         agent_telnet_dial: false,
         vara_engine_split: false,
         favorites_peer_link: true, // Task 17 (R5-7): the favorites↔peer bridge landed.
@@ -357,15 +357,15 @@ mod tests {
     #[test]
     fn capabilities_report_only_landed_rows_true() {
         // Task 11 lands rows 1-2 (store + recorder); Task 17 lands row 10 (the
-        // favorites↔peer bridge). Every OTHER bit stays false until its own task
-        // flips it — this guards against an accidental early flip and pins
-        // Task 28's completeness baseline.
+        // favorites↔peer bridge); Task 19 lands row 4 (the find_peers agent tool).
+        // Every OTHER bit stays false until its own task flips it — this guards
+        // against an accidental early flip and pins Task 28's completeness baseline.
         let c = p2p_capabilities();
         assert!(c.peer_store, "Task 11 lands the store + recorder");
         assert!(!c.finder_peers);
         assert!(!c.map_peers);
         assert!(!c.settings_editor);
-        assert!(!c.agent_find_peers);
+        assert!(c.agent_find_peers, "Task 19 lands the find_peers agent tool");
         assert!(!c.agent_telnet_dial);
         assert!(!c.vara_engine_split);
         assert!(c.favorites_peer_link, "Task 17 lands the favorites↔peer bridge");

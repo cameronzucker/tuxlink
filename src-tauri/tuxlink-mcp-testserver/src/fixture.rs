@@ -26,7 +26,7 @@ use thiserror::Error;
 use tuxlink_mcp_core::ports::{
     ArdopConfigDto, AudioDevicesDto, BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto,
     ConfigViewDto, DocsHitDto, LogLineDto, ModemStatusDto, PacketConfigDto,
-    ParsedMessageDto, PathPredictionDto, PositionStatusDto, RigConfigDto, RigStatusDto,
+    ParsedMessageDto, PathPredictionDto, PeerListDto, PositionStatusDto, RigConfigDto, RigStatusDto,
     SerialDeviceDto, SolarSnapshotDto, StationListDto, VaraConfigDto,
 };
 
@@ -103,6 +103,11 @@ pub struct World {
     /// The gateway directory `find_stations` returns. `None` ⇒ empty list.
     #[serde(default)]
     pub stations: Option<StationListDto>,
+    /// The peer roster `find_peers` returns. `None` ⇒ empty list. (The real impl
+    /// gates this read behind the egress arm; the scenario harness serves the
+    /// seeded curated roster directly.)
+    #[serde(default)]
+    pub peers: Option<PeerListDto>,
     /// The HF path prediction `predict_path` returns. `None` ⇒ `Unavailable`.
     #[serde(default)]
     pub prediction: Option<PathPredictionDto>,

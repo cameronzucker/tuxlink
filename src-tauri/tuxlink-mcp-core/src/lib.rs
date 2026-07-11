@@ -162,11 +162,11 @@ pub mod test_support {
         LogLineDto, LogPort, MailboxPort, MessageMetaDto, ModemStatusDto, PacketConfigDto,
         PacketWriteDto, ParsedMessageDto, PathPredictionDto, PlatformInfoDto, PortError,
         PositionStatusDto, PredictRequestDto, PredictionPort, PrinterDto, ProvisionPort,
-        QsyCandidateDto, RigConfigDto, RigStatusDto, SearchPort, SearchQueryDto, SearchResultsDto,
-        SendFormDto, SerialDeviceDto, SessionIntentDto, SolarSnapshotDto, StationFilterDto,
-        StationListDto, StationModeDto, StationPort, StatusPort, VaraCheckpointDto, VaraConfigDto,
-        VaraInstallStatusDto, VaraInstallSummaryDto, VaraProbeDto, VaraStatusDto, VaraWriteDto,
-        WritePort, WritePortError,
+        PeerListDto, QsyCandidateDto, RigConfigDto, RigStatusDto, SearchPort, SearchQueryDto,
+        SearchResultsDto, SendFormDto, SerialDeviceDto, SessionIntentDto, SolarSnapshotDto,
+        StationFilterDto, StationListDto, StationModeDto, StationPort, StatusPort, VaraCheckpointDto,
+        VaraConfigDto, VaraInstallStatusDto, VaraInstallSummaryDto, VaraProbeDto, VaraStatusDto,
+        VaraWriteDto, WritePort, WritePortError,
     };
     use crate::validate::{
         validate_address, validate_attachment_dest, validate_body, validate_drive_level,
@@ -713,6 +713,11 @@ pub mod test_support {
                 fetched_at_ms: Some(0),
                 operator_grid: None,
             })
+        }
+        async fn find_peers(&self) -> Result<PeerListDto, PortError> {
+            // Empty, non-fabricated roster — the peer read is gated in the real
+            // impl; this mock never seeds phantom peers.
+            Ok(PeerListDto { peers: Vec::new() })
         }
     }
 

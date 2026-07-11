@@ -27,10 +27,10 @@ use tuxlink_mcp_core::ports::{
     ArdopConfigDto, AudioDevicesDto, BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto,
     ConfigPort, ConfigViewDto, DevicePort, DocsHitDto, FolderDto, LogLineDto, LogPort, MailboxPort,
     MessageMetaDto, ModemStatusDto, PacketConfigDto, ParsedMessageDto, PathPredictionDto,
-    PlatformInfoDto, PortError, PositionStatusDto, PredictRequestDto, PredictionPort, PrinterDto,
-    RigConfigDto, RigStatusDto, SearchPort, SearchQueryDto, SearchResultsDto, SerialDeviceDto,
-    SolarSnapshotDto, StationFilterDto, StationListDto, StationPort, StatusPort, VaraConfigDto,
-    VaraProbeDto, VaraStatusDto,
+    PeerListDto, PlatformInfoDto, PortError, PositionStatusDto, PredictRequestDto, PredictionPort,
+    PrinterDto, RigConfigDto, RigStatusDto, SearchPort, SearchQueryDto, SearchResultsDto,
+    SerialDeviceDto, SolarSnapshotDto, StationFilterDto, StationListDto, StationPort, StatusPort,
+    VaraConfigDto, VaraProbeDto, VaraStatusDto,
 };
 
 use crate::fixture::World;
@@ -120,6 +120,14 @@ impl StationPort for ScenarioStation {
             fetched_at_ms: None,
             operator_grid: None,
         }))
+    }
+    async fn find_peers(&self) -> Result<PeerListDto, PortError> {
+        // A void world seeds no peers — return an EMPTY, non-fabricated roster.
+        Ok(self
+            .0
+            .peers
+            .clone()
+            .unwrap_or(PeerListDto { peers: Vec::new() }))
     }
 }
 

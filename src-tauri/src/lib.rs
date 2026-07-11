@@ -1532,8 +1532,12 @@ pub fn run() {
                         // through the polite offline cache; prediction/solar are
                         // offline compute. The prediction port injects the
                         // operator's OWN tx_grid from config (never agent-supplied).
+                        // find_stations is an ungated public read; find_peers gates
+                        // the private peer roster behind the SAME shared guard the
+                        // operator arms/disarms (spec R2-S5).
                         stations: std::sync::Arc::new(crate::mcp_ports::MonolithStationPort::new(
                             h.clone(),
+                            guard.clone(),
                         )),
                         prediction: std::sync::Arc::new(
                             crate::mcp_ports::MonolithPredictionPort::new(h.clone()),
@@ -1628,7 +1632,7 @@ pub fn run() {
                     abort: std::sync::Arc::new(crate::mcp_ports::MonolithAbortPort::new(h_elmer.clone())),
                     write: std::sync::Arc::new(crate::mcp_ports::MonolithWritePort::new(h_elmer.clone(), guard_elmer.clone())),
                     compose: std::sync::Arc::new(crate::mcp_ports::MonolithComposePort::new(h_elmer.clone())),
-                    stations: std::sync::Arc::new(crate::mcp_ports::MonolithStationPort::new(h_elmer.clone())),
+                    stations: std::sync::Arc::new(crate::mcp_ports::MonolithStationPort::new(h_elmer.clone(), guard_elmer.clone())),
                     prediction: std::sync::Arc::new(crate::mcp_ports::MonolithPredictionPort::new(h_elmer.clone())),
                     provision: std::sync::Arc::new(crate::mcp_ports::MonolithProvisionPort::new(h_elmer.clone())),
                 });

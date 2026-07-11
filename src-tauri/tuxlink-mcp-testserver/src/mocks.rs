@@ -19,9 +19,10 @@ use tuxlink_mcp_core::ports::{
     ConfigPort, ConfigViewDto, DevicePort, DocsHitDto, EgressPort, EgressPortError, FolderDto,
     GatewayAntennaDto, GatewayDto, GribRequestDto, LogLineDto, LogPort, MailboxPort,
     MessageMetaDto, ModemStatusDto, PacketConfigDto, PacketWriteDto, ParsedMessageDto,
-    PathPredictionDto, PlatformInfoDto, PortError, PositionStatusDto, PredictRequestDto,
-    PredictionPort, PrinterDto, ProvisionPort, QsyCandidateDto, RigConfigDto, RigStatusDto,
-    SearchPort, SearchQueryDto, SearchResultsDto, SendFormDto, SerialDeviceDto, SessionIntentDto,
+    PathPredictionDto, PeerListDto, PlatformInfoDto, PortError, PositionStatusDto,
+    PredictRequestDto, PredictionPort, PrinterDto, ProvisionPort, QsyCandidateDto, RigConfigDto,
+    RigStatusDto, SearchPort, SearchQueryDto, SearchResultsDto, SendFormDto, SerialDeviceDto,
+    SessionIntentDto,
     SolarSnapshotDto, StationFilterDto, StationListDto, StationModeDto, StationPort, StatusPort,
     VaraCheckpointDto, VaraConfigDto, VaraInstallStatusDto, VaraInstallSummaryDto, VaraProbeDto,
     VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
@@ -566,6 +567,11 @@ impl StationPort for MockStation {
             fetched_at_ms: Some(0),
             operator_grid: None,
         })
+    }
+    async fn find_peers(&self) -> Result<PeerListDto, PortError> {
+        // Empty, non-fabricated roster — the real impl gates this read behind the
+        // egress arm; this mock seeds no phantom peers.
+        Ok(PeerListDto { peers: Vec::new() })
     }
 }
 

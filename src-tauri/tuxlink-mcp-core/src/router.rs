@@ -499,6 +499,15 @@ impl TuxlinkMcp {
     }
 
     #[tool(
+        name = "find_peers",
+        description = "List saved P2P peer stations (callsigns, RF channels, last-connected). Endpoint host:port appears only for operator-verified endpoints while the egress window is armed. Requires the egress arm — the peer roster is the operator's private station data, not public directory data. Read-only; does not transmit."
+    )]
+    pub async fn find_peers(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self.state.stations.find_peers().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
         name = "predict_path",
         description = "Predict HF path reliability/SNR/MUFday by UTC hour from your station to a target grid across the given dials. Offline VOACAP. Read-only."
     )]
