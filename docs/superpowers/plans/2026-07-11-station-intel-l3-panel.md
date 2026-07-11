@@ -35,7 +35,8 @@
 > dispatch them as parallel subagents. If an orchestrator wants concurrency, the
 > parent applies the `generate_handler!` additions in ONE pass after the command
 > bodies land. `bd dep` edges: A2→A1, A3→A1, A4→A1, A5 (independent), A6→A1,
-> A7→A2.
+> A7→A2. (`src-tauri/Cargo.toml` + `Cargo.lock` are also shared — A5's WMM dep,
+> A6's `realfft` — but the strict-sequential rule already covers them.)
 >
 > **`Ft8CmdError` is foundational — A2 owns it, everyone consumes it.** A2 Step 3
 > defines `pub struct Ft8CmdError { kind: String, detail: String }` (Serialize,
@@ -60,7 +61,7 @@
 - Test: `src-tauri/src/ft8/service.rs` `#[cfg(test)]` (extend the snapshot completeness test)
 
 **Interfaces:**
-- Produces: `Ft8Snapshot.sweepConfig: SweepConfigDto { enabled: bool, bands: Vec<String>, dwellSlots: u8 }` (camelCase serde), `Ft8Snapshot.configuredDeviceName: Option<String>`, `AudioDeviceChoice.alsaHw: String` (`"hw:1"`). Consumed by Task B1's hook + Task C9 (setup surface) + Task C10 (popover, via `sweepConfig`).
+- Produces: `Ft8Snapshot.sweepConfig: SweepConfigDto { enabled: bool, bands: Vec<String>, dwellSlots: u8 }` (camelCase serde), `Ft8Snapshot.configuredDeviceName: Option<String>`, `AudioDeviceChoice.alsaHw: String` (`"hw:1"`). Consumed by Task B1's hook + Task C9a (setup device rows, via `configuredDeviceName`/`alsaHw`) + Task C10 (popover, via `sweepConfig`).
 
 - [ ] **Step 1: Write the failing test.** In the snapshot completeness test, assert the serialized snapshot JSON contains keys `sweepConfig` (object with `enabled`/`bands`/`dwellSlots`), `configuredDeviceName`, and that an `AudioDeviceChoice` serializes with `alsaHw`. Assert `sweepConfig` mirrors `config.ft8.sweep` and `configuredDeviceName` is the resolved human name when a device is configured, `None` otherwise.
 
@@ -197,7 +198,7 @@ fn listener_open_wins_reservation_over_meter() {
 
 - [ ] **Step 1: PLAN-TIME GATE (do this first).** Check whether a maintained pure-Rust WMM crate (`world-magnetic-model`, `wmm`) declares `rust-version <= 1.75` and builds on both arches. If yes → crate route. If no → from-coefficients (bundle `WMM.COF`, implement Schmidt semi-normalized Legendre + secular variation). Record the choice in the task's commit body.
 
-- [ ] **Step 2: Write the failing test.** NOAA-published WMM test vectors: for a fixed (lat, lon, decimal-year) assert `decl_deg` within ±0.1° of the published value; for a grid input assert it parses via `position::maidenhead::grid_to_lat_lon` and matches.
+- [ ] **Step 2: Write the failing tests.** (a) NOAA-published WMM test vectors: for a fixed (lat, lon, decimal-year) assert `decl_deg` within ±0.1° of the published value; for a grid input assert it parses via `position::maidenhead::grid_to_lat_lon` and matches; (b) **serialized-key assertion (the camelCase Global Constraint):** the `DeclDto` serializes with camelCase keys — `assert!(v["declDeg"].is_number()); assert!(v["modelEpoch"].is_string()); assert!(v["validUntil"].is_string());` — a snake_case leak (`decl_deg`) must fail here, else C6's aim hero reads `undefined`.
 
 ```rust
 #[test]
@@ -205,6 +206,13 @@ fn declination_matches_noaa_vectors() {
     // NOAA WMM2025 test value, e.g. (lat, lon, 2025.0) -> known decl
     let d = declination_at(lat, lon, 2025.0);
     assert!((d - EXPECTED).abs() < 0.1, "got {d}");
+}
+#[test]
+fn decl_dto_serializes_camelcase() {
+    let v = serde_json::to_value(&DeclDto { decl_deg: 9.7, model_epoch: "WMM2025".into(), valid_until: "2030-01-01".into() }).unwrap();
+    assert!(v["declDeg"].is_number());
+    assert!(v["modelEpoch"].is_string());
+    assert!(v["validUntil"].is_string());
 }
 ```
 
@@ -229,7 +237,7 @@ fn declination_matches_noaa_vectors() {
 **Interfaces:**
 - Produces: `ft8_waterfall_subscribe() -> Result<SubDto{subscription_id:String}, Ft8CmdError>`, `ft8_waterfall_unsubscribe(subscription_id: String) -> Result<(), Ft8CmdError>` (both idempotent; DTOs `#[serde(rename_all="camelCase")]` → `subscriptionId`). Event `ft8-waterfall:columns` payload `WaterfallBatch { seq: u64, first_col_utc_ms: u64, cols: Vec<Vec<u8>> /* 512 bins each */ }` **with `#[serde(rename_all="camelCase")]` → wire keys `seq`/`firstColUtcMs`/`cols`**. Consumed by Task C8 (Waterfall.tsx).
 
-- [ ] **Step 1: Write the failing tests.** (a) subscribe returns a fresh id; two subscribes → two live ids; unsubscribe of one keeps the thread alive; unsubscribe of the last stops the thread; (b) **idempotent:** a stale unsubscribe (already-removed id) is a no-op, does NOT decrement another live id; (c) **zero-subscriber ⇒ zero-FFT:** instrument a `take_blocks`/FFT-invocation counter (`AtomicU64`); after the last token is released, the counter stops advancing (this is the load-bearing backend half of Exit gate 2); (d) FFT column length = 512 u8 (0–3000 Hz crop of a 2048-pt real FFT, which yields 1025 bins; the 0–3000 Hz slice is 512); (e) each emitted batch serializes camelCase `seq` + `firstColUtcMs`.
+- [ ] **Step 1: Write the failing tests.** (a) subscribe returns a fresh id (serialized camelCase — `assert!(v["subscriptionId"].is_string())`); two subscribes → two live ids; unsubscribe of one keeps the thread alive; unsubscribe of the last stops the thread; (b) **idempotent:** a stale unsubscribe (already-removed id) is a no-op, does NOT decrement another live id; (c) **zero-subscriber ⇒ zero-FFT:** instrument a `take_blocks`/FFT-invocation counter (`AtomicU64`); after the last token is released, the counter stops advancing (this is the load-bearing backend half of Exit gate 2); (d) FFT column length = 512 u8 (0–3000 Hz crop of a 2048-pt real FFT, which yields 1025 bins; the 0–3000 Hz slice is 512); (e) each emitted batch serializes camelCase `seq` + `firstColUtcMs`.
 
 - [ ] **Step 2: Run to verify it fails.**
 
