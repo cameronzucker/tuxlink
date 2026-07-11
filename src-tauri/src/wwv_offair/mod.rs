@@ -122,112 +122,119 @@ pub fn capture_cycle<C: CaptureSource>(
 mod tests {
     use super::*;
     use crate::wwv_offair::capture::CaptureError;
+    use std::rc::Rc;
+
+    /// Ordered call log shared between `MockRig` and `MockCapture` so tests
+    /// can assert the *interleaving* between rig calls and the capture call,
+    /// not just each mock's calls in isolation. `run_cycle` takes the rig and
+    /// capture source as separate generic parameters with no shared state in
+    /// production, but the test double needs the shared log to prove the
+    /// serial-sequencing invariant: capture() happens strictly after
+    /// release_serial() and strictly before respawn()/restore.
+    type CallLog = Rc<RefCell<Vec<String>>>;
 
     /// Records ordered rig calls via interior mutability — `TuneRig`'s
     /// methods take `&self` (to fit behind the `ManagedTuneRig`/`RefCell`
     /// adapter), so a plain `Vec` field can't be mutated directly.
     struct MockRig {
         status: RigStatus,
-        calls: RefCell<Vec<String>>,
+        log: CallLog,
     }
 
     impl MockRig {
-        fn new(status: RigStatus) -> Self {
-            Self {
-                status,
-                calls: RefCell::new(Vec::new()),
-            }
-        }
-
-        fn calls(&self) -> Vec<String> {
-            self.calls.borrow().clone()
+        fn new(status: RigStatus, log: CallLog) -> Self {
+            Self { status, log }
         }
     }
 
     impl TuneRig for MockRig {
         fn status(&self) -> Result<RigStatus, RigError> {
-            self.calls.borrow_mut().push("status".into());
+            self.log.borrow_mut().push("status".into());
             Ok(self.status)
         }
 
         fn tune(&self, hz: u64, mode: Mode) -> Result<(), RigError> {
-            self.calls.borrow_mut().push(format!("tune {hz} {mode:?}"));
+            self.log.borrow_mut().push(format!("tune {hz} {mode:?}"));
             Ok(())
         }
 
         fn release_serial(&self) {
-            self.calls.borrow_mut().push("release_serial".into());
+            self.log.borrow_mut().push("release_serial".into());
         }
 
         fn respawn(&self) -> Result<(), RigError> {
-            self.calls.borrow_mut().push("respawn".into());
+            self.log.borrow_mut().push("respawn".into());
             Ok(())
         }
     }
 
-    /// Records its own `capture()` invocation independently of `MockRig` —
-    /// `run_cycle` takes the rig and the capture source as two separate
-    /// generic parameters with no shared state, so a faithful mock keeps
-    /// them independent rather than smuggling a shared log through a
-    /// `Default`-constructed capture mock.
-    #[derive(Default)]
+    /// Records its `capture()` invocation into the same shared log as
+    /// `MockRig` — see `CallLog` doc comment above.
     struct MockCapture {
-        calls: RefCell<Vec<String>>,
+        log: CallLog,
     }
 
     impl MockCapture {
-        fn calls(&self) -> Vec<String> {
-            self.calls.borrow().clone()
+        fn new(log: CallLog) -> Self {
+            Self { log }
         }
     }
 
     impl CaptureSource for MockCapture {
         fn capture(&self, _freq_hz: u64, _dwell: Duration) -> Result<PathBuf, CaptureError> {
-            self.calls.borrow_mut().push("capture".into());
+            self.log.borrow_mut().push("capture".into());
             Ok(PathBuf::from("/mock/wwv.wav"))
         }
     }
 
     #[test]
     fn cycle_saves_tunes_captures_restores_no_release() {
-        let mock = MockRig::new(RigStatus {
-            freq_hz: 14_074_000,
-            mode: Some(Mode::PktUsb),
-            ptt: false,
-        });
-        let cap = MockCapture::default();
+        let log: CallLog = Rc::new(RefCell::new(Vec::new()));
+        let mock = MockRig::new(
+            RigStatus {
+                freq_hz: 14_074_000,
+                mode: Some(Mode::PktUsb),
+                ptt: false,
+            },
+            Rc::clone(&log),
+        );
+        let cap = MockCapture::new(Rc::clone(&log));
         let out = run_cycle(&mock, false, 10_000_000, Duration::from_secs(70), &cap).unwrap();
         assert_eq!(out, PathBuf::from("/mock/wwv.wav"));
         assert_eq!(
-            mock.calls(),
+            log.borrow().clone(),
             vec![
                 "status".to_string(),
                 "tune 10000000 Usb".to_string(),
+                "capture".to_string(),
                 "tune 14074000 PktUsb".to_string(), // restore, no release/re-spawn
             ]
         );
-        assert_eq!(cap.calls(), vec!["capture".to_string()]);
     }
 
     #[test]
     fn cycle_releases_serial_and_respawns_for_internal_codec() {
-        let mock = MockRig::new(RigStatus {
-            freq_hz: 14_074_000,
-            mode: Some(Mode::PktUsb),
-            ptt: false,
-        });
-        let cap = MockCapture::default();
+        let log: CallLog = Rc::new(RefCell::new(Vec::new()));
+        let mock = MockRig::new(
+            RigStatus {
+                freq_hz: 14_074_000,
+                mode: Some(Mode::PktUsb),
+                ptt: false,
+            },
+            Rc::clone(&log),
+        );
+        let cap = MockCapture::new(Rc::clone(&log));
         run_cycle(&mock, true, 10_000_000, Duration::from_secs(70), &cap).unwrap();
         assert_eq!(
-            mock.calls(),
+            log.borrow().clone(),
             vec![
                 "status".to_string(),
                 "tune 10000000 Usb".to_string(),
                 "release_serial".to_string(),
+                "capture".to_string(),
                 "respawn".to_string(),
                 "tune 14074000 PktUsb".to_string(),
             ]
         );
-        assert_eq!(cap.calls(), vec!["capture".to_string()]);
     }
 }
