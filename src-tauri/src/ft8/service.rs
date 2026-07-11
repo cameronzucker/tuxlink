@@ -414,6 +414,9 @@ pub struct Ft8ListenerState {
     /// backward clock steps) — `slot-<utc_ms>-<seq>`.
     slot_seq: AtomicU64,
     tap: WaterfallTap,
+    /// L3 (Task A6) token registry + the single FFT consumer thread. Wraps the
+    /// tap: `waterfall::subscribe`/`unsubscribe` drive its lifecycle.
+    waterfall: crate::ft8::waterfall::WaterfallHub,
     /// Capture-side slot-boundary counter (spec: cadences count BOUNDARIES,
     /// not decoded slots).
     slot_boundaries: AtomicU64,
@@ -460,6 +463,7 @@ impl Ft8ListenerState {
             capture_abort: Arc::new(AtomicBool::new(false)),
             slot_seq: AtomicU64::new(0),
             tap: WaterfallTap::default(),
+            waterfall: crate::ft8::waterfall::WaterfallHub::default(),
             slot_boundaries: AtomicU64::new(0),
             supervisor_thread: Mutex::new(None),
             pipe_fd_baseline: Mutex::new(None),
@@ -481,6 +485,9 @@ impl Ft8ListenerState {
     }
     pub fn tap(&self) -> &WaterfallTap {
         &self.tap
+    }
+    pub(crate) fn waterfall(&self) -> &crate::ft8::waterfall::WaterfallHub {
+        &self.waterfall
     }
     pub fn set_ft8_config(&self, cfg: Ft8Config) {
         let mut g = self.lock_inner();

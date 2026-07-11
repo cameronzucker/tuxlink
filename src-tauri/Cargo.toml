@@ -157,6 +157,11 @@ tuxlink-capture = { path = "tuxlink-capture" }
 # first non-dev use.
 tuxlink-jt9 = { path = "tuxlink-jt9" }
 alsa = "0.9"
+# FT8 Station Intelligence L3 (tuxlink-b026z.4 Task A6): real-input FFT for the
+# waterfall consumer thread (12 kHz i16 → 2048-pt real FFT → 1025 bins). Already
+# resolved transitively at 3.5.0 in Cargo.lock, so promoting it to a direct dep
+# is lock-neutral.
+realfft = "3.5.0"
 # rmcp client (elmer/executor.rs in-process duplex invoker).  `client` +
 # `transport-async-rw` are the features d3zwe already uses; the lockfile already
 # has rmcp 0.8.5 so this does not introduce a new crate or version.  `server` +

@@ -153,6 +153,7 @@ impl ClockProbe for FakeClock {
 pub struct RecordingSink {
     pub listening_changes: Mutex<Vec<Ft8ListeningChange>>,
     pub slots: Mutex<Vec<SlotRecord>>,
+    pub waterfall_batches: Mutex<Vec<super::waterfall::WaterfallBatch>>,
 }
 
 impl EventSink for RecordingSink {
@@ -161,6 +162,9 @@ impl EventSink for RecordingSink {
     }
     fn emit_slot(&self, record: &SlotRecord) {
         self.slots.lock().unwrap().push(record.clone());
+    }
+    fn emit_waterfall(&self, batch: &super::waterfall::WaterfallBatch) {
+        self.waterfall_batches.lock().unwrap().push(batch.clone());
     }
 }
 

@@ -2280,6 +2280,8 @@ pub fn run() {
             crate::ft8::commands::ft8_device_meter,
             crate::ft8::commands::ft8_list_devices,
             crate::ft8::commands::ft8_cat_probe,
+            crate::ft8::commands::ft8_waterfall_subscribe,
+            crate::ft8::commands::ft8_waterfall_unsubscribe,
             crate::geomag::magnetic_declination,
         ])
         .run(tauri::generate_context!())

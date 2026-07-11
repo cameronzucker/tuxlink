@@ -57,6 +57,16 @@ pub struct CatProbeDto {
     pub band: String,
 }
 
+/// `ft8_waterfall_subscribe` result (Task A6): the fresh subscription token the
+/// frontend holds for the lifetime of an open waterfall view and passes back to
+/// `ft8_waterfall_unsubscribe` on window close. Wire key is camelCase
+/// (`subscriptionId`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubDto {
+    pub subscription_id: String,
+}
+
 /// One serialized ft8 RMW cycle, delegating to the CRATE-WIDE gate
 /// (`config::update_config`, Step 2a): read → mutate → validate → atomic
 /// write under config.rs's one static writer lock. Returns the updated
@@ -438,6 +448,32 @@ pub async fn ft8_cat_probe(
             "CAT probe did not complete within 3s",
         )),
     }
+}
+
+/// `ft8_waterfall_subscribe` (Task A6): register a waterfall subscription,
+/// spawning the single FFT consumer thread on the registry 0→1 edge. Sync +
+/// cheap (a HashMap insert + at most one thread spawn); no `spawn_blocking`
+/// needed. Idempotent by construction — each call mints a fresh id.
+#[tauri::command]
+pub fn ft8_waterfall_subscribe(
+    state: State<'_, Arc<Ft8ListenerState>>,
+) -> Result<SubDto, Ft8CmdError> {
+    let s = (*state).clone();
+    Ok(SubDto { subscription_id: crate::ft8::waterfall::subscribe(&s) })
+}
+
+/// `ft8_waterfall_unsubscribe` (Task A6): release a waterfall subscription id,
+/// joining the consumer thread on the registry 1→0 edge. Idempotent: an
+/// unknown/duplicate id is a no-op. The join is bounded (~one consumer poll),
+/// so a sync command is fine.
+#[tauri::command]
+pub fn ft8_waterfall_unsubscribe(
+    state: State<'_, Arc<Ft8ListenerState>>,
+    subscription_id: String,
+) -> Result<(), Ft8CmdError> {
+    let s = (*state).clone();
+    crate::ft8::waterfall::unsubscribe(&s, &subscription_id);
+    Ok(())
 }
 
 #[cfg(test)]

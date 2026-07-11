@@ -18,6 +18,7 @@ pub mod records;
 pub mod service;
 pub mod sweep;
 pub mod traits;
+pub mod waterfall;
 
 #[cfg(test)]
 pub mod testutil;
