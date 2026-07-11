@@ -355,4 +355,28 @@ mod tests {
         }
         assert_eq!(chunked, one, "chunked stream must equal one-shot exactly");
     }
+
+    #[test]
+    fn full_scale_input_saturates_to_bounds() {
+        // Pins the spec-pinned saturate behavior; the clamp predates this test — Gate A P2.
+        // Feed constant full-scale input: all i16::MAX. Σ|COEFFS| ≈ 1.554 drives
+        // accumulator to ~51,100, well past i16::MAX. Verify saturate_round clamps
+        // outputs to i16::MAX and does not panic, wrap, or overflow.
+        let input = vec![i16::MAX; 512];
+
+        let mut d = Decimator::new();
+        let mut out = Vec::new();
+        d.process(&input, &mut out);
+
+        // Verify no panic/UB — all outputs within valid i16 range
+        for &sample in &out {
+            assert!((i16::MIN..=i16::MAX).contains(&sample));
+        }
+
+        // Verify saturation to i16::MAX (positive clamping occurs)
+        assert!(
+            out.contains(&i16::MAX),
+            "expected positive saturation to i16::MAX with full-scale input"
+        );
+    }
 }
