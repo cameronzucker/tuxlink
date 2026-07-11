@@ -2291,7 +2291,12 @@ mod tests {
             test_ardop_config(),
             "N0CALL",
         );
-        assert_eq!(out.unwrap_err(), "boom");
+        // Box<dyn ModemTransport> is not Debug, so unwrap_err() cannot be
+        // used (E0277 — the same trap as the elmer session's CI round 2).
+        match out {
+            Err(e) => assert_eq!(e, "boom"),
+            Ok(_) => panic!("expected the factory error to pass through"),
+        }
     }
 
     #[test]

@@ -330,12 +330,40 @@ mod tests {
         state.test_teardown();
     }
 
-    // NOTE: the non-reentrancy composition pin
-    // (`rig_session_composed_with_qsy_does_not_deadlock`) lives in Task 16's
-    // sweep tests — it drives `qsy_to_band`, which does not exist until T16.
-    // T14 pins the arbiter half of the contract (rig_session takes ONLY the
-    // arbiter lock) via the doc comment + the sites above; the composed
-    // deadline test lands with its missing half.
+    /// The non-reentrancy composition pin (the pre-fix design deadlocked
+    /// EXACTLY here and no test drove it): rig_session takes ONLY the
+    /// arbiter lock; the closure owns the rig lock via qsy_to_band. If
+    /// rig_session ever re-acquires the rig lock, this composition hangs —
+    /// the deadline poll turns the hang into a failure. LOCAL arbiter, not
+    /// the process-global OnceLock. (Deferred from T14: qsy_to_band is a
+    /// T16 product; Gate F checks this test exists and fails-on-deadlock.)
+    #[test]
+    fn rig_session_composed_with_qsy_does_not_deadlock() {
+        let p = FakePlatform::happy();
+        *p.rig_configured.lock().unwrap() = true;
+        let (state, arb) = setup(p.clone(), cfg_with_device());
+        state.test_run_sequence();
+        assert_eq!(state.axis(), ServiceAxis::Listening);
+        let s2 = state.clone();
+        let arb2 = arb.clone();
+        let worker = std::thread::spawn(move || {
+            arb2.rig_session(|| {
+                s2.qsy_to_band("40m", crate::ft8::records::BandSource::CatConfirmed)
+            })
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !worker.is_finished() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "rig_session(qsy_to_band) deadlocked — the non-reentrancy \
+                 contract is broken (rig_session must not take the rig lock)"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        worker.join().unwrap().unwrap();
+        assert_eq!(*p.tuned_to.lock().unwrap().last().unwrap(), 7_074_000);
+        state.test_teardown();
+    }
 
     /// Negative resume gate (spec §Resume — ALL conditions must hold): an
     /// INELIGIBLE modem session (e.g. ConnectedIss) blocks resume even with
@@ -427,8 +455,9 @@ mod tests {
             (ModemState::ConnectedIss, false),
             (ModemState::Disconnecting, false),
         ] {
+            let label = format!("{st:?}");
             set_state(st);
-            assert_eq!(plat.modem_resume_eligible(), want, "{st:?}");
+            assert_eq!(plat.modem_resume_eligible(), want, "{label}");
         }
     }
 

@@ -14,6 +14,7 @@ pub mod clock;
 pub mod events;
 pub mod records;
 pub mod service;
+pub mod sweep;
 pub mod traits;
 
 #[cfg(test)]

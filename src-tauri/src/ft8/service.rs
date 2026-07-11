@@ -1034,6 +1034,79 @@ impl Ft8ListenerState {
         self.set_blocked(BlockedReason::DeviceAbsent, diagnostic);
     }
 
+    // ---- sweep QSY (T16) ------------------------------------------------
+
+    /// Spawn-tune-drop QSY to a table band + relabel + k-reset. This helper
+    /// OWNS the rig-lock acquisition; every caller (sweep::tick, T17's
+    /// ft8_set_band) ADDITIONALLY wraps the call in the arbiter's
+    /// rig_session (arbiter-lock-only, T14) — the ARBITER lock is what
+    /// excludes a concurrent pause_for_modem; the rig lock only serializes
+    /// rig sessions against each other. Lock order arbiter > rig > state,
+    /// each acquired at most once per thread. On failure the band label
+    /// DOWNGRADES: a failed tune may have moved the dial anyway
+    /// (freq-before-mode).
+    pub(crate) fn qsy_to_band(
+        self: &Arc<Self>,
+        band: &str,
+        source: BandSource,
+    ) -> Result<(), String> {
+        let dial = tuxlink_capture::bands::dial_hz(band)
+            .ok_or_else(|| format!("{band:?} is not an FT8 band"))?;
+        let result = {
+            let rig = self.rig_lock();
+            let _g = rig.lock().unwrap_or_else(|p| p.into_inner());
+            self.platform.rig_tune(dial)
+        };
+        match result {
+            Ok(()) => {
+                {
+                    let mut g = self.lock_inner();
+                    g.band = band.to_string();
+                    g.dial_hz = dial;
+                    g.band_source = source;
+                    g.band_label_confirmed_utc_ms = Some(self.platform.utc_now_ms());
+                    g.machine.on_band_change(); // k resets on band change
+                    // The slot in progress during the QSY is the transition
+                    // slot: a scheduled discard.
+                    g.discard_next_slot = Some(DiscardClassDto::QsyTransition);
+                }
+                self.emit_listening_change();
+                Ok(())
+            }
+            Err(e) => {
+                {
+                    let mut g = self.lock_inner();
+                    // Slots must NOT keep being attributed to the stale band
+                    // with confirmed provenance — the dial position is now
+                    // unknown.
+                    g.band_source = BandSource::DefaultUnconfirmed;
+                    g.band_label_confirmed_utc_ms = None;
+                    g.last_failure = Some(format!("QSY failed: {e}"));
+                }
+                self.emit_listening_change();
+                Err(e)
+            }
+        }
+    }
+
+    pub(crate) fn on_sweep_qsy_success(self: &Arc<Self>, next_idx: usize) {
+        {
+            self.lock_inner().machine.on_qsy_success(next_idx);
+        }
+        self.emit_listening_change();
+    }
+    pub(crate) fn on_sweep_qsy_failure(self: &Arc<Self>, _diag: String) {
+        {
+            self.lock_inner().machine.on_qsy_failure();
+        }
+        self.emit_listening_change();
+    }
+
+    // Narrow read accessors for sweep::tick (keep Inner private).
+    pub(crate) fn lock_inner_for_sweep(&self) -> SweepView<'_> {
+        SweepView { guard: self.lock_inner() }
+    }
+
     // ---- snapshot -----------------------------------------------------------
 
     pub fn snapshot(&self) -> Ft8Snapshot {
@@ -1095,6 +1168,65 @@ impl Ft8ListenerState {
     pub(crate) fn test_teardown(self: &Arc<Self>) {
         self.stop();
         let _ = std::fs::remove_dir_all(self.platform_tmp_for_test());
+    }
+
+    #[cfg(test)]
+    pub(crate) fn snapshot_sweep(&self) -> tuxlink_capture::state::Sweep {
+        self.lock_inner().machine.sweep()
+    }
+    #[cfg(test)]
+    pub(crate) fn snapshot_ft8_cfg(&self) -> crate::config::Ft8Config {
+        self.lock_inner().ft8_cfg.clone()
+    }
+    #[cfg(test)]
+    pub(crate) fn test_base_record(
+        &self,
+        slot_utc_ms: u64,
+        outcome: crate::ft8::records::RingOutcome,
+    ) -> crate::ft8::records::SlotRecord {
+        self.base_record(slot_utc_ms, outcome, Vec::new(), SlotProvenance {
+            lost_frames: 0,
+            boundary_skew_frames: 0,
+            clip_fraction: 0.0,
+            rms_dbfs: -60.0,
+        })
+    }
+    #[cfg(test)]
+    pub(crate) fn test_complete_one_slot(self: &Arc<Self>, slot_utc_ms: u64) {
+        let tx = self.master_tx.lock().unwrap().clone().expect("listening");
+        // Reuse the T12 test helper's CompletedSlot constructor.
+        self.handle_completed_slot(test_completed_slot(slot_utc_ms), &tx);
+    }
+}
+
+/// Read-only sweep view over the state mutex (one lock, three reads).
+pub(crate) struct SweepView<'a> {
+    guard: std::sync::MutexGuard<'a, Inner>,
+}
+impl SweepView<'_> {
+    pub(crate) fn machine_sweep(&self) -> tuxlink_capture::state::Sweep {
+        self.guard.machine.sweep()
+    }
+    pub(crate) fn machine_dwell_complete(&self, dwell_slots: u8) -> bool {
+        self.guard.machine.dwell_complete(dwell_slots)
+    }
+    pub(crate) fn sweep_config(&self) -> crate::config::Ft8SweepConfig {
+        self.guard.ft8_cfg.sweep.clone()
+    }
+}
+
+/// Shared `CompletedSlot` test fixture (hoisted from T12's locally-scoped
+/// `completed()` so both this module's test suite and `sweep.rs`'s test
+/// suite — via `Ft8ListenerState::test_complete_one_slot` — can build one).
+#[cfg(test)]
+fn test_completed_slot(slot_utc_ms: u64) -> tuxlink_capture::slot::CompletedSlot {
+    tuxlink_capture::slot::CompletedSlot {
+        slot_utc_ms,
+        samples: vec![0i16; tuxlink_capture::slot::OUT_SLOT_FRAMES],
+        lost_frames: 0,
+        boundary_skew_frames: 0,
+        clip_fraction: 0.0,
+        rms_dbfs: -60.0,
     }
 }
 
@@ -1444,11 +1576,8 @@ impl Ft8ListenerState {
             *last_watermark = boundaries;
             self.check_pipe_watermark();
         }
-        self.sweep_tick_stub(); // T16 swaps this for crate::ft8::sweep::tick(self)
+        crate::ft8::sweep::tick(self);
     }
-
-    /// Replaced by sweep::tick in Task 16 (which deletes this stub).
-    pub(crate) fn sweep_tick_stub(self: &Arc<Self>) {}
 
     /// Returns whether the watermark tripped (testable seam — the spec's
     /// named "pipe-fd watermark trip (fake /proc reader)" test drives this
@@ -1794,18 +1923,6 @@ mod tests {
 
     use crate::ft8::records::RingOutcome;
     use crate::ft8::testutil::{FakeEngine, SourceStep};
-    use tuxlink_capture::slot::CompletedSlot;
-
-    fn completed(slot_utc_ms: u64) -> CompletedSlot {
-        CompletedSlot {
-            slot_utc_ms,
-            samples: vec![0i16; tuxlink_capture::slot::OUT_SLOT_FRAMES],
-            lost_frames: 0,
-            boundary_skew_frames: 0,
-            clip_fraction: 0.0,
-            rms_dbfs: -60.0,
-        }
-    }
 
     /// Backpressure (spec §Backpressure): with decode parked busy, slot N
     /// decodes, slot N+1 SPECIFICALLY drops (dir deleted, N incremented,
@@ -1822,7 +1939,7 @@ mod tests {
 
         // Slot 1: decode accepts it, then we gate the engine busy.
         eng.hold_gate();
-        state.handle_completed_slot(completed(1_000), &tx);
+        state.handle_completed_slot(test_completed_slot(1_000), &tx);
         // Wait until decode has STARTED slot 1 (parked on the gate).
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while eng.decodes_started.load(Ordering::SeqCst) < 1 {
@@ -1830,7 +1947,7 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         // Slot 2 (N+1): rendezvous refuses — dropped, dir deleted.
-        state.handle_completed_slot(completed(2_000), &tx);
+        state.handle_completed_slot(test_completed_slot(2_000), &tx);
         {
             let g = state.lock_inner();
             let dropped: Vec<_> = g
@@ -1861,7 +1978,7 @@ mod tests {
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        state.handle_completed_slot(completed(3_000), &tx);
+        state.handle_completed_slot(test_completed_slot(3_000), &tx);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while eng.decodes_finished.load(Ordering::SeqCst) < 2 {
             assert!(std::time::Instant::now() < deadline);
@@ -1880,7 +1997,7 @@ mod tests {
         run_sequence(&state);
         let tx = state.master_tx.lock().unwrap().clone().unwrap();
         *p.wav_result.lock().unwrap() = Err("No space left on device (os error 28)".into());
-        state.handle_completed_slot(completed(1_000), &tx);
+        state.handle_completed_slot(test_completed_slot(1_000), &tx);
         {
             let g = state.lock_inner();
             assert!(matches!(
@@ -1892,7 +2009,7 @@ mod tests {
         }
         // Recovery: the next slot flows to decode.
         *p.wav_result.lock().unwrap() = Ok(());
-        state.handle_completed_slot(completed(2_000), &tx);
+        state.handle_completed_slot(test_completed_slot(2_000), &tx);
         let snap_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         loop {
             let done = {
@@ -2065,7 +2182,7 @@ mod tests {
         run_sequence(&state);
         let tx = state.master_tx.lock().unwrap().clone().unwrap();
         eng.hold_gate();
-        state.handle_completed_slot(completed(1_000), &tx);
+        state.handle_completed_slot(test_completed_slot(1_000), &tx);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while eng.decodes_started.load(Ordering::SeqCst) < 1 {
             assert!(std::time::Instant::now() < deadline);
@@ -2261,11 +2378,10 @@ mod tests {
         assert_eq!(state.axis(), ServiceAxis::Yielded);
         assert_thread_liveness(&state); // decode alive, capture joined
 
-        let prewarm_count_before = {
-            // FakeEngine has no prewarm counter; pin via engine identity —
-            // the SAME Arc must still be installed after resume.
-            Arc::as_ptr(&(state.engine.lock().unwrap().clone().unwrap())) as usize
-        };
+        // FakeEngine has no prewarm counter; pin via engine identity —
+        // the SAME Arc must still be installed after resume. (Fat pointers
+        // cannot cast to usize — E0606; compare Arcs with ptr_eq.)
+        let engine_before = state.engine.lock().unwrap().clone().unwrap();
 
         // Clear the latch + free card + eligible modem → tick resumes.
         state.hold().clear();
@@ -2273,9 +2389,11 @@ mod tests {
         state.tick_yielded();
         assert_eq!(state.axis(), ServiceAxis::Listening);
         assert_thread_liveness(&state);
-        let engine_after =
-            Arc::as_ptr(&(state.engine.lock().unwrap().clone().unwrap())) as usize;
-        assert_eq!(prewarm_count_before, engine_after, "runner NOT reconstructed on resume");
+        let engine_after = state.engine.lock().unwrap().clone().unwrap();
+        assert!(
+            Arc::ptr_eq(&engine_before, &engine_after),
+            "runner NOT reconstructed on resume"
+        );
         teardown(&state);
     }
 
