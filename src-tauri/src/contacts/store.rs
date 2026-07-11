@@ -1098,7 +1098,12 @@ mod tests {
         )
         .unwrap();
         let ch = &s.contacts()[0].channels[0];
-        assert_eq!(ch.counts.fail, 1);
+        assert_eq!(
+            ch.counts.fail, 2,
+            "two FAILED attempts on the same channel key accumulate (the ok in \
+             between does not reset the fail counter); direction/phase are not \
+             part of the channel dedup key so all three observations share one channel"
+        );
         assert_eq!(ch.last_seen, "2026-07-11T12:10:00-07:00", "fail bumps last_seen");
         assert_eq!(
             ch.last_ok.as_deref(),
