@@ -424,6 +424,12 @@ describe('useFt8Listener — bounded ring', () => {
 describe('useFt8Listener — composed seam (golden fixture)', () => {
   it('feeds the golden Ft8Snapshot through the hook + derivations reading REAL camelCase keys', async () => {
     const golden = goldenSnapshot as unknown as Ft8Snapshot;
+    // deriveBandActivity honors a 10-min evidence window (Task B3). The golden
+    // fixture's ring_tail slots are timestamped ~1.70e12; pin the clock just
+    // past the latest so that evidence is IN-window and the seam guard exercises
+    // a real (non-no-data) dot. Without this, wall-clock now would age the
+    // fixture out and the band would correctly be absent — a false seam failure.
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_040_000);
     invokeMock.mockImplementation(async (cmd?: string) => {
       if (cmd === 'ft8_listener_snapshot') return golden;
       return undefined;
@@ -452,5 +458,6 @@ describe('useFt8Listener — composed seam (golden fixture)', () => {
     expect(result.current.bandActivity.get('20m')?.tier).not.toBe('no-data');
     // The golden ring_tail seeded the decodes ring.
     expect(result.current.decodesRing.length).toBeGreaterThanOrEqual(3);
+    nowSpy.mockRestore();
   });
 });
