@@ -31,6 +31,117 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.88.0](https://github.com/cameronzucker/tuxlink/compare/v0.87.2...v0.88.0) (2026-07-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* **peers:** the frontend Peer/PeersFile DTOs and the peers_read/peers:changed contract are gone; reachability reads flow through contacts_read and the Contact v2 shape.
+* **contacts:** the peers_read/peer_* Tauri commands and the peers:changed event are removed (unreleased surface); the frontend re-source lands in Task T-E.
+* **mcp:** the telnet_p2p_connect MCP tool is no longer exposed to the agent surface; agents can no longer dial a saved P2P peer's telnet endpoint. The operator's manual telnet P2P dial and the agent's radio P2P dial are unaffected.
+
+### Features
+
+* **contacts:** Contact grows tier + reachability; contacts.json schema v2 ([8f30768](https://github.com/cameronzucker/tuxlink/commit/8f30768324a393f492da0c972138b745efe8c099))
+* **contacts:** delete the peers store — commands cutover, record-site re-point, keyring retarget ([3cdcf91](https://github.com/cameronzucker/tuxlink/commit/3cdcf91fa7ceb39412008ffed5c64937cb453f0f))
+* **contacts:** observation recorder + inbound limiter with exact-callsign attach ([3e56353](https://github.com/cameronzucker/tuxlink/commit/3e5635310d035180436fb08611b7c16976342929))
+* **contacts:** Recent section + contact-detail reachability (T-F Parts 1-2) ([6e9fef6](https://github.com/cameronzucker/tuxlink/commit/6e9fef60e2bd6fe9f01b22accfe0f1b01fec1663))
+* **contacts:** success-only last_ok + last_ok_direction on reachability rows (T-F Part 0) ([9bbf572](https://github.com/cameronzucker/tuxlink/commit/9bbf572f5e7f93d0d0e886c7fdd6a952dbce02a7))
+* **contacts:** success-only last_ok timestamps (T-F Part 0) ([2d3588a](https://github.com/cameronzucker/tuxlink/commit/2d3588a277301c55fc80b4a58e640657f1c26af8))
+* **finder:** "Dial a station" manual-dial affordance — dial an unheard callsign through the peer-connect seam (T-G) ([37d3df1](https://github.com/cameronzucker/tuxlink/commit/37d3df1027063c5d84849ffe085898a2ac99d8c6))
+* **ft8:** 51-tap Kaiser 4:1 decimator with response-verified committed table (tuxlink-b026z.3 T3) ([65a3b55](https://github.com/cameronzucker/tuxlink/commit/65a3b55f5908e3772c8a77421bcde267a8fcdd93))
+* **ft8:** canonical slot-WAV writer, tuxlink-jt9 preflight round-trip proven (tuxlink-b026z.3 T2) ([a044dae](https://github.com/cameronzucker/tuxlink/commit/a044daeae026b0a25b3da2b3e5313cab5a1d1149))
+* **ft8:** capture-capable device enumeration + hw:&lt;index&gt; resolver handle (tuxlink-b026z.3 T8) ([8becb30](https://github.com/cameronzucker/tuxlink/commit/8becb30b0fd787b48cf03f2072f78d2e28a5b78a))
+* **ft8:** commands + events + lib wiring; sweep race re-check; clippy round 6 (tuxlink-b026z.3 T17) ([999f7ef](https://github.com/cameronzucker/tuxlink/commit/999f7ef0ba14f748817803d35e5e0655e8bece94))
+* **ft8:** decode types + jt9 discovery with sibling version probe (tuxlink-b026z.2 T4) ([f6363d2](https://github.com/cameronzucker/tuxlink/commit/f6363d2196fd31b9f643269852c71bb494a44d5e))
+* **ft8:** FT8 message field extractor with pinned grammar (tuxlink-b026z.2 T2) ([58adc71](https://github.com/cameronzucker/tuxlink/commit/58adc71669beb285171d6e3ff2b9e48e7936e6f4))
+* **ft8:** Ft8Config + sweep config, validation rules, alsa + tuxlink-capture deps (tuxlink-b026z.3 T9) ([4ec95ad](https://github.com/cameronzucker/tuxlink/commit/4ec95ada6043869f169c9f6ad14c14518bf30911))
+* **ft8:** host-side slot-WAV preflight — jt9 cannot be trusted to reject bad input (tuxlink-b026z.2 T3) ([ce33e2a](https://github.com/cameronzucker/tuxlink/commit/ce33e2ab11b97e9c2f02f6ae5e1aa8d2f36b5983))
+* **ft8:** jt9 runner — spawn/timeout/kill discipline, partial salvage, full failure taxonomy (tuxlink-b026z.2 T5) ([0152d98](https://github.com/cameronzucker/tuxlink/commit/0152d9825d969ddca6b52dc8f9f8a9055109ac70))
+* **ft8:** listener service core — supervisor, start sequence, snapshot, ring (tuxlink-b026z.3 T11) ([67f57a6](https://github.com/cameronzucker/tuxlink/commit/67f57a6ac76b9e2c728fd40f10a1e4ec7a8bae85))
+* **ft8:** listener state machine — axes, health flags, sweep element, N/k counters (tuxlink-b026z.3 T6) ([0aabbb8](https://github.com/cameronzucker/tuxlink/commit/0aabbb83036dd1156f79401617fece9fdec6ab03))
+* **ft8:** modem arbiter — pause/hold/resume + rig-session serialization (tuxlink-b026z.3 T14) ([20ee1fe](https://github.com/cameronzucker/tuxlink/commit/20ee1fe978255684e611c59249721b26383fd577))
+* **ft8:** modem yield seams — ardopcf choke wrapper, Dire Wolf pre-probe hook, VARA spawn_blocking (tuxlink-b026z.3 T15) ([b365386](https://github.com/cameronzucker/tuxlink/commit/b365386cebd4e0883208ee5b5579e845a63ddc5d))
+* **ft8:** salvage-on-signal parity in the jt9 runner + contract doc edits (tuxlink-b026z.3 T7, resolves tuxlink-gujnz) ([374870c](https://github.com/cameronzucker/tuxlink/commit/374870c715dc2e5fa4c90b750a7e0517f421c8ce))
+* **ft8:** slot anomaly rules — surplus drop, clock-anomaly abandonment, lost-frames drop (tuxlink-b026z.3 T5) ([bcb0ea4](https://github.com/cameronzucker/tuxlink/commit/bcb0ea49d0e4ac1bdb388fb66f932a8063aed27b))
+* **ft8:** slot pipeline — capture/decode threads, tap, backpressure, ring records (tuxlink-b026z.3 T12) ([3fd0848](https://github.com/cameronzucker/tuxlink/commit/3fd08488f4623964803d215941c1257586525187))
+* **ft8:** src/ft8 skeleton — traits, wire records, fakes, ALSA source, clock probe (tuxlink-b026z.3 T10) ([25b9826](https://github.com/cameronzucker/tuxlink/commit/25b982628b5d13ef3835db6bf25fd1490c1d730f))
+* **ft8:** stop protocol + resume/device-absent recovery (tuxlink-b026z.3 T13) ([8dfeaa8](https://github.com/cameronzucker/tuxlink/commit/8dfeaa872e1210f882341dcf2448caf999d97c23))
+* **ft8:** sweep scheduler + provenance downgrade + composition pin (tuxlink-b026z.3 T16) ([056f817](https://github.com/cameronzucker/tuxlink/commit/056f817cd5843482155e0b51042226432e2b9729))
+* **ft8:** tuxlink-capture leaf crate + FT8 band→dial table (tuxlink-b026z.3 T1) ([abcc392](https://github.com/cameronzucker/tuxlink/commit/abcc392907930d43cd3654cc7a603246b28ec2ea))
+* **ft8:** tuxlink-jt9 leaf crate + jt9 stdout line parser (tuxlink-b026z.2 T1) ([7ed80e3](https://github.com/cameronzucker/tuxlink/commit/7ed80e31887f0740754f7b9afea0c4e80e477fa0))
+* **ft8:** wall-clock-true slot assembler — boundaries, gap fill, provenance (tuxlink-b026z.3 T4) ([c0ec114](https://github.com/cameronzucker/tuxlink/commit/c0ec11452bcdde686673182f95c9a39cb56d1e65))
+* **mcp:** agent telnet P2P dial — (peer_id, endpoint_id) addressing, rebinding-safe denylist ([ff5d084](https://github.com/cameronzucker/tuxlink/commit/ff5d084897b813e695eb2f1a6661a0cb0bce3346))
+* **mcp:** curated find_peers behind the egress arm gate ([bc3d4cd](https://github.com/cameronzucker/tuxlink/commit/bc3d4cd30d11edbf996052a73fbe15398346cf31))
+* **mcp:** engine-aware VARA agent egress — honor HF/SAT vs FM, drop the VaraHf hard-pin ([93726ff](https://github.com/cameronzucker/tuxlink/commit/93726ff748ea86857d9c51967e5b426e6420a49a))
+* **mcp:** find_peers reads contacts; telnet host:port never crosses the agent surface ([1c5ef02](https://github.com/cameronzucker/tuxlink/commit/1c5ef02041fa6bee637e6bfcb6e9667156c881bb))
+* **packet:** thread SessionIntent through the packet connect path ([cfa8816](https://github.com/cameronzucker/tuxlink/commit/cfa8816f4846f563eeb63a495b3f03e22f3d3a74))
+* **peers:** ARDOP record sites — outer connect-fail, exchange, and answer ([806428e](https://github.com/cameronzucker/tuxlink/commit/806428efe1562e69b0b2818d5cb7800b7573d4ab))
+* **peers:** circle peer layer on both maps (escaped divIcon, map_peers-gated) ([3f347ed](https://github.com/cameronzucker/tuxlink/commit/3f347edfd706026b25fce5d89639c4e038b680bf))
+* **peers:** contact-link reconciliation + peer_id favorite cleanup; finder/map capabilities on ([053a148](https://github.com/cameronzucker/tuxlink/commit/053a14809583cef446d9df96538e46af4864e63b))
+* **peers:** endpoint-keyed keyring secrets with conservative migration and cascade clear ([4688104](https://github.com/cameronzucker/tuxlink/commit/4688104ff712e3c1a5e2ef259ae52abe93dbe4de))
+* **peers:** favorites link — peer_id on FavoriteDial, recorder-&gt;recents bridge, double-count suppression ([f1e8b64](https://github.com/cameronzucker/tuxlink/commit/f1e8b64c4ec7f98d232604119d2e399afc10e99b))
+* **peers:** finder station-type filter + peer rows + capability hide ([6f4928b](https://github.com/cameronzucker/tuxlink/commit/6f4928b826559ee9e90a9c1af4d357009fe7ffe7))
+* **peers:** frontend P2P connect seam — peer Connect dials p2p with via/path/intent ([69fb08f](https://github.com/cameronzucker/tuxlink/commit/69fb08f6e11ea98fd8bd18d8ddf1eac0d5d2fca7))
+* **peers:** frontend peer types, usePeers hook, distinct aggregation ([cf037d0](https://github.com/cameronzucker/tuxlink/commit/cf037d003f33170f062c96976a5ebc3c6ea0df26))
+* **peers:** global observation sink + VARA record sites (dial + answer) ([0102d87](https://github.com/cameronzucker/tuxlink/commit/0102d87b4632883d07dab3fe53fc4325760f676f))
+* **peers:** inbound auto-create rate limiter + quarantine counter with p2p_limits config ([bf1203f](https://github.com/cameronzucker/tuxlink/commit/bf1203faa5a9605adaa216da80414829e09687a5))
+* **peers:** packet record sites — dial + answer ([ab5db94](https://github.com/cameronzucker/tuxlink/commit/ab5db94aa68ae55d90511ed2269ef04b6fb8294f))
+* **peers:** peer data model — types + serde wire shapes ([c4e9458](https://github.com/cameronzucker/tuxlink/commit/c4e94589c4526f0c80d53e46732a31465daadef1))
+* **peers:** peer store — open/quarantine/flush, upsert/dedup, split routing, bounded caps ([d3a66a6](https://github.com/cameronzucker/tuxlink/commit/d3a66a6632393c3fee8d9a5956520270e1d1619c))
+* **peers:** recorder drop-guard, central observation entry, Tauri commands + state wiring ([8d500c7](https://github.com/cameronzucker/tuxlink/commit/8d500c77058930e3a1c2964c05b89ba321ca36b5))
+* **peers:** telnet record sites + global reject-&gt;limiter plumbing complete the 8-site matrix ([0b193b1](https://github.com/cameronzucker/tuxlink/commit/0b193b1a840adbcc0fc81bc11009fbdd8f9b6f13))
+* **vara:** command-layer extensions — REGISTERED/WRONG parsing, Connected bandwidth+via, SessionType/RETRIES, corrected COMPRESSION vocabulary ([005b660](https://github.com/cameronzucker/tuxlink/commit/005b660a887f20ae0b244e4a8b81bf64e468689d))
+* **vara:** dial path — per-dial SessionType, WRONG fail-fast, SSID echo base-match, via threading ([57a9ca2](https://github.com/cameronzucker/tuxlink/commit/57a9ca247a32b64c487318cacb839659c56efa06))
+* **vara:** engine-split open sequence — HF/SAT full setter chain, FM MYCALL-only ([6bc6087](https://github.com/cameronzucker/tuxlink/commit/6bc60877f81191a67486cbe0f571747d3648f772))
+* **vara:** REGISTERED readiness gate — T_min settle, T_max fail-open, gate outside the session lock ([53f1282](https://github.com/cameronzucker/tuxlink/commit/53f1282ab220ff885457e2fe4a2aae1565dc048a))
+* **winlink:** shared callsign module — canonical base, wire grammar, presented + display validators ([e1875d5](https://github.com/cameronzucker/tuxlink/commit/e1875d523eb4a535380c7e7e4c6142ee67379343))
+
+
+### Bug Fixes
+
+* **build:** cover EgressDenied in the operator telnet-dial guard-phase match ([5d57493](https://github.com/cameronzucker/tuxlink/commit/5d5749326bb2af88495076e71bf344174d3bc619))
+* **config:** add ft8 field to every exhaustive Config literal (CI E0063) ([85f93c8](https://github.com/cameronzucker/tuxlink/commit/85f93c8f56bea9b468fb89ccd440f2958d5051cd))
+* **config:** ft8 field in the two integration-test Config literals (CI E0063 round 2) ([90e607b](https://github.com/cameronzucker/tuxlink/commit/90e607be423851d9248d58f701c4d76d736f4da7))
+* **contacts:** key the heard/reached verb on last_ok_direction, never the failure-mutated direction ([88eeb0f](https://github.com/cameronzucker/tuxlink/commit/88eeb0feb374528cf6f0c25efda3c108b59a6a22))
+* **favorites:** peer_id is preserved through edits, never merged from the payload ([09ef9bf](https://github.com/cameronzucker/tuxlink/commit/09ef9bfa81494ac47ffef1570ffc17bd12ee4ab1))
+* **ft8:** bound clean-exit pipe drains so decode_slot always returns; pin 12s slot budget + dropped-slot counter semantics for L2 (tuxlink-b026z.2 final review) ([8fae18a](https://github.com/cameronzucker/tuxlink/commit/8fae18af41984220c0ee76ab6bf47734e21f1d29))
+* **ft8:** capture jt9 stderr lossily per the design contract — non-UTF-8 diagnostics must still surface (tuxlink-b026z.2 gate B) ([c3464f9](https://github.com/cameronzucker/tuxlink/commit/c3464f9311d1f1b980b8e1f76fcfe941005e247a))
+* **ft8:** enforce single-CQ-modifier pinned grammar in extract_fields (tuxlink-b026z.2 T2 review fix) ([ebb2812](https://github.com/cameronzucker/tuxlink/commit/ebb281256bbb8374c29045604942ff513d1b0033))
+* **ft8:** gate B hardening — pin all taxonomy arms, sentinel-aware partial flag, bounded version probe, prewarm cleanup, warm shared e2e harness (tuxlink-b026z.2 gate B) ([ad8bce6](https://github.com/cameronzucker/tuxlink/commit/ad8bce61bbab18d15eec177d2a63e2df4466481d))
+* **ft8:** Gate B P2s — saturating boundary math at u64 edges + phase/N persistence pins ([b1076f4](https://github.com/cameronzucker/tuxlink/commit/b1076f4adee6f2bca0663338f0f52fc4c823107f))
+* **ft8:** Gate E blockers — stop() preserves capture-wedged; spawn_workers/stop handle race closed ([aca15ed](https://github.com/cameronzucker/tuxlink/commit/aca15ed38d0fc96d0661084bc9573e8cb9e197de))
+* **ft8:** reject non-finite DT in the jt9 line parser; pin hashed-call test to the verified live capture (tuxlink-b026z.2 gate A) ([92e7e18](https://github.com/cameronzucker/tuxlink/commit/92e7e18afd24871a1303cceba37f868cfa978299))
+* **ft8:** T11 review Criticals — lock-across-I/O + non-test-target dead code ([778dec1](https://github.com/cameronzucker/tuxlink/commit/778dec1e66c1a666d7638eb38ae7546911712380))
+* **lint:** derive Debug on ExchangeOutcome — Task 14 test expect() requires it ([2d2a737](https://github.com/cameronzucker/tuxlink/commit/2d2a737177b49512e43e7f5fc3284e339b699e31))
+* **lint:** use contains() over iter().any() equality in peers store ([67e2401](https://github.com/cameronzucker/tuxlink/commit/67e240197a218666124754f6fdeee488e6041265))
+* **mcp:** deny CGNAT 100.64.0.0/10 in the agent dial + repair stranded doc comment ([c7b3a77](https://github.com/cameronzucker/tuxlink/commit/c7b3a77a7971856b3f6938ada9a271594fd1a162))
+* **mcp:** remove the agent telnet P2P dial (reverses Task 20) ([d071092](https://github.com/cameronzucker/tuxlink/commit/d07109245503fb2d57bc6c1177bfc93b97c03927))
+* **merge:** drop redundant Config field insertions — the auto-merge was already complete ([a2a6390](https://github.com/cameronzucker/tuxlink/commit/a2a6390ef7fe9d36d18962d0d36a353b40859f2a))
+* **p2p:** gate the telnet dial password on operator provenance + cap observed endpoints (FIX-1/P1, FIX-2/P2a) ([981db61](https://github.com/cameronzucker/tuxlink/commit/981db61687effca2bf42bdfecadaa01252196d10))
+* **p2p:** remove legacy-secret migration from the telnet dial path — close the auto-minted-endpoint two-step (FIX-1b/P1) ([efe0f61](https://github.com/cameronzucker/tuxlink/commit/efe0f61fd4a6201bb7eee3d59948f234e5ba0d7e))
+* **p2p:** surface a selectable "P2P · ARDOP HF" row — close the wire-walk inbound gap ([b8d8f97](https://github.com/cameronzucker/tuxlink/commit/b8d8f9761fb5f47c47854418e0b23c443f2da612))
+* **packet:** validate AX.25 grammar on packet target + via hops before the wire (FIX-3/P3) ([be07f29](https://github.com/cameronzucker/tuxlink/commit/be07f29d8851397f45d7a2b9dc75ff577b5357ee))
+* **peers:** arm the dial observation guard only at the CONNECT send ([9d09ed6](https://github.com/cameronzucker/tuxlink/commit/9d09ed6754208f990228cb2eab7f7e4f5fa385cf))
+* **peers:** key reachability labels/tiers on success-only last_ok (T-F Part 0) ([9171dad](https://github.com/cameronzucker/tuxlink/commit/9171dad612769fec39a4005004f753c5c87bb54f))
+* **peers:** merge re-keys absorbed-endpoint keyring secrets; recorder conflict gate proven end-to-end ([16833cd](https://github.com/cameronzucker/tuxlink/commit/16833cd0cf477abc26117e6515ddb4b91af91dc7))
+* **peers:** migration reports Migrated when only the legacy delete fails ([f1fab78](https://github.com/cameronzucker/tuxlink/commit/f1fab78891034432463565baff1b18abbc557685))
+* **peers:** per-map peer tier scheme — finder reachability ramp, APRS outcome tiers ([8622371](https://github.com/cameronzucker/tuxlink/commit/862237195b130405bb5222f944410cb879db7eeb))
+* **test:** last_ok channel test asserts the true accumulated fail count (2, not 1) ([5399dd1](https://github.com/cameronzucker/tuxlink/commit/5399dd12b7b6c7ffdaf04c507c683b8588b4959e))
+* **test:** packet dial-fail tests use a closing KISS wire — deterministic failure, no timing tune ([81284ac](https://github.com/cameronzucker/tuxlink/commit/81284ac0e8153d530d6fb92e4e53cb934e30711c))
+* **vara:** LISTEN ON refuses while an ARQ exchange is in flight ([e0b039a](https://github.com/cameronzucker/tuxlink/commit/e0b039ad823ac8b3ea825e726bdd5316515007cf))
+* **vara:** readiness gate breaks out promptly on mid-gate socket EOF ([9619085](https://github.com/cameronzucker/tuxlink/commit/961908559cada9de09b129e30d6e5bd91fde979a))
+
+
+### Refactors
+
+* **ax25:** fmt_addr is the single CALL-SSID formatter for roster via strings ([dfaf329](https://github.com/cameronzucker/tuxlink/commit/dfaf329e8e7c2bf5a1f0a15cb24e092ff4db0f99))
+* **contacts:** reconcile P2pCapabilities bit set with the pivoted surface ([5246429](https://github.com/cameronzucker/tuxlink/commit/52464296bac2b7c15f406e92b159cf1749b9027b))
+* **favorites:** rename Favorite.peer_id → contact_id (Rust + TS) ([99ee3d0](https://github.com/cameronzucker/tuxlink/commit/99ee3d0bad263fa495c90847823d76358b74c40b))
+* **ft8:** drop stale build-phase comments + dead sweep binding (final review Minors) ([fb70096](https://github.com/cameronzucker/tuxlink/commit/fb700963673d545cf2e3a9378f99905f5b4deba7))
+* **ft8:** move dir into SlotJob — the clone was dead (T12 review Minor) ([d88aedc](https://github.com/cameronzucker/tuxlink/commit/d88aedce0ab21d4c128431fd2848f00aa721f375))
+* **peers:** re-source the frontend reachability layer from the dead peers store onto contacts (T-E) ([812981c](https://github.com/cameronzucker/tuxlink/commit/812981c37ab554709d89c015cf1ab80a8cc2498f))
+
 ## [0.87.2](https://github.com/cameronzucker/tuxlink/compare/v0.87.1...v0.87.2) (2026-07-10)
 
 
