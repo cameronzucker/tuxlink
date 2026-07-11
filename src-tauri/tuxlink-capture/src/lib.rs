@@ -6,3 +6,4 @@
 //! docs/superpowers/specs/2026-07-10-station-intel-l2-capture-design.md.
 
 pub mod bands;
+pub mod wavwrite;
