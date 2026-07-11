@@ -18,6 +18,8 @@ import { deriveBandActivity, stripStats } from './deriveBandActivity';
 import type { BandSource, DecodeDto, RingOutcome, SlotRecord } from './ft8Types';
 
 const SLOT_MS = 15_000;
+/** §Openness window = 10 min = 40 slots; kept in lockstep with the impl's WINDOW_MS. */
+const WINDOW_MS = 600_000;
 
 /** Minimal-but-complete SlotRecord factory — every field the wire contract needs. */
 function mkSlot(overrides: {
@@ -198,10 +200,13 @@ describe('deriveBandActivity — fade', () => {
     expect(later).toBeLessThan(soon);
   });
 
-  it('(e) opacity floors at 0.4 no matter how stale the evidence', () => {
+  it('(e) opacity floors at 0.4 at the window edge (evidence exactly 10 min old, still in scope)', () => {
     const ring = decodedSlots('20m', 0, 1, 1);
-    const dots = deriveBandActivity(ring, 24 * 60 * 60 * 1000); // 1 day later
+    // Evidence at t=0, now = exactly WINDOW_MS later → still in-window, floored.
+    const dots = deriveBandActivity(ring, WINDOW_MS);
     expect(dots.get('20m')?.opacity).toBe(0.4);
+    expect(dots.get('20m')?.tier).toBe('warm'); // still live — the dot has not reverted
+    expect(dots.get('20m')?.sampledAgoMs).toBe(WINDOW_MS);
   });
 
   it('(e) a no-data dot never claims a nonzero opacity', () => {
@@ -211,6 +216,59 @@ describe('deriveBandActivity — fade', () => {
     const dots = deriveBandActivity(ring, 1000);
     expect(dots.get('40m')?.opacity).toBe(0);
     expect(dots.get('40m')?.sampledAgoMs).toBeNull();
+  });
+});
+
+describe('deriveBandActivity — 10-minute window (evidence outside the window does not count)', () => {
+  it('a band whose only evidence is just past the window edge reverts to no-data (absent from Map)', () => {
+    const ring = decodedSlots('20m', 0, 4, 5); // hot-worthy evidence at t=0..45s
+    // now = one ms past a full window after the LAST evidence slot (t=45s).
+    const lastEvidence = 3 * SLOT_MS;
+    const dots = deriveBandActivity(ring, lastEvidence + WINDOW_MS + 1);
+    // No in-window confirmed slot for 20m at all → not sampleable → absent.
+    expect(dots.has('20m')).toBe(false);
+    const stats = stripStats(ring, '20m', lastEvidence + WINDOW_MS + 1);
+    expect(stats.decodesPerMin).toBe(0);
+    expect(stats.gridsHeard).toBe(0);
+  });
+
+  it('boundary: evidence exactly at the window edge still counts; one ms older does not', () => {
+    const ring = decodedSlots('20m', 0, 1, 3); // 1 slot, 3 decodes, at t=0
+
+    // Edge-inclusive: now = t + WINDOW_MS → in scope, tiers (3*4/1 = 12/min → hot).
+    const atEdge = deriveBandActivity(ring, WINDOW_MS);
+    expect(atEdge.get('20m')?.tier).toBe('hot');
+
+    // One ms past the edge → out of scope → reverts to no-data (absent).
+    const pastEdge = deriveBandActivity(ring, WINDOW_MS + 1);
+    expect(pastEdge.has('20m')).toBe(false);
+  });
+
+  it('recent in-window evidence tiers correctly even when stale evidence is also present in the ring', () => {
+    // Old hot burst at t=0 (will fall out of window), fresh single decode near now.
+    const old = decodedSlots('20m', 0, 8, 5); // t=0..105s, would be hot
+    const freshT = 100 * SLOT_MS; // far in the future relative to the old burst
+    const fresh = decodedSlots('20m', freshT, 4, 0).map((s, i) => ({
+      ...s,
+      decodes: i === 0 ? [mkDecode({ slotUtcMs: s.slotUtcMs, grid: 'EM10' })] : [],
+    }));
+    const ring = [...old, ...fresh];
+    const nowMs = freshT + 3 * SLOT_MS; // only the 4 fresh slots are in-window
+    const dots = deriveBandActivity(ring, nowMs);
+    // 4 in-window evidence slots, 1 decode → 1*4/4 = 1/min → warm, NOT hot.
+    expect(dots.get('20m')?.tier).toBe('warm');
+  });
+});
+
+describe('deriveBandActivity — evidence allowlist', () => {
+  it('a failed outcome is excluded from evidence (allowlist is decoded + band-dead only)', () => {
+    const ring: SlotRecord[] = [
+      mkSlot({ slotUtcMs: 0, band: '30m', outcome: { kind: 'failed', failure: 'jt9 crash' } }),
+    ];
+    const dots = deriveBandActivity(ring, 1000);
+    expect(dots.get('30m')?.tier).toBe('no-data');
+    expect(dots.get('30m')?.sampledAgoMs).toBeNull();
+    expect(dots.get('30m')?.opacity).toBe(0);
   });
 });
 

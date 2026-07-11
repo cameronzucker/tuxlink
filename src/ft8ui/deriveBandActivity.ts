@@ -20,14 +20,25 @@
  *     = hot.
  *   - Tiers: >=8 decodes/min -> 'hot'; >=1 -> 'warm'; sampled (evidence present)
  *     but below 1 -> 'quiet'; no evidence at all -> 'no-data'.
- *   - Fade: opacity fades linearly with `sampledAgoMs` over a 10-minute window,
- *     floored at 0.4 — evidence is never rendered fully invisible once it
- *     exists. A `no-data` dot has no evidence to fade, so it renders at 0.
+ *   - Window = 10 min = 40 slots (§Openness "Window", matching the snapshot's
+ *     `ring_tail` cap). Only confirmed slots whose `slotUtcMs` lies inside
+ *     `[nowMs - WINDOW_MS, nowMs]` are in scope. Evidence OUTSIDE the window
+ *     does NOT count toward tier / rate / opacity: a band swept away from for
+ *     more than 10 minutes reverts to `no-data` (hollow dot) rather than
+ *     reporting a dimmed-but-visible stale tier forever. The `<= nowMs` upper
+ *     bound also drops clock-skewed future-dated slots (which would otherwise
+ *     yield a negative `sampledAgoMs` and an opacity > 1).
+ *   - Fade: WITHIN the window, opacity fades linearly with `sampledAgoMs` from
+ *     1.0 (fresh) to the 0.4 floor at the window edge — evidence is never
+ *     rendered fully invisible while it is still in scope. A `no-data` dot has
+ *     no in-window evidence to fade, so it renders at 0 (distinct from the 0.4
+ *     floor a real-but-old in-window dot gets).
  *   - Never-sampleable bands (60m, VHF) simply never appear in the returned
  *     Map (nothing in the ring ever names them) — the consumer's job is to not
  *     query/render a dot for those bands at all. A band that DOES appear in the
- *     ring, but only via non-evidence or provenance-excluded slots, is present
- *     in the Map as an explicit `'no-data'` entry (see (a) below), not omitted.
+ *     ring's in-window scope, but only via non-evidence or provenance-excluded
+ *     slots, is present in the Map as an explicit `'no-data'` entry (see (a)
+ *     below), not omitted.
  */
 import type { BandDot, RingOutcome, SlotRecord } from './ft8Types';
 
@@ -36,8 +47,13 @@ const SLOT_SECONDS = 15;
 /** Decodes/min tier thresholds. */
 const HOT_THRESHOLD_PER_MIN = 8;
 const WARM_THRESHOLD_PER_MIN = 1;
-/** Fade window + floor (§Openness "Fade"). */
-const FADE_WINDOW_MS = 10 * 60 * 1000;
+/**
+ * Openness window (§Openness "Window = 10 min = 40 slots"). The SINGLE window
+ * used by both `deriveBandActivity` and `stripStats` for scope, tiering, and
+ * fade — evidence older than this reverts a band to `no-data`.
+ */
+const WINDOW_MS = 600_000;
+/** Fade floor (§Openness "Staleness"). Fade spans the full `WINDOW_MS`. */
 const OPACITY_FLOOR = 0.4;
 const OPACITY_MAX = 1;
 /** A grid square must be at least 4 chars (the Maidenhead field+square) to count. */
@@ -47,9 +63,18 @@ function isEvidence(outcome: RingOutcome): boolean {
   return outcome.kind === 'decoded' || outcome.kind === 'band-dead';
 }
 
-/** Provenance-confirmed slots only — `default-unconfirmed` never attributes to a band. */
-function confirmedSlots(ring: SlotRecord[]): SlotRecord[] {
-  return ring.filter((rec) => rec.bandSource !== 'default-unconfirmed');
+/**
+ * The SHARED gating path: provenance-confirmed slots (`default-unconfirmed`
+ * never attributes to a band) whose `slotUtcMs` lies inside the 10-minute
+ * window `[nowMs - WINDOW_MS, nowMs]`. Both exported functions build on this,
+ * so their evidence/provenance/window gating is byte-for-byte identical.
+ */
+function slotsInScope(ring: SlotRecord[], nowMs: number): SlotRecord[] {
+  const lowerBound = nowMs - WINDOW_MS;
+  return ring.filter(
+    (rec) =>
+      rec.bandSource !== 'default-unconfirmed' && rec.slotUtcMs >= lowerBound && rec.slotUtcMs <= nowMs,
+  );
 }
 
 interface BandAggregate {
@@ -65,8 +90,8 @@ interface BandAggregate {
   evidenceDecodeGrids: (string | null)[];
 }
 
-function aggregateBand(confirmed: SlotRecord[], band: string): BandAggregate {
-  const bandSlots = confirmed.filter((rec) => rec.band === band);
+function aggregateBand(inScope: SlotRecord[], band: string): BandAggregate {
+  const bandSlots = inScope.filter((rec) => rec.band === band);
   let evidenceCount = 0;
   let totalDecodes = 0;
   let lastEvidenceUtcMs: number | null = null;
@@ -107,10 +132,16 @@ function tierFor(rate: number, evidenceCount: number): BandDot['tier'] {
   return 'quiet';
 }
 
-/** Linear fade from 1.0 at age=0 to the 0.4 floor at age>=10min, clamped at the floor beyond. */
+/**
+ * Linear fade from 1.0 at age=0 to the 0.4 floor at the window edge (age ==
+ * WINDOW_MS). `sampledAgoMs` is always within `[0, WINDOW_MS]` for an in-scope
+ * evidence slot (the caller only reaches here with in-window evidence), so the
+ * floor is hit exactly at the edge; the `clamp` is belt-and-suspenders. A
+ * `null` age (no in-window evidence → no-data) renders at 0.
+ */
 function opacityFor(sampledAgoMs: number | null): number {
   if (sampledAgoMs === null) return 0; // no-data: nothing to render.
-  const decayFraction = Math.min(1, sampledAgoMs / FADE_WINDOW_MS);
+  const decayFraction = Math.min(1, Math.max(0, sampledAgoMs / WINDOW_MS));
   const opacity = OPACITY_MAX - (OPACITY_MAX - OPACITY_FLOOR) * decayFraction;
   return Math.max(OPACITY_FLOOR, opacity);
 }
@@ -129,35 +160,38 @@ function dotFor(agg: BandAggregate, nowMs: number): BandDot {
 
 /**
  * Derive one openness dot per band that appears (with provenance-confirmed
- * attribution) anywhere in the ring. Bands never seen in the ring at all are
- * simply absent from the returned Map — the consumer treats an absent key the
- * same as "never sampleable" and renders no dot.
+ * attribution) inside the 10-minute window. Bands with NO in-window confirmed
+ * slot at all — never seen, or last seen more than 10 min ago — are simply
+ * absent from the returned Map; the consumer treats an absent key the same as
+ * "never sampleable" and renders no dot. A band present in-window only via
+ * non-evidence slots (`discarded` / `dropped-*` / `failed`) is an explicit
+ * `no-data` entry.
  */
 export function deriveBandActivity(ring: SlotRecord[], nowMs: number): Map<string, BandDot> {
-  const confirmed = confirmedSlots(ring);
-  const bands = new Set(confirmed.map((rec) => rec.band));
+  const inScope = slotsInScope(ring, nowMs);
+  const bands = new Set(inScope.map((rec) => rec.band));
   const dots = new Map<string, BandDot>();
   for (const band of bands) {
-    dots.set(band, dotFor(aggregateBand(confirmed, band), nowMs));
+    dots.set(band, dotFor(aggregateBand(inScope, band), nowMs));
   }
   return dots;
 }
 
 /**
- * Strip stats for one band: the same evidence-only, provenance-gated
- * decodes/min rate `deriveBandActivity` uses for tiering, plus the count of
- * distinct 4+ char grids heard. `nowMs` guards against clock-skewed slots
- * dated in the future contaminating the stat; per the same "not diluted by
- * window" invariant as the tier rate, it does not otherwise bound the window —
- * the ring itself (already capped upstream) IS the window.
+ * Strip stats for one band: the same evidence-only, provenance-gated,
+ * window-bounded decodes/min rate `deriveBandActivity` uses for tiering, plus
+ * the count of distinct 4+ char grids heard IN the same 10-minute window. Both
+ * exported functions route through the identical `slotsInScope` gating, so a
+ * band that reads `no-data` on the dot also reports `0` decodes/min and `0`
+ * grids here — they can never disagree about what was heard.
  */
 export function stripStats(
   ring: SlotRecord[],
   band: string,
   nowMs: number,
 ): { decodesPerMin: number; gridsHeard: number } {
-  const confirmed = confirmedSlots(ring).filter((rec) => rec.slotUtcMs <= nowMs);
-  const agg = aggregateBand(confirmed, band);
+  const inScope = slotsInScope(ring, nowMs);
+  const agg = aggregateBand(inScope, band);
   const grids = new Set(
     agg.evidenceDecodeGrids.filter((grid): grid is string => grid !== null && grid.length >= MIN_GRID_LEN),
   );
