@@ -24,9 +24,9 @@ const invokeMock = vi.hoisted(() =>
     if (cmd === 'peers_read') return { schema_version: 1, peers: [] };
     if (cmd === 'p2p_capabilities') {
       return {
-        peer_store: false, finder_peers: false, map_peers: false, settings_editor: false,
-        agent_find_peers: false, agent_telnet_dial: false, vara_engine_split: false,
-        favorites_peer_link: false,
+        peer_store: false, finder_peers: false, map_peers: false,
+        agent_find_peers: false, vara_engine_split: false,
+        favorites_contact_link: false,
       };
     }
     return undefined;

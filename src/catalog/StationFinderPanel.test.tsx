@@ -47,9 +47,9 @@ beforeEach(() => {
     // undefined" reason as favorites_read above.
     if (cmd === 'p2p_capabilities')
       return {
-        peer_store: false, finder_peers: false, map_peers: false, settings_editor: false,
-        agent_find_peers: false, agent_telnet_dial: false, vara_engine_split: false,
-        favorites_peer_link: false,
+        peer_store: false, finder_peers: false, map_peers: false,
+        agent_find_peers: false, vara_engine_split: false,
+        favorites_contact_link: false,
       } as unknown as never;
     if (cmd === 'peers_read') return { schema_version: 1, peers: [] } as unknown as never;
     return undefined as unknown as never;
@@ -206,9 +206,9 @@ describe('StationFinderPanel', () => {
       if (cmd === 'favorites_read') return { favorites: [] } as unknown as never;
       if (cmd === 'p2p_capabilities')
         return {
-          peer_store: true, finder_peers: finderPeers, map_peers: true, settings_editor: true,
-          agent_find_peers: true, agent_telnet_dial: true, vara_engine_split: true,
-          favorites_peer_link: true,
+          peer_store: true, finder_peers: finderPeers, map_peers: true,
+          agent_find_peers: true, vara_engine_split: true,
+          favorites_contact_link: true,
         } as unknown as never;
       if (cmd === 'peers_read') return { schema_version: 1, peers: [GRIDLESS_TELNET_PEER] } as unknown as never;
       return undefined as unknown as never;

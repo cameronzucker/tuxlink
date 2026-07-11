@@ -5,7 +5,8 @@
 // `rename_all` (favorites/types.ts:2-7 pattern). Sources of truth:
 //   - `src-tauri/src/peers/model.rs` — Peer / Channel / Endpoint / PeersFile /
 //     the enum wire strings (all `#[serde(rename_all = "kebab-case")]`).
-//   - `src-tauri/src/peers/commands.rs` — `P2pCapabilities`.
+//   - `src-tauri/src/contacts/commands.rs` — `P2pCapabilities` (relocated by
+//     Task T-B's contacts fold; shape reconciled by Task T-D).
 // When either Rust shape changes, this file MUST be updated in the same PR.
 //
 // `Option<T>` fields in model.rs carry NO `skip_serializing_if` — the backend
@@ -108,18 +109,17 @@ export interface PeersFile {
 }
 
 /// Mirrors `commands.rs::P2pCapabilities` — the P2P integration-matrix
-/// capability bits (spec R5-8). See the Rust doc comment for the
-/// UI-queried-vs-informational distinction; the frontend only needs the
-/// three UI-queried bits (`finder_peers`, `map_peers`, `settings_editor`) to
-/// gate rendering, but all eight are mirrored so a caller can read any of
-/// them.
+/// capability bits (spec R5-8), reconciled post-pivot by Task T-D (two bits
+/// for cancelled surfaces were removed; the favorites↔contact-link bit was
+/// renamed alongside T-B's peer_id→contact_id rename). See the Rust doc
+/// comment for the UI-queried-vs-informational distinction; the frontend
+/// only needs the two UI-queried bits (`finder_peers`, `map_peers`) to gate
+/// rendering, but all six are mirrored so a caller can read any of them.
 export interface P2pCapabilities {
   peer_store: boolean;
   finder_peers: boolean;
   map_peers: boolean;
-  settings_editor: boolean;
   agent_find_peers: boolean;
-  agent_telnet_dial: boolean;
   vara_engine_split: boolean;
-  favorites_peer_link: boolean;
+  favorites_contact_link: boolean;
 }

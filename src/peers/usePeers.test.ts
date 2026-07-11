@@ -68,11 +68,9 @@ const CAPS: P2pCapabilities = {
   peer_store: true,
   finder_peers: false,
   map_peers: false,
-  settings_editor: false,
   agent_find_peers: true,
-  agent_telnet_dial: true,
   vara_engine_split: true,
-  favorites_peer_link: true,
+  favorites_contact_link: true,
 };
 
 function wrapperWith(qc: QueryClient) {

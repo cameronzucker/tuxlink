@@ -491,21 +491,25 @@ pub fn contacts_recent_gateways(
     Ok(store.recent_gateways(within_hours, now))
 }
 
-/// The P2P integration-matrix capability flags [R5-8]. One bool per matrix
-/// row. Relocated from the deleted `peers/commands.rs` (contacts-superset
-/// pivot); the DTO shape and bit values are UNCHANGED here — Task T-D
-/// reconciles the bit set against the pivoted surface.
+/// The P2P integration-matrix capability flags [R5-8], reconciled by Task
+/// T-D against the post-pivot surface (the peers store folded into
+/// contacts; the agent telnet dial and the settings-roster editor were both
+/// cancelled). One bool per surviving matrix row.
 ///
-/// **Two kinds of bit — read this before adding a query site.** Exactly THREE
-/// bits are UI-QUERIED and drive the render-hide mechanism (spec R5-8: a false
-/// bit HIDES its row so a half-wired feature is never operator-reachable):
-/// `finder_peers`, `map_peers`, and `settings_editor`.
+/// **Two kinds of bit — read this before adding a query site.** Exactly TWO
+/// bits are UI-QUERIED and drive the render-hide mechanism (spec R5-8: a
+/// false bit HIDES its row so a half-wired feature is never
+/// operator-reachable): `finder_peers` and `map_peers`.
 ///
-/// The other FIVE — `peer_store`, `agent_find_peers`, `agent_telnet_dial`,
-/// `vara_engine_split`, and `favorites_peer_link` — are INFORMATIONAL only:
-/// the agent tool / store / protocol code either exists in the binary or it
-/// does not (there is no half-rendered state to hide), so nothing queries
-/// them to gate rendering.
+/// The other FOUR — `peer_store`, `agent_find_peers`, `vara_engine_split`,
+/// and `favorites_contact_link` — are INFORMATIONAL only: the agent tool /
+/// store / protocol code either exists in the binary or it does not (there
+/// is no half-rendered state to hide), so nothing queries them to gate
+/// rendering.
+///
+/// No bit hides the Contacts reachability surface (T-F): capability bits
+/// exist to hide unshipped integration rows, and Contacts ships wired in
+/// this same branch, so it needs no hiding bit.
 ///
 /// Convention: each bit starts `false` and is hardcoded `true` ONLY in the
 /// task that lands its row, in that task's own commit.
@@ -519,37 +523,26 @@ pub struct P2pCapabilities {
     pub finder_peers: bool,
     /// Row 6 — peer pins on the map layer. UI-QUERIED (hides the map layer).
     pub map_peers: bool,
-    /// Row 8 — the peers settings editor. UI-QUERIED (hides the editor).
-    /// The pivot cancelled the surface; T-D removes or repurposes the bit.
-    pub settings_editor: bool,
     /// Row 4 — the `find_peers` agent tool. INFORMATIONAL.
     pub agent_find_peers: bool,
-    /// Row 7 — the agent telnet-dial path. INFORMATIONAL. Removed by T-A
-    /// (destination-trust); stays false.
-    pub agent_telnet_dial: bool,
     /// Row 9 — the VARA engine split. INFORMATIONAL.
     pub vara_engine_split: bool,
-    /// Row 10 — the favorites↔roster link. INFORMATIONAL.
-    pub favorites_peer_link: bool,
+    /// Row 10 — the favorites↔contact link (T-B renamed the substrate
+    /// peer_id→contact_id). INFORMATIONAL.
+    pub favorites_contact_link: bool,
 }
 
 /// Report the P2P integration-matrix capability bits [R5-8]. See
-/// [`P2pCapabilities`] for the UI-queried-vs-informational distinction. Bit
-/// VALUES are unchanged by the T-B relocation; T-D reconciles them.
+/// [`P2pCapabilities`] for the UI-queried-vs-informational distinction.
 #[tauri::command]
 pub fn p2p_capabilities() -> P2pCapabilities {
     P2pCapabilities {
         peer_store: true,
         finder_peers: true, // Task 26 (R5-8 rows 3+5): the Finder's peers surface landed (Tasks 22-23).
         map_peers: true,    // Task 26 (R5-8 row 6): peer pins on the map layer landed (Task 24).
-        settings_editor: false, // Surface cancelled by the pivot; T-D reconciles the bit itself.
         agent_find_peers: true, // Task 19 (R5-8 row 4): the find_peers agent tool (re-sourced to contacts in T-B).
-        // Task 20 landed the agent telnet-dial path, then Task T-A removed it
-        // (operator pivot: a telnet host:port is destination-trust the armed
-        // egress gate cannot vouch for). Row 7 stays false.
-        agent_telnet_dial: false,
         vara_engine_split: true, // Task 21 (R5-8 row 9): agent VARA egress dispatches on engine.
-        favorites_peer_link: true, // Task 17 (R5-7): the favorites↔roster bridge landed.
+        favorites_contact_link: true, // Task 17 (R5-7); T-D renamed the bit alongside T-B's peer_id→contact_id rename.
     }
 }
 
@@ -931,24 +924,35 @@ mod tests {
         assert!(c.peer_store, "store + recorder landed (now the contacts superset)");
         assert!(c.finder_peers, "Task 26 landed the Finder's peers surface");
         assert!(c.map_peers, "Task 26 landed the map layer's peer pins");
-        assert!(!c.settings_editor, "surface cancelled by the pivot; never landed");
         assert!(c.agent_find_peers, "find_peers agent tool (re-sourced to contacts)");
-        assert!(
-            !c.agent_telnet_dial,
-            "Task 20's agent telnet-dial path was removed by Task T-A"
-        );
         assert!(c.vara_engine_split, "Task 21 landed the VARA engine split");
-        assert!(c.favorites_peer_link, "Task 17 landed the favorites bridge");
+        assert!(c.favorites_contact_link, "Task 17 landed the favorites bridge; T-D renamed the bit");
     }
 
     #[test]
     fn capabilities_serialize_camelless_snake_case_on_the_wire() {
         // The struct carries no serde(rename_all), so the field names ARE the
-        // wire keys — the contract the UI query sites read. Pin it.
+        // wire keys — the contract the UI query sites read. Pin the exact
+        // post-pivot field set (T-D): two cancelled-surface bits are gone
+        // and the favorites-link bit carries its new contact_id-era name.
         let v = serde_json::to_value(p2p_capabilities()).unwrap();
+        let obj = v.as_object().expect("P2pCapabilities serializes to a JSON object");
+        let mut keys: Vec<&str> = obj.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec![
+                "agent_find_peers",
+                "favorites_contact_link",
+                "finder_peers",
+                "map_peers",
+                "peer_store",
+                "vara_engine_split",
+            ],
+            "exact post-pivot wire-key set (T-D) — cancelled-surface bits removed, favorites bit renamed"
+        );
         assert_eq!(v.get("peer_store").and_then(|b| b.as_bool()), Some(true));
         assert_eq!(v.get("finder_peers").and_then(|b| b.as_bool()), Some(true));
-        assert_eq!(v.get("settings_editor").and_then(|b| b.as_bool()), Some(false));
-        assert!(v.get("favorites_peer_link").is_some());
+        assert_eq!(v.get("favorites_contact_link").and_then(|b| b.as_bool()), Some(true));
     }
 }
