@@ -69,12 +69,19 @@ function asFt8CmdError(err: unknown): Ft8CmdError {
 
 /** Per-kind disable reason (brief: "A modem-busy/rig-not-configured probe
  *  result disables with the matching reason"; unknown/other kinds — incl.
- *  `probe-timeout` — fall back to the spec's literal generic copy). */
-function catProbeReason(error: Ft8CmdError | null): string {
+ *  `probe-timeout` — fall back to the spec's literal generic copy).
+ *
+ *  The modem-busy copy INTERPOLATES the active blocking session's mode
+ *  (spec §502 pins "radio busy with <mode> session — disconnect first").
+ *  The mode cannot come from the `Ft8CmdError` — the A4 error carries no mode
+ *  identifier and the Ft8CmdError contract has the UI branch on `kind`, never
+ *  parse `detail` — so it is passed in from the app's active-modem state via
+ *  `blockingSessionMode`, degrading to "another" when unknown/unavailable. */
+function catProbeReason(error: Ft8CmdError | null, blockingSessionMode?: string): string {
   if (!error) return DEFAULT_SWEEP_REASON;
   switch (error.kind) {
     case 'modem-busy':
-      return 'radio busy with another session — disconnect first';
+      return `radio busy with ${blockingSessionMode ?? 'another'} session — disconnect first`;
     case 'rig-not-configured':
       return 'no rig configured — set up CAT first';
     default:
@@ -97,6 +104,14 @@ export interface BandSubsetPopoverProps {
    *  runtime "radio not responding" condition, surfaced inline. Independent
    *  of `sweepConfig.enabled`, which stays true (config truth) throughout. */
   fallbackHold: boolean;
+  /** The active blocking modem session's mode (e.g. "VARA", "ARDOP"), from
+   *  the app's active-modem state — the parent (C7 LiveBandStrip / D1) wires
+   *  this from `useActiveModemMode` / the connected-mode the ribbon shows.
+   *  Interpolated into the `modem-busy` sweep-gate reason (spec §502's
+   *  "<mode>"); when absent/unknown the copy degrades to "another session".
+   *  Optional because the A4 `ft8_cat_probe` error cannot carry the mode
+   *  (the Ft8CmdError contract branches on `kind`, never parses `detail`). */
+  blockingSessionMode?: string;
 }
 
 export function BandSubsetPopover({
@@ -104,6 +119,7 @@ export function BandSubsetPopover({
   heldBand,
   isListening,
   fallbackHold,
+  blockingSessionMode,
 }: BandSubsetPopoverProps) {
   const { enabled: sweepEnabled, bands, dwellSlots } = sweepConfig;
   const [catProbe, setCatProbe] = useState<CatProbeState>(
@@ -140,7 +156,7 @@ export function BandSubsetPopover({
   const sweepFailure = catProbe.status === 'failed' ? catProbe.error : null;
   const sweepCaption = sweepAllowed
     ? `${dwellSlots} slot${dwellSlots === 1 ? '' : 's'}/band`
-    : catProbeReason(sweepFailure);
+    : catProbeReason(sweepFailure, blockingSessionMode);
 
   const toggleBand = (band: string) => {
     if (!sweepEnabled) return; // hold-one mode: chips are inert (brief)

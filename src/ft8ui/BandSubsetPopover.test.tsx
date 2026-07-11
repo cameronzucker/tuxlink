@@ -106,13 +106,30 @@ describe('BandSubsetPopover — sweep-enable gated on a fresh ft8_cat_probe', ()
     expect(screen.getByTestId('band-subset-sweep-caption')).toHaveTextContent('4 slots/band');
   });
 
-  it('disables the Sweep radio with the modem-busy reason on that probe failure', async () => {
+  it('disables the Sweep radio with the modem-busy reason interpolating the blocking mode', async () => {
     invokeMock.mockImplementation((cmd: string) => {
       if (cmd === 'ft8_cat_probe') {
         return Promise.reject({ kind: 'modem-busy', detail: 'a modem session is active' });
       }
       return Promise.resolve();
     });
+    renderPopover({ sweepConfig: sweepConfig({ enabled: false }), blockingSessionMode: 'VARA' });
+    await waitFor(() =>
+      expect(screen.getByTestId('band-subset-sweep-caption')).toHaveTextContent(
+        'radio busy with VARA session — disconnect first',
+      ),
+    );
+    expect(screen.getByTestId('band-subset-mode-sweep')).toBeDisabled();
+  });
+
+  it('degrades the modem-busy reason to "another session" when the blocking mode is absent', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'ft8_cat_probe') {
+        return Promise.reject({ kind: 'modem-busy', detail: 'a modem session is active' });
+      }
+      return Promise.resolve();
+    });
+    // No blockingSessionMode prop — the graceful fallback path.
     renderPopover({ sweepConfig: sweepConfig({ enabled: false }) });
     await waitFor(() =>
       expect(screen.getByTestId('band-subset-sweep-caption')).toHaveTextContent(
