@@ -411,14 +411,21 @@ mod tests {
             s.state = st;
             session.set_status(s);
         };
+        // EVERY ModemState variant appears here (modem_status.rs) — the
+        // eligibility contract is pinned over the full enum, and a new
+        // variant added without updating this table shows up as a missing
+        // row in review (matches! has no exhaustiveness lever for this).
         for (st, want) in [
             (ModemState::Stopped, true),
             (ModemState::Error, true),
             (ModemState::SocketLost, true),
             (ModemState::Idle, false),
             (ModemState::Spawning, false),
+            (ModemState::Initializing, false),
             (ModemState::Connecting, false),
+            (ModemState::ConnectedIrs, false),
             (ModemState::ConnectedIss, false),
+            (ModemState::Disconnecting, false),
         ] {
             set_state(st);
             assert_eq!(plat.modem_resume_eligible(), want, "{st:?}");

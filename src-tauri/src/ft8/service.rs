@@ -2088,7 +2088,7 @@ mod tests {
         let p = FakePlatform::happy();
         let state = test_state(p, cfg_with_device());
         assert_eq!(state.axis(), ServiceAxis::Stopped);
-        // T14's arbiter checks is_stopped() and returns Ok(()) WITHOUT
+        // T14's arbiter dispatches on axis(): Stopped returns Ok(()) WITHOUT
         // latching; pin the primitive here: the hold stays clear and the
         // axis stays stopped even if pause mechanics are (wrongly) invoked.
         assert!(!state.hold().is_latched());
