@@ -8,6 +8,7 @@ import {
   readClip,
   manualIngest,
   catConfigured,
+  discardClip,
   type WwvRefreshOutcome,
   type SolarSnapshot,
 } from './wwvApi';
@@ -115,5 +116,15 @@ describe('catConfigured', () => {
 
     expect(invoke).toHaveBeenCalledWith('wwv_offair_cat_configured');
     expect(got).toBe(true);
+  });
+});
+
+describe('discardClip', () => {
+  it('invokes wwv_offair_discard_clip with the path', async () => {
+    vi.mocked(invoke).mockResolvedValue(undefined as unknown as never);
+
+    await discardClip('/tmp/wwv-clip.wav');
+
+    expect(invoke).toHaveBeenCalledWith('wwv_offair_discard_clip', { path: '/tmp/wwv-clip.wav' });
   });
 });

@@ -242,6 +242,31 @@ describe('WwvOffairControl', () => {
     expect(screen.queryByTestId('wwv-offair-play')).toBeNull();
   });
 
+  it('clicking Play clip twice rapidly revokes the first blob URL exactly once (no ref race)', async () => {
+    mockStatus = 'nocopy';
+    mockWavPath = '/tmp/wwv-clip.wav';
+    let call = 0;
+    vi.mocked(URL.createObjectURL).mockImplementation(() => `blob:mock-${++call}`);
+
+    render(<WwvOffairControl />);
+    const playButton = screen.getByTestId('wwv-offair-play');
+
+    // Two rapid clicks before either readClip promise settles — the ref
+    // update in the Play handler must be synchronous (not deferred to the
+    // clipUrl-change effect) so the second resolution sees the first URL on
+    // clipUrlRef.current and revokes it instead of orphaning it.
+    fireEvent.click(playButton);
+    fireEvent.click(playButton);
+
+    await waitFor(() => {
+      expect(readClip).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:mock-1');
+    });
+    expect(URL.revokeObjectURL).toHaveBeenCalledTimes(1);
+  });
+
   it('renders the SFI input and Save button when nocopy, and submits parsed values', async () => {
     mockStatus = 'nocopy';
     render(<WwvOffairControl />);
@@ -274,5 +299,21 @@ describe('WwvOffairControl', () => {
     render(<WwvOffairControl />);
     fireEvent.click(screen.getByTestId('wwv-manual-save'));
     expect(mockManualIngest).not.toHaveBeenCalled();
+  });
+
+  it('K-index input accepts decimal steps so a fractional value like 1.33 submits', async () => {
+    mockStatus = 'nocopy';
+    render(<WwvOffairControl />);
+
+    const kInput = screen.getByTestId('wwv-k-input');
+    expect(kInput).toHaveAttribute('step', 'any');
+
+    fireEvent.change(screen.getByTestId('wwv-sfi-input'), { target: { value: '120' } });
+    fireEvent.change(kInput, { target: { value: '1.33' } });
+    fireEvent.click(screen.getByTestId('wwv-manual-save'));
+
+    await waitFor(() => {
+      expect(mockManualIngest).toHaveBeenCalledWith(120, null, 1.33);
+    });
   });
 });

@@ -160,10 +160,23 @@ pub async fn wwv_offair_snapshot_read() -> Result<Option<SolarSnapshot>, UiError
 /// dir and matches the `wwv-*.wav` naming `ArecordCapture` produces. Guards
 /// `wwv_offair_read_clip` against reading arbitrary files off the operator's
 /// disk via a spoofed path from the frontend.
+///
+/// Resolves symlinks + `..` (via `canonicalize`) before the containment check
+/// so a crafted path (e.g. `/tmp/../etc/passwd`) or a symlink planted inside
+/// the temp dir cannot escape the capture-dir boundary. A lexical
+/// `starts_with` alone is bypassable both ways — this is the arbitrary-file-
+/// read guard, not a convenience check.
 pub(crate) fn is_valid_clip_path(p: &Path) -> bool {
-    let fname = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
-    let in_temp = p.starts_with(std::env::temp_dir());
-    in_temp && fname.starts_with("wwv-") && fname.ends_with(".wav")
+    let canon = match std::fs::canonicalize(p) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let temp = match std::fs::canonicalize(std::env::temp_dir()) {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+    let fname = canon.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    canon.starts_with(&temp) && fname.starts_with("wwv-") && fname.ends_with(".wav")
 }
 
 /// Read a kept no-copy capture WAV for playback. Path-validated to the temp
@@ -176,6 +189,19 @@ pub async fn wwv_offair_read_clip(path: String) -> Result<Vec<u8>, UiError> {
         return Err(UiError::Rejected("not a wwv capture clip".into()));
     }
     std::fs::read(&p).map_err(|e| UiError::Internal { detail: e.to_string() })
+}
+
+/// Delete a kept no-copy capture WAV (path-validated) once it's no longer
+/// needed (operator did manual entry, or re-armed). Idempotent — a missing
+/// file is not an error.
+#[tauri::command]
+pub async fn wwv_offair_discard_clip(path: String) -> Result<(), UiError> {
+    let p = std::path::PathBuf::from(&path);
+    if !is_valid_clip_path(&p) {
+        return Err(UiError::Rejected("not a wwv capture clip".into()));
+    }
+    let _ = std::fs::remove_file(&p);
+    Ok(())
 }
 
 /// PURE bounds-check + ingest for operator-entered SFI/A/K. Extracted from
@@ -191,6 +217,16 @@ pub(crate) fn manual_ingest_indices(
 ) -> Result<UpdateOutcome, String> {
     if !(50.0..=500.0).contains(&sfi) {
         return Err(format!("solar flux {sfi} outside the plausible 50–500 range"));
+    }
+    if let Some(a) = a_index {
+        if !(0.0..=400.0).contains(&a) {
+            return Err(format!("A-index {a} outside 0–400"));
+        }
+    }
+    if let Some(k) = k_index {
+        if !(0.0..=9.0).contains(&k) {
+            return Err(format!("K-index {k} outside 0–9"));
+        }
     }
     let indices = SolarIndices { sfi, a_index, k_index };
     solar_update::apply_rf_solar_indices(indices, "rf-wwv-manual", year, month, now_ms, config_dir)
@@ -289,6 +325,27 @@ mod tests {
     }
 
     #[test]
+    fn manual_ingest_rejects_implausible_a_index() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(manual_ingest_indices(150.0, Some(-5.0), None, 2026, 7, 1_000, dir.path()).is_err());
+        assert!(SolarSnapshot::load(dir.path()).is_none());
+    }
+
+    #[test]
+    fn manual_ingest_rejects_implausible_k_index() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(manual_ingest_indices(150.0, None, Some(99.0), 2026, 7, 1_000, dir.path()).is_err());
+        assert!(SolarSnapshot::load(dir.path()).is_none());
+    }
+
+    #[test]
+    fn manual_ingest_accepts_valid_fractional_k_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = manual_ingest_indices(150.0, Some(8.0), Some(1.33), 2026, 7, 1_000, dir.path()).unwrap();
+        assert!(out.forecast_updated);
+    }
+
+    #[test]
     fn clip_path_validation() {
         let dir = tempfile::tempdir().unwrap();
         let good = dir.path().join("wwv-123-456789-70.wav");
@@ -300,5 +357,10 @@ mod tests {
         let non_wwv = dir.path().join("notes.txt");
         std::fs::write(&non_wwv, b"hi").unwrap();
         assert!(!is_valid_clip_path(&non_wwv), "non wwv-*.wav filename should reject");
+
+        let missing = dir.path().join("wwv-does-not-exist.wav");
+        assert!(!is_valid_clip_path(&missing), "nonexistent path should reject (canonicalize fails)");
+
+        assert!(!is_valid_clip_path(Path::new("/etc/hostname")), "existing file outside temp dir should reject");
     }
 }

@@ -2175,6 +2175,7 @@ pub fn run() {
             crate::wwv_offair::commands::wwv_offair_refresh,
             crate::wwv_offair::commands::wwv_offair_snapshot_read,
             crate::wwv_offair::commands::wwv_offair_read_clip,
+            crate::wwv_offair::commands::wwv_offair_discard_clip,
             crate::wwv_offair::commands::wwv_offair_manual_ingest,
             crate::wwv_offair::commands::wwv_offair_cat_configured,
             // tuxlink-9xy1 slice 1: GPS source detection probes (unprivileged).

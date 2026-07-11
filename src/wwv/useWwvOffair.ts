@@ -15,6 +15,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { nextCapture } from './window';
 import {
   catConfigured as catConfiguredApi,
+  discardClip,
   manualIngest as manualIngestApi,
   readSnapshot,
   refreshOffair,
@@ -65,6 +66,14 @@ export function useWwvOffair(): UseWwvOffairResult {
   // an unmounted hook (React dev "setState after unmount" warning + wasted
   // update). Set false in the unmount effect below.
   const mountedRef = useRef(true);
+  // Mirrors `wavPath` state so armInternal/manualIngest (whose callback deps
+  // don't include wavPath) can read the latest kept-clip path synchronously
+  // to discard it on disk, without adding wavPath to their dependency arrays.
+  const wavPathRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    wavPathRef.current = wavPath;
+  }, [wavPath]);
 
   const refreshSnapshot = useCallback(async () => {
     const snap = await readSnapshot();
@@ -87,6 +96,15 @@ export function useWwvOffair(): UseWwvOffairResult {
       try {
         await manualIngestApi(sfi, aIndex, kIndex, Date.now());
         if (!mountedRef.current) return;
+        // Manual entry means the kept clip has served its purpose (the
+        // operator transcribed it by ear) — discard it on disk and drop the
+        // reference so a stale wavPath doesn't linger in state/UI.
+        const keptClip = wavPathRef.current;
+        if (keptClip != null) {
+          discardClip(keptClip).catch(() => {});
+          wavPathRef.current = null;
+          setWavPath(null);
+        }
         setStatus('done');
         await refreshSnapshot();
       } catch {
@@ -149,10 +167,15 @@ export function useWwvOffair(): UseWwvOffairResult {
       if (!isRetry) {
         retriedRef.current = false;
         // A fresh user-initiated arm starts a new capture cycle — any clip
-        // from a prior cycle is stale, so drop the reference. The internal
-        // auto-retry re-arm (isRetry === true) deliberately keeps it: there's
-        // no new clip yet, and the retry is still resolving the same user
-        // gesture.
+        // from a prior cycle is stale, so discard it on disk and drop the
+        // reference. The internal auto-retry re-arm (isRetry === true)
+        // deliberately keeps it: there's no new clip yet, and the retry is
+        // still resolving the same user gesture.
+        const staleClip = wavPathRef.current;
+        if (staleClip != null) {
+          discardClip(staleClip).catch(() => {});
+          wavPathRef.current = null;
+        }
         setWavPath(null);
       }
       clearTimer();

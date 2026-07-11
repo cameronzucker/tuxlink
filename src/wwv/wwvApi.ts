@@ -68,3 +68,8 @@ export async function manualIngest(
 export async function catConfigured(): Promise<boolean> {
   return await invoke<boolean>('wwv_offair_cat_configured');
 }
+
+/** Delete a kept no-copy capture WAV once it's no longer needed (manual entry done, or re-armed). */
+export async function discardClip(path: string): Promise<void> {
+  await invoke('wwv_offair_discard_clip', { path });
+}

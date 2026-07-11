@@ -19,6 +19,7 @@ const catConfiguredMock = vi.fn(() => Promise.resolve(true));
 const manualIngestMock = vi.fn<
   (sfi: number, aIndex: number | null, kIndex: number | null, nowMs: number) => Promise<WwvRefreshOutcome>
 >();
+const discardClipMock = vi.fn<(path: string) => Promise<void>>(() => Promise.resolve());
 
 vi.mock('./wwvApi', () => ({
   refreshOffair: (nowMs: number) => refreshOffairMock(nowMs),
@@ -26,6 +27,7 @@ vi.mock('./wwvApi', () => ({
   catConfigured: () => catConfiguredMock(),
   manualIngest: (sfi: number, aIndex: number | null, kIndex: number | null, nowMs: number) =>
     manualIngestMock(sfi, aIndex, kIndex, nowMs),
+  discardClip: (path: string) => discardClipMock(path),
 }));
 
 import { useWwvOffair } from './useWwvOffair';
@@ -77,6 +79,8 @@ beforeEach(() => {
   catConfiguredMock.mockReset();
   catConfiguredMock.mockResolvedValue(true);
   manualIngestMock.mockReset();
+  discardClipMock.mockReset();
+  discardClipMock.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -292,6 +296,9 @@ describe('useWwvOffair', () => {
       result.current.arm(Date.now());
     });
     expect(result.current.wavPath).toBeNull();
+    // The stale clip from the prior cycle is discarded on disk, not just
+    // dropped from state.
+    expect(discardClipMock).toHaveBeenCalledWith('/tmp/clip.wav');
   });
 
   it('refreshCat() populates catConfigured, swallowing a rejected invoke like refreshSnapshot', async () => {
@@ -339,5 +346,39 @@ describe('useWwvOffair', () => {
     });
 
     expect(result.current.status).toBe('error');
+  });
+
+  it('manualIngest() discards the kept clip and clears wavPath on success', async () => {
+    refreshOffairMock.mockResolvedValue({
+      updated: false,
+      indices: null,
+      source: 'rf-wwv-voice',
+      no_copy: true,
+      wav_path: '/tmp/clip.wav',
+    });
+    manualIngestMock.mockResolvedValue({
+      updated: true,
+      indices: { sfi: 133 },
+      source: 'rf-wwv-manual',
+      no_copy: false,
+      wav_path: null,
+    });
+    readSnapshotMock.mockResolvedValue(null);
+    const { result } = renderHook(() => useWwvOffair());
+
+    // Get a kept clip onto the hook first (mirrors the earlier wavPath test).
+    act(() => {
+      result.current.arm(HOUR_BOUNDARY_MS);
+    });
+    await advance(WWV_START_S * 1000);
+    expect(result.current.wavPath).toBe('/tmp/clip.wav');
+
+    await act(async () => {
+      await result.current.manualIngest(133, null, null);
+    });
+
+    expect(discardClipMock).toHaveBeenCalledWith('/tmp/clip.wav');
+    expect(result.current.wavPath).toBeNull();
+    expect(result.current.status).toBe('done');
   });
 });

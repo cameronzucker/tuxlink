@@ -89,9 +89,17 @@ export function WwvOffairControl() {
         // through the array-like constructor overload (same pattern as
         // Ics309FormV2's PDF download) to get a fresh ArrayBuffer-backed copy.
         const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: 'audio/wav' }));
+        // Update the ref SYNCHRONOUSLY here (not just via the clipUrl effect
+        // below) so a rapid double-click on "Play clip" — a second
+        // handlePlayClip resolving before the first render/effect cycle
+        // completes — sees the just-created URL on clipUrlRef.current and
+        // revokes it instead of orphaning it. Relying solely on the effect
+        // left a window where clipUrlRef.current was still stale (null or
+        // the URL-before-last) when the second call's revoke check ran.
         if (clipUrlRef.current) {
           URL.revokeObjectURL(clipUrlRef.current);
         }
+        clipUrlRef.current = url;
         setClipUrl(url);
       })
       .catch(() => {});
@@ -206,6 +214,7 @@ export function WwvOffairControl() {
             <input
               type="number"
               inputMode="decimal"
+              step="any"
               placeholder="K"
               aria-label="K-index"
               className="station-finder__offair-field"
