@@ -1,22 +1,28 @@
-// Right rail for Find-a-Station (design §7): selected-station header → antenna
-// aiming hero → path propagation forecast → channels grouped by mode/frequency
-// with per-channel reliability + Use →. Replaces the old redundant station list.
+// Right rail for Find-a-Station (design §7): a `Station | Live decodes` tab
+// shell (plan tuxlink-b026z.4 Task C5, spec §Rail) fronting two panes:
+//   - Station tab (existing behavior, preserved verbatim): selected-station
+//     header → antenna aiming hero → path propagation forecast → channels
+//     grouped by mode/frequency with per-channel reliability + Use →.
+//   - Live decodes tab (`LiveDecodesTab.tsx`, new): station-centric
+//     aggregation over the FT8 decode ring, independent of the map selection.
 // Use → emits emitGatewayPrefill for a channel matching the open modem; other
 // channels are listed but their Use → is disabled with a hint (RADIO-1: this
 // only fills a form — the operator still clicks Connect).
 
-import type { CSSProperties } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { groupChannelsByMode, channelToDial, channelReliability } from './channelGrouping';
 import { rankedDialsFor } from './ranking';
 import { bestBandNow, relToTier, tierColorVar } from './reachability';
 import { bandLabel, bandForKhz, HF_BANDS } from './bandPlan';
 import { emitGatewayPrefill } from '../favorites/prefillEvent';
 import { distanceFromGrids, kmToMi } from './distance';
-import { gridToLatLon } from '../forms/position/maidenhead';
+import { gridToLatLon, type LatLon } from '../forms/position/maidenhead';
+import { LiveDecodesTab } from './LiveDecodesTab';
 import type { Station, Channel } from './stationModel';
 import type { PathPrediction } from './propagationApi';
 import type { PredictionStatus } from './useStationPrediction';
 import type { RadioMode, FavoriteDial } from '../favorites/types';
+import type { SlotRecord } from '../ft8ui/ft8Types';
 
 export interface StationRailProps {
   station: Station | null;
@@ -43,6 +49,23 @@ export interface StationRailProps {
   onSaveFavorite?: (dial: FavoriteDial) => void;
   /** Whether a channel's dial is already a STARRED favorite (drives the ★ fill). */
   isSaved?: (dial: FavoriteDial) => boolean;
+  /**
+   * The FT8 decode ring backing the "Live decodes" tab (Task B1's
+   * `useFt8Listener().decodesRing`). C5's scope is the tab shell + the
+   * LiveDecodesTab component only — the caller wires the live hook value in
+   * (Task D1, "wire the panel body"); a caller that omits this (e.g. today's
+   * StationFinderPanel, or a harness/test) sees the tab's empty state rather
+   * than a crash.
+   */
+  decodesRing?: SlotRecord[];
+  /**
+   * Pan the map to a station's grid-derived coordinate — fired by a Live
+   * decodes row click AFTER the row's grid clears the null-guarded
+   * `gridToLatLon` (a malformed/garbage over-the-air grid never reaches this
+   * callback). Omitted ⇒ the click still computes but has nowhere to act
+   * (Task D1 wires the real map pan); never throws either way.
+   */
+  onPanToGrid?: (ll: LatLon) => void;
 }
 
 const mhz = (khz: number): string => (khz / 1000).toFixed(3);
@@ -54,8 +77,10 @@ const MODE_LABEL: Record<string, string> = {
   'robust-packet': 'Robust Packet',
 };
 
-/** Great-circle bearing from two grids (deg), for the distance-only fallback. */
-function bearingFromGrids(a: string, b: string): number | null {
+/** Great-circle bearing from two grids (deg), for the distance-only fallback.
+ *  Exported for `LiveDecodesTab`'s mi·brg column (same operator↔station math,
+ *  now also applied to a heard station's grid instead of the selected one). */
+export function bearingFromGrids(a: string, b: string): number | null {
   const pa = gridToLatLon(a);
   const pb = gridToLatLon(b);
   if (!pa || !pb) return null;
@@ -67,11 +92,55 @@ function bearingFromGrids(a: string, b: string): number | null {
   return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
 }
 
+type RailTab = 'station' | 'live';
+
 export function StationRail(props: StationRailProps) {
+  const { decodesRing = [], operatorGrid, onPanToGrid } = props;
+  const [tab, setTab] = useState<RailTab>('station');
+
+  return (
+    <div className="station-finder__rail">
+      <div className="station-finder__railtabs" role="tablist" aria-label="Station rail view">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'station'}
+          className={`station-finder__railtab${tab === 'station' ? ' is-active' : ''}`}
+          data-testid="rail-tab-station"
+          onClick={() => setTab('station')}
+        >
+          Station
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'live'}
+          className={`station-finder__railtab${tab === 'live' ? ' is-active' : ''}`}
+          data-testid="rail-tab-live"
+          onClick={() => setTab('live')}
+        >
+          Live decodes
+        </button>
+      </div>
+      {tab === 'station' ? (
+        <StationTabPane {...props} />
+      ) : (
+        <LiveDecodesTab decodesRing={decodesRing} operatorGrid={operatorGrid} onPanTo={onPanToGrid} />
+      )}
+    </div>
+  );
+}
+
+/** The Station tab's content — unchanged from pre-tab-shell StationRail behavior. */
+function StationTabPane(props: StationRailProps) {
   const { station, prediction, predictionStatus, operatorGrid, utcHour, activePrefillMode } = props;
 
   if (!station) {
-    return <div className="station-finder__rail station-finder__rail--empty">Select a station on the map.</div>;
+    return (
+      <div className="station-finder__rail--empty" data-testid="rail-pane-station-empty">
+        Select a station on the map.
+      </div>
+    );
   }
 
   const bearing = prediction?.bearingDeg ?? (operatorGrid ? bearingFromGrids(operatorGrid, station.grid) : null);
@@ -113,7 +182,7 @@ export function StationRail(props: StationRailProps) {
   };
 
   return (
-    <div className="station-finder__rail">
+    <div className="station-finder__railpane" data-testid="rail-pane-station">
       <header className="station-finder__sta">
         <div className="station-finder__sta-top">
           <span className="station-finder__call">{station.baseCallsign}</span>
@@ -131,6 +200,10 @@ export function StationRail(props: StationRailProps) {
         </div>
       </header>
 
+      {/* Task C6 (aim hero + magnetic declination, spec §Declination) upgrades
+          this block in place: adds the magnetic/true bearing split + a
+          declination provenance line beneath. Runs AFTER C5, BEFORE C3. Left
+          as-is here — C5's scope is the tab shell, not the hero. */}
       <div className="station-finder__aim">
         <div
           className="station-finder__compass"
@@ -149,6 +222,12 @@ export function StationRail(props: StationRailProps) {
         </div>
       </div>
 
+      {/* Task C3 (BandMatrix mount, spec §Rail Station tab) mounts BandMatrix
+          here, below the aim hero — one row per HF band + VHF (openness dot ·
+          VOACAP bar+% · dial chips), superseding the two blocks immediately
+          below (path-forecast bars, then channels-grouped-by-mode) once C3
+          lands. Left intact for now — C5 preserves existing Station-tab
+          behavior verbatim; C3 owns removing/replacing them. */}
       {predictionStatus === 'ok' && prediction ? (
         <div className="station-finder__prop">
           <h4>

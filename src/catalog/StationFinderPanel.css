@@ -280,13 +280,125 @@
   min-width: 360px;
   display: flex;
   flex-direction: column;
-  overflow: auto;
+  overflow: hidden;
   background: var(--surface, #0c1620);
 }
+
+/* ── rail tab shell (tuxlink-b026z.4 Task C5, §Rail) ──────────────────────
+   `Station | Live decodes`. Sits on the opaque `.station-finder__rail`
+   background; border-radius:0 on the buttons is load-bearing — a transparent
+   button that keeps App.css's global 6px radius shows a sliver of native
+   GTK chrome at the rounded corners under WebKitGTK (the same finding that
+   flattened `.aprs-dock-tab`; see AprsDockTabs.css). */
+.station-finder__railtabs {
+  display: flex;
+  align-items: stretch;
+  flex: none;
+  border-bottom: 1px solid var(--border, #243a52);
+  background: var(--panel, #0f1c28);
+}
+.station-finder__railtab {
+  padding: 8px 15px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  border-right: 1px solid var(--border, #243a52);
+  color: var(--dim, #9fb6cc);
+}
+.station-finder__railtab.is-active {
+  background: var(--surface, #0c1620);
+  color: var(--text, #e8f1fa);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--accent, #4aa3df);
+}
+.station-finder__railtab:not(.is-active):hover {
+  color: var(--text, #e8f1fa);
+}
+
+.station-finder__railpane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
 .station-finder__rail--empty {
+  flex: 1;
+  display: flex;
   align-items: center;
   justify-content: center;
   color: var(--faint, #6f8aa3);
+}
+
+/* ── Live decodes tab (§Rail "Live decodes tab") ───────────────────────────
+   Station-centric aggregation: call · grid · SNR · count · mi·brg. A
+   grid-less row is deliberately NOT `.is-clickable` (no cursor, no hover) so
+   the operator never mistakes it for an actionable pin. */
+.station-finder__ld--empty {
+  align-items: center;
+  justify-content: center;
+  color: var(--faint, #6f8aa3);
+  font-size: 12px;
+  padding: 20px;
+  text-align: center;
+}
+.station-finder__ld-head,
+.station-finder__ld-row {
+  display: grid;
+  grid-template-columns: 1.4fr 0.9fr 0.6fr 0.5fr 1fr;
+  gap: 9px;
+  align-items: center;
+  padding: 7px 13px;
+}
+.station-finder__ld-head {
+  font-size: 10px;
+  color: var(--faint, #6f8aa3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: 1px solid var(--border, #243a52);
+}
+.station-finder__ld-row {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--dim, #9fb6cc);
+  border-bottom: 1px solid #16293a;
+}
+.station-finder__ld-row.is-clickable {
+  cursor: pointer;
+}
+.station-finder__ld-row.is-clickable:hover {
+  background: var(--panel, #0f1c28);
+}
+.station-finder__ld-call {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text, #e8f1fa);
+  font-weight: 600;
+}
+.station-finder__ld-band {
+  font-family: inherit;
+  font-size: 9.5px;
+  font-weight: 500;
+  text-transform: uppercase;
+  color: var(--faint, #6f8aa3);
+  border: 1px solid var(--border2, #34556f);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+.station-finder__ld-grid {
+  color: var(--dim, #9fb6cc);
+}
+.station-finder__ld-snr,
+.station-finder__ld-count {
+  text-align: right;
+}
+.station-finder__ld-dist {
+  text-align: right;
+  color: var(--dim, #9fb6cc);
 }
 
 /* Station pins — rendered as L.divIcon HTML by StationFinderMap (global classes,

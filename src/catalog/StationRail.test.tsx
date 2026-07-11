@@ -200,4 +200,35 @@ describe('StationRail', () => {
       expect.objectContaining({ mode: 'packet', gateway: 'N0DAJ-10' }),
     );
   });
+
+  // tuxlink-b026z.4 Task C5 — the `Station | Live decodes` tab shell.
+  describe('rail tab shell', () => {
+    it('shows the Station tab by default with both tabs present', () => {
+      render(<StationRail station={station} prediction={prediction} predictionStatus="ok" operatorGrid="DM43bp" utcHour={21} />);
+      expect(screen.getByTestId('rail-tab-station').getAttribute('aria-selected')).toBe('true');
+      expect(screen.getByTestId('rail-tab-live').getAttribute('aria-selected')).toBe('false');
+      expect(screen.getByTestId('rail-pane-station')).toBeTruthy();
+      expect(screen.getByText('N0DAJ')).toBeTruthy(); // Station tab content preserved
+    });
+
+    it('switches to the Live decodes tab on click and back again', () => {
+      render(<StationRail station={station} prediction={prediction} predictionStatus="ok" operatorGrid="DM43bp" utcHour={21} />);
+      fireEvent.click(screen.getByTestId('rail-tab-live'));
+      expect(screen.getByTestId('rail-tab-live').getAttribute('aria-selected')).toBe('true');
+      expect(screen.queryByTestId('rail-pane-station')).toBeNull();
+      // No decodesRing supplied — the Live decodes tab renders its empty state,
+      // not a crash (StationFinderPanel wiring is Task D1, not C5).
+      expect(screen.getByTestId('live-decodes-empty')).toBeTruthy();
+
+      fireEvent.click(screen.getByTestId('rail-tab-station'));
+      expect(screen.getByTestId('rail-pane-station')).toBeTruthy();
+      expect(screen.queryByTestId('live-decodes-empty')).toBeNull();
+    });
+
+    it('shows the Live decodes tab even with no station selected (it is not map-selection-scoped)', () => {
+      render(<StationRail station={null} prediction={null} predictionStatus="idle" operatorGrid="DM43bp" utcHour={21} />);
+      fireEvent.click(screen.getByTestId('rail-tab-live'));
+      expect(screen.getByTestId('live-decodes-empty')).toBeTruthy();
+    });
+  });
 });
