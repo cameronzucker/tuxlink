@@ -111,24 +111,33 @@ pub fn apply_rf_solar_reply(
     let indices = solar::parse_wwv(body).ok_or_else(|| {
         PropagationError::Ssn("RF solar reply had no parsable solar flux".to_string())
     })?;
+    apply_rf_solar_indices(indices, "rf-wwv", year, month, now_ms, config_dir)
+}
+
+/// Apply pre-parsed RF solar indices under an explicit `source` provenance tag.
+/// Derives an SSN from the SFI (only daily SFI crosses the air — the documented
+/// coarser fallback), writes it into the writable forecast as the current
+/// `year`-`month` (preserving other months), and persists the live snapshot.
+pub fn apply_rf_solar_indices(
+    indices: SolarIndices,
+    source: &str,
+    year: i32,
+    month: u8,
+    now_ms: u64,
+    config_dir: &Path,
+) -> Result<UpdateOutcome, PropagationError> {
     let mut forecast = SsnForecast::load_writable_then_bundled(config_dir);
     let derived = solar::derive_ssn_from_sfi(indices.sfi);
-    forecast
-        .monthly
-        .insert(format!("{year:04}-{month:02}"), derived);
+    forecast.monthly.insert(format!("{year:04}-{month:02}"), derived);
     forecast.persist(config_dir)?;
     SolarSnapshot {
         indices: Some(indices),
         updated_at_ms: now_ms,
-        source: "rf-wwv".to_string(),
+        source: source.to_string(),
         forecast_updated: true,
     }
     .persist(config_dir)?;
-    Ok(UpdateOutcome {
-        forecast_updated: true,
-        indices: Some(indices),
-        source: "rf-wwv".to_string(),
-    })
+    Ok(UpdateOutcome { forecast_updated: true, indices: Some(indices), source: source.to_string() })
 }
 
 #[cfg(test)]
@@ -204,6 +213,20 @@ mod tests {
     fn rf_reply_unparsable_body_is_error() {
         let dir = tempfile::tempdir().unwrap();
         assert!(apply_rf_solar_reply("no flux here", 2026, 6, 6_000, dir.path()).is_err());
+    }
+
+    #[test]
+    fn rf_voice_source_tag_persists_and_updates_forecast() {
+        let dir = tempfile::tempdir().unwrap();
+        let indices = SolarIndices { sfi: 150.0, a_index: Some(8.0), k_index: Some(2.0) };
+        let out = apply_rf_solar_indices(indices, "rf-wwv-voice", 2026, 7, 1_000, dir.path()).unwrap();
+        assert!(out.forecast_updated);
+        assert_eq!(out.source, "rf-wwv-voice");
+        let snap = SolarSnapshot::load(dir.path()).unwrap();
+        assert_eq!(snap.source, "rf-wwv-voice");
+        // Forecast got the derived SSN for the current month.
+        let f = SsnForecast::load_writable_then_bundled(dir.path());
+        assert!(f.monthly.contains_key("2026-07"));
     }
 
     #[test]
