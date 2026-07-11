@@ -95,7 +95,7 @@ use super::transport::{RecvOutcome, VaraTransport};
 /// NOTE (spec §4 write boundary): this parser deliberately applies NO
 /// charset filter — accept policy belongs to `AllowedStations`, and WLE
 /// parity means a malformed claimed callsign may still get a session.
-/// The PEER ROSTER is protected downstream: `PeersStore::apply_observation`
+/// The ROSTER is protected downstream: `ContactsStore::apply_observation`
 /// drops any presented callsign failing `callsign::validate_presented_callsign`
 /// [R2-S2], and keyring accounts are id-keyed, never callsign-keyed
 /// [R2-S10]. Render surfaces escape everything (frontend hostile-callsign

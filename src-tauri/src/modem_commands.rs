@@ -1850,13 +1850,13 @@ fn run_ardop_connect_b2f_with_transport(
     let outcome = match run_b2f_with_transport(app, transport, target, intent) {
         Ok(()) => {
             if let Some(g) = &obs_guard {
-                g.set_phase(crate::peers::recorder::ObservationPhase::B2fOk);
+                g.set_phase(crate::contacts::observation::ObservationPhase::B2fOk);
             }
             ExchangeOutcome::Completed
         }
         Err(e) => {
             if let Some(g) = &obs_guard {
-                g.set_phase(crate::peers::recorder::ObservationPhase::B2fFail);
+                g.set_phase(crate::contacts::observation::ObservationPhase::B2fFail);
             }
             ExchangeOutcome::ExchangeFailed(e)
         }
@@ -1872,16 +1872,16 @@ fn run_ardop_connect_b2f_with_transport(
 /// without constructing a transport or an `AppHandle` [CDX-7].
 fn ardop_dial_observation_sink(
     intent: SessionIntent,
-) -> Option<crate::peers::recorder::ObservationSink> {
+) -> Option<crate::contacts::observation::ObservationSink> {
     if intent == SessionIntent::P2p {
-        crate::peers::recorder::observation_sink()
+        crate::contacts::observation::observation_sink()
     } else {
         None
     }
 }
 
 /// The ARQ-connect stage of the ARDOP outer record site (Task 14, `[R5-2]`).
-/// Arms the [`crate::peers::recorder::ObservationGuard`] at `DialAttempted`
+/// Arms the [`crate::contacts::observation::ObservationGuard`] at `DialAttempted`
 /// immediately before `connect_arq` — the actual CONNECT transmission — so
 /// nothing before this point (there is no pre-TX stage on the ARDOP outer
 /// path; `connect_arq` itself is the first and only transmission attempt)
@@ -1903,21 +1903,21 @@ fn run_ardop_connect_stage(
     transport: &mut dyn ModemTransport,
     target: &str,
     intent: SessionIntent,
-) -> Result<Option<crate::peers::recorder::ObservationGuard>, ExchangeOutcome> {
+) -> Result<Option<crate::contacts::observation::ObservationGuard>, ExchangeOutcome> {
     let obs_guard = ardop_dial_observation_sink(intent).map(|sink| {
-        crate::peers::recorder::ObservationGuard::new(
+        crate::contacts::observation::ObservationGuard::new(
             sink,
-            crate::peers::recorder::PeerObservation {
-                path: crate::peers::recorder::ObservedPath::Rf {
-                    transport: crate::peers::model::ChannelTransport::Ardop,
+            crate::contacts::observation::PeerObservation {
+                path: crate::contacts::observation::ObservedPath::Rf {
+                    transport: crate::contacts::reachability::ChannelTransport::Ardop,
                     via: vec![],
                     // rig/CAT freq not threaded here; never fabricated [R3-11].
                     freq_hz: None,
                     bandwidth: None,
                 },
-                direction: crate::peers::model::Direction::Outgoing,
+                direction: crate::contacts::reachability::Direction::Outgoing,
                 presented_target: target.to_string(),
-                phase: crate::peers::recorder::ObservationPhase::DialAttempted,
+                phase: crate::contacts::observation::ObservationPhase::DialAttempted,
             },
         )
     });
@@ -1934,7 +1934,7 @@ fn run_ardop_connect_stage(
         )));
     }
     if let Some(g) = &obs_guard {
-        g.set_phase(crate::peers::recorder::ObservationPhase::Connected);
+        g.set_phase(crate::contacts::observation::ObservationPhase::Connected);
     }
     Ok(obs_guard)
 }
@@ -3205,7 +3205,7 @@ mod tests {
         // map "   " to None at the serde layer.
         let cfg = Config {
             elmer: crate::config::ElmerConfig::default(),
-            p2p_limits: crate::peers::limiter::P2pLimitsConfig::default(),
+            p2p_limits: crate::contacts::limiter::P2pLimitsConfig::default(),
             schema_version: crate::config::CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: crate::config::ConnectConfig {
@@ -3926,7 +3926,7 @@ mod tests {
     fn test_config() -> Config {
         Config {
             elmer: crate::config::ElmerConfig::default(),
-            p2p_limits: crate::peers::limiter::P2pLimitsConfig::default(),
+            p2p_limits: crate::contacts::limiter::P2pLimitsConfig::default(),
             schema_version: crate::config::CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: crate::config::ConnectConfig {
@@ -4975,11 +4975,11 @@ mod tests {
         // calls — against a transport whose `connect_arq` genuinely fails, so
         // the guard-arm + drop-fire is the real code path, not a hand-built
         // guard. #[serial]: the sink is process-global.
-        let seen: Arc<std::sync::Mutex<Vec<crate::peers::recorder::PeerObservation>>> =
+        let seen: Arc<std::sync::Mutex<Vec<crate::contacts::observation::PeerObservation>>> =
             Arc::default();
         {
             let seen = seen.clone();
-            crate::peers::recorder::install_observation_sink(Arc::new(move |o| {
+            crate::contacts::observation::install_observation_sink(Arc::new(move |o| {
                 seen.lock().unwrap().push(o)
             }));
         }
@@ -4989,12 +4989,12 @@ mod tests {
         let obs = seen.lock().unwrap();
         assert_eq!(obs.len(), 1);
         assert_eq!(obs[0].presented_target, "N0DAJ-7");
-        assert_eq!(obs[0].direction, crate::peers::model::Direction::Outgoing);
+        assert_eq!(obs[0].direction, crate::contacts::reachability::Direction::Outgoing);
         assert_eq!(
-            crate::peers::recorder::classify(obs[0].phase),
-            crate::peers::recorder::Classified::Fail
+            crate::contacts::observation::classify(obs[0].phase),
+            crate::contacts::observation::Classified::Fail
         );
-        crate::peers::recorder::install_observation_sink(Arc::new(|_| {})); // reset
+        crate::contacts::observation::install_observation_sink(Arc::new(|_| {})); // reset
     }
 
     #[test]
@@ -5004,11 +5004,11 @@ mod tests {
         // `run_ardop_connect_stage`): Cms/RadioOnly/PostOffice dials resolve NO
         // sink even when the global sink IS installed, so a failed non-P2P
         // ARDOP dial never touches the peer roster [spec §3].
-        let seen: Arc<std::sync::Mutex<Vec<crate::peers::recorder::PeerObservation>>> =
+        let seen: Arc<std::sync::Mutex<Vec<crate::contacts::observation::PeerObservation>>> =
             Arc::default();
         {
             let seen = seen.clone();
-            crate::peers::recorder::install_observation_sink(Arc::new(move |o| {
+            crate::contacts::observation::install_observation_sink(Arc::new(move |o| {
                 seen.lock().unwrap().push(o)
             }));
         }
@@ -5027,7 +5027,7 @@ mod tests {
             "a CMS ARDOP dial must not record even with the global sink installed"
         );
 
-        crate::peers::recorder::install_observation_sink(Arc::new(|_| {})); // reset
+        crate::contacts::observation::install_observation_sink(Arc::new(|_| {})); // reset
     }
 
     #[test]
@@ -5038,11 +5038,11 @@ mod tests {
         // past `DialAttempted` to `Connected` before hand-back — the
         // production caller then carries it into the B2F stage. Uses the
         // existing `StubTransport` (connect_arq always Ok).
-        let seen: Arc<std::sync::Mutex<Vec<crate::peers::recorder::PeerObservation>>> =
+        let seen: Arc<std::sync::Mutex<Vec<crate::contacts::observation::PeerObservation>>> =
             Arc::default();
         {
             let seen = seen.clone();
-            crate::peers::recorder::install_observation_sink(Arc::new(move |o| {
+            crate::contacts::observation::install_observation_sink(Arc::new(move |o| {
                 seen.lock().unwrap().push(o)
             }));
         }
@@ -5060,8 +5060,8 @@ mod tests {
         assert_eq!(obs.len(), 1);
         assert_eq!(
             obs[0].phase,
-            crate::peers::recorder::ObservationPhase::Connected
+            crate::contacts::observation::ObservationPhase::Connected
         );
-        crate::peers::recorder::install_observation_sink(Arc::new(|_| {})); // reset
+        crate::contacts::observation::install_observation_sink(Arc::new(|_| {})); // reset
     }
 }

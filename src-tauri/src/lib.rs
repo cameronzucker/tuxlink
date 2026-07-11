@@ -18,7 +18,6 @@ pub mod media;
 pub mod stations_window;
 pub mod theme_state;
 pub mod native_mailbox;
-pub mod peers;
 pub mod position;
 pub mod search;
 pub mod session_log;
@@ -1025,45 +1024,39 @@ pub fn run() {
                         ),
                     )));
 
-                    // peers (VARA P2P peer model, Task 11): the peers.json
-                    // first-class-peer roster + the inbound auto-create rate
-                    // limiter. `PeersStore::open` is INFALLIBLE (degrade-and-
-                    // preserve on a read/parse error, same contract as
-                    // ContactsStore/FavoritesStore) so it is UNCONDITIONALLY
-                    // managed — no guard branch, never blocks startup. The limiter
-                    // seeds its thresholds from `config.p2p_limits` (absent →
+                    // P2P inbound auto-create rate limiter (contacts-superset
+                    // pivot: observations land on the CONTACTS store — there is
+                    // no separate peers store or peers.json). The limiter seeds
+                    // its thresholds from `config.p2p_limits` (absent →
                     // P2pLimitsConfig::default()); its quarantine counter is
-                    // in-memory only, never persisted. Reuses the already-resolved
-                    // `data_dir` (C2).
+                    // in-memory only, never persisted.
                     app.manage(std::sync::Arc::new(std::sync::Mutex::new(
-                        crate::peers::store::PeersStore::open(data_dir.join("peers.json")),
-                    )));
-                    app.manage(std::sync::Arc::new(std::sync::Mutex::new(
-                        crate::peers::limiter::InboundCreateLimiter::new(
+                        crate::contacts::limiter::InboundCreateLimiter::new(
                             crate::config::read_config()
                                 .map(|c| c.p2p_limits)
                                 .unwrap_or_default(),
                         ),
                     )));
 
-                    // Install the process-global peer-observation sink (Task 13),
-                    // immediately after the peers store + limiter are managed so
-                    // every record site (Tasks 13-16) can resolve it. The sink
-                    // captures the managed store + limiter and routes each
-                    // concluded observation through `record_peer_observation`
-                    // (classify → inbound-create rate limit → store apply),
-                    // emitting `peers:changed` only on a real roster write. Sites
-                    // are no-ops until this runs (unit tests, headless tools).
-                    // Task 17 (R5-7) adds the favorites bridge inside this
-                    // closure — the ONE bridge from a concluded outbound P2P
-                    // observation into the favorites/Recents attempt log.
+                    // Install the process-global observation sink, immediately
+                    // after the contacts store + limiter are managed so every
+                    // record site can resolve it. The sink captures the managed
+                    // store + limiter and routes each concluded observation
+                    // through `record_contact_observation` (classify →
+                    // inbound-create rate limit → store apply → evicted-endpoint
+                    // keyring cascade), emitting `contacts:changed` only on a
+                    // real roster write (the `peers:changed` event died with the
+                    // peers store). Sites are no-ops until this runs (unit
+                    // tests, headless tools). The favorites bridge [R5-7] rides
+                    // inside this closure — the ONE bridge from a concluded
+                    // outbound P2P observation into the favorites/Recents log.
                     {
                         let store = app
-                            .state::<std::sync::Arc<std::sync::Mutex<crate::peers::store::PeersStore>>>()
+                            .state::<std::sync::Arc<std::sync::Mutex<crate::contacts::store::ContactsStore>>>()
                             .inner()
                             .clone();
                         let limiter = app
-                            .state::<std::sync::Arc<std::sync::Mutex<crate::peers::limiter::InboundCreateLimiter>>>()
+                            .state::<std::sync::Arc<std::sync::Mutex<crate::contacts::limiter::InboundCreateLimiter>>>()
                             .inner()
                             .clone();
                         let favorites = app
@@ -1078,77 +1071,32 @@ pub fn run() {
                         // AppHandle and whose NoRecord rejects never reach the
                         // limiter through the sink — can still drive the
                         // spoofing-loop quarantine counter via record_inbound_reject.
-                        crate::peers::recorder::install_inbound_limiter(limiter.clone());
-                        crate::peers::recorder::install_observation_sink(std::sync::Arc::new(
-                            move |obs: crate::peers::recorder::PeerObservation| {
+                        crate::contacts::observation::install_inbound_limiter(limiter.clone());
+                        crate::contacts::observation::install_observation_sink(std::sync::Arc::new(
+                            move |obs: crate::contacts::observation::PeerObservation| {
                                 // [R5-7] Bridge FIRST (borrows obs), then move obs
-                                // into record_peer_observation. Runs unconditionally
-                                // for every observation — bridge_to_favorites itself
-                                // filters to outbound Ok/Fail conclusions, so an
-                                // inbound or NoRecord observation is a no-op here.
-                                crate::peers::recorder::bridge_to_favorites(&favorites, &obs);
-                                let effect = crate::peers::recorder::record_peer_observation(
-                                    &store, &limiter, obs,
-                                );
+                                // into record_contact_observation. Runs
+                                // unconditionally for every observation —
+                                // bridge_to_favorites itself filters to outbound
+                                // Ok/Fail conclusions, so an inbound or NoRecord
+                                // observation is a no-op here.
+                                crate::contacts::observation::bridge_to_favorites(&favorites, &obs);
+                                let effect =
+                                    crate::contacts::observation::record_contact_observation(
+                                        &store, &limiter, obs,
+                                    );
                                 if !matches!(
                                     effect,
-                                    crate::peers::store::ApplyEffect::NoRecord
+                                    crate::contacts::store::ApplyEffect::NoRecord
                                 ) {
                                     use tauri::Emitter;
-                                    let _ = emit_handle.emit("peers:changed", ());
+                                    let _ = emit_handle.emit(
+                                        crate::contacts::commands::CONTACTS_CHANGED_EVENT,
+                                        (),
+                                    );
                                 }
                             },
                         ));
-                    }
-
-                    // contacts→peers reconciliation listener (Task 26, spec
-                    // §Cross-store consistency [R4-9]): a peer's `contact_id`
-                    // is a ONE-WAY reference into the contacts store. When a
-                    // contact is deleted, the linked peer's `contact_id` (and
-                    // any contact-sourced grid) must not keep pointing at a
-                    // ghost. Rather than pay a reconcile cost on every
-                    // `peers_read` (the frontend reads on mount), this listens
-                    // for the contacts store's `contacts:changed` event, reads
-                    // the LIVE contact ids, and reconciles once per contacts
-                    // mutation — authoritative, event-driven, not a per-read
-                    // cost.
-                    //
-                    // Lock order is contacts→peers here and nowhere reversed
-                    // (mirrors `recorder.rs`'s documented store→limiter
-                    // ordering): the contacts lock is acquired and released
-                    // FIRST (collecting live ids into an owned `Vec<String>`),
-                    // and the peers lock is taken only afterward — the two
-                    // are never held simultaneously, so there is no
-                    // lock-order hazard.
-                    {
-                        use tauri::Listener;
-                        let contacts = app
-                            .state::<std::sync::Arc<
-                                std::sync::Mutex<crate::contacts::store::ContactsStore>,
-                            >>()
-                            .inner()
-                            .clone();
-                        let peers = app
-                            .state::<std::sync::Arc<std::sync::Mutex<crate::peers::store::PeersStore>>>()
-                            .inner()
-                            .clone();
-                        let emit_handle = app.handle().clone();
-                        let listener_handle = app.handle().clone();
-                        listener_handle.listen(
-                            crate::contacts::commands::CONTACTS_CHANGED_EVENT,
-                            move |_| {
-                                let live_ids: Vec<String> = match contacts.lock() {
-                                    Ok(c) => c.file().contacts.iter().map(|c| c.id.clone()).collect(),
-                                    Err(_) => return,
-                                };
-                                if let Ok(mut p) = peers.lock() {
-                                    p.reconcile_contact_links(&live_ids);
-                                }
-                                use tauri::Emitter;
-                                let _ = emit_handle
-                                    .emit(crate::peers::commands::PEERS_CHANGED_EVENT, ());
-                            },
-                        );
                     }
 
                     // forms sequence counters (tuxlink-2tom / G12-C): per-form
@@ -2269,6 +2217,15 @@ pub fn run() {
             crate::contacts::commands::contacts_connection_record,
             // tuxlink-s1o1: recent gateways for Winlink map layer pin rendering.
             crate::contacts::commands::contacts_recent_gateways,
+            // contacts-superset pivot (Task T-B, spec §AMENDMENT): the tier
+            // promote + contact-endpoint keyring commands + the capability
+            // bits. `contact_delete` above cascades endpoint keyring secrets
+            // and back-linked favorites; observation writes emit
+            // `contacts:changed` from the sink installed in .setup().
+            crate::contacts::commands::contact_confirm,
+            crate::contacts::commands::contact_endpoint_password_set,
+            crate::contacts::commands::contact_endpoint_password_clear,
+            crate::contacts::commands::p2p_capabilities,
             // favorites (tuxlink-egmp, Task B2): per-radio-mode Favorites/Recents
             // CRUD + the honest connection record, over the managed
             // `Arc<Mutex<FavoritesStore>>`. `favorite_upsert` MERGES only
@@ -2284,22 +2241,6 @@ pub fn run() {
             crate::favorites::commands::favorite_record_attempt,
             crate::favorites::commands::favorites_recents,
             crate::favorites::commands::favorite_tod_hint,
-            // peers (VARA P2P peer model, Task 11): first-class-peer roster CRUD
-            // + merge/split/promote + endpoint keyring set/clear over the managed
-            // `Arc<Mutex<PeersStore>>`. Mutations emit the `peers:changed`
-            // cross-window event (Task 22's usePeers hook listens on it);
-            // `peer_delete` cascades the endpoint keyring-secret clear [R2-S7].
-            // `p2p_capabilities` reports the integration-matrix hide bits [R5-8].
-            // KEEP THIS BLOCK CONTIGUOUS + LABELED.
-            crate::peers::commands::peers_read,
-            crate::peers::commands::peer_upsert,
-            crate::peers::commands::peer_delete,
-            crate::peers::commands::peer_merge,
-            crate::peers::commands::peer_split,
-            crate::peers::commands::peer_endpoint_promote,
-            crate::peers::commands::peer_endpoint_password_set,
-            crate::peers::commands::peer_endpoint_password_clear,
-            crate::peers::commands::p2p_capabilities,
             // tuxlink-dyop Phase 8.1: LAN map-tile command surface. configure
             // (validate→activate→persist), test (dry-run validate), clear-cache,
             // and a no-network status reflection of the gatekeeper. All take the

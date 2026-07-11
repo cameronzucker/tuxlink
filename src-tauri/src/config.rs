@@ -369,9 +369,9 @@ pub struct Config {
     /// does NOT bump `CONFIG_SCHEMA_VERSION`.
     #[serde(
         default,
-        skip_serializing_if = "crate::peers::limiter::P2pLimitsConfig::is_default"
+        skip_serializing_if = "crate::contacts::limiter::P2pLimitsConfig::is_default"
     )]
-    pub p2p_limits: crate::peers::limiter::P2pLimitsConfig,
+    pub p2p_limits: crate::contacts::limiter::P2pLimitsConfig,
 }
 
 impl Config {
@@ -1776,7 +1776,7 @@ mod tests {
             .expect("a config without [p2p_limits] deserializes additively");
         assert_eq!(
             cfg.p2p_limits,
-            crate::peers::limiter::P2pLimitsConfig::default()
+            crate::contacts::limiter::P2pLimitsConfig::default()
         );
     }
 
@@ -1801,7 +1801,7 @@ mod tests {
     fn p2p_limits_round_trips_when_customized() {
         let mut cfg: Config =
             serde_json::from_str(&config_json(CONFIG_SCHEMA_VERSION, "")).unwrap();
-        cfg.p2p_limits = crate::peers::limiter::P2pLimitsConfig {
+        cfg.p2p_limits = crate::contacts::limiter::P2pLimitsConfig {
             accepted_per_hour: 250,
             failed_per_minute: 3,
         };
@@ -1810,7 +1810,7 @@ mod tests {
         let back: Config = serde_json::from_str(&s).unwrap();
         assert_eq!(
             back.p2p_limits,
-            crate::peers::limiter::P2pLimitsConfig {
+            crate::contacts::limiter::P2pLimitsConfig {
                 accepted_per_hour: 250,
                 failed_per_minute: 3,
             }

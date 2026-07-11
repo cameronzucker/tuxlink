@@ -784,7 +784,7 @@ mod tests {
     fn cms_config() -> Config {
         Config {
             elmer: crate::config::ElmerConfig::default(),
-            p2p_limits: crate::peers::limiter::P2pLimitsConfig::default(),
+            p2p_limits: crate::contacts::limiter::P2pLimitsConfig::default(),
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: ConnectConfig {

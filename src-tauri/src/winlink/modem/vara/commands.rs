@@ -2745,8 +2745,8 @@ fn run_vara_b2f_with_transport(
     // never construct a guard. The channel-transport label mirrors the
     // sideband discriminator below (a None pre-open kind → HF).
     let engine_transport = match session.active_transport_kind() {
-        Some(TransportKind::VaraFm) => crate::peers::model::ChannelTransport::VaraFm,
-        _ => crate::peers::model::ChannelTransport::VaraHf,
+        Some(TransportKind::VaraFm) => crate::contacts::reachability::ChannelTransport::VaraFm,
+        _ => crate::contacts::reachability::ChannelTransport::VaraHf,
     };
     let sink = dial_observation_sink(intent);
 
@@ -2951,13 +2951,13 @@ fn run_vara_b2f_with_transport(
     let outcome = match exchange_result {
         Ok(()) => {
             if let Some(g) = &live_guard {
-                g.set_phase(crate::peers::recorder::ObservationPhase::B2fOk);
+                g.set_phase(crate::contacts::observation::ObservationPhase::B2fOk);
             }
             VaraExchangeOutcome::Completed
         }
         Err(e) => {
             if let Some(g) = &live_guard {
-                g.set_phase(crate::peers::recorder::ObservationPhase::B2fFail);
+                g.set_phase(crate::contacts::observation::ObservationPhase::B2fFail);
             }
             VaraExchangeOutcome::ExchangeFailed(format!("VARA B2F exchange failed: {e}"))
         }
@@ -2973,9 +2973,9 @@ fn run_vara_b2f_with_transport(
 /// `AppHandle` [CDX-7].
 fn dial_observation_sink(
     intent: SessionIntent,
-) -> Option<crate::peers::recorder::ObservationSink> {
+) -> Option<crate::contacts::observation::ObservationSink> {
     if intent == SessionIntent::P2p {
-        crate::peers::recorder::observation_sink()
+        crate::contacts::observation::observation_sink()
     } else {
         None
     }
@@ -2985,7 +2985,7 @@ fn dial_observation_sink(
 /// can drive the REAL guard-construction path without an `AppHandle` [CDX-7].
 ///
 /// Each candidate runs in two stages, and the walk arms the
-/// [`crate::peers::recorder::ObservationGuard`] BETWEEN them (review fix — the
+/// [`crate::contacts::observation::ObservationGuard`] BETWEEN them (review fix — the
 /// guard-arm must not precede the pre-TX exits):
 ///
 /// 1. `pre_tx(idx, c)` — the abort-rechecks + pre-CONNECT CAT tune. A `false`
@@ -3008,17 +3008,17 @@ fn dial_observation_sink(
 fn run_recorded_dial_walk<P, F>(
     candidates: &[DialCandidate],
     qsy_on_fail: bool,
-    engine_transport: crate::peers::model::ChannelTransport,
+    engine_transport: crate::contacts::reachability::ChannelTransport,
     via: &[String],
-    sink: Option<crate::peers::recorder::ObservationSink>,
+    sink: Option<crate::contacts::observation::ObservationSink>,
     mut pre_tx: P,
     mut connect: F,
-) -> (Option<usize>, Option<crate::peers::recorder::ObservationGuard>)
+) -> (Option<usize>, Option<crate::contacts::observation::ObservationGuard>)
 where
     P: FnMut(usize, &DialCandidate) -> bool,
     F: FnMut(usize, &DialCandidate) -> bool,
 {
-    let mut live_guard: Option<crate::peers::recorder::ObservationGuard> = None;
+    let mut live_guard: Option<crate::contacts::observation::ObservationGuard> = None;
     let outcome = walk_candidates(candidates, qsy_on_fail, |idx, c| {
         // Stage 1 — pre-TX: abort-rechecks + CAT tune. Nothing has gone out
         // over the air yet, so a bail here must not touch the roster: no guard.
@@ -3027,18 +3027,18 @@ where
         }
         // Arm between the stages — immediately before the CONNECT send.
         let guard = sink.clone().map(|s| {
-            crate::peers::recorder::ObservationGuard::new(
+            crate::contacts::observation::ObservationGuard::new(
                 s,
-                crate::peers::recorder::PeerObservation {
-                    path: crate::peers::recorder::ObservedPath::Rf {
+                crate::contacts::observation::PeerObservation {
+                    path: crate::contacts::observation::ObservedPath::Rf {
                         transport: engine_transport,
                         via: via.to_vec(),
                         freq_hz: c.freq_hz,
                         bandwidth: None,
                     },
-                    direction: crate::peers::model::Direction::Outgoing,
+                    direction: crate::contacts::reachability::Direction::Outgoing,
                     presented_target: c.target.clone(),
-                    phase: crate::peers::recorder::ObservationPhase::DialAttempted,
+                    phase: crate::contacts::observation::ObservationPhase::DialAttempted,
                 },
             )
         });
@@ -3046,7 +3046,7 @@ where
         let connected = connect(idx, c);
         if connected {
             if let Some(g) = &guard {
-                g.set_phase(crate::peers::recorder::ObservationPhase::Connected);
+                g.set_phase(crate::contacts::observation::ObservationPhase::Connected);
             }
             // The winning candidate's guard survives into the exchange; the
             // caller owns its terminal phase + drop.
@@ -4604,10 +4604,10 @@ mod tests {
         // fails at the shortened deadline, so the walk's own per-candidate
         // guard-drop records exactly one Fail [R3-11]. The sink is process-global,
         // so this test is #[serial].
-        let seen: Arc<Mutex<Vec<crate::peers::recorder::PeerObservation>>> = Arc::default();
+        let seen: Arc<Mutex<Vec<crate::contacts::observation::PeerObservation>>> = Arc::default();
         {
             let seen = seen.clone();
-            crate::peers::recorder::install_observation_sink(Arc::new(move |o| {
+            crate::contacts::observation::install_observation_sink(Arc::new(move |o| {
                 seen.lock().unwrap().push(o)
             }));
         }
@@ -4623,9 +4623,9 @@ mod tests {
         let (outcome, live_guard) = run_recorded_dial_walk(
             &candidates,
             false,
-            crate::peers::model::ChannelTransport::VaraHf,
+            crate::contacts::reachability::ChannelTransport::VaraHf,
             &[],
-            crate::peers::recorder::observation_sink(),
+            crate::contacts::observation::observation_sink(),
             |_idx, _c| true, // pre-TX (abort-rechecks + tune) passes
             |_idx, c| {
                 send_connect_and_wait_inner(
@@ -4648,14 +4648,14 @@ mod tests {
             let recs = seen.lock().unwrap();
             assert_eq!(recs.len(), 1, "exactly one per-candidate fail recorded");
             assert_eq!(
-                crate::peers::recorder::classify(recs[0].phase),
-                crate::peers::recorder::Classified::Fail
+                crate::contacts::observation::classify(recs[0].phase),
+                crate::contacts::observation::Classified::Fail
             );
             assert_eq!(recs[0].presented_target, "N0DAJ-7");
-            assert_eq!(recs[0].direction, crate::peers::model::Direction::Outgoing);
+            assert_eq!(recs[0].direction, crate::contacts::reachability::Direction::Outgoing);
         }
 
-        crate::peers::recorder::install_observation_sink(Arc::new(|_| {})); // reset
+        crate::contacts::observation::install_observation_sink(Arc::new(|_| {})); // reset
         drop(t);
         ch.join().unwrap();
         dh.join().unwrap();
@@ -4671,10 +4671,10 @@ mod tests {
         // transmitted. The pre-TX stage runs the REAL close-generation check
         // against a real VaraSession whose generation was bumped (the operator's
         // Stop), mirroring the production stage-1 closure.
-        let seen: Arc<Mutex<Vec<crate::peers::recorder::PeerObservation>>> = Arc::default();
+        let seen: Arc<Mutex<Vec<crate::contacts::observation::PeerObservation>>> = Arc::default();
         {
             let seen = seen.clone();
-            crate::peers::recorder::install_observation_sink(Arc::new(move |o| {
+            crate::contacts::observation::install_observation_sink(Arc::new(move |o| {
                 seen.lock().unwrap().push(o)
             }));
         }
@@ -4692,9 +4692,9 @@ mod tests {
         let (outcome, live_guard) = run_recorded_dial_walk(
             &candidates,
             false,
-            crate::peers::model::ChannelTransport::VaraHf,
+            crate::contacts::reachability::ChannelTransport::VaraHf,
             &[],
-            crate::peers::recorder::observation_sink(),
+            crate::contacts::observation::observation_sink(),
             // Production stage-1 abort recheck (C2 for VARA), verbatim shape.
             |_idx, _c| session.current_close_generation() == close_gen_snapshot,
             |_idx, _c| {
@@ -4711,7 +4711,7 @@ mod tests {
             "a dial that never transmitted must not touch the roster"
         );
 
-        crate::peers::recorder::install_observation_sink(Arc::new(|_| {})); // reset
+        crate::contacts::observation::install_observation_sink(Arc::new(|_| {})); // reset
     }
 
     #[test]
@@ -4722,10 +4722,10 @@ mod tests {
         // even when the global sink IS installed, so the walk arms no guard and
         // a failed CMS dial never touches the peer roster. P2p resolves the
         // installed sink; the auto-arming-but-non-peer RadioOnly does not.
-        let seen: Arc<Mutex<Vec<crate::peers::recorder::PeerObservation>>> = Arc::default();
+        let seen: Arc<Mutex<Vec<crate::contacts::observation::PeerObservation>>> = Arc::default();
         {
             let seen = seen.clone();
-            crate::peers::recorder::install_observation_sink(Arc::new(move |o| {
+            crate::contacts::observation::install_observation_sink(Arc::new(move |o| {
                 seen.lock().unwrap().push(o)
             }));
         }
@@ -4745,7 +4745,7 @@ mod tests {
         let (outcome, live_guard) = run_recorded_dial_walk(
             &candidates,
             false,
-            crate::peers::model::ChannelTransport::VaraHf,
+            crate::contacts::reachability::ChannelTransport::VaraHf,
             &[],
             dial_observation_sink(SessionIntent::Cms),
             |_idx, _c| true,
@@ -4770,7 +4770,7 @@ mod tests {
             "a CMS dial must not record even with the global sink installed"
         );
 
-        crate::peers::recorder::install_observation_sink(Arc::new(|_| {})); // reset
+        crate::contacts::observation::install_observation_sink(Arc::new(|_| {})); // reset
         drop(t);
         ch.join().unwrap();
         dh.join().unwrap();

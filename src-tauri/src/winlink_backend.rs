@@ -2700,12 +2700,12 @@ fn native_packet_connect(
             // Mirrors the VARA (`dial_observation_sink`) / ARDOP
             // (`ardop_dial_observation_sink`) dial gates (Tasks 13-14).
             let obs_guard = if intent == SessionIntent::P2p {
-                crate::peers::recorder::observation_sink().map(|s| {
-                    crate::peers::recorder::ObservationGuard::new(
+                crate::contacts::observation::observation_sink().map(|s| {
+                    crate::contacts::observation::ObservationGuard::new(
                         s,
-                        crate::peers::recorder::PeerObservation {
-                            path: crate::peers::recorder::ObservedPath::Rf {
-                                transport: crate::peers::model::ChannelTransport::Packet,
+                        crate::contacts::observation::PeerObservation {
+                            path: crate::contacts::observation::ObservedPath::Rf {
+                                transport: crate::contacts::reachability::ChannelTransport::Packet,
                                 via: digis
                                     .iter()
                                     .map(crate::winlink::ax25::datalink::fmt_addr)
@@ -2713,9 +2713,9 @@ fn native_packet_connect(
                                 freq_hz: None,
                                 bandwidth: None,
                             },
-                            direction: crate::peers::model::Direction::Outgoing,
+                            direction: crate::contacts::reachability::Direction::Outgoing,
                             presented_target: target.call.clone(),
-                            phase: crate::peers::recorder::ObservationPhase::DialAttempted,
+                            phase: crate::contacts::observation::ObservationPhase::DialAttempted,
                         },
                     )
                 })
@@ -2739,7 +2739,7 @@ fn native_packet_connect(
             // `DialAttempted` → Fail [R3-11]. Past this point the AX.25 link is
             // up — advance to `Connected`.
             if let Some(g) = &obs_guard {
-                g.set_phase(crate::peers::recorder::ObservationPhase::Connected);
+                g.set_phase(crate::contacts::observation::ObservationPhase::Connected);
             }
             // P1.3 (Codex post-impl review): read_password is deferred until AFTER
             // the KISS link is established. The prior placement (before connect_link)
@@ -2767,8 +2767,8 @@ fn native_packet_connect(
             );
             if let Some(g) = &obs_guard {
                 g.set_phase(match &result {
-                    Ok(()) => crate::peers::recorder::ObservationPhase::B2fOk,
-                    Err(_) => crate::peers::recorder::ObservationPhase::B2fFail,
+                    Ok(()) => crate::contacts::observation::ObservationPhase::B2fOk,
+                    Err(_) => crate::contacts::observation::ObservationPhase::B2fFail,
                 });
             }
             result
@@ -2868,8 +2868,8 @@ fn native_packet_connect(
                 // R3-F5: count the rejected inbound on the quarantine limiter's
                 // failed path (no roster record) — the spoofing-loop counter's
                 // only real-burst source for packet.
-                crate::peers::recorder::record_inbound_reject(
-                    crate::peers::model::ChannelTransport::Packet,
+                crate::contacts::observation::record_inbound_reject(
+                    crate::contacts::reachability::ChannelTransport::Packet,
                 );
 
                 let msg = format!(
@@ -2903,19 +2903,19 @@ fn native_packet_connect(
             // last phase: `Accepted` on a clean exchange, `B2fFail` on failure,
             // and — if a wedge/panic-unwind unwinds past here — the
             // `B2fStarted` it was armed at, which classifies as Fail [R3-11].
-            let obs_guard = crate::peers::recorder::observation_sink().map(|s| {
-                crate::peers::recorder::ObservationGuard::new(
+            let obs_guard = crate::contacts::observation::observation_sink().map(|s| {
+                crate::contacts::observation::ObservationGuard::new(
                     s,
-                    crate::peers::recorder::PeerObservation {
-                        path: crate::peers::recorder::ObservedPath::Rf {
-                            transport: crate::peers::model::ChannelTransport::Packet,
+                    crate::contacts::observation::PeerObservation {
+                        path: crate::contacts::observation::ObservedPath::Rf {
+                            transport: crate::contacts::reachability::ChannelTransport::Packet,
                             via: vec![],
                             freq_hz: None,
                             bandwidth: None,
                         },
-                        direction: crate::peers::model::Direction::Incoming,
+                        direction: crate::contacts::reachability::Direction::Incoming,
                         presented_target: peer.call.clone(),
-                        phase: crate::peers::recorder::ObservationPhase::B2fStarted,
+                        phase: crate::contacts::observation::ObservationPhase::B2fStarted,
                     },
                 )
             });
@@ -2938,8 +2938,8 @@ fn native_packet_connect(
             );
             if let Some(g) = &obs_guard {
                 g.set_phase(match &result {
-                    Ok(()) => crate::peers::recorder::ObservationPhase::Accepted,
-                    Err(_) => crate::peers::recorder::ObservationPhase::B2fFail,
+                    Ok(()) => crate::contacts::observation::ObservationPhase::Accepted,
+                    Err(_) => crate::contacts::observation::ObservationPhase::B2fFail,
                 });
             }
             result
@@ -4399,7 +4399,7 @@ mod native_read_state_tests {
     fn offline_config() -> Config {
         Config {
             elmer: crate::config::ElmerConfig::default(),
-            p2p_limits: crate::peers::limiter::P2pLimitsConfig::default(),
+            p2p_limits: crate::contacts::limiter::P2pLimitsConfig::default(),
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: ConnectConfig {
@@ -6219,7 +6219,7 @@ mod native_read_state_tests {
     fn offline_config_with_callsign() -> Config {
         Config {
             elmer: crate::config::ElmerConfig::default(),
-            p2p_limits: crate::peers::limiter::P2pLimitsConfig::default(),
+            p2p_limits: crate::contacts::limiter::P2pLimitsConfig::default(),
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: ConnectConfig {
@@ -7224,11 +7224,11 @@ mod native_read_state_tests {
         // the recorder sink is process-global.
         use crate::identity::{Callsign, IdentityHandle, SessionIdentity};
 
-        let seen: Arc<std::sync::Mutex<Vec<crate::peers::recorder::PeerObservation>>> =
+        let seen: Arc<std::sync::Mutex<Vec<crate::contacts::observation::PeerObservation>>> =
             Arc::default();
         {
             let seen = seen.clone();
-            crate::peers::recorder::install_observation_sink(Arc::new(move |o| {
+            crate::contacts::observation::install_observation_sink(Arc::new(move |o| {
                 seen.lock().unwrap().push(o)
             }));
         }
@@ -7298,7 +7298,7 @@ mod native_read_state_tests {
         let obs = seen.lock().unwrap();
         let incoming: Vec<_> = obs
             .iter()
-            .filter(|o| o.direction == crate::peers::model::Direction::Incoming)
+            .filter(|o| o.direction == crate::contacts::reachability::Direction::Incoming)
             .collect();
         assert_eq!(
             incoming.len(),
@@ -7307,8 +7307,8 @@ mod native_read_state_tests {
         );
         let o = incoming[0];
         match &o.path {
-            crate::peers::recorder::ObservedPath::Rf { transport, .. } => {
-                assert_eq!(*transport, crate::peers::model::ChannelTransport::Packet);
+            crate::contacts::observation::ObservedPath::Rf { transport, .. } => {
+                assert_eq!(*transport, crate::contacts::reachability::ChannelTransport::Packet);
             }
             other => panic!("expected an Rf path for the packet answer site; got {other:?}"),
         }
@@ -7317,14 +7317,14 @@ mod native_read_state_tests {
             "the answerer's observation must present the dialer's base call"
         );
         assert_eq!(
-            crate::peers::recorder::classify(o.phase),
-            crate::peers::recorder::Classified::Ok,
+            crate::contacts::observation::classify(o.phase),
+            crate::contacts::observation::Classified::Ok,
             "a clean accepted exchange must classify Ok; got phase {:?}",
             o.phase
         );
         drop(obs);
 
-        crate::peers::recorder::install_observation_sink(Arc::new(|_| {})); // reset
+        crate::contacts::observation::install_observation_sink(Arc::new(|_| {})); // reset
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -7339,11 +7339,11 @@ mod native_read_state_tests {
         // failure (see `spawn_closing_kiss_wire` for why a silent wire is NOT
         // usable: the 25 s non-configurable `connect_timeout` governs that
         // path). #[serial]: the recorder sink is process-global.
-        let seen: Arc<std::sync::Mutex<Vec<crate::peers::recorder::PeerObservation>>> =
+        let seen: Arc<std::sync::Mutex<Vec<crate::contacts::observation::PeerObservation>>> =
             Arc::default();
         {
             let seen = seen.clone();
-            crate::peers::recorder::install_observation_sink(Arc::new(move |o| {
+            crate::contacts::observation::install_observation_sink(Arc::new(move |o| {
                 seen.lock().unwrap().push(o)
             }));
         }
@@ -7388,15 +7388,15 @@ mod native_read_state_tests {
             1,
             "exactly one observation for the failed P2P dial; got {obs:?}"
         );
-        assert_eq!(obs[0].direction, crate::peers::model::Direction::Outgoing);
+        assert_eq!(obs[0].direction, crate::contacts::reachability::Direction::Outgoing);
         assert_eq!(obs[0].presented_target, "W7AUX");
         assert_eq!(
-            crate::peers::recorder::classify(obs[0].phase),
-            crate::peers::recorder::Classified::Fail
+            crate::contacts::observation::classify(obs[0].phase),
+            crate::contacts::observation::Classified::Fail
         );
         drop(obs);
 
-        crate::peers::recorder::install_observation_sink(Arc::new(|_| {})); // reset
+        crate::contacts::observation::install_observation_sink(Arc::new(|_| {})); // reset
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -7407,11 +7407,11 @@ mod native_read_state_tests {
         // that fails its AX.25 connect must not touch the peer roster even
         // though the global sink IS installed. Same deterministic
         // accept-then-close wire as the P2p twin (sub-second failure).
-        let seen: Arc<std::sync::Mutex<Vec<crate::peers::recorder::PeerObservation>>> =
+        let seen: Arc<std::sync::Mutex<Vec<crate::contacts::observation::PeerObservation>>> =
             Arc::default();
         {
             let seen = seen.clone();
-            crate::peers::recorder::install_observation_sink(Arc::new(move |o| {
+            crate::contacts::observation::install_observation_sink(Arc::new(move |o| {
                 seen.lock().unwrap().push(o)
             }));
         }
@@ -7450,6 +7450,6 @@ mod native_read_state_tests {
             "a CMS packet dial must not record even with the global sink installed"
         );
 
-        crate::peers::recorder::install_observation_sink(Arc::new(|_| {})); // reset
+        crate::contacts::observation::install_observation_sink(Arc::new(|_| {})); // reset
     }
 }

@@ -427,9 +427,10 @@ impl StatusPort for MonolithStatusPort {
 
     async fn p2p_peer_password_status(&self, callsign: &str) -> Result<bool, PortError> {
         use crate::ui_commands::PeerPasswordStatus;
-        let status = crate::ui_commands::p2p_peer_password_status(callsign.to_string())
-            .await
-            .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
+        let status =
+            crate::ui_commands::p2p_peer_password_status(self.app.clone(), callsign.to_string())
+                .await
+                .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
         // Return ONLY the set/not-set boolean — never the password.
         Ok(matches!(status, PeerPasswordStatus::Set))
     }

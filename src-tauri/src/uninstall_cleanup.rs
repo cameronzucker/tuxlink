@@ -583,15 +583,26 @@ fn discover_peer_callsigns(env: &CleanupEnv) -> Vec<String> {
     out.into_iter().collect()
 }
 
-/// Discover `(peer_id, endpoint_id)` pairs from `peers.json` (Task 7/8 peer
-/// model) so a P2P endpoint keyring secret is never orphaned by a Full
-/// cleanup [R5-5]. Deliberately parses raw JSON rather than importing
-/// `peers::model` — this module has no dependency on other crate modules
-/// (same discipline as `collect_keyed_callsigns` above), so an unrelated
-/// model refactor cannot silently break cleanup enumeration.
+/// Discover `(owner_id, endpoint_id)` pairs for `p2p-endpoint:*` keyring
+/// accounts so a P2P endpoint secret is never orphaned by a Full cleanup
+/// [R5-5]. Two sources:
+///
+/// - `contacts.json` (schema v2 contacts-superset, spec §AMENDMENT): the
+///   LIVE store — endpoint secrets are keyed
+///   `p2p-endpoint:<contact_id>:<endpoint_id>`.
+/// - `peers.json`: a LEGACY artifact — dev builds of the pre-pivot peer
+///   store may have written it, and sweeping a maybe-present stale file is
+///   correct uninstall behavior.
+///
+/// Deliberately parses raw JSON rather than importing the contacts model —
+/// this module has no dependency on other crate modules (same discipline as
+/// `collect_keyed_callsigns` above), so an unrelated model refactor cannot
+/// silently break cleanup enumeration.
 fn discover_peer_endpoint_ids(env: &CleanupEnv) -> Vec<(String, String)> {
     let mut out = BTreeSet::new();
     for path in [
+        env.app_data_dir().join("contacts.json"),
+        env.legacy_data_dir().join("contacts.json"),
         env.app_data_dir().join("peers.json"),
         env.legacy_data_dir().join("peers.json"),
     ] {
@@ -603,19 +614,23 @@ fn discover_peer_endpoint_ids(env: &CleanupEnv) -> Vec<(String, String)> {
 }
 
 fn collect_peer_endpoint_ids(value: &serde_json::Value, out: &mut BTreeSet<(String, String)>) {
-    let Some(peers) = value.get("peers").and_then(|v| v.as_array()) else {
-        return;
-    };
-    for peer in peers {
-        let Some(peer_id) = peer.get("id").and_then(|v| v.as_str()) else {
+    // "contacts" (live, schema v2) or "peers" (legacy artifact) — same
+    // per-record shape either way: { id, endpoints: [{ id, .. }] }.
+    for key in ["contacts", "peers"] {
+        let Some(records) = value.get(key).and_then(|v| v.as_array()) else {
             continue;
         };
-        let Some(endpoints) = peer.get("endpoints").and_then(|v| v.as_array()) else {
-            continue;
-        };
-        for endpoint in endpoints {
-            if let Some(endpoint_id) = endpoint.get("id").and_then(|v| v.as_str()) {
-                out.insert((peer_id.to_string(), endpoint_id.to_string()));
+        for record in records {
+            let Some(owner_id) = record.get("id").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let Some(endpoints) = record.get("endpoints").and_then(|v| v.as_array()) else {
+                continue;
+            };
+            for endpoint in endpoints {
+                if let Some(endpoint_id) = endpoint.get("id").and_then(|v| v.as_str()) {
+                    out.insert((owner_id.to_string(), endpoint_id.to_string()));
+                }
             }
         }
     }
@@ -1244,6 +1259,37 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn full_cleanup_enumerates_contact_endpoint_keyring_accounts() {
+        // Post-pivot (spec §AMENDMENT): endpoint secrets are keyed by
+        // CONTACT id under contacts.json (schema v2); peers.json above stays
+        // enumerated as a legacy dev-build artifact.
+        let tmp = tempdir().unwrap();
+        let env = test_env(tmp.path());
+        write(
+            &env.app_data_dir().join("contacts.json"),
+            r#"{"schema_version":2,"contacts":[
+                {"id":"c1","name":"","callsign":"W6ABC","endpoints":[
+                    {"id":"e1","host":"1.2.3.4","port":8772,"last_seen":"2026-07-11T00:00:00Z"}
+                ]},
+                {"id":"c2","name":"","callsign":"N7CPZ","endpoints":[]}
+            ],"groups":[]}"#,
+        );
+
+        let plan = build_plan(CleanupMode::Full, &env);
+        assert!(
+            plan.keyring_targets
+                .iter()
+                .any(|t| t.account == "p2p-endpoint:c1:e1"
+                    && t.description == "P2P endpoint password")
+        );
+        // A contact with no endpoints contributes no endpoint keyring target.
+        assert!(!plan
+            .keyring_targets
+            .iter()
+            .any(|t| t.account.starts_with("p2p-endpoint:c2:")));
     }
 
     #[test]

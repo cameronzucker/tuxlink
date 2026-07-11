@@ -5628,9 +5628,9 @@ pub struct ArdopListenHandle {
 /// `AppHandle` [CDX-7].
 fn ardop_answer_observation_sink(
     active_intent: Option<SessionIntent>,
-) -> Option<crate::peers::recorder::ObservationSink> {
+) -> Option<crate::contacts::observation::ObservationSink> {
     if active_intent == Some(SessionIntent::P2p) {
-        crate::peers::recorder::observation_sink()
+        crate::contacts::observation::observation_sink()
     } else {
         None
     }
@@ -5765,20 +5765,20 @@ fn ardop_listener_consumer_task(
                 // [R3-11].
                 let obs_sink = ardop_answer_observation_sink(session.active_intent());
                 let obs_guard = obs_sink.map(|s| {
-                    crate::peers::recorder::ObservationGuard::new(
+                    crate::contacts::observation::ObservationGuard::new(
                         s,
-                        crate::peers::recorder::PeerObservation {
-                            path: crate::peers::recorder::ObservedPath::Rf {
-                                transport: crate::peers::model::ChannelTransport::Ardop,
+                        crate::contacts::observation::PeerObservation {
+                            path: crate::contacts::observation::ObservedPath::Rf {
+                                transport: crate::contacts::reachability::ChannelTransport::Ardop,
                                 via: vec![],
                                 // No wire freq source on inbound (CONNECTED
                                 // carries bandwidth, not frequency) [R3-11].
                                 freq_hz: None,
                                 bandwidth: None,
                             },
-                            direction: crate::peers::model::Direction::Incoming,
+                            direction: crate::contacts::reachability::Direction::Incoming,
                             presented_target: peer_call.clone(),
-                            phase: crate::peers::recorder::ObservationPhase::B2fStarted,
+                            phase: crate::contacts::observation::ObservationPhase::B2fStarted,
                         },
                     )
                 });
@@ -5835,7 +5835,7 @@ fn ardop_listener_consumer_task(
                 match result {
                     Ok(()) => {
                         if let Some(g) = &obs_guard {
-                            g.set_phase(crate::peers::recorder::ObservationPhase::Accepted);
+                            g.set_phase(crate::contacts::observation::ObservationPhase::Accepted);
                         }
                         progress(&format!(
                             "ARDOP listener: exchange with {} complete.",
@@ -5844,7 +5844,7 @@ fn ardop_listener_consumer_task(
                     }
                     Err(e) => {
                         if let Some(g) = &obs_guard {
-                            g.set_phase(crate::peers::recorder::ObservationPhase::B2fFail);
+                            g.set_phase(crate::contacts::observation::ObservationPhase::B2fFail);
                         }
                         progress(&format!(
                             "ARDOP listener: exchange with {} failed: {e}",
@@ -5883,8 +5883,8 @@ fn ardop_listener_consumer_task(
                 let _ = event.append_to_log(&log_path);
                 // R3-F5: count the rejected inbound on the quarantine limiter's
                 // failed path (no roster record).
-                crate::peers::recorder::record_inbound_reject(
-                    crate::peers::model::ChannelTransport::Ardop,
+                crate::contacts::observation::record_inbound_reject(
+                    crate::contacts::reachability::ChannelTransport::Ardop,
                 );
                 let _ = arq_disconnect_via_cmd_writer(&*transport);
                 // Codex review 2026-06-03 [P1 #4] (tuxlink-61yg): after
@@ -6451,15 +6451,15 @@ pub(crate) fn disarm_vara_listener_inner(
 /// [`vara_listener_consumer_task`] so the gate is unit-testable without an
 /// `AppHandle` [CDX-7].
 /// Map a listener [`TransportKind`](crate::winlink::listener::TransportKind) to
-/// the peer-model [`ChannelTransport`](crate::peers::model::ChannelTransport)
+/// the peer-model [`ChannelTransport`](crate::contacts::reachability::ChannelTransport)
 /// used as the quarantine-limiter bucket key at a reject site (R3-F5). Telnet
 /// and Pactor have no RF `ChannelTransport` variant → the `Unknown` bucket (a
 /// real RF transport never writes there, so it steals no RF budget; matches the
 /// recorder/limiter's own telnet→Unknown mapping).
 fn channel_transport_from_transport_kind(
     kind: crate::winlink::listener::TransportKind,
-) -> crate::peers::model::ChannelTransport {
-    use crate::peers::model::ChannelTransport;
+) -> crate::contacts::reachability::ChannelTransport {
+    use crate::contacts::reachability::ChannelTransport;
     use crate::winlink::listener::TransportKind;
     match kind {
         TransportKind::Packet => ChannelTransport::Packet,
@@ -6472,9 +6472,9 @@ fn channel_transport_from_transport_kind(
 
 fn vara_answer_observation_sink(
     active_intent: Option<SessionIntent>,
-) -> Option<crate::peers::recorder::ObservationSink> {
+) -> Option<crate::contacts::observation::ObservationSink> {
     if active_intent == Some(SessionIntent::P2p) {
-        crate::peers::recorder::observation_sink()
+        crate::contacts::observation::observation_sink()
     } else {
         None
     }
@@ -6645,15 +6645,15 @@ fn vara_listener_consumer_task(
                 // nothing for that path.
                 let obs_sink = vara_answer_observation_sink(vara_session.active_intent());
                 let obs_guard = obs_sink.map(|s| {
-                    crate::peers::recorder::ObservationGuard::new(
+                    crate::contacts::observation::ObservationGuard::new(
                         s,
-                        crate::peers::recorder::PeerObservation {
-                            path: crate::peers::recorder::ObservedPath::Rf {
+                        crate::contacts::observation::PeerObservation {
+                            path: crate::contacts::observation::ObservedPath::Rf {
                                 transport: match vara_session.active_transport_kind() {
                                     Some(
                                         crate::winlink::listener::transport::TransportKind::VaraFm,
-                                    ) => crate::peers::model::ChannelTransport::VaraFm,
-                                    _ => crate::peers::model::ChannelTransport::VaraHf,
+                                    ) => crate::contacts::reachability::ChannelTransport::VaraFm,
+                                    _ => crate::contacts::reachability::ChannelTransport::VaraHf,
                                 },
                                 via: vec![],
                                 // No wire freq source on inbound (CONNECTED carries
@@ -6661,9 +6661,9 @@ fn vara_listener_consumer_task(
                                 freq_hz: None,
                                 bandwidth: None,
                             },
-                            direction: crate::peers::model::Direction::Incoming,
+                            direction: crate::contacts::reachability::Direction::Incoming,
                             presented_target: peer_call.clone(),
-                            phase: crate::peers::recorder::ObservationPhase::B2fStarted,
+                            phase: crate::contacts::observation::ObservationPhase::B2fStarted,
                         },
                     )
                 });
@@ -6740,7 +6740,7 @@ fn vara_listener_consumer_task(
                 match result {
                     Ok(()) => {
                         if let Some(g) = &obs_guard {
-                            g.set_phase(crate::peers::recorder::ObservationPhase::Accepted);
+                            g.set_phase(crate::contacts::observation::ObservationPhase::Accepted);
                         }
                         progress(&format!(
                             "VARA listener: exchange with {} complete.",
@@ -6749,7 +6749,7 @@ fn vara_listener_consumer_task(
                     }
                     Err(e) => {
                         if let Some(g) = &obs_guard {
-                            g.set_phase(crate::peers::recorder::ObservationPhase::B2fFail);
+                            g.set_phase(crate::contacts::observation::ObservationPhase::B2fFail);
                         }
                         progress(&format!(
                             "VARA listener: exchange with {} failed: {e}",
@@ -6792,7 +6792,7 @@ fn vara_listener_consumer_task(
                 // R3-F5: count the rejected inbound on the quarantine limiter's
                 // failed path (no roster record). Bucket by the actual VARA sub-
                 // transport so an HF flood never exhausts an FM budget.
-                crate::peers::recorder::record_inbound_reject(
+                crate::contacts::observation::record_inbound_reject(
                     channel_transport_from_transport_kind(transport_kind),
                 );
             }
@@ -6809,7 +6809,7 @@ fn vara_listener_consumer_task(
                     &peer_id,
                 );
                 let _ = event.append_to_log(&log_path);
-                crate::peers::recorder::record_inbound_reject(
+                crate::contacts::observation::record_inbound_reject(
                     channel_transport_from_transport_kind(transport_kind),
                 );
             }
@@ -7734,25 +7734,104 @@ pub struct P2pConnectState {
     pub aborting: std::sync::atomic::AtomicBool,
 }
 
-/// Write the per-peer station password to the OS keyring.
-///
-/// Overwrites any existing entry. `callsign` is uppercased before storage so
-/// case variants do not create duplicate entries (see `credentials::p2p_peer_account`).
-#[tauri::command]
-pub async fn p2p_peer_password_set(callsign: String, password: String) -> Result<(), UiError> {
-    crate::winlink::credentials::p2p_peer_password_write(&callsign, &password).map_err(|e| {
-        UiError::Internal {
-            detail: e.to_string(),
-        }
-    })
+/// Resolve the single `(contact_id, endpoint_id)` pair `callsign` maps to
+/// unambiguously (exactly one exact-callsign contact with exactly one
+/// operator-provenance endpoint [R5-5]), or `None` when ambiguous / unmapped.
+fn contact_endpoint_pair(
+    app: &AppHandle,
+    callsign: &str,
+) -> Result<Option<(String, String)>, String> {
+    let store = app.state::<std::sync::Arc<
+        std::sync::Mutex<crate::contacts::store::ContactsStore>,
+    >>();
+    let guard = store
+        .lock()
+        .map_err(|_| "contacts store poisoned".to_string())?;
+    Ok(crate::contacts::store::unambiguous_operator_endpoint(
+        guard.file(),
+        callsign,
+    ))
 }
 
-/// Delete the per-peer station password from the OS keyring.
+/// Resolve the P2P station password for `callsign` across BOTH keyring
+/// schemes — the contact-endpoint-keyed
+/// `p2p-endpoint:<contact_id>:<endpoint_id>` scheme and the SHIPPED legacy
+/// `p2p-peer:<CALLSIGN>` scheme — running the conservative lazy migration
+/// [R5-5] when (and only when) the mapping is unambiguous:
 ///
-/// Idempotent: succeeds when no entry exists (spec §4.4). Useful for clearing
-/// a stored password without navigating back to a settings form.
+/// 1. Unambiguous contact endpoint (exactly one exact-callsign contact with
+///    exactly one operator-provenance endpoint): read the id-keyed secret;
+///    on a miss, attempt `migrate_legacy_peer_secret` (legacy is deleted
+///    strictly AFTER the new-key write succeeds) and re-read on `Migrated`.
+/// 2. Otherwise fall back to the legacy callsign key — an ambiguous mapping
+///    leaves the legacy secret in place (that IS the manual-reassignment
+///    signal), and it keeps answering here so the operator dial never
+///    regresses mid-migration.
+fn p2p_password_lookup(app: &AppHandle, callsign: &str) -> Result<Option<String>, String> {
+    use crate::winlink::credentials as creds;
+    if let Some((contact_id, endpoint_id)) = contact_endpoint_pair(app, callsign)? {
+        if let Some(secret) = creds::p2p_endpoint_password_read(&contact_id, &endpoint_id)? {
+            return Ok(Some(secret));
+        }
+        return match creds::migrate_legacy_peer_secret(callsign, &contact_id, &endpoint_id, true)?
+        {
+            creds::LegacyMigration::Migrated => {
+                creds::p2p_endpoint_password_read(&contact_id, &endpoint_id)
+            }
+            creds::LegacyMigration::NoLegacySecret | creds::LegacyMigration::Ambiguous => Ok(None),
+        };
+    }
+    match creds::p2p_peer_password_read(callsign) {
+        Ok(p) => Ok(Some(p)),
+        Err(crate::winlink::credentials::KeyringError::NoEntry { .. }) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Write the per-peer station password to the OS keyring.
+///
+/// Post-pivot (spec §AMENDMENT pt. 3): when `callsign` maps unambiguously to
+/// a single operator-provenance contact endpoint, the secret is written under
+/// the id-keyed `p2p-endpoint:<contact_id>:<endpoint_id>` account. Otherwise
+/// (no contact yet — e.g. a first dial to a hand-typed host — or an ambiguous
+/// mapping) it is written under the legacy `p2p-peer:<CALLSIGN>` account,
+/// which [`p2p_password_lookup`] migrates forward once the mapping becomes
+/// unambiguous. Overwrites any existing entry.
 #[tauri::command]
-pub async fn p2p_peer_password_clear(callsign: String) -> Result<(), UiError> {
+pub async fn p2p_peer_password_set(
+    app: AppHandle,
+    callsign: String,
+    password: String,
+) -> Result<(), UiError> {
+    let pair = contact_endpoint_pair(&app, &callsign)
+        .map_err(|detail| UiError::Internal { detail })?;
+    match pair {
+        Some((contact_id, endpoint_id)) => crate::winlink::credentials::p2p_endpoint_password_write(
+            &contact_id,
+            &endpoint_id,
+            &password,
+        )
+        .map_err(|detail| UiError::Internal { detail }),
+        None => crate::winlink::credentials::p2p_peer_password_write(&callsign, &password)
+            .map_err(|e| UiError::Internal {
+                detail: e.to_string(),
+            }),
+    }
+}
+
+/// Delete the per-peer station password from the OS keyring — BOTH schemes:
+/// the id-keyed contact-endpoint account (when the mapping resolves) and the
+/// legacy callsign account, so a clear after migration leaves no live copy.
+///
+/// Idempotent: succeeds when no entry exists (spec §4.4).
+#[tauri::command]
+pub async fn p2p_peer_password_clear(app: AppHandle, callsign: String) -> Result<(), UiError> {
+    if let Some((contact_id, endpoint_id)) = contact_endpoint_pair(&app, &callsign)
+        .map_err(|detail| UiError::Internal { detail })?
+    {
+        crate::winlink::credentials::p2p_endpoint_password_delete(&contact_id, &endpoint_id)
+            .map_err(|detail| UiError::Internal { detail })?;
+    }
     crate::winlink::credentials::p2p_peer_password_delete(&callsign).map_err(|e| {
         UiError::Internal {
             detail: e.to_string(),
@@ -7760,20 +7839,23 @@ pub async fn p2p_peer_password_clear(callsign: String) -> Result<(), UiError> {
     })
 }
 
-/// Return whether a peer-station password is stored in the keyring.
+/// Return whether a P2P station password is stored for `callsign` — under the
+/// contact-endpoint scheme when the mapping is unambiguous (running the lazy
+/// legacy migration on the way), else under the legacy callsign key (the
+/// migration-UX probe: an ambiguous mapping keeps answering here).
 ///
 /// Returns [`PeerPasswordStatus::Set`] when an entry exists,
 /// [`PeerPasswordStatus::NotSet`] when absent. Any other keyring error is
-/// surfaced as `UiError::Internal`.
+/// surfaced as `UiError::Internal`. Never returns the secret itself.
 #[tauri::command]
-pub async fn p2p_peer_password_status(callsign: String) -> Result<PeerPasswordStatus, UiError> {
-    use crate::winlink::credentials::KeyringError;
-    match crate::winlink::credentials::p2p_peer_password_read(&callsign) {
-        Ok(_) => Ok(PeerPasswordStatus::Set),
-        Err(KeyringError::NoEntry { .. }) => Ok(PeerPasswordStatus::NotSet),
-        Err(e) => Err(UiError::Internal {
-            detail: e.to_string(),
-        }),
+pub async fn p2p_peer_password_status(
+    app: AppHandle,
+    callsign: String,
+) -> Result<PeerPasswordStatus, UiError> {
+    match p2p_password_lookup(&app, &callsign) {
+        Ok(Some(_)) => Ok(PeerPasswordStatus::Set),
+        Ok(None) => Ok(PeerPasswordStatus::NotSet),
+        Err(detail) => Err(UiError::Internal { detail }),
     }
 }
 
@@ -7819,7 +7901,6 @@ pub async fn telnet_p2p_connect(
     log: State<'_, std::sync::Arc<SessionLogState>>,
     req: P2pDialRequest,
 ) -> Result<P2pDialResult, UiError> {
-    use crate::winlink::credentials::KeyringError;
     use crate::winlink::session::{ExchangeConfig, SessionIntent};
     use crate::winlink::telnet_p2p;
     use std::sync::atomic::Ordering;
@@ -7942,19 +8023,18 @@ pub async fn telnet_p2p_connect(
         ),
     );
 
-    // Look up peer password if configured (None = no password challenge attempted).
-    let peer_password =
-        match crate::winlink::credentials::p2p_peer_password_read(&req.peer_callsign) {
-            Ok(p) => Some(p),
-            Err(KeyringError::NoEntry { .. }) => None,
-            Err(e) => {
-                p2p_state.in_progress.store(false, Ordering::SeqCst);
-                emit_p2p_status(&app, StatusDto::Disconnected);
-                return Err(UiError::Internal {
-                    detail: e.to_string(),
-                });
-            }
-        };
+    // Look up the peer password if configured (None = no password challenge
+    // attempted). Both keyring schemes: the contact-endpoint-keyed account
+    // (with the lazy legacy migration when unambiguous) + the legacy
+    // callsign-keyed fallback — see `p2p_password_lookup`.
+    let peer_password = match p2p_password_lookup(&app, &req.peer_callsign) {
+        Ok(p) => p,
+        Err(detail) => {
+            p2p_state.in_progress.store(false, Ordering::SeqCst);
+            emit_p2p_status(&app, StatusDto::Disconnected);
+            return Err(UiError::Internal { detail });
+        }
+    };
 
     let config = ExchangeConfig {
         // req.my_callsign is advisory; mycall authority is the active SessionIdentity.
@@ -7976,18 +8056,18 @@ pub async fn telnet_p2p_connect(
     // when the operator aborted, and — if none of those set it — the
     // `DialAttempted` it was armed at (a pre-connect Resolve/Connect failure),
     // which classifies as Fail [R3-11].
-    let obs_guard = crate::peers::recorder::observation_sink().map(|s| {
-        crate::peers::recorder::ObservationGuard::new(
+    let obs_guard = crate::contacts::observation::observation_sink().map(|s| {
+        crate::contacts::observation::ObservationGuard::new(
             s,
-            crate::peers::recorder::PeerObservation {
-                path: crate::peers::recorder::ObservedPath::Telnet {
+            crate::contacts::observation::PeerObservation {
+                path: crate::contacts::observation::ObservedPath::Telnet {
                     host: req.host.clone(),
                     port: req.port,
-                    provenance: crate::peers::model::Provenance::Operator,
+                    provenance: crate::contacts::reachability::Provenance::Operator,
                 },
-                direction: crate::peers::model::Direction::Outgoing,
+                direction: crate::contacts::reachability::Direction::Outgoing,
                 presented_target: req.peer_callsign.clone(),
-                phase: crate::peers::recorder::ObservationPhase::DialAttempted,
+                phase: crate::contacts::observation::ObservationPhase::DialAttempted,
             },
         )
     });
@@ -8046,7 +8126,7 @@ pub async fn telnet_p2p_connect(
         Ok(exchange) => {
             // Outbound telnet dial completed the B2F exchange → B2fOk.
             if let Some(g) = &obs_guard {
-                g.set_phase(crate::peers::recorder::ObservationPhase::B2fOk);
+                g.set_phase(crate::contacts::observation::ObservationPhase::B2fOk);
             }
             // tuxlink-l55l: file received messages into Inbox and move
             // successfully-sent MIDs from Outbox to Sent, via
@@ -8095,14 +8175,14 @@ pub async fn telnet_p2p_connect(
             // its armed `DialAttempted` (both classify Fail [R3-11]).
             if let Some(g) = &obs_guard {
                 if was_aborted {
-                    g.set_phase(crate::peers::recorder::ObservationPhase::AbortedOrWedged);
+                    g.set_phase(crate::contacts::observation::ObservationPhase::AbortedOrWedged);
                 } else {
                     match &e {
                         crate::winlink::telnet_p2p::P2pTelnetError::Login(_) => {
-                            g.set_phase(crate::peers::recorder::ObservationPhase::LoginFailed);
+                            g.set_phase(crate::contacts::observation::ObservationPhase::LoginFailed);
                         }
                         crate::winlink::telnet_p2p::P2pTelnetError::Exchange(_) => {
-                            g.set_phase(crate::peers::recorder::ObservationPhase::B2fFail);
+                            g.set_phase(crate::contacts::observation::ObservationPhase::B2fFail);
                         }
                         crate::winlink::telnet_p2p::P2pTelnetError::Resolve { .. }
                         | crate::winlink::telnet_p2p::P2pTelnetError::Connect { .. } => {
@@ -9253,11 +9333,11 @@ mod tests {
         // intent. With the global sink INSTALLED, only Some(P2p) resolves it —
         // a RadioOnly inbound (armed listener, non-peer session) and a closed
         // session (None) record nothing. #[serial]: the sink is process-global.
-        let seen: std::sync::Arc<std::sync::Mutex<Vec<crate::peers::recorder::PeerObservation>>> =
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<crate::contacts::observation::PeerObservation>>> =
             std::sync::Arc::default();
         {
             let seen = seen.clone();
-            crate::peers::recorder::install_observation_sink(std::sync::Arc::new(move |o| {
+            crate::contacts::observation::install_observation_sink(std::sync::Arc::new(move |o| {
                 seen.lock().unwrap().push(o)
             }));
         }
@@ -9274,29 +9354,29 @@ mod tests {
         let sink = vara_answer_observation_sink(Some(SessionIntent::P2p))
             .expect("P2p resolves the installed sink");
         {
-            let g = crate::peers::recorder::ObservationGuard::new(
+            let g = crate::contacts::observation::ObservationGuard::new(
                 sink,
-                crate::peers::recorder::PeerObservation {
-                    path: crate::peers::recorder::ObservedPath::Rf {
-                        transport: crate::peers::model::ChannelTransport::VaraHf,
+                crate::contacts::observation::PeerObservation {
+                    path: crate::contacts::observation::ObservedPath::Rf {
+                        transport: crate::contacts::reachability::ChannelTransport::VaraHf,
                         via: vec![],
                         freq_hz: None,
                         bandwidth: None,
                     },
-                    direction: crate::peers::model::Direction::Incoming,
+                    direction: crate::contacts::reachability::Direction::Incoming,
                     presented_target: "N0DAJ-7".into(),
-                    phase: crate::peers::recorder::ObservationPhase::B2fStarted,
+                    phase: crate::contacts::observation::ObservationPhase::B2fStarted,
                 },
             );
-            g.set_phase(crate::peers::recorder::ObservationPhase::Accepted);
+            g.set_phase(crate::contacts::observation::ObservationPhase::Accepted);
         } // drop → record
         assert_eq!(seen.lock().unwrap().len(), 1);
         assert_eq!(
             seen.lock().unwrap()[0].phase,
-            crate::peers::recorder::ObservationPhase::Accepted
+            crate::contacts::observation::ObservationPhase::Accepted
         );
 
-        crate::peers::recorder::install_observation_sink(std::sync::Arc::new(|_| {})); // reset
+        crate::contacts::observation::install_observation_sink(std::sync::Arc::new(|_| {})); // reset
     }
 
     #[test]
@@ -9308,11 +9388,11 @@ mod tests {
         // the global sink INSTALLED, only Some(P2p) resolves it — a RadioOnly
         // inbound (armed listener, non-peer session) and a closed session
         // (None) record nothing. #[serial]: the sink is process-global.
-        let seen: std::sync::Arc<std::sync::Mutex<Vec<crate::peers::recorder::PeerObservation>>> =
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<crate::contacts::observation::PeerObservation>>> =
             std::sync::Arc::default();
         {
             let seen = seen.clone();
-            crate::peers::recorder::install_observation_sink(std::sync::Arc::new(move |o| {
+            crate::contacts::observation::install_observation_sink(std::sync::Arc::new(move |o| {
                 seen.lock().unwrap().push(o)
             }));
         }
@@ -9329,29 +9409,29 @@ mod tests {
         let sink = ardop_answer_observation_sink(Some(SessionIntent::P2p))
             .expect("P2p resolves the installed sink");
         {
-            let g = crate::peers::recorder::ObservationGuard::new(
+            let g = crate::contacts::observation::ObservationGuard::new(
                 sink,
-                crate::peers::recorder::PeerObservation {
-                    path: crate::peers::recorder::ObservedPath::Rf {
-                        transport: crate::peers::model::ChannelTransport::Ardop,
+                crate::contacts::observation::PeerObservation {
+                    path: crate::contacts::observation::ObservedPath::Rf {
+                        transport: crate::contacts::reachability::ChannelTransport::Ardop,
                         via: vec![],
                         freq_hz: None,
                         bandwidth: None,
                     },
-                    direction: crate::peers::model::Direction::Incoming,
+                    direction: crate::contacts::reachability::Direction::Incoming,
                     presented_target: "N0DAJ-7".into(),
-                    phase: crate::peers::recorder::ObservationPhase::B2fStarted,
+                    phase: crate::contacts::observation::ObservationPhase::B2fStarted,
                 },
             );
-            g.set_phase(crate::peers::recorder::ObservationPhase::Accepted);
+            g.set_phase(crate::contacts::observation::ObservationPhase::Accepted);
         } // drop → record
         assert_eq!(seen.lock().unwrap().len(), 1);
         assert_eq!(
             seen.lock().unwrap()[0].phase,
-            crate::peers::recorder::ObservationPhase::Accepted
+            crate::contacts::observation::ObservationPhase::Accepted
         );
 
-        crate::peers::recorder::install_observation_sink(std::sync::Arc::new(|_| {})); // reset
+        crate::contacts::observation::install_observation_sink(std::sync::Arc::new(|_| {})); // reset
     }
 
     #[test]
@@ -10347,7 +10427,7 @@ hw:CARD=Device,DEV=0
     fn cms_config_fixture() -> Config {
         Config {
             elmer: crate::config::ElmerConfig::default(),
-            p2p_limits: crate::peers::limiter::P2pLimitsConfig::default(),
+            p2p_limits: crate::contacts::limiter::P2pLimitsConfig::default(),
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: ConnectConfig {
@@ -10701,7 +10781,7 @@ hw:CARD=Device,DEV=0
         };
         let cfg = Config {
             elmer: crate::config::ElmerConfig::default(),
-            p2p_limits: crate::peers::limiter::P2pLimitsConfig::default(),
+            p2p_limits: crate::contacts::limiter::P2pLimitsConfig::default(),
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: ConnectConfig {
@@ -12278,7 +12358,7 @@ hw:CARD=Device,DEV=0
         };
         config::Config {
             elmer: crate::config::ElmerConfig::default(),
-            p2p_limits: crate::peers::limiter::P2pLimitsConfig::default(),
+            p2p_limits: crate::contacts::limiter::P2pLimitsConfig::default(),
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
             connect: ConnectConfig {

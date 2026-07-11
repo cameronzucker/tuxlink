@@ -381,8 +381,8 @@ where
             // IS a rejected burst the spoofing-loop quarantine counter must see.
             // Telnet has no ChannelTransport of its own → the Unknown bucket
             // (queued-decision 1; see the fn docs on that bucket).
-            crate::peers::recorder::record_inbound_reject(
-                crate::peers::model::ChannelTransport::Unknown,
+            crate::contacts::observation::record_inbound_reject(
+                crate::contacts::reachability::ChannelTransport::Unknown,
             );
             return Ok(ExchangeResult::default());
         }
@@ -392,8 +392,8 @@ where
             ));
             let _ = writer.write_all(WIRE_REJECT_EXPIRED);
             wire_log("> *** Listener is not armed");
-            crate::peers::recorder::record_inbound_reject(
-                crate::peers::model::ChannelTransport::Unknown,
+            crate::contacts::observation::record_inbound_reject(
+                crate::contacts::reachability::ChannelTransport::Unknown,
             );
             return Ok(ExchangeResult::default());
         }
@@ -461,8 +461,8 @@ where
             ));
             let _ = writer.write_all(WIRE_REJECT_PASSWORD);
             wire_log("> *** Incorrect station password specified");
-            crate::peers::recorder::record_inbound_reject(
-                crate::peers::model::ChannelTransport::Unknown,
+            crate::contacts::observation::record_inbound_reject(
+                crate::contacts::reachability::ChannelTransport::Unknown,
             );
             return Ok(ExchangeResult::default());
         }
@@ -479,8 +479,8 @@ where
             ));
             let _ = writer.write_all(WIRE_REJECT_EXPIRED);
             wire_log("> *** Listener is not armed");
-            crate::peers::recorder::record_inbound_reject(
-                crate::peers::model::ChannelTransport::Unknown,
+            crate::contacts::observation::record_inbound_reject(
+                crate::contacts::reachability::ChannelTransport::Unknown,
             );
             return Ok(ExchangeResult::default());
         }
@@ -495,8 +495,8 @@ where
                 "Rejecting {peer_addr} — allowlist re-check failed (race?)"
             ));
             let _ = writer.write_all(WIRE_REJECT_ALLOWLIST);
-            crate::peers::recorder::record_inbound_reject(
-                crate::peers::model::ChannelTransport::Unknown,
+            crate::contacts::observation::record_inbound_reject(
+                crate::contacts::reachability::ChannelTransport::Unknown,
             );
             return Ok(ExchangeResult::default());
         }
@@ -521,18 +521,18 @@ where
     } else {
         format!("{}-{}", claimed.call, claimed.ssid)
     };
-    let obs_guard = crate::peers::recorder::observation_sink().map(|s| {
-        crate::peers::recorder::ObservationGuard::new(
+    let obs_guard = crate::contacts::observation::observation_sink().map(|s| {
+        crate::contacts::observation::ObservationGuard::new(
             s,
-            crate::peers::recorder::PeerObservation {
-                path: crate::peers::recorder::ObservedPath::Telnet {
+            crate::contacts::observation::PeerObservation {
+                path: crate::contacts::observation::ObservedPath::Telnet {
                     host: peer_addr.ip().to_string(),
                     port: DEFAULT_PORT,
-                    provenance: crate::peers::model::Provenance::ObservedIncoming,
+                    provenance: crate::contacts::reachability::Provenance::ObservedIncoming,
                 },
-                direction: crate::peers::model::Direction::Incoming,
+                direction: crate::contacts::reachability::Direction::Incoming,
                 presented_target,
-                phase: crate::peers::recorder::ObservationPhase::B2fStarted,
+                phase: crate::contacts::observation::ObservationPhase::B2fStarted,
             },
         )
     });
@@ -557,8 +557,8 @@ where
     );
     if let Some(g) = &obs_guard {
         match &result {
-            Ok(_) => g.set_phase(crate::peers::recorder::ObservationPhase::Accepted),
-            Err(_) => g.set_phase(crate::peers::recorder::ObservationPhase::B2fFail),
+            Ok(_) => g.set_phase(crate::contacts::observation::ObservationPhase::Accepted),
+            Err(_) => g.set_phase(crate::contacts::observation::ObservationPhase::B2fFail),
         }
     }
     drop(obs_guard);
@@ -1530,10 +1530,10 @@ mod tests {
     /// Restore both process-globals to a clean state at the end of each serial
     /// record-site test so a later test never inherits a stale sink/limiter.
     fn reset_peer_globals() {
-        crate::peers::recorder::install_observation_sink(std::sync::Arc::new(|_| {}));
-        crate::peers::recorder::install_inbound_limiter(std::sync::Arc::new(std::sync::Mutex::new(
-            crate::peers::limiter::InboundCreateLimiter::new(
-                crate::peers::limiter::P2pLimitsConfig::default(),
+        crate::contacts::observation::install_observation_sink(std::sync::Arc::new(|_| {}));
+        crate::contacts::observation::install_inbound_limiter(std::sync::Arc::new(std::sync::Mutex::new(
+            crate::contacts::limiter::InboundCreateLimiter::new(
+                crate::contacts::limiter::P2pLimitsConfig::default(),
             ),
         )));
     }
@@ -1549,10 +1549,10 @@ mod tests {
         // no record site (that lives in the `telnet_p2p_connect` command), so
         // exactly one observation is expected. 60s socket timeouts on both ends
         // are the backstop against a hung exchange.
-        let seen: Arc<Mutex<Vec<crate::peers::recorder::PeerObservation>>> = Arc::default();
+        let seen: Arc<Mutex<Vec<crate::contacts::observation::PeerObservation>>> = Arc::default();
         {
             let seen = seen.clone();
-            crate::peers::recorder::install_observation_sink(Arc::new(move |o| {
+            crate::contacts::observation::install_observation_sink(Arc::new(move |o| {
                 seen.lock().unwrap().push(o)
             }));
         }
@@ -1614,22 +1614,22 @@ mod tests {
 
         let obs = seen.lock().unwrap();
         assert_eq!(obs.len(), 1, "exactly one inbound observation from the listener");
-        assert_eq!(obs[0].direction, crate::peers::model::Direction::Incoming);
+        assert_eq!(obs[0].direction, crate::contacts::reachability::Direction::Incoming);
         match &obs[0].path {
-            crate::peers::recorder::ObservedPath::Telnet {
+            crate::contacts::observation::ObservedPath::Telnet {
                 host,
                 port: p,
                 provenance,
             } => {
                 assert_eq!(host, "127.0.0.1");
                 assert_eq!(*p, DEFAULT_PORT, "claimed back-dial port is the P2P convention, not the ephemeral source port");
-                assert_eq!(*provenance, crate::peers::model::Provenance::ObservedIncoming);
+                assert_eq!(*provenance, crate::contacts::reachability::Provenance::ObservedIncoming);
             }
             other => panic!("expected a Telnet path, got {other:?}"),
         }
         assert_eq!(
-            crate::peers::recorder::classify(obs[0].phase),
-            crate::peers::recorder::Classified::Ok,
+            crate::contacts::observation::classify(obs[0].phase),
+            crate::contacts::observation::Classified::Ok,
             "a completed inbound answer classifies Ok"
         );
         drop(obs);
@@ -1644,20 +1644,20 @@ mod tests {
         // counter. `failed_per_minute = 0` makes the very first reject
         // over-budget → quarantined() == 1, proving the REAL reject path invoked
         // record_inbound_reject.
-        let seen: Arc<Mutex<Vec<crate::peers::recorder::PeerObservation>>> = Arc::default();
+        let seen: Arc<Mutex<Vec<crate::contacts::observation::PeerObservation>>> = Arc::default();
         {
             let seen = seen.clone();
-            crate::peers::recorder::install_observation_sink(Arc::new(move |o| {
+            crate::contacts::observation::install_observation_sink(Arc::new(move |o| {
                 seen.lock().unwrap().push(o)
             }));
         }
-        let limiter = Arc::new(Mutex::new(crate::peers::limiter::InboundCreateLimiter::new(
-            crate::peers::limiter::P2pLimitsConfig {
+        let limiter = Arc::new(Mutex::new(crate::contacts::limiter::InboundCreateLimiter::new(
+            crate::contacts::limiter::P2pLimitsConfig {
                 accepted_per_hour: 100,
                 failed_per_minute: 0,
             },
         )));
-        crate::peers::recorder::install_inbound_limiter(limiter.clone());
+        crate::contacts::observation::install_inbound_limiter(limiter.clone());
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -1720,26 +1720,28 @@ mod tests {
         // applies no charset filter and `allow_all` defaults TRUE, so a claimed
         // callsign carrying arbitrary attacker bytes (`<b>EVIL</b>`) passes the
         // allowlist gate and reaches `Accepted`. The write boundary is
-        // downstream: `record_peer_observation` → `PeersStore::apply_observation`
-        // drops any presented callsign failing `validate_presented_callsign`.
-        // Wire a REAL temp `PeersStore` + `InboundCreateLimiter` into the sink
-        // (CDX-7: drive `record_peer_observation`/`apply_observation`, not a
-        // hand-rolled assertion) and assert the store stays empty end-to-end.
+        // downstream: `record_contact_observation` →
+        // `ContactsStore::apply_observation` drops any presented callsign
+        // failing `validate_presented_callsign`. Wire a REAL temp
+        // `ContactsStore` + `InboundCreateLimiter` into the sink (CDX-7: drive
+        // `record_contact_observation`/`apply_observation`, not a hand-rolled
+        // assertion) and assert the store stays empty end-to-end.
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(Mutex::new(crate::peers::store::PeersStore::open(
-            dir.path().join("peers.json"),
+        let store = Arc::new(Mutex::new(crate::contacts::store::ContactsStore::open(
+            dir.path().join("contacts.json"),
         )));
-        let limiter = Arc::new(Mutex::new(crate::peers::limiter::InboundCreateLimiter::new(
-            crate::peers::limiter::P2pLimitsConfig::default(),
+        let limiter = Arc::new(Mutex::new(crate::contacts::limiter::InboundCreateLimiter::new(
+            crate::contacts::limiter::P2pLimitsConfig::default(),
         )));
         {
             let store = store.clone();
             let limiter = limiter.clone();
-            crate::peers::recorder::install_observation_sink(Arc::new(move |obs| {
-                let _ = crate::peers::recorder::record_peer_observation(&store, &limiter, obs);
+            crate::contacts::observation::install_observation_sink(Arc::new(move |obs| {
+                let _ =
+                    crate::contacts::observation::record_contact_observation(&store, &limiter, obs);
             }));
         }
-        crate::peers::recorder::install_inbound_limiter(limiter.clone());
+        crate::contacts::observation::install_inbound_limiter(limiter.clone());
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -1804,7 +1806,7 @@ mod tests {
         let _ = client.join().unwrap();
 
         assert!(
-            store.lock().unwrap().file().peers.is_empty(),
+            store.lock().unwrap().file().contacts.is_empty(),
             "a hostile CALLSIGN-phase claim must never create a roster record"
         );
         reset_peer_globals();
