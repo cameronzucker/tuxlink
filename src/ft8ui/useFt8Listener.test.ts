@@ -243,6 +243,42 @@ describe('useFt8Listener — race-safe hydration', () => {
     expect(withT).toHaveLength(1); // present exactly once — not lost, not doubled
   });
 
+  it('keeps a LIVE-ONLY gap-window slot absent from ring_tail (isolates live-capture from tail-recovery)', async () => {
+    // Reviewer finding (fix round 1): the dedupe test above cannot distinguish
+    // "captured live" from "recovered from ring_tail" because the slot is in
+    // BOTH. Here the gap-window live slot (LIVE_T) is NOT in the resolved
+    // snapshot's ring_tail — its only path into the ring is the live handler.
+    // If a regression dropped gap-window live events, this slot would vanish
+    // and the test would go RED (verified below by stubbing the handler).
+    const LIVE_T = 1700000005000;
+    const TAIL_T = 1700000000000;
+    const d = deferred<Ft8Snapshot>();
+    invokeMock.mockImplementation(async (cmd?: string) => {
+      if (cmd === 'ft8_listener_snapshot') return d.promise;
+      return undefined;
+    });
+
+    const { result } = renderHook(() => useFt8Listener(), { wrapper });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    // Live-only slot arrives in the pending-snapshot gap.
+    emitSlot(makeSlot(LIVE_T));
+
+    // Snapshot resolves with a DIFFERENT slot in ring_tail (LIVE_T absent).
+    await act(async () => {
+      d.resolve(makeSnapshot({ ringTail: [makeSlot(TAIL_T)] }));
+      await Promise.resolve();
+    });
+    await flush();
+
+    // The live-only slot survived hydration exactly once (live-capture proven).
+    expect(result.current.decodesRing.filter((r) => r.slotUtcMs === LIVE_T)).toHaveLength(1);
+    // And the tail slot is present too (merge did not clobber the live entry).
+    expect(result.current.decodesRing.filter((r) => r.slotUtcMs === TAIL_T)).toHaveLength(1);
+    expect(result.current.decodesRing).toHaveLength(2);
+  });
+
   it('applies a ft8-listening:change that arrives in the gap before the snapshot', async () => {
     const d = deferred<Ft8Snapshot>();
     invokeMock.mockImplementation(async (cmd?: string) => {
