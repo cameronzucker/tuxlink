@@ -456,6 +456,18 @@ pub enum StationModeDto {
     RobustPacket,
 }
 
+/// Which VARA engine an agent egress dial should use. Mirrors the monolith's
+/// `TransportKind::VaraHf` / `TransportKind::VaraFm` split (Task 4); `None` at
+/// the call site maps to [`VaraEngineDto::VaraHf`] (backward-compatible with
+/// every existing caller). Take this from the target peer channel's
+/// `transport` field — do not guess.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum VaraEngineDto {
+    VaraHf,
+    VaraFm,
+}
+
 /// A gateway's antenna type, used as an optional prediction parameter. Lowercase
 /// on the wire (`beam` / `dipole` / `vertical`).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
@@ -890,13 +902,17 @@ pub trait EgressPort: Send + Sync {
     /// Run a VARA B2F message exchange with `target` for the given `intent`.
     /// VARA differs from ARDOP: its B2F connects + tunes + exchanges in a single
     /// call, so `freq_hz` / `qsy_candidates` are live here (same pre-tune + QSY
-    /// semantics as [`EgressPort::ardop_connect`]).
+    /// semantics as [`EgressPort::ardop_connect`]). `engine` selects which VARA
+    /// engine the target uses (`None` → [`VaraEngineDto::VaraHf`], the
+    /// backward-compatible default) — take it from the target peer channel's
+    /// `transport` field, never guess.
     async fn vara_b2f_exchange(
         &self,
         target: String,
         intent: SessionIntentDto,
         freq_hz: Option<u64>,
         qsy_candidates: Option<Vec<QsyCandidateDto>>,
+        engine: Option<VaraEngineDto>,
     ) -> Result<(), EgressPortError>;
     /// Open the VARA session: install the TCP transport to the local VARA
     /// engine and register MYCALL (the on-air station ID). PRE-AIR by itself
@@ -905,9 +921,15 @@ pub trait EgressPort: Send + Sync {
     /// `rig_status` posture: an un-armed agent must not be able to open
     /// transmit-capable state). Required before
     /// [`EgressPort::vara_b2f_exchange`]; closed via the ungated
-    /// [`AbortPort::vara_stop_session`]. Pins VARA-HF (parity with the
-    /// exchange tool's pin).
-    async fn vara_open_session(&self, intent: SessionIntentDto) -> Result<(), EgressPortError>;
+    /// [`AbortPort::vara_stop_session`]. `engine` selects which VARA engine to
+    /// open (`None` → [`VaraEngineDto::VaraHf`], parity with the exchange
+    /// tool's default) — take it from the target peer channel's `transport`
+    /// field, never guess.
+    async fn vara_open_session(
+        &self,
+        intent: SessionIntentDto,
+        engine: Option<VaraEngineDto>,
+    ) -> Result<(), EgressPortError>;
     /// Connect an AX.25 packet session to `call` over the optional digipeater
     /// `path`.
     async fn packet_connect(&self, call: String, path: Vec<String>) -> Result<(), EgressPortError>;

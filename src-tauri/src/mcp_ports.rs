@@ -47,8 +47,8 @@ use tuxlink_mcp_core::ports::{
     RigStatusDto, RunningModemDto, SearchPort, SearchQueryDto, SearchResultsDto,
     SelectedConnectionDto, SendFormDto, SerialDeviceDto, SessionIntentDto, SolarSnapshotDto,
     StagedRecordDto, StationFilterDto, StationListDto, StationModeDto, StationPort, StatusPort,
-    VaraCheckpointDto, VaraConfigDto, VaraInstallStatusDto, VaraInstallSummaryDto, VaraProbeDto,
-    VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
+    VaraCheckpointDto, VaraConfigDto, VaraEngineDto, VaraInstallStatusDto, VaraInstallSummaryDto,
+    VaraProbeDto, VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
 };
 use tuxlink_mcp_core::validate::{
     validate_address, validate_attachment_dest, validate_body, validate_drive_level,
@@ -77,6 +77,45 @@ use tuxlink_security::{guarded_egress, EgressAudit, EgressAuthority, EgressGuard
 /// are policy strings (arm/taint/poison state), never underlying protocol text.
 fn redact_err(s: String) -> String {
     crate::winlink::redaction::redact_freeform(&s).into_owned()
+}
+
+// ---------------------------------------------------------------------------
+// VARA engine dispatch [R5-1].
+// ---------------------------------------------------------------------------
+
+/// Map the agent-facing [`VaraEngineDto`] onto the monolith's
+/// [`TransportKind`](crate::winlink::listener::transport::TransportKind).
+/// `None` (every caller before this task, and any caller that omits the new
+/// `engine` param) defaults to `VaraHf` — backward-compatible with the
+/// pre-split HF-only pin.
+fn map_vara_engine(
+    engine: Option<VaraEngineDto>,
+) -> crate::winlink::listener::transport::TransportKind {
+    match engine {
+        Some(VaraEngineDto::VaraFm) => crate::winlink::listener::transport::TransportKind::VaraFm,
+        _ => crate::winlink::listener::transport::TransportKind::VaraHf,
+    }
+}
+
+#[cfg(test)]
+mod vara_engine_dispatch_tests {
+    use super::*;
+
+    #[test]
+    fn vara_engine_dto_maps_to_transport_kind_with_hf_default() {
+        assert_eq!(
+            map_vara_engine(None),
+            crate::winlink::listener::transport::TransportKind::VaraHf
+        );
+        assert_eq!(
+            map_vara_engine(Some(VaraEngineDto::VaraHf)),
+            crate::winlink::listener::transport::TransportKind::VaraHf
+        );
+        assert_eq!(
+            map_vara_engine(Some(VaraEngineDto::VaraFm)),
+            crate::winlink::listener::transport::TransportKind::VaraFm
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1298,10 +1337,12 @@ impl EgressPort for MonolithEgressPort {
         intent: SessionIntentDto,
         freq_hz: Option<u64>,
         qsy_candidates: Option<Vec<QsyCandidateDto>>,
+        engine: Option<VaraEngineDto>,
     ) -> Result<(), EgressPortError> {
         let audit = egress_audit_sink(self.app.clone());
         let app = self.app.clone();
         let qsy = map_qsy_candidates(qsy_candidates);
+        let transport_kind = map_vara_engine(engine);
         guarded_egress(
             &self.guard,
             EgressAuthority::Agent,
@@ -1309,9 +1350,12 @@ impl EgressPort for MonolithEgressPort {
             &audit,
             || async move {
                 // vara/commands.rs:1548 modem_vara_b2f_exchange — VARA CONNECT
-                // is LIVE here; the gate runs the real path. Pin VARA-HF (the
-                // operationally-confirmed G90 + VARA HF Standard path); the
-                // command validates the kind is VaraHf | VaraFm.
+                // is LIVE here; the gate runs the real path. `map_vara_engine`
+                // dispatches on the caller-supplied `engine` DTO (`None` →
+                // VaraHf, the backward-compatible default) [R5-1]: an agent
+                // acting on a `vara-fm` peer channel must dial FM, not the
+                // operationally-confirmed G90 + VARA HF Standard path. The
+                // command still validates the kind is VaraHf | VaraFm.
                 // tuxlink-wxwlr: thread the agent-supplied freq_hz + QSY
                 // candidate list (tuxlink-8fkkk freq_hz / qsy_candidates params);
                 // `None`/empty → single dial of `target`.
@@ -1321,7 +1365,7 @@ impl EgressPort for MonolithEgressPort {
                     app.state::<Arc<crate::winlink::modem::vara::VaraSession>>(),
                     target,
                     map_session_intent(intent),
-                    crate::winlink::listener::transport::TransportKind::VaraHf,
+                    transport_kind,
                     freq_hz,
                     qsy,
                     // tuxlink-0ye6 Task 5: no digipeater path from the agent
@@ -1337,9 +1381,14 @@ impl EgressPort for MonolithEgressPort {
         .map_err(|d| EgressPortError::Denied(d.to_string()))?
     }
 
-    async fn vara_open_session(&self, intent: SessionIntentDto) -> Result<(), EgressPortError> {
+    async fn vara_open_session(
+        &self,
+        intent: SessionIntentDto,
+        engine: Option<VaraEngineDto>,
+    ) -> Result<(), EgressPortError> {
         let audit = egress_audit_sink(self.app.clone());
         let app = self.app.clone();
+        let transport_kind = map_vara_engine(engine);
         guarded_egress(
             &self.guard,
             EgressAuthority::Agent,
@@ -1351,15 +1400,17 @@ impl EgressPort for MonolithEgressPort {
                 // identity. PRE-AIR (no RF leaves the radio), but it stands up
                 // transmit-capable state, so it runs behind the same Agent
                 // egress gate as the dial (the rig_status posture: no un-armed
-                // agent opens a transmit-capable surface). Pin VaraHf —
-                // parity with vara_b2f_exchange's pin (tuxlink-cgna5).
+                // agent opens a transmit-capable surface). `map_vara_engine`
+                // dispatches on the caller-supplied `engine` DTO (`None` →
+                // VaraHf) — parity with vara_b2f_exchange's dispatch
+                // [R5-1] (tuxlink-cgna5).
                 crate::winlink::modem::vara::commands::vara_open_session(
                     app.clone(),
                     app.state::<Arc<crate::winlink::modem::vara::VaraSession>>(),
                     app.state::<Arc<crate::session_log::SessionLogState>>(),
                     app.state::<Arc<crate::ui_commands::VaraListenState>>(),
                     map_session_intent(intent),
-                    crate::winlink::listener::transport::TransportKind::VaraHf,
+                    transport_kind,
                 )
                 .await
                 .map(|_status| ())

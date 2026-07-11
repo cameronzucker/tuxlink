@@ -338,7 +338,7 @@ pub fn p2p_capabilities() -> P2pCapabilities {
         settings_editor: false,
         agent_find_peers: true, // Task 19 (R5-8 row 4): the find_peers agent tool landed.
         agent_telnet_dial: true, // Task 20 (R5-8 row 7): the agent telnet-dial path landed.
-        vara_engine_split: false,
+        vara_engine_split: true, // Task 21 (R5-8 row 9): agent VARA egress dispatches on engine.
         favorites_peer_link: true, // Task 17 (R5-7): the favorites↔peer bridge landed.
     }
 }
@@ -358,7 +358,8 @@ mod tests {
     fn capabilities_report_only_landed_rows_true() {
         // Task 11 lands rows 1-2 (store + recorder); Task 17 lands row 10 (the
         // favorites↔peer bridge); Task 19 lands row 4 (the find_peers agent tool);
-        // Task 20 lands row 7 (the agent telnet-dial path).
+        // Task 20 lands row 7 (the agent telnet-dial path); Task 21 lands row 9
+        // (the VARA engine split).
         // Every OTHER bit stays false until its own task flips it — this guards
         // against an accidental early flip and pins Task 28's completeness baseline.
         let c = p2p_capabilities();
@@ -368,7 +369,7 @@ mod tests {
         assert!(!c.settings_editor);
         assert!(c.agent_find_peers, "Task 19 lands the find_peers agent tool");
         assert!(c.agent_telnet_dial, "Task 20 lands the agent telnet-dial path");
-        assert!(!c.vara_engine_split);
+        assert!(c.vara_engine_split, "Task 21 lands the VARA engine split");
         assert!(c.favorites_peer_link, "Task 17 lands the favorites↔peer bridge");
     }
 

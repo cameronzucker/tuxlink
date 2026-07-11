@@ -165,8 +165,8 @@ pub mod test_support {
         PeerListDto, QsyCandidateDto, RigConfigDto, RigStatusDto, SearchPort, SearchQueryDto,
         SearchResultsDto, SendFormDto, SerialDeviceDto, SessionIntentDto, SolarSnapshotDto,
         StationFilterDto, StationListDto, StationModeDto, StationPort, StatusPort, VaraCheckpointDto,
-        VaraConfigDto, VaraInstallStatusDto, VaraInstallSummaryDto, VaraProbeDto, VaraStatusDto,
-        VaraWriteDto, WritePort, WritePortError,
+        VaraConfigDto, VaraEngineDto, VaraInstallStatusDto, VaraInstallSummaryDto, VaraProbeDto,
+        VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
     };
     use crate::validate::{
         validate_address, validate_attachment_dest, validate_body, validate_drive_level,
@@ -496,12 +496,14 @@ pub mod test_support {
             _intent: SessionIntentDto,
             _freq_hz: Option<u64>,
             _qsy_candidates: Option<Vec<QsyCandidateDto>>,
+            _engine: Option<VaraEngineDto>,
         ) -> Result<(), EgressPortError> {
             self.gated("vara_b2f_exchange").await
         }
         async fn vara_open_session(
             &self,
             _intent: SessionIntentDto,
+            _engine: Option<VaraEngineDto>,
         ) -> Result<(), EgressPortError> {
             self.gated("vara_open_session").await
         }

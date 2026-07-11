@@ -24,8 +24,8 @@ use tuxlink_mcp_core::ports::{
     RigStatusDto, SearchPort, SearchQueryDto, SearchResultsDto, SendFormDto, SerialDeviceDto,
     SessionIntentDto,
     SolarSnapshotDto, StationFilterDto, StationListDto, StationModeDto, StationPort, StatusPort,
-    VaraCheckpointDto, VaraConfigDto, VaraInstallStatusDto, VaraInstallSummaryDto, VaraProbeDto,
-    VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
+    VaraCheckpointDto, VaraConfigDto, VaraEngineDto, VaraInstallStatusDto, VaraInstallSummaryDto,
+    VaraProbeDto, VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
 };
 use tuxlink_mcp_core::validate::{
     validate_address, validate_attachment_dest, validate_body, validate_drive_level,
@@ -356,10 +356,15 @@ impl EgressPort for MockEgress {
         _intent: SessionIntentDto,
         _freq_hz: Option<u64>,
         _qsy_candidates: Option<Vec<QsyCandidateDto>>,
+        _engine: Option<VaraEngineDto>,
     ) -> Result<(), EgressPortError> {
         self.gated("vara_b2f_exchange").await
     }
-    async fn vara_open_session(&self, _intent: SessionIntentDto) -> Result<(), EgressPortError> {
+    async fn vara_open_session(
+        &self,
+        _intent: SessionIntentDto,
+        _engine: Option<VaraEngineDto>,
+    ) -> Result<(), EgressPortError> {
         self.gated("vara_open_session").await
     }
     async fn packet_connect(
