@@ -479,10 +479,10 @@ fn keyring_targets(env: &CleanupEnv, warnings: &mut Vec<String>) -> Vec<KeyringT
         });
     }
 
-    for (peer_id, endpoint_id) in discover_peer_endpoint_ids(env) {
+    for (owner_id, endpoint_id) in discover_peer_endpoint_ids(env) {
         out.push(KeyringTarget {
             service: KEYRING_SERVICE.into(),
-            account: format!("p2p-endpoint:{peer_id}:{endpoint_id}"),
+            account: format!("p2p-endpoint:{owner_id}:{endpoint_id}"),
             description: "P2P endpoint password".into(),
         });
     }
