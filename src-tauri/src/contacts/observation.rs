@@ -384,7 +384,7 @@ pub fn bridge_to_favorites(
         transport: None,
         band: None,
         grid: None,
-        peer_id: None,
+        contact_id: None,
     };
     if let Ok(mut f) = favorites.lock() {
         if let Err(e) = f.record_attempt(

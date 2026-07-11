@@ -26,12 +26,12 @@ describe('dialToNewFavorite (tuxlink-5016)', () => {
     expect(fav.band).toBe('internet');
   });
 
-  it('carries peer_id through when present ([R5-7]); absent for an ordinary dial', () => {
-    const withPeer = dialToNewFavorite({ mode: 'vara-hf', gateway: 'N0DAJ', peer_id: 'p1' });
-    expect(withPeer.peer_id).toBe('p1');
+  it('carries contact_id through when present ([R5-7]); absent for an ordinary dial', () => {
+    const withPeer = dialToNewFavorite({ mode: 'vara-hf', gateway: 'N0DAJ', contact_id: 'p1' });
+    expect(withPeer.contact_id).toBe('p1');
 
     const withoutPeer = dialToNewFavorite({ mode: 'vara-hf', gateway: 'N0DAJ' });
-    expect(withoutPeer.peer_id).toBeUndefined();
+    expect(withoutPeer.contact_id).toBeUndefined();
   });
 });
 

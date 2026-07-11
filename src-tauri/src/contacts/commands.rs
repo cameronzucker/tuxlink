@@ -182,7 +182,7 @@ pub fn contact_delete(
     }
     {
         let mut store = favorites.lock().expect("favorites store mutex poisoned");
-        if let Err(e) = store.delete_by_peer_id(&id) {
+        if let Err(e) = store.delete_by_contact_id(&id) {
             tracing::warn!(
                 target: "tuxlink::contacts",
                 contact_id = %id,
@@ -750,7 +750,7 @@ mod tests {
             transport: None,
             band: None,
             grid: None,
-            peer_id: None,
+            contact_id: None,
         }
     }
 

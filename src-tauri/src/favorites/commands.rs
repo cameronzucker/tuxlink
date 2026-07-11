@@ -194,7 +194,7 @@ mod tests {
             band: Some("20m".to_string()),
             grid: Some("CN87".to_string()),
             note: None,
-            peer_id: None,
+            contact_id: None,
             starred: false,
             last_attempt_at: None,
             created_at: String::new(),
@@ -298,7 +298,7 @@ mod tests {
                     transport: None,
                     band: Some("20m".to_string()),
                     grid: Some("CN87".to_string()),
-                    peer_id: None,
+                    contact_id: None,
                 },
                 "reached".to_string(),
                 "2026-06-07T10:00:00-07:00".to_string(),
@@ -328,7 +328,7 @@ mod tests {
             band: Some("20m".to_string()),
             grid: Some("CN87".to_string()),
             note: Some("edited note".to_string()),
-            peer_id: None,
+            contact_id: None,
             starred: false,                                       // STALE
             last_attempt_at: None,                                // STALE
             created_at: "1999-01-01T00:00:00+00:00".to_string(), // STALE
@@ -380,7 +380,7 @@ mod tests {
             transport: None,
             band: Some("20m".to_string()),
             grid: Some("CN87".to_string()),
-            peer_id: None,
+            contact_id: None,
         };
         store
             .record_attempt(

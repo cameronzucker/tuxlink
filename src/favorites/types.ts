@@ -14,7 +14,7 @@ export type RadioMode = 'vara-hf' | 'vara-fm' | 'ardop-hf' | 'packet' | 'telnet'
 /// the join key for `ConnectionAttempt.unit_id`. `last_attempt_at` is bumped on
 /// every recorded attempt and is the LRU-dialed eviction key (M3). `freq` is
 /// record-only metadata (never read back into a form, H8). `transport` is the
-/// telnet-only `"CmsSsl" | "Telnet"` discriminator (H7). `peer_id` [R5-7] links
+/// telnet-only `"CmsSsl" | "Telnet"` discriminator (H7). `contact_id` [R5-7] links
 /// this favorite to a P2P roster entry when the recent originated from (or was
 /// matched to) a peer.
 export interface Favorite {
@@ -26,7 +26,7 @@ export interface Favorite {
   band?: string;
   grid?: string;
   note?: string;
-  peer_id?: string;
+  contact_id?: string;
   starred: boolean;
   last_attempt_at?: string;
   created_at: string;
@@ -45,8 +45,8 @@ export interface ConnectionAttempt {
 
 /// The record-path DTO (H3/Codex#8). Carries everything needed to upsert/find
 /// the unit; the client passes this (NOT a `unit_id`) to `favorite_record_attempt`.
-/// `peer_id` [R5-7] carries the P2P roster link through to a brand-new
-/// recent's `Favorite.peer_id`.
+/// `contact_id` [R5-7] carries the P2P roster link through to a brand-new
+/// recent's `Favorite.contact_id`.
 export interface FavoriteDial {
   mode: RadioMode;
   gateway: string;
@@ -54,7 +54,7 @@ export interface FavoriteDial {
   transport?: 'CmsSsl' | 'Telnet';
   band?: string;
   grid?: string;
-  peer_id?: string;
+  contact_id?: string;
 }
 
 /// The whole on-disk stations file (mirrors Rust StationsFile), returned by
