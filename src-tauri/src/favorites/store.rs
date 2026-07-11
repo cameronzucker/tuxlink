@@ -627,6 +627,35 @@ impl FavoritesStore {
         self.flush()
     }
 
+    /// Remove every favorite whose [`Favorite::peer_id`] equals `peer_id`
+    /// (no-op if none match) AND sweep their orphaned log entries — the same
+    /// M2 cleanup [`Self::favorite_delete`] performs, generalized to every
+    /// unit a deleted peer's starred/recent channel back-links to [R4-12].
+    ///
+    /// A `peer_id` can legitimately back multiple favorites (e.g. the same
+    /// peer dialed in two modes each mint their own `Favorite`, per
+    /// [`Self::record_attempt`]'s [R5-7] carry-through) — every one of them is
+    /// removed, not just the first match, so a peer delete never orphans a
+    /// star. Flushes once, after all removals, iff at least one favorite
+    /// matched (a no-op call does not touch the file's mtime).
+    pub fn delete_by_peer_id(&mut self, peer_id: &str) -> Result<(), FavoritesError> {
+        let dropped_ids: Vec<String> = self
+            .file
+            .favorites
+            .iter()
+            .filter(|f| f.peer_id.as_deref() == Some(peer_id))
+            .map(|f| f.id.clone())
+            .collect();
+        if dropped_ids.is_empty() {
+            return Ok(());
+        }
+        self.file
+            .favorites
+            .retain(|f| f.peer_id.as_deref() != Some(peer_id));
+        self.file.log.retain(|a| !dropped_ids.contains(&a.unit_id));
+        self.flush()
+    }
+
     /// Record a connection attempt against the unit identified by `dial`.
     ///
     /// The record path (H3):
@@ -1181,6 +1210,58 @@ mod tests {
             store.log().is_empty(),
             "delete must sweep the unit's orphaned log entries (M2)"
         );
+    }
+
+    #[test]
+    fn deleting_a_peer_id_favorite_does_not_orphan_the_star() {
+        // [R4-12]: a starred peer channel carries peer_id; the favorite is
+        // resolvable back to its peer and cleaned on peer delete.
+        // (Exercises FavoritesStore's peer_id-aware delete helper.)
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stations.json");
+        let mut store = FavoritesStore::open(path);
+
+        // A starred favorite linked to the peer, plus an attempt on it.
+        let mut starred = favorite("f-star", "vara-hf", "KK6XYZ");
+        starred.peer_id = Some("p1".to_string());
+        starred.starred = true;
+        store.favorite_upsert(starred).unwrap();
+        store.file.log.push(attempt("f-star", "2026-07-10T10:00:00-07:00", "reached"));
+
+        // A second favorite for the SAME peer_id in a different mode (the
+        // same peer dialed under two modes mints two favorites, R5-7) — both
+        // must be removed, not just the first match.
+        let mut telnet_fav = favorite("f-telnet", "telnet", "KK6XYZ");
+        telnet_fav.peer_id = Some("p1".to_string());
+        store.favorite_upsert(telnet_fav).unwrap();
+
+        // An unrelated favorite for a DIFFERENT peer must survive untouched.
+        let mut other = favorite("f-other", "vara-hf", "W6ABC");
+        other.peer_id = Some("p2".to_string());
+        store.favorite_upsert(other).unwrap();
+        store.file.log.push(attempt("f-other", "2026-07-10T11:00:00-07:00", "reached"));
+        store.flush().unwrap();
+
+        store.delete_by_peer_id("p1").unwrap();
+
+        let remaining_ids: Vec<&str> = store.favorites().iter().map(|f| f.id.as_str()).collect();
+        assert_eq!(
+            remaining_ids,
+            vec!["f-other"],
+            "both p1-linked favorites removed; the p2 favorite survives"
+        );
+        assert!(
+            store.log().iter().all(|a| a.unit_id != "f-star"),
+            "the deleted peer's starred channel's log entries are swept, not orphaned"
+        );
+        assert!(
+            store.log().iter().any(|a| a.unit_id == "f-other"),
+            "an unrelated peer's log entries are untouched"
+        );
+
+        // A peer_id with no matching favorite is a silent no-op.
+        store.delete_by_peer_id("p-never-existed").unwrap();
+        assert_eq!(store.favorites().len(), 1);
     }
 
     // ---- Record path: server-stamped unit_id + ts_local verbatim ------------

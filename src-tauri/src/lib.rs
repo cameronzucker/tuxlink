@@ -1101,6 +1101,56 @@ pub fn run() {
                         ));
                     }
 
+                    // contacts→peers reconciliation listener (Task 26, spec
+                    // §Cross-store consistency [R4-9]): a peer's `contact_id`
+                    // is a ONE-WAY reference into the contacts store. When a
+                    // contact is deleted, the linked peer's `contact_id` (and
+                    // any contact-sourced grid) must not keep pointing at a
+                    // ghost. Rather than pay a reconcile cost on every
+                    // `peers_read` (the frontend reads on mount), this listens
+                    // for the contacts store's `contacts:changed` event, reads
+                    // the LIVE contact ids, and reconciles once per contacts
+                    // mutation — authoritative, event-driven, not a per-read
+                    // cost.
+                    //
+                    // Lock order is contacts→peers here and nowhere reversed
+                    // (mirrors `recorder.rs`'s documented store→limiter
+                    // ordering): the contacts lock is acquired and released
+                    // FIRST (collecting live ids into an owned `Vec<String>`),
+                    // and the peers lock is taken only afterward — the two
+                    // are never held simultaneously, so there is no
+                    // lock-order hazard.
+                    {
+                        use tauri::Listener;
+                        let contacts = app
+                            .state::<std::sync::Arc<
+                                std::sync::Mutex<crate::contacts::store::ContactsStore>,
+                            >>()
+                            .inner()
+                            .clone();
+                        let peers = app
+                            .state::<std::sync::Arc<std::sync::Mutex<crate::peers::store::PeersStore>>>()
+                            .inner()
+                            .clone();
+                        let emit_handle = app.handle().clone();
+                        let listener_handle = app.handle().clone();
+                        listener_handle.listen(
+                            crate::contacts::commands::CONTACTS_CHANGED_EVENT,
+                            move |_| {
+                                let live_ids: Vec<String> = match contacts.lock() {
+                                    Ok(c) => c.file().contacts.iter().map(|c| c.id.clone()).collect(),
+                                    Err(_) => return,
+                                };
+                                if let Ok(mut p) = peers.lock() {
+                                    p.reconcile_contact_links(&live_ids);
+                                }
+                                use tauri::Emitter;
+                                let _ = emit_handle
+                                    .emit(crate::peers::commands::PEERS_CHANGED_EVENT, ());
+                            },
+                        );
+                    }
+
                     // forms sequence counters (tuxlink-2tom / G12-C): per-form
                     // serial numbers for SeqInc forms. `SeqCounterStore::open` is
                     // INFALLIBLE (degrade-to-empty on read error) like the stores

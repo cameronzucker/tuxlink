@@ -34,7 +34,7 @@
 //!   stored rather than dropped [R3-F2].
 
 use crate::peers::model::{
-    AttemptCounts, Channel, Direction, Endpoint, IdentityKind, Origin, Peer, PeersFile,
+    AttemptCounts, Channel, Direction, Endpoint, GridSource, IdentityKind, Origin, Peer, PeersFile,
     Provenance, RecordSource, AUTO_PEER_CAP,
 };
 use serde::Serialize;
@@ -683,6 +683,43 @@ impl PeersStore {
         Ok(new_id)
     }
 
+    /// Reconcile `contact_id` links against the LIVE contacts set (spec
+    /// §Cross-store consistency [R4-9]). `contact_id` is a ONE-WAY reference
+    /// into the contacts store; a peer whose `contact_id` no longer appears in
+    /// `live_contact_ids` is treated as unlinked — the link is cleared (not the
+    /// peer itself; a dangling reference is a data-hygiene issue, not grounds
+    /// to drop the roster entry). If the peer's `grid` was sourced FROM that
+    /// now-gone contact (`GridSource::Contact`), the grid is cleared too, so a
+    /// stale contact-derived grid is never shown as authoritative once its
+    /// source is gone. A grid with any OTHER source (`Aprs`/`Manual`) is left
+    /// untouched even when the same peer's contact link is cleared.
+    ///
+    /// Called from the `contacts:changed` listener installed in `lib.rs`'s
+    /// `.setup()` (authoritative, event-driven — not a per-`peers_read` cost).
+    /// Best-effort flush: a flush failure is logged, never panics, and never
+    /// blocks the caller (mirrors the keyring-cascade posture elsewhere in this
+    /// module — the in-memory reconciliation already succeeded).
+    pub fn reconcile_contact_links(&mut self, live_contact_ids: &[String]) {
+        let mut changed = false;
+        for p in &mut self.file.peers {
+            let Some(cid) = p.contact_id.clone() else {
+                continue;
+            };
+            if !live_contact_ids.contains(&cid) {
+                p.contact_id = None;
+                if matches!(&p.grid, Some(g) if g.source == GridSource::Contact) {
+                    p.grid = None;
+                }
+                changed = true;
+            }
+        }
+        if changed {
+            if let Err(e) = self.flush() {
+                eprintln!("peers: reconcile_contact_links flush failed: {e}");
+            }
+        }
+    }
+
     /// Promote an endpoint to `Operator` provenance IN PLACE — the ONLY path
     /// that writes `Operator` on an endpoint (the keyring secret keyed on the
     /// endpoint id is never orphaned [R5-5]). Flushes on success.
@@ -1137,5 +1174,69 @@ mod tests {
         assert_eq!(kept.id, "p-keep");
         assert!(kept.endpoints.iter().any(|e| e.id == "e-uniq"));
         assert!(!kept.endpoints.iter().any(|e| e.id == "e-dup"));
+    }
+
+    #[test]
+    fn contact_delete_leaves_peer_and_clears_contact_sourced_grid() {
+        // §Cross-store: contact_id is one-way; a missing contact_id is
+        // treated as unlinked, and a grid whose source was the now-gone
+        // contact is cleared (not shown as authoritative) [R4-9].
+        let dir = td();
+        let mut s = PeersStore::open(dir.path().join("peers.json"));
+        let mut p = manual_peer("p1", "W6ABC");
+        p.contact_id = Some("c-gone".into());
+        p.grid = Some(PeerGrid {
+            value: "CN87".into(),
+            source: GridSource::Contact,
+        });
+        s.upsert_manual(p).unwrap();
+        // Resolve against a contacts set that no longer has c-gone.
+        s.reconcile_contact_links(&[] /* live contact ids */);
+        let peer = &s.file().peers[0];
+        assert_eq!(peer.contact_id, None, "dangling contact link cleared");
+        assert!(peer.grid.is_none(), "contact-sourced grid cleared when contact gone");
+    }
+
+    #[test]
+    fn reconcile_contact_links_preserves_live_links_and_non_contact_grids() {
+        // A live contact_id is untouched, and a grid sourced from Manual/Aprs
+        // survives even when the peer's OWN contact link is dropped — only a
+        // Contact-sourced grid is tied to contact_id's fate.
+        let dir = td();
+        let mut s = PeersStore::open(dir.path().join("peers.json"));
+        let mut live = manual_peer("p-live", "W6ABC");
+        live.contact_id = Some("c-live".into());
+        live.grid = Some(PeerGrid {
+            value: "CN87".into(),
+            source: GridSource::Contact,
+        });
+        s.upsert_manual(live).unwrap();
+
+        let mut manual_grid = manual_peer("p-manual-grid", "K0NONE");
+        manual_grid.contact_id = Some("c-gone".into());
+        manual_grid.grid = Some(PeerGrid {
+            value: "EM10".into(),
+            source: GridSource::Manual,
+        });
+        s.upsert_manual(manual_grid).unwrap();
+
+        s.reconcile_contact_links(&["c-live".to_string()]);
+
+        let live_after = s.file().peers.iter().find(|p| p.id == "p-live").unwrap();
+        assert_eq!(live_after.contact_id.as_deref(), Some("c-live"));
+        assert!(live_after.grid.is_some(), "live contact's grid is untouched");
+
+        let manual_after = s
+            .file()
+            .peers
+            .iter()
+            .find(|p| p.id == "p-manual-grid")
+            .unwrap();
+        assert_eq!(manual_after.contact_id, None, "dangling link still cleared");
+        assert_eq!(
+            manual_after.grid.as_ref().map(|g| g.value.as_str()),
+            Some("EM10"),
+            "a Manual-sourced grid survives the contact link being cleared"
+        );
     }
 }

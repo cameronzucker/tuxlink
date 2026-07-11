@@ -20,6 +20,8 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
+use crate::favorites::store::FavoritesStore;
+
 use super::model::{Peer, PeersFile};
 use super::store::{AbsorbedEndpoint, PeersError, PeersStore};
 
@@ -103,12 +105,22 @@ pub fn peer_upsert(
 
 /// Delete a peer by id (no-op if absent). Cascades the keyring-secret clear for
 /// every endpoint the store reports removed [R2-S7] so no password is orphaned,
-/// then emits `peers:changed`. A keyring delete failure is logged (never the
-/// secret) but does not fail the command — the roster write already succeeded.
+/// then cascades into the favorites store [R4-12]: every `Favorite` back-linked
+/// to this peer id (a starred or recent channel) is removed via
+/// [`FavoritesStore::delete_by_peer_id`] so a deleted peer never leaves an
+/// orphaned star. Finally emits `peers:changed`. A keyring delete failure or a
+/// favorites-cascade failure is logged but does not fail the command — the
+/// roster write already succeeded.
+///
+/// Lock order is peers→favorites here and nowhere reversed: the peers lock is
+/// acquired and released first (inside the `delete_peer` block), and the
+/// favorites lock is taken afterward in its own scope — the two are never held
+/// simultaneously, mirroring `recorder.rs`'s documented store→limiter ordering.
 #[tauri::command]
 pub fn peer_delete(
     app: tauri::AppHandle,
     svc: tauri::State<Arc<Mutex<PeersStore>>>,
+    favorites: tauri::State<Arc<Mutex<FavoritesStore>>>,
     id: String,
 ) -> Result<(), PeersError> {
     let endpoint_ids = {
@@ -124,6 +136,16 @@ pub fn peer_delete(
                 peer_id = %id,
                 endpoint_id = %endpoint_id,
                 "peer delete: clearing endpoint keyring secret failed: {e}"
+            );
+        }
+    }
+    {
+        let mut store = favorites.lock().expect("favorites store mutex poisoned");
+        if let Err(e) = store.delete_by_peer_id(&id) {
+            tracing::warn!(
+                target: "tuxlink::peers",
+                peer_id = %id,
+                "peer delete: clearing back-linked favorites failed: {e}"
             );
         }
     }
@@ -333,9 +355,9 @@ pub fn peer_endpoint_password_clear(
 pub fn p2p_capabilities() -> P2pCapabilities {
     P2pCapabilities {
         peer_store: true,
-        finder_peers: false,
-        map_peers: false,
-        settings_editor: false,
+        finder_peers: true, // Task 26 (R5-8 rows 3+5): the Finder's peers surface landed (Tasks 22-23).
+        map_peers: true,    // Task 26 (R5-8 row 6): peer pins on the map layer landed (Task 24).
+        settings_editor: false, // Task 25 flips this when the peers settings editor lands.
         agent_find_peers: true, // Task 19 (R5-8 row 4): the find_peers agent tool landed.
         agent_telnet_dial: true, // Task 20 (R5-8 row 7): the agent telnet-dial path landed.
         vara_engine_split: true, // Task 21 (R5-8 row 9): agent VARA egress dispatches on engine.
@@ -359,14 +381,16 @@ mod tests {
         // Task 11 lands rows 1-2 (store + recorder); Task 17 lands row 10 (the
         // favorites↔peer bridge); Task 19 lands row 4 (the find_peers agent tool);
         // Task 20 lands row 7 (the agent telnet-dial path); Task 21 lands row 9
-        // (the VARA engine split).
-        // Every OTHER bit stays false until its own task flips it — this guards
-        // against an accidental early flip and pins Task 28's completeness baseline.
+        // (the VARA engine split); Task 26 lands rows 3+5 (Finder peers surface,
+        // Tasks 22-23) and row 6 (map peer pins, Task 24).
+        // `settings_editor` stays false until Task 25 lands its own row — this
+        // guards against an accidental early flip and pins Task 28's completeness
+        // baseline.
         let c = p2p_capabilities();
         assert!(c.peer_store, "Task 11 lands the store + recorder");
-        assert!(!c.finder_peers);
-        assert!(!c.map_peers);
-        assert!(!c.settings_editor);
+        assert!(c.finder_peers, "Task 26 lands the Finder's peers surface");
+        assert!(c.map_peers, "Task 26 lands the map layer's peer pins");
+        assert!(!c.settings_editor, "Task 25 has not landed yet");
         assert!(c.agent_find_peers, "Task 19 lands the find_peers agent tool");
         assert!(c.agent_telnet_dial, "Task 20 lands the agent telnet-dial path");
         assert!(c.vara_engine_split, "Task 21 lands the VARA engine split");
@@ -493,7 +517,8 @@ mod tests {
         // wire keys — the contract Task 23-25 + Task 28 read. Pin it.
         let v = serde_json::to_value(p2p_capabilities()).unwrap();
         assert_eq!(v.get("peer_store").and_then(|b| b.as_bool()), Some(true));
-        assert_eq!(v.get("finder_peers").and_then(|b| b.as_bool()), Some(false));
+        assert_eq!(v.get("finder_peers").and_then(|b| b.as_bool()), Some(true));
+        assert_eq!(v.get("settings_editor").and_then(|b| b.as_bool()), Some(false));
         assert!(v.get("favorites_peer_link").is_some());
     }
 }
