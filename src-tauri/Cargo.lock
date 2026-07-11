@@ -6994,6 +6994,7 @@ name = "tuxlink-stt"
 version = "0.1.0"
 dependencies = [
  "hound",
+ "tempfile",
  "thiserror 2.0.18",
  "whisper-rs",
 ]
