@@ -9,6 +9,7 @@
 //! docs/superpowers/specs/2026-07-10-station-intel-l2-capture-design.md.
 
 pub mod alsa_source;
+pub mod arbiter;
 pub mod clock;
 pub mod events;
 pub mod records;

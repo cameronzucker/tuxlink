@@ -63,6 +63,19 @@ pub enum SourceStep {
     /// polling its abort flag (contrast `Park`, added in T14, whose read
     /// blocks — the hung-USB class the abort flag cannot reach).
     Idle,
+    /// Block inside read() while the flag is true (50 ms poll). The capture
+    /// loop cannot observe its abort flag during this — the wedged-join
+    /// class `Ft8Arbiter::pause_for_modem` maps to `PauseError::CaptureWedged`
+    /// (T14).
+    Park(Arc<std::sync::atomic::AtomicBool>),
+}
+
+/// A `Park`-armed flag, initially `true` (parked). Tests store a
+/// `SourceStep::Park(park.clone())` in the step queue, then flip the flag to
+/// `false` to release the detached read thread once the assertions that
+/// depend on the wedge are done (hygiene: the test binary must still exit).
+pub fn park_flag() -> Arc<std::sync::atomic::AtomicBool> {
+    Arc::new(std::sync::atomic::AtomicBool::new(true))
 }
 
 /// Scripted [`SampleSource`]: replays a step queue against the shared
@@ -86,6 +99,12 @@ impl SampleSource for ScriptedSource {
                 Ok(ReadBatch { frames: n, mono_ts_us: self.clock.mono_us(), gap })
             }
             Some(SourceStep::Fail(e)) => Err(e),
+            Some(SourceStep::Park(flag)) => {
+                while flag.load(std::sync::atomic::Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                Ok(ReadBatch { frames: 0, mono_ts_us: self.clock.mono_us(), gap: None })
+            }
             Some(SourceStep::Idle) | None => {
                 // Bounded park like PCM::wait's timeout arm.
                 std::thread::sleep(Duration::from_millis(1));

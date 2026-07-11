@@ -91,6 +91,13 @@ impl SharedHold {
             None => false,
         }
     }
+    /// Test-only TTL exercise: backdate the latch by `d` without a fake
+    /// clock detour (Instant is not fake-able without one the spec does not
+    /// require).
+    #[cfg(test)]
+    pub(crate) fn test_backdate(&self, d: Duration) {
+        *self.latched_at.lock().unwrap_or_else(|p| p.into_inner()) = Some(Instant::now() - d);
+    }
 }
 
 /// Injected seams, bundled (clippy too_many_arguments discipline).
@@ -190,6 +197,16 @@ impl WaterfallTap {
             .drain(..)
             .collect()
     }
+}
+
+/// Capture-side slot measurements carried into every ring record
+/// (bundled: clippy too_many_arguments, same discipline as Ft8Deps).
+#[derive(Clone, Copy)]
+pub(crate) struct SlotProvenance {
+    pub lost_frames: u64,
+    pub boundary_skew_frames: u64,
+    pub clip_fraction: f32,
+    pub rms_dbfs: f32,
 }
 
 /// Everything behind the leaf-level state mutex.
@@ -593,7 +610,15 @@ impl Ft8ListenerState {
             {
                 self.lock_inner().machine.set_cat_fixed_band(false);
             }
-            self.start_rig_labeling();
+            // Through the arbiter when installed: the ARBITER lock is what
+            // excludes a concurrent pause_for_modem; start_rig_labeling
+            // itself owns the rig lock (lock order arbiter > rig > state,
+            // each acquired at most once per thread).
+            let label = || self.start_rig_labeling();
+            match crate::ft8::arbiter::FT8_ARBITER.get() {
+                Some(arb) => arb.rig_session(label),
+                None => label(),
+            }
         } else {
             let mut g = self.lock_inner();
             g.machine.set_cat_fixed_band(true);
@@ -824,10 +849,12 @@ impl Ft8ListenerState {
                 slot.slot_utc_ms,
                 RingOutcome::Discarded { class },
                 Vec::new(),
-                slot.lost_frames,
-                slot.boundary_skew_frames,
-                slot.clip_fraction,
-                slot.rms_dbfs,
+                SlotProvenance {
+                    lost_frames: slot.lost_frames,
+                    boundary_skew_frames: slot.boundary_skew_frames,
+                    clip_fraction: slot.clip_fraction,
+                    rms_dbfs: slot.rms_dbfs,
+                },
             ));
             return;
         }
@@ -848,10 +875,12 @@ impl Ft8ListenerState {
                 slot.slot_utc_ms,
                 RingOutcome::DroppedStorageError { diagnostic: diag.clone() },
                 Vec::new(),
-                slot.lost_frames,
-                slot.boundary_skew_frames,
-                slot.clip_fraction,
-                slot.rms_dbfs,
+                SlotProvenance {
+                    lost_frames: slot.lost_frames,
+                    boundary_skew_frames: slot.boundary_skew_frames,
+                    clip_fraction: slot.clip_fraction,
+                    rms_dbfs: slot.rms_dbfs,
+                },
             );
             rec.partial_salvage = false;
             {
@@ -883,10 +912,12 @@ impl Ft8ListenerState {
                     job.slot_utc_ms,
                     RingOutcome::DroppedBackpressure,
                     Vec::new(),
-                    job.lost_frames,
-                    job.boundary_skew_frames,
-                    job.clip_fraction,
-                    job.rms_dbfs,
+                    SlotProvenance {
+                        lost_frames: job.lost_frames,
+                        boundary_skew_frames: job.boundary_skew_frames,
+                        clip_fraction: job.clip_fraction,
+                        rms_dbfs: job.rms_dbfs,
+                    },
                 ));
             }
             Err(std::sync::mpsc::TrySendError::Disconnected(job)) => {
@@ -902,11 +933,9 @@ impl Ft8ListenerState {
         slot_utc_ms: u64,
         outcome: RingOutcome,
         decodes: Vec<crate::ft8::records::DecodeDto>,
-        lost_frames: u64,
-        boundary_skew_frames: u64,
-        clip_fraction: f32,
-        rms_dbfs: f32,
+        prov: SlotProvenance,
     ) -> SlotRecord {
+        let SlotProvenance { lost_frames, boundary_skew_frames, clip_fraction, rms_dbfs } = prov;
         let g = self.lock_inner();
         let partial_salvage = decodes.iter().any(|d| d.partial);
         SlotRecord {
@@ -1003,6 +1032,26 @@ impl Ft8ListenerState {
     pub(crate) fn platform_tmp_for_test(&self) -> PathBuf {
         self.platform.slot_dir_root().parent().map(|p| p.to_path_buf()).unwrap_or_default()
     }
+
+    /// Shared test helper (cross-module: `service.rs`'s own tests AND
+    /// `arbiter.rs`'s tests both drive the start sequence synchronously):
+    /// signal `on_start_requested` then run the sequence inline on the
+    /// calling thread — no supervisor spawn.
+    #[cfg(test)]
+    pub(crate) fn test_run_sequence(self: &Arc<Self>) {
+        {
+            self.lock_inner().machine.on_start_requested();
+        }
+        self.execute_start_sequence(false);
+    }
+
+    /// Shared test helper: full stop + tmp-dir cleanup, for tests that don't
+    /// need finer control over teardown ordering.
+    #[cfg(test)]
+    pub(crate) fn test_teardown(self: &Arc<Self>) {
+        self.stop();
+        let _ = std::fs::remove_dir_all(self.platform_tmp_for_test());
+    }
 }
 
 /// The ALSA read loop → gap accounting → tap → slot assembler (spec
@@ -1085,10 +1134,12 @@ impl Ft8ListenerState {
                         utc,
                         RingOutcome::Discarded { class: dto },
                         Vec::new(),
-                        0,
-                        0,
-                        0.0,
-                        f32::NEG_INFINITY,
+                        SlotProvenance {
+                            lost_frames: 0,
+                            boundary_skew_frames: 0,
+                            clip_fraction: 0.0,
+                            rms_dbfs: f32::NEG_INFINITY,
+                        },
                     ));
                 }
                 SlotEvent::Dropped { class: DropClass::LostFrames, slot_utc_ms, lost_frames } => {
@@ -1096,10 +1147,12 @@ impl Ft8ListenerState {
                         slot_utc_ms,
                         RingOutcome::DroppedLostFrames,
                         Vec::new(),
-                        lost_frames,
-                        0,
-                        0.0,
-                        f32::NEG_INFINITY,
+                        SlotProvenance {
+                            lost_frames,
+                            boundary_skew_frames: 0,
+                            clip_fraction: 0.0,
+                            rms_dbfs: f32::NEG_INFINITY,
+                        },
                     ));
                 }
             }
@@ -1126,29 +1179,35 @@ fn decode_loop(
                     job.slot_utc_ms,
                     RingOutcome::Decoded,
                     dtos,
-                    job.lost_frames,
-                    job.boundary_skew_frames,
-                    job.clip_fraction,
-                    job.rms_dbfs,
+                    SlotProvenance {
+                        lost_frames: job.lost_frames,
+                        boundary_skew_frames: job.boundary_skew_frames,
+                        clip_fraction: job.clip_fraction,
+                        rms_dbfs: job.rms_dbfs,
+                    },
                 )
             }
             SlotOutcome::BandDead => state.base_record(
                 job.slot_utc_ms,
                 RingOutcome::BandDead,
                 Vec::new(),
-                job.lost_frames,
-                job.boundary_skew_frames,
-                job.clip_fraction,
-                job.rms_dbfs,
+                SlotProvenance {
+                    lost_frames: job.lost_frames,
+                    boundary_skew_frames: job.boundary_skew_frames,
+                    clip_fraction: job.clip_fraction,
+                    rms_dbfs: job.rms_dbfs,
+                },
             ),
             SlotOutcome::Failed(f) => state.base_record(
                 job.slot_utc_ms,
                 RingOutcome::Failed { failure: format!("{f:?}") },
                 Vec::new(),
-                job.lost_frames,
-                job.boundary_skew_frames,
-                job.clip_fraction,
-                job.rms_dbfs,
+                SlotProvenance {
+                    lost_frames: job.lost_frames,
+                    boundary_skew_frames: job.boundary_skew_frames,
+                    clip_fraction: job.clip_fraction,
+                    rms_dbfs: job.rms_dbfs,
+                },
             ),
         };
         state.record_slot(rec);
@@ -1249,11 +1308,24 @@ impl Ft8ListenerState {
         Ok(())
     }
 
-    /// Pause from `stopped` is a stateless no-op guard the arbiter uses
-    /// (spec: a system that never enabled FT8 must never acquire phantom
-    /// listener state). Exposed for the T13 test; T14 routes through it.
-    pub(crate) fn is_stopped(&self) -> bool {
-        matches!(self.axis(), ServiceAxis::Stopped)
+    /// The arbiter's `starting`-axis pause: no capture thread exists yet
+    /// (spawned only at step 8), so there is nothing to join. The flag
+    /// makes the supervisor abandon its sequence at the next between-step
+    /// check (dropping a held PCM if past step 7); `on_pause` writes the
+    /// axis — the flag itself never does (spec §Lifecycle ownership).
+    pub(crate) fn request_yield_from_starting(&self) {
+        self.yield_request.store(true, Ordering::SeqCst);
+        {
+            self.lock_inner().machine.on_pause();
+        }
+        self.emit_listening_change();
+    }
+
+    /// The last-resolved device's card index, for the arbiter's
+    /// release-confirm probe. `None` when no sequence has resolved a device
+    /// yet (e.g. yielded out of `starting` before step 2).
+    pub(crate) fn resolved_card_index(&self) -> Option<u32> {
+        self.lock_inner().resolved.as_ref().map(|r| r.card_index)
     }
 
     /// Resume conditions (spec §Resume — ALL must hold): latch clear, card
@@ -1387,10 +1459,7 @@ mod tests {
     }
 
     fn run_sequence(state: &Arc<Ft8ListenerState>) {
-        {
-            state.lock_inner().machine.on_start_requested();
-        }
-        state.execute_start_sequence(false);
+        state.test_run_sequence();
     }
 
     // Arrow 1: jt9 absent → blocked(wsjtx-absent); the snapshot still
@@ -1869,10 +1938,12 @@ mod tests {
                 i as u64,
                 o.clone(),
                 Vec::new(),
-                0,
-                0,
-                0.0,
-                -60.0,
+                SlotProvenance {
+                    lost_frames: 0,
+                    boundary_skew_frames: 0,
+                    clip_fraction: 0.0,
+                    rms_dbfs: -60.0,
+                },
             ));
         }
         let g = state.lock_inner();
@@ -1893,10 +1964,12 @@ mod tests {
                 i,
                 RingOutcome::BandDead,
                 Vec::new(),
-                0,
-                0,
-                0.0,
-                -60.0,
+                SlotProvenance {
+                    lost_frames: 0,
+                    boundary_skew_frames: 0,
+                    clip_fraction: 0.0,
+                    rms_dbfs: -60.0,
+                },
             ));
         }
         let g = state.lock_inner();
@@ -1906,8 +1979,7 @@ mod tests {
     }
 
     fn teardown(state: &Arc<Ft8ListenerState>) {
-        state.stop();
-        let _ = std::fs::remove_dir_all(state.platform_tmp_for_test());
+        state.test_teardown();
     }
 
     /// Asserts the §Lifecycle threads-per-state table for the current axis.
@@ -2015,7 +2087,7 @@ mod tests {
     fn pause_from_stopped_is_a_stateless_noop() {
         let p = FakePlatform::happy();
         let state = test_state(p, cfg_with_device());
-        assert!(state.is_stopped());
+        assert_eq!(state.axis(), ServiceAxis::Stopped);
         // T14's arbiter checks is_stopped() and returns Ok(()) WITHOUT
         // latching; pin the primitive here: the hold stays clear and the
         // axis stays stopped even if pause mechanics are (wrongly) invoked.
