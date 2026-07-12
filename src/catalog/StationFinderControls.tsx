@@ -6,6 +6,8 @@
 import type { ReactNode } from 'react';
 import { HF_BANDS, bandLabel, type Band } from './bandPlan';
 import type { BandDot } from '../ft8ui/ft8Types';
+import { SolarUpdateControl } from '../wwv/SolarUpdateControl';
+import { WwvOffairControl } from '../wwv/WwvOffairControl';
 
 export type FilterMode = 'vara-hf' | 'ardop-hf' | 'packet';
 
@@ -122,9 +124,12 @@ export function StationFinderControls(props: StationFinderControlsProps) {
   return (
     <div className="station-finder__controls">
       {/* Row 1 (directly under the title): data-update actions on the left,
-          live conditions/time pushed to the right. The "Update propagation data"
-          action lands here beside "Update station list" once that feature ships
-          (deferred — a non-functional button would be a placeholder stub). */}
+          live conditions/time pushed to the right. Both space-weather
+          refreshes — the internet SWPC path (SolarUpdateControl) and the
+          off-air WWV decode (WwvOffairControl) — live here beside "Update
+          station list", each a self-contained component owning its own
+          request state so no propagation state is threaded through this
+          presentational panel's props. */}
       <div className="station-finder__topbar">
         <div className="station-finder__actions">
           <button
@@ -140,6 +145,8 @@ export function StationFinderControls(props: StationFinderControlsProps) {
               {listAgeLabel(props.listFetchedAtMs)}
             </span>
           )}
+          <SolarUpdateControl />
+          <WwvOffairControl />
         </div>
         <div className="station-finder__cond" data-testid="conditions">
           <span>

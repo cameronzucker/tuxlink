@@ -9,8 +9,10 @@ import {
   manualIngest,
   catConfigured,
   discardClip,
+  updateSolarFromInternet,
   type WwvRefreshOutcome,
   type SolarSnapshot,
+  type SolarUpdateOutcome,
 } from './wwvApi';
 
 beforeEach(() => vi.mocked(invoke).mockReset());
@@ -126,5 +128,35 @@ describe('discardClip', () => {
     await discardClip('/tmp/wwv-clip.wav');
 
     expect(invoke).toHaveBeenCalledWith('wwv_offair_discard_clip', { path: '/tmp/wwv-clip.wav' });
+  });
+});
+
+describe('updateSolarFromInternet', () => {
+  it('invokes propagation_update_solar with no args and returns the snake_case outcome verbatim', async () => {
+    const outcome: SolarUpdateOutcome = {
+      forecast_updated: true,
+      indices: { sfi: 117, a_index: 6, k_index: 1.33 },
+      source: 'swpc',
+    };
+    vi.mocked(invoke).mockResolvedValue(outcome as unknown as never);
+
+    const got = await updateSolarFromInternet();
+
+    expect(invoke).toHaveBeenCalledWith('propagation_update_solar');
+    expect(got).toEqual(outcome);
+  });
+
+  it('passes through a partial update (indices only, forecast not touched)', async () => {
+    const outcome: SolarUpdateOutcome = {
+      forecast_updated: false,
+      indices: { sfi: 150 },
+      source: 'swpc',
+    };
+    vi.mocked(invoke).mockResolvedValue(outcome as unknown as never);
+
+    const got = await updateSolarFromInternet();
+
+    expect(got.forecast_updated).toBe(false);
+    expect(got.indices?.sfi).toBe(150);
   });
 });

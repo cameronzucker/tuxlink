@@ -2172,6 +2172,8 @@ pub fn run() {
             // tuxlink-s0r1: operator antenna preset + REQ.SNR + power prefs.
             crate::propagation::commands::propagation_prefs_read,
             crate::propagation::commands::propagation_prefs_write,
+            // tuxlink-ot71: internet (NOAA SWPC) "Update propagation data" fetch.
+            crate::propagation::commands::propagation_update_solar,
             // tuxlink-xscum: off-air WWV/WWVH space-weather decode (RX-only).
             crate::wwv_offair::commands::wwv_offair_refresh,
             crate::wwv_offair::commands::wwv_offair_snapshot_read,

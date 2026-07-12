@@ -38,6 +38,17 @@ export interface SolarSnapshot {
   forecast_updated: boolean;
 }
 
+/// The internet (NOAA SWPC) update outcome — `src-tauri/src/propagation/
+/// solar_update.rs::UpdateOutcome`, the same struct persisted (as a
+/// `SolarSnapshot`, source `"swpc"`) by `refreshOffair`'s RF sibling. No
+/// serde rename attribute, so the wire shape is snake_case like the other
+/// types on this page.
+export interface SolarUpdateOutcome {
+  forecast_updated: boolean;
+  indices: SolarIndices | null;
+  source: string;
+}
+
 /** Capture the next WWV bulletin off-air and ingest it into the propagation forecast. */
 export async function refreshOffair(nowMs: number): Promise<WwvRefreshOutcome> {
   return await invoke<WwvRefreshOutcome>('wwv_offair_refresh', { nowMs });
@@ -72,4 +83,15 @@ export async function catConfigured(): Promise<boolean> {
 /** Delete a kept no-copy capture WAV once it's no longer needed (manual entry done, or re-armed). */
 export async function discardClip(path: string): Promise<void> {
   await invoke('wwv_offair_discard_clip', { path });
+}
+
+/** Fetch NOAA SWPC's smoothed-SSN forecast + live WWV-style indices over the
+ * internet and persist them (SSN forecast + solar snapshot) — the internet
+ * counterpart to `refreshOffair`. Backed by `propagation_update_solar`
+ * (src-tauri/src/propagation/commands.rs), which composes this fetch with the
+ * same `solar_update::apply_swpc_update` pure-apply logic `refreshOffair`'s
+ * RF path calls under a different provenance tag. A partial fetch (one SWPC
+ * product unreachable) still applies what it got; both unreachable rejects. */
+export async function updateSolarFromInternet(): Promise<SolarUpdateOutcome> {
+  return await invoke<SolarUpdateOutcome>('propagation_update_solar');
 }
