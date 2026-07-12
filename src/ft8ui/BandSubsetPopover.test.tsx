@@ -66,23 +66,50 @@ describe('BandSubsetPopover — reads sweepConfig (config truth)', () => {
   });
 });
 
-describe('BandSubsetPopover — hold-one mode disables chips', () => {
-  it('disables every band chip while sweepConfig.enabled is false', () => {
-    renderPopover({ sweepConfig: sweepConfig({ enabled: false, bands: ['20m'] }) });
-    for (const band of ['160m', '80m', '40m', '30m', '20m', '17m', '15m', '12m', '10m']) {
-      expect(screen.getByTestId(`band-subset-chip-${band}`)).toBeDisabled();
-    }
+describe('BandSubsetPopover — hold-one mode: chips single-select the HELD band', () => {
+  // The approved states mock's popover card ("no CAT, operator hasn't clicked a
+  // band") makes the chip click the operator's band assertion. The original C10
+  // brief's inert-chips reading contradicted that mock and left ft8_set_band
+  // with ZERO UI callers — a held band the operator could never change.
+  it('marks the held band selected (not the sweep subset) while hold-one', () => {
+    renderPopover({
+      sweepConfig: sweepConfig({ enabled: false, bands: ['40m', '15m'] }),
+      heldBand: '20m',
+    });
+    expect(screen.getByTestId('band-subset-chip-20m')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('band-subset-chip-40m')).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByTestId('band-subset-chip-15m')).toHaveAttribute('aria-pressed', 'false');
   });
 
-  it('does not invoke ft8_set_sweep_bands when a disabled chip is clicked', () => {
-    renderPopover({ sweepConfig: sweepConfig({ enabled: false, bands: ['20m'] }) });
+  it('clicking a different band invokes ft8_set_band — never the sweep-bands command', () => {
+    renderPopover({ sweepConfig: sweepConfig({ enabled: false, bands: ['20m'] }), heldBand: '20m' });
     fireEvent.click(screen.getByTestId('band-subset-chip-40m'));
+    expect(invokeMock).toHaveBeenCalledWith('ft8_set_band', { band: '40m' });
     expect(invokeMock).not.toHaveBeenCalledWith('ft8_set_sweep_bands', expect.anything());
   });
 
-  it('enables chips once sweepConfig.enabled is true', () => {
-    renderPopover({ sweepConfig: sweepConfig({ enabled: true, bands: ['20m'] }) });
-    expect(screen.getByTestId('band-subset-chip-40m')).not.toBeDisabled();
+  it('clicking the already-held band invokes nothing (no redundant retune)', () => {
+    renderPopover({ sweepConfig: sweepConfig({ enabled: false, bands: ['20m'] }), heldBand: '20m' });
+    fireEvent.click(screen.getByTestId('band-subset-chip-20m'));
+    expect(invokeMock).not.toHaveBeenCalledWith('ft8_set_band', expect.anything());
+  });
+
+  it('surfaces a rejected retune as the bands error', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'ft8_cat_probe') return new Promise(() => {});
+      if (cmd === 'ft8_set_band') return Promise.reject({ kind: 'invalid-band', detail: 'not an FT8 band' });
+      return Promise.resolve();
+    });
+    renderPopover({ sweepConfig: sweepConfig({ enabled: false, bands: ['20m'] }), heldBand: '20m' });
+    fireEvent.click(screen.getByTestId('band-subset-chip-40m'));
+    expect(await screen.findByTestId('band-subset-bands-error')).toHaveTextContent('not an FT8 band');
+  });
+
+  it('in sweep mode chips stay the multi-select subset (ft8_set_sweep_bands, never set_band)', () => {
+    renderPopover({ sweepConfig: sweepConfig({ enabled: true, bands: ['20m'] }), heldBand: '20m' });
+    fireEvent.click(screen.getByTestId('band-subset-chip-40m'));
+    expect(invokeMock).toHaveBeenCalledWith('ft8_set_sweep_bands', { bands: ['20m', '40m'] });
+    expect(invokeMock).not.toHaveBeenCalledWith('ft8_set_band', expect.anything());
   });
 });
 

@@ -148,3 +148,18 @@
 .ft8-setup__meter-db {
   font-family: ui-monospace, monospace;
 }
+
+/* Phase D1 (C9b review minors, deferred to D-phase): these two classNames
+   shipped with NO rules, so Test CAT and the CTA rendered as unstyled
+   block-stacking instead of the row layout their names promise. */
+.ft8-setup__cat-test {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ft8-setup__cta-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}

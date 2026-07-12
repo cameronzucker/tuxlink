@@ -41,6 +41,7 @@ import { HF_BANDS, type Band } from './bandPlan';
 import type { ListingMode } from './stationTypes';
 import type { RadioMode, FavoriteDial } from '../favorites/types';
 import type { AggregatedPeer } from '../peers/peerModel';
+import type { LatLon } from '../forms/position/maidenhead';
 import type { PeerPrefill } from '../peers/peerPrefillEvent';
 import './StationFinderPanel.css';
 
@@ -196,6 +197,11 @@ export function StationFinderPanel({
   // completes a handover (onStarted) — then we re-read and fall back to whatever
   // the snapshot now says.
   const [forceSetup, setForceSetup] = useState(false);
+
+  // D1: Live-decodes tab row click → pan the map to that station's grid. A FRESH
+  // object per click (identity drives PanTo's effect) so re-clicking the same
+  // grid re-pans after the operator has dragged away.
+  const [panTarget, setPanTarget] = useState<LatLon | null>(null);
   // Band picker is a multi-select FILTER (tuxlink-hlas). Default: all HF bands
   // on (show the operator's full HF options), VHF/UHF off (line-of-sight packet
   // is opt-in). A station shows only if it has a channel on a selected band.
@@ -487,6 +493,7 @@ export function StationFinderPanel({
             onSelect={(s) => setSelection({ kind: 'gateway', key: stationKey(s) })}
             onSelectPeer={(peer) => setSelection({ kind: 'peer', peer })}
             selectedPeerId={selection?.kind === 'peer' ? selection.peer.id : null}
+            panTarget={panTarget}
           />
           <StationRail
             station={selected}
@@ -505,6 +512,7 @@ export function StationFinderPanel({
             // BandMatrix openness dots.
             decodesRing={ft8.decodesRing}
             bandActivity={ft8.bandActivity}
+            onPanToGrid={(ll) => setPanTarget({ ...ll })}
           />
         </div>
 

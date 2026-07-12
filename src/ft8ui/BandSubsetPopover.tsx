@@ -159,7 +159,23 @@ export function BandSubsetPopover({
     : catProbeReason(sweepFailure, blockingSessionMode);
 
   const toggleBand = (band: string) => {
-    if (!sweepEnabled) return; // hold-one mode: chips are inert (brief)
+    if (!sweepEnabled) {
+      // Hold-one mode: the chips are a SINGLE-SELECT held-band picker
+      // (`ft8_set_band` — "the strip's existing band selection" the spec's
+      // §Popover parenthetical names). This is also the no-CAT operator's band
+      // assertion: the approved states mock's popover card reads "no CAT,
+      // operator hasn't clicked a band" — clicking one IS the assertion that
+      // flips provenance off `unconfirmed`. The original C10 brief made these
+      // chips inert, which contradicted the mock and left `ft8_set_band` with
+      // zero UI callers — a held band the operator could never change.
+      if (band === heldBand) return; // already holding it — nothing to save
+      setBandsError(null);
+      invoke('ft8_set_band', { band }).catch((err: unknown) => {
+        const e = asFt8CmdError(err);
+        setBandsError(e.detail || 'could not change the held band');
+      });
+      return;
+    }
     const has = bands.includes(band);
     const next = has ? bands.filter((b) => b !== band) : [...bands, band];
     if (next.length === 0) return; // never submit an empty subset (backend rejects it — client mirrors)
@@ -183,9 +199,15 @@ export function BandSubsetPopover({
   return (
     <div className="band-subset-popover" data-testid="band-subset-popover">
       <div className="band-subset-popover__heading">Listen on</div>
-      <div className="band-subset-popover__bands" role="group" aria-label="Sweep bands">
+      <div
+        className="band-subset-popover__bands"
+        role="group"
+        aria-label={sweepEnabled ? 'Sweep bands' : 'Held band'}
+      >
         {FT8_BANDS.map((band) => {
-          const selected = bands.includes(band);
+          // Selection tracks the MODE: the sweep subset in sweep mode, the one
+          // held band in hold-one (where a click retunes via ft8_set_band).
+          const selected = sweepEnabled ? bands.includes(band) : band === heldBand;
           return (
             <Button
               key={band}
@@ -195,7 +217,6 @@ export function BandSubsetPopover({
               className="band-subset-popover__chip"
               data-testid={`band-subset-chip-${band}`}
               aria-pressed={selected}
-              disabled={!sweepEnabled}
               onClick={() => toggleBand(band)}
             >
               {selected && <span aria-hidden="true">✓ </span>}

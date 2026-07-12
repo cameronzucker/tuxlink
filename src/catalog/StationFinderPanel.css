@@ -302,6 +302,16 @@
   flex: 1;
   overflow: hidden;
 }
+/* LAYOUT-1 (Phase D1): on a short window (~700px canonical main window) the
+   540px floor + the FORCE-EXPANDED strip (needs-setup / wedged / device-lost
+   override collapse) would push the setup surface's CTA below the fold. Relax
+   the floor so the strip's setup arms always fit — the map/rail flex-shrink
+   instead of the CTA clipping. */
+@media (max-height: 760px) {
+  .station-finder__body {
+    min-height: 300px;
+  }
+}
 .station-finder__map {
   position: relative;
   flex: 1 1 55%;
@@ -536,6 +546,34 @@
   height: 8px;
   border-radius: 50%;
   background: var(--m-vara, #4aa3ff);
+}
+/* Peers layer toggle swatch + legend keys (peers↔L3 reconciliation, approved
+   mock: [Gateways][Peers] toggles + a PEERS legend row). Diamond = the peer
+   glyph (rotated hollow square — border carries the tier color, mirroring
+   .peer-pin--diamond); dashed = never connected. */
+.station-finder__layer-swatch--peer {
+  border-radius: 2px;
+  background: transparent;
+  border: 2px solid var(--reach-good, #41ba6c);
+  transform: rotate(45deg);
+  width: 7px;
+  height: 7px;
+}
+.station-finder__reachkey .pk {
+  display: inline-block;
+  box-sizing: border-box;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  border: 2px solid var(--reach-good, #41ba6c);
+  background: transparent;
+  transform: rotate(45deg);
+  margin: 0 3px 0 8px;
+  vertical-align: middle;
+}
+.station-finder__reachkey .pk.never {
+  border-color: var(--text-faint, #5d6975);
+  border-style: dashed;
 }
 
 .station-finder__reachkey {
