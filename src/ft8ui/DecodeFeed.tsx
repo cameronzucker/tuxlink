@@ -20,6 +20,7 @@
 // NEVER from callsign/message/grid text — so a hostile or duplicated decode
 // payload can never manufacture a colliding or markup-shaped key.
 
+import { useMemo } from 'react';
 import type { DecodeDto, SlotRecord } from './ft8Types';
 import './DecodeFeed.css';
 
@@ -89,7 +90,12 @@ function utcLabel(ms: number): string {
 }
 
 export function DecodeFeed({ decodesRing }: DecodeFeedProps) {
-  const rows = flattenDecodeFeed(decodesRing);
+  // D1 (C11 review note, deferred to the wiring task): before D1 this component
+  // was never mounted, so re-flattening on every render cost nothing. It is now
+  // fed the LIVE ring, which commits a new array on every FT-8 slot event — so
+  // flatten only when the ring identity actually changes, not on every parent
+  // re-render (the provider re-renders the whole panel on each slot).
+  const rows = useMemo(() => flattenDecodeFeed(decodesRing), [decodesRing]);
 
   if (rows.length === 0) {
     return (

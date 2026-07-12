@@ -8,10 +8,20 @@ import type { ReactElement } from 'react';
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 import { invoke } from '@tauri-apps/api/core';
 import { StationFinderPanel } from './StationFinderPanel';
+import { Ft8ListenerProvider } from '../ft8ui/useFt8Listener';
 
+// Phase D1: the panel now hosts the live FT-8 surfaces (LiveBandStrip +
+// Ft8SetupSurface) and reads the listener via context, so it must render inside
+// Ft8ListenerProvider — useFt8Listener throws otherwise. The provider's own
+// snapshot fetch + event listeners degrade silently under the invoke mock (it
+// catches), so these station-focused cases are unaffected by it.
 function renderPanel(ui: ReactElement) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
+  return render(
+    <QueryClientProvider client={qc}>
+      <Ft8ListenerProvider>{ui}</Ft8ListenerProvider>
+    </QueryClientProvider>,
+  );
 }
 
 const N0DAJ = {

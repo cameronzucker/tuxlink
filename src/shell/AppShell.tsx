@@ -147,6 +147,16 @@ import { isBuilt } from '../connections/sessionTypes';
 import { connectFor, abortFor, MissingTargetError } from '../connections/connectDispatch';
 import { emitGatewayPrefill } from '../favorites/prefillEvent';
 import { emitPeerPrefill, type PeerPrefill } from '../peers/peerPrefillEvent';
+
+/** Phase D1 — display name for the RF modem session that BLOCKS an FT-8 listener
+ *  start (it owns the radio + audio device). Deliberately partial: `telnet` is not
+ *  an RF mode and never blocks FT-8, so it maps to nothing. */
+const FT8_BLOCKING_MODE_LABEL: Partial<Record<RadioPanelMode['kind'], string>> = {
+  'vara-hf': 'VARA',
+  'vara-fm': 'VARA FM',
+  'ardop-hf': 'ARDOP',
+  packet: 'Packet',
+};
 import type { FavoriteDial, StationsFile } from '../favorites/types';
 import { StubPanel } from '../connections/StubPanel';
 import { useInboundSelection } from '../connections/useInboundSelection';
@@ -914,6 +924,15 @@ function AppShellInner() {
   // memoizes on `activeConnection`, so the shell never re-renders at the 4 Hz
   // modem-broadcaster cadence.
   const activeModem: RadioPanelMode | null = useActiveModemMode(activeConnection);
+
+  // Phase D1: an RF modem session holds the radio + audio device, so it BLOCKS an
+  // FT-8 listener start; BandSubsetPopover names it ("radio busy with <mode>
+  // session — disconnect first"). Telnet is deliberately absent: it is not an RF
+  // mode and never touches the radio, so it never blocks FT-8. Undefined → the
+  // popover uses its own "another session" wording.
+  const ft8BlockingSessionMode: string | undefined = activeModem
+    ? FT8_BLOCKING_MODE_LABEL[activeModem.kind]
+    : undefined;
 
   useEffect(() => {
     const status = statusData.status;
@@ -2250,6 +2269,7 @@ function AppShellInner() {
             activePrefillMode={catalogPrefillMode}
             onUse={handleStationUse}
             onUsePeer={handlePeerUse}
+            blockingSessionMode={ft8BlockingSessionMode}
             onClose={() => setCatalogBuilderOpen(false)}
           />
         </Suspense>
