@@ -31,6 +31,83 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.89.0](https://github.com/cameronzucker/tuxlink/compare/v0.88.0...v0.89.0) (2026-07-12)
+
+
+### Features
+
+* **catalog:** aim hero — magnetic/true bearing + offline declination ([283ba2f](https://github.com/cameronzucker/tuxlink/commit/283ba2f444925c34e4febc05b8bf328a6c708003))
+* **catalog:** BandMatrix — per-band rows (openness dot + VOACAP bar + dial chips) ([b87d2c7](https://github.com/cameronzucker/tuxlink/commit/b87d2c7ad21d820ecb61e879bc0aeb465f168238))
+* **catalog:** live-openness dots on HF band chips ([289d95c](https://github.com/cameronzucker/tuxlink/commit/289d95c26b0972f0446df4b5d0b92fc788e45cc3))
+* **catalog:** StationRail Station|Live decodes tabs + LiveDecodesTab ([5b52268](https://github.com/cameronzucker/tuxlink/commit/5b52268be288d9573b22ff3559b9178801c8f79d))
+* **config:** additive WwvOffairConfig ([948fe7f](https://github.com/cameronzucker/tuxlink/commit/948fe7f0cb0b97bf448d8f520a11a7c1cb64742d))
+* **finder:** peers as map diamonds that PREFILL the modem — never dial from the finder ([efed5eb](https://github.com/cameronzucker/tuxlink/commit/efed5eb92ea7658de409fe53aadffcabea0fc770))
+* **finder:** wire internet SFI refresh + mount WWV control in Station Intelligence ([d7ca0fa](https://github.com/cameronzucker/tuxlink/commit/d7ca0fa2fa2bdfd724d41405ccc5a8b950b4a26f))
+* **ft8:** DeviceReservation — listener-priority acquire over in-flight meter reads ([80aa809](https://github.com/cameronzucker/tuxlink/commit/80aa809e36c7d11f4e07f778d95865f1fd15c4d6))
+* **ft8:** emit listening:change on set_device + hoi1 two-face guards on all ft8 writers ([6b56f18](https://github.com/cameronzucker/tuxlink/commit/6b56f180bb9b4ef23723bd9f657f7690f95e46a2))
+* **ft8:** ft8_cat_probe read-only dial probe (refuses during modem sessions) ([7b2c3c7](https://github.com/cameronzucker/tuxlink/commit/7b2c3c7d2e6bd4de28572dd897ffe47f2d56ad3b))
+* **ft8:** ft8_device_meter + ft8_list_devices commands ([20b86b3](https://github.com/cameronzucker/tuxlink/commit/20b86b3b13d686b63428ffc496f80014628ce2e2))
+* **ft8:** ft8_set_sweep_bands command (validated, RMW, emits change) + Ft8CmdError ([33d0cc3](https://github.com/cameronzucker/tuxlink/commit/33d0cc3d1f893ae7e4fc7d9021040aae01bed303))
+* **ft8ui:** BandSubsetPopover — sweep band selection gated on CAT ([89a6fa2](https://github.com/cameronzucker/tuxlink/commit/89a6fa2b3b5e049a7627c9c693abbc4da687c5d6))
+* **ft8ui:** close the six gaps a full-feature reachability audit found ([53683c7](https://github.com/cameronzucker/tuxlink/commit/53683c77a692bf618614792777974536fbe4ea1f))
+* **ft8ui:** DecodeFeed (capped) + map layer-control housing (Gateways only) ([2548117](https://github.com/cameronzucker/tuxlink/commit/2548117ba4dc2b8f6db350c0e541ebfb365aa57d))
+* **ft8ui:** deriveBandActivity + stripStats (evidence-only, provenance-gated) ([5b26665](https://github.com/cameronzucker/tuxlink/commit/5b2666523285255cb85d8febf538d54184f873f4))
+* **ft8ui:** deriveUiState total mapping over ServiceAxis (9-member union) ([782d18a](https://github.com/cameronzucker/tuxlink/commit/782d18aeda0dea0622c077d1be7c07ed7b8a4702))
+* **ft8ui:** Ft8SetupSurface device-picker + live meter + meter/start handover ([0283a8d](https://github.com/cameronzucker/tuxlink/commit/0283a8dd8421557cc995e2a64082d485faa949c0))
+* **ft8ui:** Ft8SetupSurface Step 2 — rig control + Test CAT + CTA ([2ff260c](https://github.com/cameronzucker/tuxlink/commit/2ff260c74d9912e3f74ca29d9113f15575d8b3db))
+* **ft8ui:** LiveBandStrip — collapsible strip composing waterfall/decodes/popover ([1ee37e5](https://github.com/cameronzucker/tuxlink/commit/1ee37e5c5c0486a46bd9fd55cd40000d34b04a53))
+* **ft8ui:** Phase D1 — mount the FT-8 surfaces the panel never got ([8f6b0b3](https://github.com/cameronzucker/tuxlink/commit/8f6b0b369233c10f46d34b0dac0109dece21f600))
+* **ft8ui:** useFt8Listener hook + ft8Types.ts (race-safe hydration, generation-gated) ([ab77bf1](https://github.com/cameronzucker/tuxlink/commit/ab77bf13d77938ffffd9ff72f22252d4780cafcb))
+* **ft8ui:** Waterfall.tsx — Canvas2D FFT renderer with gap markers ([0ac7114](https://github.com/cameronzucker/tuxlink/commit/0ac71147d7cd2cd5057ccfb2e21dfdeb18140815))
+* **ft8ui:** wire useFt8Listener to the real deriveUiState + deriveBandActivity ([36e1015](https://github.com/cameronzucker/tuxlink/commit/36e101515fc20aeaf7813554f27d71413d740348))
+* **ft8:** waterfall FFT consumer thread + token-counted subscriptions ([3765bf3](https://github.com/cameronzucker/tuxlink/commit/3765bf318ceb143571efbd316e0383bd1fe86d32))
+* **geomag:** offline magnetic_declination command (WMM2025, NOAA-vector tested) ([694d752](https://github.com/cameronzucker/tuxlink/commit/694d752119d12df9df214768b9307dfa19098e99))
+* **shell:** FT-8 ambient badge in DashboardRibbon + Ft8ListenerProvider mount ([6e71a92](https://github.com/cameronzucker/tuxlink/commit/6e71a9299fe0ef1c1fc5f16395f6c9fd98207e0a))
+* **stt:** 16kHz mono f32 WAV loader ([56ec2a6](https://github.com/cameronzucker/tuxlink/commit/56ec2a6f5755b82281734618d21e5860db206788))
+* **stt:** noise-rejection confidence gate ([d00d777](https://github.com/cameronzucker/tuxlink/commit/d00d7771bdded42dbf08b6dbce69ea52fe2549d5))
+* **stt:** scaffold tuxlink-stt crate — DecodeMode, SttResult, SttError ([8a3a3c9](https://github.com/cameronzucker/tuxlink/commit/8a3a3c9d3f219efd5c67f532a0616bc7cd5a6f8c))
+* **stt:** WhisperStt model wrapper + transcribe with vocabulary biasing ([35f9115](https://github.com/cameronzucker/tuxlink/commit/35f9115a67fe93884906fd0368bd40ebca63892d))
+* **wwv:** backend for low-SNR clip playback, manual entry, manual-tune fallback ([62d90b1](https://github.com/cameronzucker/tuxlink/commit/62d90b1244080c658863b7f5b8c48e728e4bcfa9))
+* **wwv:** capture_cycle rig orchestration with serial-sequencing branch ([218b4f8](https://github.com/cameronzucker/tuxlink/commit/218b4f89746aef108b99098375801bd35384dac5))
+* **wwv:** CaptureSource trait + arecord capture ([20e6105](https://github.com/cameronzucker/tuxlink/commit/20e610547ac4f1d67ef29f17fde4b96f84e00b60))
+* **wwv:** frontend invoke bindings + useWwvOffair hook ([5447a95](https://github.com/cameronzucker/tuxlink/commit/5447a958554f97747199cf1614ba9b81314819e8))
+* **wwv:** low-SNR clip player + manual entry + manual-tune prompt + styling ([e0220dc](https://github.com/cameronzucker/tuxlink/commit/e0220dc16f00050db2f4c48d0c07166ccc31bd1b))
+* **wwv:** nearest-window scheduler (WWV :18 / WWVH :45) ([afd54dd](https://github.com/cameronzucker/tuxlink/commit/afd54ddb71ce6c849cb6cc68b36ba27961d0981f))
+* **wwv:** off-air refresh + snapshot Tauri commands, model resolution, ingest ([b6b98b0](https://github.com/cameronzucker/tuxlink/commit/b6b98b025ef519aa73161d1a635d2100c1b8d74c))
+* **wwv:** Refresh off-air control mounted in station-finder actions row ([0d50369](https://github.com/cameronzucker/tuxlink/commit/0d50369d761e978f113d9be77da88fa820747498))
+* **wwv:** register wwv_offair_refresh + wwv_offair_snapshot_read commands ([0cac962](https://github.com/cameronzucker/tuxlink/commit/0cac96201844c7f49c65b3c46092f365bc9ff420))
+* **wwv:** setup-time STT model fetch script + off-air space-weather guide page ([2830d35](https://github.com/cameronzucker/tuxlink/commit/2830d35d5f7f9a6e922874b788932cb16ccc5465))
+* **wwv:** spoken-number normalizer for STT output ([f1577f2](https://github.com/cameronzucker/tuxlink/commit/f1577f20593584cce8b1122055ab12a8627b740b))
+* **wwv:** time-of-day WWV frequency selection ([97bc28d](https://github.com/cameronzucker/tuxlink/commit/97bc28d4607aed12447b732c4d04f445093a354e))
+* **wwv:** window scheduling (:18/:45) + arm/cancel + no-copy retry-once ([0ba2428](https://github.com/cameronzucker/tuxlink/commit/0ba2428dabe8b3e90d7fe4686e3f9fb7ffd9fedc))
+
+
+### Bug Fixes
+
+* **config:** add wwv_offair: None to all full Config literals (E0063) ([264f8c0](https://github.com/cameronzucker/tuxlink/commit/264f8c07fe6a6688f5ab9a8ffb64ec4bfe67f60c))
+* **config:** borrow instead of move in wwv_offair round-trip test (E0382) ([c76875a](https://github.com/cameronzucker/tuxlink/commit/c76875ab31b41ee982bd2bf84a459851b262149d))
+* **contacts:** make suggestion rows clickable — clicking a correspondent opened nothing (tuxlink-wxtas) ([d3fd434](https://github.com/cameronzucker/tuxlink/commit/d3fd4344d23505cabe9b5527aeab9e30c66fa735))
+* **ft8:** clear two CI clippy/compile errors from Phase A (unused import, E0716) ([07b6f07](https://github.com/cameronzucker/tuxlink/commit/07b6f075c4b4156f7a65712018087db6e028185d))
+* **ft8:** map ft8_set_sweep_bands infra failures to internal-error, not invalid-band ([a09b783](https://github.com/cameronzucker/tuxlink/commit/a09b783246d6675b9ee0045d2b515048b2faf979))
+* **ft8:** meter preempts on listener priority so the listener always wins cleanly ([754e12e](https://github.com/cameronzucker/tuxlink/commit/754e12eb1ad9e47a11cff983a1bdf805002bee47))
+* **ft8:** normalize waterfall FFT magnitude so strong signals don't saturate to 255 ([de97e4b](https://github.com/cameronzucker/tuxlink/commit/de97e4bd6379bb44c4633b42ce071aa8b57d9389))
+* **ft8ui:** correct waterfall gap-marker slack to a genuine 2x cadence margin ([ed1213d](https://github.com/cameronzucker/tuxlink/commit/ed1213de37555ae325cf01571ad37ac35ff9e6b1))
+* **ft8ui:** enforce the 10-min openness window so stale bands revert to no-data ([63cb0ae](https://github.com/cameronzucker/tuxlink/commit/63cb0aed38f5fe9b74e97e103db10e2e6136a9f7))
+* **ft8ui:** interpolate active modem mode into BandSubsetPopover modem-busy copy ([59b3e5b](https://github.com/cameronzucker/tuxlink/commit/59b3e5bcdfce807a2224990026bf67338a38eb8c))
+* **mcp:** bundle tuxlink-mcp shim in release + ECT packages ([b781af4](https://github.com/cameronzucker/tuxlink/commit/b781af47f60cfa9fa94759bf04ea8ed4a697ccc7))
+* **wwv:** adversarial-review correctness wave (rig restore, default device, timing, silence) ([7296197](https://github.com/cameronzucker/tuxlink/commit/72961976f416ee4bad8f95f3493d32fbaf599dcc))
+* **wwv:** Codex adversarial findings on the completion (clip security + validation) ([d33e104](https://github.com/cameronzucker/tuxlink/commit/d33e1043aafeb213ef81cb1d4257d643a6fbf80c))
+* **wwv:** guard useWwvOffair setState against unmount during in-flight capture ([17ab76d](https://github.com/cameronzucker/tuxlink/commit/17ab76df6e6ed6e07d629480d6f7e805240582bc))
+* **wwv:** snake_case test name (clippy non_snake_case) ([a145cf2](https://github.com/cameronzucker/tuxlink/commit/a145cf2bf8540c6229e4e7328444242cfccd26ac))
+
+
+### Refactors
+
+* **catalog:** rename Find-a-Station -&gt; Station Intelligence (user strings) ([c34990f](https://github.com/cameronzucker/tuxlink/commit/c34990f1e9b64da5e42825aa2edd2de39333b139))
+* **ft8:** nearest_band delegates to bands::band_for_dial (single tolerance source) ([b443adb](https://github.com/cameronzucker/tuxlink/commit/b443adb04b737d11e5f04d4406475c413d28453d))
+* **propagation:** add apply_rf_solar_indices(source) seam for off-air WWV ([c775855](https://github.com/cameronzucker/tuxlink/commit/c77585555e6683b7c57477c3e982d6525fea759e))
+* **wwv:** remove dead backend scheduler; guard normalizer shorthand ([628774d](https://github.com/cameronzucker/tuxlink/commit/628774df4ebf1eec7adf3eaa27332106182ba02d))
+
 ## [0.88.0](https://github.com/cameronzucker/tuxlink/compare/v0.87.2...v0.88.0) (2026-07-11)
 
 
