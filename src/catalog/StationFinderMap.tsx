@@ -28,7 +28,7 @@ import { useLeafletLayerGroup } from '../map/leafletHooks';
 import { usePersistedViewport } from '../map/usePersistedViewport';
 import { LeafletRecenterControl } from '../map/LeafletRecenterControl';
 import { PeerLayer, type PeerVisual } from '../map/PeerLayer';
-import { gridToLatLon } from '../forms/position/maidenhead';
+import { gridToLatLon, type LatLon } from '../forms/position/maidenhead';
 import { reportFrontendError } from '../frontendErrorLog';
 import { type ReachTier } from './reachability';
 import { stationKey } from './useReachabilityMap';
@@ -50,6 +50,10 @@ export interface StationFinderMapProps {
    */
   onSelectPeer?: (peer: AggregatedPeer) => void;
   selectedPeerId?: string | null;
+  /** Phase D1: fly the map to this point when it changes (fresh object per
+   *  request — identity drives the pan, so repeat targets re-pan). The
+   *  Live-decodes tab's row click feeds this via the panel. */
+  panTarget?: LatLon | null;
 }
 
 // Recenter zoom on the operator, on the z0–14 scale (matches the MapLibre edition).
@@ -306,6 +310,20 @@ function OperatorPin({ location }: { location: { lat: number; lon: number } | nu
   return null;
 }
 
+/** Fly the map to an externally-supplied target (Phase D1 — the Live-decodes
+ *  tab's row click pans here). Mirrors LeafletRecenterControl's context idiom:
+ *  reads the live L.Map and calls flyTo. Keyed on the target's OBJECT identity —
+ *  the supplier commits a fresh object per click, so re-clicking the same grid
+ *  re-pans (values alone would dedupe it away). Renders nothing. */
+function PanTo({ target }: { target: LatLon | null }) {
+  const map = useLeafletMap();
+  useEffect(() => {
+    if (!map || !target) return;
+    map.flyTo([target.lat, target.lon]);
+  }, [map, target]);
+  return null;
+}
+
 export function StationFinderMap(props: StationFinderMapProps) {
   const me = props.operatorGrid ? gridToLatLon(props.operatorGrid) : null;
   // tuxlink-dwzu: restore the operator's last viewport. A saved view wins over the
@@ -324,6 +342,10 @@ export function StationFinderMap(props: StationFinderMapProps) {
   // wired to a nonexistent layer would itself be the incomplete-control
   // anti-pattern the no-incomplete-refs rule bans — spec §Scope "Out").
   const [gatewaysVisible, setGatewaysVisible] = useState(true);
+  // Peers toggle (approved reconciliation mock: [Gateways][Peers] side by side).
+  // Rendered ONLY when the map_peers capability is on — with peers unavailable a
+  // lone toggle would be dead chrome (capability-hide, not disable).
+  const [peersVisible, setPeersVisible] = useState(true);
 
   // Task delta2 (spec §6 reconciliation): the peer DIAMOND layer, gated
   // end-to-end on `map_peers` [R5-8] — false (or still loading) HIDES every
@@ -364,12 +386,13 @@ export function StationFinderMap(props: StationFinderMapProps) {
         <OperatorPin location={me} />
         <PeerLayer
           peers={aggregatedPeers}
-          enabled={mapPeersEnabled}
+          enabled={mapPeersEnabled && peersVisible}
           shape="diamond"
           visualFor={peerVisualFor}
           onSelect={(peer) => props.onSelectPeer?.(peer)}
           selectedId={props.selectedPeerId ?? null}
         />
+        <PanTo target={props.panTarget ?? null} />
         <LeafletRecenterControl target={me} zoom={OPERATOR_ZOOM} />
       </LeafletMap>
       <div className="station-finder__layers" data-testid="map-layer-control">
@@ -383,6 +406,21 @@ export function StationFinderMap(props: StationFinderMapProps) {
           <span className="station-finder__layer-swatch" aria-hidden="true" />
           Gateways
         </button>
+        {mapPeersEnabled && (
+          <button
+            type="button"
+            className={`station-finder__layer-btn${peersVisible ? ' on' : ''}`}
+            data-testid="map-layer-peers"
+            aria-pressed={peersVisible}
+            onClick={() => setPeersVisible((v) => !v)}
+          >
+            <span
+              className="station-finder__layer-swatch station-finder__layer-swatch--peer"
+              aria-hidden="true"
+            />
+            Peers
+          </button>
+        )}
       </div>
       <div className="station-finder__reachkey" aria-hidden>
         <span className="k good" /> good
@@ -391,6 +429,13 @@ export function StationFinderMap(props: StationFinderMapProps) {
         <span className="k poor" /> maybe not
         <span className="k unlikely" /> unlikely
         <span className="k skip" /> not reachable
+        {mapPeersEnabled && (
+          <div className="station-finder__reachkey-peers" data-testid="reachkey-peers">
+            PEERS (P2P) · same ramp
+            <span className="pk" /> peer
+            <span className="pk never" /> never connected
+          </div>
+        )}
       </div>
     </div>
   );

@@ -23,6 +23,14 @@ import { ServiceCodesField } from './ServiceCodesField';
 import { StationFinderMap } from './StationFinderMap';
 import { StationRail } from './StationRail';
 import { AntennaControl } from './AntennaControl';
+// Phase D1 — the FT-8 integration seam. Phase C built every one of these and
+// mounted NONE of them: LiveBandStrip had zero call sites, Ft8SetupSurface had
+// zero, and the listener's decodesRing/bandActivity reached no consumer, so the
+// whole Station-Intelligence feature was inert. This is where they become real.
+import { useFt8Listener } from '../ft8ui/useFt8Listener';
+import { LiveBandStrip } from '../ft8ui/LiveBandStrip';
+import { Ft8SetupSurface } from '../ft8ui/Ft8SetupSurface';
+import { useStatusData } from '../shell/useStatus';
 import {
   readPropagationPrefs,
   writePropagationPrefs,
@@ -33,6 +41,7 @@ import { HF_BANDS, type Band } from './bandPlan';
 import type { ListingMode } from './stationTypes';
 import type { RadioMode, FavoriteDial } from '../favorites/types';
 import type { AggregatedPeer } from '../peers/peerModel';
+import type { LatLon } from '../forms/position/maidenhead';
 import type { PeerPrefill } from '../peers/peerPrefillEvent';
 import './StationFinderPanel.css';
 
@@ -64,6 +73,14 @@ export interface StationFinderPanelProps {
    * standalone harness), matching `onUse`'s own fallback contract.
    */
   onUsePeer?: (prefill: PeerPrefill) => void;
+  /**
+   * Phase D1: the RF modem session currently holding the radio (e.g. "VARA"),
+   * from AppShell's `useActiveModemMode`. Threaded to LiveBandStrip →
+   * BandSubsetPopover, which interpolates it into "radio busy with <mode>
+   * session — disconnect first" (spec §NewCommands). Undefined when no RF modem
+   * is active; the popover degrades to its own "another session" wording.
+   */
+  blockingSessionMode?: string;
 }
 
 const FILTER_MODES: FilterMode[] = ['vara-hf', 'ardop-hf', 'packet'];
@@ -153,12 +170,38 @@ export function StationFinderPanel({
   activePrefillMode,
   onUse,
   onUsePeer,
+  blockingSessionMode,
 }: StationFinderPanelProps) {
   // tuxlink-liqs9: seed the finder view from the operator's last session so a
   // close/reopen restores where they left off. Read ONCE at mount (lazy);
   // re-persisted by the effect below.
   const [persisted0] = useState(readFinderView);
   const [grid, setGrid] = useState('');
+
+  // ---- Phase D1: the FT-8 listener seam -----------------------------------
+  // Reads the shared Ft8ListenerProvider context AppShell already mounts — NOT a
+  // second subscription (useFt8Listener is a context read).
+  const ft8 = useFt8Listener();
+
+  // C6 review fix (D1): the aim hero's bearing used a MOUNT-ONLY grid (the
+  // position_current_fix effect below) while the declination used the LIVE
+  // useStatusData().grid — so a mid-session GPS fix made magnetic and true
+  // bearings reference two different origins, and the "from <grid>" provenance
+  // lied. Prefer the live grid everywhere the panel means "the operator's
+  // position", so every consumer references ONE grid.
+  const { grid: liveGrid } = useStatusData();
+  const operatorGrid = (liveGrid ?? '').trim() || grid;
+
+  // `device-lost`'s "pick another input" link (spec §States row 6b) must open the
+  // full setup surface, or it is a dead link. Forced open until the operator
+  // completes a handover (onStarted) — then we re-read and fall back to whatever
+  // the snapshot now says.
+  const [forceSetup, setForceSetup] = useState(false);
+
+  // D1: Live-decodes tab row click → pan the map to that station's grid. A FRESH
+  // object per click (identity drives PanTo's effect) so re-clicking the same
+  // grid re-pans after the operator has dragged away.
+  const [panTarget, setPanTarget] = useState<LatLon | null>(null);
   // Band picker is a multi-select FILTER (tuxlink-hlas). Default: all HF bands
   // on (show the operator's full HF options), VHF/UHF off (line-of-sight packet
   // is opt-in). A station shows only if it has a channel on a selected band.
@@ -433,6 +476,8 @@ export function StationFinderPanel({
           onRefresh={() => stations.fetch(FILTER_MODES as ListingMode[])}
           refreshing={stations.loading}
           filterExtra={<ServiceCodesField onApplied={() => stations.fetch(FILTER_MODES as ListingMode[])} />}
+          // D1: live per-band FT-8 openness dots on the band chips (Task C4).
+          bandActivity={ft8.bandActivity}
         />
 
         {prefs && (
@@ -442,27 +487,75 @@ export function StationFinderPanel({
         <div className="station-finder__body">
           <StationFinderMap
             stations={visible}
-            operatorGrid={grid}
+            operatorGrid={operatorGrid}
             tiers={reach.tiers}
             selectedKey={selectedKey}
             onSelect={(s) => setSelection({ kind: 'gateway', key: stationKey(s) })}
             onSelectPeer={(peer) => setSelection({ kind: 'peer', peer })}
             selectedPeerId={selection?.kind === 'peer' ? selection.peer.id : null}
+            panTarget={panTarget}
           />
           <StationRail
             station={selected}
             peer={selection?.kind === 'peer' ? selection.peer : null}
             prediction={pred.prediction}
             predictionStatus={pred.status}
-            operatorGrid={grid}
+            operatorGrid={operatorGrid}
             utcHour={utcHour}
             activePrefillMode={activePrefillMode}
             onUse={onUse}
             onUsePeer={onUsePeer}
             onSaveFavorite={onSaveFavorite}
             isSaved={isSaved}
+            // D1: the live FT-8 feeds the rail was built to take and never got —
+            // decodesRing drives the "Live decodes" tab, bandActivity the
+            // BandMatrix openness dots.
+            decodesRing={ft8.decodesRing}
+            bandActivity={ft8.bandActivity}
+            onPanToGrid={(ll) => setPanTarget({ ...ll })}
           />
         </div>
+
+        {/* D1 — THE mount that was missing. Phase C built LiveBandStrip (and,
+            beneath it, Waterfall + DecodeFeed + BandSubsetPopover) with zero call
+            sites, so none of it existed for the operator. The strip hosts the live
+            band: waterfall, decode feed, stats, provenance chips, and the
+            band-subset popover; in the needs-setup arms it hosts Ft8SetupSurface,
+            which likewise had no mount. */}
+        <LiveBandStrip
+          snapshot={ft8.snapshot}
+          uiState={ft8.uiState}
+          decodesRing={ft8.decodesRing}
+          blockingSessionMode={blockingSessionMode}
+          setupSurface={
+            ft8.snapshot ? (
+              <Ft8SetupSurface
+                snapshot={ft8.snapshot}
+                onStarted={() => {
+                  setForceSetup(false);
+                  ft8.rehydrate();
+                }}
+                onRetry={ft8.rehydrate}
+              />
+            ) : undefined
+          }
+          onOpenFullSetup={() => setForceSetup(true)}
+        />
+
+        {/* `device-lost` → "pick another input": the strip's compact body has no
+            device picker, so the forced full setup surface renders here beneath it
+            (the link is otherwise dead). Gated on a snapshot — the surface's own
+            contract requires one. */}
+        {forceSetup && ft8.snapshot && (
+          <Ft8SetupSurface
+            snapshot={ft8.snapshot}
+            onStarted={() => {
+              setForceSetup(false);
+              ft8.rehydrate();
+            }}
+            onRetry={ft8.rehydrate}
+          />
+        )}
       </div>
     </div>
   );
