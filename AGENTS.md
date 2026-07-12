@@ -116,6 +116,7 @@ Key routing rules:
 - Save progress, checkpoint, resume → invoke checkpoint
 - Code quality, health check → invoke health
 - About to claim a feature is end-to-end shipped / done / complete, or mark a PR ready → invoke **wire-walk** (HARD GATE). Operator supplies the user flows greenfield (do NOT draft them); trace each to code (`file:line`); any broken primary flow = NOT shipped. Canonical + rationale: `.claude/skills/wire-walk/SKILL.md` and the CLAUDE.md "Wire-walk gate" section.
+- **Features are built whole ([ADR 0022](docs/adr/0022-ban-autonomous-agent-issue-splitting-and-deferrals.md)).** A feature ships whole and wire-walked, or stays in progress — never a shippable inert slice + deferred remainder, and no authorization escape hatch. Filing a spec'd, buildable piece as a "follow-up" is the banned deferral. Distinct, independently-complete capabilities are separate features (not splitting).
 
 Codex fallback rule: if the native harness does not expose Claude's Skill tool
 or does not list a named project skill, read the local `SKILL.md` and follow it
