@@ -32,6 +32,7 @@ pub mod winlink_backend;
 pub mod wizard;
 pub mod mcp_ports;
 pub mod ft8;
+pub mod geomag;
 pub mod modem_commands;
 pub mod modem_status;
 pub mod propagation;
@@ -2171,6 +2172,8 @@ pub fn run() {
             // tuxlink-s0r1: operator antenna preset + REQ.SNR + power prefs.
             crate::propagation::commands::propagation_prefs_read,
             crate::propagation::commands::propagation_prefs_write,
+            // tuxlink-ot71: internet (NOAA SWPC) "Update propagation data" fetch.
+            crate::propagation::commands::propagation_update_solar,
             // tuxlink-xscum: off-air WWV/WWVH space-weather decode (RX-only).
             crate::wwv_offair::commands::wwv_offair_refresh,
             crate::wwv_offair::commands::wwv_offair_snapshot_read,
@@ -2371,6 +2374,13 @@ pub fn run() {
             crate::ft8::commands::ft8_set_device,
             crate::ft8::commands::ft8_set_band,
             crate::ft8::commands::ft8_set_sweep,
+            crate::ft8::commands::ft8_set_sweep_bands,
+            crate::ft8::commands::ft8_device_meter,
+            crate::ft8::commands::ft8_list_devices,
+            crate::ft8::commands::ft8_cat_probe,
+            crate::ft8::commands::ft8_waterfall_subscribe,
+            crate::ft8::commands::ft8_waterfall_unsubscribe,
+            crate::geomag::magnetic_declination,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -67,7 +67,7 @@ use serde::{Deserialize, Serialize};
 /// from a `/dev/snd/by-id` symlink, a USB `vid:pid:serial`, or a stable hash of
 /// the ALSA card id — never the `card N` index. See the module docs for the
 /// derivation priority order.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StableAudioId {
     /// How this id was derived — lets the UI explain the resolution and lets a
@@ -79,7 +79,7 @@ pub struct StableAudioId {
 }
 
 /// Which input produced a [`StableAudioId`] — ordered most-to-least specific.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum StableIdKind {
     /// Derived from a `/dev/snd/by-id/<basename>` symlink (best).

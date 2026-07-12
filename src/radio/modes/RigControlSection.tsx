@@ -1,15 +1,25 @@
 // src/radio/modes/RigControlSection.tsx
 //
-// Shared "Rig control" expander for ARDOP and VARA panels. Reads/writes the
-// radio-level Config.rig via the Tauri commands config_get_rig /
-// config_set_rig introduced in Task A1.
+// Shared "Rig control" expander for ARDOP, VARA, and (Task C9b) the FT-8
+// setup surface. Reads/writes the radio-level Config.rig via the Tauri
+// commands config_get_rig / config_set_rig introduced in Task A1.
 //
-// Both panels render this component — one physical radio, both modes share
-// the same hamlib/CAT config. The storageKeyPrefix param distinguishes the
-// localStorage collapse-state key so the two panels can be independently
-// expanded/collapsed.
+// All three sites render this component — one physical radio, every mode
+// shares the same hamlib/CAT config. The storageKeyPrefix param distinguishes
+// the localStorage collapse-state key so each render site can be
+// independently expanded/collapsed.
+//
+// Task C9b: the FT-8 setup surface's "Test CAT" action must not read stale
+// `Config.rig` when the operator has just typed into a field but not yet
+// blurred it (blur is when this component normally flushes serial/baud/
+// rigctld-binary to the backend). `commitNow()` — exposed via
+// `useImperativeHandle` on a forwarded ref — flushes those three
+// blur-deferred fields immediately, so a caller can `await ref.current
+// ?.commitNow()` right before probing. The ref is OPTIONAL: ArdopRadioPanel
+// and VaraRadioPanel render this component without a ref today and keep
+// working unchanged — forwardRef accepts (and ignores) a missing ref.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Button, Select, Field } from '../../controls';
 import { getRigProfile } from './rigProfiles';
@@ -64,12 +74,26 @@ interface RigControlSectionProps {
   onRadioSelected?: (modelId: number | null, pttOverridden: boolean) => void;
 }
 
+/** Imperative handle (Task C9b) — exposed via a forwarded ref. Optional for
+ *  every consumer; ArdopRadioPanel/VaraRadioPanel render without a ref and
+ *  are unaffected. */
+export interface RigControlSectionHandle {
+  /** Flushes the three blur-deferred fields (CAT serial manual entry, CAT
+   *  baud, rigctld binary) to the backend immediately, regardless of focus
+   *  state. Resolves once every flush's config_set_rig round-trip (or its
+   *  no-op skip, e.g. an invalid baud that reverts instead of persisting)
+   *  has settled. Safe to call even when nothing changed since the last
+   *  blur — the writes are idempotent read-modify-writes. */
+  commitNow: () => Promise<void>;
+}
+
 /** Collapsible "Rig control" expander — hamlib model, CAT serial/baud,
  *  data mode, close-serial sequencing, and live VFO poll. Loads from
  *  config_get_rig on mount; persists via config_set_rig on change/blur.
  *  Collapsed by default; collapse state is preserved in localStorage.
  *  Use variant="bare" to render only the field rows (no expander chrome). */
-export function RigControlSection({ storageKeyPrefix, variant = 'expander', onRadioSelected }: RigControlSectionProps) {
+export const RigControlSection = forwardRef<RigControlSectionHandle, RigControlSectionProps>(
+  function RigControlSection({ storageKeyPrefix, variant = 'expander', onRadioSelected }, ref) {
   const lsKey = `tuxlink.${storageKeyPrefix}.rigCfgOpen`;
 
   const [rigCfgOpen, setRigCfgOpen] = useState<boolean>(() => {
@@ -142,9 +166,14 @@ export function RigControlSection({ storageKeyPrefix, variant = 'expander', onRa
   /** Read-modify-write Config.rig against the BACKEND (not the possibly-stale
    *  local rigConfig) so the shared rig_field_overrides — also written by the
    *  ARDOP panel's PTT handler — is never clobbered by a stale copy. `compute`
-   *  receives the fresh backend config and returns the patch to merge. */
-  const rmwRig = (compute: (fresh: RigConfig) => Partial<RigConfig>) => {
-    void invoke<RigConfig>('config_get_rig')
+   *  receives the fresh backend config and returns the patch to merge.
+   *
+   *  Returns a Promise<void> that settles once the write (or its best-effort
+   *  fallback) has been attempted — Task C9b's `commitNow()` awaits this so a
+   *  caller can be sure a just-typed field has actually reached the backend
+   *  before it reads Config.rig for something else (e.g. a CAT probe). */
+  const rmwRig = (compute: (fresh: RigConfig) => Partial<RigConfig>): Promise<void> => {
+    return invoke<RigConfig>('config_get_rig')
       .then((fresh) => {
         const base = fresh ?? rigConfig ?? DEFAULT_RIG_CONFIG;
         const next = { ...base, ...compute(base) };
@@ -156,24 +185,25 @@ export function RigControlSection({ storageKeyPrefix, variant = 'expander', onRa
         const base = rigConfig ?? DEFAULT_RIG_CONFIG;
         const next = { ...base, ...compute(base) };
         setRigConfig(next);
-        void invoke('config_set_rig', { value: next }).catch(() => {});
-      });
+        return invoke('config_set_rig', { value: next }).catch(() => {});
+      })
+      .then(() => undefined);
   };
 
   /** Merge a patch into the backend config and update local state.
    *  Uses a read-modify-write against the backend so the shared
    *  rig_field_overrides (also written by the ARDOP PTT handler) is never
    *  clobbered by a stale local copy. */
-  const persistRig = (patch: Partial<RigConfig>) => {
-    rmwRig(() => patch);
+  const persistRig = (patch: Partial<RigConfig>): Promise<void> => {
+    return rmwRig(() => patch);
   };
 
   /** Persist a patch AND add `key` to the override set (idempotent). Used when
    *  the operator hand-edits a profile-managed field so a later radio change
    *  won't clobber it. Reads the fresh override set from the backend so a
    *  concurrent ARDOP-panel PTT override is never lost. */
-  const persistRigWithOverride = (key: string, patch: Partial<RigConfig>) => {
-    rmwRig((fresh) => ({
+  const persistRigWithOverride = (key: string, patch: Partial<RigConfig>): Promise<void> => {
+    return rmwRig((fresh) => ({
       ...patch,
       rig_field_overrides: fresh.rig_field_overrides.includes(key)
         ? fresh.rig_field_overrides
@@ -209,18 +239,22 @@ export function RigControlSection({ storageKeyPrefix, variant = 'expander', onRa
     });
   };
 
-  const commitCatSerial = () => {
+  /** commitNow (Task C9b) awaits this directly, so it MUST return the
+   *  persist Promise rather than fire-and-forget it — otherwise a caller
+   *  awaiting commitNow() would resolve before the write actually landed. */
+  const commitCatSerial = (): Promise<void> => {
     const trimmed = catSerialInput.trim();
-    persistRig({ cat_serial_path: trimmed === '' ? null : trimmed });
+    return persistRig({ cat_serial_path: trimmed === '' ? null : trimmed });
   };
 
-  const commitCatBaud = () => {
+  const commitCatBaud = (): Promise<void> => {
     const n = Number(catBaudInput.trim());
     if (!Number.isInteger(n) || n <= 0) {
       setCatBaudInput(String(rigConfig?.cat_baud ?? 38400));
-      return;
+      // Invalid input reverts instead of persisting — nothing to await.
+      return Promise.resolve();
     }
-    persistRigWithOverride('cat_baud', { cat_baud: n });
+    return persistRigWithOverride('cat_baud', { cat_baud: n });
   };
 
   /** Blank clears back to the bundled sentinel "rigctld" rather than an empty
@@ -229,12 +263,26 @@ export function RigControlSection({ storageKeyPrefix, variant = 'expander', onRa
    *  bundled copy" (bd-tuxlink-a9ip3). Not radio-profile-driven (unlike
    *  data_mode/cat_baud/close_serial), so a plain persistRig — no override-set
    *  bookkeeping needed. */
-  const commitRigctldBinary = () => {
+  const commitRigctldBinary = (): Promise<void> => {
     const trimmed = rigctldBinaryInput.trim();
     const next = trimmed === '' ? 'rigctld' : trimmed;
     setRigctldBinaryInput(next);
-    persistRig({ rigctld_binary: next });
+    return persistRig({ rigctld_binary: next });
   };
+
+  /** Task C9b: flush the three blur-deferred fields (CAT serial manual
+   *  entry, CAT baud, rigctld binary) immediately, regardless of DOM focus.
+   *  Exposed via the forwarded ref so a caller — the FT-8 setup surface's
+   *  "Test CAT" button — can `await ref.current?.commitNow()` right before
+   *  probing, so a just-typed-but-unblurred field doesn't cause a false
+   *  "radio not responding". No dependency array: each render closes over
+   *  the latest input state, and re-registering the handle every render is
+   *  cheap (a single object with one function). */
+  useImperativeHandle(ref, () => ({
+    commitNow: async () => {
+      await Promise.all([commitCatSerial(), commitCatBaud(), commitRigctldBinary()]);
+    },
+  }));
 
   const rows = (
     <>
@@ -465,4 +513,5 @@ export function RigControlSection({ storageKeyPrefix, variant = 'expander', onRa
       {rows}
     </details>
   );
-}
+  },
+);

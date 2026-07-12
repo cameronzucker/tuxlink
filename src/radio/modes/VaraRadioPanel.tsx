@@ -27,6 +27,7 @@ import { useSessionLog } from '../sections/useSessionLog';
 import { useVaraConfig } from '../useVaraConfig';
 import type { VaraUiConfig } from '../useVaraConfig';
 import type { RadioPanelMode } from '../types';
+import { findGatewayLabelForIntent } from '../types';
 import { AllowedStationsEditor } from '../sections/AllowedStationsEditor';
 import { ListenArmButton } from '../sections/ListenArmButton';
 import { useListenerState } from '../sections/useListenerState';
@@ -34,6 +35,7 @@ import { useActiveIdentity } from '../../shell/useIdentities';
 import { FavoritesTabs } from '../../favorites/FavoritesTabs';
 import { useFavorites } from '../../favorites/useFavorites';
 import { listenGatewayPrefill } from '../../favorites/prefillEvent';
+import { listenPeerPrefill, type PeerPrefill } from '../../peers/peerPrefillEvent';
 import { tsLocal } from '../../favorites/ts-local';
 import type { FavoriteDial } from '../../favorites/types';
 import { RigControlSection } from './RigControlSection';
@@ -42,6 +44,7 @@ import {
   parseFreqInputToHz,
   dialFreqToMhzString,
   dialsToQsyCandidates,
+  hzToMhzString,
 } from './freq';
 import './VaraRadioPanel.css';
 import '../sections/ListenSection.css';
@@ -517,6 +520,28 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
     [mode.kind, handlePrefill],
   );
 
+  // Peers↔L3 reconciliation: a PEER channel picked in the finder's Station tab.
+  // Fills the target + freq ONLY — never transmits; the operator presses the
+  // pane's own Connect, exactly as with a gateway prefill. Gated on the **p2p**
+  // intent so a peer dial can never land in (and be sent to) a CMS pane.
+  const handlePeerPrefill = useCallback(
+    (p: PeerPrefill) => {
+      setTarget(p.target);
+      writeLastTarget(mode.kind, p.target);
+      // A peer channel's freq is raw Hz (contacts Channel.freq_hz), not the dial
+      // metadata dialFreqToMhzString parses — hence its own formatter. CLEAR the
+      // field when the channel has no freq, so a stale one never tunes the rig.
+      setFreqMhz(p.freqHz != null ? hzToMhzString(p.freqHz) : '');
+      // Land the operator CONNECTABLE — opening the transport does NOT transmit.
+      setAutoOpenPending(true);
+    },
+    [mode.kind],
+  );
+  useEffect(
+    () => (mode.intent === 'p2p' ? listenPeerPrefill(mode.kind, handlePeerPrefill) : undefined),
+    [mode.kind, mode.intent, handlePeerPrefill],
+  );
+
   // Build the dial for a connection record. The gateway is the dial target. If
   // the prefilled favorite matches it (case-insensitive), carry its metadata
   // (band/grid/note) into the record; otherwise record a minimal manual dial.
@@ -619,6 +644,13 @@ export function VaraRadioPanel({ mode, onClose, onFindGateway }: VaraRadioPanelP
       sub={headerSub}
       onClose={onClose}
       onFindGateway={onFindGateway}
+      // VARA is RF-only (vara-hf/vara-fm), whose intent is 'cms' | 'p2p' |
+      // 'radio-only'; the ternary narrows away the telnet-only
+      // post-office/network-po members that `mode: RadioPanelMode` admits
+      // structurally but VARA never actually receives.
+      findGatewayLabel={findGatewayLabelForIntent(
+        mode.intent === 'radio-only' || mode.intent === 'p2p' ? mode.intent : 'cms',
+      )}
     >
       {platformBlocked && (
         <p

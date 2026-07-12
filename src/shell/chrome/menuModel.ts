@@ -94,7 +94,7 @@ export const MENU_TREE: TopMenu[] = [
     // message action); also surfaced in-panel from the ARDOP/Packet/VARA radio
     // panels. The action id stays `find_gateway` (the menuModel contract test
     // keys on it) though the surface is now Find a Station.
-    { id: 'menu:tools:find_gateway', label: 'Find a Station…' },
+    { id: 'menu:tools:find_gateway', label: 'Station Intelligence…' },
     // tuxlink-lqw2: Verify CMS Connection — connect-only NativeBackend probe
     // (verify_cms_connection): confirms CMS reachability + auth over internet
     // telnet, no transmission. Relocated here from the (removed) Session menu.

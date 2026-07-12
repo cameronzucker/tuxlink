@@ -19,6 +19,12 @@
   --m-vara: #4aa3ff;
   --m-ardop: #b07cf0;
   --m-packet: #34d0d0;
+  /* OPENNESS (§Openness) — "how much FT-8 activity was heard recently on this
+     band," a third axis distinct from SIGNAL (path reliability) and MODES
+     (protocol). A dedicated warm-red→amber ramp so it never reads as either. */
+  --open-hot: #ff5470;
+  --open-warm: #ffcf5c;
+  --open-quiet: #5c92b3;
 }
 
 .station-finder-overlay {
@@ -168,6 +174,33 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+/* Openness dot (§Openness) — a non-interactive live-activity indicator inside
+   each HF band chip. `no-data` is deliberately hollow (border only, no fill)
+   so it never reads as "activity" — the dot never claims knowledge it lacks.
+   Never-sampleable bands (60m, VHF/UHF) omit this span entirely (component
+   logic), not just style it away, so there's nothing here to hide for them. */
+.station-finder__dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 5px;
+  border-radius: 50%;
+  vertical-align: middle;
+  flex: none;
+}
+.station-finder__dot--hot {
+  background: var(--open-hot);
+}
+.station-finder__dot--warm {
+  background: var(--open-warm);
+}
+.station-finder__dot--quiet {
+  background: var(--open-quiet);
+}
+.station-finder__dot--no-data {
+  background: transparent;
+  border: 1px solid var(--border2, #34556f);
+}
 .station-finder__modes {
   margin-left: auto;
   display: flex;
@@ -262,76 +295,6 @@
   cursor: pointer;
 }
 
-/* Off-air WWV control (WwvOffairControl.tsx) — clip playback + manual entry
-   + manual-tune prompt, styled to match .station-finder__refresh above. */
-.station-finder__refresh-offair {
-  font: inherit;
-  font-size: 11.5px;
-  color: var(--dim, #9fb6cc);
-  background: var(--surface-2);
-  border: 1px solid var(--border2, #34556f);
-  border-radius: 7px;
-  padding: 5px 10px;
-  cursor: pointer;
-}
-.station-finder__refresh-offair:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-.station-finder__cancel-offair {
-  font: inherit;
-  font-size: 11px;
-  color: var(--faint, #6f8aa3);
-  background: transparent;
-  border: 1px solid var(--border2, #34556f);
-  border-radius: 7px;
-  padding: 4px 8px;
-  cursor: pointer;
-}
-.station-finder__offair-note {
-  font-size: 11px;
-  color: var(--dim, #9fb6cc);
-  font-family: var(--mono, ui-monospace, monospace);
-}
-.station-finder__offair {
-  font-size: 10.5px;
-  color: var(--dim, #9fb6cc);
-  font-family: var(--mono, ui-monospace, monospace);
-  padding-left: 8px;
-  border-left: 2px solid var(--accent, #4c86c6);
-}
-.station-finder__offair b {
-  color: var(--text, #e8f1fa);
-}
-.station-finder__offair-nocopy {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  font-size: 11px;
-  color: #e0c060;
-  font-family: var(--mono, ui-monospace, monospace);
-}
-.station-finder__offair-manual {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.station-finder__offair-field {
-  width: 4.5em;
-  font: inherit;
-  font-size: 11px;
-  color: var(--text, #e8f1fa);
-  background: var(--surface-2);
-  border: 1px solid var(--border2, #34556f);
-  border-radius: 6px;
-  padding: 3px 6px;
-}
-.station-finder__offair-clip {
-  height: 28px;
-  max-width: 200px;
-}
-
 /* ── body: map + rail ─────────────────────────────────────────────────── */
 .station-finder__body {
   display: flex;
@@ -350,19 +313,125 @@
   min-width: 360px;
   display: flex;
   flex-direction: column;
-  overflow: auto;
+  overflow: hidden;
   background: var(--surface, #0c1620);
 }
-.station-finder__rail--empty {
-  /* Task 23: peer rows can now render alongside this empty state (a peer with
-     no map pin has nothing else to select), so this is a CHILD of
-     .station-finder__rail rather than reusing its display:flex directly —
-     declare its own flex context to keep the same centered look. */
+
+/* ── rail tab shell (tuxlink-b026z.4 Task C5, §Rail) ──────────────────────
+   `Station | Live decodes`. Sits on the opaque `.station-finder__rail`
+   background; border-radius:0 on the buttons is load-bearing — a transparent
+   button that keeps App.css's global 6px radius shows a sliver of native
+   GTK chrome at the rounded corners under WebKitGTK (the same finding that
+   flattened `.aprs-dock-tab`; see AprsDockTabs.css). */
+.station-finder__railtabs {
   display: flex;
+  align-items: stretch;
+  flex: none;
+  border-bottom: 1px solid var(--border, #243a52);
+  background: var(--panel, #0f1c28);
+}
+.station-finder__railtab {
+  padding: 8px 15px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  border-right: 1px solid var(--border, #243a52);
+  color: var(--dim, #9fb6cc);
+}
+.station-finder__railtab.is-active {
+  background: var(--surface, #0c1620);
+  color: var(--text, #e8f1fa);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--accent, #4aa3df);
+}
+.station-finder__railtab:not(.is-active):hover {
+  color: var(--text, #e8f1fa);
+}
+
+.station-finder__railpane {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+.station-finder__rail--empty {
+  flex: 1;
+  display: flex;
   align-items: center;
   justify-content: center;
   color: var(--faint, #6f8aa3);
+}
+
+/* ── Live decodes tab (§Rail "Live decodes tab") ───────────────────────────
+   Station-centric aggregation: call · grid · SNR · count · mi·brg. A
+   grid-less row is deliberately NOT `.is-clickable` (no cursor, no hover) so
+   the operator never mistakes it for an actionable pin. */
+.station-finder__ld--empty {
+  align-items: center;
+  justify-content: center;
+  color: var(--faint, #6f8aa3);
+  font-size: 12px;
+  padding: 20px;
+  text-align: center;
+}
+.station-finder__ld-head,
+.station-finder__ld-row {
+  display: grid;
+  grid-template-columns: 1.4fr 0.9fr 0.6fr 0.5fr 1fr;
+  gap: 9px;
+  align-items: center;
+  padding: 7px 13px;
+}
+.station-finder__ld-head {
+  font-size: 10px;
+  color: var(--faint, #6f8aa3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: 1px solid var(--border, #243a52);
+}
+.station-finder__ld-row {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--dim, #9fb6cc);
+  border-bottom: 1px solid #16293a;
+}
+.station-finder__ld-row.is-clickable {
+  cursor: pointer;
+}
+.station-finder__ld-row.is-clickable:hover {
+  background: var(--panel, #0f1c28);
+}
+.station-finder__ld-call {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text, #e8f1fa);
+  font-weight: 600;
+}
+.station-finder__ld-band {
+  font-family: inherit;
+  font-size: 9.5px;
+  font-weight: 500;
+  text-transform: uppercase;
+  color: var(--faint, #6f8aa3);
+  border: 1px solid var(--border2, #34556f);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+.station-finder__ld-grid {
+  color: var(--dim, #9fb6cc);
+}
+.station-finder__ld-snr,
+.station-finder__ld-count {
+  text-align: right;
+}
+.station-finder__ld-dist {
+  text-align: right;
+  color: var(--dim, #9fb6cc);
 }
 
 /* Station pins — rendered as L.divIcon HTML by StationFinderMap (global classes,
@@ -427,6 +496,48 @@
   border: 3px solid var(--accent, #2f86f0);
   box-shadow: 0 0 0 3px rgba(47, 134, 240, 0.3);
 }
+/* ── map layer-control housing (tuxlink-b026z.4 Task C11, §Scope map
+   layer-control) — Gateways entry ONLY; the FT-8 heat entry is L5-owned and
+   is not present here (no dead toggle). Non-transparent pill button (D3
+   gate): `.station-finder__layer-btn` carries an opaque background, never
+   bare/transparent chrome. ────────────────────────────────────────────── */
+.station-finder__layers {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  z-index: 7;
+  display: flex;
+  gap: 6px;
+  font-size: 10.5px;
+  background: rgba(8, 16, 24, 0.74);
+  border: 1px solid var(--border, #243a52);
+  border-radius: 6px;
+  padding: 5px 7px;
+}
+.station-finder__layer-btn {
+  font: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-dim, #94a0ad);
+  background: var(--surface-2, #131f2b);
+  border: 1px solid var(--border-strong, #2c3a47);
+  border-radius: 12px;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+.station-finder__layer-btn.on {
+  color: var(--text, #eaf3fb);
+  border-color: var(--reach-good, #41ba6c);
+}
+.station-finder__layer-swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--m-vara, #4aa3ff);
+}
+
 .station-finder__reachkey {
   position: absolute;
   left: 10px;
@@ -514,10 +625,15 @@
 
 .station-finder__aim {
   display: flex;
-  align-items: center;
-  gap: 14px;
+  flex-direction: column;
+  gap: 6px;
   padding: 11px 13px;
   border-bottom: 1px solid var(--border, #243a52);
+}
+.station-finder__aimrow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
 }
 .station-finder__compass {
   width: 58px;
@@ -553,6 +669,15 @@
 }
 .station-finder__dist .station-finder__big {
   font-size: 18px;
+}
+.station-finder__aim-true {
+  font-size: 12px;
+  color: var(--dim, #9fb6cc);
+  font-family: var(--mono, ui-monospace, monospace);
+}
+.station-finder__aim-decl {
+  font-size: 10.5px;
+  color: var(--faint, #6f8aa3);
 }
 
 .station-finder__prop {
@@ -703,118 +828,102 @@
   cursor: not-allowed;
 }
 
-/* Station-type filter chips (Task 23, spec §5) — reuses .station-finder__chip
-   styling; the cluster itself is only rendered when finder_peers is on. */
-.station-finder__types {
-  display: inline-flex;
-  gap: 6px;
+/* ── BandMatrix (tuxlink-b026z.4 Task C3, spec §Rail) ───────────────────
+   One row per finder HF band + VHF: band label · openness dot · VOACAP
+   bar+% · dial chips. Supersedes the old .station-finder__prop (path
+   forecast bars) + .station-finder__ch (channels-grouped-by-mode) blocks —
+   those classes stay defined above for any other consumer, but StationRail
+   no longer renders them. */
+.station-finder__bandmatrix {
+  flex: 1;
 }
-
-/* ── Manual-dial affordance (Task T-G, spec §AMENDMENT pt. 7) ────────────
-   "Dial a station" — dial a callsign the operator has not heard, through the
-   same connect seam as the peer rows below. Sits above the Peers list so it
-   still renders on an empty roster (Flow 2(b)); gated on the SAME
-   finder_peers capability bit, not on whether any peers are visible. */
-.station-finder__dial {
-  border-top: 1px solid var(--border, #243a52);
-  padding: 9px 13px;
+.station-finder__bmheader {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 13px 7px;
+  font-size: 11px;
+  color: var(--faint, #6f8aa3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
-.station-finder__dial-row {
+.station-finder__bmrow {
+  display: grid;
+  grid-template-columns: 40px 12px 100px 1fr;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 13px;
+  border-bottom: 1px solid #16293a;
+  min-height: 34px;
+}
+.station-finder__bmrow.is-best {
+  background: rgba(65, 186, 108, 0.06);
+}
+.station-finder__bmrow.is-best .station-finder__bn {
+  color: var(--text, #e8f1fa);
+  font-weight: 700;
+}
+.station-finder__bmrow.is-empty .station-finder__bmnone {
+  opacity: 0.55;
+}
+.station-finder__bmdotslot {
+  width: 7px;
+  height: 7px;
+  display: inline-block;
+}
+.station-finder__bmforecast {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.station-finder__bmforecast .station-finder__track {
+  flex: 1;
+}
+.station-finder__bmchips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
   align-items: center;
+  gap: 6px;
 }
-.station-finder__dial-call,
-.station-finder__dial-freq,
-.station-finder__dial-via,
-.station-finder__dial-host,
-.station-finder__dial-port,
-.station-finder__dial-transport {
+.station-finder__bmchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.station-finder__chipuse {
   font: inherit;
-  font-size: 12px;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   color: var(--text, #e8f1fa);
   background: var(--surface-2);
   border: 1px solid var(--border2, #34556f);
-  border-radius: 7px;
-  padding: 5px 8px;
+  border-radius: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
 }
-.station-finder__dial-call {
-  flex: 1 1 96px;
-  min-width: 84px;
-  text-transform: uppercase;
-  font-family: var(--mono, ui-monospace, monospace);
+.station-finder__chipuse:hover:not(:disabled) {
+  border-color: var(--accent, #2f86f0);
 }
-.station-finder__dial-freq,
-.station-finder__dial-port {
-  width: 68px;
+.station-finder__chipuse:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
-.station-finder__dial-host,
-.station-finder__dial-via {
-  flex: 1 1 100px;
-  min-width: 84px;
-}
-.station-finder__dial-error {
-  margin-top: 6px;
+.station-finder__more {
+  font: inherit;
   font-size: 11px;
-  color: var(--danger, #f87171);
-}
-
-/* ── P2P peer rows (Task 23, spec §5) ────────────────────────────────────
-   A distinct list, independent of the map-pin station selection: a
-   gridless/telnet-only peer has no pin to click, so it renders here
-   directly — untiered (no reachability pip), same as the gateway
-   channel list's visual language where it applies. */
-.station-finder__peers {
-  border-top: 1px solid var(--border, #243a52);
-}
-.station-finder__peer {
-  padding: 9px 13px;
-  border-bottom: 1px solid #16293a;
-}
-.station-finder__peer-top {
-  display: flex;
-  align-items: baseline;
-  gap: 9px;
-}
-.station-finder__peer-origin {
-  margin-left: auto;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--faint, #6f8aa3);
-}
-.station-finder__peer-endpoints,
-.station-finder__peer-channels {
-  margin-top: 6px;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-.station-finder__peer-endpoint {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-}
-.station-finder__peer-badge {
-  font-size: 10px;
-  font-weight: 700;
-  border-radius: 4px;
-  padding: 2px 6px;
-  color: #cfe3f2;
-  background: #13283b;
-  border: 1px solid var(--border2, #34556f);
-}
-.station-finder__peer-ep-addr {
-  font-family: var(--mono, ui-monospace, monospace);
   color: var(--dim, #9fb6cc);
+  background: var(--surface-2);
+  border: 1px dashed var(--border2, #34556f);
+  border-radius: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
 }
-.station-finder__peer-channel {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 9px;
+.station-finder__bmnone {
+  font-size: 10.5px;
+  color: var(--faint, #6f8aa3);
 }
 
 /* ── FZ-M1 compact: stack map over rail on the rugged screen ───────────── */

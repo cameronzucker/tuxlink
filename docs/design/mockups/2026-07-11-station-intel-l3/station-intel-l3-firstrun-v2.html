@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Station Intelligence L3 — first-run setup v2</title>
+<link rel="stylesheet" href="../../../src/App.css">
+<link rel="stylesheet" href="../../../src/catalog/StationFinderPanel.css">
+<style>
+body { background: var(--bg); padding: 20px; }
+.card { max-width: 1000px; border: 1px solid var(--border-strong); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.card__cap { font-size: 12.5px; font-weight: 600; color: var(--text); padding: 9px 13px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+.card__cap small { display: block; font-weight: 400; color: var(--text-dim); font-size: 10.5px; margin-top: 2px; }
+
+.si-strip__hdr { display: flex; align-items: center; gap: 12px; padding: 8px 14px; font-size: 11.5px; color: var(--text-dim); background: var(--panel, var(--surface-2)); }
+.si-dot--off { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); opacity: .6; flex: none; }
+.si-strip__title { color: var(--text); font-weight: 600; font-size: 12px; }
+.si-prov--warn {
+  font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--reach-marginal); border: 1px solid rgba(217,177,58,.45);
+  border-radius: 4px; padding: 1px 6px;
+}
+.si-collapse { margin-left: auto; font: inherit; font-size: 10.5px; color: var(--text-dim); background: none; border: 1px solid var(--border-strong); border-radius: 6px; padding: 2px 8px; }
+
+.fr { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 14px; border-top: 1px solid var(--border); }
+.step__h { display: flex; align-items: baseline; gap: 9px; margin-bottom: 7px; }
+.step__n {
+  font-family: var(--mono); font-size: 10px; font-weight: 700;
+  color: var(--text); background: var(--surface-2);
+  border: 1px solid var(--border-strong); border-radius: 10px;
+  padding: 1px 8px;
+}
+.step__t { font-size: 12px; font-weight: 600; color: var(--text); }
+.step__req { font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--reach-unlikely); }
+.step__opt { font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-faint); }
+.step__hint { font-size: 10.5px; color: var(--text-faint); margin-bottom: 8px; line-height: 1.5; }
+.step__hint b { color: var(--text-dim); }
+
+.devlist { display: flex; flex-direction: column; gap: 6px; }
+.dev {
+  display: grid; grid-template-columns: 14px 1fr auto 130px 46px;
+  align-items: center; gap: 12px;
+  background: var(--surface-2); border: 1px solid var(--border-strong);
+  border-radius: 7px; padding: 9px 12px; cursor: pointer;
+  font-size: 12px; color: var(--text);
+}
+.dev.sel { border-color: var(--reach-good); }
+.dev .radio { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--border-strong); }
+.dev.sel .radio { border-color: var(--reach-good); background: var(--reach-good); box-shadow: inset 0 0 0 2px var(--surface-2); }
+.dev .badge {
+  font-size: 9px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--m-vara); border: 1px solid rgba(74,163,255,.4);
+  border-radius: 4px; padding: 1px 6px;
+}
+.meter { display: flex; flex-direction: column; gap: 3px; }
+.meter__lab { font-family: var(--mono); font-size: 8.5px; color: var(--text-faint); }
+.meter__track { height: 6px; border-radius: 3px; background: var(--bg); border: 1px solid var(--border); overflow: hidden; }
+.meter__fill { height: 100%; border-radius: 2px; }
+.meter__fill--live { width: 62%; background: linear-gradient(90deg, var(--reach-good), var(--reach-fair)); }
+.meter__fill--dead { width: 3%; background: var(--text-faint); }
+.dev .hw { font-family: var(--mono); font-size: 10px; color: var(--text-faint); text-align: right; }
+
+.rigform {
+  background: var(--surface-2); border: 1px solid var(--border-strong);
+  border-radius: 7px; padding: 12px;
+  display: grid; grid-template-columns: 1fr 1fr 120px auto; gap: 10px 12px;
+  align-items: end;
+}
+.rf { display: flex; flex-direction: column; gap: 4px; }
+.rf label { font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-faint); }
+.rf select, .rf input {
+  font: inherit; font-size: 12px; color: var(--text);
+  background: var(--bg); border: 1px solid var(--border-strong);
+  border-radius: 6px; padding: 6px 9px;
+}
+.rf-test {
+  font: inherit; font-size: 11.5px; color: var(--text);
+  background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: 6px; padding: 7px 13px; cursor: pointer;
+}
+.rig-result {
+  grid-column: 1 / -1;
+  font-family: var(--mono); font-size: 11px; color: var(--reach-good);
+  display: flex; align-items: center; gap: 7px;
+}
+.rig-share { grid-column: 1 / -1; font-size: 10px; color: var(--text-faint); line-height: 1.5; border-top: 1px solid var(--border); padding-top: 8px; }
+.rig-share b { color: var(--text-dim); }
+
+.fr__foot { display: flex; align-items: center; gap: 14px; }
+.fr__cta {
+  font: inherit; font-size: 12px; font-weight: 600;
+  color: #08120b; background: var(--reach-good);
+  border: none; border-radius: 7px; padding: 9px 18px; cursor: pointer;
+}
+.fr__foot small { font-size: 10.5px; color: var(--text-faint); }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div class="card__cap">6 · no-device / first-run — REVISED
+    <small>Both blockers solvable in place: live meters disambiguate the audio source; the shared rig-control form is embedded, editable, and provable via Test CAT. Requiredness is explicit per step.</small>
+  </div>
+
+  <div class="si-strip__hdr">
+    <span class="si-dot--off"></span><span class="si-strip__title">Live band · FT-8</span>
+    <span class="si-prov--warn">needs setup</span>
+    <button class="si-collapse">⌄ collapse</button>
+  </div>
+
+  <div class="fr">
+
+    <div>
+      <div class="step__h"><span class="step__n">1</span><span class="step__t">Audio input</span><span class="step__req">required</span></div>
+      <div class="step__hint">Pick the sound card wired to your radio — <b>it's the one with a moving level</b> (your radio hears band noise constantly; try turning the volume/RF gain up if both are flat). Asked once; every later start is automatic.</div>
+      <div class="devlist">
+        <div class="dev sel">
+          <span class="radio"></span>
+          <span>USB Audio CODEC — Digirig Mobile</span>
+          <span class="badge">used by your ARDOP setup</span>
+          <span class="meter"><span class="meter__lab">LIVE −38 dBFS</span><span class="meter__track"><span class="meter__fill meter__fill--live" style="display:block"></span></span></span>
+          <span class="hw">hw:1</span>
+        </div>
+        <div class="dev">
+          <span class="radio"></span>
+          <span>HDMI Audio — vc4-hdmi</span>
+          <span></span>
+          <span class="meter"><span class="meter__lab">SILENT</span><span class="meter__track"><span class="meter__fill meter__fill--dead" style="display:block"></span></span></span>
+          <span class="hw">hw:2</span>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="step__h"><span class="step__n">2</span><span class="step__t">Rig control (CAT)</span><span class="step__opt">optional · recommended</span></div>
+      <div class="step__hint">Lets Station Intelligence tune the radio to each band's FT-8 dial, confirm the band, and sweep. <b>Without CAT you can still listen</b> — you tune by hand and pick the band yourself.</div>
+      <div class="rigform">
+        <div class="rf">
+          <label>Radio model</label>
+          <select><option>Yaesu FT-710 (profile applied)</option></select>
+        </div>
+        <div class="rf">
+          <label>CAT serial port</label>
+          <select><option>/dev/serial/by-id/usb-Silicon_Labs_CP2105…-if01</option></select>
+        </div>
+        <div class="rf">
+          <label>Baud</label>
+          <select><option>38400</option></select>
+        </div>
+        <div class="rf">
+          <label>&nbsp;</label>
+          <button class="rf-test">Test CAT</button>
+        </div>
+        <div class="rig-result">✓ radio responds — dial reads 14.074.00 MHz (20 m)</div>
+        <div class="rig-share"><b>One radio, one config:</b> these are the same rig-control settings your VARA and ARDOP panes use — set them here and they're set everywhere. Documented per-radio defaults are pre-filled from the model profile.</div>
+      </div>
+    </div>
+
+    <div class="fr__foot">
+      <button class="fr__cta">Start listening on 20 m →</button>
+      <small>starts the decoder on the selected card · nothing ever transmits</small>
+    </div>
+
+  </div>
+</div>
+
+</body>
+</html>

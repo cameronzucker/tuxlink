@@ -31,6 +31,7 @@ import { listen } from '@tauri-apps/api/event';
 import { readLastTarget, writeLastTarget } from '../../connections/connectDispatch';
 import { Button, Select, Field } from '../../controls';
 import { RadioPanel } from '../RadioPanel';
+import { findGatewayLabelForIntent } from '../types';
 import { SessionLogSection } from '../sections/SessionLogSection';
 import { useSessionLog } from '../sections/useSessionLog';
 import { ModemLinkSection, type ModemLinkFields } from '../sections/ModemLinkSection';
@@ -42,6 +43,7 @@ import type { PacketConfigDto, StableAudioId, PttChoice } from '../../packet/pac
 import { FavoritesTabs } from '../../favorites/FavoritesTabs';
 import { useFavorites } from '../../favorites/useFavorites';
 import { listenGatewayPrefill } from '../../favorites/prefillEvent';
+import { listenPeerPrefill, type PeerPrefill } from '../../peers/peerPrefillEvent';
 import { tsLocal } from '../../favorites/ts-local';
 import type { FavoriteDial } from '../../favorites/types';
 import '../sections/ListenSection.css';
@@ -114,6 +116,22 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
   useEffect(
     () => listenGatewayPrefill('packet', handlePrefill),
     [handlePrefill],
+  );
+
+  // Peers↔L3 reconciliation: a PEER packet channel picked in the finder's Station
+  // tab. Unlike a gateway prefill (which has no relay chain to give — the known gap
+  // noted below), a peer channel carries its digipeater path, so this fills the
+  // relay chips too. Target + path ONLY: it never transmits; the operator presses
+  // Connect. Gated on the **p2p** intent so a peer never prefills a CMS pane.
+  const handlePeerPrefill = useCallback((p: PeerPrefill) => {
+    setTarget(p.target);
+    // The panel accepts at most 2 relay chips; a longer path is truncated, not dropped.
+    setRelays((p.via ?? []).slice(0, 2));
+    writeLastTarget('packet', p.target);
+  }, []);
+  useEffect(
+    () => (intent === 'p2p' ? listenPeerPrefill('packet', handlePeerPrefill) : undefined),
+    [intent, handlePeerPrefill],
   );
   // Build the dial for a connection record. The gateway is the connect target.
   // If the prefilled favorite matches it (case-insensitive), carry its metadata
@@ -385,6 +403,7 @@ export function PacketRadioPanel({ intent, baseCall, onClose, onFindGateway }: P
       sub={headerSub}
       onClose={onClose}
       onFindGateway={onFindGateway}
+      findGatewayLabel={findGatewayLabelForIntent(intent)}
     >
       <section className="radio-panel-sec">
         <h5>Connection</h5>

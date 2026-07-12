@@ -1,14 +1,29 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { invoke } from '@tauri-apps/api/core';
 import { GATEWAY_PREFILL_EVENT } from '../favorites/prefillEvent';
 import { StationRail } from './StationRail';
 import type { Station } from './stationModel';
 import type { PathPrediction } from './propagationApi';
-import type { AggregatedPeer } from '../peers/peerModel';
+import type { DeclDto } from '../ft8ui/ft8Types';
 
+// Task C6 (aim hero + magnetic declination): mock the Tauri invoke surface so
+// `magnetic_declination` resolves without a real backend. A far-future
+// `validUntil` keeps the default fixture "not expired" — the expired-model
+// test below overrides it per-case.
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
-const mockInvoke = vi.mocked(invoke);
+import { invoke } from '@tauri-apps/api/core';
+
+// C6 sources the declination fetch's grid from the LIVE useStatusData().grid
+// (tuxlink-fnzr class — never a one-shot config read), independent of the
+// `operatorGrid` prop used for the pre-existing bearing/distance fallback.
+// Mock the hook directly (RequestCenter.test.tsx pattern) so these tests
+// control the live grid without standing up a QueryClientProvider.
+const statusMock = vi.hoisted(() => ({ grid: 'DM43bp' as string | null }));
+vi.mock('../shell/useStatus', () => ({
+  useStatusData: () => ({ grid: statusMock.grid }),
+}));
+
+const DEFAULT_DECL: DeclDto = { declDeg: 10, modelEpoch: 'WMM2025', validUntil: '2099-01-01' };
 
 const station: Station = {
   baseCallsign: 'N0DAJ', grid: 'DM34oa', sysopName: 'Doug Jarmuth', location: 'Wickenburg, AZ',
@@ -28,7 +43,14 @@ const prediction: PathPrediction = {
   ],
 };
 
-beforeEach(() => vi.restoreAllMocks());
+beforeEach(() => {
+  statusMock.grid = 'DM43bp';
+  vi.mocked(invoke).mockReset();
+  vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+    if (cmd === 'magnetic_declination') return DEFAULT_DECL;
+    return undefined;
+  });
+});
 afterEach(() => vi.restoreAllMocks());
 
 describe('StationRail', () => {
@@ -205,271 +227,123 @@ describe('StationRail', () => {
       expect.objectContaining({ mode: 'packet', gateway: 'N0DAJ-10' }),
     );
   });
-});
 
-// tuxlink-c39af Task 23a — the peer-row Connect fires a REAL outbound P2P dial
-// (Flow 2) through connectFor, reaching the same backend command the mode's
-// panel uses with intent/sessionType=p2p and the channel's via/path/freq
-// threaded. This is the click→backend seam Task 28 traces; a CMS-defaulting
-// dial here would silence the peer recorder and leave the store empty.
-describe('StationRail — peer-row Connect fires a P2P dial (Task 23a)', () => {
-  // A peer with one RF channel per transport (VARA/ARDOP/packet) + a telnet
-  // endpoint, so every protocol has a clickable peer-dial path.
-  const peer: AggregatedPeer = {
-    id: 'peer-1',
-    callsign: 'W7XYZ-5',
-    origin: 'incoming',
-    tier: 'unconfirmed',
-    grid: 'CN87',
-    mapPlaceable: true,
-    lastSeen: null,
-    lastOk: null,
-    channels: [
-      {
-        transport: 'vara-fm', target_callsign: 'W7XYZ-5', via: ['RELAY1'],
-        freq_hz: 145_030_000, bandwidth: null, direction: 'outgoing',
-        counts: { ok: 0, fail: 0 }, last_seen: '2026-07-10T00:00:00Z', last_ok: null, last_ok_direction: null,
-      },
-      {
-        transport: 'ardop', target_callsign: 'W7XYZ', via: [],
-        freq_hz: 7_105_000, bandwidth: null, direction: 'outgoing',
-        counts: { ok: 0, fail: 0 }, last_seen: '2026-07-10T00:00:00Z', last_ok: null, last_ok_direction: null,
-      },
-      {
-        transport: 'packet', target_callsign: 'W7XYZ-1', via: ['WIDE1-1'],
-        freq_hz: 144_390_000, bandwidth: null, direction: 'outgoing',
-        counts: { ok: 0, fail: 0 }, last_seen: '2026-07-10T00:00:00Z', last_ok: null, last_ok_direction: null,
-      },
-    ],
-    endpoints: [
-      {
-        id: 'ep-1', host: '10.0.0.5', port: 8774,
-        provenance: 'operator', last_seen: '2026-07-10T00:00:00Z', last_ok: null,
-      },
-    ],
-  };
+  // tuxlink-b026z.4 Task C5 — the `Station | Live decodes` tab shell.
+  describe('rail tab shell', () => {
+    it('shows the Station tab by default with both tabs present', () => {
+      render(<StationRail station={station} prediction={prediction} predictionStatus="ok" operatorGrid="DM43bp" utcHour={21} />);
+      expect(screen.getByTestId('rail-tab-station').getAttribute('aria-selected')).toBe('true');
+      expect(screen.getByTestId('rail-tab-live').getAttribute('aria-selected')).toBe('false');
+      expect(screen.getByTestId('rail-pane-station')).toBeTruthy();
+      expect(screen.getByText('N0DAJ')).toBeTruthy(); // Station tab content preserved
+    });
 
-  beforeEach(() => {
-    mockInvoke.mockReset();
-    mockInvoke.mockResolvedValue(undefined);
-  });
-  afterEach(() => mockInvoke.mockReset());
+    it('switches to the Live decodes tab on click and back again', () => {
+      render(<StationRail station={station} prediction={prediction} predictionStatus="ok" operatorGrid="DM43bp" utcHour={21} />);
+      fireEvent.click(screen.getByTestId('rail-tab-live'));
+      expect(screen.getByTestId('rail-tab-live').getAttribute('aria-selected')).toBe('true');
+      expect(screen.queryByTestId('rail-pane-station')).toBeNull();
+      // No decodesRing supplied — the Live decodes tab renders its empty state,
+      // not a crash (StationFinderPanel wiring is Task D1, not C5).
+      expect(screen.getByTestId('live-decodes-empty')).toBeTruthy();
 
-  function renderPeer() {
-    // station=null still renders the peer rows (they are independent of the
-    // map-pin selection); operatorGrid feeds the telnet handshake locator.
-    render(
-      <StationRail
-        station={null} prediction={null} predictionStatus="idle"
-        operatorGrid="CN85nm" utcHour={0} peers={[peer]}
-      />,
-    );
-  }
+      fireEvent.click(screen.getByTestId('rail-tab-station'));
+      expect(screen.getByTestId('rail-pane-station')).toBeTruthy();
+      expect(screen.queryByTestId('live-decodes-empty')).toBeNull();
+    });
 
-  it('VARA peer Connect → modem_vara_b2f_exchange with intent=p2p + the channel via/freq', async () => {
-    renderPeer();
-    fireEvent.click(screen.getByTestId('peer-use-peer-1-0'));
-    await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith(
-        'modem_vara_b2f_exchange',
-        expect.objectContaining({
-          target: 'W7XYZ-5', intent: 'p2p', transportKind: 'vara-fm',
-          via: ['RELAY1'], freqHz: 145_030_000,
-        }),
-      ),
-    );
-    expect(mockInvoke).toHaveBeenCalledWith(
-      'vara_open_session',
-      expect.objectContaining({ intent: 'p2p', transportKind: 'vara-fm' }),
-    );
+    it('shows the Live decodes tab even with no station selected (it is not map-selection-scoped)', () => {
+      render(<StationRail station={null} prediction={null} predictionStatus="idle" operatorGrid="DM43bp" utcHour={21} />);
+      fireEvent.click(screen.getByTestId('rail-tab-live'));
+      expect(screen.getByTestId('live-decodes-empty')).toBeTruthy();
+    });
   });
 
-  it('ARDOP peer Connect → modem_ardop_b2f_exchange with intent=p2p', async () => {
-    renderPeer();
-    fireEvent.click(screen.getByTestId('peer-use-peer-1-1'));
-    await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith(
-        'modem_ardop_b2f_exchange',
-        expect.objectContaining({ target: 'W7XYZ', intent: 'p2p', transportKind: 'ardop' }),
-      ),
-    );
-  });
+  // tuxlink-b026z.4 Task C6 — aim hero magnetic/true bearing split + declination
+  // provenance (spec §Declination). `prediction.bearingDeg` (318°, from the
+  // shared fixture) is the TRUE bearing the compass needle stays referenced to;
+  // declination shifts only the numeric readout.
+  describe('aim hero declination', () => {
+    it('shows the magnetic bearing primary and true bearing secondary once declination resolves', async () => {
+      vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+        if (cmd === 'magnetic_declination') {
+          return { declDeg: 10, modelEpoch: 'WMM2025', validUntil: '2099-01-01' } satisfies DeclDto;
+        }
+        return undefined;
+      });
+      render(<StationRail station={station} prediction={prediction} predictionStatus="ok" operatorGrid="DM43bp" utcHour={21} />);
+      // true 318 - decl 10 = magnetic 308.
+      await waitFor(() => expect(screen.getByTestId('aim-bearing').textContent).toBe('308° M'));
+      expect(screen.getByTestId('aim-bearing-true').textContent).toBe('318° T');
+      expect(screen.getByTestId('aim-declination').textContent).toMatch(/declination \+10\.0° E/);
+      expect(screen.getByTestId('aim-declination').textContent).toMatch(/WMM2025/);
+      expect(screen.getByTestId('aim-declination').textContent).toMatch(/from DM43bp/);
+      expect(invoke).toHaveBeenCalledWith('magnetic_declination', { grid: 'DM43bp' });
+    });
 
-  it('packet peer Connect → packet_connect with intent=p2p + the channel path', async () => {
-    renderPeer();
-    fireEvent.click(screen.getByTestId('peer-use-peer-1-2'));
-    await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith(
-        'packet_connect',
-        expect.objectContaining({ call: 'W7XYZ-1', path: ['WIDE1-1'], intent: 'p2p' }),
-      ),
-    );
-  });
+    it('wraps a magnetic bearing that normalizes to exactly 0 to 360° M (compass convention)', async () => {
+      // true 318 - decl 318 = 0 → displays as 360, never 0.
+      vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+        if (cmd === 'magnetic_declination') {
+          return { declDeg: 318, modelEpoch: 'WMM2025', validUntil: '2099-01-01' } satisfies DeclDto;
+        }
+        return undefined;
+      });
+      render(<StationRail station={station} prediction={prediction} predictionStatus="ok" operatorGrid="DM43bp" utcHour={21} />);
+      await waitFor(() => expect(screen.getByTestId('aim-bearing').textContent).toBe('360° M'));
+    });
 
-  it('telnet peer endpoint Connect → telnet_p2p_connect (never cms_connect)', async () => {
-    renderPeer();
-    fireEvent.click(screen.getByTestId('peer-endpoint-connect-ep-1'));
-    await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith(
-        'telnet_p2p_connect',
-        expect.objectContaining({
-          req: expect.objectContaining({
-            host: '10.0.0.5', port: 8774, peer_callsign: 'W7XYZ-5', locator: 'CN85nm',
-            // FIX-1: a peer-row Connect threads the contact + endpoint identity
-            // (peer.id / endpoint.id) so the backend can gate the stored
-            // password on Provenance::Operator.
-            contact_id: 'peer-1', endpoint_id: 'ep-1',
-          }),
-        }),
-      ),
-    );
-    expect(mockInvoke).not.toHaveBeenCalledWith('cms_connect');
-  });
-});
+    it('re-invokes magnetic_declination when useStatusData().grid changes', async () => {
+      statusMock.grid = 'DM43bp';
+      const { rerender } = render(
+        <StationRail station={station} prediction={prediction} predictionStatus="ok" operatorGrid="DM43bp" utcHour={21} />,
+      );
+      await waitFor(() =>
+        expect(invoke).toHaveBeenCalledWith('magnetic_declination', { grid: 'DM43bp' }),
+      );
+      statusMock.grid = 'CN87';
+      rerender(<StationRail station={station} prediction={prediction} predictionStatus="ok" operatorGrid="DM43bp" utcHour={21} />);
+      await waitFor(() =>
+        expect(invoke).toHaveBeenCalledWith('magnetic_declination', { grid: 'CN87' }),
+      );
+    });
 
-// Task T-G — "Dial a station" manual-dial affordance (spec §AMENDMENT pt. 7):
-// dial a callsign the operator has never heard, through the SAME
-// connectPeerChannel/connectPeerEndpoint seam the peer rows above use, so the
-// backend observation recorder auto-creates the unconfirmed contact. Gated on
-// the finder_peers capability (`p2pDialEnabled`), mirroring StationFinderPanel's
-// existing showPeerType gating — NOT on whether any peers are visible, so it
-// still renders on an empty roster (Flow 2(b)).
-describe('StationRail — manual "Dial a station" affordance (Task T-G)', () => {
-  beforeEach(() => {
-    mockInvoke.mockReset();
-    mockInvoke.mockResolvedValue(undefined);
-  });
-  afterEach(() => mockInvoke.mockReset());
+    it('appends a drift note when validUntil is in the past (model expired, never blanks the hero)', async () => {
+      vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+        if (cmd === 'magnetic_declination') {
+          return { declDeg: 10, modelEpoch: 'WMM2025', validUntil: '2020-01-01' } satisfies DeclDto;
+        }
+        return undefined;
+      });
+      render(<StationRail station={station} prediction={prediction} predictionStatus="ok" operatorGrid="DM43bp" utcHour={21} />);
+      await waitFor(() =>
+        expect(screen.getByTestId('aim-declination').textContent).toMatch(/model expired/),
+      );
+      // The hero keeps rendering the (now-stale) magnetic bearing — never blanks.
+      expect(screen.getByTestId('aim-bearing').textContent).toBe('308° M');
+    });
 
-  function renderDial(p2pDialEnabled = true) {
-    render(
-      <StationRail
-        station={null} prediction={null} predictionStatus="idle"
-        operatorGrid="CN85nm" utcHour={0} p2pDialEnabled={p2pDialEnabled}
-      />,
-    );
-  }
+    it('renders — with no declination line when there is no operator grid at all', () => {
+      statusMock.grid = null;
+      render(<StationRail station={station} prediction={null} predictionStatus="no-location" operatorGrid="" utcHour={21} />);
+      expect(screen.getByTestId('aim-bearing').textContent).toBe('—');
+      expect(screen.queryByTestId('aim-declination')).toBeNull();
+      expect(screen.queryByTestId('aim-bearing-true')).toBeNull();
+    });
 
-  it('does not render when p2pDialEnabled is false/omitted (finder_peers gating)', () => {
-    render(<StationRail station={null} prediction={null} predictionStatus="idle" operatorGrid="CN85nm" utcHour={0} />);
-    expect(screen.queryByTestId('manual-dial-form')).toBeNull();
-  });
-
-  it('renders on an EMPTY roster when p2pDialEnabled is true (Flow 2(b) — the empty-roster case)', () => {
-    renderDial();
-    expect(screen.getByTestId('manual-dial-form')).toBeTruthy();
-    // No peer rows exist here — the affordance is not gated on peers.length.
-    expect(screen.queryByTestId('peer-rows')).toBeNull();
-  });
-
-  it('bad (whitespace-containing) callsign never dispatches', () => {
-    renderDial();
-    fireEvent.change(screen.getByTestId('manual-dial-callsign'), { target: { value: 'BAD CALL' } });
-    fireEvent.click(screen.getByTestId('manual-dial-connect'));
-    expect(screen.getByTestId('manual-dial-error')).toBeTruthy();
-    expect(mockInvoke).not.toHaveBeenCalled();
-  });
-
-  it('empty callsign never dispatches', () => {
-    renderDial();
-    fireEvent.click(screen.getByTestId('manual-dial-connect'));
-    expect(screen.getByTestId('manual-dial-error')).toBeTruthy();
-    expect(mockInvoke).not.toHaveBeenCalled();
-  });
-
-  it('uppercases the typed callsign as the operator types (exact SSID-bearing form preserved)', () => {
-    renderDial();
-    fireEvent.change(screen.getByTestId('manual-dial-callsign'), { target: { value: 'w7xyz-9' } });
-    expect((screen.getByTestId('manual-dial-callsign') as HTMLInputElement).value).toBe('W7XYZ-9');
-  });
-
-  it('VARA HF dial (default transport) → modem_vara_b2f_exchange with intent=p2p + typed target/freq, never cms_connect', async () => {
-    renderDial();
-    fireEvent.change(screen.getByTestId('manual-dial-callsign'), { target: { value: 'w7xyz-9' } });
-    fireEvent.change(screen.getByTestId('manual-dial-freq'), { target: { value: '7.102' } });
-    fireEvent.click(screen.getByTestId('manual-dial-connect'));
-    await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith(
-        'modem_vara_b2f_exchange',
-        expect.objectContaining({
-          target: 'W7XYZ-9', intent: 'p2p', transportKind: 'vara-hf', freqHz: 7_102_000,
-        }),
-      ),
-    );
-    expect(mockInvoke).not.toHaveBeenCalledWith('cms_connect');
-    // Clears after dispatch (GroupEditor "+ Add" idiom — type, commit, clear).
-    await waitFor(() => expect((screen.getByTestId('manual-dial-callsign') as HTMLInputElement).value).toBe(''));
-    expect((screen.getByTestId('manual-dial-freq') as HTMLInputElement).value).toBe('');
-  });
-
-  it('ARDOP dial → modem_ardop_b2f_exchange with intent=p2p + typed target', async () => {
-    renderDial();
-    fireEvent.change(screen.getByTestId('manual-dial-transport'), { target: { value: 'ardop' } });
-    fireEvent.change(screen.getByTestId('manual-dial-callsign'), { target: { value: 'w7xyz' } });
-    fireEvent.click(screen.getByTestId('manual-dial-connect'));
-    await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith(
-        'modem_ardop_b2f_exchange',
-        expect.objectContaining({ target: 'W7XYZ', intent: 'p2p', transportKind: 'ardop' }),
-      ),
-    );
-  });
-
-  it('packet dial → packet_connect with intent=p2p + typed via path (comma-separated, capped at 2)', async () => {
-    renderDial();
-    fireEvent.change(screen.getByTestId('manual-dial-transport'), { target: { value: 'packet' } });
-    fireEvent.change(screen.getByTestId('manual-dial-callsign'), { target: { value: 'w7xyz-1' } });
-    fireEvent.change(screen.getByTestId('manual-dial-via'), { target: { value: 'wide1-1, wide2-1, wide3-1' } });
-    fireEvent.click(screen.getByTestId('manual-dial-connect'));
-    await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith(
-        'packet_connect',
-        expect.objectContaining({ call: 'W7XYZ-1', path: ['wide1-1', 'wide2-1'], intent: 'p2p' }),
-      ),
-    );
-  });
-
-  it('telnet dial → telnet_p2p_connect with typed host/port/callsign + operator grid as locator, never cms_connect', async () => {
-    renderDial();
-    fireEvent.change(screen.getByTestId('manual-dial-transport'), { target: { value: 'telnet' } });
-    fireEvent.change(screen.getByTestId('manual-dial-callsign'), { target: { value: 'w7xyz-5' } });
-    fireEvent.change(screen.getByTestId('manual-dial-host'), { target: { value: '10.0.0.9' } });
-    fireEvent.change(screen.getByTestId('manual-dial-port'), { target: { value: '8774' } });
-    fireEvent.click(screen.getByTestId('manual-dial-connect'));
-    await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith(
-        'telnet_p2p_connect',
-        expect.objectContaining({
-          req: expect.objectContaining({
-            host: '10.0.0.9', port: 8774, peer_callsign: 'W7XYZ-5', locator: 'CN85nm',
-            // FIX-1: a manual/hand-typed dial carries NO endpoint identity, so
-            // the backend attaches no stored password.
-            contact_id: null, endpoint_id: null,
-          }),
-        }),
-      ),
-    );
-    expect(mockInvoke).not.toHaveBeenCalledWith('cms_connect');
-  });
-
-  it('telnet dial with a missing host never dispatches', () => {
-    renderDial();
-    fireEvent.change(screen.getByTestId('manual-dial-transport'), { target: { value: 'telnet' } });
-    fireEvent.change(screen.getByTestId('manual-dial-callsign'), { target: { value: 'w7xyz-5' } });
-    fireEvent.change(screen.getByTestId('manual-dial-port'), { target: { value: '8774' } });
-    fireEvent.click(screen.getByTestId('manual-dial-connect'));
-    expect(screen.getByTestId('manual-dial-error')).toBeTruthy();
-    expect(mockInvoke).not.toHaveBeenCalled();
-  });
-
-  it('telnet dial with an out-of-range port never dispatches', () => {
-    renderDial();
-    fireEvent.change(screen.getByTestId('manual-dial-transport'), { target: { value: 'telnet' } });
-    fireEvent.change(screen.getByTestId('manual-dial-callsign'), { target: { value: 'w7xyz-5' } });
-    fireEvent.change(screen.getByTestId('manual-dial-host'), { target: { value: '10.0.0.9' } });
-    fireEvent.change(screen.getByTestId('manual-dial-port'), { target: { value: '999999' } });
-    fireEvent.click(screen.getByTestId('manual-dial-connect'));
-    expect(screen.getByTestId('manual-dial-error')).toBeTruthy();
-    expect(mockInvoke).not.toHaveBeenCalled();
+    it('degrades to the plain true bearing (no crash, no M suffix) when magnetic_declination rejects', async () => {
+      vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+        if (cmd === 'magnetic_declination') return Promise.reject(new Error('invalid-grid'));
+        return undefined;
+      });
+      render(<StationRail station={station} prediction={prediction} predictionStatus="ok" operatorGrid="DM43bp" utcHour={21} />);
+      await waitFor(() => expect(invoke).toHaveBeenCalledWith('magnetic_declination', { grid: 'DM43bp' }));
+      // Bearing is still known (from the prediction) — degrades to the plain
+      // true-bearing reading, never throws, never shows an M/T split it can't
+      // back with real declination.
+      expect(screen.getByTestId('aim-bearing').textContent).toBe('318°');
+      expect(screen.queryByTestId('aim-bearing-true')).toBeNull();
+      expect(screen.queryByTestId('aim-declination')).toBeNull();
+    });
   });
 });

@@ -13,6 +13,13 @@
 // Markers are created once per station and updated in place across re-renders
 // (no churn). Render fidelity is grim-verified; the unit test proves the marker
 // wiring (count, tier style, selection emphasis, click→onSelect, operator pin).
+//
+// Layer-control housing (Task C11, plan tuxlink-b026z.4 §Scope map
+// layer-control): a top-right toggle pill with a Gateways entry that
+// shows/hides the whole station-pin layer group. Gateways-ONLY today — the
+// FT-8 heat layer is L5 (tuxlink-b026z.6); the housing exists so L5 can add
+// its entry beside Gateways later, but no dead/disabled heat toggle ships
+// here (spec §Scope "Out").
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import { LeafletMap } from '../map/LeafletMap';
@@ -35,6 +42,14 @@ export interface StationFinderMapProps {
   tiers: Map<string, ReachTier>;
   selectedKey: string | null;
   onSelect: (station: Station) => void;
+  /**
+   * Peer selection (Task delta2, spec §6 reconciliation) — raised to the
+   * PARENT panel (not held locally) so a map-clicked peer feeds the SAME
+   * Station-tab detail a gateway selection does. `selectedPeerId` re-styles
+   * that peer's pin in place, mirroring `selectedKey`'s gateway pin styling.
+   */
+  onSelectPeer?: (peer: AggregatedPeer) => void;
+  selectedPeerId?: string | null;
 }
 
 // Recenter zoom on the operator, on the z0–14 scale (matches the MapLibre edition).
@@ -98,7 +113,13 @@ interface Pin {
   tier: string;
 }
 
-function StationLayers({ stations, tiers, selectedKey, onSelect }: Omit<StationFinderMapProps, 'operatorGrid'>) {
+function StationLayers({
+  stations,
+  tiers,
+  selectedKey,
+  onSelect,
+  visible,
+}: Omit<StationFinderMapProps, 'operatorGrid'> & { visible: boolean }) {
   const map = useLeafletMap();
   const group = useLeafletLayerGroup(map);
 
@@ -221,6 +242,20 @@ function StationLayers({ stations, tiers, selectedKey, onSelect }: Omit<StationF
     // eslint-disable-next-line react-hooks/exhaustive-deps -- selection handled via refs + the dedicated effect below; depending on it would churn markers
   }, [map, group, stations, tiers]);
 
+  // Layer-control visibility (Task C11, §Scope map layer-control): the
+  // Gateways toggle add/removes the WHOLE group from the map rather than
+  // touching individual markers — cheap, and it never disturbs the
+  // reconcile/selection effects' in-place marker identities above.
+  useEffect(() => {
+    if (!map || !group) return;
+    if (visible) {
+      if (!map.hasLayer(group)) safe('show gateways layer', () => map.addLayer(group));
+    } else {
+      if (map.hasLayer(group)) safe('hide gateways layer', () => map.removeLayer(group));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `safe` is recreated each render but does no state capture worth re-running for; only visible/map/group should retrigger this
+  }, [map, group, visible]);
+
   // Selection re-style: clear the previously-selected pin's emphasis, apply it to
   // the new one, and move the glow — WITHOUT recreating any marker (the Leaflet
   // analog of setFeatureState: one click flips two markers' styles, not the set).
@@ -282,29 +317,34 @@ export function StationFinderMap(props: StationFinderMapProps) {
   const initialCenter = saved ? saved.center : (me ?? undefined);
   const initialZoom = saved ? saved.zoom : me ? OPERATOR_ZOOM : 2;
 
-  // Task 24 (spec §6): the peer circle layer, gated end-to-end on
-  // `map_peers` [R5-8] — false (or still loading) HIDES every peer pin, not
-  // merely dims it. Reads its own peers/capabilities (like AprsPositionsMap
-  // reads its own Winlink layer state) rather than threading them through
-  // StationFinderPanel's props.
+  // Layer-control housing (Task C11, plan tuxlink-b026z.4 §Scope map
+  // layer-control): a Gateways-only toggle today. This is deliberately a
+  // HOUSING — L5 (tuxlink-b026z.6) adds the FT-8 heat-layer entry beside it
+  // later; L3 ships ONLY the Gateways entry (a dead/disabled heat toggle
+  // wired to a nonexistent layer would itself be the incomplete-control
+  // anti-pattern the no-incomplete-refs rule bans — spec §Scope "Out").
+  const [gatewaysVisible, setGatewaysVisible] = useState(true);
+
+  // Task delta2 (spec §6 reconciliation): the peer DIAMOND layer, gated
+  // end-to-end on `map_peers` [R5-8] — false (or still loading) HIDES every
+  // peer pin, not merely dims it. Reads its own peers/capabilities (like
+  // AprsPositionsMap reads its own Winlink layer state) rather than
+  // threading them through StationFinderPanel's props. Mirrors origin/main's
+  // (pre-reconciliation) StationFinderMap wiring exactly, adapted to this
+  // L3 map + the diamond shape + selection raised to the parent panel.
   const p2pCapabilities = useP2pCapabilities();
   const mapPeersEnabled = p2pCapabilities.capabilities?.map_peers === true;
   const peersData = usePeers();
   const aggregatedPeers = useMemo(() => aggregatePeers(peersData.peers), [peersData.peers]);
-  const [selectedPeer, setSelectedPeer] = useState<AggregatedPeer | null>(null);
 
   // Finder color axis is PROPAGATION REACHABILITY (spec §6), never a peer's
-  // attempt history — peers take the SAME six-step ramp stations use. A peer
-  // shares a predicted tier only when its base+grid coincides with a predicted
-  // station key (the finder runs voacap over `stations`, not peers); otherwise
-  // the peer has no prediction and renders dashed-outline untiered grey, exactly
-  // as the spec prescribes for a peer without prediction. This is the reuse the
-  // reviewer required — no invented peer-color scheme.
+  // attempt history — a peer takes the SAME six-step ramp stations use, keyed
+  // on `${baseCallsign}|${grid}` against the SAME `tiers` map the gateway
+  // pins use. No coincident tier ⇒ untiered + dashed (no invented peer-color
+  // scheme — the reviewer requirement origin/main's peer layer already met).
   const peerVisualFor = useCallback(
     (peer: AggregatedPeer): PeerVisual => {
-      const tier = peer.grid
-        ? props.tiers.get(`${baseCallsign(peer.callsign)}|${peer.grid}`)
-        : undefined;
+      const tier = peer.grid ? props.tiers.get(`${baseCallsign(peer.callsign)}|${peer.grid}`) : undefined;
       if (!tier) return { tierClass: 'peer-pin--untiered', dashed: true };
       return { tierClass: `peer-pin--${tier}`, dashed: false };
     },
@@ -319,17 +359,31 @@ export function StationFinderMap(props: StationFinderMapProps) {
           tiers={props.tiers}
           selectedKey={props.selectedKey}
           onSelect={props.onSelect}
+          visible={gatewaysVisible}
         />
         <OperatorPin location={me} />
         <PeerLayer
           peers={aggregatedPeers}
           enabled={mapPeersEnabled}
+          shape="diamond"
           visualFor={peerVisualFor}
-          onSelect={setSelectedPeer}
-          selectedId={selectedPeer?.id ?? null}
+          onSelect={(peer) => props.onSelectPeer?.(peer)}
+          selectedId={props.selectedPeerId ?? null}
         />
         <LeafletRecenterControl target={me} zoom={OPERATOR_ZOOM} />
       </LeafletMap>
+      <div className="station-finder__layers" data-testid="map-layer-control">
+        <button
+          type="button"
+          className={`station-finder__layer-btn${gatewaysVisible ? ' on' : ''}`}
+          data-testid="map-layer-gateways"
+          aria-pressed={gatewaysVisible}
+          onClick={() => setGatewaysVisible((v) => !v)}
+        >
+          <span className="station-finder__layer-swatch" aria-hidden="true" />
+          Gateways
+        </button>
+      </div>
       <div className="station-finder__reachkey" aria-hidden>
         <span className="k good" /> good
         <span className="k fair" /> fair

@@ -30,7 +30,10 @@ use crate::catalog::stations_cache::Clock;
 use crate::ui_commands::UiError;
 
 use super::engine::EnginePaths;
-use super::{antenna, deck, engine, parse, prefs, ssn, PathPrediction, PredictionInputs, PropagationError};
+use super::{
+    antenna, deck, engine, parse, prefs, solar_update, ssn, PathPrediction, PredictionInputs,
+    PropagationError,
+};
 
 // ============================================================================
 // Error projection
@@ -305,6 +308,84 @@ pub async fn propagation_prefs_write(
 }
 
 // ============================================================================
+// Internet solar-data update (tuxlink-ot71) — the SWPC caller for
+// `solar_update::apply_swpc_update`, which until now had no caller.
+// ============================================================================
+
+const SOLAR_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// SWPC monthly **smoothed** SSN forecast — the VOACAP input. See
+/// `solar::parse_swpc_predicted_ssn`.
+const SWPC_PREDICTED_SSN_URL: &str = "https://services.swpc.noaa.gov/json/predicted-solar-cycle.json";
+/// SWPC WWV-style geophysical bulletin (SFI/A/K) — the live conditions. See
+/// `solar::parse_wwv`.
+const SWPC_WWV_URL: &str = "https://services.swpc.noaa.gov/text/wwv.txt";
+
+/// Descriptive, identifiable User-Agent so NOAA ops can contact rather than
+/// ban (matches the identifier used by `catalog::commands::catalog_user_agent`).
+fn solar_update_user_agent() -> String {
+    format!(
+        "Tuxlink/{} ({}; {})",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    )
+}
+
+/// Fetch one SWPC product as text. `None` on any transport error or non-2xx
+/// status — a single missing product degrades to a partial update rather
+/// than failing the whole command (NOAA endpoints are occasionally flaky).
+async fn fetch_swpc_product(client: &reqwest::Client, url: &str) -> Option<String> {
+    let resp = client.get(url).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    resp.text().await.ok()
+}
+
+/// Fetch the two NOAA SWPC space-weather products over the internet and
+/// apply them via [`solar_update::apply_swpc_update`], persisting the SSN
+/// forecast (VOACAP input) and the live-indices snapshot (conditions bar,
+/// "solar data N old" caption).
+///
+/// A partial fetch (one product unreachable) still applies what it got, per
+/// `apply_swpc_update`'s contract. Both unreachable is a hard
+/// `UiError::Transport` — there is nothing to apply, and silently no-opping
+/// would make the button look broken rather than reporting the real cause.
+#[tauri::command]
+pub async fn propagation_update_solar() -> Result<solar_update::UpdateOutcome, UiError> {
+    let client = reqwest::Client::builder()
+        .user_agent(solar_update_user_agent())
+        .timeout(SOLAR_HTTP_TIMEOUT)
+        .https_only(true)
+        .build()
+        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+
+    let predicted = fetch_swpc_product(&client, SWPC_PREDICTED_SSN_URL).await;
+    let wwv = fetch_swpc_product(&client, SWPC_WWV_URL).await;
+
+    if predicted.is_none() && wwv.is_none() {
+        return Err(UiError::Transport {
+            reason: "could not reach NOAA SWPC (predicted-solar-cycle.json and wwv.txt both unreachable)"
+                .to_string(),
+        });
+    }
+
+    let dir = crate::config::config_path();
+    let dir = dir.parent().ok_or_else(|| UiError::Internal {
+        detail: "config path has no parent directory".to_string(),
+    })?;
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or_default();
+
+    let outcome = solar_update::apply_swpc_update(predicted.as_deref(), wwv.as_deref(), now_ms, dir)?;
+    Ok(outcome)
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -507,5 +588,64 @@ mod tests {
             matches!(ui, UiError::Rejected(_)),
             "NoFrequencies should map to Rejected, got {ui:?}"
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // fetch_swpc_product — loopback-mocked (mockito), never the real network.
+    // The full `propagation_update_solar` command hardcodes the real NOAA SWPC
+    // URLs (services.swpc.noaa.gov), so it is not unit-testable without either
+    // hitting the internet or threading the URLs as parameters; this exercises
+    // the fetch helper's success/failure classification instead, which is the
+    // part `propagation_update_solar` composes with the already-tested
+    // `solar_update::apply_swpc_update`.
+    // -------------------------------------------------------------------------
+
+    fn loopback_client() -> reqwest::Client {
+        reqwest::Client::builder()
+            .https_only(false)
+            .build()
+            .expect("client builds")
+    }
+
+    #[tokio::test]
+    async fn fetch_swpc_product_returns_body_on_200() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/predicted-solar-cycle.json")
+            .with_status(200)
+            .with_body("[{\"time-tag\":\"2026-06\",\"predicted_ssn\":133.0}]")
+            .create_async()
+            .await;
+        let client = loopback_client();
+        let body = fetch_swpc_product(
+            &client,
+            &format!("{}/predicted-solar-cycle.json", server.url()),
+        )
+        .await;
+        assert!(body.is_some(), "200 response should yield Some(body)");
+        assert!(body.unwrap().contains("predicted_ssn"));
+    }
+
+    #[tokio::test]
+    async fn fetch_swpc_product_none_on_non_2xx() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/wwv.txt")
+            .with_status(503)
+            .with_body("service unavailable")
+            .create_async()
+            .await;
+        let client = loopback_client();
+        let body = fetch_swpc_product(&client, &format!("{}/wwv.txt", server.url())).await;
+        assert!(body.is_none(), "non-2xx should yield None, not the error body");
+    }
+
+    #[tokio::test]
+    async fn fetch_swpc_product_none_on_unreachable() {
+        let client = loopback_client();
+        // Port 1 is reserved and nothing listens there — a fast, reliable
+        // connection-refused case without depending on network absence.
+        let body = fetch_swpc_product(&client, "http://127.0.0.1:1/x").await;
+        assert!(body.is_none(), "connection failure should yield None, not panic");
     }
 }

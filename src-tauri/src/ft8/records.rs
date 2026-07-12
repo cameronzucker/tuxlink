@@ -4,6 +4,7 @@
 
 use serde::Serialize;
 
+use crate::config::Ft8SweepConfig;
 use crate::winlink::ax25::devices::StableAudioId;
 use tuxlink_capture::state::{
     BlockedReason, HealthFlags, RingOutcomeKind, ServiceAxis, SlotPhase, Sweep,
@@ -137,6 +138,31 @@ pub struct SlotRecord {
 pub struct AudioDeviceChoice {
     pub human_name: String,
     pub stable_id: StableAudioId,
+    /// The live ALSA `hw:<card_index>,0` name for this card (L3 station-intel
+    /// panel: the setup rows show the exact device string the capture path
+    /// opens). Same value shape as [`crate::winlink::ax25::devices::ResolvedManagedDevice::alsa_hw`],
+    /// resolved fresh at enumeration time via [`crate::winlink::ax25::devices::alsa_hw_name`].
+    pub alsa_hw: String,
+}
+
+/// Sweep configuration on the wire (spec header additive-changes (1): the
+/// L3 popover shows the sweep the operator configured, not just the live
+/// [`SweepStatusDto`]). Mirrors [`Ft8SweepConfig`] field-for-field —
+/// deliberately a separate DTO (not `#[derive(Serialize)]` on the config
+/// struct itself) so config-file shape and wire shape can diverge without
+/// coupling.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SweepConfigDto {
+    pub enabled: bool,
+    pub bands: Vec<String>,
+    pub dwell_slots: u8,
+}
+
+impl From<&Ft8SweepConfig> for SweepConfigDto {
+    fn from(c: &Ft8SweepConfig) -> Self {
+        Self { enabled: c.enabled, bands: c.bands.clone(), dwell_slots: c.dwell_slots }
+    }
 }
 
 // ---- state-machine mirrors (leaf-crate types cannot derive serde) --------
@@ -344,6 +370,34 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&s).unwrap(),
             r#"{"mode":"active","bandIdx":2,"dwellProgress":5}"#
+        );
+    }
+
+    /// L3 additive-fields shape pin (tuxlink-b026z.4 Task A1): `AudioDeviceChoice`
+    /// carries `alsaHw`; `SweepConfigDto` mirrors `Ft8SweepConfig` in camelCase.
+    #[test]
+    fn audio_device_choice_and_sweep_config_dto_shapes_are_pinned() {
+        let dev = AudioDeviceChoice {
+            human_name: "USB Audio CODEC".into(),
+            stable_id: StableAudioId {
+                kind: crate::winlink::ax25::devices::StableIdKind::ByIdSymlink,
+                value: "usb-codec-00".into(),
+            },
+            alsa_hw: "hw:1,0".into(),
+        };
+        let v = serde_json::to_value(&dev).unwrap();
+        assert_eq!(v["alsaHw"], "hw:1,0");
+        assert_eq!(v["humanName"], "USB Audio CODEC");
+
+        let cfg = Ft8SweepConfig {
+            enabled: true,
+            bands: vec!["20m".into(), "40m".into()],
+            dwell_slots: 8,
+        };
+        let dto: SweepConfigDto = (&cfg).into();
+        assert_eq!(
+            serde_json::to_string(&dto).unwrap(),
+            r#"{"enabled":true,"bands":["20m","40m"],"dwellSlots":8}"#
         );
     }
 }

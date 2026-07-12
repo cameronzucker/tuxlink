@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Station Intelligence — L3 + peers reconciled v1 (PROPOSAL)</title>
+<!-- Render with the WebKitGTK harness over file:// (see dev/render-harness/snapshot.py).
+     Paths are relative to repo-root/src (this file is docs/design/mockups/<dir>/, i.e. 4 levels deep). -->
+<link rel="stylesheet" href="../../../../src/App.css">
+<link rel="stylesheet" href="../../../../src/catalog/StationFinderPanel.css">
+<style>
+/* ════ mock-v4 L3 ADDITIONS (verbatim from station-intel-l3-mock-v4.html) ════ */
+.si-strip__hdr .si-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--reach-good); box-shadow: 0 0 6px rgba(65, 186, 108, 0.8); }
+.si-band-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-left: 6px; vertical-align: 1px; background: var(--text-faint); }
+.si-band-dot--hot   { background: var(--reach-good); box-shadow: 0 0 5px rgba(65,186,108,.9); }
+.si-band-dot--warm  { background: var(--reach-marginal); }
+.si-band-dot--quiet { background: var(--text-faint); opacity: .6; }
+.station-finder__bandtab.on .si-band-dot--hot { background: #08120b; box-shadow: none; }
+.si-layers { position: absolute; right: 10px; top: 10px; z-index: 7; display: flex; gap: 6px; font-size: 10.5px; background: rgba(8, 16, 24, 0.74); border: 1px solid var(--border); border-radius: 6px; padding: 5px 7px; }
+.si-layers button { font: inherit; display: inline-flex; align-items: center; gap: 5px; color: var(--text-dim); background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 12px; padding: 3px 9px; cursor: pointer; }
+.si-layers button.on { color: var(--text); border-color: var(--reach-good); }
+.si-layers .k { width: 8px; height: 8px; border-radius: 50%; }
+.si-rail-tabs { display: flex; border-bottom: 1px solid var(--border); background: var(--panel); flex: none; }
+.si-rail-tabs button { font: inherit; font-size: 12px; flex: 1; padding: 9px 10px; color: var(--text-dim); background: transparent; border: none; border-bottom: 2px solid transparent; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+.si-rail-tabs button.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+.si-rail-tabs .si-count { font-family: var(--mono); font-size: 10px; color: var(--reach-good); }
+.si-aim { display: flex; align-items: center; gap: 16px; padding: 11px 13px; border-bottom: 1px solid var(--border); }
+.si-aim .station-finder__compass { flex: none; }
+.si-aim__mag .station-finder__big { color: var(--text); }
+.si-aim__true { color: var(--text-dim); }
+.si-aim__true .station-finder__big { font-size: 15px; color: var(--text-dim); }
+.si-aim__dist { margin-left: auto; text-align: right; }
+.si-aim__decl { font-family: var(--mono); font-size: 10px; color: var(--text-faint); padding: 0 13px 9px; border-bottom: 1px solid var(--border); }
+.si-aim__decl b { color: var(--text-dim); font-weight: 600; }
+.bm { padding: 2px 0 8px; }
+.bm__h { display: flex; align-items: baseline; gap: 8px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--text-dim); padding: 9px 13px 7px; }
+.bm__h .best { margin-left: auto; font-weight: 600; color: var(--reach-good); text-transform: none; letter-spacing: 0; font-size: 11px; }
+.bandrow { display: grid; grid-template-columns: 34px 10px 80px 34px 1fr; align-items: center; gap: 9px; padding: 5px 13px; border-bottom: 1px solid var(--border-soft); min-height: 34px; }
+.bandrow.is-best { background: rgba(65, 186, 108, 0.06); }
+.bandrow .bn { font-family: var(--mono); font-size: 11.5px; color: var(--text-dim); }
+.bandrow.is-best .bn { color: var(--text); font-weight: 700; }
+.bandrow .si-band-dot { margin: 0; }
+.bandrow .track { height: 5px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.bandrow .fill { height: 100%; border-radius: 3px; }
+.bandrow .pct { font-family: var(--mono); font-size: 10.5px; color: var(--text-faint); text-align: right; }
+.bandrow .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.chip-use { font-family: var(--mono); font-size: 11px; display: inline-flex; align-items: center; gap: 5px; color: var(--text); background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 6px; padding: 3px 8px; cursor: pointer; }
+.chip-use:hover { border-color: var(--accent); }
+.chip-use .station-finder__sw { width: 9px; height: 9px; }
+.chip-use .star { color: var(--text-faint); font-size: 11px; margin-left: 1px; }
+.chip-use .star.is-saved { color: var(--accent); }
+.bandrow .none { font-size: 10.5px; color: var(--text-faint); opacity: .55; }
+.si-strip { flex: none; border-top: 1px solid var(--border-strong); background: var(--panel); display: flex; flex-direction: column; }
+.si-strip__hdr { display: flex; align-items: center; gap: 14px; padding: 7px 14px; font-size: 11.5px; color: var(--text-dim); }
+.si-strip__title { color: var(--text); font-weight: 600; font-size: 12px; }
+.si-strip__stats { margin-left: auto; display: inline-flex; gap: 14px; font-family: var(--mono); font-size: 11px; }
+.si-strip__stats b { color: var(--text); font-weight: 600; }
+.si-prov { font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--reach-good); border: 1px solid rgba(65,186,108,.4); border-radius: 4px; padding: 1px 6px; }
+.si-collapse { font: inherit; font-size: 11px; color: var(--text-dim); background: none; border: 1px solid var(--border-strong); border-radius: 6px; padding: 3px 9px; cursor: pointer; }
+.si-strip__body { display: flex; border-top: 1px solid var(--border); min-height: 0; }
+.si-wf { flex: 1 1 55%; min-width: 0; padding: 8px 0 4px 14px; }
+.si-wf canvas { display: block; width: 100%; height: 168px; border: 1px solid var(--border); border-radius: 4px; }
+.si-wf__axis { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 9.5px; color: var(--text-faint); padding: 3px 2px 0; }
+.si-feed { flex: 1 1 45%; min-width: 360px; border-left: 1px solid var(--border); margin-left: 14px; overflow: hidden; }
+.si-feed table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 11px; }
+.si-feed th { text-align: left; font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-faint); padding: 6px 10px 4px; border-bottom: 1px solid var(--border); }
+.si-feed td { padding: 4px 10px; color: var(--text-dim); white-space: nowrap; border-bottom: 1px solid var(--border-soft); }
+.si-feed td.call { color: var(--text); }
+.si-feed td.db-good { color: var(--reach-good); }
+.si-feed td.db-mid  { color: var(--reach-marginal); }
+.si-feed td.db-weak { color: var(--reach-unlikely); }
+.si-feed td.dist { text-align: right; color: var(--text-faint); }
+.mockmap { position: absolute; inset: 0; background: linear-gradient(rgba(31,40,50,.55) 1px, transparent 1px), linear-gradient(90deg, rgba(31,40,50,.55) 1px, transparent 1px), var(--bg); background-size: 72px 72px, 72px 72px, auto; overflow: hidden; }
+.mockmap .heat { position: absolute; border-radius: 50%; filter: blur(2px); }
+.mockmap .pin { position: absolute; width: 14px; height: 14px; }
+.mockmap .pin .station-finder__pindot { width: 14px; height: 14px; }
+.mockmap .me { position: absolute; }
+.si-reachkey-ft8 { border-top: 1px solid var(--border); margin-top: 5px; padding-top: 5px; }
+
+/* ════ NEW — PEERS RECONCILIATION (proposal for approval) ════
+   Design intent, per operator ruling:
+   - Peers are their OWN glyph shape (deconflicted from the gateway round dot):
+     a DIAMOND. Color keeps the shared reachability ramp (shape encodes entity,
+     color encodes reachability — no color collision). A never-connected peer
+     renders with a DASHED outline + neutral fill (peer-model plan §6).
+   - Clicking a peer selects it into the SAME Station detail panel a gateway
+     uses (the one place details appear). No separate list, no in-list dial box. */
+.mockmap .peerpin { position: absolute; width: 16px; height: 16px; transform: translate(-50%, -50%); }
+.peerglyph {
+  display: block; box-sizing: border-box;
+  width: 13px; height: 13px; margin: 1px auto; transform: rotate(45deg);
+  border: 2px solid var(--reach-good); border-radius: 2px;
+  background: var(--panel);
+}
+.peerglyph--good     { border-color: var(--reach-good); }
+.peerglyph--marginal { border-color: var(--reach-marginal); }
+.peerglyph--never    { border-color: var(--text-faint); border-style: dashed; }
+.peerpin.is-selected .peerglyph { box-shadow: 0 0 0 3px rgba(65,186,108,.35), 0 0 9px rgba(65,186,108,.6); }
+.peerpin .peertag {
+  position: absolute; left: 50%; top: 17px; transform: translateX(-50%);
+  font-family: var(--mono); font-size: 9.5px; color: var(--text-dim); white-space: nowrap;
+  background: rgba(8,16,24,.7); padding: 0 3px; border-radius: 3px;
+}
+.si-reachkey-peer { border-top: 1px solid var(--border); margin-top: 5px; padding-top: 5px; }
+.si-reachkey-peer .pk { display: inline-block; width: 9px; height: 9px; transform: rotate(45deg); border: 2px solid var(--reach-good); border-radius: 2px; vertical-align: -1px; margin: 0 5px 0 2px; background: var(--panel); }
+.si-reachkey-peer .pk--never { border-color: var(--text-faint); border-style: dashed; }
+
+/* Peer detail: reuses the Station detail layout; the connect action is a P2P
+   dial (Connect →), not the gateway prefill (Use →). */
+.station-finder__mb--peer { border-color: var(--reach-good); color: var(--reach-good); }
+.chip-conn { font-family: var(--mono); font-size: 11px; display: inline-flex; align-items: center; gap: 5px; color: #08120b; background: var(--reach-good); border: 1px solid var(--reach-good); border-radius: 6px; padding: 3px 9px; cursor: pointer; font-weight: 600; }
+.peer-ep { display: grid; grid-template-columns: 34px 10px 80px 34px 1fr; align-items: center; gap: 9px; padding: 5px 13px; border-bottom: 1px solid var(--border-soft); min-height: 34px; }
+.peer-ep .bn { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+.peer-ep .addr { grid-column: 3 / 5; font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+.peer-ep .badge { font-size: 9px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-dim); border: 1px solid var(--border-strong); border-radius: 4px; padding: 0 5px; }
+.peer-note { font-family: var(--mono); font-size: 10px; color: var(--text-faint); padding: 6px 13px 0; }
+</style>
+</head>
+<body>
+
+<div class="station-finder-overlay" role="dialog" aria-label="Station Intelligence">
+  <div class="station-finder">
+
+    <header class="station-finder__header">
+      <h2>Station Intelligence</h2>
+      <button class="station-finder__close" aria-label="Close">×</button>
+    </header>
+
+    <div class="station-finder__controls">
+      <div class="station-finder__topbar">
+        <div class="station-finder__actions">
+          <button type="button" class="station-finder__refresh">Update station list</button>
+          <span class="station-finder__listage">stations updated 4 min ago</span>
+          <!-- Internet space-weather refresh (NOAA SWPC, tuxlink-ot71) — the deferred "Update propagation data"
+               action, now wired next to the off-air refresh so both sources have a manual control -->
+          <button type="button" class="station-finder__refresh">Update propagation data</button>
+          <!-- WWV off-air control (Task 15, shipped on main) — verbatim copy/classes from WwvOffairControl.tsx -->
+          <button type="button" class="station-finder__refresh-offair">Refresh off-air</button>
+          <span class="station-finder__offair" title="off-air WWV">off-air WWV · SFI <b>92</b> · K <b>3</b></span>
+        </div>
+        <div class="station-finder__cond">
+          <span>15:41 local · <b>22:41Z</b></span>
+          <span>SFI <b>142</b></span>
+          <span>SSN <b>118</b></span>
+          <span>K <b>2</b></span>
+        </div>
+      </div>
+
+      <div class="station-finder__bandbar">
+        <span class="station-finder__lab">Bands</span>
+        <button type="button" class="station-finder__bandtab off">80 m<span class="si-band-dot si-band-dot--warm"></span></button>
+        <button type="button" class="station-finder__bandtab on">40 m<span class="si-band-dot si-band-dot--hot"></span></button>
+        <button type="button" class="station-finder__bandtab off">30 m<span class="si-band-dot si-band-dot--quiet"></span></button>
+        <button type="button" class="station-finder__bandtab on">20 m<span class="si-band-dot si-band-dot--hot"></span></button>
+        <button type="button" class="station-finder__bandtab off">17 m<span class="si-band-dot si-band-dot--warm"></span></button>
+        <button type="button" class="station-finder__bandtab off">15 m<span class="si-band-dot si-band-dot--quiet"></span></button>
+        <button type="button" class="station-finder__bandtab off">VHF/UHF</button>
+
+        <span class="station-finder__modes">
+          <button type="button" class="station-finder__chip on"><span class="station-finder__sw station-finder__sw--vara-hf"></span>VARA HF</button>
+          <button type="button" class="station-finder__chip on"><span class="station-finder__sw station-finder__sw--ardop-hf"></span>ARDOP HF</button>
+          <button type="button" class="station-finder__chip off"><span class="station-finder__sw station-finder__sw--packet"></span>Packet</button>
+        </span>
+
+        <span class="station-finder__searchgroup">
+          <input type="search" class="station-finder__search" placeholder="callsign or grid">
+          <span class="station-finder__radius"><select><option>1000 mi</option></select></span>
+        </span>
+      </div>
+    </div>
+
+    <div class="station-finder__body">
+      <div class="station-finder__map">
+        <div class="mockmap">
+          <div class="heat" style="left:8%;  top:34%; width:190px; height:170px; background:radial-gradient(circle, rgba(65,186,108,.38), transparent 65%)"></div>
+          <div class="heat" style="left:40%; top:16%; width:150px; height:140px; background:radial-gradient(circle, rgba(217,177,58,.30), transparent 65%)"></div>
+          <div class="heat" style="left:64%; top:48%; width:120px; height:110px; background:radial-gradient(circle, rgba(65,186,108,.22), transparent 65%)"></div>
+          <!-- GATEWAYS — verbatim from mock-v4 (round reachability dots) -->
+          <span class="pin" style="left:19%; top:47%"><span class="station-finder__pindot station-finder__pindot--good"></span></span>
+          <span class="pin" style="left:31%; top:60%"><span class="station-finder__pindot station-finder__pindot--good"></span></span>
+          <span class="pin" style="left:47%; top:28%"><span class="station-finder__pindot station-finder__pindot--marginal"></span></span>
+          <span class="pin" style="left:42%; top:52%"><span class="station-finder__pindot station-finder__pindot--fair"></span></span>
+          <span class="pin" style="left:70%; top:42%"><span class="station-finder__pindot station-finder__pindot--skip"></span></span>
+          <span class="pin" style="left:78%; top:58%"><span class="station-finder__pindot station-finder__pindot--untiered"></span></span>
+          <!-- PEERS — NEW: diamond glyph, reachability-colored; dashed = never connected.
+               Clicking one fills the SAME Station detail panel (shown here with gateway W7GTE selected). -->
+          <span class="peerpin is-selected" style="left:27%; top:40%"><span class="peerglyph peerglyph--good"></span><span class="peertag">KE7PWR</span></span>
+          <span class="peerpin" style="left:55%; top:64%"><span class="peerglyph peerglyph--marginal"></span><span class="peertag">W7QRS</span></span>
+          <span class="peerpin" style="left:62%; top:22%"><span class="peerglyph peerglyph--never"></span><span class="peertag">N7ELM</span></span>
+          <span class="me" style="left:24%; top:55%"><span class="station-finder__me"></span></span>
+        </div>
+        <div class="si-layers">
+          <button type="button" class="on"><span class="k" style="background:var(--m-vara)"></span>Gateways</button>
+          <button type="button" class="on"><span class="k" style="background:var(--reach-good); transform:rotate(45deg); border-radius:2px"></span>Peers</button>
+          <button type="button" class="on"><span class="k" style="background:var(--reach-good)"></span>FT-8 heat</button>
+        </div>
+        <div class="station-finder__reachkey">
+          GATEWAY REACHABILITY · VOACAP
+          <span class="k good"></span>likely
+          <span class="k marginal"></span>marginal
+          <span class="k unlikely"></span>unlikely
+          <div class="si-reachkey-peer">
+            PEERS (P2P) · same reachability ramp
+            <span class="pk"></span>peer
+            <span class="pk pk--never"></span>never connected
+          </div>
+          <div class="si-reachkey-ft8">
+            FT-8 LIVE HEAT (OVERLAY)
+            <span class="k good"></span>band active here now
+          </div>
+        </div>
+      </div>
+
+      <div class="station-finder__rail">
+        <div class="si-rail-tabs">
+          <button type="button" class="on">Station</button>
+          <button type="button">Live decodes <span class="si-count">34/min</span></button>
+        </div>
+
+        <!-- SELECTED PEER KE7PWR — SAME detail panel + SAME chip-use elements a gateway uses.
+             The peer is distinguished by the ◆ Peer badge + the "Connect to" section header,
+             NOT by restyled chips. Clicking a chip dials P2P (vs a gateway chip's prefill). -->
+        <header class="station-finder__sta">
+          <div class="station-finder__sta-top">
+            <span class="station-finder__call">KE7PWR</span>
+            <span class="station-finder__badges">
+              <span class="station-finder__mb station-finder__mb--peer">◆ Peer</span>
+              <span class="station-finder__mb"><span class="station-finder__sw station-finder__sw--vara-hf"></span>VARA HF</span>
+              <span class="station-finder__mb"><span class="station-finder__sw station-finder__sw--ardop-hf"></span>ARDOP HF</span>
+              <span class="station-finder__mb"><span class="station-finder__sw station-finder__sw--packet"></span>Telnet</span>
+            </span>
+          </div>
+          <div class="station-finder__who">Dana · Flagstaff, AZ · DM45bb · reached 2h ago</div>
+        </header>
+
+        <div class="si-aim">
+          <div class="station-finder__compass" style="--bearing: 18deg"><span class="station-finder__needle"></span></div>
+          <div class="si-aim__mag">
+            <div class="station-finder__big">8° M</div>
+            <div class="station-finder__lab">aim antenna · compass</div>
+          </div>
+          <div class="si-aim__true">
+            <div class="station-finder__big">18° T</div>
+            <div class="station-finder__lab">true bearing</div>
+          </div>
+          <div class="si-aim__dist">
+            <div class="station-finder__big">72 mi</div>
+            <div class="station-finder__lab">short path</div>
+          </div>
+        </div>
+        <div class="si-aim__decl">declination <b>+9.7° E</b> · WMM 2025 · from DM41 · updates with your location</div>
+
+        <div class="bm">
+          <div class="bm__h">Connect to KE7PWR · you → peer <span class="best">best now: 20 m</span></div>
+          <div class="bandrow is-best"><span class="bn">20 m</span><span class="si-band-dot si-band-dot--hot"></span><div class="track"><div class="fill" style="width:84%; background:var(--reach-good)"></div></div><span class="pct">84%</span><span class="chips"><button class="chip-use"><span class="station-finder__sw station-finder__sw--vara-hf"></span>14.103<span class="star">☆</span></button></span></div>
+          <div class="bandrow"><span class="bn">40 m</span><span class="si-band-dot si-band-dot--warm"></span><div class="track"><div class="fill" style="width:56%; background:var(--reach-fair)"></div></div><span class="pct">56%</span><span class="chips"><button class="chip-use"><span class="station-finder__sw station-finder__sw--ardop-hf"></span>7.104<span class="star">☆</span></button></span></div>
+          <div class="bandrow"><span class="bn">Telnet</span><span></span><div class="track" style="opacity:.25"></div><span class="pct">net</span><span class="chips"><button class="chip-use">100.72.4.19:8774<span class="star">☆</span></button></span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="si-strip">
+      <div class="si-strip__hdr">
+        <span class="si-dot"></span>
+        <span class="si-strip__title">Live band · FT-8</span>
+        <span class="si-prov">CAT confirmed</span>
+        <span class="si-strip__stats">
+          <span>holding <b>20 m</b></span>
+          <span>dial <b>14.074 MHz</b></span>
+          <span><b>34</b> decodes/min</span>
+          <span><b>126</b> grids heard</span>
+        </span>
+        <button type="button" class="si-collapse">⌄ collapse</button>
+      </div>
+      <div class="si-strip__body">
+        <div class="si-wf">
+          <canvas id="wf" width="1280" height="336"></canvas>
+          <div class="si-wf__axis"><span>0</span><span>500</span><span>1000</span><span>1500</span><span>2000</span><span>2500</span><span>3000 Hz</span></div>
+        </div>
+        <div class="si-feed">
+          <table>
+            <thead><tr><th>UTC</th><th>dB</th><th>Freq</th><th>Message</th><th style="text-align:right">mi · brg</th></tr></thead>
+            <tbody>
+              <tr><td>22:41:15</td><td class="db-good">−04</td><td>1240</td><td class="call">CQ W7GTE DM34</td><td class="dist">182 · 291°</td></tr>
+              <tr><td>22:41:15</td><td class="db-mid">−13</td><td>0688</td><td class="call">K5MDX N7CPZ DM43</td><td class="dist">96 · 118°</td></tr>
+              <tr><td>22:41:15</td><td class="db-good">−07</td><td>1902</td><td class="call">CQ DX JA1ETO PM95</td><td class="dist">5,210 · 305°</td></tr>
+              <tr><td>22:41:00</td><td class="db-weak">−20</td><td>0455</td><td class="call">VE7GNU W1AW R−15</td><td class="dist">1,740 · 061°</td></tr>
+              <tr><td>22:41:00</td><td class="db-mid">−11</td><td>2210</td><td class="call">CQ KD9QRP EN52</td><td class="dist">1,310 · 074°</td></tr>
+              <tr><td>22:41:00</td><td class="db-good">−02</td><td>1188</td><td class="call">N7CPZ W7ABC RR73</td><td class="dist">96 · 118°</td></tr>
+              <tr><td>22:40:45</td><td class="db-weak">−19</td><td>1560</td><td class="call">CQ POTA K4POT EM73</td><td class="dist">1,490 · 095°</td></tr>
+              <tr><td>22:40:45</td><td class="db-good">+03</td><td>0850</td><td class="call">W4PHS K0SWE DN45 −08</td><td class="dist">830 · 352°</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+(function () {
+  const cv = document.getElementById('wf');
+  const ctx = cv.getContext('2d');
+  if (!ctx) return;
+  const W = cv.width, H = cv.height;
+  let s = 0x2af9;
+  const rnd = () => ((s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  function ramp(v) {
+    if (v < 0.35) { const t = v / 0.35; return [13 + 10 * t, 19 + 28 * t, 24 + 60 * t]; }
+    if (v < 0.7)  { const t = (v - 0.35) / 0.35; return [23 + 30 * t, 47 + 120 * t, 84 + 110 * t]; }
+    const t = (v - 0.7) / 0.3; return [53 + 192 * t, 167 + 20 * t, 194 - 130 * t];
+  }
+  const img = ctx.createImageData(W, H);
+  const sigs = [];
+  const freqs = [455, 688, 850, 1188, 1240, 1385, 1560, 1725, 1902, 2085, 2210, 2440, 2620, 2810];
+  for (let i = 0; i < freqs.length; i++) {
+    const str = (i === 2 || i === 8) ? 0.95 : 0.55 + rnd() * 0.4;
+    sigs.push([freqs[i], Math.floor(rnd() * 3) * (H / 4) + Math.floor(rnd() * 8), H / 4 * 0.84, str]);
+  }
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      let v = 0.10 + rnd() * 0.16;
+      const hz = (x / W) * 3000;
+      for (const [f, y0, dur, str] of sigs) {
+        const inSlot = ((y - y0) % (H / 2) + (H / 2)) % (H / 2) < dur;
+        const df = Math.abs(hz - f);
+        if (inSlot && df < 25) v = Math.max(v, str * (1 - df / 25) * (0.8 + rnd() * 0.2));
+      }
+      const [r, g, b] = ramp(Math.min(1, v));
+      const idx = (y * W + x) * 4;
+      img.data[idx] = r; img.data[idx + 1] = g; img.data[idx + 2] = b; img.data[idx + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  ctx.strokeStyle = 'rgba(228,235,242,0.18)';
+  ctx.setLineDash([4, 4]);
+  for (let i = 1; i < 4; i++) { ctx.beginPath(); ctx.moveTo(0, (H / 4) * i); ctx.lineTo(W, (H / 4) * i); ctx.stroke(); }
+  ctx.setLineDash([]);
+  ctx.font = '11px monospace';
+  ctx.fillStyle = 'rgba(148,160,173,0.9)';
+  ctx.fillText('now', 6, 12);
+  ctx.fillText('−60 s', 6, H - 6);
+})();
+</script>
+</body>
+</html>

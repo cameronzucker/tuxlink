@@ -5,6 +5,8 @@
 
 import type { ReactNode } from 'react';
 import { HF_BANDS, bandLabel, type Band } from './bandPlan';
+import type { BandDot } from '../ft8ui/ft8Types';
+import { SolarUpdateControl } from '../wwv/SolarUpdateControl';
 import { WwvOffairControl } from '../wwv/WwvOffairControl';
 
 export type FilterMode = 'vara-hf' | 'ardop-hf' | 'packet';
@@ -15,17 +17,6 @@ const FILTER_MODES: { mode: FilterMode; label: string }[] = [
   { mode: 'packet', label: 'Packet' },
 ];
 
-/// Station-type filter (Task 23, spec §5): a new dimension on the existing
-/// finder, orthogonal to band/mode. Gateway = the RMS-catalog stations this
-/// panel already showed; Peer = the P2P roster (Task 22's usePeers/
-/// aggregatePeers). Both on by default.
-export type StationType = 'gateway' | 'peer';
-
-const STATION_TYPES: { type: StationType; label: string }[] = [
-  { type: 'gateway', label: 'Gateway' },
-  { type: 'peer', label: 'Peer' },
-];
-
 export interface StationFinderControlsProps {
   /** Selected bands — a multi-select FILTER: a station shows only if it has a
    *  channel on one of these bands (∩ enabledModes). Includes 'vhf-uhf' when the
@@ -34,14 +25,6 @@ export interface StationFinderControlsProps {
   onToggleBand: (band: Band) => void;
   enabledModes: Set<FilterMode>;
   onToggleMode: (mode: FilterMode) => void;
-  /** Station-type filter state (Task 23): Gateway / Peer. */
-  enabledTypes: Set<StationType>;
-  onToggleType: (type: StationType) => void;
-  /** Whether the Peer type + its chip render at all — gated on
-   *  `useP2pCapabilities().finder_peers` [R5-8]. `false` HIDES the whole type
-   *  chip cluster (not just the Peer chip): with peers unavailable, showing a
-   *  single-option Gateway toggle would be confusing chrome for no benefit. */
-  showPeerType: boolean;
   utcHour: number;
   localTime: string;
   ssn: number | null;
@@ -69,6 +52,52 @@ export interface StationFinderControlsProps {
    *  presets + Apply), so they share the filter line instead of a row of their
    *  own (tuxlink-obpa compaction). */
   filterExtra?: ReactNode;
+  /** Live per-band FT-8 openness dots (design §Openness), keyed by `Band`
+   *  string — `useFt8Listener().bandActivity`, itself `deriveBandActivity`'s
+   *  output (Task B3). A band absent from the map (never sampled inside the
+   *  10-minute window) renders the same as an explicit `no-data` entry — a
+   *  hollow dot, not an omitted one; only the never-sampleable `60m` and
+   *  `vhf-uhf` chips omit the dot entirely (see `NEVER_SAMPLEABLE` below).
+   *  Optional so this stays a pure presentational component pre-D1-wiring:
+   *  omitting the prop renders every eligible chip with a hollow no-data dot,
+   *  identical to an empty map. */
+  bandActivity?: Map<string, BandDot>;
+}
+
+/** Bands the FT-8 engine structurally cannot sample (design §Openness) — the
+ *  openness invariant: a dot never claims knowledge it lacks, so these chips
+ *  render NO dot at all (not even a hollow no-data one). */
+const NEVER_SAMPLEABLE = new Set<Band>(['60m', 'vhf-uhf']);
+
+/** The default dot for a band absent from `bandActivity` — identical to what
+ *  `deriveBandActivity` returns for an in-window band with zero evidence. */
+const NO_DATA_DOT: BandDot = { tier: 'no-data', opacity: 0, sampledAgoMs: null, dwellSlots: 0 };
+
+function dotFor(band: Band, bandActivity: Map<string, BandDot> | undefined): BandDot {
+  return bandActivity?.get(band) ?? NO_DATA_DOT;
+}
+
+/** Tooltip text for the openness dot (design §Openness): recency + sample
+ *  size when there's evidence, the honest "not sampled" caption otherwise. */
+function dotTitle(dot: BandDot): string {
+  if (dot.tier === 'no-data' || dot.sampledAgoMs === null) {
+    return 'not sampled in the last 10 min';
+  }
+  const ageMin = Math.round(dot.sampledAgoMs / 60_000);
+  return `sampled ${ageMin}m ago · dwell ${dot.dwellSlots} slots`;
+}
+
+/** One band-chip openness dot — non-interactive (never a button; D3 gate). */
+function BandOpennessDot({ band, dot }: { band: Band; dot: BandDot }) {
+  return (
+    <span
+      className={`station-finder__dot station-finder__dot--${dot.tier}`}
+      style={{ opacity: dot.opacity }}
+      title={dotTitle(dot)}
+      aria-hidden="true"
+      data-testid={`band-dot-${band}`}
+    />
+  );
 }
 
 /** Radius options (miles) for the search-radius selector; null = All. */
@@ -95,10 +124,12 @@ export function StationFinderControls(props: StationFinderControlsProps) {
   return (
     <div className="station-finder__controls">
       {/* Row 1 (directly under the title): data-update actions on the left,
-          live conditions/time pushed to the right. The off-air WWV control
-          (Task 15) lives here beside "Update station list" — a self-contained
-          component that owns its own hook, so no propagation state is
-          threaded through this presentational panel's props. */}
+          live conditions/time pushed to the right. Both space-weather
+          refreshes — the internet SWPC path (SolarUpdateControl) and the
+          off-air WWV decode (WwvOffairControl) — live here beside "Update
+          station list", each a self-contained component owning its own
+          request state so no propagation state is threaded through this
+          presentational panel's props. */}
       <div className="station-finder__topbar">
         <div className="station-finder__actions">
           <button
@@ -114,6 +145,7 @@ export function StationFinderControls(props: StationFinderControlsProps) {
               {listAgeLabel(props.listFetchedAtMs)}
             </span>
           )}
+          <SolarUpdateControl />
           <WwvOffairControl />
         </div>
         <div className="station-finder__cond" data-testid="conditions">
@@ -160,6 +192,9 @@ export function StationFinderControls(props: StationFinderControlsProps) {
             onClick={() => props.onToggleBand(b)}
           >
             {bandLabel(b)}
+            {/* 60m is structurally outside the FT-8 band table — never-sampleable,
+                so it gets no dot at all (§Openness), unlike the other HF chips. */}
+            {!NEVER_SAMPLEABLE.has(b) && <BandOpennessDot band={b} dot={dotFor(b, props.bandActivity)} />}
           </button>
         ))}
         {/* VHF/UHF is a selectable filter (line-of-sight packet) but is never
@@ -188,25 +223,6 @@ export function StationFinderControls(props: StationFinderControlsProps) {
             </button>
           ))}
         </span>
-
-        {/* Station-type filter (Task 23, spec §5): Gateway/Peer. Hidden — not
-            disabled — when the P2P finder_peers capability is off (R5-8). */}
-        {props.showPeerType && (
-          <span className="station-finder__types" data-testid="type-chips">
-            {STATION_TYPES.map(({ type, label }) => (
-              <button
-                key={type}
-                type="button"
-                data-testid={`type-chip-${type}`}
-                className={`station-finder__chip${props.enabledTypes.has(type) ? ' on' : ' off'}`}
-                aria-pressed={props.enabledTypes.has(type)}
-                onClick={() => props.onToggleType(type)}
-              >
-                {label}
-              </button>
-            ))}
-          </span>
-        )}
 
         {/* Search group merged onto the band-bar row (reclaims the old filter
             row); pushed to the right of the bands/modes via margin-left:auto. */}

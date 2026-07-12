@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Station Intelligence L3 — state variants v1</title>
+<link rel="stylesheet" href="../../../src/App.css">
+<link rel="stylesheet" href="../../../src/catalog/StationFinderPanel.css">
+<style>
+body { background: var(--bg); padding: 20px; }
+.sheet { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; max-width: 1480px; }
+.card { border: 1px solid var(--border-strong); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.card__cap {
+  font-size: 12.5px; font-weight: 600; color: var(--text);
+  padding: 9px 13px; border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.card__cap small { display: block; font-weight: 400; color: var(--text-dim); font-size: 10.5px; margin-top: 2px; }
+.wide { grid-column: 1 / -1; }
+
+/* strip (from approved v4) */
+.si-strip { background: var(--panel); display: flex; flex-direction: column; }
+.si-strip__hdr { display: flex; align-items: center; gap: 12px; padding: 7px 14px; font-size: 11.5px; color: var(--text-dim); }
+.si-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--reach-good); box-shadow: 0 0 6px rgba(65,186,108,.8); flex: none; }
+.si-dot--amber { background: var(--reach-marginal); box-shadow: 0 0 6px rgba(217,177,58,.8); }
+.si-dot--red { background: var(--reach-unlikely); box-shadow: 0 0 6px rgba(214,74,64,.8); }
+.si-dot--off { background: var(--text-faint); box-shadow: none; opacity: .6; }
+.si-strip__title { color: var(--text); font-weight: 600; font-size: 12px; }
+.si-strip__stats { margin-left: auto; display: inline-flex; gap: 12px; font-family: var(--mono); font-size: 10.5px; }
+.si-strip__stats b { color: var(--text); font-weight: 600; }
+.si-prov {
+  font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--reach-good); border: 1px solid rgba(65,186,108,.4);
+  border-radius: 4px; padding: 1px 6px;
+}
+.si-prov--warn { color: var(--reach-marginal); border-color: rgba(217,177,58,.45); }
+.si-prov--unconf { color: var(--text-faint); border-color: var(--border-strong); border-style: dashed; }
+.si-collapse { font: inherit; font-size: 10.5px; color: var(--text-dim); background: none; border: 1px solid var(--border-strong); border-radius: 6px; padding: 2px 8px; }
+.si-strip__body { display: flex; border-top: 1px solid var(--border); }
+.si-wf { flex: 1 1 58%; min-width: 0; padding: 8px 0 6px 12px; position: relative; }
+.si-wf canvas { display: block; width: 100%; height: 130px; border: 1px solid var(--border); border-radius: 4px; }
+.si-wf__axis { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 9px; color: var(--text-faint); padding: 2px 2px 0; }
+.si-feed { flex: 1 1 42%; border-left: 1px solid var(--border); margin-left: 12px; }
+.si-feed table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 10.5px; }
+.si-feed td { padding: 3px 9px; color: var(--text-dim); white-space: nowrap; border-bottom: 1px solid var(--border-soft); }
+.si-feed td.call { color: var(--text); }
+.si-feed td.db-good { color: var(--reach-good); }
+.si-feed td.db-weak { color: var(--reach-unlikely); }
+
+/* state banners inside the strip */
+.si-banner {
+  margin: 8px 12px; padding: 9px 12px;
+  border-radius: 6px; font-size: 11.5px;
+  display: flex; gap: 9px; align-items: baseline;
+}
+.si-banner b { font-weight: 600; }
+.si-banner--info  { background: rgba(65,186,108,.07); border: 1px solid rgba(65,186,108,.25); color: var(--text-dim); }
+.si-banner--warn  { background: rgba(217,177,58,.08); border: 1px solid rgba(217,177,58,.35); color: var(--text-dim); }
+.si-banner--err   { background: rgba(214,74,64,.08);  border: 1px solid rgba(214,74,64,.35);  color: var(--text-dim); }
+.si-banner--quiet { background: var(--surface-2); border: 1px solid var(--border-strong); color: var(--text-dim); }
+.si-wf__overlay {
+  position: absolute; inset: 8px 0 22px 12px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; color: var(--text-dim);
+  background: rgba(13, 19, 24, 0.55);
+  border-radius: 4px;
+}
+.si-feed__empty {
+  padding: 18px 14px; font-size: 11px; color: var(--text-faint);
+  line-height: 1.6;
+}
+.si-feed__empty b { color: var(--text-dim); }
+
+/* first-run blocked surface */
+.fr { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.fr__h { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--text-dim); }
+.devlist { display: flex; flex-direction: column; gap: 6px; }
+.dev {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--surface-2); border: 1px solid var(--border-strong);
+  border-radius: 7px; padding: 9px 12px; cursor: pointer;
+  font-size: 12px; color: var(--text);
+}
+.dev.sel { border-color: var(--reach-good); }
+.dev .radio { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--border-strong); flex: none; }
+.dev.sel .radio { border-color: var(--reach-good); background: var(--reach-good); box-shadow: inset 0 0 0 2px var(--surface-2); }
+.dev small { color: var(--text-faint); font-family: var(--mono); font-size: 10px; margin-left: auto; }
+.fr__note { font-size: 10.5px; color: var(--text-faint); }
+.rigx {
+  border: 1px solid var(--border-strong); border-radius: 7px;
+  background: var(--surface-2);
+}
+.rigx__hdr {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 12px; font-size: 12px; color: var(--text);
+  cursor: pointer;
+}
+.rigx__hdr .chev { color: var(--text-faint); font-size: 10px; }
+.rigx__hdr .st { margin-left: auto; font-size: 10px; color: var(--reach-marginal); }
+.rigx__hint { font-size: 10.5px; color: var(--text-faint); padding: 0 12px 9px; line-height: 1.5; }
+.fr__cta {
+  font: inherit; font-size: 12px; font-weight: 600;
+  color: #08120b; background: var(--reach-good);
+  border: none; border-radius: 7px; padding: 8px 16px;
+  align-self: flex-start; cursor: pointer;
+}
+
+/* sweep popover */
+.pop-stage { padding: 16px 14px 22px; position: relative; }
+.pop {
+  width: 300px;
+  background: var(--elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 12px 34px rgba(0,0,0,.55);
+  padding: 12px;
+  margin-top: 8px;
+}
+.pop__h { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--text-dim); margin-bottom: 8px; }
+.pop__bands { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 11px; }
+.pop__band {
+  font-family: var(--mono); font-size: 11.5px;
+  display: inline-flex; align-items: center; gap: 5px;
+  color: var(--text-dim);
+  background: var(--surface-2); border: 1px solid var(--border-strong);
+  border-radius: 6px; padding: 4px 9px; cursor: pointer;
+}
+.pop__band.sel { color: var(--text); border-color: var(--reach-good); }
+.pop__band.sel::before { content: '✓'; color: var(--reach-good); font-size: 10px; }
+.pop__row { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--text-dim); padding: 4px 0; }
+.pop__row .radio { width: 11px; height: 11px; border-radius: 50%; border: 2px solid var(--border-strong); flex: none; }
+.pop__row.sel .radio { border-color: var(--reach-good); background: var(--reach-good); box-shadow: inset 0 0 0 2px var(--elevated); }
+.pop__row.sel { color: var(--text); }
+.pop__row small { margin-left: auto; font-family: var(--mono); font-size: 9.5px; color: var(--text-faint); }
+.pop__foot { font-size: 9.5px; color: var(--text-faint); border-top: 1px solid var(--border); padding-top: 8px; margin-top: 8px; line-height: 1.5; }
+
+/* ribbon badges */
+.ribbonrow { display: flex; gap: 22px; padding: 16px 14px; align-items: center; flex-wrap: wrap; }
+.rb {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 7px; padding: 6px 12px; cursor: pointer;
+}
+.rb b { color: var(--text); font-weight: 600; }
+.rb .n { font-family: var(--mono); font-size: 10px; color: var(--reach-good); }
+.rb--blocked { border-color: rgba(217,177,58,.5); }
+.rblab { font-size: 10px; color: var(--text-faint); text-align: center; margin-top: 6px; font-family: var(--mono); }
+.rbcell { display: flex; flex-direction: column; }
+</style>
+</head>
+<body>
+
+<div class="sheet">
+
+  <!-- 1 · decoding (reference) -->
+  <div class="card">
+    <div class="card__cap">1 · decoding <small>Reference — the approved v4 treatment. Green dot, live stats, streaks + feed.</small></div>
+    <div class="si-strip">
+      <div class="si-strip__hdr">
+        <span class="si-dot"></span><span class="si-strip__title">Live band · FT-8</span>
+        <span class="si-prov">CAT confirmed</span>
+        <span class="si-strip__stats"><span>holding <b>20 m</b></span><span>dial <b>14.074</b></span><span><b>34</b>/min</span></span>
+        <button class="si-collapse">⌄ collapse</button>
+      </div>
+      <div class="si-strip__body">
+        <div class="si-wf"><canvas class="wfc" data-mode="live" width="760" height="260"></canvas>
+          <div class="si-wf__axis"><span>0</span><span>1000</span><span>2000</span><span>3000 Hz</span></div></div>
+        <div class="si-feed"><table><tbody>
+          <tr><td>22:41:15</td><td class="db-good">−04</td><td class="call">CQ W7GTE DM34</td></tr>
+          <tr><td>22:41:15</td><td class="db-weak">−20</td><td class="call">VE7GNU W1AW R−15</td></tr>
+          <tr><td>22:41:00</td><td class="db-good">−02</td><td class="call">N7CPZ W7ABC RR73</td></tr>
+          <tr><td>22:40:45</td><td class="db-good">+03</td><td class="call">W4PHS K0SWE DN45 −08</td></tr>
+        </tbody></table></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2 · waiting-first-slot -->
+  <div class="card">
+    <div class="card__cap">2 · waiting-first-slot <small>Just started: waterfall filling from the top, feed shows the countdown — expectation-setting, not emptiness.</small></div>
+    <div class="si-strip">
+      <div class="si-strip__hdr">
+        <span class="si-dot"></span><span class="si-strip__title">Live band · FT-8</span>
+        <span class="si-prov">CAT confirmed</span>
+        <span class="si-strip__stats"><span>holding <b>20 m</b></span><span>dial <b>14.074</b></span><span><b>—</b>/min</span></span>
+        <button class="si-collapse">⌄ collapse</button>
+      </div>
+      <div class="si-strip__body">
+        <div class="si-wf"><canvas class="wfc" data-mode="filling" width="760" height="260"></canvas>
+          <div class="si-wf__axis"><span>0</span><span>1000</span><span>2000</span><span>3000 Hz</span></div></div>
+        <div class="si-feed"><div class="si-feed__empty">
+          <b>Listening…</b><br>first decode cycle completes in <b>9 s</b><br><br>FT-8 decodes arrive once per 15-second slot.
+        </div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3 · band-dead -->
+  <div class="card">
+    <div class="card__cap">3 · band-dead <small>Capture healthy, zero decodes — reads as a QUIET BAND, never as broken. Waterfall shows live noise; feed suggests, doesn't warn.</small></div>
+    <div class="si-strip">
+      <div class="si-strip__hdr">
+        <span class="si-dot"></span><span class="si-strip__title">Live band · FT-8</span>
+        <span class="si-prov">CAT confirmed</span>
+        <span class="si-strip__stats"><span>holding <b>15 m</b></span><span>dial <b>21.074</b></span><span><b>0</b>/min</span></span>
+        <button class="si-collapse">⌄ collapse</button>
+      </div>
+      <div class="si-strip__body">
+        <div class="si-wf"><canvas class="wfc" data-mode="noise" width="760" height="260"></canvas>
+          <div class="si-wf__axis"><span>0</span><span>1000</span><span>2000</span><span>3000 Hz</span></div></div>
+        <div class="si-feed"><div class="si-feed__empty">
+          <b>15 m is quiet</b> — no decodes in the last 6 slots.<br><br>Audio is flowing (RMS −52 dBFS). The band may simply be closed from your location — <b>40 m</b> and <b>20 m</b> are hot right now.
+        </div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4 · clock-unsynced -->
+  <div class="card">
+    <div class="card__cap">4 · clock-unsynced <small>Amber WARNING banner; listening continues (decodes may fail slot alignment). Dot goes amber.</small></div>
+    <div class="si-strip">
+      <div class="si-strip__hdr">
+        <span class="si-dot si-dot--amber"></span><span class="si-strip__title">Live band · FT-8</span>
+        <span class="si-prov si-prov--warn">clock unsynced</span>
+        <span class="si-strip__stats"><span>holding <b>20 m</b></span><span>dial <b>14.074</b></span><span><b>2</b>/min</span></span>
+        <button class="si-collapse">⌄ collapse</button>
+      </div>
+      <div class="si-banner si-banner--warn">⚠ <span><b>System clock is not synchronized.</b> FT-8 slots are UTC-aligned — decodes will be unreliable until time sync returns (chrony reports unsynced).</span></div>
+      <div class="si-strip__body">
+        <div class="si-wf"><canvas class="wfc" data-mode="live" width="760" height="260"></canvas>
+          <div class="si-wf__axis"><span>0</span><span>1000</span><span>2000</span><span>3000 Hz</span></div></div>
+        <div class="si-feed"><table><tbody>
+          <tr><td>22:41:15</td><td class="db-weak">−18</td><td class="call">CQ K7RA CN87</td></tr>
+        </tbody></table></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5 · device-busy -->
+  <div class="card">
+    <div class="card__cap">5 · device-busy <small>A modem session holds the card; FT-8 yielded and auto-resumes. Waterfall freezes + dims under an overlay; dot amber.</small></div>
+    <div class="si-strip">
+      <div class="si-strip__hdr">
+        <span class="si-dot si-dot--amber"></span><span class="si-strip__title">Live band · FT-8</span>
+        <span class="si-prov si-prov--warn">yielded</span>
+        <span class="si-strip__stats"><span>holding <b>20 m</b></span><span>dial <b>14.074</b></span><span>paused</span></span>
+        <button class="si-collapse">⌄ collapse</button>
+      </div>
+      <div class="si-strip__body">
+        <div class="si-wf">
+          <canvas class="wfc" data-mode="dim" width="760" height="260"></canvas>
+          <div class="si-wf__overlay">⏸ &nbsp;VARA session active — FT-8 listening yielded, resumes when the session ends</div>
+          <div class="si-wf__axis"><span>0</span><span>1000</span><span>2000</span><span>3000 Hz</span></div>
+        </div>
+        <div class="si-feed"><table><tbody>
+          <tr><td>22:38:45</td><td class="db-good">−06</td><td class="call">CQ W7GTE DM34</td></tr>
+          <tr><td>22:38:30</td><td class="db-weak">−17</td><td class="call">CQ NA K6ARK DM14</td></tr>
+        </tbody></table></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6 · no-device / first-run -->
+  <div class="card">
+    <div class="card__cap">6 · no-device / first-run <small>Flow 1's "program/connect their radio": in-panel device picker (always asks, even with one device) + embedded shared Rig-control expander, collapsed. Strip body is replaced — no fake waterfall.</small></div>
+    <div class="si-strip">
+      <div class="si-strip__hdr">
+        <span class="si-dot si-dot--off"></span><span class="si-strip__title">Live band · FT-8</span>
+        <span class="si-prov si-prov--warn">needs setup</span>
+        <button class="si-collapse" style="margin-left:auto">⌄ collapse</button>
+      </div>
+      <div class="fr">
+        <div>
+          <div class="fr__h">Select audio input</div>
+          <div class="fr__note" style="margin:4px 0 8px">Pick the sound card wired to your radio. Asked once — every later start is automatic.</div>
+          <div class="devlist">
+            <div class="dev sel"><span class="radio"></span>USB Audio CODEC — Digirig Mobile<small>hw:1</small></div>
+            <div class="dev"><span class="radio"></span>FT-710 USB AUDIO<small>hw:2</small></div>
+          </div>
+        </div>
+        <div class="rigx">
+          <div class="rigx__hdr"><span class="chev">▸</span>Rig control (CAT)<span class="st">not configured</span></div>
+          <div class="rigx__hint">Optional — lets Station Intelligence tune the radio to each band's FT-8 dial and sweep bands automatically. Without CAT, you tune by hand and tell us the band. Same settings as the VARA/ARDOP panes.</div>
+        </div>
+        <button class="fr__cta">Start listening on 20 m →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- sweep popover -->
+  <div class="card">
+    <div class="card__cap">+ band-subset &amp; sweep control <small>Flow 1's "limit FT-8 decode to a subset of bands or only one band" — popover from the strip header's "holding 20 m". Also shows the unconfirmed-provenance chip (no CAT, operator hasn't clicked a band).</small></div>
+    <div class="pop-stage">
+      <div class="si-strip__hdr" style="padding-left:0">
+        <span class="si-dot"></span><span class="si-strip__title">Live band · FT-8</span>
+        <span class="si-prov si-prov--unconf">20 m · unconfirmed — tune your dial to 14.074</span>
+        <span class="si-strip__stats"><span style="border:1px solid var(--accent); border-radius:6px; padding:2px 8px">holding <b>20 m</b> ⌄</span></span>
+      </div>
+      <div class="pop">
+        <div class="pop__h">Listen on</div>
+        <div class="pop__bands">
+          <span class="pop__band sel">80 m</span>
+          <span class="pop__band sel">40 m</span>
+          <span class="pop__band">30 m</span>
+          <span class="pop__band sel">20 m</span>
+          <span class="pop__band">17 m</span>
+          <span class="pop__band">15 m</span>
+        </div>
+        <div class="pop__row sel"><span class="radio"></span>Hold one band — 20 m<small>default</small></div>
+        <div class="pop__row"><span class="radio"></span>Sweep selected bands<small>needs CAT · 4 slots/band</small></div>
+        <div class="pop__foot">Sweep round-robins the radio through each selected band's FT-8 dial. Openness dots and the heat layer reflect only what the current dwell sampled.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ribbon badges -->
+  <div class="card">
+    <div class="card__cap">+ DashboardRibbon badge — four states <small>Ambient service toggle (APRS-badge pattern); dot is backend truth, never optimistic. Lives in the ribbon, not the panel.</small></div>
+    <div class="ribbonrow">
+      <span class="rbcell"><span class="rb"><span class="si-dot si-dot--off"></span>FT-8 <b>Off</b></span><span class="rblab">off</span></span>
+      <span class="rbcell"><span class="rb"><span class="si-dot si-dot--amber"></span>FT-8 <b>Starting…</b></span><span class="rblab">starting</span></span>
+      <span class="rbcell"><span class="rb"><span class="si-dot"></span>FT-8 <b>20 m</b> <span class="n">34/min</span></span><span class="rblab">listening</span></span>
+      <span class="rbcell"><span class="rb rb--blocked"><span class="si-dot si-dot--amber"></span>FT-8 <b>needs setup</b></span><span class="rblab">blocked (click opens panel)</span></span>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  let s = 0x2af9;
+  const rnd = () => ((s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  function ramp(v) {
+    if (v < 0.35) { const t = v / 0.35; return [13 + 10 * t, 19 + 28 * t, 24 + 60 * t]; }
+    if (v < 0.7)  { const t = (v - 0.35) / 0.35; return [23 + 30 * t, 47 + 120 * t, 84 + 110 * t]; }
+    const t = (v - 0.7) / 0.3; return [53 + 192 * t, 167 + 20 * t, 194 - 130 * t];
+  }
+  const freqs = [455, 850, 1188, 1385, 1725, 1902, 2210, 2620];
+  document.querySelectorAll('canvas.wfc').forEach((cv) => {
+    const mode = cv.dataset.mode;
+    const ctx = cv.getContext('2d');
+    if (!ctx) return;
+    const W = cv.width, H = cv.height;
+    const img = ctx.createImageData(W, H);
+    const sigs = freqs.map((f, i) => [f, Math.floor(rnd() * 3) * (H / 4), H / 4 * 0.84, i === 2 ? 0.95 : 0.5 + rnd() * 0.4]);
+    const fillTo = mode === 'filling' ? H * 0.22 : H;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        let v;
+        if (y > fillTo) v = 0.04;                                  // not yet captured
+        else {
+          v = 0.10 + rnd() * 0.16;
+          if (mode === 'live' || mode === 'dim' || mode === 'filling') {
+            const hz = (x / W) * 3000;
+            for (const [f, y0, dur, str] of sigs) {
+              const inSlot = ((y - y0) % (H / 2) + (H / 2)) % (H / 2) < dur;
+              const df = Math.abs(hz - f);
+              if (inSlot && df < 25) v = Math.max(v, str * (1 - df / 25) * (0.8 + rnd() * 0.2));
+            }
+          }
+        }
+        if (mode === 'dim') v *= 0.45;
+        const [r, g, b] = ramp(Math.min(1, v));
+        const idx = (y * W + x) * 4;
+        img.data[idx] = r; img.data[idx + 1] = g; img.data[idx + 2] = b; img.data[idx + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    if (mode !== 'filling') {
+      ctx.strokeStyle = 'rgba(228,235,242,0.15)';
+      ctx.setLineDash([4, 4]);
+      for (let i = 1; i < 4; i++) { ctx.beginPath(); ctx.moveTo(0, (H / 4) * i); ctx.lineTo(W, (H / 4) * i); ctx.stroke(); }
+      ctx.setLineDash([]);
+    }
+  });
+})();
+</script>
+</body>
+</html>

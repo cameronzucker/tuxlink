@@ -1,0 +1,150 @@
+/* src/ft8ui/Ft8SetupSurface.css
+ *
+ * Setup / degraded surface for the FT-8 listener (plan tuxlink-b026z.4 Task
+ * C9a). `.ft8-setup__` namespace, additive-only — does not touch the
+ * `station-finder__` namespace owned by StationFinderPanel/StationRail.
+ */
+
+.ft8-setup {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+
+.ft8-setup__step-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ft8-setup__step-title {
+  margin: 0;
+  font-size: var(--type-control, 12px);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-primary, #e2e8f0);
+}
+
+.ft8-setup__step-badge {
+  font-size: var(--type-micro, 10px);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill, 999px);
+}
+
+.ft8-setup__step-badge--required {
+  background: rgba(248, 113, 113, 0.16);
+  color: #f87171;
+  border: 1px solid rgba(248, 113, 113, 0.35);
+}
+
+.ft8-setup__body {
+  margin: 0;
+  color: var(--text-faint, #94a3b8);
+  font-size: var(--type-control, 12px);
+  line-height: 1.4;
+}
+
+.ft8-setup__using {
+  margin: 0;
+  color: var(--text-primary, #e2e8f0);
+  font-size: var(--type-control, 12px);
+}
+
+.ft8-setup__select-error {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: var(--radius-control, 3px);
+  background: rgba(248, 113, 113, 0.12);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  color: #f87171;
+  font-size: var(--type-control, 12px);
+}
+
+.ft8-setup__zero {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.ft8-setup__device-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ft8-setup__device-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-control, 3px);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.ft8-setup__device-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ft8-setup__device-name {
+  color: var(--text-primary, #e2e8f0);
+  font-size: var(--type-control, 12px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ft8-setup__device-hw {
+  color: var(--text-faint, #94a3b8);
+  font-family: ui-monospace, monospace;
+  font-size: var(--type-micro, 10px);
+}
+
+.ft8-setup__meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--type-micro, 10px);
+  color: var(--text-faint, #94a3b8);
+  white-space: nowrap;
+}
+
+.ft8-setup__meter-bar {
+  position: relative;
+  display: inline-block;
+  width: 60px;
+  height: 6px;
+  border-radius: var(--radius-pill, 999px);
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.ft8-setup__meter-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: #4ade80;
+}
+
+.ft8-setup__meter--silent .ft8-setup__meter-fill {
+  background: #64748b;
+}
+
+.ft8-setup__meter--error {
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.ft8-setup__meter--inuse {
+  color: #fbbf24;
+}
+
+.ft8-setup__meter-db {
+  font-family: ui-monospace, monospace;
+}

@@ -439,11 +439,11 @@ describe('<AppShell> — Mock B topology', () => {
   // config_read is mocked to null above; the panel's null-grid is swallowed, so it still renders.
   // tuxlink-gife: Find a Station (was Find a Gateway) under Tools — the
   // propagation-aware station map supersedes the Catalog Builder.
-  it('Tools → Find a Station opens the station finder (production mount path)', async () => {
+  it('Tools → Station Intelligence opens the station finder (production mount path)', async () => {
     renderShell();
-    clickMenu('Tools', /find a station/i);
+    clickMenu('Tools', /station intelligence/i);
     expect(
-      await screen.findByRole('dialog', { name: /find a station/i }, { timeout: 10000 }),
+      await screen.findByRole('dialog', { name: /station intelligence/i }, { timeout: 10000 }),
     ).toBeInTheDocument();
   });
 

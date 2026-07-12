@@ -13,10 +13,12 @@ pub mod arbiter;
 pub mod clock;
 pub mod commands;
 pub mod events;
+pub mod meter;
 pub mod records;
 pub mod service;
 pub mod sweep;
 pub mod traits;
+pub mod waterfall;
 
 #[cfg(test)]
 pub mod testutil;

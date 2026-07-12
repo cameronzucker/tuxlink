@@ -1,40 +1,44 @@
-// Right rail for Find-a-Station (design §7): selected-station header → antenna
-// aiming hero → path propagation forecast → channels grouped by mode/frequency
-// with per-channel reliability + Use →. Replaces the old redundant station list.
+// Right rail for Find-a-Station (design §7): a `Station | Live decodes` tab
+// shell (plan tuxlink-b026z.4 Task C5, spec §Rail) fronting two panes:
+//   - Station tab (existing behavior, preserved verbatim): selected-station
+//     header → antenna aiming hero → path propagation forecast → channels
+//     grouped by mode/frequency with per-channel reliability + Use →.
+//   - Live decodes tab (`LiveDecodesTab.tsx`, new): station-centric
+//     aggregation over the FT8 decode ring, independent of the map selection.
 // Use → emits emitGatewayPrefill for a channel matching the open modem; other
 // channels are listed but their Use → is disabled with a hint (RADIO-1: this
 // only fills a form — the operator still clicks Connect).
 
-import { useState, type CSSProperties } from 'react';
-import { groupChannelsByMode, channelToDial, channelReliability } from './channelGrouping';
-import { rankedDialsFor } from './ranking';
-import { bestBandNow, relToTier, tierColorVar } from './reachability';
-import { bandLabel, bandForKhz, HF_BANDS } from './bandPlan';
-import { emitGatewayPrefill } from '../favorites/prefillEvent';
+import { useEffect, useState, type CSSProperties } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { BandMatrix } from './BandMatrix';
+import { PeerDetail } from './PeerDetail';
+// Transport→RadioMode mapper ONLY. The finder deliberately does NOT call this
+// module's connectPeerChannel/connectPeerEndpoint (they dial RF directly); peers
+// reach a modem through the prefill path, like gateways.
+import { radioModeForPeerTransport } from '../peers/connectPeer';
 import { distanceFromGrids, kmToMi } from './distance';
-import { gridToLatLon } from '../forms/position/maidenhead';
-import type { Station, Channel } from './stationModel';
+import { gridToLatLon, type LatLon } from '../forms/position/maidenhead';
+import { LiveDecodesTab } from './LiveDecodesTab';
+import { useStatusData } from '../shell/useStatus';
+import type { Station } from './stationModel';
 import type { PathPrediction } from './propagationApi';
 import type { PredictionStatus } from './useStationPrediction';
 import type { RadioMode, FavoriteDial } from '../favorites/types';
 import type { AggregatedPeer } from '../peers/peerModel';
-import {
-  connectPeerChannel,
-  connectPeerEndpoint,
-  radioModeForPeerTransport,
-} from '../peers/connectPeer';
-import { validateCallsign } from '../wizard/validators';
-import { parseFreqInputToHz } from '../radio/modes/freq';
-import type {
-  Channel as PeerChannel,
-  Endpoint as PeerEndpoint,
-  ChannelTransport,
-  Origin,
-  Provenance,
-} from '../contacts/types';
+import type { PeerPrefill } from '../peers/peerPrefillEvent';
+import type { SlotRecord, DeclDto, BandDot } from '../ft8ui/ft8Types';
 
 export interface StationRailProps {
   station: Station | null;
+  /**
+   * The selected PEER (Task delta2, spec §6 reconciliation), mutually
+   * exclusive with `station` (`StationFinderPanel`'s `FinderSelection` union
+   * ensures only one is ever non-null). When set, the Station tab renders
+   * `PeerDetail` instead of the gateway detail below — the SAME tab, SAME
+   * rail, distinguished by a `◆ Peer` badge, per the operator-approved mock.
+   */
+  peer?: AggregatedPeer | null;
   prediction: PathPrediction | null;
   predictionStatus: PredictionStatus;
   operatorGrid: string;
@@ -51,6 +55,15 @@ export interface StationRailProps {
    */
   onUse?: (dial: FavoriteDial, candidates?: FavoriteDial[]) => void;
   /**
+   * Handle a peer channel/endpoint's "Connect to →" (Task delta2, spec §6
+   * reconciliation) — the peer analog of `onUse`. THIS PREFILLS the matching
+   * P2P-intent modem pane; it NEVER dials directly (unlike the dropped
+   * finder rail's `connectPeerChannel`/`connectPeerEndpoint`). Omitted falls
+   * back to a bare `emitPeerPrefill` in `PeerDetail`, matching `onUse`'s own
+   * fallback-to-`emitGatewayPrefill` contract in `BandMatrix`.
+   */
+  onUsePeer?: (prefill: PeerPrefill) => void;
+  /**
    * Save / unsave a discovered channel as a starred favorite (tuxlink-5016).
    * The parent finds-or-creates the per-mode favorite and toggles its star;
    * omitting the prop hides the affordance (e.g. a standalone harness).
@@ -59,65 +72,32 @@ export interface StationRailProps {
   /** Whether a channel's dial is already a STARRED favorite (drives the ★ fill). */
   isSaved?: (dial: FavoriteDial) => boolean;
   /**
-   * P2P peer rows (Task 23, spec §5) — the panel's `aggregatePeers(usePeers().peers)`
-   * output, already filtered by the type toggle + capability hide. Rendered as a
-   * distinct list, independent of `station`/`selectedKey`: a gridless/telnet-only
-   * peer has no map pin to select, so it must still show up here (untiered) or it
-   * is invisible entirely. Omitted/empty renders nothing (no section).
-   *
-   * Connect here fires a REAL outbound peer dial (Task 23a, Flow 2): the row's
-   * Connect invokes `connectFor({ sessionType: 'p2p', protocol })` directly —
-   * NOT the gateway `onUse` prefill path — so the dial reaches the same backend
-   * command the mode's panel uses with `intent = 'p2p'` and the channel's
-   * `via`/`freq` threaded. There is NO CMS fallback on the peer path.
+   * The FT8 decode ring backing the "Live decodes" tab (Task B1's
+   * `useFt8Listener().decodesRing`). C5's scope is the tab shell + the
+   * LiveDecodesTab component only — the caller wires the live hook value in
+   * (Task D1, "wire the panel body"); a caller that omits this (e.g. today's
+   * StationFinderPanel, or a harness/test) sees the tab's empty state rather
+   * than a crash.
    */
-  peers?: AggregatedPeer[];
+  decodesRing?: SlotRecord[];
   /**
-   * Show the "Dial a station" manual-dial affordance (Task T-G, spec
-   * §AMENDMENT pt. 7) — the ONLY way to dial a callsign the operator has not
-   * heard, from an empty peer roster. Gated on the SAME `finder_peers`
-   * capability bit that shows the Peer rows (`useP2pCapabilities` in
-   * StationFinderPanel) — not on whether any peers happen to be visible right
-   * now, so the affordance still renders when `peers` is empty (Flow 2(b)).
-   * Defaults to false (hidden) when omitted — matches the peer rows' hide,
-   * not disable, posture.
+   * Pan the map to a station's grid-derived coordinate — fired by a Live
+   * decodes row click AFTER the row's grid clears the null-guarded
+   * `gridToLatLon` (a malformed/garbage over-the-air grid never reaches this
+   * callback). Omitted ⇒ the click still computes but has nowhere to act
+   * (Task D1 wires the real map pan); never throws either way.
    */
-  p2pDialEnabled?: boolean;
+  onPanToGrid?: (ll: LatLon) => void;
+  /**
+   * Live per-band FT-8 openness dots (design §Openness) for the Station tab's
+   * BandMatrix rows (tuxlink-b026z.4 Task C3) — `useFt8Listener().bandActivity`,
+   * itself Task B3's `deriveBandActivity` output. Optional so BandMatrix stays
+   * presentational pre-D1-wiring; omitting it renders every eligible row with
+   * a hollow no-data dot.
+   */
+  bandActivity?: Map<string, BandDot>;
 }
 
-/** Plain-language origin labels (spec §5): no "worked", never the raw enum. */
-const ORIGIN_LABEL: Record<Origin, string> = {
-  incoming: 'incoming',
-  outgoing: 'outgoing',
-  manual: 'added',
-  aprs: 'APRS',
-  unknown: 'unknown origin',
-};
-
-const PROVENANCE_LABEL: Record<Provenance, string> = {
-  operator: 'operator-added',
-  'observed-incoming': 'observed',
-  unknown: 'unknown provenance',
-};
-
-const PEER_TRANSPORT_LABEL: Record<ChannelTransport, string> = {
-  packet: 'Packet',
-  ardop: 'ARDOP HF',
-  'vara-hf': 'VARA HF',
-  'vara-fm': 'VARA FM',
-  unknown: 'Unknown',
-};
-
-/** Format a SUCCESS timestamp (`last_ok`) for display. Renamed from
- *  `formatLastConnected` (T-F Part 3): its input is now the success-only
- *  `lastOk`, not the failure-bumping `lastSeen`, so the name states the truth. */
-function formatReachedAt(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString();
-}
-
-const mhz = (khz: number): string => (khz / 1000).toFixed(3);
 const MODE_LABEL: Record<string, string> = {
   'vara-hf': 'VARA HF',
   'ardop-hf': 'ARDOP HF',
@@ -126,8 +106,10 @@ const MODE_LABEL: Record<string, string> = {
   'robust-packet': 'Robust Packet',
 };
 
-/** Great-circle bearing from two grids (deg), for the distance-only fallback. */
-function bearingFromGrids(a: string, b: string): number | null {
+/** Great-circle bearing from two grids (deg), for the distance-only fallback.
+ *  Exported for `LiveDecodesTab`'s mi·brg column (same operator↔station math,
+ *  now also applied to a heard station's grid instead of the selected one). */
+export function bearingFromGrids(a: string, b: string): number | null {
   const pa = gridToLatLon(a);
   const pb = gridToLatLon(b);
   if (!pa || !pb) return null;
@@ -139,42 +121,204 @@ function bearingFromGrids(a: string, b: string): number | null {
   return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
 }
 
-export function StationRail(props: StationRailProps) {
-  const { station, prediction, predictionStatus, operatorGrid, utcHour, activePrefillMode, peers, p2pDialEnabled } = props;
+/** `true - decl` (declination east-positive), normalized to [0, 360) and
+ *  rounded to a whole degree for display. Compass convention: an exact-0
+ *  wrap renders as `360°`, never `0°` (a compass rose has no 0 tick — spec
+ *  §Declination). */
+function magneticBearing(trueDeg: number, declDeg: number): number {
+  const wrapped = (((trueDeg - declDeg) % 360) + 360) % 360;
+  const rounded = Math.round(wrapped) % 360;
+  return rounded === 0 ? 360 : rounded;
+}
 
-  // Task 23a (Flow 2): a peer row's Connect fires a REAL P2P dial via
-  // connectFor — NOT the gateway `onUse` prefill path AppShell hardcodes to
-  // sessionType 'cms'. The dial reaches the mode's backend command with
-  // intent='p2p' + the channel's via/freq (connectPeerChannel /
-  // connectPeerEndpoint). operatorGrid supplies the telnet handshake locator.
-  //
-  // Task T-G: the manual-dial affordance sits ABOVE the peer list — it must
-  // render even when `peers` is empty (an unheard station has no roster row
-  // yet), so it cannot be gated on `peers.length`. It reuses the EXACT same
-  // connectPeerChannel/connectPeerEndpoint seam as the rows below.
-  const peerRows = (
-    <>
-      {p2pDialEnabled && (
-        <ManualDialForm
-          operatorGrid={operatorGrid}
-          onConnectChannel={connectPeerChannel}
-          onConnectEndpoint={connectPeerEndpoint}
-        />
+/** The aim hero's declination provenance line (spec §Declination example:
+ *  `declination +9.7° E · WMM2025 · from <operator grid> · updates with your
+ *  location`), with a drift note appended when the model's `validUntil` has
+ *  passed — the hero still renders the (now-stale) value, never blanks. */
+function declProvenance(decl: DeclDto, grid: string): string {
+  const dir = decl.declDeg >= 0 ? 'E' : 'W';
+  const sign = decl.declDeg >= 0 ? '+' : '-';
+  const mag = Math.abs(decl.declDeg).toFixed(1);
+  const base = `declination ${sign}${mag}° ${dir} · ${decl.modelEpoch} · from ${grid} · updates with your location`;
+  const validMs = Date.parse(decl.validUntil);
+  const expired = Number.isFinite(validMs) && validMs < Date.now();
+  return expired ? `${base} · model expired — declination may drift ~0.1°/yr` : base;
+}
+
+type RailTab = 'station' | 'live';
+
+export function StationRail(props: StationRailProps) {
+  const { decodesRing = [], operatorGrid, onPanToGrid } = props;
+  const [tab, setTab] = useState<RailTab>('station');
+
+  return (
+    <div className="station-finder__rail">
+      <div className="station-finder__railtabs" role="tablist" aria-label="Station rail view">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'station'}
+          className={`station-finder__railtab${tab === 'station' ? ' is-active' : ''}`}
+          data-testid="rail-tab-station"
+          onClick={() => setTab('station')}
+        >
+          Station
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'live'}
+          className={`station-finder__railtab${tab === 'live' ? ' is-active' : ''}`}
+          data-testid="rail-tab-live"
+          onClick={() => setTab('live')}
+        >
+          Live decodes
+        </button>
+      </div>
+      {tab === 'station' ? (
+        <StationTabPane {...props} />
+      ) : (
+        <LiveDecodesTab decodesRing={decodesRing} operatorGrid={operatorGrid} onPanTo={onPanToGrid} />
       )}
-      <PeerRows
-        peers={peers ?? []}
-        operatorGrid={operatorGrid}
-        onConnectChannel={connectPeerChannel}
-        onConnectEndpoint={(peer, ep, grid) => connectPeerEndpoint(peer.callsign, ep, grid, peer.id)}
-      />
-    </>
+    </div>
   );
+}
+
+/** The Station tab's content — unchanged from pre-tab-shell StationRail behavior. */
+function StationTabPane(props: StationRailProps) {
+  const { station, peer, prediction, predictionStatus, operatorGrid, utcHour } = props;
+
+  // Task C6 (aim hero + magnetic declination, spec §Declination): the LIVE
+  // operator grid — useStatusData().grid, NOT config_read (the tuxlink-fnzr
+  // bug class: a one-shot config read misses a GPS fix that arrives after
+  // mount). Declination depends only on the operator's OWN position, not on
+  // the selected station, so this runs unconditionally (before the `!station`
+  // early return below) — by the time a station is picked, the declination is
+  // usually already resolved, no per-selection fetch latency.
+  const { grid: liveGrid } = useStatusData();
+  const [decl, setDecl] = useState<DeclDto | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!liveGrid) {
+      setDecl(null);
+      return;
+    }
+    invoke<DeclDto>('magnetic_declination', { grid: liveGrid })
+      .then((dto) => {
+        if (cancelled) return;
+        // Defensive shape check: a test double or a future backend contract
+        // drift that resolves something other than a real DeclDto degrades
+        // the same as an explicit error, rather than rendering "NaN° M".
+        setDecl(dto && typeof dto.declDeg === 'number' ? dto : null);
+      })
+      .catch(() => {
+        // invalid-grid / internal-error (Ft8CmdError), or no Tauri context
+        // (tests/dev browser) — degrade to the plain true-bearing display;
+        // never throw, never spin.
+        if (!cancelled) setDecl(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [liveGrid]);
+
+  // Peers↔L3 reconciliation: a peer clicked on the map fills THIS SAME tab — same
+  // rail, same aim hero, same row/chip elements — distinguished by a ◆ Peer badge
+  // and PeerDetail's per-transport connect rows. Checked BEFORE the `!station`
+  // guard because the panel's selection is a gateway-or-peer union: a peer
+  // selection carries no `station`. The gateway path below is untouched.
+  if (peer) {
+    const peerBearing = operatorGrid && peer.grid ? bearingFromGrids(operatorGrid, peer.grid) : null;
+    const peerDistKm = operatorGrid && peer.grid ? distanceFromGrids(operatorGrid, peer.grid) : null;
+    const peerDistMi = peerDistKm != null ? Math.round(kmToMi(peerDistKm)) : null;
+    // Distinct dialable transports, for the header badges (an 'unknown' transport
+    // has no modem, so it never earns a badge).
+    const peerModes = Array.from(
+      new Set(
+        peer.channels
+          .map((c) => radioModeForPeerTransport(c.transport))
+          .filter((m): m is RadioMode => m !== null),
+      ),
+    );
+    return (
+      <div className="station-finder__railpane" data-testid="rail-pane-peer">
+        <header className="station-finder__sta">
+          <div className="station-finder__sta-top">
+            <span className="station-finder__call">{peer.callsign}</span>
+            <span className="station-finder__badges">
+              <span className="station-finder__mb station-finder__mb--peer" data-testid="peer-badge">
+                ◆ Peer
+              </span>
+              {peerModes.map((m) => (
+                <span key={m} className="station-finder__mb">
+                  <span className={`station-finder__sw station-finder__sw--${m}`} />
+                  {MODE_LABEL[m] ?? m}
+                </span>
+              ))}
+              {peer.endpoints.length > 0 && (
+                <span className="station-finder__mb">
+                  <span className="station-finder__sw station-finder__sw--telnet" />
+                  Telnet
+                </span>
+              )}
+            </span>
+          </div>
+          <div className="station-finder__who">
+            {[
+              peer.grid ?? 'no grid — untiered',
+              // Success-only recency: NEVER derive "reached" from last_seen (it bumps
+              // on failures too) — `lastOk` is the only honest source.
+              peer.lastOk ? 'reached before' : 'not reached yet',
+            ].join(' · ')}
+          </div>
+        </header>
+
+        <div className="station-finder__aim">
+          <div className="station-finder__aimrow">
+            <div
+              className="station-finder__compass"
+              style={peerBearing != null ? ({ ['--bearing']: `${peerBearing}deg` } as CSSProperties) : undefined}
+              aria-hidden
+            >
+              <span className="station-finder__needle" />
+            </div>
+            <div>
+              <div className="station-finder__big" data-testid="aim-bearing">
+                {peerBearing == null
+                  ? '—'
+                  : decl != null
+                    ? `${magneticBearing(peerBearing, decl.declDeg)}° M`
+                    : `${Math.round(peerBearing)}°`}
+              </div>
+              {peerBearing != null && decl != null && (
+                <div className="station-finder__aim-true" data-testid="aim-bearing-true">
+                  {Math.round(peerBearing)}° T
+                </div>
+              )}
+              <div className="station-finder__lab">aim antenna</div>
+            </div>
+            <div className="station-finder__dist" data-testid="aim-distance">
+              <div className="station-finder__big">{peerDistMi != null ? `${peerDistMi} mi` : '—'}</div>
+              <div className="station-finder__lab">short path</div>
+            </div>
+          </div>
+          {peerBearing != null && decl != null && liveGrid && (
+            <div className="station-finder__aim-decl" data-testid="aim-declination">
+              {declProvenance(decl, liveGrid)}
+            </div>
+          )}
+        </div>
+
+        <PeerDetail peer={peer} onUsePeer={props.onUsePeer} />
+      </div>
+    );
+  }
 
   if (!station) {
     return (
-      <div className="station-finder__rail">
-        <div className="station-finder__rail--empty">Select a station on the map.</div>
-        {peerRows}
+      <div className="station-finder__rail--empty" data-testid="rail-pane-station-empty">
+        Select a station on the map.
       </div>
     );
   }
@@ -182,43 +326,9 @@ export function StationRail(props: StationRailProps) {
   const bearing = prediction?.bearingDeg ?? (operatorGrid ? bearingFromGrids(operatorGrid, station.grid) : null);
   const distKm = prediction?.distanceKm ?? (operatorGrid ? distanceFromGrids(operatorGrid, station.grid) : null);
   const distMi = distKm != null ? Math.round(kmToMi(distKm)) : null;
-  const best = prediction ? bestBandNow(prediction, utcHour) : null;
-
-  const onUse = (channel: Channel) => {
-    const dial = channelToDial(station, channel);
-    if (!dial) return;
-    // tuxlink-8fkkk Task B: the QSY-on-fail walk needs the station's OTHER
-    // channels for this mode, ranked best-first. Compute them here where the
-    // station + prediction + utcHour are in scope and pass them alongside the
-    // primary dial.
-    //
-    // The clicked `dial` MUST be the PRIMARY candidate (index 0): the backend
-    // treats a non-empty `qsyCandidates` list as OVERRIDING the form's
-    // target/freq, so it dials candidates[0] first. `rankedDialsFor` returns
-    // channels ranked best-first (and capped), which may NOT be the clicked
-    // channel — and could even omit it under the cap. Force the clicked dial to
-    // the front, then append the ranked channels minus a duplicate of it, so
-    // "Use" on channel X always dials X first and only QSYs to others on
-    // failure.
-    const ranked = rankedDialsFor(station, dial.mode, prediction, utcHour);
-    const sameDial = (a: FavoriteDial, b: FavoriteDial) =>
-      a.gateway === b.gateway && a.freq === b.freq;
-    const candidates = [dial, ...ranked.filter((d) => !sameDial(d, dial))];
-    // Arm-on-demand (tuxlink-s0r1): AppShell opens the matching modem panel then
-    // prefills it. Fall back to a bare emit for an already-open panel in contexts
-    // that don't supply the handler (e.g. tests/standalone harness).
-    if (props.onUse) props.onUse(dial, candidates);
-    else emitGatewayPrefill(dial, candidates);
-  };
-
-  const onSave = (channel: Channel) => {
-    const dial = channelToDial(station, channel);
-    if (!dial || !props.onSaveFavorite) return;
-    props.onSaveFavorite(dial);
-  };
 
   return (
-    <div className="station-finder__rail">
+    <div className="station-finder__railpane" data-testid="rail-pane-station">
       <header className="station-finder__sta">
         <div className="station-finder__sta-top">
           <span className="station-finder__call">{station.baseCallsign}</span>
@@ -236,473 +346,63 @@ export function StationRail(props: StationRailProps) {
         </div>
       </header>
 
+      {/* Task C6 (aim hero + magnetic declination, spec §Declination): compass
+          needle stays TRUE-referenced (matches the map); the numeric readout
+          prefers magnetic (what a compass shows) once declination resolves,
+          falling back to the plain true bearing while decl is unavailable
+          (no live grid, still loading, or a degraded invoke) — never blanks a
+          bearing the rail already has. */}
       <div className="station-finder__aim">
-        <div
-          className="station-finder__compass"
-          style={bearing != null ? ({ ['--bearing']: `${bearing}deg` } as CSSProperties) : undefined}
-          aria-hidden
-        >
-          <span className="station-finder__needle" />
-        </div>
-        <div>
-          <div className="station-finder__big">{bearing != null ? `${Math.round(bearing)}°` : '—'}</div>
-          <div className="station-finder__lab">aim antenna</div>
-        </div>
-        <div className="station-finder__dist" data-testid="aim-distance">
-          <div className="station-finder__big">{distMi != null ? `${distMi} mi` : '—'}</div>
-          <div className="station-finder__lab">short path</div>
-        </div>
-      </div>
-
-      {predictionStatus === 'ok' && prediction ? (
-        <div className="station-finder__prop">
-          <h4>
-            Path forecast · you → {station.baseCallsign}
-            {best && <span className="station-finder__best">best now: {bandLabel(best.band)}</span>}
-          </h4>
-          {HF_BANDS.map((b) => {
-            const pc = prediction.channels.find((c) => bandForKhz(c.frequencyKhz) === b);
-            const rel = pc ? pc.relByHour[utcHour] ?? 0 : null;
-            return (
-              <div key={b} className={`station-finder__pbar${best?.band === b ? ' is-current' : ''}`}>
-                <span className="station-finder__bn">{bandLabel(b)}</span>
-                <div className="station-finder__track">
-                  <div
-                    className="station-finder__fill"
-                    style={{
-                      width: `${Math.round((rel ?? 0) * 100)}%`,
-                      // Colour the bar by reachability tier (good→green … skip→red),
-                      // matching the per-channel pip and mock D — not a static fill.
-                      background: rel != null ? tierColorVar(relToTier(rel)) : undefined,
-                    }}
-                  />
-                </div>
-                <span className="station-finder__pct">{rel != null ? `${Math.round(rel * 100)}%` : '—'}</span>
+        <div className="station-finder__aimrow">
+          <div
+            className="station-finder__compass"
+            style={bearing != null ? ({ ['--bearing']: `${bearing}deg` } as CSSProperties) : undefined}
+            aria-hidden
+          >
+            <span className="station-finder__needle" />
+          </div>
+          <div>
+            <div className="station-finder__big" data-testid="aim-bearing">
+              {bearing == null
+                ? '—'
+                : decl != null
+                  ? `${magneticBearing(bearing, decl.declDeg)}° M`
+                  : `${Math.round(bearing)}°`}
+            </div>
+            {bearing != null && decl != null && (
+              <div className="station-finder__aim-true" data-testid="aim-bearing-true">
+                {Math.round(bearing)}° T
               </div>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="station-finder__prop station-finder__prop--degraded">
-          {predictionStatus === 'no-location'
-            ? 'Set your location in the status bar to see the path forecast.'
-            : 'Forecast unavailable — showing channels without reliability.'}
-        </div>
-      )}
-
-      <div className="station-finder__channels">
-        {groupChannelsByMode(station).map((group) => (
-          <div key={group.mode}>
-            <div className="station-finder__chh">
-              <span className={`station-finder__sw station-finder__sw--${group.mode}`} />
-              {MODE_LABEL[group.mode] ?? group.mode}
-              <span className="station-finder__chh-n">{group.channels.length} ch</span>
-            </div>
-            {group.channels.map((ch) => {
-              const rel = prediction ? channelReliability(ch, prediction, utcHour) : null;
-              const dialable = channelToDial(station, ch) != null;
-              // The matching modem is already open — purely informational now that
-              // Use → arms on demand (tuxlink-s0r1); kept for the "armed" affordance.
-              const active = activePrefillMode != null && ch.mode === activePrefillMode;
-              return (
-                <div
-                  key={`${ch.mode}-${ch.frequencyKhz}-${ch.ssid ?? ''}`}
-                  className={`station-finder__ch${rel?.tier === 'skip' ? ' is-dim' : ''}`}
-                >
-                  <span
-                    className="station-finder__rel"
-                    style={rel ? { background: `var(--reach-${rel.tier})` } : undefined}
-                  />
-                  <div>
-                    <div className="station-finder__f">{mhz(ch.frequencyKhz)} MHz</div>
-                    <div className="station-finder__sub">
-                      {ch.band === 'vhf-uhf'
-                        ? `VHF/UHF · local${ch.ssid ? ` · connect ${ch.ssid}` : ''}`
-                        : bandLabel(ch.band ?? '40m')}
-                    </div>
-                  </div>
-                  <span className="station-finder__q">
-                    {rel ? `${Math.round(rel.rel * 100)}%` : ch.band === 'vhf-uhf' ? 'LoS?' : '—'}
-                  </span>
-                  {props.onSaveFavorite && (() => {
-                    // Save / unsave this channel as a starred favorite (tuxlink-5016).
-                    // Only meaningful for dialable channels (a non-tuxlink mode has
-                    // no per-mode favorite to hold). The dial is non-null here
-                    // because dialable === (channelToDial != null).
-                    const saved = dialable && props.isSaved ? props.isSaved(channelToDial(station, ch)!) : false;
-                    return (
-                      <button
-                        type="button"
-                        data-testid={`save-${ch.mode}-${ch.frequencyKhz}`}
-                        className={`station-finder__save${saved ? ' is-saved' : ''}`}
-                        disabled={!dialable}
-                        aria-pressed={saved}
-                        title={
-                          !dialable
-                            ? 'No tuxlink modem for this mode'
-                            : saved
-                              ? 'Remove from favorites'
-                              : 'Save to favorites'
-                        }
-                        onClick={() => onSave(ch)}
-                      >
-                        {saved ? '★' : '☆'}
-                      </button>
-                    );
-                  })()}
-                  <button
-                    type="button"
-                    data-testid={`use-${ch.mode}-${ch.frequencyKhz}`}
-                    className="station-finder__use"
-                    disabled={!dialable}
-                    title={
-                      !dialable
-                        ? 'No tuxlink modem for this mode'
-                        : active
-                          ? `Prefill the open ${MODE_LABEL[ch.mode]} modem`
-                          : `Open the ${MODE_LABEL[ch.mode]} modem and prefill this channel`
-                    }
-                    onClick={() => onUse(ch)}
-                  >
-                    Use →
-                  </button>
-                </div>
-              );
-            })}
+            )}
+            <div className="station-finder__lab">aim antenna</div>
           </div>
-        ))}
-      </div>
-      {peerRows}
-    </div>
-  );
-}
-
-/**
- * P2P peer rows (Task 23, spec §5) — rendered as a list independent of the
- * map-pin `station` selection, since a gridless/telnet-only peer has no pin
- * to click. `null` when there are no peers to show (no empty section chrome).
- */
-function PeerRows({
-  peers,
-  operatorGrid,
-  onConnectChannel,
-  onConnectEndpoint,
-}: {
-  peers: AggregatedPeer[];
-  operatorGrid: string;
-  onConnectChannel: (channel: PeerChannel) => void;
-  onConnectEndpoint: (peer: AggregatedPeer, endpoint: PeerEndpoint, operatorGrid: string) => void;
-}) {
-  if (peers.length === 0) return null;
-  return (
-    <div className="station-finder__peers" data-testid="peer-rows">
-      <div className="station-finder__chh">
-        Peers
-        <span className="station-finder__chh-n">{peers.length}</span>
-      </div>
-      {peers.map((peer) => (
-        <div key={peer.id} className="station-finder__peer" data-testid={`peer-row-${peer.id}`}>
-          <div className="station-finder__peer-top">
-            <span className="station-finder__call">{peer.callsign}</span>
-            <span className="station-finder__peer-origin" data-testid={`peer-origin-${peer.id}`}>
-              {ORIGIN_LABEL[peer.origin]}
-            </span>
+          <div className="station-finder__dist" data-testid="aim-distance">
+            <div className="station-finder__big">{distMi != null ? `${distMi} mi` : '—'}</div>
+            <div className="station-finder__lab">short path</div>
           </div>
-          <div className="station-finder__who">
-            {peer.grid ? peer.grid : <span data-testid={`peer-untiered-${peer.id}`}>no grid — untiered</span>}
-            {/* Success-only recency (T-F Part 0): a failed dial must never show
-                as "reached". `lastOk` is the honest instant; absent it, the row
-                says so plainly rather than mislabeling a failed-attempt time. */}
-            {peer.lastOk
-              ? ` · last reached ${formatReachedAt(peer.lastOk)}`
-              : ' · not reached yet'}
-          </div>
-
-          {peer.endpoints.length > 0 && (
-            <div className="station-finder__peer-endpoints">
-              {peer.endpoints.map((ep) => (
-                <div key={ep.id} className="station-finder__peer-endpoint" data-testid={`peer-endpoint-${ep.id}`}>
-                  <span className="station-finder__peer-badge">{PROVENANCE_LABEL[ep.provenance]}</span>
-                  <span className="station-finder__peer-ep-addr">
-                    {ep.host}:{ep.port}
-                  </span>
-                  {/* Task 23a: a telnet peer-endpoint dial (Flow 2) — dials the
-                      peer's TCP listener over P2P telnet via connectFor. */}
-                  <button
-                    type="button"
-                    data-testid={`peer-endpoint-connect-${ep.id}`}
-                    className="station-finder__use"
-                    title={`Connect to ${peer.callsign} over telnet`}
-                    onClick={() => onConnectEndpoint(peer, ep, operatorGrid)}
-                  >
-                    Connect →
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {peer.channels.length > 0 && (
-            <div className="station-finder__peer-channels">
-              {peer.channels.map((ch, i) => {
-                const protocol = radioModeForPeerTransport(ch.transport);
-                const label = PEER_TRANSPORT_LABEL[ch.transport] ?? ch.transport;
-                return (
-                  <div
-                    key={`${ch.transport}-${ch.target_callsign}-${ch.freq_hz ?? 'nofreq'}-${i}`}
-                    className="station-finder__peer-channel"
-                    data-testid={`peer-channel-${peer.id}-${i}`}
-                  >
-                    <div>
-                      <div className="station-finder__f">
-                        {label} · {ch.target_callsign}
-                      </div>
-                      <div className="station-finder__sub">
-                        {ch.freq_hz != null ? `${(ch.freq_hz / 1_000_000).toFixed(3)} MHz` : 'freq unknown'}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      data-testid={`peer-use-${peer.id}-${i}`}
-                      className="station-finder__use"
-                      disabled={!protocol}
-                      title={
-                        !protocol
-                          ? 'No tuxlink modem for this transport'
-                          : `Connect to ${ch.target_callsign} over ${label}`
-                      }
-                      onClick={() => protocol && onConnectChannel(ch)}
-                    >
-                      Connect →
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
         </div>
-      ))}
-    </div>
-  );
-}
-
-/** The p2p-capable transport set the connect seam supports for a manual dial
- *  (spec §AMENDMENT pt. 7). Four RF transports route through
- *  `connectPeerChannel` (a `Channel`-shaped dispatch); `telnet` routes through
- *  `connectPeerEndpoint` (host/port, no freq/via) — it is not a
- *  `ChannelTransport` member, so it is handled as a distinct branch below. */
-const P2P_DIAL_TRANSPORTS: { value: ChannelTransport | 'telnet'; label: string }[] = [
-  { value: 'vara-hf', label: 'VARA HF' },
-  { value: 'vara-fm', label: 'VARA FM' },
-  { value: 'ardop', label: 'ARDOP HF' },
-  { value: 'packet', label: 'Packet' },
-  { value: 'telnet', label: 'Telnet' },
-];
-
-/**
- * "Dial a station" (Task T-G, spec §AMENDMENT pt. 7) — a compact manual-dial
- * affordance next to the finder's Peer rows: type a callsign that has never
- * been heard and dial it directly, for the empty-roster case Flow 2(b)
- * depends on. PURE FRONTEND per the task brief: it collects the dial
- * parameters and dispatches through the EXISTING peer-connect seam
- * (`connectPeerChannel` / `connectPeerEndpoint`) — the SAME functions the
- * peer rows below use — so the backend observation recorder (armed on every
- * p2p dial attempt, success or failure) auto-creates the unconfirmed contact.
- * No new persistence code; no new dispatch path.
- *
- * The `Channel`/`Endpoint` objects built here carry placeholder values for
- * fields `connectPeerChannel`/`connectPeerEndpoint` never read (`counts`,
- * `last_seen`, `last_ok`, `id`, …) — those functions only consume
- * `transport`/`target_callsign`/`via`/`freq_hz` (channel) or `host`/`port`
- * (endpoint); the backend's OWN observation record is the real, authoritative
- * write (T-B), not anything constructed here.
- */
-function ManualDialForm({
-  operatorGrid,
-  onConnectChannel,
-  onConnectEndpoint,
-}: {
-  operatorGrid: string;
-  onConnectChannel: (channel: PeerChannel) => void;
-  onConnectEndpoint: (callsign: string, endpoint: PeerEndpoint, operatorGrid: string) => void;
-}) {
-  const [callsign, setCallsign] = useState('');
-  const [transport, setTransport] = useState<ChannelTransport | 'telnet'>('vara-hf');
-  const [freqMhz, setFreqMhz] = useState('');
-  const [via, setVia] = useState('');
-  const [host, setHost] = useState('');
-  const [port, setPort] = useState('');
-  const [error, setError] = useState<string | null>(null);
-
-  const isTelnet = transport === 'telnet';
-  const isPacket = transport === 'packet';
-
-  // Clears every field after a dispatch (mirrors GroupEditor's "+ Add" raw-
-  // callsign idiom: type → commit → clear, ready for the next entry). The
-  // brief's own free-persistence claim is why: retry after this dial lives in
-  // the Recent/finder rows this SAME dial just created a record for, not in
-  // this box — unlike the RF panels' persistent target field (built for
-  // repeated redial of the SAME gateway), a manual dial here is a one-shot
-  // "reach this new station" action.
-  const reset = () => {
-    setCallsign('');
-    setFreqMhz('');
-    setVia('');
-    setHost('');
-    setPort('');
-    setError(null);
-  };
-
-  const onConnect = () => {
-    const typed = callsign.trim().toUpperCase();
-    const callErr = validateCallsign(typed);
-    if (callErr) {
-      setError(callErr);
-      return;
-    }
-
-    if (isTelnet) {
-      const trimmedHost = host.trim();
-      const portNum = Number(port.trim());
-      if (!trimmedHost) {
-        setError('Host is required for a telnet dial.');
-        return;
-      }
-      if (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {
-        setError('Port must be 1–65535.');
-        return;
-      }
-      const endpoint: PeerEndpoint = {
-        id: 'manual-dial',
-        host: trimmedHost,
-        port: portNum,
-        provenance: 'operator',
-        last_seen: new Date().toISOString(),
-        last_ok: null,
-      };
-      onConnectEndpoint(typed, endpoint, operatorGrid);
-      reset();
-      return;
-    }
-
-    // RF transport (vara-hf/vara-fm/ardop/packet). Freq is OPTIONAL — same
-    // rule as the RF panels' Manual freq field: an empty/unparseable MHz
-    // string yields freq_hz: null, which connectFor threads as an undefined
-    // freqHz (direct dial, no pre-audio CAT tune) rather than blocking Connect.
-    const freqHz = parseFreqInputToHz(freqMhz);
-    // Packet-only digipeater path, 0-2 entries — same cap as the PacketRadioPanel
-    // Connect sub-section's relay chips.
-    const viaList = isPacket
-      ? via.split(',').map((v) => v.trim()).filter(Boolean).slice(0, 2)
-      : [];
-    const channel: PeerChannel = {
-      transport,
-      target_callsign: typed,
-      via: viaList,
-      freq_hz: freqHz,
-      bandwidth: null,
-      direction: 'outgoing',
-      counts: { ok: 0, fail: 0 },
-      last_seen: new Date().toISOString(),
-      last_ok: null,
-      last_ok_direction: null,
-    };
-    onConnectChannel(channel);
-    reset();
-  };
-
-  return (
-    <div className="station-finder__dial" data-testid="manual-dial-form">
-      <div className="station-finder__chh">Dial a station</div>
-      <div className="station-finder__dial-row">
-        <input
-          type="text"
-          data-testid="manual-dial-callsign"
-          className="station-finder__dial-call"
-          placeholder="Callsign"
-          value={callsign}
-          onChange={(e) => {
-            setCallsign(e.target.value.toUpperCase());
-            setError(null);
-          }}
-          autoComplete="off"
-          spellCheck={false}
-        />
-        <select
-          data-testid="manual-dial-transport"
-          className="station-finder__dial-transport"
-          value={transport}
-          onChange={(e) => {
-            setTransport(e.target.value as ChannelTransport | 'telnet');
-            setError(null);
-          }}
-        >
-          {P2P_DIAL_TRANSPORTS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-        {isTelnet ? (
-          <>
-            <input
-              type="text"
-              data-testid="manual-dial-host"
-              className="station-finder__dial-host"
-              placeholder="Host"
-              value={host}
-              onChange={(e) => setHost(e.target.value)}
-              autoComplete="off"
-            />
-            <input
-              type="text"
-              inputMode="numeric"
-              data-testid="manual-dial-port"
-              className="station-finder__dial-port"
-              placeholder="Port"
-              value={port}
-              onChange={(e) => setPort(e.target.value)}
-              autoComplete="off"
-            />
-          </>
-        ) : (
-          <input
-            type="text"
-            inputMode="decimal"
-            data-testid="manual-dial-freq"
-            className="station-finder__dial-freq"
-            placeholder="MHz"
-            value={freqMhz}
-            onChange={(e) => setFreqMhz(e.target.value)}
-            autoComplete="off"
-          />
+        {bearing != null && decl != null && liveGrid && (
+          <div className="station-finder__aim-decl" data-testid="aim-declination">
+            {declProvenance(decl, liveGrid)}
+          </div>
         )}
-        {isPacket && (
-          <input
-            type="text"
-            data-testid="manual-dial-via"
-            className="station-finder__dial-via"
-            placeholder="via (0–2, comma-sep)"
-            value={via}
-            onChange={(e) => setVia(e.target.value)}
-            autoComplete="off"
-          />
-        )}
-        <button
-          type="button"
-          data-testid="manual-dial-connect"
-          className="station-finder__use"
-          title={`Dial ${callsign.trim() || 'a station'} over ${P2P_DIAL_TRANSPORTS.find((o) => o.value === transport)?.label ?? transport}`}
-          onClick={onConnect}
-        >
-          Connect →
-        </button>
       </div>
-      {error && (
-        <div className="station-finder__dial-error" data-testid="manual-dial-error" role="alert">
-          {error}
-        </div>
-      )}
+
+      {/* Task C3 (BandMatrix mount, spec §Rail Station tab): one row per HF
+          band + VHF — openness dot · VOACAP bar+% · dial chips. Supersedes
+          the pre-C3 "path forecast" bars + "channels grouped by mode" list
+          (moved into BandMatrix verbatim — see BandMatrix.tsx for the
+          rankedDialsFor/channelToDial + candidates[0] + sibling-☆ contracts). */}
+      <BandMatrix
+        station={station}
+        prediction={prediction}
+        predictionStatus={predictionStatus}
+        utcHour={utcHour}
+        bandActivity={props.bandActivity}
+        onUse={props.onUse}
+        onSaveFavorite={props.onSaveFavorite}
+        isSaved={props.isSaved}
+      />
     </div>
   );
 }

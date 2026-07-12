@@ -6846,6 +6846,7 @@ dependencies = [
  "quick-xml 0.41.0",
  "quote",
  "rand 0.10.2",
+ "realfft",
  "regex",
  "reqwest",
  "rmcp",

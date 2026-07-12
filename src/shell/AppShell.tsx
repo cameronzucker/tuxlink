@@ -40,7 +40,13 @@ import type { MessageMetaDto } from '../search/types';
 import { DEV_SELECTED } from '../mailbox/devFixture';
 import { FolderSidebar } from '../mailbox/FolderSidebar';
 import type { ConnectionKey } from '../mailbox/FolderSidebar';
-import { DashboardRibbon } from './DashboardRibbon';
+import { DashboardRibbon, ft8RibbonState } from './DashboardRibbon';
+// tuxlink-b026z.4 Task C2: the Station Intelligence (FT-8) listener context.
+// Mounted OUTSIDE the lazy-panel boundary (see the AppShell wrapper below) so
+// the ambient listening state is available app-wide from cold start — not
+// gated behind the (lazy, not-yet-open) Station Intelligence panel.
+import { Ft8ListenerProvider, useFt8Listener } from '../ft8ui/useFt8Listener';
+import { stripStats } from '../ft8ui/deriveBandActivity';
 import { CloseBehaviorPrompt } from './CloseBehaviorPrompt';
 import { useIdentityList, useActiveIdentity, useIdentitySwitch } from './useIdentities';
 import { StatusBar } from './StatusBar';
@@ -140,6 +146,7 @@ import { usePacketConfig } from '../packet/usePacketConfig';
 import { isBuilt } from '../connections/sessionTypes';
 import { connectFor, abortFor, MissingTargetError } from '../connections/connectDispatch';
 import { emitGatewayPrefill } from '../favorites/prefillEvent';
+import { emitPeerPrefill, type PeerPrefill } from '../peers/peerPrefillEvent';
 import type { FavoriteDial, StationsFile } from '../favorites/types';
 import { StubPanel } from '../connections/StubPanel';
 import { useInboundSelection } from '../connections/useInboundSelection';
@@ -312,7 +319,26 @@ function computeHighlights(
   return out;
 }
 
+/**
+ * AppShell — the exported entry point. Wraps `AppShellInner` in
+ * `Ft8ListenerProvider` (Task C2, plan tuxlink-b026z.4 §Ribbon): the provider
+ * mounts here, at the TOP of the tree, OUTSIDE every lazy-loaded overlay/panel
+ * boundary inside `AppShellInner` — so its one subscription (hydration +
+ * `ft8-decodes:slot` / `ft8-listening:change` listeners) starts at cold start
+ * and stays alive regardless of whether the operator has ever opened the
+ * Station Intelligence panel. `AppShellInner` (below) consumes
+ * `useFt8Listener()` for the ribbon badge; any future lazy FT-8 surface reads
+ * the SAME context instance, never a second subscription.
+ */
 export function AppShell() {
+  return (
+    <Ft8ListenerProvider>
+      <AppShellInner />
+    </Ft8ListenerProvider>
+  );
+}
+
+function AppShellInner() {
   // selectedFolder accepts either a system-folder identifier or a user-folder
   // slug (tuxlink-f62f). The Tauri commands take either string at the boundary;
   // string-equal is enough to drive the sidebar's active-row highlight.
@@ -788,6 +814,48 @@ export function AppShell() {
       }
     }
   }, [aprsToggling, aprsConnecting, aprs.listening, aprsLinkKind, runAprsConnect, onAprsDisconnect, openAprsChat]);
+
+  // Task C2 (plan tuxlink-b026z.4 §Ribbon): Station Intelligence (FT-8)
+  // listener status + toggle, consumed by the ribbon badge. `ft8Listener` is
+  // exposed by the top-level `Ft8ListenerProvider` (see the `AppShell`
+  // wrapper above AppShellInner) — this component is always its descendant.
+  // `ft8Band` + the decodes/min rate feed the ribbon's 'listening' caption;
+  // DashboardRibbon only consults them when its 9→4 reduction is 'listening'.
+  const ft8Listener = useFt8Listener();
+  const ft8UiState = ft8Listener.uiState.state;
+  const ft8Band = ft8Listener.snapshot?.band ?? null;
+  const ft8DecodesPerMin = ft8Band
+    ? stripStats(ft8Listener.decodesRing, ft8Band, Date.now()).decodesPerMin
+    : null;
+  // Opens the Station Intelligence panel — the SAME overlay the sidebar/
+  // Message-menu "Find a Station" flow opens (StationFinderPanel, hosting
+  // StationRail). A 'blocked' ribbon click ALWAYS routes here, never a
+  // toggle attempt (DashboardRibbon enforces that branch internally; this is
+  // just the handler it calls).
+  const onOpenFt8 = useCallback(() => { setCatalogBuilderOpen(true); }, []);
+  const [ft8Toggling, setFt8Toggling] = useState(false);
+  const onToggleFt8Listening = useCallback(async () => {
+    if (ft8Toggling) return;
+    setFt8Toggling(true);
+    try {
+      if (ft8RibbonState(ft8UiState) === 'listening') {
+        await invoke('ft8_listener_stop');
+      } else {
+        await invoke('ft8_listener_start');
+      }
+    } catch (err) {
+      // Backend truth: a failed start/stop leaves uiState as-is; the ribbon
+      // reflects whatever the next ft8-listening:change/snapshot reports.
+      // Mirrors the APRS toggle's session-log fallback (tuxlink-nnjz idiom)
+      // so a silent failure still surfaces somewhere the operator can see.
+      void invoke('session_log_append', {
+        level: 'warn',
+        message: `FT-8: ${err instanceof Error ? err.message : String(err)}`,
+      }).catch(() => { /* backend absent (pre-bootstrap) — nothing else to surface */ });
+    } finally {
+      setFt8Toggling(false);
+    }
+  }, [ft8Toggling, ft8UiState]);
 
   // Phase 7 (tuxlink-noa0): identity list + active session + switch mutation for
   // the dashboard's inline IdentitySwitcher. The list/active queries feed the
@@ -1504,6 +1572,28 @@ export function AppShell() {
     [onSelectConnection],
   );
 
+  // Peers↔L3 reconciliation: a peer channel/endpoint click in the finder's Station
+  // tab. Same open-and-arm shape as handleStationUse, with the ONE load-bearing
+  // difference: the modem is armed under the **p2p** intent, not 'cms' — a peer is
+  // the far end itself, not an RMS gateway to relay through. Opening a pane is UI,
+  // not TX; the operator still presses the pane's own Connect.
+  //
+  // This REPLACES the dropped finder rail's connectPeerChannel/connectPeerEndpoint,
+  // which fired a REAL outbound RF dial straight from the browse list with the pane
+  // closed — a connect path unlike every other mode in the app. Peers now reach the
+  // radio the same two-step way gateways do.
+  const handlePeerUse = useCallback(
+    (prefill: PeerPrefill) => {
+      onSelectConnection({
+        sessionType: 'p2p',
+        protocol: prefill.mode as ConnectionKey['protocol'],
+      });
+      emitPeerPrefill(prefill);
+      setCatalogBuilderOpen(false);
+    },
+    [onSelectConnection],
+  );
+
   // bd-tuxlink-kiaa: Connect from the shell-level Favorites home. Identical
   // open-and-arm path to handleStationUse (FavoriteRow's Connect is pure
   // prefill — RADIO-1), minus the finder close: selectedFolder stays
@@ -1738,6 +1828,14 @@ export function AppShell() {
             onOpen: openAprsChat,
             onToggleListening: onToggleAprsListening,
             toggleBusy: aprsToggling || aprsConnecting,
+          }}
+          ft8={{
+            uiState: ft8UiState,
+            band: ft8Band,
+            decodesPerMin: ft8DecodesPerMin,
+            onOpen: onOpenFt8,
+            onToggleListening: onToggleFt8Listening,
+            toggleBusy: ft8Toggling || ft8UiState === 'transitional',
           }}
           identities={identityList.data ?? null}
           activeIdentity={activeIdentity.data ?? null}
@@ -2151,6 +2249,7 @@ export function AppShell() {
           <StationFinderPanel
             activePrefillMode={catalogPrefillMode}
             onUse={handleStationUse}
+            onUsePeer={handlePeerUse}
             onClose={() => setCatalogBuilderOpen(false)}
           />
         </Suspense>

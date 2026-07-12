@@ -13,22 +13,17 @@ import type { Station } from './stationModel';
 // tier style, selection emphasis applied in place (no marker churn), the operator
 // pin, and click→onSelect. Render fidelity is grim-verified.
 
-// LeafletMap fetches packs via invoke('basemap_list_packs') (wants {packs}). Task
-// 24 wired StationFinderMap to its own usePeers()/useP2pCapabilities() (the peer
-// circle layer, gated on map_peers) — those call contacts_read/p2p_capabilities
-// (T-E: usePeers re-sourced onto contacts_read; peers_read died with the peers
-// store).
+// LeafletMap fetches packs via invoke('basemap_list_packs') (wants {packs}).
+// The map also now reads the peer layer's inputs (peers↔L3 reconciliation):
+// `p2p_capabilities` (gates the layer) + `contacts_read` (the peer roster, via
+// usePeers → useContacts). Default them to capabilities-OFF + an empty roster so
+// these station-focused cases render exactly as before — the peer layer's own
+// behavior is covered separately.
 const invokeMock = vi.hoisted(() =>
   vi.fn(async (cmd: string) => {
     if (cmd === 'basemap_list_packs') return { packs: [] };
-    if (cmd === 'contacts_read') return { schema_version: 2, contacts: [], groups: [] };
-    if (cmd === 'p2p_capabilities') {
-      return {
-        peer_store: false, finder_peers: false, map_peers: false,
-        agent_find_peers: false, vara_engine_split: false,
-        favorites_contact_link: false,
-      };
-    }
+    if (cmd === 'p2p_capabilities') return { finder_peers: false, map_peers: false };
+    if (cmd === 'contacts_read') return { contacts: [] };
     return undefined;
   }),
 );
@@ -69,19 +64,24 @@ afterEach(() => {
   if (origH) Object.defineProperty(HTMLElement.prototype, 'clientHeight', origH);
 });
 
-/** Render and flush LeafletMap's whenReady (sync) + async pack fetch. */
+/** Render and flush LeafletMap's whenReady (sync) + async pack fetch.
+ *  Wrapped in a QueryClientProvider: the map's peer layer reads usePeers /
+ *  useP2pCapabilities (TanStack Query), which throw without a client. */
 async function renderMap(ui: React.ReactElement) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  // Use the `wrapper` option so RTL's `rerender` keeps the QueryClientProvider
-  // intact when tests call result.rerender(<StationFinderMap .../>).
-  const result = render(ui, {
-    wrapper: ({ children }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>,
-  });
+  const result = render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
   await act(async () => {
     await Promise.resolve();
   });
   await waitFor(() => expect(captured).not.toBeNull());
-  return result;
+  // RTL's rerender replaces the ROOT element — hand back one that re-wraps in the
+  // same provider, so a rerender doesn't strip the QueryClient out from under the
+  // map's peer-layer hooks.
+  return {
+    ...result,
+    rerender: (next: React.ReactElement) =>
+      result.rerender(<QueryClientProvider client={qc}>{next}</QueryClientProvider>),
+  };
 }
 
 /** All circleMarkers on the live map. */
@@ -228,6 +228,46 @@ describe('StationFinderMap (Leaflet)', () => {
   });
 });
 
+describe('StationFinderMap layer control (tuxlink-b026z.4 Task C11, §Scope map layer-control)', () => {
+  it('renders a layer control housing a Gateways entry ONLY — no FT-8/heat entry (L5 owns that)', async () => {
+    await renderMap(
+      <StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
+    );
+    const control = screen.getByTestId('map-layer-control');
+    expect(control).toBeInTheDocument();
+    expect(screen.getByTestId('map-layer-gateways')).toBeInTheDocument();
+    expect(control.textContent).toMatch(/gateways/i);
+    // No dead/disabled heat-layer control ships at L3 — the housing carries
+    // exactly one entry until L5 adds its own.
+    expect(control.textContent).not.toMatch(/heat|ft-?8/i);
+    expect(control.querySelectorAll('button')).toHaveLength(1);
+  });
+
+  it('Gateways entry defaults on and is a real, non-transparent toggle (aria-pressed truthy, opaque background)', async () => {
+    await renderMap(
+      <StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
+    );
+    const btn = screen.getByTestId('map-layer-gateways');
+    expect(btn).toHaveAttribute('aria-pressed', 'true');
+    expect(btn.className).toContain('on');
+  });
+
+  it('toggling Gateways off hides the whole station-pin layer group; toggling back on restores it', async () => {
+    await renderMap(
+      <StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
+    );
+    expect(stationPins()).toHaveLength(2); // DM34oa + EN34 (NOGRID dropped)
+
+    fireEvent.click(screen.getByTestId('map-layer-gateways'));
+    expect(screen.getByTestId('map-layer-gateways')).toHaveAttribute('aria-pressed', 'false');
+    expect(stationPins()).toHaveLength(0); // group removed from the map entirely
+
+    fireEvent.click(screen.getByTestId('map-layer-gateways'));
+    expect(screen.getByTestId('map-layer-gateways')).toHaveAttribute('aria-pressed', 'true');
+    expect(stationPins()).toHaveLength(2); // restored, same station set
+  });
+});
+
 describe('StationFinderMap viewport persistence (tuxlink-dwzu)', () => {
   const KEY = 'tuxlink:map-viewport:station-finder';
 
@@ -254,9 +294,11 @@ describe('StationFinderMap viewport persistence (tuxlink-dwzu)', () => {
   it('persists the viewport after the operator pans (debounced)', async () => {
     vi.useFakeTimers();
     try {
-      const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      // Renders directly (not via renderMap) because it drives fake timers — still
+      // needs the QueryClient the map's peer-layer hooks read.
+      const qcPan = new QueryClient({ defaultOptions: { queries: { retry: false } } });
       render(
-        <QueryClientProvider client={qc}>
+        <QueryClientProvider client={qcPan}>
           <StationFinderMap stations={[]} operatorGrid="DM43bp" tiers={new Map()} selectedKey={null} onSelect={() => {}} />
         </QueryClientProvider>,
       );
