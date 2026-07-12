@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, act, screen, fireEvent, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import L from 'leaflet';
 import { gridToLatLon } from '../forms/position/maidenhead';
 import { stationKey } from './useReachabilityMap';
@@ -13,8 +14,18 @@ import type { Station } from './stationModel';
 // pin, and click→onSelect. Render fidelity is grim-verified.
 
 // LeafletMap fetches packs via invoke('basemap_list_packs') (wants {packs}).
+// The map also now reads the peer layer's inputs (peers↔L3 reconciliation):
+// `p2p_capabilities` (gates the layer) + `contacts_read` (the peer roster, via
+// usePeers → useContacts). Default them to capabilities-OFF + an empty roster so
+// these station-focused cases render exactly as before — the peer layer's own
+// behavior is covered separately.
 const invokeMock = vi.hoisted(() =>
-  vi.fn(async (cmd: string) => (cmd === 'basemap_list_packs' ? { packs: [] } : undefined)),
+  vi.fn(async (cmd: string) => {
+    if (cmd === 'basemap_list_packs') return { packs: [] };
+    if (cmd === 'p2p_capabilities') return { finder_peers: false, map_peers: false };
+    if (cmd === 'contacts_read') return { contacts: [] };
+    return undefined;
+  }),
 );
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
 
@@ -53,14 +64,24 @@ afterEach(() => {
   if (origH) Object.defineProperty(HTMLElement.prototype, 'clientHeight', origH);
 });
 
-/** Render and flush LeafletMap's whenReady (sync) + async pack fetch. */
+/** Render and flush LeafletMap's whenReady (sync) + async pack fetch.
+ *  Wrapped in a QueryClientProvider: the map's peer layer reads usePeers /
+ *  useP2pCapabilities (TanStack Query), which throw without a client. */
 async function renderMap(ui: React.ReactElement) {
-  const result = render(ui);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const result = render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
   await act(async () => {
     await Promise.resolve();
   });
   await waitFor(() => expect(captured).not.toBeNull());
-  return result;
+  // RTL's rerender replaces the ROOT element — hand back one that re-wraps in the
+  // same provider, so a rerender doesn't strip the QueryClient out from under the
+  // map's peer-layer hooks.
+  return {
+    ...result,
+    rerender: (next: React.ReactElement) =>
+      result.rerender(<QueryClientProvider client={qc}>{next}</QueryClientProvider>),
+  };
 }
 
 /** All circleMarkers on the live map. */
@@ -273,8 +294,13 @@ describe('StationFinderMap viewport persistence (tuxlink-dwzu)', () => {
   it('persists the viewport after the operator pans (debounced)', async () => {
     vi.useFakeTimers();
     try {
+      // Renders directly (not via renderMap) because it drives fake timers — still
+      // needs the QueryClient the map's peer-layer hooks read.
+      const qcPan = new QueryClient({ defaultOptions: { queries: { retry: false } } });
       render(
-        <StationFinderMap stations={[]} operatorGrid="DM43bp" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
+        <QueryClientProvider client={qcPan}>
+          <StationFinderMap stations={[]} operatorGrid="DM43bp" tiers={new Map()} selectedKey={null} onSelect={() => {}} />
+        </QueryClientProvider>,
       );
       await act(async () => {
         await Promise.resolve();

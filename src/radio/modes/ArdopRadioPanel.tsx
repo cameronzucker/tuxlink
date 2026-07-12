@@ -46,6 +46,7 @@ import { useActiveIdentity } from '../../shell/useIdentities';
 import { FavoritesTabs } from '../../favorites/FavoritesTabs';
 import { useFavorites } from '../../favorites/useFavorites';
 import { listenGatewayPrefill } from '../../favorites/prefillEvent';
+import { listenPeerPrefill, type PeerPrefill } from '../../peers/peerPrefillEvent';
 import { tsLocal } from '../../favorites/ts-local';
 import type { FavoriteDial } from '../../favorites/types';
 import type { RadioPanelMode } from '../types';
@@ -57,6 +58,7 @@ import {
   parseFreqInputToHz,
   dialFreqToMhzString,
   dialsToQsyCandidates,
+  hzToMhzString,
 } from './freq';
 import './ArdopRadioPanel.css';
 import '../sections/ListenSection.css';
@@ -439,6 +441,21 @@ export function ArdopRadioPanel({
   useEffect(
     () => listenGatewayPrefill('ardop-hf', handlePrefill),
     [handlePrefill],
+  );
+
+  // Peers↔L3 reconciliation: a PEER channel picked in the finder's Station tab.
+  // Fills target + freq ONLY — never transmits; the operator presses Connect.
+  // Gated on the **p2p** intent so a peer dial can never land in a CMS pane.
+  const handlePeerPrefill = useCallback((p: PeerPrefill) => {
+    setTarget(p.target);
+    writeLastTarget('ardop-hf', p.target);
+    // Peer channel freq is raw Hz (contacts Channel.freq_hz), not dial metadata.
+    // CLEAR when absent so a stale freq never tunes the rig on the next Start.
+    setFreqMhz(p.freqHz != null ? hzToMhzString(p.freqHz) : '');
+  }, []);
+  useEffect(
+    () => (mode.intent === 'p2p' ? listenPeerPrefill('ardop-hf', handlePeerPrefill) : undefined),
+    [mode.intent, handlePeerPrefill],
   );
   // Build the dial for a connection record from the LIVE peer. If the prefilled
   // favorite matches the peer callsign, carry its metadata (freq/band/grid/

@@ -12,6 +12,11 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { BandMatrix } from './BandMatrix';
+import { PeerDetail } from './PeerDetail';
+// Transport→RadioMode mapper ONLY. The finder deliberately does NOT call this
+// module's connectPeerChannel/connectPeerEndpoint (they dial RF directly); peers
+// reach a modem through the prefill path, like gateways.
+import { radioModeForPeerTransport } from '../peers/connectPeer';
 import { distanceFromGrids, kmToMi } from './distance';
 import { gridToLatLon, type LatLon } from '../forms/position/maidenhead';
 import { LiveDecodesTab } from './LiveDecodesTab';
@@ -20,10 +25,20 @@ import type { Station } from './stationModel';
 import type { PathPrediction } from './propagationApi';
 import type { PredictionStatus } from './useStationPrediction';
 import type { RadioMode, FavoriteDial } from '../favorites/types';
+import type { AggregatedPeer } from '../peers/peerModel';
+import type { PeerPrefill } from '../peers/peerPrefillEvent';
 import type { SlotRecord, DeclDto, BandDot } from '../ft8ui/ft8Types';
 
 export interface StationRailProps {
   station: Station | null;
+  /**
+   * The selected PEER (Task delta2, spec §6 reconciliation), mutually
+   * exclusive with `station` (`StationFinderPanel`'s `FinderSelection` union
+   * ensures only one is ever non-null). When set, the Station tab renders
+   * `PeerDetail` instead of the gateway detail below — the SAME tab, SAME
+   * rail, distinguished by a `◆ Peer` badge, per the operator-approved mock.
+   */
+  peer?: AggregatedPeer | null;
   prediction: PathPrediction | null;
   predictionStatus: PredictionStatus;
   operatorGrid: string;
@@ -39,6 +54,15 @@ export interface StationRailProps {
    * panel sends it as `qsyCandidates` for the backend QSY-on-fail walk.
    */
   onUse?: (dial: FavoriteDial, candidates?: FavoriteDial[]) => void;
+  /**
+   * Handle a peer channel/endpoint's "Connect to →" (Task delta2, spec §6
+   * reconciliation) — the peer analog of `onUse`. THIS PREFILLS the matching
+   * P2P-intent modem pane; it NEVER dials directly (unlike the dropped
+   * finder rail's `connectPeerChannel`/`connectPeerEndpoint`). Omitted falls
+   * back to a bare `emitPeerPrefill` in `PeerDetail`, matching `onUse`'s own
+   * fallback-to-`emitGatewayPrefill` contract in `BandMatrix`.
+   */
+  onUsePeer?: (prefill: PeerPrefill) => void;
   /**
    * Save / unsave a discovered channel as a starred favorite (tuxlink-5016).
    * The parent finds-or-creates the per-mode favorite and toggles its star;
@@ -162,7 +186,7 @@ export function StationRail(props: StationRailProps) {
 
 /** The Station tab's content — unchanged from pre-tab-shell StationRail behavior. */
 function StationTabPane(props: StationRailProps) {
-  const { station, prediction, predictionStatus, operatorGrid, utcHour } = props;
+  const { station, peer, prediction, predictionStatus, operatorGrid, utcHour } = props;
 
   // Task C6 (aim hero + magnetic declination, spec §Declination): the LIVE
   // operator grid — useStatusData().grid, NOT config_read (the tuxlink-fnzr
@@ -198,6 +222,98 @@ function StationTabPane(props: StationRailProps) {
       cancelled = true;
     };
   }, [liveGrid]);
+
+  // Peers↔L3 reconciliation: a peer clicked on the map fills THIS SAME tab — same
+  // rail, same aim hero, same row/chip elements — distinguished by a ◆ Peer badge
+  // and PeerDetail's per-transport connect rows. Checked BEFORE the `!station`
+  // guard because the panel's selection is a gateway-or-peer union: a peer
+  // selection carries no `station`. The gateway path below is untouched.
+  if (peer) {
+    const peerBearing = operatorGrid && peer.grid ? bearingFromGrids(operatorGrid, peer.grid) : null;
+    const peerDistKm = operatorGrid && peer.grid ? distanceFromGrids(operatorGrid, peer.grid) : null;
+    const peerDistMi = peerDistKm != null ? Math.round(kmToMi(peerDistKm)) : null;
+    // Distinct dialable transports, for the header badges (an 'unknown' transport
+    // has no modem, so it never earns a badge).
+    const peerModes = Array.from(
+      new Set(
+        peer.channels
+          .map((c) => radioModeForPeerTransport(c.transport))
+          .filter((m): m is RadioMode => m !== null),
+      ),
+    );
+    return (
+      <div className="station-finder__railpane" data-testid="rail-pane-peer">
+        <header className="station-finder__sta">
+          <div className="station-finder__sta-top">
+            <span className="station-finder__call">{peer.callsign}</span>
+            <span className="station-finder__badges">
+              <span className="station-finder__mb station-finder__mb--peer" data-testid="peer-badge">
+                ◆ Peer
+              </span>
+              {peerModes.map((m) => (
+                <span key={m} className="station-finder__mb">
+                  <span className={`station-finder__sw station-finder__sw--${m}`} />
+                  {MODE_LABEL[m] ?? m}
+                </span>
+              ))}
+              {peer.endpoints.length > 0 && (
+                <span className="station-finder__mb">
+                  <span className="station-finder__sw station-finder__sw--telnet" />
+                  Telnet
+                </span>
+              )}
+            </span>
+          </div>
+          <div className="station-finder__who">
+            {[
+              peer.grid ?? 'no grid — untiered',
+              // Success-only recency: NEVER derive "reached" from last_seen (it bumps
+              // on failures too) — `lastOk` is the only honest source.
+              peer.lastOk ? 'reached before' : 'not reached yet',
+            ].join(' · ')}
+          </div>
+        </header>
+
+        <div className="station-finder__aim">
+          <div className="station-finder__aimrow">
+            <div
+              className="station-finder__compass"
+              style={peerBearing != null ? ({ ['--bearing']: `${peerBearing}deg` } as CSSProperties) : undefined}
+              aria-hidden
+            >
+              <span className="station-finder__needle" />
+            </div>
+            <div>
+              <div className="station-finder__big" data-testid="aim-bearing">
+                {peerBearing == null
+                  ? '—'
+                  : decl != null
+                    ? `${magneticBearing(peerBearing, decl.declDeg)}° M`
+                    : `${Math.round(peerBearing)}°`}
+              </div>
+              {peerBearing != null && decl != null && (
+                <div className="station-finder__aim-true" data-testid="aim-bearing-true">
+                  {Math.round(peerBearing)}° T
+                </div>
+              )}
+              <div className="station-finder__lab">aim antenna</div>
+            </div>
+            <div className="station-finder__dist" data-testid="aim-distance">
+              <div className="station-finder__big">{peerDistMi != null ? `${peerDistMi} mi` : '—'}</div>
+              <div className="station-finder__lab">short path</div>
+            </div>
+          </div>
+          {peerBearing != null && decl != null && liveGrid && (
+            <div className="station-finder__aim-decl" data-testid="aim-declination">
+              {declProvenance(decl, liveGrid)}
+            </div>
+          )}
+        </div>
+
+        <PeerDetail peer={peer} onUsePeer={props.onUsePeer} />
+      </div>
+    );
+  }
 
   if (!station) {
     return (

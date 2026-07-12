@@ -42,6 +42,7 @@
 //   p2p_peer_password_clear(callsign)           → void
 
 import { useEffect, useState } from 'react';
+import { listenPeerPrefill } from '../../peers/peerPrefillEvent';
 import type { KeyboardEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useQueryClient } from '@tanstack/react-query';
@@ -136,6 +137,21 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
   // above but lives in the listener section.
   const [stationPasswordStatus, setStationPasswordStatus] =
     useState<StationPasswordStatus>('NotSet');
+
+  // Peers↔L3 reconciliation: a PEER telnet endpoint picked in the finder's Station
+  // tab. Fills the peer callsign + host + port ONLY — it never dials; the operator
+  // presses this pane's own Connect. (No intent gate: this panel IS the p2p telnet
+  // surface.) This replaces the dropped finder rail's connectPeerEndpoint, which
+  // fired a real outbound dial straight from the browse list.
+  useEffect(
+    () =>
+      listenPeerPrefill('telnet', (p) => {
+        setPeerCallsign(p.target);
+        if (p.host) setHost(p.host);
+        if (p.port != null) setPort(p.port);
+      }),
+    [],
+  );
 
   // Listener arms + allowlist plumbing via the shared hook. The Telnet
   // commands take `enabled`/`callsign`/`pattern` args by name.

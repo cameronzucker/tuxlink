@@ -74,6 +74,63 @@
   border-style: dashed;
   background: transparent;
 }
+
+/* Finder-only DIAMOND shape (Task delta2, spec §6 reconciliation) —
+   deconflicted from the gateway ROUND dot per the operator-approved mock
+   (docs/design/mockups/2026-07-11-station-intel-l3/
+   station-intel-l3-peer-selected.html's `.peerglyph`). Layered ON TOP of the
+   existing `.peer-pin` box + tier/dashed/selected modifiers above: the
+   diamond swaps the tier's FILL for an OUTLINE (border = tier colour,
+   background = panel) and rotates + squares the box. `.peer-pin--dashed`
+   already gives the outline + transparent-background look for a
+   never-connected peer, so it needs no diamond-specific override — only the
+   filled tiers (good/fair/marginal/poor/unlikely/skip/untiered) need their
+   background swapped for a border colour here. */
+.peer-pin--diamond {
+  width: 13px;
+  height: 13px;
+  margin: 1px auto;
+  border-radius: 2px;
+  transform: rotate(45deg);
+  background: var(--panel, #0f1c28);
+}
+.peer-pin--diamond.peer-pin--good {
+  border-color: var(--reach-good, #41ba6c);
+}
+.peer-pin--diamond.peer-pin--fair {
+  border-color: var(--reach-fair, #8cc23f);
+}
+.peer-pin--diamond.peer-pin--marginal {
+  border-color: var(--reach-marginal, #d9b13a);
+}
+.peer-pin--diamond.peer-pin--poor {
+  border-color: var(--reach-poor, #e2862f);
+}
+.peer-pin--diamond.peer-pin--unlikely {
+  border-color: var(--reach-unlikely, #d64a40);
+}
+.peer-pin--diamond.peer-pin--skip {
+  border-color: var(--reach-skip, #6c5a5a);
+}
+.peer-pin--diamond.peer-pin--untiered {
+  border-color: #9fb6cc;
+}
+/* Tac-chat outcome tiers reused on a diamond finder pin only if a future
+   consumer mixes them (not exercised today — the finder always passes the
+   reachability-ramp classes above); kept for completeness of the axis. */
+.peer-pin--diamond.peer-pin--live,
+.peer-pin--diamond.peer-pin--reached {
+  border-color: #46d07f;
+}
+.peer-pin--diamond.peer-pin--failed {
+  border-color: #e0913a;
+}
+.peer-pin--diamond.peer-pin--stale {
+  border-color: rgba(70, 208, 127, 0.45);
+}
+.peer-pin--diamond.peer-pin--unknown {
+  border-color: #6c5a5a;
+}
 .peer-pin--selected {
   box-shadow: 0 0 0 4px rgba(234, 255, 242, 0.35);
 }

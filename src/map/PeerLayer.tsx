@@ -50,13 +50,30 @@ export interface PeerVisual {
   dashed: boolean;
 }
 
-/// Build the peer pin `divIcon`: a circle, styled by the parent-supplied
-/// `visual`, with an escaped callsign label beneath it (mirrors the APRS pin's
-/// label idiom).
-function peerIcon(p: AggregatedPeer, selected: boolean, visual: PeerVisual): L.DivIcon {
+/// Pin shape (Task delta2, spec §6 reconciliation): the tac-chat map keeps
+/// the original CIRCLE (unchanged consumer); the L3 finder mounts the SAME
+/// layer with `shape="diamond"` so a peer is deconflicted from the gateway
+/// ROUND dot on that map (docs/design/mockups/2026-07-11-station-intel-l3/
+/// station-intel-l3-peer-selected.html). Shape is a SECOND, independent axis
+/// from `PeerVisual` (which still owns colour/dashed) — it never changes
+/// what a tier means, only how the pin reads at a glance.
+export type PeerPinShape = 'circle' | 'diamond';
+
+/// Build the peer pin `divIcon`: a circle or diamond (per `shape`), styled by
+/// the parent-supplied `visual`, with an escaped callsign label beneath it
+/// (mirrors the APRS pin's label idiom). The diamond gets a slightly larger
+/// box (mirrors the approved mock's 16px `.peerpin` container) so the 45°
+/// rotation doesn't clip a circle-sized box's corners.
+function peerIcon(
+  p: AggregatedPeer,
+  selected: boolean,
+  visual: PeerVisual,
+  shape: PeerPinShape,
+): L.DivIcon {
   const call = p.callsign;
   const cls = [
     'peer-pin',
+    shape === 'diamond' ? 'peer-pin--diamond' : '',
     visual.tierClass,
     visual.dashed ? 'peer-pin--dashed' : '',
     selected ? 'peer-pin--selected' : '',
@@ -66,7 +83,9 @@ function peerIcon(p: AggregatedPeer, selected: boolean, visual: PeerVisual): L.D
   const html =
     `<div class="${cls}" data-call="${esc(call)}"></div>` +
     `<span class="peer-pin-label">${esc(call)}</span>`;
-  return L.divIcon({ className: 'peer-pin-icon', html, iconSize: [14, 14], iconAnchor: [7, 7] });
+  const size: [number, number] = shape === 'diamond' ? [16, 16] : [14, 14];
+  const anchor: [number, number] = shape === 'diamond' ? [8, 8] : [7, 7];
+  return L.divIcon({ className: 'peer-pin-icon', html, iconSize: size, iconAnchor: anchor });
 }
 
 export interface PeerLayerProps {
@@ -89,6 +108,11 @@ export interface PeerLayerProps {
   /// map, and live RF truth wins over the stored peer record (spec §6).
   /// Tac-chat only; the finder map has no live APRS feed.
   liveAprsCallsigns?: Set<string>;
+  /// Pin shape — `'circle'` (default, unchanged) for the tac-chat map;
+  /// `'diamond'` for the L3 finder map, which deconflicts a peer from the
+  /// gateway ROUND dot (spec §6 reconciliation). Purely a rendering axis —
+  /// never affects `visualFor`'s colour/dashed semantics.
+  shape?: PeerPinShape;
 }
 
 export function PeerLayer({
@@ -98,6 +122,7 @@ export function PeerLayer({
   onSelect,
   selectedId,
   liveAprsCallsigns,
+  shape = 'circle',
 }: PeerLayerProps): null {
   const map = useLeafletMap();
   const group = useLeafletLayerGroup(map);
@@ -113,7 +138,9 @@ export function PeerLayer({
         if (liveAprsCallsigns?.has(baseCallsign(p.callsign))) continue; // APRS sprite wins
         const ll = gridToLatLon(p.grid);
         if (!ll) continue;
-        const m = L.marker([ll.lat, ll.lon], { icon: peerIcon(p, p.id === selectedId, visualFor(p)) });
+        const m = L.marker([ll.lat, ll.lon], {
+          icon: peerIcon(p, p.id === selectedId, visualFor(p), shape),
+        });
         m.on('click', () => onSelectRef.current(p));
         group.addLayer(m);
       }
@@ -121,7 +148,7 @@ export function PeerLayer({
     return () => {
       group.clearLayers();
     };
-  }, [group, enabled, peers, selectedId, liveAprsCallsigns, visualFor]);
+  }, [group, enabled, peers, selectedId, liveAprsCallsigns, visualFor, shape]);
 
   return null;
 }

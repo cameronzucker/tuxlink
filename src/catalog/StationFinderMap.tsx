@@ -20,18 +20,21 @@
 // FT-8 heat layer is L5 (tuxlink-b026z.6); the housing exists so L5 can add
 // its entry beside Gateways later, but no dead/disabled heat toggle ships
 // here (spec §Scope "Out").
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import { LeafletMap } from '../map/LeafletMap';
 import { useLeafletMap } from '../map/LeafletMapContext';
 import { useLeafletLayerGroup } from '../map/leafletHooks';
 import { usePersistedViewport } from '../map/usePersistedViewport';
 import { LeafletRecenterControl } from '../map/LeafletRecenterControl';
+import { PeerLayer, type PeerVisual } from '../map/PeerLayer';
 import { gridToLatLon } from '../forms/position/maidenhead';
 import { reportFrontendError } from '../frontendErrorLog';
 import { type ReachTier } from './reachability';
 import { stationKey } from './useReachabilityMap';
-import type { Station } from './stationModel';
+import { baseCallsign, type Station } from './stationModel';
+import { usePeers, useP2pCapabilities } from '../peers/usePeers';
+import { aggregatePeers, type AggregatedPeer } from '../peers/peerModel';
 
 export interface StationFinderMapProps {
   stations: Station[];
@@ -39,6 +42,14 @@ export interface StationFinderMapProps {
   tiers: Map<string, ReachTier>;
   selectedKey: string | null;
   onSelect: (station: Station) => void;
+  /**
+   * Peer selection (Task delta2, spec §6 reconciliation) — raised to the
+   * PARENT panel (not held locally) so a map-clicked peer feeds the SAME
+   * Station-tab detail a gateway selection does. `selectedPeerId` re-styles
+   * that peer's pin in place, mirroring `selectedKey`'s gateway pin styling.
+   */
+  onSelectPeer?: (peer: AggregatedPeer) => void;
+  selectedPeerId?: string | null;
 }
 
 // Recenter zoom on the operator, on the z0–14 scale (matches the MapLibre edition).
@@ -314,6 +325,32 @@ export function StationFinderMap(props: StationFinderMapProps) {
   // anti-pattern the no-incomplete-refs rule bans — spec §Scope "Out").
   const [gatewaysVisible, setGatewaysVisible] = useState(true);
 
+  // Task delta2 (spec §6 reconciliation): the peer DIAMOND layer, gated
+  // end-to-end on `map_peers` [R5-8] — false (or still loading) HIDES every
+  // peer pin, not merely dims it. Reads its own peers/capabilities (like
+  // AprsPositionsMap reads its own Winlink layer state) rather than
+  // threading them through StationFinderPanel's props. Mirrors origin/main's
+  // (pre-reconciliation) StationFinderMap wiring exactly, adapted to this
+  // L3 map + the diamond shape + selection raised to the parent panel.
+  const p2pCapabilities = useP2pCapabilities();
+  const mapPeersEnabled = p2pCapabilities.capabilities?.map_peers === true;
+  const peersData = usePeers();
+  const aggregatedPeers = useMemo(() => aggregatePeers(peersData.peers), [peersData.peers]);
+
+  // Finder color axis is PROPAGATION REACHABILITY (spec §6), never a peer's
+  // attempt history — a peer takes the SAME six-step ramp stations use, keyed
+  // on `${baseCallsign}|${grid}` against the SAME `tiers` map the gateway
+  // pins use. No coincident tier ⇒ untiered + dashed (no invented peer-color
+  // scheme — the reviewer requirement origin/main's peer layer already met).
+  const peerVisualFor = useCallback(
+    (peer: AggregatedPeer): PeerVisual => {
+      const tier = peer.grid ? props.tiers.get(`${baseCallsign(peer.callsign)}|${peer.grid}`) : undefined;
+      if (!tier) return { tierClass: 'peer-pin--untiered', dashed: true };
+      return { tierClass: `peer-pin--${tier}`, dashed: false };
+    },
+    [props.tiers],
+  );
+
   return (
     <div className="station-finder__map" data-testid="station-map">
       <LeafletMap initialCenter={initialCenter} initialZoom={initialZoom} onViewportChange={onViewportChange}>
@@ -325,6 +362,14 @@ export function StationFinderMap(props: StationFinderMapProps) {
           visible={gatewaysVisible}
         />
         <OperatorPin location={me} />
+        <PeerLayer
+          peers={aggregatedPeers}
+          enabled={mapPeersEnabled}
+          shape="diamond"
+          visualFor={peerVisualFor}
+          onSelect={(peer) => props.onSelectPeer?.(peer)}
+          selectedId={props.selectedPeerId ?? null}
+        />
         <LeafletRecenterControl target={me} zoom={OPERATOR_ZOOM} />
       </LeafletMap>
       <div className="station-finder__layers" data-testid="map-layer-control">

@@ -32,7 +32,20 @@ import {
 import { HF_BANDS, type Band } from './bandPlan';
 import type { ListingMode } from './stationTypes';
 import type { RadioMode, FavoriteDial } from '../favorites/types';
+import type { AggregatedPeer } from '../peers/peerModel';
+import type { PeerPrefill } from '../peers/peerPrefillEvent';
 import './StationFinderPanel.css';
+
+/**
+ * The rail's selection (Task delta2, spec §6 reconciliation): a gateway
+ * station (by `stationKey`) OR a peer (the full `AggregatedPeer` object,
+ * since peers are sourced/aggregated inside `StationFinderMap`, not here —
+ * the map raises the clicked peer up via `onSelectPeer` rather than this
+ * panel re-deriving it from an id). `null` = nothing selected. Selecting one
+ * kind deselects the other, matching the mock's single-selection-at-a-time
+ * map + Station-tab pairing.
+ */
+type FinderSelection = { kind: 'gateway'; key: string } | { kind: 'peer'; peer: AggregatedPeer } | null;
 
 export interface StationFinderPanelProps {
   onClose: () => void;
@@ -42,6 +55,15 @@ export interface StationFinderPanelProps {
    *  `candidates` is the ranked QSY-on-fail list for the used channel's
    *  station+mode (tuxlink-8fkkk Task B). */
   onUse?: (dial: FavoriteDial, candidates?: FavoriteDial[]) => void;
+  /**
+   * Arm-on-demand handler for a peer channel/endpoint's "Connect to →"
+   * (Task delta2, spec §6 reconciliation) — the peer analog of `onUse`.
+   * AppShell opens the matching modem under the P2P intent (NOT cms — this
+   * is the critical distinction from a gateway's "Use →") and then emits the
+   * peer prefill. Omitted falls back to a bare `emitPeerPrefill` (tests /
+   * standalone harness), matching `onUse`'s own fallback contract.
+   */
+  onUsePeer?: (prefill: PeerPrefill) => void;
 }
 
 const FILTER_MODES: FilterMode[] = ['vara-hf', 'ardop-hf', 'packet'];
@@ -126,7 +148,12 @@ function writeFinderView(view: PersistedFinderView): void {
   }
 }
 
-export function StationFinderPanel({ onClose, activePrefillMode, onUse }: StationFinderPanelProps) {
+export function StationFinderPanel({
+  onClose,
+  activePrefillMode,
+  onUse,
+  onUsePeer,
+}: StationFinderPanelProps) {
   // tuxlink-liqs9: seed the finder view from the operator's last session so a
   // close/reopen restores where they left off. Read ONCE at mount (lazy);
   // re-persisted by the effect below.
@@ -141,7 +168,16 @@ export function StationFinderPanel({ onClose, activePrefillMode, onUse }: Statio
   const [enabledModes, setEnabledModes] = useState<Set<FilterMode>>(
     () => new Set(persisted0.modes ?? FILTER_MODES),
   );
-  const [selectedKey, setSelectedKey] = useState<string | null>(persisted0.selectedKey ?? null);
+  // Task delta2 (spec §6 reconciliation): the rail selection is now a
+  // gateway-or-peer union (see `FinderSelection` above). Only the gateway
+  // case is persisted across a close/reopen (`writeFinderView` below writes
+  // `selectedKey` only) — a peer selection is a map-click within the current
+  // session, not a durable "last station" choice, and `AggregatedPeer`
+  // objects aren't a stable thing to round-trip through localStorage anyway.
+  const [selection, setSelection] = useState<FinderSelection>(
+    persisted0.selectedKey ? { kind: 'gateway', key: persisted0.selectedKey } : null,
+  );
+  const selectedKey = selection?.kind === 'gateway' ? selection.key : null;
   const [utcHour] = useState(currentUtcHour);
   // `null` is a valid "no radius" choice, so distinguish it from "not persisted".
   const [radiusMi, setRadiusMi] = useState<number | null>(
@@ -409,16 +445,20 @@ export function StationFinderPanel({ onClose, activePrefillMode, onUse }: Statio
             operatorGrid={grid}
             tiers={reach.tiers}
             selectedKey={selectedKey}
-            onSelect={(s) => setSelectedKey(stationKey(s))}
+            onSelect={(s) => setSelection({ kind: 'gateway', key: stationKey(s) })}
+            onSelectPeer={(peer) => setSelection({ kind: 'peer', peer })}
+            selectedPeerId={selection?.kind === 'peer' ? selection.peer.id : null}
           />
           <StationRail
             station={selected}
+            peer={selection?.kind === 'peer' ? selection.peer : null}
             prediction={pred.prediction}
             predictionStatus={pred.status}
             operatorGrid={grid}
             utcHour={utcHour}
             activePrefillMode={activePrefillMode}
             onUse={onUse}
+            onUsePeer={onUsePeer}
             onSaveFavorite={onSaveFavorite}
             isSaved={isSaved}
           />

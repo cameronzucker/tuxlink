@@ -146,6 +146,7 @@ import { usePacketConfig } from '../packet/usePacketConfig';
 import { isBuilt } from '../connections/sessionTypes';
 import { connectFor, abortFor, MissingTargetError } from '../connections/connectDispatch';
 import { emitGatewayPrefill } from '../favorites/prefillEvent';
+import { emitPeerPrefill, type PeerPrefill } from '../peers/peerPrefillEvent';
 import type { FavoriteDial, StationsFile } from '../favorites/types';
 import { StubPanel } from '../connections/StubPanel';
 import { useInboundSelection } from '../connections/useInboundSelection';
@@ -1571,6 +1572,28 @@ function AppShellInner() {
     [onSelectConnection],
   );
 
+  // Peers↔L3 reconciliation: a peer channel/endpoint click in the finder's Station
+  // tab. Same open-and-arm shape as handleStationUse, with the ONE load-bearing
+  // difference: the modem is armed under the **p2p** intent, not 'cms' — a peer is
+  // the far end itself, not an RMS gateway to relay through. Opening a pane is UI,
+  // not TX; the operator still presses the pane's own Connect.
+  //
+  // This REPLACES the dropped finder rail's connectPeerChannel/connectPeerEndpoint,
+  // which fired a REAL outbound RF dial straight from the browse list with the pane
+  // closed — a connect path unlike every other mode in the app. Peers now reach the
+  // radio the same two-step way gateways do.
+  const handlePeerUse = useCallback(
+    (prefill: PeerPrefill) => {
+      onSelectConnection({
+        sessionType: 'p2p',
+        protocol: prefill.mode as ConnectionKey['protocol'],
+      });
+      emitPeerPrefill(prefill);
+      setCatalogBuilderOpen(false);
+    },
+    [onSelectConnection],
+  );
+
   // bd-tuxlink-kiaa: Connect from the shell-level Favorites home. Identical
   // open-and-arm path to handleStationUse (FavoriteRow's Connect is pure
   // prefill — RADIO-1), minus the finder close: selectedFolder stays
@@ -2226,6 +2249,7 @@ function AppShellInner() {
           <StationFinderPanel
             activePrefillMode={catalogPrefillMode}
             onUse={handleStationUse}
+            onUsePeer={handlePeerUse}
             onClose={() => setCatalogBuilderOpen(false)}
           />
         </Suspense>

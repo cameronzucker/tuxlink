@@ -19,6 +19,18 @@ export function parseFreqInputToHz(input: string): number | null {
 }
 
 /**
+ * Format a raw Hz value (e.g. a peer `Channel.freq_hz`) as the MHz string the
+ * freq input field expects. `7102000` → `"7.102"`. This is the peer-prefill
+ * counterpart of `dialFreqToMhzString` below — a peer channel's freq arrives
+ * as a plain Hz number (`contacts/types.ts::Channel.freq_hz`), never as the
+ * dial-metadata string `dialFreqToMhzString` parses, so it needs its own
+ * (much simpler) formatter rather than round-tripping through a fake dial.
+ */
+export function hzToMhzString(hz: number): string {
+  return String(Number((hz / 1_000_000).toFixed(6)));
+}
+
+/**
  * Normalize a dial's freq metadata into the MHz string the input field expects.
  *
  * The dials that reach a panel carry their freq in TWO magnitudes:
