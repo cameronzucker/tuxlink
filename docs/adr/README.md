@@ -73,6 +73,8 @@ Deciders: <names or session monikers of people involved>
 - [0018 — RADIO-1 gates operator execution of transmitting software, not agent authorship of RF-path code](0018-radio1-gates-operator-execution-not-agent-authorship.md)
 - [0019 — Sonde rebrand and repo extraction](0019-sonde-rebrand-and-extraction.md)
 - [0020 — Linux support matrix and the build-floor policy](0020-linux-support-matrix-and-build-floor.md) — *core targets a modern floor (Trixie+/24.04+, full HEIC); a separate feature-gated low-floor build serves the EmComm Tools (Ubuntu 22.10) audience; the build-floor distro is the system-library budget*
+- [0021 — Tuxlink as a simulation harness](0021-tuxlink-as-simulation-harness.md)
+- [0022 — Features are built whole: no arbitrary splitting, deferral, or delay](0022-ban-autonomous-agent-issue-splitting-and-deferrals.md) — *a feature ships whole and wire-walked, or stays in progress; no shippable inert slice + deferred remainder, no authorization escape hatch (renumbered from a colliding 0018)*
 
 ## References
 
