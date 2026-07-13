@@ -202,6 +202,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Off-air WWV capture (tuxlink-l44dm) is RECEIVE-ONLY + ungated; the mock
         // is used in both branches (there is no scenario-seeded WWV world).
         wwv: Arc::new(mocks::MockWwv),
+        // FT-8 is receive-only + ungated + non-tainting; like provisioning, the
+        // mock serves both branches (the scenario World seeds no FT-8 decodes).
+        ft8: Arc::new(mocks::MockFt8),
     };
     let router = TuxlinkMcp::new(Arc::new(state));
 

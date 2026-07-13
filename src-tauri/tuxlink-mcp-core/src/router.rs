@@ -1148,6 +1148,74 @@ impl TuxlinkMcp {
             .map_err(write_err)?;
         Ok(CallToolResult::success(vec![ContentBlock::json(mid)?]))
     }
+
+    // ----- FT-8 listener (receive-only; no taint, no gate) -----
+    //
+    // The FT-8 listener never keys the transmitter, so none of these six tools
+    // pass through `guarded_egress`. None of them taint either: FT-8's payload is
+    // 77 bits over a fixed message-type set, and free text is hard-capped at 13
+    // chars of a restricted alphabet — a prompt injection does not fit. Tainting
+    // decodes would lock transmit after listening and break the actual FT-8 loop
+    // (listen, then work the station you heard). `ft8_set_band` DOES move the dial
+    // via CAT — a real-world side effect, but not a transmission.
+
+    #[tool(
+        name = "ft8_status",
+        description = "Report the FT-8 listener's state: whether it is listening, on which band and dial frequency, which audio device, and what is blocking it if it cannot start. Call this before ft8_heard_stations if no stations come back — the listener may simply not be running. Receive-only. Does not taint. Read-only."
+    )]
+    pub async fn ft8_status(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self.state.ft8.status().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
+        name = "ft8_heard_stations",
+        description = "List the amateur stations heard on FT-8 recently, deduplicated: callsign, Maidenhead grid, best signal-to-noise ratio in dB, how many times heard, and when last heard. This is how to answer 'who am I hearing' / 'what stations are on this band'. Requires the listener to be running (see ft8_start_listening). Returns an empty list if nothing has decoded yet. Read-only; does not taint."
+    )]
+    pub async fn ft8_heard_stations(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self.state.ft8.heard_stations().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
+        name = "ft8_start_listening",
+        description = "Start the FT-8 listener on the configured band and audio device. RECEIVE-ONLY: this does not transmit and does not require send authority. Returns an error naming what is missing if no audio device is configured."
+    )]
+    pub async fn ft8_start_listening(&self) -> Result<CallToolResult, ErrorData> {
+        self.state.ft8.start().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json("ok")?]))
+    }
+
+    #[tool(
+        name = "ft8_stop_listening",
+        description = "Stop the FT-8 listener and release the audio device."
+    )]
+    pub async fn ft8_stop_listening(&self) -> Result<CallToolResult, ErrorData> {
+        self.state.ft8.stop().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json("ok")?]))
+    }
+
+    #[tool(
+        name = "ft8_set_band",
+        description = "Set the FT-8 band (e.g. \"20m\", \"40m\"). If rig CAT control is configured this QSYs the radio's dial to that band's FT-8 frequency. Does not transmit."
+    )]
+    pub async fn ft8_set_band(
+        &self,
+        params: Parameters<BandParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(BandParams { band }) = params;
+        self.state.ft8.set_band(&band).await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json("ok")?]))
+    }
+
+    #[tool(
+        name = "ft8_list_audio_devices",
+        description = "List the audio capture devices the FT-8 listener can use, with the stable id to select. Use when ft8_status reports it is blocked needing a device."
+    )]
+    pub async fn ft8_list_audio_devices(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self.state.ft8.list_audio_devices().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
 }
 
 /// `{ "callsign": "W1AW" }` — input for `p2p_peer_password_status`.
@@ -1199,6 +1267,13 @@ pub struct QueryParams {
 pub struct SlugParams {
     /// The `slug` of a documentation page, exactly as returned by `docs_search`.
     pub slug: String,
+}
+
+/// `{ "band": "20m" }` — input for `ft8_set_band`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct BandParams {
+    /// The amateur band to set the FT-8 listener to (e.g. `"20m"`, `"40m"`).
+    pub band: String,
 }
 
 /// `{ "freq_hz": 7104000 }` — input for `rig_tune`.
@@ -1991,9 +2066,16 @@ mod tests {
         // RECEIVE-ONLY WWV availability probe (tuxlink-l44dm): a CAT-config read,
         // no radio traffic at all — it must not taint.
         h.wwv_offair_available().await.unwrap();
+        // FT-8 reads are receive-only. Their decodes carry a 77-bit payload with
+        // free text capped at 13 chars of a restricted alphabet — no injection
+        // fits, so they must NOT taint (tainting would lock transmit after
+        // listening and break the listen-then-work-the-station loop).
+        h.ft8_status().await.unwrap();
+        h.ft8_heard_stations().await.unwrap();
+        h.ft8_list_audio_devices().await.unwrap();
         assert!(
             !h.state.guard.is_tainted(),
-            "read-only status/config/docs/devices tools must NOT taint a fresh guard"
+            "read-only status/config/docs/devices/ft8 tools must NOT taint a fresh guard"
         );
     }
 

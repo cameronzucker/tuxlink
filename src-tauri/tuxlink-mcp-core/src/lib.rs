@@ -29,7 +29,7 @@ pub mod transport_uds;
 pub mod validate;
 
 pub use ports::{
-    AbortPort, ComposePort, ConfigPort, DevicePort, EgressPort, EgressPortError, LogPort,
+    AbortPort, ComposePort, ConfigPort, DevicePort, EgressPort, EgressPortError, Ft8Port, LogPort,
     MailboxPort, PortError, PredictionPort, ProvisionPort, SearchPort, StationPort, StatusPort,
     WritePort, WritePortError, WwvPort,
 };
@@ -100,6 +100,8 @@ pub struct McpState {
     /// `vara_install_start` is NON-TRANSMIT (installs software via pkexec's own
     /// password prompt) so it does NOT pass through the transmit consent gate.
     pub provision: Arc<dyn ProvisionPort>,
+    /// FT-8 listener. Receive-only; none taint, none egress-gated.
+    pub ft8: Arc<dyn Ft8Port>,
 }
 
 /// Serializable shape returned by the `server_info` tool.
@@ -163,7 +165,8 @@ pub mod test_support {
         AbortPort, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto, AudioDevicesDto,
         BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto, ChannelReliabilityDto,
         ComposeDraftDto, ComposePort, ConfigPort, ConfigViewDto, DevicePort, DocBodyDto,
-        DocsHitDto, EgressPort, EgressPortError, FolderDto, GatewayAntennaDto, GatewayDto,
+        DocsHitDto, EgressPort, EgressPortError, FolderDto, Ft8AudioDeviceDto, Ft8HeardStationDto,
+        Ft8Port, Ft8StatusDto, GatewayAntennaDto, GatewayDto,
         GribRequestDto,
         LogLineDto, LogPort, MailboxPort, MessageMetaDto, ModemStatusDto, PacketConfigDto,
         PacketWriteDto, ParsedMessageDto, PathPredictionDto, PlatformInfoDto, PortError,
@@ -193,6 +196,12 @@ pub mod test_support {
     pub const SEED_GW_GRID: &str = "FN31";
     pub const SEED_GW_FREQ_KHZ: f64 = 7104.0;
     pub const SEED_TX_GRID: &str = "CN87";
+
+    /// FT-8 fixtures: the one station [`MockFt8::heard_stations`] seeds, and the
+    /// slot stamp it reports as both `last_heard_utc_ms` and the listener's
+    /// `last_slot_utc_ms`.
+    pub const SEED_FT8_CALL: &str = "K7RA";
+    pub const SEED_FT8_HEARD_MS: u64 = 1_770_000_000_000;
 
     pub struct MockStatus;
     #[async_trait]
@@ -844,6 +853,54 @@ pub mod test_support {
         }
     }
 
+    /// A mock [`Ft8Port`]. Receive-only and UNGATED by contract: every method
+    /// returns a canned value WITHOUT touching the guard, so a test on a
+    /// DISARMED guard proves the FT-8 surface neither gates nor taints.
+    /// `heard_stations` seeds ONE recognizable station ([`SEED_FT8_CALL`]).
+    pub struct MockFt8;
+
+    #[async_trait]
+    impl Ft8Port for MockFt8 {
+        async fn status(&self) -> Result<Ft8StatusDto, PortError> {
+            Ok(Ft8StatusDto {
+                state: "listening".into(),
+                blocked_reason: None,
+                band: "20m".into(),
+                dial_hz: 14_074_000,
+                sweep_enabled: false,
+                device_name: Some("USB Audio CODEC".into()),
+                last_slot_utc_ms: Some(SEED_FT8_HEARD_MS),
+                last_failure: None,
+            })
+        }
+        async fn heard_stations(&self) -> Result<Vec<Ft8HeardStationDto>, PortError> {
+            Ok(vec![Ft8HeardStationDto {
+                call: SEED_FT8_CALL.into(),
+                grid: Some(SEED_GW_GRID.into()),
+                best_snr_db: -7,
+                freq_hz: 1_240,
+                band: "20m".into(),
+                last_heard_utc_ms: SEED_FT8_HEARD_MS,
+                times_heard: 3,
+            }])
+        }
+        async fn start(&self) -> Result<(), PortError> {
+            Ok(())
+        }
+        async fn stop(&self) -> Result<(), PortError> {
+            Ok(())
+        }
+        async fn set_band(&self, _band: &str) -> Result<(), PortError> {
+            Ok(())
+        }
+        async fn list_audio_devices(&self) -> Result<Vec<Ft8AudioDeviceDto>, PortError> {
+            Ok(vec![Ft8AudioDeviceDto {
+                human_name: "USB Audio CODEC".into(),
+                stable_id: "usb-codec-00".into(),
+            }])
+        }
+    }
+
     /// Build an [`McpState`] around the supplied guard, wiring all mock ports.
     /// The egress/abort flags are internal; use [`state_with_egress_probes`] to
     /// observe whether a gated egress op actually ran or an abort fired.
@@ -898,6 +955,7 @@ pub mod test_support {
             prediction: Arc::new(MockPrediction),
             provision: Arc::new(MockProvision::new(Arc::clone(&op_ran))),
             wwv: Arc::new(MockWwv),
+            ft8: Arc::new(MockFt8),
         })
     }
 
@@ -929,6 +987,7 @@ pub mod test_support {
             prediction: Arc::new(MockPrediction),
             provision: Arc::new(MockProvision::new(Arc::clone(&op_ran))),
             wwv: Arc::new(MockWwv),
+            ft8: Arc::new(MockFt8),
         };
         (state, op_ran, aborted, staged)
     }

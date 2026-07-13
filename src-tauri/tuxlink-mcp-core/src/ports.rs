@@ -1176,3 +1176,85 @@ pub struct StagedRecordDto {
 pub trait OutboxReadPort: Send + Sync {
     async fn list_staged(&self) -> Result<Vec<StagedRecordDto>, PortError>;
 }
+
+// ---------------------------------------------------------------------------
+// FT-8 listener (tuxlink-dof5j) — receive-only. NOTHING here taints and
+// NOTHING here is egress-gated.
+//
+// Taint: FT-8's payload is 77 bits over a fixed message-type set; `Standard`
+// messages are packed callsign/grid/report FIELDS and free text is hard-capped
+// at 13 characters of a restricted alphabet. A prompt injection does not fit in
+// that channel, so tainting would block egress after listening — breaking the
+// actual FT-8 loop (listen, then work the station you heard) to defend a threat
+// the channel cannot carry. The threat model is calibrated to the CHANNEL's
+// capacity, not the field's type.
+//
+// Gate: the listener never keys the transmitter. `set_band` DOES move the dial
+// via CAT — a real-world side effect, but not a transmission, and in the same
+// class as `rig_tune`'s dial move.
+//
+// The agent never sees the monolith's `Ft8Snapshot` (a UI struct: 40 slot
+// records, health flags, sweep-dwell progress, device lists). It gets the
+// purpose-shaped DTOs below.
+// ---------------------------------------------------------------------------
+
+/// One station heard on FT-8, aggregated across the decode ring.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Ft8HeardStationDto {
+    pub call: String,
+    pub grid: Option<String>,
+    /// Best (highest) SNR seen for this station, in dB.
+    pub best_snr_db: i32,
+    /// Audio frequency of the most recent decode, in Hz.
+    pub freq_hz: u32,
+    pub band: String,
+    pub last_heard_utc_ms: u64,
+    /// How many times this station was decoded in the retained window.
+    pub times_heard: u32,
+}
+
+/// Listener state, agent-shaped (NOT the UI's `Ft8Snapshot`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Ft8StatusDto {
+    /// `"stopped"` | `"starting"` | `"listening"` | `"yielded"` | `"blocked"` |
+    /// `"stopping"`.
+    pub state: String,
+    /// Present only when `state == "blocked"`; why it cannot listen.
+    pub blocked_reason: Option<String>,
+    pub band: String,
+    pub dial_hz: u64,
+    pub sweep_enabled: bool,
+    pub device_name: Option<String>,
+    pub last_slot_utc_ms: Option<u64>,
+    pub last_failure: Option<String>,
+}
+
+/// One audio capture device the FT-8 listener can be pointed at. `stable_id` is
+/// the value the operator/agent selects by.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Ft8AudioDeviceDto {
+    pub human_name: String,
+    pub stable_id: String,
+}
+
+/// FT-8 listener. Receive-only: nothing here keys the transmitter, so nothing
+/// here is egress-gated. Decodes do not taint (see the module note above).
+/// Object-safe so [`crate::McpState`] can hold it as `Arc<dyn Ft8Port>`.
+#[async_trait]
+pub trait Ft8Port: Send + Sync {
+    /// Report the listener's state, band/dial, sweep, device, and what is
+    /// blocking it. Read-only; does not taint or gate.
+    async fn status(&self) -> Result<Ft8StatusDto, PortError>;
+    /// The deduped stations heard in the retained decode window, most recently
+    /// heard first. Read-only; does not taint or gate.
+    async fn heard_stations(&self) -> Result<Vec<Ft8HeardStationDto>, PortError>;
+    /// Start the listener (RECEIVE-ONLY; never transmits).
+    async fn start(&self) -> Result<(), PortError>;
+    /// Stop the listener and release the audio device.
+    async fn stop(&self) -> Result<(), PortError>;
+    /// Set the FT-8 band. QSYs the rig's dial via CAT when rig control is
+    /// configured and the listener is running. Never transmits.
+    async fn set_band(&self, band: &str) -> Result<(), PortError>;
+    /// Enumerate the audio capture devices the listener can use.
+    async fn list_audio_devices(&self) -> Result<Vec<Ft8AudioDeviceDto>, PortError>;
+}
