@@ -1622,6 +1622,13 @@ pub fn run() {
                         provision: std::sync::Arc::new(
                             crate::mcp_ports::MonolithProvisionPort::new(h.clone()),
                         ),
+                        // tuxlink-dof5j: the FT-8 listener. Receive-only — it
+                        // never keys the transmitter, so none of its methods
+                        // gate; its decodes carry no free-form text worth
+                        // tainting (77-bit payload, 13-char capped free text).
+                        ft8: std::sync::Arc::new(crate::mcp_ports::MonolithFt8Port::new(
+                            h.clone(),
+                        )),
                     });
                     let router = tuxlink_mcp_core::router::TuxlinkMcp::new(mcp_state);
 
@@ -1709,6 +1716,8 @@ pub fn run() {
                     stations: std::sync::Arc::new(crate::mcp_ports::MonolithStationPort::new(h_elmer.clone(), guard_elmer.clone())),
                     prediction: std::sync::Arc::new(crate::mcp_ports::MonolithPredictionPort::new(h_elmer.clone())),
                     provision: std::sync::Arc::new(crate::mcp_ports::MonolithProvisionPort::new(h_elmer.clone())),
+                    // tuxlink-dof5j: FT-8 listener. Receive-only; never gates, never taints.
+                    ft8: std::sync::Arc::new(crate::mcp_ports::MonolithFt8Port::new(h_elmer.clone())),
                 });
 
                 // Perform the async MCP duplex handshake synchronously from setup.
