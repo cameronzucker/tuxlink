@@ -59,11 +59,6 @@ impl MeterDto {
     pub(crate) fn in_use() -> Self {
         Self { rms_dbfs: FLOOR_DBFS, state: "in-use".into(), detail: None }
     }
-    /// A genuine open/IO failure that is NOT reserved/busy (device vanished,
-    /// unsupported format, other errno) — the bar shows an error indicator.
-    pub(crate) fn error() -> Self {
-        Self { rms_dbfs: FLOOR_DBFS, state: "error".into(), detail: None }
-    }
     /// `error`, carrying the underlying ALSA diagnostic (operator live-test
     /// 2026-07-12: a bare "meter unavailable" is undiagnosable in the field).
     pub(crate) fn error_with(e: &crate::ft8::traits::SourceError) -> Self {
@@ -275,7 +270,7 @@ mod tests {
     #[test]
     fn in_use_and_error_dtos_are_tagged() {
         assert_eq!(MeterDto::in_use().state, "in-use");
-        assert_eq!(MeterDto::error().state, "error");
+        assert_eq!(MeterDto::error_with(&SourceError::Absent).state, "error");
         assert!(MeterDto::in_use().rms_dbfs.is_finite());
     }
 }
