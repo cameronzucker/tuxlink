@@ -14,10 +14,11 @@
 // plain `position:fixed` rects recomputed on resize/scroll/ResizeObserver/rAF.
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react';
 import { useHints } from './HintProvider';
 import { TOUR_STOPS } from './tourRegistry';
 import type { HintEntry } from './types';
+import { findMountedAnchor } from './domAnchor';
 import './HintOverlay.css';
 
 interface Rect {
@@ -70,7 +71,7 @@ export function HintOverlay() {
     const anchorAttr = entry.anchor;
 
     function reposition() {
-      const el = document.querySelector(`[data-tour-anchor="${anchorAttr}"]`);
+      const el = findMountedAnchor(anchorAttr);
       setGeom({ id, rect: el ? rectOf(el) : null });
     }
     reposition();
@@ -78,7 +79,10 @@ export function HintOverlay() {
     window.addEventListener('resize', reposition);
     window.addEventListener('scroll', reposition, true);
 
-    const el = document.querySelector(`[data-tour-anchor="${anchorAttr}"]`);
+    // Finding #1: a zero-rect anchor (e.g. RadioDrawer's `display:contents`
+    // root at desktop widths) is treated as anchor-missing by findMountedAnchor
+    // above, so `el` here is null too — nothing to ResizeObserver.
+    const el = findMountedAnchor(anchorAttr);
     let ro: ResizeObserver | undefined;
     if (el && typeof ResizeObserver !== 'undefined') {
       ro = new ResizeObserver(reposition);
@@ -105,7 +109,13 @@ export function HintOverlay() {
     if (handledSkipRef.current === entry.id) return;
     handledSkipRef.current = entry.id;
     if (mode === 'tour') hints.advance();
-    else if (mode === 'single') hints.dismissSingle();
+    // Finding #5: a single hint (tip or point-at) whose anchor is missing at
+    // fire time must be abandoned WITHOUT persisting — dismissSingle() would
+    // mark a tip permanently "seen" even though the operator never saw it.
+    // abandonSingle() clears the active state and leaves tipsSeen untouched
+    // (suppressed-not-consumed), matching the busy-suppression semantics
+    // requestFirstOpenTip already uses elsewhere.
+    else if (mode === 'single') hints.abandonSingle();
   }, [entry, resolved, rect, mode, hints]);
 
   const showSpotlight = entry !== null && resolved && rect !== null;
@@ -183,6 +193,14 @@ export function HintOverlay() {
     }
   }
 
+  // Finding #4: the dim panels sit over live app chrome; a click on one must
+  // not fall through to whatever control is underneath (the hole blocker
+  // already covers the hole itself, so this only ever swallows clicks OUTSIDE
+  // the spotlighted hole).
+  function swallowPanelClick(e: ReactMouseEvent<HTMLDivElement>) {
+    e.stopPropagation();
+  }
+
   if (!entry || !resolved || !popoverVisible) return null;
 
   const titleId = 'hint-overlay-title';
@@ -206,11 +224,13 @@ export function HintOverlay() {
           <div
             className="hint-overlay__panel"
             data-testid="hint-overlay-panel"
+            onClick={swallowPanelClick}
             style={{ top: 0, left: 0, width: '100vw', height: Math.max(0, hole.top) }}
           />
           <div
             className="hint-overlay__panel"
             data-testid="hint-overlay-panel"
+            onClick={swallowPanelClick}
             style={{
               top: hole.top + hole.height,
               left: 0,
@@ -221,11 +241,13 @@ export function HintOverlay() {
           <div
             className="hint-overlay__panel"
             data-testid="hint-overlay-panel"
+            onClick={swallowPanelClick}
             style={{ top: hole.top, left: 0, width: Math.max(0, hole.left), height: hole.height }}
           />
           <div
             className="hint-overlay__panel"
             data-testid="hint-overlay-panel"
+            onClick={swallowPanelClick}
             style={{
               top: hole.top,
               left: hole.left + hole.width,

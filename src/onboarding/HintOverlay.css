@@ -6,7 +6,11 @@
   position: fixed;
   background: color-mix(in srgb, var(--bg) 78%, transparent);
   z-index: 1200;
-  pointer-events: none;
+  /* Finding #4 (fixwave): auto, not none — a panel must catch clicks itself
+   * so they can't fall through to a live app control underneath. The hole
+   * blocker (z-index 1201, transparent) covers the spotlighted hole itself. */
+  pointer-events: auto;
+  cursor: default;
 }
 
 .hint-overlay__blocker {

@@ -276,6 +276,22 @@ function selectConnection(sessTestId: string, protoTestId: string) {
   fireEvent.click(screen.getByTestId(protoTestId));
 }
 
+// jsdom has no layout engine — every element's getBoundingClientRect() is
+// all-zero by default, which fixwave finding #1 (HintOverlay/HintProvider)
+// now treats the same as "anchor not found" (the confirmed live case is
+// RadioDrawer's `display:contents` root; a normal ribbon button like
+// `connect-button` has a REAL non-zero box in production). Stub a realistic
+// rect so tour/tip tests that spotlight a normal (non-display:contents)
+// element see what a real browser would report.
+function stubAnchorRect(testId: string): void {
+  const el = screen.getByTestId(testId);
+  el.getBoundingClientRect = () =>
+    ({
+      top: 100, left: 50, width: 120, height: 40, bottom: 140, right: 170, x: 50, y: 100,
+      toJSON() { return this; },
+    }) as DOMRect;
+}
+
 describe('<AppShell> — Mock B topology', () => {
   beforeEach(() => {
     globalThis.localStorage?.clear?.();
@@ -431,6 +447,12 @@ describe('<AppShell> — Mock B topology', () => {
   it('Help → Replay tour opens the guided tour, spotlighting the Connect button first', async () => {
     renderShell();
     expect(screen.queryByTestId('hint-overlay-popover')).toBeNull();
+    // Fixwave finding #1: jsdom's default all-zero rect now reads as
+    // anchor-missing. connect-button is a normal ribbon button in
+    // production (unlike RadioDrawer's display:contents root), so it has a
+    // real layout box — stub one so the spotlight (not the center fallback)
+    // engages here, matching real-browser behavior.
+    stubAnchorRect('connect-button');
 
     clickMenu('Help', /Replay tour/);
 
@@ -464,6 +486,12 @@ describe('<AppShell> — Mock B topology', () => {
       expect(ric).toHaveBeenCalled();
       // …and the tip has NOT fired yet — deferred, not synchronous.
       expect(screen.queryByTestId('hint-overlay-popover')).toBeNull();
+      // Fixwave finding #1: jsdom's default all-zero rect now reads as
+      // anchor-missing, and 'compose' has fallback:'skip' — without a
+      // realistic rect the tip would auto-abandon silently the instant it
+      // fires instead of showing. rows-pane-compose is a normal toolbar
+      // button in production, so stub a real layout box for it.
+      stubAnchorRect('rows-pane-compose');
 
       // Run the captured idle callbacks: the compose tip surfaces.
       act(() => {

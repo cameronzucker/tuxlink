@@ -42,6 +42,19 @@ function Harness({ onAnchorClick, showMailboxAnchor = false }: { onAnchorClick: 
   );
 }
 
+/** A tip-only harness (no tour): 'find-a-station' has fallback:'skip', so it
+ *  drives the auto-skip path exercised by fixwave findings #3/#5. */
+function TipHarness({ showAnchor = true }: { showAnchor?: boolean }) {
+  const hints = useHints();
+  return (
+    <div>
+      {showAnchor && <div data-tour-anchor="find-a-station" />}
+      <button onClick={() => hints.requestFirstOpenTip('find-a-station')}>requestTip</button>
+      <HintOverlay />
+    </div>
+  );
+}
+
 beforeEach(() => {
   vi.mocked(invoke).mockReset();
   vi.mocked(invoke).mockImplementation(async (cmd: string) => {
@@ -244,5 +257,180 @@ describe('HintOverlay', () => {
     const blocker = await waitFor(() => screen.getByTestId('hint-overlay-blocker'));
     fireEvent.click(blocker);
     expect(onAnchorClick).not.toHaveBeenCalled();
+  });
+
+  // Fixwave finding #1: a zero-rect anchor (present in the DOM, but laid out
+  // with no box — jsdom's default getBoundingClientRect() for any element,
+  // matching the live RadioDrawer `display:contents` shape at desktop widths)
+  // must be treated as anchor-missing: the entry's declared fallback engages
+  // instead of a top-left-corner spotlight.
+  it('fixwave #1: a zero-rect anchor engages the center fallback with no panels/blocker', async () => {
+    render(
+      <HintProvider>
+        <Harness onAnchorClick={() => {}} />
+      </HintProvider>,
+    );
+    await waitFor(() => expect(screen.getByText('Connect')).toBeInTheDocument());
+    // Deliberately NOT calling stubRect — the anchor keeps jsdom's default
+    // all-zero rect, exactly the display:contents shape.
+
+    fireEvent.click(screen.getByText('startTour'));
+
+    const popover = await waitFor(() => screen.getByTestId('hint-overlay-popover'));
+    expect(popover).toHaveClass('hint-overlay__popover--center');
+    expect(screen.queryAllByTestId('hint-overlay-panel')).toHaveLength(0);
+    expect(screen.queryByTestId('hint-overlay-blocker')).toBeNull();
+  });
+
+  // Fixwave findings #2/#3: Enter/Space activation on the popover's own
+  // buttons must not double-fire, must not be swallowed, and consumed keys
+  // (Escape, and Enter/Arrows outside the popover) must not leak past the
+  // overlay to a listener underneath it.
+  describe('fixwave #2/#3: keyboard policy — no double-advance, native activation preserved, handled keys consumed', () => {
+    it('Enter on the focused Next button does not double-advance', async () => {
+      render(
+        <HintProvider>
+          <Harness onAnchorClick={() => {}} />
+        </HintProvider>,
+      );
+      await waitFor(() => expect(screen.getByText('Connect')).toBeInTheDocument());
+      stubRect(screen.getByText('Connect'), ANCHOR_RECT);
+      fireEvent.click(screen.getByText('startTour'));
+
+      const nextBtn = await waitFor(() => screen.getByTestId('hint-overlay-next'));
+      await waitFor(() => expect(document.activeElement).toBe(nextBtn));
+      expect(screen.getByTestId('hint-overlay-live')).toHaveTextContent('Step 1 of 5');
+
+      // Dispatched directly ON the focused button, so e.target === nextBtn —
+      // the capture-phase handler must see it's inside the popover dialog
+      // and do nothing (no preventDefault, no synthesized advance()).
+      const evEnter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+      const preventEnter = vi.spyOn(evEnter, 'preventDefault');
+      nextBtn.dispatchEvent(evEnter);
+      expect(preventEnter).not.toHaveBeenCalled();
+      // Not advanced by our own handler — jsdom doesn't synthesize the
+      // native "Enter-on-button triggers click" behavior a real browser
+      // would have produced from the untouched event above.
+      expect(screen.getByTestId('hint-overlay-live')).toHaveTextContent('Step 1 of 5');
+
+      // Simulate that one real native follow-up click a browser would fire.
+      // Lands on "Step 3 of 5: Contacts", not step 2 — step 1 ('mailbox') has
+      // no anchor rendered in this harness and fallback:'skip', so the
+      // UNRELATED auto-skip effect (HintOverlay.tsx) advances past it
+      // automatically, exactly like the existing "fallback center" test
+      // above. The point under test is that this ONE click produces exactly
+      // ONE user-initiated advance (mailbox -> contacts), not two.
+      fireEvent.click(nextBtn);
+      await waitFor(() => expect(screen.getByTestId('hint-overlay-live')).toHaveTextContent('Step 3 of 5: Contacts'));
+    });
+
+    it('Space on the focused Skip button is not swallowed', async () => {
+      render(
+        <HintProvider>
+          <Harness onAnchorClick={() => {}} />
+        </HintProvider>,
+      );
+      await waitFor(() => expect(screen.getByText('Connect')).toBeInTheDocument());
+      stubRect(screen.getByText('Connect'), ANCHOR_RECT);
+      fireEvent.click(screen.getByText('startTour'));
+
+      const skipBtn = await waitFor(() => screen.getByTestId('hint-overlay-skip'));
+      skipBtn.focus();
+      expect(document.activeElement).toBe(skipBtn);
+
+      const evSpace = new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true });
+      const preventSpace = vi.spyOn(evSpace, 'preventDefault');
+      const stopSpace = vi.spyOn(evSpace, 'stopPropagation');
+      skipBtn.dispatchEvent(evSpace);
+      expect(preventSpace).not.toHaveBeenCalled();
+      expect(stopSpace).not.toHaveBeenCalled();
+
+      // Simulate the native Space-activation click this untouched event
+      // would produce in a real browser.
+      fireEvent.click(skipBtn);
+      await waitFor(() => expect(screen.queryByTestId('hint-overlay-popover')).toBeNull());
+    });
+
+    it('Escape is consumed and does not reach a document-level listener underneath the overlay', async () => {
+      render(
+        <HintProvider>
+          <TipHarness />
+        </HintProvider>,
+      );
+      const anchorDiv = document.querySelector('[data-tour-anchor="find-a-station"]')!;
+      stubRect(anchorDiv, ANCHOR_RECT);
+      // Fires whether config_read has resolved yet or not — pre-hydration it
+      // queues (finding #6) and shows once hydration drains the queue;
+      // post-hydration it shows immediately. Either way the popover appears.
+      fireEvent.click(screen.getByText('requestTip'));
+      await waitFor(() => expect(screen.getByTestId('hint-overlay-popover')).toBeInTheDocument());
+
+      const docListener = vi.fn();
+      document.addEventListener('keydown', docListener);
+      try {
+        const evEsc = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+        document.body.dispatchEvent(evEsc);
+
+        await waitFor(() => expect(screen.queryByTestId('hint-overlay-popover')).toBeNull());
+        expect(docListener).not.toHaveBeenCalled();
+      } finally {
+        document.removeEventListener('keydown', docListener);
+      }
+    });
+  });
+
+  // Fixwave finding #4: the dim panels must swallow clicks themselves rather
+  // than let them fall through to a live app control underneath.
+  describe('fixwave #4: backdrop panels swallow clicks', () => {
+    const HINT_OVERLAY_CSS = import.meta.glob('./HintOverlay.css', {
+      eager: true,
+      query: '?raw',
+      import: 'default',
+    }) as Record<string, string>;
+    const css = HINT_OVERLAY_CSS['./HintOverlay.css'];
+
+    it('the panel rule is pointer-events:auto, not none', () => {
+      expect(css).toMatch(/\.hint-overlay__panel\s*{[^}]*pointer-events:\s*auto;/);
+      expect(css).not.toMatch(/\.hint-overlay__panel\s*{[^}]*pointer-events:\s*none;/);
+    });
+
+    it('clicking a panel does not reach an underlying control spy', async () => {
+      const onAnchorClick = vi.fn();
+      render(
+        <HintProvider>
+          <Harness onAnchorClick={onAnchorClick} />
+        </HintProvider>,
+      );
+      await waitFor(() => expect(screen.getByText('Connect')).toBeInTheDocument());
+      stubRect(screen.getByText('Connect'), ANCHOR_RECT);
+      fireEvent.click(screen.getByText('startTour'));
+
+      const panels = await waitFor(() => {
+        const els = screen.getAllByTestId('hint-overlay-panel');
+        expect(els).toHaveLength(4);
+        return els;
+      });
+      fireEvent.click(panels[0]);
+      expect(onAnchorClick).not.toHaveBeenCalled();
+    });
+  });
+
+  // Fixwave finding #5: the overlay's auto-skip path (fallback:'skip', anchor
+  // missing at fire time) must abandon the single hint WITHOUT persisting —
+  // see HintProvider.test.tsx's dedicated abandonSingle contract test for the
+  // "stays eligible for a future request" half of this finding.
+  it('fixwave #5: an auto-skipped tip does not persist tips_seen', async () => {
+    render(
+      <HintProvider>
+        <TipHarness showAnchor={false} />
+      </HintProvider>,
+    );
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('config_read'));
+    vi.mocked(invoke).mockClear();
+
+    fireEvent.click(screen.getByText('requestTip'));
+    await waitFor(() => expect(screen.queryByTestId('hint-overlay-popover')).toBeNull());
+
+    expect(invoke).not.toHaveBeenCalledWith('config_set_onboarding', expect.anything());
   });
 });

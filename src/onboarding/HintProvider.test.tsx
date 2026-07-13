@@ -38,6 +38,23 @@ function captureListener(): { get: () => PointAtListener | undefined } {
   return { get: () => captured };
 }
 
+/** Gives a test fixture's `[data-tour-anchor]` div a non-zero rect. jsdom's
+ *  default getBoundingClientRect() is all-zero for every element (no real
+ *  layout engine); fixwave finding #1 now treats a zero rect the same as
+ *  "anchor not found" (the confirmed live case is a `display:contents`
+ *  wrapper), so tests exercising the "mounted and visible" path need a real
+ *  fixture anchor to have a real-looking rect, same as HintOverlay.test.tsx's
+ *  stubRect helper. */
+function stubAnchorRect(anchorId: string): void {
+  const el = document.querySelector(`[data-tour-anchor="${anchorId}"]`);
+  if (!el) throw new Error(`stubAnchorRect: no element for anchor "${anchorId}"`);
+  (el as HTMLElement).getBoundingClientRect = () =>
+    ({
+      top: 100, left: 50, width: 120, height: 40, bottom: 140, right: 170, x: 50, y: 100,
+      toJSON() { return this; },
+    }) as DOMRect;
+}
+
 function Probe({ anchors = [] as string[] }: { anchors?: string[] }) {
   const hints = useHints();
   return (
@@ -50,6 +67,7 @@ function Probe({ anchors = [] as string[] }: { anchors?: string[] }) {
       <button onClick={hints.skipTour}>skipTour</button>
       <button onClick={hints.declineOffer}>declineOffer</button>
       <button onClick={hints.dismissSingle}>dismissSingle</button>
+      <button onClick={hints.abandonSingle}>abandonSingle</button>
       <button onClick={() => hints.requestFirstOpenTip('find-a-station')}>requestTip</button>
       {anchors.map((a) => (
         <div key={a} data-tour-anchor={a} />
@@ -192,6 +210,7 @@ describe('HintProvider', () => {
       </HintProvider>,
     );
     await waitFor(() => expect(listener.get()).toBeDefined());
+    stubAnchorRect('contacts');
     act(() => listener.get()!({ payload: { request_id: 1, anchor_id: 'contacts' } }));
     await waitFor(() => expect((activeOf() as { source: string }).source).toBe('point-at'));
     vi.mocked(invoke).mockClear();
@@ -226,18 +245,24 @@ describe('HintProvider', () => {
     expect(preventSwallow).toHaveBeenCalled();
     expect(stopSwallow).toHaveBeenCalled();
 
-    // ArrowRight: passes through AND advances the tour.
+    // ArrowRight: consumed (fixwave finding #3 — a handled key must not also
+    // leak to a listener underneath the overlay) AND advances the tour.
     const evArrow = new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true });
     const preventArrow = vi.spyOn(evArrow, 'preventDefault');
+    const stopArrow = vi.spyOn(evArrow, 'stopPropagation');
     act(() => window.dispatchEvent(evArrow));
-    expect(preventArrow).not.toHaveBeenCalled();
+    expect(preventArrow).toHaveBeenCalled();
+    expect(stopArrow).toHaveBeenCalled();
     await waitFor(() => expect(activeOf()).toEqual({ kind: 'tour', stepIndex: 1 }));
 
-    // Escape: passes through AND skips (persists + clears active).
+    // Escape: consumed AND skips (persists + clears active) — kept global
+    // regardless of focus location, per the finding #2/#3 fix.
     const evEsc = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
     const preventEsc = vi.spyOn(evEsc, 'preventDefault');
+    const stopEsc = vi.spyOn(evEsc, 'stopPropagation');
     act(() => window.dispatchEvent(evEsc));
-    expect(preventEsc).not.toHaveBeenCalled();
+    expect(preventEsc).toHaveBeenCalled();
+    expect(stopEsc).toHaveBeenCalled();
     await waitFor(() => expect(activeOf()).toBeNull());
 
     // Inactive: no-op passthrough.
@@ -283,6 +308,7 @@ describe('HintProvider', () => {
     });
 
     // Known + mounted, idle -> shown.
+    stubAnchorRect('find-a-station');
     act(() => listener.get()!({ payload: { request_id: 3, anchor_id: 'find-a-station' } }));
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith(
@@ -397,5 +423,137 @@ describe('HintProvider', () => {
     expect((call?.[1] as { validIds: string[] }).validIds).toEqual(
       expect.arrayContaining(['menu:tools', 'menu:help', 'menu:help:replay_tour', 'find-a-station']),
     );
+  });
+
+  // Fixwave finding #5: abandonSingle() (the auto-skip-fallback path) must
+  // clear the active hint WITHOUT persisting tips_seen — suppressed, not
+  // consumed — unlike dismissSingle() (the user-clicked "Got it" path, which
+  // DOES persist for a tip; see bullet 4 above).
+  it('fixwave #5: abandonSingle clears without persisting; the tip stays eligible for a future request', async () => {
+    routeInvoke({ onboarding_tour_completed: true, onboarding_tips_seen: [] });
+    render(
+      <HintProvider>
+        <Probe />
+      </HintProvider>,
+    );
+    await waitFor(() => expect(activeOf()).toBeNull());
+
+    fireEvent.click(screen.getByText('requestTip'));
+    await waitFor(() => {
+      const active = activeOf() as { kind: string; entry: { id: string } };
+      expect(active.kind).toBe('single');
+      expect(active.entry.id).toBe('find-a-station');
+    });
+
+    vi.mocked(invoke).mockClear();
+    fireEvent.click(screen.getByText('abandonSingle'));
+    expect(activeOf()).toBeNull();
+    expect(invoke).not.toHaveBeenCalledWith('config_set_onboarding', expect.anything());
+
+    // Still eligible: requesting the same tip again shows it — tipsSeen was
+    // never mutated by the abandon.
+    fireEvent.click(screen.getByText('requestTip'));
+    await waitFor(() => {
+      const active = activeOf() as { kind: string; entry: { id: string } };
+      expect(active.kind).toBe('single');
+      expect(active.entry.id).toBe('find-a-station');
+    });
+  });
+
+  // Fixwave finding #1: an anchor that IS in the DOM but lays out with a
+  // zero-size rect (the live case is RadioDrawer's `display:contents` root at
+  // desktop widths, anchor "radio-dock") must be treated as anchor-missing —
+  // point-at acks anchor-unmounted, not shown.
+  it('fixwave #1: a zero-rect anchor acks anchor-unmounted, not shown', async () => {
+    const listener = captureListener();
+    routeInvoke({ onboarding_tour_completed: true, onboarding_tips_seen: [] });
+    render(
+      <HintProvider>
+        <Probe anchors={['contacts']} />
+      </HintProvider>,
+    );
+    await waitFor(() => expect(listener.get()).toBeDefined());
+    await waitFor(() => expect(activeOf()).toBeNull());
+
+    // 'contacts' IS in the DOM (Probe rendered it) but jsdom's default
+    // getBoundingClientRect() is all-zero — exactly the display:contents
+    // shape. Deliberately do NOT call stubAnchorRect here.
+    act(() => listener.get()!({ payload: { request_id: 20, anchor_id: 'contacts' } }));
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith(
+        'onboarding_point_at_ack',
+        expect.objectContaining({ requestId: 20, outcome: 'anchor-unmounted', openHint: expect.any(String) }),
+      );
+    });
+    expect(invoke).not.toHaveBeenCalledWith(
+      'onboarding_point_at_ack',
+      expect.objectContaining({ requestId: 20, outcome: 'shown' }),
+    );
+    expect(activeOf()).toBeNull();
+  });
+
+  // Fixwave finding #6: requestFirstOpenTip called before config_read
+  // resolves must NOT consult the initialState placeholder
+  // (tourCompleted:true, tipsSeen:[]) — it queues, and is re-checked against
+  // the REAL config once hydration completes.
+  it('fixwave #6: requestFirstOpenTip before hydration queues instead of showing, and drains against the real config', async () => {
+    // Scenario A: the request arrives before config_read resolves; the
+    // resolved tipsSeen is the "everything seen" sentinel — the queued
+    // request must stay suppressed once hydration completes, exactly as a
+    // synchronous post-hydration request would be.
+    let resolveA!: (v: ConfigRead) => void;
+    const configA = new Promise<ConfigRead>((res) => {
+      resolveA = res;
+    });
+    vi.mocked(invoke).mockImplementation((async (cmd: string) => {
+      if (cmd === 'config_read') return configA;
+      return undefined;
+    }) as typeof invoke);
+    const { unmount } = render(
+      <HintProvider>
+        <Probe />
+      </HintProvider>,
+    );
+
+    fireEvent.click(screen.getByText('requestTip'));
+    expect(activeOf()).toBeNull(); // queued, not shown — no premature display
+
+    await act(async () => {
+      resolveA({ onboarding_tour_completed: true, onboarding_tips_seen: ['*'] });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(activeOf()).toBeNull(); // drained against the sentinel -> still nothing
+    unmount();
+
+    // Scenario B: same before-hydration request, but the resolved tipsSeen is
+    // empty — the queued request DOES show once hydration completes.
+    let resolveB!: (v: ConfigRead) => void;
+    const configB = new Promise<ConfigRead>((res) => {
+      resolveB = res;
+    });
+    vi.mocked(invoke).mockImplementation((async (cmd: string) => {
+      if (cmd === 'config_read') return configB;
+      return undefined;
+    }) as typeof invoke);
+    render(
+      <HintProvider>
+        <Probe />
+      </HintProvider>,
+    );
+
+    fireEvent.click(screen.getByText('requestTip'));
+    expect(activeOf()).toBeNull();
+
+    await act(async () => {
+      resolveB({ onboarding_tour_completed: true, onboarding_tips_seen: [] });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      const active = activeOf() as { kind: string; entry: { id: string } };
+      expect(active.kind).toBe('single');
+      expect(active.entry.id).toBe('find-a-station');
+    });
   });
 });
