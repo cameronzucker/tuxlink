@@ -57,6 +57,24 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: "@vitest/*"
         update-types: ["version-update:semver-major"]
+      # pbf 5 is ESM-only and REMOVED the default export, splitting `Pbf` into
+      # named `PbfReader` / `PbfWriter` classes. Our vendored protomaps-leaflet
+      # bundle (src/vendor/protomaps-leaflet/index.js) does `import Pbf from "pbf"`
+      # and constructs it, so the bump fails the vite build outright:
+      #   "default" is not exported by node_modules/pbf/index.js
+      # (PR #1096). This is not a shimmable rename — adopting pbf 5 means
+      # RE-VENDORING protomaps-leaflet against the new API, and upstream must
+      # support it first.
+      #
+      # Note the pin looks odd on purpose: package.json holds `pbf: ^4`, while
+      # @mapbox/vector-tile@3 depends on `pbf: ^5`. pnpm installs BOTH — the
+      # vendored bundle resolves to our pbf 4 (default export intact) and
+      # vector-tile uses pbf 5 internally. Bumping our direct pin collapses them
+      # to a single pbf 5 and breaks the vendor bundle. Leave the pin at ^4.
+      #
+      # Remove this ignore when protomaps-leaflet is re-vendored against pbf 5.
+      - dependency-name: "pbf"
+        update-types: ["version-update:semver-major"]
 
     # Groups bundle related packages into a SINGLE PR so peer-pair version
     # drift can't slip through. Closes the failure mode behind tuxlink-ola6:

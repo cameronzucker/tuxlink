@@ -40,7 +40,8 @@ use tuxlink_mcp_core::ports::{
     BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto, ChannelReliabilityDto, ComposeDraftDto,
     ComposePort, ConfigPort, ConfigViewDto, DevicePort, DocBodyDto, DocsHitDto, EgressPort,
     EgressPortError,
-    FolderDto, GatewayAntennaDto, GatewayDto, GribRequestDto, LogLineDto, LogPort, MailboxPort,
+    FolderDto, Ft8AudioDeviceDto, Ft8HeardStationDto, Ft8Port, Ft8StatusDto,
+    GatewayAntennaDto, GatewayDto, GribRequestDto, LogLineDto, LogPort, MailboxPort,
     MessageMetaDto, ModemStatusDto, OutboxReadPort, PacketConfigDto, PacketWriteDto,
     ParsedMessageDto, PathPredictionDto, PeerChannelDto, PeerDto, PeerListDto,
     PlatformInfoDto, PortError, PositionStatusDto,
@@ -50,6 +51,7 @@ use tuxlink_mcp_core::ports::{
     StagedRecordDto, StationFilterDto, StationListDto, StationModeDto, StationPort, StatusPort,
     UiHintPort, VaraCheckpointDto, VaraConfigDto, VaraEngineDto, VaraInstallStatusDto,
     VaraInstallSummaryDto, VaraProbeDto, VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
+    WwvCaptureDto, WwvPort,
 };
 use tuxlink_mcp_core::validate::{
     validate_address, validate_attachment_dest, validate_body, validate_drive_level,
@@ -2854,6 +2856,81 @@ impl PredictionPort for MonolithPredictionPort {
 }
 
 // ---------------------------------------------------------------------------
+// WWV off-air port (tuxlink-l44dm) — space weather with NO internet.
+//
+// RECEIVE-ONLY. `capture` tunes the rig to the WWV time station over CAT and
+// LISTENS for the next space-weather bulletin, then decodes + ingests it. It
+// never keys the transmitter, so it is NOT an egress act and is NOT routed
+// through `guarded_egress` (the transmit consent gate governs keying a radio,
+// which this never does). It returns parsed numeric indices — never free text
+// off the air — so it is not a taint source either.
+//
+// `wwv_offair_refresh` already runs its blocking capture/decode work on
+// `spawn_blocking` internally, so this adapter awaits it directly.
+// ---------------------------------------------------------------------------
+
+/// Map a [`UiError`](crate::ui_commands::UiError) from the WWV command layer
+/// onto a [`PortError`]. Missing hardware / an unresolvable STT model is
+/// `Unavailable` (a degradation the agent can narrate + retry, not a bug);
+/// everything else is `Internal`. Every message crosses `redact_err` first.
+fn wwv_port_err(e: crate::ui_commands::UiError) -> PortError {
+    use crate::ui_commands::UiError;
+    match e {
+        UiError::NotFound(m) => PortError::Internal(redact_err(m)),
+        UiError::NotConfigured(reason) | UiError::Unavailable { reason } => {
+            PortError::Unavailable(redact_err(reason))
+        }
+        UiError::Rejected(m) => PortError::Internal(redact_err(m)),
+        UiError::AuthFailed { reason } | UiError::Transport { reason } => {
+            PortError::Internal(redact_err(reason))
+        }
+        UiError::Cancelled => PortError::Internal("cancelled".to_string()),
+        UiError::Internal { detail } => PortError::Internal(redact_err(detail)),
+    }
+}
+
+/// [`WwvPort`] adapter over the off-air WWV capture commands. Holds no handle —
+/// both commands read the on-disk config directly (an unused `AppHandle` field
+/// would be dead code), so this is a unit struct.
+pub struct MonolithWwvPort;
+
+#[async_trait]
+impl WwvPort for MonolithWwvPort {
+    async fn capture(&self) -> Result<WwvCaptureDto, PortError> {
+        use crate::catalog::stations_cache::{Clock, SystemClock};
+
+        // Same clock the solar snapshot loader uses — the capture stamps the
+        // ingested snapshot and picks the WWV dial for the current UTC hour.
+        let now_ms = SystemClock.now_millis();
+        let out = crate::wwv_offair::commands::wwv_offair_refresh(now_ms)
+            .await
+            .map_err(wwv_port_err)?;
+
+        // Flatten the optional SolarIndices into the three optional fields. A
+        // no-copy capture carries no indices (nothing was written), so all three
+        // degrade to None and `updated` stays false.
+        let (sfi, a_index, k_index) = match out.indices {
+            Some(i) => (Some(i.sfi), i.a_index, i.k_index),
+            None => (None, None, None),
+        };
+        Ok(WwvCaptureDto {
+            updated: out.updated,
+            no_copy: out.no_copy,
+            source: out.source,
+            sfi,
+            a_index,
+            k_index,
+        })
+    }
+
+    async fn cat_configured(&self) -> Result<bool, PortError> {
+        crate::wwv_offair::commands::wwv_offair_cat_configured()
+            .await
+            .map_err(wwv_port_err)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Provision port (tuxlink-w7212) — VARA-under-WINE setup.
 //
 // The two probes (`vara_engine_available` / `vara_install_status`) are read-only
@@ -3149,6 +3226,268 @@ pub(crate) async fn approval_gated_flush(
         EgressPortError::Denied(msg) => FlushError::Denied(msg),
         EgressPortError::Failed(msg) => FlushError::Failed(msg),
     })
+}
+
+// ---------------------------------------------------------------------------
+// FT-8 listener port (tuxlink-dof5j).
+//
+// Receive-only: NOTHING here calls `guarded_egress` and NOTHING here taints.
+// The listener never keys the transmitter (`set_band` moves the DIAL via CAT —
+// a side effect, not a transmission, in the same class as `rig_tune`), and an
+// FT-8 decode is a 77-bit payload over a fixed message-type set whose free-text
+// variant is capped at 13 characters of a restricted alphabet — a channel that
+// cannot carry a prompt injection.
+//
+// The agent never sees `Ft8Snapshot` (a UI struct: 40 slot records, health
+// flags, sweep-dwell progress, device lists). `status()` curates it down to the
+// eight fields an operator question actually needs, and `heard_stations()`
+// folds the decode ring into deduped stations.
+//
+// Every method reuses the `*_inner(&Ft8ListenerState)` seam the Tauri commands
+// call (`crate::ft8::commands`) — the SAME validation, persistence, QSY, and
+// wedged-refusal logic, never a reimplementation. Those fns are blocking, so
+// they run on `tauri::async_runtime::spawn_blocking`, exactly as the commands do.
+// ---------------------------------------------------------------------------
+
+use crate::ft8::commands::{
+    ft8_list_devices_inner, ft8_listener_start_inner, ft8_listener_stop_inner, ft8_set_band_inner,
+};
+use crate::ft8::records::{BlockedReasonDto, ServiceAxisDto, SlotRecord};
+use crate::ft8::service::Ft8ListenerState;
+
+/// Plain-language reason the listener cannot listen. The agent relays this to
+/// the operator verbatim, so it names the fix, not the enum variant.
+fn ft8_blocked_reason(reason: BlockedReasonDto) -> &'static str {
+    match reason {
+        BlockedReasonDto::DeviceAbsent => {
+            "the configured audio capture device is not plugged in (it is retried automatically \
+             when it reappears)"
+        }
+        BlockedReasonDto::NeedsDeviceSelection => {
+            "no audio capture device has been selected yet — call ft8_list_audio_devices and pick \
+             one in Settings"
+        }
+        BlockedReasonDto::WsjtxAbsent => {
+            "the jt9 decoder (shipped with WSJT-X) could not be found on this system"
+        }
+        BlockedReasonDto::UnsupportedSampleRate => {
+            "the selected audio device rejected the capture format the decoder needs"
+        }
+        BlockedReasonDto::CaptureWedged => {
+            "the audio capture thread is wedged and may still hold the sound card; restart Tuxlink \
+             to recover"
+        }
+    }
+}
+
+/// Split the listener's service axis into the agent-facing `state` token plus
+/// the `blocked_reason` that is populated ONLY on the `blocked` axis.
+fn ft8_axis_tokens(axis: ServiceAxisDto) -> (&'static str, Option<String>) {
+    match axis {
+        ServiceAxisDto::Stopped => ("stopped", None),
+        ServiceAxisDto::Starting => ("starting", None),
+        ServiceAxisDto::Listening => ("listening", None),
+        ServiceAxisDto::Yielded => ("yielded", None),
+        ServiceAxisDto::Stopping => ("stopping", None),
+        ServiceAxisDto::Blocked { reason } => {
+            ("blocked", Some(ft8_blocked_reason(reason).to_string()))
+        }
+    }
+}
+
+/// Fold the decode ring into DEDUPED heard stations — the substance of
+/// `ft8_heard_stations`.
+///
+/// A free function (not a method) so it is unit-testable without Tauri managed
+/// state: it takes only the ring the snapshot already carries.
+///
+/// Rules:
+/// - Key on `from_call`. A decode with `from_call: None` is SKIPPED — an
+///   unparsed/partial line names no station, and a station we cannot name is
+///   not a heard station.
+/// - `best_snr_db` = the MAX snr across that call's decodes (its best showing,
+///   which is what an operator means by "how well am I hearing them").
+/// - `times_heard` = how many decodes carried that call in the retained window.
+/// - `grid` = the FIRST `Some(grid)` seen and then RETAINED: grids do not
+///   change, and most FT-8 messages omit the grid, so a later gridless decode
+///   must not erase one we already learned.
+/// - `freq_hz` / `band` / `last_heard_utc_ms` come from the MOST RECENT decode
+///   (highest `slot_utc_ms`) — a station that QSYs is reported where it is now.
+///   `band` comes from the SlotRecord (the decode itself carries only the audio
+///   offset within the slot).
+/// - Sorted most-recently-heard FIRST (the order the operator asks in), with the
+///   callsign as a deterministic tie-break so equal stamps do not ride on
+///   HashMap iteration order.
+fn aggregate_heard(ring: &[SlotRecord]) -> Vec<Ft8HeardStationDto> {
+    use std::collections::HashMap;
+
+    let mut by_call: HashMap<String, Ft8HeardStationDto> = HashMap::new();
+    for slot in ring {
+        for decode in &slot.decodes {
+            // A decode we cannot attribute to a callsign is not a heard station.
+            let Some(call) = decode.from_call.as_deref() else {
+                continue;
+            };
+            match by_call.get_mut(call) {
+                Some(station) => {
+                    station.times_heard = station.times_heard.saturating_add(1);
+                    if decode.snr_db > station.best_snr_db {
+                        station.best_snr_db = decode.snr_db;
+                    }
+                    // Retain a grid once seen; never let a later gridless decode
+                    // erase it.
+                    if station.grid.is_none() {
+                        station.grid.clone_from(&decode.grid);
+                    }
+                    // `>=` so that when two decodes share a slot stamp, the later
+                    // one in ring order wins — deterministic, and the ring is
+                    // already in chronological order.
+                    if decode.slot_utc_ms >= station.last_heard_utc_ms {
+                        station.last_heard_utc_ms = decode.slot_utc_ms;
+                        station.freq_hz = decode.freq_hz;
+                        station.band.clone_from(&slot.band);
+                    }
+                }
+                None => {
+                    by_call.insert(
+                        call.to_string(),
+                        Ft8HeardStationDto {
+                            call: call.to_string(),
+                            grid: decode.grid.clone(),
+                            best_snr_db: decode.snr_db,
+                            freq_hz: decode.freq_hz,
+                            band: slot.band.clone(),
+                            last_heard_utc_ms: decode.slot_utc_ms,
+                            times_heard: 1,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    let mut stations: Vec<Ft8HeardStationDto> = by_call.into_values().collect();
+    stations.sort_by(|a, b| {
+        b.last_heard_utc_ms
+            .cmp(&a.last_heard_utc_ms)
+            .then_with(|| a.call.cmp(&b.call))
+    });
+    stations
+}
+
+/// [`Ft8Port`] adapter over the Tauri-managed `Arc<Ft8ListenerState>`.
+pub struct MonolithFt8Port {
+    app: AppHandle,
+}
+
+impl MonolithFt8Port {
+    pub fn new(app: AppHandle) -> Self {
+        Self { app }
+    }
+
+    /// Clone the managed listener handle out of Tauri state.
+    ///
+    /// The FT-8 service is OPTIONALLY managed (its setup block is skipped when
+    /// the listener is not stood up), so — exactly like `MonolithSearchPort`'s
+    /// `SearchService` — this uses `try_state` and degrades to
+    /// [`PortError::Unavailable`] rather than panicking the way the command
+    /// extractor would. The `State` guard is dropped before the caller awaits;
+    /// only the `Arc` crosses into `spawn_blocking`.
+    fn listener(&self) -> Result<Arc<Ft8ListenerState>, PortError> {
+        self.app
+            .try_state::<Arc<Ft8ListenerState>>()
+            .map(|state| (*state).clone())
+            .ok_or_else(|| {
+                PortError::Unavailable("the FT-8 listener is not available".to_string())
+            })
+    }
+}
+
+#[async_trait]
+impl Ft8Port for MonolithFt8Port {
+    async fn status(&self) -> Result<Ft8StatusDto, PortError> {
+        let listener = self.listener()?;
+        // `snapshot()` takes the state mutex + (when devices are wanted) does
+        // enumeration I/O — blocking work, off the async runtime.
+        let snap = tauri::async_runtime::spawn_blocking(move || listener.snapshot())
+            .await
+            .map_err(|e| PortError::Internal(format!("ft8 status task failed: {e}")))?;
+        let (state, blocked_reason) = ft8_axis_tokens(snap.service);
+        Ok(Ft8StatusDto {
+            state: state.to_string(),
+            blocked_reason,
+            band: snap.band,
+            dial_hz: snap.dial_hz,
+            // The sweep the OPERATOR configured (`config.ft8.sweep.enabled`) —
+            // the question "is sweep on?" is about the setting, not about which
+            // dwell slot the live sweep happens to be in this instant.
+            sweep_enabled: snap.sweep_config.enabled,
+            device_name: snap.configured_device_name,
+            last_slot_utc_ms: snap.last_slot_utc_ms,
+            last_failure: snap.last_failure.map(redact_err),
+        })
+    }
+
+    async fn heard_stations(&self) -> Result<Vec<Ft8HeardStationDto>, PortError> {
+        let listener = self.listener()?;
+        let snap = tauri::async_runtime::spawn_blocking(move || listener.snapshot())
+            .await
+            .map_err(|e| PortError::Internal(format!("ft8 heard-stations task failed: {e}")))?;
+        Ok(aggregate_heard(&snap.ring_tail))
+    }
+
+    async fn start(&self) -> Result<(), PortError> {
+        let listener = self.listener()?;
+        // RECEIVE-ONLY: deliberately NOT routed through `guarded_egress`. Starting
+        // the listener opens a sound card for CAPTURE; it stands up no
+        // transmit-capable surface (contrast `vara_open_session`, which does).
+        tauri::async_runtime::spawn_blocking(move || ft8_listener_start_inner(&listener))
+            .await
+            .map_err(|e| PortError::Internal(format!("ft8 start task failed: {e}")))?
+            .map_err(|e| PortError::Internal(redact_err(e)))
+    }
+
+    async fn stop(&self) -> Result<(), PortError> {
+        let listener = self.listener()?;
+        tauri::async_runtime::spawn_blocking(move || ft8_listener_stop_inner(&listener))
+            .await
+            .map_err(|e| PortError::Internal(format!("ft8 stop task failed: {e}")))?
+            .map_err(|e| PortError::Internal(redact_err(e)))
+    }
+
+    async fn set_band(&self, band: &str) -> Result<(), PortError> {
+        let listener = self.listener()?;
+        let band = band.to_string();
+        // `ft8_set_band_inner` validates the band against the FT-8 band table
+        // BEFORE persisting, and QSYs the dial only when the listener is already
+        // running with CAT configured. Moving the dial is not a transmission, so
+        // this is ungated (same posture as the `rig_tune` dial move).
+        tauri::async_runtime::spawn_blocking(move || ft8_set_band_inner(&listener, band))
+            .await
+            .map_err(|e| PortError::Internal(format!("ft8 set-band task failed: {e}")))?
+            .map_err(|e| PortError::Internal(redact_err(e)))
+    }
+
+    async fn list_audio_devices(&self) -> Result<Vec<Ft8AudioDeviceDto>, PortError> {
+        let listener = self.listener()?;
+        // Fresh sysfs/ALSA enumeration — blocking.
+        let devices = tauri::async_runtime::spawn_blocking(move || {
+            ft8_list_devices_inner(&listener)
+        })
+        .await
+        .map_err(|e| PortError::Internal(format!("ft8 list-devices task failed: {e}")))?
+        .map_err(|e| PortError::Internal(redact_err(e.detail)))?;
+        Ok(devices
+            .into_iter()
+            .map(|d| Ft8AudioDeviceDto {
+                human_name: d.human_name,
+                // The agent selects by the stable id's VALUE (the same string the
+                // setup rows pass back); the id's `kind` is provenance the agent
+                // has no use for.
+                stable_id: d.stable_id.value,
+            })
+            .collect())
+    }
 }
 
 #[cfg(test)]
@@ -3821,5 +4160,151 @@ mod tests {
         let port = SeededOutboxPort { records: vec![] };
         let result = port.list_staged().await.expect("empty outbox is Ok");
         assert!(result.is_empty(), "empty outbox should return empty vec");
+    }
+
+    // --- FT-8 heard-stations aggregation (tuxlink-dof5j, Task 2) -------------
+    //
+    // `aggregate_heard` is a free function precisely so the fold can be tested
+    // without Tauri managed state: it consumes only the `SlotRecord` ring the
+    // snapshot already carries.
+    mod ft8_heard {
+        use super::super::aggregate_heard;
+        use crate::ft8::records::{BandSource, DecodeDto, RingOutcome, SlotRecord};
+
+        fn decode(
+            slot_utc_ms: u64,
+            snr_db: i32,
+            freq_hz: u32,
+            from_call: Option<&str>,
+            grid: Option<&str>,
+        ) -> DecodeDto {
+            DecodeDto {
+                slot_utc_ms,
+                snr_db,
+                dt_s: 0.2,
+                freq_hz,
+                message: "CQ TEST".to_string(),
+                from_call: from_call.map(str::to_string),
+                to_call: None,
+                grid: grid.map(str::to_string),
+                partial: false,
+            }
+        }
+
+        fn slot(slot_utc_ms: u64, band: &str, decodes: Vec<DecodeDto>) -> SlotRecord {
+            SlotRecord {
+                slot_utc_ms,
+                band: band.to_string(),
+                dial_hz: 14_074_000,
+                band_source: BandSource::CatConfirmed,
+                band_label_confirmed_utc_ms: None,
+                outcome: RingOutcome::Decoded,
+                decodes,
+                partial_salvage: false,
+                lost_frames: 0,
+                boundary_skew_frames: 0,
+                clip_fraction: 0.0,
+                rms_dbfs: -20.0,
+                dwell_slot_index: None,
+            }
+        }
+
+        /// Two decodes of the SAME call collapse to one station that keeps the
+        /// BEST snr and the LATEST freq / band / time, with `times_heard == 2`.
+        /// The best snr is NOT the latest snr and the latest freq is NOT the
+        /// best-snr decode's freq — the fixture crosses them on purpose so a
+        /// "just keep the last one" or "just keep the best one" implementation
+        /// fails.
+        #[test]
+        fn same_call_keeps_best_snr_and_latest_freq_band_and_time() {
+            let ring = vec![
+                slot(1_000, "20m", vec![decode(1_000, -3, 1_200, Some("K7RA"), None)]),
+                slot(1_015, "40m", vec![decode(1_015, -18, 1_850, Some("K7RA"), None)]),
+            ];
+            let heard = aggregate_heard(&ring);
+            assert_eq!(heard.len(), 1, "the two decodes dedupe to one station");
+            let s = &heard[0];
+            assert_eq!(s.call, "K7RA");
+            assert_eq!(s.times_heard, 2, "both decodes count");
+            assert_eq!(s.best_snr_db, -3, "best (highest) snr wins, not the latest");
+            assert_eq!(s.freq_hz, 1_850, "freq comes from the MOST RECENT decode");
+            assert_eq!(s.band, "40m", "band comes from the MOST RECENT decode's slot");
+            assert_eq!(s.last_heard_utc_ms, 1_015);
+        }
+
+        /// A decode with no `from_call` (unparsed / partial) names no station, so
+        /// it is skipped entirely — it neither creates a phantom entry nor
+        /// inflates a real station's `times_heard`.
+        #[test]
+        fn decode_without_from_call_is_skipped() {
+            let ring = vec![slot(
+                1_000,
+                "20m",
+                vec![
+                    decode(1_000, -5, 1_100, Some("W1AW"), None),
+                    decode(1_000, -9, 1_300, None, None),
+                ],
+            )];
+            let heard = aggregate_heard(&ring);
+            assert_eq!(heard.len(), 1, "only the attributable decode yields a station");
+            assert_eq!(heard[0].call, "W1AW");
+            assert_eq!(
+                heard[0].times_heard, 1,
+                "the unattributable decode must not inflate times_heard"
+            );
+        }
+
+        /// A grid seen ONCE is retained forever: grids do not change, and most
+        /// FT-8 messages omit them, so a later gridless decode must not erase a
+        /// grid we already learned.
+        #[test]
+        fn grid_seen_once_is_retained_when_later_decodes_omit_it() {
+            let ring = vec![
+                slot(
+                    1_000,
+                    "20m",
+                    vec![decode(1_000, -5, 1_100, Some("W1AW"), Some("FN31"))],
+                ),
+                slot(1_015, "20m", vec![decode(1_015, -6, 1_100, Some("W1AW"), None)]),
+                slot(1_030, "20m", vec![decode(1_030, -7, 1_100, Some("W1AW"), None)]),
+            ];
+            let heard = aggregate_heard(&ring);
+            assert_eq!(heard.len(), 1);
+            assert_eq!(
+                heard[0].grid.as_deref(),
+                Some("FN31"),
+                "a later gridless decode must not erase the grid"
+            );
+            assert_eq!(heard[0].times_heard, 3);
+        }
+
+        /// Output is sorted MOST-RECENTLY-HEARD FIRST — the order an operator
+        /// asks "who am I hearing" in. The fixture seeds the stations in the
+        /// opposite order so a pass-through of insertion order fails.
+        #[test]
+        fn output_is_sorted_most_recently_heard_first() {
+            let ring = vec![
+                slot(1_000, "20m", vec![decode(1_000, -5, 1_100, Some("OLDEST"), None)]),
+                slot(1_015, "20m", vec![decode(1_015, -5, 1_200, Some("MIDDLE"), None)]),
+                slot(1_030, "20m", vec![decode(1_030, -5, 1_300, Some("NEWEST"), None)]),
+            ];
+            let calls: Vec<String> = aggregate_heard(&ring).into_iter().map(|s| s.call).collect();
+            assert_eq!(calls, vec!["NEWEST", "MIDDLE", "OLDEST"]);
+        }
+
+        /// An empty ring — nothing decoded yet — yields an empty list, NOT an
+        /// error and never a fabricated station.
+        #[test]
+        fn empty_ring_yields_no_stations() {
+            assert!(aggregate_heard(&[]).is_empty());
+        }
+
+        /// A ring of slots that produced NO decodes (band dead) is the same case:
+        /// no stations, no error.
+        #[test]
+        fn ring_with_no_decodes_yields_no_stations() {
+            let ring = vec![slot(1_000, "20m", vec![]), slot(1_015, "20m", vec![])];
+            assert!(aggregate_heard(&ring).is_empty());
+        }
     }
 }

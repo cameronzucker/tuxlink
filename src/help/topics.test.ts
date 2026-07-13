@@ -2,8 +2,32 @@ import { describe, it, expect } from 'vitest';
 import { TOPICS, SECTIONS, getTopicBySlug } from './topics';
 
 describe('topics registry', () => {
-  it('exposes thirty-six topics', () => {
-    expect(TOPICS).toHaveLength(36);
+  // Deliberately NOT a hardcoded count. A magic number here fires on every
+  // legitimate doc addition and teaches you to bump it without thinking, which is
+  // how it stops catching anything. The invariant worth guarding is the one that
+  // actually breaks the Help window: TOPICS is built by globbing
+  // docs/user-guide/*.md and cross-referencing SECTIONS, so the two registries must
+  // agree in BOTH directions. buildTopics() already throws on an ungrouped file;
+  // this catches the reverse — a slug listed in SECTIONS whose markdown is gone.
+  it('every grouped slug has a topic, and every topic is grouped', () => {
+    const topicSlugs = new Set(TOPICS.map((t) => t.slug));
+    const groupedSlugs = SECTIONS.flatMap((s) => s.topicSlugs);
+
+    for (const slug of groupedSlugs) {
+      expect(
+        topicSlugs.has(slug),
+        `SECTIONS lists "${slug}" but no docs/user-guide/${slug}.md was found`,
+      ).toBe(true);
+    }
+    for (const t of TOPICS) {
+      expect(
+        groupedSlugs.includes(t.slug),
+        `docs/user-guide/${t.slug}.md exists but is not grouped in SECTIONS`,
+      ).toBe(true);
+    }
+    expect(TOPICS.length).toBe(groupedSlugs.length);
+    // Sanity floor: the guide exists and did not silently collapse to nothing.
+    expect(TOPICS.length).toBeGreaterThan(30);
   });
 
   it('every topic has a non-empty slug, number, displayName, body, sectionId', () => {

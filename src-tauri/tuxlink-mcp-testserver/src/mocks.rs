@@ -17,7 +17,7 @@ use tuxlink_mcp_core::ports::{
     AbortPort, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto, AudioDevicesDto, BackendStatusDto,
     BluetoothDeviceDto, CatalogEntryDto, ChannelReliabilityDto, ComposeDraftDto, ComposePort,
     ConfigPort, ConfigViewDto, DevicePort, DocBodyDto, DocsHitDto, EgressPort, EgressPortError,
-    FolderDto,
+    FolderDto, Ft8AudioDeviceDto, Ft8HeardStationDto, Ft8Port, Ft8StatusDto,
     GatewayAntennaDto, GatewayDto, GribRequestDto, LogLineDto, LogPort, MailboxPort,
     MessageMetaDto, ModemStatusDto, PacketConfigDto, PacketWriteDto, ParsedMessageDto,
     PathPredictionDto, PeerListDto, PlatformInfoDto, PortError, PositionStatusDto,
@@ -27,6 +27,7 @@ use tuxlink_mcp_core::ports::{
     SolarSnapshotDto, StationFilterDto, StationListDto, StationModeDto, StationPort, StatusPort,
     UiHintPort, VaraCheckpointDto, VaraConfigDto, VaraEngineDto, VaraInstallStatusDto,
     VaraInstallSummaryDto, VaraProbeDto, VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
+    WwvCaptureDto, WwvPort,
 };
 use tuxlink_mcp_core::validate::{
     validate_address, validate_attachment_dest, validate_body, validate_drive_level,
@@ -46,6 +47,11 @@ pub const SEED_GW_CALLSIGN: &str = "W1AW";
 pub const SEED_GW_GRID: &str = "FN31";
 pub const SEED_GW_FREQ_KHZ: f64 = 7104.0;
 pub const SEED_TX_GRID: &str = "CN87";
+/// FT-8 fixtures (tuxlink-dof5j): the one station `MockFt8::heard_stations`
+/// seeds, and the slot stamp it reports as both `last_heard_utc_ms` and the
+/// listener's `last_slot_utc_ms`.
+pub const SEED_FT8_CALL: &str = "K7RA";
+pub const SEED_FT8_HEARD_MS: u64 = 1_770_000_000_000;
 
 pub struct MockStatus;
 
@@ -625,6 +631,29 @@ impl PredictionPort for MockPrediction {
     }
 }
 
+/// A mock [`WwvPort`] (tuxlink-l44dm). `capture` returns a confident decode with
+/// the seeded indices + the voice provenance; `cat_configured` reports the rig
+/// tunable. RECEIVE-ONLY — never touches the guard, so a capture succeeds even
+/// on a disarmed guard (it is not a transmit).
+pub struct MockWwv;
+
+#[async_trait]
+impl WwvPort for MockWwv {
+    async fn capture(&self) -> Result<WwvCaptureDto, PortError> {
+        Ok(WwvCaptureDto {
+            updated: true,
+            no_copy: false,
+            source: "rf-wwv-voice".into(),
+            sfi: Some(150.0),
+            a_index: Some(8.0),
+            k_index: Some(2.0),
+        })
+    }
+    async fn cat_configured(&self) -> Result<bool, PortError> {
+        Ok(true)
+    }
+}
+
 /// A mock [`ProvisionPort`]. The probes report the engine bundled + not-yet-ready
 /// with one pending checkpoint; `vara_install_start` returns a green summary.
 /// Non-transmit, ungated — never touches the guard.
@@ -667,5 +696,54 @@ pub struct MockUiHint;
 impl UiHintPort for MockUiHint {
     async fn point_at(&self, _anchor_id: &str) -> Result<(), PortError> {
         Ok(())
+    }
+}
+
+/// A mock [`Ft8Port`] (tuxlink-dof5j). Receive-only and UNGATED by contract:
+/// every method returns a canned value WITHOUT touching the guard, so the
+/// tier-2 round-trip proves the FT-8 tools answer on a DISARMED, UN-tainted
+/// guard and that calling them neither taints nor gates. `heard_stations`
+/// seeds ONE recognizable station ([`SEED_FT8_CALL`]).
+pub struct MockFt8;
+
+#[async_trait]
+impl Ft8Port for MockFt8 {
+    async fn status(&self) -> Result<Ft8StatusDto, PortError> {
+        Ok(Ft8StatusDto {
+            state: "listening".into(),
+            blocked_reason: None,
+            band: "20m".into(),
+            dial_hz: 14_074_000,
+            sweep_enabled: false,
+            device_name: Some("USB Audio CODEC".into()),
+            last_slot_utc_ms: Some(SEED_FT8_HEARD_MS),
+            last_failure: None,
+        })
+    }
+    async fn heard_stations(&self) -> Result<Vec<Ft8HeardStationDto>, PortError> {
+        Ok(vec![Ft8HeardStationDto {
+            call: SEED_FT8_CALL.into(),
+            grid: Some(SEED_GW_GRID.into()),
+            best_snr_db: -7,
+            freq_hz: 1_240,
+            band: "20m".into(),
+            last_heard_utc_ms: SEED_FT8_HEARD_MS,
+            times_heard: 3,
+        }])
+    }
+    async fn start(&self) -> Result<(), PortError> {
+        Ok(())
+    }
+    async fn stop(&self) -> Result<(), PortError> {
+        Ok(())
+    }
+    async fn set_band(&self, _band: &str) -> Result<(), PortError> {
+        Ok(())
+    }
+    async fn list_audio_devices(&self) -> Result<Vec<Ft8AudioDeviceDto>, PortError> {
+        Ok(vec![Ft8AudioDeviceDto {
+            human_name: "USB Audio CODEC".into(),
+            stable_id: "usb-codec-00".into(),
+        }])
     }
 }

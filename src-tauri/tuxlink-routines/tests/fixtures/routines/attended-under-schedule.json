@@ -1,0 +1,17 @@
+{
+  "routine": "attended-under-schedule-demo",
+  "schema_version": 1,
+  "transmit_mode": "attended",
+  "on_interrupted": "stay",
+  "inputs": [],
+  "triggers": [{ "type": "schedule", "every": "30m", "align": "hour", "if_missed": "skip" }],
+  "tracks": [
+    {
+      "name": "t1",
+      "steps": [
+        { "id": "s1", "action": "radio.connect", "params": {} },
+        { "id": "e1", "control": "end", "failed": false }
+      ]
+    }
+  ]
+}

@@ -68,6 +68,7 @@ export const SECTIONS: readonly HelpSection[] = [
       '12-cat-and-rigctld',
       '13-radio-specific-notes',
       '36-off-air-space-weather',
+      '37-ft8',
     ],
   },
   {

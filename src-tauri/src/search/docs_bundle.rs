@@ -312,4 +312,10 @@ pub static BUNDLED_TOPICS: &[DocTopic<'static>] = &[
         markdown: include_str!("../../../docs/mcp-knowledge/agents-guide.md"),
         source: DocSource::McpKnowledge,
     },
+    DocTopic {
+        slug: "37-ft8",
+        title: "FT-8",
+        markdown: include_str!("../../../docs/user-guide/37-ft8.md"),
+        source: DocSource::UserGuide,
+    },
 ];

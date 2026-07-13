@@ -1,0 +1,18 @@
+{
+  "routine": "retry-zero-attempts-demo",
+  "schema_version": 1,
+  "transmit_mode": "attended",
+  "on_interrupted": "stay",
+  "inputs": [],
+  "triggers": [{ "type": "manual" }],
+  "tracks": [
+    {
+      "name": "t1",
+      "steps": [
+        { "id": "r1", "control": "retry", "step": "s1", "attempts": 0 },
+        { "id": "s1", "action": "local.note", "params": {} },
+        { "id": "e1", "control": "end", "failed": false }
+      ]
+    }
+  ]
+}

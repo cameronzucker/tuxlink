@@ -1638,6 +1638,17 @@ pub fn run() {
                         ui_hint: std::sync::Arc::new(
                             crate::mcp_ports::MonolithUiHintPort::new(h.clone()),
                         ),
+                        // tuxlink-l44dm: off-air WWV space-weather capture.
+                        // RECEIVE-ONLY (tunes the rig and listens; never keys the
+                        // transmitter), so it is ungated and non-tainting.
+                        wwv: std::sync::Arc::new(crate::mcp_ports::MonolithWwvPort),
+                        // tuxlink-dof5j: the FT-8 listener. Receive-only — it
+                        // never keys the transmitter, so none of its methods
+                        // gate; its decodes carry no free-form text worth
+                        // tainting (77-bit payload, 13-char capped free text).
+                        ft8: std::sync::Arc::new(crate::mcp_ports::MonolithFt8Port::new(
+                            h.clone(),
+                        )),
                     });
                     let router = tuxlink_mcp_core::router::TuxlinkMcp::new(mcp_state);
 
@@ -1726,6 +1737,11 @@ pub fn run() {
                     prediction: std::sync::Arc::new(crate::mcp_ports::MonolithPredictionPort::new(h_elmer.clone())),
                     provision: std::sync::Arc::new(crate::mcp_ports::MonolithProvisionPort::new(h_elmer.clone())),
                     ui_hint: std::sync::Arc::new(crate::mcp_ports::MonolithUiHintPort::new(h_elmer.clone())),
+                    // tuxlink-l44dm: RECEIVE-ONLY off-air WWV capture — Elmer's
+                    // only way to refresh space weather with no internet.
+                    wwv: std::sync::Arc::new(crate::mcp_ports::MonolithWwvPort),
+                    // tuxlink-dof5j: FT-8 listener. Receive-only; never gates, never taints.
+                    ft8: std::sync::Arc::new(crate::mcp_ports::MonolithFt8Port::new(h_elmer.clone())),
                 });
 
                 // Perform the async MCP duplex handshake synchronously from setup.
