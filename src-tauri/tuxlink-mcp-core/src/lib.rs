@@ -157,8 +157,9 @@ pub mod test_support {
     use crate::ports::{
         AbortPort, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto, AudioDevicesDto,
         BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto, ChannelReliabilityDto,
-        ComposeDraftDto, ComposePort, ConfigPort, ConfigViewDto, DevicePort, DocsHitDto,
-        EgressPort, EgressPortError, FolderDto, GatewayAntennaDto, GatewayDto, GribRequestDto,
+        ComposeDraftDto, ComposePort, ConfigPort, ConfigViewDto, DevicePort, DocBodyDto,
+        DocsHitDto, EgressPort, EgressPortError, FolderDto, GatewayAntennaDto, GatewayDto,
+        GribRequestDto,
         LogLineDto, LogPort, MailboxPort, MessageMetaDto, ModemStatusDto, PacketConfigDto,
         PacketWriteDto, ParsedMessageDto, PathPredictionDto, PlatformInfoDto, PortError,
         PositionStatusDto, PredictRequestDto, PredictionPort, PrinterDto, ProvisionPort,
@@ -310,9 +311,16 @@ pub mod test_support {
         async fn docs(&self, _query: &str) -> Result<Vec<DocsHitDto>, PortError> {
             Ok(vec![DocsHitDto {
                 title: "Getting started".into(),
-                path: "user-guide/start.md".into(),
+                slug: "user-guide/start.md".into(),
                 snippet: "Connect to a CMS gateway.".into(),
             }])
+        }
+        async fn doc(&self, slug: &str) -> Result<Option<DocBodyDto>, PortError> {
+            Ok(Some(DocBodyDto {
+                slug: slug.to_string(),
+                title: "Test doc".to_string(),
+                body: "Full body text.".to_string(),
+            }))
         }
         async fn catalog(&self) -> Result<Vec<CatalogEntryDto>, PortError> {
             Ok(vec![CatalogEntryDto {
