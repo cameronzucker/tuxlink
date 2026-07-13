@@ -5,20 +5,26 @@
 //! §9 (arbiter), §14 (storage). Plan:
 //! `docs/superpowers/plans/2026-07-13-routines-02-actions-arbiter-mount.md`.
 //!
-//! **Plan 2 Task 1 (this landing):** [`store::DefinitionStore`] (one
-//! `<routine>.json` file per routine, portable — no runtime state in the
-//! definition itself) and [`presets::RadioPresetStore`] (the Radio Preset
-//! entity CRUD, `radio-presets.json` beside `config.json`). Later plan-2
-//! tasks in this module add the radio arbiter, the entity resolver, the real
-//! action catalog, the engine mount, and the Tauri command surface.
+//! **Plan 2 Task 1:** [`store::DefinitionStore`] (one `<routine>.json` file
+//! per routine, portable — no runtime state in the definition itself) and
+//! [`presets::RadioPresetStore`] (the Radio Preset entity CRUD,
+//! `radio-presets.json` beside `config.json`).
+//!
+//! **Plan 2 Task 2 (this landing):** [`arbiter::RadioArbiter`] — the
+//! single-owner lease over a rig, shared between the operator's interactive
+//! sessions and routine-run steps (spec §9). Later plan-2 tasks in this
+//! module add the entity resolver, the real action catalog, the engine
+//! mount, and the Tauri command surface.
 //!
 //! That other, banned six-syllable term for scripted automation never
 //! appears in this module's symbols, JSON keys, or docs (spec Global
 //! Constraints) — the feature is Routines.
 
+pub mod arbiter;
 pub mod presets;
 pub mod store;
 
+pub use arbiter::{ArbiterError, Holder, HolderInfo, RadioArbiter, RadioLease};
 pub use presets::{PresetError, RadioPreset, RadioPresetStore};
 pub use store::{DefinitionStore, RoutineSummary, StoreError};
 
