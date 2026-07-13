@@ -39,7 +39,7 @@
 //! than a stub or a side-path fake — see `actions::cat`'s module doc for
 //! the full recon.
 //!
-//! **Plan 2 Task 4c (this landing):** [`actions::data`] — the `DataService`
+//! **Plan 2 Task 4c:** [`actions::data`] — the `DataService`
 //! seam and the four `data.*` actions (`data.spacewx_wwv`/
 //! `data.spacewx_swpc`/`data.stationlist_update`/`data.read`, spec §6).
 //! `data.spacewx_wwv` ports the frontend's WWV/WWVH `:18`/`:45` broadcast-
@@ -53,9 +53,31 @@
 //! `actions::data`'s module doc for the full recon, including the exact
 //! `catalog::stations::Gateway.frequencies_khz` seam `data.stationlist_update`
 //! populates that Task 5's ARDOP/VARA gateway-frequency resolver (the gap
-//! `actions::radio`'s module doc names) will eventually read. Later plan-2
-//! tasks extend `actions` with `local.rs` and add the engine mount + Tauri
-//! command surface.
+//! `actions::radio`'s module doc names) will eventually read.
+//!
+//! **Plan 2 Task 4d (this landing, final action-catalog task):**
+//! [`actions::local`] — the `LocalService` seam and the five `local.*`
+//! actions (`local.compose`/`local.compose_catalog_request`/
+//! `local.set_identity`/`local.log`/`local.notify`, spec §6). `local.compose`
+//! and `local.compose_catalog_request` both stage a real B2F message via the
+//! exact `winlink_backend::OutboundMessage` + `WinlinkBackend::send_message`
+//! pipeline `ui_commands::message_send`/`catalog::commands::catalog_send_inquiry`
+//! already use. `local.compose`'s run-scoped `from_identity` override closed
+//! a genuine seam gap: `WinlinkBackend` gained a new, backward-compatible
+//! `send_message_as(msg, from: Option<String>)` method (default delegates to
+//! `send_message`; `NativeBackend` overrides it to compose+queue under an
+//! explicit callsign without ever touching the shared `active_identity`
+//! session slot) — see `actions::local`'s module doc for the full rationale.
+//! `local.compose`'s template rendering delegates to the real
+//! `forms::serialize::render_body_template` (`<var field_id>` tokens, the
+//! same renderer the bundled Standard Forms catalog Task 3's `@template:`
+//! resolver already sources from). `local.set_identity` takes NO seam at
+//! all — see its own doc comment for why that is structurally, not just
+//! by-convention, true. This landing also adds `tauri-plugin-notification`
+//! (`Cargo.toml`/`Cargo.lock` + `lib.rs`'s plugin chain) for `local.notify`.
+//! With Task 4d landed, every spec §6 action name is registered in
+//! `actions::build_registry` — Task 5 (engine mount + consent stub +
+//! events) and Task 6 (Tauri commands) are what remain of this plan.
 //!
 //! That other, banned six-syllable term for scripted automation never
 //! appears in this module's symbols, JSON keys, or docs (spec Global

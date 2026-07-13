@@ -5,17 +5,17 @@
 //! envelope-parsing helpers every radio action in `radio.rs` uses. Plan
 //! Task 4b adds the CAT verb seam (`RigService`) and registers the five
 //! `rig.*` actions from `cat.rs`. Plan Task 4c adds the `DataService` seam
-//! and registers the four `data.*` actions from `data.rs`. `local.rs` (plan
-//! Task 4d) extends [`ActionDeps`] with its own service trait object and
-//! [`build_registry`] with its own `registry.register(...)` calls — see the
-//! marked extension point below. Adding that module does not change
-//! anything in this file except that one marked spot.
+//! and registers the four `data.*` actions from `data.rs`. Plan Task 4d adds
+//! the `LocalService` seam and registers the five `local.*` actions from
+//! `local.rs` (`local.set_identity` alone takes no seam at all — see its own
+//! module doc for why).
 //!
 //! Plan: `docs/superpowers/plans/2026-07-13-routines-02-actions-arbiter-mount.md`
 //! Task 4. Spec: `docs/superpowers/specs/2026-07-13-routines-design.md` §6.
 
 pub mod cat;
 pub mod data;
+pub mod local;
 pub mod radio;
 
 use std::sync::Arc;
@@ -246,22 +246,50 @@ pub trait DataService: Send + Sync {
     async fn read_grid(&self) -> Result<Option<String>, String>;
 }
 
+/// The `local.*` action family's delegation seam (spec §6 "Local actions";
+/// plan Task 4d). One trait, not three — mirrors [`DataService`]'s shape:
+/// `local.compose` and `local.compose_catalog_request` (local.rs) share the
+/// SAME [`compose_stage`](LocalService::compose_stage) call (both ultimately
+/// build a [`crate::winlink_backend::OutboundMessage`] and drive it through
+/// the exact outbox pipeline `ui_commands::message_send`/
+/// `catalog::commands::catalog_send_inquiry` use); `local.log` and
+/// `local.notify` are unrelated local I/O with no shared shape, but folding
+/// them into this one trait keeps [`ActionDeps`] from growing one field per
+/// action, following this module's own established `DataService` precedent.
+/// **`local.set_identity` needs no method here at all** — see local.rs's
+/// module doc for why (spec §6: run-scoped, never touches global identity
+/// config, so it takes no seam whatsoever, not even a read one).
+#[async_trait]
+pub trait LocalService: Send + Sync {
+    /// `local.compose` / `local.compose_catalog_request`'s shared outbox
+    /// stage call. `from: None` ⇒ the app's current identity applies
+    /// (mirrors `ui_commands::message_send`); `from: Some(callsign)` ⇒
+    /// `local.compose`'s run-scoped `from_identity` override — see
+    /// [`crate::winlink_backend::WinlinkBackend::send_message_as`]'s doc
+    /// comment for the full rationale (it composes+queues under that exact
+    /// callsign WITHOUT touching the shared, process-wide active-identity
+    /// session slot). Returns the minted MID on success.
+    async fn compose_stage(
+        &self,
+        msg: crate::winlink_backend::OutboundMessage,
+        from: Option<String>,
+    ) -> Result<String, String>;
+
+    /// `local.log`'s real station/session-log append.
+    async fn log_append(&self, message: String) -> Result<(), String>;
+
+    /// `local.notify`'s real Tauri desktop notification.
+    async fn notify(&self, title: Option<String>, message: String) -> Result<(), String>;
+}
+
 // ============================================================================
 // Registry construction
 // ============================================================================
 
 /// Constructor bag [`build_registry`] consumes. `arbiter` is shared by every
 /// `needs_radio` action (radio.rs, cat.rs, data.rs's `data.spacewx_wwv`). The
-/// three radio.rs service seams (`connect`/`aprs`/`listen`) plus cat.rs's
-/// `rig` and data.rs's `data` are wired here; Task 4d adds its OWN
-/// `Arc<dyn LocalService>` field — additive only, so existing `ActionDeps {
-/// arbiter, connect, aprs, listen, rig, data }` construction call sites
-/// (Task 5's session mount, this module's own tests) keep compiling as that
-/// task lands. Suggested shape for the extension (do not add this field
-/// until Task 4d actually lands — an unused trait object field would be dead
-/// weight the registry never registers):
-///
-/// - Task 4d (`local.rs`): `pub local: Arc<dyn LocalService>,`
+/// three radio.rs service seams (`connect`/`aprs`/`listen`), cat.rs's `rig`,
+/// data.rs's `data`, and local.rs's `local` are wired here.
 pub struct ActionDeps {
     pub arbiter: Arc<RadioArbiter>,
     pub connect: Arc<dyn ConnectService>,
@@ -269,13 +297,14 @@ pub struct ActionDeps {
     pub listen: Arc<dyn ListenService>,
     pub rig: Arc<dyn RigService>,
     pub data: Arc<dyn DataService>,
+    pub local: Arc<dyn LocalService>,
 }
 
-/// Builds the action registry. Tasks 4a/4b/4c register the radio.rs, cat.rs,
-/// and data.rs actions; Task 4d extends this function with its own
-/// `registry.register(Arc::new(...))` calls, following the exact pattern
-/// below — a `struct X { arbiter: Arc<RadioArbiter>, service: Arc<dyn
-/// YService> }` implementing `tuxlink_routines::action::Action`.
+/// Builds the action registry. Tasks 4a/4b/4c/4d register the radio.rs,
+/// cat.rs, data.rs, and local.rs actions, following the same pattern
+/// throughout — a `struct X { arbiter: Arc<RadioArbiter>, service: Arc<dyn
+/// YService> }` (or, for actions needing no seam at all, a bare unit struct)
+/// implementing `tuxlink_routines::action::Action`.
 pub fn build_registry(deps: ActionDeps) -> ActionRegistry {
     let mut registry = ActionRegistry::default();
 
@@ -317,9 +346,13 @@ pub fn build_registry(deps: ActionDeps) -> ActionRegistry {
     registry.register(Arc::new(data::StationlistUpdate::new(deps.data.clone())));
     registry.register(Arc::new(data::DataRead::new(deps.data.clone())));
 
-    // ---- Extension point (Task 4d) --------------------------------------
-    // registry.register(Arc::new(local::ComposeMessage::new(...)));
-    // -----------------------------------------------------------------------
+    registry.register(Arc::new(local::ComposeMessage::new(deps.local.clone())));
+    registry.register(Arc::new(local::ComposeCatalogRequest::new(
+        deps.local.clone(),
+    )));
+    registry.register(Arc::new(local::SetIdentity::new()));
+    registry.register(Arc::new(local::LogEntry::new(deps.local.clone())));
+    registry.register(Arc::new(local::Notify::new(deps.local.clone())));
 
     registry
 }

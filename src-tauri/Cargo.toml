@@ -175,6 +175,7 @@ tuxlink-stt = { path = "tuxlink-stt" }
 # `macros` come in transitively via tuxlink-mcp-core; Cargo unifies to a single
 # copy.
 rmcp = { version = "2.1", features = ["client", "transport-async-rw"] }
+tauri-plugin-notification = "2"  # NEW (Routines plan 2 Task 4d) — local.notify desktop notifications
 
 # tuxlink-cumx / G8 — faithful PDF export drives the live form's WebKitGTK view
 # via WebKitPrintOperation. Both crates are already in the build (transitive via
@@ -193,6 +194,13 @@ gtk = "=0.18.2"
 # Release `cargo build` does not resolve dev-dependencies, so `for_test` and
 # other test-support seams stay out of production binaries.
 tuxlink = { path = ".", features = ["test-support"] }
+# `test-util` (mock clock / `#[tokio::test(start_paused = true)]`) is NOT part
+# of tokio's "full" feature bundle ([dependencies] above), so the
+# routines::actions test modules' paused-clock tests need it added here.
+# Cargo unifies features across dep kinds for the same tokio version, so this
+# only turns test-util on for test/bench/example builds, not release —
+# mirrors tuxlink-routines/Cargo.toml's leaf-crate dev-dependencies.
+tokio = { version = "1", features = ["test-util"] }
 # tuxlink-mcp-core with test-support exposes mock ports + state_with_seeded_inbox
 # for the elmer/ integration tests (Task 4 taint-parity + withholding tests).
 tuxlink-mcp-core = { path = "tuxlink-mcp-core", features = ["test-support"] }

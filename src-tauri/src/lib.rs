@@ -526,6 +526,11 @@ pub fn run() {
         // download plus explicit image preview. Save writes decoded bytes to
         // the chosen path; preview returns a bounded image payload on demand.
         .plugin(tauri_plugin_dialog::init())
+        // Routines plan 2 Task 4d: local.notify (routines/actions/local.rs)
+        // needs `AppHandle::notification()` (the `NotificationExt` trait) —
+        // registering here so the extension method resolves once Task 5
+        // mounts the routines action registry; unused by anything else yet.
+        .plugin(tauri_plugin_notification::init())
         // Task 14 (tuxlink-dm8): per-compose-window geometry persistence.
         // `tauri-plugin-window-state` hooks the WebviewWindow lifecycle to
         // save/restore size+position keyed by window label. Registered here
