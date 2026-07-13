@@ -54,8 +54,20 @@ A plain ARM does not clear taint. See the arm/taint model below.
   nearest-first, unknown-distance last.
 - `predict_path` — offline VOACAP HF path reliability/SNR/MUF-day by UTC hour from
   the operator's own grid to a target grid across candidate dial frequencies.
-- `solar_conditions` — current space-weather indices (SFI/A/K) and the sunspot
-  number used in predictions.
+- `solar_conditions` — the **stored** space-weather indices (SFI/A/K) and the
+  sunspot number used in predictions. It reads a cached snapshot and fetches
+  nothing, so the data may be old: check `source` and `updated_at_ms` before
+  presenting it as current. A `source` of `bundled` means the values shipped with
+  the app and have **never** been updated — never report those as today's
+  conditions.
+- `wwv_capture_offair` — refresh the stored indices by capturing the WWV time
+  station's space-weather bulletin **over the operator's own radio**, with no
+  internet. Receive-only (it tunes the radio and listens; it never transmits), so
+  it needs no armed send-authority. Takes about a minute — it waits for the next
+  bulletin. `no_copy: true` means audio was captured but the decode was not
+  confident, and the stored indices were left unchanged.
+- `wwv_offair_available` — whether off-air WWV capture is possible (it needs rig
+  CAT control to tune the dial). Call this before `wwv_capture_offair`.
 
 ### Remediation writes — require armed send-authority AND un-tainted
 

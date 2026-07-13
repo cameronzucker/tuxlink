@@ -50,7 +50,7 @@ use tuxlink_mcp_core::ports::{
     SelectedConnectionDto, SendFormDto, SerialDeviceDto, SessionIntentDto, SolarSnapshotDto,
     StagedRecordDto, StationFilterDto, StationListDto, StationModeDto, StationPort, StatusPort,
     VaraCheckpointDto, VaraConfigDto, VaraEngineDto, VaraInstallStatusDto, VaraInstallSummaryDto,
-    VaraProbeDto, VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
+    VaraProbeDto, VaraStatusDto, VaraWriteDto, WritePort, WritePortError, WwvCaptureDto, WwvPort,
 };
 use tuxlink_mcp_core::validate::{
     validate_address, validate_attachment_dest, validate_body, validate_drive_level,
@@ -2851,6 +2851,81 @@ impl PredictionPort for MonolithPredictionPort {
         // Never errors hard when solar data is merely absent: the loader returns
         // the bundled-SSN fallback (ssn present, indices None, source "bundled").
         Ok(load_solar_snapshot_dto())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WWV off-air port (tuxlink-l44dm) — space weather with NO internet.
+//
+// RECEIVE-ONLY. `capture` tunes the rig to the WWV time station over CAT and
+// LISTENS for the next space-weather bulletin, then decodes + ingests it. It
+// never keys the transmitter, so it is NOT an egress act and is NOT routed
+// through `guarded_egress` (the transmit consent gate governs keying a radio,
+// which this never does). It returns parsed numeric indices — never free text
+// off the air — so it is not a taint source either.
+//
+// `wwv_offair_refresh` already runs its blocking capture/decode work on
+// `spawn_blocking` internally, so this adapter awaits it directly.
+// ---------------------------------------------------------------------------
+
+/// Map a [`UiError`](crate::ui_commands::UiError) from the WWV command layer
+/// onto a [`PortError`]. Missing hardware / an unresolvable STT model is
+/// `Unavailable` (a degradation the agent can narrate + retry, not a bug);
+/// everything else is `Internal`. Every message crosses `redact_err` first.
+fn wwv_port_err(e: crate::ui_commands::UiError) -> PortError {
+    use crate::ui_commands::UiError;
+    match e {
+        UiError::NotFound(m) => PortError::Internal(redact_err(m)),
+        UiError::NotConfigured(reason) | UiError::Unavailable { reason } => {
+            PortError::Unavailable(redact_err(reason))
+        }
+        UiError::Rejected(m) => PortError::Internal(redact_err(m)),
+        UiError::AuthFailed { reason } | UiError::Transport { reason } => {
+            PortError::Internal(redact_err(reason))
+        }
+        UiError::Cancelled => PortError::Internal("cancelled".to_string()),
+        UiError::Internal { detail } => PortError::Internal(redact_err(detail)),
+    }
+}
+
+/// [`WwvPort`] adapter over the off-air WWV capture commands. Holds no handle —
+/// both commands read the on-disk config directly (an unused `AppHandle` field
+/// would be dead code), so this is a unit struct.
+pub struct MonolithWwvPort;
+
+#[async_trait]
+impl WwvPort for MonolithWwvPort {
+    async fn capture(&self) -> Result<WwvCaptureDto, PortError> {
+        use crate::catalog::stations_cache::{Clock, SystemClock};
+
+        // Same clock the solar snapshot loader uses — the capture stamps the
+        // ingested snapshot and picks the WWV dial for the current UTC hour.
+        let now_ms = SystemClock.now_millis();
+        let out = crate::wwv_offair::commands::wwv_offair_refresh(now_ms)
+            .await
+            .map_err(wwv_port_err)?;
+
+        // Flatten the optional SolarIndices into the three optional fields. A
+        // no-copy capture carries no indices (nothing was written), so all three
+        // degrade to None and `updated` stays false.
+        let (sfi, a_index, k_index) = match out.indices {
+            Some(i) => (Some(i.sfi), i.a_index, i.k_index),
+            None => (None, None, None),
+        };
+        Ok(WwvCaptureDto {
+            updated: out.updated,
+            no_copy: out.no_copy,
+            source: out.source,
+            sfi,
+            a_index,
+            k_index,
+        })
+    }
+
+    async fn cat_configured(&self) -> Result<bool, PortError> {
+        crate::wwv_offair::commands::wwv_offair_cat_configured()
+            .await
+            .map_err(wwv_port_err)
     }
 }
 

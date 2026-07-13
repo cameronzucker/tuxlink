@@ -31,7 +31,7 @@ pub mod validate;
 pub use ports::{
     AbortPort, ComposePort, ConfigPort, DevicePort, EgressPort, EgressPortError, Ft8Port, LogPort,
     MailboxPort, PortError, PredictionPort, ProvisionPort, SearchPort, StationPort, StatusPort,
-    WritePort, WritePortError,
+    WritePort, WritePortError, WwvPort,
 };
 pub use router::TuxlinkMcp;
 pub use transport_uds::serve;
@@ -91,6 +91,11 @@ pub struct McpState {
     /// Offline HF propagation prediction + space-weather reads. Read-only —
     /// never taints, never gates.
     pub prediction: Arc<dyn PredictionPort>,
+    /// Off-air WWV space-weather capture (tuxlink-l44dm). RECEIVE-ONLY: tunes
+    /// the rig to WWV and listens, never transmits — so it is NOT routed through
+    /// the transmit consent gate. It yields parsed numeric indices (never free
+    /// text), so it never taints either.
+    pub wwv: Arc<dyn WwvPort>,
     /// VARA-under-WINE provisioning (tuxlink-w7212). The probes are read-only;
     /// `vara_install_start` is NON-TRANSMIT (installs software via pkexec's own
     /// password prompt) so it does NOT pass through the transmit consent gate.
@@ -170,7 +175,7 @@ pub mod test_support {
         SearchResultsDto, SendFormDto, SerialDeviceDto, SessionIntentDto, SolarSnapshotDto,
         StationFilterDto, StationListDto, StationModeDto, StationPort, StatusPort, VaraCheckpointDto,
         VaraConfigDto, VaraEngineDto, VaraInstallStatusDto, VaraInstallSummaryDto, VaraProbeDto,
-        VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
+        VaraStatusDto, VaraWriteDto, WritePort, WritePortError, WwvCaptureDto, WwvPort,
     };
     use crate::validate::{
         validate_address, validate_attachment_dest, validate_body, validate_drive_level,
@@ -825,6 +830,29 @@ pub mod test_support {
         }
     }
 
+    /// A mock [`WwvPort`]. `capture` returns a confident decode (updated, with
+    /// the seeded indices + the voice provenance); `cat_configured` reports the
+    /// rig tunable. RECEIVE-ONLY by construction — it never touches the guard,
+    /// so a capture on a DISARMED guard still succeeds (it is not a transmit).
+    pub struct MockWwv;
+
+    #[async_trait]
+    impl WwvPort for MockWwv {
+        async fn capture(&self) -> Result<WwvCaptureDto, PortError> {
+            Ok(WwvCaptureDto {
+                updated: true,
+                no_copy: false,
+                source: "rf-wwv-voice".into(),
+                sfi: Some(150.0),
+                a_index: Some(8.0),
+                k_index: Some(2.0),
+            })
+        }
+        async fn cat_configured(&self) -> Result<bool, PortError> {
+            Ok(true)
+        }
+    }
+
     /// A mock [`Ft8Port`]. Receive-only and UNGATED by contract: every method
     /// returns a canned value WITHOUT touching the guard, so a test on a
     /// DISARMED guard proves the FT-8 surface neither gates nor taints.
@@ -926,6 +954,7 @@ pub mod test_support {
             stations: Arc::new(MockStation),
             prediction: Arc::new(MockPrediction),
             provision: Arc::new(MockProvision::new(Arc::clone(&op_ran))),
+            wwv: Arc::new(MockWwv),
             ft8: Arc::new(MockFt8),
         })
     }
@@ -957,6 +986,7 @@ pub mod test_support {
             stations: Arc::new(MockStation),
             prediction: Arc::new(MockPrediction),
             provision: Arc::new(MockProvision::new(Arc::clone(&op_ran))),
+            wwv: Arc::new(MockWwv),
             ft8: Arc::new(MockFt8),
         };
         (state, op_ran, aborted, staged)

@@ -26,7 +26,7 @@ use tuxlink_mcp_core::ports::{
     SessionIntentDto,
     SolarSnapshotDto, StationFilterDto, StationListDto, StationModeDto, StationPort, StatusPort,
     VaraCheckpointDto, VaraConfigDto, VaraEngineDto, VaraInstallStatusDto, VaraInstallSummaryDto,
-    VaraProbeDto, VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
+    VaraProbeDto, VaraStatusDto, VaraWriteDto, WritePort, WritePortError, WwvCaptureDto, WwvPort,
 };
 use tuxlink_mcp_core::validate::{
     validate_address, validate_attachment_dest, validate_body, validate_drive_level,
@@ -627,6 +627,29 @@ impl PredictionPort for MockPrediction {
             updated_at_ms: 0,
             source: "bundled".into(),
         })
+    }
+}
+
+/// A mock [`WwvPort`] (tuxlink-l44dm). `capture` returns a confident decode with
+/// the seeded indices + the voice provenance; `cat_configured` reports the rig
+/// tunable. RECEIVE-ONLY — never touches the guard, so a capture succeeds even
+/// on a disarmed guard (it is not a transmit).
+pub struct MockWwv;
+
+#[async_trait]
+impl WwvPort for MockWwv {
+    async fn capture(&self) -> Result<WwvCaptureDto, PortError> {
+        Ok(WwvCaptureDto {
+            updated: true,
+            no_copy: false,
+            source: "rf-wwv-voice".into(),
+            sfi: Some(150.0),
+            a_index: Some(8.0),
+            k_index: Some(2.0),
+        })
+    }
+    async fn cat_configured(&self) -> Result<bool, PortError> {
+        Ok(true)
     }
 }
 
