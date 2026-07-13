@@ -1206,6 +1206,7 @@ mod tests {
         // station-major order, still walks every combination until one
         // connects.
         let arb = arbiter();
+        #[allow(clippy::type_complexity)] // seen-combos capture in a test
         let seen: Arc<Mutex<Vec<(String, Option<String>)>>> = Arc::new(Mutex::new(Vec::new()));
         let s = seen.clone();
         let fake = FakeConnectService::new(move |station, band| {

@@ -1903,6 +1903,45 @@ pub fn run() {
                 }
             }
 
+            // ── Routines engine mount (plan 2 Task 5a, tuxlink routines-p2) ──
+            // Build the RoutinesState facade over the tuxlink-routines engine
+            // (stores + arbiter + action catalog + event sink), manage it so the
+            // Task 6 commands can retrieve `State<'_, Arc<RoutinesState>>`, then
+            // run launch recovery (spec §8) OFF the main thread so a resumed
+            // run's snapshot resolution never blocks launch. Recovery marks
+            // interrupted journals terminally Interrupted, emits
+            // RunFinished{Interrupted}, and re-invokes `on_interrupted: resume`
+            // routines from their journal snapshot. Infallible construction
+            // (all stores open degrade-to-empty; the engine ctor is infallible),
+            // matching the SeqCounterStore/DraftLibrary manage precedents above.
+            {
+                use tauri::Manager as _;
+                let routines_state = std::sync::Arc::new(
+                    crate::routines::session::build_routines_state_for_app(app.handle()),
+                );
+                app.manage(std::sync::Arc::clone(&routines_state));
+                tauri::async_runtime::spawn(async move {
+                    match routines_state.recover().await {
+                        Ok(report) if report.interrupted > 0 => {
+                            tracing::info!(
+                                target: "tuxlink::routines",
+                                interrupted = report.interrupted,
+                                resumed = report.resumed,
+                                "routines launch recovery complete"
+                            );
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            tracing::warn!(
+                                target: "tuxlink::routines",
+                                error = %e,
+                                "routines launch recovery failed"
+                            );
+                        }
+                    }
+                });
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| {

@@ -285,9 +285,12 @@ impl RadioArbiter {
                 // `state.waiters` below (keeps this block trivially
                 // borrow-checkable without relying on disjoint-field NLL
                 // subtleties).
-                let (held_by, since) = {
-                    let active = state.active.as_ref().unwrap();
-                    (render_holder(&active.holder), active.since)
+                let (held_by, since) = match state.active.as_ref() {
+                    Some(active) => (render_holder(&active.holder), active.since),
+                    // Unreachable: this is the `else` arm of `state.active.is_none()`,
+                    // so the holder is present. A `match` (not `.unwrap()`) states
+                    // that to clippy without a redundant `is_none`→`unwrap` pattern.
+                    None => unreachable!("active holder is Some in the busy branch"),
                 };
                 match policy {
                     BusyPolicy::Fail => {
@@ -1422,7 +1425,7 @@ mod tests {
 
         fn op_strategy() -> impl Strategy<Value = Op> {
             prop_oneof![
-                "[a-c]".prop_map(|s| Op::AcquireRun(s)),
+                "[a-c]".prop_map(Op::AcquireRun),
                 Just(Op::AcquireInteractive),
                 Just(Op::Release),
                 Just(Op::OperatorTake),

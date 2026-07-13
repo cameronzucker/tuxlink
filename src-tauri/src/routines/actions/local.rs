@@ -47,10 +47,10 @@
 //!   `NativeBackend` overrides it for real: `from: Some(callsign)` composes
 //!   + queues under that exact callsign via the SAME `compose_message_with_files`
 //!   + `Outbox` store call `send_message` itself makes (refactored into a
-//!   shared private `queue_message` helper), entirely bypassing
-//!   `active_identity()`/config resolution — the override never reads or
-//!   writes the shared slot. `WinlinkBackend` has exactly one production
-//!   implementor (`NativeBackend`), so this addition is non-breaking.
+//!     shared private `queue_message` helper), entirely bypassing
+//!     `active_identity()`/config resolution — the override never reads or
+//!     writes the shared slot. `WinlinkBackend` has exactly one production
+//!     implementor (`NativeBackend`), so this addition is non-breaking.
 //!
 //! - **The catalog-request wire format** — `crate::catalog::composer`
 //!   (verified empirically against a real N7CPZ WLE outbox, per that
@@ -1317,6 +1317,7 @@ mod tests {
 
     #[tokio::test]
     async fn notify_happy_path_threads_title_and_message() {
+        #[allow(clippy::type_complexity)] // observed-tuple capture in a test
         let observed: Arc<Mutex<Option<(Option<String>, String)>>> = Arc::new(Mutex::new(None));
         let o = observed.clone();
         let local = FakeLocalService::default().with_notify(move |title, message| {

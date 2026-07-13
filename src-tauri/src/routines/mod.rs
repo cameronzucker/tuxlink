@@ -79,20 +79,42 @@
 //! `actions::build_registry` — Task 5 (engine mount + consent stub +
 //! events) and Task 6 (Tauri commands) are what remain of this plan.
 //!
+//! **Plan 2 Task 5a:** [`session::RoutinesState`] — the managed-state facade
+//! that mounts the `tuxlink-routines` engine (built by
+//! [`session::build_routines_state`]), holds the stores + arbiter + a live-run
+//! registry, and bridges the engine to the UI via [`events::RoutinesEvent`] on
+//! the [`events::ROUTINES_EVENT`] channel (`RunStarted`/`RunFinished` at the run
+//! boundary; step-level events come from journal polling in Task 6). Launch
+//! recovery ([`session::RoutinesState::recover`]) marks interrupted runs
+//! terminally, emits `RunFinished{Interrupted}`, and resumes
+//! `on_interrupted: resume` routines from their journal snapshot. The transmit
+//! CONSENT wrapper is slice 5b — the private `start_routine_def` start
+//! chokepoint leaves a clean seam for it (see that method's doc). `lib.rs`
+//! `.setup()` calls
+//! [`session::build_routines_state_for_app`] + `.manage()`s the result; Task 6
+//! registers the commands.
+//!
 //! That other, banned six-syllable term for scripted automation never
 //! appears in this module's symbols, JSON keys, or docs (spec Global
 //! Constraints) — the feature is Routines.
 
 pub mod actions;
 pub mod arbiter;
+pub mod events;
 pub mod presets;
 pub mod resolver;
+pub mod session;
 pub mod station_sets;
 pub mod store;
 
 pub use arbiter::{ArbiterError, Holder, HolderInfo, RadioArbiter, RadioLease};
+pub use events::{RoutinesEvent, RoutinesEventSink, TauriRoutinesEventSink, ROUTINES_EVENT};
 pub use presets::{PresetError, RadioPreset, RadioPresetStore};
 pub use resolver::MonolithEntityResolver;
+pub use session::{
+    build_routines_state, build_routines_state_for_app, RecoveryReport, RoutineStartError,
+    RoutinesState, RunStatusSnapshot,
+};
 pub use station_sets::{StationSet, StationSetError, StationSetStore};
 pub use store::{DefinitionStore, RoutineSummary, StoreError};
 

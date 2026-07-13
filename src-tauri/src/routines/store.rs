@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use tuxlink_routines::engine::RoutineLookup;
 use tuxlink_routines::error::RoutineParseError;
 use tuxlink_routines::types::{RoutineDef, TransmitMode, Trigger};
 
@@ -241,7 +242,7 @@ impl DefinitionStore {
     /// name (e.g. a `"routine": "../config"` trigger reference resolved at
     /// engine runtime) resolves to `None` rather than building a path outside
     /// the store directory.
-    pub fn lookup_fn(&self) -> Arc<dyn Fn(&str) -> Option<RoutineDef> + Send + Sync> {
+    pub fn lookup_fn(&self) -> RoutineLookup {
         let dir = self.dir.clone();
         Arc::new(move |name: &str| {
             if !valid_name(name) {

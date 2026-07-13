@@ -729,6 +729,7 @@ mod tests {
 
     // ---- FakeRigService ---------------------------------------------------
 
+    #[allow(clippy::type_complexity)] // boxed FnMut fields are a test-double idiom
     struct FakeRigService {
         read_result: Mutex<Box<dyn FnMut() -> Result<RigStateDto, String> + Send>>,
         apply_result: Mutex<Box<dyn FnMut(u64, String) -> Result<(), String> + Send>>,
