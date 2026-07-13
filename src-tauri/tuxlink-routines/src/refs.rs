@@ -19,7 +19,10 @@ impl EntityRef {
         if kind.is_empty() || name.is_empty() {
             return None;
         }
-        Some(EntityRef { kind: kind.to_string(), name: name.to_string() })
+        Some(EntityRef {
+            kind: kind.to_string(),
+            name: name.to_string(),
+        })
     }
 }
 
@@ -42,7 +45,10 @@ impl VarPath {
         if step.is_empty() || output.is_empty() {
             return None;
         }
-        Some(VarPath { step: StepId(step.to_string()), output: output.to_string() })
+        Some(VarPath {
+            step: StepId(step.to_string()),
+            output: output.to_string(),
+        })
     }
 }
 

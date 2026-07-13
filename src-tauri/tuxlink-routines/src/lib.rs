@@ -11,6 +11,7 @@
 
 pub mod action;
 pub mod compose;
+pub mod dryrun;
 pub mod engine;
 pub mod error;
 pub mod executor;
@@ -20,4 +21,5 @@ pub mod refs;
 pub mod scheduler;
 pub mod snapshot;
 pub mod types;
+pub mod validate;
 pub mod vars;

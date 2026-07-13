@@ -1,0 +1,23 @@
+{
+  "routine": "unresolved-ref-demo",
+  "schema_version": 1,
+  "transmit_mode": "attended",
+  "on_interrupted": "stay",
+  "inputs": [],
+  "triggers": [{ "type": "manual" }],
+  "tracks": [
+    {
+      "name": "t1",
+      "steps": [
+        {
+          "id": "s1",
+          "action": "radio.connect",
+          "params": { "stations": "@station-set:ghost-gateways", "bands": ["40m"] },
+          "timeout_s": 300,
+          "on_radio_busy": "wait"
+        },
+        { "id": "e1", "control": "end", "failed": false }
+      ]
+    }
+  ]
+}

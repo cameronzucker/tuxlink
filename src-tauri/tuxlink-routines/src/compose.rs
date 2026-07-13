@@ -39,38 +39,55 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use tokio_util::sync::CancellationToken;
 
-    fn fixed_now() -> i64 { 1_752_400_000 }
+    fn fixed_now() -> i64 {
+        1_752_400_000
+    }
 
     fn call_step(id: &str, routine: &str, args: serde_json::Value, sync: bool) -> Step {
         Step::Control(ControlStep {
             id: StepId(id.into()),
-            control: Control::Call { routine: routine.into(), args, sync },
+            control: Control::Call {
+                routine: routine.into(),
+                args,
+                sync,
+            },
         })
     }
 
     fn ctx_with(invoker: Arc<FakeInvoker>, dir: &std::path::Path) -> (ExecCtx, std::path::PathBuf) {
         let journal = JournalWriter::create(dir, "run-parent", fixed_now).unwrap();
         let path = journal.path();
-        (ExecCtx {
-            registry: Arc::new(ActionRegistry::default()),
-            journal: Arc::new(Mutex::new(journal)),
-            cancel: CancellationToken::new(),
-            default_timeout_s: 30,
-            now: fixed_now,
-            invoker,
-            run_id: "run-parent".into(),
-            depth: 0,
-        }, path)
+        (
+            ExecCtx {
+                registry: Arc::new(ActionRegistry::default()),
+                journal: Arc::new(Mutex::new(journal)),
+                cancel: CancellationToken::new(),
+                default_timeout_s: 30,
+                now: fixed_now,
+                invoker,
+                run_id: "run-parent".into(),
+                depth: 0,
+            },
+            path,
+        )
     }
 
     #[tokio::test]
     async fn sync_call_awaits_child_and_stores_result_as_step_output() {
-        let invoker = Arc::new(FakeInvoker::new().result("clear-channel-connect", json!({"connected": true, "band": "40m"})));
+        let invoker = Arc::new(FakeInvoker::new().result(
+            "clear-channel-connect",
+            json!({"connected": true, "band": "40m"}),
+        ));
         let dir = tempfile::tempdir().unwrap();
         let (ctx, _) = ctx_with(invoker.clone(), dir.path());
         let track = Track {
             name: "t".into(),
-            steps: vec![call_step("s5", "clear-channel-connect", json!({"bands": ["40m"]}), true)],
+            steps: vec![call_step(
+                "s5",
+                "clear-channel-connect",
+                json!({"bands": ["40m"]}),
+                true,
+            )],
         };
         let mut vars = RunVars::default();
         run_track(&track, &mut vars, &ctx).await.unwrap();
@@ -101,13 +118,20 @@ mod tests {
 
     #[tokio::test]
     async fn sync_call_failure_propagates_verbatim() {
-        let invoker = Arc::new(FakeInvoker::new().error("broken", "child run failed at step s2: CAT: PTT stuck"));
+        let invoker = Arc::new(
+            FakeInvoker::new().error("broken", "child run failed at step s2: CAT: PTT stuck"),
+        );
         let dir = tempfile::tempdir().unwrap();
         let (ctx, _) = ctx_with(invoker, dir.path());
-        let track = Track { name: "t".into(), steps: vec![call_step("s1", "broken", json!({}), true)] };
+        let track = Track {
+            name: "t".into(),
+            steps: vec![call_step("s1", "broken", json!({}), true)],
+        };
         let mut vars = RunVars::default();
         let err = run_track(&track, &mut vars, &ctx).await.unwrap_err();
-        assert!(matches!(err, crate::error::StepError::Action { cause, .. } if cause.contains("PTT stuck")));
+        assert!(
+            matches!(err, crate::error::StepError::Action { cause, .. } if cause.contains("PTT stuck"))
+        );
     }
 
     #[tokio::test]
@@ -116,9 +140,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (mut ctx, _) = ctx_with(invoker, dir.path());
         ctx.depth = 8; // already at the cap
-        let track = Track { name: "t".into(), steps: vec![call_step("s1", "x", json!({}), true)] };
+        let track = Track {
+            name: "t".into(),
+            steps: vec![call_step("s1", "x", json!({}), true)],
+        };
         let mut vars = RunVars::default();
         let err = run_track(&track, &mut vars, &ctx).await.unwrap_err();
-        assert!(matches!(err, crate::error::StepError::Action { cause, .. } if cause.contains("depth")));
+        assert!(
+            matches!(err, crate::error::StepError::Action { cause, .. } if cause.contains("depth"))
+        );
     }
 }

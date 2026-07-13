@@ -30,15 +30,30 @@ impl FakeAction {
     pub fn new(name: &'static str) -> Self {
         FakeAction {
             name,
-            descriptor: ActionDescriptor { name, needs_radio: false, transmits: false, needs_internet: false },
+            descriptor: ActionDescriptor {
+                name,
+                needs_radio: false,
+                transmits: false,
+                needs_internet: false,
+            },
             outcomes: Mutex::new(Vec::new()),
             calls: Mutex::new(Vec::new()),
         }
     }
 
     /// Override capability flags (for arbiter/validator tests in later plans).
-    pub fn with_capabilities(mut self, needs_radio: bool, transmits: bool, needs_internet: bool) -> Self {
-        self.descriptor = ActionDescriptor { name: self.name, needs_radio, transmits, needs_internet };
+    pub fn with_capabilities(
+        mut self,
+        needs_radio: bool,
+        transmits: bool,
+        needs_internet: bool,
+    ) -> Self {
+        self.descriptor = ActionDescriptor {
+            name: self.name,
+            needs_radio,
+            transmits,
+            needs_internet,
+        };
         self
     }
 
@@ -48,7 +63,10 @@ impl FakeAction {
     }
 
     pub fn err(self, verbatim_cause: &str) -> Self {
-        self.outcomes.lock().unwrap().push(Outcome::Err(verbatim_cause.to_string()));
+        self.outcomes
+            .lock()
+            .unwrap()
+            .push(Outcome::Err(verbatim_cause.to_string()));
         self
     }
 
@@ -89,7 +107,10 @@ impl Action for FakeAction {
         };
         match outcome {
             Outcome::Ok(v) => Ok(v),
-            Outcome::Err(cause) => Err(StepError::Action { action: self.name.to_string(), cause }),
+            Outcome::Err(cause) => Err(StepError::Action {
+                action: self.name.to_string(),
+                cause,
+            }),
             Outcome::Hang => {
                 cancel.cancelled().await;
                 Err(StepError::Cancelled)
@@ -127,17 +148,26 @@ impl FakeInvoker {
     }
 
     pub fn result(self, routine: &str, value: serde_json::Value) -> Self {
-        self.outcomes.lock().unwrap().insert(routine.into(), InvokeOutcome::Result(value));
+        self.outcomes
+            .lock()
+            .unwrap()
+            .insert(routine.into(), InvokeOutcome::Result(value));
         self
     }
 
     pub fn error(self, routine: &str, verbatim: &str) -> Self {
-        self.outcomes.lock().unwrap().insert(routine.into(), InvokeOutcome::Error(verbatim.into()));
+        self.outcomes
+            .lock()
+            .unwrap()
+            .insert(routine.into(), InvokeOutcome::Error(verbatim.into()));
         self
     }
 
     pub fn hang(self, routine: &str) -> Self {
-        self.outcomes.lock().unwrap().insert(routine.into(), InvokeOutcome::Hang);
+        self.outcomes
+            .lock()
+            .unwrap()
+            .insert(routine.into(), InvokeOutcome::Hang);
         self
     }
 
@@ -197,7 +227,9 @@ pub struct FakeResolver {
 }
 
 impl FakeResolver {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
     pub fn entity(mut self, kind: &str, name: &str, value: serde_json::Value) -> Self {
         self.entities.insert((kind.into(), name.into()), value);
         self
@@ -232,7 +264,9 @@ mod tests {
 
         let first = fake.execute(json!({"try": 1}), cancel.clone()).await;
         match first {
-            Err(StepError::Action { cause, .. }) => assert_eq!(cause, "VARA: BUSY channel occupied"),
+            Err(StepError::Action { cause, .. }) => {
+                assert_eq!(cause, "VARA: BUSY channel occupied")
+            }
             other => panic!("expected scripted error, got {other:?}"),
         }
         let second = fake.execute(json!({"try": 2}), cancel).await.unwrap();

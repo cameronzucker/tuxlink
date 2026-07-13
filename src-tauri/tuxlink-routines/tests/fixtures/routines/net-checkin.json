@@ -1,0 +1,34 @@
+{
+  "routine": "net-checkin",
+  "schema_version": 1,
+  "transmit_mode": "attended",
+  "on_interrupted": "stay",
+  "inputs": [],
+  "triggers": [{ "type": "manual" }],
+  "tracks": [
+    {
+      "name": "checkin",
+      "steps": [
+        {
+          "id": "s1",
+          "action": "radio.connect",
+          "params": { "stations": "@station-set:net-control", "bands": ["40m"] },
+          "timeout_s": 120,
+          "on_radio_busy": "wait"
+        },
+        { "id": "b1", "control": "branch", "on": "s1.connected", "then": ["s2"], "else": ["s4"] },
+        { "id": "s2", "action": "compose.message", "params": { "template": "checkin" } },
+        {
+          "id": "s3",
+          "action": "radio.connect",
+          "params": { "stations": "$s1.gateway" },
+          "timeout_s": 120,
+          "on_radio_busy": "wait"
+        },
+        { "id": "e1", "control": "end", "failed": false, "reason": "checked in" },
+        { "id": "s4", "action": "log.entry", "params": { "note": "missed check-in" } },
+        { "id": "e2", "control": "end", "failed": true, "reason": "no contact with net control" }
+      ]
+    }
+  ]
+}

@@ -191,7 +191,9 @@ impl RoutineDef {
     pub fn parse(json: &str) -> Result<Self, RoutineParseError> {
         let def: RoutineDef = serde_json::from_str(json)?;
         if def.schema_version != SUPPORTED_SCHEMA_VERSION {
-            return Err(RoutineParseError::UnsupportedSchemaVersion(def.schema_version));
+            return Err(RoutineParseError::UnsupportedSchemaVersion(
+                def.schema_version,
+            ));
         }
         Ok(def)
     }
@@ -267,7 +269,10 @@ mod tests {
     fn unknown_schema_version_is_a_parse_error() {
         let bumped = SPEC_EXAMPLE.replace("\"schema_version\": 1", "\"schema_version\": 99");
         let err = RoutineDef::parse(&bumped).unwrap_err();
-        assert!(matches!(err, RoutineParseError::UnsupportedSchemaVersion(99)));
+        assert!(matches!(
+            err,
+            RoutineParseError::UnsupportedSchemaVersion(99)
+        ));
     }
 
     #[test]

@@ -1,0 +1,17 @@
+{
+  "routine": "fleet-same-effect-overlap-b",
+  "schema_version": 1,
+  "transmit_mode": "attended",
+  "on_interrupted": "stay",
+  "inputs": [],
+  "triggers": [{ "type": "schedule", "every": "2h", "align": "hour", "if_missed": "skip" }],
+  "tracks": [
+    {
+      "name": "t1",
+      "steps": [
+        { "id": "s1", "action": "data.web_lookup", "params": {} },
+        { "id": "e1", "control": "end", "failed": false }
+      ]
+    }
+  ]
+}
