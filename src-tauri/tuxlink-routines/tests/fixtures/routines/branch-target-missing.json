@@ -1,0 +1,18 @@
+{
+  "routine": "branch-target-missing-demo",
+  "schema_version": 1,
+  "transmit_mode": "attended",
+  "on_interrupted": "stay",
+  "inputs": [],
+  "triggers": [{ "type": "manual" }],
+  "tracks": [
+    {
+      "name": "t1",
+      "steps": [
+        { "id": "s1", "action": "local.note", "params": {} },
+        { "id": "b1", "control": "branch", "on": "s1.go", "then": ["ghost"], "else": ["e1"] },
+        { "id": "e1", "control": "end", "failed": false }
+      ]
+    }
+  ]
+}

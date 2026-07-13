@@ -1,0 +1,36 @@
+{
+  "routine": "ics-log-cycle",
+  "schema_version": 1,
+  "transmit_mode": "automatic",
+  "transmit_ack": { "by": "KK7ABC", "at": "2026-07-13T20:00:00Z" },
+  "on_interrupted": "stay",
+  "inputs": [],
+  "triggers": [{ "type": "schedule", "every": "2h", "align": "hour", "if_missed": "skip" }],
+  "tracks": [
+    {
+      "name": "ics-cycle",
+      "steps": [
+        {
+          "id": "s1",
+          "action": "radio.connect",
+          "params": { "stations": "@station-set:or-gateways", "bands": ["40m", "80m"] },
+          "timeout_s": 300,
+          "on_radio_busy": "wait"
+        },
+        { "id": "b1", "control": "branch", "on": "s1.connected", "then": ["s2"], "else": ["s5"] },
+        { "id": "s2", "action": "compose.message", "params": { "template": "ics-213" } },
+        {
+          "id": "s3",
+          "action": "radio.connect",
+          "params": { "stations": "$s1.gateway" },
+          "timeout_s": 300,
+          "on_radio_busy": "wait"
+        },
+        { "id": "s4", "action": "log.entry", "params": { "note": "ICS log sent" } },
+        { "id": "e1", "control": "end", "failed": false, "reason": "ICS log sent" },
+        { "id": "s5", "action": "log.entry", "params": { "note": "no contact" } },
+        { "id": "e2", "control": "end", "failed": true, "reason": "no contact with any gateway" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "routine": "unreachable-step-demo",
+  "schema_version": 1,
+  "transmit_mode": "attended",
+  "on_interrupted": "stay",
+  "inputs": [],
+  "triggers": [{ "type": "manual" }],
+  "tracks": [
+    {
+      "name": "t1",
+      "steps": [
+        { "id": "s1", "action": "local.note", "params": {} },
+        { "id": "e1", "control": "end", "failed": false },
+        { "id": "s3", "action": "local.note", "params": {} }
+      ]
+    }
+  ]
+}

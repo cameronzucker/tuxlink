@@ -1,0 +1,324 @@
+{
+  "fixtures": [
+    {
+      "kind": "single",
+      "name": "UNRESOLVED_REF",
+      "file": "unresolved-ref.json",
+      "expected_codes": ["UNRESOLVED_REF"],
+      "context": {
+        "actions": ["radio.connect"],
+        "entities": [],
+        "profile": { "has_internet": false, "rigs": ["FT-710"] },
+        "sibling_routines": []
+      }
+    },
+    {
+      "kind": "single",
+      "name": "UNKNOWN_ACTION",
+      "file": "unknown-action.json",
+      "expected_codes": ["UNKNOWN_ACTION"],
+      "context": {
+        "actions": [],
+        "entities": [],
+        "profile": { "has_internet": false, "rigs": [] },
+        "sibling_routines": []
+      }
+    },
+    {
+      "kind": "single",
+      "name": "NEEDS_INTERNET_OFFGRID",
+      "file": "needs-internet-offgrid.json",
+      "expected_codes": ["NEEDS_INTERNET_OFFGRID"],
+      "context": {
+        "actions": ["data.web_lookup"],
+        "entities": [],
+        "profile": { "has_internet": false, "rigs": [] },
+        "sibling_routines": []
+      }
+    },
+    {
+      "kind": "single",
+      "name": "NO_RIG_CONFIGURED",
+      "file": "no-rig-configured.json",
+      "expected_codes": ["NO_RIG_CONFIGURED"],
+      "context": {
+        "actions": ["radio.connect"],
+        "entities": [],
+        "profile": { "has_internet": false, "rigs": [] },
+        "sibling_routines": []
+      }
+    },
+    {
+      "kind": "single",
+      "name": "SAME_RIG_PARALLEL_LANES",
+      "file": "same-rig-parallel-lanes.json",
+      "expected_codes": ["SAME_RIG_PARALLEL_LANES"],
+      "context": {
+        "actions": ["radio.connect"],
+        "entities": [],
+        "profile": { "has_internet": false, "rigs": ["FT-710"] },
+        "sibling_routines": []
+      }
+    },
+    {
+      "kind": "single",
+      "name": "UNSATISFIABLE_VAR",
+      "file": "unsatisfiable-var.json",
+      "expected_codes": ["UNSATISFIABLE_VAR"],
+      "context": {
+        "actions": ["local.note"],
+        "entities": [],
+        "profile": { "has_internet": false, "rigs": [] },
+        "sibling_routines": []
+      }
+    },
+    {
+      "kind": "single",
+      "name": "BRANCH_ON_UNKNOWN",
+      "file": "branch-on-unknown.json",
+      "expected_codes": ["BRANCH_ON_UNKNOWN"],
+      "context": {
+        "actions": ["local.note"],
+        "entities": [],
+        "profile": { "has_internet": false, "rigs": [] },
+        "sibling_routines": []
+      }
+    },
+    {
+      "kind": "single",
+      "name": "UNREACHABLE_STEP",
+      "file": "unreachable-step.json",
+      "expected_codes": ["UNREACHABLE_STEP"],
+      "context": {
+        "actions": ["local.note"],
+        "entities": [],
+        "profile": { "has_internet": false, "rigs": [] },
+        "sibling_routines": []
+      }
+    },
+    {
+      "kind": "single",
+      "name": "NO_TERMINAL_PATH",
+      "file": "no-terminal-path.json",
+      "expected_codes": ["NO_TERMINAL_PATH"],
+      "context": {
+        "actions": ["local.note"],
+        "entities": [],
+        "profile": { "has_internet": false, "rigs": [] },
+        "sibling_routines": []
+      }
+    },
+    {
+      "kind": "single",
+      "name": "RETRY_ZERO_ATTEMPTS",
+      "file": "retry-zero-attempts.json",
+      "expected_codes": ["RETRY_ZERO_ATTEMPTS"],
+      "context": {
+        "actions": ["local.note"],
+        "entities": [],
+        "profile": { "has_internet": false, "rigs": [] },
+        "sibling_routines": []
+      }
+    },
+    {
+      "kind": "single",
+      "name": "RETRY_TARGET_MISSING",
+      "file": "retry-target-missing.json",
+      "expected_codes": ["RETRY_TARGET_MISSING"],
+      "context": {
+        "actions": [],
+        "entities": [],
+        "profile": { "has_internet": false, "rigs": [] },
+        "sibling_routines": []
+      }
+    },
+    {
+      "kind": "single",
+      "name": "RETRY_TARGET_NOT_ACTION",
+      "file": "retry-target-not-action.json",
+      "expected_codes": ["RETRY_TARGET_NOT_ACTION"],
+      "context": {
+        "actions": [],
+        "entities": [],
+        "profile": { "has_internet": false, "rigs": [] },
+        "sibling_routines": []
+      }
+    },
+    {
+      "kind": "single",
+      "name": "BRANCH_CYCLE",
+      "file": "branch-cycle.json",
+      "expected_codes": ["BRANCH_CYCLE"],
+      "context": {
+        "actions": ["local.note"],
+        "entities": [],
+        "profile": { "has_internet": false, "rigs": [] },
+        "sibling_routines": []
+      }
+    },
+    {
+      "kind": "single",
+      "name": "BRANCH_TARGET_MISSING",
+      "file": "branch-target-missing.json",
+      "expected_codes": ["BRANCH_TARGET_MISSING"],
+      "context": {
+        "actions": ["local.note"],
+        "entities": [],
+        "profile": { "has_internet": false, "rigs": [] },
+        "sibling_routines": []
+      }
+    },
+    {
+      "kind": "single",
+      "name": "CALL_RECURSION",
+      "file": "call-recursion.json",
+      "expected_codes": ["CALL_RECURSION"],
+      "context": {
+        "actions": [],
+        "entities": [],
+        "profile": { "has_internet": false, "rigs": [] },
+        "sibling_routines": []
+      }
+    },
+    {
+      "kind": "single",
+      "name": "CALL_TARGET_MISSING",
+      "file": "call-target-missing.json",
+      "expected_codes": ["CALL_TARGET_MISSING"],
+      "context": {
+        "actions": [],
+        "entities": [],
+        "profile": { "has_internet": false, "rigs": [] },
+        "sibling_routines": []
+      }
+    },
+    {
+      "kind": "single",
+      "name": "AUTO_TX_UNACKED",
+      "file": "auto-tx-unacked.json",
+      "expected_codes": ["AUTO_TX_UNACKED"],
+      "context": {
+        "actions": ["radio.connect"],
+        "entities": [],
+        "profile": { "has_internet": false, "rigs": ["FT-710"] },
+        "sibling_routines": []
+      }
+    },
+    {
+      "kind": "single",
+      "name": "MIXED_MODE_STALL",
+      "file": "mixed-mode-stall.json",
+      "expected_codes": ["MIXED_MODE_STALL"],
+      "context": {
+        "actions": ["radio.connect"],
+        "entities": [],
+        "profile": { "has_internet": false, "rigs": ["FT-710"] },
+        "sibling_routines": [
+          {
+            "routine": "mixed-mode-stall-callee",
+            "schema_version": 1,
+            "transmit_mode": "attended",
+            "on_interrupted": "stay",
+            "inputs": [],
+            "triggers": [{ "type": "manual" }],
+            "tracks": [
+              {
+                "name": "t1",
+                "steps": [
+                  { "id": "tx1", "action": "radio.connect", "params": {} },
+                  { "id": "e1", "control": "end", "failed": false }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "kind": "single",
+      "name": "ATTENDED_UNDER_SCHEDULE",
+      "file": "attended-under-schedule.json",
+      "expected_codes": ["ATTENDED_UNDER_SCHEDULE"],
+      "context": {
+        "actions": ["radio.connect"],
+        "entities": [],
+        "profile": { "has_internet": false, "rigs": ["FT-710"] },
+        "sibling_routines": []
+      }
+    },
+    {
+      "kind": "single",
+      "name": "CROSS_TRACK_VAR",
+      "file": "cross-track-var.json",
+      "expected_codes": ["CROSS_TRACK_VAR"],
+      "context": {
+        "actions": ["local.note"],
+        "entities": [],
+        "profile": { "has_internet": false, "rigs": [] },
+        "sibling_routines": []
+      }
+    },
+    {
+      "kind": "fleet",
+      "name": "SCHEDULE_COLLISION",
+      "files": ["schedule-collision.a.json", "schedule-collision.b.json"],
+      "expected_codes": ["SCHEDULE_COLLISION"],
+      "now_unix": 1784124420,
+      "context": {
+        "actions": ["radio.connect"],
+        "entities": [],
+        "profile": { "has_internet": false, "rigs": ["FT-710"] },
+        "sibling_routines": []
+      }
+    },
+    {
+      "kind": "fleet",
+      "name": "SAME_EFFECT_OVERLAP",
+      "files": ["same-effect-overlap.a.json", "same-effect-overlap.b.json"],
+      "expected_codes": ["SAME_EFFECT_OVERLAP"],
+      "now_unix": 1784124420,
+      "context": {
+        "actions": ["data.web_lookup"],
+        "entities": [],
+        "profile": { "has_internet": true, "rigs": [] },
+        "sibling_routines": []
+      }
+    },
+    {
+      "kind": "single",
+      "name": "ics-log-cycle",
+      "file": "ics-log-cycle.json",
+      "expected_codes": [],
+      "context": {
+        "actions": ["radio.connect", "compose.message", "log.entry"],
+        "entities": [{ "kind": "station-set", "name": "or-gateways" }],
+        "profile": { "has_internet": false, "rigs": ["FT-710"] },
+        "sibling_routines": []
+      }
+    },
+    {
+      "kind": "single",
+      "name": "deployment-poll",
+      "file": "deployment-poll.json",
+      "expected_codes": ["CROSS_TRACK_VAR", "SAME_RIG_PARALLEL_LANES"],
+      "context": {
+        "actions": ["radio.connect", "compose.message"],
+        "entities": [{ "kind": "station-set", "name": "or-gateways" }],
+        "profile": { "has_internet": false, "rigs": ["FT-710"] },
+        "sibling_routines": []
+      }
+    },
+    {
+      "kind": "single",
+      "name": "net-checkin",
+      "file": "net-checkin.json",
+      "expected_codes": [],
+      "context": {
+        "actions": ["radio.connect", "compose.message", "log.entry"],
+        "entities": [{ "kind": "station-set", "name": "net-control" }],
+        "profile": { "has_internet": false, "rigs": ["FT-710"] },
+        "sibling_routines": []
+      }
+    }
+  ]
+}
