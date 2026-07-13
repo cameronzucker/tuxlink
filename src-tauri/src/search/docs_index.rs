@@ -50,6 +50,37 @@ pub struct DocTopic<'a> {
     pub source: DocSource,
 }
 
+/// Reduce free text to a safe FTS5 expression: bare alphanumeric tokens, each
+/// quoted as an FTS5 string literal, joined by `OR`.
+///
+/// Quoting is what makes this safe. Inside `"..."` FTS5 treats the content as a
+/// literal term, so a token that would otherwise be an operator (`AND`, `OR`,
+/// `NOT`, `NEAR`) or a column reference is inert. Splitting on non-alphanumerics
+/// means `-`, `.`, `?`, `*`, `:` and `"` never reach the parser at all — so
+/// `pat-winlink` becomes `"pat" OR "winlink"` instead of an error, and "ax.25"
+/// becomes `"ax" OR "25"`.
+///
+/// Single-character tokens are dropped. They carry no retrieval signal and, ORed
+/// into the expression, actively hurt: the `t` left behind by "won't" and the `I`
+/// from "I'm" match a huge fraction of the corpus and drag unrelated documents up
+/// the BM25 ranking. Measured against the real 48-document corpus, dropping them
+/// moves the ARDOP playbook from rank 24 to rank 5 for "ARDOP won't connect", with
+/// no regression on the other evals. Two-character tokens are kept — "25" from
+/// "ax.25" is meaningful.
+///
+/// Returns `None` when the input holds no usable token at all.
+fn fts5_or_query(query: &str) -> Option<String> {
+    let tokens: Vec<String> = query
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| t.chars().count() >= 2)
+        .map(|t| format!("\"{}\"", t.to_lowercase()))
+        .collect();
+    if tokens.is_empty() {
+        return None;
+    }
+    Some(tokens.join(" OR "))
+}
+
 impl Index {
     /// Return true if `docs_fts` is empty.
     pub fn docs_is_empty(&self) -> Result<bool, IndexError> {
@@ -95,10 +126,50 @@ impl Index {
     /// The `query` is passed through to FTS5 MATCH unchanged after rejecting
     /// the empty string. Operators get FTS5's column-scoping and prefix
     /// syntax for free.
+    ///
+    /// Natural-language queries are handled by a fallback, because FTS5's MATCH
+    /// argument is a QUERY LANGUAGE, not a search string. Passing a question
+    /// through raw fails two ways:
+    ///
+    /// - **Syntax errors.** `-`, `.`, `?`, `"`, `*`, `:` and the bare words
+    ///   `AND`/`OR`/`NOT`/`NEAR` are all operators. "How do I connect?" is a
+    ///   syntax error near `?`; the KJ4UYO question is a syntax error near `.`
+    ///   (from "ax.25"); even passing a slug like `pat-winlink` errors, because
+    ///   `-` means NOT.
+    /// - **Implicit AND.** Bare terms are ANDed, so one absent word returns zero
+    ///   rows — indistinguishable, to a caller, from "no documentation on this".
+    ///
+    /// Both matter more than they look: the callers are the in-app help search box
+    /// (a human typing a question) and the `docs_search` MCP tool (a small model
+    /// handing over the operator's question verbatim). A model that gets an error
+    /// or an empty list has nothing to ground on, and fabricates — which is the
+    /// exact failure this whole retrieval path exists to prevent (P0 tuxlink-0mudm).
+    ///
+    /// So: try the query as written first, preserving FTS5 syntax for anyone who
+    /// means it. If that errors OR returns nothing, retry with the query reduced to
+    /// bare tokens joined by OR. BM25 then ranks documents matching more of the
+    /// distinctive terms first, which is what a natural-language query wants. The
+    /// fallback can only add results, never remove them.
     pub fn search_docs(&self, query: &str) -> Result<Vec<DocsHit>, IndexError> {
         if query.trim().is_empty() {
             return Ok(vec![]);
         }
+        // Attempt 1: the query as written. A deliberate FTS5 expression works here.
+        match self.match_docs(query) {
+            Ok(hits) if !hits.is_empty() => return Ok(hits),
+            Ok(_) => {}  // parsed, but matched nothing — fall through and broaden
+            Err(_) => {} // not a valid FTS5 expression — almost certainly prose
+        }
+        // Attempt 2: treat it as prose.
+        match fts5_or_query(query) {
+            Some(relaxed) => self.match_docs(&relaxed),
+            // Nothing tokenizable (e.g. "???") — no hits rather than an error.
+            None => Ok(vec![]),
+        }
+    }
+
+    /// Run one `MATCH` against `docs_fts`. `expr` must already be valid FTS5.
+    fn match_docs(&self, expr: &str) -> Result<Vec<DocsHit>, IndexError> {
         let mut stmt = self.conn.prepare(
             "SELECT slug, title, snippet(docs_fts, 2, '<mark>', '</mark>', '…', 12) \
              FROM docs_fts \
@@ -106,7 +177,7 @@ impl Index {
              ORDER BY rank \
              LIMIT 30",
         )?;
-        let rows = stmt.query_map([query], |row| {
+        let rows = stmt.query_map([expr], |row| {
             Ok(DocsHit {
                 slug: row.get(0)?,
                 title: row.get(1)?,
@@ -175,6 +246,90 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].slug, "02-connections");
         assert!(hits[0].snippet.contains("ARDOP"));
+    }
+
+    /// FTS5's MATCH argument is a query language. A question containing `?`, `.`,
+    /// or `-` is a SYNTAX ERROR, not a miss — which surfaced to the model as a tool
+    /// failure and left it with nothing to ground on.
+    #[test]
+    fn natural_language_question_does_not_error_and_still_matches() {
+        let (_dir, idx) = fresh();
+        idx.populate_docs(&[DocTopic {
+            slug: "pat-winlink",
+            title: "Pat Winlink",
+            markdown: "# Pat Winlink\nConnect via a digipeater: ax25:///DIGI/TARGET.",
+            source: DocSource::Knowledge,
+        }])
+        .unwrap();
+
+        // The motivating question (KJ4UYO), verbatim. Raw, this is an FTS5 syntax
+        // error near "." (from "ax.25") — it must still find the document.
+        let hits = idx
+            .search_docs("What is the syntax for Pat Winlink in EmComm Tools in ax.25 to connect via a digipeater?")
+            .expect("a question must never surface as an FTS5 error");
+        assert!(hits.iter().any(|h| h.slug == "pat-winlink"));
+    }
+
+    /// `-` is the NOT operator, so a bare slug is an FTS5 error. A model that pastes
+    /// a slug back in as a query must not get an error.
+    #[test]
+    fn a_slug_as_a_query_does_not_error() {
+        let (_dir, idx) = fresh();
+        idx.populate_docs(&[DocTopic {
+            slug: "pat-winlink",
+            title: "Pat Winlink",
+            markdown: "# Pat Winlink\nPat is a Winlink client.",
+            source: DocSource::Knowledge,
+        }])
+        .unwrap();
+        let hits = idx.search_docs("pat-winlink").expect("a slug must not error");
+        assert!(hits.iter().any(|h| h.slug == "pat-winlink"));
+    }
+
+    /// Bare terms are ANDed by FTS5, so one absent word returns zero rows — which a
+    /// caller cannot distinguish from "there is no documentation on this".
+    #[test]
+    fn one_absent_term_does_not_zero_out_the_result() {
+        let (_dir, idx) = fresh();
+        idx.populate_docs(&[DocTopic {
+            slug: "playbook-ardop",
+            title: "Playbook: ARDOP will not connect",
+            markdown: "# Playbook: ARDOP will not connect\nCheck the audio device.",
+            source: DocSource::McpKnowledge,
+        }])
+        .unwrap();
+        // "troubleshooting" appears nowhere in the doc. Under implicit AND this
+        // returns nothing; the OR fallback still finds it.
+        let hits = idx.search_docs("ardop connect troubleshooting").unwrap();
+        assert!(hits.iter().any(|h| h.slug == "playbook-ardop"));
+    }
+
+    /// A deliberate FTS5 expression still works — the fallback only engages when the
+    /// query as written errors or matches nothing, so it can never remove results.
+    #[test]
+    fn explicit_fts5_syntax_is_preserved() {
+        let (_dir, idx) = fresh();
+        idx.populate_docs(&[
+            DocTopic { slug: "a", title: "A", markdown: "ardop digital mode", source: DocSource::UserGuide },
+            DocTopic { slug: "b", title: "B", markdown: "vara digital mode", source: DocSource::UserGuide },
+        ])
+        .unwrap();
+        // Explicit AND: only "a" has both terms. If the fallback fired, "b" would
+        // also come back (it has "digital").
+        let hits = idx.search_docs("ardop AND digital").unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].slug, "a");
+    }
+
+    #[test]
+    fn query_with_no_usable_token_returns_no_hits_not_an_error() {
+        let (_dir, idx) = fresh();
+        idx.populate_docs(&[DocTopic {
+            slug: "a", title: "A", markdown: "x", source: DocSource::UserGuide,
+        }])
+        .unwrap();
+        assert!(idx.search_docs("???").unwrap().is_empty());
+        assert!(idx.search_docs("- . ?").unwrap().is_empty());
     }
 
     #[test]
