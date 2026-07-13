@@ -102,31 +102,48 @@ impl WhisperStt {
             .full(params, &audio)
             .map_err(|e| SttError::Transcribe(e.to_string()))?;
 
-        let n = state
-            .full_n_segments()
-            .map_err(|e| SttError::Transcribe(e.to_string()))?;
+        // whisper-rs 0.16 reworked the segment/token surface into borrowed objects:
+        // `full_n_segments` no longer returns a Result, and `full_get_segment_text` /
+        // `full_n_tokens` / `full_get_token_prob` are gone in favour of
+        // `get_segment(i) -> Option<WhisperSegment>` with methods hanging off it.
+        let n = state.full_n_segments();
+
         let mut text = String::new();
-        // Aggregate a worst-case (lowest mean-token-logprob) across segments.
-        // NOTE: whisper-rs 0.14.4 exposes NO per-segment no-speech probability
-        // getter (verified against the crate source), so confidence rests on
-        // token log-probs alone; no_speech_prob is reported as 0.0 (neutral).
+        // Aggregate worst-case confidence across segments: the LOWEST mean
+        // token-logprob, and the HIGHEST no-speech probability.
         let mut min_logprob = 0.0f32;
+        let mut max_no_speech = 0.0f32;
+
         for i in 0..n {
+            // A segment index the backend does not resolve is skipped rather than
+            // failing the whole transcript — one bad segment should not discard an
+            // otherwise good WWV bulletin.
+            let Some(seg) = state.get_segment(i) else {
+                continue;
+            };
+
             text.push_str(
-                &state
-                    .full_get_segment_text(i)
+                &seg.to_str_lossy()
                     .map_err(|e| SttError::Transcribe(e.to_string()))?,
             );
             text.push(' ');
 
-            let toks = state.full_n_tokens(i).unwrap_or(0);
+            // 0.16 EXPOSES the per-segment no-speech probability that 0.14 did not.
+            // Until now this was hardcoded to 0.0, which made the `no_speech_prob <
+            // 0.8` half of `is_confident` permanently true — i.e. dead. That is the
+            // half that matters most here: WWV is decoded off-air from a noisy HF
+            // channel, and the gate exists precisely to reject a hallucinated
+            // transcript of noise instead of emitting confident nonsense.
+            max_no_speech = max_no_speech.max(seg.no_speech_probability());
+
+            let toks = seg.n_tokens();
             if toks > 0 {
                 let mut sum = 0.0f32;
                 let mut cnt = 0.0f32;
                 for j in 0..toks {
-                    if let Ok(p) = state.full_get_token_prob(i, j) {
+                    if let Some(tok) = seg.get_token(j) {
                         // token prob in (0,1]; guard ln(0).
-                        sum += p.max(1e-9).ln();
+                        sum += tok.token_probability().max(1e-9).ln();
                         cnt += 1.0;
                     }
                 }
@@ -140,7 +157,7 @@ impl WhisperStt {
             text: text.trim().to_string(),
             confidence: SttConfidence {
                 avg_logprob: min_logprob,
-                no_speech_prob: 0.0,
+                no_speech_prob: max_no_speech,
             },
         })
     }
