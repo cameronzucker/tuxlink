@@ -64,8 +64,25 @@ impl JournalWriter {
     pub fn create(dir: &Path, run_id: &str, now: fn() -> i64) -> std::io::Result<Self> {
         std::fs::create_dir_all(dir)?;
         let path = dir.join(format!("{run_id}.jsonl"));
+        // If a journal already exists at this path (e.g. `Engine::recover()`
+        // re-opening a run's journal to append a terminal `RunFinished`), the
+        // monotonic-seq invariant this module documents requires resuming
+        // from where the file left off — starting over at 0 would collide
+        // with the original entries' seqs. Count existing non-empty lines as
+        // a high-water mark; this is not a validation pass, so an
+        // unparseable line still counts toward the seq (it occupied a seq
+        // number when it was written).
+        let seq = if path.exists() {
+            let file = File::open(&path)?;
+            BufReader::new(file)
+                .lines()
+                .filter(|line| line.as_ref().map(|l| !l.trim().is_empty()).unwrap_or(true))
+                .count() as u64
+        } else {
+            0
+        };
         let file = OpenOptions::new().create(true).append(true).open(&path)?;
-        Ok(JournalWriter { file, path, run_id: run_id.to_string(), seq: 0, now })
+        Ok(JournalWriter { file, path, run_id: run_id.to_string(), seq, now })
     }
 
     pub fn path(&self) -> PathBuf {
@@ -269,5 +286,34 @@ mod tests {
         // The valid completed run should NOT be in the list.
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].0, "run-torn");
+    }
+
+    #[test]
+    fn create_on_existing_journal_resumes_seq() {
+        // FINDING 2: `JournalWriter::create` on a run_id that ALREADY has a
+        // journal on disk (e.g. `Engine::recover()` re-opening a dead run's
+        // journal to append the terminal `RunFinished{Interrupted}` entry)
+        // must resume `seq` from where the file left off, not restart at 0 —
+        // restarting at 0 collides with the original entries' seqs and
+        // violates this module's own monotonic-seq invariant.
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let mut w = JournalWriter::create(dir.path(), "run-resume", fixed_now).unwrap();
+            w.append(RunEvent::RunStarted { routine: "a".into(), snapshot: json!({}) }).unwrap();
+            w.append(RunEvent::StepIntent {
+                step: StepId("s1".into()),
+                action: "radio.connect".into(),
+                resolved_params: json!({}),
+            }).unwrap();
+        } // writer dropped; journal has 2 entries (seq 0, 1) but no RunFinished
+
+        {
+            let mut w = JournalWriter::create(dir.path(), "run-resume", fixed_now).unwrap();
+            w.append(RunEvent::RunFinished { state: RunState::Interrupted, reason: None }).unwrap();
+        }
+
+        let entries = read_journal(&dir.path().join("run-resume.jsonl")).unwrap();
+        let seqs: Vec<u64> = entries.iter().map(|e| e.seq).collect();
+        assert_eq!(seqs, vec![0, 1, 2]);
     }
 }

@@ -400,7 +400,23 @@ pub async fn run_tracks(
     let mut intentional_cancel = false;
 
     while let Some(joined) = set.join_next().await {
-        match joined.expect("track task must not panic") {
+        // A panicking track must NOT become an in-process zombie run: a
+        // panic that escapes here would propagate into the engine's outer
+        // spawned task (engine.rs), which nobody awaits — RunFinished would
+        // never be appended and `handle.done` would return `RecvError`, so
+        // the run would look "running" forever until process restart.
+        // Instead, map a `JoinError` (panic or cancellation of the track
+        // task) into a genuine `StepError::Action` and handle it exactly
+        // like any other track error: cancel siblings via the intentional-
+        // cancel path below and propagate verbatim.
+        let joined = match joined {
+            Ok(inner) => inner,
+            Err(join_error) => Err(StepError::Action {
+                action: "track".into(),
+                cause: format!("track task panicked: {join_error}"),
+            }),
+        };
+        match joined {
             Ok(TrackEnd::Completed) => {}
             Ok(TrackEnd::Ended { failed: false, .. }) => {
                 ctx.cancel.cancel();
@@ -826,5 +842,55 @@ mod tests {
         let vars = Arc::new(tokio::sync::Mutex::new(RunVars::default()));
         let err = run_tracks(&tracks, vars, &ctx).await.unwrap_err();
         assert!(matches!(err, StepError::Action { cause, .. } if cause.contains("ARQ timeout 120s")));
+    }
+
+    /// Test-only action whose `execute` panics — used to prove a panicking
+    /// track task fails the run (via `JoinError` -> `StepError::Action`)
+    /// instead of leaving it a zombie (FINDING 1). `tokio::task::JoinSet`
+    /// catches the panic at the task boundary, so this does not abort the
+    /// test process.
+    struct PanicAction;
+
+    #[async_trait::async_trait]
+    impl crate::action::Action for PanicAction {
+        fn descriptor(&self) -> crate::action::ActionDescriptor {
+            crate::action::ActionDescriptor {
+                name: "test.panic",
+                needs_radio: false,
+                transmits: false,
+                needs_internet: false,
+            }
+        }
+
+        async fn execute(
+            &self,
+            _params: serde_json::Value,
+            _cancel: CancellationToken,
+        ) -> Result<serde_json::Value, StepError> {
+            panic!("PanicAction: deliberate test panic");
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn panicking_track_fails_the_run_instead_of_zombieing() {
+        let hang = Arc::new(FakeAction::new("local.wait").hang());
+        let mut reg = ActionRegistry::default();
+        reg.register(hang);
+        reg.register(Arc::new(PanicAction));
+        let dir = tempfile::tempdir().unwrap();
+        let (ctx, _) = ctx(reg, dir.path());
+        let tracks = vec![
+            Track { name: "a".into(), steps: vec![action("s1", "local.wait", json!({}))] },
+            Track { name: "b".into(), steps: vec![action("s2", "test.panic", json!({}))] },
+        ];
+        let vars = Arc::new(tokio::sync::Mutex::new(RunVars::default()));
+        let err = run_tracks(&tracks, vars, &ctx).await.unwrap_err();
+        match err {
+            StepError::Action { cause, .. } => assert!(
+                cause.contains("panicked"),
+                "expected cause to mention the panic, got {cause:?}"
+            ),
+            other => panic!("expected StepError::Action from the panicked track, got {other:?}"),
+        }
     }
 }

@@ -33,3 +33,15 @@ pub enum SnapshotError {
     #[error("resolver I/O failure: {0}")]
     Io(String),
 }
+
+/// Errors surfaced by the engine facade (`engine.rs`): starting a run,
+/// journaling it, and recovering interrupted journals.
+#[derive(Debug, thiserror::Error)]
+pub enum EngineError {
+    #[error("snapshot: {0}")]
+    Snapshot(#[from] SnapshotError),
+    #[error("journal: {0}")]
+    Journal(#[from] std::io::Error),
+    #[error("routine '{0}' not found")]
+    UnknownRoutine(String),
+}

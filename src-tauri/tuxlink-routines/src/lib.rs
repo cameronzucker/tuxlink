@@ -11,6 +11,7 @@
 
 pub mod action;
 pub mod compose;
+pub mod engine;
 pub mod error;
 pub mod executor;
 pub mod fakes;
