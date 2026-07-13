@@ -1770,7 +1770,7 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    use crate::ports::{MessageMetaDto, ParsedMessageDto};
+    use crate::ports::{MessageMetaDto, ParsedMessageDto, SolarSnapshotDto};
     use crate::test_support::{
         state_with_all_probes, state_with_egress_probes, state_with_guard, SEED_GW_CALLSIGN,
         SEED_GW_GRID, SEED_MSG_FROM, SEED_MSG_ID, SEED_MSG_SUBJECT, SEED_TX_GRID,
