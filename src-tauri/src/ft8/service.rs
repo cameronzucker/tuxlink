@@ -2187,13 +2187,15 @@ mod tests {
         teardown(&state);
     }
 
-    // Autostart contract: enabled=true, device=None → the supervisor lands
+    // Start-with-no-device contract: an explicit start with device=None lands
     // blocked(needs-device-selection) — the state that RESUMES the
-    // interrupted first-contact flow (never silently stopped).
+    // interrupted first-contact flow (never silently stopped). (Was the
+    // "autostart contract" until QA round-3 finding 1 retired boot autostart;
+    // the same landing state now guards the operator-initiated start.)
     #[test]
-    fn autostart_with_no_device_lands_needs_device_selection() {
+    fn start_with_no_device_lands_needs_device_selection() {
         let p = FakePlatform::happy();
-        let state = test_state(p, Ft8Config { enabled: true, ..Ft8Config::default() });
+        let state = test_state(p, Ft8Config::default());
         state.start().expect("start spawns the supervisor");
         // The supervisor runs the sequence async; poll briefly.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);

@@ -1342,7 +1342,6 @@ pub fn run() {
                 let ft8_cfg = crate::config::read_config()
                     .map(|c| c.ft8)
                     .unwrap_or_default();
-                let autostart = ft8_cfg.enabled;
                 let ft8_state = crate::ft8::service::Ft8ListenerState::new(
                     crate::ft8::service::Ft8Deps {
                         platform,
@@ -1356,22 +1355,15 @@ pub fn run() {
                 app.manage(ft8_state.clone());
                 // The arbiter: managed for command access AND installed
                 // globally for the modem seams (T15's choke points).
-                let arbiter = crate::ft8::arbiter::Ft8Arbiter::new(ft8_state.clone());
+                let arbiter = crate::ft8::arbiter::Ft8Arbiter::new(ft8_state);
                 app.manage(arbiter.clone());
                 let _ = crate::ft8::arbiter::FT8_ARBITER.set(arbiter);
-                // Autostart on `enabled` ALONE — NOT gated on device
-                // presence: an interrupted first-contact operator must find
-                // blocked(needs-device-selection), not silent stopped.
-                if autostart {
-                    std::thread::Builder::new()
-                        .name("ft8-autostart".into())
-                        .spawn(move || {
-                            if let Err(e) = ft8_state.start() {
-                                tracing::warn!(target: "tuxlink::ft8", "autostart failed: {e}");
-                            }
-                        })
-                        .ok();
-                }
+                // NO boot autostart (QA round-3 finding 1, operator ruling
+                // 2026-07-12): listening is session-scoped. A fresh launch
+                // always starts quiet — a green "Listening" chip with no
+                // radio attached (persisted `enabled` from a prior session)
+                // read as misleading. `ft8.enabled` remains in the config
+                // schema for parse-compat but is never read or written.
             }
 
             // tuxlink-nx95: spawn the UV-Pro control status broadcaster — a
