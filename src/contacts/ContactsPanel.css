@@ -72,34 +72,61 @@
   background: var(--accent-2);
 }
 
-/* ---- sort row ---- */
-.contacts-sort {
+/* ---- scope pills + sort — one always-present row (tuxlink-sbf03) ---- */
+.contacts-scopes {
   display: flex;
-  gap: 4px;
-  padding: 6px 8px;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 10px;
   border-bottom: 1px solid var(--border);
 }
 
-.contacts-sort-btn {
-  padding: 3px 9px;
+.contacts-scope {
   font-size: 11px;
-  font-weight: 600;
   color: var(--text-dim);
-  background: none;
-  border: 1px solid transparent;
-  border-radius: 4px;
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  padding: 3px 10px;
   cursor: pointer;
+  white-space: nowrap;
 }
 
-.contacts-sort-btn:hover {
+.contacts-scope b {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  margin-left: 3px;
+  color: var(--text-faint);
+}
+
+.contacts-scope:hover {
   color: var(--text);
   background: var(--surface-2);
 }
 
-.contacts-sort-btn--active {
+.contacts-scope--active {
+  color: var(--text);
+  background: var(--surface-2);
+  border-color: var(--accent);
+}
+
+.contacts-scope--active b {
   color: var(--accent);
-  background: var(--accent-soft);
-  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.contacts-sort {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+.contacts-sort-select {
+  font-size: 10.5px;
+  padding: 2px 5px;
 }
 
 /* ---- the tree ---- */
@@ -202,10 +229,12 @@
 
 /* ---- identity rows ---- */
 .contacts-row {
-  display: grid;
-  grid-template-columns: 22px auto 1fr auto;
+  /* tuxlink-sbf03 uniform anatomy: avatar · callsign+name · (flex) · meta.
+     Was a 4-col grid — the right-edge meta became a 5th item and wrapped
+     onto its own line. */
+  display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   width: 100%;
   padding: 5px 10px;
   font-size: 13px;
@@ -270,6 +299,9 @@
   white-space: nowrap;
   color: var(--text-dim);
   font-size: 12px;
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
 }
 
 .contacts-row-name--add {
@@ -834,9 +866,9 @@
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 3px 8px;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 9px;
   padding: 4px 0;
   background: none;
   border: none;
@@ -921,4 +953,153 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ============================================================================
+ * tuxlink-sbf03 — the unified row anatomy: every roster row carries the same
+ * right-edge meta (reach dot · last-heard age · ★); Heard rows use the dashed
+ * not-saved avatar; the Favorites scope adds an inline Connect.
+ * ========================================================================== */
+
+.contacts-avatar--heard {
+  background: transparent;
+  border: 1.5px dashed var(--border-strong);
+  color: var(--text-faint);
+}
+
+.contacts-avatar--more {
+  background: var(--surface-2);
+  color: var(--text-faint);
+}
+
+.contacts-row-meta-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+}
+
+.contacts-reach-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.contacts-reach-dot--good {
+  background: var(--reach-good, #41ba6c);
+}
+
+.contacts-reach-dot--stale {
+  background: var(--reach-marginal, #d9b13a);
+}
+
+.contacts-reach-dot--dead {
+  background: transparent;
+  border: 1px solid var(--text-faint);
+}
+
+.contacts-row-ago {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  min-width: 26px;
+  text-align: right;
+}
+
+.contacts-row-star {
+  color: var(--accent);
+  font-size: 12px;
+  line-height: 1;
+}
+
+/* email pseudo-contact chip — never the raw SMTP: string */
+.contacts-idkind {
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  padding: 0 4px;
+  flex: none;
+}
+
+.contacts-idkind--lg {
+  font-size: 10px;
+  padding: 1px 6px;
+  margin-right: 8px;
+  vertical-align: 3px;
+}
+
+.contacts-row-callsign--name {
+  font-family: inherit;
+}
+
+/* heard / favorites two-line who block */
+.contacts-heard-who {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  min-width: 0;
+}
+
+.contacts-heard-sub {
+  font-size: 10px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* the Favorites scope's permanent Connect (ribbon parity) */
+.contacts-row-connect {
+  font: inherit;
+  font-size: 10.5px;
+  color: var(--reach-good, #41ba6c);
+  background: rgba(65, 186, 108, 0.08);
+  border: 1px solid rgba(65, 186, 108, 0.4);
+  border-radius: 5px;
+  padding: 3px 10px;
+  cursor: pointer;
+  flex: none;
+  margin-right: 8px;
+}
+
+.contacts-row-connect:hover {
+  background: rgba(65, 186, 108, 0.16);
+}
+
+/* detail-pane per-dial star (★ = a starred Favorite) */
+.contact-dial-star {
+  font-size: 15px;
+  line-height: 1;
+  color: var(--border-strong);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 2px 6px;
+  flex: none;
+}
+
+.contact-dial-star--on {
+  color: var(--accent);
+}
+
+.contact-detail-star {
+  color: var(--accent);
+  font-size: 15px;
+  margin-left: 8px;
+}
+
+.contacts-heard-who {
+  flex: 1 1 auto;
+}
+
+.contacts-heard-who .contacts-row-name {
+  margin-left: 7px;
+  flex: none;
+  display: inline;
 }

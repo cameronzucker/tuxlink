@@ -305,7 +305,7 @@ describe('<ContactsPanel> — Recent section + reachability (Task T-F)', () => {
     // Confirmed ALICE → curated row; never a Recent row.
     expect(await screen.findByTestId('contact-row-c-alice')).toBeInTheDocument();
     // Unconfirmed RECENT_VARA → Recent section; never the curated tree.
-    const recent = await screen.findByTestId('contacts-recent');
+    const recent = await screen.findByTestId('contacts-heard');
     expect(within(recent).getByTestId('recent-row-c-recent')).toBeInTheDocument();
     expect(screen.queryByTestId('contact-row-c-recent')).not.toBeInTheDocument();
     expect(screen.queryByTestId('recent-row-c-alice')).not.toBeInTheDocument();
@@ -315,7 +315,7 @@ describe('<ContactsPanel> — Recent section + reachability (Task T-F)', () => {
     routeInvoke({ contacts: [ALICE] });
     renderPanel();
     await screen.findByTestId('contact-row-c-alice');
-    expect(screen.queryByTestId('contacts-recent')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('contacts-heard')).not.toBeInTheDocument();
   });
 
   it('a completed (last_ok) row carries the Heard distinction; a fail-only row reads dialed-not-reached', async () => {

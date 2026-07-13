@@ -1,22 +1,26 @@
-// ContactsPanel — the unified Contacts outline (tuxlink-je5d).
+// ContactsPanel — THE address surface (tuxlink-je5d; unified by tuxlink-sbf03).
 //
-// Selected from the sidebar's Address → Contacts pseudo-folder; AppShell swaps
-// it in for BOTH the MessageList and the reading pane (it spans grid lines 2→4
-// per AppShell.css). It replaces the prior nested 286px master-detail with ONE
-// outline (the roster) feeding a polymorphic reading-pane detail:
+// Selected from the sidebar's Address → Contacts pseudo-folder — AND, since
+// tuxlink-sbf03, the Favorites pseudo-folder (initialScope='favorites');
+// AppShell swaps it in for BOTH the MessageList and the reading pane (grid
+// lines 2→4 per AppShell.css). Contacts, Favorites, and Heard are SCOPES of
+// this one list, not sibling features: Favorites = starred dials (with the
+// retired FavoritesPanel's inline Connect), Heard = the not-saved-yet class
+// (unconfirmed auto-observed stations + suggested-from-traffic callsigns).
 //
 //   ROSTER (~380px message-list footprint):
 //     · a global search that scopes the WHOLE tree (groups containing a match
-//       auto-expand)
+//       auto-expand) + the scope pills (All / ★ Favorites / Heard) + sort.
 //     · collapsible GROUP sections — header = caret · name · member count ·
-//       avatar stack; members render indented when expanded. The caret toggles
-//       expand; the group NAME selects the group (→ group management).
-//     · an "Ungrouped" section — contacts referenced by no group, plus the
-//       suggested-from-traffic callsigns (each a "New"-tagged row with an inline
-//       "Save" that creates a contact).
+//       contained avatar stack (max 2 + "+N"); members render indented.
+//     · a "Contacts" section — curated contacts referenced by no group.
+//     · a "Heard — not saved" section — the one unsaved class, uniform row
+//       anatomy (dashed avatar · provenance sub-line · "+ Save" · dismiss).
+//     · EVERY row: avatar · callsign+name · reach dot · last-heard age · ★.
 //   DETAIL (reading pane, polymorphic):
-//     · member selected → ContactDetail (callsign headline · name · connection
-//       record card · details · New message / Edit).
+//     · member selected → ContactDetail (identity headline · connection
+//       record · Reachability & connect rows with per-dial ★ (a starred dial
+//       IS a Favorite) + Connect · groups · New message / Edit).
 //     · group header selected → GroupManagement (rename · per-member remove ·
 //       add by callsign/name · delete) — inline, no popup.
 //
@@ -46,6 +50,9 @@ import { ContactEditor, emptyContact } from './ContactEditor';
 import { openComposeTo } from './composeTo';
 import { ConnectionRecord } from '../favorites/ConnectionRecord';
 import { useContactConnectionRecord } from './useContactConnectionRecord';
+import { FAVORITES_QUERY_KEY } from '../favorites/useFavorites';
+import { dialToNewFavorite, favoriteKey } from '../favorites/dialToFavorite';
+import type { Favorite, FavoriteDial, StationsFile } from '../favorites/types';
 import { connectPeerChannel, connectPeerEndpoint, radioModeForPeerTransport } from '../peers/connectPeer';
 import {
   channelStatusLine,
@@ -73,12 +80,90 @@ type Selection =
 /// The inline contact editor target (takes over the detail pane when open).
 type EditorState = { kind: 'closed' } | { kind: 'new'; seed: Contact } | { kind: 'edit'; contact: Contact };
 
-export function ContactsPanel() {
+/// Roster scope (tuxlink-sbf03 consolidation): Contacts, Favorites, and Heard
+/// are SCOPES of one list, not separate features. 'all' = groups + contacts +
+/// heard; 'favorites' = starred dials (with inline Connect — the retired
+/// FavoritesPanel's job); 'heard' = the not-yet-saved class only.
+export type RosterScope = 'all' | 'favorites' | 'heard';
+
+export interface ContactsPanelProps {
+  /** Scope pre-selected at mount. The sidebar Favorites pseudo-folder opens
+   *  THIS panel with 'favorites'; the Contacts pseudo-folder omits it ('all'). */
+  initialScope?: RosterScope;
+  /** RADIO-1: open + arm the matching modem for a starred dial's Connect
+   *  (AppShell's handleFavoritesConnect — the exact handler the retired
+   *  FavoritesPanel took). Omitted ⇒ Connect buttons are not rendered. */
+  onConnectFavorite?: (dial: FavoriteDial) => void;
+}
+
+// ---------------------------------------------------------------------------
+// Row-meta derivation (tuxlink-sbf03): every roster row carries the SAME
+// right-edge meta — reach dot · last-heard age · ★. All from contact data the
+// roster already holds; no extra queries.
+// ---------------------------------------------------------------------------
+
+/** Most-recent activity instant (ms) across channels + endpoints, or null. */
+export function contactLastHeardMs(c: Contact): number | null {
+  const times: number[] = [];
+  for (const ch of c.channels ?? []) {
+    const t = Date.parse(ch.last_seen);
+    if (!Number.isNaN(t)) times.push(t);
+  }
+  for (const ep of c.endpoints ?? []) {
+    const t = Date.parse(ep.last_seen);
+    if (!Number.isNaN(t)) times.push(t);
+  }
+  return times.length > 0 ? Math.max(...times) : null;
+}
+
+/** Dot tone: activity within 6 h = good (green), within 7 d = stale (amber),
+ *  older/never = dead (hollow). Same recency the `ago` label shows. */
+export function reachTone(lastMs: number | null, nowMs: number): 'good' | 'stale' | 'dead' {
+  if (lastMs === null) return 'dead';
+  const age = nowMs - lastMs;
+  if (age <= 6 * 3600_000) return 'good';
+  if (age <= 7 * 86_400_000) return 'stale';
+  return 'dead';
+}
+
+/** Compact age: "now", "35 m", "2 h", "3 d", "5 w"; em-dash for never. */
+export function agoLabel(lastMs: number | null, nowMs: number): string {
+  if (lastMs === null) return '—';
+  const s = Math.max(0, Math.floor((nowMs - lastMs) / 1000));
+  if (s < 90) return 'now';
+  if (s < 3600) return `${Math.round(s / 60)} m`;
+  if (s < 48 * 3600) return `${Math.round(s / 3600)} h`;
+  if (s < 14 * 86_400) return `${Math.round(s / 86_400)} d`;
+  return `${Math.round(s / (7 * 86_400))} w`;
+}
+
+/** Email pseudo-contact ("SMTP:addr" callsign): render an EMAIL chip + the
+ *  display name, never the raw scheme string (tuxlink-sbf03). */
+export function emailAddressOf(c: Pick<Contact, 'callsign'>): string | null {
+  return c.callsign.startsWith('SMTP:') ? c.callsign.slice('SMTP:'.length) : null;
+}
+
+/** Base callsign for favorite↔contact linking ("N0DAJ-10" → "N0DAJ"). */
+function baseCall(callsign: string): string {
+  return callsign.split('-')[0].toUpperCase();
+}
+
+/** The starred favorites belonging to a contact — linked by `contact_id` when
+ *  the favorite carries one, else by base-callsign match on the gateway. */
+export function starredFavoritesOf(c: Contact, favorites: Favorite[]): Favorite[] {
+  const base = baseCall(c.callsign);
+  return favorites.filter(
+    (f) => f.starred && (f.contact_id === c.id || baseCall(f.gateway) === base),
+  );
+}
+
+export function ContactsPanel({ initialScope = 'all', onConnectFavorite }: ContactsPanelProps = {}) {
   const qc = useQueryClient();
   const { contacts, groups, upsertContact, deleteContact, confirmContact, upsertGroup, deleteGroup } =
     useContacts();
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<SortKey>('last-heard');
+  const [scope, setScope] = useState<RosterScope>(initialScope);
   const [selection, setSelection] = useState<Selection>({ kind: 'none' });
   const [editor, setEditor] = useState<EditorState>({ kind: 'closed' });
   // Manual collapse state — group ids the operator has explicitly collapsed.
@@ -91,6 +176,16 @@ export function ContactsPanel() {
     queryFn: () => invoke<Suggestion[]>('contacts_suggestions'),
   });
   const suggestions = suggestionsQuery.data ?? [];
+
+  // Favorites (tuxlink-sbf03): same query key FavoritesPanel used, so star
+  // toggles from any surface invalidate consistently. Drives the row-meta ★,
+  // the Favorites scope, and the detail pane's per-dial stars.
+  const favoritesQuery = useQuery({
+    queryKey: FAVORITES_QUERY_KEY,
+    queryFn: () => invoke<StationsFile>('favorites_read'),
+  });
+  const favorites = useMemo(() => favoritesQuery.data?.favorites ?? [], [favoritesQuery.data]);
+  const starredFavorites = useMemo(() => favorites.filter((f) => f.starred), [favorites]);
 
   // Operator grid for a telnet-endpoint Connect's B2F locator (best-effort;
   // empty means the dial simply carries no locator). Mirrors StationFinderPanel.
@@ -118,18 +213,68 @@ export function ContactsPanel() {
         .sort((a, b) => recentRecency(b) - recentRecency(a)),
     [contacts, q],
   );
+  // Suggestions render in the Heard section (not the tree), so they filter on
+  // the query here.
+  const visibleSuggestions = useMemo(
+    () => suggestions.filter((s) => !q || s.callsign.toLowerCase().includes(q)),
+    [suggestions, q],
+  );
 
+  // The "Last heard" sort finally gets its data (tuxlink-sbf03: the map was
+  // caller-supplied and NEVER passed, so the default sort silently didn't
+  // sort). Keyed by uppercase callsign per LastHeardMap's contract.
+  const lastHeard = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const c of contacts) {
+      const t = contactLastHeardMs(c);
+      if (t !== null) map[c.callsign.toUpperCase()] = t;
+    }
+    return map;
+  }, [contacts]);
+
+  // Suggestions no longer render inside Ungrouped — they are Heard-class rows
+  // (tuxlink-sbf03), merged with the unconfirmed contacts below the roster.
   const tree = useMemo(
-    () => buildContactTree({ contacts: curatedContacts, groups, suggestions, query: q, sort }),
-    [curatedContacts, groups, suggestions, q, sort],
+    () => buildContactTree({ contacts: curatedContacts, groups, suggestions: [], query: q, sort, lastHeard }),
+    [curatedContacts, groups, q, sort, lastHeard],
   );
 
   // Under a query, groups containing a match auto-expand (overrides manual
   // collapse). With no query, manual collapse state governs.
   const autoExpand = useMemo(
-    () => groupsMatchingQuery({ contacts: curatedContacts, groups, suggestions, query: q, sort }),
-    [curatedContacts, groups, suggestions, q, sort],
+    () => groupsMatchingQuery({ contacts: curatedContacts, groups, suggestions: [], query: q, sort }),
+    [curatedContacts, groups, q, sort],
   );
+
+  // ---- Favorites scope rows (tuxlink-sbf03) ----
+  // A starred favorite joins to a contact by contact_id / base-callsign; the
+  // remainder (pure gateway/CMS favorites with no contact) still get rows —
+  // retiring FavoritesPanel must not orphan them.
+  const favoriteRows = useMemo(() => {
+    const rows: Array<{ favorite: Favorite; contact: Contact | null }> = [];
+    for (const f of starredFavorites) {
+      const c =
+        contacts.find((k) => f.contact_id === k.id) ??
+        contacts.find((k) => baseCall(k.callsign) === baseCall(f.gateway)) ??
+        null;
+      if (q) {
+        const hay = [f.gateway, f.freq, f.band, c?.name, c?.callsign].filter(Boolean).join(' ').toLowerCase();
+        if (!hay.includes(q)) continue;
+      }
+      rows.push({ favorite: f, contact: c });
+    }
+    rows.sort((a, b) => {
+      const ta = a.contact ? contactLastHeardMs(a.contact) ?? -Infinity : -Infinity;
+      const tb = b.contact ? contactLastHeardMs(b.contact) ?? -Infinity : -Infinity;
+      return tb - ta || a.favorite.gateway.localeCompare(b.favorite.gateway);
+    });
+    return rows;
+  }, [starredFavorites, contacts, q]);
+
+  // Scope pill counts (whole-population, not query-filtered — the pill answers
+  // "how many exist", the list answers "how many match").
+  const heardCount =
+    contacts.filter((c) => (c.tier ?? 'confirmed') === 'unconfirmed').length + suggestions.length;
 
   const isExpanded = (groupId: string): boolean =>
     q ? autoExpand.has(groupId) : !collapsed.has(groupId);
@@ -198,6 +343,23 @@ export function ContactsPanel() {
     setSelected(new Set());
     setSelection({ kind: 'suggestion', callsign, messageCount });
     setEditor({ kind: 'closed' });
+  };
+
+  // ---- per-dial star (tuxlink-sbf03) ----
+  // ★ on a detail-pane dial = that dial is a starred Favorite (it appears in
+  // the Favorites scope and the ribbon Connect targets). Find-or-create then
+  // toggle — the StationFinderPanel save-favorite pattern, keyed the same way.
+  const toggleDialStar = async (dial: FavoriteDial) => {
+    const existing = favorites.find((f) => favoriteKey(f) === favoriteKey(dial));
+    if (existing) {
+      await invoke('favorite_star', { id: existing.id, starred: !existing.starred }).catch(() => {});
+    } else {
+      const created = await invoke<Favorite>('favorite_upsert', {
+        favorite: dialToNewFavorite(dial),
+      }).catch(() => null);
+      if (created) await invoke('favorite_star', { id: created.id, starred: true }).catch(() => {});
+    }
+    await qc.invalidateQueries({ queryKey: FAVORITES_QUERY_KEY });
   };
 
   // ---- multi-select (Ctrl/Shift) over contact rows ----
@@ -298,17 +460,97 @@ export function ContactsPanel() {
           </button>
         </div>
 
-        <div className="contacts-sort" data-testid="contacts-sort">
-          <SortButton current={sort} value="last-heard" label="Last heard" onChange={setSort} />
-          <SortButton current={sort} value="name" label="Name" onChange={setSort} />
-          <SortButton current={sort} value="callsign" label="Callsign" onChange={setSort} />
+        {/* Scope pills + sort — ONE always-present row (tuxlink-sbf03). The
+            pills are the consolidation: Favorites and Heard are filters over
+            this list, not sibling features. */}
+        <div className="contacts-scopes" data-testid="contacts-scopes">
+          <ScopePill
+            label="All"
+            count={contacts.length}
+            active={scope === 'all'}
+            testid="contacts-scope-all"
+            onClick={() => setScope('all')}
+          />
+          <ScopePill
+            label="★ Favorites"
+            count={starredFavorites.length}
+            active={scope === 'favorites'}
+            testid="contacts-scope-favorites"
+            onClick={() => setScope('favorites')}
+          />
+          <ScopePill
+            label="Heard"
+            count={heardCount}
+            active={scope === 'heard'}
+            testid="contacts-scope-heard"
+            onClick={() => setScope('heard')}
+          />
+          <label className="contacts-sort" data-testid="contacts-sort">
+            sort
+            <select
+              className="tux-select contacts-sort-select"
+              data-testid="contacts-sort-select"
+              value={sort}
+              onChange={(e) => setSort(e.target.value as SortKey)}
+            >
+              <option value="last-heard">Last heard</option>
+              <option value="name">Name</option>
+              <option value="callsign">Callsign</option>
+            </select>
+          </label>
         </div>
 
+        {scope === 'favorites' ? (
+          <div className="contacts-tree" data-testid="contacts-tree">
+            {favoriteRows.length === 0 ? (
+              <p className="contacts-empty" data-testid="contacts-favorites-empty">
+                No starred favorites yet — ★ a dial on a contact, or star a gateway from Find a Station.
+              </p>
+            ) : (
+              <ul className="contacts-rows">
+                {favoriteRows.map(({ favorite, contact }) => (
+                  <FavoriteScopeRow
+                    key={favorite.id}
+                    favorite={favorite}
+                    contact={contact}
+                    selected={
+                      contact !== null && selection.kind === 'contact' && selection.id === contact.id
+                    }
+                    onSelect={() => {
+                      if (contact) {
+                        setSelection({ kind: 'contact', id: contact.id });
+                      } else {
+                        setSelection({ kind: 'raw', callsign: favorite.gateway });
+                      }
+                      setEditor({ kind: 'closed' });
+                    }}
+                    onConnect={onConnectFavorite}
+                  />
+                ))}
+              </ul>
+            )}
+          </div>
+        ) : scope === 'heard' ? (
+          <div className="contacts-tree" data-testid="contacts-tree">
+            <HeardSection
+              recentContacts={recentContacts}
+              suggestions={visibleSuggestions}
+              selection={selection}
+              standalone
+              onSelectRecent={selectRecent}
+              onPromote={(id) => void promoteContact(id)}
+              onDeleteRecent={(id) => void deleteRecent(id)}
+              onSelectSuggestion={selectSuggestion}
+              onSaveSuggestion={(cs) => void addSuggestion(cs)}
+            />
+          </div>
+        ) : (
         <div className="contacts-tree" data-testid="contacts-tree">
           {tree.groups.map((section) => (
             <GroupSectionView
               key={section.group.id}
               section={section}
+              favorites={starredFavorites}
               expanded={isExpanded(section.group.id)}
               onToggleCollapse={() => toggleCollapse(section.group.id)}
               onSelectGroup={() => {
@@ -328,7 +570,7 @@ export function ContactsPanel() {
 
           <section className="contacts-ungrouped" data-testid="contacts-ungrouped">
             <div className="contacts-ungrouped-head" data-testid="contacts-ungrouped-head">
-              <span className="contacts-ungrouped-label">Ungrouped</span>
+              <span className="contacts-ungrouped-label">Contacts</span>
               <span className="contacts-ungrouped-count">{tree.ungrouped.length}</span>
             </div>
             {tree.ungrouped.length === 0 ? (
@@ -343,6 +585,7 @@ export function ContactsPanel() {
                     row={row}
                     selection={selection}
                     multiSelected={selected}
+                    favorites={starredFavorites}
                     onContactRowClick={onContactRowClick}
                     onSelectRaw={(callsign) => {
                       setSelected(new Set());
@@ -357,31 +600,22 @@ export function ContactsPanel() {
             )}
           </section>
 
-          {/* RECENT — auto-observed (unconfirmed-tier) stations, below the
-              curated list. Vocabulary shared with Favorites' Recent tab. Each
-              row makes its OWN honest RF claim (Heard vs dialed-not-reached);
-              the section makes none. Empty ⇒ hidden (no empty-state chrome). */}
-          {recentContacts.length > 0 && (
-            <section className="contacts-recent" data-testid="contacts-recent">
-              <div className="contacts-ungrouped-head" data-testid="contacts-recent-head">
-                <span className="contacts-ungrouped-label">Recent</span>
-                <span className="contacts-ungrouped-count">{recentContacts.length}</span>
-              </div>
-              <ul className="contacts-rows">
-                {recentContacts.map((c) => (
-                  <RecentRowView
-                    key={c.id}
-                    contact={c}
-                    selected={selection.kind === 'contact' && selection.id === c.id}
-                    onSelect={() => selectRecent(c.id)}
-                    onPromote={() => void promoteContact(c.id)}
-                    onDelete={() => void deleteRecent(c.id)}
-                  />
-                ))}
-              </ul>
-            </section>
-          )}
+          {/* HEARD — the one not-saved-yet class (tuxlink-sbf03): unconfirmed
+              auto-observed stations AND suggested-from-traffic callsigns, one
+              section, one row anatomy. Each row makes its OWN honest RF claim;
+              the section makes none. Empty ⇒ hidden. */}
+          <HeardSection
+            recentContacts={recentContacts}
+            suggestions={visibleSuggestions}
+            selection={selection}
+            onSelectRecent={selectRecent}
+            onPromote={(id) => void promoteContact(id)}
+            onDeleteRecent={(id) => void deleteRecent(id)}
+            onSelectSuggestion={selectSuggestion}
+            onSaveSuggestion={(cs) => void addSuggestion(cs)}
+          />
         </div>
+        )}
 
         {selected.size > 0 && (
           <BulkBar
@@ -402,6 +636,8 @@ export function ContactsPanel() {
             contact={selectedContact}
             groups={groups}
             operatorGrid={operatorGrid}
+            favorites={favorites}
+            onToggleStar={(dial) => void toggleDialStar(dial)}
             onNewMessage={() => void openComposeTo(selectedContact.callsign)}
             onEdit={() => setEditor({ kind: 'edit', contact: selectedContact })}
             onPromote={
@@ -447,27 +683,63 @@ export function ContactsPanel() {
 // Roster sub-components
 // ===========================================================================
 
-function SortButton({
-  current,
-  value,
+/** One scope pill: label + population count; the active pill carries the
+ *  accent (tuxlink-sbf03 — Favorites/Heard are FILTERS of one list). */
+function ScopePill({
   label,
-  onChange,
+  count,
+  active,
+  testid,
+  onClick,
 }: {
-  current: SortKey;
-  value: SortKey;
   label: string;
-  onChange: (v: SortKey) => void;
+  count: number;
+  active: boolean;
+  testid: string;
+  onClick: () => void;
 }) {
   return (
     <button
       type="button"
-      className={`contacts-sort-btn${current === value ? ' contacts-sort-btn--active' : ''}`}
-      data-testid={`contacts-sort-${value}`}
-      aria-pressed={current === value}
-      onClick={() => onChange(value)}
+      className={`contacts-scope${active ? ' contacts-scope--active' : ''}`}
+      data-testid={testid}
+      aria-pressed={active}
+      onClick={onClick}
     >
-      {label}
+      {label} <b>{count}</b>
     </button>
+  );
+}
+
+/** The uniform right-edge row meta: reach dot · last-heard age · ★. */
+function RowMeta({ contact, favorites }: { contact: Contact; favorites: Favorite[] }) {
+  const last = contactLastHeardMs(contact);
+  const now = Date.now();
+  const starred = starredFavoritesOf(contact, favorites).length > 0;
+  return (
+    <span className="contacts-row-meta-right" data-testid={`row-meta-${contact.id}`}>
+      <span className={`contacts-reach-dot contacts-reach-dot--${reachTone(last, now)}`} aria-hidden="true" />
+      <span className="contacts-row-ago">{agoLabel(last, now)}</span>
+      {starred && (
+        <span className="contacts-row-star" data-testid={`row-star-${contact.id}`} aria-label="starred favorite">
+          ★
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** Avatar for every row (tuxlink-sbf03 uniform anatomy): initials from the
+ *  display name, else the callsign's first two characters. `heard` renders the
+ *  dashed not-saved variant. */
+function RowAvatar({ contact, heard = false }: { contact: Pick<Contact, 'callsign' | 'name'>; heard?: boolean }) {
+  const text = hasDisplayName(contact as Contact)
+    ? contactInitials(contact.name)
+    : contact.callsign.replace(/^SMTP:/, '').slice(0, 2).toUpperCase();
+  return (
+    <span className={`contacts-avatar contacts-avatar--sm${heard ? ' contacts-avatar--heard' : ''}`} aria-hidden="true">
+      {text}
+    </span>
   );
 }
 
@@ -478,6 +750,7 @@ function GroupSectionView({
   onSelectGroup,
   selection,
   multiSelected,
+  favorites,
   onContactRowClick,
   onSelectRaw,
 }: {
@@ -487,6 +760,7 @@ function GroupSectionView({
   onSelectGroup: () => void;
   selection: Selection;
   multiSelected: Set<string>;
+  favorites: Favorite[];
   onContactRowClick: (id: string, e: React.MouseEvent) => void;
   onSelectRaw: (callsign: string) => void;
 }) {
@@ -494,9 +768,13 @@ function GroupSectionView({
   const isSelected = selection.kind === 'group' && selection.id === group.id;
   // Up to three avatars in the stack — named members first (callsign-only rows
   // are avatar-less, so their initials would be noise).
-  const stack = rows
-    .filter((r): r is Extract<OutlineRow, { kind: 'contact' }> => r.kind === 'contact' && hasDisplayName(r.contact))
-    .slice(0, 3);
+  const named = rows.filter(
+    (r): r is Extract<OutlineRow, { kind: 'contact' }> => r.kind === 'contact' && hasDisplayName(r.contact),
+  );
+  // Max TWO avatars + a contained "+N" overflow chip — the open-ended stack
+  // clipped at the roster edge (tuxlink-sbf03 survey render).
+  const stack = named.slice(0, 2);
+  const overflow = memberCount - stack.length;
 
   return (
     <section className="contacts-group" data-testid={`group-section-${group.id}`}>
@@ -528,6 +806,9 @@ function GroupSectionView({
               {contactInitials(r.contact.name)}
             </span>
           ))}
+          {overflow > 0 && (
+            <span className="contacts-avatar contacts-avatar--sm contacts-avatar--more">+{overflow}</span>
+          )}
         </span>
       </div>
 
@@ -544,6 +825,7 @@ function GroupSectionView({
                 row={row}
                 selection={selection}
                 multiSelected={multiSelected}
+                favorites={favorites}
                 onContactRowClick={onContactRowClick}
                 onSelectRaw={onSelectRaw}
               />
@@ -559,6 +841,7 @@ function OutlineRowView({
   row,
   selection,
   multiSelected,
+  favorites,
   onContactRowClick,
   onSelectRaw,
   onSelectSuggestion,
@@ -567,6 +850,7 @@ function OutlineRowView({
   row: OutlineRow;
   selection: Selection;
   multiSelected: Set<string>;
+  favorites: Favorite[];
   onContactRowClick: (id: string, e: React.MouseEvent) => void;
   onSelectRaw: (callsign: string) => void;
   onSelectSuggestion?: (callsign: string, messageCount: number) => void;
@@ -616,6 +900,7 @@ function OutlineRowView({
           data-testid={`raw-row-${row.callsign}`}
           onClick={() => onSelectRaw(row.callsign)}
         >
+          <RowAvatar contact={{ callsign: row.callsign, name: '' }} heard />
           <span className="contacts-row-callsign">{row.callsign}</span>
           <span className="contacts-row-name contacts-row-name--add">+ add name</span>
         </button>
@@ -623,9 +908,12 @@ function OutlineRowView({
     );
   }
 
-  // Contact row — callsign-first; avatar only for named contacts.
+  // Contact row — the uniform anatomy (tuxlink-sbf03): avatar (always) ·
+  // callsign+name · reach dot · last-heard · ★. Email pseudo-contacts render
+  // an EMAIL chip + name, never the raw SMTP: string.
   const c = row.contact;
   const named = hasDisplayName(c);
+  const email = emailAddressOf(c);
   const isSelected = selection.kind === 'contact' && selection.id === c.id;
   const isMulti = multiSelected.has(c.id);
   return (
@@ -639,20 +927,29 @@ function OutlineRowView({
         aria-pressed={isMulti}
         onClick={(e) => onContactRowClick(c.id, e)}
       >
-        {named ? (
-          <span className="contacts-avatar contacts-avatar--sm" aria-hidden="true">
-            {contactInitials(c.name)}
-          </span>
+        <RowAvatar contact={c} />
+        {email ? (
+          <>
+            <span className="contacts-idkind" data-testid={`contact-email-chip-${c.id}`}>
+              EMAIL
+            </span>
+            <span className="contacts-row-callsign contacts-row-callsign--name">
+              {named ? c.name : email}
+            </span>
+            {named && <span className="contacts-row-name">{email}</span>}
+          </>
         ) : (
-          <span className="contacts-avatar-placeholder" aria-hidden="true" />
-        )}
-        <span className="contacts-row-callsign">{c.callsign}</span>
-        {named ? (
-          <span className="contacts-row-name">{c.name}</span>
-        ) : (
-          <span className="contacts-row-name contacts-row-name--add">+ add name</span>
+          <>
+            <span className="contacts-row-callsign">{c.callsign}</span>
+            {named ? (
+              <span className="contacts-row-name">{c.name}</span>
+            ) : (
+              <span className="contacts-row-name contacts-row-name--add">+ add name</span>
+            )}
+          </>
         )}
         {c.tactical && <span className="contacts-tag contacts-tag--tactical">{c.tactical}</span>}
+        <RowMeta contact={c} favorites={favorites} />
       </button>
     </li>
   );
@@ -697,10 +994,101 @@ const PROVENANCE_LABEL: Record<Provenance, string> = {
   unknown: 'unknown',
 };
 
-/** A Recent (Unconfirmed) row: callsign · optional grid · honest per-row status
- *  (Heard vs dialed-not-reached) + one-click "+ Add" (promote) and delete. The
+/** The Heard section (tuxlink-sbf03): ONE not-saved-yet class — unconfirmed
+ *  auto-observed stations (RF/telnet observations) and suggested-from-traffic
+ *  callsigns — in the uniform row anatomy (dashed avatar), each with a
+ *  one-click promote and dismiss. `standalone` renders the rows without the
+ *  section head (the Heard SCOPE is the section). Empty ⇒ hidden. */
+function HeardSection({
+  recentContacts,
+  suggestions,
+  selection,
+  standalone = false,
+  onSelectRecent,
+  onPromote,
+  onDeleteRecent,
+  onSelectSuggestion,
+  onSaveSuggestion,
+}: {
+  recentContacts: Contact[];
+  suggestions: Suggestion[];
+  selection: Selection;
+  standalone?: boolean;
+  onSelectRecent: (id: string) => void;
+  onPromote: (id: string) => void;
+  onDeleteRecent: (id: string) => void;
+  onSelectSuggestion: (callsign: string, messageCount: number) => void;
+  onSaveSuggestion: (callsign: string) => void;
+}) {
+  const total = recentContacts.length + suggestions.length;
+  if (total === 0) {
+    return standalone ? (
+      <p className="contacts-empty" data-testid="contacts-heard-empty">
+        Nothing heard yet — stations you hear (or that message you) appear here to save.
+      </p>
+    ) : null;
+  }
+  return (
+    <section className="contacts-recent" data-testid="contacts-heard">
+      {!standalone && (
+        <div className="contacts-ungrouped-head" data-testid="contacts-heard-head">
+          <span className="contacts-ungrouped-label">Heard — not saved</span>
+          <span className="contacts-ungrouped-count">{total}</span>
+        </div>
+      )}
+      <ul className="contacts-rows">
+        {recentContacts.map((c) => (
+          <HeardRowView
+            key={c.id}
+            contact={c}
+            selected={selection.kind === 'contact' && selection.id === c.id}
+            onSelect={() => onSelectRecent(c.id)}
+            onPromote={() => onPromote(c.id)}
+            onDelete={() => onDeleteRecent(c.id)}
+          />
+        ))}
+        {suggestions.map((s) => {
+          const isSelected = selection.kind === 'suggestion' && selection.callsign === s.callsign;
+          return (
+            <li className="contacts-row-li" key={`sugg-${s.callsign}`}>
+              <div
+                className={`contacts-row contacts-row--suggestion${isSelected ? ' contacts-row--selected' : ''}`}
+              >
+                <button
+                  type="button"
+                  className="contacts-suggestion-main"
+                  data-testid={`suggestion-${s.callsign}`}
+                  onClick={() => onSelectSuggestion(s.callsign, s.message_count)}
+                >
+                  <RowAvatar contact={{ callsign: s.callsign, name: '' }} heard />
+                  <span className="contacts-heard-who">
+                    <span className="contacts-row-callsign">{s.callsign}</span>
+                    <span className="contacts-heard-sub">
+                      {s.message_count} {s.message_count === 1 ? 'message' : 'messages'} in traffic
+                    </span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="contacts-row-save"
+                  data-testid={`suggestion-add-${s.callsign}`}
+                  onClick={() => onSaveSuggestion(s.callsign)}
+                >
+                  + Save
+                </button>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+/** A Heard (Unconfirmed) row in the uniform anatomy: dashed avatar · callsign ·
+ *  honest provenance sub-line + one-click "+ Save" (promote) and dismiss. The
  *  row body selects the contact into the detail pane. */
-function RecentRowView({
+function HeardRowView({
   contact,
   selected,
   onSelect,
@@ -723,29 +1111,29 @@ function RecentRowView({
           data-testid={`recent-row-${contact.id}`}
           onClick={onSelect}
         >
-          <span className="contacts-row-callsign">{contact.callsign}</span>
-          {contact.grid?.value && <span className="contacts-recent-grid">{contact.grid.value}</span>}
-          {statusLine && (
-            <span className="contacts-recent-status" data-testid={`recent-status-${contact.id}`}>
-              {statusLine}
+          <RowAvatar contact={contact} heard />
+          <span className="contacts-heard-who">
+            <span className="contacts-row-callsign">{contact.callsign}</span>
+            <span className="contacts-heard-sub" data-testid={`recent-status-${contact.id}`}>
+              {[statusLine, contact.grid?.value].filter(Boolean).join(' · ') || 'observed'}
             </span>
-          )}
+          </span>
         </button>
         <button
           type="button"
           className="contacts-row-save"
           data-testid={`recent-add-${contact.id}`}
-          title="Add to contacts"
+          title="Save to contacts"
           onClick={onPromote}
         >
-          + Add
+          + Save
         </button>
         <button
           type="button"
           className="contacts-recent-delete"
           data-testid={`recent-delete-${contact.id}`}
-          aria-label="Delete"
-          title="Delete"
+          aria-label="Dismiss"
+          title="Dismiss"
           onClick={onDelete}
         >
           ×
@@ -754,6 +1142,93 @@ function RecentRowView({
     </li>
   );
 }
+
+/** A Favorites-scope row (tuxlink-sbf03 — the retired FavoritesPanel's job in
+ *  the uniform anatomy): avatar · callsign+name · the starred dial's summary
+ *  sub-line · a permanent Connect (ribbon parity, one click). */
+function FavoriteScopeRow({
+  favorite,
+  contact,
+  selected,
+  onSelect,
+  onConnect,
+}: {
+  favorite: Favorite;
+  contact: Contact | null;
+  selected: boolean;
+  onSelect: () => void;
+  onConnect?: (dial: FavoriteDial) => void;
+}) {
+  const label = MODE_LABELS[favorite.mode] ?? favorite.mode;
+  const status = contact ? recentStatusLine(deriveRecentStatus(contact)) : null;
+  const sub = [
+    `★ ${label}`,
+    favorite.freq || null,
+    favorite.band || null,
+    favorite.transport || null,
+    status,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  const rowContact: Pick<Contact, 'callsign' | 'name'> = contact ?? {
+    callsign: favorite.gateway,
+    name: '',
+  };
+  return (
+    <li className="contacts-row-li">
+      <div className={`contacts-row contacts-row--favorite${selected ? ' contacts-row--selected' : ''}`}>
+        <button
+          type="button"
+          className="contacts-recent-main"
+          data-testid={`favorite-row-${favorite.id}`}
+          onClick={onSelect}
+        >
+          <RowAvatar contact={rowContact} />
+          <span className="contacts-heard-who">
+            <span className="contacts-row-callsign">
+              {contact?.callsign ?? favorite.gateway}
+              {contact && hasDisplayName(contact) && (
+                <span className="contacts-row-name">{contact.name}</span>
+              )}
+            </span>
+            <span className="contacts-heard-sub">{sub}</span>
+          </span>
+        </button>
+        {onConnect && (
+          <button
+            type="button"
+            className="contacts-row-connect"
+            data-testid={`favorite-connect-${favorite.id}`}
+            title={`Connect to ${favorite.gateway}`}
+            onClick={() =>
+              onConnect({
+                mode: favorite.mode,
+                gateway: favorite.gateway,
+                freq: favorite.freq,
+                transport: favorite.transport,
+                band: favorite.band,
+                grid: favorite.grid,
+                contact_id: favorite.contact_id,
+              })
+            }
+          >
+            Connect
+          </button>
+        )}
+      </div>
+    </li>
+  );
+}
+
+/** Display labels for a favorite's RadioMode (FavoritesPanel's MODE_ORDER,
+ *  carried over when that panel retired into the Favorites scope). */
+const MODE_LABELS: Record<string, string> = {
+  'vara-hf': 'VARA HF',
+  'vara-fm': 'VARA FM',
+  'ardop-hf': 'ARDOP HF',
+  packet: 'Packet',
+  telnet: 'Telnet',
+};
 
 // ===========================================================================
 // Reachability block (contact detail, Task T-F Part 2)
@@ -775,12 +1250,29 @@ function ReachChannelRow({
   contact,
   channel,
   index,
+  favorites,
+  onToggleStar,
 }: {
   contact: Contact;
   channel: ReachChannel;
   index: number;
+  favorites: Favorite[];
+  onToggleStar: (dial: FavoriteDial) => void;
 }) {
   const protocol = radioModeForPeerTransport(channel.transport);
+  // The channel as a Favorite dial (tuxlink-sbf03): ★ = this dial appears in
+  // the Favorites scope + the ribbon Connect targets. Starless when the
+  // transport has no tuxlink modem (nothing could ever dial it).
+  const dial: FavoriteDial | null = protocol
+    ? {
+        mode: protocol,
+        gateway: channel.target_callsign,
+        freq: channel.freq_hz != null ? (channel.freq_hz / 1000).toFixed(1) : undefined,
+        contact_id: contact.id,
+      }
+    : null;
+  const starred =
+    dial !== null && favorites.some((f) => f.starred && favoriteKey(f) === favoriteKey(dial));
   const sub = [
     channel.via.length > 0 ? `via ${channel.via.join(', ')}` : '',
     bandwidthText(channel.bandwidth),
@@ -798,6 +1290,18 @@ function ReachChannelRow({
           {sub}
         </div>
       </div>
+      {dial !== null && (
+        <button
+          type="button"
+          className={`contact-dial-star${starred ? ' contact-dial-star--on' : ''}`}
+          data-testid={`reach-channel-star-${contact.id}-${index}`}
+          aria-pressed={starred}
+          title={starred ? 'Unstar — remove from Favorites' : 'Star — add to Favorites + ribbon Connect'}
+          onClick={() => onToggleStar(dial)}
+        >
+          {starred ? '★' : '☆'}
+        </button>
+      )}
       <button
         type="button"
         className="contact-detail-btn"
@@ -854,15 +1358,32 @@ function ReachEndpointRow({
 
 /** The reachability block: RF channel rows + telnet endpoint rows. Hidden when
  *  the contact carries neither (spec: heard stations appear when they happen). */
-function ReachabilityBlock({ contact, operatorGrid }: { contact: Contact; operatorGrid: string }) {
+function ReachabilityBlock({
+  contact,
+  operatorGrid,
+  favorites,
+  onToggleStar,
+}: {
+  contact: Contact;
+  operatorGrid: string;
+  favorites: Favorite[];
+  onToggleStar: (dial: FavoriteDial) => void;
+}) {
   const channels = contact.channels ?? [];
   const endpoints = contact.endpoints ?? [];
   if (channels.length === 0 && endpoints.length === 0) return null;
   return (
     <section className="contact-reach-card" data-testid="contact-reachability">
-      <h3 className="contact-card-label">Reachability</h3>
+      <h3 className="contact-card-label">Reachability &amp; connect</h3>
       {channels.map((ch, i) => (
-        <ReachChannelRow key={`ch-${i}`} contact={contact} channel={ch} index={i} />
+        <ReachChannelRow
+          key={`ch-${i}`}
+          contact={contact}
+          channel={ch}
+          index={i}
+          favorites={favorites}
+          onToggleStar={onToggleStar}
+        />
       ))}
       {endpoints.map((ep) => (
         <ReachEndpointRow key={ep.id} contact={contact} endpoint={ep} operatorGrid={operatorGrid} />
@@ -1001,6 +1522,8 @@ function ContactDetail({
   contact,
   groups,
   operatorGrid,
+  favorites,
+  onToggleStar,
   onNewMessage,
   onEdit,
   onPromote,
@@ -1008,6 +1531,8 @@ function ContactDetail({
   contact: Contact;
   groups: Group[];
   operatorGrid: string;
+  favorites: Favorite[];
+  onToggleStar: (dial: FavoriteDial) => void;
   onNewMessage: () => void;
   onEdit: () => void;
   /// Present ONLY for an Unconfirmed contact — the one-click promote ("+ Add
@@ -1031,7 +1556,19 @@ function ContactDetail({
         )}
         <div className="contact-detail-id">
           <h2 className="contact-detail-callsign" data-testid="contact-detail-callsign">
-            {contact.callsign}
+            {emailAddressOf(contact) ? (
+              <>
+                <span className="contacts-idkind contacts-idkind--lg">EMAIL</span>
+                {hasDisplayName(contact) ? contact.name : emailAddressOf(contact)}
+              </>
+            ) : (
+              contact.callsign
+            )}
+            {starredFavoritesOf(contact, favorites).length > 0 && (
+              <span className="contact-detail-star" title="Has starred Favorite dials">
+                ★
+              </span>
+            )}
           </h2>
           {named ? (
             <span className="contact-detail-name">{contact.name}</span>
@@ -1050,7 +1587,12 @@ function ContactDetail({
 
       {/* Reachability (Task T-F Part 2): live RF/telnet rows with Connect —
           hidden when the contact has neither. */}
-      <ReachabilityBlock contact={contact} operatorGrid={operatorGrid} />
+      <ReachabilityBlock
+        contact={contact}
+        operatorGrid={operatorGrid}
+        favorites={favorites}
+        onToggleStar={onToggleStar}
+      />
 
       <dl className="contact-detail-fields">
         {contact.tactical && (
