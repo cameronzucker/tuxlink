@@ -571,7 +571,8 @@ fn retain_user_guide(
 mod help_search_tests {
     use super::retain_user_guide;
     use crate::search::docs_bundle::BUNDLED_TOPICS;
-    use crate::search::docs_index::{DocSource, DocsHit, Index};
+    use crate::search::docs_index::{DocSource, DocsHit};
+    use crate::search::index::Index;
     use tempfile::tempdir;
 
     fn hit(slug: &str) -> DocsHit {
