@@ -397,12 +397,23 @@ impl Action for RadioListen {
                 cause: e.to_string(),
             })?;
 
-        let rms = tokio::select! {
-            biased;
-            _ = cancel.cancelled() => return Err(StepError::Cancelled),
-            res = self.listen.sample_rms(&rig, parsed.seconds, cancel.clone()) => res,
+        let mut cancelled_during_sample = false;
+        let mut sample_fut = self.listen.sample_rms(&rig, parsed.seconds, cancel.clone());
+        let sample_result = loop {
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled(), if !cancelled_during_sample => {
+                    cancelled_during_sample = true;
+                }
+                res = &mut sample_fut => break res,
+            }
+        };
+
+        if cancelled_during_sample {
+            return Err(StepError::Cancelled);
         }
-        .map_err(|cause| StepError::Action {
+
+        let rms = sample_result.map_err(|cause| StepError::Action {
             action: RADIO_LISTEN.to_string(),
             cause,
         })?;
@@ -412,6 +423,10 @@ impl Action for RadioListen {
             "rms": rms,
         }))
         // `_lease` drops here — released after the dwell completes.
+        // This is also true of the early `return Err(StepError::Cancelled)`
+        // above: it only runs after `sample_result` already resolved, so
+        // `_lease` never releases before the physical capture is done, on
+        // any code path.
     }
 }
 
@@ -797,11 +812,37 @@ mod tests {
 
     struct FakeListenService {
         rms: f32,
+        delay: Option<std::time::Duration>,
+        on_complete: Option<Arc<Mutex<bool>>>,
     }
 
     impl FakeListenService {
         fn always(rms: f32) -> Self {
-            Self { rms }
+            Self {
+                rms,
+                delay: None,
+                on_complete: None,
+            }
+        }
+
+        fn with_delay(rms: f32, delay: std::time::Duration) -> Self {
+            Self {
+                rms,
+                delay: Some(delay),
+                on_complete: None,
+            }
+        }
+
+        fn with_delay_and_completion_flag(
+            rms: f32,
+            delay: std::time::Duration,
+            on_complete: Arc<Mutex<bool>>,
+        ) -> Self {
+            Self {
+                rms,
+                delay: Some(delay),
+                on_complete: Some(on_complete),
+            }
         }
     }
 
@@ -813,6 +854,12 @@ mod tests {
             _seconds: u64,
             _cancel: CancellationToken,
         ) -> Result<f32, String> {
+            if let Some(delay) = self.delay {
+                tokio::time::sleep(delay).await;
+            }
+            if let Some(ref flag) = self.on_complete {
+                *flag.lock().unwrap() = true;
+            }
             Ok(self.rms)
         }
     }
@@ -1308,6 +1355,53 @@ mod tests {
             .unwrap();
         assert_eq!(*observed.lock().unwrap(), Some(true));
         assert!(arb.status(rig).is_none(), "lease released after listen");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn listen_cancel_during_sample_lets_it_finish_then_returns_cancelled() {
+        let arb = arbiter();
+        let sample_ran_to_completion = Arc::new(Mutex::new(false));
+        let src = sample_ran_to_completion.clone();
+        let listen = Arc::new(FakeListenService::with_delay_and_completion_flag(
+            0.01,
+            std::time::Duration::from_secs(20),
+            src,
+        ));
+        let action = RadioListen::new(arb, listen);
+        let cancel = CancellationToken::new();
+        let cancel_for_task = cancel.clone();
+
+        let handle = tokio::spawn(async move {
+            action
+                .execute(json!({"seconds": 20}), cancel_for_task)
+                .await
+        });
+
+        // Let the sample start and get partway through its simulated dwell,
+        // THEN cancel — well before the fake's 20 s completes. Paused time
+        // advances exactly this far (not further) while this sleep is
+        // pending, so the cancel genuinely lands mid-sample.
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        assert!(
+            !*sample_ran_to_completion.lock().unwrap(),
+            "sanity: sample must still be in flight when cancel fires"
+        );
+        cancel.cancel();
+
+        // `handle.await` drives paused time forward the remaining ~15 s the
+        // fake sample is still sleeping through — proving execute() really
+        // awaited the sample to completion instead of returning as soon as
+        // cancellation was observed.
+        let result = handle.await.expect("execute task must not panic");
+        assert!(
+            matches!(result, Err(StepError::Cancelled)),
+            "cancellation during sample must still surface as Cancelled, got {result:?}"
+        );
+        assert!(
+            *sample_ran_to_completion.lock().unwrap(),
+            "the in-flight sample must run to completion — a cancelled lease must not lie \
+             about physical rig use"
+        );
     }
 
     // ======================================================================
