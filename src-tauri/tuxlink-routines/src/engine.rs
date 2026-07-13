@@ -62,7 +62,10 @@ pub struct InterruptedRun {
 
 impl Engine {
     pub fn new(cfg: EngineConfig) -> Self {
-        Engine { cfg, counter: AtomicU64::new(0) }
+        Engine {
+            cfg,
+            counter: AtomicU64::new(0),
+        }
     }
 
     fn next_run_id(&self) -> String {
@@ -95,7 +98,10 @@ impl Engine {
         let run_id = self.next_run_id();
         let snapshot = resolve_snapshot(def, self.cfg.resolver.as_ref()).await?;
         let mut journal = JournalWriter::create(&self.cfg.journal_dir, &run_id, self.cfg.now)?;
-        journal.append(RunEvent::RunStarted { routine: def.routine.clone(), snapshot: snapshot.clone() })?;
+        journal.append(RunEvent::RunStarted {
+            routine: def.routine.clone(),
+            snapshot: snapshot.clone(),
+        })?;
 
         // The executor runs the SNAPSHOT (spec §7), not the live definition.
         let resolved: RoutineDef = serde_json::from_value(snapshot)
@@ -151,7 +157,11 @@ impl Engine {
             drop(journal_guard);
             let _ = tx.send(outcome);
         });
-        Ok(RunHandle { run_id, cancel, done: rx })
+        Ok(RunHandle {
+            run_id,
+            cancel,
+            done: rx,
+        })
     }
 
     /// Launch-time recovery (spec §8): make every dead journal explicitly,
@@ -165,7 +175,10 @@ impl Engine {
                 state: RunState::Interrupted,
                 reason: Some("process terminated underneath this run".into()),
             })?;
-            out.push(InterruptedRun { run_id, journal_path: path });
+            out.push(InterruptedRun {
+                run_id,
+                journal_path: path,
+            });
         }
         Ok(out)
     }
@@ -187,7 +200,8 @@ impl RoutineInvoker for NoInvoker {
     ) -> Result<serde_json::Value, StepError> {
         Err(StepError::Action {
             action: format!("call:{routine}"),
-            cause: "no routine invoker is mounted (engine configured without a definition lookup)".into(),
+            cause: "no routine invoker is mounted (engine configured without a definition lookup)"
+                .into(),
         })
     }
 }
@@ -222,13 +236,18 @@ impl RoutineInvoker for EngineChildInvoker {
             .engine
             .start_run_with_depth(&def, args, self.child_depth)
             .await
-            .map_err(|e| StepError::Action { action: format!("call:{routine}"), cause: e.to_string() })?;
+            .map_err(|e| StepError::Action {
+                action: format!("call:{routine}"),
+                cause: e.to_string(),
+            })?;
         let outcome = handle.done.await.map_err(|_| StepError::Action {
             action: format!("call:{routine}"),
             cause: "child run task dropped without an outcome".into(),
         })?;
         match outcome.state {
-            RunState::Completed => Ok(serde_json::json!({"completed": true, "run_id": handle.run_id})),
+            RunState::Completed => {
+                Ok(serde_json::json!({"completed": true, "run_id": handle.run_id}))
+            }
             other => Err(StepError::Action {
                 action: format!("call:{routine}"),
                 cause: format!("child run {} ended {:?}", handle.run_id, other),
@@ -297,8 +316,13 @@ mod tests {
         let entries = read_journal(&jpath).unwrap();
         assert!(matches!(&entries.first().unwrap().event,
             RunEvent::RunStarted { routine, snapshot } if routine == "quick" && snapshot.is_object()));
-        assert!(matches!(&entries.last().unwrap().event,
-            RunEvent::RunFinished { state: RunState::Completed, .. }));
+        assert!(matches!(
+            &entries.last().unwrap().event,
+            RunEvent::RunFinished {
+                state: RunState::Completed,
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
@@ -326,8 +350,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         // Fabricate a dead journal (crash: no RunFinished).
         {
-            let mut w = crate::journal::JournalWriter::create(dir.path(), "run-dead", fixed_now).unwrap();
-            w.append(RunEvent::RunStarted { routine: "quick".into(), snapshot: json!({}) }).unwrap();
+            let mut w =
+                crate::journal::JournalWriter::create(dir.path(), "run-dead", fixed_now).unwrap();
+            w.append(RunEvent::RunStarted {
+                routine: "quick".into(),
+                snapshot: json!({}),
+            })
+            .unwrap();
         }
         let eng = engine(dir.path());
         let recovered = eng.recover().unwrap();
@@ -336,8 +365,13 @@ mod tests {
         // The journal is now terminal — a second scan finds nothing.
         assert!(eng.recover().unwrap().is_empty());
         let entries = read_journal(&dir.path().join("run-dead.jsonl")).unwrap();
-        assert!(matches!(&entries.last().unwrap().event,
-            RunEvent::RunFinished { state: RunState::Interrupted, .. }));
+        assert!(matches!(
+            &entries.last().unwrap().event,
+            RunEvent::RunFinished {
+                state: RunState::Interrupted,
+                ..
+            }
+        ));
         // FINDING 2 regression: recover() reopens an EXISTING journal via
         // `JournalWriter::create` to append the terminal entry. seq must
         // resume from the prior entry count (1 pre-existing entry here), not
@@ -355,16 +389,28 @@ mod tests {
         // entry count — not just the single-entry case.
         let dir = tempfile::tempdir().unwrap();
         {
-            let mut w = crate::journal::JournalWriter::create(dir.path(), "run-dead-2", fixed_now).unwrap();
-            w.append(RunEvent::RunStarted { routine: "quick".into(), snapshot: json!({}) }).unwrap();
+            let mut w =
+                crate::journal::JournalWriter::create(dir.path(), "run-dead-2", fixed_now).unwrap();
+            w.append(RunEvent::RunStarted {
+                routine: "quick".into(),
+                snapshot: json!({}),
+            })
+            .unwrap();
             w.append(RunEvent::StepIntent {
                 step: crate::types::StepId("s1".into()),
                 action: "local.log".into(),
                 resolved_params: json!({}),
-            }).unwrap();
-            w.append(RunEvent::StepOk { step: crate::types::StepId("s1".into()), output: json!({}) }).unwrap();
+            })
+            .unwrap();
+            w.append(RunEvent::StepOk {
+                step: crate::types::StepId("s1".into()),
+                output: json!({}),
+            })
+            .unwrap();
         }
-        let prior_count = read_journal(&dir.path().join("run-dead-2.jsonl")).unwrap().len();
+        let prior_count = read_journal(&dir.path().join("run-dead-2.jsonl"))
+            .unwrap()
+            .len();
 
         let eng = engine(dir.path());
         let recovered = eng.recover().unwrap();
@@ -372,7 +418,13 @@ mod tests {
 
         let entries = read_journal(&dir.path().join("run-dead-2.jsonl")).unwrap();
         let last = entries.last().unwrap();
-        assert!(matches!(last.event, RunEvent::RunFinished { state: RunState::Interrupted, .. }));
+        assert!(matches!(
+            last.event,
+            RunEvent::RunFinished {
+                state: RunState::Interrupted,
+                ..
+            }
+        ));
         assert_eq!(last.seq, prior_count as u64);
         let seqs: Vec<u64> = entries.iter().map(|e| e.seq).collect();
         assert_eq!(seqs, vec![0, 1, 2, 3]);
@@ -412,13 +464,20 @@ mod tests {
             }
             let entries = read_journal(&path).unwrap();
             for e in &entries {
-                if let RunEvent::StepErr { error: crate::error::StepError::Action { cause, .. }, .. } = &e.event {
+                if let RunEvent::StepErr {
+                    error: crate::error::StepError::Action { cause, .. },
+                    ..
+                } = &e.event
+                {
                     if cause.contains("depth") {
                         found_depth_err = true;
                     }
                 }
             }
         }
-        assert!(found_depth_err, "expected some journal in the recursion chain to record a depth-cap StepErr");
+        assert!(
+            found_depth_err,
+            "expected some journal in the recursion chain to record a depth-cap StepErr"
+        );
     }
 }

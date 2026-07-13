@@ -84,7 +84,10 @@ pub enum TrackEnd {
     /// Ran off the end of the step list.
     Completed,
     /// Hit an explicit End step (terminates the RUN, spec §6).
-    Ended { failed: bool, reason: Option<String> },
+    Ended {
+        failed: bool,
+        reason: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
@@ -96,11 +99,18 @@ fn journal(ctx: &ExecCtx, event: RunEvent) {
     // Journal I/O failure is unrecoverable-by-design: a run we can't record
     // is a run we must not continue (no-silent-death). Panic in debug;
     // in release the lock/write error still aborts the run via unwrap.
-    ctx.journal.lock().unwrap().append(event).expect("run journal must be writable");
+    ctx.journal
+        .lock()
+        .unwrap()
+        .append(event)
+        .expect("run journal must be writable");
 }
 
 /// Resolve `$var` string params through RunVars (spec §14 convention).
-fn resolve_params(params: &serde_json::Value, vars: &RunVars) -> Result<serde_json::Value, StepError> {
+fn resolve_params(
+    params: &serde_json::Value,
+    vars: &RunVars,
+) -> Result<serde_json::Value, StepError> {
     match params {
         serde_json::Value::String(s) if s.starts_with('$') => vars.resolve(&s[1..]),
         serde_json::Value::Object(map) => {
@@ -111,7 +121,10 @@ fn resolve_params(params: &serde_json::Value, vars: &RunVars) -> Result<serde_js
             Ok(serde_json::Value::Object(out))
         }
         serde_json::Value::Array(items) => Ok(serde_json::Value::Array(
-            items.iter().map(|v| resolve_params(v, vars)).collect::<Result<_, _>>()?,
+            items
+                .iter()
+                .map(|v| resolve_params(v, vars))
+                .collect::<Result<_, _>>()?,
         )),
         other => Ok(other.clone()),
     }
@@ -129,19 +142,25 @@ async fn run_action_step_shared(
     vars: &tokio::sync::Mutex<RunVars>,
     ctx: &ExecCtx,
 ) -> Result<(), StepError> {
-    let action = ctx.registry.get(&step.action).ok_or_else(|| StepError::Action {
-        action: step.action.clone(),
-        cause: format!("action '{}' is not in the registry", step.action),
-    })?;
+    let action = ctx
+        .registry
+        .get(&step.action)
+        .ok_or_else(|| StepError::Action {
+            action: step.action.clone(),
+            cause: format!("action '{}' is not in the registry", step.action),
+        })?;
     let resolved = {
         let guard = vars.lock().await;
         resolve_params(&step.params, &guard)?
     }; // lock dropped here, before any action await
-    journal(ctx, RunEvent::StepIntent {
-        step: step.id.clone(),
-        action: step.action.clone(),
-        resolved_params: resolved.clone(),
-    });
+    journal(
+        ctx,
+        RunEvent::StepIntent {
+            step: step.id.clone(),
+            action: step.action.clone(),
+            resolved_params: resolved.clone(),
+        },
+    );
     let seconds = step.timeout_s.unwrap_or(ctx.default_timeout_s);
     let child_cancel = ctx.cancel.child_token();
     let result = tokio::select! {
@@ -158,7 +177,13 @@ async fn run_action_step_shared(
     };
     match result {
         Ok(output) => {
-            journal(ctx, RunEvent::StepOk { step: step.id.clone(), output: output.clone() });
+            journal(
+                ctx,
+                RunEvent::StepOk {
+                    step: step.id.clone(),
+                    output: output.clone(),
+                },
+            );
             {
                 let mut guard = vars.lock().await;
                 guard.set_step_output(&step.id, output);
@@ -166,7 +191,13 @@ async fn run_action_step_shared(
             Ok(())
         }
         Err(err) => {
-            journal(ctx, RunEvent::StepErr { step: step.id.clone(), error: err.clone() });
+            journal(
+                ctx,
+                RunEvent::StepErr {
+                    step: step.id.clone(),
+                    error: err.clone(),
+                },
+            );
             Err(err)
         }
     }
@@ -219,150 +250,209 @@ pub async fn run_track_shared(
                 run_action_step_shared(a, vars, ctx).await?;
                 idx += 1;
             }
-            Step::Control(c) => match &c.control {
-                Control::Branch { on, then, r#else } => {
-                    let v = {
-                        let guard = vars.lock().await;
-                        guard.resolve(on)?
-                    };
-                    let arm = match &v {
-                        serde_json::Value::Bool(true) => then,
-                        serde_json::Value::Bool(false) => r#else,
-                        other => {
-                            return Err(StepError::Action {
+            Step::Control(c) => {
+                match &c.control {
+                    Control::Branch { on, then, r#else } => {
+                        let v = {
+                            let guard = vars.lock().await;
+                            guard.resolve(on)?
+                        };
+                        let arm = match &v {
+                            serde_json::Value::Bool(true) => then,
+                            serde_json::Value::Bool(false) => r#else,
+                            other => {
+                                return Err(StepError::Action {
                                 action: "branch".into(),
                                 cause: format!("branch variable '{on}' resolved to {other} — not a boolean"),
                             });
+                            }
+                        };
+                        match arm.first() {
+                            Some(target) => {
+                                idx = index_of(track, target).ok_or_else(|| StepError::Action {
+                                    action: "branch".into(),
+                                    cause: format!(
+                                        "branch target '{}' not found in track '{}'",
+                                        target.0, track.name
+                                    ),
+                                })?;
+                            }
+                            None => idx += 1, // empty arm: fall through
                         }
-                    };
-                    match arm.first() {
-                        Some(target) => {
-                            idx = index_of(track, target).ok_or_else(|| StepError::Action {
-                                action: "branch".into(),
-                                cause: format!("branch target '{}' not found in track '{}'", target.0, track.name),
-                            })?;
-                        }
-                        None => idx += 1, // empty arm: fall through
                     }
-                }
-                Control::Retry { step: target, attempts, backoff_s } => {
-                    // Validate: attempts must be > 0 or the loop never executes.
-                    if *attempts == 0 {
-                        return Err(StepError::Action {
+                    Control::Retry {
+                        step: target,
+                        attempts,
+                        backoff_s,
+                    } => {
+                        // Validate: attempts must be > 0 or the loop never executes.
+                        if *attempts == 0 {
+                            return Err(StepError::Action {
                             action: "retry".into(),
                             cause: format!("retry step '{}' has attempts: 0 — it can never execute its target", c.id.0),
                         });
-                    }
-                    let target_idx = index_of(track, target).ok_or_else(|| StepError::Action {
-                        action: "retry".into(),
-                        cause: format!("retry target '{}' not found in track '{}'", target.0, track.name),
-                    })?;
-                    let Step::Action(inner) = &track.steps[target_idx] else {
-                        return Err(StepError::Action {
-                            action: "retry".into(),
-                            cause: format!("retry target '{}' is not an action step", target.0),
-                        });
-                    };
-                    let mut last_err = None;
-                    for attempt in 0..*attempts {
-                        match run_action_step_shared(inner, vars, ctx).await {
-                            Ok(()) => {
-                                last_err = None;
-                                break;
-                            }
-                            Err(e @ StepError::Cancelled) => return Err(e),
-                            Err(e) => {
-                                last_err = Some(e);
-                                if attempt + 1 < *attempts && *backoff_s > 0 {
-                                    tokio::select! {
-                                        _ = tokio::time::sleep(Duration::from_secs(*backoff_s)) => {},
-                                        _ = ctx.cancel.cancelled() => return Err(StepError::Cancelled),
+                        }
+                        let target_idx =
+                            index_of(track, target).ok_or_else(|| StepError::Action {
+                                action: "retry".into(),
+                                cause: format!(
+                                    "retry target '{}' not found in track '{}'",
+                                    target.0, track.name
+                                ),
+                            })?;
+                        let Step::Action(inner) = &track.steps[target_idx] else {
+                            return Err(StepError::Action {
+                                action: "retry".into(),
+                                cause: format!("retry target '{}' is not an action step", target.0),
+                            });
+                        };
+                        let mut last_err = None;
+                        for attempt in 0..*attempts {
+                            match run_action_step_shared(inner, vars, ctx).await {
+                                Ok(()) => {
+                                    last_err = None;
+                                    break;
+                                }
+                                Err(e @ StepError::Cancelled) => return Err(e),
+                                Err(e) => {
+                                    last_err = Some(e);
+                                    if attempt + 1 < *attempts && *backoff_s > 0 {
+                                        tokio::select! {
+                                            _ = tokio::time::sleep(Duration::from_secs(*backoff_s)) => {},
+                                            _ = ctx.cancel.cancelled() => return Err(StepError::Cancelled),
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
-                    if let Some(e) = last_err {
-                        return Err(e);
-                    }
-                    consumed.insert(target.clone());
-                    idx += 1;
-                }
-                Control::End { failed, reason } => {
-                    return Ok(TrackEnd::Ended { failed: *failed, reason: reason.clone() });
-                }
-                Control::Delay { delay } => {
-                    let spec = parse_delay(delay)?;
-                    let dur = match spec {
-                        DelaySpec::Relative(d) => d,
-                        DelaySpec::NextAlign(align) => duration_to_next_align((ctx.now)(), align),
-                    };
-                    journal(ctx, RunEvent::StateChanged { state: RunState::Waiting });
-                    tokio::select! {
-                        _ = tokio::time::sleep(dur) => {}
-                        _ = ctx.cancel.cancelled() => return Err(StepError::Cancelled),
-                    }
-                    journal(ctx, RunEvent::StateChanged { state: RunState::Running });
-                    idx += 1;
-                }
-                Control::Call { routine, args, sync } => {
-                    // Resolve args first: a $var resolution failure is a
-                    // step failure per the unset-variable rules (spec §10),
-                    // same as an action step's params — no journal entry for
-                    // a call that never had valid params to attempt.
-                    let resolved_args = {
-                        let guard = vars.lock().await;
-                        resolve_params(args, &guard)?
-                    }; // lock dropped here, before any invoke await
-                    journal(ctx, RunEvent::StepIntent {
-                        step: c.id.clone(),
-                        action: format!("call:{routine}"),
-                        resolved_params: resolved_args.clone(),
-                    });
-                    if ctx.depth >= crate::compose::MAX_CALL_DEPTH {
-                        let err = StepError::Action {
-                            action: format!("call:{routine}"),
-                            cause: format!(
-                                "call depth {} exceeds cap {} — recursive routine chain",
-                                ctx.depth,
-                                crate::compose::MAX_CALL_DEPTH
-                            ),
-                        };
-                        journal(ctx, RunEvent::StepErr { step: c.id.clone(), error: err.clone() });
-                        return Err(err);
-                    }
-                    let provenance = crate::compose::Provenance {
-                        parent_run_id: ctx.run_id.clone(),
-                        parent_step: c.id.clone(),
-                    };
-                    if *sync {
-                        match ctx.invoker.invoke(routine, resolved_args, provenance).await {
-                            Ok(result) => {
-                                journal(ctx, RunEvent::StepOk { step: c.id.clone(), output: result.clone() });
-                                let mut guard = vars.lock().await;
-                                guard.set_step_output(&c.id, result);
-                            }
-                            Err(err) => {
-                                journal(ctx, RunEvent::StepErr { step: c.id.clone(), error: err.clone() });
-                                return Err(err);
-                            }
+                        if let Some(e) = last_err {
+                            return Err(e);
                         }
-                    } else {
-                        let invoker = ctx.invoker.clone();
-                        let routine = routine.clone();
-                        tokio::spawn(async move {
-                            // Child journals its own outcome; the parent does
-                            // not await it (fire-and-forget, spec §7).
-                            let _ = invoker.invoke(&routine, resolved_args, provenance).await;
-                        });
-                        let marker = serde_json::json!({"dispatched": true});
-                        journal(ctx, RunEvent::StepOk { step: c.id.clone(), output: marker.clone() });
-                        let mut guard = vars.lock().await;
-                        guard.set_step_output(&c.id, marker);
+                        consumed.insert(target.clone());
+                        idx += 1;
                     }
-                    idx += 1;
+                    Control::End { failed, reason } => {
+                        return Ok(TrackEnd::Ended {
+                            failed: *failed,
+                            reason: reason.clone(),
+                        });
+                    }
+                    Control::Delay { delay } => {
+                        let spec = parse_delay(delay)?;
+                        let dur = match spec {
+                            DelaySpec::Relative(d) => d,
+                            DelaySpec::NextAlign(align) => {
+                                duration_to_next_align((ctx.now)(), align)
+                            }
+                        };
+                        journal(
+                            ctx,
+                            RunEvent::StateChanged {
+                                state: RunState::Waiting,
+                            },
+                        );
+                        tokio::select! {
+                            _ = tokio::time::sleep(dur) => {}
+                            _ = ctx.cancel.cancelled() => return Err(StepError::Cancelled),
+                        }
+                        journal(
+                            ctx,
+                            RunEvent::StateChanged {
+                                state: RunState::Running,
+                            },
+                        );
+                        idx += 1;
+                    }
+                    Control::Call {
+                        routine,
+                        args,
+                        sync,
+                    } => {
+                        // Resolve args first: a $var resolution failure is a
+                        // step failure per the unset-variable rules (spec §10),
+                        // same as an action step's params — no journal entry for
+                        // a call that never had valid params to attempt.
+                        let resolved_args = {
+                            let guard = vars.lock().await;
+                            resolve_params(args, &guard)?
+                        }; // lock dropped here, before any invoke await
+                        journal(
+                            ctx,
+                            RunEvent::StepIntent {
+                                step: c.id.clone(),
+                                action: format!("call:{routine}"),
+                                resolved_params: resolved_args.clone(),
+                            },
+                        );
+                        if ctx.depth >= crate::compose::MAX_CALL_DEPTH {
+                            let err = StepError::Action {
+                                action: format!("call:{routine}"),
+                                cause: format!(
+                                    "call depth {} exceeds cap {} — recursive routine chain",
+                                    ctx.depth,
+                                    crate::compose::MAX_CALL_DEPTH
+                                ),
+                            };
+                            journal(
+                                ctx,
+                                RunEvent::StepErr {
+                                    step: c.id.clone(),
+                                    error: err.clone(),
+                                },
+                            );
+                            return Err(err);
+                        }
+                        let provenance = crate::compose::Provenance {
+                            parent_run_id: ctx.run_id.clone(),
+                            parent_step: c.id.clone(),
+                        };
+                        if *sync {
+                            match ctx.invoker.invoke(routine, resolved_args, provenance).await {
+                                Ok(result) => {
+                                    journal(
+                                        ctx,
+                                        RunEvent::StepOk {
+                                            step: c.id.clone(),
+                                            output: result.clone(),
+                                        },
+                                    );
+                                    let mut guard = vars.lock().await;
+                                    guard.set_step_output(&c.id, result);
+                                }
+                                Err(err) => {
+                                    journal(
+                                        ctx,
+                                        RunEvent::StepErr {
+                                            step: c.id.clone(),
+                                            error: err.clone(),
+                                        },
+                                    );
+                                    return Err(err);
+                                }
+                            }
+                        } else {
+                            let invoker = ctx.invoker.clone();
+                            let routine = routine.clone();
+                            tokio::spawn(async move {
+                                // Child journals its own outcome; the parent does
+                                // not await it (fire-and-forget, spec §7).
+                                let _ = invoker.invoke(&routine, resolved_args, provenance).await;
+                            });
+                            let marker = serde_json::json!({"dispatched": true});
+                            journal(
+                                ctx,
+                                RunEvent::StepOk {
+                                    step: c.id.clone(),
+                                    output: marker.clone(),
+                                },
+                            );
+                            let mut guard = vars.lock().await;
+                            guard.set_step_output(&c.id, marker);
+                        }
+                        idx += 1;
+                    }
                 }
-            },
+            }
         }
     }
     Ok(TrackEnd::Completed)
@@ -426,7 +516,9 @@ pub async fn run_tracks(
         set.spawn(async move { run_track_shared(&track, &vars, &task_ctx).await });
     }
 
-    let mut outcome = RunOutcome { state: RunState::Completed };
+    let mut outcome = RunOutcome {
+        state: RunState::Completed,
+    };
     let mut first_err: Option<StepError> = None;
     let mut intentional_cancel = false;
 
@@ -491,7 +583,9 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use tokio_util::sync::CancellationToken;
 
-    fn fixed_now() -> i64 { 1_752_400_000 }
+    fn fixed_now() -> i64 {
+        1_752_400_000
+    }
 
     fn action(id: &str, name: &'static str, params: serde_json::Value) -> Step {
         Step::Action(ActionStep {
@@ -522,7 +616,9 @@ mod tests {
     #[tokio::test]
     async fn happy_path_runs_steps_in_order_and_journals_intent_before_ok() {
         let mut reg = ActionRegistry::default();
-        reg.register(Arc::new(FakeAction::new("local.compose").ok(json!({"staged": 1}))));
+        reg.register(Arc::new(
+            FakeAction::new("local.compose").ok(json!({"staged": 1})),
+        ));
         reg.register(Arc::new(FakeAction::new("local.log").ok(json!({}))));
         let dir = tempfile::tempdir().unwrap();
         let (ctx, jpath) = ctx(reg, dir.path());
@@ -539,18 +635,23 @@ mod tests {
         assert!(matches!(end, TrackEnd::Completed));
 
         let entries = read_journal(&jpath).unwrap();
-        let kinds: Vec<&str> = entries.iter().map(|e| match &e.event {
-            RunEvent::StepIntent { .. } => "intent",
-            RunEvent::StepOk { .. } => "ok",
-            other => panic!("unexpected {other:?}"),
-        }).collect();
+        let kinds: Vec<&str> = entries
+            .iter()
+            .map(|e| match &e.event {
+                RunEvent::StepIntent { .. } => "intent",
+                RunEvent::StepOk { .. } => "ok",
+                other => panic!("unexpected {other:?}"),
+            })
+            .collect();
         assert_eq!(kinds, vec!["intent", "ok", "intent", "ok"]);
     }
 
     #[tokio::test]
     async fn branch_follows_the_variable_and_jumps() {
         let mut reg = ActionRegistry::default();
-        reg.register(Arc::new(FakeAction::new("radio.connect").ok(json!({"connected": false}))));
+        reg.register(Arc::new(
+            FakeAction::new("radio.connect").ok(json!({"connected": false})),
+        ));
         reg.register(Arc::new(FakeAction::new("local.log").ok(json!({}))));
         reg.register(Arc::new(FakeAction::new("local.notify").ok(json!({}))));
         let dir = tempfile::tempdir().unwrap();
@@ -572,7 +673,10 @@ mod tests {
                 action("s3", "local.log", json!({})),
                 Step::Control(ControlStep {
                     id: StepId("end1".into()),
-                    control: Control::End { failed: false, reason: None },
+                    control: Control::End {
+                        failed: false,
+                        reason: None,
+                    },
                 }),
                 action("s4", "local.notify", json!({})),
             ],
@@ -582,10 +686,13 @@ mod tests {
         // connected=false → else-arm → s4 executes, s3 does not
         assert!(matches!(end, TrackEnd::Completed));
         let entries = read_journal(&jpath).unwrap();
-        let executed: Vec<String> = entries.iter().filter_map(|e| match &e.event {
-            RunEvent::StepIntent { step, .. } => Some(step.0.clone()),
-            _ => None,
-        }).collect();
+        let executed: Vec<String> = entries
+            .iter()
+            .filter_map(|e| match &e.event {
+                RunEvent::StepIntent { step, .. } => Some(step.0.clone()),
+                _ => None,
+            })
+            .collect();
         assert_eq!(executed, vec!["s1", "s4"]);
     }
 
@@ -598,7 +705,10 @@ mod tests {
             name: "t1".into(),
             steps: vec![Step::Control(ControlStep {
                 id: StepId("e".into()),
-                control: Control::End { failed: true, reason: Some("no contact after all bands".into()) },
+                control: Control::End {
+                    failed: true,
+                    reason: Some("no contact after all bands".into()),
+                },
             })],
         };
         let mut vars = RunVars::default();
@@ -614,18 +724,28 @@ mod tests {
     #[tokio::test]
     async fn unhandled_step_error_fails_the_run_verbatim() {
         let mut reg = ActionRegistry::default();
-        reg.register(Arc::new(FakeAction::new("radio.connect").err("CAT: rig did not respond on /dev/ttyUSB0")));
+        reg.register(Arc::new(
+            FakeAction::new("radio.connect").err("CAT: rig did not respond on /dev/ttyUSB0"),
+        ));
         let dir = tempfile::tempdir().unwrap();
         let (ctx, jpath) = ctx(reg, dir.path());
-        let track = Track { name: "t1".into(), steps: vec![action("s1", "radio.connect", json!({}))] };
+        let track = Track {
+            name: "t1".into(),
+            steps: vec![action("s1", "radio.connect", json!({}))],
+        };
         let mut vars = RunVars::default();
         let err = run_track(&track, &mut vars, &ctx).await.unwrap_err();
         match &err {
-            StepError::Action { cause, .. } => assert_eq!(cause, "CAT: rig did not respond on /dev/ttyUSB0"),
+            StepError::Action { cause, .. } => {
+                assert_eq!(cause, "CAT: rig did not respond on /dev/ttyUSB0")
+            }
             other => panic!("expected verbatim Action error, got {other:?}"),
         }
         let entries = read_journal(&jpath).unwrap();
-        assert!(matches!(entries.last().unwrap().event, RunEvent::StepErr { .. }));
+        assert!(matches!(
+            entries.last().unwrap().event,
+            RunEvent::StepErr { .. }
+        ));
     }
 
     #[tokio::test]
@@ -649,7 +769,11 @@ mod tests {
             steps: vec![
                 Step::Control(ControlStep {
                     id: StepId("r1".into()),
-                    control: Control::Retry { step: StepId("s1".into()), attempts: 3, backoff_s: 0 },
+                    control: Control::Retry {
+                        step: StepId("s1".into()),
+                        attempts: 3,
+                        backoff_s: 0,
+                    },
                 }),
                 action("s1", "radio.connect", json!({})),
             ],
@@ -673,7 +797,10 @@ mod tests {
             timeout_s: Some(1),
             on_radio_busy: BusyPolicy::Wait,
         };
-        let track = Track { name: "t1".into(), steps: vec![Step::Action(step)] };
+        let track = Track {
+            name: "t1".into(),
+            steps: vec![Step::Action(step)],
+        };
         let mut vars = RunVars::default();
         // With paused virtual time, tokio::time::timeout's deadline elapses
         // as soon as the executor awaits it (no real-world sleep needed).
@@ -710,7 +837,11 @@ mod tests {
         let (ctx, _) = ctx(reg, dir.path());
         let track = Track {
             name: "t1".into(),
-            steps: vec![action("s2", "radio.redial", json!({"station": "$s1.gateway"}))],
+            steps: vec![action(
+                "s2",
+                "radio.redial",
+                json!({"station": "$s1.gateway"}),
+            )],
         };
         let mut vars = RunVars::default();
         let err = run_track(&track, &mut vars, &ctx).await.unwrap_err();
@@ -720,7 +851,9 @@ mod tests {
     #[tokio::test]
     async fn retry_with_zero_attempts_fails_loudly() {
         let mut reg = ActionRegistry::default();
-        reg.register(Arc::new(FakeAction::new("radio.connect").ok(json!({"connected": true}))));
+        reg.register(Arc::new(
+            FakeAction::new("radio.connect").ok(json!({"connected": true})),
+        ));
         let dir = tempfile::tempdir().unwrap();
         let (ctx, _) = ctx(reg, dir.path());
         let track = Track {
@@ -728,7 +861,11 @@ mod tests {
             steps: vec![
                 Step::Control(ControlStep {
                     id: StepId("r1".into()),
-                    control: Control::Retry { step: StepId("s1".into()), attempts: 0, backoff_s: 0 },
+                    control: Control::Retry {
+                        step: StepId("s1".into()),
+                        attempts: 0,
+                        backoff_s: 0,
+                    },
                 }),
                 action("s1", "radio.connect", json!({})),
             ],
@@ -759,7 +896,11 @@ mod tests {
             steps: vec![
                 Step::Control(ControlStep {
                     id: StepId("r1".into()),
-                    control: Control::Retry { step: StepId("s1".into()), attempts: 3, backoff_s: 3600 },
+                    control: Control::Retry {
+                        step: StepId("s1".into()),
+                        attempts: 3,
+                        backoff_s: 3600,
+                    },
                 }),
                 action("s1", "radio.connect", json!({})),
             ],
@@ -803,7 +944,9 @@ mod tests {
             steps: vec![
                 Step::Control(ControlStep {
                     id: StepId("d1".into()),
-                    control: Control::Delay { delay: "+5m".into() },
+                    control: Control::Delay {
+                        delay: "+5m".into(),
+                    },
                 }),
                 action("s1", "local.log", json!({})),
             ],
@@ -813,16 +956,38 @@ mod tests {
         run_track(&track, &mut vars, &ctx).await.unwrap();
         assert!(start.elapsed() >= std::time::Duration::from_secs(300));
         let entries = read_journal(&jpath).unwrap();
-        assert!(matches!(entries[0].event, RunEvent::StateChanged { state: RunState::Waiting }));
-        assert!(matches!(entries[1].event, RunEvent::StateChanged { state: RunState::Running }));
+        assert!(matches!(
+            entries[0].event,
+            RunEvent::StateChanged {
+                state: RunState::Waiting
+            }
+        ));
+        assert!(matches!(
+            entries[1].event,
+            RunEvent::StateChanged {
+                state: RunState::Running
+            }
+        ));
     }
 
     #[test]
     fn parse_delay_shapes() {
-        assert_eq!(parse_delay("+5m").unwrap(), DelaySpec::Relative(std::time::Duration::from_secs(300)));
-        assert_eq!(parse_delay("+90s").unwrap(), DelaySpec::Relative(std::time::Duration::from_secs(90)));
-        assert_eq!(parse_delay("+2h").unwrap(), DelaySpec::Relative(std::time::Duration::from_secs(7200)));
-        assert_eq!(parse_delay("next:hour").unwrap(), DelaySpec::NextAlign(Align::Hour));
+        assert_eq!(
+            parse_delay("+5m").unwrap(),
+            DelaySpec::Relative(std::time::Duration::from_secs(300))
+        );
+        assert_eq!(
+            parse_delay("+90s").unwrap(),
+            DelaySpec::Relative(std::time::Duration::from_secs(90))
+        );
+        assert_eq!(
+            parse_delay("+2h").unwrap(),
+            DelaySpec::Relative(std::time::Duration::from_secs(7200))
+        );
+        assert_eq!(
+            parse_delay("next:hour").unwrap(),
+            DelaySpec::NextAlign(Align::Hour)
+        );
         assert!(parse_delay("5 minutes").is_err());
         assert!(parse_delay("+5x").is_err());
     }
@@ -839,13 +1004,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (ctx, _) = ctx(reg, dir.path());
         let tracks = vec![
-            Track { name: "a".into(), steps: vec![action("s1", "radio.connect", json!({}))] },
+            Track {
+                name: "a".into(),
+                steps: vec![action("s1", "radio.connect", json!({}))],
+            },
             Track {
                 name: "b".into(),
                 steps: vec![
                     Step::Control(ControlStep {
                         id: StepId("d1".into()),
-                        control: Control::Delay { delay: "+5m".into() },
+                        control: Control::Delay {
+                            delay: "+5m".into(),
+                        },
                     }),
                     action("s2", "radio.redial", json!({"station": "$s1.gateway"})),
                 ],
@@ -860,19 +1030,29 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn one_track_failing_cancels_the_others() {
         let hang = Arc::new(FakeAction::new("local.wait").hang());
-        let boom = Arc::new(FakeAction::new("radio.connect").err("ARDOP: session wedge, ARQ timeout 120s"));
+        let boom = Arc::new(
+            FakeAction::new("radio.connect").err("ARDOP: session wedge, ARQ timeout 120s"),
+        );
         let mut reg = ActionRegistry::default();
         reg.register(hang);
         reg.register(boom);
         let dir = tempfile::tempdir().unwrap();
         let (ctx, _) = ctx(reg, dir.path());
         let tracks = vec![
-            Track { name: "a".into(), steps: vec![action("s1", "local.wait", json!({}))] },
-            Track { name: "b".into(), steps: vec![action("s2", "radio.connect", json!({}))] },
+            Track {
+                name: "a".into(),
+                steps: vec![action("s1", "local.wait", json!({}))],
+            },
+            Track {
+                name: "b".into(),
+                steps: vec![action("s2", "radio.connect", json!({}))],
+            },
         ];
         let vars = Arc::new(tokio::sync::Mutex::new(RunVars::default()));
         let err = run_tracks(&tracks, vars, &ctx).await.unwrap_err();
-        assert!(matches!(err, StepError::Action { cause, .. } if cause.contains("ARQ timeout 120s")));
+        assert!(
+            matches!(err, StepError::Action { cause, .. } if cause.contains("ARQ timeout 120s"))
+        );
     }
 
     /// Test-only action whose `execute` panics — used to prove a panicking
@@ -911,8 +1091,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (ctx, _) = ctx(reg, dir.path());
         let tracks = vec![
-            Track { name: "a".into(), steps: vec![action("s1", "local.wait", json!({}))] },
-            Track { name: "b".into(), steps: vec![action("s2", "test.panic", json!({}))] },
+            Track {
+                name: "a".into(),
+                steps: vec![action("s1", "local.wait", json!({}))],
+            },
+            Track {
+                name: "b".into(),
+                steps: vec![action("s2", "test.panic", json!({}))],
+            },
         ];
         let vars = Arc::new(tokio::sync::Mutex::new(RunVars::default()));
         let err = run_tracks(&tracks, vars, &ctx).await.unwrap_err();
@@ -936,14 +1122,20 @@ mod tests {
             name: "ok".into(),
             steps: vec![Step::Control(ControlStep {
                 id: StepId("e1".into()),
-                control: Control::End { failed: false, reason: None },
+                control: Control::End {
+                    failed: false,
+                    reason: None,
+                },
             })],
         };
         let fail_track = Track {
             name: "fail".into(),
             steps: vec![Step::Control(ControlStep {
                 id: StepId("e2".into()),
-                control: Control::End { failed: true, reason: Some("nope".into()) },
+                control: Control::End {
+                    failed: true,
+                    reason: Some("nope".into()),
+                },
             })],
         };
 
@@ -954,7 +1146,11 @@ mod tests {
             let tracks = vec![ok_track.clone(), fail_track.clone()];
             let vars = Arc::new(tokio::sync::Mutex::new(RunVars::default()));
             let outcome = run_tracks(&tracks, vars, &ctx).await.unwrap();
-            assert_eq!(outcome.state, RunState::Failed, "order A (ok, fail) must still fail");
+            assert_eq!(
+                outcome.state,
+                RunState::Failed,
+                "order A (ok, fail) must still fail"
+            );
         }
 
         // Order B: failure-track first in the slice.
@@ -964,7 +1160,11 @@ mod tests {
             let tracks = vec![fail_track, ok_track];
             let vars = Arc::new(tokio::sync::Mutex::new(RunVars::default()));
             let outcome = run_tracks(&tracks, vars, &ctx).await.unwrap();
-            assert_eq!(outcome.state, RunState::Failed, "order B (fail, ok) must still fail");
+            assert_eq!(
+                outcome.state,
+                RunState::Failed,
+                "order B (fail, ok) must still fail"
+            );
         }
     }
 
@@ -976,7 +1176,9 @@ mod tests {
         let mut reg = ActionRegistry::default();
         // A single `.ok(...)` outcome replays forever (fakes.rs), so this
         // loop never terminates on its own — the step budget must catch it.
-        reg.register(Arc::new(FakeAction::new("local.gen").ok(json!({"go": true}))));
+        reg.register(Arc::new(
+            FakeAction::new("local.gen").ok(json!({"go": true})),
+        ));
         let dir = tempfile::tempdir().unwrap();
         let (ctx, _) = ctx(reg, dir.path());
         let track = Track {
@@ -997,7 +1199,10 @@ mod tests {
         let err = run_track(&track, &mut vars, &ctx).await.unwrap_err();
         match err {
             StepError::Action { cause, .. } => {
-                assert!(cause.contains("exceeded"), "expected 'exceeded' in cause, got {cause:?}");
+                assert!(
+                    cause.contains("exceeded"),
+                    "expected 'exceeded' in cause, got {cause:?}"
+                );
             }
             other => panic!("expected StepError::Action from the step budget, got {other:?}"),
         }
@@ -1009,7 +1214,9 @@ mod tests {
     #[tokio::test]
     async fn branch_on_non_bool_fails_verbatim() {
         let mut reg = ActionRegistry::default();
-        reg.register(Arc::new(FakeAction::new("local.gen").ok(json!({"x": "yes"}))));
+        reg.register(Arc::new(
+            FakeAction::new("local.gen").ok(json!({"x": "yes"})),
+        ));
         let dir = tempfile::tempdir().unwrap();
         let (ctx, _) = ctx(reg, dir.path());
         let track = Track {
@@ -1018,7 +1225,11 @@ mod tests {
                 action("s1", "local.gen", json!({})),
                 Step::Control(ControlStep {
                     id: StepId("b1".into()),
-                    control: Control::Branch { on: "s1.x".into(), then: vec![], r#else: vec![] },
+                    control: Control::Branch {
+                        on: "s1.x".into(),
+                        then: vec![],
+                        r#else: vec![],
+                    },
                 }),
             ],
         };
@@ -1026,7 +1237,10 @@ mod tests {
         let err = run_track(&track, &mut vars, &ctx).await.unwrap_err();
         match err {
             StepError::Action { cause, .. } => {
-                assert!(cause.contains("not a boolean"), "expected 'not a boolean' in cause, got {cause:?}");
+                assert!(
+                    cause.contains("not a boolean"),
+                    "expected 'not a boolean' in cause, got {cause:?}"
+                );
             }
             other => panic!("expected StepError::Action for non-bool branch, got {other:?}"),
         }

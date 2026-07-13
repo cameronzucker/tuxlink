@@ -34,7 +34,11 @@ pub struct Finding {
 }
 
 impl Finding {
-    pub fn error(code: &'static str, routine: impl Into<String>, message: impl Into<String>) -> Self {
+    pub fn error(
+        code: &'static str,
+        routine: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
         Finding {
             code,
             severity: Severity::Error,
@@ -45,7 +49,11 @@ impl Finding {
         }
     }
 
-    pub fn warning(code: &'static str, routine: impl Into<String>, message: impl Into<String>) -> Self {
+    pub fn warning(
+        code: &'static str,
+        routine: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
         Finding {
             code,
             severity: Severity::Warning,
@@ -75,8 +83,14 @@ mod tests {
     fn severity_wire_shape_survives_rename_all() {
         // serde rename_all on enums renames TAGS only (project pitfall,
         // see types.rs's identical guard): assert the exact wire strings.
-        assert_eq!(serde_json::to_value(Severity::Error).unwrap(), serde_json::json!("error"));
-        assert_eq!(serde_json::to_value(Severity::Warning).unwrap(), serde_json::json!("warning"));
+        assert_eq!(
+            serde_json::to_value(Severity::Error).unwrap(),
+            serde_json::json!("error")
+        );
+        assert_eq!(
+            serde_json::to_value(Severity::Warning).unwrap(),
+            serde_json::json!("warning")
+        );
     }
 
     #[test]

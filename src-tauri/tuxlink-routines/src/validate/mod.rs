@@ -56,7 +56,11 @@ pub fn validate_fleet(defs: &[RoutineDef], ctx: &dyn ValidationContext) -> Vec<F
 /// lexically by step id). Lives here, not in `findings.rs`, so no single
 /// check module can special-case its own ordering.
 fn sort_findings(findings: &mut [Finding]) {
-    findings.sort_by(|a, b| a.code.cmp(b.code).then_with(|| step_sort_key(&a.step).cmp(&step_sort_key(&b.step))));
+    findings.sort_by(|a, b| {
+        a.code
+            .cmp(b.code)
+            .then_with(|| step_sort_key(&a.step).cmp(&step_sort_key(&b.step)))
+    });
 }
 
 fn step_sort_key(step: &Option<StepId>) -> Option<&str> {
@@ -66,7 +70,7 @@ fn step_sort_key(step: &Option<StepId>) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{OnInterrupted, RoutineDef, TransmitMode, Track, Trigger};
+    use crate::types::{OnInterrupted, RoutineDef, Track, TransmitMode, Trigger};
 
     fn trivially_valid_routine() -> RoutineDef {
         RoutineDef {
@@ -77,7 +81,10 @@ mod tests {
             on_interrupted: OnInterrupted::Stay,
             inputs: vec![],
             triggers: vec![Trigger::Manual],
-            tracks: vec![Track { name: "t".into(), steps: vec![] }],
+            tracks: vec![Track {
+                name: "t".into(),
+                steps: vec![],
+            }],
         }
     }
 
@@ -110,8 +117,10 @@ mod tests {
             Finding::error("A_CODE", "r1", "m").with_step(StepId("s1".into())),
         ];
         sort_findings(&mut findings);
-        let ordered: Vec<(&str, Option<String>)> =
-            findings.iter().map(|f| (f.code, f.step.as_ref().map(|s| s.0.clone()))).collect();
+        let ordered: Vec<(&str, Option<String>)> = findings
+            .iter()
+            .map(|f| (f.code, f.step.as_ref().map(|s| s.0.clone())))
+            .collect();
         assert_eq!(
             ordered,
             vec![
@@ -128,8 +137,12 @@ mod tests {
         use crate::action::ActionDescriptor;
         use crate::types::{ActionStep, BusyPolicy, Step, StepId};
 
-        const RADIO_CONNECT: ActionDescriptor =
-            ActionDescriptor { name: "radio.connect", needs_radio: true, transmits: true, needs_internet: false };
+        const RADIO_CONNECT: ActionDescriptor = ActionDescriptor {
+            name: "radio.connect",
+            needs_radio: true,
+            transmits: true,
+            needs_internet: false,
+        };
 
         // s1: known action, unresolved @ref (UNRESOLVED_REF) + no rig (NO_RIG_CONFIGURED).
         // s2: unknown action (UNKNOWN_ACTION), which must not also fire a capability finding.
@@ -166,8 +179,18 @@ mod tests {
         let findings = validate(&def, &ctx);
         let codes: Vec<&str> = findings.iter().map(|f| f.code).collect();
         // Sorted lexically by code: NO_RIG_CONFIGURED, UNKNOWN_ACTION, UNRESOLVED_REF.
-        assert_eq!(codes, vec!["NO_RIG_CONFIGURED", "UNKNOWN_ACTION", "UNRESOLVED_REF"]);
-        assert_eq!(findings.iter().find(|f| f.code == "UNKNOWN_ACTION").unwrap().step, Some(StepId("s2".into())));
+        assert_eq!(
+            codes,
+            vec!["NO_RIG_CONFIGURED", "UNKNOWN_ACTION", "UNRESOLVED_REF"]
+        );
+        assert_eq!(
+            findings
+                .iter()
+                .find(|f| f.code == "UNKNOWN_ACTION")
+                .unwrap()
+                .step,
+            Some(StepId("s2".into()))
+        );
     }
 
     #[test]

@@ -99,8 +99,11 @@ mod tests {
     #[tokio::test]
     async fn refs_are_replaced_with_resolved_values() {
         let def = RoutineDef::parse(DEF).unwrap();
-        let resolver = FakeResolver::new()
-            .entity("station-set", "or-gateways", json!(["W7DEF-10", "K7ABC-10"]));
+        let resolver = FakeResolver::new().entity(
+            "station-set",
+            "or-gateways",
+            json!(["W7DEF-10", "K7ABC-10"]),
+        );
         let snapshot = resolve_snapshot(&def, &resolver).await.unwrap();
         let stations = &snapshot["tracks"][0]["steps"][0]["params"]["stations"];
         assert_eq!(stations, &json!(["W7DEF-10", "K7ABC-10"]));

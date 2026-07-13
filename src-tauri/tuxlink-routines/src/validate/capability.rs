@@ -35,7 +35,9 @@ pub fn check(def: &RoutineDef, ctx: &dyn ValidationContext, findings: &mut Vec<F
         let mut track_needs_radio = false;
 
         for step in &track.steps {
-            let Step::Action(action_step) = step else { continue };
+            let Step::Action(action_step) = step else {
+                continue;
+            };
             let Some(descriptor) = ctx.action_descriptor(&action_step.action) else {
                 // UNKNOWN_ACTION already fired in refs::check; skip here so
                 // it never double-fires a capability finding, and never
@@ -47,7 +49,14 @@ pub fn check(def: &RoutineDef, ctx: &dyn ValidationContext, findings: &mut Vec<F
                 track_needs_radio = true;
             }
 
-            check_step_capability(def, &track.name, &action_step.id.0, descriptor, &profile, findings);
+            check_step_capability(
+                def,
+                &track.name,
+                &action_step.id.0,
+                descriptor,
+                &profile,
+                findings,
+            );
         }
 
         if track_needs_radio {
@@ -100,7 +109,11 @@ fn check_step_capability(
 }
 
 fn same_rig_parallel_lanes_finding(def: &RoutineDef, track_names: &[String]) -> Finding {
-    let list = track_names.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", ");
+    let list = track_names
+        .iter()
+        .map(|n| format!("\"{n}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
     Finding::warning(
         SAME_RIG_PARALLEL_LANES,
         def.routine.clone(),
@@ -115,18 +128,31 @@ fn same_rig_parallel_lanes_finding(def: &RoutineDef, track_names: &[String]) -> 
 mod tests {
     use super::*;
     use crate::types::{
-        ActionStep, BusyPolicy, OnInterrupted, RoutineDef, Step, StepId, Track, TransmitMode, Trigger,
+        ActionStep, BusyPolicy, OnInterrupted, RoutineDef, Step, StepId, Track, TransmitMode,
+        Trigger,
     };
     use crate::validate::context::StaticContext;
     use crate::validate::findings::Severity;
     use serde_json::json;
 
-    const RADIO_CONNECT: ActionDescriptor =
-        ActionDescriptor { name: "radio.connect", needs_radio: true, transmits: true, needs_internet: false };
-    const WEB_LOOKUP: ActionDescriptor =
-        ActionDescriptor { name: "data.web_lookup", needs_radio: false, transmits: false, needs_internet: true };
-    const LOCAL_NOTE: ActionDescriptor =
-        ActionDescriptor { name: "local.note", needs_radio: false, transmits: false, needs_internet: false };
+    const RADIO_CONNECT: ActionDescriptor = ActionDescriptor {
+        name: "radio.connect",
+        needs_radio: true,
+        transmits: true,
+        needs_internet: false,
+    };
+    const WEB_LOOKUP: ActionDescriptor = ActionDescriptor {
+        name: "data.web_lookup",
+        needs_radio: false,
+        transmits: false,
+        needs_internet: true,
+    };
+    const LOCAL_NOTE: ActionDescriptor = ActionDescriptor {
+        name: "local.note",
+        needs_radio: false,
+        transmits: false,
+        needs_internet: false,
+    };
 
     fn action_step(id: &str, action: &str) -> Step {
         Step::Action(ActionStep {
@@ -153,7 +179,10 @@ mod tests {
 
     #[test]
     fn needs_internet_action_offgrid_is_flagged() {
-        let def = routine(vec![Track { name: "t1".into(), steps: vec![action_step("s1", "data.web_lookup")] }]);
+        let def = routine(vec![Track {
+            name: "t1".into(),
+            steps: vec![action_step("s1", "data.web_lookup")],
+        }]);
         let ctx = StaticContext::new().with_action(WEB_LOOKUP); // has_internet defaults false
         let mut findings = Vec::new();
         check(&def, &ctx, &mut findings);
@@ -169,10 +198,16 @@ mod tests {
 
     #[test]
     fn needs_internet_action_online_produces_no_finding() {
-        let def = routine(vec![Track { name: "t1".into(), steps: vec![action_step("s1", "data.web_lookup")] }]);
+        let def = routine(vec![Track {
+            name: "t1".into(),
+            steps: vec![action_step("s1", "data.web_lookup")],
+        }]);
         let ctx = StaticContext::new()
             .with_action(WEB_LOOKUP)
-            .with_profile(StationProfile { has_internet: true, rigs: vec![] });
+            .with_profile(StationProfile {
+                has_internet: true,
+                rigs: vec![],
+            });
         let mut findings = Vec::new();
         check(&def, &ctx, &mut findings);
         assert!(findings.is_empty());
@@ -180,7 +215,10 @@ mod tests {
 
     #[test]
     fn needs_radio_action_with_no_rig_is_flagged() {
-        let def = routine(vec![Track { name: "t1".into(), steps: vec![action_step("s1", "radio.connect")] }]);
+        let def = routine(vec![Track {
+            name: "t1".into(),
+            steps: vec![action_step("s1", "radio.connect")],
+        }]);
         let ctx = StaticContext::new().with_action(RADIO_CONNECT); // rigs defaults empty
         let mut findings = Vec::new();
         check(&def, &ctx, &mut findings);
@@ -195,10 +233,16 @@ mod tests {
 
     #[test]
     fn needs_radio_action_with_rig_configured_produces_no_finding() {
-        let def = routine(vec![Track { name: "t1".into(), steps: vec![action_step("s1", "radio.connect")] }]);
+        let def = routine(vec![Track {
+            name: "t1".into(),
+            steps: vec![action_step("s1", "radio.connect")],
+        }]);
         let ctx = StaticContext::new()
             .with_action(RADIO_CONNECT)
-            .with_profile(StationProfile { has_internet: false, rigs: vec!["FT-710".into()] });
+            .with_profile(StationProfile {
+                has_internet: false,
+                rigs: vec!["FT-710".into()],
+            });
         let mut findings = Vec::new();
         check(&def, &ctx, &mut findings);
         assert!(findings.is_empty());
@@ -206,7 +250,10 @@ mod tests {
 
     #[test]
     fn local_action_never_flagged() {
-        let def = routine(vec![Track { name: "t1".into(), steps: vec![action_step("s1", "local.note")] }]);
+        let def = routine(vec![Track {
+            name: "t1".into(),
+            steps: vec![action_step("s1", "local.note")],
+        }]);
         let ctx = StaticContext::new().with_action(LOCAL_NOTE);
         let mut findings = Vec::new();
         check(&def, &ctx, &mut findings);
@@ -216,16 +263,28 @@ mod tests {
     #[test]
     fn two_radio_tracks_trigger_same_rig_parallel_lanes() {
         let def = routine(vec![
-            Track { name: "connect-cycle".into(), steps: vec![action_step("s1", "radio.connect")] },
-            Track { name: "listen-cycle".into(), steps: vec![action_step("s2", "radio.connect")] },
+            Track {
+                name: "connect-cycle".into(),
+                steps: vec![action_step("s1", "radio.connect")],
+            },
+            Track {
+                name: "listen-cycle".into(),
+                steps: vec![action_step("s2", "radio.connect")],
+            },
         ]);
         let ctx = StaticContext::new()
             .with_action(RADIO_CONNECT)
-            .with_profile(StationProfile { has_internet: false, rigs: vec!["FT-710".into()] });
+            .with_profile(StationProfile {
+                has_internet: false,
+                rigs: vec!["FT-710".into()],
+            });
         let mut findings = Vec::new();
         check(&def, &ctx, &mut findings);
 
-        let parallel: Vec<_> = findings.iter().filter(|f| f.code == SAME_RIG_PARALLEL_LANES).collect();
+        let parallel: Vec<_> = findings
+            .iter()
+            .filter(|f| f.code == SAME_RIG_PARALLEL_LANES)
+            .collect();
         assert_eq!(parallel.len(), 1);
         assert_eq!(parallel[0].severity, Severity::Warning);
         assert!(parallel[0].message.contains("connect-cycle"));
@@ -236,13 +295,22 @@ mod tests {
     #[test]
     fn single_radio_track_does_not_trigger_same_rig_parallel_lanes() {
         let def = routine(vec![
-            Track { name: "connect-cycle".into(), steps: vec![action_step("s1", "radio.connect")] },
-            Track { name: "notes-cycle".into(), steps: vec![action_step("s2", "local.note")] },
+            Track {
+                name: "connect-cycle".into(),
+                steps: vec![action_step("s1", "radio.connect")],
+            },
+            Track {
+                name: "notes-cycle".into(),
+                steps: vec![action_step("s2", "local.note")],
+            },
         ]);
         let ctx = StaticContext::new()
             .with_action(RADIO_CONNECT)
             .with_action(LOCAL_NOTE)
-            .with_profile(StationProfile { has_internet: false, rigs: vec!["FT-710".into()] });
+            .with_profile(StationProfile {
+                has_internet: false,
+                rigs: vec!["FT-710".into()],
+            });
         let mut findings = Vec::new();
         check(&def, &ctx, &mut findings);
         assert!(findings.iter().all(|f| f.code != SAME_RIG_PARALLEL_LANES));
@@ -254,12 +322,21 @@ mod tests {
         // module); capability::check must not ALSO fire for it, and must not
         // count it toward SAME_RIG_PARALLEL_LANES track membership.
         let def = routine(vec![
-            Track { name: "t1".into(), steps: vec![action_step("s1", "radio.mystery")] },
-            Track { name: "t2".into(), steps: vec![action_step("s2", "radio.connect")] },
+            Track {
+                name: "t1".into(),
+                steps: vec![action_step("s1", "radio.mystery")],
+            },
+            Track {
+                name: "t2".into(),
+                steps: vec![action_step("s2", "radio.connect")],
+            },
         ]);
         let ctx = StaticContext::new()
             .with_action(RADIO_CONNECT) // "radio.mystery" NOT seeded
-            .with_profile(StationProfile { has_internet: false, rigs: vec!["FT-710".into()] });
+            .with_profile(StationProfile {
+                has_internet: false,
+                rigs: vec!["FT-710".into()],
+            });
         let mut findings = Vec::new();
         check(&def, &ctx, &mut findings);
 
@@ -267,6 +344,9 @@ mod tests {
         // warning (only one real radio track), and nothing at all fires for
         // the unknown-action step in t1 (no capability finding for it, and
         // it does not count toward SAME_RIG_PARALLEL_LANES membership).
-        assert!(findings.is_empty(), "expected no capability findings, got {findings:?}");
+        assert!(
+            findings.is_empty(),
+            "expected no capability findings, got {findings:?}"
+        );
     }
 }

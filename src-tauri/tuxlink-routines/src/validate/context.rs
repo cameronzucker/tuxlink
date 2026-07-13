@@ -67,7 +67,10 @@ impl StaticContext {
     /// Seed an entity that `entity_exists` will report as present, e.g.
     /// `.with_entity("station-set", "or-gateways")` for `@station-set:or-gateways`.
     pub fn with_entity(mut self, kind: &str, name: &str) -> Self {
-        self.entities.insert(EntityRef { kind: kind.to_string(), name: name.to_string() });
+        self.entities.insert(EntityRef {
+            kind: kind.to_string(),
+            name: name.to_string(),
+        });
         self
     }
 
@@ -113,7 +116,10 @@ impl ValidationContext for StaticContext {
     }
 
     fn enabled_routines(&self) -> Vec<RoutineDef> {
-        self.enabled.iter().filter_map(|name| self.routines.get(name).cloned()).collect()
+        self.enabled
+            .iter()
+            .filter_map(|name| self.routines.get(name).cloned())
+            .collect()
     }
 
     fn station_profile(&self) -> StationProfile {
@@ -141,7 +147,10 @@ mod tests {
     #[test]
     fn empty_context_knows_nothing() {
         let ctx = StaticContext::new();
-        let r = EntityRef { kind: "station-set".into(), name: "or-gateways".into() };
+        let r = EntityRef {
+            kind: "station-set".into(),
+            name: "or-gateways".into(),
+        };
         assert!(!ctx.entity_exists(&r));
         assert!(ctx.action_descriptor("radio.connect").is_none());
         assert!(ctx.routine_def("r1").is_none());
@@ -152,9 +161,18 @@ mod tests {
     #[test]
     fn seeded_entity_is_found_and_others_are_not() {
         let ctx = StaticContext::new().with_entity("station-set", "or-gateways");
-        assert!(ctx.entity_exists(&EntityRef { kind: "station-set".into(), name: "or-gateways".into() }));
-        assert!(!ctx.entity_exists(&EntityRef { kind: "station-set".into(), name: "other".into() }));
-        assert!(!ctx.entity_exists(&EntityRef { kind: "preset".into(), name: "or-gateways".into() }));
+        assert!(ctx.entity_exists(&EntityRef {
+            kind: "station-set".into(),
+            name: "or-gateways".into()
+        }));
+        assert!(!ctx.entity_exists(&EntityRef {
+            kind: "station-set".into(),
+            name: "other".into()
+        }));
+        assert!(!ctx.entity_exists(&EntityRef {
+            kind: "preset".into(),
+            name: "or-gateways".into()
+        }));
     }
 
     #[test]
@@ -198,7 +216,10 @@ mod tests {
 
     #[test]
     fn station_profile_reflects_seeded_value() {
-        let profile = StationProfile { has_internet: true, rigs: vec!["FT-710".into()] };
+        let profile = StationProfile {
+            has_internet: true,
+            rigs: vec!["FT-710".into()],
+        };
         let ctx = StaticContext::new().with_profile(profile.clone());
         assert_eq!(ctx.station_profile(), profile);
     }

@@ -32,7 +32,14 @@ pub fn check(def: &RoutineDef, ctx: &dyn ValidationContext, findings: &mut Vec<F
         for step in &track.steps {
             match step {
                 Step::Action(action_step) => {
-                    check_refs_in(&action_step.params, def, ctx, findings, &track.name, &action_step.id.0);
+                    check_refs_in(
+                        &action_step.params,
+                        def,
+                        ctx,
+                        findings,
+                        &track.name,
+                        &action_step.id.0,
+                    );
 
                     if ctx.action_descriptor(&action_step.action).is_none() {
                         findings.push(
@@ -89,14 +96,18 @@ mod tests {
     use super::*;
     use crate::action::ActionDescriptor;
     use crate::types::{
-        ActionStep, BusyPolicy, Control, ControlStep, OnInterrupted, RoutineDef, StepId, Track, TransmitMode,
-        Trigger,
+        ActionStep, BusyPolicy, Control, ControlStep, OnInterrupted, RoutineDef, StepId, Track,
+        TransmitMode, Trigger,
     };
     use crate::validate::context::StaticContext;
     use serde_json::json;
 
-    const RADIO_CONNECT: ActionDescriptor =
-        ActionDescriptor { name: "radio.connect", needs_radio: true, transmits: true, needs_internet: false };
+    const RADIO_CONNECT: ActionDescriptor = ActionDescriptor {
+        name: "radio.connect",
+        needs_radio: true,
+        transmits: true,
+        needs_internet: false,
+    };
 
     fn routine_with_action_step(action: &str, params: serde_json::Value) -> RoutineDef {
         RoutineDef {
@@ -136,7 +147,11 @@ mod tests {
         assert_eq!(f.routine, "r1");
         assert_eq!(f.track, Some("t1".to_string()));
         assert_eq!(f.step, Some(StepId("s1".into())));
-        assert!(f.message.contains("@station-set:or-gateways"), "message: {}", f.message);
+        assert!(
+            f.message.contains("@station-set:or-gateways"),
+            "message: {}",
+            f.message
+        );
         assert!(f.message.contains("s1"), "message: {}", f.message);
     }
 
@@ -146,8 +161,9 @@ mod tests {
             "radio.connect",
             json!({ "stations": "@station-set:or-gateways", "bands": ["40m"] }),
         );
-        let ctx =
-            StaticContext::new().with_action(RADIO_CONNECT).with_entity("station-set", "or-gateways");
+        let ctx = StaticContext::new()
+            .with_action(RADIO_CONNECT)
+            .with_entity("station-set", "or-gateways");
         let mut findings = Vec::new();
         check(&def, &ctx, &mut findings);
         assert!(findings.is_empty());
@@ -161,7 +177,10 @@ mod tests {
         let ctx = StaticContext::new().with_action(RADIO_CONNECT); // nothing seeded at all
         let mut findings = Vec::new();
         check(&def, &ctx, &mut findings);
-        assert!(findings.is_empty(), "expected no findings for $var param, got {findings:?}");
+        assert!(
+            findings.is_empty(),
+            "expected no findings for $var param, got {findings:?}"
+        );
     }
 
     #[test]
@@ -176,7 +195,11 @@ mod tests {
         assert_eq!(f.code, UNKNOWN_ACTION);
         assert_eq!(f.track, Some("t1".to_string()));
         assert_eq!(f.step, Some(StepId("s1".into())));
-        assert!(f.message.contains("radio.nonexistent"), "message: {}", f.message);
+        assert!(
+            f.message.contains("radio.nonexistent"),
+            "message: {}",
+            f.message
+        );
     }
 
     #[test]
