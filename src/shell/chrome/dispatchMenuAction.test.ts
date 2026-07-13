@@ -18,6 +18,7 @@ function handlers(): MenuHandlers {
     openThemeDesigner: vi.fn(),
     openAbout: vi.fn(),
     openHelp: vi.fn(),
+    replayTour: vi.fn(),
     openLogging: vi.fn(),
     reportIssue: vi.fn(),
     openUninstallCleanup: vi.fn(),
@@ -156,6 +157,13 @@ describe('dispatchMenuAction', () => {
     const h = handlers();
     dispatchMenuAction('menu:help:docs', h);
     expect(h.openHelp).toHaveBeenCalledOnce();
+  });
+
+  // tuxlink-10bkw Task 6: Help → Replay tour restarts the guided tour.
+  it('routes Help → Replay tour to replayTour', () => {
+    const h = handlers();
+    dispatchMenuAction('menu:help:replay_tour', h);
+    expect(h.replayTour).toHaveBeenCalledOnce();
   });
 
   it('routes Help → Report Issue to reportIssue', () => {

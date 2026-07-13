@@ -23,7 +23,7 @@ const EXPECTED_IDS = [
   'menu:tools:elmer',
   'menu:tools:elmer_model',
   'menu:tools:settings',
-  'menu:help:about', 'menu:help:docs', 'menu:help:logging', 'menu:help:report_issue', 'menu:help:uninstall_cleanup',
+  'menu:help:about', 'menu:help:docs', 'menu:help:replay_tour', 'menu:help:logging', 'menu:help:report_issue', 'menu:help:uninstall_cleanup',
 ];
 
 describe('menu model', () => {

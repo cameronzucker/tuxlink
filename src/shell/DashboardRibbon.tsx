@@ -275,6 +275,7 @@ function ElmerAgentChip({
       type="button"
       className={`dash-elmer-agent dash-elmer-agent--${mode}${elmerOpen ? ' is-open' : ''}`}
       data-testid="ribbon-elmer-launcher"
+      data-tour-anchor="elmer"
       data-mode={mode}
       aria-pressed={!!elmerOpen}
       aria-label="Elmer assistant and agent send authority"
@@ -596,6 +597,7 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
               onClick={onConnect}
               disabled={connecting}
               data-testid="connect-button"
+              data-tour-anchor="ribbon-connect"
             >
               {connecting ? 'Connecting…' : 'Connect'}
             </Button>

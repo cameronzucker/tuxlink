@@ -345,6 +345,14 @@ export interface MessageListProps {
   /// Single-message read/unread toggle — context-menu and U-key (tuxlink-etxt
   /// Tasks 12 + 13). Optional so existing callers compile without change.
   onSetReadState?: (id: string, folder: MailboxFolderRef, read: boolean) => void;
+  /// tuxlink-10bkw Task 6: opens a new Compose window (AppShell wires
+  /// `handlers.openCompose`, the same action File → New Message uses). The
+  /// mailbox toolbar's Compose affordance — the anchor + first-open tip for
+  /// hintRegistry's 'compose' entry (Compose itself is a separate Tauri
+  /// window; there is nothing to spotlight inside it). Optional so existing
+  /// callers (tests, standalone renders) compile without change and get no
+  /// extra button when absent.
+  onCompose?: () => void;
 }
 
 /// Stable empty-selection default so the no-selection caller (pre-Task-11) does
@@ -378,6 +386,7 @@ export function MessageList({
   onBulkRestore,
   onBulkPurge,
   onSetReadState,
+  onCompose,
 }: MessageListProps) {
   // Sort client-side so changing modes doesn't require a backend re-fetch.
   // Memo keyed on (messages, sortState, folder) — folder affects sender-* in
@@ -483,8 +492,8 @@ export function MessageList({
     : folder;
 
   return (
-    <div className="rows-pane" data-testid="rows-pane">
-      {(onSortStateChange || selectedIds.size > 0) && (
+    <div className="rows-pane" data-testid="rows-pane" data-tour-anchor="mailbox">
+      {(onSortStateChange || selectedIds.size > 0 || onCompose) && (
         <div className="rows-pane-header" data-testid="rows-pane-header">
           {selectedIds.size > 0 ? (
             <MessageBulkBar
@@ -501,7 +510,22 @@ export function MessageList({
               onClear={() => onSelectionChange(new Set())}
             />
           ) : (
-            onSortStateChange && <MessageListSortControl value={sortState} onChange={onSortStateChange} />
+            <>
+              {onSortStateChange && <MessageListSortControl value={sortState} onChange={onSortStateChange} />}
+              {onCompose && (
+                <button
+                  type="button"
+                  className="rows-pane-compose-btn"
+                  data-testid="rows-pane-compose"
+                  data-tour-anchor="compose"
+                  onClick={onCompose}
+                  title="New Message (Ctrl+N)"
+                  aria-label="New Message"
+                >
+                  + Compose
+                </button>
+              )}
+            </>
           )}
         </div>
       )}

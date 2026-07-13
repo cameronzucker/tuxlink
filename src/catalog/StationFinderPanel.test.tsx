@@ -6,20 +6,28 @@ import type { ReactElement } from 'react';
 // StationFinderMap renders on MapLibreMap (globally mocked via test-setup).
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
+vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
 import { invoke } from '@tauri-apps/api/core';
 import { StationFinderPanel } from './StationFinderPanel';
 import { Ft8ListenerProvider } from '../ft8ui/useFt8Listener';
+import { HintProvider } from '../onboarding/HintProvider';
 
 // Phase D1: the panel now hosts the live FT-8 surfaces (LiveBandStrip +
 // Ft8SetupSurface) and reads the listener via context, so it must render inside
 // Ft8ListenerProvider — useFt8Listener throws otherwise. The provider's own
 // snapshot fetch + event listeners degrade silently under the invoke mock (it
 // catches), so these station-focused cases are unaffected by it.
+//
+// tuxlink-10bkw Task 6: the panel also calls useFirstOpenTip('find-a-station'),
+// which throws outside a <HintProvider> ancestor — wrap here too. HintOverlay
+// itself is never mounted in this file, so onboarding state stays invisible.
 function renderPanel(ui: ReactElement) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <Ft8ListenerProvider>{ui}</Ft8ListenerProvider>
+      <HintProvider>
+        <Ft8ListenerProvider>{ui}</Ft8ListenerProvider>
+      </HintProvider>
     </QueryClientProvider>,
   );
 }

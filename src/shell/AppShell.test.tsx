@@ -424,6 +424,25 @@ describe('<AppShell> — Mock B topology', () => {
     expect(screen.getByTestId('status-bar')).toBeInTheDocument();
   });
 
+  // tuxlink-10bkw Task 6: Help → Replay tour restarts the 5-stop guided tour
+  // through the REAL production shell — the wire-walk gate for the menu path
+  // (menuModel + dispatchMenuAction are unit-tested elsewhere; this proves the
+  // click actually reaches HintProvider.startTour() and paints the overlay).
+  it('Help → Replay tour opens the guided tour, spotlighting the Connect button first', async () => {
+    renderShell();
+    expect(screen.queryByTestId('hint-overlay-popover')).toBeNull();
+
+    clickMenu('Help', /Replay tour/);
+
+    await waitFor(() => expect(screen.getByTestId('hint-overlay-popover')).toBeInTheDocument());
+    expect(screen.getByTestId('hint-overlay-live')).toHaveTextContent('Step 1 of 5: Connect');
+    expect(screen.getAllByTestId('hint-overlay-panel')).toHaveLength(4);
+    expect(screen.getByTestId('hint-overlay-blocker')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('hint-overlay-skip'));
+    await waitFor(() => expect(screen.queryByTestId('hint-overlay-popover')).toBeNull());
+  });
+
   // tuxlink-lqw2: the Mailbox top menu was removed in the pre-Alpha declutter —
   // folder navigation lives in the FolderSidebar (covered by FolderSidebar.test).
   it('Message → New Message opens a compose window', () => {

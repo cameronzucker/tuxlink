@@ -22,6 +22,7 @@ import { IdentitiesSettings } from './IdentitiesSettings';
 import { WinlinkAccountSettings } from './WinlinkAccountSettings';
 import { MailboxSettings } from './MailboxSettings';
 import { WindowSettings } from './WindowSettings';
+import { useFirstOpenTip } from '../onboarding/HintProvider';
 import './SettingsPanel.css';
 
 const GPS_STATE_OPTIONS: { value: GpsState; label: string; help: string }[] = [
@@ -109,6 +110,12 @@ export interface SettingsPanelProps {
 }
 
 export function SettingsPanel({ open, onClose, initialSection = 'location' }: SettingsPanelProps) {
+  // tuxlink-10bkw Task 6: first-open discretionary tip (hintRegistry 'settings').
+  // Called unconditionally (rules of hooks) even though the panel's own `open`
+  // prop may be false in a standalone render — AppShell only ever mounts this
+  // component at all when settingsOpen is true (`{settingsOpen && <SettingsPanel
+  // open={true} .../>}`), so in production this always fires on first mount.
+  useFirstOpenTip('settings');
   const [active, setActive] = useState<SectionId>(initialSection);
   const [gpsState, setGpsState] = useState<GpsState | null>(null);
   const [precision, setPrecision] = useState<PositionPrecision | null>(null);
@@ -169,6 +176,7 @@ export function SettingsPanel({ open, onClose, initialSection = 'location' }: Se
         aria-modal="true"
         aria-label="Settings"
         data-testid="settings-panel"
+        data-tour-anchor="settings"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="tux-settings-header">

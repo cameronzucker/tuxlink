@@ -1,0 +1,143 @@
+/* HintOverlay + OfferCard (tuxlink-10bkw Task 6). Tokens only — theme-aware by
+ * construction (App.css redefines --surface/--text/etc per color scheme).
+ * No SVG masks, no mix-blend-mode: both are unreliable under WebKitGTK. */
+
+.hint-overlay__panel {
+  position: fixed;
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  z-index: 1200;
+  pointer-events: none;
+}
+
+.hint-overlay__blocker {
+  position: fixed;
+  background: transparent;
+  z-index: 1201;
+  pointer-events: auto;
+  cursor: default;
+}
+
+.hint-overlay__popover {
+  position: fixed;
+  z-index: 1202;
+  width: 320px;
+  max-width: calc(100vw - 16px);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-panel);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  padding: var(--space-6, 16px);
+  color: var(--text);
+  font-size: var(--type-body, 13px);
+}
+
+.hint-overlay__popover--center {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+/* aria-live region — visually present (not visually-hidden) so the caption
+ * doubles as an on-screen "Step N of 5" progress readout, not just an SR cue. */
+.hint-overlay__live {
+  font-size: var(--type-meta, 11px);
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: var(--space-3, 6px);
+}
+
+.hint-overlay__title {
+  margin: 0 0 var(--space-3, 6px);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.hint-overlay__body {
+  margin: 0 0 var(--space-5, 12px);
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+
+.hint-overlay__step {
+  font-size: var(--type-meta, 11px);
+  color: var(--text-faint, var(--text-dim));
+  margin-bottom: var(--space-4, 8px);
+}
+
+.hint-overlay__actions {
+  display: flex;
+  gap: var(--space-4, 8px);
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.hint-overlay__btn {
+  appearance: none;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  border-radius: var(--radius-control);
+  padding: 6px 12px;
+  font-size: var(--type-body, 13px);
+  cursor: pointer;
+}
+
+.hint-overlay__btn:hover {
+  background: var(--elevated);
+}
+
+.hint-overlay__btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+  font-weight: 600;
+}
+
+.hint-overlay__btn--primary:hover {
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+}
+
+.hint-overlay__btn--ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-dim);
+}
+
+.hint-overlay__btn--ghost:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+/* OfferCard — the first-run "want a tour?" prompt. Fixed bottom-right, never
+ * blocks input (no backdrop, no focus steal), sits above the app's prior
+ * z-index ceiling (1100) but below the guided-tour overlay (1200+) since the
+ * two are mutually exclusive `active` states and never show together. */
+.hint-offer-card {
+  position: fixed;
+  right: var(--space-8, 24px);
+  bottom: var(--space-8, 24px);
+  z-index: 1150;
+  width: 300px;
+  max-width: calc(100vw - 32px);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-panel);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  padding: var(--space-6, 16px);
+  color: var(--text);
+}
+
+.hint-offer-card__body {
+  margin: 0 0 var(--space-5, 12px);
+  font-size: var(--type-body, 13px);
+  line-height: 1.45;
+}
+
+.hint-offer-card__actions {
+  display: flex;
+  gap: var(--space-4, 8px);
+  justify-content: flex-end;
+}

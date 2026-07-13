@@ -43,6 +43,7 @@ import type { RadioMode, FavoriteDial } from '../favorites/types';
 import type { AggregatedPeer } from '../peers/peerModel';
 import type { LatLon } from '../forms/position/maidenhead';
 import type { PeerPrefill } from '../peers/peerPrefillEvent';
+import { useFirstOpenTip } from '../onboarding/HintProvider';
 import './StationFinderPanel.css';
 
 /**
@@ -172,6 +173,9 @@ export function StationFinderPanel({
   onUsePeer,
   blockingSessionMode,
 }: StationFinderPanelProps) {
+  // tuxlink-10bkw Task 6: first-open discretionary tip (hintRegistry 'find-a-station').
+  useFirstOpenTip('find-a-station');
+
   // tuxlink-liqs9: seed the finder view from the operator's last session so a
   // close/reopen restores where they left off. Read ONCE at mount (lazy);
   // re-persisted by the effect below.
@@ -462,7 +466,7 @@ export function StationFinderPanel({
       aria-label="Station Intelligence"
       onClick={onClose}
     >
-      <div className="station-finder" onClick={(e) => e.stopPropagation()}>
+      <div className="station-finder" data-tour-anchor="find-a-station" onClick={(e) => e.stopPropagation()}>
         <header className="station-finder__header">
           <h2>Station Intelligence</h2>
           <button className="station-finder__close" onClick={onClose} aria-label="Close">
