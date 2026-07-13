@@ -199,6 +199,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Provisioning is non-transmit + ungated; the mock is used in both the
         // scenario and no-scenario branches (like egress/abort/write/compose).
         provision: Arc::new(mocks::MockProvision),
+        // FT-8 is receive-only + ungated + non-tainting; like provisioning, the
+        // mock serves both branches (the scenario World seeds no FT-8 decodes).
+        ft8: Arc::new(mocks::MockFt8),
     };
     let router = TuxlinkMcp::new(Arc::new(state));
 
