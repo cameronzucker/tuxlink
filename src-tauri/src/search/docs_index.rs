@@ -16,6 +16,16 @@ pub struct DocsHit {
     pub snippet: String,  // FTS5 snippet() output, may contain <mark>...</mark>
 }
 
+/// A whole document, returned by `read_doc`. This is the payload `docs_search`'s
+/// 12-token `snippet()` cannot carry.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DocBody {
+    pub slug: String,
+    pub title: String,
+    pub body: String,
+}
+
 /// Which corpus a topic came from. All three are indexed into `docs_fts` and are
 /// searchable/readable by the agent; only `UserGuide` also renders in the in-app
 /// Help sidebar (which discovers files itself via `import.meta.glob` in
@@ -104,6 +114,29 @@ impl Index {
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(IndexError::from)
+    }
+
+    /// Return the full indexed body for `slug`, or `None` when the slug is not
+    /// in `docs_fts`.
+    ///
+    /// The body column already holds the whole extracted document — `search_docs`
+    /// simply never exposed more than a `snippet()` of it. This is the read half
+    /// of the search-then-read pair (P0 tuxlink-0mudm).
+    pub fn read_doc(&self, slug: &str) -> Result<Option<DocBody>, IndexError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT slug, title, body FROM docs_fts WHERE slug = ?1 LIMIT 1",
+        )?;
+        let mut rows = stmt.query_map([slug], |row| {
+            Ok(DocBody {
+                slug: row.get(0)?,
+                title: row.get(1)?,
+                body: row.get(2)?,
+            })
+        })?;
+        match rows.next() {
+            Some(r) => Ok(Some(r?)),
+            None => Ok(None),
+        }
     }
 }
 
@@ -195,4 +228,38 @@ mod tests {
         ]).unwrap();
         assert_eq!(idx.docs_slugs().unwrap(), vec!["01-what-is-tuxlink".to_string()]);
     }
+
+    #[test]
+    fn read_doc_returns_full_body_not_a_snippet() {
+        let (_dir, idx) = fresh();
+        idx.populate_docs(&[DocTopic {
+            slug: "pat-winlink",
+            title: "Pat Winlink",
+            markdown: "# Pat Winlink\nConnect via a digipeater: ax25:///DIGI/TARGET is the form.",
+            source: DocSource::Knowledge,
+        }])
+        .unwrap();
+
+        let doc = idx.read_doc("pat-winlink").unwrap().expect("slug is present");
+        assert_eq!(doc.slug, "pat-winlink");
+        assert_eq!(doc.title, "Pat Winlink");
+        // The whole body, not a 12-token snippet() window.
+        assert!(doc.body.contains("ax25:///DIGI/TARGET"));
+        assert!(doc.body.contains("Connect via a digipeater"));
+        assert!(!doc.body.contains("<mark>"));
+    }
+
+    #[test]
+    fn read_doc_unknown_slug_returns_none() {
+        let (_dir, idx) = fresh();
+        idx.populate_docs(&[DocTopic {
+            slug: "01-foo",
+            title: "Foo",
+            markdown: "x",
+            source: DocSource::UserGuide,
+        }])
+        .unwrap();
+        assert!(idx.read_doc("no-such-slug").unwrap().is_none());
+    }
+
 }
