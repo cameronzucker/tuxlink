@@ -34,14 +34,11 @@ pub struct ExecCtx {
     pub depth: u32,
 }
 
-/// Alignment target for `DelaySpec::NextAlign` (spec §6 `Control::Delay`).
-/// Task 9's scheduler.rs will grow more variants and re-export this type;
-/// for this task it lives here alongside the executor logic that consumes it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Align {
-    Hour,
-    Day,
-}
+/// `Align` and `duration_to_next_align` now live in `scheduler.rs` (Task 9;
+/// shared with `Trigger::Schedule`'s `align` field). Re-exported here so
+/// `Control::Delay`'s `next:hour` / `next:day` handling and Task 6's tests
+/// compile unchanged.
+pub use crate::scheduler::{duration_to_next_align, Align};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DelaySpec {
@@ -72,18 +69,6 @@ pub fn parse_delay(spec: &str) -> Result<DelaySpec, StepError> {
         _ => return Err(bad()),
     };
     Ok(DelaySpec::Relative(Duration::from_secs(secs)))
-}
-
-/// Duration until the next hour/day boundary from `now_unix` (UTC, epoch
-/// seconds). Task 9 moves this into `scheduler.rs` and re-exports it; this
-/// task defines the one canonical implementation.
-pub fn duration_to_next_align(now_unix: i64, align: Align) -> Duration {
-    let period: i64 = match align {
-        Align::Hour => 3600,
-        Align::Day => 86_400,
-    };
-    let remainder = now_unix.rem_euclid(period);
-    Duration::from_secs((period - remainder) as u64)
 }
 
 #[derive(Debug, Clone, PartialEq)]
