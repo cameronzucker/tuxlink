@@ -5,7 +5,7 @@
 # app, and `default-run = "tuxlink"` is unchanged. The sibling xtask/ and tools/
 # crates are OUTSIDE src-tauri and are not pulled into this workspace.
 [workspace]
-members = [".", "tuxlink-security", "tuxlink-mcp-core", "tuxlink-mcp", "tuxlink-mcp-testserver", "tux-rig", "tuxlink-agent-runner", "tuxlink-agent-frontend", "d3zwe", "tuxlink-ft8", "tuxlink-jt9", "tuxlink-capture", "tuxlink-stt"]
+members = [".", "tuxlink-security", "tuxlink-mcp-core", "tuxlink-mcp", "tuxlink-mcp-testserver", "tuxlink-routines", "tux-rig", "tuxlink-agent-runner", "tuxlink-agent-frontend", "d3zwe", "tuxlink-ft8", "tuxlink-jt9", "tuxlink-capture", "tuxlink-stt"]
 default-members = ["."]
 
 [package]
