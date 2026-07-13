@@ -16,13 +16,28 @@ pub struct DocsHit {
     pub snippet: String,  // FTS5 snippet() output, may contain <mark>...</mark>
 }
 
+/// Which corpus a topic came from. All three are indexed into `docs_fts` and are
+/// searchable/readable by the agent; only `UserGuide` also renders in the in-app
+/// Help sidebar (which discovers files itself via `import.meta.glob` in
+/// `src/help/topics.ts`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocSource {
+    /// `docs/user-guide/` — Tuxlink's operator manual. Also in the Help sidebar.
+    UserGuide,
+    /// `docs/knowledge/` — agent-only reference about OTHER Winlink clients.
+    Knowledge,
+    /// `docs/mcp-knowledge/` — playbooks and specs, also served as MCP resources.
+    McpKnowledge,
+}
+
 /// A bundled topic, supplied by the caller (the frontend has a typed
-/// registry; the Rust side accepts the trio at populate time).
+/// registry; the Rust side accepts the tuple at populate time).
 #[derive(Debug, Clone)]
 pub struct DocTopic<'a> {
     pub slug: &'a str,
     pub title: &'a str,
     pub markdown: &'a str,
+    pub source: DocSource,
 }
 
 impl Index {
@@ -118,8 +133,8 @@ mod tests {
     fn populate_then_search_returns_hits() {
         let (_dir, idx) = fresh();
         idx.populate_docs(&[
-            DocTopic { slug: "01-getting-started", title: "Getting started", markdown: "# Getting started\nWelcome to Tuxlink." },
-            DocTopic { slug: "02-connections", title: "Connections", markdown: "# Connections\nARDOP is HF digital." },
+            DocTopic { slug: "01-getting-started", title: "Getting started", markdown: "# Getting started\nWelcome to Tuxlink.", source: DocSource::UserGuide },
+            DocTopic { slug: "02-connections", title: "Connections", markdown: "# Connections\nARDOP is HF digital.", source: DocSource::UserGuide },
         ]).unwrap();
 
         assert!(!idx.docs_is_empty().unwrap());
@@ -133,7 +148,7 @@ mod tests {
     fn empty_query_returns_no_hits() {
         let (_dir, idx) = fresh();
         idx.populate_docs(&[
-            DocTopic { slug: "01", title: "x", markdown: "anything" },
+            DocTopic { slug: "01", title: "x", markdown: "anything", source: DocSource::UserGuide },
         ]).unwrap();
         assert!(idx.search_docs("").unwrap().is_empty());
         assert!(idx.search_docs("   ").unwrap().is_empty());
@@ -143,10 +158,10 @@ mod tests {
     fn populate_replaces_previous_content() {
         let (_dir, idx) = fresh();
         idx.populate_docs(&[
-            DocTopic { slug: "old", title: "Old", markdown: "ARDOP digital" },
+            DocTopic { slug: "old", title: "Old", markdown: "ARDOP digital", source: DocSource::UserGuide },
         ]).unwrap();
         idx.populate_docs(&[
-            DocTopic { slug: "new", title: "New", markdown: "VARA digital" },
+            DocTopic { slug: "new", title: "New", markdown: "VARA digital", source: DocSource::UserGuide },
         ]).unwrap();
         assert!(idx.search_docs("ARDOP").unwrap().is_empty());
         assert_eq!(idx.search_docs("VARA").unwrap().len(), 1);
@@ -157,8 +172,8 @@ mod tests {
         let (_dir, idx) = fresh();
         assert!(idx.docs_slugs().unwrap().is_empty());
         idx.populate_docs(&[
-            DocTopic { slug: "01-foo", title: "Foo", markdown: "x" },
-            DocTopic { slug: "02-bar", title: "Bar", markdown: "y" },
+            DocTopic { slug: "01-foo", title: "Foo", markdown: "x", source: DocSource::UserGuide },
+            DocTopic { slug: "02-bar", title: "Bar", markdown: "y", source: DocSource::UserGuide },
         ]).unwrap();
         let mut slugs = idx.docs_slugs().unwrap();
         slugs.sort();
@@ -172,11 +187,11 @@ mod tests {
         // a subsequent search returns ONLY the new slugs.
         let (_dir, idx) = fresh();
         idx.populate_docs(&[
-            DocTopic { slug: "01-getting-started", title: "Getting started", markdown: "ARDOP" },
+            DocTopic { slug: "01-getting-started", title: "Getting started", markdown: "ARDOP", source: DocSource::UserGuide },
         ]).unwrap();
         assert_eq!(idx.docs_slugs().unwrap(), vec!["01-getting-started".to_string()]);
         idx.populate_docs(&[
-            DocTopic { slug: "01-what-is-tuxlink", title: "What is Tuxlink", markdown: "ARDOP" },
+            DocTopic { slug: "01-what-is-tuxlink", title: "What is Tuxlink", markdown: "ARDOP", source: DocSource::UserGuide },
         ]).unwrap();
         assert_eq!(idx.docs_slugs().unwrap(), vec!["01-what-is-tuxlink".to_string()]);
     }
