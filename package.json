@@ -28,7 +28,7 @@
     "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-shell": "^2.3.5",
     "color2k": "^2.0.4",
-    "dompurify": "^3.4.11",
+    "dompurify": "^3.4.12",
     "leaflet": "^1.9.4",
     "marked": "^15.0.12",
     "marked-extended-tables": "^2.0.1",
