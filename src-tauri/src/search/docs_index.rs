@@ -81,6 +81,39 @@ fn fts5_or_query(query: &str) -> Option<String> {
     Some(tokens.join(" OR "))
 }
 
+/// Fingerprint of the topic bundle compiled into this binary, computed exactly
+/// the way [`Index::docs_content_fingerprint`] computes the index's — same
+/// fields, same order, and crucially the same BODY representation.
+///
+/// `populate_docs` stores `extract_markdown(t.markdown)`, not the raw file, so
+/// this must extract too. Hashing the raw markdown here would mismatch the index
+/// on every single startup and repopulate forever — a silent, permanent
+/// write-on-every-launch.
+pub fn bundled_docs_fingerprint(topics: &[DocTopic<'_>]) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut rows: Vec<(String, String, String)> = topics
+        .iter()
+        .map(|t| {
+            (
+                t.slug.to_string(),
+                t.title.to_string(),
+                extract_markdown(t.markdown),
+            )
+        })
+        .collect();
+    rows.sort();
+
+    let mut h = DefaultHasher::new();
+    for (slug, title, body) in &rows {
+        slug.hash(&mut h);
+        title.hash(&mut h);
+        body.hash(&mut h);
+    }
+    h.finish()
+}
+
 impl Index {
     /// Return true if `docs_fts` is empty.
     pub fn docs_is_empty(&self) -> Result<bool, IndexError> {
@@ -101,6 +134,48 @@ impl Index {
         let mut stmt = self.conn.prepare("SELECT slug FROM docs_fts")?;
         let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
         rows.collect::<Result<Vec<_>, _>>().map_err(IndexError::from)
+    }
+
+    /// Fingerprint of what is actually IN `docs_fts` right now: every row's
+    /// slug, title and body, in slug order.
+    ///
+    /// Compare against [`bundled_docs_fingerprint`] to decide whether the index
+    /// needs repopulating. Comparing slug SETS — which is what this used to do —
+    /// only notices topics being added, renamed or removed. It does not notice a
+    /// topic's BODY changing, so a correction to an existing page shipped inside
+    /// the new binary and the operator's `docs_fts` kept serving the old text
+    /// forever.
+    ///
+    /// That was survivable when the only thing exposed was a 12-token snippet.
+    /// It is not now: `docs_read` hands whole documents to the model as ground
+    /// truth, so a stale body means Elmer keeps quoting a connect string we have
+    /// already fixed — on air.
+    ///
+    /// Deliberately NOT a stored fingerprint. A stored value is a third piece of
+    /// state that can itself drift and would need migrating; comparing the two
+    /// live sources (the index vs the bundle compiled into this binary) is
+    /// self-validating. Cost is one scan of ~50 short documents at startup.
+    pub fn docs_content_fingerprint(&self) -> Result<u64, IndexError> {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut rows: Vec<(String, String, String)> = {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT slug, title, body FROM docs_fts")?;
+            let mapped = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+            mapped.collect::<Result<Vec<_>, _>>()?
+        };
+        // FTS5 has no inherent row order; sort so the fingerprint is stable.
+        rows.sort();
+
+        let mut h = DefaultHasher::new();
+        for (slug, title, body) in &rows {
+            slug.hash(&mut h);
+            title.hash(&mut h);
+            body.hash(&mut h);
+        }
+        Ok(h.finish())
     }
 
     /// Populate `docs_fts` from `topics`. Wipes the table first so re-calls
@@ -225,6 +300,102 @@ mod tests {
         let dir = tempdir().unwrap();
         let idx = Index::open(dir.path().join("search.db")).unwrap();
         (dir, idx)
+    }
+
+    /// The whole point of tuxlink-cr0wz: an edit to a doc's BODY must trigger a
+    /// repopulate. The old slug-set comparison could not see this — same slugs,
+    /// different text — so a corrected page never reached an existing install.
+    #[test]
+    fn content_fingerprint_changes_when_only_a_body_changes() {
+        let (_dir, idx) = fresh();
+        let before = [DocTopic {
+            slug: "pat-winlink",
+            title: "Pat Winlink",
+            markdown: "# Pat Winlink\nHops are separated by commas.",
+            source: DocSource::Knowledge,
+        }];
+        idx.populate_docs(&before).unwrap();
+
+        // Same slug, same title — only the text is corrected.
+        let after = [DocTopic {
+            slug: "pat-winlink",
+            title: "Pat Winlink",
+            markdown: "# Pat Winlink\nHops are separated by slashes.",
+            source: DocSource::Knowledge,
+        }];
+
+        assert_eq!(
+            idx.docs_content_fingerprint().unwrap(),
+            bundled_docs_fingerprint(&before),
+            "a freshly populated index must match the bundle it came from"
+        );
+        assert_ne!(
+            idx.docs_content_fingerprint().unwrap(),
+            bundled_docs_fingerprint(&after),
+            "a body-only correction must be detected — this is the bug: the old \
+             slug-set check saw no drift and the operator kept the wrong text"
+        );
+    }
+
+    /// The trap on the other side. `populate_docs` stores
+    /// `extract_markdown(markdown)`, so the bundle fingerprint must extract too.
+    /// If it hashed the RAW markdown it would never match the index, and every
+    /// single launch would wipe and repopulate — forever, silently.
+    #[test]
+    fn fingerprints_agree_after_populate_so_startup_is_idempotent() {
+        let (_dir, idx) = fresh();
+        let topics = [
+            DocTopic {
+                slug: "01-a",
+                title: "A",
+                markdown: "# A\nSome **bold** text and `code` and a [link](http://x).",
+                source: DocSource::UserGuide,
+            },
+            DocTopic {
+                slug: "02-b",
+                title: "B",
+                markdown: "# B\n```\nax25:///DIGI/TARGET\n```\n",
+                source: DocSource::Knowledge,
+            },
+        ];
+        idx.populate_docs(&topics).unwrap();
+
+        assert_eq!(
+            idx.docs_content_fingerprint().unwrap(),
+            bundled_docs_fingerprint(&topics),
+            "fingerprints must agree right after populate, or the app repopulates \
+             the docs index on EVERY launch"
+        );
+
+        // And repopulating with the same bundle keeps it stable.
+        idx.populate_docs(&topics).unwrap();
+        assert_eq!(
+            idx.docs_content_fingerprint().unwrap(),
+            bundled_docs_fingerprint(&topics)
+        );
+    }
+
+    /// Slug drift (the original PR #347 bug) must still be caught.
+    #[test]
+    fn content_fingerprint_still_catches_slug_drift() {
+        let (_dir, idx) = fresh();
+        idx.populate_docs(&[DocTopic {
+            slug: "01-getting-started",
+            title: "Getting started",
+            markdown: "ARDOP",
+            source: DocSource::UserGuide,
+        }])
+        .unwrap();
+        let renamed = [DocTopic {
+            slug: "01-what-is-tuxlink",
+            title: "Getting started",
+            markdown: "ARDOP",
+            source: DocSource::UserGuide,
+        }];
+        assert_ne!(
+            idx.docs_content_fingerprint().unwrap(),
+            bundled_docs_fingerprint(&renamed)
+        );
     }
 
     #[test]
