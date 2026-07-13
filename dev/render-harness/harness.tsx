@@ -55,6 +55,8 @@ import { Sparkline } from '../../src/radio/charts/Sparkline';
 //   &flags=clock|jt9    (overlay variants on any live state)
 import { LiveBandStrip } from '../../src/ft8ui/LiveBandStrip';
 import { Ft8SetupSurface } from '../../src/ft8ui/Ft8SetupSurface';
+import { Ft8ListenerProvider } from '../../src/ft8ui/useFt8Listener';
+import { StationFinderPanel } from '../../src/catalog/StationFinderPanel';
 import type {
   Ft8Snapshot,
   Ft8UiState,
@@ -70,7 +72,7 @@ const grid = params.has('grid') ? params.get('grid') : 'CN87';
 const view = (params.get('view') ?? 'home') as
   | 'home' | 'browse' | 'grib' | 'ribbon'
   | 'radio-ardop' | 'radio-vara' | 'radio-telnet'
-  | 'elmer' | 'sparkline' | 'ft8';
+  | 'elmer' | 'sparkline' | 'ft8' | 'finder';
 // ?running=1 drives a connected modem / open VARA transport so the running-state
 // footers render: ARDOP/VARA `Send/Receive` (primary) + the red `Stop`
 // (`radio-panel-btn-bad`) button. Without it the fixture pins state to STOPPED, so
@@ -371,6 +373,175 @@ function ft8StateFixture(state: Ft8UiState, flags: Ft8Flags): { snapshot: Ft8Sna
   }
 }
 
+// ---------------------------------------------------------------------------
+// view=finder — the WHOLE StationFinderPanel (QA round-3 render gate). Drives
+// the real panel + Ft8ListenerProvider against canned mount-time reads:
+//   ?view=finder                 → map+rail+strip, listener decoding (F5/F7/F8)
+//   ?view=finder&state=setup     → needs-setup → FULL-BODY setup surface (F2)
+//   ?view=finder&state=<Ft8UiState> → any other listener state
+// The ft8 ring is anchored at the REAL Date.now() (unlike the strip fixtures'
+// fixed FT8_NOW_MS) so live decodes/min figures — the strip stats and the
+// rail tab's si-count badge — render non-zero in the snapshot.
+// ---------------------------------------------------------------------------
+if (view === 'finder') {
+  const stateParam = params.get('state') ?? 'decoding';
+  const finderState = (stateParam === 'setup' ? 'needs-setup' : stateParam) as Ft8UiState;
+  const nowMs = Date.now();
+  const liveRing: SlotRecord[] = [0, 1, 2, 3].map((i): SlotRecord => ({
+    slotUtcMs: nowMs - (4 - i) * 15_000,
+    band: '20m',
+    dialHz: 14_074_000,
+    bandSource: 'cat-confirmed',
+    bandLabelConfirmedUtcMs: nowMs - 90_000,
+    outcome: { kind: 'decoded' },
+    decodes: [
+      { slotUtcMs: nowMs - (4 - i) * 15_000, snrDb: -4 - i, dtS: 0.2, freqHz: 1240 + i * 180, message: 'CQ W7GTE DM34', fromCall: 'W7GTE', toCall: null, grid: 'DM34', partial: false },
+      { slotUtcMs: nowMs - (4 - i) * 15_000, snrDb: -13, dtS: 0.1, freqHz: 688, message: 'K5MDX N7CPZ DM43', fromCall: 'N7CPZ', toCall: 'K5MDX', grid: 'DM43', partial: false },
+    ],
+  }));
+  const { snapshot } = ft8StateFixture(finderState, {
+    clockUnsynced: false,
+    jt9Degraded: false,
+    catFixedBand: false,
+  });
+  RESPONSES.ft8_listener_snapshot = snapshot
+    ? { ...snapshot, lastSlotUtcMs: nowMs - 15_000, bandLabelConfirmedUtcMs: nowMs - 90_000, ringTail: finderState === 'needs-setup' ? [] : liveRing }
+    : null;
+  RESPONSES.ft8_listener_start = null;
+
+  const gw = (callsign: string, g: string, location: string, freqs: number[]) => ({
+    channel: `${callsign} ${g}`,
+    callsign,
+    sysopName: null,
+    grid: g,
+    location,
+    frequenciesKhz: freqs,
+    lastUpdate: null,
+    email: null,
+    homepage: null,
+    antenna: null,
+  });
+  RESPONSES.catalog_fetch_stations = [
+    {
+      mode: 'vara-hf',
+      title: 'Public VARA HF RMS gateways',
+      gateways: [
+        gw('N0DAJ', 'DM34oa', 'Wickenburg, AZ', [3590, 7103.5, 14103.5]),
+        gw('KD7SSB', 'DM33', 'Phoenix, AZ', [7101.5, 10145.5]),
+        gw('K7HTZ', 'CN85', 'Portland, OR', [7104, 14105]),
+      ],
+      raw: '',
+      parsedOk: true,
+      fetchedAtMs: nowMs - 18 * 60_000,
+    },
+    {
+      mode: 'ardop-hf',
+      title: 'Public ARDOP RMS gateways',
+      gateways: [gw('W7RMS', 'DM43', 'Mesa, AZ', [7102, 14105.5]), gw('N0DAJ', 'DM34oa', 'Wickenburg, AZ', [7103.5])],
+      raw: '',
+      parsedOk: true,
+      fetchedAtMs: nowMs - 18 * 60_000,
+    },
+  ];
+  RESPONSES.propagation_predict_path = {
+    bearingDeg: 57,
+    distanceKm: 1397,
+    ssn: 108,
+    year: 2026,
+    month: 7,
+    channels: [3590, 7101.5, 7102, 7103.5, 7104, 10145.5, 14103.5, 14105, 14105.5].map((frequencyKhz) => ({
+      frequencyKhz,
+      voacapMhz: frequencyKhz / 1000,
+      relByHour: Array(24).fill(frequencyKhz < 10000 ? 0.82 : 0.51),
+      snrByHour: Array(24).fill(12),
+      mufdayByHour: Array(24).fill(0.9),
+    })),
+  };
+  RESPONSES.propagation_prefs_read = {
+    antenna_preset: 'low-nvis-wire',
+    req_snr_db: 38,
+    tx_power_w: 50,
+    antenna_height_m: 2.5,
+    ground_type: 'poor-rocky',
+    noise_environment: 'city-industrial',
+  };
+  RESPONSES.propagation_prefs_write = null;
+  // Peers (finding 8): ONE grid-bearing peer with a channel → a map diamond +
+  // the PEERS legend row; capabilities all-on → the Peers layer pill renders.
+  RESPONSES.p2p_capabilities = {
+    peer_store: true,
+    finder_peers: true,
+    map_peers: true,
+    agent_find_peers: true,
+    vara_engine_split: true,
+    favorites_contact_link: true,
+  };
+  RESPONSES.contacts_read = {
+    schema_version: 2,
+    contacts: [
+      {
+        id: 'peer-ka0zis',
+        name: 'Dennis Hess',
+        callsign: 'KA0ZIS',
+        tier: 'confirmed',
+        origin: 'incoming',
+        grid: { value: 'EM17gq', source: 'manual' },
+        channels: [
+          {
+            transport: 'vara-hf',
+            target_callsign: 'KA0ZIS',
+            via: [],
+            freq_hz: 7101500,
+            bandwidth: null,
+            direction: 'incoming',
+            counts: { ok: 2, fail: 0 },
+            last_seen: new Date(nowMs - 3600_000).toISOString(),
+            last_ok: new Date(nowMs - 3600_000).toISOString(),
+          },
+        ],
+        endpoints: [],
+        created_at: new Date(nowMs - 86_400_000).toISOString(),
+        updated_at: new Date(nowMs - 3600_000).toISOString(),
+      },
+    ],
+    groups: [],
+  };
+  RESPONSES.position_current_fix = { grid: 'DM33wp' };
+  RESPONSES.position_status = {
+    gps_ready: false,
+    broadcast_grid: 'DM33wp',
+    ui_grid: 'DM33wp',
+  };
+  RESPONSES.backend_status = null;
+  RESPONSES.magnetic_declination = { declDeg: 9.7, modelEpoch: 'WMM2025', validUntil: '2029-01-01' };
+  RESPONSES.basemap_list_packs = { packs: [], total_bytes: 0 };
+  RESPONSES.catalog_get_service_codes = 'PUBLIC';
+  RESPONSES.catalog_set_service_codes = null;
+  RESPONSES.wwv_offair_snapshot_read = null;
+  RESPONSES.wwv_offair_cat_configured = true;
+  // Seed the persisted map viewport (Arizona at regional zoom) so gateway
+  // pins spread out instead of stacking under the operator dot at world
+  // zoom. `?worldview=1` skips the seed for a first-open render.
+  if (params.get('worldview') !== '1') {
+    try {
+      localStorage.setItem(
+        'tuxlink:map-viewport:station-finder',
+        JSON.stringify({ center: { lat: 33.4, lon: -112.0 }, zoom: 7 }),
+      );
+    } catch {
+      /* storage disabled — the world-zoom fallback still renders */
+    }
+  }
+}
+
+function FinderFixtureView() {
+  return (
+    <Ft8ListenerProvider>
+      <StationFinderPanel onClose={() => undefined} />
+    </Ft8ListenerProvider>
+  );
+}
+
 function Ft8StripFixtureView() {
   const state = (params.get('state') ?? 'decoding') as Ft8UiState;
   const flagsParam = params.get('flags');
@@ -383,17 +554,22 @@ function Ft8StripFixtureView() {
   const snapWithFlags = snapshot
     ? { ...snapshot, flags, lastFailure: flags.jt9Degraded ? 'jt9 exited 137 (SIGKILL) — decode timeout' : snapshot.lastFailure }
     : null;
-  const setupSlot = snapWithFlags ? (
-    <Ft8SetupSurface snapshot={snapWithFlags} onStarted={() => undefined} onRetry={() => undefined} />
-  ) : undefined;
+  // QA round-3 finding 2: the strip no longer nests Ft8SetupSurface — the
+  // full surface renders standalone below the strip here so the D2 per-state
+  // fixtures still cover BOTH the strip arm and the surface itself. In the
+  // product it is StationFinderPanel's full BODY (view=finder&state=setup).
+  const setupStandalone =
+    (state === 'needs-setup' || state === 'device-lost') && snapWithFlags ? (
+      <Ft8SetupSurface snapshot={snapWithFlags} onStarted={() => undefined} onRetry={() => undefined} />
+    ) : null;
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: 'var(--bg)' }}>
+      {setupStandalone}
       <LiveBandStrip
         snapshot={snapWithFlags}
         uiState={{ state, flags }}
         decodesRing={ring}
         blockingSessionMode={params.get('blocking') ?? undefined}
-        setupSurface={setupSlot}
         onOpenFullSetup={() => undefined}
         nowMs={FT8_NOW_MS}
       />
@@ -403,7 +579,9 @@ function Ft8StripFixtureView() {
 
 createRoot(document.getElementById('root')!).render(
   <QueryClientProvider client={queryClient}>
-    {view === 'ft8' ? (
+    {view === 'finder' ? (
+      <FinderFixtureView />
+    ) : view === 'ft8' ? (
       <Ft8StripFixtureView />
     ) : view === 'sparkline' ? (
       <SparklineFixtureView />
@@ -439,6 +617,15 @@ createRoot(document.getElementById('root')!).render(
           reviewInbound={true}
           onReviewInboundChange={() => undefined}
           aprs={{ listening: true, unread: 3, onOpen: () => undefined }}
+          // QA round-3 finding 4 render: drive the FT-8 chip's raw uiState via
+          // ?ft8state= (e.g. yielded → "Paused", needs-setup → "Needs setup").
+          // Default 'decoding' keeps the pre-existing ribbon snapshot lively.
+          ft8={{
+            uiState: (params.get('ft8state') ?? 'decoding') as Ft8UiState,
+            band: '20m',
+            decodesPerMin: 4.5,
+            onOpen: () => undefined,
+          }}
           egress={{
             status: { armed: true, armedRemainingSecs: 540, tainted: false },
             onArm: () => undefined,
