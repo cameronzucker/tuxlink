@@ -311,7 +311,12 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "docs_search",
-        description = "Search the in-app documentation by query. App-owned content; does not taint. Read-only."
+        description = "Search the documentation by keyword. Covers Tuxlink's own user guide, \
+                       troubleshooting playbooks, and reference material on OTHER Winlink clients \
+                       (Pat, Winlink Express). Returns ranked hits as {title, slug, snippet}. \
+                       IMPORTANT: the snippet is only a short fragment around the keyword match \
+                       and is NOT enough to answer from. To read a page, call docs_read with its \
+                       slug. App-owned content; does not taint. Read-only."
     )]
     pub async fn docs_search(
         &self,
@@ -320,6 +325,39 @@ impl TuxlinkMcp {
         let Parameters(QueryParams { query }) = params;
         let dto = self.state.search.docs(&query).await.map_err(port_err)?;
         Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
+        name = "docs_read",
+        description = "Read one documentation page IN FULL, given the slug from a docs_search hit. \
+                       This is how you get the actual text — command syntax, connection strings, \
+                       configuration steps — that docs_search's snippet only hints at. Use \
+                       docs_search first to find the slug, then docs_read to read the page, then \
+                       answer FROM the page. If the slug is unknown, the result lists the valid \
+                       slugs. App-owned content; does not taint. Read-only."
+    )]
+    pub async fn docs_read(
+        &self,
+        params: Parameters<SlugParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(SlugParams { slug }) = params;
+        match self.state.search.doc(&slug).await.map_err(port_err)? {
+            Some(doc) => Ok(CallToolResult::success(vec![ContentBlock::json(doc)?])),
+            None => {
+                // Steer, don't derail: a wrong slug guess should tell the model what
+                // it CAN read rather than surfacing as a tool error mid-turn.
+                let hits = self.state.search.docs(&slug).await.map_err(port_err)?;
+                let available: Vec<String> = hits.into_iter().map(|h| h.slug).collect();
+                Ok(CallToolResult::success(vec![ContentBlock::json(
+                    serde_json::json!({
+                        "error": "unknown slug",
+                        "requested": slug,
+                        "hint": "Call docs_search first and pass a slug from its hits.",
+                        "closest_slugs": available,
+                    }),
+                )?]))
+            }
+        }
     }
 
     #[tool(
@@ -1113,6 +1151,13 @@ pub struct SearchParams {
 pub struct QueryParams {
     /// The documentation search query string.
     pub query: String,
+}
+
+/// `{ "slug": "pat-winlink" }` — input for `docs_read`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SlugParams {
+    /// The `slug` of a documentation page, exactly as returned by `docs_search`.
+    pub slug: String,
 }
 
 /// `{ "freq_hz": 7104000 }` — input for `rig_tune`.
