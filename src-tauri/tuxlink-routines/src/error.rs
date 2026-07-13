@@ -44,4 +44,6 @@ pub enum EngineError {
     Journal(#[from] std::io::Error),
     #[error("routine '{0}' not found")]
     UnknownRoutine(String),
+    #[error("resolved snapshot does not deserialize back to a routine definition: {0}")]
+    SnapshotShape(String),
 }

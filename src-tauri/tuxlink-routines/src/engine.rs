@@ -99,7 +99,7 @@ impl Engine {
 
         // The executor runs the SNAPSHOT (spec §7), not the live definition.
         let resolved: RoutineDef = serde_json::from_value(snapshot)
-            .map_err(|e| EngineError::Journal(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
+            .map_err(|e| EngineError::SnapshotShape(e.to_string()))?;
 
         let mut vars = RunVars::default();
         if let serde_json::Value::Object(map) = args {
@@ -140,8 +140,15 @@ impl Engine {
             };
             let outcome = RunOutcome { state };
             // RunFinished is appended exactly once, on every path (success,
-            // failure, cancel) — this is the single point that does it.
-            let _ = journal_arc.lock().unwrap().append(RunEvent::RunFinished { state, reason });
+            // failure, cancel) — this is the single point that does it. Use
+            // `unwrap_or_else` rather than `unwrap` on the lock: if a
+            // sibling track's journal write panicked and poisoned this
+            // mutex mid-run, we must still append the terminal event rather
+            // than panicking here ourselves and leaving the run a zombie
+            // (no RunFinished ever recorded, `handle.done` never resolved).
+            let mut journal_guard = journal_arc.lock().unwrap_or_else(|e| e.into_inner());
+            let _ = journal_guard.append(RunEvent::RunFinished { state, reason });
+            drop(journal_guard);
             let _ = tx.send(outcome);
         });
         Ok(RunHandle { run_id, cancel, done: rx })

@@ -71,6 +71,14 @@ pub fn parse_delay(spec: &str) -> Result<DelaySpec, StepError> {
     Ok(DelaySpec::Relative(Duration::from_secs(secs)))
 }
 
+/// Runtime backstop against runaway branch cycles (spec: "every run
+/// terminates"). A track step count is not a step INDEX bound — `Branch`
+/// jumps can revisit earlier steps indefinitely if a routine is authored (or
+/// imported) with a cycle — so this bounds the number of steps EXECUTED
+/// (including repeats via backward jumps) per track, not the track's
+/// authored length.
+pub const MAX_STEPS_PER_TRACK: usize = 10_000;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum TrackEnd {
     /// Ran off the end of the step list.
@@ -181,10 +189,25 @@ pub async fn run_track_shared(
     // Steps that only exist as a Retry wrapper's target are skipped when
     // reached sequentially (the wrapper executed them).
     let mut consumed: std::collections::HashSet<StepId> = std::collections::HashSet::new();
+    // Runtime backstop (finding: "every run terminates") — an authored or
+    // imported branch cycle would otherwise spin this loop forever via
+    // backward `Branch` jumps. Counts every step visited (executed or
+    // skipped-as-consumed), so a cycle of any shape trips the cap.
+    let mut executed_steps: usize = 0;
 
     while idx < track.steps.len() {
         if ctx.cancel.is_cancelled() {
             return Err(StepError::Cancelled);
+        }
+        executed_steps += 1;
+        if executed_steps > MAX_STEPS_PER_TRACK {
+            return Err(StepError::Action {
+                action: "track".into(),
+                cause: format!(
+                    "track '{}' exceeded {MAX_STEPS_PER_TRACK} executed steps — likely a branch cycle; runs must terminate",
+                    track.name
+                ),
+            });
         }
         let step = &track.steps[idx];
         if consumed.contains(step.id()) {
@@ -202,8 +225,16 @@ pub async fn run_track_shared(
                         let guard = vars.lock().await;
                         guard.resolve(on)?
                     };
-                    let truthy = v == serde_json::Value::Bool(true);
-                    let arm = if truthy { then } else { r#else };
+                    let arm = match &v {
+                        serde_json::Value::Bool(true) => then,
+                        serde_json::Value::Bool(false) => r#else,
+                        other => {
+                            return Err(StepError::Action {
+                                action: "branch".into(),
+                                cause: format!("branch variable '{on}' resolved to {other} — not a boolean"),
+                            });
+                        }
+                    };
                     match arm.first() {
                         Some(target) => {
                             idx = index_of(track, target).ok_or_else(|| StepError::Action {
@@ -891,6 +922,113 @@ mod tests {
                 "expected cause to mention the panic, got {cause:?}"
             ),
             other => panic!("expected StepError::Action from the panicked track, got {other:?}"),
+        }
+    }
+
+    /// FINDING 5: `run_tracks`' "any `Ended{failed:true}` -> run Failed" rule
+    /// must win over a simultaneous `Ended{failed:false}` no matter which
+    /// track's result `JoinSet::join_next` hands back first. Exercised both
+    /// ways by varying slice order, since spawn order does not guarantee
+    /// completion order.
+    #[tokio::test(start_paused = true)]
+    async fn failure_end_wins_over_success_end_regardless_of_order() {
+        let ok_track = Track {
+            name: "ok".into(),
+            steps: vec![Step::Control(ControlStep {
+                id: StepId("e1".into()),
+                control: Control::End { failed: false, reason: None },
+            })],
+        };
+        let fail_track = Track {
+            name: "fail".into(),
+            steps: vec![Step::Control(ControlStep {
+                id: StepId("e2".into()),
+                control: Control::End { failed: true, reason: Some("nope".into()) },
+            })],
+        };
+
+        // Order A: success-track first in the slice.
+        {
+            let dir = tempfile::tempdir().unwrap();
+            let (ctx, _) = ctx(ActionRegistry::default(), dir.path());
+            let tracks = vec![ok_track.clone(), fail_track.clone()];
+            let vars = Arc::new(tokio::sync::Mutex::new(RunVars::default()));
+            let outcome = run_tracks(&tracks, vars, &ctx).await.unwrap();
+            assert_eq!(outcome.state, RunState::Failed, "order A (ok, fail) must still fail");
+        }
+
+        // Order B: failure-track first in the slice.
+        {
+            let dir = tempfile::tempdir().unwrap();
+            let (ctx, _) = ctx(ActionRegistry::default(), dir.path());
+            let tracks = vec![fail_track, ok_track];
+            let vars = Arc::new(tokio::sync::Mutex::new(RunVars::default()));
+            let outcome = run_tracks(&tracks, vars, &ctx).await.unwrap();
+            assert_eq!(outcome.state, RunState::Failed, "order B (fail, ok) must still fail");
+        }
+    }
+
+    /// FINDING 1 + 6: an authored/imported branch cycle (backward jump) must
+    /// not spin forever — `run_track_shared` trips `MAX_STEPS_PER_TRACK` and
+    /// fails loudly instead.
+    #[tokio::test]
+    async fn branch_cycle_hits_the_step_budget() {
+        let mut reg = ActionRegistry::default();
+        // A single `.ok(...)` outcome replays forever (fakes.rs), so this
+        // loop never terminates on its own — the step budget must catch it.
+        reg.register(Arc::new(FakeAction::new("local.gen").ok(json!({"go": true}))));
+        let dir = tempfile::tempdir().unwrap();
+        let (ctx, _) = ctx(reg, dir.path());
+        let track = Track {
+            name: "t1".into(),
+            steps: vec![
+                action("a1", "local.gen", json!({})),
+                Step::Control(ControlStep {
+                    id: StepId("b1".into()),
+                    control: Control::Branch {
+                        on: "a1.go".into(),
+                        then: vec![StepId("a1".into())],
+                        r#else: vec![],
+                    },
+                }),
+            ],
+        };
+        let mut vars = RunVars::default();
+        let err = run_track(&track, &mut vars, &ctx).await.unwrap_err();
+        match err {
+            StepError::Action { cause, .. } => {
+                assert!(cause.contains("exceeded"), "expected 'exceeded' in cause, got {cause:?}");
+            }
+            other => panic!("expected StepError::Action from the step budget, got {other:?}"),
+        }
+    }
+
+    /// FINDING 2 + 6: a branch variable that resolves to a non-boolean is a
+    /// "trigger that lies" — it must fail loudly, never silently fall
+    /// through to the else-arm.
+    #[tokio::test]
+    async fn branch_on_non_bool_fails_verbatim() {
+        let mut reg = ActionRegistry::default();
+        reg.register(Arc::new(FakeAction::new("local.gen").ok(json!({"x": "yes"}))));
+        let dir = tempfile::tempdir().unwrap();
+        let (ctx, _) = ctx(reg, dir.path());
+        let track = Track {
+            name: "t1".into(),
+            steps: vec![
+                action("s1", "local.gen", json!({})),
+                Step::Control(ControlStep {
+                    id: StepId("b1".into()),
+                    control: Control::Branch { on: "s1.x".into(), then: vec![], r#else: vec![] },
+                }),
+            ],
+        };
+        let mut vars = RunVars::default();
+        let err = run_track(&track, &mut vars, &ctx).await.unwrap_err();
+        match err {
+            StepError::Action { cause, .. } => {
+                assert!(cause.contains("not a boolean"), "expected 'not a boolean' in cause, got {cause:?}");
+            }
+            other => panic!("expected StepError::Action for non-bool branch, got {other:?}"),
         }
     }
 }
