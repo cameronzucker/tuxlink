@@ -8,6 +8,7 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use crate::action::ActionRegistry;
+use crate::compose::RoutineInvoker;
 use crate::error::StepError;
 use crate::journal::{JournalWriter, RunEvent, RunState};
 use crate::types::{ActionStep, Control, Step, StepId, Track};
@@ -18,9 +19,19 @@ pub struct ExecCtx {
     pub journal: Arc<Mutex<JournalWriter>>,
     pub cancel: CancellationToken,
     pub default_timeout_s: u64,
-    /// Clock used for `next:hour` / `next:day` delay alignment. Task 7 adds
-    /// more fields (invoker/run_id/depth) for `Control::Call`; not pre-added here.
+    /// Clock used for `next:hour` / `next:day` delay alignment.
     pub now: fn() -> i64,
+    /// Composition backstop for `Control::Call` (spec §7): the engine facade
+    /// (Task 9) implements this against real child runs; tests use
+    /// `fakes::FakeInvoker`.
+    pub invoker: Arc<dyn RoutineInvoker>,
+    /// This run's own id, threaded into `Provenance::parent_run_id` on every
+    /// child call so journals alone reconstruct "run 47, step 3 -> child 48".
+    pub run_id: String,
+    /// Call-chain depth for the runtime backstop against runaway recursion
+    /// (spec §7); root runs start at 0, each `Control::Call` a child engine
+    /// spawns increments it by one.
+    pub depth: u32,
 }
 
 /// Alignment target for `DelaySpec::NextAlign` (spec §6 `Control::Delay`).
@@ -278,12 +289,62 @@ pub async fn run_track_shared(
                     journal(ctx, RunEvent::StateChanged { state: RunState::Running });
                     idx += 1;
                 }
-                Control::Call { .. } => {
-                    // Lands in Task 7. Explicit error keeps this task honest.
-                    return Err(StepError::Action {
-                        action: "control".into(),
-                        cause: format!("control step '{}' kind not yet wired in this task", c.id.0),
+                Control::Call { routine, args, sync } => {
+                    // Resolve args first: a $var resolution failure is a
+                    // step failure per the unset-variable rules (spec §10),
+                    // same as an action step's params — no journal entry for
+                    // a call that never had valid params to attempt.
+                    let resolved_args = {
+                        let guard = vars.lock().await;
+                        resolve_params(args, &guard)?
+                    }; // lock dropped here, before any invoke await
+                    journal(ctx, RunEvent::StepIntent {
+                        step: c.id.clone(),
+                        action: format!("call:{routine}"),
+                        resolved_params: resolved_args.clone(),
                     });
+                    if ctx.depth >= crate::compose::MAX_CALL_DEPTH {
+                        let err = StepError::Action {
+                            action: format!("call:{routine}"),
+                            cause: format!(
+                                "call depth {} exceeds cap {} — recursive routine chain",
+                                ctx.depth,
+                                crate::compose::MAX_CALL_DEPTH
+                            ),
+                        };
+                        journal(ctx, RunEvent::StepErr { step: c.id.clone(), error: err.clone() });
+                        return Err(err);
+                    }
+                    let provenance = crate::compose::Provenance {
+                        parent_run_id: ctx.run_id.clone(),
+                        parent_step: c.id.clone(),
+                    };
+                    if *sync {
+                        match ctx.invoker.invoke(routine, resolved_args, provenance).await {
+                            Ok(result) => {
+                                journal(ctx, RunEvent::StepOk { step: c.id.clone(), output: result.clone() });
+                                let mut guard = vars.lock().await;
+                                guard.set_step_output(&c.id, result);
+                            }
+                            Err(err) => {
+                                journal(ctx, RunEvent::StepErr { step: c.id.clone(), error: err.clone() });
+                                return Err(err);
+                            }
+                        }
+                    } else {
+                        let invoker = ctx.invoker.clone();
+                        let routine = routine.clone();
+                        tokio::spawn(async move {
+                            // Child journals its own outcome; the parent does
+                            // not await it (fire-and-forget, spec §7).
+                            let _ = invoker.invoke(&routine, resolved_args, provenance).await;
+                        });
+                        let marker = serde_json::json!({"dispatched": true});
+                        journal(ctx, RunEvent::StepOk { step: c.id.clone(), output: marker.clone() });
+                        let mut guard = vars.lock().await;
+                        guard.set_step_output(&c.id, marker);
+                    }
+                    idx += 1;
                 }
             },
         }
@@ -312,7 +373,7 @@ pub async fn run_track(
 ///   - any track's unhandled `StepErr` -> run `Failed` verbatim (propagated
 ///     as `Err`), remaining tracks cancelled.
 ///   - any track's `Ended{failed:false}` -> run `Completed` immediately
-///     (an explicit successful End is "mark workflow complete"), remaining
+///     (an explicit successful End means the routine has done its job), remaining
 ///     tracks cancelled.
 ///   - all tracks `Completed` (ran off the end) -> run `Completed`.
 ///
@@ -342,6 +403,9 @@ pub async fn run_tracks(
             cancel: ctx.cancel.child_token(),
             default_timeout_s: ctx.default_timeout_s,
             now: ctx.now,
+            invoker: ctx.invoker.clone(),
+            run_id: ctx.run_id.clone(),
+            depth: ctx.depth,
         };
         set.spawn(async move { run_track_shared(&track, &vars, &task_ctx).await });
     }
@@ -387,7 +451,7 @@ pub async fn run_tracks(
 mod tests {
     use super::*;
     use crate::action::ActionRegistry;
-    use crate::fakes::FakeAction;
+    use crate::fakes::{FakeAction, FakeInvoker};
     use crate::journal::{read_journal, JournalWriter, RunEvent};
     use crate::types::{ActionStep, BusyPolicy, Control, ControlStep, Step, StepId, Track};
     use crate::vars::RunVars;
@@ -416,6 +480,9 @@ mod tests {
             cancel: CancellationToken::new(),
             default_timeout_s: 30,
             now: fixed_now,
+            invoker: Arc::new(FakeInvoker::new()),
+            run_id: "run-t".into(),
+            depth: 0,
         };
         (ctx, path)
     }

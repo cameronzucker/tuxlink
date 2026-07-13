@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 use crate::action::{Action, ActionDescriptor};
+use crate::compose::{Provenance, RoutineInvoker};
 use crate::error::StepError;
 
 enum Outcome {
@@ -90,6 +91,99 @@ impl Action for FakeAction {
             Outcome::Hang => {
                 cancel.cancelled().await;
                 Err(StepError::Cancelled)
+            }
+        }
+    }
+}
+
+/// Scriptable [`RoutineInvoker`] for `compose.rs` tests: outcomes are keyed
+/// by routine name (not ordered like `FakeAction`, since call tests script
+/// per-routine, not per-call-sequence) and every invocation is recorded so
+/// tests can assert provenance was threaded through correctly.
+#[derive(Debug, Clone)]
+pub struct RecordedInvocation {
+    pub routine: String,
+    pub args: serde_json::Value,
+    pub provenance: Provenance,
+}
+
+enum InvokeOutcome {
+    Result(serde_json::Value),
+    Error(String),
+    Hang,
+}
+
+#[derive(Default)]
+pub struct FakeInvoker {
+    outcomes: Mutex<std::collections::HashMap<String, InvokeOutcome>>,
+    invocations: Mutex<Vec<RecordedInvocation>>,
+}
+
+impl FakeInvoker {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn result(self, routine: &str, value: serde_json::Value) -> Self {
+        self.outcomes.lock().unwrap().insert(routine.into(), InvokeOutcome::Result(value));
+        self
+    }
+
+    pub fn error(self, routine: &str, verbatim: &str) -> Self {
+        self.outcomes.lock().unwrap().insert(routine.into(), InvokeOutcome::Error(verbatim.into()));
+        self
+    }
+
+    pub fn hang(self, routine: &str) -> Self {
+        self.outcomes.lock().unwrap().insert(routine.into(), InvokeOutcome::Hang);
+        self
+    }
+
+    pub fn invocations(&self) -> Vec<RecordedInvocation> {
+        self.invocations.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl RoutineInvoker for FakeInvoker {
+    async fn invoke(
+        &self,
+        routine: &str,
+        args: serde_json::Value,
+        provenance: Provenance,
+    ) -> Result<serde_json::Value, StepError> {
+        self.invocations.lock().unwrap().push(RecordedInvocation {
+            routine: routine.to_string(),
+            args,
+            provenance,
+        });
+        // Match, clone what's needed, and drop the std::sync::MutexGuard
+        // before any `.await` — held across the Hang branch's pending await
+        // it would make this future !Send (the trait requires Send futures).
+        enum Decision {
+            Ready(Result<serde_json::Value, StepError>),
+            Hang,
+        }
+        let decision = {
+            let outcomes = self.outcomes.lock().unwrap();
+            match outcomes.get(routine) {
+                Some(InvokeOutcome::Result(v)) => Decision::Ready(Ok(v.clone())),
+                Some(InvokeOutcome::Error(cause)) => Decision::Ready(Err(StepError::Action {
+                    action: format!("call:{routine}"),
+                    cause: cause.clone(),
+                })),
+                Some(InvokeOutcome::Hang) => Decision::Hang,
+                None => Decision::Ready(Err(StepError::Action {
+                    action: format!("call:{routine}"),
+                    cause: format!("routine '{routine}' not scripted in FakeInvoker"),
+                })),
+            }
+        }; // lock dropped here
+        match decision {
+            Decision::Ready(result) => result,
+            Decision::Hang => {
+                std::future::pending::<()>().await;
+                unreachable!()
             }
         }
     }
