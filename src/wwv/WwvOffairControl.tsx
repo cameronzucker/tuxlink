@@ -127,7 +127,9 @@ export function WwvOffairControl() {
         disabled={capturing || armed}
         onClick={() => arm(Date.now())}
       >
-        {capturing ? 'Capturing…' : 'Refresh off-air'}
+        {/* QA round-3 finding 6: "off-air" read as wrong to the operator (the
+            data arrives OVER the air) — name the source instead. */}
+        {capturing ? 'Capturing…' : 'Refresh from WWV'}
       </button>
       {armed && catConfigured === false && (
         <>
@@ -163,9 +165,9 @@ export function WwvOffairControl() {
         <span
           className="station-finder__offair"
           data-testid="wwv-offair-provenance"
-          title={`off-air WWV ${new Date(snapshot.updated_at_ms).toISOString()}`}
+          title={`decoded from WWV ${new Date(snapshot.updated_at_ms).toISOString()}`}
         >
-          {snapshot.source === 'rf-wwv-manual' ? 'off-air WWV (manual)' : 'off-air WWV'} · SFI{' '}
+          {snapshot.source === 'rf-wwv-manual' ? 'from WWV (manual)' : 'from WWV'} · SFI{' '}
           <b>{offairIndices.sfi}</b>
           {offairIndices.k_index != null && (
             <>
@@ -230,7 +232,7 @@ export function WwvOffairControl() {
       )}
       {status === 'error' && (
         <span className="station-finder__offair-note" data-testid="wwv-offair-error">
-          off-air refresh failed
+          WWV refresh failed
         </span>
       )}
     </>

@@ -108,9 +108,11 @@
 
 .si-strip__popover {
   position: absolute;
-  top: 100%;
+  /* QA round-3 finding 3: the strip is anchored to the DIALOG BOTTOM, so a
+     downward popover (top: 100%) clips below `.station-finder`'s
+     overflow:hidden. Open UPWARD from the trigger instead. */
+  bottom: calc(100% + 4px);
   right: 0;
-  margin-top: 6px;
   z-index: 20;
 }
 

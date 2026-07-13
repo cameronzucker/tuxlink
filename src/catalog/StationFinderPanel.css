@@ -104,6 +104,10 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  /* Finding 6: let the WWV armed-note shrink/ellipsize inside the row rather
+     than shoving the conditions cell onto a blank wrap line. */
+  min-width: 0;
+  flex-wrap: wrap;
 }
 .station-finder__cond {
   display: flex;
@@ -295,6 +299,55 @@
   cursor: pointer;
 }
 
+/* ── WWV control's actions-row companions (QA round-3 finding 6: these
+   classes shipped with NO rules, so the armed note rendered at body size,
+   collided with the local-time cell, and forced a blank wrap line). The
+   notes match the conditions cell's mono/small voice; ellipsis instead of
+   pushing `.station-finder__cond` off its row. ─────────────────────────── */
+.station-finder__offair-note,
+.station-finder__offair {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  color: var(--dim, #9fb6cc);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  max-width: 40ch;
+}
+.station-finder__offair b {
+  color: var(--text, #e8f1fa);
+}
+/* The no-copy affordance is a deliberate full-width second line (play the
+   clip + manual SFI/A/K entry can't fit beside the buttons). */
+.station-finder__offair-nocopy {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 10.5px;
+  color: var(--dim, #9fb6cc);
+}
+.station-finder__offair-manual {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.station-finder__offair-field {
+  font: inherit;
+  font-size: 11px;
+  width: 52px;
+  color: var(--text, #e8f1fa);
+  background: var(--bg, #0b141d);
+  border: 1px solid var(--border2, #34556f);
+  border-radius: 6px;
+  padding: 4px 7px;
+}
+.station-finder__offair-clip {
+  height: 26px;
+}
+
 /* ── body: map + rail ─────────────────────────────────────────────────── */
 .station-finder__body {
   display: flex;
@@ -360,6 +413,14 @@
 }
 .station-finder__railtab:not(.is-active):hover {
   color: var(--text, #e8f1fa);
+}
+/* Finding 7: the Live-decodes tab's live NN/min badge (approved mock's
+   `si-count`) — the discoverability affordance for the tab. */
+.station-finder__railtab .si-count {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 10px;
+  color: var(--reach-good, #41ba6c);
+  margin-left: 6px;
 }
 
 .station-finder__railpane {
@@ -516,11 +577,16 @@
   /* Above Leaflet panes (200-700) AND its control container (1000) — same fix
      the tac map's overlays carry. Without this the legend/pills paint at first
      open (empty map) then VANISH the moment tiles/markers populate (operator
-     live-test 2026-07-12: "legend renders then immediately disappears"). */
+     live-test 2026-07-12: "legend renders then immediately disappears").
+     QA round-3 finding 5: the original fix inserted 1100 ABOVE a leftover
+     `z-index: 7` in this same block — last declaration wins, so the fix was
+     dead on arrival. Exactly ONE z-index may appear in this rule. */
   z-index: 1100;
-  right: 10px;
+  /* Clear Leaflet's top-right zoom control (~34px wide + 10px inset) — the
+     overlays never painted before the finding-5 fix, so this collision was
+     invisible until now. */
+  right: 56px;
   top: 10px;
-  z-index: 7;
   display: flex;
   gap: 6px;
   font-size: 10.5px;
@@ -586,11 +652,15 @@
   /* Above Leaflet panes (200-700) AND its control container (1000) — same fix
      the tac map's overlays carry. Without this the legend/pills paint at first
      open (empty map) then VANISH the moment tiles/markers populate (operator
-     live-test 2026-07-12: "legend renders then immediately disappears"). */
+     live-test 2026-07-12: "legend renders then immediately disappears").
+     QA round-3 finding 5: the original fix inserted 1100 ABOVE a leftover
+     `z-index: 7` in this same block — last declaration wins, so the fix was
+     dead on arrival. Exactly ONE z-index may appear in this rule. */
   z-index: 1100;
   left: 10px;
-  bottom: 10px;
-  z-index: 7;
+  /* Clear Leaflet's bottom-left scale control (~26px tall) — same
+     newly-visible collision as the layer pills above. */
+  bottom: 40px;
   font-size: 10px;
   color: var(--faint, #6f8aa3);
   background: rgba(8, 16, 24, 0.74);
@@ -1149,16 +1219,31 @@
   white-space: nowrap;
 }
 
-/* Operator QA finding (2026-07-12): `.station-finder` clips overflow
-   (`overflow: hidden`, `max-height: 92vh`) and this forced Ft8SetupSurface
-   mount (device-lost's "pick another input" link, and the strip header's
-   "setup" affordance while listening/starting/yielded) sits at the very
-   bottom of the dialog, below the map/rail body and the strip — the tallest
-   stack of siblings. Without its own scroll, expanding rig control here
-   pushed the CTA below the dialog's clipped bottom edge with nothing to
-   scroll it back into view. Same `52vh`/`480px` budget as the strip's own
-   needs-setup body (LiveBandStrip.css `.si-strip__notice--setup`). */
-.station-finder__forced-setup {
+/* QA round-3 finding 2: the setup surface is the panel's FULL BODY (approved
+   firstrun-v2 mock) — it replaces map+rail+strip outright, so it gets the
+   body's whole height budget instead of the old cramped
+   `max-height: min(52vh, 480px)` scroll box under the strip. The inner
+   scroll wrapper still guards genuinely-short windows (~700px contract):
+   the CTA row must never be clipped out of reach. */
+.station-finder__setupbody {
+  display: flex;
+  flex-direction: column;
+  /* Same height budget as the map+rail body it replaces (incl. LAYOUT-1's
+     short-window relaxation below) so the dialog doesn't jump size when
+     setup swaps in. */
+  min-height: 540px;
+  flex: 1;
+}
+@media (max-height: 760px) {
+  .station-finder__setupbody {
+    min-height: 300px;
+  }
+}
+.station-finder__setupbody-scroll {
   overflow-y: auto;
-  max-height: min(52vh, 480px);
+  min-height: 0;
+  flex: 1;
+}
+.station-finder__setup-back {
+  margin-left: auto;
 }
