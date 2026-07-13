@@ -228,15 +228,35 @@ function MeterReadout({ meter, error }: { meter: MeterDto | null; error: Ft8CmdE
   if (error) {
     // device-not-found / internal-error / device-reserved — all render a
     // muted, non-alarming line; polling continues (a reserved/transient
-    // failure often clears on the next ~500ms tick).
+    // failure often clears on the next ~500ms tick). The WHY travels with it
+    // (operator live-test 2026-07-12: a bare "meter unavailable" on every
+    // device is undiagnosable in the field — rate mismatch, EBUSY from a
+    // sound server, and a vanished device all looked identical).
     return (
-      <span className="ft8-setup__meter ft8-setup__meter--error" data-testid="ft8-setup-meter-error">
-        meter unavailable
+      <span
+        className="ft8-setup__meter ft8-setup__meter--error"
+        data-testid="ft8-setup-meter-error"
+        title={error.detail || undefined}
+      >
+        meter unavailable{error.detail ? ` — ${error.detail}` : ''}
       </span>
     );
   }
   if (!meter) {
     return <span className="ft8-setup__meter ft8-setup__meter--loading">reading level…</span>;
+  }
+  if (meter.state === 'error') {
+    // The Ok-but-error MeterDto arm (open/negotiate/IO failure). Without this
+    // arm it fell through to the level bar and rendered a bogus "-120 dBFS".
+    return (
+      <span
+        className="ft8-setup__meter ft8-setup__meter--error"
+        data-testid="ft8-setup-meter-error"
+        title={meter.detail || undefined}
+      >
+        meter unavailable{meter.detail ? ` — ${meter.detail}` : ''}
+      </span>
+    );
   }
   if (meter.state === 'in-use') {
     // The unified signal for BOTH the live meter and the "used by ARDOP/

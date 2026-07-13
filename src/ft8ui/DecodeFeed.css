@@ -57,3 +57,11 @@
 .decode-feed__db--weak {
   color: var(--reach-unlikely);
 }
+
+/* mi·brg column (mock-v4 strip-feed parity, restored 2026-07-12) */
+.decode-feed__dist-h,
+.decode-feed__dist {
+  text-align: right;
+  color: var(--text-faint, #5d6975);
+  white-space: nowrap;
+}

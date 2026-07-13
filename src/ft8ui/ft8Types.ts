@@ -214,6 +214,10 @@ export interface Ft8Snapshot {
 export interface MeterDto {
   rmsDbfs: number;
   state: MeterState;
+  /** ALSA diagnostic for `state === 'error'` (absent otherwise — the Rust side
+   *  skips serializing None). Surfaced by the setup surface so "meter
+   *  unavailable" says WHY (rate/format vs busy vs vanished). */
+  detail?: string;
 }
 
 /** CAT-probe result (commands.rs `CatProbeDto`). */

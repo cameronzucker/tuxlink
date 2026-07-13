@@ -161,6 +161,9 @@ export interface LiveBandStripProps {
   /** `useFt8Listener().decodesRing` — feeds DecodeFeed and (via `stripStats`)
    *  the header's decodes/min + grids-heard figures. */
   decodesRing: SlotRecord[];
+  /** Operator grid for DecodeFeed's mi·brg column (mock-v4 strip-feed parity,
+   *  restored 2026-07-12). Omitted → the column renders '—' per row. */
+  operatorGrid?: string;
   /** The active blocking modem session's mode (e.g. "VARA"), threaded
    *  through unchanged to `BandSubsetPopover`'s `blockingSessionMode` prop
    *  (spec §NewCommands "<mode>" interpolation) — D1 supplies this from the
@@ -190,6 +193,7 @@ export function LiveBandStrip({
   snapshot,
   uiState,
   decodesRing,
+  operatorGrid,
   blockingSessionMode,
   setupSurface,
   onOpenFullSetup,
@@ -408,7 +412,7 @@ export function LiveBandStrip({
                   </div>
                 </div>
                 <div className="si-feed">
-                  <DecodeFeed decodesRing={decodesRing} />
+                  <DecodeFeed decodesRing={decodesRing} operatorGrid={operatorGrid} />
                 </div>
               </>
             ) : (
@@ -488,7 +492,28 @@ function NonLiveBody({
   onOpenFullSetup?: () => void;
 }) {
   switch (state) {
-    case 'off':
+    case 'off': {
+      // Configuration-aware CTA (operator live-test 2026-07-12): with NO audio
+      // device ever configured, "Start listening on 20m" is a lie — the start
+      // would just bounce into blocked(needs-device-selection). Route straight
+      // to setup instead, and only offer Start once a device is configured.
+      const deviceConfigured = snapshot?.configuredDeviceName != null;
+      if (!deviceConfigured) {
+        return (
+          <div className="si-strip__notice" data-testid="ft8-strip-body-off">
+            <p>Not listening — no audio input configured yet.</p>
+            <Button
+              tone="primary"
+              emphasis="solid"
+              size="sm"
+              data-testid="ft8-strip-setup-cta"
+              onClick={() => onOpenFullSetup?.()}
+            >
+              Set up FT-8 listening →
+            </Button>
+          </div>
+        );
+      }
       return (
         <div className="si-strip__notice" data-testid="ft8-strip-body-off">
           <p>Not listening.</p>
@@ -504,6 +529,7 @@ function NonLiveBody({
           </Button>
         </div>
       );
+    }
     case 'transitional':
       return (
         <div className="si-strip__notice" data-testid="ft8-strip-body-transitional">

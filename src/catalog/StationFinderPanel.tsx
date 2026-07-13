@@ -526,6 +526,7 @@ export function StationFinderPanel({
           snapshot={ft8.snapshot}
           uiState={ft8.uiState}
           decodesRing={ft8.decodesRing}
+          operatorGrid={operatorGrid}
           blockingSessionMode={blockingSessionMode}
           setupSurface={
             ft8.snapshot ? (

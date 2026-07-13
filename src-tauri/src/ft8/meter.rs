@@ -24,6 +24,13 @@ use crate::ft8::traits::{SampleSource, SourceError};
 pub struct MeterDto {
     pub rms_dbfs: f64,
     pub state: String,
+    /// The underlying ALSA diagnostic for the `error` state (open/negotiate/IO
+    /// failure text) — the setup surface surfaces it so "meter unavailable" is
+    /// actionable ("rate 48000: ..." vs EBUSY vs vanished device). `None` for
+    /// every non-error state. Additive; skipped on the wire when absent so
+    /// pre-existing consumers/tests see the exact old shape.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 /// dBFS floor: a zero/near-silent buffer reports this instead of `-inf`, so the
@@ -50,12 +57,28 @@ const MAX_READS: usize = 16;
 impl MeterDto {
     /// Device held by the listener or another process (EBUSY at open/read).
     pub(crate) fn in_use() -> Self {
-        Self { rms_dbfs: FLOOR_DBFS, state: "in-use".into() }
+        Self { rms_dbfs: FLOOR_DBFS, state: "in-use".into(), detail: None }
     }
     /// A genuine open/IO failure that is NOT reserved/busy (device vanished,
     /// unsupported format, other errno) — the bar shows an error indicator.
     pub(crate) fn error() -> Self {
-        Self { rms_dbfs: FLOOR_DBFS, state: "error".into() }
+        Self { rms_dbfs: FLOOR_DBFS, state: "error".into(), detail: None }
+    }
+    /// `error`, carrying the underlying ALSA diagnostic (operator live-test
+    /// 2026-07-12: a bare "meter unavailable" is undiagnosable in the field).
+    pub(crate) fn error_with(e: &crate::ft8::traits::SourceError) -> Self {
+        use crate::ft8::traits::SourceError as E;
+        // SourceError has no Display (diagnostics travel as Strings per the
+        // result_large_err discipline) — render the operator-readable form here.
+        let detail = match e {
+            E::Busy => "device busy".to_string(),
+            E::Absent => "device disappeared (unplugged?)".to_string(),
+            E::UnsupportedFormat(d) => format!("unsupported format: {d}"),
+            E::Suspended => "stream suspended (system sleep)".to_string(),
+            E::Wedged => "device wedged (silent, not erroring) — replug or restart".to_string(),
+            E::Io(d) => format!("audio I/O error: {d}"),
+        };
+        Self { rms_dbfs: FLOOR_DBFS, state: "error".into(), detail: Some(detail) }
     }
 }
 
@@ -125,7 +148,7 @@ where
     }
 
     let (rms_dbfs, state) = dbfs_state(sum_sq, n);
-    Ok(MeterRead::Level(MeterDto { rms_dbfs, state: state.into() }))
+    Ok(MeterRead::Level(MeterDto { rms_dbfs, state: state.into(), detail: None }))
 }
 
 /// Open the device, run [`meter_read`] preemptible on `resv`/`id`, close.
@@ -144,10 +167,10 @@ pub(crate) fn open_and_meter(
             Ok(MeterRead::Level(dto)) => dto,
             Ok(MeterRead::Preempted) => MeterDto::in_use(),
             Err(SourceError::Busy) => MeterDto::in_use(),
-            Err(_) => MeterDto::error(),
+            Err(e) => MeterDto::error_with(&e),
         },
         Err(SourceError::Busy) => MeterDto::in_use(),
-        Err(_) => MeterDto::error(),
+        Err(e) => MeterDto::error_with(&e),
     }
 }
 

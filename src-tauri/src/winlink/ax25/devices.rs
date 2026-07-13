@@ -359,7 +359,14 @@ pub fn enumerate_capture_devices(snapshot: &SysSnapshot) -> Vec<AudioDevice> {
     snapshot
         .cards
         .iter()
-        .filter(|c| is_usable_packet_card(c) && c.has_capture)
+        // Capture-capability is the ONLY gate here (operator live-test
+        // 2026-07-12): the packet picker's USB-only rule excluded legitimate
+        // FT-8 RX sources — snd-aloop loopbacks (an SDR piped through ALSA),
+        // onboard line-in. The class that rule guarded against (HDMI/bcm2835
+        // playback-only cards, the Error -524 family) has no capture
+        // substream, so `has_capture` alone still excludes every one of them.
+        // Non-USB cards get the `cardid:<hash>` stable-id fallback.
+        .filter(|c| c.has_capture)
         .map(|card| AudioDevice {
             human_name: card.card_name.clone(),
             alsa_plughw: plughw_name(card),
@@ -1431,21 +1438,41 @@ mod tests {
         assert_eq!(cap[0].human_name, "DRA-100 USB Audio");
     }
 
-    /// Onboard (non-USB) cards stay excluded from capture enumeration even
-    /// when they report a capture substream (the bcm2835 class).
+    /// Non-USB capture cards ARE capture-enumerable (operator live-test
+    /// 2026-07-12): a snd-aloop Loopback — an SDR piped through ALSA — and
+    /// onboard line-in are legitimate FT-8 RX sources the old USB-only rule
+    /// hid. They resolve the `cardid:<hash>` stable-id fallback. The PACKET
+    /// picker (released behavior) still excludes them, and a playback-only
+    /// HDMI card (`has_capture: false`) stays out of both.
     #[test]
-    fn capture_enumeration_still_excludes_onboard_cards() {
-        let onboard = SnapshotCard {
+    fn capture_enumeration_includes_non_usb_capture_cards() {
+        let loopback = SnapshotCard {
+            card_index: 2,
+            card_id: "Loopback".into(),
+            card_name: "Loopback".into(),
+            by_id_basename: None,
+            usb: None,
+            usb_parent: None,
+            has_capture: true,
+        };
+        let hdmi_playback_only = SnapshotCard {
             card_index: 0,
             card_id: "vc4hdmi".into(),
             card_name: "vc4-hdmi".into(),
             by_id_basename: None,
             usb: None,
             usb_parent: None,
-            has_capture: true,
+            has_capture: false,
         };
-        let snap = SysSnapshot { cards: vec![onboard], ..Default::default() };
-        assert!(enumerate_capture_devices(&snap).is_empty());
+        let snap = SysSnapshot {
+            cards: vec![hdmi_playback_only, loopback],
+            ..Default::default()
+        };
+        let cap = enumerate_capture_devices(&snap);
+        assert_eq!(cap.len(), 1, "loopback in, playback-only HDMI out");
+        assert_eq!(cap[0].human_name, "Loopback");
+        assert!(matches!(cap[0].stable_id.kind, StableIdKind::CardIdHash));
+        // Packet picker: released USB-only behavior untouched.
         assert!(enumerate_audio_devices(&snap).is_empty());
     }
 }
