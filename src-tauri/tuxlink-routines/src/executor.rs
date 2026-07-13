@@ -1,6 +1,6 @@
 //! Track executor (spec §8): sequential steps, branch jumps, retry wrappers,
-//! explicit End, per-step timeouts, cancellation. Parallel tracks + delays
-//! land in the next task; composition in `compose.rs`.
+//! explicit End, per-step timeouts, cancellation, delays, and concurrent
+//! tracks over shared vars. Composition lands in `compose.rs`.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -18,6 +18,61 @@ pub struct ExecCtx {
     pub journal: Arc<Mutex<JournalWriter>>,
     pub cancel: CancellationToken,
     pub default_timeout_s: u64,
+    /// Clock used for `next:hour` / `next:day` delay alignment. Task 7 adds
+    /// more fields (invoker/run_id/depth) for `Control::Call`; not pre-added here.
+    pub now: fn() -> i64,
+}
+
+/// Alignment target for `DelaySpec::NextAlign` (spec §6 `Control::Delay`).
+/// Task 9's scheduler.rs will grow more variants and re-export this type;
+/// for this task it lives here alongside the executor logic that consumes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Align {
+    Hour,
+    Day,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DelaySpec {
+    Relative(Duration),
+    NextAlign(Align),
+}
+
+/// Parse "+5m" / "+90s" / "+2h" / "next:hour" / "next:day" (spec §6).
+pub fn parse_delay(spec: &str) -> Result<DelaySpec, StepError> {
+    let bad = || StepError::Action {
+        action: "delay".into(),
+        cause: format!("unparseable delay spec '{spec}' (want +Ns/+Nm/+Nh or next:hour/next:day)"),
+    };
+    if let Some(rest) = spec.strip_prefix("next:") {
+        return match rest {
+            "hour" => Ok(DelaySpec::NextAlign(Align::Hour)),
+            "day" => Ok(DelaySpec::NextAlign(Align::Day)),
+            _ => Err(bad()),
+        };
+    }
+    let rest = spec.strip_prefix('+').ok_or_else(bad)?;
+    let (num, unit) = rest.split_at(rest.len().saturating_sub(1));
+    let n: u64 = num.parse().map_err(|_| bad())?;
+    let secs = match unit {
+        "s" => n,
+        "m" => n * 60,
+        "h" => n * 3600,
+        _ => return Err(bad()),
+    };
+    Ok(DelaySpec::Relative(Duration::from_secs(secs)))
+}
+
+/// Duration until the next hour/day boundary from `now_unix` (UTC, epoch
+/// seconds). Task 9 moves this into `scheduler.rs` and re-exports it; this
+/// task defines the one canonical implementation.
+pub fn duration_to_next_align(now_unix: i64, align: Align) -> Duration {
+    let period: i64 = match align {
+        Align::Hour => 3600,
+        Align::Day => 86_400,
+    };
+    let remainder = now_unix.rem_euclid(period);
+    Duration::from_secs((period - remainder) as u64)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -58,16 +113,26 @@ fn resolve_params(params: &serde_json::Value, vars: &RunVars) -> Result<serde_js
     }
 }
 
-async fn run_action_step(
+/// Run one action step against vars shared across concurrent tracks.
+///
+/// Lock-before-await discipline (same as `ModemSession`): `vars` is locked
+/// only long enough to resolve `$var` params or to record the step's
+/// output — the lock is dropped BEFORE the action's own `.await`, so a
+/// slow/hanging action on one track never blocks a sibling track's var
+/// access.
+async fn run_action_step_shared(
     step: &ActionStep,
-    vars: &mut RunVars,
+    vars: &tokio::sync::Mutex<RunVars>,
     ctx: &ExecCtx,
 ) -> Result<(), StepError> {
     let action = ctx.registry.get(&step.action).ok_or_else(|| StepError::Action {
         action: step.action.clone(),
         cause: format!("action '{}' is not in the registry", step.action),
     })?;
-    let resolved = resolve_params(&step.params, vars)?;
+    let resolved = {
+        let guard = vars.lock().await;
+        resolve_params(&step.params, &guard)?
+    }; // lock dropped here, before any action await
     journal(ctx, RunEvent::StepIntent {
         step: step.id.clone(),
         action: step.action.clone(),
@@ -90,7 +155,10 @@ async fn run_action_step(
     match result {
         Ok(output) => {
             journal(ctx, RunEvent::StepOk { step: step.id.clone(), output: output.clone() });
-            vars.set_step_output(&step.id, output);
+            {
+                let mut guard = vars.lock().await;
+                guard.set_step_output(&step.id, output);
+            } // lock dropped immediately after the write
             Ok(())
         }
         Err(err) => {
@@ -104,9 +172,13 @@ fn index_of(track: &Track, id: &StepId) -> Option<usize> {
     track.steps.iter().position(|s| s.id() == id)
 }
 
-pub async fn run_track(
+/// Run a single track to completion, with `vars` shared behind a mutex so
+/// sibling tracks (spawned by `run_tracks`) can read/write the same store —
+/// e.g. the "+5 min re-dial last heard gateway" scenario, where track B
+/// reads `$track_a_step.gateway` after track A has set it.
+pub async fn run_track_shared(
     track: &Track,
-    vars: &mut RunVars,
+    vars: &tokio::sync::Mutex<RunVars>,
     ctx: &ExecCtx,
 ) -> Result<TrackEnd, StepError> {
     let mut idx = 0usize;
@@ -125,12 +197,15 @@ pub async fn run_track(
         }
         match step {
             Step::Action(a) => {
-                run_action_step(a, vars, ctx).await?;
+                run_action_step_shared(a, vars, ctx).await?;
                 idx += 1;
             }
             Step::Control(c) => match &c.control {
                 Control::Branch { on, then, r#else } => {
-                    let v = vars.resolve(on)?;
+                    let v = {
+                        let guard = vars.lock().await;
+                        guard.resolve(on)?
+                    };
                     let truthy = v == serde_json::Value::Bool(true);
                     let arm = if truthy { then } else { r#else };
                     match arm.first() {
@@ -163,7 +238,7 @@ pub async fn run_track(
                     };
                     let mut last_err = None;
                     for attempt in 0..*attempts {
-                        match run_action_step(inner, vars, ctx).await {
+                        match run_action_step_shared(inner, vars, ctx).await {
                             Ok(()) => {
                                 last_err = None;
                                 break;
@@ -189,9 +264,22 @@ pub async fn run_track(
                 Control::End { failed, reason } => {
                     return Ok(TrackEnd::Ended { failed: *failed, reason: reason.clone() });
                 }
-                Control::Delay { .. } | Control::Call { .. } => {
-                    // Implemented in Tasks 6 (delay) and 7 (call). Landing them
-                    // as explicit unimplemented errors keeps this task honest.
+                Control::Delay { delay } => {
+                    let spec = parse_delay(delay)?;
+                    let dur = match spec {
+                        DelaySpec::Relative(d) => d,
+                        DelaySpec::NextAlign(align) => duration_to_next_align((ctx.now)(), align),
+                    };
+                    journal(ctx, RunEvent::StateChanged { state: RunState::Waiting });
+                    tokio::select! {
+                        _ = tokio::time::sleep(dur) => {}
+                        _ = ctx.cancel.cancelled() => return Err(StepError::Cancelled),
+                    }
+                    journal(ctx, RunEvent::StateChanged { state: RunState::Running });
+                    idx += 1;
+                }
+                Control::Call { .. } => {
+                    // Lands in Task 7. Explicit error keeps this task honest.
                     return Err(StepError::Action {
                         action: "control".into(),
                         cause: format!("control step '{}' kind not yet wired in this task", c.id.0),
@@ -201,6 +289,98 @@ pub async fn run_track(
         }
     }
     Ok(TrackEnd::Completed)
+}
+
+/// Single-track entry point (Task 5's original signature). A thin wrapper
+/// over `run_track_shared`: wraps `vars` in a task-local mutex so every
+/// pre-existing test keeps working against an owned `&mut RunVars` unchanged.
+pub async fn run_track(
+    track: &Track,
+    vars: &mut RunVars,
+    ctx: &ExecCtx,
+) -> Result<TrackEnd, StepError> {
+    let shared = tokio::sync::Mutex::new(std::mem::take(vars));
+    let result = run_track_shared(track, &shared, ctx).await;
+    *vars = shared.into_inner();
+    result
+}
+
+/// Run all tracks concurrently over shared vars; map to a run outcome per
+/// the locked rules (spec §8 / task header):
+///   - any track's `Ended{failed:true}` -> run `Failed` (first reason wins),
+///     remaining tracks cancelled.
+///   - any track's unhandled `StepErr` -> run `Failed` verbatim (propagated
+///     as `Err`), remaining tracks cancelled.
+///   - any track's `Ended{failed:false}` -> run `Completed` immediately
+///     (an explicit successful End is "mark workflow complete"), remaining
+///     tracks cancelled.
+///   - all tracks `Completed` (ran off the end) -> run `Completed`.
+///
+/// Cancelling siblings after one track concludes produces collateral
+/// `Err(StepError::Cancelled)` results from the rest. Those must never be
+/// mistaken for the run's own failure, no matter what order `join_next`
+/// hands results back in — so once THIS function has triggered a cancel for
+/// any reason, every subsequent `Cancelled` result is treated as collateral,
+/// not re-examined against the conclusive outcome already recorded.
+pub async fn run_tracks(
+    tracks: &[Track],
+    vars: Arc<tokio::sync::Mutex<RunVars>>,
+    ctx: &ExecCtx,
+) -> Result<RunOutcome, StepError> {
+    let mut set = tokio::task::JoinSet::new();
+    // clippy suggests dropping `.cloned()` and spawning against a borrowed
+    // `&Track`, but `tracks: &[Track]` is not `'static` — `JoinSet::spawn`
+    // requires an owned, `'static` future, so the clone is load-bearing
+    // (confirmed: the borrowed form fails with E0521 "borrowed data escapes
+    // outside of function").
+    #[allow(clippy::unnecessary_to_owned)]
+    for track in tracks.iter().cloned() {
+        let vars = vars.clone();
+        let task_ctx = ExecCtx {
+            registry: ctx.registry.clone(),
+            journal: ctx.journal.clone(),
+            cancel: ctx.cancel.child_token(),
+            default_timeout_s: ctx.default_timeout_s,
+            now: ctx.now,
+        };
+        set.spawn(async move { run_track_shared(&track, &vars, &task_ctx).await });
+    }
+
+    let mut outcome = RunOutcome { state: RunState::Completed };
+    let mut first_err: Option<StepError> = None;
+    let mut intentional_cancel = false;
+
+    while let Some(joined) = set.join_next().await {
+        match joined.expect("track task must not panic") {
+            Ok(TrackEnd::Completed) => {}
+            Ok(TrackEnd::Ended { failed: false, .. }) => {
+                ctx.cancel.cancel();
+                intentional_cancel = true;
+                if outcome.state != RunState::Failed {
+                    outcome.state = RunState::Completed;
+                }
+            }
+            Ok(TrackEnd::Ended { failed: true, .. }) => {
+                ctx.cancel.cancel();
+                intentional_cancel = true;
+                outcome.state = RunState::Failed;
+            }
+            // Collateral of a cancel THIS function already triggered — never
+            // conclusive, regardless of arrival order relative to the
+            // triggering result.
+            Err(StepError::Cancelled) if intentional_cancel => {}
+            Err(e) => {
+                ctx.cancel.cancel();
+                intentional_cancel = true;
+                first_err.get_or_insert(e);
+            }
+        }
+    }
+
+    if let Some(e) = first_err {
+        return Err(e);
+    }
+    Ok(outcome)
 }
 
 #[cfg(test)]
@@ -235,6 +415,7 @@ mod tests {
             journal: Arc::new(Mutex::new(journal)),
             cancel: CancellationToken::new(),
             default_timeout_s: 30,
+            now: fixed_now,
         };
         (ctx, path)
     }
@@ -510,5 +691,88 @@ mod tests {
             }
             other => panic!("expected Cancelled, got {other:?}"),
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn delay_step_sleeps_virtual_time_and_journals_waiting() {
+        let mut reg = ActionRegistry::default();
+        reg.register(Arc::new(FakeAction::new("local.log").ok(json!({}))));
+        let dir = tempfile::tempdir().unwrap();
+        let (ctx, jpath) = ctx(reg, dir.path());
+        let track = Track {
+            name: "t1".into(),
+            steps: vec![
+                Step::Control(ControlStep {
+                    id: StepId("d1".into()),
+                    control: Control::Delay { delay: "+5m".into() },
+                }),
+                action("s1", "local.log", json!({})),
+            ],
+        };
+        let mut vars = RunVars::default();
+        let start = tokio::time::Instant::now();
+        run_track(&track, &mut vars, &ctx).await.unwrap();
+        assert!(start.elapsed() >= std::time::Duration::from_secs(300));
+        let entries = read_journal(&jpath).unwrap();
+        assert!(matches!(entries[0].event, RunEvent::StateChanged { state: RunState::Waiting }));
+        assert!(matches!(entries[1].event, RunEvent::StateChanged { state: RunState::Running }));
+    }
+
+    #[test]
+    fn parse_delay_shapes() {
+        assert_eq!(parse_delay("+5m").unwrap(), DelaySpec::Relative(std::time::Duration::from_secs(300)));
+        assert_eq!(parse_delay("+90s").unwrap(), DelaySpec::Relative(std::time::Duration::from_secs(90)));
+        assert_eq!(parse_delay("+2h").unwrap(), DelaySpec::Relative(std::time::Duration::from_secs(7200)));
+        assert_eq!(parse_delay("next:hour").unwrap(), DelaySpec::NextAlign(Align::Hour));
+        assert!(parse_delay("5 minutes").is_err());
+        assert!(parse_delay("+5x").is_err());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn parallel_tracks_share_vars_and_join() {
+        // Track A sets a gateway; track B delays then reads it — the
+        // "+5 min re-dial last heard gateway" scenario shape (spec §1).
+        let connect = Arc::new(FakeAction::new("radio.connect").ok(json!({"gateway": "W7DEF-10"})));
+        let redial = Arc::new(FakeAction::new("radio.redial").ok(json!({})));
+        let mut reg = ActionRegistry::default();
+        reg.register(connect);
+        reg.register(redial.clone());
+        let dir = tempfile::tempdir().unwrap();
+        let (ctx, _) = ctx(reg, dir.path());
+        let tracks = vec![
+            Track { name: "a".into(), steps: vec![action("s1", "radio.connect", json!({}))] },
+            Track {
+                name: "b".into(),
+                steps: vec![
+                    Step::Control(ControlStep {
+                        id: StepId("d1".into()),
+                        control: Control::Delay { delay: "+5m".into() },
+                    }),
+                    action("s2", "radio.redial", json!({"station": "$s1.gateway"})),
+                ],
+            },
+        ];
+        let vars = Arc::new(tokio::sync::Mutex::new(RunVars::default()));
+        let outcome = run_tracks(&tracks, vars, &ctx).await.unwrap();
+        assert_eq!(outcome.state, RunState::Completed);
+        assert_eq!(redial.calls()[0]["station"], "W7DEF-10");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn one_track_failing_cancels_the_others() {
+        let hang = Arc::new(FakeAction::new("local.wait").hang());
+        let boom = Arc::new(FakeAction::new("radio.connect").err("ARDOP: session wedge, ARQ timeout 120s"));
+        let mut reg = ActionRegistry::default();
+        reg.register(hang);
+        reg.register(boom);
+        let dir = tempfile::tempdir().unwrap();
+        let (ctx, _) = ctx(reg, dir.path());
+        let tracks = vec![
+            Track { name: "a".into(), steps: vec![action("s1", "local.wait", json!({}))] },
+            Track { name: "b".into(), steps: vec![action("s2", "radio.connect", json!({}))] },
+        ];
+        let vars = Arc::new(tokio::sync::Mutex::new(RunVars::default()));
+        let err = run_tracks(&tracks, vars, &ctx).await.unwrap_err();
+        assert!(matches!(err, StepError::Action { cause, .. } if cause.contains("ARQ timeout 120s")));
     }
 }
