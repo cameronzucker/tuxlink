@@ -346,14 +346,27 @@ impl TuxlinkMcp {
             None => {
                 // Steer, don't derail: a wrong slug guess should tell the model what
                 // it CAN read rather than surfacing as a tool error mid-turn.
+                //
+                // Treat the bogus slug as a search query — a near-miss like
+                // `pat_winlink` still surfaces `pat-winlink`, because search_docs
+                // tokenizes and ORs. It comes back empty only for a slug with no
+                // usable token at all, and in that case an empty list plus an explicit
+                // instruction is more honest than inventing a plausible-looking one.
                 let hits = self.state.search.docs(&slug).await.map_err(port_err)?;
-                let available: Vec<String> = hits.into_iter().map(|h| h.slug).collect();
+                let closest: Vec<String> = hits.into_iter().map(|h| h.slug).collect();
+                let hint = if closest.is_empty() {
+                    "No slug resembles that. Call docs_search with the operator's \
+                     question and use a slug from its hits."
+                } else {
+                    "Call docs_read again with one of closest_slugs, or call docs_search \
+                     with the operator's question."
+                };
                 Ok(CallToolResult::success(vec![ContentBlock::json(
                     serde_json::json!({
                         "error": "unknown slug",
                         "requested": slug,
-                        "hint": "Call docs_search first and pass a slug from its hits.",
-                        "closest_slugs": available,
+                        "hint": hint,
+                        "closest_slugs": closest,
                     }),
                 )?]))
             }

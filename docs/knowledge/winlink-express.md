@@ -77,3 +77,22 @@ credential storage. Do not describe Tuxlink's behavior (OS keyring, Linux-native
 panels, Tuxlink's own UI) as though it were Winlink Express's. If an operator asks
 where Winlink Express stores something and it is not covered here, say so rather than
 guessing.
+
+## Provenance of the claims on this page
+
+The digipeater procedure above (Connection Type → Digipeater, two Via boxes, hops in
+access order, same-frequency requirement) is **corroborated across three independent
+club/operator sources**, not taken from a single one:
+
+- North Florida ARC — *Making a Packet Connection to a Winlink RMS Packet Server*
+- Benton County ARES — *Using the K7CVO Digipeater with Winlink Express*
+- W4EAT — *Making a packet connection to a Winlink RMS Packet server*
+
+It has **not** been confirmed first-hand against a running Winlink Express. The
+**two-digipeater ceiling** in particular follows from those sources describing exactly
+two Via boxes; treat it as well-corroborated rather than as verified-from-the-binary.
+
+This matters because the Pat page on the same subject *is* verified from the binary
+and its source, and the two pages should not be assumed to carry equal certainty. If
+an operator needs a Winlink Express detail to be certain, say that it should be
+confirmed against their installation rather than asserting it.

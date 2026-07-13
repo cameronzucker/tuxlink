@@ -523,16 +523,109 @@ mod rebuild_tests {
 }
 
 /// User-guide search command (tuxlink-0gsy / spec §9.3). Frontend
-/// (useHelpSearch) debounces; this command is a thin forward to the
-/// underlying Index::search_docs path.
+/// (useHelpSearch) debounces; this command forwards to `Index::search_docs` and
+/// then **filters the hits down to the user guide**.
+///
+/// The filter is load-bearing, not cosmetic. `docs_fts` is shared: it also holds
+/// the agent-only corpora (`docs/knowledge/`, `docs/mcp-knowledge/`) that Elmer
+/// reads over MCP. The Help window cannot RENDER those — `src/help/topics.ts`
+/// discovers its markdown with `import.meta.glob('/docs/user-guide/*.md')`, so a
+/// slug like `pat-winlink` or `playbook-ardop-wont-connect` has no frontend
+/// document behind it. Returning one here puts a clickable row in the sidebar
+/// whose `getTopicBySlug` lookup misses, and `HelpView` silently falls back to
+/// rendering topic[0] ("What is Tuxlink?") while the row shows as selected.
+///
+/// That is exactly the PR #347 stale-slug failure described in `mod.rs` — a search
+/// hit that opens the wrong page. The MCP path (`SearchPort::docs`) is deliberately
+/// NOT filtered: Elmer wants all 48 documents.
 #[tauri::command]
 pub fn docs_search(
     svc: tauri::State<SearchService>,
     query: String,
 ) -> Result<Vec<crate::search::docs_index::DocsHit>, String> {
-    svc.index
+    let hits = svc
+        .index
         .lock()
         .unwrap()
         .search_docs(&query)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    Ok(retain_user_guide(hits))
+}
+
+/// Drop any hit whose slug is not a `DocSource::UserGuide` topic.
+fn retain_user_guide(
+    hits: Vec<crate::search::docs_index::DocsHit>,
+) -> Vec<crate::search::docs_index::DocsHit> {
+    use crate::search::docs_bundle::BUNDLED_TOPICS;
+    use crate::search::docs_index::DocSource;
+    hits.into_iter()
+        .filter(|h| {
+            BUNDLED_TOPICS.iter().any(|t| {
+                t.slug == h.slug && matches!(t.source, DocSource::UserGuide)
+            })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod help_search_tests {
+    use super::retain_user_guide;
+    use crate::search::docs_bundle::BUNDLED_TOPICS;
+    use crate::search::docs_index::{DocSource, DocsHit, Index};
+    use tempfile::tempdir;
+
+    fn hit(slug: &str) -> DocsHit {
+        DocsHit {
+            slug: slug.to_string(),
+            title: slug.to_string(),
+            snippet: String::new(),
+        }
+    }
+
+    /// The Help window can only render user-guide topics. An agent-only slug
+    /// reaching the sidebar produces a row that opens the WRONG page (PR #347).
+    #[test]
+    fn help_search_never_returns_an_unrenderable_slug() {
+        let mixed = vec![
+            hit("27-settings"),                 // UserGuide  — renderable
+            hit("pat-winlink"),                 // Knowledge  — NOT renderable
+            hit("playbook-ardop-wont-connect"), // McpKnowledge — NOT renderable
+            hit("15-ardop-deep-dive"),          // UserGuide  — renderable
+        ];
+        let kept: Vec<String> = retain_user_guide(mixed)
+            .into_iter()
+            .map(|h| h.slug)
+            .collect();
+        assert_eq!(kept, vec!["27-settings", "15-ardop-deep-dive"]);
+    }
+
+    /// End-to-end against the real corpus: "ARDOP" is the query that exposed this
+    /// — the ARDOP playbook (docs/mcp-knowledge/) ranks high on it and would land
+    /// in the Help sidebar unrenderable.
+    #[test]
+    fn real_corpus_help_search_yields_only_renderable_user_guide_slugs() {
+        let dir = tempdir().unwrap();
+        let idx = Index::open(dir.path().join("search.db")).unwrap();
+        idx.populate_docs(BUNDLED_TOPICS).unwrap();
+
+        let raw = idx.search_docs("ARDOP won't connect").unwrap();
+        assert!(
+            raw.iter().any(|h| h.slug == "playbook-ardop-wont-connect"),
+            "precondition: the agent-only playbook IS in the shared index"
+        );
+
+        for h in retain_user_guide(raw) {
+            let topic = BUNDLED_TOPICS
+                .iter()
+                .find(|t| t.slug == h.slug)
+                .expect("hit is a registered topic");
+            assert!(
+                matches!(topic.source, DocSource::UserGuide),
+                "Help search returned {} ({:?}), which has no frontend markdown and \
+                 would silently render the wrong page",
+                h.slug,
+                topic.source
+            );
+        }
+    }
 }

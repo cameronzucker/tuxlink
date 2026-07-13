@@ -76,10 +76,21 @@ fn eval_pat_ax25_digipeater_syntax_is_retrievable() {
 fn eval_credential_storage_is_retrievable() {
     let (_dir, idx) = corpus();
     let hits = slugs_for(&idx, "Where does Tuxlink store my Winlink password?");
+    let found = hits
+        .iter()
+        .find(|s| s.as_str() == "27-settings" || s.as_str() == "02-first-launch-wizard")
+        .unwrap_or_else(|| {
+            panic!("no credential-storage doc reachable from the question that caused the P0; got {hits:?}")
+        });
+
+    // Reaching the document is not enough — it must actually SAY keyring. Without
+    // this the eval passes while the retrieved page is silent on credential
+    // storage, which is precisely how the model came to invent
+    // "~/.config/tuxlink/tuxlink.cfg base64/mode 600" (P0 tuxlink-0mudm).
+    let doc = idx.read_doc(found).unwrap().expect("hit is readable");
     assert!(
-        hits.iter()
-            .any(|s| s == "27-settings" || s == "02-first-launch-wizard"),
-        "no credential-storage doc reachable from the question that caused the P0; got {hits:?}"
+        doc.body.to_lowercase().contains("keyring"),
+        "{found} was retrieved for a credential question but never mentions the keyring"
     );
 }
 

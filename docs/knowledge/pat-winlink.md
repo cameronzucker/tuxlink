@@ -45,8 +45,9 @@ Chain them with `/`, in the order they will be used:
 pat connect "ax25:///DIGI1/DIGI2/W4XYZ-10"
 ```
 
-Pat parses the path into a list of digipeaters, so more than one hop is supported.
-From Pat's transport source (`la5nta/wl2k-go`, `transport/url.go`):
+Pat parses the path into a **list** of digipeaters, so more than one hop is supported.
+From Pat's transport source (`la5nta/wl2k-go`, `transport/url.go`) — the load-bearing
+lines, abridged:
 
 ```go
 // scheme://(mycall(:password)@)(host)(/digi1/...)/targetcall
@@ -55,6 +56,8 @@ Digis []string   // List of digipeaters ("path" between origin and target).
 via, target := path.Split(u.Path)
 url.Digis = strings.Split(strings.Trim(via, "/"), "/")
 ```
+
+`Digis` is a list and the separator is `/`. That is the whole basis for multi-hop.
 
 ### The triple slash is not a typo
 
