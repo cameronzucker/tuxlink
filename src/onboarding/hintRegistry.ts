@@ -23,7 +23,7 @@ export const HINTS: HintEntry[] = [
   {
     id: 'compose', anchor: 'compose',
     title: 'Compose',
-    body: 'Write and send Winlink messages to reach distant stations and operators. Start with a new message and select recipients from your contacts.',
+    body: 'Compose opens in its own window so you can keep browsing mail while you write. Start with a new message and pick recipients from your contacts.',
     fallback: 'skip',
   },
 ];
