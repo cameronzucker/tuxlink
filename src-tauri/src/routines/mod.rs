@@ -14,21 +14,29 @@
 //! over a rig, shared between the operator's interactive sessions and
 //! routine-run steps (spec §9).
 //!
-//! **Plan 2 Task 3 (this landing):** [`resolver::MonolithEntityResolver`]
+//! **Plan 2 Task 3:** [`resolver::MonolithEntityResolver`]
 //! — the production `EntityResolver` that resolves `@preset:`/
 //! `@station-set:`/`@identity:`/`@template:` reference tokens against the
 //! real Tauri-side stores (see `resolver.rs`'s module doc for the
 //! per-kind service-seam recon). [`station_sets::StationSetStore`] is a
 //! new small store this task added — no named station-set/group concept
 //! existed anywhere else in the codebase (see `resolver.rs` and
-//! `station_sets.rs` module docs). Later plan-2 tasks in this module add
-//! the real action catalog, the engine mount, and the Tauri command
-//! surface.
+//! `station_sets.rs` module docs).
+//!
+//! **Plan 2 Task 4a (this landing):** [`actions`] — the real action
+//! catalog's service seams (`ConnectService`/`AprsService`/`ListenService`),
+//! `ActionDeps`/`build_registry`, and the three radio actions
+//! (`radio.connect`/`radio.listen`/`radio.aprs_send`, spec §6). See
+//! `actions::radio`'s module doc for the transport-seam recon and the
+//! ARDOP/VARA gateway-frequency gap Task 5 must close. Later plan-2 tasks
+//! extend `actions` with `cat.rs`/`data.rs`/`local.rs` and add the engine
+//! mount + Tauri command surface.
 //!
 //! That other, banned six-syllable term for scripted automation never
 //! appears in this module's symbols, JSON keys, or docs (spec Global
 //! Constraints) — the feature is Routines.
 
+pub mod actions;
 pub mod arbiter;
 pub mod presets;
 pub mod resolver;
