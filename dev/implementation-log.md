@@ -5,6 +5,23 @@ shipped, bug-hunt cycles, adversarial reviews). Keyed by date + topic.
 
 ---
 
+## 2026-07-13 — QA round-3 shipped (#1086) + Contacts/Favorites/Heard consolidation (PR #1089)
+
+Agent crag-fox-savanna. All 8 operator QA-round-3 findings fixed and merged
+(#1086): F5's overlay invisibility root-caused to a duplicate z-index
+declaration (last-wins) with a CSS-source regression test; FT-8 listening made
+session-scoped per operator ruling (autostart retired); setup surface promoted
+to the panel's full body per the firstrun-v2 mock; plus popover direction,
+ribbon label case, WWV wording/layout, and the Live-decodes count badge. New
+render-harness fixtures: view=finder (whole StationFinderPanel), snap-click.py.
+Mid-session operator report → tuxlink-r788i (ARDOP/VARA arm/session UX +
+unapproved two-step Start/Send; findings only). Then the operator-requested
+Contacts consolidation (tuxlink-sbf03): ONE address surface with All/★
+Favorites/Heard scopes, FavoritesPanel deleted, uniform row anatomy, per-dial
+favorite stars, "Last heard" sort no-op fixed; design mock approved, WebKitGTK
+renders approved, Codex adrev round applied (5 fixes, 1 rejected with
+rationale). PR #1089 open at session end.
+
 ## 2026-07-11 — Station Intelligence L2: capture + slot-decode service (tuxlink-b026z.3)
 
 Plan `docs/superpowers/plans/2026-07-10-station-intel-l2-capture.md`
