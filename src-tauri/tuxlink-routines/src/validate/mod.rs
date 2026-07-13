@@ -4,14 +4,17 @@
 //! checks on top, same ordering contract). Errors block enable/run, never
 //! save; warnings are informational.
 //!
-//! This task lands the skeleton only: `validate()`/`validate_fleet()` wire
-//! zero checks and return an empty, deterministically-ordered `Vec<Finding>`.
-//! Later tasks add per-module check fns (`refs`, `capability`, `contracts`,
+//! Task 1 landed the skeleton (zero checks wired). Task 2 wires `refs`
+//! (`UNRESOLVED_REF`, `UNKNOWN_ACTION`) and `capability`
+//! (`NEEDS_INTERNET_OFFGRID`, `NO_RIG_CONFIGURED`, `SAME_RIG_PARALLEL_LANES`).
+//! Later tasks add the remaining per-module check fns (`contracts`,
 //! `structure`, `consent`, `fleet`) that each push `Finding`s into the same
 //! vector before the final sort — no module gets a privileged ordering.
 
+pub mod capability;
 pub mod context;
 pub mod findings;
+pub mod refs;
 
 pub use context::{StaticContext, StationProfile, ValidationContext};
 pub use findings::{Finding, Severity};
@@ -19,15 +22,16 @@ pub use findings::{Finding, Severity};
 use crate::types::{RoutineDef, StepId};
 
 /// Validate a single routine definition against the port. Dispatches to
-/// per-module check fns (added task by task; this task wires none) and
-/// returns every `Finding` sorted deterministically by `(code, step)` so
-/// UI/MCP output and the fixture-corpus assertions (task 6) are stable
-/// across runs and independent of check-fn execution order.
+/// per-module check fns (added task by task; task 2 wires `refs` +
+/// `capability`) and returns every `Finding` sorted deterministically by
+/// `(code, step)` so UI/MCP output and the fixture-corpus assertions
+/// (task 6) are stable across runs and independent of check-fn execution
+/// order.
 pub fn validate(def: &RoutineDef, ctx: &dyn ValidationContext) -> Vec<Finding> {
-    let _ = (def, ctx);
     let mut findings: Vec<Finding> = Vec::new();
 
-    // Task 2: refs::check(def, ctx, &mut findings); capability::check(def, ctx, &mut findings);
+    refs::check(def, ctx, &mut findings);
+    capability::check(def, ctx, &mut findings);
     // Task 3: contracts::check(def, &mut findings); structure::check(def, &mut findings);
     // Task 4: consent::check(def, ctx, &mut findings);
 
@@ -117,6 +121,53 @@ mod tests {
                 ("B_CODE", Some("s2".into())),
             ]
         );
+    }
+
+    #[test]
+    fn validate_dispatches_refs_and_capability_checks_and_sorts_the_result() {
+        use crate::action::ActionDescriptor;
+        use crate::types::{ActionStep, BusyPolicy, Step, StepId};
+
+        const RADIO_CONNECT: ActionDescriptor =
+            ActionDescriptor { name: "radio.connect", needs_radio: true, transmits: true, needs_internet: false };
+
+        // s1: known action, unresolved @ref (UNRESOLVED_REF) + no rig (NO_RIG_CONFIGURED).
+        // s2: unknown action (UNKNOWN_ACTION), which must not also fire a capability finding.
+        let def = RoutineDef {
+            routine: "r1".into(),
+            schema_version: crate::types::SUPPORTED_SCHEMA_VERSION,
+            transmit_mode: TransmitMode::Attended,
+            transmit_ack: None,
+            on_interrupted: OnInterrupted::Stay,
+            inputs: vec![],
+            triggers: vec![Trigger::Manual],
+            tracks: vec![Track {
+                name: "t1".into(),
+                steps: vec![
+                    Step::Action(ActionStep {
+                        id: StepId("s1".into()),
+                        action: "radio.connect".into(),
+                        params: serde_json::json!({ "stations": "@station-set:or-gateways" }),
+                        timeout_s: None,
+                        on_radio_busy: BusyPolicy::Wait,
+                    }),
+                    Step::Action(ActionStep {
+                        id: StepId("s2".into()),
+                        action: "radio.mystery".into(),
+                        params: serde_json::json!({}),
+                        timeout_s: None,
+                        on_radio_busy: BusyPolicy::Wait,
+                    }),
+                ],
+            }],
+        };
+        let ctx = StaticContext::new().with_action(RADIO_CONNECT); // "radio.mystery" not seeded; entity not seeded
+
+        let findings = validate(&def, &ctx);
+        let codes: Vec<&str> = findings.iter().map(|f| f.code).collect();
+        // Sorted lexically by code: NO_RIG_CONFIGURED, UNKNOWN_ACTION, UNRESOLVED_REF.
+        assert_eq!(codes, vec!["NO_RIG_CONFIGURED", "UNKNOWN_ACTION", "UNRESOLVED_REF"]);
+        assert_eq!(findings.iter().find(|f| f.code == "UNKNOWN_ACTION").unwrap().step, Some(StepId("s2".into())));
     }
 
     #[test]
