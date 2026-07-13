@@ -443,6 +443,68 @@ describe('<AppShell> — Mock B topology', () => {
     await waitFor(() => expect(screen.queryByTestId('hint-overlay-popover')).toBeNull());
   });
 
+  // Reviewer proof-gap #2 (Task 6 review): jsdom has no requestIdleCallback,
+  // so the compose-tip deferral always took the setTimeout fallback in tests
+  // and the rIC branch was never exercised. Stub rIC and prove (a) the shell
+  // routes the deferral through it, (b) the tip stays deferred until the idle
+  // callback actually runs, and (c) running it surfaces the compose tip.
+  it('defers the compose first-open tip through requestIdleCallback when available', async () => {
+    const idleCbs: Array<() => void> = [];
+    const ric = vi.fn((cb: () => void) => {
+      idleCbs.push(cb);
+      return idleCbs.length;
+    });
+    const cic = vi.fn();
+    (window as unknown as { requestIdleCallback?: unknown }).requestIdleCallback = ric;
+    (window as unknown as { cancelIdleCallback?: unknown }).cancelIdleCallback = cic;
+    try {
+      renderShell();
+      // The deferral registered through the rIC branch (the radio-panel chunk
+      // preload also uses rIC, hence >= 1 rather than exactly 1)…
+      expect(ric).toHaveBeenCalled();
+      // …and the tip has NOT fired yet — deferred, not synchronous.
+      expect(screen.queryByTestId('hint-overlay-popover')).toBeNull();
+
+      // Run the captured idle callbacks: the compose tip surfaces.
+      act(() => {
+        idleCbs.splice(0).forEach((cb) => cb());
+      });
+      await waitFor(() => expect(screen.getByTestId('hint-overlay-popover')).toBeInTheDocument());
+      expect(screen.getByTestId('hint-overlay-live')).toHaveTextContent('Compose');
+
+      fireEvent.click(screen.getByTestId('hint-overlay-gotit'));
+      await waitFor(() => expect(screen.queryByTestId('hint-overlay-popover')).toBeNull());
+    } finally {
+      delete (window as unknown as { requestIdleCallback?: unknown }).requestIdleCallback;
+      delete (window as unknown as { cancelIdleCallback?: unknown }).cancelIdleCallback;
+    }
+  });
+
+  // Reviewer proof-gap #3 (Task 6 review): the direct regression test for the
+  // cold-start freeze this task introduced-then-fixed. Mechanism under test:
+  // HintProvider's capture-phase keydown policy swallows every key except
+  // Escape/Tab/Enter/Arrows while a tour or tip is active. Firing the compose
+  // first-open tip synchronously at AppShellInner mount therefore froze every
+  // keyboard accelerator from the first frame. The fix defers the tip request
+  // to idle (rIC / 500ms setTimeout fallback) — so BEFORE any timers or idle
+  // callbacks run, no overlay may be capturing and a shell accelerator must
+  // dispatch synchronously. (The two AppShell.radioPanel Ctrl+Shift+M tests
+  // caught this incidentally; this one names the mechanism on purpose.)
+  it('cold start: keyboard accelerators fire before idle — the compose tip must not capture keydown at mount', () => {
+    renderShell();
+    // No overlay is capturing at mount (the tip is deferred, not yet fired).
+    expect(screen.queryByTestId('hint-overlay-popover')).toBeNull();
+
+    // Ctrl+N (menu:message:new) dispatched synchronously, zero timer/idle
+    // advancement — this is the exact call that a mount-time tip would have
+    // preventDefault'ed + stopPropagation'ed away.
+    fireEvent.keyDown(window, { key: 'n', ctrlKey: true });
+    expect(invoke).toHaveBeenCalledWith(
+      'compose_window_open',
+      expect.objectContaining({ draftId: expect.any(String) }),
+    );
+  });
+
   // tuxlink-lqw2: the Mailbox top menu was removed in the pre-Alpha declutter —
   // folder navigation lives in the FolderSidebar (covered by FolderSidebar.test).
   it('Message → New Message opens a compose window', () => {

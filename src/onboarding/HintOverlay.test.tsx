@@ -146,6 +146,90 @@ describe('HintOverlay', () => {
     expect(popover).toBeInTheDocument();
   });
 
+  // Reviewer proof-gap #1 (Task 6 review): the collision-flip/clamp math was
+  // never exercised with real geometry — jsdom reports offsetWidth/Height = 0
+  // and the `|| 320` / `|| 160` fallbacks masked whether the measured popover
+  // size was used at all. Stub the prototype getters to values that DIFFER
+  // from the fallbacks (400×200, not 320×160) so these assertions can only
+  // pass if the real measurement feeds the math.
+  describe('collision flip + horizontal clamp (measured geometry)', () => {
+    const POP_W = 400;
+    const POP_H = 200;
+    let origW: PropertyDescriptor | undefined;
+    let origH: PropertyDescriptor | undefined;
+
+    beforeEach(() => {
+      origW = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth');
+      origH = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight');
+      Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+        configurable: true,
+        get: () => POP_W,
+      });
+      Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+        configurable: true,
+        get: () => POP_H,
+      });
+      // vitest runs a beforeEach-returned function as the paired teardown.
+      return () => {
+        if (origW) Object.defineProperty(HTMLElement.prototype, 'offsetWidth', origW);
+        if (origH) Object.defineProperty(HTMLElement.prototype, 'offsetHeight', origH);
+      };
+    });
+
+    it('flips the popover ABOVE an anchor near the viewport bottom edge', async () => {
+      render(
+        <HintProvider>
+          <Harness onAnchorClick={() => {}} />
+        </HintProvider>,
+      );
+      await waitFor(() => expect(screen.getByText('Connect')).toBeInTheDocument());
+      // Anchor hugging the bottom: below-placement top would be
+      // anchorTop + 40 + 12, and +200 of measured popover overflows
+      // innerHeight − 8 margin → flip above.
+      const anchorTop = window.innerHeight - 68; // 700 at jsdom's default 768
+      stubRect(screen.getByText('Connect'), {
+        top: anchorTop, left: 50, width: 120, height: 40,
+        bottom: anchorTop + 40, right: 170,
+      });
+      fireEvent.click(screen.getByText('startTour'));
+
+      const popover = await waitFor(() => screen.getByTestId('hint-overlay-popover'));
+      const expectedTop = Math.max(8, anchorTop - POP_H - 12);
+      await waitFor(() => expect(popover.style.top).toBe(`${expectedTop}px`));
+      // The load-bearing property: it sits ABOVE the anchor, not below it…
+      expect(parseFloat(popover.style.top)).toBeLessThan(anchorTop);
+      // …and it used the MEASURED 200px height, not the 160px fallback (which
+      // would have produced anchorTop − 172 instead of anchorTop − 212).
+      expect(expectedTop).toBe(anchorTop - 200 - 12);
+    });
+
+    it('clamps the popover horizontally at the right edge (8px viewport margin held)', async () => {
+      render(
+        <HintProvider>
+          <Harness onAnchorClick={() => {}} />
+        </HintProvider>,
+      );
+      await waitFor(() => expect(screen.getByText('Connect')).toBeInTheDocument());
+      // Anchor hugging the right edge: left-aligned placement would put the
+      // measured 400px popover past innerWidth − 8 → clamp left.
+      const anchorLeft = window.innerWidth - 84; // 940 at jsdom's default 1024
+      stubRect(screen.getByText('Connect'), {
+        top: 100, left: anchorLeft, width: 120, height: 40,
+        bottom: 140, right: anchorLeft + 120,
+      });
+      fireEvent.click(screen.getByText('startTour'));
+
+      const popover = await waitFor(() => screen.getByTestId('hint-overlay-popover'));
+      const expectedLeft = window.innerWidth - POP_W - 8;
+      await waitFor(() => expect(popover.style.left).toBe(`${expectedLeft}px`));
+      // Clamped inside the viewport, honoring the 8px margin on both sides,
+      // with the MEASURED 400px width (the 320px fallback would land 80px
+      // further right).
+      expect(parseFloat(popover.style.left)).toBeGreaterThanOrEqual(8);
+      expect(parseFloat(popover.style.left) + POP_W).toBeLessThanOrEqual(window.innerWidth - 8);
+    });
+  });
+
   it('clicking the blocker does not click the anchored button underneath', async () => {
     const onAnchorClick = vi.fn();
     render(
