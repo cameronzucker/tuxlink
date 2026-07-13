@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ARDOP/VARA arm/session footer — state machine v1 (tuxlink-r788i)</title>
+<style>
+  /* === Tokens: verbatim from src/App.css (cool slate + modem-accent) === */
+  :root {
+    --bg: #0d1318;
+    --surface: #141c23;
+    --surface-2: #1a2330;
+    --elevated: #1e2832;
+    --border: #1f2832;
+    --border-strong: #2c3744;
+    --border-soft: #1a2028;
+    --text: #e4ebf2;
+    --text-dim: #94a0ad;
+    --text-faint: #5d6975;
+    --accent: #f59f3c;
+    --accent-2: #ffba6e;
+    --accent-soft: rgba(245, 159, 60, 0.12);
+    --modem-accent: #4ade80;
+    --modem-accent-2: #86efac;
+    --modem-accent-soft: rgba(34, 197, 94, 0.10);
+    --success: #5dd6a0;
+    --error: #ee6b6b;
+    --info: #6bb8ee;
+    --tux-danger-surface: rgba(238, 107, 107, 0.12);
+    --mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', Menlo, Consolas, monospace;
+    --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --radius-control: 6px;
+    --type-body: 13px;
+    --type-meta: 11px;
+    --type-micro: 10px;
+    /* Radio dock resolves --ctl-accent to the modem green family */
+    --ctl-accent: var(--modem-accent);
+    --ctl-accent-2: var(--modem-accent-2);
+    --ctl-accent-soft: var(--modem-accent-soft);
+    --ctl-accent-fg: #0d1b14;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 40px 64px;
+    background: var(--bg); color: var(--text);
+    font-family: var(--sans); font-size: var(--type-body);
+  }
+  h1 { font-size: 17px; font-weight: 600; margin: 0 0 4px; }
+  .sub { color: var(--text-dim); font-size: 12px; margin: 0 0 28px; max-width: 860px; line-height: 1.5; }
+  .sub code { font-family: var(--mono); font-size: 11px; color: var(--accent-2); }
+
+  .state-row { display: flex; gap: 24px; align-items: flex-start; margin-bottom: 26px; }
+  .panel-excerpt {
+    width: 400px; flex: 0 0 400px;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .annot { flex: 1; max-width: 460px; padding-top: 6px; }
+  .annot h3 { font-size: 12px; font-weight: 600; margin: 0 0 6px; color: var(--accent-2);
+              text-transform: uppercase; letter-spacing: 0.05em; }
+  .annot p { margin: 0 0 8px; font-size: 12px; line-height: 1.55; color: var(--text-dim); }
+  .annot p strong { color: var(--text); font-weight: 600; }
+  .annot code { font-family: var(--mono); font-size: 11px; color: var(--text); }
+
+  /* === Panel section rhythm: verbatim from src/radio/RadioPanel.css === */
+  .radio-panel-sec {
+    padding: 8px 12px;
+    border-bottom: 1px dashed var(--border-soft);
+    min-width: 0; max-width: 100%;
+  }
+  .radio-panel-sec:last-child { border-bottom: none; }
+  .radio-panel-sec h5 {
+    margin: 0 0 8px; font-size: var(--type-meta);
+    text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--text-faint); font-weight: 600;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .log-hint { font-family: var(--mono); font-size: 10.5px; color: var(--text-faint);
+              line-height: 1.6; overflow: hidden; white-space: nowrap; }
+  .log-hint .t { color: var(--text-faint); opacity: 0.7; }
+  .radio-panel-act { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+
+  /* === Buttons: verbatim from src/styles/controls.css === */
+  .tux-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: max-content; border: 1px solid transparent;
+    border-radius: var(--radius-control); cursor: pointer; text-align: center;
+    font-family: var(--sans);
+  }
+  .tux-btn:disabled { opacity: 0.6; cursor: default; }
+  .tux-btn--md { font-size: var(--type-body); font-weight: 500; padding: 8px 14px; }
+  .tux-btn--primary.tux-btn--soft {
+    background: var(--ctl-accent-soft); color: var(--ctl-accent);
+    border-color: color-mix(in srgb, var(--ctl-accent) 35%, transparent);
+  }
+  .tux-btn--danger.tux-btn--soft {
+    background: var(--tux-danger-surface); color: var(--error);
+    border-color: color-mix(in srgb, var(--error) 35%, transparent);
+  }
+  .tux-btn--neutral.tux-btn--outline {
+    background: transparent; color: var(--text); border-color: var(--border-strong);
+  }
+
+  /* === NEW: the state strip (the design's one new element) === */
+  .modem-state-strip {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 12px;
+    font-size: var(--type-meta);
+    letter-spacing: 0.04em;
+    border-bottom: 1px dashed var(--border-soft);
+    background: var(--surface-2);
+  }
+  .modem-state-strip .dot {
+    width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px;
+  }
+  .modem-state-strip .label {
+    font-weight: 600; text-transform: uppercase; white-space: nowrap; flex-shrink: 0;
+  }
+  .modem-state-strip .detail {
+    color: var(--text-dim); text-transform: none; letter-spacing: 0;
+    font-weight: 400; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .modem-state-strip .ttl {
+    margin-left: auto; font-family: var(--mono); font-size: var(--type-micro);
+    color: var(--text-faint); text-transform: none; letter-spacing: 0; flex-shrink: 0;
+  }
+  /* Armed: modem green, steady */
+  .strip-armed .dot { background: var(--modem-accent); box-shadow: 0 0 6px rgba(74, 222, 128, 0.55); }
+  .strip-armed .label { color: var(--modem-accent); }
+  /* Paused-for-outbound: amber */
+  .strip-paused .dot { background: var(--accent); box-shadow: 0 0 6px rgba(245, 159, 60, 0.55); }
+  .strip-paused .label { color: var(--accent); }
+  /* Session (outbound or inbound): amber, session identity in mono */
+  .strip-session .dot { background: var(--accent); box-shadow: 0 0 6px rgba(245, 159, 60, 0.55); }
+  .strip-session .label { color: var(--accent-2); }
+  .strip-session .peer { font-family: var(--mono); color: var(--text); font-weight: 600; letter-spacing: 0; }
+  /* Armed but modem down: red */
+  .strip-error .dot { background: var(--error); box-shadow: 0 0 6px rgba(238, 107, 107, 0.55); }
+  .strip-error .label { color: var(--error); }
+
+  .divider { border: 0; border-top: 1px solid var(--border-strong); margin: 40px 0 28px; }
+  h2.group { font-size: 13px; font-weight: 600; color: var(--text-dim);
+             text-transform: uppercase; letter-spacing: 0.08em; margin: 0 0 18px; }
+</style>
+</head>
+<body>
+
+<h1>ARDOP / VARA — arm &amp; session footer state machine (v1)</h1>
+<p class="sub">
+  tuxlink-r788i · one footer, four states, derived from backend status — never from which
+  button was clicked. <code>Start</code> and <code>Send/Receive</code> are gone: <code>Connect</code>
+  is the one-click dial (connect + B2F exchange + disconnect, same chain the ribbon runs).
+  <code>Stop</code> is replaced by state-scoped <code>Disarm</code> / <code>Abort</code>.
+  Panel excerpts below show the bottom of the 400&nbsp;px radio panel: session-log tail,
+  the NEW state strip, and the action row.
+</p>
+
+<!-- ================= STATE 1: STOPPED ================= -->
+<div class="state-row">
+  <div class="panel-excerpt">
+    <div class="radio-panel-sec">
+      <h5>Session log</h5>
+      <div class="log-hint"><span class="t">12:41:02</span> ardopcf stopped · listener disarmed</div>
+    </div>
+    <div class="radio-panel-sec">
+      <div class="radio-panel-act">
+        <button class="tux-btn tux-btn--md tux-btn--primary tux-btn--soft">Connect</button>
+        <button class="tux-btn tux-btn--md tux-btn--neutral tux-btn--outline" disabled>Open WebGUI</button>
+      </div>
+    </div>
+  </div>
+  <div class="annot">
+    <h3>1 · Stopped</h3>
+    <p><strong>No strip at all</strong> — nothing is running, so nothing claims a status line.
+       <code>Connect</code> is the only primary action (disabled until a target is entered,
+       exactly like today's Start). It spawns the modem, dials, exchanges, and tears
+       back down in one click. WebGUI needs a running ardopcf → disabled.</p>
+  </div>
+</div>
+
+<!-- ================= STATE 2: ARMED ================= -->
+<div class="state-row">
+  <div class="panel-excerpt">
+    <div class="radio-panel-sec">
+      <h5>Session log</h5>
+      <div class="log-hint"><span class="t">12:44:10</span> listener armed as KJ7XSO · ardopcf listening</div>
+    </div>
+    <div class="modem-state-strip strip-armed">
+      <span class="dot"></span>
+      <span class="label">Listener armed</span>
+      <span class="detail">KJ7XSO · accepting inbound P2P</span>
+      <span class="ttl">no expiry</span>
+    </div>
+    <div class="radio-panel-sec">
+      <div class="radio-panel-act">
+        <button class="tux-btn tux-btn--md tux-btn--primary tux-btn--soft">Connect</button>
+        <button class="tux-btn tux-btn--md tux-btn--danger tux-btn--soft">Disarm</button>
+        <button class="tux-btn tux-btn--md tux-btn--neutral tux-btn--outline">Open WebGUI</button>
+      </div>
+    </div>
+  </div>
+  <div class="annot">
+    <h3>2 · Listener armed (modem running, no session)</h3>
+    <p>The state today's footer misreports as a live session. The strip says what is
+       actually true: armed, as whom, until when. <strong><code>Connect</code> stays
+       enabled</strong> — dialing out suspends the listener and re-arms afterward
+       (state&nbsp;3). <code>Disarm</code> ends the armed window and releases the modem;
+       it is the only red action because it is the only thing to stop.</p>
+  </div>
+</div>
+
+<!-- ================= STATE 3: ARMED, PAUSED FOR OUTBOUND ================= -->
+<div class="state-row">
+  <div class="panel-excerpt">
+    <div class="radio-panel-sec">
+      <h5>Session log</h5>
+      <div class="log-hint"><span class="t">12:47:31</span> listener paused · dialing W7YAM…</div>
+    </div>
+    <div class="modem-state-strip strip-session">
+      <span class="dot"></span>
+      <span class="label">Outbound</span>
+      <span class="detail"><span class="peer">W7YAM</span>&nbsp;· connecting… (attempt 4/15)</span>
+      <span class="ttl">re-arms after</span>
+    </div>
+    <div class="radio-panel-sec">
+      <div class="radio-panel-act">
+        <button class="tux-btn tux-btn--md tux-btn--danger tux-btn--soft">Abort</button>
+        <button class="tux-btn tux-btn--md tux-btn--neutral tux-btn--outline">Open WebGUI</button>
+      </div>
+    </div>
+  </div>
+  <div class="annot">
+    <h3>3 · Outbound session (from an armed panel)</h3>
+    <p>One click on <code>Connect</code> got here; no second consent click exists.
+       The strip carries the live phase (<code>connecting… → exchanging mail</code>) and,
+       when the listener was armed, the <code>re-arms after</code> tag — operator arm
+       intent survives the session. <strong><code>Abort</code></strong> kills the session
+       through the bounded-abort path and re-arms; it never touches the arm record.</p>
+  </div>
+</div>
+
+<!-- ================= STATE 4: OUTBOUND, EXCHANGING (from stopped) ================= -->
+<div class="state-row">
+  <div class="panel-excerpt">
+    <div class="radio-panel-sec">
+      <h5>Session log</h5>
+      <div class="log-hint"><span class="t">12:48:02</span> connected W7YAM (2000 Hz) · B2F exchange</div>
+    </div>
+    <div class="modem-state-strip strip-session">
+      <span class="dot"></span>
+      <span class="label">Outbound</span>
+      <span class="detail"><span class="peer">W7YAM</span>&nbsp;· exchanging mail · 14 kB ↓</span>
+    </div>
+    <div class="radio-panel-sec">
+      <div class="radio-panel-act">
+        <button class="tux-btn tux-btn--md tux-btn--danger tux-btn--soft">Abort</button>
+        <button class="tux-btn tux-btn--md tux-btn--neutral tux-btn--outline">Open WebGUI</button>
+      </div>
+    </div>
+  </div>
+  <div class="annot">
+    <h3>4 · Outbound session — exchange phase</h3>
+    <p>Same state, later phase (dialed from Stopped this time — no <code>re-arms after</code>
+       tag). The strip is the single progress surface; there is no in-flight
+       <code>Exchanging…</code> button label because there is no button mid-session —
+       the actions are exactly <code>Abort</code> and the waterfall.</p>
+  </div>
+</div>
+
+<!-- ================= STATE 5: INBOUND SESSION ================= -->
+<div class="state-row">
+  <div class="panel-excerpt">
+    <div class="radio-panel-sec">
+      <h5>Session log</h5>
+      <div class="log-hint"><span class="t">13:02:44</span> inbound CONNECTED KD7RVX via armed listener</div>
+    </div>
+    <div class="modem-state-strip strip-session">
+      <span class="dot"></span>
+      <span class="label">Inbound</span>
+      <span class="detail"><span class="peer">KD7RVX</span>&nbsp;· P2P session · receiving</span>
+      <span class="ttl">re-arms after</span>
+    </div>
+    <div class="radio-panel-sec">
+      <div class="radio-panel-act">
+        <button class="tux-btn tux-btn--md tux-btn--danger tux-btn--soft">Abort</button>
+        <button class="tux-btn tux-btn--md tux-btn--neutral tux-btn--outline">Open WebGUI</button>
+      </div>
+    </div>
+  </div>
+  <div class="annot">
+    <h3>5 · Inbound session (listener accepted a peer)</h3>
+    <p>Distinct label so the operator knows the station answered — they did not dial.
+       <code>Abort</code> drops the peer and re-arms. A <strong>Disarm from any surface
+       during this state aborts first, then disarms</strong> (tuxlink-4u43s kill-switch);
+       TTL expiry mid-session is the one polite exception — it lets the exchange finish,
+       then disarms.</p>
+  </div>
+</div>
+
+<!-- ================= STATE 6: ARMED, MODEM DOWN ================= -->
+<div class="state-row">
+  <div class="panel-excerpt">
+    <div class="radio-panel-sec">
+      <h5>Session log</h5>
+      <div class="log-hint"><span class="t">13:11:19</span> ardopcf exited (audio device unavailable)</div>
+    </div>
+    <div class="modem-state-strip strip-error">
+      <span class="dot"></span>
+      <span class="label">Armed · modem down</span>
+      <span class="detail">not hearing inbound</span>
+    </div>
+    <div class="radio-panel-sec">
+      <div class="radio-panel-act">
+        <button class="tux-btn tux-btn--md tux-btn--primary tux-btn--soft">Re-arm</button>
+        <button class="tux-btn tux-btn--md tux-btn--danger tux-btn--soft">Disarm</button>
+        <button class="tux-btn tux-btn--md tux-btn--neutral tux-btn--outline" disabled>Open WebGUI</button>
+      </div>
+    </div>
+  </div>
+  <div class="annot">
+    <h3>6 · Armed but modem down (tuxlink-kw873 honesty state)</h3>
+    <p>The arm record is operator intent — a modem crash must not silently flip it.
+       The strip goes red and says the station is <strong>not</strong> hearing inbound;
+       <code>Re-arm</code> retries the modem under the existing arm record,
+       <code>Disarm</code> clears intent. Never again "armed in the UI, dead on the air"
+       or the reverse.</p>
+  </div>
+</div>
+
+<hr class="divider">
+<h2 class="group">VARA mirror (tuxlink-n95sr #3 — no UX divergence)</h2>
+
+<!-- ================= STATE 7: VARA ARMED ================= -->
+<div class="state-row">
+  <div class="panel-excerpt">
+    <div class="radio-panel-sec">
+      <h5>Session log</h5>
+      <div class="log-hint"><span class="t">13:20:07</span> LISTEN ON · listener armed as KJ7XSO</div>
+    </div>
+    <div class="modem-state-strip strip-armed">
+      <span class="dot"></span>
+      <span class="label">Listener armed</span>
+      <span class="detail">KJ7XSO · accepting inbound peers</span>
+      <span class="ttl">38 min left</span>
+    </div>
+    <div class="radio-panel-sec">
+      <div class="radio-panel-act">
+        <button class="tux-btn tux-btn--md tux-btn--primary tux-btn--soft">Connect</button>
+        <button class="tux-btn tux-btn--md tux-btn--danger tux-btn--soft">Disarm</button>
+      </div>
+    </div>
+  </div>
+  <div class="annot">
+    <h3>7 · VARA — identical machine, minus WebGUI</h3>
+    <p>Pixel-identical footer (no ardopcf WebGUI button). The load-bearing change vs
+       today: <strong><code>Connect</code> is enabled while armed</strong> — the current
+       panel refuses ("Disarm the listener first"), stranding an armed station.
+       The chain performs the listener-suspend / transport give-back / re-arm sequence
+       itself; the operator never manages the transport.</p>
+  </div>
+</div>
+
+</body>
+</html>
