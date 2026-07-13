@@ -21,6 +21,8 @@
 // payload can never manufacture a colliding or markup-shaped key.
 
 import { useMemo } from 'react';
+import { bearingFromGrids } from '../catalog/StationRail';
+import { distanceFromGrids, kmToMi } from '../catalog/distance';
 import type { DecodeDto, SlotRecord } from './ft8Types';
 import './DecodeFeed.css';
 
@@ -30,6 +32,11 @@ export const DECODE_FEED_CAP = 200;
 export interface DecodeFeedProps {
   /** `useFt8Listener().decodesRing` — oldest→newest, capped at 240 by the hook. */
   decodesRing: SlotRecord[];
+  /** Operator grid for the mi·brg column (approved mock-v4's strip feed carries
+   *  per-decode distance+bearing; a C11 review adjudication dropped it against
+   *  the mock — operator live-test 2026-07-12 restored it). Omitted/empty →
+   *  the column renders '—' per row, mirroring LiveDecodesTab's fallback. */
+  operatorGrid?: string;
 }
 
 /** One flattened, renderable decode row. `key` is backend-numeric only — see
@@ -40,6 +47,8 @@ interface DecodeFeedRow {
   snrDb: number;
   freqHz: number;
   message: string;
+  /** The decode's reported grid (untrusted radio text; may be null). */
+  grid: string | null;
 }
 
 /**
@@ -60,6 +69,7 @@ export function flattenDecodeFeed(ring: SlotRecord[]): DecodeFeedRow[] {
         snrDb: d.snrDb,
         freqHz: d.freqHz,
         message: d.message,
+        grid: d.grid,
       });
     });
   }
@@ -82,6 +92,18 @@ function formatSnr(snrDb: number): string {
   return `${rounded >= 0 ? '+' : '-'}${String(Math.abs(rounded)).padStart(2, '0')}`;
 }
 
+/** `182 · 291°` — distance (mi) + bearing from the operator to the decode's
+ *  grid, the approved mock-v4 strip-feed column. NULL-GUARDED end to end: no
+ *  operator grid, no decode grid, or a malformed grid (gridToLatLon → null)
+ *  all render '—' — garbage radio text never yields NaN. */
+function miBrgLabel(operatorGrid: string | undefined, grid: string | null): string {
+  if (!operatorGrid || !grid) return '—';
+  const distKm = distanceFromGrids(operatorGrid, grid);
+  const brg = bearingFromGrids(operatorGrid, grid);
+  if (distKm == null || brg == null) return '—';
+  return `${Math.round(kmToMi(distKm)).toLocaleString()} · ${String(Math.round(brg)).padStart(3, '0')}°`;
+}
+
 /** `HH:MM:SS` UTC — emcomm convention (mirrors MessageList's UTC-anchored date math). */
 function utcLabel(ms: number): string {
   const d = new Date(ms);
@@ -89,7 +111,7 @@ function utcLabel(ms: number): string {
   return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
 }
 
-export function DecodeFeed({ decodesRing }: DecodeFeedProps) {
+export function DecodeFeed({ decodesRing, operatorGrid }: DecodeFeedProps) {
   // D1 (C11 review note, deferred to the wiring task): before D1 this component
   // was never mounted, so re-flattening on every render cost nothing. It is now
   // fed the LIVE ring, which commits a new array on every FT-8 slot event — so
@@ -114,6 +136,7 @@ export function DecodeFeed({ decodesRing }: DecodeFeedProps) {
             <th>dB</th>
             <th>Freq</th>
             <th>Message</th>
+            <th className="decode-feed__dist-h">mi · brg</th>
           </tr>
         </thead>
         <tbody>
@@ -126,6 +149,7 @@ export function DecodeFeed({ decodesRing }: DecodeFeedProps) {
                   text (callsigns/grids embedded in the message) never reaches
                   the DOM as markup. */}
               <td className="decode-feed__message">{row.message}</td>
+              <td className="decode-feed__dist">{miBrgLabel(operatorGrid, row.grid)}</td>
             </tr>
           ))}
         </tbody>

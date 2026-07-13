@@ -14,8 +14,21 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { MessageMeta } from '../mailbox/types';
 
+// Mutable per-test knobs, hoisted so the mock factory can consult them at CALL
+// time (each test sets + beforeEach resets). Lets the configured-link failure
+// path share this file's one production-mount harness.
+const aprsTestState = vi.hoisted(() => ({
+  linkKind: null as string | null,
+  btMac: null as string | null,
+  uvproConnectFails: false,
+}));
+
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(async (cmd: string) => {
+    if (cmd === 'uvpro_connect') {
+      if (aprsTestState.uvproConnectFails) throw new Error('bluetooth connect timed out');
+      return null;
+    }
     if (cmd === 'config_read') return null;
     if (cmd === 'backend_status') return null;
     if (cmd === 'session_log_snapshot') return [];
@@ -38,7 +51,7 @@ vi.mock('@tauri-apps/api/core', () => ({
       // configured yet; with a configured link these tests would race the config
       // query (dock-open vs start-listening) — tuxlink-28o0.
       return {
-        ssid: 7, listenDefault: true, linkKind: null, tcpHost: null,
+        ssid: 7, listenDefault: true, linkKind: aprsTestState.linkKind, btMac: aprsTestState.btMac, tcpHost: null,
         tcpPort: null, serialDevice: null, serialBaud: null, txdelay: 30,
         persistence: 63, slotTime: 10, paclen: 128, maxframe: 4,
         t1Ms: 3000, n2Retries: 10,
@@ -128,6 +141,9 @@ function renderShell() {
 describe('APRS dock integration', () => {
   beforeEach(() => {
     globalThis.localStorage?.clear?.();
+    aprsTestState.linkKind = null;
+    aprsTestState.btMac = null;
+    aprsTestState.uvproConnectFails = false;
   });
 
   it('opens the chat in the right dock from the status-strip control', async () => {
@@ -137,6 +153,24 @@ describe('APRS dock integration', () => {
     fireEvent.click(screen.getByTestId('dash-aprs-control'));
     // The lazy AprsChatPanel resolves; the dock tab row mounts alongside it.
     expect(await screen.findByTestId('aprs-chat-panel', {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(screen.getByTestId('aprs-dock-tabs')).toBeInTheDocument();
+  });
+
+  // Operator live-test 2026-07-12 regression: with a CONFIGURED link the chip is
+  // a pure on/off toggle (a1j3) — but when the connect FAILS (radio off / out of
+  // range), the catch was EMPTY, so the click burned a BT timeout and then did
+  // nothing, and no other discoverable surface opens the chat: tac chat/map were
+  // unreachable entirely. The fix lands the operator in the dock (connect strip:
+  // failure + retry + picker), per the catch's own written intent.
+  it('opens the dock when a configured link fails to connect (never a silent no-op)', async () => {
+    aprsTestState.linkKind = 'UvproNative';
+    aprsTestState.btMac = '38:D2:00:01:55:5C';
+    aprsTestState.uvproConnectFails = true;
+    renderShell();
+    expect(screen.queryByTestId('aprs-chat-panel')).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByTestId('dash-aprs-control'));
+    // The failed uvpro_connect rejects -> the catch opens the dock.
+    expect(await screen.findByTestId('aprs-dock-surface', {}, { timeout: 5000 })).toBeInTheDocument();
     expect(screen.getByTestId('aprs-dock-tabs')).toBeInTheDocument();
   });
 

@@ -313,11 +313,15 @@ describe('Ft8SetupSurface', () => {
     });
   });
 
-  describe('meter/start handover race-safety', () => {
-    it('stops metering and awaits the in-flight read BEFORE calling ft8_set_device / ft8_listener_start', async () => {
+  // Task D2 (operator decision, 2026-07-12): "Use this device" selects,
+  // only the Start CTA starts. A device row's click is now SELECT-ONLY —
+  // it persists via ft8_set_device and stops there; ft8_listener_start and
+  // onStarted are reserved for the CTA (covered separately below).
+  describe('device-row select-only handover (Task D2)', () => {
+    it('stops metering and awaits the in-flight read BEFORE calling ft8_set_device — and never calls ft8_listener_start', async () => {
       // Manually control the meter promise so we can observe the ordering:
       // click "Use this device" WHILE a meter read is in flight, and assert
-      // set_device/start are NOT called until that meter read resolves.
+      // set_device is NOT called until that meter read resolves.
       let resolveMeter: ((v: { rmsDbfs: number; state: string }) => void) | null = null;
       const callOrder: string[] = [];
       // Task C9b: Step 2's RigControlSection mounts alongside Step 1 now and
@@ -365,7 +369,11 @@ describe('Ft8SetupSurface', () => {
       expect(callOrder).not.toContain('ft8_listener_start');
 
       // Now let the in-flight meter read settle — only THEN should the
-      // handover proceed to set_device, then start.
+      // handover proceed to set_device. It stops there — select-only. The
+      // trailing `ft8_device_meter` is the Task D2 "meter resumes" contract:
+      // `selecting` drops back to false right after `ft8_set_device`
+      // resolves, which flips the row's poll hook `enabled` back to true and
+      // fires an immediate resumed read — never a `ft8_listener_start`.
       await act(async () => {
         resolveMeter?.({ rmsDbfs: -20, state: 'live' });
         await Promise.resolve();
@@ -373,10 +381,11 @@ describe('Ft8SetupSurface', () => {
         await Promise.resolve();
       });
 
-      expect(deviceCallOrder()).toEqual(['ft8_device_meter', 'ft8_set_device', 'ft8_listener_start']);
+      expect(deviceCallOrder()).toEqual(['ft8_device_meter', 'ft8_set_device', 'ft8_device_meter']);
+      expect(callOrder).not.toContain('ft8_listener_start');
     });
 
-    it('calls onStarted after a successful handover', async () => {
+    it('never calls ft8_listener_start or onStarted, even after a successful persist', async () => {
       const onStarted = vi.fn();
       render(
         <Ft8SetupSurface
@@ -391,8 +400,35 @@ describe('Ft8SetupSurface', () => {
         screen.getByTestId(`ft8-setup-device-use-${DEV_A.stableId.kind}:${DEV_A.stableId.value}`),
       );
       await waitFor(() => {
-        expect(onStarted).toHaveBeenCalled();
+        expect(vi.mocked(invoke)).toHaveBeenCalledWith('ft8_set_device', { stableId: DEV_A.stableId });
       });
+      expect(vi.mocked(invoke)).not.toHaveBeenCalledWith('ft8_listener_start');
+      expect(onStarted).not.toHaveBeenCalled();
+    });
+
+    it('resumes the meter after the persist settles (no permanently-frozen row)', async () => {
+      let meterCalls = 0;
+      vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+        if (cmd === 'ft8_device_meter') {
+          meterCalls += 1;
+          return { rmsDbfs: -20, state: 'live' };
+        }
+        if (cmd === 'ft8_set_device') return undefined;
+        return undefined;
+      });
+      render(<Ft8SetupSurface snapshot={makeSnapshot({ availableDevices: [DEV_A] })} />);
+      await waitFor(() => expect(meterCalls).toBeGreaterThanOrEqual(1));
+      const callsBeforeSelect = meterCalls;
+
+      fireEvent.click(
+        screen.getByTestId(`ft8-setup-device-use-${DEV_A.stableId.kind}:${DEV_A.stableId.value}`),
+      );
+      await waitFor(() => {
+        expect(vi.mocked(invoke)).toHaveBeenCalledWith('ft8_set_device', { stableId: DEV_A.stableId });
+      });
+      // Once `selecting` drops back to false, the row's meter poll re-enables
+      // and fires again — it does not stay frozen forever.
+      await waitFor(() => expect(meterCalls).toBeGreaterThan(callsBeforeSelect));
     });
 
     it('surfaces a select error without crashing when ft8_set_device rejects', async () => {
@@ -416,10 +452,119 @@ describe('Ft8SetupSurface', () => {
     });
   });
 
-  describe('defensive rendering', () => {
-    it('renders nothing when the snapshot axis is not blocked (never mounted this way in prod, but must not crash)', () => {
+  describe('device-row selected state', () => {
+    it('shows a "selected" badge when configuredDeviceName matches the row', () => {
+      render(
+        <Ft8SetupSurface
+          snapshot={makeSnapshot({ availableDevices: [DEV_A, DEV_B], configuredDeviceName: DEV_A.humanName })}
+        />,
+      );
+      expect(
+        screen.getByTestId(`ft8-setup-device-selected-${DEV_A.stableId.kind}:${DEV_A.stableId.value}`),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByTestId(`ft8-setup-device-selected-${DEV_B.stableId.kind}:${DEV_B.stableId.value}`),
+      ).toBeNull();
+    });
+
+    it('shows no selected badge on any row when no device is configured', () => {
+      render(
+        <Ft8SetupSurface
+          snapshot={makeSnapshot({ availableDevices: [DEV_A, DEV_B], configuredDeviceName: null })}
+        />,
+      );
+      expect(
+        screen.queryByTestId(`ft8-setup-device-selected-${DEV_A.stableId.kind}:${DEV_A.stableId.value}`),
+      ).toBeNull();
+      expect(
+        screen.queryByTestId(`ft8-setup-device-selected-${DEV_B.stableId.kind}:${DEV_B.stableId.value}`),
+      ).toBeNull();
+    });
+  });
+
+  // Task D2 "no way back to setup once capture runs": the surface can now be
+  // force-mounted over a LIVE session (LiveBandStrip's header "setup"
+  // button, Finding 4b) to fix a wrong device/rig pick without restarting.
+  describe('D2 active-axis mode (revisit setup during a live session)', () => {
+    it('renders (not null) while listening, with device rows and a Stop CTA instead of Start', async () => {
+      vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+        if (cmd === 'ft8_list_devices') return [DEV_A];
+        if (cmd === 'ft8_device_meter') return { rmsDbfs: -20, state: 'live' };
+        if (cmd === 'config_get_rig') return KNOWN_RIG_CONFIG;
+        if (cmd === 'rig_list_models') return [];
+        if (cmd === 'packet_list_serial_devices') return [];
+        return undefined;
+      });
+      render(
+        <Ft8SetupSurface
+          snapshot={makeSnapshot({
+            service: { axis: 'listening' },
+            configuredDeviceName: DEV_A.humanName,
+            availableDevices: null, // L2 presence rule: the backend omits it while listening
+          })}
+        />,
+      );
+      await waitFor(() => {
+        expect(vi.mocked(invoke)).toHaveBeenCalledWith('ft8_list_devices');
+      });
+      await waitFor(() => {
+        expect(screen.getByTestId('ft8-setup-device-list').textContent).toMatch(/USB Audio CODEC/);
+      });
+      expect(screen.queryByTestId('ft8-setup-start-cta')).toBeNull();
+      const stopBtn = screen.getByTestId('ft8-setup-stop-cta');
+      expect(stopBtn.textContent).toMatch(/stop listening/i);
+      expect(screen.getByTestId('ft8-setup-cta-caption').textContent).toMatch(/stop to change devices/i);
+    });
+
+    it('Stop CTA invokes ft8_listener_stop', async () => {
+      vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+        if (cmd === 'ft8_list_devices') return [DEV_A];
+        if (cmd === 'ft8_device_meter') return { rmsDbfs: -20, state: 'live' };
+        if (cmd === 'config_get_rig') return KNOWN_RIG_CONFIG;
+        if (cmd === 'rig_list_models') return [];
+        if (cmd === 'packet_list_serial_devices') return [];
+        if (cmd === 'ft8_listener_stop') return undefined;
+        return undefined;
+      });
+      render(
+        <Ft8SetupSurface
+          snapshot={makeSnapshot({
+            service: { axis: 'starting' },
+            configuredDeviceName: DEV_A.humanName,
+            availableDevices: null,
+          })}
+        />,
+      );
+      const stopBtn = await screen.findByTestId('ft8-setup-stop-cta');
+      fireEvent.click(stopBtn);
+      await waitFor(() => {
+        expect(vi.mocked(invoke)).toHaveBeenCalledWith('ft8_listener_stop');
+      });
+    });
+
+    it('renders for yielded axis too', async () => {
+      vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+        if (cmd === 'ft8_list_devices') return [DEV_A];
+        if (cmd === 'ft8_device_meter') return { rmsDbfs: -20, state: 'live' };
+        if (cmd === 'config_get_rig') return KNOWN_RIG_CONFIG;
+        if (cmd === 'rig_list_models') return [];
+        if (cmd === 'packet_list_serial_devices') return [];
+        return undefined;
+      });
       const { container } = render(
-        <Ft8SetupSurface snapshot={makeSnapshot({ service: { axis: 'listening' } })} />,
+        <Ft8SetupSurface
+          snapshot={makeSnapshot({ service: { axis: 'yielded' }, configuredDeviceName: DEV_A.humanName })}
+        />,
+      );
+      await waitFor(() => expect(container.textContent).not.toBe(''));
+      expect(screen.getByTestId('ft8-setup-stop-cta')).toBeInTheDocument();
+    });
+  });
+
+  describe('defensive rendering', () => {
+    it('renders nothing for stopped/stopping axes (never mounted this way in prod, but must not crash)', () => {
+      const { container } = render(
+        <Ft8SetupSurface snapshot={makeSnapshot({ service: { axis: 'stopped' } })} />,
       );
       expect(container.textContent).toBe('');
     });

@@ -161,6 +161,9 @@ export interface LiveBandStripProps {
   /** `useFt8Listener().decodesRing` — feeds DecodeFeed and (via `stripStats`)
    *  the header's decodes/min + grids-heard figures. */
   decodesRing: SlotRecord[];
+  /** Operator grid for DecodeFeed's mi·brg column (mock-v4 strip-feed parity,
+   *  restored 2026-07-12). Omitted → the column renders '—' per row. */
+  operatorGrid?: string;
   /** The active blocking modem session's mode (e.g. "VARA"), threaded
    *  through unchanged to `BandSubsetPopover`'s `blockingSessionMode` prop
    *  (spec §NewCommands "<mode>" interpolation) — D1 supplies this from the
@@ -190,6 +193,7 @@ export function LiveBandStrip({
   snapshot,
   uiState,
   decodesRing,
+  operatorGrid,
   blockingSessionMode,
   setupSurface,
   onOpenFullSetup,
@@ -360,6 +364,26 @@ export function LiveBandStrip({
           )}
         </div>
 
+        {!collapsed && (
+          // Finding 4b ("no way back to setup once capture runs"): a small,
+          // always-present header affordance to reopen the full setup
+          // surface — the strip's own needs-setup body is the ONLY other
+          // route in, and it doesn't exist once the strip has moved past
+          // needs-setup into a live body state. Rendered in every
+          // non-collapsed state (not gated on `state`) so it's reachable
+          // regardless of which arm the strip is currently in.
+          <Button
+            tone="neutral"
+            emphasis="outline"
+            size="sm"
+            className="si-strip__setup-trigger"
+            data-testid="ft8-strip-setup-btn"
+            onClick={() => onOpenFullSetup?.()}
+          >
+            setup
+          </Button>
+        )}
+
         <Button
           tone="neutral"
           emphasis="outline"
@@ -408,7 +432,7 @@ export function LiveBandStrip({
                   </div>
                 </div>
                 <div className="si-feed">
-                  <DecodeFeed decodesRing={decodesRing} />
+                  <DecodeFeed decodesRing={decodesRing} operatorGrid={operatorGrid} />
                 </div>
               </>
             ) : (
@@ -488,7 +512,28 @@ function NonLiveBody({
   onOpenFullSetup?: () => void;
 }) {
   switch (state) {
-    case 'off':
+    case 'off': {
+      // Configuration-aware CTA (operator live-test 2026-07-12): with NO audio
+      // device ever configured, "Start listening on 20m" is a lie — the start
+      // would just bounce into blocked(needs-device-selection). Route straight
+      // to setup instead, and only offer Start once a device is configured.
+      const deviceConfigured = snapshot?.configuredDeviceName != null;
+      if (!deviceConfigured) {
+        return (
+          <div className="si-strip__notice" data-testid="ft8-strip-body-off">
+            <p>Not listening — no audio input configured yet.</p>
+            <Button
+              tone="primary"
+              emphasis="solid"
+              size="sm"
+              data-testid="ft8-strip-setup-cta"
+              onClick={() => onOpenFullSetup?.()}
+            >
+              Set up FT-8 listening →
+            </Button>
+          </div>
+        );
+      }
       return (
         <div className="si-strip__notice" data-testid="ft8-strip-body-off">
           <p>Not listening.</p>
@@ -504,6 +549,7 @@ function NonLiveBody({
           </Button>
         </div>
       );
+    }
     case 'transitional':
       return (
         <div className="si-strip__notice" data-testid="ft8-strip-body-transitional">
@@ -512,7 +558,10 @@ function NonLiveBody({
       );
     case 'needs-setup':
       return (
-        <div className="si-strip__notice" data-testid="ft8-strip-body-needs-setup">
+        <div
+          className="si-strip__notice si-strip__notice--setup"
+          data-testid="ft8-strip-body-needs-setup"
+        >
           {setupSurface ?? (
             <p>Setup required — select an audio input (and, optionally, configure CAT) to start listening.</p>
           )}

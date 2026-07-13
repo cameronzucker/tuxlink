@@ -703,13 +703,17 @@ impl Ft8ListenerState {
                 // Resume re-enters via on_resume (yielded → starting; k
                 // reset; sweep re-arm).
                 ServiceAxis::Yielded => g.machine.on_resume(),
-                // Blocked re-entry (set_device retrigger, device-absent
-                // retry) MUST go through on_start_requested — T6 permits
-                // Blocked→Starting (+ sweep re-arm) there, while on_resume
-                // is a no-op outside Yielded. Without this, the sequence
-                // runs on a STALE blocked axis and a mid-sequence pause
-                // (step 6 busy) is silently swallowed (on_pause from
-                // blocked leaves the axis untouched).
+                // Blocked re-entry (the operator's explicit Start CTA click
+                // — device-absent retry, or Start after a persist-only
+                // device pick; `ft8_set_device` itself no longer calls
+                // `start()`, per the 2026-07-12 QA wave 2 "Use this device
+                // selects, only the Start CTA starts" decision) MUST go
+                // through on_start_requested — T6 permits Blocked→Starting
+                // (+ sweep re-arm) there, while on_resume is a no-op outside
+                // Yielded. Without this, the sequence runs on a STALE
+                // blocked axis and a mid-sequence pause (step 6 busy) is
+                // silently swallowed (on_pause from blocked leaves the axis
+                // untouched).
                 ServiceAxis::Blocked(r) if r != BlockedReason::CaptureWedged => {
                     let _ = g.machine.on_start_requested();
                 }
@@ -2896,13 +2900,15 @@ mod tests {
     }
 
     /// Blocked re-entry with a BUSY card lands `Yielded`, never a stale
-    /// blocked axis (the set_device-from-blocked path): the sequence entry
-    /// re-enters Starting from every non-wedged blocked reason
-    /// (on_start_requested — T11 entry match), so step 6's pause writes
-    /// Yielded; on_pause from Blocked would have been silently swallowed.
-    /// tick_yielded then recovers once the card frees.
+    /// blocked axis (the operator's explicit Start-CTA-from-blocked path —
+    /// `ft8_set_device` itself is persist-only and never calls `start()`,
+    /// per the 2026-07-12 QA wave 2 decision): the sequence entry re-enters
+    /// Starting from every non-wedged blocked reason (on_start_requested —
+    /// T11 entry match), so step 6's pause writes Yielded; on_pause from
+    /// Blocked would have been silently swallowed. tick_yielded then
+    /// recovers once the card frees.
     #[test]
-    fn set_device_from_blocked_with_busy_card_lands_yielded_then_recovers() {
+    fn start_from_blocked_with_busy_card_lands_yielded_then_recovers() {
         let p = FakePlatform::happy();
         *p.resolved.lock().unwrap() = None;
         let state = test_state(p.clone(), cfg_with_device());
@@ -2917,7 +2923,9 @@ mod tests {
                 card_index: 1,
             });
         *p.busy.lock().unwrap() = Err("card busy".into());
-        state.execute_start_sequence(false); // the set_device retrigger path
+        // The operator's Start CTA re-entering from Blocked (a device pick
+        // no longer auto-retriggers this).
+        state.execute_start_sequence(false);
         assert_eq!(
             state.axis(),
             ServiceAxis::Yielded,

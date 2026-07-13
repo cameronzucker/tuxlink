@@ -123,7 +123,7 @@ export function WwvOffairControl() {
     <>
       <button
         type="button"
-        className="station-finder__refresh-offair"
+        className="station-finder__refresh station-finder__refresh-offair"
         disabled={capturing || armed}
         onClick={() => arm(Date.now())}
       >
@@ -136,7 +136,7 @@ export function WwvOffairControl() {
           </span>
           <button
             type="button"
-            className="station-finder__cancel-offair"
+            className="station-finder__refresh station-finder__cancel-offair"
             data-testid="wwv-offair-cancel"
             onClick={() => cancel()}
           >
@@ -151,7 +151,7 @@ export function WwvOffairControl() {
           </span>
           <button
             type="button"
-            className="station-finder__cancel-offair"
+            className="station-finder__refresh station-finder__cancel-offair"
             data-testid="wwv-offair-cancel"
             onClick={() => cancel()}
           >
@@ -181,7 +181,7 @@ export function WwvOffairControl() {
           {wavPath && (
             <button
               type="button"
-              className="station-finder__refresh-offair"
+              className="station-finder__refresh station-finder__refresh-offair"
               data-testid="wwv-offair-play"
               onClick={handlePlayClip}
             >
@@ -222,7 +222,7 @@ export function WwvOffairControl() {
               value={kInput}
               onChange={(event) => setKInput(event.target.value)}
             />
-            <button type="submit" className="station-finder__refresh-offair" data-testid="wwv-manual-save">
+            <button type="submit" className="station-finder__refresh station-finder__refresh-offair" data-testid="wwv-manual-save">
               Save
             </button>
           </form>

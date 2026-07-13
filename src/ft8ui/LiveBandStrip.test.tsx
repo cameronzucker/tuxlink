@@ -449,3 +449,31 @@ describe('LiveBandStrip — provenance chip', () => {
     expect(screen.getByTestId('ft8-strip-chip-band-provenance')).toHaveTextContent('CAT CONFIRMED');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Finding 4b: header "setup" affordance — the only way back to the setup
+// surface once the strip has moved past needs-setup into a live body state
+// (decoding / waiting-first-slot / band-dead / yielded).
+// ---------------------------------------------------------------------------
+
+describe('LiveBandStrip — header setup button', () => {
+  it('renders in a live-body state and fires onOpenFullSetup on click', () => {
+    const onOpen = vi.fn();
+    renderStrip({ uiState: makeUiState('decoding'), onOpenFullSetup: onOpen });
+    const btn = screen.getByTestId('ft8-strip-setup-btn');
+    expect(btn).toHaveTextContent('setup');
+    fireEvent.click(btn);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders in the off (non-live-body) state too', () => {
+    renderStrip({ uiState: makeUiState('off'), snapshot: makeSnapshot({ service: { axis: 'stopped' } }) });
+    expect(screen.getByTestId('ft8-strip-setup-btn')).toBeInTheDocument();
+  });
+
+  it('does NOT render while the strip is collapsed', () => {
+    renderStrip({ uiState: makeUiState('decoding') });
+    fireEvent.click(screen.getByTestId('ft8-strip-collapse')); // collapse it
+    expect(screen.queryByTestId('ft8-strip-setup-btn')).toBeNull();
+  });
+});

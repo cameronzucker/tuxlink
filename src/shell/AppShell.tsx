@@ -819,8 +819,16 @@ function AppShellInner() {
       try {
         await runAprsConnect();
       } catch {
-        // Backend truth: a failed start leaves the indicator Off; the reason is in
-        // the structured log (tuxlink-xyi7). Open the dock to retry via the strip.
+        // Backend truth: a failed start leaves the indicator Off; the reason is
+        // in the structured log (tuxlink-xyi7). Open the dock so the operator
+        // lands on the connect strip — failure visible, retry + radio picker in
+        // hand. This line was the WRITTEN INTENT of this catch since a1j3
+        // ("Open the dock to retry via the strip") but the body shipped EMPTY:
+        // with a configured-but-unreachable radio (UV-Pro off/out of range) the
+        // click burned a BT-timeout worth of seconds and then did nothing, and
+        // since the ribbon chip is the only discoverable APRS surface, tac
+        // chat/map were unreachable entirely (operator live-test 2026-07-12).
+        openAprsChat();
       }
     }
   }, [aprsToggling, aprsConnecting, aprs.listening, aprsLinkKind, runAprsConnect, onAprsDisconnect, openAprsChat]);

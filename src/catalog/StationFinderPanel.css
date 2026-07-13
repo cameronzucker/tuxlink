@@ -513,6 +513,11 @@
    bare/transparent chrome. ────────────────────────────────────────────── */
 .station-finder__layers {
   position: absolute;
+  /* Above Leaflet panes (200-700) AND its control container (1000) — same fix
+     the tac map's overlays carry. Without this the legend/pills paint at first
+     open (empty map) then VANISH the moment tiles/markers populate (operator
+     live-test 2026-07-12: "legend renders then immediately disappears"). */
+  z-index: 1100;
   right: 10px;
   top: 10px;
   z-index: 7;
@@ -578,6 +583,11 @@
 
 .station-finder__reachkey {
   position: absolute;
+  /* Above Leaflet panes (200-700) AND its control container (1000) — same fix
+     the tac map's overlays carry. Without this the legend/pills paint at first
+     open (empty map) then VANISH the moment tiles/markers populate (operator
+     live-test 2026-07-12: "legend renders then immediately disappears"). */
+  z-index: 1100;
   left: 10px;
   bottom: 10px;
   z-index: 7;
@@ -1137,4 +1147,18 @@
   color: var(--faint, #6f8aa3);
   font-size: 11px;
   white-space: nowrap;
+}
+
+/* Operator QA finding (2026-07-12): `.station-finder` clips overflow
+   (`overflow: hidden`, `max-height: 92vh`) and this forced Ft8SetupSurface
+   mount (device-lost's "pick another input" link, and the strip header's
+   "setup" affordance while listening/starting/yielded) sits at the very
+   bottom of the dialog, below the map/rail body and the strip — the tallest
+   stack of siblings. Without its own scroll, expanding rig control here
+   pushed the CTA below the dialog's clipped bottom edge with nothing to
+   scroll it back into view. Same `52vh`/`480px` budget as the strip's own
+   needs-setup body (LiveBandStrip.css `.si-strip__notice--setup`). */
+.station-finder__forced-setup {
+  overflow-y: auto;
+  max-height: min(52vh, 480px);
 }
