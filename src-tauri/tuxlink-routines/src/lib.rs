@@ -10,4 +10,6 @@
 //! - Prior-art engine terminology is banned from this codebase; the feature is Routines.
 
 pub mod error;
+pub mod refs;
 pub mod types;
+pub mod vars;
