@@ -5,6 +5,12 @@ shipped, bug-hunt cycles, adversarial reviews). Keyed by date + topic.
 
 ---
 
+## 2026-07-13 — v0.90.0 shipped; first-run tour + spatial hint system shipped (PR #1114); r788i arm/session UX designed
+
+- Merged #1089 (contacts consolidation) + #1090 (jt9 deflake) on green; released v0.90.0 (manual release-merge dispatch, operator-approved, after the cron was dropped by GitHub).
+- Shipped tuxlink-10bkw end-to-end in one session: office-hours spec (3 adversarial reviews), operator-approved renders, 8-task subagent-driven build, 6-finding fix wave (final review + Codex), wire-walk on operator flows (menu-anchor gap found and built in-branch), CI green, merged. Config schema v7.
+- Designed (code-gated) tuxlink-r788i one-click Connect / tri-state footer / scoped Disarm-Abort; spec + WebKitGTK mock pushed on bd-tuxlink-r788i/arm-session-ux awaiting operator approval.
+
 ## 2026-07-13 — QA round-3 shipped (#1086) + Contacts/Favorites/Heard consolidation (PR #1089)
 
 Agent crag-fox-savanna. All 8 operator QA-round-3 findings fixed and merged
