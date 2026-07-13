@@ -31,6 +31,38 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.91.0](https://github.com/cameronzucker/tuxlink/compare/v0.90.0...v0.91.0) (2026-07-13)
+
+
+### Features
+
+* **config:** config_set_onboarding setter + onboarding fields on ConfigViewDto ([8be9682](https://github.com/cameronzucker/tuxlink/commit/8be968295addc482c4546eaf842ee719c7eba059))
+* **config:** onboarding section, schema v7, upgrade-cohort tip sentinel (tuxlink-10bkw) ([169e9ae](https://github.com/cameronzucker/tuxlink/commit/169e9ae8eedbea8b82ecd12c3114f7860725e7b5))
+* **dev:** render-harness onboarding view — offer/tour/tip/point-at fixtures for WebKitGTK approval ([d3e3184](https://github.com/cameronzucker/tuxlink/commit/d3e3184b5357f27a576abf2998f3b0842408105f))
+* **mcp:** point_at tool — spotlight UI anchors from Elmer with honest ack semantics ([db8ee01](https://github.com/cameronzucker/tuxlink/commit/db8ee018e48350fa5c729925d0e7ea0221171bf3))
+* **onboarding:** HintProvider — offer/tour/single state machine, point-at ack, capture-phase key policy ([bedf802](https://github.com/cameronzucker/tuxlink/commit/bedf8029702b44ec38f65e3dfc776e52d8cf7f1b))
+* **onboarding:** menu chrome point-at anchors derived from MENU_TREE (wire-walk flow 2) ([2e13422](https://github.com/cameronzucker/tuxlink/commit/2e13422db839676ee73b53bbde563015f47f047e))
+* **onboarding:** registries + tip sentinel logic (5 stops, 4 tips) ([93a91c4](https://github.com/cameronzucker/tuxlink/commit/93a91c44e782eb3d886face9b852b984728a968d))
+* **onboarding:** spotlight overlay, offer card, anchors, probes, Replay-tour menu ([7ba7333](https://github.com/cameronzucker/tuxlink/commit/7ba7333960ea867cbef933ec3c4f012e27c450de))
+* **routines:** consent-closure validation — the Part 97 design-time layer ([4e43794](https://github.com/cameronzucker/tuxlink/commit/4e4379484d53b439fb947c8716e4bd41e1f60cca))
+* **routines:** contract + structure validation — 12 codes mirroring runtime ([0247e28](https://github.com/cameronzucker/tuxlink/commit/0247e28376a99d9a7d17cd094cf0fddc41c297c8))
+* **routines:** engine facade — run lifecycle, depth-real children, recovery ([371b637](https://github.com/cameronzucker/tuxlink/commit/371b637e0a8b250870b86fc7549ce9b394291f85))
+* **routines:** fleet check + dry-run over the shared fake-action path ([6df526c](https://github.com/cameronzucker/tuxlink/commit/6df526ca68c480858ef47d0f73aae24bdd8fdd8c))
+* **routines:** pure schedule math — epoch-anchored grid, fail-closed windows ([d3a8119](https://github.com/cameronzucker/tuxlink/commit/d3a8119a36e39685329396a44e5352d3d0af92a5))
+* **routines:** reference + capability validation checks ([612eae7](https://github.com/cameronzucker/tuxlink/commit/612eae7309f8c0068d7f99ed3ec0bfe0d7d9afe0))
+* **routines:** validation Finding vocabulary, context port, validate() skeleton ([fbc255a](https://github.com/cameronzucker/tuxlink/commit/fbc255a657946369cf75d511d3c36e7edc8e97e1))
+
+
+### Bug Fixes
+
+* **config:** add onboarding field to integration-test Config literals ([3b8b6f3](https://github.com/cameronzucker/tuxlink/commit/3b8b6f3e50b304d6e36f052a118e7ee7356a6e07))
+* **onboarding:** compose tip states that Compose opens its own window (spec copy requirement) ([71a6134](https://github.com/cameronzucker/tuxlink/commit/71a6134d89f95e2c2758a062ee3e1160f6b2d5f0))
+* **onboarding:** drop duplicated step readout (eyebrow carries it); offer copy to spec ([d178adc](https://github.com/cameronzucker/tuxlink/commit/d178adcbef1dae4a2318c56f7ef54e986afa8e59))
+* **onboarding:** final review + Codex fix wave — zero-rect fallback, keyboard seam, backdrop, tip eligibility, hydration gate ([2035763](https://github.com/cameronzucker/tuxlink/commit/20357636662f77016097b49f05aa4a9fea375ddc))
+* **onboarding:** overlay-busy ack wins over anchor-unmounted while offer/tour is active ([44bb3ee](https://github.com/cameronzucker/tuxlink/commit/44bb3ee143f3760058518a2d14ed07fc7122a42b))
+* **routines:** final-review hardening — runtime termination backstops ([263748a](https://github.com/cameronzucker/tuxlink/commit/263748a62b62cc9b63441b97bfe2e3542c381c96))
+* **search:** reconcile the docs index on CONTENT, not just slugs ([5cdf8ed](https://github.com/cameronzucker/tuxlink/commit/5cdf8ed1608c7eb2de89e7e2c83aefea9b473d0c))
+
 ## [0.90.0](https://github.com/cameronzucker/tuxlink/compare/v0.89.1...v0.90.0) (2026-07-13)
 
 
