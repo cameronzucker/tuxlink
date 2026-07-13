@@ -30,15 +30,32 @@
 //! `actions::radio`'s module doc for the transport-seam recon and the
 //! ARDOP/VARA gateway-frequency gap Task 5 must close.
 //!
-//! **Plan 2 Task 4b (this landing):** [`actions::cat`] — the CAT verb
+//! **Plan 2 Task 4b:** [`actions::cat`] — the CAT verb
 //! seam (`RigService`), and the five `rig.*` actions
 //! (`rig.read_state`/`rig.validate_preset`/`rig.apply_preset`/
 //! `rig.switch_vfo`/`rig.tune_atu`, spec §6). Two of the five
 //! (`rig.switch_vfo`, `rig.tune_atu`) have no real `tux_rig::Rig` verb to
 //! delegate to and return a verbatim, seam-naming unsupported error rather
 //! than a stub or a side-path fake — see `actions::cat`'s module doc for
-//! the full recon. Later plan-2 tasks extend `actions` with
-//! `data.rs`/`local.rs` and add the engine mount + Tauri command surface.
+//! the full recon.
+//!
+//! **Plan 2 Task 4c (this landing):** [`actions::data`] — the `DataService`
+//! seam and the four `data.*` actions (`data.spacewx_wwv`/
+//! `data.spacewx_swpc`/`data.stationlist_update`/`data.read`, spec §6).
+//! `data.spacewx_wwv` ports the frontend's WWV/WWVH `:18`/`:45` broadcast-
+//! window scheduling to Rust (the real backend capture call has no notion
+//! of the schedule) and sleeps to the window before capturing — a real,
+//! schedule-aware wait, not a half-wired immediate call. `data.read`'s
+//! `heard_stations` and `last_connected_gateway` sources have NO backend
+//! seam to delegate to (heard-station positions live only in frontend React
+//! state; the last-reached gateway is never persisted past a live session)
+//! and return a documented honest-gap error rather than fake data — see
+//! `actions::data`'s module doc for the full recon, including the exact
+//! `catalog::stations::Gateway.frequencies_khz` seam `data.stationlist_update`
+//! populates that Task 5's ARDOP/VARA gateway-frequency resolver (the gap
+//! `actions::radio`'s module doc names) will eventually read. Later plan-2
+//! tasks extend `actions` with `local.rs` and add the engine mount + Tauri
+//! command surface.
 //!
 //! That other, banned six-syllable term for scripted automation never
 //! appears in this module's symbols, JSON keys, or docs (spec Global

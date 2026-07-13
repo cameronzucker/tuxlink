@@ -4,16 +4,18 @@
 //! (the constructor bag `build_registry` consumes), and the shared
 //! envelope-parsing helpers every radio action in `radio.rs` uses. Plan
 //! Task 4b adds the CAT verb seam (`RigService`) and registers the five
-//! `rig.*` actions from `cat.rs`. `data.rs`/`local.rs` (plan Tasks 4c/4d)
-//! extend [`ActionDeps`] with their own service trait objects and
-//! [`build_registry`] with their own `registry.register(...)` calls — see
-//! the marked extension points below. Adding those modules does not change
-//! anything in this file except those two marked spots.
+//! `rig.*` actions from `cat.rs`. Plan Task 4c adds the `DataService` seam
+//! and registers the four `data.*` actions from `data.rs`. `local.rs` (plan
+//! Task 4d) extends [`ActionDeps`] with its own service trait object and
+//! [`build_registry`] with its own `registry.register(...)` calls — see the
+//! marked extension point below. Adding that module does not change
+//! anything in this file except that one marked spot.
 //!
 //! Plan: `docs/superpowers/plans/2026-07-13-routines-02-actions-arbiter-mount.md`
 //! Task 4. Spec: `docs/superpowers/specs/2026-07-13-routines-design.md` §6.
 
 pub mod cat;
+pub mod data;
 pub mod radio;
 
 use std::sync::Arc;
@@ -142,22 +144,123 @@ pub trait RigService: Send + Sync {
     async fn apply(&self, freq_hz: u64, mode: String) -> Result<(), String>;
 }
 
+/// Outcome of `data.spacewx_wwv`'s underlying capture-decode call — mirrors
+/// `wwv_offair::commands::WwvRefreshOutcome` field-for-field. A NEW,
+/// decoupled type (not a re-export of the `wwv_offair` command DTO) so this
+/// action's tests never need to import `wwv_offair`'s own module — the same
+/// "narrow port, mirrored DTO" pattern [`RigStateDto`] established for
+/// cat.rs. `indices` reuses [`crate::propagation::solar::SolarIndices`]
+/// directly: that is a plain, `Copy`, domain-value struct (sfi/a_index/
+/// k_index) with no UI/command-specific shape to decouple from — the same
+/// reasoning [`ConnectOutcome::gateway`] applies to reusing a bare `String`.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WwvCaptureOutcome {
+    pub updated: bool,
+    pub indices: Option<crate::propagation::solar::SolarIndices>,
+    pub source: String,
+    pub no_copy: bool,
+    /// Set only on `no_copy` — the kept clip's path (see `wwv_offair`'s own
+    /// `WwvRefreshOutcome` doc). `None` on a confident ingest.
+    pub wav_path: Option<String>,
+}
+
+/// Outcome of `data.spacewx_swpc`'s underlying online fetch — mirrors
+/// `propagation::solar_update::UpdateOutcome`'s two fields the action cares
+/// about (`source` is always `"swpc"` for this action, so it is not
+/// duplicated here; the action's own output JSON states the action name).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwpcOutcome {
+    pub forecast_updated: bool,
+    pub indices: Option<crate::propagation::solar::SolarIndices>,
+}
+
+/// Outcome of `data.stationlist_update`'s underlying catalog refresh.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StationlistOutcome {
+    /// Total gateways across every fetched mode's listing (`catalog_fetch_stations`'s
+    /// per-mode `StationListing.gateways`, summed).
+    pub station_count: usize,
+    /// Human-readable labels of the modes actually fetched (e.g. `["VARA HF",
+    /// "Packet"]`) — echoed for the routine author/journal, not load-bearing.
+    pub modes: Vec<String>,
+}
+
+/// Outcome of `data.read` with `source: "inbox_summary"`.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InboxSummaryDto {
+    pub total: usize,
+    pub unread: usize,
+}
+
+/// The `data.*` action family's delegation seam (spec §6 "Update space
+/// weather from WWV" (radio-actions table), "Internet actions", and "Read
+/// data" (local-actions table); plan Task 4c). One trait, not four — `data.rs`
+/// registers four distinct `Action` impls that all delegate through this
+/// single narrow port, mirroring the extension-point shape this module's doc
+/// comment already sketched (`pub data: Arc<dyn DataService>`).
+///
+/// **`wwv_capture` does NOT itself do the :18/:45 schedule wait.** It mirrors
+/// `wwv_offair::commands::wwv_offair_refresh(now_ms)` exactly: capture
+/// IMMEDIATELY when called (that command has no notion of the broadcast
+/// schedule — see its own module doc). The schedule-aware wait is
+/// `data.rs`'s `SpaceWxWwv::execute` own logic (a Rust port of
+/// `src/wwv/window.ts`'s `nextCapture`), which sleeps until the window
+/// THEN calls this method — keeping the trait itself a thin, honest mirror
+/// of the one real backend call, exactly like every other Monolith* seam in
+/// this module.
+#[async_trait]
+pub trait DataService: Send + Sync {
+    /// `data.spacewx_wwv`'s real capture-decode call.
+    async fn wwv_capture(&self, now_ms: u64) -> Result<WwvCaptureOutcome, String>;
+
+    /// `data.spacewx_swpc`'s real online SWPC fetch.
+    async fn swpc_refresh(&self) -> Result<SwpcOutcome, String>;
+
+    /// `data.stationlist_update`'s real Winlink gateway status API refresh.
+    /// `modes` is never empty by the time this is called (the action resolves
+    /// an absent/empty param to every `ListingMode`).
+    async fn stationlist_refresh(
+        &self,
+        modes: Vec<crate::catalog::stations::ListingMode>,
+        history_hours: u32,
+    ) -> Result<StationlistOutcome, String>;
+
+    /// `data.read` with `source: "inbox_summary"`.
+    async fn read_inbox_summary(&self) -> Result<InboxSummaryDto, String>;
+
+    /// `data.read` with `source: "space_weather"` — the currently persisted
+    /// snapshot (`None` when nothing has ever updated it), NOT a fresh fetch.
+    async fn read_space_weather(
+        &self,
+    ) -> Result<Option<crate::propagation::solar_update::SolarSnapshot>, String>;
+
+    /// `data.read` with `source: "grid"` — the same effective LOCAL DISPLAY
+    /// locator the status-bar ribbon shows (`position_status`'s `ui_grid`,
+    /// per `feedback_location_grid_source`: grid comes from live
+    /// `position_status`, NOT `config_read`). `None` when no grid is
+    /// available (empty `ui_grid`).
+    async fn read_grid(&self) -> Result<Option<String>, String>;
+}
+
 // ============================================================================
 // Registry construction
 // ============================================================================
 
 /// Constructor bag [`build_registry`] consumes. `arbiter` is shared by every
-/// `needs_radio` action (radio.rs, cat.rs). The three radio.rs service seams
-/// (`connect`/`aprs`/`listen`) plus cat.rs's `rig` are wired here; Tasks
-/// 4c/4d add their OWN `Arc<dyn ...Service>` fields — additive only, so
-/// existing `ActionDeps { arbiter, connect, aprs, listen, rig }`
-/// construction call sites (Task 5's session mount, this module's own tests)
-/// keep compiling as later tasks land. Suggested shape for the extension (do
-/// not add these fields until the corresponding task actually lands — an
-/// unused trait object field would be dead weight the registry never
-/// registers):
+/// `needs_radio` action (radio.rs, cat.rs, data.rs's `data.spacewx_wwv`). The
+/// three radio.rs service seams (`connect`/`aprs`/`listen`) plus cat.rs's
+/// `rig` and data.rs's `data` are wired here; Task 4d adds its OWN
+/// `Arc<dyn LocalService>` field — additive only, so existing `ActionDeps {
+/// arbiter, connect, aprs, listen, rig, data }` construction call sites
+/// (Task 5's session mount, this module's own tests) keep compiling as that
+/// task lands. Suggested shape for the extension (do not add this field
+/// until Task 4d actually lands — an unused trait object field would be dead
+/// weight the registry never registers):
 ///
-/// - Task 4c (`data.rs`): `pub data: Arc<dyn DataService>,`
 /// - Task 4d (`local.rs`): `pub local: Arc<dyn LocalService>,`
 pub struct ActionDeps {
     pub arbiter: Arc<RadioArbiter>,
@@ -165,10 +268,11 @@ pub struct ActionDeps {
     pub aprs: Arc<dyn AprsService>,
     pub listen: Arc<dyn ListenService>,
     pub rig: Arc<dyn RigService>,
+    pub data: Arc<dyn DataService>,
 }
 
-/// Builds the action registry. Tasks 4a/4b register the radio.rs and cat.rs
-/// actions; Tasks 4c/4d extend this function with their own
+/// Builds the action registry. Tasks 4a/4b/4c register the radio.rs, cat.rs,
+/// and data.rs actions; Task 4d extends this function with its own
 /// `registry.register(Arc::new(...))` calls, following the exact pattern
 /// below — a `struct X { arbiter: Arc<RadioArbiter>, service: Arc<dyn
 /// YService> }` implementing `tuxlink_routines::action::Action`.
@@ -204,8 +308,16 @@ pub fn build_registry(deps: ActionDeps) -> ActionRegistry {
     registry.register(Arc::new(cat::RigSwitchVfo::new(deps.arbiter.clone())));
     registry.register(Arc::new(cat::RigTuneAtu::new(deps.arbiter.clone())));
 
-    // ---- Extension point (Task 4c/4d) -----------------------------------
-    // registry.register(Arc::new(data::SpaceWxWwv::new(...)));
+    registry.register(Arc::new(data::SpaceWxWwv::new(
+        deps.arbiter.clone(),
+        deps.data.clone(),
+        data::system_now_ms,
+    )));
+    registry.register(Arc::new(data::SpaceWxSwpc::new(deps.data.clone())));
+    registry.register(Arc::new(data::StationlistUpdate::new(deps.data.clone())));
+    registry.register(Arc::new(data::DataRead::new(deps.data.clone())));
+
+    // ---- Extension point (Task 4d) --------------------------------------
     // registry.register(Arc::new(local::ComposeMessage::new(...)));
     // -----------------------------------------------------------------------
 
