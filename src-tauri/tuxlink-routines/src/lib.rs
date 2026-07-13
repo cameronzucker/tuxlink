@@ -20,4 +20,5 @@ pub mod refs;
 pub mod scheduler;
 pub mod snapshot;
 pub mod types;
+pub mod validate;
 pub mod vars;
