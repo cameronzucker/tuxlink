@@ -100,3 +100,18 @@ Needs an operator-approved design + renders before any code.
 - Codex adrev on substantive diffs; record REJECTED findings with rationale.
 - The main checkout is operator state; this session read main via `git show`
   and worked entirely in the worktree.
+
+## Addendum — v0.90.0 release-PR CI failure (investigated + fixed, PR #1090)
+
+The release PR (#1088) failed `verify (amd64)` on
+`tuxlink-jt9::discover::tests::override_wins_and_version_comes_from_sibling`
+("WSJT-X 2.7.0" expected, UNKNOWN fallback got). Pre-existing flake, NOT
+release content: `probe_version` treats any spawn error as the UNKNOWN
+fallback, and multi-threaded cargo test's fork→exec window intermittently
+yields ETXTBSY on the just-installed fake script. Fix (PR #1090, branch
+`bd-tuxlink-qxyim/jt9-probe-deflake`, bd tuxlink-qxyim): bounded ETXTBSY
+retry inside the existing 2 s PROBE_DEADLINE (raw errno 26 — the ErrorKind
+postdates the 1.75 MSRV). Verified locally on the leaf crate: 24/24 tests +
+clippy clean. The failed #1088 job was RE-RUN (in progress at handoff) —
+merge #1090 on green regardless, so the flake stops recurring; #1088 goes
+green on the rerun or, failing that, after #1090 lands and it re-triggers.
