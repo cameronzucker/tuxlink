@@ -10,11 +10,20 @@
 //! [`presets::RadioPresetStore`] (the Radio Preset entity CRUD,
 //! `radio-presets.json` beside `config.json`).
 //!
-//! **Plan 2 Task 2 (this landing):** [`arbiter::RadioArbiter`] — the
-//! single-owner lease over a rig, shared between the operator's interactive
-//! sessions and routine-run steps (spec §9). Later plan-2 tasks in this
-//! module add the entity resolver, the real action catalog, the engine
-//! mount, and the Tauri command surface.
+//! **Plan 2 Task 2:** [`arbiter::RadioArbiter`] — the single-owner lease
+//! over a rig, shared between the operator's interactive sessions and
+//! routine-run steps (spec §9).
+//!
+//! **Plan 2 Task 3 (this landing):** [`resolver::MonolithEntityResolver`]
+//! — the production `EntityResolver` that resolves `@preset:`/
+//! `@station-set:`/`@identity:`/`@template:` reference tokens against the
+//! real Tauri-side stores (see `resolver.rs`'s module doc for the
+//! per-kind service-seam recon). [`station_sets::StationSetStore`] is a
+//! new small store this task added — no named station-set/group concept
+//! existed anywhere else in the codebase (see `resolver.rs` and
+//! `station_sets.rs` module docs). Later plan-2 tasks in this module add
+//! the real action catalog, the engine mount, and the Tauri command
+//! surface.
 //!
 //! That other, banned six-syllable term for scripted automation never
 //! appears in this module's symbols, JSON keys, or docs (spec Global
@@ -22,10 +31,14 @@
 
 pub mod arbiter;
 pub mod presets;
+pub mod resolver;
+pub mod station_sets;
 pub mod store;
 
 pub use arbiter::{ArbiterError, Holder, HolderInfo, RadioArbiter, RadioLease};
 pub use presets::{PresetError, RadioPreset, RadioPresetStore};
+pub use resolver::MonolithEntityResolver;
+pub use station_sets::{StationSet, StationSetError, StationSetStore};
 pub use store::{DefinitionStore, RoutineSummary, StoreError};
 
 use std::io::Write;
