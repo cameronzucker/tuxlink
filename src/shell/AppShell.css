@@ -1033,10 +1033,30 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  gap: 8px;
   padding: 4px 12px;
   border-bottom: 1px solid var(--border-soft);
   background: var(--surface);
   flex: 0 0 auto;
+}
+
+/* tuxlink-10bkw Task 6: the mailbox toolbar's Compose affordance — reuses
+ * File → New Message's compose_window_open action; also the anchor + first-
+ * open tip host for hintRegistry's 'compose' entry. */
+.layout-b .rows-pane-compose-btn {
+  appearance: none;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  border-radius: var(--radius-control);
+  padding: 3px 10px;
+  font-size: var(--type-control, 12px);
+  cursor: pointer;
+  order: -1;
+  margin-right: auto;
+}
+.layout-b .rows-pane-compose-btn:hover {
+  background: var(--elevated);
 }
 
 /* Icon-only trigger. Inherits currentColor so the inline SVG matches the

@@ -820,6 +820,7 @@ mod tests {
             close_to_tray: true,
             close_prompt_seen: false,
             active_connection: None,
+            onboarding: Some(crate::config::OnboardingConfig::default()),
         }
     }
 

@@ -1149,6 +1149,25 @@ impl TuxlinkMcp {
         Ok(CallToolResult::success(vec![ContentBlock::json(mid)?]))
     }
 
+    #[tool(
+        name = "point_at",
+        description = "Spotlight a UI element in the main window so the operator can see where it is. Never clicks, navigates, or transmits — display only. Errors list valid anchor IDs when the ID is unknown."
+    )]
+    pub async fn point_at(
+        &self,
+        params: Parameters<PointAtParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(PointAtParams { anchor_id }) = params;
+        self.state
+            .ui_hint
+            .point_at(&anchor_id)
+            .await
+            .map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(
+            serde_json::json!({ "outcome": "shown", "anchor_id": anchor_id }),
+        )?]))
+    }
+
     // ----- FT-8 listener (receive-only; no taint, no gate) -----
     //
     // The FT-8 listener never keys the transmitter, so none of these six tools
@@ -1499,6 +1518,15 @@ pub struct GribRequestParams {
     pub mode: String,
     /// Subject line for the staged request message.
     pub subject: String,
+}
+
+/// `{ "anchor_id": "ribbon-connect" }` — input for `point_at`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct PointAtParams {
+    /// Anchor ID from the onboarding registries (e.g. "ribbon-connect",
+    /// "mailbox", "contacts", "radio-dock", "elmer"). Unknown IDs error with
+    /// the valid list.
+    pub anchor_id: String,
 }
 
 /// Input for `find_stations`. All fields optional/defaultable: empty `modes` /

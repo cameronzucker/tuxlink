@@ -1,8 +1,12 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
 import { AprsChatPanel, formatTime, parseCompose } from './AprsChatPanel';
 import type { ChannelMessage } from './aprsTypes';
+// tuxlink-10bkw Task 6: the panel calls useFirstOpenTip('aprs'), which throws
+// outside a <HintProvider> ancestor.
+import { HintProvider } from '../onboarding/HintProvider';
 
 const noMessages: ChannelMessage[] = [];
 const send = vi.fn().mockResolvedValue('A1');
@@ -11,13 +15,15 @@ const setConfig = vi.fn().mockResolvedValue(undefined);
 
 function renderPanel(over: Partial<Parameters<typeof AprsChatPanel>[0]> = {}) {
   return render(
-    <AprsChatPanel
-      messages={noMessages}
-      send={send}
-      getConfig={getConfig}
-      setConfig={setConfig}
-      {...over}
-    />,
+    <HintProvider>
+      <AprsChatPanel
+        messages={noMessages}
+        send={send}
+        getConfig={getConfig}
+        setConfig={setConfig}
+        {...over}
+      />
+    </HintProvider>,
   );
 }
 

@@ -29,7 +29,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 // `WinlinkBackend` trait must be in scope to call its methods
 // (`list_messages`, `read_message_in`, …) on the `Arc<dyn WinlinkBackend>`
@@ -49,8 +49,9 @@ use tuxlink_mcp_core::ports::{
     RigStatusDto, RunningModemDto, SearchPort, SearchQueryDto, SearchResultsDto,
     SelectedConnectionDto, SendFormDto, SerialDeviceDto, SessionIntentDto, SolarSnapshotDto,
     StagedRecordDto, StationFilterDto, StationListDto, StationModeDto, StationPort, StatusPort,
-    VaraCheckpointDto, VaraConfigDto, VaraEngineDto, VaraInstallStatusDto, VaraInstallSummaryDto,
-    VaraProbeDto, VaraStatusDto, VaraWriteDto, WritePort, WritePortError, WwvCaptureDto, WwvPort,
+    UiHintPort, VaraCheckpointDto, VaraConfigDto, VaraEngineDto, VaraInstallStatusDto,
+    VaraInstallSummaryDto, VaraProbeDto, VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
+    WwvCaptureDto, WwvPort,
 };
 use tuxlink_mcp_core::validate::{
     validate_address, validate_attachment_dest, validate_body, validate_drive_level,
@@ -3022,6 +3023,74 @@ impl ProvisionPort for MonolithProvisionPort {
             prefix: summary.prefix,
             vara_version: summary.vara_version,
         })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// UI spatial-help port (tuxlink-10bkw) — point_at.
+// ---------------------------------------------------------------------------
+
+/// [`UiHintPort`] adapter. Emits [`crate::onboarding_bridge::POINT_AT_EVENT`]
+/// to the main webview and awaits the frontend's ack via the shared
+/// [`crate::onboarding_bridge::PointAtPending`] keyed-oneshot map, bounded by
+/// [`crate::onboarding_bridge::ACK_TIMEOUT`]. Never gates through the egress
+/// guard — spotlighting a UI element is display-only, not a transmission.
+pub struct MonolithUiHintPort {
+    app: AppHandle,
+}
+
+impl MonolithUiHintPort {
+    pub fn new(app: AppHandle) -> Self {
+        Self { app }
+    }
+}
+
+#[async_trait]
+impl UiHintPort for MonolithUiHintPort {
+    async fn point_at(&self, anchor_id: &str) -> Result<(), PortError> {
+        let pending = self
+            .app
+            .state::<std::sync::Arc<crate::onboarding_bridge::PointAtPending>>();
+        let (id, rx) = pending.register();
+        let req = crate::onboarding_bridge::PointAtRequest {
+            request_id: id,
+            anchor_id: anchor_id.to_string(),
+        };
+        if self
+            .app
+            .emit(crate::onboarding_bridge::POINT_AT_EVENT, &req)
+            .is_err()
+        {
+            pending.forget(id);
+            return Err(PortError::Internal("point-at emit failed".into()));
+        }
+        match tokio::time::timeout(crate::onboarding_bridge::ACK_TIMEOUT, rx).await {
+            Ok(Ok(ack)) if ack.outcome == "shown" => Ok(()),
+            Ok(Ok(ack)) => {
+                // These fields are frontend-registry-owned static strings
+                // (anchor ids + a fixed "how to open this" hint), never raw
+                // backend/protocol text, so `redact_err` does not apply here.
+                let mut msg = format!("point_at not shown: {}", ack.outcome);
+                if let Some(ids) = ack.valid_ids {
+                    msg.push_str(&format!("; valid anchor ids: {}", ids.join(", ")));
+                }
+                if let Some(h) = ack.open_hint {
+                    msg.push_str(&format!("; to make it visible: {h}"));
+                }
+                Err(PortError::Internal(msg))
+            }
+            Ok(Err(_)) | Err(_) => {
+                // Sender dropped (frontend never acked before this task's
+                // listener lands) or the timeout elapsed: either way the
+                // pending entry must be forgotten so a late ack after this
+                // point is a documented no-op (`PointAtPending::resolve`
+                // returns `false`) instead of resolving a stale receiver.
+                pending.forget(id);
+                Err(PortError::Internal(
+                    "point_at timed out — main window did not confirm the hint (window closed/minimized, or overlay unresponsive)".into(),
+                ))
+            }
+        }
     }
 }
 

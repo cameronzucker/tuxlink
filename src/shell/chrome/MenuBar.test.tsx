@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MenuBar } from './MenuBar';
+import { menuAnchorId } from '../../onboarding/menuAnchors';
 
 const CHROME_CSS_MODULES = import.meta.glob('./chrome.css', {
   eager: true,
@@ -104,6 +105,29 @@ describe('MenuBar', () => {
     render(<MenuBar onAction={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Message' }));
     expect(screen.queryByRole('button', { name: /Print/ })).not.toBeInTheDocument();
+  });
+
+  // tuxlink-10bkw Task 9: Elmer's point_at tool highlights menu chrome — the
+  // top-level button and, once opened, the items inside it — via
+  // data-tour-anchor stamped from menuAnchors.ts (menuAnchorId for the
+  // top-level button, the item's own MenuActionId verbatim for leaves).
+  it('stamps data-tour-anchor on the top-level Tools button and its open menu items', () => {
+    render(<MenuBar onAction={vi.fn()} />);
+    const toolsButton = screen.getByRole('button', { name: 'Tools' });
+    expect(toolsButton).toHaveAttribute('data-tour-anchor', menuAnchorId('Tools'));
+
+    // The item-level anchor only exists in the DOM once the menu is open.
+    expect(screen.queryByRole('button', { name: /Settings/ })).not.toBeInTheDocument();
+    fireEvent.click(toolsButton);
+    const settings = screen.getByRole('button', { name: /Settings/ });
+    expect(settings).toHaveAttribute('data-tour-anchor', 'menu:tools:settings');
+  });
+
+  it('stamps data-tour-anchor on a nested submenu leaf (View → Color scheme → Night)', () => {
+    render(<MenuBar onAction={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'View' }));
+    const night = screen.getByRole('button', { name: /Night . tactical/ });
+    expect(night).toHaveAttribute('data-tour-anchor', 'menu:view:scheme:night-red');
   });
 
   it('keeps top-app dropdown layers above message-list scroll content', () => {

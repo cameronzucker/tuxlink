@@ -276,6 +276,22 @@ function selectConnection(sessTestId: string, protoTestId: string) {
   fireEvent.click(screen.getByTestId(protoTestId));
 }
 
+// jsdom has no layout engine — every element's getBoundingClientRect() is
+// all-zero by default, which fixwave finding #1 (HintOverlay/HintProvider)
+// now treats the same as "anchor not found" (the confirmed live case is
+// RadioDrawer's `display:contents` root; a normal ribbon button like
+// `connect-button` has a REAL non-zero box in production). Stub a realistic
+// rect so tour/tip tests that spotlight a normal (non-display:contents)
+// element see what a real browser would report.
+function stubAnchorRect(testId: string): void {
+  const el = screen.getByTestId(testId);
+  el.getBoundingClientRect = () =>
+    ({
+      top: 100, left: 50, width: 120, height: 40, bottom: 140, right: 170, x: 50, y: 100,
+      toJSON() { return this; },
+    }) as DOMRect;
+}
+
 describe('<AppShell> — Mock B topology', () => {
   beforeEach(() => {
     globalThis.localStorage?.clear?.();
@@ -422,6 +438,99 @@ describe('<AppShell> — Mock B topology', () => {
     expect(screen.queryByTestId('status-bar')).toBeNull();
     clickMenu('View', /Toggle Mailbox Bar/);
     expect(screen.getByTestId('status-bar')).toBeInTheDocument();
+  });
+
+  // tuxlink-10bkw Task 6: Help → Replay tour restarts the 5-stop guided tour
+  // through the REAL production shell — the wire-walk gate for the menu path
+  // (menuModel + dispatchMenuAction are unit-tested elsewhere; this proves the
+  // click actually reaches HintProvider.startTour() and paints the overlay).
+  it('Help → Replay tour opens the guided tour, spotlighting the Connect button first', async () => {
+    renderShell();
+    expect(screen.queryByTestId('hint-overlay-popover')).toBeNull();
+    // Fixwave finding #1: jsdom's default all-zero rect now reads as
+    // anchor-missing. connect-button is a normal ribbon button in
+    // production (unlike RadioDrawer's display:contents root), so it has a
+    // real layout box — stub one so the spotlight (not the center fallback)
+    // engages here, matching real-browser behavior.
+    stubAnchorRect('connect-button');
+
+    clickMenu('Help', /Replay tour/);
+
+    await waitFor(() => expect(screen.getByTestId('hint-overlay-popover')).toBeInTheDocument());
+    expect(screen.getByTestId('hint-overlay-live')).toHaveTextContent('Step 1 of 5: Connect');
+    expect(screen.getAllByTestId('hint-overlay-panel')).toHaveLength(4);
+    expect(screen.getByTestId('hint-overlay-blocker')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('hint-overlay-skip'));
+    await waitFor(() => expect(screen.queryByTestId('hint-overlay-popover')).toBeNull());
+  });
+
+  // Reviewer proof-gap #2 (Task 6 review): jsdom has no requestIdleCallback,
+  // so the compose-tip deferral always took the setTimeout fallback in tests
+  // and the rIC branch was never exercised. Stub rIC and prove (a) the shell
+  // routes the deferral through it, (b) the tip stays deferred until the idle
+  // callback actually runs, and (c) running it surfaces the compose tip.
+  it('defers the compose first-open tip through requestIdleCallback when available', async () => {
+    const idleCbs: Array<() => void> = [];
+    const ric = vi.fn((cb: () => void) => {
+      idleCbs.push(cb);
+      return idleCbs.length;
+    });
+    const cic = vi.fn();
+    (window as unknown as { requestIdleCallback?: unknown }).requestIdleCallback = ric;
+    (window as unknown as { cancelIdleCallback?: unknown }).cancelIdleCallback = cic;
+    try {
+      renderShell();
+      // The deferral registered through the rIC branch (the radio-panel chunk
+      // preload also uses rIC, hence >= 1 rather than exactly 1)…
+      expect(ric).toHaveBeenCalled();
+      // …and the tip has NOT fired yet — deferred, not synchronous.
+      expect(screen.queryByTestId('hint-overlay-popover')).toBeNull();
+      // Fixwave finding #1: jsdom's default all-zero rect now reads as
+      // anchor-missing, and 'compose' has fallback:'skip' — without a
+      // realistic rect the tip would auto-abandon silently the instant it
+      // fires instead of showing. rows-pane-compose is a normal toolbar
+      // button in production, so stub a real layout box for it.
+      stubAnchorRect('rows-pane-compose');
+
+      // Run the captured idle callbacks: the compose tip surfaces.
+      act(() => {
+        idleCbs.splice(0).forEach((cb) => cb());
+      });
+      await waitFor(() => expect(screen.getByTestId('hint-overlay-popover')).toBeInTheDocument());
+      expect(screen.getByTestId('hint-overlay-live')).toHaveTextContent('Compose');
+
+      fireEvent.click(screen.getByTestId('hint-overlay-gotit'));
+      await waitFor(() => expect(screen.queryByTestId('hint-overlay-popover')).toBeNull());
+    } finally {
+      delete (window as unknown as { requestIdleCallback?: unknown }).requestIdleCallback;
+      delete (window as unknown as { cancelIdleCallback?: unknown }).cancelIdleCallback;
+    }
+  });
+
+  // Reviewer proof-gap #3 (Task 6 review): the direct regression test for the
+  // cold-start freeze this task introduced-then-fixed. Mechanism under test:
+  // HintProvider's capture-phase keydown policy swallows every key except
+  // Escape/Tab/Enter/Arrows while a tour or tip is active. Firing the compose
+  // first-open tip synchronously at AppShellInner mount therefore froze every
+  // keyboard accelerator from the first frame. The fix defers the tip request
+  // to idle (rIC / 500ms setTimeout fallback) — so BEFORE any timers or idle
+  // callbacks run, no overlay may be capturing and a shell accelerator must
+  // dispatch synchronously. (The two AppShell.radioPanel Ctrl+Shift+M tests
+  // caught this incidentally; this one names the mechanism on purpose.)
+  it('cold start: keyboard accelerators fire before idle — the compose tip must not capture keydown at mount', () => {
+    renderShell();
+    // No overlay is capturing at mount (the tip is deferred, not yet fired).
+    expect(screen.queryByTestId('hint-overlay-popover')).toBeNull();
+
+    // Ctrl+N (menu:message:new) dispatched synchronously, zero timer/idle
+    // advancement — this is the exact call that a mount-time tip would have
+    // preventDefault'ed + stopPropagation'ed away.
+    fireEvent.keyDown(window, { key: 'n', ctrlKey: true });
+    expect(invoke).toHaveBeenCalledWith(
+      'compose_window_open',
+      expect.objectContaining({ draftId: expect.any(String) }),
+    );
   });
 
   // tuxlink-lqw2: the Mailbox top menu was removed in the pre-Alpha declutter —

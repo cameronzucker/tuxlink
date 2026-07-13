@@ -9,7 +9,7 @@
 //   ?grid=CN87uo      6-char grid (reproduces the gridToLatLon null gap)
 //   ?grid=            no grid ("Location not set")
 //   ?view=home|browse|grib|ribbon
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import '../../src/App.css';
@@ -58,6 +58,18 @@ import { Ft8SetupSurface } from '../../src/ft8ui/Ft8SetupSurface';
 import { Ft8ListenerProvider } from '../../src/ft8ui/useFt8Listener';
 import { StationFinderPanel } from '../../src/catalog/StationFinderPanel';
 import { ContactsPanel } from '../../src/contacts/ContactsPanel';
+// Onboarding first-run tour fixtures (tuxlink-10bkw Task 7): the REAL
+// HintProvider/HintOverlay/OfferCard mounted over a fake-but-realistic shell
+// anchor layout built from the REAL DashboardRibbon/FolderSidebar/MessageList
+// (each already carries the production `data-tour-anchor` the tour targets).
+import { HintProvider, useHints } from '../../src/onboarding/HintProvider';
+import type { HintContextValue } from '../../src/onboarding/HintProvider';
+import { HintOverlay } from '../../src/onboarding/HintOverlay';
+import { OfferCard } from '../../src/onboarding/OfferCard';
+import { FolderSidebar } from '../../src/mailbox/FolderSidebar';
+import { MessageList } from '../../src/mailbox/MessageList';
+import { MessageViewEmpty } from '../../src/mailbox/MessageViewEmpty';
+import { useViewport } from '../../src/shell/useViewport';
 import type {
   Ft8Snapshot,
   Ft8UiState,
@@ -67,6 +79,7 @@ import type {
 import type { RadioPanelMode } from '../../src/radio/types';
 import type { CatalogEntry } from '../../src/catalog/types';
 import type { StatusBarData } from '../../src/shell/useStatus';
+import type { MessageMeta } from '../../src/mailbox/types';
 
 const params = new URLSearchParams(location.search);
 const grid = params.has('grid') ? params.get('grid') : 'CN87';
@@ -74,7 +87,7 @@ const view = (params.get('view') ?? 'home') as
   | 'home' | 'browse' | 'grib' | 'ribbon'
   | 'radio-ardop' | 'radio-vara' | 'radio-telnet'
   | 'elmer' | 'sparkline' | 'ft8' | 'finder'
-  | 'contacts' | 'favorites';
+  | 'contacts' | 'favorites' | 'onboarding';
 // ?running=1 drives a connected modem / open VARA transport so the running-state
 // footers render: ARDOP/VARA `Send/Receive` (primary) + the red `Stop`
 // (`radio-panel-btn-bad`) button. Without it the fixture pins state to STOPPED, so
@@ -111,7 +124,21 @@ const RESPONSES: Record<string, unknown> = {
     // Telnet pane reads host + transport from config_read.
     host: 'cms.winlink.org',
     transport: 'CmsSsl',
+    // Onboarding first-run tour (tuxlink-10bkw Task 7, view=onboarding):
+    // HintProvider seeds from these two on mount. false/[] reproduces a
+    // fresh install — the offer card is the config-loaded default when the
+    // tour has never completed. Harmless extra fields for every other view.
+    onboarding_tour_completed: false,
+    onboarding_tips_seen: [] as string[],
   },
+  // HintProvider's whole-section persistence write (skipTour/declineOffer/
+  // dismissSingle) — resolves with no return value, matching the real
+  // Tauri command's `()` result.
+  config_set_onboarding: null,
+  // HintProvider's point-at ack (view=onboarding&state=pointat replays the
+  // real 'onboarding:point-at' event — see capturedEventHandlers below —
+  // which fires this on the 'shown' path).
+  onboarding_point_at_ack: null,
   catalog_list: CATALOG,
   catalog_send_inquiry: 'MID-TEST-0001',
   // Elmer model-access picker (tuxlink-wpqwy): onboarded=false → ElmerPane shows
@@ -205,10 +232,25 @@ const RESPONSES: Record<string, unknown> = {
   rig_list_models: [],
 };
 
+// Captured `listen()` registrations, keyed by event name (onboarding fixture,
+// view=onboarding&state=pointat). `transformCallback` below is the identity
+// function, so @tauri-apps/api/event's listen() passes its OWN handler
+// closure straight through as invoke('plugin:event|listen', {handler}) —
+// see node_modules/@tauri-apps/api/event.js `listen()`. Capturing it here
+// lets a fixture synthesize the backend event a `listen()` call is waiting
+// on (e.g. HintProvider's 'onboarding:point-at') with no real Tauri event
+// bus. Harmless for every other view: they never look this map up.
+const capturedEventHandlers = new Map<string, (event: { payload: unknown }) => void>();
+
 // Tauri v2 routes invoke() through window.__TAURI_INTERNALS__.invoke(cmd, args).
 (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
-  invoke: (cmd: string) =>
+  invoke: (cmd: string, args?: Record<string, unknown>) =>
     new Promise((resolve, reject) => {
+      if (cmd === 'plugin:event|listen' && typeof args?.event === 'string' && typeof args.handler === 'function') {
+        capturedEventHandlers.set(args.event, args.handler as (event: { payload: unknown }) => void);
+        resolve(0);
+        return;
+      }
       if (cmd in RESPONSES) setTimeout(() => resolve(RESPONSES[cmd]), 0);
       else reject(new Error(`harness: no canned response for '${cmd}'`));
     }),
@@ -241,7 +283,14 @@ const VARA_MODE: RadioPanelMode = { kind: 'vara-hf', intent: 'cms' };
 // (rendered only while connecting) can be snapshotted for the token diff.
 const ribbonConnecting = params.get('connecting') === '1';
 
-document.documentElement.dataset.theme = params.get('theme') ?? '';
+// ?theme=light maps to the app's real light preset. The app never calls a
+// scheme "light" — colorScheme.ts's PresetScheme id is 'daylight' ("Daylight
+// (light)", mode:'light'); applyColorScheme() just does
+// `root.dataset.theme = scheme`, so stamping 'daylight' directly reproduces
+// exactly what Settings → Appearance does. Every other ?theme= value (e.g.
+// night-red, used by other views) passes through unchanged.
+const themeParam = params.get('theme');
+document.documentElement.dataset.theme = themeParam === 'light' ? 'daylight' : (themeParam ?? '');
 
 // Sparkline regression fixture (tuxlink-ivzut). Renders the real <Sparkline>
 // in both its shipped configurations so the token palette can be snapshot-
@@ -707,6 +756,226 @@ function FavoritesFixtureView() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// view=onboarding — the REAL HintProvider + HintOverlay + OfferCard mounted
+// over a fake-but-realistic shell anchor layout (tuxlink-10bkw Task 7). Every
+// anchor except 'find-a-station' is the REAL production element (imported
+// from src/): DashboardRibbon carries `ribbon-connect` + `elmer`,
+// FolderSidebar carries `contacts`, MessageList carries `mailbox` + the new
+// `compose` toolbar button. 'find-a-station' has no persistent chrome in the
+// real app (its anchor is the whole StationFinderPanel, opened from a
+// message-menu action) — the harness-only stand-in below exists solely so
+// `?state=tip` has something to spotlight.
+//
+//   ?view=onboarding&state=offer     first-run offer card, bottom-right
+//   ?view=onboarding&state=stop1     tour step 1 — ribbon-connect spotlight
+//   ?view=onboarding&state=stop4     tour step 4 — radio-dock NOT mounted →
+//                                    the designed 'center' fallback card
+//   ?view=onboarding&state=tip       discretionary tip on find-a-station
+//   ?view=onboarding&state=pointat   backend point-at, single-hint mode, on
+//                                    ribbon-connect
+//   &theme=light                    the app's real 'daylight' preset
+//
+// The offer/tour/tip/point-at states are reached by driving the REAL
+// HintProvider state machine (startTour/advance/declineOffer/
+// requestFirstOpenTip) and — for point-at — replaying the REAL
+// 'onboarding:point-at' Tauri event through the captured `listen()` handler
+// (see capturedEventHandlers above), rather than reaching into HintProvider's
+// internals. Each driving call is separated by a macrotask (setTimeout) so
+// HintProvider's "latest ref" (stateRef, mutated once per render) has
+// actually observed the PRIOR dispatch before the next call reads it —
+// calling e.g. `advance()` three times synchronously would read the same
+// stale stepIndex three times instead of incrementing.
+// ---------------------------------------------------------------------------
+
+const ONBOARDING_MESSAGES: MessageMeta[] = [
+  {
+    id: 'ob-1',
+    subject: 'Net check-in reminder',
+    from: 'W7RMS',
+    to: ['N7CPZ'],
+    date: new Date(Date.now() - 3_600_000).toISOString(),
+    unread: true,
+    bodySize: 812,
+    hasAttachments: false,
+    preview: 'Reminder: Tuesday net at 1900Z on 7103.5.',
+  },
+  {
+    id: 'ob-2',
+    subject: 'RE: propagation outlook',
+    from: 'K7HTZ',
+    to: ['N7CPZ'],
+    date: new Date(Date.now() - 86_400_000).toISOString(),
+    unread: true,
+    bodySize: 2100,
+    hasAttachments: true,
+    preview: '3-day HF outlook attached — 20m looking good after 1400Z.',
+  },
+  {
+    id: 'ob-3',
+    subject: 'Welcome to the ARES net',
+    from: 'N0DAJ',
+    to: ['N7CPZ'],
+    date: new Date(Date.now() - 3 * 86_400_000).toISOString(),
+    unread: false,
+    bodySize: 640,
+    hasAttachments: false,
+    preview: 'Glad to have you aboard — see you Tuesday.',
+  },
+];
+
+/** Drives the real tour from stop 0 to `targetStepIndex`, one `advance()`
+ *  per macrotask (see file-header timing note). `targetStepIndex === 0`
+ *  (state=stop1) issues no advances — `startTour()` alone lands there. */
+function driveTourTo(hints: HintContextValue, targetStepIndex: number): void {
+  hints.startTour();
+  let remaining = targetStepIndex;
+  function step() {
+    if (remaining <= 0) return;
+    setTimeout(() => {
+      hints.advance();
+      remaining -= 1;
+      step();
+    }, 40);
+  }
+  step();
+}
+
+/** Imperatively drives HintProvider's real state machine to the fixture's
+ *  requested `?state=`, then renders nothing itself — HintOverlay/OfferCard
+ *  (siblings under the same HintProvider) render the result. */
+function OnboardingFixtureController({ state }: { state: string }) {
+  const hints = useHints();
+  const startedRef = useRef(false);
+  useEffect(() => {
+    if (startedRef.current) return;
+    // Waits for config_read to resolve — HintProvider's config-loaded action
+    // sets `active: {kind:'offer'}` (the canned onboarding_tour_completed is
+    // false, reproducing a fresh install). Before that resolves, active is
+    // the reducer's safe initial `null` and there is nothing to drive yet.
+    if (hints.active === null) return;
+    startedRef.current = true;
+    switch (state) {
+      case 'stop1':
+        driveTourTo(hints, 0);
+        break;
+      case 'stop4':
+        driveTourTo(hints, 3); // TOUR_STOPS[3] === 'radio-dock' (1-indexed stop 4)
+        break;
+      case 'tip':
+        hints.declineOffer(); // clears the offer so requestFirstOpenTip sees active===null
+        setTimeout(() => hints.requestFirstOpenTip('find-a-station'), 40);
+        break;
+      case 'pointat':
+        hints.declineOffer();
+        setTimeout(() => {
+          const handler = capturedEventHandlers.get('onboarding:point-at');
+          handler?.({ payload: { request_id: 1, anchor_id: 'ribbon-connect' } });
+        }, 40);
+        break;
+      default:
+        // 'offer' (or an unrecognized state): the offer card is already the
+        // config-loaded default — nothing further to drive.
+        break;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hints.active, state]);
+  return null;
+}
+
+/** The fake-but-realistic shell frame the tour anchors live in: ribbon strip
+ *  (Connect + Elmer), sidebar (Contacts row), mailbox rows-pane (+ Compose),
+ *  reading pane. All REAL components; `useViewport` drives `compact` exactly
+ *  as AppShell does, so a narrow render (1024×768) reflows the same way the
+ *  shipped shell would (subject to the FZ-M1 rail's own `any-pointer: coarse`
+ *  gate — a non-touch WebKitGTK render stays in desktop mode at any width,
+ *  same as every other harness view). */
+function OnboardingShell({ state }: { state: string }) {
+  const { isCompact } = useViewport();
+  return (
+    <div className="layout-b" style={{ height: '100vh' }}>
+      {/* `.layout-b`'s CSS is a fixed 5-row grid (titlebar/menubar/
+          ribbon-with-search/panes/statusbar — see AppShell.css). This
+          fixture mounts only 2 of those 5 rows (no titlebar/menubar/
+          statusbar chrome), and neither `.ribbon-with-search` nor `.panes`
+          carries an explicit `grid-row` in AppShell.css — production relies
+          on ALL FIVE siblings being present so DOM-order auto-placement
+          lands them correctly. Pin the rows explicitly so `.panes` actually
+          gets the 1fr track (full remaining height) instead of collapsing
+          to an `auto` (content-height) track vacated by the missing
+          titlebar/menubar rows. */}
+      {/* No `.ribbon-with-search`/`.search-zone` wrapper here (contrast
+          view=ribbon above): that wrapper's `.search-zone` reserves a
+          560px-shrinking-to-240px flex basis, which starves `.dashboard`'s
+          own `overflow:hidden` row once its content — even this fixture's
+          minimal Callsign/Grid/clock/Connection/Elmer/Connect set — plus
+          the reserved search width exceeds 1366px, clipping the
+          right-pinned Connect button (`margin-left:auto`) off-canvas. This
+          fixture has no SearchBar to reproduce and no long GPS-fallback/
+          packet text to guard against (see the 'ribbon' view's own comment
+          on THAT overlap risk) — mounting `.dashboard` bare gives it the
+          full row width, which is what the flagship ribbon-connect spotlight
+          renders need. */}
+      <div style={{ gridRow: 3 }}>
+        <DashboardRibbon
+          data={ribbonData}
+          onConnect={() => undefined}
+          connecting={false}
+          onOpenElmer={() => undefined}
+          elmerOpen={false}
+        />
+      </div>
+      <div className="panes" style={{ gridRow: 4 }}>
+        <FolderSidebar
+          compact={isCompact}
+          selectedFolder="inbox"
+          onSelectFolder={() => undefined}
+          counts={{ inbox: 2 }}
+          contactsCount={6}
+          favoritesCount={4}
+        />
+        <MessageList
+          folder="inbox"
+          messages={ONBOARDING_MESSAGES}
+          selectedId={null}
+          onSelect={() => undefined}
+          onCompose={() => undefined}
+        />
+        <MessageViewEmpty />
+      </div>
+      {/* Harness-only stand-in (?state=tip only): the real 'find-a-station'
+          anchor is the whole StationFinderPanel, opened via a message-menu
+          action rather than persistent chrome, so there is nothing
+          lightweight to mount here. Fixed position — independent of the
+          shell's grid/flex so it never perturbs the real components' layout;
+          z-index below the overlay's panels/blocker (1200+) so the spotlight
+          hole still paints correctly around it. */}
+      {state === 'tip' && (
+        <button
+          type="button"
+          className="hint-overlay__btn"
+          data-tour-anchor="find-a-station"
+          style={{ position: 'fixed', left: 24, bottom: 24, zIndex: 50 }}
+        >
+          🔎 Find a station
+        </button>
+      )}
+    </div>
+  );
+}
+
+function OnboardingFixtureView() {
+  const state = params.get('state') ?? 'offer';
+  return (
+    <HintProvider>
+      <OnboardingShell state={state} />
+      <OnboardingFixtureController state={state} />
+      <HintOverlay />
+      <OfferCard />
+    </HintProvider>
+  );
+}
+
 function Ft8StripFixtureView() {
   const state = (params.get('state') ?? 'decoding') as Ft8UiState;
   const flagsParam = params.get('flags');
@@ -750,6 +1019,8 @@ createRoot(document.getElementById('root')!).render(
       <FavoritesFixtureView />
     ) : view === 'finder' ? (
       <FinderFixtureView />
+    ) : view === 'onboarding' ? (
+      <OnboardingFixtureView />
     ) : view === 'ft8' ? (
       <Ft8StripFixtureView />
     ) : view === 'sparkline' ? (

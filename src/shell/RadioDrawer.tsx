@@ -45,7 +45,7 @@ export function RadioDrawer({ open, onToggle, sessionState, children }: RadioDra
   }, [open]);
 
   return (
-    <div className={`radio-drawer${open ? ' is-open' : ''}`} data-testid="radio-drawer">
+    <div className={`radio-drawer${open ? ' is-open' : ''}`} data-testid="radio-drawer" data-tour-anchor="radio-dock">
       <button
         ref={gripRef}
         type="button"

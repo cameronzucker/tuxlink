@@ -704,6 +704,18 @@ pub trait StatusPort: Send + Sync {
     async fn rig_status(&self) -> Result<RigStatusDto, PortError>;
 }
 
+/// UI spatial-help port (tuxlink-10bkw). `point_at` NEVER navigates, opens
+/// panels, or fires actions — it asks the main webview to spotlight a
+/// registered anchor and reports honestly whether that happened. Object-safe
+/// so [`crate::McpState`] can hold it as `Arc<dyn UiHintPort>`.
+#[async_trait]
+pub trait UiHintPort: Send + Sync {
+    /// `Ok(())` iff the hint is actually visible. `Err` carries the outcome:
+    /// unknown-anchor (with the valid-ID list), anchor-unmounted (with the
+    /// registry's "how to open this surface" line), overlay-busy, or timeout.
+    async fn point_at(&self, anchor_id: &str) -> Result<(), PortError>;
+}
+
 /// VARA-under-WINE provisioning (tuxlink-w7212). The two probes are read-only
 /// and do NOT taint (app-owned build/readiness data). `vara_install_start` runs
 /// the one-time, prep-time install of VARA HF; it is **NON-TRANSMIT** (it drives

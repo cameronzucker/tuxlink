@@ -869,6 +869,7 @@ export const FolderSidebar = memo(function FolderSidebar({
             key={item.id}
             type="button"
             data-testid={`folder-${item.id}`}
+            data-tour-anchor={item.id === 'contacts' ? 'contacts' : undefined}
             className={className}
             disabled={!item.enabled}
             aria-current={active ? 'true' : undefined}

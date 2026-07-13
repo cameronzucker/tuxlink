@@ -126,6 +126,10 @@ export const MENU_TREE: TopMenu[] = [
   { label: 'Help', items: [
     { id: 'menu:help:about', label: 'About Tuxlink' },
     { id: 'menu:help:docs', label: 'Documentation' },
+    // tuxlink-10bkw Task 6: replays the first-run guided tour on demand
+    // (HintProvider.startTour) — the same 5-stop spotlight tour a fresh
+    // install sees from the first-run offer card.
+    { id: 'menu:help:replay_tour', label: 'Replay tour' },
     { separator: true },
     // tuxlink-qjgx alpha-logging Task 8: Logging window + Report Issue flow.
     { id: 'menu:help:logging', label: 'Logging…' },

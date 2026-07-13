@@ -45,6 +45,14 @@ import { DashboardRibbon, ft8RibbonState } from './DashboardRibbon';
 // the ambient listening state is available app-wide from cold start — not
 // gated behind the (lazy, not-yet-open) Station Intelligence panel.
 import { Ft8ListenerProvider, useFt8Listener } from '../ft8ui/useFt8Listener';
+// tuxlink-10bkw Task 6: first-run tour + discretionary-tip state machine
+// (Task 5), and its overlay/offer-card render surfaces (this task). Mounted
+// at the top of the tree (like Ft8ListenerProvider) so HintOverlay/OfferCard
+// and every useFirstOpenTip() call site anywhere under AppShellInner share
+// ONE provider instance from cold start.
+import { HintProvider, useHints } from '../onboarding/HintProvider';
+import { HintOverlay } from '../onboarding/HintOverlay';
+import { OfferCard } from '../onboarding/OfferCard';
 import { stripStats } from '../ft8ui/deriveBandActivity';
 import { CloseBehaviorPrompt } from './CloseBehaviorPrompt';
 import { useIdentityList, useActiveIdentity, useIdentitySwitch } from './useIdentities';
@@ -342,12 +350,49 @@ function computeHighlights(
 export function AppShell() {
   return (
     <Ft8ListenerProvider>
-      <AppShellInner />
+      <HintProvider>
+        <AppShellInner />
+      </HintProvider>
     </Ft8ListenerProvider>
   );
 }
 
 function AppShellInner() {
+  // tuxlink-10bkw Task 6: the first-run tour / discretionary-tip state
+  // machine. AppShell wraps AppShellInner in <HintProvider> (see the AppShell
+  // wrapper above), so this is always a real provider, never the "used
+  // outside <HintProvider>" throw.
+  const hints = useHints();
+  // tuxlink-10bkw Task 6: first-open discretionary tip (hintRegistry
+  // 'compose') for the mailbox toolbar's Compose button (rendered inside
+  // MessageList, data-tour-anchor="compose"). Deliberately NOT the plain
+  // `useFirstOpenTip('compose')` sugar hook used by the other three surfaces
+  // (StationFinderPanel/AprsChatPanel/SettingsPanel): those are gated behind
+  // the operator ALREADY having opened that lazy panel, so a tip appearing
+  // right then — with HintProvider's capture-phase keydown policy freezing
+  // every accelerator except Escape/Tab/Enter/Arrows until dismissed, same as
+  // any modal — is expected. MessageList/the mailbox toolbar is mounted at
+  // COLD START (selectedFolder defaults to 'inbox'), so firing synchronously
+  // on mount would freeze every keyboard accelerator (Ctrl+Shift+M, Ctrl+N,
+  // …) from the very first frame, before the operator has done anything.
+  // Deferred to idle instead (mirrors the radio-panel preload effect below),
+  // via the same public `requestFirstOpenTip` the sugar hook itself calls —
+  // not a new API, just a later call site for this one surface.
+  const hintsRef = useRef(hints);
+  hintsRef.current = hints;
+  useEffect(() => {
+    const w = window as Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    const fire = () => hintsRef.current.requestFirstOpenTip('compose');
+    if (typeof w.requestIdleCallback === 'function') {
+      const id = w.requestIdleCallback(fire, { timeout: 2000 });
+      return () => w.cancelIdleCallback?.(id);
+    }
+    const id = window.setTimeout(fire, 500);
+    return () => window.clearTimeout(id);
+  }, []);
   // selectedFolder accepts either a system-folder identifier or a user-folder
   // slug (tuxlink-f62f). The Tauri commands take either string at the boundary;
   // string-equal is enough to drive the sidebar's active-row highlight.
@@ -1003,6 +1048,36 @@ function AppShellInner() {
     activeModem,
     togglePinned: pinRadioPanel,
   });
+
+  // tuxlink-10bkw Task 6: register the two panel-state probes the guided tour
+  // consults (tourRegistry's `requiredPanelState` on the 'mailbox' and
+  // 'radio-dock' stops). Registered ONCE via the "latest ref" pattern (mirrors
+  // HintProvider's own stateRef) so this doesn't re-run registerProbe (a fresh
+  // closure every HintProvider render) on every selectedFolder/radioPanelMode/
+  // aprsOpen change — the refs give the probe callbacks live values without
+  // needing the effect itself to re-fire.
+  const selectedFolderRef = useRef(selectedFolder);
+  selectedFolderRef.current = selectedFolder;
+  const radioPanelModeRef = useRef(radioPanelMode);
+  radioPanelModeRef.current = radioPanelMode;
+  const aprsOpenRef = useRef(aprsOpen);
+  aprsOpenRef.current = aprsOpen;
+  useEffect(() => {
+    const offMailbox = hints.registerProbe('mailbox-visible', () => {
+      const f = selectedFolderRef.current;
+      return f !== 'contacts' && f !== 'favorites';
+    });
+    const offRadio = hints.registerProbe(
+      'radio-dock-open',
+      () => radioPanelModeRef.current !== null || aprsOpenRef.current,
+    );
+    return () => {
+      offMailbox();
+      offRadio();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // tuxlink-gife: VARA HF/FM modems now consume station prefill (VaraRadioPanel
   // listens via listenGatewayPrefill + sets its RMS-gateway target), so the
   // Find-a-Station map's VARA channels — the HF majority — are usable too.
@@ -1535,8 +1610,11 @@ function AppShellInner() {
     },
     openCatalogBuilder: () => setCatalogBuilderOpen(true),
     openRequestCenter: (initialView = 'home') => setRequestCenter({ initialView }),
+    // tuxlink-10bkw Task 6: Help → Replay tour restarts the 5-stop guided tour
+    // — the same action the first-run offer card's "Start tour" fires.
+    replayTour: () => hints.startTour(),
     quit: () => { void invoke('app_quit'); },
-  }), [openMessage, archiveOpen, selectedMessage, deleteByIdAndFolder, reportIssueController, aprsOpen, dockTab]);
+  }), [openMessage, archiveOpen, selectedMessage, deleteByIdAndFolder, reportIssueController, aprsOpen, dockTab, hints]);
 
   const editDraft = useCallback((draftId: string) => {
     void invoke('compose_window_open', { draftId });
@@ -1942,6 +2020,7 @@ function AppShellInner() {
           onBulkRestore={bulkRestore}
           onBulkPurge={bulkPurge}
           onSetReadState={setMessageReadState}
+          onCompose={handlers.openCompose}
         />
         {(() => {
           // tuxlink-6vgt: when the APRS dock is open AND its Map toggle is on,
@@ -2405,6 +2484,15 @@ function AppShellInner() {
           onCancel={() => setPendingPurge(null)}
         />
       </Suspense>
+
+      {/* tuxlink-10bkw Task 6: the first-run guided tour's spotlight overlay
+       *  + the "want a tour?" offer card. Both are pure useHints() consumers
+       *  (HintProvider wraps this whole tree — see the AppShell wrapper
+       *  above) and each renders nothing on its own — HintOverlay handles
+       *  'tour'/'single', OfferCard handles 'offer'. Not lazy-loaded: same
+       *  "tiny, state-machine-gated" reasoning as ReportIssueModal above. */}
+      <HintOverlay />
+      <OfferCard />
     </div>
   );
 }

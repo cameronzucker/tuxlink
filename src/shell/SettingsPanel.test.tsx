@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import type { ReactElement } from 'react';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
+vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
 // Section panes own their own data/providers and have their own tests; stub them
 // here so the SettingsPanel shell test asserts nav + pane wiring only.
 vi.mock('./IdentitiesSettings', () => ({
@@ -18,8 +20,15 @@ vi.mock('./MailboxSettings', () => ({
 }));
 import { invoke } from '@tauri-apps/api/core';
 import { SettingsPanel } from './SettingsPanel';
+// tuxlink-10bkw Task 6: SettingsPanel now calls useFirstOpenTip('settings'),
+// which throws outside a <HintProvider> ancestor.
+import { HintProvider } from '../onboarding/HintProvider';
 
 const invokeMock = invoke as unknown as ReturnType<typeof vi.fn>;
+
+function renderSettings(ui: ReactElement) {
+  return render(<HintProvider>{ui}</HintProvider>);
+}
 
 beforeEach(() => {
   invokeMock.mockReset();
@@ -39,18 +48,18 @@ beforeEach(() => {
 
 /** Open the panel and switch to the GPS state & privacy section. */
 function openGpsState() {
-  render(<SettingsPanel open onClose={vi.fn()} />);
+  renderSettings(<SettingsPanel open onClose={vi.fn()} />);
   fireEvent.click(screen.getByTestId('settings-nav-gpsstate'));
 }
 
 describe('SettingsPanel', () => {
   it('renders nothing when closed', () => {
-    const { container } = render(<SettingsPanel open={false} onClose={vi.fn()} />);
+    const { container } = renderSettings(<SettingsPanel open={false} onClose={vi.fn()} />);
     expect(container).toBeEmptyDOMElement();
   });
 
   it('defaults to the Location & GPS section (inline pane, no popup)', async () => {
-    render(<SettingsPanel open onClose={vi.fn()} />);
+    renderSettings(<SettingsPanel open onClose={vi.fn()} />);
     expect(await screen.findByTestId('settings-pane-location')).toBeInTheDocument();
     expect(screen.getByTestId('location-settings')).toBeInTheDocument();
     // No "Open …" button — the feature is inline, not a nested window.
@@ -58,7 +67,7 @@ describe('SettingsPanel', () => {
   });
 
   it('navigates between sections in place (nav + inline pane)', async () => {
-    render(<SettingsPanel open onClose={vi.fn()} />);
+    renderSettings(<SettingsPanel open onClose={vi.fn()} />);
     fireEvent.click(screen.getByTestId('settings-nav-identities'));
     expect(await screen.findByTestId('settings-pane-identities')).toBeInTheDocument();
     expect(screen.getByTestId('identities-settings')).toBeInTheDocument();
@@ -67,7 +76,7 @@ describe('SettingsPanel', () => {
   // tuxlink-vfb3: the Winlink Account section hosts CMS password change + the
   // keyring-only re-enter recovery.
   it('renders the Winlink Account section (nav + inline pane)', async () => {
-    render(<SettingsPanel open onClose={vi.fn()} />);
+    renderSettings(<SettingsPanel open onClose={vi.fn()} />);
     fireEvent.click(screen.getByTestId('settings-nav-account'));
     expect(await screen.findByTestId('settings-pane-account')).toBeInTheDocument();
     expect(screen.getByTestId('winlink-account-settings')).toBeInTheDocument();
@@ -75,7 +84,7 @@ describe('SettingsPanel', () => {
 
   // tuxlink-vfb3: opening directly on the account section (the menu entry point).
   it('honors initialSection=account', async () => {
-    render(<SettingsPanel open onClose={vi.fn()} initialSection="account" />);
+    renderSettings(<SettingsPanel open onClose={vi.fn()} initialSection="account" />);
     expect(await screen.findByTestId('settings-pane-account')).toBeInTheDocument();
     expect(screen.getByTestId('winlink-account-settings')).toBeInTheDocument();
   });
@@ -115,7 +124,7 @@ describe('SettingsPanel', () => {
 
   it('calls onClose on the close button and on Escape', async () => {
     const onClose = vi.fn();
-    render(<SettingsPanel open onClose={onClose} />);
+    renderSettings(<SettingsPanel open onClose={onClose} />);
     await screen.findByTestId('settings-panel');
     fireEvent.click(screen.getByTestId('settings-close'));
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -125,14 +134,14 @@ describe('SettingsPanel', () => {
 
   // tuxlink-wl7n: Mailbox section renders via the nav + pane wiring.
   it('renders the Mailbox section when the nav item is clicked', async () => {
-    render(<SettingsPanel open onClose={vi.fn()} />);
+    renderSettings(<SettingsPanel open onClose={vi.fn()} />);
     fireEvent.click(screen.getByTestId('settings-nav-mailbox'));
     expect(await screen.findByTestId('settings-pane-mailbox')).toBeInTheDocument();
     expect(screen.getByTestId('mailbox-settings')).toBeInTheDocument();
   });
 
   it('does NOT render the ARDOP HF fieldset (tuxlink-jmfm)', async () => {
-    render(<SettingsPanel open onClose={vi.fn()} />);
+    renderSettings(<SettingsPanel open onClose={vi.fn()} />);
     await screen.findByTestId('settings-panel');
     expect(screen.queryByText(/ARDOP HF/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/ardopcf binary/i)).not.toBeInTheDocument();

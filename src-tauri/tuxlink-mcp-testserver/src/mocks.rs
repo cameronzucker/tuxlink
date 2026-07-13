@@ -25,8 +25,9 @@ use tuxlink_mcp_core::ports::{
     RigStatusDto, SearchPort, SearchQueryDto, SearchResultsDto, SendFormDto, SerialDeviceDto,
     SessionIntentDto,
     SolarSnapshotDto, StationFilterDto, StationListDto, StationModeDto, StationPort, StatusPort,
-    VaraCheckpointDto, VaraConfigDto, VaraEngineDto, VaraInstallStatusDto, VaraInstallSummaryDto,
-    VaraProbeDto, VaraStatusDto, VaraWriteDto, WritePort, WritePortError, WwvCaptureDto, WwvPort,
+    UiHintPort, VaraCheckpointDto, VaraConfigDto, VaraEngineDto, VaraInstallStatusDto,
+    VaraInstallSummaryDto, VaraProbeDto, VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
+    WwvCaptureDto, WwvPort,
 };
 use tuxlink_mcp_core::validate::{
     validate_address, validate_attachment_dest, validate_body, validate_drive_level,
@@ -684,6 +685,17 @@ impl ProvisionPort for MockProvision {
             prefix: Some("/home/ham/.wine-vara".into()),
             vara_version: Some("VARA HF".into()),
         })
+    }
+}
+
+/// A mock [`UiHintPort`]. Always reports the hint as shown; read-only — never
+/// touches the guard (display-only spotlight, not an egress).
+pub struct MockUiHint;
+
+#[async_trait]
+impl UiHintPort for MockUiHint {
+    async fn point_at(&self, _anchor_id: &str) -> Result<(), PortError> {
+        Ok(())
     }
 }
 

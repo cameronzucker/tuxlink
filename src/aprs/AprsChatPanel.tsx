@@ -50,6 +50,7 @@ import type {
   DeliveryState,
 } from './aprsTypes';
 import { decodeAprsInfo, type AprsPacketCategory } from './aprsDecode';
+import { useFirstOpenTip } from '../onboarding/HintProvider';
 import './AprsChatPanel.css';
 
 /// Short monitor-style tag per decoded packet category (tuxlink-hzwc bug #2),
@@ -255,6 +256,8 @@ export function AprsChatPanel({
   setConfig,
   controlStrip,
 }: AprsChatPanelProps) {
+  // tuxlink-10bkw Task 6: first-open discretionary tip (hintRegistry 'aprs').
+  useFirstOpenTip('aprs');
   const [text, setText] = useState('');
   // Directed-send target (tuxlink-hzwc bug #3). `null` ⇒ broadcast (APRS
   // default). Set by tapping a heard station OR by typing a leading `CALL:`
@@ -367,7 +370,7 @@ export function AprsChatPanel({
   const hasMessages = messages.length > 0;
 
   return (
-    <section className="aprs-chat" data-testid="aprs-chat-panel">
+    <section className="aprs-chat" data-testid="aprs-chat-panel" data-tour-anchor="aprs">
       <header className="aprs-chat-h">
         <span className="aprs-chat-title">APRS Channel</span>
       </header>

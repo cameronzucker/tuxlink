@@ -42,6 +42,10 @@ export interface MenuHandlers {
   openHelp: () => void;
   /** Open the Logging window (tuxlink-qjgx Task 8). */
   openLogging: () => void;
+  /** Replay the first-run guided tour on demand (tuxlink-10bkw Task 6) —
+   *  Help → Replay tour calls HintProvider's startTour(), the same 5-stop
+   *  spotlight tour a fresh install sees from the first-run offer card. */
+  replayTour: () => void;
   /** Open the Report Issue modal — auto-export + pre-filled GitHub URL (tuxlink-qjgx Task 8). */
   reportIssue: () => void;
   /** Open the inline uninstall cleanup dialog (tuxlink-uodl). */
@@ -109,6 +113,9 @@ export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
       h.openAbout(); return;
     case 'menu:help:docs':
       h.openHelp(); return;
+    // tuxlink-10bkw Task 6: Help → Replay tour restarts the guided tour.
+    case 'menu:help:replay_tour':
+      h.replayTour(); return;
     case 'menu:help:logging':
       h.openLogging(); return;
     case 'menu:help:report_issue':
