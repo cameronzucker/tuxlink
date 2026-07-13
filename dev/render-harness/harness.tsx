@@ -57,6 +57,7 @@ import { LiveBandStrip } from '../../src/ft8ui/LiveBandStrip';
 import { Ft8SetupSurface } from '../../src/ft8ui/Ft8SetupSurface';
 import { Ft8ListenerProvider } from '../../src/ft8ui/useFt8Listener';
 import { StationFinderPanel } from '../../src/catalog/StationFinderPanel';
+import { ContactsPanel } from '../../src/contacts/ContactsPanel';
 import type {
   Ft8Snapshot,
   Ft8UiState,
@@ -72,7 +73,8 @@ const grid = params.has('grid') ? params.get('grid') : 'CN87';
 const view = (params.get('view') ?? 'home') as
   | 'home' | 'browse' | 'grib' | 'ribbon'
   | 'radio-ardop' | 'radio-vara' | 'radio-telnet'
-  | 'elmer' | 'sparkline' | 'ft8' | 'finder';
+  | 'elmer' | 'sparkline' | 'ft8' | 'finder'
+  | 'contacts' | 'favorites';
 // ?running=1 drives a connected modem / open VARA transport so the running-state
 // footers render: ARDOP/VARA `Send/Receive` (primary) + the red `Stop`
 // (`radio-panel-btn-bad`) button. Without it the fixture pins state to STOPPED, so
@@ -542,6 +544,169 @@ function FinderFixtureView() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// view=contacts / view=favorites — the Contacts outline + the Favorites panel
+// on ONE representative dataset (tuxlink-sbf03 consolidation pass): groups,
+// grouped + ungrouped contacts across tiers/origins, heard-but-unconfirmed
+// suggestions, starred favorites + recents, and a shared contact↔favorite
+// link — so the current visual (in)coherence of the three surfaces renders
+// side-by-side for critique.
+// ---------------------------------------------------------------------------
+if (view === 'contacts' || view === 'favorites') {
+  const nowMs = Date.now();
+  const iso = (agoMs: number) => new Date(nowMs - agoMs).toISOString();
+  const ch = (
+    transport: string,
+    target: string,
+    freqHz: number | null,
+    dir: string,
+    ok: number,
+    fail: number,
+    agoMs: number,
+    okAgoMs: number | null,
+  ) => ({
+    transport,
+    target_callsign: target,
+    via: [],
+    freq_hz: freqHz,
+    bandwidth: null,
+    direction: dir,
+    counts: { ok, fail },
+    last_seen: iso(agoMs),
+    last_ok: okAgoMs === null ? null : iso(okAgoMs),
+  });
+  const contact = (
+    id: string,
+    callsign: string,
+    name: string,
+    over: Record<string, unknown> = {},
+  ) => ({
+    id,
+    callsign,
+    name,
+    tier: 'confirmed',
+    origin: 'manual',
+    grid: null,
+    channels: [],
+    endpoints: [],
+    created_at: iso(30 * 86_400_000),
+    updated_at: iso(86_400_000),
+    ...over,
+  });
+  RESPONSES.contacts_read = {
+    schema_version: 2,
+    contacts: [
+      contact('c-ka0zis', 'KA0ZIS', 'Dennis Hess', {
+        grid: { value: 'EM17gq', source: 'manual' },
+        origin: 'incoming',
+        channels: [ch('vara-hf', 'KA0ZIS', 7101500, 'incoming', 3, 1, 3600_000, 3600_000)],
+      }),
+      contact('c-n0daj', 'N0DAJ', 'Doug Jarmuth', {
+        grid: { value: 'DM34oa', source: 'manual' },
+        channels: [
+          ch('vara-hf', 'N0DAJ', 7103500, 'outgoing', 5, 2, 7200_000, 7200_000),
+          ch('ardop', 'N0DAJ', 7103500, 'outgoing', 1, 4, 86_400_000, 259_200_000),
+        ],
+      }),
+      contact('c-w7gte', 'W7GTE', '', {
+        tier: 'unconfirmed',
+        origin: 'incoming',
+        grid: { value: 'DM34', source: 'aprs' },
+        channels: [ch('packet', 'W7GTE', 145710000, 'incoming', 2, 0, 1800_000, 1800_000)],
+      }),
+      contact('c-k7htz', 'K7HTZ', 'Portland Gateway', {
+        grid: { value: 'CN85', source: 'manual' },
+        channels: [ch('vara-hf', 'K7HTZ', 14105000, 'outgoing', 0, 3, 43_200_000, null)],
+      }),
+      contact('c-smtp', 'SMTP:cameronzucker@gmail.com', 'Cameron (email)', {}),
+      contact('c-kj7abc', 'KJ7ABC', 'Riley Park', {
+        grid: { value: 'DM33', source: 'manual' },
+      }),
+    ],
+    groups: [
+      {
+        id: 'g-ares',
+        name: 'ARES Net',
+        members: [
+          { type: 'contact', contact_id: 'c-n0daj' },
+          { type: 'contact', contact_id: 'c-kj7abc' },
+          { type: 'raw', callsign: 'W7XYZ' },
+        ],
+        created_at: iso(20 * 86_400_000),
+        updated_at: iso(2 * 86_400_000),
+      },
+      {
+        id: 'g-family',
+        name: 'Family',
+        members: [{ type: 'contact', contact_id: 'c-smtp' }],
+        created_at: iso(20 * 86_400_000),
+        updated_at: iso(10 * 86_400_000),
+      },
+    ],
+  };
+  RESPONSES.contacts_suggestions = [
+    { callsign: 'K5MDX', message_count: 4 },
+    { callsign: 'N7CPZ-1', message_count: 2 },
+  ];
+  const fav = (
+    id: string,
+    mode: string,
+    gateway: string,
+    freq: string,
+    starred: boolean,
+    over: Record<string, unknown> = {},
+  ) => ({
+    id,
+    mode,
+    gateway,
+    freq,
+    starred,
+    created_at: iso(20 * 86_400_000),
+    updated_at: iso(86_400_000),
+    ...over,
+  });
+  RESPONSES.favorites_read = {
+    schema_version: 1,
+    favorites: [
+      fav('f-1', 'vara-hf', 'N0DAJ', '7103.5', true, { band: '40m', grid: 'DM34oa', contact_id: 'c-n0daj', last_attempt_at: iso(7200_000) }),
+      fav('f-2', 'vara-hf', 'K7HTZ', '14105.0', true, { band: '20m', grid: 'CN85', last_attempt_at: iso(43_200_000) }),
+      fav('f-3', 'ardop-hf', 'W7RMS', '7102.0', true, { band: '40m', grid: 'DM43' }),
+      fav('f-4', 'telnet', 'CMS', '', true, { transport: 'CmsSsl' }),
+    ],
+    log: [
+      { unit_id: 'f-1', ts_local: new Date(nowMs - 7200_000).toISOString(), freq: '7103.5', outcome: 'reached' },
+      { unit_id: 'f-2', ts_local: new Date(nowMs - 43_200_000).toISOString(), freq: '14105.0', outcome: 'failed' },
+    ],
+  };
+  RESPONSES.favorites_recents = [
+    fav('r-1', 'vara-hf', 'KD7SSB', '7101.5', false, { band: '40m', grid: 'DM33', last_attempt_at: iso(10_800_000) }),
+    fav('r-2', 'packet', 'W7GTE-10', '145.710', false, { last_attempt_at: iso(1800_000) }),
+  ];
+  RESPONSES.position_current_fix = { grid: 'DM33wp' };
+}
+
+function ContactsFixtureView() {
+  return (
+    <div className="layout-b" style={{ height: '100vh' }}>
+      <div style={{ height: '100%', display: 'flex' }}>
+        <ContactsPanel />
+      </div>
+    </div>
+  );
+}
+
+function FavoritesFixtureView() {
+  // tuxlink-sbf03: Favorites is a SCOPE of ContactsPanel now (FavoritesPanel
+  // retired) — this view renders the pseudo-folder's exact mount.
+  return (
+    <div className="layout-b" style={{ height: '100vh' }}>
+      <div style={{ height: '100%', display: 'flex' }}>
+        <ContactsPanel initialScope="favorites" onConnectFavorite={() => undefined} />
+      </div>
+    </div>
+  );
+}
+
 function Ft8StripFixtureView() {
   const state = (params.get('state') ?? 'decoding') as Ft8UiState;
   const flagsParam = params.get('flags');
@@ -579,7 +744,11 @@ function Ft8StripFixtureView() {
 
 createRoot(document.getElementById('root')!).render(
   <QueryClientProvider client={queryClient}>
-    {view === 'finder' ? (
+    {view === 'contacts' ? (
+      <ContactsFixtureView />
+    ) : view === 'favorites' ? (
+      <FavoritesFixtureView />
+    ) : view === 'finder' ? (
       <FinderFixtureView />
     ) : view === 'ft8' ? (
       <Ft8StripFixtureView />

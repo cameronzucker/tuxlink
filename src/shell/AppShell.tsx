@@ -32,7 +32,6 @@ import type { MailboxFolder, MailboxFolderRef, MessageMeta } from '../mailbox/ty
 import { useUserFolders, useMoveUserFolder } from '../mailbox/useUserFolders';
 import { useContacts } from '../contacts/useContacts';
 import { ContactsPanel } from '../contacts/ContactsPanel';
-import { FavoritesPanel } from '../favorites/FavoritesPanel';
 import { FAVORITES_QUERY_KEY } from '../favorites/useFavorites';
 import { FolderContextMenu } from '../mailbox/FolderContextMenu';
 import type { UserFolder } from '../mailbox/types';
@@ -1906,12 +1905,16 @@ function AppShellInner() {
             the reading-pane ternary alone would leave MessageList rendered to the
             left (two list columns). */}
         {selectedFolder === 'contacts' ? (
-          <ContactsPanel />
+          // key: initialScope is consumed by mount-time useState — without
+          // distinct keys, switching Contacts⇄Favorites reuses the instance
+          // and keeps the previous scope (Codex adrev P1).
+          <ContactsPanel key="folder-contacts" onConnectFavorite={handleFavoritesConnect} />
         ) : selectedFolder === 'favorites' ? (
-          // bd-tuxlink-kiaa: the Favorites pseudo-folder, like Contacts, replaces
-          // BOTH the MessageList column AND the reading pane with the inline
-          // cross-mode FavoritesPanel. Connect opens+arms the matching modem dock.
-          <FavoritesPanel onConnect={handleFavoritesConnect} />
+          // tuxlink-sbf03: Favorites is a SCOPE of the one address surface, not
+          // a separate panel — the pseudo-folder opens ContactsPanel with the
+          // ★ scope pre-selected. Connect still opens+arms the matching modem
+          // dock via the same handler the retired FavoritesPanel took.
+          <ContactsPanel key="folder-favorites" initialScope="favorites" onConnectFavorite={handleFavoritesConnect} />
         ) : (
           <>
         <MessageList

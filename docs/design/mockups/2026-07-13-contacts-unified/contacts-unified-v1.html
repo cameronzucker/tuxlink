@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Contacts / Favorites / Heard — ONE surface (v1)</title>
+<link rel="stylesheet" href="../../../../src/App.css">
+<style>
+body { background: var(--bg); padding: 22px; color: var(--text); font-family: system-ui, sans-serif; font-size: 13px; }
+.card { max-width: 1180px; border: 1px solid var(--border-strong); border-radius: 8px; overflow: hidden; background: var(--surface); margin-bottom: 26px; }
+.card__cap { font-size: 12.5px; font-weight: 600; padding: 9px 13px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+.card__cap small { display: block; font-weight: 400; color: var(--text-dim); font-size: 10.5px; margin-top: 2px; line-height: 1.5; }
+
+/* ══ the surface: roster + detail ══ */
+.two { display: flex; min-height: 620px; }
+.roster { width: 380px; flex: none; border-right: 1px solid var(--border); display: flex; flex-direction: column; background: var(--surface); }
+.detail { flex: 1; background: var(--bg); padding: 18px 22px; min-width: 0; }
+
+/* roster top bar */
+.rtop { padding: 10px 12px 8px; display: flex; gap: 8px; border-bottom: 1px solid var(--border); }
+.rtop input { flex: 1; font: inherit; font-size: 12px; background: var(--bg); color: var(--text); border: 1px solid var(--border-strong); border-radius: 6px; padding: 6px 9px; }
+.rtop .new { font: inherit; font-size: 12px; color: var(--accent); background: var(--accent-soft); border: 1px solid rgba(245,159,60,.35); border-radius: 6px; padding: 6px 11px; white-space: nowrap; }
+
+/* scope pills + sort — ONE row, always present. The sidebar's Favorites
+   pseudo-folder opens this same surface with ★ pre-selected. */
+.scopes { display: flex; align-items: center; gap: 5px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.scope { font: inherit; font-size: 11px; color: var(--text-dim); background: transparent; border: 1px solid var(--border-strong); border-radius: 12px; padding: 3px 10px; }
+.scope.on { color: var(--text); background: var(--surface-2); border-color: var(--accent); }
+.scope b { font-family: var(--mono); font-size: 10px; font-weight: 600; margin-left: 4px; color: var(--text-faint); }
+.scope.on b { color: var(--accent); }
+.sort { margin-left: auto; display: flex; align-items: center; gap: 5px; font-size: 10px; color: var(--text-faint); }
+.sort select { font: inherit; font-size: 10.5px; color: var(--text-dim); background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 5px; padding: 2px 5px; }
+
+/* sections */
+.sec { padding: 4px 0 2px; }
+.sec__h { display: flex; align-items: center; gap: 7px; padding: 7px 12px 4px; font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-faint); }
+.sec__h .n { font-family: var(--mono); }
+.sec__h .rule { flex: 1; height: 1px; background: var(--border); }
+
+/* group header — same grammar as a section but interactive, count + CONTAINED avatar stack */
+.grp { display: flex; align-items: center; gap: 8px; padding: 6px 12px; cursor: pointer; }
+.grp .caret { color: var(--text-faint); font-size: 9px; width: 10px; }
+.grp .gname { font-size: 12.5px; font-weight: 600; }
+.grp .gn { font-family: var(--mono); font-size: 10px; color: var(--text-faint); }
+.grp .stack { margin-left: auto; display: flex; }
+.stack .av { width: 18px; height: 18px; font-size: 8px; margin-left: -5px; border: 2px solid var(--surface); }
+.stack .av.more { background: var(--surface-2); color: var(--text-faint); }
+
+/* ══ THE row anatomy — identical for every class ══
+   [avatar] [callsign + name] ............ [reach dot · last-heard · ★]     */
+.row { display: flex; align-items: center; gap: 9px; padding: 6px 12px 6px 12px; cursor: pointer; }
+.row.indent { padding-left: 28px; }
+.row:hover { background: var(--surface-2); }
+.row.sel { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+.av { width: 26px; height: 26px; flex: none; border-radius: 50%; background: #2b3a4c; color: #cfe0f0; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; }
+.av.heard { background: transparent; border: 1.5px dashed var(--border-strong); color: var(--text-faint); }
+.who { min-width: 0; flex: 1; }
+.who .cs { font-family: var(--mono); font-size: 12.5px; font-weight: 600; color: var(--text); }
+.who .nm { font-size: 11.5px; color: var(--text-dim); margin-left: 7px; }
+.who .sub { font-size: 10px; color: var(--text-faint); margin-top: 1px; }
+.who .sub .via { color: var(--m-packet, #b48ead); }
+.meta { display: flex; align-items: center; gap: 7px; flex: none; }
+.meta .dot { width: 7px; height: 7px; border-radius: 50%; }
+.dot.good { background: var(--reach-good, #41ba6c); }
+.dot.stale { background: var(--reach-marginal, #d9b13a); }
+.dot.dead { background: transparent; border: 1px solid var(--text-faint); }
+.meta .ago { font-family: var(--mono); font-size: 10px; color: var(--text-faint); }
+.meta .star { color: var(--accent); font-size: 12px; }
+.meta .star.off { color: var(--border-strong); }
+/* heard-row promote/dismiss */
+.meta .save { font: inherit; font-size: 10.5px; color: var(--reach-good, #41ba6c); background: transparent; border: 1px solid rgba(65,186,108,.4); border-radius: 5px; padding: 2px 8px; }
+.meta .x { color: var(--text-faint); background: none; border: 0; font-size: 12px; padding: 0 2px; }
+/* inline connect (shown in ★ scope + on hover elsewhere) */
+.meta .conn { font: inherit; font-size: 10.5px; color: var(--reach-good, #41ba6c); background: rgba(65,186,108,.08); border: 1px solid rgba(65,186,108,.4); border-radius: 5px; padding: 2px 9px; }
+
+/* email identity chip instead of raw scheme string */
+.who .cs .idkind { font-size: 8.5px; letter-spacing: .05em; color: var(--text-faint); border: 1px solid var(--border-strong); border-radius: 3px; padding: 0 4px; margin-right: 6px; vertical-align: 1px; }
+
+/* ══ detail pane ══ */
+.dhead { display: flex; align-items: flex-start; gap: 13px; }
+.dhead .av { width: 44px; height: 44px; font-size: 15px; }
+.dhead .cs { font-family: var(--mono); font-size: 21px; font-weight: 700; }
+.dhead .nm { font-size: 13px; color: var(--text-dim); margin-top: 1px; }
+.badges { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
+.bdg { font-size: 9px; letter-spacing: .06em; text-transform: uppercase; border: 1px solid var(--border-strong); color: var(--text-dim); border-radius: 4px; padding: 1.5px 7px; }
+.bdg.ok { color: var(--reach-good, #41ba6c); border-color: rgba(65,186,108,.4); }
+.bdg.warn { color: var(--reach-marginal, #d9b13a); border-color: rgba(217,177,58,.4); }
+.bdg.mono { font-family: var(--mono); text-transform: none; letter-spacing: 0; font-size: 10px; }
+.dact { margin-left: auto; display: flex; gap: 8px; }
+.btn { font: inherit; font-size: 12px; border-radius: 6px; padding: 6px 13px; border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--text); }
+.btn.primary { background: var(--accent-soft); border-color: rgba(245,159,60,.4); color: var(--accent); font-weight: 600; }
+
+.dsec { margin-top: 18px; }
+.dsec__h { font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 7px; display: flex; gap: 8px; align-items: baseline; }
+.dsec__h small { text-transform: none; letter-spacing: 0; font-size: 10px; }
+
+/* reachability rows — where Favorites' Connect verb now lives */
+.chrow { display: grid; grid-template-columns: 92px 1fr auto auto auto; align-items: center; gap: 12px; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 7px; padding: 9px 12px; margin-bottom: 6px; }
+.chrow .tx { font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: .04em; padding: 2px 0; text-align: center; border-radius: 4px; }
+.tx.vara { color: var(--m-vara, #4aa3ff); border: 1px solid rgba(74,163,255,.35); }
+.tx.ardop { color: #b48ead; border: 1px solid rgba(180,142,173,.35); }
+.tx.packet { color: #88c0d0; border: 1px solid rgba(136,192,208,.35); }
+.chrow .dial { font-family: var(--mono); font-size: 12px; }
+.chrow .dial small { color: var(--text-faint); font-size: 10px; margin-left: 6px; }
+.chrow .verdict { font-size: 11px; }
+.verdict.ok { color: var(--reach-good, #41ba6c); }
+.verdict.bad { color: var(--reach-unlikely, #e07a5f); }
+.verdict small { color: var(--text-faint); display: block; font-family: var(--mono); font-size: 9.5px; margin-top: 1px; }
+.chrow .fstar { font-size: 14px; color: var(--accent); background: none; border: 0; }
+.chrow .fstar.off { color: var(--border-strong); }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 12px; padding: 3px 10px; margin-right: 6px; }
+.chip .x { color: var(--text-faint); }
+.hint { font-size: 10px; color: var(--text-faint); margin-top: 5px; line-height: 1.5; }
+
+.log { font-family: var(--mono); font-size: 10.5px; color: var(--text-dim); line-height: 1.9; }
+.log .ok { color: var(--reach-good, #41ba6c); }
+.log .bad { color: var(--reach-unlikely, #e07a5f); }
+.log .hd { color: #88c0d0; }
+</style>
+</head>
+<body>
+
+<!-- ════════════════ 1 · the unified surface ════════════════ -->
+<div class="card">
+  <div class="card__cap">1 · ONE address surface — Contacts, Favorites, Heard are SCOPES of the same list, not features
+    <small>Same row anatomy everywhere: avatar · callsign+name · reach-dot · last-heard · ★. Sidebar "Favorites" opens this surface with the ★ scope pre-selected; "Contacts" opens All. Heard/Recents/suggested-from-traffic collapse into ONE "Heard" class (dashed avatar = not saved yet). Sort + groups always visible. Selected: N0DAJ.</small>
+  </div>
+  <div class="two">
+    <div class="roster">
+      <div class="rtop"><input placeholder="Search contacts…"><button class="new">+ New</button></div>
+      <div class="scopes">
+        <button class="scope on">All <b>9</b></button>
+        <button class="scope">★ Favorites <b>3</b></button>
+        <button class="scope">Heard <b>3</b></button>
+        <span class="sort">sort <select><option>Last heard</option><option>Name</option><option>Callsign</option></select></span>
+      </div>
+
+      <div class="sec">
+        <div class="grp"><span class="caret">▼</span><span class="gname">ARES Net</span><span class="gn">3</span>
+          <span class="stack"><span class="av">DJ</span><span class="av">RP</span><span class="av more">+1</span></span>
+        </div>
+        <div class="row indent sel"><span class="av">DJ</span>
+          <span class="who"><span class="cs">N0DAJ</span><span class="nm">Doug Jarmuth</span></span>
+          <span class="meta"><span class="dot good"></span><span class="ago">2 h</span><span class="star">★</span></span>
+        </div>
+        <div class="row indent"><span class="av">RP</span>
+          <span class="who"><span class="cs">KJ7ABC</span><span class="nm">Riley Park</span></span>
+          <span class="meta"><span class="dot dead"></span><span class="ago">—</span></span>
+        </div>
+        <div class="row indent"><span class="av heard">W7</span>
+          <span class="who"><span class="cs">W7XYZ</span><span class="nm" style="color:var(--text-faint)">+ add name</span></span>
+          <span class="meta"><span class="dot dead"></span><span class="ago">—</span></span>
+        </div>
+      </div>
+
+      <div class="sec">
+        <div class="grp"><span class="caret">▶</span><span class="gname">Family</span><span class="gn">1</span>
+          <span class="stack"><span class="av">C</span></span>
+        </div>
+      </div>
+
+      <div class="sec">
+        <div class="sec__h">contacts <span class="n">4</span><span class="rule"></span></div>
+        <div class="row"><span class="av">DH</span>
+          <span class="who"><span class="cs">KA0ZIS</span><span class="nm">Dennis Hess</span></span>
+          <span class="meta"><span class="dot good"></span><span class="ago">1 h</span><span class="star">★</span></span>
+        </div>
+        <div class="row"><span class="av">PG</span>
+          <span class="who"><span class="cs">K7HTZ</span><span class="nm">Portland Gateway</span></span>
+          <span class="meta"><span class="dot stale"></span><span class="ago">12 h</span><span class="star">★</span></span>
+        </div>
+        <div class="row"><span class="av">C</span>
+          <span class="who"><span class="cs"><span class="idkind">EMAIL</span>Cameron</span><span class="nm">cameronzucker@gmail.com</span></span>
+          <span class="meta"><span class="dot dead"></span><span class="ago">—</span></span>
+        </div>
+      </div>
+
+      <div class="sec">
+        <div class="sec__h">heard — not saved <span class="n">3</span><span class="rule"></span></div>
+        <div class="row"><span class="av heard">W7</span>
+          <span class="who"><span class="cs">W7GTE</span>
+            <div class="sub">heard <span class="via">Packet · 145.710</span> · 30 min ago · DM34</div></span>
+          <span class="meta"><button class="save">+ Save</button><button class="x">×</button></span>
+        </div>
+        <div class="row"><span class="av heard">K5</span>
+          <span class="who"><span class="cs">K5MDX</span>
+            <div class="sub">4 messages in traffic</div></span>
+          <span class="meta"><button class="save">+ Save</button><button class="x">×</button></span>
+        </div>
+        <div class="row"><span class="av heard">N7</span>
+          <span class="who"><span class="cs">N7CPZ-1</span>
+            <div class="sub">2 messages in traffic</div></span>
+          <span class="meta"><button class="save">+ Save</button><button class="x">×</button></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="detail">
+      <div class="dhead">
+        <span class="av">DJ</span>
+        <div>
+          <div class="cs">N0DAJ <span class="star" style="color:var(--accent)">★</span></div>
+          <div class="nm">Doug Jarmuth</div>
+          <div class="badges">
+            <span class="bdg ok">confirmed</span>
+            <span class="bdg mono">DM34oa · 74 km · 318°</span>
+            <span class="bdg">in ARES Net</span>
+          </div>
+        </div>
+        <div class="dact">
+          <button class="btn primary">New message</button>
+          <button class="btn">Edit</button>
+          <button class="btn">⋯</button>
+        </div>
+      </div>
+
+      <div class="dsec">
+        <div class="dsec__h">reachability &amp; connect <small>★ a dial → it appears under Favorites and in the ribbon Connect targets</small></div>
+        <div class="chrow">
+          <span class="tx vara">VARA HF</span>
+          <span class="dial">7103.5 <small>40 m · dial</small></span>
+          <span class="verdict ok">✓ reached 2 h ago<small>5 ok · 2 fail · outgoing</small></span>
+          <button class="fstar">★</button>
+          <button class="conn" style="font:inherit;font-size:11.5px;color:var(--reach-good,#41ba6c);background:rgba(65,186,108,.08);border:1px solid rgba(65,186,108,.4);border-radius:6px;padding:5px 14px;">Connect</button>
+        </div>
+        <div class="chrow">
+          <span class="tx ardop">ARDOP</span>
+          <span class="dial">7103.5 <small>40 m · dial</small></span>
+          <span class="verdict bad">✗ failing<small>last success 3 d ago · 1 ok · 4 fail</small></span>
+          <button class="fstar off">☆</button>
+          <button class="conn" style="font:inherit;font-size:11.5px;color:var(--reach-good,#41ba6c);background:rgba(65,186,108,.08);border:1px solid rgba(65,186,108,.4);border-radius:6px;padding:5px 14px;">Connect</button>
+        </div>
+        <div class="hint">Honest verbs only: "reached" = a successful outgoing connect; "heard" = they reached us. A failed dial never claims either.</div>
+      </div>
+
+      <div class="dsec">
+        <div class="dsec__h">groups</div>
+        <span class="chip">ARES Net <span class="x">×</span></span>
+        <span class="chip" style="color:var(--text-faint)">+ add to group</span>
+      </div>
+
+      <div class="dsec">
+        <div class="dsec__h">recent activity</div>
+        <div class="log">
+          <div><span class="ok">✓ reached</span> · VARA HF 7103.5 · today 09:14</div>
+          <div><span class="bad">✗ failed</span> · ARDOP 7103.5 · yesterday 18:02</div>
+          <div><span class="hd">◉ heard</span> · their CQ on 20 m FT-8 · 3 d ago</div>
+        </div>
+      </div>
+
+      <div class="dsec">
+        <div class="dsec__h">notes</div>
+        <div style="font-size:12px;color:var(--text-dim)">Runs the Wickenburg RMS. Prefers 40 m mornings.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════ 2 · Favorites scope ════════════════ -->
+<div class="card">
+  <div class="card__cap">2 · ★ Favorites scope — the SAME surface, filtered; Connect is inline (one click, ribbon parity)
+    <small>The sidebar Favorites pseudo-folder lands here. Rows are the same anatomy with the starred DIAL's summary inline and a permanent Connect button. No separate card language, no separate "Recent" tab — recents live in the Heard scope.</small>
+  </div>
+  <div class="roster" style="width:100%;max-width:560px;border-right:0">
+    <div class="rtop"><input placeholder="Search contacts…"><button class="new">+ New</button></div>
+    <div class="scopes">
+      <button class="scope">All <b>9</b></button>
+      <button class="scope on">★ Favorites <b>3</b></button>
+      <button class="scope">Heard <b>3</b></button>
+      <span class="sort">sort <select><option>Last heard</option></select></span>
+    </div>
+    <div class="sec">
+      <div class="row"><span class="av">DJ</span>
+        <span class="who"><span class="cs">N0DAJ</span><span class="nm">Doug Jarmuth</span>
+          <div class="sub">★ VARA HF · 7103.5 · 40 m · ✓ reached 2 h ago</div></span>
+        <span class="meta"><button class="conn">Connect</button></span>
+      </div>
+      <div class="row"><span class="av">DH</span>
+        <span class="who"><span class="cs">KA0ZIS</span><span class="nm">Dennis Hess</span>
+          <div class="sub">★ VARA HF · 7101.5 · 40 m · ◉ heard 1 h ago</div></span>
+        <span class="meta"><button class="conn">Connect</button></span>
+      </div>
+      <div class="row"><span class="av">PG</span>
+        <span class="who"><span class="cs">K7HTZ</span><span class="nm">Portland Gateway</span>
+          <div class="sub">★ VARA HF · 14105.0 · 20 m · ✗ no success yet · 1 fail 12 h ago</div></span>
+        <span class="meta"><button class="conn">Connect</button></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════ 3 · Heard detail (promote flow) ════════════════ -->
+<div class="card">
+  <div class="card__cap">3 · a Heard row selected — the detail pane IS the promote flow
+    <small>Same detail anatomy as a saved contact; the primary action becomes "+ Save contact". Everything observed (channel, grid, traffic) is already filled in — saving is one click, not a form.</small>
+  </div>
+  <div class="detail" style="min-height:0;padding:18px 22px">
+    <div class="dhead">
+      <span class="av heard" style="width:44px;height:44px;font-size:15px">W7</span>
+      <div>
+        <div class="cs">W7GTE</div>
+        <div class="nm" style="color:var(--text-faint)">no name yet</div>
+        <div class="badges">
+          <span class="bdg warn">heard · not saved</span>
+          <span class="bdg mono">DM34 (from APRS) · 66 km · 099°</span>
+        </div>
+      </div>
+      <div class="dact">
+        <button class="btn primary">+ Save contact</button>
+        <button class="btn">Dismiss</button>
+      </div>
+    </div>
+    <div class="dsec">
+      <div class="dsec__h">observed reachability</div>
+      <div class="chrow">
+        <span class="tx packet">PACKET</span>
+        <span class="dial">145.710 <small>direct</small></span>
+        <span class="verdict ok">◉ heard 30 min ago<small>2 incoming connects</small></span>
+        <span></span><span></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
