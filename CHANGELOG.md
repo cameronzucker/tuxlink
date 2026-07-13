@@ -31,6 +31,15 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.89.1](https://github.com/cameronzucker/tuxlink/compare/v0.89.0...v0.89.1) (2026-07-13)
+
+
+### Bug Fixes
+
+* **ft8,catalog:** clippy dead-code (meter error ctor) + finder overlays under Leaflet panes ([4a7cb64](https://github.com/cameronzucker/tuxlink/commit/4a7cb64c8c6b6858bf14722c523ae01b512fb53c))
+* **ft8ui,ft8:** QA wave 2 — waterfall orientation, setup overflow, select-vs-start, setup always reachable ([a0e691c](https://github.com/cameronzucker/tuxlink/commit/a0e691c3b5bbbbb5c6b2322b3dfab244382d7082))
+* **shell,ft8ui:** operator live-test wave — APRS dead-end + 5 FT-8 findings (v0.89.0) ([75bb8fd](https://github.com/cameronzucker/tuxlink/commit/75bb8fdd6b416c180f47c9aed2cde2a20127e621))
+
 ## [0.89.0](https://github.com/cameronzucker/tuxlink/compare/v0.88.0...v0.89.0) (2026-07-12)
 
 
