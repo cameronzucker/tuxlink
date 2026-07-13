@@ -10,7 +10,7 @@ default-members = ["."]
 
 [package]
 name = "tuxlink"
-version = "0.89.1"
+version = "0.90.0"
 description = "Linux-native full-capability Winlink client"
 authors = ["Cameron Zucker"]
 edition = "2021"
