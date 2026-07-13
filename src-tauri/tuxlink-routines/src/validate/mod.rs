@@ -4,17 +4,23 @@
 //! checks on top, same ordering contract). Errors block enable/run, never
 //! save; warnings are informational.
 //!
-//! Task 1 landed the skeleton (zero checks wired). Task 2 wires `refs`
+//! Task 1 landed the skeleton (zero checks wired). Task 2 wired `refs`
 //! (`UNRESOLVED_REF`, `UNKNOWN_ACTION`) and `capability`
 //! (`NEEDS_INTERNET_OFFGRID`, `NO_RIG_CONFIGURED`, `SAME_RIG_PARALLEL_LANES`).
-//! Later tasks add the remaining per-module check fns (`contracts`,
-//! `structure`, `consent`, `fleet`) that each push `Finding`s into the same
-//! vector before the final sort — no module gets a privileged ordering.
+//! Task 3 wires `contracts` (`UNSATISFIABLE_VAR`, `BRANCH_ON_UNKNOWN`,
+//! `CROSS_TRACK_VAR`) and `structure` (`UNREACHABLE_STEP`,
+//! `NO_TERMINAL_PATH`, `RETRY_ZERO_ATTEMPTS`, `RETRY_TARGET_MISSING`,
+//! `RETRY_TARGET_NOT_ACTION`, `BRANCH_CYCLE`, `CALL_RECURSION`,
+//! `CALL_TARGET_MISSING`). Later tasks add the remaining per-module check
+//! fns (`consent`, `fleet`) that each push `Finding`s into the same vector
+//! before the final sort — no module gets a privileged ordering.
 
 pub mod capability;
 pub mod context;
+pub mod contracts;
 pub mod findings;
 pub mod refs;
+pub mod structure;
 
 pub use context::{StaticContext, StationProfile, ValidationContext};
 pub use findings::{Finding, Severity};
@@ -32,7 +38,8 @@ pub fn validate(def: &RoutineDef, ctx: &dyn ValidationContext) -> Vec<Finding> {
 
     refs::check(def, ctx, &mut findings);
     capability::check(def, ctx, &mut findings);
-    // Task 3: contracts::check(def, &mut findings); structure::check(def, &mut findings);
+    contracts::check(def, &mut findings);
+    structure::check(def, ctx, &mut findings);
     // Task 4: consent::check(def, ctx, &mut findings);
 
     sort_findings(&mut findings);
@@ -135,7 +142,7 @@ mod tests {
     #[test]
     fn validate_dispatches_refs_and_capability_checks_and_sorts_the_result() {
         use crate::action::ActionDescriptor;
-        use crate::types::{ActionStep, BusyPolicy, Step, StepId};
+        use crate::types::{ActionStep, BusyPolicy, Control, ControlStep, Step, StepId};
 
         const RADIO_CONNECT: ActionDescriptor = ActionDescriptor {
             name: "radio.connect",
@@ -146,6 +153,9 @@ mod tests {
 
         // s1: known action, unresolved @ref (UNRESOLVED_REF) + no rig (NO_RIG_CONFIGURED).
         // s2: unknown action (UNKNOWN_ACTION), which must not also fire a capability finding.
+        // e1: explicit End, so this fixture doesn't also pick up task-3's
+        // NO_TERMINAL_PATH warning — that check has its own dedicated tests
+        // in structure.rs; this test stays scoped to refs+capability.
         let def = RoutineDef {
             routine: "r1".into(),
             schema_version: crate::types::SUPPORTED_SCHEMA_VERSION,
@@ -170,6 +180,13 @@ mod tests {
                         params: serde_json::json!({}),
                         timeout_s: None,
                         on_radio_busy: BusyPolicy::Wait,
+                    }),
+                    Step::Control(ControlStep {
+                        id: StepId("e1".into()),
+                        control: Control::End {
+                            failed: false,
+                            reason: None,
+                        },
                     }),
                 ],
             }],
