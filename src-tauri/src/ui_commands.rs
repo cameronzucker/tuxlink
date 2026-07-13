@@ -3518,6 +3518,10 @@ pub struct ConfigViewDto {
     /// (React state / localStorage are lost across restarts). Serialized
     /// snake_case (`{ session_type, protocol }`) matching this DTO's convention.
     pub active_connection: Option<config::SelectedConnection>,
+    /// First-run tour completion state (tuxlink-10bkw). Mirrors `OnboardingConfig.tour_completed`.
+    pub onboarding_tour_completed: bool,
+    /// Tips seen during onboarding (tuxlink-10bkw). Mirrors `OnboardingConfig.tips_seen`.
+    pub onboarding_tips_seen: Vec<String>,
 }
 
 impl From<&config::Config> for ConfigViewDto {
@@ -3541,6 +3545,16 @@ impl From<&config::Config> for ConfigViewDto {
             trash_retention_days: c.trash_retention_days,
             close_to_tray: c.close_to_tray,
             active_connection: c.active_connection.clone(),
+            onboarding_tour_completed: c
+                .onboarding
+                .as_ref()
+                .map(|o| o.tour_completed)
+                .unwrap_or(false),
+            onboarding_tips_seen: c
+                .onboarding
+                .as_ref()
+                .map(|o| o.tips_seen.clone())
+                .unwrap_or_default(),
         }
     }
 }
@@ -7477,6 +7491,23 @@ pub async fn config_set_trash_auto_purge(
 }
 
 // ============================================================================
+// tuxlink-10bkw — config_set_onboarding (first-run tour state)
+// ============================================================================
+
+/// tuxlink-10bkw: persist tour/tip state. Whole-section set (single-operator
+/// app; same last-write-wins posture as the other config_set_* commands).
+#[tauri::command]
+pub async fn config_set_onboarding(
+    tour_completed: bool,
+    tips_seen: Vec<String>,
+) -> Result<(), UiError> {
+    let mut cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    cfg.onboarding = Some(config::OnboardingConfig { tour_completed, tips_seen });
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    Ok(())
+}
+
+// ============================================================================
 // tuxlink-5rvp / #882 — close-to-tray prompt (resolve_close_prompt + set_close_to_tray)
 // ============================================================================
 
@@ -10714,6 +10745,22 @@ hw:CARD=Device,DEV=0
             dto.trash_retention_days, 14,
             "trash_retention_days = 14 must project through"
         );
+    }
+
+    // ========================================================================
+    // tuxlink-10bkw — ConfigViewDto projects onboarding tour/tips state
+    // ========================================================================
+
+    #[test]
+    fn config_view_dto_carries_onboarding() {
+        let mut cfg = cms_config_fixture();
+        cfg.onboarding = Some(config::OnboardingConfig {
+            tour_completed: true,
+            tips_seen: vec!["find-a-station".into()],
+        });
+        let dto = ConfigViewDto::from(&cfg);
+        assert!(dto.onboarding_tour_completed);
+        assert_eq!(dto.onboarding_tips_seen, vec!["find-a-station".to_string()]);
     }
 
     // ========================================================================
