@@ -10567,6 +10567,7 @@ hw:CARD=Device,DEV=0
             close_to_tray: true,
             close_prompt_seen: false,
             active_connection: None,
+            onboarding: Some(crate::config::OnboardingConfig::default()),
         }
     }
 
@@ -10923,6 +10924,7 @@ hw:CARD=Device,DEV=0
             close_to_tray: true,
             close_prompt_seen: false,
             active_connection: None,
+            onboarding: Some(crate::config::OnboardingConfig::default()),
         };
         let tmp = tempfile::tempdir().expect("tmpdir");
         let state = BackendState::new();
@@ -12502,6 +12504,7 @@ hw:CARD=Device,DEV=0
             close_to_tray: true,
             close_prompt_seen: false,
             active_connection: None,
+            onboarding: Some(crate::config::OnboardingConfig::default()),
         }
     }
 
