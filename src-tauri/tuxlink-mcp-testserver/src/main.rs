@@ -199,6 +199,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Provisioning is non-transmit + ungated; the mock is used in both the
         // scenario and no-scenario branches (like egress/abort/write/compose).
         provision: Arc::new(mocks::MockProvision),
+        // tuxlink-10bkw: point_at spotlight — no live webview in this
+        // tier-2 harness, so the mock always reports "shown".
+        ui_hint: Arc::new(mocks::MockUiHint),
     };
     let router = TuxlinkMcp::new(Arc::new(state));
 

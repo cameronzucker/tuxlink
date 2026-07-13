@@ -31,7 +31,7 @@ pub mod validate;
 pub use ports::{
     AbortPort, ComposePort, ConfigPort, DevicePort, EgressPort, EgressPortError, LogPort,
     MailboxPort, PortError, PredictionPort, ProvisionPort, SearchPort, StationPort, StatusPort,
-    WritePort, WritePortError,
+    UiHintPort, WritePort, WritePortError,
 };
 pub use router::TuxlinkMcp;
 pub use transport_uds::serve;
@@ -95,6 +95,10 @@ pub struct McpState {
     /// `vara_install_start` is NON-TRANSMIT (installs software via pkexec's own
     /// password prompt) so it does NOT pass through the transmit consent gate.
     pub provision: Arc<dyn ProvisionPort>,
+    /// UI spatial-help port (tuxlink-10bkw): `point_at` spotlights a
+    /// registered anchor in the main webview and awaits the frontend's
+    /// honest ack. Never navigates, opens panels, or fires actions.
+    pub ui_hint: Arc<dyn UiHintPort>,
 }
 
 /// Serializable shape returned by the `server_info` tool.
@@ -167,7 +171,7 @@ pub mod test_support {
         SearchResultsDto, SendFormDto, SerialDeviceDto, SessionIntentDto, SolarSnapshotDto,
         StationFilterDto, StationListDto, StationModeDto, StationPort, StatusPort, VaraCheckpointDto,
         VaraConfigDto, VaraEngineDto, VaraInstallStatusDto, VaraInstallSummaryDto, VaraProbeDto,
-        VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
+        VaraStatusDto, VaraWriteDto, UiHintPort, WritePort, WritePortError,
     };
     use crate::validate::{
         validate_address, validate_attachment_dest, validate_body, validate_drive_level,
@@ -816,6 +820,17 @@ pub mod test_support {
         }
     }
 
+    /// A mock [`UiHintPort`]. Always reports the hint as shown; read-only
+    /// (never touches the guard) since `point_at` is a display-only spotlight,
+    /// not an egress.
+    pub struct MockUiHint;
+    #[async_trait]
+    impl UiHintPort for MockUiHint {
+        async fn point_at(&self, _anchor_id: &str) -> Result<(), PortError> {
+            Ok(())
+        }
+    }
+
     /// Build an [`McpState`] around the supplied guard, wiring all mock ports.
     /// The egress/abort flags are internal; use [`state_with_egress_probes`] to
     /// observe whether a gated egress op actually ran or an abort fired.
@@ -869,6 +884,7 @@ pub mod test_support {
             stations: Arc::new(MockStation),
             prediction: Arc::new(MockPrediction),
             provision: Arc::new(MockProvision::new(Arc::clone(&op_ran))),
+            ui_hint: Arc::new(MockUiHint),
         })
     }
 
@@ -899,6 +915,7 @@ pub mod test_support {
             stations: Arc::new(MockStation),
             prediction: Arc::new(MockPrediction),
             provision: Arc::new(MockProvision::new(Arc::clone(&op_ran))),
+            ui_hint: Arc::new(MockUiHint),
         };
         (state, op_ran, aborted, staged)
     }
