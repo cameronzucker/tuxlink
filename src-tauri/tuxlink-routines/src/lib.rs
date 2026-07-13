@@ -9,7 +9,9 @@
 //! - Runs execute a snapshot resolved at run start.
 //! - Prior-art engine terminology is banned from this codebase; the feature is Routines.
 
+pub mod action;
 pub mod error;
+pub mod fakes;
 pub mod journal;
 pub mod refs;
 pub mod types;
