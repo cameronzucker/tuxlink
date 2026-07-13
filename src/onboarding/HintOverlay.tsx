@@ -261,11 +261,6 @@ export function HintOverlay() {
         <p id={bodyId} className="hint-overlay__body">
           {entry.body}
         </p>
-        {mode === 'tour' && (
-          <div className="hint-overlay__step" data-testid="hint-overlay-step">
-            Step {stepIndex + 1} of {total}
-          </div>
-        )}
         <div className="hint-overlay__actions">
           {mode === 'tour' ? (
             <>

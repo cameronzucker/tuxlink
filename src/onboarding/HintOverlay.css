@@ -60,12 +60,6 @@
   line-height: 1.45;
 }
 
-.hint-overlay__step {
-  font-size: var(--type-meta, 11px);
-  color: var(--text-faint, var(--text-dim));
-  margin-bottom: var(--space-4, 8px);
-}
-
 .hint-overlay__actions {
   display: flex;
   gap: var(--space-4, 8px);

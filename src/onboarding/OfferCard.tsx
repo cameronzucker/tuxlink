@@ -15,7 +15,7 @@ export function OfferCard() {
 
   return (
     <div className="hint-offer-card" role="status" data-testid="hint-offer-card">
-      <p className="hint-offer-card__body">Want a 60-second tour of the shell?</p>
+      <p className="hint-offer-card__body">New here? Take a 90-second tour.</p>
       <div className="hint-offer-card__actions">
         <button
           type="button"
