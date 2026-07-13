@@ -156,7 +156,7 @@ tuxlink-capture = { path = "tuxlink-capture" }
 # dev-dependency (wavwrite.rs round-trip test); this is the main crate's own
 # first non-dev use.
 tuxlink-jt9 = { path = "tuxlink-jt9" }
-alsa = "0.9"
+alsa = "0.12"
 # FT8 Station Intelligence L3 (tuxlink-b026z.4 Task A6): real-input FFT for the
 # waterfall consumer thread (12 kHz i16 → 2048-pt real FFT → 1025 bins). Already
 # resolved transitively at 3.5.0 in Cargo.lock, so promoting it to a direct dep
