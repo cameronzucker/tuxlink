@@ -198,6 +198,20 @@ export function StationFinderPanel({
   // the snapshot now says.
   const [forceSetup, setForceSetup] = useState(false);
 
+  // QA round-3 finding 2: setup renders as the panel's FULL BODY (replacing
+  // map+rail), per the approved firstrun-v2 mock — never a cramped scroll box
+  // under the strip. `needs-setup` promotes automatically; `setupDismissed`
+  // is the back-out (needs-setup can be caused by non-in-place blockers like
+  // a missing jt9 binary, and the GATEWAY finder must stay reachable then).
+  // A dismissal is scoped to ONE needs-setup episode — reset when the state
+  // moves on, so the next episode re-promotes.
+  const [setupDismissed, setSetupDismissed] = useState(false);
+  const needsSetup = ft8.uiState.state === 'needs-setup';
+  useEffect(() => {
+    if (!needsSetup) setSetupDismissed(false);
+  }, [needsSetup]);
+  const setupActive = ft8.snapshot != null && (forceSetup || (needsSetup && !setupDismissed));
+
   // D1: Live-decodes tab row click → pan the map to that station's grid. A FRESH
   // object per click (identity drives PanTo's effect) so re-clicking the same
   // grid re-pans after the operator has dragged away.
@@ -484,6 +498,42 @@ export function StationFinderPanel({
           <AntennaControl prefs={prefs} onChange={handlePrefsChange} error={prefsError} />
         )}
 
+        {setupActive && ft8.snapshot ? (
+          /* Finding 2: setup IS the body (firstrun-v2 mock) — the strip-header
+             row above it carries the state chip + the way back; map+rail and
+             the live strip do not render underneath (they return the moment
+             setup completes via onStarted, or on back-out). */
+          <div className="station-finder__setupbody" data-testid="station-finder-setup-body">
+            <div className="si-strip__hdr">
+              <span className="si-dot si-dot--amber" aria-hidden="true" />
+              <span className="si-strip__title">Live band · FT-8</span>
+              {needsSetup && <span className="si-prov si-prov--warn">NEEDS SETUP</span>}
+              <button
+                type="button"
+                className="station-finder__refresh station-finder__setup-back"
+                data-testid="station-finder-setup-back"
+                onClick={() => {
+                  setForceSetup(false);
+                  setSetupDismissed(true);
+                }}
+              >
+                ← back to finder
+              </button>
+            </div>
+            <div className="station-finder__setupbody-scroll">
+              <Ft8SetupSurface
+                snapshot={ft8.snapshot}
+                onStarted={() => {
+                  setForceSetup(false);
+                  setSetupDismissed(false);
+                  ft8.rehydrate();
+                }}
+                onRetry={ft8.rehydrate}
+              />
+            </div>
+          </div>
+        ) : (
+        <>
         <div className="station-finder__body">
           <StationFinderMap
             stations={visible}
@@ -512,57 +562,33 @@ export function StationFinderPanel({
             // BandMatrix openness dots.
             decodesRing={ft8.decodesRing}
             bandActivity={ft8.bandActivity}
+            // Finding 7: the Live-decodes tab's NN/min badge (approved mock's
+            // si-count) — the held band scopes the figure to match the strip.
+            liveBand={ft8.snapshot?.band ?? null}
             onPanToGrid={(ll) => setPanTarget({ ...ll })}
           />
         </div>
 
         {/* D1 — THE mount that was missing. Phase C built LiveBandStrip (and,
             beneath it, Waterfall + DecodeFeed + BandSubsetPopover) with zero call
-            sites, so none of it existed for the operator. The strip hosts the live
-            band: waterfall, decode feed, stats, provenance chips, and the
-            band-subset popover; in the needs-setup arms it hosts Ft8SetupSurface,
-            which likewise had no mount. */}
+            sites, so none of it existed for the operator. The strip hosts the
+            live band: waterfall, decode feed, stats, provenance chips, and the
+            band-subset popover. Since QA round-3 finding 2 the full setup
+            surface is the PANEL BODY above (never nested in the strip) — the
+            strip's needs-setup arm is a one-line notice + "Open setup →" that
+            re-promotes it (visible only after an explicit back-out). */}
         <LiveBandStrip
           snapshot={ft8.snapshot}
           uiState={ft8.uiState}
           decodesRing={ft8.decodesRing}
           operatorGrid={operatorGrid}
           blockingSessionMode={blockingSessionMode}
-          setupSurface={
-            ft8.snapshot ? (
-              <Ft8SetupSurface
-                snapshot={ft8.snapshot}
-                onStarted={() => {
-                  setForceSetup(false);
-                  ft8.rehydrate();
-                }}
-                onRetry={ft8.rehydrate}
-              />
-            ) : undefined
-          }
-          onOpenFullSetup={() => setForceSetup(true)}
+          onOpenFullSetup={() => {
+            setForceSetup(true);
+            setSetupDismissed(false);
+          }}
         />
-
-        {/* `device-lost` → "pick another input" (and, since the 4b setup-affordance
-            finding, the strip header's "setup" button while listening/starting/
-            yielded too): the strip's compact body has no device picker, so the
-            forced full setup surface renders here beneath it (the link is
-            otherwise dead). Gated on a snapshot — the surface's own contract
-            requires one. Scrollable + height-capped (operator QA finding,
-            2026-07-12): `.station-finder` clips overflow, and this mount sits
-            below the strip, so an unbounded surface pushed its own CTA off the
-            dialog with no scrollbar to reach it. */}
-        {forceSetup && ft8.snapshot && (
-          <div className="station-finder__forced-setup" data-testid="station-finder-forced-setup">
-            <Ft8SetupSurface
-              snapshot={ft8.snapshot}
-              onStarted={() => {
-                setForceSetup(false);
-                ft8.rehydrate();
-              }}
-              onRetry={ft8.rehydrate}
-            />
-          </div>
+        </>
         )}
       </div>
     </div>

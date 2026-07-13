@@ -89,9 +89,9 @@ beforeEach(() => {
 });
 
 describe('WwvOffairControl', () => {
-  it('renders a "Refresh off-air" button that arms a capture on click', async () => {
+  it('renders a "Refresh from WWV" button that arms a capture on click', async () => {
     render(<WwvOffairControl />);
-    const button = screen.getByRole('button', { name: 'Refresh off-air' });
+    const button = screen.getByRole('button', { name: 'Refresh from WWV' });
     fireEvent.click(button);
     await waitFor(() => {
       expect(mockArm).toHaveBeenCalledOnce();
@@ -163,8 +163,8 @@ describe('WwvOffairControl', () => {
     fireEvent.click(cancelButton);
     expect(mockCancel).toHaveBeenCalledOnce();
 
-    // The "Refresh off-air" button is disabled while armed.
-    const refreshButton = screen.getByRole('button', { name: 'Refresh off-air' });
+    // The "Refresh from WWV" button is disabled while armed.
+    const refreshButton = screen.getByRole('button', { name: 'Refresh from WWV' });
     expect(refreshButton).toBeDisabled();
   });
 

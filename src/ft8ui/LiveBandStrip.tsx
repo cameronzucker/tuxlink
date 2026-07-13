@@ -49,7 +49,7 @@
 // current force-expand episode (reset the moment the state leaves the
 // force-expand set).
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Button } from '../controls';
 import { Waterfall } from './Waterfall';
@@ -170,15 +170,6 @@ export interface LiveBandStripProps {
    *  app's active-modem state. Optional; degrades to BandSubsetPopover's own
    *  "another session" fallback when omitted. */
   blockingSessionMode?: string;
-  /**
-   * Optional slot for the full `needs-setup` setup surface (Ft8SetupSurface,
-   * Task C9a/C9b — in flight concurrently with this task, so this component
-   * does not import it directly). When omitted, `needs-setup` renders a
-   * minimal placeholder body instead of a blank/absent one, so the component
-   * stays self-consistent standalone; D1 is expected to pass
-   * `<Ft8SetupSurface .../>` here once both land.
-   */
-  setupSurface?: ReactNode;
   /** `device-lost`'s compact body carries a "pick another input" link that
    *  opens the full setup surface (spec §States row 6b) — the parent decides
    *  what that means (e.g. force-render Ft8SetupSurface). Optional; the link
@@ -195,7 +186,6 @@ export function LiveBandStrip({
   decodesRing,
   operatorGrid,
   blockingSessionMode,
-  setupSurface,
   onOpenFullSetup,
   nowMs,
 }: LiveBandStripProps) {
@@ -441,7 +431,6 @@ export function LiveBandStrip({
                 snapshot={snapshot}
                 starting={starting}
                 onStart={handleStart}
-                setupSurface={setupSurface}
                 onOpenFullSetup={onOpenFullSetup}
               />
             )}
@@ -501,14 +490,12 @@ function NonLiveBody({
   snapshot,
   starting,
   onStart,
-  setupSurface,
   onOpenFullSetup,
 }: {
   state: Ft8UiState;
   snapshot: Ft8Snapshot | null;
   starting: boolean;
   onStart: () => void;
-  setupSurface?: ReactNode;
   onOpenFullSetup?: () => void;
 }) {
   switch (state) {
@@ -557,14 +544,25 @@ function NonLiveBody({
         </div>
       );
     case 'needs-setup':
+      // Since QA round-3 finding 2 the full setup surface is the PANEL's own
+      // body (firstrun-v2 mock) — the strip never nests it. This arm is only
+      // visible after an explicit back-out of that surface, so it stays a
+      // one-line re-entry point, not a dead notice.
       return (
         <div
           className="si-strip__notice si-strip__notice--setup"
           data-testid="ft8-strip-body-needs-setup"
         >
-          {setupSurface ?? (
-            <p>Setup required — select an audio input (and, optionally, configure CAT) to start listening.</p>
-          )}
+          <p>Setup required — select an audio input (and, optionally, configure CAT) to start listening.</p>
+          <Button
+            tone="primary"
+            emphasis="solid"
+            size="sm"
+            data-testid="ft8-strip-open-setup"
+            onClick={() => onOpenFullSetup?.()}
+          >
+            Open setup →
+          </Button>
         </div>
       );
     case 'device-lost':

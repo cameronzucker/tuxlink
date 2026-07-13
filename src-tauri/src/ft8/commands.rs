@@ -101,20 +101,16 @@ fn wedged_refusal(state: &Ft8ListenerState) -> Result<(), String> {
 
 pub(crate) fn ft8_listener_start_inner(state: &Arc<Ft8ListenerState>) -> Result<(), String> {
     wedged_refusal(state)?;
-    let ft8 = with_ft8_config_writer(|c| {
-        c.ft8.enabled = true;
-        Ok(())
-    })?;
-    state.set_ft8_config(ft8);
+    // QA round-3 finding 1 (operator ruling 2026-07-12): listening is
+    // SESSION-SCOPED. start/stop no longer persist `ft8.enabled`, and boot
+    // never autostarts from it — a fresh launch always opens quiet, with a
+    // green "Listening" only after the operator turns it on this session.
+    // (`enabled` stays in the schema so configs that carry it still parse;
+    // it is simply never read or written again.)
     state.start() // idempotent: live supervisor → sequence re-run signal
 }
 
 pub(crate) fn ft8_listener_stop_inner(state: &Arc<Ft8ListenerState>) -> Result<(), String> {
-    let ft8 = with_ft8_config_writer(|c| {
-        c.ft8.enabled = false;
-        Ok(())
-    })?;
-    state.set_ft8_config(ft8);
     state.stop();
     Ok(())
 }
@@ -634,6 +630,20 @@ mod tests {
         let state = state_with(cfg_with_device());
         ft8_listener_start_inner(&state).unwrap();
         ft8_listener_start_inner(&state).unwrap();
+        state.test_teardown();
+    }
+
+    /// QA round-3 finding 1 (operator ruling): listening is session-scoped —
+    /// start/stop must NOT persist `ft8.enabled`, so a later launch always
+    /// opens quiet instead of autostarting into a green "Listening" chip.
+    #[test]
+    fn start_and_stop_do_not_persist_enabled() {
+        let (_env, _dir) = seed_config();
+        let state = state_with(cfg_with_device());
+        ft8_listener_start_inner(&state).unwrap();
+        assert!(!crate::config::read_config().unwrap().ft8.enabled);
+        ft8_listener_stop_inner(&state).unwrap();
+        assert!(!crate::config::read_config().unwrap().ft8.enabled);
         state.test_teardown();
     }
 

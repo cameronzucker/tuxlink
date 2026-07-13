@@ -833,12 +833,16 @@ Ft8Snapshot {
   **one ft8 writer mutex** before `write_config_atomic` (atomic file replace
   does not make concurrent RMW cycles atomic; the existing config layer does
   not serialize writers).
-- **Autostart:** setup hook starts the service when `config.ft8.enabled`
-  alone — NOT gated on `device.is_some()`: a first-contact operator who
-  enabled the listener and got interrupted mid-pick must find it in
-  `blocked(needs-device-selection)` after restart (the state that resumes
-  their flow), not silently `stopped`. `ft8_listener_start` sets
-  `enabled = true`; `ft8_listener_stop` sets `enabled = false`.
+- **Autostart: RETIRED (2026-07-12 operator ruling, QA round-3 finding 1).**
+  Listening is **session-scoped**: the setup hook never starts the service at
+  boot, and `ft8_listener_start`/`ft8_listener_stop` no longer persist
+  `enabled` (the field stays in the schema for parse-compat only). Rationale:
+  a persisted `enabled=true` autostarted capture on a machine with no radio
+  attached, presenting a green "Listening" chip that the operator read as
+  "hearing signals" — misleading enough to outweigh the resume-interrupted-
+  setup convenience the original contract optimized for. The
+  `blocked(needs-device-selection)` landing state still guards the
+  operator-initiated start-with-no-device path.
 
 ## Config (`AprsConfig` pattern, serde defaults, no schema bump)
 

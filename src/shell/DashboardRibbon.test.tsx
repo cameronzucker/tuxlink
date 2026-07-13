@@ -549,12 +549,13 @@ describe('<DashboardRibbon> — FT-8 status control (Task C2, tuxlink-b026z.4)',
     expect(btn).toHaveTextContent(/needs setup/i);
   });
 
-  // Blocked sub-labels (spec §Ribbon: "needs setup" / "disconnected" / "restart" / "paused").
+  // Blocked sub-labels (spec §Ribbon), sentence-cased per QA round-3
+  // finding 4 — exact-case match so a lowercase regression fails here.
   const BLOCKED_LABELS: Array<{ uiState: Ft8UiState; label: string }> = [
-    { uiState: 'needs-setup', label: 'needs setup' },
-    { uiState: 'device-lost', label: 'disconnected' },
-    { uiState: 'wedged', label: 'restart' },
-    { uiState: 'yielded', label: 'paused' },
+    { uiState: 'needs-setup', label: 'Needs setup' },
+    { uiState: 'device-lost', label: 'Disconnected' },
+    { uiState: 'wedged', label: 'Restart' },
+    { uiState: 'yielded', label: 'Paused' },
   ];
 
   it.each(BLOCKED_LABELS)('blocked uiState "$uiState" shows sub-label "$label"', ({ uiState, label }) => {

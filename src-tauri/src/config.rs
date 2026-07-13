@@ -1582,11 +1582,10 @@ impl Default for AprsConfig {
 /// predate it; no schema bump). `deny_unknown_fields` is intentionally
 /// absent, matching the other additive UI-config sections.
 ///
-/// - `enabled`: autostart flag. `ft8_listener_start` sets it true;
-///   `ft8_listener_stop` sets it false. Autostart fires on `enabled` ALONE —
-///   NOT gated on `device.is_some()` (a first-contact operator interrupted
-///   mid-pick must find `blocked(needs-device-selection)` after restart, not
-///   a silent `stopped`).
+/// - `enabled`: RETIRED (QA round-3 finding 1, operator ruling 2026-07-12:
+///   listening is session-scoped — no boot autostart, start/stop no longer
+///   persist it). Kept in the schema so configs that carry it still parse;
+///   never read or written.
 /// - `device`: the operator-picked capture card. `None` →
 ///   `blocked(needs-device-selection)`. No auto-selection, ever (operator
 ///   decision 2 in the spec header).

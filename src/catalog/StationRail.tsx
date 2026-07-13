@@ -21,6 +21,7 @@ import { distanceFromGrids, kmToMi } from './distance';
 import { gridToLatLon, type LatLon } from '../forms/position/maidenhead';
 import { LiveDecodesTab } from './LiveDecodesTab';
 import { useStatusData } from '../shell/useStatus';
+import { stripStats } from '../ft8ui/deriveBandActivity';
 import type { Station } from './stationModel';
 import type { PathPrediction } from './propagationApi';
 import type { PredictionStatus } from './useStationPrediction';
@@ -96,6 +97,18 @@ export interface StationRailProps {
    * a hollow no-data dot.
    */
   bandActivity?: Map<string, BandDot>;
+  /**
+   * The live strip's held band (`useFt8Listener().snapshot?.band`) — drives
+   * the Live-decodes tab's `NN/min` count badge (QA round-3 finding 7: the
+   * approved mock's tab carries a live `si-count` badge as THE discoverability
+   * affordance, and it was never wired). Omitted/null (no snapshot — listener
+   * never hydrated) hides the badge; the figure matches the strip header's
+   * decodes/min (same `stripStats`, same band scope).
+   */
+  liveBand?: string | null;
+  /** Injectable "now" for deterministic badge tests; defaults to `Date.now()`
+   *  (mirrors `LiveBandStrip`'s `nowMs` convention). */
+  nowMs?: number;
 }
 
 const MODE_LABEL: Record<string, string> = {
@@ -148,8 +161,15 @@ function declProvenance(decl: DeclDto, grid: string): string {
 type RailTab = 'station' | 'live';
 
 export function StationRail(props: StationRailProps) {
-  const { decodesRing = [], operatorGrid, onPanToGrid } = props;
+  const { decodesRing = [], operatorGrid, onPanToGrid, liveBand, nowMs } = props;
   const [tab, setTab] = useState<RailTab>('station');
+
+  // Finding 7: the tab's live count badge — same stripStats/band scope as the
+  // strip header, so the two figures never disagree on screen.
+  const liveCount =
+    liveBand != null
+      ? Math.round(stripStats(decodesRing, liveBand, nowMs ?? Date.now()).decodesPerMin)
+      : null;
 
   return (
     <div className="station-finder__rail">
@@ -173,6 +193,11 @@ export function StationRail(props: StationRailProps) {
           onClick={() => setTab('live')}
         >
           Live decodes
+          {liveCount != null && (
+            <span className="si-count" data-testid="rail-tab-live-count">
+              {liveCount}/min
+            </span>
+          )}
         </button>
       </div>
       {tab === 'station' ? (
