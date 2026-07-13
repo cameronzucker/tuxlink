@@ -1,18 +1,19 @@
-//! Action catalog service seams + registry (spec §6). Plan Task 4a lands the
-//! narrow trait-object ports every `needs_radio` action delegates through
-//! (`ConnectService`/`AprsService`/`ListenService`), `ActionDeps` (the
-//! constructor bag `build_registry` consumes), and the shared envelope-
-//! parsing helpers every radio action in `radio.rs` uses. `radio.rs` (this
-//! task) registers `radio.connect`/`radio.listen`/`radio.aprs_send`;
-//! `cat.rs`/`data.rs`/`local.rs` (plan Tasks 4b/4c/4d) extend [`ActionDeps`]
-//! with their own service trait objects and [`build_registry`] with their
-//! own `registry.register(...)` calls — see the marked extension points
-//! below. Adding those modules does not change anything in this file except
-//! those two marked spots.
+//! Action catalog service seams + registry (spec §6). Plan Task 4a landed
+//! the narrow trait-object ports every `needs_radio` action delegates
+//! through (`ConnectService`/`AprsService`/`ListenService`), `ActionDeps`
+//! (the constructor bag `build_registry` consumes), and the shared
+//! envelope-parsing helpers every radio action in `radio.rs` uses. Plan
+//! Task 4b adds the CAT verb seam (`RigService`) and registers the five
+//! `rig.*` actions from `cat.rs`. `data.rs`/`local.rs` (plan Tasks 4c/4d)
+//! extend [`ActionDeps`] with their own service trait objects and
+//! [`build_registry`] with their own `registry.register(...)` calls — see
+//! the marked extension points below. Adding those modules does not change
+//! anything in this file except those two marked spots.
 //!
 //! Plan: `docs/superpowers/plans/2026-07-13-routines-02-actions-arbiter-mount.md`
 //! Task 4. Spec: `docs/superpowers/specs/2026-07-13-routines-design.md` §6.
 
+pub mod cat;
 pub mod radio;
 
 use std::sync::Arc;
@@ -103,21 +104,59 @@ pub trait ListenService: Send + Sync {
     ) -> Result<f32, String>;
 }
 
+/// Live CAT state — the wire shape `rig.read_state`/`rig.validate_preset`/
+/// `rig.apply_preset` (cat.rs, plan Task 4b) output. Mirrors `tux_rig::RigStatus`
+/// field-for-field (`freq_hz`, `mode`, `ptt`), NOT the fuller "power, meters"
+/// wording spec §6's "Read radio state" row uses — `tux_rig::Rig` has no
+/// power/meter query verb (see `cat.rs`'s module doc for the full recon); this
+/// DTO reports exactly what the real seam can observe, honestly, rather than a
+/// power/meters field that would always read `null`. `mode` is `None` when
+/// `RigStatus.mode` itself is `None` (rigctld returned a token
+/// `tux_rig::Mode::from_rigctl` doesn't recognize) — a real, reportable
+/// condition, not an error swallowed into a default.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RigStateDto {
+    pub freq_hz: u64,
+    pub mode: Option<String>,
+    pub ptt: bool,
+}
+
+/// The `rig.*` CAT verb delegation seam (spec §6 "Radio actions", cat.rs,
+/// plan Task 4b). Every method is a FRESH, short-lived `rigctld` spawn (see
+/// `cat.rs`'s module doc for why this deliberately does not attempt to reuse
+/// a live `ModemSession`'s already-open rig handle) — narrow enough that
+/// `rig.switch_vfo`/`rig.tune_atu` (spec-listed CAT verbs with NO real
+/// `tux_rig::Rig` counterpart) never implement a fake by stretching this
+/// trait; they return a verbatim unsupported error instead (cat.rs).
+#[async_trait]
+pub trait RigService: Send + Sync {
+    /// Reads live CAT state (freq/mode/PTT).
+    async fn read_state(&self) -> Result<RigStateDto, String>;
+
+    /// Sets frequency (Hz) then mode (a `tux_rig::Mode::rigctl_str` token,
+    /// e.g. `"PKTUSB"`). Does NOT itself re-read to verify — `rig.apply_preset`'s
+    /// action layer does that as an explicit, separate [`Self::read_state`]
+    /// call (spec §6's "read-state → validate → apply chain" is two visible
+    /// steps, not one opaque one).
+    async fn apply(&self, freq_hz: u64, mode: String) -> Result<(), String>;
+}
+
 // ============================================================================
 // Registry construction
 // ============================================================================
 
 /// Constructor bag [`build_registry`] consumes. `arbiter` is shared by every
-/// `needs_radio` action (radio.rs today; cat.rs tomorrow). The three service
-/// seams above are radio.rs's; Tasks 4b/4c/4d add their OWN
-/// `Arc<dyn ...Service>` fields here — additive only, so existing
-/// `ActionDeps { arbiter, connect, aprs, listen }` construction call sites
-/// (Task 5's session mount, this module's own tests) keep compiling as later
-/// tasks land. Suggested shape for the extension (do not add these fields
-/// until the corresponding task actually lands — an unused trait object
-/// field would be dead weight the registry never registers):
+/// `needs_radio` action (radio.rs, cat.rs). The three radio.rs service seams
+/// (`connect`/`aprs`/`listen`) plus cat.rs's `rig` are wired here; Tasks
+/// 4c/4d add their OWN `Arc<dyn ...Service>` fields — additive only, so
+/// existing `ActionDeps { arbiter, connect, aprs, listen, rig }`
+/// construction call sites (Task 5's session mount, this module's own tests)
+/// keep compiling as later tasks land. Suggested shape for the extension (do
+/// not add these fields until the corresponding task actually lands — an
+/// unused trait object field would be dead weight the registry never
+/// registers):
 ///
-/// - Task 4b (`cat.rs`): `pub rig: Arc<dyn RigService>,`
 /// - Task 4c (`data.rs`): `pub data: Arc<dyn DataService>,`
 /// - Task 4d (`local.rs`): `pub local: Arc<dyn LocalService>,`
 pub struct ActionDeps {
@@ -125,10 +164,11 @@ pub struct ActionDeps {
     pub connect: Arc<dyn ConnectService>,
     pub aprs: Arc<dyn AprsService>,
     pub listen: Arc<dyn ListenService>,
+    pub rig: Arc<dyn RigService>,
 }
 
-/// Builds the action registry. Task 4a registers only the three radio
-/// actions; Tasks 4b/4c/4d extend this function with their own
+/// Builds the action registry. Tasks 4a/4b register the radio.rs and cat.rs
+/// actions; Tasks 4c/4d extend this function with their own
 /// `registry.register(Arc::new(...))` calls, following the exact pattern
 /// below — a `struct X { arbiter: Arc<RadioArbiter>, service: Arc<dyn
 /// YService> }` implementing `tuxlink_routines::action::Action`.
@@ -149,8 +189,22 @@ pub fn build_registry(deps: ActionDeps) -> ActionRegistry {
         deps.aprs.clone(),
     )));
 
-    // ---- Extension point (Task 4b/4c/4d) --------------------------------
-    // registry.register(Arc::new(cat::RigReadState::new(...)));
+    registry.register(Arc::new(cat::RigReadState::new(
+        deps.arbiter.clone(),
+        deps.rig.clone(),
+    )));
+    registry.register(Arc::new(cat::RigValidatePreset::new(
+        deps.arbiter.clone(),
+        deps.rig.clone(),
+    )));
+    registry.register(Arc::new(cat::RigApplyPreset::new(
+        deps.arbiter.clone(),
+        deps.rig.clone(),
+    )));
+    registry.register(Arc::new(cat::RigSwitchVfo::new(deps.arbiter.clone())));
+    registry.register(Arc::new(cat::RigTuneAtu::new(deps.arbiter.clone())));
+
+    // ---- Extension point (Task 4c/4d) -----------------------------------
     // registry.register(Arc::new(data::SpaceWxWwv::new(...)));
     // registry.register(Arc::new(local::ComposeMessage::new(...)));
     // -----------------------------------------------------------------------

@@ -23,14 +23,22 @@
 //! existed anywhere else in the codebase (see `resolver.rs` and
 //! `station_sets.rs` module docs).
 //!
-//! **Plan 2 Task 4a (this landing):** [`actions`] — the real action
-//! catalog's service seams (`ConnectService`/`AprsService`/`ListenService`),
+//! **Plan 2 Task 4a:** [`actions`] — the real action catalog's service
+//! seams (`ConnectService`/`AprsService`/`ListenService`),
 //! `ActionDeps`/`build_registry`, and the three radio actions
 //! (`radio.connect`/`radio.listen`/`radio.aprs_send`, spec §6). See
 //! `actions::radio`'s module doc for the transport-seam recon and the
-//! ARDOP/VARA gateway-frequency gap Task 5 must close. Later plan-2 tasks
-//! extend `actions` with `cat.rs`/`data.rs`/`local.rs` and add the engine
-//! mount + Tauri command surface.
+//! ARDOP/VARA gateway-frequency gap Task 5 must close.
+//!
+//! **Plan 2 Task 4b (this landing):** [`actions::cat`] — the CAT verb
+//! seam (`RigService`), and the five `rig.*` actions
+//! (`rig.read_state`/`rig.validate_preset`/`rig.apply_preset`/
+//! `rig.switch_vfo`/`rig.tune_atu`, spec §6). Two of the five
+//! (`rig.switch_vfo`, `rig.tune_atu`) have no real `tux_rig::Rig` verb to
+//! delegate to and return a verbatim, seam-naming unsupported error rather
+//! than a stub or a side-path fake — see `actions::cat`'s module doc for
+//! the full recon. Later plan-2 tasks extend `actions` with
+//! `data.rs`/`local.rs` and add the engine mount + Tauri command surface.
 //!
 //! That other, banned six-syllable term for scripted automation never
 //! appears in this module's symbols, JSON keys, or docs (spec Global
