@@ -56,6 +56,18 @@ type ActiveHint =
   | { kind: 'tour'; stepIndex: number }
   | { kind: 'single'; entry: HintEntry; source: 'tip' | 'point-at' };
 
+/**
+ * The overlay is capturing keyboard/UI: a tour or a single hint. The offer
+ * card is deliberately NOT overlay-active (it never blocks typing). Single
+ * source of truth for both the context's `overlayActive` and the capture
+ * keydown policy. Type guard so callers get the narrowed tour/single union.
+ */
+function isOverlayCapturing(
+  active: ActiveHint,
+): active is Exclude<ActiveHint, null | { kind: 'offer' }> {
+  return active !== null && active.kind !== 'offer';
+}
+
 export interface HintContextValue {
   active: ActiveHint;
   /** Offer accept + Help replay — (re)starts the tour from stop 0. */
@@ -259,18 +271,21 @@ export function HintProvider({ children }: { children: ReactNode }) {
       ackPointAt(requestId, 'unknown-anchor', { validIds: ALL_ENTRIES.map((e) => e.id) });
       return;
     }
+    // Overlay-busy wins over mount-state: while a modal offer/tour is
+    // capturing the UI, an 'anchor-unmounted' ack with openHint navigation
+    // guidance would be actively wrong (the operator can't navigate anywhere).
+    // A point-at may replace an earlier point-at/tip (single), but never a
+    // running offer or tour.
+    const activeNow = stateRef.current.active;
+    if (activeNow !== null && (activeNow.kind === 'offer' || activeNow.kind === 'tour')) {
+      ackPointAt(requestId, 'overlay-busy');
+      return;
+    }
     const probe = entry.requiredPanelState ? probesRef.current.get(entry.requiredPanelState) : undefined;
     const probeOk = entry.requiredPanelState ? Boolean(probe?.()) : true;
     const anchorMounted = document.querySelector(`[data-tour-anchor="${entry.anchor}"]`) !== null;
     if (!probeOk || !anchorMounted) {
       ackPointAt(requestId, 'anchor-unmounted', { openHint: entry.openHint });
-      return;
-    }
-    const activeNow = stateRef.current.active;
-    // A point-at may replace an earlier point-at/tip (single), but never a
-    // running offer or tour — those ack overlay-busy instead.
-    if (activeNow !== null && (activeNow.kind === 'offer' || activeNow.kind === 'tour')) {
-      ackPointAt(requestId, 'overlay-busy');
       return;
     }
     dispatch({ type: 'show-single', entry, source: 'point-at' });
@@ -311,8 +326,7 @@ export function HintProvider({ children }: { children: ReactNode }) {
 
     function onKeyDown(e: KeyboardEvent): void {
       const active = stateRef.current.active;
-      const overlayActiveNow = active !== null && active.kind !== 'offer';
-      if (!overlayActiveNow) return; // inactive or offer card: no-op passthrough
+      if (!isOverlayCapturing(active)) return; // inactive or offer card: no-op passthrough
 
       if (!passthroughKeys.has(e.key)) {
         e.preventDefault();
@@ -338,7 +352,7 @@ export function HintProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const overlayActive = state.active !== null && state.active.kind !== 'offer';
+  const overlayActive = isOverlayCapturing(state.active);
 
   const value: HintContextValue = {
     active: state.active,

@@ -307,4 +307,35 @@ describe('HintProvider', () => {
       );
     });
   });
+
+  it('bullet 6 precedence: overlay-busy wins over anchor-unmounted while a tour is active', async () => {
+    // point_at for a known-but-UNMOUNTED anchor while the tour is running must
+    // ack overlay-busy, NOT anchor-unmounted — openHint navigation guidance is
+    // actively wrong while a modal tour is capturing the UI.
+    const listener = captureListener();
+    routeInvoke({ onboarding_tour_completed: true, onboarding_tips_seen: [] });
+    render(
+      <HintProvider>
+        <Probe />
+      </HintProvider>,
+    );
+    await waitFor(() => expect(listener.get()).toBeDefined());
+    await waitFor(() => expect(activeOf()).toBeNull());
+
+    fireEvent.click(screen.getByText('startTour'));
+    await waitFor(() => expect(screen.getByTestId('overlay-active').textContent).toBe('true'));
+
+    // 'compose' is a known registry entry with no data-tour-anchor rendered here.
+    act(() => listener.get()!({ payload: { request_id: 7, anchor_id: 'compose' } }));
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith(
+        'onboarding_point_at_ack',
+        expect.objectContaining({ requestId: 7, outcome: 'overlay-busy' }),
+      );
+    });
+    expect(invoke).not.toHaveBeenCalledWith(
+      'onboarding_point_at_ack',
+      expect.objectContaining({ requestId: 7, outcome: 'anchor-unmounted' }),
+    );
+  });
 });
