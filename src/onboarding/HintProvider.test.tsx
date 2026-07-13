@@ -338,4 +338,64 @@ describe('HintProvider', () => {
       expect.objectContaining({ requestId: 7, outcome: 'anchor-unmounted' }),
     );
   });
+
+  // tuxlink-10bkw Task 9: menu chrome anchors (MENU_POINT_AT_ENTRIES) are
+  // point-at-only — they must resolve through the same lookup as tour/tip
+  // entries, including the "menu closed -> anchor-unmounted with openHint"
+  // and "unknown-anchor validIds" paths.
+  it('Task 9: menu item point-at acks anchor-unmounted with the menu openHint while the menu is closed', async () => {
+    const listener = captureListener();
+    routeInvoke({ onboarding_tour_completed: true, onboarding_tips_seen: [] });
+    render(
+      <HintProvider>
+        <Probe />
+      </HintProvider>,
+    );
+    await waitFor(() => expect(listener.get()).toBeDefined());
+    await waitFor(() => expect(activeOf()).toBeNull());
+
+    // 'menu:help:replay_tour' is a real MENU_POINT_AT_ENTRIES anchor, but no
+    // DOM node carries it here — the menu-item element only exists in the DOM
+    // while its parent menu is open (MenuBar renders it conditionally).
+    act(() => listener.get()!({ payload: { request_id: 10, anchor_id: 'menu:help:replay_tour' } }));
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith(
+        'onboarding_point_at_ack',
+        expect.objectContaining({
+          requestId: 10,
+          outcome: 'anchor-unmounted',
+          openHint: 'Open the Help menu first — this entry lives inside it.',
+        }),
+      );
+    });
+    expect(activeOf()).toBeNull();
+  });
+
+  it('Task 9: unknown-anchor validIds includes menu chrome ids alongside tour/tip ids', async () => {
+    const listener = captureListener();
+    routeInvoke({ onboarding_tour_completed: true, onboarding_tips_seen: [] });
+    render(
+      <HintProvider>
+        <Probe />
+      </HintProvider>,
+    );
+    await waitFor(() => expect(listener.get()).toBeDefined());
+    await waitFor(() => expect(activeOf()).toBeNull());
+
+    act(() => listener.get()!({ payload: { request_id: 11, anchor_id: 'still-nope' } }));
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith(
+        'onboarding_point_at_ack',
+        expect.objectContaining({ requestId: 11, outcome: 'unknown-anchor' }),
+      );
+    });
+    const call = vi
+      .mocked(invoke)
+      .mock.calls.find(
+        (c) => c[0] === 'onboarding_point_at_ack' && (c[1] as { requestId: number }).requestId === 11,
+      );
+    expect((call?.[1] as { validIds: string[] }).validIds).toEqual(
+      expect.arrayContaining(['menu:tools', 'menu:help', 'menu:help:replay_tour', 'find-a-station']),
+    );
+  });
 });

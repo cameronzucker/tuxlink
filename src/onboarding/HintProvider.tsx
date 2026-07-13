@@ -38,10 +38,17 @@ import { listen } from '@tauri-apps/api/event';
 import type { HintEntry, PanelStateProbe } from './types';
 import { TOUR_STOPS } from './tourRegistry';
 import { HINTS } from './hintRegistry';
+import { MENU_POINT_AT_ENTRIES } from './menuAnchors';
 import { isTipSeen, markTipSeen } from './tipLogic';
 
-/** Every known anchor, tour + discretionary tips, for point-at lookup. */
-const ALL_ENTRIES: HintEntry[] = [...TOUR_STOPS, ...HINTS];
+/** Every known anchor, for point-at lookup: tour stops, discretionary tips,
+ *  and menu chrome (top-level menu buttons + items inside open menus —
+ *  point-at-only, tuxlink-10bkw Task 9). Discretionary first-open tip
+ *  scheduling (`requestFirstOpenTip`) is driven exclusively by literal HINTS
+ *  ids passed from call sites (useFirstOpenTip('settings'|'compose'|
+ *  'find-a-station'|'aprs')) — it never iterates this combined list — so
+ *  menu entries cannot leak into tip scheduling. */
+const ALL_ENTRIES: HintEntry[] = [...TOUR_STOPS, ...HINTS, ...MENU_POINT_AT_ENTRIES];
 
 function findEntry(id: string): HintEntry | undefined {
   return ALL_ENTRIES.find((e) => e.id === id);
