@@ -45,6 +45,22 @@ import { ElmerPane } from '../../src/elmer/ElmerPane';
 // `.sparkline-bar` only inside `.spk-*` wrappers, so this stays a pre-approval
 // visual probe, not the implementation.
 import { Sparkline } from '../../src/radio/charts/Sparkline';
+// FT-8 Station Intelligence D2 (tuxlink-b026z.4): mount LiveBandStrip per
+// uiState with realistic fixtures — one PNG per state via snapshot.py. The
+// strip is props-driven, so every state is drivable without a backend; the
+// needs-setup/device-lost arms mount the real Ft8SetupSurface in the slot
+// (its device list/meter/rig reads come from the canned shim below).
+//   ?view=ft8&state=off|transitional|needs-setup|device-lost|wedged|yielded|
+//                    waiting-first-slot|band-dead|decoding
+//   &flags=clock|jt9    (overlay variants on any live state)
+import { LiveBandStrip } from '../../src/ft8ui/LiveBandStrip';
+import { Ft8SetupSurface } from '../../src/ft8ui/Ft8SetupSurface';
+import type {
+  Ft8Snapshot,
+  Ft8UiState,
+  Ft8Flags,
+  SlotRecord,
+} from '../../src/ft8ui/ft8Types';
 import type { RadioPanelMode } from '../../src/radio/types';
 import type { CatalogEntry } from '../../src/catalog/types';
 import type { StatusBarData } from '../../src/shell/useStatus';
@@ -54,7 +70,7 @@ const grid = params.has('grid') ? params.get('grid') : 'CN87';
 const view = (params.get('view') ?? 'home') as
   | 'home' | 'browse' | 'grib' | 'ribbon'
   | 'radio-ardop' | 'radio-vara' | 'radio-telnet'
-  | 'elmer' | 'sparkline';
+  | 'elmer' | 'sparkline' | 'ft8';
 // ?running=1 drives a connected modem / open VARA transport so the running-state
 // footers render: ARDOP/VARA `Send/Receive` (primary) + the red `Stop`
 // (`radio-panel-btn-bad`) button. Without it the fixture pins state to STOPPED, so
@@ -173,6 +189,16 @@ const RESPONSES: Record<string, unknown> = {
   vara_allowed_stations_get: { allow_all: true, callsigns: [], ips: [] },
   packet_allowed_stations_get: { allow_all: true, callsigns: [], ips: [] },
   telnet_allowed_stations_get: { allow_all: true, callsigns: [], ips: [] },
+  // --- FT-8 D2 fixtures (view=ft8). Setup surface + waterfall mount-time reads. ---
+  ft8_list_devices: [
+    { humanName: 'Digirig Mobile (USB Audio)', stableId: { kind: 'usb-path', value: 'usb-1.2' }, alsaHw: 'hw:1,0' },
+    { humanName: 'DRA-100 (USB Audio CODEC)', stableId: { kind: 'usb-path', value: 'usb-1.3' }, alsaHw: 'hw:2,0' },
+  ],
+  ft8_device_meter: { rmsDbfs: -32.5, state: 'live' },
+  ft8_cat_probe: { dialHz: 14074000, band: '20m' },
+  ft8_waterfall_subscribe: { token: 1 },
+  ft8_waterfall_unsubscribe: null,
+  rig_list_models: [],
 };
 
 // Tauri v2 routes invoke() through window.__TAURI_INTERNALS__.invoke(cmd, args).
@@ -268,9 +294,118 @@ function SparklineFixtureView() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// FT-8 D2 fixtures — one falsifiable render per uiState (tuxlink-b026z.4).
+// ---------------------------------------------------------------------------
+const FT8_NOW_MS = 1_767_225_600_000; // fixed "now" so stripStats is deterministic
+
+function ft8Snapshot(over: Partial<Ft8Snapshot> = {}): Ft8Snapshot {
+  return {
+    service: { axis: 'listening' },
+    flags: { clockUnsynced: false, catFixedBand: false, jt9Degraded: false },
+    slotPhase: 'decoded',
+    band: '20m',
+    dialHz: 14_074_000,
+    bandSource: 'cat-confirmed',
+    bandLabelConfirmedUtcMs: FT8_NOW_MS - 90_000,
+    sweep: { mode: 'inactive', bandIdx: null, dwellProgress: null },
+    engineVersion: 'jt9 2.6.1',
+    nConsecutive: 4,
+    kConsecutive: 0,
+    lastSlotUtcMs: FT8_NOW_MS - 15_000,
+    lastFailure: null,
+    availableDevices: null,
+    ringTail: [],
+    sweepConfig: { enabled: false, bands: ['20m'], dwellSlots: 4 },
+    configuredDeviceName: 'Digirig Mobile',
+    ...over,
+  } as Ft8Snapshot;
+}
+
+const FT8_RING: SlotRecord[] = [0, 1, 2, 3].map((i): SlotRecord => ({
+  slotUtcMs: FT8_NOW_MS - (4 - i) * 15_000,
+  band: '20m',
+  dialHz: 14_074_000,
+  bandSource: 'cat-confirmed',
+  bandLabelConfirmedUtcMs: FT8_NOW_MS - 90_000,
+  outcome: { kind: 'decoded' },
+  decodes: [
+    { slotUtcMs: FT8_NOW_MS - (4 - i) * 15_000, snrDb: -4 - i, dtS: 0.2, freqHz: 1240 + i * 180, message: `CQ W7GTE DM34`, fromCall: 'W7GTE', toCall: null, grid: 'DM34', partial: false },
+    { slotUtcMs: FT8_NOW_MS - (4 - i) * 15_000, snrDb: -13, dtS: 0.1, freqHz: 688, message: 'K5MDX N7CPZ DM43', fromCall: 'N7CPZ', toCall: 'K5MDX', grid: 'DM43', partial: false },
+  ],
+}));
+
+/** Per-state snapshot + uiState (flags folded in via ?flags=). */
+function ft8StateFixture(state: Ft8UiState, flags: Ft8Flags): { snapshot: Ft8Snapshot | null; ring: SlotRecord[] } {
+  switch (state) {
+    case 'off':
+      return { snapshot: ft8Snapshot({ service: { axis: 'stopped' }, slotPhase: 'waiting-first-slot', lastSlotUtcMs: null, nConsecutive: 0 }), ring: [] };
+    case 'transitional':
+      return { snapshot: ft8Snapshot({ service: { axis: 'starting' }, slotPhase: 'waiting-first-slot', lastSlotUtcMs: null }), ring: [] };
+    case 'needs-setup':
+      return {
+        snapshot: ft8Snapshot({
+          service: { axis: 'blocked', reason: 'needs-device-selection' },
+          slotPhase: 'waiting-first-slot',
+          configuredDeviceName: null,
+          availableDevices: [
+            { humanName: 'Digirig Mobile (USB Audio)', stableId: { kind: 'usb-path', value: 'usb-1.2' }, alsaHw: 'hw:1,0' },
+            { humanName: 'DRA-100 (USB Audio CODEC)', stableId: { kind: 'usb-path', value: 'usb-1.3' }, alsaHw: 'hw:2,0' },
+          ],
+        }),
+        ring: [],
+      };
+    case 'device-lost':
+      return { snapshot: ft8Snapshot({ service: { axis: 'blocked', reason: 'device-absent' }, slotPhase: 'waiting-first-slot' }), ring: FT8_RING };
+    case 'wedged':
+      return { snapshot: ft8Snapshot({ service: { axis: 'blocked', reason: 'capture-wedged' }, slotPhase: 'waiting-first-slot' }), ring: FT8_RING };
+    case 'yielded':
+      return { snapshot: ft8Snapshot({ service: { axis: 'yielded' } }), ring: FT8_RING };
+    case 'waiting-first-slot':
+      return { snapshot: ft8Snapshot({ slotPhase: 'waiting-first-slot', lastSlotUtcMs: null, nConsecutive: 0 }), ring: [] };
+    case 'band-dead':
+      return { snapshot: ft8Snapshot({ slotPhase: 'band-dead', nConsecutive: 0, kConsecutive: 9 }), ring: [] };
+    case 'decoding':
+    default:
+      return { snapshot: ft8Snapshot(), ring: FT8_RING };
+  }
+}
+
+function Ft8StripFixtureView() {
+  const state = (params.get('state') ?? 'decoding') as Ft8UiState;
+  const flagsParam = params.get('flags');
+  const flags: Ft8Flags = {
+    clockUnsynced: flagsParam === 'clock',
+    jt9Degraded: flagsParam === 'jt9',
+    catFixedBand: params.get('catfixed') === '1',
+  };
+  const { snapshot, ring } = ft8StateFixture(state, flags);
+  const snapWithFlags = snapshot
+    ? { ...snapshot, flags, lastFailure: flags.jt9Degraded ? 'jt9 exited 137 (SIGKILL) — decode timeout' : snapshot.lastFailure }
+    : null;
+  const setupSlot = snapWithFlags ? (
+    <Ft8SetupSurface snapshot={snapWithFlags} onStarted={() => undefined} onRetry={() => undefined} />
+  ) : undefined;
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: 'var(--bg)' }}>
+      <LiveBandStrip
+        snapshot={snapWithFlags}
+        uiState={{ state, flags }}
+        decodesRing={ring}
+        blockingSessionMode={params.get('blocking') ?? undefined}
+        setupSurface={setupSlot}
+        onOpenFullSetup={() => undefined}
+        nowMs={FT8_NOW_MS}
+      />
+    </div>
+  );
+}
+
 createRoot(document.getElementById('root')!).render(
   <QueryClientProvider client={queryClient}>
-    {view === 'sparkline' ? (
+    {view === 'ft8' ? (
+      <Ft8StripFixtureView />
+    ) : view === 'sparkline' ? (
       <SparklineFixtureView />
     ) : view === 'ribbon' ? (
       <div className="layout-b">
