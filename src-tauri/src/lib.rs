@@ -1622,6 +1622,10 @@ pub fn run() {
                         provision: std::sync::Arc::new(
                             crate::mcp_ports::MonolithProvisionPort::new(h.clone()),
                         ),
+                        // tuxlink-l44dm: off-air WWV space-weather capture.
+                        // RECEIVE-ONLY (tunes the rig and listens; never keys the
+                        // transmitter), so it is ungated and non-tainting.
+                        wwv: std::sync::Arc::new(crate::mcp_ports::MonolithWwvPort),
                     });
                     let router = tuxlink_mcp_core::router::TuxlinkMcp::new(mcp_state);
 
@@ -1709,6 +1713,9 @@ pub fn run() {
                     stations: std::sync::Arc::new(crate::mcp_ports::MonolithStationPort::new(h_elmer.clone(), guard_elmer.clone())),
                     prediction: std::sync::Arc::new(crate::mcp_ports::MonolithPredictionPort::new(h_elmer.clone())),
                     provision: std::sync::Arc::new(crate::mcp_ports::MonolithProvisionPort::new(h_elmer.clone())),
+                    // tuxlink-l44dm: RECEIVE-ONLY off-air WWV capture — Elmer's
+                    // only way to refresh space weather with no internet.
+                    wwv: std::sync::Arc::new(crate::mcp_ports::MonolithWwvPort),
                 });
 
                 // Perform the async MCP duplex handshake synchronously from setup.

@@ -586,11 +586,39 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "solar_conditions",
-        description = "Report current space-weather indices (SFI/A/K) + the sunspot number used for predictions. Public data. Read-only."
+        description = "Report the STORED space-weather indices (SFI/A/K) and the sunspot number used for predictions. IMPORTANT: this reads a cached snapshot — it does not fetch anything, and the data may be old. Always check the returned `source` and `updated_at_ms` before presenting these as current. `source` is: \"swpc\" (from the internet), \"rf-wwv\" or \"rf-wwv-voice\" (decoded from the radio), or \"bundled\" (a fallback that shipped with the app and has NEVER been updated — do not present bundled values as current conditions). If the data is stale or bundled, tell the operator and offer wwv_capture_offair, which refreshes it over their own radio with no internet. Read-only; does not taint."
     )]
     pub async fn solar_conditions(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.prediction.solar().await.map_err(port_err)?;
         Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    // ----- Off-air WWV space-weather capture (tuxlink-l44dm) -----
+    //
+    // RECEIVE-ONLY. `wwv_capture_offair` tunes the rig to WWV and LISTENS; it
+    // never keys the transmitter, so it is NOT an egress act and does NOT pass
+    // through the transmit consent gate. It returns parsed numeric indices (never
+    // free text off the air), so it does not taint either. This is the ONLY way
+    // to refresh space weather with no internet.
+
+    #[tool(
+        name = "wwv_capture_offair",
+        description = "Capture the current space-weather bulletin from the WWV time station over the operator's OWN RADIO and update the stored indices. This needs NO internet — it is how to refresh space weather when the operator is off-grid. Receive-only: it tunes the radio to WWV and listens, it does not transmit. Takes about a minute (it waits for the next bulletin). Requires rig CAT control (see wwv_offair_available). If it returns no_copy=true, audio was captured but the decode was not confident; the indices were not changed. Does not taint."
+    )]
+    pub async fn wwv_capture_offair(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self.state.wwv.capture().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
+        name = "wwv_offair_available",
+        description = "Report whether off-air WWV capture is possible: it requires rig CAT control so Tuxlink can tune the radio to WWV. Call before wwv_capture_offair. Read-only; does not taint."
+    )]
+    pub async fn wwv_offair_available(&self) -> Result<CallToolResult, ErrorData> {
+        let configured = self.state.wwv.cat_configured().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(
+            configured,
+        )?]))
     }
 
     // ----- Provisioning: VARA-under-WINE setup (tuxlink-w7212) -----
@@ -1880,6 +1908,65 @@ mod tests {
         );
     }
 
+    /// A tool description that names a field the payload does NOT contain is worse
+    /// than one that names none: it sends the model looking for `updatedAtMs`, the
+    /// payload has `updated_at_ms`, and a small model can conclude the field is
+    /// absent and fall back on assumption — the exact ungrounded behaviour these
+    /// descriptions exist to prevent.
+    ///
+    /// The port DTOs carry no `serde(rename_all)`, so the wire keys are the Rust
+    /// field names verbatim. That convention is silent — nothing makes a description
+    /// and a DTO drift apart loudly. This makes it loud.
+    #[test]
+    fn tool_descriptions_name_the_real_wire_keys_not_camel_case() {
+        // 1. Pin the wire keys. The port DTOs carry no `serde(rename_all)`, so the
+        //    keys the model sees are the Rust field names verbatim. If someone adds
+        //    camelCase renaming later, this fails and points at the descriptions.
+        let dto = SolarSnapshotDto {
+            sfi: Some(1.0),
+            a_index: Some(2.0),
+            k_index: Some(3.0),
+            ssn: 4.0,
+            updated_at_ms: 5,
+            source: "bundled".into(),
+        };
+        let obj = serde_json::to_value(&dto).unwrap();
+        let obj = obj.as_object().unwrap().clone();
+        assert!(
+            obj.contains_key("updated_at_ms") && obj.contains_key("source"),
+            "wire keys changed; solar_conditions' description names them explicitly \
+             and must be updated in lockstep. got: {:?}",
+            obj.keys().collect::<Vec<_>>()
+        );
+
+        // 2. Lint this file's own tool descriptions for camelCase field mentions.
+        //    A description that names a field the payload does NOT contain is worse
+        //    than one that names none: it sends the model looking for `updatedAtMs`,
+        //    the payload has `updated_at_ms`, and a small model can conclude the
+        //    field is absent and fall back on assumption — the exact ungrounded
+        //    behaviour these descriptions exist to prevent. That drift is silent:
+        //    nothing in the compiler couples a doc string to a serde key.
+        //
+        //    Scoped to `description = "..."` lines ONLY. Linting the whole file would
+        //    be self-defeating: this assertion's own camelCase literals live in the
+        //    source too, and the test would always trip on itself.
+        let camel_case_field_mentions: Vec<&str> = include_str!("router.rs")
+            .lines()
+            .filter(|l| l.trim_start().starts_with("description = \""))
+            .filter(|l| {
+                ["updatedAtMs", "noCopy", "aIndex", "kIndex", "bestSnrDb"]
+                    .iter()
+                    .any(|bad| l.contains(bad))
+            })
+            .collect();
+        assert!(
+            camel_case_field_mentions.is_empty(),
+            "a tool description names a camelCase field, but the port DTOs serialize \
+             snake_case (no serde rename_all) — the model would look for a key that is \
+             not there. Offending description(s): {camel_case_field_mentions:#?}"
+        );
+    }
+
     // --- NON-taint tools leave a fresh guard clean ---
 
     #[tokio::test]
@@ -1901,6 +1988,9 @@ mod tests {
         }))
         .await
         .unwrap();
+        // RECEIVE-ONLY WWV availability probe (tuxlink-l44dm): a CAT-config read,
+        // no radio traffic at all — it must not taint.
+        h.wwv_offair_available().await.unwrap();
         assert!(
             !h.state.guard.is_tainted(),
             "read-only status/config/docs/devices tools must NOT taint a fresh guard"
@@ -2065,6 +2155,27 @@ mod tests {
         assert!(
             !h.state.guard.is_tainted(),
             "solar_conditions must NOT taint the session (public data)"
+        );
+    }
+
+    // --- Off-air WWV capture (receive-only; ungated, non-tainting) ---
+
+    #[tokio::test]
+    async fn wwv_capture_offair_round_trips_and_is_ungated() {
+        use crate::ports::WwvCaptureDto;
+        // A FRESH (disarmed) guard: the capture is RECEIVE-ONLY, so it must
+        // succeed without an arm — it is not a transmit and is not gated.
+        let h = handler();
+        assert!(!h.state.guard.is_tainted());
+        let result = h.wwv_capture_offair().await.unwrap();
+        let dto: WwvCaptureDto = json_of(&result);
+        assert!(dto.updated);
+        assert!(!dto.no_copy);
+        assert_eq!(dto.source, "rf-wwv-voice");
+        assert_eq!(dto.sfi, Some(150.0));
+        assert!(
+            !h.state.guard.is_tainted(),
+            "wwv_capture_offair must NOT taint (it yields parsed numeric indices)"
         );
     }
 

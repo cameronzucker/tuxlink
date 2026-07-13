@@ -663,6 +663,20 @@ pub struct SolarSnapshotDto {
     pub source: String,
 }
 
+/// Result of an off-air WWV capture.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WwvCaptureDto {
+    /// True when a confident decode updated the stored space-weather indices.
+    pub updated: bool,
+    /// True when audio was captured but no confident transcript was obtained.
+    pub no_copy: bool,
+    /// Provenance written to the snapshot, e.g. "rf-wwv-voice".
+    pub source: String,
+    pub sfi: Option<f64>,
+    pub a_index: Option<f64>,
+    pub k_index: Option<f64>,
+}
+
 // ---------------------------------------------------------------------------
 // Port traits.
 // ---------------------------------------------------------------------------
@@ -812,6 +826,16 @@ pub trait PredictionPort: Send + Sync {
     /// Report the current space-weather snapshot. Read-only; does not taint or
     /// gate.
     async fn solar(&self) -> Result<SolarSnapshotDto, PortError>;
+}
+
+/// Off-air WWV space-weather capture. RECEIVE-ONLY: tunes the rig to WWV and
+/// listens; never transmits. Yields parsed numeric indices, so nothing taints.
+#[async_trait]
+pub trait WwvPort: Send + Sync {
+    /// Capture the next WWV bulletin off-air and ingest it.
+    async fn capture(&self) -> Result<WwvCaptureDto, PortError>;
+    /// Whether rig CAT control is configured (WWV capture needs it to tune).
+    async fn cat_configured(&self) -> Result<bool, PortError>;
 }
 
 // ---------------------------------------------------------------------------
