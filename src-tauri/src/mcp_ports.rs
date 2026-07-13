@@ -38,7 +38,8 @@ use tauri::{AppHandle, Manager};
 use tuxlink_mcp_core::ports::{
     AbortPort, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto, AudioCardDto, AudioDevicesDto,
     BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto, ChannelReliabilityDto, ComposeDraftDto,
-    ComposePort, ConfigPort, ConfigViewDto, DevicePort, DocsHitDto, EgressPort, EgressPortError,
+    ComposePort, ConfigPort, ConfigViewDto, DevicePort, DocBodyDto, DocsHitDto, EgressPort,
+    EgressPortError,
     FolderDto, GatewayAntennaDto, GatewayDto, GribRequestDto, LogLineDto, LogPort, MailboxPort,
     MessageMetaDto, ModemStatusDto, OutboxReadPort, PacketConfigDto, PacketWriteDto,
     ParsedMessageDto, PathPredictionDto, PeerChannelDto, PeerDto, PeerListDto,
@@ -670,10 +671,28 @@ impl SearchPort for MonolithSearchPort {
             .into_iter()
             .map(|h| DocsHitDto {
                 title: h.title,
-                path: h.slug,
+                slug: h.slug,
                 snippet: h.snippet,
             })
             .collect())
+    }
+
+    async fn doc(&self, slug: &str) -> Result<Option<DocBodyDto>, PortError> {
+        let svc = self
+            .app
+            .try_state::<crate::search::commands::SearchService>()
+            .ok_or_else(|| PortError::Unavailable("search index unavailable".to_string()))?;
+        let found = svc
+            .index
+            .lock()
+            .map_err(|e| PortError::Internal(format!("docs index poisoned: {e}")))?
+            .read_doc(slug)
+            .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
+        Ok(found.map(|d| DocBodyDto {
+            slug: d.slug,
+            title: d.title,
+            body: d.body,
+        }))
     }
 
     async fn catalog(&self) -> Result<Vec<CatalogEntryDto>, PortError> {

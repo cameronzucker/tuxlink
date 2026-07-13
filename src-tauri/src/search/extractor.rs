@@ -365,8 +365,21 @@ fn strip_inline_md(input: &str) -> String {
                 continue;
             }
         }
-        out.push(bytes[i] as char);
-        i += 1;
+        // Copy the next whole UTF-8 CHARACTER, not a raw byte. `bytes[i] as char`
+        // reinterprets one byte of a multi-byte sequence as a codepoint, so an
+        // em-dash (E2 80 94) came out as three Latin-1 characters. That was
+        // survivable while the only thing exposed was a 12-token snippet(); now
+        // `docs_read` hands the whole body to the model as ground truth, so the
+        // corruption would be quoted back to the operator.
+        //
+        // Every branch above matches ASCII markers only, so `i` is always on a char
+        // boundary here — and advancing by `len_utf8()` keeps it that way.
+        let ch = input[i..]
+            .chars()
+            .next()
+            .expect("i is on a char boundary: all branches above match ASCII only");
+        out.push(ch);
+        i += ch.len_utf8();
     }
     out
 }

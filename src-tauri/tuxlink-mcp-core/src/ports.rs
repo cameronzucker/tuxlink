@@ -107,12 +107,20 @@ pub struct SearchResultsDto {
     pub total: u32,
 }
 
-/// One in-app documentation search hit.
+/// One in-app documentation search hit. `slug` is the key `docs_read` takes.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DocsHitDto {
     pub title: String,
-    pub path: String,
+    pub slug: String,
     pub snippet: String,
+}
+
+/// A whole documentation page, returned by `docs_read`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DocBodyDto {
+    pub slug: String,
+    pub title: String,
+    pub body: String,
 }
 
 /// One template-catalog entry (forms / standard messages).
@@ -724,6 +732,9 @@ pub trait SearchPort: Send + Sync {
     async fn messages(&self, query: SearchQueryDto) -> Result<SearchResultsDto, PortError>;
     /// Search in-app documentation. App-owned content; does not taint.
     async fn docs(&self, query: &str) -> Result<Vec<DocsHitDto>, PortError>;
+    /// Read one documentation page in full, by the `slug` returned from `docs`.
+    /// `Ok(None)` means the slug is unknown. App-owned content; does not taint.
+    async fn doc(&self, slug: &str) -> Result<Option<DocBodyDto>, PortError>;
     /// List the template catalog. App-owned content; does not taint.
     async fn catalog(&self) -> Result<Vec<CatalogEntryDto>, PortError>;
 }

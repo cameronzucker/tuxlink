@@ -14,6 +14,11 @@ pub mod query;
 pub mod saved;
 pub mod types;
 
+#[cfg(test)]
+mod docs_registry_test;
+#[cfg(test)]
+mod docs_eval_test;
+
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
