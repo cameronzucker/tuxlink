@@ -233,4 +233,83 @@ pub static BUNDLED_TOPICS: &[DocTopic<'static>] = &[
         markdown: include_str!("../../../docs/user-guide/36-off-air-space-weather.md"),
         source: DocSource::UserGuide,
     },
+    // --- docs/knowledge/ — agent-only reference on OTHER Winlink clients. Indexed
+    // for docs_search/docs_read, deliberately NOT in the Help sidebar (topics.ts
+    // globs docs/user-guide/ only), so Tuxlink's manual stays about Tuxlink.
+    DocTopic {
+        slug: "pat-winlink",
+        title: "Pat Winlink (third-party client)",
+        markdown: include_str!("../../../docs/knowledge/pat-winlink.md"),
+        source: DocSource::Knowledge,
+    },
+    DocTopic {
+        slug: "winlink-express",
+        title: "Winlink Express (third-party client)",
+        markdown: include_str!("../../../docs/knowledge/winlink-express.md"),
+        source: DocSource::Knowledge,
+    },
+    // --- docs/mcp-knowledge/ — playbooks + reference. Until now reachable ONLY over
+    // the MCP resource tier (tuxlink:// URIs), which in-app Elmer never lists or
+    // reads: its runner's sole schema source is list_tools_as_specs. Indexing them
+    // here is what makes them Elmer-visible at all.
+    DocTopic {
+        slug: "playbook-ardop-wont-connect",
+        title: "Playbook: ARDOP will not connect",
+        markdown: include_str!("../../../docs/mcp-knowledge/playbook-ardop-wont-connect.md"),
+        source: DocSource::McpKnowledge,
+    },
+    DocTopic {
+        slug: "playbook-cms-z-password-lag",
+        title: "Playbook: new Winlink account, correct password rejected",
+        markdown: include_str!("../../../docs/mcp-knowledge/playbook-cms-z-password-lag.md"),
+        source: DocSource::McpKnowledge,
+    },
+    DocTopic {
+        slug: "audio-setup",
+        title: "Playbook: picking the right audio device for VARA / a digital modem",
+        markdown: include_str!("../../../docs/mcp-knowledge/audio-setup.md"),
+        source: DocSource::McpKnowledge,
+    },
+    DocTopic {
+        slug: "vara-wine-setup",
+        title: "Playbook: installing VARA HF under WINE",
+        markdown: include_str!("../../../docs/mcp-knowledge/vara-wine-setup.md"),
+        source: DocSource::McpKnowledge,
+    },
+    DocTopic {
+        slug: "band-plan",
+        title: "Band plan reference (Winlink-relevant)",
+        markdown: include_str!("../../../docs/mcp-knowledge/band-plan.md"),
+        source: DocSource::McpKnowledge,
+    },
+    DocTopic {
+        slug: "modem-capability-matrix",
+        title: "Modem capability matrix",
+        markdown: include_str!("../../../docs/mcp-knowledge/modem-capability-matrix.md"),
+        source: DocSource::McpKnowledge,
+    },
+    DocTopic {
+        slug: "device-uv-pro",
+        title: "Device setup: UV-Pro (Benshi)",
+        markdown: include_str!("../../../docs/mcp-knowledge/device-uv-pro.md"),
+        source: DocSource::McpKnowledge,
+    },
+    DocTopic {
+        slug: "glossary-supplement",
+        title: "Glossary supplement",
+        markdown: include_str!("../../../docs/mcp-knowledge/glossary-supplement.md"),
+        source: DocSource::McpKnowledge,
+    },
+    DocTopic {
+        slug: "local-agent-deployment",
+        title: "Running a Tuxlink assistant on local hardware",
+        markdown: include_str!("../../../docs/mcp-knowledge/local-agent-deployment.md"),
+        source: DocSource::McpKnowledge,
+    },
+    DocTopic {
+        slug: "agents-guide",
+        title: "Tuxlink agent guide",
+        markdown: include_str!("../../../docs/mcp-knowledge/agents-guide.md"),
+        source: DocSource::McpKnowledge,
+    },
 ];
