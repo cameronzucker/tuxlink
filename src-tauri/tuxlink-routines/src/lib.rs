@@ -16,5 +16,6 @@ pub mod executor;
 pub mod fakes;
 pub mod journal;
 pub mod refs;
+pub mod snapshot;
 pub mod types;
 pub mod vars;

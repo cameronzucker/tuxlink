@@ -7,7 +7,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::action::{Action, ActionDescriptor};
 use crate::compose::{Provenance, RoutineInvoker};
-use crate::error::StepError;
+use crate::error::{SnapshotError, StepError};
+use crate::refs::EntityRef;
+use crate::snapshot::EntityResolver;
 
 enum Outcome {
     Ok(serde_json::Value),
@@ -186,6 +188,29 @@ impl RoutineInvoker for FakeInvoker {
                 unreachable!()
             }
         }
+    }
+}
+
+#[derive(Default)]
+pub struct FakeResolver {
+    entities: std::collections::HashMap<(String, String), serde_json::Value>,
+}
+
+impl FakeResolver {
+    pub fn new() -> Self { Self::default() }
+    pub fn entity(mut self, kind: &str, name: &str, value: serde_json::Value) -> Self {
+        self.entities.insert((kind.into(), name.into()), value);
+        self
+    }
+}
+
+#[async_trait]
+impl EntityResolver for FakeResolver {
+    async fn resolve(&self, entity: &EntityRef) -> Result<serde_json::Value, SnapshotError> {
+        self.entities
+            .get(&(entity.kind.clone(), entity.name.clone()))
+            .cloned()
+            .ok_or_else(|| SnapshotError::UnresolvedRef(entity.to_string()))
     }
 }
 

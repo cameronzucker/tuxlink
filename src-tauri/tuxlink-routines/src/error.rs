@@ -24,3 +24,12 @@ pub enum StepError {
     #[error("run cancelled")]
     Cancelled,
 }
+
+/// Errors resolving `@`-references in a run-start snapshot.
+#[derive(Debug, thiserror::Error)]
+pub enum SnapshotError {
+    #[error("unresolved reference {0}")]
+    UnresolvedRef(String),
+    #[error("resolver I/O failure: {0}")]
+    Io(String),
+}
