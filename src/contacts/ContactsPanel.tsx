@@ -31,7 +31,7 @@
 // The model logic lives in contactTree.ts (pure, unit-tested); this file is a
 // thin renderer + selection/collapse state over it.
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import './ContactsPanel.css';
@@ -54,6 +54,7 @@ import { FAVORITES_QUERY_KEY } from '../favorites/useFavorites';
 import { dialToNewFavorite, favoriteKey } from '../favorites/dialToFavorite';
 import type { Favorite, FavoriteDial, StationsFile } from '../favorites/types';
 import { connectPeerChannel, connectPeerEndpoint, radioModeForPeerTransport } from '../peers/connectPeer';
+import { mhz } from '../catalog/channelGrouping';
 import {
   channelStatusLine,
   channelSummary,
@@ -148,13 +149,21 @@ function baseCall(callsign: string): string {
   return callsign.split('-')[0].toUpperCase();
 }
 
-/** The starred favorites belonging to a contact — linked by `contact_id` when
- *  the favorite carries one, else by base-callsign match on the gateway. */
+/** Does this favorite belong to this contact? An explicit `contact_id` link is
+ *  AUTHORITATIVE (never falls through to callsign matching — Codex adrev P2:
+ *  with W6ABC and W6ABC-7 both in the book, a linked favorite must not light
+ *  the other row). Unlinked favorites match by exact callsign, or — only when
+ *  the contact's callsign is itself SSID-less — by the gateway's base call. */
+export function favoriteMatchesContact(f: Favorite, c: Contact): boolean {
+  if (f.contact_id) return f.contact_id === c.id;
+  const g = f.gateway.trim().toUpperCase();
+  const cs = c.callsign.toUpperCase();
+  return g === cs || (!cs.includes('-') && baseCall(f.gateway) === cs);
+}
+
+/** The starred favorites belonging to a contact (see favoriteMatchesContact). */
 export function starredFavoritesOf(c: Contact, favorites: Favorite[]): Favorite[] {
-  const base = baseCall(c.callsign);
-  return favorites.filter(
-    (f) => f.starred && (f.contact_id === c.id || baseCall(f.gateway) === base),
-  );
+  return favorites.filter((f) => f.starred && favoriteMatchesContact(f, c));
 }
 
 export function ContactsPanel({ initialScope = 'all', onConnectFavorite }: ContactsPanelProps = {}) {
@@ -253,10 +262,7 @@ export function ContactsPanel({ initialScope = 'all', onConnectFavorite }: Conta
   const favoriteRows = useMemo(() => {
     const rows: Array<{ favorite: Favorite; contact: Contact | null }> = [];
     for (const f of starredFavorites) {
-      const c =
-        contacts.find((k) => f.contact_id === k.id) ??
-        contacts.find((k) => baseCall(k.callsign) === baseCall(f.gateway)) ??
-        null;
+      const c = contacts.find((k) => favoriteMatchesContact(f, k)) ?? null;
       if (q) {
         const hay = [f.gateway, f.freq, f.band, c?.name, c?.callsign].filter(Boolean).join(' ').toLowerCase();
         if (!hay.includes(q)) continue;
@@ -349,17 +355,32 @@ export function ContactsPanel({ initialScope = 'all', onConnectFavorite }: Conta
   // ★ on a detail-pane dial = that dial is a starred Favorite (it appears in
   // the Favorites scope and the ribbon Connect targets). Find-or-create then
   // toggle — the StationFinderPanel save-favorite pattern, keyed the same way.
+  // NOTE on identity: `favoriteKey` is mode+gateway — the app-wide favorite
+  // unit is per-mode-per-gateway (dialToFavorite.ts), with `freq` an attribute
+  // (the preferred dial), NOT part of the identity. Two same-mode channels to
+  // one gateway therefore share ONE star by design (Codex adrev proposed a
+  // per-freq key; rejected as a data-model mismatch with the backend unit).
+  const starPendingRef = useRef<Set<string>>(new Set());
   const toggleDialStar = async (dial: FavoriteDial) => {
-    const existing = favorites.find((f) => favoriteKey(f) === favoriteKey(dial));
-    if (existing) {
-      await invoke('favorite_star', { id: existing.id, starred: !existing.starred }).catch(() => {});
-    } else {
-      const created = await invoke<Favorite>('favorite_upsert', {
-        favorite: dialToNewFavorite(dial),
-      }).catch(() => null);
-      if (created) await invoke('favorite_star', { id: created.id, starred: true }).catch(() => {});
+    // Serialize per-dial (Codex adrev P2): a rapid double-click before the
+    // query invalidates would run find-or-create twice and mint a duplicate.
+    const key = favoriteKey(dial);
+    if (starPendingRef.current.has(key)) return;
+    starPendingRef.current.add(key);
+    try {
+      const existing = favorites.find((f) => favoriteKey(f) === key);
+      if (existing) {
+        await invoke('favorite_star', { id: existing.id, starred: !existing.starred }).catch(() => {});
+      } else {
+        const created = await invoke<Favorite>('favorite_upsert', {
+          favorite: dialToNewFavorite(dial),
+        }).catch(() => null);
+        if (created) await invoke('favorite_star', { id: created.id, starred: true }).catch(() => {});
+      }
+      await qc.invalidateQueries({ queryKey: FAVORITES_QUERY_KEY });
+    } finally {
+      starPendingRef.current.delete(key);
     }
-    await qc.invalidateQueries({ queryKey: FAVORITES_QUERY_KEY });
   };
 
   // ---- multi-select (Ctrl/Shift) over contact rows ----
@@ -374,6 +395,16 @@ export function ContactsPanel({ initialScope = 'all', onConnectFavorite }: Conta
   };
 
   const clearMultiSelect = () => setSelected(new Set());
+
+  // A scope switch drops selection, multi-select, and any open editor (Codex
+  // adrev P2): the detail pane and bulk bar must never act on rows the
+  // current scope doesn't show.
+  const switchScope = (next: RosterScope) => {
+    setScope(next);
+    setSelection({ kind: 'none' });
+    setSelected(new Set());
+    setEditor({ kind: 'closed' });
+  };
 
   // A plain click on a contact row selects it for the detail pane AND, if a
   // modifier is held, toggles its membership in the multi-select set instead.
@@ -469,21 +500,21 @@ export function ContactsPanel({ initialScope = 'all', onConnectFavorite }: Conta
             count={contacts.length}
             active={scope === 'all'}
             testid="contacts-scope-all"
-            onClick={() => setScope('all')}
+            onClick={() => switchScope('all')}
           />
           <ScopePill
             label="★ Favorites"
             count={starredFavorites.length}
             active={scope === 'favorites'}
             testid="contacts-scope-favorites"
-            onClick={() => setScope('favorites')}
+            onClick={() => switchScope('favorites')}
           />
           <ScopePill
             label="Heard"
             count={heardCount}
             active={scope === 'heard'}
             testid="contacts-scope-heard"
-            onClick={() => setScope('heard')}
+            onClick={() => switchScope('heard')}
           />
           <label className="contacts-sort" data-testid="contacts-sort">
             sort
@@ -1267,7 +1298,10 @@ function ReachChannelRow({
     ? {
         mode: protocol,
         gateway: channel.target_callsign,
-        freq: channel.freq_hz != null ? (channel.freq_hz / 1000).toFixed(1) : undefined,
+        // The app-wide freq convention is an MHz string (channelToDial's mhz —
+        // Codex adrev P2: a kHz string here split the same physical dial into
+        // two favorite units depending on which surface starred it).
+        freq: channel.freq_hz != null ? mhz(channel.freq_hz / 1000) : undefined,
         contact_id: contact.id,
       }
     : null;

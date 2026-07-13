@@ -1905,13 +1905,16 @@ function AppShellInner() {
             the reading-pane ternary alone would leave MessageList rendered to the
             left (two list columns). */}
         {selectedFolder === 'contacts' ? (
-          <ContactsPanel onConnectFavorite={handleFavoritesConnect} />
+          // key: initialScope is consumed by mount-time useState — without
+          // distinct keys, switching Contacts⇄Favorites reuses the instance
+          // and keeps the previous scope (Codex adrev P1).
+          <ContactsPanel key="folder-contacts" onConnectFavorite={handleFavoritesConnect} />
         ) : selectedFolder === 'favorites' ? (
           // tuxlink-sbf03: Favorites is a SCOPE of the one address surface, not
           // a separate panel — the pseudo-folder opens ContactsPanel with the
           // ★ scope pre-selected. Connect still opens+arms the matching modem
           // dock via the same handler the retired FavoritesPanel took.
-          <ContactsPanel initialScope="favorites" onConnectFavorite={handleFavoritesConnect} />
+          <ContactsPanel key="folder-favorites" initialScope="favorites" onConnectFavorite={handleFavoritesConnect} />
         ) : (
           <>
         <MessageList

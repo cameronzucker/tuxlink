@@ -38,7 +38,7 @@ function radioModeFor(mode: ListingMode): RadioMode | null {
 // three decimals rounded a .5 kHz center to the wrong kHz, which put the
 // derived sideband dial 500 Hz off (tuxlink-9pzaj, Codex adrev P2 #3).
 // Whole-kHz channels keep the conventional 3-decimal form ("145.570").
-const mhz = (khz: number): string =>
+export const mhz = (khz: number): string =>
   Number.isInteger(khz) ? (khz / 1000).toFixed(3) : (khz / 1000).toFixed(4);
 
 export function channelToDial(station: Station, channel: Channel): FavoriteDial | null {
