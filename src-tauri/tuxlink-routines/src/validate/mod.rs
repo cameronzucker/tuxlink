@@ -13,15 +13,17 @@
 //! `RETRY_TARGET_NOT_ACTION`, `BRANCH_CYCLE`, `CALL_RECURSION`,
 //! `CALL_TARGET_MISSING`). Task 4 wires `consent` (`AUTO_TX_UNACKED`,
 //! `MIXED_MODE_STALL`, `ATTENDED_UNDER_SCHEDULE`). Later tasks add the
-//! remaining per-module check fn (`fleet`) that pushes `Finding`s into the
-//! same vector before the final sort — no module gets a privileged
-//! ordering.
+//! remaining per-module check fn. Task 5 wires `fleet`
+//! (`SCHEDULE_COLLISION`, `SAME_EFFECT_OVERLAP`) into `validate_fleet` only
+//! — it is a cross-routine check over the whole set being enabled, so it
+//! has no place in per-routine `validate()`.
 
 pub mod capability;
 pub mod consent;
 pub mod context;
 pub mod contracts;
 pub mod findings;
+pub mod fleet;
 pub mod refs;
 pub mod structure;
 
@@ -52,10 +54,19 @@ pub fn validate(def: &RoutineDef, ctx: &dyn ValidationContext) -> Vec<Finding> {
 /// Enable-time fleet check: `validate()` on every def, plus cross-routine
 /// checks (`fleet` module, task 5) over the set being enabled. Same
 /// ordering contract as `validate()`.
-pub fn validate_fleet(defs: &[RoutineDef], ctx: &dyn ValidationContext) -> Vec<Finding> {
+///
+/// `now_unix` anchors the fleet check's 7-day schedule-collision horizon
+/// (`fleet::HORIZON_SECONDS`) — a caller-supplied timestamp, not a hidden
+/// clock read, so the check is deterministic and testable at any instant
+/// (mirrors `scheduler::next_fire`'s own `now_unix` parameter).
+pub fn validate_fleet(
+    defs: &[RoutineDef],
+    ctx: &dyn ValidationContext,
+    now_unix: i64,
+) -> Vec<Finding> {
     let mut findings: Vec<Finding> = defs.iter().flat_map(|def| validate(def, ctx)).collect();
 
-    // Task 5: fleet::check(defs, ctx, &mut findings);
+    fleet::check(defs, ctx, now_unix, &mut findings);
 
     sort_findings(&mut findings);
     findings
@@ -109,13 +120,13 @@ mod tests {
     fn fleet_skeleton_returns_empty_for_trivially_valid_routines() {
         let def = trivially_valid_routine();
         let ctx = StaticContext::new();
-        assert_eq!(validate_fleet(&[def], &ctx), Vec::new());
+        assert_eq!(validate_fleet(&[def], &ctx, 0), Vec::new());
     }
 
     #[test]
     fn fleet_skeleton_handles_the_empty_fleet() {
         let ctx = StaticContext::new();
-        assert_eq!(validate_fleet(&[], &ctx), Vec::new());
+        assert_eq!(validate_fleet(&[], &ctx, 0), Vec::new());
     }
 
     #[test]

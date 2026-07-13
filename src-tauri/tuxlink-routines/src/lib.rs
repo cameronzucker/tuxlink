@@ -11,6 +11,7 @@
 
 pub mod action;
 pub mod compose;
+pub mod dryrun;
 pub mod engine;
 pub mod error;
 pub mod executor;

@@ -33,10 +33,18 @@ pub enum RunState {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RunEvent {
     /// First entry of every journal; `snapshot` is the fully resolved
-    /// definition the run executes (spec §7).
+    /// definition the run executes (spec §7). `dry_run` (plan-3 task 5,
+    /// additive — `#[serde(default)]` so older journals without the field
+    /// still parse as `false`) is set true only by `Engine::start_dry_run`
+    /// (`engine.rs`), whose registry mirrors every real action with a
+    /// scripted `FakeAction` (`dryrun.rs`) — a dry run's `RunStarted` is
+    /// the single durable record that no real action was ever invoked for
+    /// this run.
     RunStarted {
         routine: String,
         snapshot: serde_json::Value,
+        #[serde(default)]
+        dry_run: bool,
     },
     StateChanged {
         state: RunState,
@@ -214,6 +222,7 @@ mod tests {
         w.append(RunEvent::RunStarted {
             routine: "t".into(),
             snapshot: json!({}),
+            dry_run: false,
         })
         .unwrap();
         w.append(RunEvent::StepIntent {
@@ -282,6 +291,7 @@ mod tests {
         done.append(RunEvent::RunStarted {
             routine: "a".into(),
             snapshot: json!({}),
+            dry_run: false,
         })
         .unwrap();
         done.append(RunEvent::RunFinished {
@@ -294,6 +304,7 @@ mod tests {
         dead.append(RunEvent::RunStarted {
             routine: "b".into(),
             snapshot: json!({}),
+            dry_run: false,
         })
         .unwrap();
         dead.append(RunEvent::StepIntent {
@@ -354,6 +365,7 @@ mod tests {
             .append(RunEvent::RunStarted {
                 routine: "a".into(),
                 snapshot: json!({}),
+                dry_run: false,
             })
             .unwrap();
         valid
@@ -388,6 +400,7 @@ mod tests {
             w.append(RunEvent::RunStarted {
                 routine: "a".into(),
                 snapshot: json!({}),
+                dry_run: false,
             })
             .unwrap();
             w.append(RunEvent::StepIntent {
