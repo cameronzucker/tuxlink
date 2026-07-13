@@ -764,6 +764,19 @@ pub struct RadioLease {
     pause: CancellationToken,
 }
 
+/// Manual `Debug` — `RigState` (behind `rigs`) intentionally has no `Debug`
+/// derive, and formatting shouldn't take the arbiter's lock anyway. Only
+/// `rig`/`seq` identify a lease usefully in test failure output
+/// (`expect_err`/`unwrap_err` require `T: Debug` on the `Ok` side).
+impl std::fmt::Debug for RadioLease {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RadioLease")
+            .field("rig", &self.rig)
+            .field("seq", &self.seq)
+            .finish_non_exhaustive()
+    }
+}
+
 impl RadioLease {
     /// The dedicated pause-request signal for THIS lease — a
     /// `child_token()` of the acquire-side `cancel` token, minted at grant

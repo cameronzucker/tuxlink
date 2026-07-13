@@ -432,9 +432,10 @@ mod tests {
         // config.json one level up).
         let def = minimal_def("../config");
         let err = store.save(&def).unwrap_err();
+        let err_debug = format!("{err:?}");
         assert!(
             matches!(err, StoreError::InvalidName(name) if name == "../config"),
-            "expected InvalidName, got {err:?}"
+            "expected InvalidName, got {err_debug}"
         );
 
         // Nothing must have been written outside (or inside) the store dir.

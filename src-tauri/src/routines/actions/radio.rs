@@ -825,14 +825,6 @@ mod tests {
             }
         }
 
-        fn with_delay(rms: f32, delay: std::time::Duration) -> Self {
-            Self {
-                rms,
-                delay: Some(delay),
-                on_complete: None,
-            }
-        }
-
         fn with_delay_and_completion_flag(
             rms: f32,
             delay: std::time::Duration,

@@ -381,8 +381,12 @@ const RIG_APPLY_PRESET: &str = "rig.apply_preset";
 #[derive(Debug, Deserialize)]
 struct ApplyPresetParams {
     preset: PresetParam,
-    #[serde(default = "default_tolerance_hz")]
+    #[serde(default = "default_apply_verify_tolerance_hz")]
     tolerance_hz: u64,
+}
+
+fn default_apply_verify_tolerance_hz() -> u64 {
+    APPLY_VERIFY_TOLERANCE_HZ
 }
 
 /// `rig.apply_preset` — sets freq + mode from a resolved `@preset:` object,
