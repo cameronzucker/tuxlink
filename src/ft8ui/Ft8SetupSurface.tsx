@@ -28,22 +28,44 @@
 //     silent re-render"), `unsupported-sample-rate` (the currently-configured
 //     device is unusable — a different one must be picked via a Step-1 row,
 //     same as needs-device-selection), and "no device resolved" for
-//     needs-device-selection/device-absent. Picking a Step-1 device row
-//     already performs the full meter/start handover + `ft8_listener_start`
-//     (C9a), so by the time the CTA could be clicked with a FRESH pick this
-//     surface has typically already unmounted via `onStarted`; the CTA's own
-//     click handler stays a plain `ft8_listener_start()` (no device rows are
-//     ever rendered — and hence no meter poll ever in flight — in the one
-//     arm where the CTA can legitimately be enabled).
+//     needs-device-selection/device-absent.
+//
+// Task D2 (operator QA wave 2, 2026-07-12) — two contract changes:
+//   - "Use this device selects, only the Start CTA starts": a Step-1 device
+//     row's "Use this device" click is now SELECT-ONLY. It stops+awaits the
+//     row's live meter (race safety, unchanged), then calls `ft8_set_device`
+//     and stops there — no `ft8_listener_start`, no `onStarted`. The row's
+//     meter resumes afterward (`enabled` on the poll hook tracks `!busy`,
+//     which flips back once the persist settles) so the operator can keep
+//     watching the level on the device they just picked. A row reads as
+//     "selected" when `device.humanName === snapshot.configuredDeviceName`.
+//     `onStarted` now fires ONLY from the CTA's `ft8_listener_start` success
+//     path (see `handleStartCta`) — the ONE thing that starts capture.
+//   - "No way back to setup once capture runs": this component used to
+//     `return null` for any `service.axis` other than `blocked` (defensive —
+//     the mounting contract says it should only ever be mounted for a
+//     needs-setup-class blocked reason). It now ALSO renders for `listening`
+//     / `starting` / `yielded` — the parent may force-mount it over a live
+//     session (LiveBandStrip's header "setup" button, Finding 4b) so the
+//     operator can fix a wrong device/rig pick without restarting Tuxlink.
+//     In that mode the CTA row swaps to a "Stop listening" button
+//     (`ft8_listener_stop`) instead of Start; device rows still render (the
+//     active device's meter reads `in-use` — fine, honest) and Step 2 stays
+//     the same. `reason === null` in this mode (the axis isn't `blocked`),
+//     so every `reason`-keyed arm below falls through to the plain
+//     device-selection arm, which is exactly the render this mode wants.
 //
 // Mounting contract: the caller (LiveBandStrip / StationFinderPanel, Task
-// D1) mounts this component ONLY when `deriveUiState(snapshot).state ===
+// D1/D2) mounts this component when `deriveUiState(snapshot).state ===
 // 'needs-setup'` — i.e. `snapshot.service` is `{ axis: 'blocked', reason }`
-// with a needs-setup-class reason. This component reads `snapshot.service`
-// directly (not the derived 9-member `Ft8UiState`) because it needs the raw
-// `reason` to pick an arm; B2's `deriveUiState` collapses every needs-setup
-// reason to one state on purpose (§States row 6) — that collapse is correct
-// for the STRIP header, but the setup surface itself needs the fidelity.
+// with a needs-setup-class reason — OR when the operator has asked to revisit
+// setup while `axis` is `listening` / `starting` / `yielded` (D2 above). This
+// component reads `snapshot.service` directly (not the derived 9-member
+// `Ft8UiState`) because it needs the raw `reason` to pick an arm; B2's
+// `deriveUiState` collapses every needs-setup reason to one state on purpose
+// (§States row 6) — that collapse is correct for the STRIP header, but the
+// setup surface itself needs the fidelity. Every other `axis` (`stopped` /
+// `stopping`) still renders nothing — defensive, never reached in practice.
 //
 // Arms (§States "Setup-surface arms by blocked reason"):
 //   - `wsjtx-absent`            → package-install copy FIRST, always — jt9 is
@@ -84,9 +106,12 @@ export interface Ft8SetupSurfaceProps {
    *  for a needs-setup-class blocked reason (§States row 6); an unexpected
    *  `service.axis` renders nothing (defensive — never crashes). */
   snapshot: Ft8Snapshot;
-  /** Fired after a device row's "Use this device" handover completes
-   *  (`ft8_set_device` + `ft8_listener_start` both resolved) so the parent
-   *  can re-hydrate / dismiss the setup surface. Optional for tests. */
+  /** Fired after the Start CTA's `ft8_listener_start` succeeds (§FirstRun
+   *  "CTA") so the parent can re-hydrate / dismiss the setup surface.
+   *  Device-row selection ("Use this device") is SELECT-ONLY (Task D2,
+   *  operator decision 2026-07-12) — it persists via `ft8_set_device` and
+   *  never starts capture, so it never fires this callback. Optional for
+   *  tests. */
   onStarted?: () => void;
   /** Optional manual "Retry" affordance for the wsjtx-absent arm (re-checks
    *  for the jt9 binary by nudging the parent to re-hydrate the snapshot).
@@ -136,7 +161,13 @@ function formatDialMHz(dialHz: number): string {
 // Exposes `stopAndAwait`, the race-safety handover primitive (§FirstRun
 // "Meter/start handover"): stops future polls immediately AND awaits any
 // poll already in flight, so the row's device handle is guaranteed released
-// before the caller proceeds to `ft8_set_device` / `ft8_listener_start`.
+// before the caller proceeds to `ft8_set_device` (Task D2: select-only now —
+// see the file header — but the same handle-release race applies whether
+// the pick then starts capture or merely persists). The `enabled` prop
+// doubles as the RESUME signal (Task D2 "meter resumes"): `DeviceRow` passes
+// `!busy`, so once the parent's `selecting` flag drops back to false after
+// the persist settles, this effect's `enabled` dependency flips true again
+// and polling restarts on its own — no separate resume primitive needed.
 // ---------------------------------------------------------------------------
 
 interface DeviceMeterState {
@@ -221,6 +252,10 @@ function useDeviceMeterPoll(stableId: StableAudioId, enabled: boolean): DeviceMe
 interface DeviceRowProps {
   device: AudioDeviceChoice;
   busy: boolean;
+  /** True when `device.humanName === snapshot.configuredDeviceName` — the
+   *  persisted pick, refreshed off `ft8_set_device`'s persist-time emit
+   *  (Task D2, select-only "Use this device"). */
+  selected: boolean;
   onUse: (device: AudioDeviceChoice, stopAndAwait: () => Promise<void>) => void;
 }
 
@@ -282,15 +317,32 @@ function MeterReadout({ meter, error }: { meter: MeterDto | null; error: Ft8CmdE
   );
 }
 
-function DeviceRow({ device, busy, onUse }: DeviceRowProps) {
-  const { meter, error, stopAndAwait } = useDeviceMeterPoll(device.stableId, true);
+function DeviceRow({ device, busy, selected, onUse }: DeviceRowProps) {
+  // `enabled = !busy`: pauses while a handover (this row's or another's) is
+  // in flight and — the Task D2 "meter resumes" contract — automatically
+  // resumes once `busy` drops back to false, via the poll hook's own
+  // enabled-dependency effect (no separate resume primitive; see the hook's
+  // doc comment).
+  const { meter, error, stopAndAwait } = useDeviceMeterPoll(device.stableId, !busy);
   const inUse = meter?.state === 'in-use';
 
   return (
-    <div className="ft8-setup__device-row" data-testid={`ft8-setup-device-row-${stableIdKey(device.stableId)}`}>
+    <div
+      className={`ft8-setup__device-row${selected ? ' ft8-setup__device-row--selected' : ''}`}
+      data-testid={`ft8-setup-device-row-${stableIdKey(device.stableId)}`}
+      data-selected={selected}
+    >
       <div className="ft8-setup__device-info">
         <span className="ft8-setup__device-name">{device.humanName}</span>
         <span className="ft8-setup__device-hw">{device.alsaHw}</span>
+        {selected && (
+          <span
+            className="ft8-setup__device-selected"
+            data-testid={`ft8-setup-device-selected-${stableIdKey(device.stableId)}`}
+          >
+            ✓ selected
+          </span>
+        )}
       </div>
       <MeterReadout meter={meter} error={error} />
       <Button
@@ -329,16 +381,26 @@ function ZeroDevicesNotice({ onRefresh, loading }: { onRefresh: () => void; load
 function DeviceList({
   devices,
   busy,
+  selectedDeviceName,
   onUse,
 }: {
   devices: AudioDeviceChoice[];
   busy: boolean;
+  /** `snapshot.configuredDeviceName` — the persisted device, matched by
+   *  `humanName` to mark its row "selected" (Task D2). */
+  selectedDeviceName: string | null;
   onUse: (device: AudioDeviceChoice, stopAndAwait: () => Promise<void>) => void;
 }) {
   return (
     <div className="ft8-setup__device-list" data-testid="ft8-setup-device-list">
       {devices.map((d) => (
-        <DeviceRow key={stableIdKey(d.stableId)} device={d} busy={busy} onUse={onUse} />
+        <DeviceRow
+          key={stableIdKey(d.stableId)}
+          device={d}
+          busy={busy}
+          selected={d.humanName === selectedDeviceName}
+          onUse={onUse}
+        />
       ))}
     </div>
   );
@@ -349,14 +411,24 @@ function DeviceList({
 // ---------------------------------------------------------------------------
 
 export function Ft8SetupSurface({ snapshot, onStarted, onRetry }: Ft8SetupSurfaceProps) {
-  const reason: BlockedReasonDto | null =
-    snapshot.service.axis === 'blocked' ? snapshot.service.reason : null;
+  const axis = snapshot.service.axis;
+  const reason: BlockedReasonDto | null = axis === 'blocked' ? snapshot.service.reason : null;
+  // Task D2 "no way back to setup once capture runs": the operator can
+  // force-mount this surface over a LIVE session to fix a wrong device/rig
+  // pick. `reason` is null in this mode (axis isn't `blocked`), so every
+  // `reason`-keyed arm below falls through to the plain device-selection
+  // arm — exactly what this mode wants (device rows + Step 2, no CTA-block
+  // copy that only makes sense while genuinely blocked).
+  const activeAxis = axis === 'listening' || axis === 'starting' || axis === 'yielded';
 
   // The `unsupported-sample-rate` arm's device list is NOT on the snapshot
   // (L2 presence rule — §States) — it must be fetched via `ft8_list_devices`.
-  // Every other arm's list has ALSO the option of a manual Refresh, which
-  // re-fetches the same way and (once fetched) takes priority over the
-  // snapshot's possibly-stale list.
+  // The D2 active-axis mode ALSO needs a fetch: the backend only populates
+  // `availableDevices` while genuinely blocked on a device-class reason
+  // (service.rs's `wants_devices` gate), so a live snapshot's list is absent
+  // even though this mode wants to show it. Every other arm's list has ALSO
+  // the option of a manual Refresh, which re-fetches the same way and (once
+  // fetched) takes priority over the snapshot's possibly-stale list.
   const [fetchedDevices, setFetchedDevices] = useState<AudioDeviceChoice[] | null>(null);
   const [fetching, setFetching] = useState(false);
 
@@ -368,12 +440,13 @@ export function Ft8SetupSurface({ snapshot, onStarted, onRetry }: Ft8SetupSurfac
       .finally(() => setFetching(false));
   }, []);
 
-  const needsFetch = reason === 'unsupported-sample-rate';
+  const needsFetch = reason === 'unsupported-sample-rate' || activeAxis;
   useEffect(() => {
     if (needsFetch) loadDevices();
-    // Re-fetch whenever the arm switches into unsupported-sample-rate (a new
-    // `reason` value); the snapshot-sourced arms rely on the snapshot itself
-    // and only fetch on an explicit manual Refresh click.
+    // Re-fetch whenever the arm switches into unsupported-sample-rate or the
+    // D2 active-axis mode (a new `reason`/`activeAxis` value); the
+    // snapshot-sourced arms rely on the snapshot itself and only fetch on an
+    // explicit manual Refresh click.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [needsFetch]);
 
@@ -381,32 +454,30 @@ export function Ft8SetupSurface({ snapshot, onStarted, onRetry }: Ft8SetupSurfac
   const enumerationSettled = fetchedDevices !== null || snapshot.availableDevices !== null;
   const zeroDevices = enumerationSettled && devices.length === 0;
 
-  // ---- device-select → the race-safe handover (§FirstRun "Meter/start
-  // handover"): stop this row's meter polling and await its in-flight read
-  // BEFORE calling ft8_set_device/ft8_listener_start, so the row's device
-  // handle is released before the listener tries to open it. -------------
+  // ---- device-select → SELECT-ONLY (Task D2, operator decision
+  // 2026-07-12: "Use this device selects, only the Start CTA starts"). The
+  // race-safe handover (§FirstRun "Meter/start handover") still stops this
+  // row's meter polling and awaits its in-flight read BEFORE calling
+  // `ft8_set_device`, so the row's device handle is released before the
+  // backend re-resolves it — but the chain stops at the persist: no
+  // `ft8_listener_start`, no `onStarted`. The row's meter resumes on its own
+  // once `selecting` drops back to false (see `DeviceRow`/
+  // `useDeviceMeterPoll`). -------------------------------------------------
   const [selecting, setSelecting] = useState(false);
   const [selectError, setSelectError] = useState<string | null>(null);
 
-  const handleUse = useCallback(
-    (device: AudioDeviceChoice, stopAndAwait: () => Promise<void>) => {
-      setSelecting(true);
-      setSelectError(null);
-      void stopAndAwait() // stop metering + await the settle FIRST
-        .then(() => invoke('ft8_set_device', { stableId: device.stableId }))
-        .then(() => invoke('ft8_listener_start'))
-        .then(() => {
-          onStarted?.();
-        })
-        .catch((e: unknown) => {
-          setSelectError(cmdErrorMessage(e));
-        })
-        .finally(() => {
-          setSelecting(false);
-        });
-    },
-    [onStarted],
-  );
+  const handleUse = useCallback((device: AudioDeviceChoice, stopAndAwait: () => Promise<void>) => {
+    setSelecting(true);
+    setSelectError(null);
+    void stopAndAwait() // stop metering + await the settle FIRST
+      .then(() => invoke('ft8_set_device', { stableId: device.stableId }))
+      .catch((e: unknown) => {
+        setSelectError(cmdErrorMessage(e));
+      })
+      .finally(() => {
+        setSelecting(false);
+      });
+  }, []);
 
   // ---- Step 2 · Rig control (CAT) · Test CAT (§FirstRun Step 2) ---------
   // Edit-flush contract: RigControlSection persists CAT serial/baud/rigctld
@@ -473,9 +544,31 @@ export function Ft8SetupSurface({ snapshot, onStarted, onRetry }: Ft8SetupSurfac
       });
   }, [ctaBlockReason, onStarted]);
 
-  if (reason === null) {
+  // ---- Stop CTA — D2 active-axis mode only ("no way back to setup once
+  // capture runs"): the operator revisiting setup over a LIVE session stops
+  // capture explicitly rather than the surface starting/stopping it for
+  // them. The parent re-hydrates off the resulting ft8-listening:change
+  // event — no local callback here (unlike the Start CTA, this never
+  // dismisses the surface itself; the operator is already looking at it on
+  // purpose). ---------------------------------------------------------------
+  const [stopping, setStopping] = useState(false);
+
+  const handleStopCta = useCallback(() => {
+    setStopping(true);
+    setSelectError(null);
+    void invoke('ft8_listener_stop')
+      .catch((e: unknown) => {
+        setSelectError(cmdErrorMessage(e));
+      })
+      .finally(() => {
+        setStopping(false);
+      });
+  }, []);
+
+  if (reason === null && !activeAxis) {
     // Defensive: the caller should never mount this component outside a
-    // needs-setup-class blocked reason. Render nothing rather than throw.
+    // needs-setup-class blocked reason or the D2 active-axis (listening /
+    // starting / yielded) mode. Render nothing rather than throw.
     return null;
   }
 
@@ -509,7 +602,12 @@ export function Ft8SetupSurface({ snapshot, onStarted, onRetry }: Ft8SetupSurfac
           ) : zeroDevices ? (
             <ZeroDevicesNotice onRefresh={loadDevices} loading={fetching} />
           ) : devices.length > 0 ? (
-            <DeviceList devices={devices} busy={selecting} onUse={handleUse} />
+            <DeviceList
+              devices={devices}
+              busy={selecting}
+              selectedDeviceName={snapshot.configuredDeviceName}
+              onUse={handleUse}
+            />
           ) : null}
         </div>
       ) : reason === 'unsupported-sample-rate' ? (
@@ -520,7 +618,12 @@ export function Ft8SetupSurface({ snapshot, onStarted, onRetry }: Ft8SetupSurfac
           {/* §States: "Never render plug-in-a-device guidance here" — even an
               empty fetch result renders the plain device list (empty), not
               the zero-devices plug-in copy. */}
-          <DeviceList devices={devices} busy={selecting} onUse={handleUse} />
+          <DeviceList
+            devices={devices}
+            busy={selecting}
+            selectedDeviceName={snapshot.configuredDeviceName}
+            onUse={handleUse}
+          />
         </div>
       ) : zeroDevices ? (
         // needs-device-selection / device-absent, enumeration completed empty.
@@ -531,7 +634,12 @@ export function Ft8SetupSurface({ snapshot, onStarted, onRetry }: Ft8SetupSurfac
         // rather than a false zero-devices claim per `enumerationSettled`).
         <div data-testid="ft8-setup-arm-device-selection">
           <p className="ft8-setup__body">Choose the audio input FT-8 should listen on.</p>
-          <DeviceList devices={devices} busy={selecting} onUse={handleUse} />
+          <DeviceList
+            devices={devices}
+            busy={selecting}
+            selectedDeviceName={snapshot.configuredDeviceName}
+            onUse={handleUse}
+          />
         </div>
       )}
 
@@ -571,32 +679,53 @@ export function Ft8SetupSurface({ snapshot, onStarted, onRetry }: Ft8SetupSurfac
         )}
       </div>
 
-      {/* CTA `Start listening on <band> →` (§FirstRun "CTA") — disabled with
-          a visible reason for every blocker; a click while blocked is a
-          guarded no-op, never a silent re-render. */}
-      <div className="ft8-setup__cta-row" data-testid="ft8-setup-cta-row">
-        <Button
-          tone="primary"
-          emphasis="solid"
-          data-testid="ft8-setup-start-cta"
-          disabled={ctaBlockReason !== null || ctaStarting}
-          onClick={handleStartCta}
-        >
-          {ctaStarting ? 'Starting…' : `Start listening on ${snapshot.band} →`}
-        </Button>
-        <p className="ft8-setup__body" data-testid="ft8-setup-cta-caption">
-          starts the decoder on the selected card · nothing ever transmits
-        </p>
-        {ctaBlockReason !== null && (
-          <p
-            className="ft8-setup__select-error"
-            data-testid="ft8-setup-cta-blocked-reason"
-            role="status"
+      {activeAxis ? (
+        /* Task D2 "no way back to setup once capture runs": revisiting setup
+           over a LIVE session swaps the CTA to Stop — the operator must stop
+           before a persisted device/rig change can take effect, and this is
+           the explicit, honest way to do that (never an implicit stop). */
+        <div className="ft8-setup__cta-row" data-testid="ft8-setup-cta-row">
+          <Button
+            tone="danger"
+            emphasis="outline"
+            data-testid="ft8-setup-stop-cta"
+            disabled={stopping}
+            onClick={handleStopCta}
           >
-            {ctaBlockReason}
+            {stopping ? 'Stopping…' : 'Stop listening'}
+          </Button>
+          <p className="ft8-setup__body" data-testid="ft8-setup-cta-caption">
+            stop to change devices — settings persist
           </p>
-        )}
-      </div>
+        </div>
+      ) : (
+        /* CTA `Start listening on <band> →` (§FirstRun "CTA") — disabled with
+           a visible reason for every blocker; a click while blocked is a
+           guarded no-op, never a silent re-render. */
+        <div className="ft8-setup__cta-row" data-testid="ft8-setup-cta-row">
+          <Button
+            tone="primary"
+            emphasis="solid"
+            data-testid="ft8-setup-start-cta"
+            disabled={ctaBlockReason !== null || ctaStarting}
+            onClick={handleStartCta}
+          >
+            {ctaStarting ? 'Starting…' : `Start listening on ${snapshot.band} →`}
+          </Button>
+          <p className="ft8-setup__body" data-testid="ft8-setup-cta-caption">
+            starts the decoder on the selected card · nothing ever transmits
+          </p>
+          {ctaBlockReason !== null && (
+            <p
+              className="ft8-setup__select-error"
+              data-testid="ft8-setup-cta-blocked-reason"
+              role="status"
+            >
+              {ctaBlockReason}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

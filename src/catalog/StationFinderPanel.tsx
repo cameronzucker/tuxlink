@@ -543,19 +543,26 @@ export function StationFinderPanel({
           onOpenFullSetup={() => setForceSetup(true)}
         />
 
-        {/* `device-lost` → "pick another input": the strip's compact body has no
-            device picker, so the forced full setup surface renders here beneath it
-            (the link is otherwise dead). Gated on a snapshot — the surface's own
-            contract requires one. */}
+        {/* `device-lost` → "pick another input" (and, since the 4b setup-affordance
+            finding, the strip header's "setup" button while listening/starting/
+            yielded too): the strip's compact body has no device picker, so the
+            forced full setup surface renders here beneath it (the link is
+            otherwise dead). Gated on a snapshot — the surface's own contract
+            requires one. Scrollable + height-capped (operator QA finding,
+            2026-07-12): `.station-finder` clips overflow, and this mount sits
+            below the strip, so an unbounded surface pushed its own CTA off the
+            dialog with no scrollbar to reach it. */}
         {forceSetup && ft8.snapshot && (
-          <Ft8SetupSurface
-            snapshot={ft8.snapshot}
-            onStarted={() => {
-              setForceSetup(false);
-              ft8.rehydrate();
-            }}
-            onRetry={ft8.rehydrate}
-          />
+          <div className="station-finder__forced-setup" data-testid="station-finder-forced-setup">
+            <Ft8SetupSurface
+              snapshot={ft8.snapshot}
+              onStarted={() => {
+                setForceSetup(false);
+                ft8.rehydrate();
+              }}
+              onRetry={ft8.rehydrate}
+            />
+          </div>
         )}
       </div>
     </div>

@@ -364,6 +364,26 @@ export function LiveBandStrip({
           )}
         </div>
 
+        {!collapsed && (
+          // Finding 4b ("no way back to setup once capture runs"): a small,
+          // always-present header affordance to reopen the full setup
+          // surface — the strip's own needs-setup body is the ONLY other
+          // route in, and it doesn't exist once the strip has moved past
+          // needs-setup into a live body state. Rendered in every
+          // non-collapsed state (not gated on `state`) so it's reachable
+          // regardless of which arm the strip is currently in.
+          <Button
+            tone="neutral"
+            emphasis="outline"
+            size="sm"
+            className="si-strip__setup-trigger"
+            data-testid="ft8-strip-setup-btn"
+            onClick={() => onOpenFullSetup?.()}
+          >
+            setup
+          </Button>
+        )}
+
         <Button
           tone="neutral"
           emphasis="outline"
@@ -538,7 +558,10 @@ function NonLiveBody({
       );
     case 'needs-setup':
       return (
-        <div className="si-strip__notice" data-testid="ft8-strip-body-needs-setup">
+        <div
+          className="si-strip__notice si-strip__notice--setup"
+          data-testid="ft8-strip-body-needs-setup"
+        >
           {setupSurface ?? (
             <p>Setup required — select an audio input (and, optionally, configure CAT) to start listening.</p>
           )}

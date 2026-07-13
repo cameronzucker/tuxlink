@@ -231,7 +231,7 @@ describe('Waterfall — subscription lifecycle', () => {
 // ---------------------------------------------------------------------------
 
 describe('Waterfall — column paint', () => {
-  it('paints an incoming batch: one drawImage self-copy + one putImageData per column', async () => {
+  it('paints an incoming batch: one drawImage self-copy + one putImageData per column, as rows', async () => {
     render(<Waterfall expanded width={300} height={120} />);
     await flush();
 
@@ -243,19 +243,19 @@ describe('Waterfall — column paint', () => {
     expect(ctx.drawImage).toHaveBeenCalledTimes(2); // one self-copy scroll per column
     expect(ctx.drawImage).toHaveBeenCalledWith(
       ctx.canvas,
+      0,
+      0,
+      300,
+      119, // canvasHeight - 1
+      0,
       1,
-      0,
-      299, // canvasWidth - 1
-      120,
-      0,
-      0,
-      299,
-      120,
+      300,
+      119,
     );
     expect(ctx.putImageData).toHaveBeenCalledTimes(2);
-    expect(ctx.createImageData).toHaveBeenCalledWith(1, 120); // 1px-wide leading-edge column
-    // Written at the leading (right) edge.
-    expect(ctx.putImageData).toHaveBeenCalledWith(expect.anything(), 299, 0);
+    expect(ctx.createImageData).toHaveBeenCalledWith(300, 1); // full-width, 1px-tall leading row
+    // Written at the leading (top) edge.
+    expect(ctx.putImageData).toHaveBeenCalledWith(expect.anything(), 0, 0);
   });
 
   it('maps u8 magnitude into RGBA pixel data (opaque, non-degenerate ramp)', () => {
@@ -266,7 +266,7 @@ describe('Waterfall — column paint', () => {
     expect(rHigh + gHigh + bHigh).toBeGreaterThan(rLow + gLow + bLow);
   });
 
-  it('paintColumn writes a fully-opaque (alpha=255) column via a directly-mocked ctx', () => {
+  it('paintColumn writes a fully-opaque (alpha=255) row via a directly-mocked ctx', () => {
     const ctx: WaterfallCtx = {
       canvas: { width: 10, height: 4 },
       createImageData: (w, h) => ({
@@ -284,8 +284,8 @@ describe('Waterfall — column paint', () => {
     paintColumn(ctx, 10, 4, mkCol(200));
 
     const [imageData] = (ctx.putImageData as ReturnType<typeof vi.fn>).mock.calls[0];
-    for (let row = 0; row < 4; row += 1) {
-      expect(imageData.data[row * 4 + 3]).toBe(255); // alpha channel
+    for (let col = 0; col < 10; col += 1) {
+      expect(imageData.data[col * 4 + 3]).toBe(255); // alpha channel
     }
   });
 });
@@ -337,7 +337,7 @@ describe('Waterfall — gap detection (pure)', () => {
 });
 
 describe('Waterfall — gap marker paint', () => {
-  it('paintBatch renders a distinct gap-marker column (fillRect + gap color) BEFORE the batch columns when isGap', () => {
+  it('paintBatch renders a distinct gap-marker ROW (fillRect + gap color), full canvas width, BEFORE the batch columns when isGap', () => {
     const calls: string[] = [];
     const ctx: WaterfallCtx = {
       canvas: { width: 10, height: 4 },
@@ -359,7 +359,10 @@ describe('Waterfall — gap marker paint', () => {
 
     expect(ctx.fillRect).toHaveBeenCalledTimes(1);
     expect(ctx.fillStyle).toBe(GAP_MARKER_COLOR);
-    // Order: drawImage(scroll) -> fillRect(gap marker) -> drawImage(scroll) -> putImageData(real column).
+    // A full-width, 1px-tall row at the top — a HORIZONTAL gap marker, not a
+    // vertical column (the pre-rotation shape).
+    expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, 10, 1);
+    // Order: drawImage(scroll) -> fillRect(gap marker) -> drawImage(scroll) -> putImageData(real row).
     expect(calls).toEqual(['drawImage', 'fillRect', 'drawImage', 'putImageData']);
   });
 

@@ -107,6 +107,19 @@
   font-size: var(--type-micro, 10px);
 }
 
+/* "Use this device" selects only (Task D2, operator decision 2026-07-12) —
+ * this badge is the row's only "you picked this one" signal now that the
+ * click itself no longer starts capture. */
+.ft8-setup__device-row--selected {
+  border-color: rgba(74, 222, 128, 0.35);
+}
+
+.ft8-setup__device-selected {
+  color: #4ade80;
+  font-size: var(--type-micro, 10px);
+  letter-spacing: 0.03em;
+}
+
 .ft8-setup__meter {
   display: inline-flex;
   align-items: center;

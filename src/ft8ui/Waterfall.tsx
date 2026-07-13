@@ -20,18 +20,29 @@
 // resolves, rather than skipping the unsubscribe silently.
 //
 // **Canvas2D paint (spec §Waterfall "Frontend")**: `putImageData` writes a
-// 1px-wide column with the freshest magnitudes; the EXISTING content scrolls
-// via a self-copy `drawImage(canvas, ...)` — probe-validated in the real
-// WebKitGTK 605.1.15 aarch64 software-GL engine
-// (`dev/scratch/canvas2d-waterfall-probe.html`, 2026-07-11). CSS transform is
-// NOT used for the scroll (that was the station map's Leaflet-specific
-// decision; this is the Canvas2D-specific one, independently probe-checked).
+// 1px-TALL ROW spanning the canvas width with the freshest magnitudes (an
+// incoming *data* column — the backend's 512-bin FFT time-slice — is what
+// gets painted, hence `paintColumn`'s name; the SCREEN geometry it paints is
+// a row); the EXISTING content scrolls via a self-copy `drawImage(canvas,
+// ...)` — probe-validated in the real WebKitGTK 605.1.15 aarch64 software-GL
+// engine (`dev/scratch/canvas2d-waterfall-probe.html`, 2026-07-11). CSS
+// transform is NOT used for the scroll (that was the station map's
+// Leaflet-specific decision; this is the Canvas2D-specific one, independently
+// probe-checked).
+//
+// **Orientation (operator QA finding, 2026-07-12)**: frequency runs
+// HORIZONTAL (bin 0 = 0 Hz at the left edge, matching the strip's own
+// `si-wf__axis` labels rendered left-to-right beneath the canvas) and time
+// runs VERTICAL — new rows appear at the TOP (y=0) and history scrolls DOWN,
+// the FT-8/WSJT-X convention. The self-copy shifts the existing bitmap DOWN
+// by 1px (`drawImage(canvas, 0,0,w,h-1 -> 0,1,w,h-1)`), dropping the
+// oldest (bottom) row, then the new row paints at y=0.
 //
 // **Gap rendering (spec §Waterfall "Gap rendering + discontinuity signal")**:
 // the tap carries no discontinuity marker, so the backend stamps every batch
 // with a monotonic `seq` + the wall-clock of its first column. A seq jump OR
 // a wall-clock gap beyond the expected column cadence renders an explicit
-// gap-marker column BEFORE the batch's own columns — never a silent
+// full-width gap-marker ROW BEFORE the batch's own rows — never a silent
 // scroll-join across a discontinuity. `detectGap`/`nextGapState` are pure and
 // exported for direct unit testing; `paintColumn`/`paintBatch` are the
 // imperative Canvas2D seam, also exported so tests can assert on a mocked
@@ -56,9 +67,10 @@ export const COLUMN_CADENCE_MS = 250;
  *  (spec: "is only a heuristic") — this threshold is the actual signal. */
 const GAP_SLACK_MULTIPLIER = 2;
 
-/** Default canvas dimensions: `width` is the scroll-history depth in
- *  columns/px; `height` is the visible frequency-axis resolution — rows are
- *  nearest-neighbor-mapped onto the 512 bins, so any height renders. */
+/** Default canvas dimensions (orientation per the 2026-07-12 QA finding):
+ *  `width` is the visible frequency-axis resolution — columns of the canvas
+ *  are nearest-neighbor-mapped onto the 512 bins across 0-3000 Hz, so any
+ *  width renders; `height` is the scroll-history depth in rows/px. */
 export const DEFAULT_WATERFALL_WIDTH = 300;
 export const DEFAULT_WATERFALL_HEIGHT = 120;
 
@@ -136,12 +148,14 @@ export function magnitudeToRgb(v: number): [number, number, number] {
   return [Math.round(12 + s * 243), Math.round(48 + s * 207), Math.round(114 + s * 141)];
 }
 
-/** Nearest-neighbor row->bin mapping so any canvas height renders the fixed
- *  512-bin column. Row 0 = highest frequency (3000 Hz), last row = 0 Hz —
- *  conventional waterfall orientation (low frequencies at the bottom). */
-function binForRow(row: number, canvasHeight: number, binCount: number): number {
-  const fromTop = canvasHeight <= 1 ? 0 : row / (canvasHeight - 1);
-  const idx = Math.round((1 - fromTop) * (binCount - 1));
+/** Nearest-neighbor column->bin mapping so any canvas width renders the
+ *  fixed 512-bin column. Screen-column 0 = 0 Hz (left edge), last
+ *  screen-column = 3000 Hz (right edge) — matches the strip's own
+ *  `si-wf__axis` labels (`0 … 3000 Hz`, left to right) and the FT-8/
+ *  WSJT-X convention. */
+function binForCol(col: number, canvasWidth: number, binCount: number): number {
+  const frac = canvasWidth <= 1 ? 0 : col / (canvasWidth - 1);
+  const idx = Math.round(frac * (binCount - 1));
   return Math.max(0, Math.min(binCount - 1, idx));
 }
 
@@ -172,10 +186,10 @@ export interface WaterfallCtx {
 }
 
 /**
- * Paint exactly one leading-edge column: scroll the existing content 1px via
- * a self-copy `drawImage`, then write the new column at the freed edge — a
- * gap-marker fill (`col === null`) or a real magnitude column via
- * `putImageData`. Never joins a gap and a real column into the same paint —
+ * Paint exactly one incoming (data) column: scroll the existing content
+ * DOWN 1px via a self-copy `drawImage`, then write the new row at the freed
+ * top edge — a gap-marker fill (`col === null`) or a real magnitude row via
+ * `putImageData`. Never joins a gap and a real row into the same paint —
  * callers wanting a gap marker call this once with `col: null` before
  * painting the batch's own columns (see `paintBatch`).
  */
@@ -185,45 +199,47 @@ export function paintColumn(
   canvasHeight: number,
   col: number[] | null,
 ): void {
-  // Self-copy scroll: shift everything 1px toward the trailing edge. This is
-  // the probe-validated WebKitGTK-safe approach — NOT a CSS transform.
+  // Self-copy scroll: shift everything 1px DOWN (toward the trailing/bottom
+  // edge), dropping the oldest (bottom) row — new data enters at the TOP.
+  // This is the probe-validated WebKitGTK-safe approach — NOT a CSS
+  // transform.
   ctx.drawImage(
     ctx.canvas as unknown as CanvasImageSource,
+    0,
+    0,
+    canvasWidth,
+    canvasHeight - 1,
+    0,
     1,
-    0,
-    canvasWidth - 1,
-    canvasHeight,
-    0,
-    0,
-    canvasWidth - 1,
-    canvasHeight,
+    canvasWidth,
+    canvasHeight - 1,
   );
 
   if (col === null) {
     ctx.fillStyle = GAP_MARKER_COLOR;
-    ctx.fillRect(canvasWidth - 1, 0, 1, canvasHeight);
+    ctx.fillRect(0, 0, canvasWidth, 1);
     return;
   }
 
-  const imageData = ctx.createImageData(1, canvasHeight);
+  const imageData = ctx.createImageData(canvasWidth, 1);
   const data = imageData.data;
-  for (let row = 0; row < canvasHeight; row += 1) {
-    const bin = binForRow(row, canvasHeight, col.length);
+  for (let x = 0; x < canvasWidth; x += 1) {
+    const bin = binForCol(x, canvasWidth, col.length);
     const [r, g, b] = magnitudeToRgb(col[bin] ?? 0);
-    const o = row * 4;
+    const o = x * 4;
     data[o] = r;
     data[o + 1] = g;
     data[o + 2] = b;
     data[o + 3] = 255;
   }
-  ctx.putImageData(imageData, canvasWidth - 1, 0);
+  ctx.putImageData(imageData, 0, 0);
 }
 
 /**
- * Paint one incoming batch: an explicit gap-marker column FIRST when
- * `isGap`, then every column in `batch.cols`, oldest to newest — the
- * discontinuity is visually obvious on the strip, never silently
- * concatenated into a continuous-looking scroll.
+ * Paint one incoming batch: an explicit gap-marker row FIRST when `isGap`,
+ * then every column in `batch.cols` (each painted as a row), oldest to
+ * newest — the discontinuity is visually obvious on the strip, never
+ * silently concatenated into a continuous-looking scroll.
  */
 export function paintBatch(
   ctx: WaterfallCtx,

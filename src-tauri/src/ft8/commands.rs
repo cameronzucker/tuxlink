@@ -134,17 +134,16 @@ pub(crate) fn ft8_set_device_inner(
     state.set_ft8_config(ft8);
     // Emit unconditionally right after persist (Task A7), same pattern as
     // set_sweep_bands (~line 219): the L3 panel re-hydrates on every
-    // config.ft8 write, not just the ones that also happen to retrigger the
-    // start sequence below. `state.start()`'s own emit (when it fires) is a
-    // second, later event describing the axis transition — not a
-    // substitute for this persist-time one.
+    // config.ft8 write, so the UI's device-row "selected" state and the
+    // CTA's disable-reason clear off this snapshot.
     state.emit_listening_change();
-    // From any blocked state except capture-wedged (refused above), a
-    // device pick retriggers the start sequence; from stopped it stays
-    // persist-only (the operator's start click is the trigger).
-    if matches!(state.axis(), ServiceAxis::Blocked(_)) {
-        state.start()?;
-    }
+    // Persist-only, ALWAYS (operator decision, 2026-07-12 QA wave 2):
+    // set_device used to auto-retrigger `state.start()` from any blocked
+    // axis, so the setup surface's "Use this device" row silently started
+    // capture — the ONE thing that starts capture must be the explicit
+    // Start CTA. A device pick — from any axis, blocked or not — now only
+    // persists `config.ft8.device` and emits the change above; it never
+    // calls `state.start()`.
     Ok(())
 }
 
@@ -805,6 +804,39 @@ mod tests {
             vec!["20m".to_string(), "40m".to_string()],
             "hoi1: sweep.bands survives an unrelated set_device write"
         );
+    }
+
+    // ---- Operator QA wave 2 (2026-07-12): "Use this device" selects, only
+    // the Start CTA starts. `ft8_set_device_inner` used to auto-retrigger
+    // `state.start()` from any Blocked axis; that made the setup surface's
+    // device-row click silently start capture, which the operator called
+    // out as wrong — the row picks a device, the CTA is the one thing that
+    // starts listening. -----------------------------------------------------
+
+    /// A device pick from a Blocked axis (`needs-device-selection`, reached
+    /// here via a real `test_run_sequence()` with no device configured) is
+    /// now persist-only: the axis is UNCHANGED after `ft8_set_device_inner`
+    /// returns, even though the picked device would otherwise resolve fine.
+    #[test]
+    fn set_device_from_blocked_is_persist_only_axis_unchanged() {
+        let (_env, _dir) = seed_config();
+        let state = state_with(Ft8Config::default());
+        state.test_run_sequence();
+        assert_eq!(state.axis(), ServiceAxis::Blocked(BlockedReason::NeedsDeviceSelection));
+
+        ft8_set_device_inner(&state, test_stable_id()).unwrap();
+
+        assert_eq!(
+            state.axis(),
+            ServiceAxis::Blocked(BlockedReason::NeedsDeviceSelection),
+            "set_device is persist-only now — it must never auto-start capture"
+        );
+        assert_eq!(
+            crate::config::read_config().unwrap().ft8.device,
+            Some(test_stable_id()),
+            "the device pick still persists even though it no longer starts"
+        );
+        state.test_teardown();
     }
 
     /// (c) hoi1 for `ft8_set_band`: a device seeded on disk BEFORE the call
