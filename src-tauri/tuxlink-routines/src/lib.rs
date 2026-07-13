@@ -11,6 +11,7 @@
 
 pub mod action;
 pub mod error;
+pub mod executor;
 pub mod fakes;
 pub mod journal;
 pub mod refs;
