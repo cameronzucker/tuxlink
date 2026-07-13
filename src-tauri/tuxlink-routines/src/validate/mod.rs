@@ -11,11 +11,14 @@
 //! `CROSS_TRACK_VAR`) and `structure` (`UNREACHABLE_STEP`,
 //! `NO_TERMINAL_PATH`, `RETRY_ZERO_ATTEMPTS`, `RETRY_TARGET_MISSING`,
 //! `RETRY_TARGET_NOT_ACTION`, `BRANCH_CYCLE`, `CALL_RECURSION`,
-//! `CALL_TARGET_MISSING`). Later tasks add the remaining per-module check
-//! fns (`consent`, `fleet`) that each push `Finding`s into the same vector
-//! before the final sort — no module gets a privileged ordering.
+//! `CALL_TARGET_MISSING`). Task 4 wires `consent` (`AUTO_TX_UNACKED`,
+//! `MIXED_MODE_STALL`, `ATTENDED_UNDER_SCHEDULE`). Later tasks add the
+//! remaining per-module check fn (`fleet`) that pushes `Finding`s into the
+//! same vector before the final sort — no module gets a privileged
+//! ordering.
 
 pub mod capability;
+pub mod consent;
 pub mod context;
 pub mod contracts;
 pub mod findings;
@@ -40,7 +43,7 @@ pub fn validate(def: &RoutineDef, ctx: &dyn ValidationContext) -> Vec<Finding> {
     capability::check(def, ctx, &mut findings);
     contracts::check(def, &mut findings);
     structure::check(def, ctx, &mut findings);
-    // Task 4: consent::check(def, ctx, &mut findings);
+    consent::check(def, ctx, &mut findings);
 
     sort_findings(&mut findings);
     findings
