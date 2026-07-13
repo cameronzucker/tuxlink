@@ -6886,6 +6886,7 @@ dependencies = [
  "tuxlink-capture",
  "tuxlink-jt9",
  "tuxlink-mcp-core",
+ "tuxlink-routines",
  "tuxlink-security",
  "tuxlink-stt",
  "urlencoding",

@@ -145,6 +145,9 @@ tuxlink-mcp-core = { path = "tuxlink-mcp-core" }
 tux-rig = { path = "tux-rig" }
 tuxlink-agent-runner = { path = "tuxlink-agent-runner" }
 tuxlink-agent-frontend = { path = "tuxlink-agent-frontend" }
+# Routines (tuxlink-ofw4s plan 2): deterministic station automation engine —
+# Tauri-free leaf crate mounted under src/routines/ (spec §6/§9/§14).
+tuxlink-routines = { path = "tuxlink-routines" }
 # FT8 Station Intelligence L2 (tuxlink-b026z.3): pure capture logic (leaf,
 # std-only) + the ALSA binding for the one hardware touchpoint
 # (src/ft8/alsa_source.rs). `alsa` links system libasound: CI/apt gains

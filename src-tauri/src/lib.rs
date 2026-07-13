@@ -40,6 +40,7 @@ pub mod mesh;
 pub mod mcp_connection;
 pub mod elmer;
 pub mod wwv_offair;
+pub mod routines;
 
 #[cfg(test)]
 pub mod test_helpers;
