@@ -55,18 +55,30 @@ fn probe_version(jt9_path: &Path) -> String {
     if !sibling.is_file() {
         return UNKNOWN.into();
     }
-    let mut child = match Command::new(&sibling)
-        .arg("-v")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(_) => return UNKNOWN.into(),
-    };
-
     let deadline = Instant::now() + PROBE_DEADLINE;
+    let mut child = loop {
+        match Command::new(&sibling)
+            .arg("-v")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(c) => break c,
+            // ETXTBSY (raw errno 26 — io::ErrorKind::ExecutableFileBusy needs
+            // rustc > our 1.75 MSRV): the file briefly has an "open writer".
+            // In production that is a package manager rewriting the binary;
+            // under `cargo test` it is the classic multi-threaded fork/exec
+            // window (a sibling test's just-forked child holds inherited
+            // write-fds until its own exec). Both are transient — retry
+            // within the probe deadline instead of silently degrading to
+            // UNKNOWN (the 2026-07-13 v0.90.0 release-PR CI flake).
+            Err(e) if e.raw_os_error() == Some(26) && Instant::now() < deadline => {
+                std::thread::sleep(PROBE_POLL_INTERVAL);
+            }
+            Err(_) => return UNKNOWN.into(),
+        }
+    };
     loop {
         match child.try_wait() {
             Ok(Some(_status)) => break,
