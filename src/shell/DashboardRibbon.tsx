@@ -98,15 +98,18 @@ export function ft8RibbonState(state: Ft8UiState): Ft8RibbonState {
  * raw states (the caller only renders this alongside a 'blocked' badge).
  */
 export function ft8BlockedLabel(state: Ft8UiState): string | null {
+  // Sentence-case, matching the chip's sibling labels ('Off' / 'Listening' /
+  // 'Starting…') and the APRS control's 'Listening' / 'Off' (QA round-3
+  // finding 4: lowercase 'paused' read as inconsistent with the theme).
   switch (state) {
     case 'needs-setup':
-      return 'needs setup';
+      return 'Needs setup';
     case 'device-lost':
-      return 'disconnected';
+      return 'Disconnected';
     case 'wedged':
-      return 'restart';
+      return 'Restart';
     case 'yielded':
-      return 'paused';
+      return 'Paused';
     default:
       return null;
   }

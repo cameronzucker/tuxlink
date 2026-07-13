@@ -346,4 +346,45 @@ describe('StationRail', () => {
       expect(screen.queryByTestId('aim-declination')).toBeNull();
     });
   });
+
+  // QA round-3 finding 7: the Live-decodes tab's live NN/min badge (the
+  // approved mock's `si-count`) — present when the strip has a held band,
+  // absent when the listener never hydrated (no snapshot → liveBand null).
+  describe('Live-decodes tab count badge', () => {
+    const NOW = 1_000_000_000;
+    const mkDecode = (fromCall: string): import('../ft8ui/ft8Types').DecodeDto => ({
+      slotUtcMs: NOW, snrDb: -10, dtS: 0, freqHz: 1500,
+      message: `CQ ${fromCall} EM12`, fromCall, toCall: null, grid: null, partial: false,
+    });
+    const ring: import('../ft8ui/ft8Types').SlotRecord[] = [
+      {
+        slotUtcMs: NOW, band: '20m', dialHz: 14074000, bandSource: 'cat-confirmed',
+        bandLabelConfirmedUtcMs: null, outcome: { kind: 'decoded' },
+        decodes: [mkDecode('W7GTE'), mkDecode('K5MDX')],
+        partialSalvage: false, lostFrames: 0, boundarySkewFrames: 0,
+        clipFraction: 0, rmsDbfs: -20, dwellSlotIndex: null,
+      },
+    ];
+
+    it('renders NN/min on the tab when a held band is supplied', () => {
+      render(
+        <StationRail
+          station={null} prediction={null} predictionStatus="idle"
+          operatorGrid="DM43bp" utcHour={21}
+          decodesRing={ring} liveBand="20m" nowMs={NOW}
+        />,
+      );
+      expect(screen.getByTestId('rail-tab-live-count').textContent).toMatch(/^\d+\/min$/);
+    });
+
+    it('hides the badge when the listener has no snapshot (liveBand omitted)', () => {
+      render(
+        <StationRail
+          station={null} prediction={null} predictionStatus="idle"
+          operatorGrid="DM43bp" utcHour={21} decodesRing={ring}
+        />,
+      );
+      expect(screen.queryByTestId('rail-tab-live-count')).toBeNull();
+    });
+  });
 });
