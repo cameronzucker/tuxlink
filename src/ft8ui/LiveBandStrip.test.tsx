@@ -405,13 +405,19 @@ describe('LiveBandStrip — non-live-body states', () => {
     expect(screen.getByTestId('ft8-strip-start-cta')).toHaveTextContent('Start listening on 20m →');
   });
 
-  it('needs-setup renders the setupSurface slot when provided', () => {
+  it('needs-setup renders the notice + an Open-setup re-entry to the full-body surface', () => {
+    // QA round-3 finding 2: the full setup surface is the PANEL's body now
+    // (firstrun-v2 mock) — the strip's arm is a one-line re-entry, never a
+    // nested surface.
+    const onOpen = vi.fn();
     renderStrip({
       uiState: makeUiState('needs-setup'),
       snapshot: makeSnapshot({ service: { axis: 'blocked', reason: 'needs-device-selection' } }),
-      setupSurface: <div data-testid="stub-setup-surface">stub</div>,
+      onOpenFullSetup: onOpen,
     });
-    expect(screen.getByTestId('stub-setup-surface')).toBeInTheDocument();
+    expect(screen.getByTestId('ft8-strip-body-needs-setup')).toHaveTextContent(/setup required/i);
+    fireEvent.click(screen.getByTestId('ft8-strip-open-setup'));
+    expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
   it('device-lost renders the compact reconnecting message and link', () => {
