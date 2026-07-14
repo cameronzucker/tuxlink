@@ -832,7 +832,7 @@ pub fn list_runs(state: &RoutinesState, routine: Option<&str>, limit: usize) -> 
         });
     }
 
-    out.sort_by(|a, b| b.started_unix.cmp(&a.started_unix));
+    out.sort_by_key(|e| std::cmp::Reverse(e.started_unix));
     out.truncate(limit);
     out
 }
