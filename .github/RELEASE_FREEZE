@@ -1,0 +1,52 @@
+Frozen during the Routines build-out (2026-07-14) — Routines is landing in parts and must not auto-release half-built.
+
+Reason
+------
+Routines is a six-part plan (`docs/superpowers/specs/2026-07-13-routines-design.md`)
+whose parts land on main independently:
+
+  1/6  core engine crate (tuxlink-routines)            — landed
+  2/6  actions + arbiter + Tauri mount (tuxlink-ofw4s) — in progress
+  3/6  validator + dry-run (tuxlink-pgidw)             — landed
+  4/6  MCP tools + one-cadence amendment (tuxlink-oiigb) — in progress
+  5/6  (not yet filed)
+  6/6  (not yet filed)
+
+v0.91.0 already shipped with parts of this on main. Every further nightly would cut
+another release carrying a partially-built feature — the exact failure this marker was
+created for (release-please.yml: "v0.55.0 shipped the Phase-3 transmit gate ahead of its
+enabling Phase 6"). Hold releases until Routines lands as a coherent whole.
+
+Why Routines specifically, and not just "wait for tidiness"
+-----------------------------------------------------------
+Routines SCHEDULES RF ACTIONS. Its v1 scope includes the scheduler, the radio arbiter,
+the three-layer validator, and the Part 97 consent-closure layer. A release that carries
+the scheduling half without its guards is not merely incoherent — it is the wrong half to
+ship first. The consent-closure validator exists precisely so a routine cannot be
+authored that would transmit outside an operator's control; shipping a routine engine
+ahead of a complete guard is the failure mode RADIO-1 and ADR 0022 both exist to prevent.
+
+Routines is currently INERT in the shipped binary — the crate is present but has no Tauri
+mount and no frontend surface (`grep -c routines src-tauri/src/lib.rs` = 0 as of
+de0a3126). That is what makes freezing NOW cheap: part 2/6 is "actions + arbiter + Tauri
+mount", and the moment it lands the feature becomes partially REACHABLE. Freeze before
+the mount, not after.
+
+What this does and does not stop
+--------------------------------
+- STOPS: release-please opening/updating the rolling release PR (release-please.yml),
+  and the nightly release-merge cron merging + tagging it (release-merge.yml).
+- DOES NOT STOP: feature-branch PRs merging to main as normal. Work continues; it just
+  does not accumulate into an auto-tagged release.
+
+Unfreeze
+--------
+Delete this file in a PR once Routines is complete and wire-walked end to end — all six
+parts landed, the operator-facing surface reachable, and the operator approves a release
+cut. Per ADR 0022 completeness is an invariant: "most of Routines" is not a reason to
+unfreeze.
+
+Gate implementation: .github/workflows/release-please.yml + .github/workflows/release-merge.yml
+(both check for this file's existence and echo this file's FIRST LINE as the skip notice).
+
+Frozen-by: agent sumac-magnolia-fen, at operator request (2026-07-14).
