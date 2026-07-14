@@ -121,6 +121,21 @@ pub struct DryRunStarted {
     pub findings: Vec<Finding>,
 }
 
+/// One catalog action's declared capabilities (spec §6), as reported by
+/// [`list_actions`] — the SAME [`tuxlink_routines::action::ActionDescriptor`]
+/// the validator and the executor's registry answer with, projected to an
+/// owned, JSON-friendly shape. There is no second, hand-maintained action
+/// list anywhere in the UI surface: the registry is the only source of truth
+/// for "what actions exist and what do they need."
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionInfo {
+    pub name: String,
+    pub needs_radio: bool,
+    pub transmits: bool,
+    pub needs_internet: bool,
+}
+
 /// Caller-supplied dry-run script (all fields optional — the default is an
 /// optimistic fake world where every action succeeds).
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -386,6 +401,29 @@ pub fn validate_routine(state: &RoutinesState, name: &str) -> Result<Vec<Finding
     Ok(validate_def(state, &def))
 }
 
+/// Validate a DRAFT — a `def_json` body the caller has not (yet, or ever)
+/// saved — WITHOUT staging a save. This is the builder's live-validation
+/// panel: findings update as the operator types, and nothing hits disk
+/// until they explicitly save.
+///
+/// Applies the SAME consent-envelope normalization [`save_routine`] does
+/// (plan-5 Task 1, C1): a body-supplied `transmit_ack` is discarded before
+/// validation, replaced with whatever ack is already on disk for a routine
+/// of that name (none, if the routine has never been saved). Without this,
+/// the valbar could report a draft as acknowledged while `save_routine`
+/// would report the saved routine as `AUTO_TX_UNACKED` — the two surfaces
+/// would disagree about the same routine.
+pub fn validate_draft(state: &RoutinesState, def_json: &str) -> Result<Vec<Finding>, UiError> {
+    let mut def = RoutineDef::parse(def_json).map_err(|e| UiError::Rejected(e.to_string()))?;
+    def.transmit_ack = match def.transmit_mode {
+        tuxlink_routines::types::TransmitMode::Automatic => {
+            state.store.get(&def.routine).and_then(|d| d.transmit_ack)
+        }
+        _ => None,
+    };
+    Ok(validate_def(state, &def))
+}
+
 pub fn delete_routine(state: &RoutinesState, name: &str) -> Result<(), UiError> {
     state.store.delete(name)?;
     state.emit(&RoutinesEvent::LibraryChanged {
@@ -550,6 +588,47 @@ pub fn acknowledge_automatic(
         name: name.to_string(),
     });
     Ok(())
+}
+
+// ============================================================================
+// Service fns — catalog + fleet reads (plan-5 Task 2)
+// ============================================================================
+
+/// The action catalog, as the registry actually knows it — no hardcoded
+/// list. The builder's action picker and its capability badges (needs
+/// radio / transmits / needs internet) read this, so a new action registered
+/// on the executor's side shows up here with no UI change required. Sorted
+/// by name for a stable, deterministic render.
+pub fn list_actions(state: &RoutinesState) -> Vec<ActionInfo> {
+    let mut out: Vec<ActionInfo> = state
+        .registry
+        .descriptors()
+        .into_iter()
+        .map(|d| ActionInfo {
+            name: d.name.to_string(),
+            needs_radio: d.needs_radio,
+            transmits: d.transmits,
+            needs_internet: d.needs_internet,
+        })
+        .collect();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+/// A read-only fleet-wide check: `validate_fleet` over every CURRENTLY
+/// enabled routine, at the given instant/offset — the same cross-routine
+/// checks (`SCHEDULE_COLLISION`, `SAME_EFFECT_OVERLAP`) [`set_routine_enabled`]
+/// runs at the moment of arming, but callable any time the operator wants a
+/// standing "does anything already-armed collide right now" answer (e.g. a
+/// dashboard health check), without touching any routine's enabled state.
+///
+/// Unlike `set_routine_enabled`'s delta (§"why the findings are a DELTA"
+/// above), this reports the FULL fleet's findings — there is no "routine
+/// being added" to diff against, so every standing finding is in scope.
+pub fn fleet_check(state: &RoutinesState, now_unix: i64, utc_offset_seconds: i32) -> Vec<Finding> {
+    let ctx = MonolithValidationContext::for_state(state);
+    let defs = ctx.enabled_routines();
+    validate_fleet(&defs, &ctx, now_unix, utc_offset_seconds)
 }
 
 // ============================================================================
@@ -823,6 +902,53 @@ pub async fn routines_missed_fires(
     state: State<'_, Arc<RoutinesState>>,
 ) -> Result<Vec<ScheduleStatus>, UiError> {
     Ok(schedule_status_report(&state))
+}
+
+/// Validate one SAVED routine by name (spec §10, one validator, no
+/// privileged path). Read-only.
+///
+/// **UI-only.** The MCP surface already has an unrelated tool of the same
+/// name (`tuxlink-mcp-core/src/router.rs`'s `routines_validate`, wired
+/// through `RoutinesPort::validate` / `validate_routine` directly, not
+/// through this shim) — the two are registered on entirely separate
+/// dispatch tables (Tauri's `invoke_handler` vs. the MCP tool router) so the
+/// shared name is not a collision. This command exists so the desktop UI has
+/// its own IPC-reachable path without going through the MCP port machinery.
+#[tauri::command]
+pub async fn routines_validate(
+    state: State<'_, Arc<RoutinesState>>,
+    name: String,
+) -> Result<Vec<Finding>, UiError> {
+    validate_routine(&state, &name)
+}
+
+/// Validate an UNSAVED draft body — the builder's live-validation panel.
+/// **UI-only**; not on the MCP surface (spec §13's 10-tool list is closed).
+#[tauri::command]
+pub async fn routines_validate_draft(
+    state: State<'_, Arc<RoutinesState>>,
+    def_json: String,
+) -> Result<Vec<Finding>, UiError> {
+    validate_draft(&state, &def_json)
+}
+
+/// The action catalog, registry-truth. **UI-only**; not on the MCP surface.
+#[tauri::command]
+pub async fn routines_actions_list(
+    state: State<'_, Arc<RoutinesState>>,
+) -> Result<Vec<ActionInfo>, UiError> {
+    Ok(list_actions(&state))
+}
+
+/// A standing fleet-wide validation read, at "now" in the operator's local
+/// clock — same seam `routines_set_enabled` resolves
+/// (`unix_now_secs`/`local_utc_offset_seconds`). **UI-only**; not on the MCP
+/// surface.
+#[tauri::command]
+pub async fn routines_fleet_check(
+    state: State<'_, Arc<RoutinesState>>,
+) -> Result<Vec<Finding>, UiError> {
+    Ok(fleet_check(&state, unix_now_secs(), local_utc_offset_seconds()))
 }
 
 #[tauri::command]
@@ -1737,6 +1863,57 @@ mod tests {
             delete_routine(&state, "alpha"),
             Err(UiError::NotFound(_))
         ));
+    }
+
+    // ── validate_draft: read-only preview, same consent envelope as save ──
+
+    #[test]
+    fn validate_draft_reports_findings_without_saving_and_applies_the_consent_envelope() {
+        let (_dir, state, _sink, _c) = test_state();
+        // Unsaved draft with an unknown action: finding comes back, nothing on disk.
+        let body = def_json("scratch", json!([{"id":"s1","action":"radio.mystery","params":{}}]));
+        let findings = validate_draft(&state, &body).unwrap();
+        assert!(findings.iter().any(|f| f.code == "UNKNOWN_ACTION"));
+        assert!(state.store.get("scratch").is_none(), "validate_draft must not save");
+
+        // The valbar must not be foolable by a smuggled ack: same envelope rule
+        // as save_routine — body acks are ignored, the on-disk ack (none) wins.
+        let forged = json!({"by":"KK7ABC","at":"2026-07-14T00:00:00Z"});
+        let findings = validate_draft(&state, &auto_tx_json("scratch2", Some(forged))).unwrap();
+        assert!(findings.iter().any(|f| f.code == "AUTO_TX_UNACKED"));
+
+        // Parse failure is Rejected with the verbatim serde message.
+        assert!(matches!(validate_draft(&state, "{ nope"), Err(UiError::Rejected(_))));
+    }
+
+    // ── actions_list: registry truth, not a hardcoded catalog ────────────
+
+    #[test]
+    fn actions_list_reports_the_registry_with_capabilities_sorted() {
+        let (_dir, state, _sink, _c) = test_state();
+        let actions = list_actions(&state);
+        let names: Vec<&str> = actions.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, vec!["local.log", "radio.connect"], "sorted, registry-truth");
+        let connect = actions.iter().find(|a| a.name == "radio.connect").unwrap();
+        assert!(connect.needs_radio && connect.transmits && !connect.needs_internet);
+    }
+
+    // ── fleet_check: a read-only view of validate_fleet over enabled routines ──
+
+    #[test]
+    fn fleet_check_reports_standing_collisions_across_enabled_routines() {
+        let (_dir, state, _sink, _c) = test_state();
+        save_routine(&state, &scheduled_radio_routine("first")).unwrap();
+        save_routine(&state, &scheduled_radio_routine("second")).unwrap();
+        assert!(fleet_check(&state, NOW, 0).is_empty(), "nothing enabled yet");
+        set_routine_enabled(&state, "first", true, NOW, 0).unwrap();
+        set_routine_enabled(&state, "second", true, NOW, 0).unwrap();
+        let findings = fleet_check(&state, NOW, 0);
+        assert!(
+            findings.iter().any(|f| f.code == "SCHEDULE_COLLISION"),
+            "{:?}",
+            findings.iter().map(|f| f.code).collect::<Vec<_>>()
+        );
     }
 
     #[test]

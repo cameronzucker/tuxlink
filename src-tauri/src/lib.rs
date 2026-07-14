@@ -3312,6 +3312,12 @@ pub fn run() {
             // `transmit_ack` (plan-5 Task 1, C1 fix) — registered HERE only;
             // it must never be added to the MCP router (spec §13's 10-tool
             // list is closed — see `tuxlink-mcp-core/src/router.rs`'s guard).
+            // `routines_validate`/`routines_validate_draft`/
+            // `routines_actions_list`/`routines_fleet_check` (plan-5 Task 2)
+            // are UI-only read commands for the builder's validation panel,
+            // action picker, and a standing fleet-collision read — registered
+            // HERE only, same closed-MCP-list rule as
+            // `routines_acknowledge_automatic` above.
             crate::routines::commands::routines_list,
             crate::routines::commands::routines_get,
             crate::routines::commands::routines_save,
@@ -3331,6 +3337,10 @@ pub fn run() {
             crate::routines::commands::routines_station_sets_list,
             crate::routines::commands::routines_station_sets_save,
             crate::routines::commands::routines_station_sets_delete,
+            crate::routines::commands::routines_validate,
+            crate::routines::commands::routines_validate_draft,
+            crate::routines::commands::routines_actions_list,
+            crate::routines::commands::routines_fleet_check,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
