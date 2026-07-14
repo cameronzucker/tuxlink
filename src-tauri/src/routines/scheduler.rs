@@ -492,6 +492,59 @@ fn last_fire_path(state: &RoutinesState) -> PathBuf {
     state.config_dir.join("routines-last-fire.json")
 }
 
+/// The anchor a routine's cadence is measured from (module doc, "the anchor"):
+/// the last instant its schedule was EVALUATED, per the last-fire map, or
+/// `now` for a routine the map has never seen. Shared by
+/// `RoutinesScheduler::next_due` (which also seeds the map for an unseen
+/// routine — see `RoutinesScheduler::seed_anchors`) and [`next_fires_report`]
+/// (a read-only report, which does not), so the two can never disagree about
+/// what "the next fire" means for the same routine.
+fn resolve_anchor(anchors: &BTreeMap<String, LastFire>, routine: &str, now: i64) -> i64 {
+    anchors.get(routine).map_or(now, |entry| entry.last_fire_unix)
+}
+
+/// One routine's next scheduled fire instant, for the dashboard's
+/// `routines_next_fires` command.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NextFire {
+    pub routine: String,
+    pub at: i64,
+}
+
+/// Every enabled, schedule-triggered routine's next fire instant — the read
+/// path counterpart to the tick loop's own [`RoutinesScheduler::next_due`],
+/// reusing the SAME anchor resolution ([`resolve_anchor`]) and the same
+/// per-trigger math ([`earliest_fire`]) so this report can never disagree
+/// with what the scheduler is actually going to do. A routine with no
+/// schedule trigger (manual-only), or one whose `every`/`window` fails to
+/// parse, is silently absent — exactly [`earliest_fire`]'s fail-closed
+/// contract, the same one the tick loop lives under.
+///
+/// Unlike [`RoutinesScheduler::next_due`], this NEVER persists an anchor for
+/// a routine the last-fire map has not seen yet: it is a report, not a
+/// scheduling decision, and a read command must not have a side effect the
+/// scheduler itself would then have to reconcile. An unseen routine's anchor
+/// falls back to `now` for the purposes of this call only.
+pub fn next_fires_report(
+    state: &RoutinesState,
+    now: i64,
+    utc_offset_seconds: i32,
+) -> Vec<NextFire> {
+    let anchors = LastFireStore::open(last_fire_path(state)).read();
+    state
+        .store
+        .list()
+        .into_iter()
+        .filter(|s| s.enabled)
+        .filter_map(|s| {
+            let anchor = resolve_anchor(&anchors, &s.routine, now);
+            earliest_fire(&s.triggers, anchor, utc_offset_seconds)
+                .map(|at| NextFire { routine: s.routine, at })
+        })
+        .collect()
+}
+
 // ============================================================================
 // The scheduler
 // ============================================================================
@@ -710,13 +763,10 @@ impl RoutinesScheduler {
         let mut unseen: Vec<String> = Vec::new();
 
         for summary in self.state.store.list().into_iter().filter(|s| s.enabled) {
-            let anchor = match anchors.get(&summary.routine) {
-                Some(entry) => entry.last_fire_unix,
-                None => {
-                    unseen.push(summary.routine.clone());
-                    now
-                }
-            };
+            if !anchors.contains_key(&summary.routine) {
+                unseen.push(summary.routine.clone());
+            }
+            let anchor = resolve_anchor(&anchors, &summary.routine, now);
             let Some(at) = earliest_fire(&summary.triggers, anchor, (self.utc_offset)()) else {
                 continue; // manual-only, or an unparseable every/window (fail closed)
             };
@@ -2192,6 +2242,77 @@ mod tests {
                 detail: "disk on fire".into()
             }),
             "disk on fire"
+        );
+    }
+
+    // ── next_fires_report: the dashboard's read-only view of next_due ────────
+
+    /// A schedule-triggered, aligned routine reports the next 30-minute GRID
+    /// instant (epoch-anchored, per `next_fire`'s doc) — not `NOW + 30m` — and
+    /// a disabled routine and a manual-only routine are both absent, exactly
+    /// as `next_due`'s own fleet walk would treat them.
+    #[test]
+    fn next_fires_report_reports_only_enabled_schedule_triggered_routines() {
+        let h = Harness::log();
+
+        // Enabled, aligned to the hour: never seen by the last-fire map, so
+        // this call's own `now` (BASE) is the fallback anchor — irrelevant
+        // to the result anyway, since an aligned schedule's grid is
+        // anchor-independent (module doc).
+        let body = json!({
+            "routine": "scheduled-radio-routine",
+            "schema_version": 1,
+            "transmit_mode": "attended",
+            "triggers": [{
+                "type": "schedule",
+                "every": "30m",
+                "align": "hour",
+                "if_missed": "skip",
+            }],
+            "tracks": [{"name": "t", "steps": [
+                {"id": "s1", "action": "local.log", "params": {}},
+                {"id": "e1", "control": "end"}
+            ]}]
+        })
+        .to_string();
+        save_routine(&h.state, &body).expect("a parseable routine saves");
+        h.state
+            .store
+            .set_enabled("scheduled-radio-routine", true)
+            .unwrap();
+
+        // Saved but never enabled: absent regardless of its schedule.
+        h.save("never-enabled", "15m", "skip", "local.log");
+
+        // Enabled, but manual-only: no schedule trigger for `earliest_fire`
+        // to compute a next fire from.
+        let manual_body = json!({
+            "routine": "manual-only",
+            "schema_version": 1,
+            "transmit_mode": "attended",
+            "triggers": [{"type": "manual"}],
+            "tracks": [{"name": "t", "steps": [
+                {"id": "s1", "action": "local.log", "params": {}},
+                {"id": "e1", "control": "end"}
+            ]}]
+        })
+        .to_string();
+        save_routine(&h.state, &manual_body).expect("a parseable routine saves");
+        h.state.store.set_enabled("manual-only", true).unwrap();
+
+        let interval = 1_800i64; // "30m"
+        let expected_grid_instant = (BASE.div_euclid(interval) + 1) * interval;
+
+        let report = next_fires_report(&h.state, BASE, 0);
+        assert_eq!(
+            report,
+            vec![NextFire {
+                routine: "scheduled-radio-routine".to_string(),
+                at: expected_grid_instant,
+            }],
+            "only the enabled, schedule-triggered routine is reported, at the \
+             next 30-minute grid instant; the disabled and the manual-only \
+             routines are both absent"
         );
     }
 }

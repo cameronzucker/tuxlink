@@ -3318,6 +3318,9 @@ pub fn run() {
             // action picker, and a standing fleet-collision read — registered
             // HERE only, same closed-MCP-list rule as
             // `routines_acknowledge_automatic` above.
+            // `routines_next_fires`/`routines_runs_list` (plan-5 Task 3) are the
+            // dashboard's scheduler next-fire report and the runs tab's journal
+            // enumeration — UI-only, same closed-MCP-list rule.
             crate::routines::commands::routines_list,
             crate::routines::commands::routines_get,
             crate::routines::commands::routines_save,
@@ -3341,6 +3344,8 @@ pub fn run() {
             crate::routines::commands::routines_validate_draft,
             crate::routines::commands::routines_actions_list,
             crate::routines::commands::routines_fleet_check,
+            crate::routines::commands::routines_next_fires,
+            crate::routines::commands::routines_runs_list,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

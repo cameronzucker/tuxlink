@@ -58,7 +58,7 @@ use tauri::State;
 
 use tuxlink_routines::dryrun::{DryRunDefault, DryRunOutcome, DryRunScript};
 use tuxlink_routines::error::EngineError;
-use tuxlink_routines::journal::{JournalEntry, RunState};
+use tuxlink_routines::journal::{read_journal, JournalEntry, RunEvent, RunState};
 use tuxlink_routines::types::RoutineDef;
 use tuxlink_routines::validate::{
     validate, validate_fleet, Finding, Severity, ValidationContext as _,
@@ -66,7 +66,9 @@ use tuxlink_routines::validate::{
 
 use super::events::{LibraryEntity, RoutinesEvent};
 use super::presets::{PresetError, RadioPreset};
-use super::scheduler::{anchor_on_enable, schedule_status, ScheduleStatus};
+use super::scheduler::{
+    anchor_on_enable, next_fires_report, schedule_status, NextFire, ScheduleStatus,
+};
 use super::session::{local_utc_offset_seconds, unix_now_secs, RoutineStartError, RoutinesState};
 use super::station_sets::{StationSet, StationSetError};
 use super::store::{RoutineSummary, StoreError};
@@ -110,6 +112,24 @@ pub struct RunStatusDto {
     pub routine: String,
     pub dry_run: bool,
     pub state: RunState,
+}
+
+/// One run's identity + outcome, for the dashboard/runs-tab history
+/// ([`list_runs`]/`routines_runs_list`). Unlike [`RunStatusDto`] (one run, the
+/// fast in-memory answer), this enumerates every run JOURNAL on disk — a
+/// station that has been up for weeks has journals the in-memory registry
+/// evicted long ago (`RoutinesState`'s `MAX_TERMINAL_RUNS` cap), and the
+/// history view is supposed to answer for all of them, not just the recent
+/// ones still cached in memory.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunListEntry {
+    pub run_id: String,
+    pub routine: String,
+    pub dry_run: bool,
+    pub started_unix: i64,
+    pub state: RunState,
+    pub finished_unix: Option<i64>,
 }
 
 /// A dry-run's start response: the run id to poll, plus the validator's
@@ -715,6 +735,91 @@ pub fn schedule_status_report(state: &RoutinesState) -> Vec<ScheduleStatus> {
     schedule_status(state)
 }
 
+/// Enumerate run journals, newest first, optionally filtered to one routine
+/// (`routines_runs_list`).
+///
+/// Every `*.jsonl` in `state.journal_dir` is one run's durable record. A file
+/// with no `RunEvent::RunStarted` entry at all — foreign, or corrupted before
+/// that first write ever landed — is silently skipped: it is not this
+/// listing's record to report on, the same "ignored, not an error" posture
+/// `tuxlink_routines::journal::scan_interrupted` already takes toward an
+/// unreadable journal.
+///
+/// The terminal state + `finished_unix` come from the journal's own
+/// `RunFinished` entry when there is one. When there is not, the run is
+/// either still going in THIS process or belongs to a previous process
+/// lifetime that crashed before launch recovery reached it, and
+/// [`RoutinesState::run_status`] is consulted: a LIVE registry entry wins
+/// (finished_unix stays `None`), and its absence reads as
+/// [`RunState::Interrupted`] — the same conclusion launch recovery would
+/// reach for this exact journal, reported here eagerly rather than waiting
+/// for recovery to append the entry (mirrors the reasoning of
+/// `RoutinesState::run_status_from_journal`'s "a journal with no
+/// `RunFinished` is a run this process never finished" doc comment, applied
+/// to a run this process — or the CURRENT one, if recovery already ran — is
+/// not actively tracking).
+pub fn list_runs(state: &RoutinesState, routine: Option<&str>, limit: usize) -> Vec<RunListEntry> {
+    let mut out: Vec<RunListEntry> = Vec::new();
+
+    let Ok(dir) = std::fs::read_dir(&state.journal_dir) else {
+        return out;
+    };
+
+    for entry in dir.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let Ok(entries) = read_journal(&path) else {
+            continue; // corrupt/foreign: ignored, not an error
+        };
+        let Some((run_id, started_unix, run_routine, dry_run)) =
+            entries.iter().find_map(|e| match &e.event {
+                RunEvent::RunStarted {
+                    routine: started_routine,
+                    dry_run,
+                    ..
+                } => Some((e.run_id.clone(), e.ts_unix, started_routine.clone(), *dry_run)),
+                _ => None,
+            })
+        else {
+            continue; // no RunStarted entry: foreign/corrupt, ignored
+        };
+
+        if let Some(filter) = routine {
+            if run_routine != filter {
+                continue;
+            }
+        }
+
+        let terminal = entries.iter().rev().find_map(|e| match &e.event {
+            RunEvent::RunFinished { state: s, .. } => Some((*s, e.ts_unix)),
+            _ => None,
+        });
+
+        let (run_state, finished_unix) = match terminal {
+            Some((s, at)) => (s, Some(at)),
+            None => match state.run_status(&run_id) {
+                Some(snapshot) => (snapshot.state, None),
+                None => (RunState::Interrupted, None),
+            },
+        };
+
+        out.push(RunListEntry {
+            run_id,
+            routine: run_routine,
+            dry_run,
+            started_unix,
+            state: run_state,
+            finished_unix,
+        });
+    }
+
+    out.sort_by(|a, b| b.started_unix.cmp(&a.started_unix));
+    out.truncate(limit);
+    out
+}
+
 // ============================================================================
 // Service fns — presets + station sets (the authorable @-entities)
 // ============================================================================
@@ -865,6 +970,18 @@ pub async fn routines_journal(
     run_journal(&state, &run_id)
 }
 
+/// The runs tab / dashboard history: every run journal on disk, newest
+/// first, optionally filtered to one routine. **UI-only**; not on the MCP
+/// surface (spec §13's 10-tool list is closed). Pins `limit = 200` — the
+/// dashboard is a recent-history view, not a full-archive export.
+#[tauri::command]
+pub async fn routines_runs_list(
+    state: State<'_, Arc<RoutinesState>>,
+    routine: Option<String>,
+) -> Result<Vec<RunListEntry>, UiError> {
+    Ok(list_runs(&state, routine.as_deref(), 200))
+}
+
 #[tauri::command]
 pub async fn routines_consent_grant(
     state: State<'_, Arc<RoutinesState>>,
@@ -902,6 +1019,22 @@ pub async fn routines_missed_fires(
     state: State<'_, Arc<RoutinesState>>,
 ) -> Result<Vec<ScheduleStatus>, UiError> {
     Ok(schedule_status_report(&state))
+}
+
+/// The dashboard's next-fire report: every enabled, schedule-triggered
+/// routine's next fire instant, at "now" in the operator's local clock —
+/// the same seam `routines_set_enabled`/`routines_fleet_check` resolve
+/// (`unix_now_secs`/`local_utc_offset_seconds`). **UI-only**; not on the MCP
+/// surface (spec §13's 10-tool list is closed).
+#[tauri::command]
+pub async fn routines_next_fires(
+    state: State<'_, Arc<RoutinesState>>,
+) -> Result<Vec<NextFire>, UiError> {
+    Ok(next_fires_report(
+        &state,
+        unix_now_secs(),
+        local_utc_offset_seconds(),
+    ))
 }
 
 /// Validate one SAVED routine by name (spec §10, one validator, no
@@ -1579,6 +1712,32 @@ mod tests {
     async fn cancel_of_an_unknown_run_is_false_not_an_error() {
         let (_dir, state, _sink, _c) = test_state();
         assert!(!cancel_run(&state, "run-nope"));
+    }
+
+    // ── runs list: enumerates journals, newest first ──────────────────────
+
+    #[tokio::test]
+    async fn runs_list_enumerates_journals_newest_first_with_live_and_terminal_states() {
+        let (_dir, state, _sink, _c) = test_state();
+        save_routine(&state, &def_json("quick", log_step())).unwrap();
+        let r1 = run_routine(&state, "quick", json!({})).await.unwrap();
+        wait_until(|| run_status(&state, &r1).map(|s| s.state) == Some(RunState::Completed)).await;
+        let d = dry_run_routine(&state, "quick", json!({}), None).await.unwrap();
+        wait_until(|| run_status(&state, &d.run_id).map(|s| s.state) == Some(RunState::Completed))
+            .await;
+
+        let runs = list_runs(&state, Some("quick"), 200);
+        assert_eq!(runs.len(), 2);
+        assert!(runs[0].started_unix >= runs[1].started_unix, "newest first");
+        assert!(runs.iter().any(|r| r.dry_run), "dry runs are listed and flagged");
+        assert!(runs.iter().all(|r| r.state == RunState::Completed));
+        assert!(runs.iter().all(|r| r.finished_unix.is_some()));
+
+        assert!(
+            list_runs(&state, Some("other"), 200).is_empty(),
+            "routine filter"
+        );
+        assert_eq!(list_runs(&state, None, 1).len(), 1, "limit respected");
     }
 
     // ── consent: a parked attended transmit step resumes on grant ────────
