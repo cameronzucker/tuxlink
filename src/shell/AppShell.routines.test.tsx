@@ -46,6 +46,11 @@ vi.mock('@tauri-apps/api/core', () => ({
     if (cmd === 'contacts_suggestions') return [];
     if (cmd === 'aprs_config_get') return { listenDefault: false };
     if (cmd === 'mailbox_list') return [ROUTINES_TEST_INBOX_MSG];
+    // RoutineDesigner's always-on validation debounce (Task 9) can fire
+    // while this suite's tests are still running real timers — resolve with
+    // an empty finding list rather than falling through to `undefined`
+    // (`ValBar`'s `findings.filter(...)` would throw on that).
+    if (cmd === 'routines_validate_draft') return [];
     return undefined;
   }),
 }));
@@ -159,10 +164,11 @@ describe('Routines menu + inline surface mount', () => {
   it('Routines → New Routine… opens the surface on a fresh, unsaved designer draft', async () => {
     renderShell();
     clickMenu('Routines', /New Routine…/);
-    // RoutineDesigner (Task 9) doesn't exist yet — a placeholder stands in for
-    // it; the important assertion here is that Routines opened (mailbox
-    // master-detail gone) and it landed on the designer view, not the dashboard.
-    await screen.findByTestId('routine-designer-placeholder');
+    // RoutineDesigner (Task 9) mounts for real now — a fresh/new draft
+    // (empty routine name) renders an editable name field and never fetches
+    // a def from the backend (task-9 brief binding constraint 6).
+    await screen.findByTestId('routine-designer');
+    expect(screen.getByTestId('designer-name-input')).toBeInTheDocument();
     expect(screen.queryByTestId('routines-dashboard')).not.toBeInTheDocument();
     expect(screen.queryByTestId('folder-sidebar')).not.toBeInTheDocument();
   });
