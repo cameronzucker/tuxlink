@@ -52,6 +52,15 @@ export function RoutinesSurface({ view, onNavigate }: RoutinesSurfaceProps) {
   // double-click / ⋯ menu Edit).
   return (
     <RoutineDesigner
+      // `key={view.routine}` forces a clean remount if a future navigation
+      // path ever goes designer→designer directly (e.g. "next routine"
+      // paging) without an intermediate dashboard render — otherwise
+      // `RoutineDesigner`'s `isNewDraft` mount-time `useState` initializer
+      // and its `draft`/selection state would stick from the PREVIOUS
+      // routine (task-9 report's flagged concern; every current navigation
+      // path already goes through the dashboard, so this is defensive
+      // hardening, not a fix for an observed bug).
+      key={view.routine}
       routine={view.routine}
       tab={view.tab}
       onBack={() => onNavigate({ view: 'dashboard' })}

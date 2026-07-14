@@ -6,10 +6,13 @@
  * approved mock verbatim (dev/scratch/routines-ui-mocks/designer-canvas.html):
  * header (← Routines, name, state pill, unsaved dot, Design/Runs/Settings
  * tabs, Dry-run/Export JSON/Save actions) and the always-on `.valbar`
- * validation strip. The canvas (Task 10), settings form (Task 11), and runs
- * list (Task 13) mount points below are minimal inert placeholders — Tasks
- * 10-13 replace each one outright with the real tab body, using this file's
- * `draft` state and defDraft.ts's edit ops.
+ * validation strip. The Design tab mounts the real `CanvasTab` (Task 10,
+ * `./CanvasTab.tsx`) — RoutineDesigner owns `draft`, the fetched `actions`
+ * registry, `selectedStepId`, and the armed-insert-point state, and passes
+ * them down as controlled props; CanvasTab never calls `defDraft.ts` or the
+ * Tauri surface directly. The settings form (Task 11) and runs list
+ * (Task 13) mount points below are still minimal inert placeholders — those
+ * tasks replace each outright with the real tab body.
  *
  * Load: an existing routine (`routine !== ''`) is fetched with `getRoutine`;
  * a fresh draft (`routine === ''`) is never sent to the backend — binding
@@ -47,11 +50,14 @@ import {
   saveRoutine,
   validateDraft,
   dryRunRoutine,
+  listActions,
   type RoutineDef,
   type Finding,
+  type ActionInfo,
 } from '../routinesApi';
 import { formatUiError } from '../format';
-import { createDraft, addTrack } from './defDraft';
+import { createDraft, addTrack, removeStep } from './defDraft';
+import { CanvasTab, type ArmedInsertPosition } from './CanvasTab';
 import type { DesignerTab } from '../RoutinesSurface';
 import './RoutineDesigner.css';
 
@@ -123,21 +129,6 @@ function ValBar({
         </span>
       )}
       <span className="right">{rightMeta}</span>
-    </div>
-  );
-}
-
-/** Design tab mount point (Task 10 replaces this with the real canvas). The
- * one live affordance here — "＋ Add track" — is a real defDraft.ts op
- * (`addTrack`), not a fake control: it's how this task's own tests exercise
- * "an edit marks the draft dirty" without anticipating Task 10's canvas UI. */
-function DesignTabPlaceholder({ onAddTrack }: { onAddTrack: () => void }) {
-  return (
-    <div className="tab-body-placeholder" data-testid="design-tab-placeholder">
-      <p>Canvas (Task 10) mounts here.</p>
-      <button type="button" className="btn" data-testid="test-add-track" onClick={onAddTrack}>
-        ＋ Add track
-      </button>
     </div>
   );
 }
@@ -232,6 +223,47 @@ export function RoutineDesigner({ routine, tab, onBack, onTabChange }: RoutineDe
   const [highlightRunId, setHighlightRunId] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
 
+  // The action registry (Task 10's canvas needs it to derive category/
+  // transmits per node — never from the action's name). Fetched once per
+  // mount, independent of `routine`/`draft` — the registry doesn't change
+  // per routine.
+  const [actions, setActions] = useState<ActionInfo[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    listActions()
+      .then((list) => {
+        if (!cancelled) setActions(list);
+      })
+      .catch(() => {
+        // A registry fetch failure shouldn't block the designer from
+        // rendering — the canvas degrades to every action rendering as
+        // "unknown" (category 'local', transmits false), same as any
+        // genuinely-unregistered action name.
+        if (!cancelled) setActions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Canvas selection + armed-insert-point state (task-10 brief binding
+  // constraint 4): RoutineDesigner is the single owner so Task 11's
+  // PaletteRail can read/clear the same `armedInsert` value CanvasTab renders
+  // as the amber edge.
+  const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
+  const [armedInsert, setArmedInsert] = useState<ArmedInsertPosition | null>(null);
+
+  /** CanvasTab's ＋ click handler: toggles the armed insert point (clicking
+   *  the same one again disarms it; clicking a different one re-arms at the
+   *  new position). Task 11's palette performs the actual `insertStep` call
+   *  once an action is chosen against this armed position — this component
+   *  only tracks WHERE, never WHAT, is being inserted. */
+  const handleInsertAt = useCallback((pos: ArmedInsertPosition) => {
+    setArmedInsert((prev) =>
+      prev && prev.trackIdx === pos.trackIdx && prev.afterStepId === pos.afterStepId ? null : pos,
+    );
+  }, []);
+
   // Load the def once, per `routine`.
   useEffect(() => {
     let cancelled = false;
@@ -280,6 +312,18 @@ export function RoutineDesigner({ routine, tab, onBack, onTabChange }: RoutineDe
     setDraft((prev) => (prev ? updater(prev) : prev));
     setDirty(true);
   }, []);
+
+  /** CanvasTab's ⌫/Delete/Backspace handler. Also clears the selection (and
+   *  an armed insert point anchored to the removed step) so the canvas never
+   *  points at a step id that's no longer in the draft. */
+  const handleRemoveStep = useCallback(
+    (stepId: string) => {
+      updateDraft((d) => removeStep(d, stepId));
+      setSelectedStepId((prev) => (prev === stepId ? null : prev));
+      setArmedInsert((prev) => (prev && prev.afterStepId === stepId ? null : prev));
+    },
+    [updateDraft],
+  );
 
   const handleSave = useCallback(async () => {
     if (!draft) return null;
@@ -393,7 +437,14 @@ export function RoutineDesigner({ routine, tab, onBack, onTabChange }: RoutineDe
 
       <div className="design-body">
         {tab === 'design' && (
-          <DesignTabPlaceholder
+          <CanvasTab
+            draft={draft}
+            actions={actions}
+            selectedStepId={selectedStepId}
+            onSelect={setSelectedStepId}
+            armedInsert={armedInsert}
+            onInsertAt={handleInsertAt}
+            onRemoveStep={handleRemoveStep}
             onAddTrack={() => updateDraft((d) => addTrack(d, `track-${d.tracks.length + 1}`))}
           />
         )}

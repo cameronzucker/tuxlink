@@ -41,6 +41,8 @@ function installInvokeMock(overrides: InvokeOverrides = {}) {
         return Promise.resolve({ routine: 'deployment-poll', findings: [], blocked: false });
       case 'routines_dry_run':
         return Promise.resolve({ runId: 'run-dry-1', findings: [] });
+      case 'routines_actions_list':
+        return Promise.resolve([]);
       default:
         return Promise.resolve(undefined);
     }
@@ -135,7 +137,7 @@ describe('RoutineDesigner — always-on validation bar (b, flow 2)', () => {
     });
 
     expect(screen.queryByTestId('unsaved-dot')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByTestId('test-add-track'));
+    fireEvent.click(screen.getByTestId('add-track-btn'));
     expect(screen.getByTestId('unsaved-dot')).toBeInTheDocument();
 
     // Not yet — inside the debounce window.
@@ -198,7 +200,7 @@ describe('RoutineDesigner — Save never blocks (c)', () => {
     });
     renderDesigner();
     await screen.findByText('deployment-poll');
-    fireEvent.click(screen.getByTestId('test-add-track'));
+    fireEvent.click(screen.getByTestId('add-track-btn'));
     expect(screen.getByTestId('unsaved-dot')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
