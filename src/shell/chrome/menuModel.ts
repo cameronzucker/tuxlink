@@ -59,6 +59,14 @@ export const MENU_TREE: TopMenu[] = [
   // (Inbox/Sent/Outbox/Archive). The one survivor — Verify CMS Connection — is
   // now wired under Tools (below). The F5 / Ctrl+Shift+O connect accelerators
   // were dropped with the menu item.
+  // routines plan-5 Task 7 (spec §12): top-level Routines menu, inserted
+  // between Message and View. The surface it opens renders inline in the
+  // main pane (no new OS window, no pop-out) — see AppShell's routinesView
+  // state + RoutinesSurface.
+  { label: 'Routines', items: [
+    { id: 'menu:routines:open', label: 'Routines' },
+    { id: 'menu:routines:new', label: 'New Routine…' },
+  ] },
   { label: 'View', items: [
     // Session-log items removed in radio-panel-shell P1.6 — the bottom
     // session-log strip is gone; the log moves into the radio panel.

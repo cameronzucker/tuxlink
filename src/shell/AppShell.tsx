@@ -107,6 +107,13 @@ const StationFinderPanel = lazy(() =>
 const RequestCenter = lazy(() =>
   import('../request/RequestCenter').then((m) => ({ default: m.RequestCenter })),
 );
+// routines plan-5 Task 7 (spec §12): the inline full-pane Routines surface —
+// mounts in place of the mailbox master-detail (no folder sidebar), NOT as an
+// overlay; the chrome rows stay visible. Lazy per the cold-start discipline
+// above; only fetches once the operator opens Routines.
+const RoutinesSurface = lazy(() =>
+  import('../routines/RoutinesSurface').then((m) => ({ default: m.RoutinesSurface })),
+);
 // tuxlink-bsiy: inline pending-message selection panel ("Review Pending
 // Messages"). Event-driven — useInboundSelection (below) subscribes to the
 // b2f-event channel and surfaces a prompt; the panel only paints when a
@@ -154,6 +161,8 @@ import { isBuilt } from '../connections/sessionTypes';
 import { connectFor, abortFor, MissingTargetError } from '../connections/connectDispatch';
 import { emitGatewayPrefill } from '../favorites/prefillEvent';
 import { emitPeerPrefill, type PeerPrefill } from '../peers/peerPrefillEvent';
+// routines plan-5 Task 7: type-only import (the component itself is lazy-loaded below).
+import type { RoutinesView } from '../routines/RoutinesSurface';
 
 /** Phase D1 — display name for the RF modem session that BLOCKS an FT-8 listener
  *  start (it owns the radio + audio device). Deliberately partial: `telnet` is not
@@ -529,6 +538,14 @@ function AppShellInner() {
   // null = closed. Opened from Message → Request Center… ('home') and from
   // Message → GRIB File Request… ('grib').
   const [requestCenter, setRequestCenter] = useState<{ initialView: 'home' | 'browse' | 'grib' } | null>(null);
+  // routines plan-5 Task 7 (spec §12): the inline full-pane Routines surface.
+  // null = closed (the normal mailbox master-detail shows). Opened from
+  // Routines → Routines (dashboard) or Routines → New Routine… (a fresh
+  // designer draft). Closed by any OTHER menu action — see onMenuAction below
+  // — the surface's own "back" is simply choosing something else, mirroring
+  // how every other opener here (settingsOpen, catalogBuilderOpen, …) is a
+  // plain boolean/state flag the handler sets directly.
+  const [routinesView, setRoutinesView] = useState<RoutinesView | null>(null);
   // tuxlink-qjgx Task 8: Report Issue modal state. The controller drives the
   // Save As → export → GitHub URL flow; AppShell owns the state so the modal
   // can be positioned in the global overlay layer.
@@ -1610,6 +1627,12 @@ function AppShellInner() {
     },
     openCatalogBuilder: () => setCatalogBuilderOpen(true),
     openRequestCenter: (initialView = 'home') => setRequestCenter({ initialView }),
+    // routines plan-5 Task 7: Routines → Routines opens the dashboard view.
+    openRoutines: () => setRoutinesView({ view: 'dashboard' }),
+    // routines plan-5 Task 7: Routines → New Routine… opens a fresh, unsaved
+    // draft — empty `routine` name is what RoutineDesigner (Task 9) treats as
+    // "new" rather than an existing routine loaded for edit.
+    newRoutine: () => setRoutinesView({ view: 'designer', routine: '', tab: 'design' }),
     // tuxlink-10bkw Task 6: Help → Replay tour restarts the 5-stop guided tour
     // — the same action the first-run offer card's "Start tour" fires.
     replayTour: () => hints.startTour(),
@@ -1632,7 +1655,13 @@ function AppShellInner() {
     ? archiveOpen
     : undefined;
 
-  const onMenuAction = useCallback((id: string) => dispatchMenuAction(id, handlers), [handlers]);
+  const onMenuAction = useCallback((id: string) => {
+    // routines plan-5 Task 7 (spec §12): the inline Routines surface leaves
+    // via ANY other menu action — its own "back" is simply choosing
+    // something else, so there is no dedicated close control to wire.
+    if (routinesView && !id.startsWith('menu:routines:')) setRoutinesView(null);
+    dispatchMenuAction(id, handlers);
+  }, [handlers, routinesView]);
   useAccelerators(onMenuAction);
 
   const onSelectFolder = useCallback((folder: MailboxFolderRef) => {
@@ -1956,6 +1985,17 @@ function AppShellInner() {
         />
       </div>
 
+      {routinesView ? (
+        // routines plan-5 Task 7 (spec §12): the inline full-pane Routines
+        // surface REPLACES the mailbox master-detail entirely (no folder
+        // sidebar) — it is a sibling of `.panes` in this same grid row, not
+        // nested inside it, since it never shares the sidebar. The chrome
+        // rows above (titlebar/menubar/ribbon) and below (StatusBar) stay
+        // mounted either way.
+        <Suspense fallback={null}>
+          <RoutinesSurface view={routinesView} onNavigate={setRoutinesView} />
+        </Suspense>
+      ) : (
       <div
         className={`panes${radioPanelMode !== null || aprsOpen ? ' panes--with-dock' : ''}${drawerOpen ? ' drawer-open' : ''}`}
         data-testid="shell-panes"
@@ -2270,6 +2310,7 @@ function AppShellInner() {
           </RadioDrawer>
         )}
       </div>
+      )}
 
       <StatusBar
         show={showStatusBar}
