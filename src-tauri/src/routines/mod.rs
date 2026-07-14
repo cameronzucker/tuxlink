@@ -108,6 +108,24 @@
 //! that makes a dry run touch nothing real) and bounds the session's live-run
 //! registry (Task 5a's carried Low finding).
 //!
+//! **Plan 2 Task 6b (the schedules become live):** [`scheduler`] — the tick
+//! loop that FIRES schedule-triggered routines. Before it, an enabled
+//! `Trigger::Schedule` routine validated, enabled, and fleet-checked, and then
+//! nothing ever happened: the schedule MATH lived in the leaf
+//! (`tuxlink_routines::scheduler`'s pure `next_fire`/`missed_fires`) but the
+//! tick loop was deliberately left to the app layer, because firing means
+//! creating a run and run creation is what [`session`] owns. One tokio task
+//! ([`scheduler::RoutinesScheduler::spawn`], wired in `lib.rs` `.setup()`)
+//! computes the earliest fire across the enabled fleet, sleeps to it, fires
+//! every routine due at that instant through the same gated path the operator's
+//! Run button takes, and recomputes — waking early on any routine-library
+//! change (the command layer's existing `LibraryChanged` emit is the
+//! chokepoint). It reconciles missed fires at launch per each trigger's
+//! `if_missed` policy (spec §8: `skip` records them visibly, `run_once_on_launch`
+//! fires ONE catch-up run), persists a `routines-last-fire.json` anchor map, and
+//! never overlaps a routine with itself. Every fire outcome — started, skipped,
+//! refused, missed — is a [`events::RoutinesEvent`] variant.
+//!
 //! That other, banned six-syllable term for scripted automation never
 //! appears in this module's symbols, JSON keys, or docs (spec Global
 //! Constraints) — the feature is Routines.
@@ -119,6 +137,7 @@ pub mod consent;
 pub mod events;
 pub mod presets;
 pub mod resolver;
+pub mod scheduler;
 pub mod session;
 pub mod station_sets;
 pub mod store;
@@ -134,6 +153,10 @@ pub use events::{
 };
 pub use presets::{PresetError, RadioPreset, RadioPresetStore};
 pub use resolver::MonolithEntityResolver;
+pub use scheduler::{
+    anchor_on_enable, schedule_status, LastFire, LastFireStore, Refusal, RoutinesScheduler,
+    ScheduleStatus, SchedulerHandle, Skip,
+};
 pub use session::{
     build_routines_state, build_routines_state_for_app, RecoveryReport, RoutineStartError,
     RoutinesState, RunStatusSnapshot,

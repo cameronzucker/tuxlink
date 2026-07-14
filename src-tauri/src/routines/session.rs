@@ -50,6 +50,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tauri::AppHandle;
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 use tuxlink_routines::action::ActionRegistry;
@@ -121,6 +122,23 @@ pub(crate) fn unix_now_secs() -> i64 {
         .unwrap_or(0)
 }
 
+/// The operator's LOCAL UTC offset, in seconds (`local - utc`, `chrono`'s
+/// `FixedOffset::local_minus_utc` convention) — Task 6c's timezone seam.
+/// `tuxlink_routines::scheduler::within_window`/`next_fire` gate a
+/// `Trigger::Schedule`'s `window` ("22:00-06:00") in this clock, not UTC; the
+/// leaf crate stays Tauri- and chrono-free, so this fn (the monolith, which
+/// already depends on `chrono` for RFC3339 logging timestamps) resolves the
+/// actual offset and the app layer threads it down as a plain `i32`.
+///
+/// Read fresh on every call, never cached: DST changes the answer twice a
+/// year, and a cached offset would silently go stale the morning the clocks
+/// change. Both the scheduler's tick loop ([`super::scheduler::OffsetFn`])
+/// and the enable-time fleet check (`set_routine_enabled`) call this at the
+/// moment they need the answer, not once at startup.
+pub(crate) fn local_utc_offset_seconds() -> i32 {
+    chrono::Local::now().offset().local_minus_utc()
+}
+
 /// Errors starting a run through [`RoutinesState::start_routine`].
 #[derive(Debug, thiserror::Error)]
 pub enum RoutineStartError {
@@ -178,6 +196,13 @@ pub struct RecoveryReport {
 /// Managed-state facade over the routines [`Engine`] (plan 2 Task 5a).
 pub struct RoutinesState {
     pub engine: Arc<Engine>,
+    /// The directory holding `config.json` — the root every routines file hangs
+    /// off. Held so Task 6b's scheduler can site its last-fire map beside the
+    /// other routines stores (`radio-presets.json`, `station-sets.json`) without
+    /// re-deriving the path from `config::config_path()` and risking a
+    /// disagreement with the path this state was actually built over (tests
+    /// build against a tempdir).
+    pub config_dir: PathBuf,
     pub store: Arc<DefinitionStore>,
     pub presets: Arc<RadioPresetStore>,
     pub station_sets: Arc<StationSetStore>,
@@ -210,6 +235,14 @@ pub struct RoutinesState {
     /// Catalog action names that transmit (from the engine registry's
     /// descriptors), used by the start gate's [`closure_transmits`] predicate.
     transmit_names: HashSet<String>,
+    /// The scheduler's wake-up channel (Task 6b). Every routine-library mutation
+    /// pings it (see [`Self::emit`]) so [`super::scheduler::RoutinesScheduler`]
+    /// recomputes its next fire instant IMMEDIATELY instead of sleeping through
+    /// a disable. Lives on the state rather than being threaded through the
+    /// command layer because the commands already funnel every mutation through
+    /// `emit(LibraryChanged)` — one chokepoint, so no future command can forget
+    /// to wake the scheduler.
+    schedule_notify: Arc<Notify>,
 }
 
 impl RoutinesState {
@@ -220,6 +253,7 @@ impl RoutinesState {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         engine: Arc<Engine>,
+        config_dir: PathBuf,
         store: Arc<DefinitionStore>,
         presets: Arc<RadioPresetStore>,
         station_sets: Arc<StationSetStore>,
@@ -233,6 +267,7 @@ impl RoutinesState {
     ) -> Self {
         Self {
             engine,
+            config_dir,
             store,
             presets,
             station_sets,
@@ -245,6 +280,7 @@ impl RoutinesState {
             sink,
             consent,
             transmit_names,
+            schedule_notify: Arc::new(Notify::new()),
         }
     }
 
@@ -252,8 +288,67 @@ impl RoutinesState {
     /// uses this to announce library mutations
     /// ([`RoutinesEvent::LibraryChanged`]) so every open window re-reads the
     /// list it is showing.
+    ///
+    /// A routine-library change ALSO wakes the scheduler (Task 6b): a routine's
+    /// triggers are the schedule, so a save/enable/disable/delete may have moved
+    /// (or removed) the next fire instant the scheduler is currently sleeping
+    /// toward. Waking it here — at the one chokepoint every mutation already
+    /// passes through — is what makes a disable take effect promptly instead of
+    /// at the end of the current sleep. Preset/station-set changes do not touch
+    /// triggers, so they do not wake it.
     pub fn emit(&self, event: &RoutinesEvent) {
+        if let RoutinesEvent::LibraryChanged {
+            entity: super::events::LibraryEntity::Routine,
+            ..
+        } = event
+        {
+            self.notify_schedule_changed();
+        }
         self.sink.emit(event);
+    }
+
+    /// Wake the scheduler to recompute its next fire instant.
+    ///
+    /// `notify_one` (not `notify_waiters`) is load-bearing: it STORES a permit
+    /// when nobody is waiting, and the next `notified()` completes immediately
+    /// on it. `notify_waiters` stores nothing — a ping that lands while the
+    /// scheduler is between waits (it is reading the routines directory off
+    /// disk, or firing a routine) is dropped on the floor. That window is small
+    /// but it is exactly where the interesting pings arrive: an operator's very
+    /// first enable, racing the scheduler's startup read. With the ping lost and
+    /// nothing scheduled, the scheduler had no timer to fall back on and would
+    /// park until some LATER library change — the first routine an operator ever
+    /// enabled could silently never fire.
+    ///
+    /// The cost of a stored permit is one spurious wake (the scheduler was
+    /// already about to recompute, or it recomputes once more than it had to),
+    /// and a spurious wake is free: the loop re-reads the store from disk on
+    /// every pass, so waking with nothing to do just re-derives the same answer.
+    /// Dropping a wake is not free. `Notify` coalesces — many pings while the
+    /// scheduler is busy leave ONE permit, so a burst of saves cannot spin it.
+    pub(crate) fn notify_schedule_changed(&self) {
+        self.schedule_notify.notify_one();
+    }
+
+    /// The scheduler's wake-up handle (Task 6b) — the same `Notify`
+    /// [`Self::notify_schedule_changed`] pings.
+    pub fn schedule_notify(&self) -> Arc<Notify> {
+        Arc::clone(&self.schedule_notify)
+    }
+
+    /// Is any NON-TERMINAL run of `routine` currently registered? The scheduler
+    /// asks before it fires: a routine whose previous run is still going must
+    /// not be started a second time on top of itself (spec §9's arbiter would
+    /// serialize the two runs' radio steps, but a pile-up of queued runs is
+    /// still wrong — see `scheduler.rs`'s "no pile-up" rule).
+    ///
+    /// Answers from the in-memory registry only, which is exactly right: a run
+    /// from a PREVIOUS process lifetime is either terminal or was marked
+    /// `Interrupted` by launch recovery, so it is not "still active" now.
+    pub fn is_routine_running(&self, routine: &str) -> bool {
+        lock(&self.runs)
+            .values()
+            .any(|e| e.routine == routine && !is_terminal(e.state))
     }
 
     /// Start a routine by name. Looks the definition up in the store, then
@@ -419,6 +514,41 @@ impl RoutinesState {
             }
             None => false,
         }
+    }
+
+    /// How many runs are currently NON-TERMINAL. Task 6c's graceful-quit
+    /// gate (spec §8: "2 routines running — stop them and exit?") reads this
+    /// to decide whether the close path even needs to ask, and to name the
+    /// count in the prompt.
+    pub fn live_run_count(&self) -> usize {
+        lock(&self.runs)
+            .values()
+            .filter(|e| !is_terminal(e.state))
+            .count()
+    }
+
+    /// Cancel EVERY currently non-terminal run (Task 6c, spec §8's
+    /// graceful-quit path: "...stop them and exit?" resolves to cancelling
+    /// every live run as CANCELLED). Terminal entries are left untouched.
+    /// Returns how many were cancelled.
+    ///
+    /// This is exactly [`Self::cancel_run`] fanned out over every live
+    /// registry entry, so it inherits the same idempotence: cancelling an
+    /// already-cancelled `CancellationToken` is a no-op (`tokio_util`'s own
+    /// contract), so calling this twice in a row cancels 0 further runs on
+    /// the second call. Each cancelled run's watcher (spawned by
+    /// `start_routine_def`) observes the token and emits
+    /// `RunFinished{Cancelled}` exactly as a single `cancel_run` does.
+    pub fn cancel_all_live_runs(&self) -> usize {
+        let runs = lock(&self.runs);
+        let mut cancelled = 0usize;
+        for entry in runs.values() {
+            if !is_terminal(entry.state) {
+                entry.cancel.cancel();
+                cancelled += 1;
+            }
+        }
+        cancelled
     }
 
     /// Grant per-transmission consent for a parked attended-mode transmit step
@@ -687,6 +817,7 @@ pub fn build_routines_state(
 
     RoutinesState::new(
         engine,
+        config_dir,
         store,
         presets,
         station_sets,
@@ -773,6 +904,22 @@ mod tests {
                 })],
             }],
         }
+    }
+
+    /// Same as [`minimal_def`], but the one step calls `action` instead of
+    /// always `local.log` — Task 6c's graceful-quit tests register several
+    /// distinct actions (some hanging, some completing) in the same registry
+    /// and need each routine to call a different one of them.
+    fn def_calling(name: &str, action: &str) -> RoutineDef {
+        let mut def = minimal_def(name, OnInterrupted::Stay);
+        def.tracks[0].steps = vec![Step::Action(ActionStep {
+            id: StepId("s1".into()),
+            action: action.into(),
+            params: json!({}),
+            timeout_s: None,
+            on_radio_busy: BusyPolicy::Wait,
+        })];
+        def
     }
 
     /// Build a test state over `config_dir`: a fake registry with a
@@ -900,6 +1047,69 @@ mod tests {
         assert!(
             !state.cancel_run("does-not-exist"),
             "cancel of an unknown run is false"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_all_live_runs_cancels_every_live_run_and_leaves_terminal_ones_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut reg = ActionRegistry::default();
+        reg.register(Arc::new(FakeAction::new("local.hang").hang()));
+        reg.register(Arc::new(FakeAction::new("local.log").ok(json!({}))));
+        let arbiter = Arc::new(RadioArbiter::new(fixed_now));
+        let sink = Arc::new(RecordingSink::default());
+        let sink_dyn: Arc<dyn RoutinesEventSink> = sink.clone();
+        let state = Arc::new(build_routines_state(
+            dir.path().to_path_buf(),
+            reg,
+            arbiter,
+            sink_dyn,
+        ));
+        state.store.save(&def_calling("hangs-a", "local.hang")).unwrap();
+        state.store.save(&def_calling("hangs-b", "local.hang")).unwrap();
+        state.store.save(&def_calling("quick", "local.log")).unwrap();
+
+        let hang_a = state.start_routine("hangs-a", json!({})).await.unwrap();
+        let hang_b = state.start_routine("hangs-b", json!({})).await.unwrap();
+        let quick = state.start_routine("quick", json!({})).await.unwrap();
+
+        // Let the quick run reach its terminus BEFORE touching anything —
+        // this is the "leaves terminal ones alone" half of the contract.
+        wait_until(|| state.run_status(&quick).map(|s| s.state) == Some(RunState::Completed))
+            .await;
+        assert_eq!(
+            state.live_run_count(),
+            2,
+            "only the two hung runs are live; the completed one is terminal"
+        );
+
+        let cancelled = state.cancel_all_live_runs();
+        assert_eq!(
+            cancelled, 2,
+            "cancel_all_live_runs must cancel exactly the live runs, not the terminal one"
+        );
+        wait_until(|| count_finished(&sink.events(), RunState::Cancelled) == 2).await;
+
+        assert_eq!(
+            state.run_status(&quick).map(|s| s.state),
+            Some(RunState::Completed),
+            "the already-terminal run must be left exactly as it was"
+        );
+        assert_eq!(
+            state.run_status(&hang_a).map(|s| s.state),
+            Some(RunState::Cancelled)
+        );
+        assert_eq!(
+            state.run_status(&hang_b).map(|s| s.state),
+            Some(RunState::Cancelled)
+        );
+
+        // Idempotent: nothing left to cancel on a second call.
+        assert_eq!(state.live_run_count(), 0);
+        assert_eq!(
+            state.cancel_all_live_runs(),
+            0,
+            "a second call cancels nothing further"
         );
     }
 

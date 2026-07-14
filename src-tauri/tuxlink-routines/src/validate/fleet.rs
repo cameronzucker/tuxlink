@@ -119,23 +119,36 @@ fn closure_info(def: &RoutineDef, ctx: &dyn ValidationContext) -> ClosureInfo {
 /// after `now_unix` and within the horizon, ascending and deduplicated.
 /// Non-schedule triggers (`Trigger::Manual`) never contribute (`next_fire`
 /// returns `None` for them, same as `scheduler.rs`'s own contract).
-fn routine_fire_times(def: &RoutineDef, now_unix: i64) -> Vec<i64> {
+///
+/// `utc_offset_seconds` (`local - utc`) is threaded straight through to
+/// `next_fire` — a `Trigger::Schedule` with a `window` gates in the
+/// operator's LOCAL clock (see `scheduler::within_window`), so the
+/// collision/overlap horizon this fn walks must agree with that same clock,
+/// not silently re-derive it in UTC.
+fn routine_fire_times(def: &RoutineDef, now_unix: i64, utc_offset_seconds: i32) -> Vec<i64> {
     let horizon_end = now_unix + HORIZON_SECONDS;
     let mut times: Vec<i64> = def
         .triggers
         .iter()
-        .flat_map(|trigger| fire_times_within_horizon(trigger, now_unix, horizon_end))
+        .flat_map(|trigger| {
+            fire_times_within_horizon(trigger, now_unix, horizon_end, utc_offset_seconds)
+        })
         .collect();
     times.sort_unstable();
     times.dedup();
     times
 }
 
-fn fire_times_within_horizon(trigger: &Trigger, now_unix: i64, horizon_end: i64) -> Vec<i64> {
+fn fire_times_within_horizon(
+    trigger: &Trigger,
+    now_unix: i64,
+    horizon_end: i64,
+    utc_offset_seconds: i32,
+) -> Vec<i64> {
     let mut out = Vec::new();
     let mut cursor = now_unix;
     loop {
-        match next_fire(trigger, cursor) {
+        match next_fire(trigger, cursor, utc_offset_seconds) {
             Some(t) if t <= horizon_end => {
                 out.push(t);
                 cursor = t;
@@ -149,10 +162,14 @@ fn fire_times_within_horizon(trigger: &Trigger, now_unix: i64, horizon_end: i64)
 /// Append every fleet finding for the set `defs` into `findings`. Called by
 /// `validate_fleet` (`mod.rs`) after every individual `validate()` finding
 /// has already been collected.
+///
+/// `utc_offset_seconds` (`local - utc`) anchors the SAME clock a window-gated
+/// `Trigger::Schedule` fires in — see `routine_fire_times`.
 pub fn check(
     defs: &[RoutineDef],
     ctx: &dyn ValidationContext,
     now_unix: i64,
+    utc_offset_seconds: i32,
     findings: &mut Vec<Finding>,
 ) {
     let mut sorted: Vec<&RoutineDef> = defs.iter().collect();
@@ -162,7 +179,7 @@ pub fn check(
         for j in (i + 1)..sorted.len() {
             let a = sorted[i];
             let b = sorted[j];
-            check_pair(a, b, ctx, now_unix, findings);
+            check_pair(a, b, ctx, now_unix, utc_offset_seconds, findings);
         }
     }
 }
@@ -172,12 +189,13 @@ fn check_pair(
     b: &RoutineDef,
     ctx: &dyn ValidationContext,
     now_unix: i64,
+    utc_offset_seconds: i32,
     findings: &mut Vec<Finding>,
 ) {
     let info_a = closure_info(a, ctx);
     let info_b = closure_info(b, ctx);
-    let times_a = routine_fire_times(a, now_unix);
-    let times_b = routine_fire_times(b, now_unix);
+    let times_a = routine_fire_times(a, now_unix, utc_offset_seconds);
+    let times_b = routine_fire_times(b, now_unix, utc_offset_seconds);
 
     check_schedule_collision(
         a, b, &info_a, &info_b, &times_a, &times_b, now_unix, findings,
@@ -365,7 +383,7 @@ mod tests {
         );
         let ctx = base_ctx();
         let mut findings = Vec::new();
-        check(&[a, b], &ctx, NOW, &mut findings);
+        check(&[a, b], &ctx, NOW, 0, &mut findings);
 
         let hits: Vec<_> = findings
             .iter()
@@ -379,7 +397,7 @@ mod tests {
         // Independently compute the expected first 6h-aligned fire and
         // assert the message names that exact instant — the epoch-anchored
         // math this test's docstring claims.
-        let expected_first_b_fire = next_fire(&schedule("6h"), NOW).unwrap();
+        let expected_first_b_fire = next_fire(&schedule("6h"), NOW, 0).unwrap();
         assert!(
             hits[0].message.contains(&expected_first_b_fire.to_string()),
             "expected message to name unix time {expected_first_b_fire}: {}",
@@ -404,7 +422,7 @@ mod tests {
         );
         let ctx = base_ctx();
         let mut findings = Vec::new();
-        check(&[a, b], &ctx, NOW, &mut findings);
+        check(&[a, b], &ctx, NOW, 0, &mut findings);
         assert!(findings.iter().all(|f| f.code != SCHEDULE_COLLISION));
     }
 
@@ -438,7 +456,7 @@ mod tests {
         );
         let ctx = base_ctx();
         let mut findings = Vec::new();
-        check(&[a, b], &ctx, NOW, &mut findings);
+        check(&[a, b], &ctx, NOW, 0, &mut findings);
         assert!(
             findings.iter().all(|f| f.code != SCHEDULE_COLLISION),
             "{findings:?}"
@@ -466,7 +484,7 @@ mod tests {
         );
         let ctx = base_ctx().with_routine(radio_callee);
         let mut findings = Vec::new();
-        check(&[a, b], &ctx, NOW, &mut findings);
+        check(&[a, b], &ctx, NOW, 0, &mut findings);
         assert!(
             findings.iter().any(|f| f.code == SCHEDULE_COLLISION),
             "{findings:?}"
@@ -491,7 +509,7 @@ mod tests {
         // Must terminate (not hang) — the assertion is just that this
         // returns at all; neither "a" nor "b" touches the radio, so no
         // SCHEDULE_COLLISION should fire against "other" either.
-        check(&[a, other], &ctx, NOW, &mut findings);
+        check(&[a, other], &ctx, NOW, 0, &mut findings);
         assert!(findings.iter().all(|f| f.code != SCHEDULE_COLLISION));
     }
 
@@ -511,7 +529,7 @@ mod tests {
         );
         let ctx = base_ctx();
         let mut findings = Vec::new();
-        check(&[a, b], &ctx, NOW, &mut findings);
+        check(&[a, b], &ctx, NOW, 0, &mut findings);
 
         let hits: Vec<_> = findings
             .iter()
@@ -542,7 +560,7 @@ mod tests {
         );
         let ctx = base_ctx();
         let mut findings = Vec::new();
-        check(&[a, b], &ctx, NOW, &mut findings);
+        check(&[a, b], &ctx, NOW, 0, &mut findings);
         assert!(findings.iter().all(|f| f.code != SAME_EFFECT_OVERLAP));
     }
 
@@ -563,7 +581,7 @@ mod tests {
         );
         let ctx = base_ctx();
         let mut findings = Vec::new();
-        check(&[a, b], &ctx, NOW, &mut findings);
+        check(&[a, b], &ctx, NOW, 0, &mut findings);
         assert!(findings.iter().all(|f| f.code != SAME_EFFECT_OVERLAP));
     }
 
@@ -571,7 +589,7 @@ mod tests {
     fn empty_fleet_and_singleton_fleet_produce_no_findings() {
         let ctx = base_ctx();
         let mut findings = Vec::new();
-        check(&[], &ctx, NOW, &mut findings);
+        check(&[], &ctx, NOW, 0, &mut findings);
         assert!(findings.is_empty());
 
         let a = routine(
@@ -580,7 +598,7 @@ mod tests {
             vec![action_step("s1", "radio.connect")],
         );
         let mut findings = Vec::new();
-        check(&[a], &ctx, NOW, &mut findings);
+        check(&[a], &ctx, NOW, 0, &mut findings);
         assert!(findings.is_empty());
     }
 }

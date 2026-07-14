@@ -214,6 +214,22 @@ impl DefinitionStore {
         Ok(())
     }
 
+    /// Flip a routine's enabled bit on disk. This is the STORE half of an
+    /// enable/disable, and on its own it is invisible to the RUNNING scheduler:
+    /// the scheduler is woken by `RoutinesState::emit`'s
+    /// `LibraryChanged{entity: routine}` ping — `emit` is the wake chokepoint —
+    /// and the store does not emit. Callers who want the change to take effect
+    /// promptly (rather than whenever the scheduler next re-reads the store, up
+    /// to `scheduler::MAX_SLEEP_SECS` away) go through
+    /// [`super::commands::set_routine_enabled`]: the one path that emits, and,
+    /// on the enable side, the one path that anchors the routine's cadence at
+    /// the enable instant.
+    ///
+    /// Calling this directly is legitimate — the scheduler's own tests do, to
+    /// simulate a LOST wake ping — and nothing unsafe follows from one: the
+    /// scheduler re-reads the store on every pass, and it re-checks this bit
+    /// again immediately before it starts a run, so a disable is never *skipped*,
+    /// only possibly *delayed*.
     pub fn set_enabled(&self, name: &str, enabled: bool) -> Result<(), StoreError> {
         if !valid_name(name) {
             return Err(StoreError::InvalidName(name.to_string()));

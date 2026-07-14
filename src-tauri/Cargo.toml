@@ -210,6 +210,14 @@ serial_test = "3"          # NEW — gates env-var-mutating tests
 proptest = "1.4"           # NEW (tuxlink-c79g T7) — state-space matrix tests for position arbiter invariants I1-I5
 static_assertions = "1.1"  # alpha-logging (tuxlink-qjgx) — credential-struct Debug audit test
 tracing-test = "0.2"       # alpha-logging (tuxlink-qjgx) — Task 9.1 emission-coverage tests
+# Routines plan 2 Task 6c fix round: `tauri::test::mock_app`/`MockRuntime` for
+# the graceful-quit gate's headless unit tests (lib.rs's `quit_gate_tests`).
+# `tauri`'s `test` module is `#[cfg(any(test, feature = "test"))]`-gated
+# inside the tauri crate itself; this dev-dependency override turns the
+# feature on for test/bench/example builds only (same differential-
+# resolution reasoning as the `tokio`/`test-util` override above), so it
+# never reaches the release binary.
+tauri = { version = "2", features = ["test"] }
 syn = { version = "2", features = ["full", "parsing", "visit"] }  # alpha-logging (tuxlink-qjgx) — credential struct source-scan (§10.2 #9)
 quote = "1"                # alpha-logging (tuxlink-qjgx) — ToTokens for type normalization in source-scan
 

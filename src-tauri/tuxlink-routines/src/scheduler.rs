@@ -55,10 +55,21 @@ fn parse_window(window: &str) -> Option<(i64, i64)> {
 }
 
 /// Whether `start_min..end_min` (minutes since midnight, end-exclusive)
-/// contains `now_unix`'s local minute-of-day. `start > end` is an overnight
+/// contains `now_unix`'s LOCAL minute-of-day. `start > end` is an overnight
 /// window that wraps midnight.
-fn window_contains(start_min: i64, end_min: i64, now_unix: i64) -> bool {
-    let now_min = (now_unix.rem_euclid(86_400)) / 60;
+///
+/// `utc_offset_seconds` is `local - utc`, the same convention
+/// `chrono::FixedOffset::local_minus_utc` uses (production threads
+/// `chrono::Local::now().offset().local_minus_utc()` in from the app layer —
+/// this leaf crate stays chrono-free and just takes the plain `i32`). Adding
+/// it to `now_unix` before taking the minute-of-day is what makes the
+/// "local" in this fn's name true instead of aspirational: a bare
+/// `now_unix.rem_euclid(86_400)` is UTC, and a quiet-hours window authored
+/// in the operator's own clock (Arizona, UTC-7 year-round) would gate 7
+/// hours off from what the operator configured.
+fn window_contains(start_min: i64, end_min: i64, now_unix: i64, utc_offset_seconds: i32) -> bool {
+    let local = now_unix + utc_offset_seconds as i64;
+    let now_min = (local.rem_euclid(86_400)) / 60;
     if start_min <= end_min {
         now_min >= start_min && now_min < end_min
     } else {
@@ -68,10 +79,11 @@ fn window_contains(start_min: i64, end_min: i64, now_unix: i64) -> bool {
 
 /// "HH:MM-HH:MM"; overnight windows (start > end) wrap midnight. Fails
 /// closed (`false`) on a malformed window string rather than treating it as
-/// wide-open — see `parse_window`.
-pub fn within_window(window: &str, now_unix: i64) -> bool {
+/// wide-open — see `parse_window`. `utc_offset_seconds` (`local - utc`) is
+/// applied before gating — see [`window_contains`].
+pub fn within_window(window: &str, now_unix: i64, utc_offset_seconds: i32) -> bool {
     match parse_window(window) {
-        Some((start, end)) => window_contains(start, end, now_unix),
+        Some((start, end)) => window_contains(start, end, now_unix, utc_offset_seconds),
         None => false,
     }
 }
@@ -91,7 +103,15 @@ pub fn within_window(window: &str, now_unix: i64) -> bool {
 /// the hour/day *containing* `now` instead would drift the cadence on every
 /// call (each call re-bases from a new `now`, producing an unstable
 /// schedule).
-pub fn next_fire(trigger: &Trigger, now_unix: i64) -> Option<i64> {
+///
+/// The alignment grid itself is UTC-anchored (unaffected by
+/// `utc_offset_seconds`) — only a configured `window` is interpreted in
+/// LOCAL time (`local = now_unix + utc_offset_seconds`, `chrono`'s
+/// `local - utc` convention). That is deliberate: the grid's whole point is
+/// a stable, offset-independent cadence (see above), while a `window` is an
+/// operator-authored quiet-hours string ("22:00-06:00") that means the
+/// operator's OWN clock, not UTC.
+pub fn next_fire(trigger: &Trigger, now_unix: i64, utc_offset_seconds: i32) -> Option<i64> {
     let Trigger::Schedule {
         every,
         align,
@@ -124,9 +144,16 @@ pub fn next_fire(trigger: &Trigger, now_unix: i64) -> Option<i64> {
         // candidate falls outside it (locked semantics: jump to the
         // window's start, not the next on-grid instant inside it).
         let mut guard = 0;
-        while !window_contains(start, end, candidate) {
-            let day_base = candidate - candidate.rem_euclid(86_400);
-            let today_open = day_base + start * 60;
+        while !window_contains(start, end, candidate, utc_offset_seconds) {
+            // The window's "today" is the LOCAL calendar day the candidate
+            // falls on — shift to local before finding the day boundary,
+            // then shift the computed opening instant back to UTC (the unit
+            // every other timestamp in this module, and every caller, is
+            // in).
+            let local = candidate + utc_offset_seconds as i64;
+            let day_base_local = local - local.rem_euclid(86_400);
+            let today_open_local = day_base_local + start * 60;
+            let today_open = today_open_local - utc_offset_seconds as i64;
             candidate = if today_open > candidate {
                 today_open
             } else {
@@ -177,7 +204,10 @@ mod tests {
 
     #[test]
     fn unaligned_interval_fires_interval_after_now() {
-        assert_eq!(next_fire(&sched("30m", None, None), NOW), Some(NOW + 1800));
+        assert_eq!(
+            next_fire(&sched("30m", None, None), NOW, 0),
+            Some(NOW + 1800)
+        );
     }
 
     #[test]
@@ -186,32 +216,101 @@ mod tests {
         // anchored at the top of the hour: 14:30.
         let at_1430 = NOW - (NOW % 3600) + 1800;
         assert_eq!(
-            next_fire(&sched("30m", Some("hour"), None), NOW),
+            next_fire(&sched("30m", Some("hour"), None), NOW, 0),
             Some(at_1430)
         );
     }
 
     #[test]
     fn manual_trigger_never_fires() {
-        assert_eq!(next_fire(&Trigger::Manual, NOW), None);
+        assert_eq!(next_fire(&Trigger::Manual, NOW, 0), None);
     }
 
     #[test]
     fn window_gates_fires() {
-        assert!(within_window("06:00-22:00", NOW)); // 14:07 is inside
-        assert!(!within_window("22:00-06:00", NOW)); // overnight window, 14:07 outside
-                                                     // 03:00 UTC same day:
+        assert!(within_window("06:00-22:00", NOW, 0)); // 14:07 is inside
+        assert!(!within_window("22:00-06:00", NOW, 0)); // overnight window, 14:07 outside
+                                                          // 03:00 UTC same day:
         let three_am = NOW - (NOW % 86_400) + 3 * 3600;
-        assert!(within_window("22:00-06:00", three_am)); // overnight window wraps
-        assert!(!within_window("06:00-22:00", three_am));
+        assert!(within_window("22:00-06:00", three_am, 0)); // overnight window wraps
+        assert!(!within_window("06:00-22:00", three_am, 0));
+    }
+
+    /// Task 6c (spec §8's quiet-hours window is authored in the OPERATOR'S
+    /// clock, not UTC): the offset parameter must actually change the
+    /// answer, not just compile. 06:00 UTC reads as 23:00 LOCAL at UTC-7
+    /// (Arizona, no DST) — inside the overnight "22:00-06:00" window — while
+    /// the SAME unix instant at offset 0 reads as exactly 06:00, the
+    /// window's own (exclusive) end boundary, so it is outside.
+    #[test]
+    fn utc_offset_shifts_which_local_minute_the_window_gates() {
+        let day_base = NOW - (NOW % 86_400);
+        let six_am_utc = day_base + 6 * 3600;
+        let arizona_offset = -7 * 3600;
+
+        assert!(
+            within_window("22:00-06:00", six_am_utc, arizona_offset),
+            "06:00 UTC is 23:00 local at UTC-7 — inside the overnight window"
+        );
+        assert!(
+            !within_window("22:00-06:00", six_am_utc, 0),
+            "the SAME unix instant reads as exactly 06:00 at offset 0 — outside \
+             the window (end-exclusive) — the offset parameter must be load-bearing"
+        );
     }
 
     #[test]
     fn next_fire_outside_window_advances_into_it() {
         let three_am = NOW - (NOW % 86_400) + 3 * 3600;
-        let fire = next_fire(&sched("30m", Some("hour"), Some("06:00-22:00")), three_am).unwrap();
+        let fire = next_fire(
+            &sched("30m", Some("hour"), Some("06:00-22:00")),
+            three_am,
+            0,
+        )
+        .unwrap();
         // First on-grid instant inside the window: 06:00.
         assert_eq!(fire, three_am - 3 * 3600 + 6 * 3600);
+    }
+
+    /// Same shape as `next_fire_outside_window_advances_into_it`, but under a
+    /// non-zero offset: the window-advance math must land on LOCAL window
+    /// open, not UTC window open. UTC 09:00 is LOCAL 02:00 at UTC-7 —
+    /// outside "06:00-22:00" local — so the next fire must land at LOCAL
+    /// 06:00 (UTC 13:00), not UTC 06:00 (what the old UTC-only math would
+    /// have produced, and not the trivial "already inside" answer offset 0
+    /// gives for the same anchor).
+    #[test]
+    fn next_fire_advances_to_local_window_open_under_a_nonzero_offset() {
+        let day_base = NOW - (NOW % 86_400);
+        let nine_am_utc = day_base + 9 * 3600;
+        let arizona_offset = -7 * 3600;
+
+        let fire = next_fire(
+            &sched("30m", Some("hour"), Some("06:00-22:00")),
+            nine_am_utc,
+            arizona_offset,
+        )
+        .unwrap();
+        assert_eq!(
+            fire,
+            day_base + 13 * 3600,
+            "expected LOCAL 06:00 (UTC 13:00 at offset -7h), got unix {fire}"
+        );
+
+        // At offset 0 the SAME UTC anchor (09:00) is already inside
+        // "06:00-22:00", so next_fire takes the ordinary aligned-grid path
+        // instead of advancing to a window open — proving the offset
+        // parameter, not incidental arithmetic, produced the result above.
+        let fire_utc0 = next_fire(
+            &sched("30m", Some("hour"), Some("06:00-22:00")),
+            nine_am_utc,
+            0,
+        )
+        .unwrap();
+        assert_ne!(
+            fire_utc0, fire,
+            "offset -7h and offset 0 must take different paths from the same anchor"
+        );
     }
 
     #[test]
@@ -221,9 +320,9 @@ mod tests {
         // keeps the cadence constant across repeated calls instead of
         // drifting (previously traced: 14:50 → 15:30 → 15:45 → 16:30).
         let trigger = sched("45m", Some("hour"), None);
-        let fire1 = next_fire(&trigger, NOW).unwrap();
-        let fire2 = next_fire(&trigger, fire1).unwrap();
-        let fire3 = next_fire(&trigger, fire2).unwrap();
+        let fire1 = next_fire(&trigger, NOW, 0).unwrap();
+        let fire2 = next_fire(&trigger, fire1, 0).unwrap();
+        let fire3 = next_fire(&trigger, fire2, 0).unwrap();
         assert_eq!(fire2 - fire1, 2700);
         assert_eq!(fire3 - fire2, 2700);
     }
@@ -235,7 +334,7 @@ mod tests {
         // hour-aligned): 14:07 → 14:30.
         let at_1430 = NOW - (NOW % 3600) + 1800;
         assert_eq!(
-            next_fire(&sched("30m", Some("hour"), None), NOW),
+            next_fire(&sched("30m", Some("hour"), None), NOW, 0),
             Some(at_1430)
         );
     }
@@ -244,8 +343,11 @@ mod tests {
     fn malformed_window_is_fail_closed() {
         // An unparseable window must never fail open — that would silently
         // disable the operator's quiet-hours TX gate on a config typo.
-        assert!(!within_window("garbage", NOW));
-        assert_eq!(next_fire(&sched("30m", None, Some("25:99-xx")), NOW), None);
+        assert!(!within_window("garbage", NOW, 0));
+        assert_eq!(
+            next_fire(&sched("30m", None, Some("25:99-xx")), NOW, 0),
+            None
+        );
     }
 
     #[test]

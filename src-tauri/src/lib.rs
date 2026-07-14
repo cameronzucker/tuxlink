@@ -500,6 +500,760 @@ mod close_action_tests {
     }
 }
 
+// ============================================================================
+// Graceful quit with active routine runs (Task 6c, spec §8)
+// ============================================================================
+//
+// Spec §8, verbatim: "Graceful quit with active runs prompts the operator —
+// '2 routines running — stop them and exit?' — and stops them as cancelled."
+// Before this, NOTHING implemented it: a quit while a routine run was live
+// just killed the process out from under it mid-step.
+//
+// Two distinct places can end the process — the main window's close gesture
+// (`CloseAction::Quit` in the `on_window_event` handler below) and the
+// explicit Quit affordances (`tray:quit` in `tray.rs`; `app.exit(0)` is
+// called directly from BOTH, deliberately bypassing `CloseRequested` for the
+// tray path — see that module's doc). Both funnel through
+// [`quit_with_routines_gate`] so the live-run gate cannot be skipped by using
+// the "other" quit button.
+//
+// The frontend side of the confirm dialog is plan 5's (an in-app modal); this
+// gate must not be inert until then, so it uses `tauri-plugin-dialog`'s
+// native ask — already a dependency (the attachment Save As dialog in
+// `ui_commands.rs`) — so the flow works TODAY. Plan 5 may replace the native
+// dialog with an in-app one; the cancellation + exit sequencing below does
+// not change either way.
+
+/// How many routine runs are currently live (non-terminal). `0` (not an
+/// error) when `RoutinesState` is not yet managed — an edge case only
+/// reachable if the window closes before `.setup()` finishes mounting the
+/// routines engine, in which case there is by construction nothing running.
+pub(crate) fn live_routine_run_count<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) -> usize {
+    use tauri::Manager as _;
+    app_handle
+        .try_state::<std::sync::Arc<crate::routines::session::RoutinesState>>()
+        .map(|s| s.live_run_count())
+        .unwrap_or(0)
+}
+
+/// The abort-on-quit path (tuxlink-13v2l Task 8c AC-4): fire Elmer's
+/// `cancel_and_abort` (bounded, `CANCEL_DRAIN_TIMEOUT` = 5s) BEFORE `exit(0)`
+/// so any in-flight ARDOP/VARA/CMS transmission receives an abort signal,
+/// then exit. Shared by every path that actually ends the process — with no
+/// live routine runs, the immediate case below; with live runs, the
+/// post-confirmation case inside [`quit_with_routines_gate`] — so the two
+/// cannot drift on this invariant the way two independent copies eventually
+/// would.
+pub(crate) fn abort_elmer_and_exit<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) {
+    use tauri::Manager as _;
+    if let Some(session_state) =
+        app_handle.try_state::<std::sync::Arc<crate::elmer::session::ElmerSession>>()
+    {
+        // `State<'_, Arc<ElmerSession>>` derefs to `Arc<ElmerSession>`.
+        let session_arc: std::sync::Arc<crate::elmer::session::ElmerSession> =
+            (*session_state).clone();
+        // Block on the abort so it completes before exit(0). `block_on` (NOT
+        // try_current, which would SILENTLY SKIP the abort when this runs off
+        // the Tokio context) drives it on Tauri's managed runtime — same
+        // reasoning as the pre-Task-6c call site this was extracted from.
+        tauri::async_runtime::block_on(session_arc.cancel_and_abort());
+    }
+    app_handle.exit(0);
+}
+
+/// How long `quit_with_routines_gate`'s bounded drain waits, after
+/// cancelling every live routine run, for the registry to observe every one
+/// of them reach a terminal state before giving up and exiting anyway.
+///
+/// Mirrors `src/elmer/session.rs`'s `CANCEL_DRAIN_TIMEOUT` precedent (same
+/// 5s bound, same "bounded wait, force through on timeout" shape) — this is
+/// the routines-registry counterpart, added by the fix round below. See
+/// [`quit_with_routines_gate_impl`]'s doc for why draining on
+/// `live_run_count() == 0` is sufficient to guarantee the journal's
+/// `RunFinished` entry is already durable, not just that the in-memory
+/// registry flipped.
+const ROUTINES_QUIT_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Poll interval for the drain loop below. 50ms: frequent enough that the
+/// 5s timeout is not eaten by coarse polling, infrequent enough not to spin.
+const ROUTINES_QUIT_DRAIN_POLL: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// Re-entrancy guard for [`quit_with_routines_gate`] (fix round, P1 review
+/// finding): a second Quit click — window-close X, or the tray Quit item —
+/// while a first Quit's confirmation dialog (or the cancel-drain-exit
+/// sequence past it) is still in flight must be a no-op, not a second
+/// dialog thread racing the first sequence.
+///
+/// Scoped to app-managed state, not a bare module-level `static`: a
+/// `static AtomicBool` would be shared by every `AppHandle` in the process,
+/// including every test's own `tauri::test::mock_app()` — parallel
+/// `cargo test` threads would then trip each other's guard. One real
+/// process has exactly one `AppHandle` for its whole lifetime, so scoping
+/// to app state costs nothing there and buys per-test isolation here.
+#[derive(Default)]
+pub(crate) struct QuitGateGuard(std::sync::atomic::AtomicBool);
+
+/// Poll `live_count` at [`ROUTINES_QUIT_DRAIN_POLL`] intervals until it
+/// reports zero live runs or `timeout` elapses. Returns `true` if it
+/// drained to zero, `false` on timeout.
+///
+/// Free function (not inlined into [`quit_with_routines_gate_impl`]) so it
+/// is unit-testable against a bare injected counter, independent of a real
+/// `RoutinesState`/engine — see the `drain_live_runs_*` tests below.
+async fn drain_live_runs(
+    live_count: impl Fn() -> usize,
+    timeout: std::time::Duration,
+    poll_interval: std::time::Duration,
+) -> bool {
+    tokio::time::timeout(timeout, async {
+        loop {
+            if live_count() == 0 {
+                return;
+            }
+            tokio::time::sleep(poll_interval).await;
+        }
+    })
+    .await
+    .is_ok()
+}
+
+/// Builds the production `confirm` closure for [`quit_with_routines_gate`]:
+/// `tauri-plugin-dialog`'s blocking native "N routines running — stop them
+/// and exit?" ask, captured over `app_handle`. Both quit call sites
+/// (`on_window_event`'s `CloseAction::Quit` arm below, and `tray.rs`'s
+/// `tray:quit`) share this one builder so the prompt's wording cannot drift
+/// between the two paths now that `confirm` is an injected parameter rather
+/// than inlined into `quit_with_routines_gate` itself.
+pub(crate) fn default_confirm<R: tauri::Runtime>(
+    app_handle: tauri::AppHandle<R>,
+) -> impl FnOnce(usize) -> bool + Send + 'static {
+    move |live_runs: usize| {
+        use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+        let noun = if live_runs == 1 { "routine" } else { "routines" };
+        app_handle
+            .dialog()
+            .message(format!("{live_runs} {noun} running — stop them and exit?"))
+            .title("Quit Tuxlink")
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "Stop and Exit".into(),
+                "Cancel".into(),
+            ))
+            .blocking_show()
+    }
+}
+
+/// The graceful-quit gate itself. `live_runs` is the caller's own
+/// [`live_routine_run_count`] reading (taken by the caller, not re-read here,
+/// so the `CloseRequested` path can decide whether to `prevent_close()` from
+/// the SAME number this fn acts on — a re-read could observe a run finishing
+/// between the two calls and disagree with itself).
+///
+/// `confirm` is the injected "ask the operator" step (fix round, P1 review:
+/// this seam is what makes the gate's decision logic — zero-runs bypass,
+/// decline-is-inert, confirm-cancels-then-drains-then-exits, drain-timeout-
+/// still-exits — unit-testable without a real dialog). Production passes
+/// [`default_confirm`]; tests pass a plain closure.
+///
+/// Thin wrapper around [`quit_with_routines_gate_impl`] that pins the drain
+/// bound to [`ROUTINES_QUIT_DRAIN_TIMEOUT`]; the `_impl` fn takes the bound
+/// as a parameter purely so the drain-timeout test below does not have to
+/// wait out the real 5s.
+pub(crate) fn quit_with_routines_gate<R: tauri::Runtime>(
+    app_handle: tauri::AppHandle<R>,
+    live_runs: usize,
+    confirm: impl FnOnce(usize) -> bool + Send + 'static,
+    on_exit: impl FnOnce(&tauri::AppHandle<R>) + Send + 'static,
+) {
+    quit_with_routines_gate_impl(
+        app_handle,
+        live_runs,
+        confirm,
+        on_exit,
+        ROUTINES_QUIT_DRAIN_TIMEOUT,
+    );
+}
+
+/// Zero live runs: calls `on_exit` immediately and returns — no dialog, no
+/// deferral, the ordinary quit path unchanged from before Task 6c.
+///
+/// One or more live runs: defers. A native message dialog must not run on
+/// the caller's thread (the caller here is always a Tauri event-loop
+/// callback — `on_window_event` or a tray `on_menu_event` closure — and
+/// `tauri-plugin-dialog`'s blocking ask explicitly documents "should NOT be
+/// used when running on the main thread context"), so a plain OS thread
+/// runs `confirm`. On confirmation it cancels every live run and stops the
+/// scheduler (via [`scheduler::cancel_all_live_runs_and_stop`] when the
+/// `SchedulerHandle` is managed; falling back to cancelling the runs alone
+/// otherwise — still correct, just without the scheduler-stop half), then
+/// **drains**: blocks (bounded by `drain_timeout`) until the registry
+/// reports every cancelled run terminal, THEN calls `on_exit`.
+///
+/// The drain closes the P1 gap this fix round exists for: `tuxlink_routines`
+/// engine's `run_internal` (`tuxlink-routines/src/engine.rs`) appends the
+/// run's `RunFinished` journal entry BEFORE sending the outcome down the
+/// `oneshot` channel that resolves `RunHandle::done` (`journal_guard.append`
+/// precedes `tx.send` there, unconditionally, on every terminal path). This
+/// module's watcher (`routines/session.rs`'s `start_routine_def` spawn) only
+/// flips a run's registry entry to terminal — the thing `live_run_count()`
+/// reads — AFTER `done.await` resolves. So `live_run_count() == 0` can only
+/// be observed once every cancelled run's journal write has already landed:
+/// draining on the registry is sufficient, no separate journal-durability
+/// signal is needed. Before this fix, `exit(0)` raced that watcher with no
+/// barrier at all — the journal write usually lost, and the run's NEXT
+/// launch `recover()` saw a dead journal with no `RunFinished`, marked it
+/// `Interrupted`, and an `on_interrupted: resume` routine restarted a run
+/// the operator had explicitly stopped at quit. On a drain timeout, this
+/// still exits (an operator asked to quit; a wedged action must not trap
+/// them) but warns naming how many runs did not drain — honest, because
+/// those specific runs WILL be recovered as `Interrupted` next launch.
+///
+/// On decline it returns without doing anything: no run is cancelled,
+/// nothing is torn down, the process keeps running, and the re-entrancy
+/// guard resets so a LATER Quit click shows the dialog again — the caller's
+/// `prevent_close()` (if it called one) is what keeps the window itself
+/// alive through that outcome.
+///
+/// A second Quit while a first is already in flight (dialog showing, or past
+/// it and draining) is a no-op — see [`QuitGateGuard`].
+fn quit_with_routines_gate_impl<R: tauri::Runtime>(
+    app_handle: tauri::AppHandle<R>,
+    live_runs: usize,
+    confirm: impl FnOnce(usize) -> bool + Send + 'static,
+    on_exit: impl FnOnce(&tauri::AppHandle<R>) + Send + 'static,
+    drain_timeout: std::time::Duration,
+) {
+    if live_runs == 0 {
+        on_exit(&app_handle);
+        return;
+    }
+
+    use tauri::Manager as _;
+    let guard = app_handle
+        .try_state::<std::sync::Arc<QuitGateGuard>>()
+        .map(|s| std::sync::Arc::clone(&s));
+    if let Some(guard) = &guard {
+        if guard.0.swap(true, std::sync::atomic::Ordering::AcqRel) {
+            return; // a Quit is already in flight for this app — no-op
+        }
+    }
+
+    // Carry the caller's tracing span onto the worker thread: the drain-
+    // timeout warn below fires from THIS thread, not the Tauri event-loop
+    // thread that called in, and span context does not cross a bare
+    // `std::thread::spawn` boundary on its own.
+    let span = tracing::Span::current();
+
+    std::thread::spawn(move || {
+        let _entered = span.enter();
+
+        let confirmed = confirm(live_runs);
+        if !confirmed {
+            if let Some(guard) = &guard {
+                guard.0.store(false, std::sync::atomic::Ordering::Release);
+            }
+            return; // operator declined — nothing cancelled, nothing exits
+        }
+
+        if let Some(state) = app_handle
+            .try_state::<std::sync::Arc<crate::routines::session::RoutinesState>>()
+        {
+            // `State<'_, Arc<RoutinesState>>` derefs to `Arc<RoutinesState>`.
+            let state_arc: std::sync::Arc<crate::routines::session::RoutinesState> =
+                (*state).clone();
+            match app_handle.try_state::<crate::routines::scheduler::SchedulerHandle>() {
+                Some(scheduler) => {
+                    crate::routines::scheduler::cancel_all_live_runs_and_stop(
+                        &state_arc,
+                        &scheduler,
+                    );
+                }
+                None => {
+                    state_arc.cancel_all_live_runs();
+                }
+            }
+
+            // BOUNDED DRAIN (fix round, P1): see this fn's doc for why
+            // `live_run_count() == 0` is sufficient proof the journal write
+            // already landed.
+            let drain_state = std::sync::Arc::clone(&state_arc);
+            let drained = tauri::async_runtime::block_on(drain_live_runs(
+                move || drain_state.live_run_count(),
+                drain_timeout,
+                ROUTINES_QUIT_DRAIN_POLL,
+            ));
+            if !drained {
+                tracing::warn!(
+                    target: "tuxlink::routines",
+                    live = state_arc.live_run_count(),
+                    timeout_s = drain_timeout.as_secs_f64(),
+                    "quit: routine run(s) did not reach a terminal state within the drain \
+                     timeout; exiting anyway — they will be recovered as Interrupted on next \
+                     launch",
+                );
+            }
+        }
+
+        on_exit(&app_handle);
+    });
+}
+
+// ============================================================================
+// Graceful-quit gate tests (Task 6c fix round, P1 review finding)
+// ============================================================================
+//
+// `quit_with_routines_gate_impl`'s decision logic — zero-runs bypass,
+// decline-is-inert, confirm-cancels-then-drains-then-exits (in that order),
+// drain-timeout-still-exits — is unit-tested here with `tauri::test::
+// mock_app()` standing in for a real window/dialog, an injected `confirm`
+// closure standing in for the native dialog, and a real `RoutinesState` (a
+// tempdir-backed engine with one fake `Action`) standing in for the live
+// routine registry so the drain exercises the real `live_run_count()`
+// codepath rather than a synthetic counter. `drain_live_runs` itself gets a
+// couple of narrower tests against a bare injected counter, decoupled from
+// the routines engine entirely.
+#[cfg(test)]
+mod quit_gate_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering as AtomicOrdering};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use async_trait::async_trait;
+    use serde_json::json;
+    use tauri::Manager as _; // brings `.manage()` into scope for `App`/`AppHandle`
+    use tokio_util::sync::CancellationToken;
+    use tuxlink_routines::action::{Action, ActionDescriptor, ActionRegistry};
+    use tuxlink_routines::error::StepError;
+    use tuxlink_routines::journal::RunState;
+    use tuxlink_routines::types::{
+        ActionStep, BusyPolicy, OnInterrupted, RoutineDef, Step, StepId, Track, TransmitMode,
+        Trigger, SUPPORTED_SCHEMA_VERSION,
+    };
+
+    use crate::routines::arbiter::RadioArbiter;
+    use crate::routines::events::{RoutinesEvent, RoutinesEventSink};
+    use crate::routines::session::{build_routines_state, RoutinesState};
+
+    fn fixed_now() -> i64 {
+        1_752_400_000
+    }
+
+    struct NoopSink;
+    impl RoutinesEventSink for NoopSink {
+        fn emit(&self, _event: &RoutinesEvent) {}
+    }
+
+    fn minimal_def(name: &str, action: &str) -> RoutineDef {
+        RoutineDef {
+            routine: name.to_string(),
+            schema_version: SUPPORTED_SCHEMA_VERSION,
+            transmit_mode: TransmitMode::Attended,
+            transmit_ack: None,
+            on_interrupted: OnInterrupted::Stay,
+            inputs: vec![],
+            triggers: vec![Trigger::Manual],
+            tracks: vec![Track {
+                name: "t".into(),
+                steps: vec![Step::Action(ActionStep {
+                    id: StepId("s1".into()),
+                    action: action.into(),
+                    params: json!({}),
+                    timeout_s: None,
+                    on_radio_busy: BusyPolicy::Wait,
+                })],
+            }],
+        }
+    }
+
+    /// A cancel-cooperative action with an injected extra delay AFTER it
+    /// observes cancellation, before it actually returns — simulates a real
+    /// action's teardown work (closing a port, flushing a buffer). The delay
+    /// gives the drain a genuine, non-instantaneous gap to observe, so a
+    /// test asserting "exit only after live_run_count hits 0" cannot pass by
+    /// accident on a same-tick race if the drain call were elided.
+    struct SlowCancelAction {
+        name: &'static str,
+        delay: Duration,
+    }
+
+    #[async_trait]
+    impl Action for SlowCancelAction {
+        fn descriptor(&self) -> ActionDescriptor {
+            ActionDescriptor {
+                name: self.name,
+                needs_radio: false,
+                transmits: false,
+                needs_internet: false,
+            }
+        }
+
+        async fn execute(
+            &self,
+            _params: serde_json::Value,
+            cancel: CancellationToken,
+        ) -> Result<serde_json::Value, StepError> {
+            cancel.cancelled().await;
+            tokio::time::sleep(self.delay).await;
+            Err(StepError::Cancelled)
+        }
+    }
+
+    /// An action that blocks its worker thread SYNCHRONOUSLY (`std::thread::
+    /// sleep`, not `.await`) — the genuine "wedged action" case the drain
+    /// timeout exists for.
+    ///
+    /// A `.await`-cooperative hang (e.g. `std::future::pending().await`)
+    /// does NOT reach the drain-timeout branch in this engine: every
+    /// per-step action call is raced against cancellation externally, at
+    /// the executor level (`tuxlink-routines/src/executor.rs`'s
+    /// `tokio::select! { action.execute(...) => ..., _ = ctx.cancel.
+    /// cancelled() => Err(StepError::Cancelled) }`) — cancelling the run
+    /// abandons/drops the action's future outright, regardless of whether
+    /// the action itself ever observes the cancel token. Only a call that
+    /// blocks the underlying OS thread WITHOUT yielding back to the
+    /// executor (a real blocking FFI call, exactly Elmer's own
+    /// `CANCEL_DRAIN_TIMEOUT` precedent doc names as the reason it exists)
+    /// can defeat that race — this is that case, deliberately violating
+    /// `Action::execute`'s "MUST return promptly on cancel" contract as a
+    /// test double. Needs a multi-thread test runtime (see the test below)
+    /// so blocking one worker thread does not also wedge the test's own
+    /// polling.
+    struct WedgedBlockingAction {
+        name: &'static str,
+        block_for: Duration,
+    }
+
+    #[async_trait]
+    impl Action for WedgedBlockingAction {
+        fn descriptor(&self) -> ActionDescriptor {
+            ActionDescriptor {
+                name: self.name,
+                needs_radio: false,
+                transmits: false,
+                needs_internet: false,
+            }
+        }
+
+        async fn execute(
+            &self,
+            _params: serde_json::Value,
+            _cancel: CancellationToken,
+        ) -> Result<serde_json::Value, StepError> {
+            std::thread::sleep(self.block_for);
+            Ok(serde_json::json!({}))
+        }
+    }
+
+    /// Build a `RoutinesState` over a fresh tempdir, with one action
+    /// registered. The `TempDir` guard must outlive the state (it deletes on
+    /// drop) — callers keep the returned tuple alive for the test's duration.
+    fn test_state(action: Arc<dyn Action>) -> (Arc<RoutinesState>, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut reg = ActionRegistry::default();
+        reg.register(action);
+        let arbiter = Arc::new(RadioArbiter::new(fixed_now));
+        let sink: Arc<dyn RoutinesEventSink> = Arc::new(NoopSink);
+        let state = Arc::new(build_routines_state(
+            dir.path().to_path_buf(),
+            reg,
+            arbiter,
+            sink,
+        ));
+        (state, dir)
+    }
+
+    // ── drain_live_runs: the algorithm alone, no RoutinesState ─────────────
+
+    #[tokio::test]
+    async fn drain_live_runs_returns_true_once_count_reaches_zero() {
+        let count = Arc::new(AtomicUsize::new(2));
+        let count_bg = Arc::clone(&count);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            count_bg.store(0, AtomicOrdering::SeqCst);
+        });
+
+        let drained = drain_live_runs(
+            move || count.load(AtomicOrdering::SeqCst),
+            Duration::from_secs(1),
+            Duration::from_millis(10),
+        )
+        .await;
+        assert!(drained, "drain must report success once the count reaches zero");
+    }
+
+    #[tokio::test]
+    async fn drain_live_runs_times_out_when_count_never_reaches_zero() {
+        let drained = drain_live_runs(
+            || 3,
+            Duration::from_millis(50),
+            Duration::from_millis(10),
+        )
+        .await;
+        assert!(!drained, "drain must report failure when the bound elapses first");
+    }
+
+    // ── quit_with_routines_gate_impl: the four gate-logic tests ────────────
+
+    #[test]
+    fn zero_live_runs_bypasses_confirm_and_exits_immediately() {
+        let app = tauri::test::mock_app();
+        let app_handle = app.handle().clone();
+
+        let confirm_called = Arc::new(AtomicBool::new(false));
+        let confirm_called2 = Arc::clone(&confirm_called);
+        let exited = Arc::new(AtomicBool::new(false));
+        let exited2 = Arc::clone(&exited);
+
+        quit_with_routines_gate_impl(
+            app_handle,
+            0,
+            move |_n| {
+                confirm_called2.store(true, AtomicOrdering::SeqCst);
+                true
+            },
+            move |_h| {
+                exited2.store(true, AtomicOrdering::SeqCst);
+            },
+            Duration::from_secs(5),
+        );
+
+        assert!(
+            !confirm_called.load(AtomicOrdering::SeqCst),
+            "confirm must not be asked when there are zero live runs"
+        );
+        assert!(
+            exited.load(AtomicOrdering::SeqCst),
+            "on_exit must fire immediately (synchronously) on the zero-runs path"
+        );
+    }
+
+    #[test]
+    fn decline_is_inert_no_cancel_no_exit() {
+        let app = tauri::test::mock_app();
+        let app_handle = app.handle().clone();
+
+        let exited = Arc::new(AtomicBool::new(false));
+        let exited2 = Arc::clone(&exited);
+        let (asked_tx, asked_rx) = std::sync::mpsc::channel::<usize>();
+
+        quit_with_routines_gate_impl(
+            app_handle,
+            1,
+            move |n| {
+                let _ = asked_tx.send(n);
+                false // decline
+            },
+            move |_h| {
+                exited2.store(true, AtomicOrdering::SeqCst);
+            },
+            Duration::from_secs(5),
+        );
+
+        let asked = asked_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("confirm was never asked");
+        assert_eq!(asked, 1, "confirm must be asked with the caller's live_runs count");
+
+        // Nothing async happens after a decline; a short grace period lets
+        // the worker thread finish before asserting absence.
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(!exited.load(AtomicOrdering::SeqCst), "decline must not exit");
+    }
+
+    #[tokio::test]
+    async fn confirm_cancels_then_drains_then_exits_in_order() {
+        let app = tauri::test::mock_app();
+        let app_handle = app.handle().clone();
+
+        let (state, _dir) = test_state(Arc::new(SlowCancelAction {
+            name: "local.slow",
+            delay: Duration::from_millis(150),
+        }));
+        app.manage(Arc::clone(&state));
+
+        state.store.save(&minimal_def("r1", "local.slow")).unwrap();
+        let run_id = state.start_routine("r1", json!({})).await.unwrap();
+        assert_eq!(state.live_run_count(), 1, "the run must be live before quitting");
+
+        let (exit_tx, exit_rx) = tokio::sync::oneshot::channel::<usize>();
+        let state_for_exit = Arc::clone(&state);
+
+        quit_with_routines_gate_impl(
+            app_handle,
+            1,
+            |_n| true, // confirm
+            move |_h| {
+                // Captured at the exact instant on_exit fires. If the drain
+                // were skipped, this would read 1 — SlowCancelAction is
+                // still inside its 150ms post-cancel sleep at that point.
+                let _ = exit_tx.send(state_for_exit.live_run_count());
+            },
+            Duration::from_secs(5),
+        );
+
+        let live_at_exit = tokio::time::timeout(Duration::from_secs(3), exit_rx)
+            .await
+            .expect("on_exit did not fire within 3s")
+            .expect("on_exit sender dropped without sending");
+
+        assert_eq!(
+            live_at_exit, 0,
+            "on_exit must only fire once every live run has drained to a terminal state"
+        );
+        assert_eq!(
+            state.run_status(&run_id).map(|s| s.state),
+            Some(RunState::Cancelled),
+            "the drained run's terminal state must be Cancelled, not Interrupted"
+        );
+    }
+
+    /// Installs a global tracing subscriber, once per process, writing into
+    /// `tracing_test::internal::global_buf()` — reusing `tracing-test`'s
+    /// buffer/writer machinery directly rather than its `#[traced_test]`
+    /// macro. The macro's span-scoped `logs_contain` relies on a
+    /// `Span::enter()` guard held across `.await` points, which is not
+    /// reliable once a multi-thread runtime is free to resume a task on a
+    /// different worker thread than entered the span (needed below because
+    /// `WedgedBlockingAction` blocks its own worker thread) — and separately,
+    /// the macro derives its `EnvFilter` from `module_path!()`
+    /// (`"tuxlink_lib=trace"`), which would never match this codebase's
+    /// `tracing::warn!(target: "tuxlink::routines", ...)` calls (an explicit
+    /// target string, unrelated to the crate's module path) regardless of
+    /// threading. A filter of plain `"trace"` (everything, no target
+    /// restriction) sidesteps both problems.
+    fn ensure_test_tracing_installed() {
+        static INIT: std::sync::Once = std::sync::Once::new();
+        INIT.call_once(|| {
+            let mock_writer =
+                tracing_test::internal::MockWriter::new(tracing_test::internal::global_buf());
+            let subscriber = tracing_test::internal::get_subscriber(mock_writer, "trace");
+            // Ignore Err (already set): idempotent across the handful of
+            // tests in this module, and no other test in this binary
+            // currently sets a global default to race against.
+            let _ = tracing::dispatcher::set_global_default(subscriber);
+        });
+    }
+
+    // Multi-thread flavor is load-bearing here: `WedgedBlockingAction`
+    // blocks its worker thread synchronously, and this test's OWN polling
+    // (`exit_rx.await` below) needs a free thread on the SAME runtime to
+    // keep making progress while that happens (the drain loop itself runs
+    // on Tauri's separate global runtime, so it is unaffected either way —
+    // see `quit_with_routines_gate_impl`).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn confirm_drain_timeout_still_exits_and_warns() {
+        ensure_test_tracing_installed();
+
+        let app = tauri::test::mock_app();
+        let app_handle = app.handle().clone();
+
+        let (state, _dir) = test_state(Arc::new(WedgedBlockingAction {
+            name: "local.wedged",
+            block_for: Duration::from_millis(500),
+        }));
+        app.manage(Arc::clone(&state));
+
+        state.store.save(&minimal_def("r1", "local.wedged")).unwrap();
+        state.start_routine("r1", json!({})).await.unwrap();
+        assert_eq!(state.live_run_count(), 1);
+
+        let (exit_tx, exit_rx) = tokio::sync::oneshot::channel::<usize>();
+        let state_for_exit = Arc::clone(&state);
+
+        quit_with_routines_gate_impl(
+            app_handle,
+            1,
+            |_n| true, // confirm
+            move |_h| {
+                let _ = exit_tx.send(state_for_exit.live_run_count());
+            },
+            // Short bound (NOT the real 5s ROUTINES_QUIT_DRAIN_TIMEOUT, and
+            // well short of the action's 500ms block) so this test proves
+            // the timeout path without waiting out the real bound.
+            Duration::from_millis(150),
+        );
+
+        let live_at_exit = tokio::time::timeout(Duration::from_secs(3), exit_rx)
+            .await
+            .expect("on_exit did not fire within 3s — the timeout did not bound the wait")
+            .expect("on_exit sender dropped without sending");
+
+        // The action is still mid-`std::thread::sleep` at this point (150ms
+        // drain bound < 500ms block) — the run is still live, proving this
+        // genuinely hit the timeout branch rather than a lucky fast drain.
+        assert_eq!(
+            live_at_exit, 1,
+            "on_exit fired while the run was still live — the timeout must not silently wait forever"
+        );
+        // A raw substring search over the global buffer (see
+        // `ensure_test_tracing_installed`'s doc for why not
+        // `#[traced_test]`'s scoped `logs_contain`).
+        let logged = {
+            let buf = tracing_test::internal::global_buf().lock().unwrap();
+            String::from_utf8_lossy(&buf).contains("did not reach a terminal state within the drain")
+        };
+        assert!(
+            logged,
+            "a timed-out drain must warn naming that runs failed to reach terminus"
+        );
+    }
+
+    #[test]
+    fn repeated_quit_while_first_is_in_flight_is_a_noop() {
+        let app = tauri::test::mock_app();
+        app.manage(Arc::new(QuitGateGuard::default()));
+        let app_handle = app.handle().clone();
+
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel::<()>();
+        let confirm_calls = Arc::new(AtomicUsize::new(0));
+        let confirm_calls_first = Arc::clone(&confirm_calls);
+
+        // First Quit: `confirm` parks on `release_rx`, standing in for the
+        // dialog still being shown on screen.
+        quit_with_routines_gate_impl(
+            app_handle.clone(),
+            1,
+            move |_n| {
+                confirm_calls_first.fetch_add(1, AtomicOrdering::SeqCst);
+                let _ = entered_tx.send(());
+                let _ = release_rx.recv();
+                false
+            },
+            |_h| {},
+            Duration::from_secs(5),
+        );
+
+        entered_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("first confirm never started");
+
+        // Second Quit while the first is still parked: must be a no-op.
+        let confirm_calls_second = Arc::clone(&confirm_calls);
+        quit_with_routines_gate_impl(
+            app_handle,
+            1,
+            move |_n| {
+                confirm_calls_second.fetch_add(1, AtomicOrdering::SeqCst);
+                true
+            },
+            |_h| {},
+            Duration::from_secs(5),
+        );
+
+        std::thread::sleep(Duration::from_millis(150));
+        assert_eq!(
+            confirm_calls.load(AtomicOrdering::SeqCst),
+            1,
+            "a second Quit while the first is in flight must not invoke confirm again"
+        );
+
+        let _ = release_tx.send(());
+        std::thread::sleep(Duration::from_millis(50)); // let the first thread unwind
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Force the working WebKitGTK GL environment before the webview inits.
@@ -865,6 +1619,13 @@ pub fn run() {
         ))
         .setup(|app| {
             use tauri::Manager as _;  // brings .state() into scope for the setup closure
+
+            // Task 6c fix round (P1 review): the graceful-quit re-entrancy
+            // guard. Mounted early, unconditionally — it must exist before
+            // ANY quit path (the SETUP-is-quittable `CloseAction::Quit`,
+            // reachable before the routines block below finishes mounting)
+            // could possibly fire.
+            app.manage(std::sync::Arc::new(QuitGateGuard::default()));
 
             // tuxlink-z0le: reap orphaned form-import staging dirs left by a
             // crashed prior run (best-effort, before any import can run).
@@ -1969,8 +2730,10 @@ pub fn run() {
                 // caller shares ONE arbiter instance.
                 app.manage(std::sync::Arc::clone(&routines_state.arbiter));
                 app.manage(std::sync::Arc::clone(&routines_state));
+
+                let recovering = std::sync::Arc::clone(&routines_state);
                 tauri::async_runtime::spawn(async move {
-                    match routines_state.recover().await {
+                    match recovering.recover().await {
                         Ok(report) if report.interrupted > 0 => {
                             tracing::info!(
                                 target: "tuxlink::routines",
@@ -1989,6 +2752,35 @@ pub fn run() {
                         }
                     }
                 });
+
+                // ── Routines SCHEDULER (plan 2 Task 6b, spec §8) ─────────────
+                // The tick loop that actually fires schedule-triggered
+                // routines: without it an enabled `Trigger::Schedule` routine
+                // validates, enables, and fleet-checks — and never runs. It
+                // reconciles missed fires at launch (`if_missed`: skip records
+                // them visibly; run_once_on_launch fires ONE catch-up run),
+                // then sleeps to the earliest fire across the enabled fleet,
+                // waking early whenever the routine library changes.
+                //
+                // Runs alongside recovery rather than after it, deliberately:
+                // the two touch different things (recovery reconciles dead
+                // JOURNALS from the last process; the scheduler arms future
+                // fires), and a slow snapshot resolution in a resumed run must
+                // not hold the station's schedules hostage. Where they do meet
+                // — a resumed run still going when its routine's next fire
+                // arrives — the scheduler's no-pile-up rule skips that fire
+                // with a visible event.
+                //
+                // The handle is MANAGED so the graceful-quit path (Task 6c, the
+                // close handler below) can call `.stop()` on it. The UTC-offset
+                // closure re-reads `chrono::Local` on every use rather than
+                // caching a value at spawn time — DST changes the answer twice
+                // a year, and the scheduler runs for the app's whole lifetime.
+                app.manage(crate::routines::scheduler::RoutinesScheduler::spawn(
+                    routines_state,
+                    std::sync::Arc::new(crate::routines::session::unix_now_secs),
+                    std::sync::Arc::new(crate::routines::session::local_utc_offset_seconds),
+                ));
             }
 
             Ok(())
@@ -1997,8 +2789,11 @@ pub fn run() {
             // Task 8 — close-to-tray: intercept the window X / Alt-F4 path on
             // the MAIN window and hide instead of closing. The process + Pat
             // child stay alive.
-            // Only the Quit menu item (menu:file:quit / tray:quit) calls
-            // app.exit(0), which bypasses this handler entirely.
+            // Only the Quit menu item (tray:quit, wired in `tray.rs`) reaches
+            // `app.exit(0)` outside this handler — it bypasses CloseRequested
+            // entirely, so Task 6c's graceful-quit gate is called separately
+            // from both places (`quit_with_routines_gate`) rather than one
+            // calling into the other.
             //
             // Guard on "main" so Task 14's compose windows close normally (they
             // need real close + unsaved-draft handling, not hide-to-tray).
@@ -2016,28 +2811,28 @@ pub fn run() {
                         // last-window-close is fragile with a tray icon present).
                         CloseAction::Quit => {
                             use tauri::Manager as _;
-                            // tuxlink-13v2l Task 8c (AC-4): abort-on-quit.
-                            // Fire cancel_and_abort BEFORE exit(0) so any in-flight
-                            // ARDOP/VARA/CMS transmission receives an abort signal.
-                            // This is the ONLY Quit path; MinimizeToTray must NOT
-                            // fire this (it would abort a transmit on every tray-hide).
-                            if let Some(session_state) = window
-                                .app_handle()
-                                .try_state::<std::sync::Arc<crate::elmer::session::ElmerSession>>()
-                            {
-                                // `State<'_, Arc<ElmerSession>>` derefs to `Arc<ElmerSession>`.
-                                let session_arc: std::sync::Arc<crate::elmer::session::ElmerSession> =
-                                    (*session_state).clone();
-                                // Block on the abort so it completes before exit(0).
-                                // The abort is bounded (CANCEL_DRAIN_TIMEOUT = 5s) and
-                                // calls abort_handle.abort() if the task doesn't drain.
-                                // `tauri::async_runtime::block_on` (NOT try_current, which
-                                // would SILENTLY SKIP the abort when the window callback runs
-                                // off the Tokio context — defeating the AC-4 abort-on-quit
-                                // guarantee) drives it on Tauri's managed runtime.
-                                tauri::async_runtime::block_on(session_arc.cancel_and_abort());
+                            // tuxlink-13v2l Task 8c (AC-4): abort-on-quit fires on
+                            // every path that reaches `abort_elmer_and_exit` below —
+                            // this is the ONLY Quit path; MinimizeToTray must NOT
+                            // reach it (it would abort a transmit on every tray-hide).
+                            //
+                            // Task 6c (spec §8): graceful quit with active routine
+                            // runs. `prevent_close()` BEFORE the gate, not after —
+                            // deciding "defer" only inside `quit_with_routines_gate`
+                            // would let the window close (and, by Tauri's default,
+                            // the process exit) out from under the still-pending
+                            // native dialog.
+                            let app_handle = window.app_handle().clone();
+                            let live_runs = live_routine_run_count(&app_handle);
+                            if live_runs > 0 {
+                                api.prevent_close();
                             }
-                            window.app_handle().exit(0);
+                            quit_with_routines_gate(
+                                app_handle.clone(),
+                                live_runs,
+                                default_confirm(app_handle),
+                                abort_elmer_and_exit,
+                            );
                         }
                         // First-ever close after setup (prompt not yet answered):
                         // show the one-time explainer modal; keep the window VISIBLE;
@@ -2492,6 +3287,7 @@ pub fn run() {
             crate::routines::commands::routines_run_status,
             crate::routines::commands::routines_journal,
             crate::routines::commands::routines_consent_grant,
+            crate::routines::commands::routines_missed_fires,
             crate::routines::commands::routines_presets_list,
             crate::routines::commands::routines_presets_save,
             crate::routines::commands::routines_presets_delete,

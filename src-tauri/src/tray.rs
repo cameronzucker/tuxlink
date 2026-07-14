@@ -7,7 +7,11 @@
 //! - Show Window       (`tray:show_hide`)     — unconditional show + unminimize + focus (tuxlink-9zd)
 //! - New Message       (`tray:new_message`)  — shows window + emits `menu` event `menu:file:new`
 //! - ──────────────
-//! - Quit              (`tray:quit`)          — calls `app.exit(0)`
+//! - Quit              (`tray:quit`)          — routes through `crate::quit_with_routines_gate`
+//!   (Task 6c, spec §8): with no live routine runs it calls `app.exit(0)` immediately, same as
+//!   before; with one or more live it defers to a native confirm dialog first — this is a
+//!   SEPARATE process-exit path from the main window's `CloseRequested` handler (see below), so
+//!   it needs its own call into the same gate rather than inheriting one from there.
 //!
 //! ## Close-to-tray
 //! `on_window_event` CloseRequested → `api.prevent_close()` + (Linux) `minimize()`
@@ -84,7 +88,18 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
                             event = "quit",
                             "tray menu event",
                         );
-                        app_clone.exit(0);
+                        // Task 6c (spec §8): the graceful-quit gate. No
+                        // `prevent_close()` counterpart here — the tray Quit
+                        // item never had a window to keep open in the first
+                        // place, it just calls (or, with live runs, defers)
+                        // `app.exit(0)`.
+                        let live_runs = crate::live_routine_run_count(&app_clone);
+                        crate::quit_with_routines_gate(
+                            app_clone.clone(),
+                            live_runs,
+                            crate::default_confirm(app_clone.clone()),
+                            crate::abort_elmer_and_exit,
+                        );
                     }
                     "tray:show_hide" => {
                         tracing::debug!(

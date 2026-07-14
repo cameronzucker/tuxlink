@@ -66,7 +66,8 @@ use tuxlink_routines::validate::{
 
 use super::events::{LibraryEntity, RoutinesEvent};
 use super::presets::{PresetError, RadioPreset};
-use super::session::{unix_now_secs, RoutineStartError, RoutinesState};
+use super::scheduler::{anchor_on_enable, schedule_status, ScheduleStatus};
+use super::session::{local_utc_offset_seconds, unix_now_secs, RoutineStartError, RoutinesState};
 use super::station_sets::{StationSet, StationSetError};
 use super::store::{RoutineSummary, StoreError};
 use super::validation::MonolithValidationContext;
@@ -387,11 +388,20 @@ pub fn delete_routine(state: &RoutinesState, name: &str) -> Result<(), UiError> 
 /// already wrong out there, and already tolerated), validate it WITH, and report
 /// the difference. That is exactly "what arming this routine introduces",
 /// however the underlying check chose to attribute it.
+///
+/// `utc_offset_seconds` (`local - utc`) is the SAME seam `next_fire` and the
+/// scheduler's tick loop use (Task 6c) — a `SCHEDULE_COLLISION`/
+/// `SAME_EFFECT_OVERLAP` finding is computed over fire sequences a
+/// window-gated `Trigger::Schedule` produces in the operator's LOCAL clock,
+/// not UTC, so this check must be told the same offset the routine will
+/// actually fire under. The Tauri command wrapper resolves it via
+/// `session::local_utc_offset_seconds`; tests pass a literal.
 pub fn set_routine_enabled(
     state: &RoutinesState,
     name: &str,
     enabled: bool,
     now_unix: i64,
+    utc_offset_seconds: i32,
 ) -> Result<EnableResult, UiError> {
     let def = get_routine(state, name)?;
 
@@ -418,11 +428,11 @@ pub fn set_routine_enabled(
         .into_iter()
         .filter(|d| d.routine != def.routine)
         .collect();
-    let baseline = validate_fleet(&baseline_defs, &ctx, now_unix);
+    let baseline = validate_fleet(&baseline_defs, &ctx, now_unix, utc_offset_seconds);
 
     let mut armed_defs = baseline_defs;
     armed_defs.push(def.clone());
-    let armed = validate_fleet(&armed_defs, &ctx, now_unix);
+    let armed = validate_fleet(&armed_defs, &ctx, now_unix, utc_offset_seconds);
 
     let findings = introduced_findings(armed, baseline);
 
@@ -433,6 +443,23 @@ pub fn set_routine_enabled(
             blocked: true,
             findings,
         });
+    }
+
+    // Anchor the cadence at the ENABLE instant, before the routine is armed.
+    //
+    // Only on a real disabled → enabled transition: re-enabling an
+    // already-enabled routine (a no-op the UI can emit on a double-click) must
+    // not shift a live schedule. The scheduler measures a routine's next fire
+    // from its anchor, and without this write the anchor would be whatever the
+    // routine's PREVIOUS enabled period left behind — for an unaligned schedule
+    // that is an instant in the past, so the routine's first act on being
+    // re-enabled would be an immediate catch-up fire. `if_missed: skip` says not
+    // to do that, and on an automatic-transmit routine it would be a
+    // transmission the operator never asked for. Structural, not incidental:
+    // "a freshly-enabled routine has no misses" is now true because the anchor
+    // says so, rather than because no record happened to exist yet.
+    if !state.store.is_enabled(name) {
+        anchor_on_enable(state, name, now_unix);
     }
 
     state.store.set_enabled(name, true)?;
@@ -537,6 +564,19 @@ pub fn grant_consent(state: &RoutinesState, run_id: &str, step_id: &str) -> bool
     state.grant_consent(run_id, step_id)
 }
 
+/// Everything the scheduler has to say about why fires did not happen, per
+/// routine: fires that elapsed while the app was CLOSED (spec §8: "misses are
+/// recorded visibly either way"), the last fire the gate REFUSED (verbatim), and
+/// the last fire SKIPPED because the previous run was still going.
+///
+/// The scheduler emits an event for each of these as it happens, but an event
+/// only reaches a listener that was already listening — a window opened
+/// afterwards (or an operator who was asleep at 03:00) reads the persisted record
+/// through here. Empty when there is nothing to report.
+pub fn schedule_status_report(state: &RoutinesState) -> Vec<ScheduleStatus> {
+    schedule_status(state)
+}
+
 // ============================================================================
 // Service fns — presets + station sets (the authorable @-entities)
 // ============================================================================
@@ -633,7 +673,13 @@ pub async fn routines_set_enabled(
     name: String,
     enabled: bool,
 ) -> Result<EnableResult, UiError> {
-    set_routine_enabled(&state, &name, enabled, unix_now_secs())
+    set_routine_enabled(
+        &state,
+        &name,
+        enabled,
+        unix_now_secs(),
+        local_utc_offset_seconds(),
+    )
 }
 
 #[tauri::command]
@@ -688,6 +734,18 @@ pub async fn routines_consent_grant(
     step_id: String,
 ) -> Result<bool, UiError> {
     Ok(grant_consent(&state, &run_id, &step_id))
+}
+
+/// The schedule-status read path. Keeps its historical `missed_fires` name — it
+/// is the registered command surface, and `lib.rs`'s `invoke_handler` names it —
+/// but it now answers for all three ways a fire fails to happen (missed while
+/// closed, refused at the gate, skipped over a still-running previous run), not
+/// just the first. See [`ScheduleStatus`].
+#[tauri::command]
+pub async fn routines_missed_fires(
+    state: State<'_, Arc<RoutinesState>>,
+) -> Result<Vec<ScheduleStatus>, UiError> {
+    Ok(schedule_status_report(&state))
 }
 
 #[tauri::command]
@@ -933,7 +991,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = set_routine_enabled(&state, "broken", true, NOW).unwrap();
+        let result = set_routine_enabled(&state, "broken", true, NOW, 0).unwrap();
         assert!(!result.enabled, "a routine with errors must not enable");
         assert!(result.blocked);
         assert!(result
@@ -951,7 +1009,7 @@ mod tests {
         let (_dir, state, sink, _c) = test_state();
         save_routine(&state, &def_json("clean", log_step())).unwrap();
 
-        let result = set_routine_enabled(&state, "clean", true, NOW).unwrap();
+        let result = set_routine_enabled(&state, "clean", true, NOW, 0).unwrap();
         assert!(result.enabled);
         assert!(!result.blocked);
         assert!(state.store.is_enabled("clean"));
@@ -966,7 +1024,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let off = set_routine_enabled(&state, "clean", false, NOW).unwrap();
+        let off = set_routine_enabled(&state, "clean", false, NOW, 0).unwrap();
         assert!(!off.enabled);
         assert!(!off.blocked, "disable is never blocked");
         assert!(!state.store.is_enabled("clean"));
@@ -1011,7 +1069,7 @@ mod tests {
         save_routine(&state, &scheduled_radio_routine("second")).unwrap();
 
         // The first arms with nothing to collide with.
-        let a = set_routine_enabled(&state, "first", true, NOW).unwrap();
+        let a = set_routine_enabled(&state, "first", true, NOW, 0).unwrap();
         assert!(a.enabled);
         assert!(
             !a.findings.iter().any(|f| f.code == "SCHEDULE_COLLISION"),
@@ -1020,7 +1078,7 @@ mod tests {
 
         // The second has the identical aligned schedule and also touches the
         // radio → collision, surfaced against the routine being enabled.
-        let b = set_routine_enabled(&state, "second", true, NOW).unwrap();
+        let b = set_routine_enabled(&state, "second", true, NOW, 0).unwrap();
         let collision = b
             .findings
             .iter()
@@ -1052,11 +1110,11 @@ mod tests {
         save_routine(&state, &scheduled_radio_routine("solo")).unwrap();
 
         assert!(
-            set_routine_enabled(&state, "solo", true, NOW)
+            set_routine_enabled(&state, "solo", true, NOW, 0)
                 .unwrap()
                 .enabled
         );
-        let again = set_routine_enabled(&state, "solo", true, NOW).unwrap();
+        let again = set_routine_enabled(&state, "solo", true, NOW, 0).unwrap();
         assert!(again.enabled);
         assert!(
             !again
@@ -1078,7 +1136,7 @@ mod tests {
         // to reference an unknown action — the library is editable after enable).
         save_routine(&state, &def_json("sibling", log_step())).unwrap();
         assert!(
-            set_routine_enabled(&state, "sibling", true, NOW)
+            set_routine_enabled(&state, "sibling", true, NOW, 0)
                 .unwrap()
                 .enabled
         );
@@ -1093,7 +1151,7 @@ mod tests {
 
         // An unrelated, clean routine must still arm.
         save_routine(&state, &def_json("mine", log_step())).unwrap();
-        let result = set_routine_enabled(&state, "mine", true, NOW).unwrap();
+        let result = set_routine_enabled(&state, "mine", true, NOW, 0).unwrap();
         assert!(
             result.enabled,
             "a sibling's pre-existing error must not block this enable: {:?}",

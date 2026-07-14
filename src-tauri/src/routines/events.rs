@@ -44,6 +44,7 @@
 use serde::Serialize;
 
 use tuxlink_routines::journal::RunState;
+use tuxlink_routines::types::IfMissed;
 
 /// The single Tauri channel every routine-run lifecycle event is emitted on.
 /// The frontend listens with `tauriListen(ROUTINES_EVENT, …)` and switches on
@@ -115,6 +116,55 @@ pub enum RoutinesEvent {
         entity: LibraryEntity,
         /// The affected entry's name.
         name: String,
+    },
+
+    // ── Task 6b: the scheduler runtime (spec §8) ────────────────────────────
+    // The four ways a scheduled fire can end. Every one of them is VISIBLE:
+    // the scheduler never drops a fire silently, so "my routine didn't run" is
+    // always answerable from the event stream (and the tracing log).
+    /// A schedule fired and a run started. `at` is the SCHEDULED instant (unix
+    /// seconds), not the wake instant — a fire that woke 40 ms late still
+    /// reports the on-grid time it was due, which is what the operator's
+    /// schedule says.
+    ScheduledFire {
+        routine: String,
+        #[serde(rename = "runId")]
+        run_id: String,
+        /// The scheduled fire instant, unix seconds.
+        at: i64,
+    },
+    /// A schedule came due while the PREVIOUS run of the same routine was still
+    /// active, so this fire was skipped rather than started as an overlapping
+    /// second run (see `scheduler.rs`'s "no pile-up" rule). `reason` is
+    /// operator-facing.
+    ScheduleSkipped {
+        routine: String,
+        at: i64,
+        reason: String,
+    },
+    /// A schedule came due and the run was REFUSED at the start gate — an
+    /// unacknowledged automatic-transmit routine (spec §4), or a routine whose
+    /// definition now has validation errors (spec §10). `reason` is the gate's
+    /// verbatim operator-facing message. The scheduler logs it and keeps
+    /// running; a refusal is not a crash and it is not a silent skip.
+    ScheduleRefused {
+        routine: String,
+        at: i64,
+        reason: String,
+    },
+    /// Fires that elapsed while the app was CLOSED (spec §8: schedules pause
+    /// when the app is not running; misses are recorded visibly either way).
+    /// Emitted once per affected routine at launch. `ran` is whether the
+    /// `run_once_on_launch` policy started a single catch-up run (`false` for
+    /// the default `skip` policy, which records the misses and runs nothing).
+    MissedFires {
+        routine: String,
+        /// How many whole fires elapsed while the app was closed.
+        missed: u64,
+        /// The trigger's declared policy.
+        policy: IfMissed,
+        /// Whether a single catch-up run was started (`run_once_on_launch`).
+        ran: bool,
     },
 }
 
@@ -250,6 +300,79 @@ mod tests {
             .unwrap();
             assert_eq!(j["entity"], tag);
         }
+    }
+
+    // ── Task 6b — the scheduler's four fire outcomes ────────────────────────
+
+    #[test]
+    fn scheduled_fire_ships_camelcase_run_id_and_the_scheduled_instant() {
+        let e = RoutinesEvent::ScheduledFire {
+            routine: "morning-ics".into(),
+            run_id: "run-1752400000-0000".into(),
+            at: 1_752_400_000,
+        };
+        let j: serde_json::Value = serde_json::to_value(&e).unwrap();
+        assert_eq!(j["kind"], "scheduledFire");
+        assert_eq!(j["routine"], "morning-ics");
+        assert_eq!(j["runId"], "run-1752400000-0000");
+        assert_eq!(j["at"], 1_752_400_000);
+        assert!(j.get("run_id").is_none(), "no snake_case leakage");
+    }
+
+    #[test]
+    fn schedule_skipped_and_refused_carry_the_verbatim_reason() {
+        let skipped = RoutinesEvent::ScheduleSkipped {
+            routine: "morning-ics".into(),
+            at: 1_752_400_000,
+            reason: "previous run still active".into(),
+        };
+        let j: serde_json::Value = serde_json::to_value(&skipped).unwrap();
+        assert_eq!(j["kind"], "scheduleSkipped");
+        assert_eq!(j["reason"], "previous run still active");
+
+        let refused = RoutinesEvent::ScheduleRefused {
+            routine: "auto-tx".into(),
+            at: 1_752_400_000,
+            reason: "routine 'auto-tx' transmits under automatic control but has no \
+                     recorded acknowledgment"
+                .into(),
+        };
+        let j: serde_json::Value = serde_json::to_value(&refused).unwrap();
+        assert_eq!(j["kind"], "scheduleRefused");
+        assert_eq!(j["routine"], "auto-tx");
+        assert!(
+            j["reason"].as_str().unwrap().contains("acknowledgment"),
+            "the gate's operator-facing message ships verbatim: {j}"
+        );
+    }
+
+    #[test]
+    fn missed_fires_serializes_the_policy_as_the_engine_snake_case_tag() {
+        // `IfMissed` is `rename_all = "snake_case"` in the leaf — reuse the type
+        // rather than restating the policy names as bare strings, and assert the
+        // exact wire values plan 5's listener switches on.
+        let e = RoutinesEvent::MissedFires {
+            routine: "overnight-sync".into(),
+            missed: 7,
+            policy: IfMissed::RunOnceOnLaunch,
+            ran: true,
+        };
+        let j: serde_json::Value = serde_json::to_value(&e).unwrap();
+        assert_eq!(j["kind"], "missedFires");
+        assert_eq!(j["routine"], "overnight-sync");
+        assert_eq!(j["missed"], 7);
+        assert_eq!(j["policy"], "run_once_on_launch");
+        assert_eq!(j["ran"], true);
+
+        let skip = RoutinesEvent::MissedFires {
+            routine: "overnight-sync".into(),
+            missed: 7,
+            policy: IfMissed::Skip,
+            ran: false,
+        };
+        let j: serde_json::Value = serde_json::to_value(&skip).unwrap();
+        assert_eq!(j["policy"], "skip");
+        assert_eq!(j["ran"], false, "skip records the misses and runs nothing");
     }
 
     #[test]
