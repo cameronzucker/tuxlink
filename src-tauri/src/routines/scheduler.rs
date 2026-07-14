@@ -4,7 +4,7 @@
 //! Before this module, an enabled `Trigger::Schedule` routine validated,
 //! enabled, and fleet-checked — and then nothing happened, ever. The schedule
 //! MATH has been in the leaf crate all along (`tuxlink_routines::scheduler`:
-//! [`next_fire`], [`missed_fires`], `within_window`, `every_seconds` — pure
+//! [`next_fire`], [`missed_fires_windowed`], `within_window`, `every_seconds` — pure
 //! functions over unix seconds); what it deliberately did NOT own was the tick
 //! loop, because firing means *creating a run*, and run creation is the app
 //! layer's job (the consent gate, the event sink, and the run registry all live
@@ -170,7 +170,7 @@ use tokio::sync::futures::Notified;
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
-use tuxlink_routines::scheduler::{missed_fires, next_fire};
+use tuxlink_routines::scheduler::{missed_fires_windowed, next_fire};
 use tuxlink_routines::types::{IfMissed, Trigger};
 
 use super::atomic_write;
@@ -243,7 +243,7 @@ pub struct LastFire {
     /// for overlap, or refused at the gate — or the instant the scheduler first
     /// saw it enabled, or the instant the operator enabled it. This is the
     /// anchor `next_fire` is computed from, and the `last_seen` the launch-time
-    /// [`missed_fires`] reckoning measures against.
+    /// [`missed_fires_windowed`] reckoning measures against.
     ///
     /// Evaluated, not *fired*, is the load-bearing word: a fire the gate refused
     /// is not a fire the app was CLOSED for, and counting it as a "missed fire"
@@ -898,7 +898,8 @@ impl RoutinesScheduler {
             let mut missed = 0u64;
             let mut policy = IfMissed::Skip;
             for trigger in &summary.triggers {
-                let n = missed_fires(trigger, last.last_fire_unix, now);
+                let n =
+                    missed_fires_windowed(trigger, last.last_fire_unix, now, (self.utc_offset)());
                 if n == 0 {
                     continue;
                 }
@@ -1899,6 +1900,88 @@ mod tests {
             "the normal first fire, one interval after arming",
         )
         .await;
+
+        sched.stop();
+    }
+
+    // ── missed-fire reconciliation is window-aware (plan-4 amendment task 1b) ──
+    //
+    // `reconcile_missed_fires` must call the window/align-aware
+    // `missed_fires_windowed`, not the window-blind `missed_fires` — otherwise
+    // a windowed overnight routine reports phantom misses for hours it was
+    // never due to fire in anyway. BASE's UTC time-of-day is 09:46:40 (offset
+    // 0 here, so LOCAL == UTC); three hours earlier is 06:46:40. Both tests
+    // below use that 3h gap so the window-blind count (3h / 30m == 6) is the
+    // same known baseline to contrast against.
+
+    #[tokio::test(start_paused = true)]
+    async fn missed_fires_reconciliation_is_zero_when_the_window_was_closed_for_the_whole_gap() {
+        // Window "22:00-06:00" is CLOSED for the entire 06:00-22:00 span; both
+        // the gap's start (06:46:40) and its end (09:46:40 == BASE) fall
+        // inside that closed span, so the window never opens across the gap
+        // at all. The window-blind reckoning would report 6 slots; the
+        // window-aware reconciler must report 0 — and, per `schedule_status`,
+        // a zero-missed routine with nothing else to report does not even
+        // appear in the read-path report.
+        let h = Harness::log();
+        h.arm_windowed("overnight-closed", "30m", "22:00-06:00", "local.log");
+        h.last_fire()
+            .record_evaluated("overnight-closed", BASE - 3 * 3600);
+
+        let sched = h.start();
+
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        assert!(
+            !h.sink.events().iter().any(|e| matches!(
+                e,
+                RoutinesEvent::MissedFires { routine, .. } if routine == "overnight-closed"
+            )),
+            "a gap the window was closed for in its entirety must not be recorded as missed: {:?}",
+            h.sink.events()
+        );
+        assert_eq!(fired(&h.sink.events(), "overnight-closed"), 0);
+        assert!(
+            schedule_status(&h.state).is_empty(),
+            "missed == 0 means the routine has nothing to report"
+        );
+
+        sched.stop();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn missed_fires_reconciliation_reports_the_true_count_when_the_window_stayed_open() {
+        // Companion to the closed-window case above: when the window is OPEN
+        // for the whole gap, the window-aware count must match the naive
+        // window-blind one exactly — window-awareness must not UNDER-count an
+        // ordinary open-window miss. Window "06:00-22:00" is open across the
+        // whole gap (06:46:40 through 09:46:40 local): 3h / 30m == 6 missed
+        // slots.
+        let h = Harness::log();
+        h.arm_windowed("daytime-open", "30m", "06:00-22:00", "local.log");
+        h.last_fire()
+            .record_evaluated("daytime-open", BASE - 3 * 3600);
+
+        let sched = h.start();
+
+        expect_event(
+            &h.sink,
+            Duration::from_secs(60),
+            |evs| {
+                evs.iter().any(|e| {
+                    matches!(e,
+                    RoutinesEvent::MissedFires { routine, missed, policy: IfMissed::Skip, ran }
+                        if routine == "daytime-open" && *missed == 6 && !ran)
+                })
+            },
+            "the true (window-open) missed count to be recorded",
+        )
+        .await;
+        assert_eq!(fired(&h.sink.events(), "daytime-open"), 0);
+
+        let report = schedule_status(&h.state);
+        assert_eq!(report.len(), 1);
+        assert_eq!(report[0].routine, "daytime-open");
+        assert_eq!(report[0].missed, 6);
 
         sched.stop();
     }
