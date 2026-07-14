@@ -269,7 +269,7 @@ fn corpus_fixtures_produce_exactly_their_expected_finding_codes() {
             } => {
                 let defs: Vec<RoutineDef> = files.iter().map(|f| load_routine(f)).collect();
                 let ctx = build_context(context);
-                let findings = validate_fleet(&defs, &ctx, *now_unix);
+                let findings = validate_fleet(&defs, &ctx, *now_unix, 0);
                 let actual = codes_of(&findings);
                 let expected = as_str_set(expected_codes);
                 assert_eq!(

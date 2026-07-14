@@ -1,0 +1,388 @@
+//! Routines → TypeScript event contract (plan 2 Task 5a).
+//!
+//! Every routine-run lifecycle transition the UI needs is emitted on ONE Tauri
+//! channel, [`ROUTINES_EVENT`] (`"routines:event"`), as a serialized
+//! [`RoutinesEvent`]. The frontend (plan 5) listens on that channel and
+//! switches on the `kind` discriminant.
+//!
+//! ## Bridge honesty — what v1 emits, and what it does NOT
+//!
+//! The `tuxlink-routines` engine *journals* every step (`StepIntent`/`StepOk`/
+//! `StepErr`/`StateChanged`) but it does NOT emit Tauri events — it is a
+//! Tauri-free leaf crate. Task 5a bridges the engine to the UI at the RUN
+//! boundary only: [`super::session::RoutinesState::start_routine`] emits
+//! [`RoutinesEvent::RunStarted`], and a per-run watcher task emits
+//! [`RoutinesEvent::RunFinished`] when the run's `done` handle resolves.
+//!
+//! Step-level granularity ([`RoutinesEvent::StepCompleted`] /
+//! [`RoutinesEvent::StateChanged`]) is a variant on the wire NOW so plan 5's
+//! listener can be written against the full shape, but v1 does not emit them —
+//! step-by-step UI updates come from the frontend polling the run journal via
+//! the `routines_run_status` / `routines_journal` commands (plan Task 6). This
+//! is a deliberate "keep it simple and honest" choice over tailing the journal
+//! file from a background task (spec §8, §11: the journal is the source of
+//! truth; the event stream is a best-effort UI nudge).
+//!
+//! [`RoutinesEvent::AwaitingConsent`] likewise exists on the wire now but is
+//! emitted by slice 5b (the consent enforcement wrapper), not this slice.
+//!
+//! ## Serde shape
+//!
+//! `#[serde(tag = "kind", rename_all = "camelCase")]` produces an
+//! externally-tagged enum: the discriminant is a `"kind"` field alongside the
+//! variant fields. Per the project's serde pitfall (`rename_all` on an enum
+//! renames variant TAGS, NOT struct-variant fields), every multi-word field
+//! carries an explicit `#[serde(rename = "…")]` so it ships camelCase
+//! (`runId`, `stepId`, `dryRun`) — the shape tests below are the regression
+//! guard, mirroring the `elmer::events` precedent.
+//!
+//! `state` is a [`RunState`]: its snake_case value tags (`completed`,
+//! `interrupted`, `awaiting_consent`, …) are the engine's own terminology, so
+//! reusing the type keeps the wire contract single-sourced rather than
+//! restating the state names as bare strings.
+
+use serde::Serialize;
+
+use tuxlink_routines::journal::RunState;
+use tuxlink_routines::types::IfMissed;
+
+/// The single Tauri channel every routine-run lifecycle event is emitted on.
+/// The frontend listens with `tauriListen(ROUTINES_EVENT, …)` and switches on
+/// `payload.kind`.
+pub const ROUTINES_EVENT: &str = "routines:event";
+
+/// A routine-run lifecycle event. One channel, discriminated by `kind`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum RoutinesEvent {
+    /// A run has started (snapshot resolved, journal opened). Emitted by
+    /// [`super::session::RoutinesState::start_routine`] immediately after the
+    /// engine hands back a `RunHandle`.
+    RunStarted {
+        #[serde(rename = "runId")]
+        run_id: String,
+        /// The routine's name (`RoutineDef.routine`).
+        routine: String,
+        /// Whether this run is a dry-run (plan 3). Always `false` in v1 —
+        /// the field is on the wire now so plan 3 needs no shape change.
+        #[serde(rename = "dryRun")]
+        dry_run: bool,
+    },
+    /// A run reached a terminal state. Emitted by the per-run watcher task when
+    /// the run's `done` handle resolves, and by launch recovery for interrupted
+    /// runs. `reason` is populated only where the emitter has one in hand
+    /// (recovery); the watcher path leaves it `None` because the engine's
+    /// `RunOutcome` carries only the state — the verbatim terminal reason lives
+    /// in the journal and surfaces via `routines_journal` (plan Task 6).
+    RunFinished {
+        #[serde(rename = "runId")]
+        run_id: String,
+        state: RunState,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+    /// A run changed run-state (e.g. `Running` → `AwaitingRadio`). NOT emitted
+    /// in v1 (see module doc); on the wire for plan 5.
+    StateChanged {
+        #[serde(rename = "runId")]
+        run_id: String,
+        state: RunState,
+    },
+    /// A single step finished (ok or errored). NOT emitted in v1 (see module
+    /// doc); on the wire for plan 5.
+    StepCompleted {
+        #[serde(rename = "runId")]
+        run_id: String,
+        #[serde(rename = "stepId")]
+        step_id: String,
+        ok: bool,
+    },
+    /// A transmitting step in attended mode is parked awaiting operator consent.
+    /// The variant exists now; slice 5b (the consent wrapper) is what emits it.
+    AwaitingConsent {
+        #[serde(rename = "runId")]
+        run_id: String,
+        #[serde(rename = "stepId")]
+        step_id: String,
+    },
+    /// The routines LIBRARY changed — a definition, preset, or station-set was
+    /// created, updated, deleted, enabled, or disabled (Task 6's command layer
+    /// emits this after every successful mutation). The payload deliberately
+    /// carries only *what* changed, not the new value: a listener re-reads
+    /// through the same commands it already uses, so there is exactly one
+    /// read path and no chance of the event and the store disagreeing.
+    LibraryChanged {
+        /// Which collection changed.
+        entity: LibraryEntity,
+        /// The affected entry's name.
+        name: String,
+    },
+
+    // ── Task 6b: the scheduler runtime (spec §8) ────────────────────────────
+    // The four ways a scheduled fire can end. Every one of them is VISIBLE:
+    // the scheduler never drops a fire silently, so "my routine didn't run" is
+    // always answerable from the event stream (and the tracing log).
+    /// A schedule fired and a run started. `at` is the SCHEDULED instant (unix
+    /// seconds), not the wake instant — a fire that woke 40 ms late still
+    /// reports the on-grid time it was due, which is what the operator's
+    /// schedule says.
+    ScheduledFire {
+        routine: String,
+        #[serde(rename = "runId")]
+        run_id: String,
+        /// The scheduled fire instant, unix seconds.
+        at: i64,
+    },
+    /// A schedule came due while the PREVIOUS run of the same routine was still
+    /// active, so this fire was skipped rather than started as an overlapping
+    /// second run (see `scheduler.rs`'s "no pile-up" rule). `reason` is
+    /// operator-facing.
+    ScheduleSkipped {
+        routine: String,
+        at: i64,
+        reason: String,
+    },
+    /// A schedule came due and the run was REFUSED at the start gate — an
+    /// unacknowledged automatic-transmit routine (spec §4), or a routine whose
+    /// definition now has validation errors (spec §10). `reason` is the gate's
+    /// verbatim operator-facing message. The scheduler logs it and keeps
+    /// running; a refusal is not a crash and it is not a silent skip.
+    ScheduleRefused {
+        routine: String,
+        at: i64,
+        reason: String,
+    },
+    /// Fires that elapsed while the app was CLOSED (spec §8: schedules pause
+    /// when the app is not running; misses are recorded visibly either way).
+    /// Emitted once per affected routine at launch. `ran` is whether the
+    /// `run_once_on_launch` policy started a single catch-up run (`false` for
+    /// the default `skip` policy, which records the misses and runs nothing).
+    MissedFires {
+        routine: String,
+        /// How many whole fires elapsed while the app was closed.
+        missed: u64,
+        /// The trigger's declared policy.
+        policy: IfMissed,
+        /// Whether a single catch-up run was started (`run_once_on_launch`).
+        ran: bool,
+    },
+}
+
+/// Which routines collection a [`RoutinesEvent::LibraryChanged`] refers to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LibraryEntity {
+    Routine,
+    Preset,
+    StationSet,
+}
+
+/// Side-effect sink the session emits routine events into (the `ft8::events`
+/// and `AprsState` `EventSink` precedent). Production: Tauri `AppHandle::emit`,
+/// fire-and-forget; tests: a recording fake that captures every event.
+pub trait RoutinesEventSink: Send + Sync {
+    fn emit(&self, event: &RoutinesEvent);
+}
+
+/// Production sink: Tauri `AppHandle::emit` on [`ROUTINES_EVENT`],
+/// fire-and-forget (the `modem:status` precedent — a failed emit is a
+/// UI-absent condition, never a service error).
+pub struct TauriRoutinesEventSink {
+    pub app: tauri::AppHandle,
+}
+
+impl TauriRoutinesEventSink {
+    pub fn new(app: tauri::AppHandle) -> Self {
+        Self { app }
+    }
+}
+
+impl RoutinesEventSink for TauriRoutinesEventSink {
+    fn emit(&self, event: &RoutinesEvent) {
+        use tauri::Emitter as _;
+        let _ = self.app.emit(ROUTINES_EVENT, event);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_started_serializes_with_camelcase_fields() {
+        let e = RoutinesEvent::RunStarted {
+            run_id: "run-1-0000".into(),
+            routine: "morning-ics".into(),
+            dry_run: false,
+        };
+        let j: serde_json::Value = serde_json::to_value(&e).unwrap();
+        assert_eq!(j["kind"], "runStarted");
+        assert_eq!(j["runId"], "run-1-0000", "frontend reads payload.runId");
+        assert_eq!(j["routine"], "morning-ics");
+        assert_eq!(j["dryRun"], false, "frontend reads payload.dryRun");
+        // Regression guard: no snake_case leakage.
+        assert!(j.get("run_id").is_none());
+        assert!(j.get("dry_run").is_none());
+    }
+
+    #[test]
+    fn run_finished_serializes_state_as_snake_case_tag_and_omits_absent_reason() {
+        let e = RoutinesEvent::RunFinished {
+            run_id: "run-1-0000".into(),
+            state: RunState::Completed,
+            reason: None,
+        };
+        let j: serde_json::Value = serde_json::to_value(&e).unwrap();
+        assert_eq!(j["kind"], "runFinished");
+        assert_eq!(j["runId"], "run-1-0000");
+        assert_eq!(j["state"], "completed");
+        assert!(
+            j.get("reason").is_none(),
+            "absent reason must be omitted, not null"
+        );
+    }
+
+    #[test]
+    fn run_finished_interrupted_carries_reason() {
+        let e = RoutinesEvent::RunFinished {
+            run_id: "run-dead".into(),
+            state: RunState::Interrupted,
+            reason: Some("process terminated underneath this run".into()),
+        };
+        let j: serde_json::Value = serde_json::to_value(&e).unwrap();
+        assert_eq!(j["state"], "interrupted");
+        assert_eq!(j["reason"], "process terminated underneath this run");
+    }
+
+    #[test]
+    fn step_completed_and_awaiting_consent_ship_camelcase_step_id() {
+        let sc = RoutinesEvent::StepCompleted {
+            run_id: "r".into(),
+            step_id: "s1".into(),
+            ok: true,
+        };
+        let j: serde_json::Value = serde_json::to_value(&sc).unwrap();
+        assert_eq!(j["kind"], "stepCompleted");
+        assert_eq!(j["stepId"], "s1", "frontend reads payload.stepId");
+        assert!(j.get("step_id").is_none());
+
+        let ac = RoutinesEvent::AwaitingConsent {
+            run_id: "r".into(),
+            step_id: "s2".into(),
+        };
+        let j: serde_json::Value = serde_json::to_value(&ac).unwrap();
+        assert_eq!(j["kind"], "awaitingConsent");
+        assert_eq!(j["stepId"], "s2");
+    }
+
+    #[test]
+    fn library_changed_serializes_camelcase_entity_tags() {
+        // serde `rename_all` on an enum renames variant TAGS (the project's
+        // standing serde pitfall) — assert the exact wire strings the frontend
+        // switches on, so a rename can't silently break the listener.
+        let e = RoutinesEvent::LibraryChanged {
+            entity: LibraryEntity::StationSet,
+            name: "or-gateways".into(),
+        };
+        let j: serde_json::Value = serde_json::to_value(&e).unwrap();
+        assert_eq!(j["kind"], "libraryChanged");
+        assert_eq!(j["entity"], "stationSet");
+        assert_eq!(j["name"], "or-gateways");
+
+        for (entity, tag) in [
+            (LibraryEntity::Routine, "routine"),
+            (LibraryEntity::Preset, "preset"),
+        ] {
+            let j = serde_json::to_value(RoutinesEvent::LibraryChanged {
+                entity,
+                name: "x".into(),
+            })
+            .unwrap();
+            assert_eq!(j["entity"], tag);
+        }
+    }
+
+    // ── Task 6b — the scheduler's four fire outcomes ────────────────────────
+
+    #[test]
+    fn scheduled_fire_ships_camelcase_run_id_and_the_scheduled_instant() {
+        let e = RoutinesEvent::ScheduledFire {
+            routine: "morning-ics".into(),
+            run_id: "run-1752400000-0000".into(),
+            at: 1_752_400_000,
+        };
+        let j: serde_json::Value = serde_json::to_value(&e).unwrap();
+        assert_eq!(j["kind"], "scheduledFire");
+        assert_eq!(j["routine"], "morning-ics");
+        assert_eq!(j["runId"], "run-1752400000-0000");
+        assert_eq!(j["at"], 1_752_400_000);
+        assert!(j.get("run_id").is_none(), "no snake_case leakage");
+    }
+
+    #[test]
+    fn schedule_skipped_and_refused_carry_the_verbatim_reason() {
+        let skipped = RoutinesEvent::ScheduleSkipped {
+            routine: "morning-ics".into(),
+            at: 1_752_400_000,
+            reason: "previous run still active".into(),
+        };
+        let j: serde_json::Value = serde_json::to_value(&skipped).unwrap();
+        assert_eq!(j["kind"], "scheduleSkipped");
+        assert_eq!(j["reason"], "previous run still active");
+
+        let refused = RoutinesEvent::ScheduleRefused {
+            routine: "auto-tx".into(),
+            at: 1_752_400_000,
+            reason: "routine 'auto-tx' transmits under automatic control but has no \
+                     recorded acknowledgment"
+                .into(),
+        };
+        let j: serde_json::Value = serde_json::to_value(&refused).unwrap();
+        assert_eq!(j["kind"], "scheduleRefused");
+        assert_eq!(j["routine"], "auto-tx");
+        assert!(
+            j["reason"].as_str().unwrap().contains("acknowledgment"),
+            "the gate's operator-facing message ships verbatim: {j}"
+        );
+    }
+
+    #[test]
+    fn missed_fires_serializes_the_policy_as_the_engine_snake_case_tag() {
+        // `IfMissed` is `rename_all = "snake_case"` in the leaf — reuse the type
+        // rather than restating the policy names as bare strings, and assert the
+        // exact wire values plan 5's listener switches on.
+        let e = RoutinesEvent::MissedFires {
+            routine: "overnight-sync".into(),
+            missed: 7,
+            policy: IfMissed::RunOnceOnLaunch,
+            ran: true,
+        };
+        let j: serde_json::Value = serde_json::to_value(&e).unwrap();
+        assert_eq!(j["kind"], "missedFires");
+        assert_eq!(j["routine"], "overnight-sync");
+        assert_eq!(j["missed"], 7);
+        assert_eq!(j["policy"], "run_once_on_launch");
+        assert_eq!(j["ran"], true);
+
+        let skip = RoutinesEvent::MissedFires {
+            routine: "overnight-sync".into(),
+            missed: 7,
+            policy: IfMissed::Skip,
+            ran: false,
+        };
+        let j: serde_json::Value = serde_json::to_value(&skip).unwrap();
+        assert_eq!(j["policy"], "skip");
+        assert_eq!(j["ran"], false, "skip records the misses and runs nothing");
+    }
+
+    #[test]
+    fn state_changed_serializes_awaiting_radio_state() {
+        let e = RoutinesEvent::StateChanged {
+            run_id: "r".into(),
+            state: RunState::AwaitingRadio,
+        };
+        let j: serde_json::Value = serde_json::to_value(&e).unwrap();
+        assert_eq!(j["kind"], "stateChanged");
+        assert_eq!(j["state"], "awaiting_radio");
+    }
+}

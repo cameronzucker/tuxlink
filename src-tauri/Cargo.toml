@@ -145,6 +145,9 @@ tuxlink-mcp-core = { path = "tuxlink-mcp-core" }
 tux-rig = { path = "tux-rig" }
 tuxlink-agent-runner = { path = "tuxlink-agent-runner" }
 tuxlink-agent-frontend = { path = "tuxlink-agent-frontend" }
+# Routines (tuxlink-ofw4s plan 2): deterministic station automation engine —
+# Tauri-free leaf crate mounted under src/routines/ (spec §6/§9/§14).
+tuxlink-routines = { path = "tuxlink-routines" }
 # FT8 Station Intelligence L2 (tuxlink-b026z.3): pure capture logic (leaf,
 # std-only) + the ALSA binding for the one hardware touchpoint
 # (src/ft8/alsa_source.rs). `alsa` links system libasound: CI/apt gains
@@ -172,6 +175,7 @@ tuxlink-stt = { path = "tuxlink-stt" }
 # `macros` come in transitively via tuxlink-mcp-core; Cargo unifies to a single
 # copy.
 rmcp = { version = "2.1", features = ["client", "transport-async-rw"] }
+tauri-plugin-notification = "2"  # NEW (Routines plan 2 Task 4d) — local.notify desktop notifications
 
 # tuxlink-cumx / G8 — faithful PDF export drives the live form's WebKitGTK view
 # via WebKitPrintOperation. Both crates are already in the build (transitive via
@@ -190,6 +194,13 @@ gtk = "=0.18.2"
 # Release `cargo build` does not resolve dev-dependencies, so `for_test` and
 # other test-support seams stay out of production binaries.
 tuxlink = { path = ".", features = ["test-support"] }
+# `test-util` (mock clock / `#[tokio::test(start_paused = true)]`) is NOT part
+# of tokio's "full" feature bundle ([dependencies] above), so the
+# routines::actions test modules' paused-clock tests need it added here.
+# Cargo unifies features across dep kinds for the same tokio version, so this
+# only turns test-util on for test/bench/example builds, not release —
+# mirrors tuxlink-routines/Cargo.toml's leaf-crate dev-dependencies.
+tokio = { version = "1", features = ["test-util"] }
 # tuxlink-mcp-core with test-support exposes mock ports + state_with_seeded_inbox
 # for the elmer/ integration tests (Task 4 taint-parity + withholding tests).
 tuxlink-mcp-core = { path = "tuxlink-mcp-core", features = ["test-support"] }
@@ -199,6 +210,14 @@ serial_test = "3"          # NEW — gates env-var-mutating tests
 proptest = "1.4"           # NEW (tuxlink-c79g T7) — state-space matrix tests for position arbiter invariants I1-I5
 static_assertions = "1.1"  # alpha-logging (tuxlink-qjgx) — credential-struct Debug audit test
 tracing-test = "0.2"       # alpha-logging (tuxlink-qjgx) — Task 9.1 emission-coverage tests
+# Routines plan 2 Task 6c fix round: `tauri::test::mock_app`/`MockRuntime` for
+# the graceful-quit gate's headless unit tests (lib.rs's `quit_gate_tests`).
+# `tauri`'s `test` module is `#[cfg(any(test, feature = "test"))]`-gated
+# inside the tauri crate itself; this dev-dependency override turns the
+# feature on for test/bench/example builds only (same differential-
+# resolution reasoning as the `tokio`/`test-util` override above), so it
+# never reaches the release binary.
+tauri = { version = "2", features = ["test"] }
 syn = { version = "2", features = ["full", "parsing", "visit"] }  # alpha-logging (tuxlink-qjgx) — credential struct source-scan (§10.2 #9)
 quote = "1"                # alpha-logging (tuxlink-qjgx) — ToTokens for type normalization in source-scan
 

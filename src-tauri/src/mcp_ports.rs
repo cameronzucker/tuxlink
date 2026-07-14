@@ -1282,6 +1282,8 @@ impl EgressPort for MonolithEgressPort {
                 crate::modem_commands::modem_ardop_connect(
                     app.clone(),
                     app.state::<Arc<crate::modem_status::ModemSession>>(),
+                    // plan 2 Task 5c: interactive-lease wiring param.
+                    app.state::<Arc<crate::routines::arbiter::RadioArbiter>>(),
                     target,
                     freq_hz,
                     qsy,
@@ -1406,6 +1408,8 @@ impl EgressPort for MonolithEgressPort {
                     app.state::<Arc<crate::winlink::modem::vara::VaraSession>>(),
                     app.state::<Arc<crate::session_log::SessionLogState>>(),
                     app.state::<Arc<crate::ui_commands::VaraListenState>>(),
+                    // plan 2 Task 5c: interactive-lease wiring param.
+                    app.state::<Arc<crate::routines::arbiter::RadioArbiter>>(),
                     map_session_intent(intent),
                     transport_kind,
                 )
@@ -1436,6 +1440,8 @@ impl EgressPort for MonolithEgressPort {
                     app.clone(),
                     app.state::<crate::app_backend::BackendState>(),
                     app.state::<Arc<crate::session_log::SessionLogState>>(),
+                    // plan 2 Task 5c: interactive-lease wiring param.
+                    app.state::<Arc<crate::routines::arbiter::RadioArbiter>>(),
                     call,
                     path,
                     None,
@@ -1511,6 +1517,12 @@ impl AbortPort for MonolithAbortPort {
         crate::modem_commands::modem_ardop_disconnect(
             self.app.clone(),
             self.app.state::<Arc<crate::modem_status::ModemSession>>(),
+            // plan 2 Task 5c fix round 2: listener-armed gate param.
+            self.app
+                .state::<Arc<crate::ui_commands::ArdopListenState>>(),
+            // plan 2 Task 5c: interactive-lease wiring param.
+            self.app
+                .state::<Arc<crate::routines::arbiter::RadioArbiter>>(),
         )
         .await
         .map_err(|e| PortError::Internal(redact_err(e)))
@@ -2329,20 +2341,26 @@ fn map_gateway_antenna_in(a: GatewayAntennaDto) -> crate::catalog::stations::Gat
 /// `find_stations` filter accepts; `60m` uses the channelized 5 MHz allocation
 /// span. Edges are inclusive. Used for the client-side BAND filter — a gateway
 /// is kept when at least one of its dials maps to a requested band.
+/// Inclusive `(lo_khz, hi_khz, label)` amateur-band edges. `pub(crate)` (not
+/// module-private) so `routines::actions::radio::band_range` (plan 2 Task
+/// 5c's `GatewayFrequencyResolver`) reads the SAME table this file's
+/// `khz_to_band` uses, rather than a second, independently-maintained copy
+/// that could drift — see [`khz_to_band`]'s own doc for the edge-value
+/// rationale/citation.
+pub(crate) const BANDS: &[(f64, f64, &str)] = &[
+    (1800.0, 2000.0, "160m"),
+    (3500.0, 4000.0, "80m"),
+    (5300.0, 5410.0, "60m"),
+    (7000.0, 7300.0, "40m"),
+    (10100.0, 10150.0, "30m"),
+    (14000.0, 14350.0, "20m"),
+    (18068.0, 18168.0, "17m"),
+    (21000.0, 21450.0, "15m"),
+    (24890.0, 24990.0, "12m"),
+    (28000.0, 29700.0, "10m"),
+];
+
 fn khz_to_band(khz: f64) -> Option<&'static str> {
-    // Inclusive ranges, low..=high in kHz.
-    const BANDS: &[(f64, f64, &str)] = &[
-        (1800.0, 2000.0, "160m"),
-        (3500.0, 4000.0, "80m"),
-        (5300.0, 5410.0, "60m"),
-        (7000.0, 7300.0, "40m"),
-        (10100.0, 10150.0, "30m"),
-        (14000.0, 14350.0, "20m"),
-        (18068.0, 18168.0, "17m"),
-        (21000.0, 21450.0, "15m"),
-        (24890.0, 24990.0, "12m"),
-        (28000.0, 29700.0, "10m"),
-    ];
     for (lo, hi, label) in BANDS {
         if khz >= *lo && khz <= *hi {
             return Some(label);
@@ -2889,22 +2907,41 @@ fn wwv_port_err(e: crate::ui_commands::UiError) -> PortError {
     }
 }
 
-/// [`WwvPort`] adapter over the off-air WWV capture commands. Holds no handle —
-/// both commands read the on-disk config directly (an unused `AppHandle` field
-/// would be dead code), so this is a unit struct.
-pub struct MonolithWwvPort;
+/// [`WwvPort`] adapter over the off-air WWV capture commands.
+///
+/// Holds an `AppHandle` solely to reach the globally-`.manage()`d
+/// `Arc<RadioArbiter>`: routines plan 2 Task 5c made `wwv_offair_refresh` take
+/// the arbiter (an off-air capture SEIZES the rig — it tunes to the WWV dial and
+/// listens — so it must take an interactive lease rather than yanking the radio
+/// out from under a running routine). Tauri injects that `State` for free on the
+/// IPC path; an in-process caller like this port has to fetch it, which is what
+/// `MonolithDataService::wwv_capture` (the routines-side caller) already does.
+pub struct MonolithWwvPort {
+    app: AppHandle,
+}
+
+impl MonolithWwvPort {
+    pub fn new(app: AppHandle) -> Self {
+        Self { app }
+    }
+}
 
 #[async_trait]
 impl WwvPort for MonolithWwvPort {
     async fn capture(&self) -> Result<WwvCaptureDto, PortError> {
         use crate::catalog::stations_cache::{Clock, SystemClock};
+        use tauri::Manager as _;
 
         // Same clock the solar snapshot loader uses — the capture stamps the
         // ingested snapshot and picks the WWV dial for the current UTC hour.
         let now_ms = SystemClock.now_millis();
-        let out = crate::wwv_offair::commands::wwv_offair_refresh(now_ms)
-            .await
-            .map_err(wwv_port_err)?;
+        let out = crate::wwv_offair::commands::wwv_offair_refresh(
+            now_ms,
+            self.app
+                .state::<std::sync::Arc<crate::routines::arbiter::RadioArbiter>>(),
+        )
+        .await
+        .map_err(wwv_port_err)?;
 
         // Flatten the optional SolarIndices into the three optional fields. A
         // no-copy capture carries no indices (nothing was written), so all three

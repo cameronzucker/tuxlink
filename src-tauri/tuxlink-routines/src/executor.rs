@@ -9,6 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::action::ActionRegistry;
 use crate::compose::RoutineInvoker;
+use crate::consent::ConsentPort;
 use crate::error::StepError;
 use crate::journal::{JournalWriter, RunEvent, RunState};
 use crate::types::{ActionStep, Control, Step, StepId, Track};
@@ -32,6 +33,67 @@ pub struct ExecCtx {
     /// (spec §7); root runs start at 0, each `Control::Call` a child engine
     /// spawns increments it by one.
     pub depth: u32,
+    /// Whether transmit steps in THIS run must pause for operator consent
+    /// (spec §4 attended mode). Computed by the engine as the sticky OR of the
+    /// run's own `transmit_mode == attended` with its parent's effective flag,
+    /// and forced `false` for dry-runs (a fake-world run never parks). The
+    /// executor reads it directly (with the step's `transmits` descriptor and
+    /// [`consent`](Self::consent)) to decide whether to park a transmit step
+    /// BEFORE its timed `execute` — see [`run_action_step_shared`]. Non-attended
+    /// runs never park.
+    pub attended: bool,
+    /// The attended-consent parking desk (spec §4, §8). `Some` in production
+    /// (the monolith's `ConsentRegistry`); `None` in leaf tests that do not
+    /// exercise consent. When `attended` is set and a step's action
+    /// `transmits`, the executor parks on this port — a WAITING state entered
+    /// BEFORE the per-step timeout, so parked-awaiting-consent time is never
+    /// charged against the transmit step's timeout (the timeout is a
+    /// wedged-transport backstop, not a consent clock). A `None` consent port
+    /// with an attended transmitting run does not park (there is nothing to
+    /// park on); the start gate remains the enforcement in that configuration.
+    pub consent: Option<Arc<dyn ConsentPort>>,
+}
+
+/// Injects the engine→action params envelope onto a step's resolved params,
+/// immediately before `Action::execute` (plan 2 Task 5b closes the plan-Task-5
+/// glue the earlier slices deferred). The `Action` trait (locked in plan 1)
+/// only hands `execute` a `params: Value`, so run/step identity and the step's
+/// contention policy + timeout can only cross that boundary as reserved,
+/// underscore-prefixed keys the monolith's action helpers (`actions/mod.rs`)
+/// already read:
+///
+/// * `_run_id` / `_step_id` — the [`crate::action::Action`]'s arbiter lease
+///   holder (`run_holder_from_params`).
+/// * `_radio_busy_policy` / `_step_timeout_s` — the radio actions' lease
+///   `BusyPolicy` + acquire-wait timeout (`busy_policy_from_params` /
+///   `step_timeout_from_params`).
+///
+/// The attended-consent decision does NOT ride the envelope: the executor parks
+/// on [`ConsentPort`] directly (before this envelope is even built), so no
+/// `_attended` key is injected — consent is an executor concern, not an action
+/// param.
+///
+/// The envelope rides only the value handed to `execute`; the journal's
+/// `StepIntent.resolved_params` records the CLEAN pre-envelope params (the
+/// author's real inputs), keeping the durable record free of internal plumbing.
+/// Non-object params pass through untouched (transmit/radio actions always take
+/// object params; the envelope only matters to them).
+fn with_envelope(resolved: serde_json::Value, step: &ActionStep, ctx: &ExecCtx) -> serde_json::Value {
+    let serde_json::Value::Object(mut obj) = resolved else {
+        return resolved;
+    };
+    obj.insert("_run_id".into(), serde_json::Value::String(ctx.run_id.clone()));
+    obj.insert("_step_id".into(), serde_json::Value::String(step.id.0.clone()));
+    obj.insert(
+        "_radio_busy_policy".into(),
+        serde_json::to_value(step.on_radio_busy).unwrap_or(serde_json::Value::Null),
+    );
+    let timeout = step.timeout_s.unwrap_or(ctx.default_timeout_s);
+    obj.insert(
+        "_step_timeout_s".into(),
+        serde_json::Value::Number(timeout.into()),
+    );
+    serde_json::Value::Object(obj)
 }
 
 /// `Align` and `duration_to_next_align` now live in `scheduler.rs` (Task 9;
@@ -158,13 +220,61 @@ async fn run_action_step_shared(
         RunEvent::StepIntent {
             step: step.id.clone(),
             action: step.action.clone(),
+            // Journal the CLEAN params (author's real inputs); the internal
+            // engine→action envelope rides only the value handed to execute.
             resolved_params: resolved.clone(),
         },
     );
+
+    // Attended-mode transmit consent (spec §4, §8): a `transmits: true` step in
+    // an attended run pauses HERE — BEFORE the per-step timeout below — awaiting
+    // the control operator's per-transmission go-ahead. `AwaitingConsent` is a
+    // WAITING state, not wedged-transport time, so parking must NOT be charged
+    // against the step's timeout (the timeout is a backstop for a hung
+    // transport, not for an operator who steps away from the rig at 03:00).
+    // `ctx.attended` already folds in the dry-run exemption (the engine forces
+    // it `false` for a fake-world run), so this never parks a dry-run. The park
+    // future is dropped if the run is cancelled while parked — its RAII guard
+    // releases the parked slot (no stale grant sender leaks) and the transmit
+    // action is NEVER reached, so no carrier is ever keyed without consent.
+    if ctx.attended && action.descriptor().transmits {
+        if let Some(consent) = &ctx.consent {
+            journal(
+                ctx,
+                RunEvent::StateChanged {
+                    state: RunState::AwaitingConsent,
+                },
+            );
+            let parked = tokio::select! {
+                r = consent.park(&ctx.run_id, &step.id.0) => r,
+                _ = ctx.cancel.cancelled() => Err(StepError::Cancelled),
+            };
+            match parked {
+                Ok(()) => journal(
+                    ctx,
+                    RunEvent::StateChanged {
+                        state: RunState::Running,
+                    },
+                ),
+                Err(err) => {
+                    journal(
+                        ctx,
+                        RunEvent::StepErr {
+                            step: step.id.clone(),
+                            error: err.clone(),
+                        },
+                    );
+                    return Err(err);
+                }
+            }
+        }
+    }
+
+    let enveloped = with_envelope(resolved, step, ctx);
     let seconds = step.timeout_s.unwrap_or(ctx.default_timeout_s);
     let child_cancel = ctx.cancel.child_token();
     let result = tokio::select! {
-        r = tokio::time::timeout(Duration::from_secs(seconds), action.execute(resolved, child_cancel.clone())) => {
+        r = tokio::time::timeout(Duration::from_secs(seconds), action.execute(enveloped, child_cancel.clone())) => {
             match r {
                 Ok(inner) => inner,
                 Err(_elapsed) => {
@@ -512,6 +622,8 @@ pub async fn run_tracks(
             invoker: ctx.invoker.clone(),
             run_id: ctx.run_id.clone(),
             depth: ctx.depth,
+            attended: ctx.attended,
+            consent: ctx.consent.clone(),
         };
         set.spawn(async move { run_track_shared(&track, &vars, &task_ctx).await });
     }
@@ -609,6 +721,8 @@ mod tests {
             invoker: Arc::new(FakeInvoker::new()),
             run_id: "run-t".into(),
             depth: 0,
+            attended: false,
+            consent: None,
         };
         (ctx, path)
     }
@@ -1206,6 +1320,188 @@ mod tests {
             }
             other => panic!("expected StepError::Action from the step budget, got {other:?}"),
         }
+    }
+
+    /// Plan 2 Task 5b: the executor injects the engine→action envelope
+    /// (`_run_id`/`_step_id`/`_radio_busy_policy`/`_step_timeout_s`) onto the
+    /// params handed to `execute`, while the journal's
+    /// `StepIntent.resolved_params` records the CLEAN author params. The
+    /// attended-consent decision is NOT an envelope key — the executor parks on
+    /// `ConsentPort` directly — so `_attended` never reaches `execute`.
+    #[tokio::test]
+    async fn execute_receives_the_envelope_while_the_journal_stays_clean() {
+        let tx = Arc::new(FakeAction::new("radio.tx").ok(json!({"sent": true})));
+        let mut reg = ActionRegistry::default();
+        reg.register(tx.clone());
+        let dir = tempfile::tempdir().unwrap();
+        let (ctx, jpath) = ctx(reg, dir.path());
+        let step = ActionStep {
+            id: StepId("s1".into()),
+            action: "radio.tx".into(),
+            params: json!({"to": "W7ABC"}),
+            timeout_s: Some(42),
+            on_radio_busy: BusyPolicy::Fail,
+        };
+        let track = Track { name: "t".into(), steps: vec![Step::Action(step)] };
+        let mut vars = RunVars::default();
+        run_track(&track, &mut vars, &ctx).await.unwrap();
+
+        // execute() saw the full envelope on top of the author's own param.
+        let seen = &tx.calls()[0];
+        assert_eq!(seen["to"], "W7ABC");
+        assert_eq!(seen["_run_id"], "run-t");
+        assert_eq!(seen["_step_id"], "s1");
+        assert_eq!(seen["_radio_busy_policy"], "fail");
+        assert_eq!(seen["_step_timeout_s"], 42);
+        // Consent is an executor concern, not an action param.
+        assert!(seen.get("_attended").is_none(), "_attended must not ride the envelope");
+
+        // The journal's StepIntent kept the clean params (no envelope keys).
+        let entries = read_journal(&jpath).unwrap();
+        let intent = entries
+            .iter()
+            .find_map(|e| match &e.event {
+                RunEvent::StepIntent { resolved_params, .. } => Some(resolved_params.clone()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(intent, json!({"to": "W7ABC"}));
+        assert!(intent.get("_run_id").is_none(), "journal must stay clean");
+    }
+
+    /// Restructure (spec §8): parked-awaiting-consent time is a WAITING state
+    /// entered BEFORE the per-step timeout, so it is NOT charged against the
+    /// transmit step's timeout. A step with `timeout_s: 1` whose consent park
+    /// takes a full virtual hour to grant still executes successfully once
+    /// granted — the old wrapper-inside-`execute` design would have failed it
+    /// with `Timeout` after 1s of the parked wait.
+    #[tokio::test(start_paused = true)]
+    async fn park_time_is_not_charged_against_the_step_timeout() {
+        let tx = Arc::new(
+            FakeAction::new("radio.tx")
+                .with_capabilities(true, true, false)
+                .ok(json!({"sent": true})),
+        );
+        let mut reg = ActionRegistry::default();
+        reg.register(tx.clone());
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ctx, jpath) = ctx(reg, dir.path());
+        ctx.attended = true;
+        // A consent port that grants only after a full virtual hour.
+        ctx.consent = Some(Arc::new(crate::fakes::FakeConsent::granting_after(
+            Duration::from_secs(3600),
+        )));
+        let step = ActionStep {
+            id: StepId("s1".into()),
+            action: "radio.tx".into(),
+            params: json!({}),
+            timeout_s: Some(1),
+            on_radio_busy: BusyPolicy::Wait,
+        };
+        let track = Track { name: "t".into(), steps: vec![Step::Action(step)] };
+        let mut vars = RunVars::default();
+        // The 3600s parked wait elapses in virtual time; the 1s step timeout is
+        // NOT consumed by it — the action runs and the run completes.
+        let end = run_track(&track, &mut vars, &ctx).await.unwrap();
+        assert!(matches!(end, TrackEnd::Completed));
+        assert_eq!(tx.calls().len(), 1, "transmit ran after the grant");
+
+        // The journal is honest: AwaitingConsent then Running bracket the park.
+        let entries = read_journal(&jpath).unwrap();
+        let states: Vec<RunState> = entries
+            .iter()
+            .filter_map(|e| match &e.event {
+                RunEvent::StateChanged { state } => Some(*state),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            states,
+            vec![RunState::AwaitingConsent, RunState::Running],
+            "journal must show AwaitingConsent then Running around the park"
+        );
+        // Ordering: AwaitingConsent lands AFTER the step's intent, before ok.
+        let kinds: Vec<&str> = entries
+            .iter()
+            .map(|e| match &e.event {
+                RunEvent::StepIntent { .. } => "intent",
+                RunEvent::StateChanged { state: RunState::AwaitingConsent } => "awaiting",
+                RunEvent::StateChanged { state: RunState::Running } => "running",
+                RunEvent::StepOk { .. } => "ok",
+                other => panic!("unexpected {other:?}"),
+            })
+            .collect();
+        assert_eq!(kinds, vec!["intent", "awaiting", "running", "ok"]);
+    }
+
+    /// A non-transmitting action in an attended run does NOT park (nothing to
+    /// consent to), even with a consent port present — parking is gated on the
+    /// action's `transmits` descriptor, not merely on attended-ness.
+    #[tokio::test]
+    async fn non_transmitting_step_never_parks_in_attended_run() {
+        let log = Arc::new(FakeAction::new("local.log").ok(json!({})));
+        let mut reg = ActionRegistry::default();
+        reg.register(log.clone());
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ctx, jpath) = ctx(reg, dir.path());
+        ctx.attended = true;
+        let consent = Arc::new(crate::fakes::FakeConsent::granting_after(Duration::ZERO));
+        ctx.consent = Some(consent.clone());
+        let track = Track { name: "t".into(), steps: vec![action("s1", "local.log", json!({}))] };
+        let mut vars = RunVars::default();
+        run_track(&track, &mut vars, &ctx).await.unwrap();
+        assert!(consent.parked().is_empty(), "a non-transmit step must not park");
+        // No AwaitingConsent state was journaled.
+        let entries = read_journal(&jpath).unwrap();
+        assert!(!entries.iter().any(|e| matches!(
+            &e.event,
+            RunEvent::StateChanged { state: RunState::AwaitingConsent }
+        )));
+    }
+
+    /// Cancelling the run while a transmit step is parked ends the step
+    /// `Cancelled` and NEVER executes the transmit action — the executor's
+    /// select takes the cancel branch, dropping the park future (whose RAII
+    /// guard releases the slot in the real registry).
+    #[tokio::test]
+    async fn cancel_while_parked_fails_cancelled_and_never_transmits() {
+        let tx = Arc::new(
+            FakeAction::new("radio.tx")
+                .with_capabilities(true, true, false)
+                .ok(json!({"sent": true})),
+        );
+        let mut reg = ActionRegistry::default();
+        reg.register(tx.clone());
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ctx, _) = ctx(reg, dir.path());
+        ctx.attended = true;
+        // A consent port that never grants: the step stays parked until cancel.
+        let consent = Arc::new(crate::fakes::FakeConsent::never());
+        ctx.consent = Some(consent.clone());
+        let cancel = ctx.cancel.clone();
+        let step = ActionStep {
+            id: StepId("s1".into()),
+            action: "radio.tx".into(),
+            params: json!({}),
+            timeout_s: Some(30),
+            on_radio_busy: BusyPolicy::Wait,
+        };
+        let track = Track { name: "t".into(), steps: vec![Step::Action(step)] };
+
+        let handle = tokio::spawn(async move {
+            let mut vars = RunVars::default();
+            run_track(&track, &mut vars, &ctx).await
+        });
+        // Wait until the step has actually reached the park, then cancel.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while consent.parked().is_empty() {
+            assert!(std::time::Instant::now() < deadline, "step never parked");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        cancel.cancel();
+        let res = handle.await.unwrap();
+        assert!(matches!(res, Err(StepError::Cancelled)));
+        assert!(tx.calls().is_empty(), "transmit action NEVER ran");
     }
 
     /// FINDING 2 + 6: a branch variable that resolves to a non-boolean is a

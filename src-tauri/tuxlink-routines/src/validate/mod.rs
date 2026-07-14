@@ -59,14 +59,22 @@ pub fn validate(def: &RoutineDef, ctx: &dyn ValidationContext) -> Vec<Finding> {
 /// (`fleet::HORIZON_SECONDS`) — a caller-supplied timestamp, not a hidden
 /// clock read, so the check is deterministic and testable at any instant
 /// (mirrors `scheduler::next_fire`'s own `now_unix` parameter).
+///
+/// `utc_offset_seconds` (`local - utc`, `chrono`'s `FixedOffset::local_minus_utc`
+/// convention) is the same seam: a `Trigger::Schedule`'s `window` gates in the
+/// operator's LOCAL clock (`scheduler::within_window`), so the fleet check's
+/// fire-sequence walk must be told the same offset `next_fire` itself expects
+/// — this crate is Tauri- and chrono-free, so the caller (the app layer)
+/// resolves the actual offset and passes it in as a plain `i32`.
 pub fn validate_fleet(
     defs: &[RoutineDef],
     ctx: &dyn ValidationContext,
     now_unix: i64,
+    utc_offset_seconds: i32,
 ) -> Vec<Finding> {
     let mut findings: Vec<Finding> = defs.iter().flat_map(|def| validate(def, ctx)).collect();
 
-    fleet::check(defs, ctx, now_unix, &mut findings);
+    fleet::check(defs, ctx, now_unix, utc_offset_seconds, &mut findings);
 
     sort_findings(&mut findings);
     findings
@@ -120,13 +128,13 @@ mod tests {
     fn fleet_skeleton_returns_empty_for_trivially_valid_routines() {
         let def = trivially_valid_routine();
         let ctx = StaticContext::new();
-        assert_eq!(validate_fleet(&[def], &ctx, 0), Vec::new());
+        assert_eq!(validate_fleet(&[def], &ctx, 0, 0), Vec::new());
     }
 
     #[test]
     fn fleet_skeleton_handles_the_empty_fleet() {
         let ctx = StaticContext::new();
-        assert_eq!(validate_fleet(&[], &ctx, 0), Vec::new());
+        assert_eq!(validate_fleet(&[], &ctx, 0, 0), Vec::new());
     }
 
     #[test]

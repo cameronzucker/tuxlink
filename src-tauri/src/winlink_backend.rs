@@ -1185,6 +1185,31 @@ pub trait WinlinkBackend: Send + Sync {
     /// `NativeBackend` assigns a real filesystem-derived MID at queue time.
     async fn send_message(&self, msg: OutboundMessage) -> Result<MessageId, BackendError>;
 
+    /// Queue with an explicit `From` override (Routines `local.compose`'s
+    /// run-scoped `from_identity` param, spec §6 "Set identity"). `from:
+    /// None` ⇒ identical to [`Self::send_message`] ("the app's current
+    /// identity applies"). `from: Some(callsign)` composes+queues under that
+    /// exact callsign WITHOUT touching `active_identity()` or persisted
+    /// config — the override is per-call only, never the process-shared
+    /// session-identity slot [`Self::set_active_identity`] writes. This is
+    /// the mechanism spec §6 needs to keep "Set identity" genuinely
+    /// run-scoped: mutating the shared slot instead would make parallel
+    /// routine runs with different tactical calls race each other, exactly
+    /// what run-scoping exists to prevent.
+    ///
+    /// Default delegates to [`Self::send_message`] and ignores `from` —
+    /// matches this trait's existing "unimplemented override, `NativeBackend`
+    /// supplies the real behavior" convention (see `abort`/`restore_message`
+    /// above).
+    async fn send_message_as(
+        &self,
+        msg: OutboundMessage,
+        from: Option<String>,
+    ) -> Result<MessageId, BackendError> {
+        let _ = from;
+        self.send_message(msg).await
+    }
+
     /// Connect and run the exchange. `selection`: `None` ⇒ accept-all (download
     /// all inbound); `Some(CmsSelectionContext)` ⇒ on a CMS connect with the
     /// review-inbound preference on, prompt the operator to select which inbound
@@ -1570,6 +1595,34 @@ impl NativeBackend {
         guard.clone().ok_or(BackendError::NoActiveIdentity)
     }
 
+    /// Shared compose+store body for [`WinlinkBackend::send_message`] and
+    /// [`WinlinkBackend::send_message_as`] — the only difference between the
+    /// two trait methods is how `from` is resolved (session/config lookup
+    /// vs. a direct per-call override), so both funnel here once `from` is
+    /// known. Mirrors the pre-refactor `send_message` body exactly (same
+    /// `compose_message_with_files` + `Outbox` store + change-notify calls).
+    fn queue_message(&self, msg: OutboundMessage, from: String) -> Result<MessageId, BackendError> {
+        // The trait carries an RFC 3339 date; fall back to now if unparseable.
+        let unix_secs = parse_rfc3339_secs(&msg.date).unwrap_or_else(now_unix_secs);
+        let to: Vec<&str> = msg.to.iter().map(String::as_str).collect();
+        let cc: Vec<&str> = msg.cc.iter().map(String::as_str).collect();
+        let message = compose::compose_message_with_files(
+            &from,
+            &to,
+            &cc,
+            &msg.subject,
+            &msg.body,
+            &msg.attachments,
+            unix_secs,
+        )
+        .map_err(|e| BackendError::MessageRejected(e.to_string()))?;
+        let id = self
+            .mailbox
+            .store(MailboxFolder::Outbox, &message.to_bytes())?;
+        (self.mailbox_change)();
+        Ok(id)
+    }
+
     /// Phase 5 (tuxlink-tseu): refuse CMS entry for a tactical session whose
     /// address is not verified CMS-registered (fail-closed). A FULL session is a
     /// no-op (`Ok`). Reads + persists the 24h cache from the on-disk IdentityStore.
@@ -1847,25 +1900,27 @@ impl WinlinkBackend for NativeBackend {
                 .clone()
                 .ok_or(BackendError::NoActiveIdentity)?,
         };
-        // The trait carries an RFC 3339 date; fall back to now if unparseable.
-        let unix_secs = parse_rfc3339_secs(&msg.date).unwrap_or_else(now_unix_secs);
-        let to: Vec<&str> = msg.to.iter().map(String::as_str).collect();
-        let cc: Vec<&str> = msg.cc.iter().map(String::as_str).collect();
-        let message = compose::compose_message_with_files(
-            &from,
-            &to,
-            &cc,
-            &msg.subject,
-            &msg.body,
-            &msg.attachments,
-            unix_secs,
-        )
-        .map_err(|e| BackendError::MessageRejected(e.to_string()))?;
-        let id = self
-            .mailbox
-            .store(MailboxFolder::Outbox, &message.to_bytes())?;
-        (self.mailbox_change)();
-        Ok(id)
+        self.queue_message(msg, from)
+    }
+
+    async fn send_message_as(
+        &self,
+        msg: OutboundMessage,
+        from: Option<String>,
+    ) -> Result<MessageId, BackendError> {
+        // Routines `local.compose`'s run-scoped `from_identity` override
+        // (trait doc comment above). `from: None` delegates straight to
+        // `send_message` (its active-identity-then-config resolution is not
+        // duplicated here); `from: Some(..)` funnels into the same
+        // `queue_message` helper `send_message` itself uses, just with the
+        // override skipping that resolution entirely.
+        let from = match from {
+            Some(f) => f,
+            None => {
+                return self.send_message(msg).await;
+            }
+        };
+        self.queue_message(msg, from)
     }
 
     async fn connect(
@@ -2260,6 +2315,16 @@ impl NativeBackend {
         // so the single-flight flag is correctly cleared on this early return.
         let session_id = self.active_identity()?;
         let base = session_id.mycall().as_str().to_uppercase();
+        // plan 2 Task 5c (`connection_history`): capture the DIALED target
+        // callsign BEFORE `role` moves into `resolve_packet_endpoint` below —
+        // `None` for a `Listen` role (an inbound-answer session; no target
+        // callsign is known until a peer answers, and recording nothing for
+        // that case is unchanged from today's behavior, not a regression).
+        let dial_target = if let PacketRole::DialTo { call, .. } = &role {
+            Some(call.clone())
+        } else {
+            None
+        };
         // Decide the armed-state status before `role` is moved into resolve
         // (tuxlink-orj): Listen → Listening (armed), DialTo → Connecting (dial).
         let initial_status = initial_packet_status(&role, ssid);
@@ -2307,6 +2372,15 @@ impl NativeBackend {
             self.aborting.load(Ordering::SeqCst) || self.disconnecting.load(Ordering::SeqCst);
         match abort_aware_outcome(outcome, stopped) {
             Ok(()) => {
+                // plan 2 Task 5c (`connection_history`): "connect, forward
+                // staged outbox traffic" completed successfully — this IS
+                // the session/exchange-completion chokepoint for packet
+                // (radio.rs's own doc: "does dial + B2F exchange in one
+                // call"). Only for a DialTo session — an inbound Listen
+                // answer has no dialed target to record.
+                if let Some(ref target) = dial_target {
+                    crate::connection_history::record_success(target, "packet");
+                }
                 self.set_status(BackendStatus::Connected {
                     transport: format!("Packet-{ssid}"),
                     peer: "packet".to_string(),
