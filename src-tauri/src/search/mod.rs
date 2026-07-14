@@ -14,6 +14,11 @@ pub mod query;
 pub mod saved;
 pub mod types;
 
+#[cfg(test)]
+mod docs_registry_test;
+#[cfg(test)]
+mod docs_eval_test;
+
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -64,20 +69,27 @@ pub fn build_service(data_dir: &Path) -> Result<SearchService, CommandError> {
     // sidebar appeared to work (the hits rendered) but every click fell
     // through to `getTopicBySlug(deadSlug)` → undefined → TOPICS[0].
     //
-    // Drift check: compare the slug set in the index against the slug set
-    // bundled into this binary. Mismatch → DELETE + INSERT. Identical →
-    // no-op. The compare cost is one query + a hash-set diff; in the
-    // mismatch path the wipe+repopulate is ~32 small inserts inside one
-    // transaction. Either way the cost is sub-millisecond at startup.
-    let bundled_slugs: std::collections::HashSet<&str> =
-        crate::search::docs_bundle::BUNDLED_TOPICS
-            .iter()
-            .map(|t| t.slug)
-            .collect();
-    let indexed_slugs = index.docs_slugs().map_err(CommandError::from)?;
-    let indexed_slugs_set: std::collections::HashSet<&str> =
-        indexed_slugs.iter().map(String::as_str).collect();
-    if bundled_slugs != indexed_slugs_set {
+    // Drift check: compare the index's CONTENT against the bundle compiled into
+    // this binary — every slug, title and body — and repopulate on any
+    // difference.
+    //
+    // This used to compare slug SETS, which notices a topic being added, renamed
+    // or removed but NOT a topic's body changing. So a correction to an existing
+    // page shipped inside the new binary and the operator's index kept serving
+    // the old text forever (tuxlink-cr0wz).
+    //
+    // That was survivable when the only thing exposed was a 12-token snippet.
+    // It is not now: `docs_read` hands whole documents to the model as ground
+    // truth, so a stale body means Elmer keeps quoting a connect string we have
+    // already fixed — and the operator keys it on the air.
+    //
+    // Cost is one scan of ~50 short documents at startup; in the mismatch path,
+    // ~50 small inserts inside one transaction.
+    let bundled = crate::search::docs_index::bundled_docs_fingerprint(
+        crate::search::docs_bundle::BUNDLED_TOPICS,
+    );
+    let indexed = index.docs_content_fingerprint().map_err(CommandError::from)?;
+    if bundled != indexed {
         index
             .populate_docs(crate::search::docs_bundle::BUNDLED_TOPICS)
             .map_err(CommandError::from)?;

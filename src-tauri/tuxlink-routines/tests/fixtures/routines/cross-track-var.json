@@ -1,0 +1,24 @@
+{
+  "routine": "cross-track-var-demo",
+  "schema_version": 1,
+  "transmit_mode": "attended",
+  "on_interrupted": "stay",
+  "inputs": [],
+  "triggers": [{ "type": "manual" }],
+  "tracks": [
+    {
+      "name": "a",
+      "steps": [
+        { "id": "s1", "action": "local.note", "params": {} },
+        { "id": "e1", "control": "end", "failed": false }
+      ]
+    },
+    {
+      "name": "b",
+      "steps": [
+        { "id": "s2", "action": "local.note", "params": { "station": "$s1.gateway" } },
+        { "id": "e2", "control": "end", "failed": false }
+      ]
+    }
+  ]
+}

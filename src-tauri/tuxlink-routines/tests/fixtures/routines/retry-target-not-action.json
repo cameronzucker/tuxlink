@@ -1,0 +1,17 @@
+{
+  "routine": "retry-target-not-action-demo",
+  "schema_version": 1,
+  "transmit_mode": "attended",
+  "on_interrupted": "stay",
+  "inputs": [],
+  "triggers": [{ "type": "manual" }],
+  "tracks": [
+    {
+      "name": "t1",
+      "steps": [
+        { "id": "r1", "control": "retry", "step": "e1", "attempts": 3 },
+        { "id": "e1", "control": "end", "failed": false }
+      ]
+    }
+  ]
+}

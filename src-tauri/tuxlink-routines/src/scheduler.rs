@@ -92,7 +92,15 @@ pub fn within_window(window: &str, now_unix: i64) -> bool {
 /// call (each call re-bases from a new `now`, producing an unstable
 /// schedule).
 pub fn next_fire(trigger: &Trigger, now_unix: i64) -> Option<i64> {
-    let Trigger::Schedule { every, align, window, .. } = trigger else { return None };
+    let Trigger::Schedule {
+        every,
+        align,
+        window,
+        ..
+    } = trigger
+    else {
+        return None;
+    };
     let interval = every_seconds(every)?;
     if interval <= 0 {
         return None;
@@ -119,7 +127,11 @@ pub fn next_fire(trigger: &Trigger, now_unix: i64) -> Option<i64> {
         while !window_contains(start, end, candidate) {
             let day_base = candidate - candidate.rem_euclid(86_400);
             let today_open = day_base + start * 60;
-            candidate = if today_open > candidate { today_open } else { today_open + 86_400 };
+            candidate = if today_open > candidate {
+                today_open
+            } else {
+                today_open + 86_400
+            };
             guard += 1;
             if guard > 3 {
                 return None; // window can never admit this schedule
@@ -132,8 +144,12 @@ pub fn next_fire(trigger: &Trigger, now_unix: i64) -> Option<i64> {
 /// Whole fires elapsed between `last_seen_unix` and `now_unix` (spec §8
 /// missed-fire record). Manual triggers never miss.
 pub fn missed_fires(trigger: &Trigger, last_seen_unix: i64, now_unix: i64) -> u64 {
-    let Trigger::Schedule { every, .. } = trigger else { return 0 };
-    let Some(interval) = every_seconds(every) else { return 0 };
+    let Trigger::Schedule { every, .. } = trigger else {
+        return 0;
+    };
+    let Some(interval) = every_seconds(every) else {
+        return 0;
+    };
     if interval <= 0 || now_unix <= last_seen_unix {
         return 0;
     }
@@ -169,7 +185,10 @@ mod tests {
         // 14:07 with every=30m align=hour → next boundary on the 30m grid
         // anchored at the top of the hour: 14:30.
         let at_1430 = NOW - (NOW % 3600) + 1800;
-        assert_eq!(next_fire(&sched("30m", Some("hour"), None), NOW), Some(at_1430));
+        assert_eq!(
+            next_fire(&sched("30m", Some("hour"), None), NOW),
+            Some(at_1430)
+        );
     }
 
     #[test]
@@ -181,7 +200,7 @@ mod tests {
     fn window_gates_fires() {
         assert!(within_window("06:00-22:00", NOW)); // 14:07 is inside
         assert!(!within_window("22:00-06:00", NOW)); // overnight window, 14:07 outside
-        // 03:00 UTC same day:
+                                                     // 03:00 UTC same day:
         let three_am = NOW - (NOW % 86_400) + 3 * 3600;
         assert!(within_window("22:00-06:00", three_am)); // overnight window wraps
         assert!(!within_window("06:00-22:00", three_am));
@@ -215,7 +234,10 @@ mod tests {
         // coincides with top-of-hour boundaries (the epoch itself is
         // hour-aligned): 14:07 → 14:30.
         let at_1430 = NOW - (NOW % 3600) + 1800;
-        assert_eq!(next_fire(&sched("30m", Some("hour"), None), NOW), Some(at_1430));
+        assert_eq!(
+            next_fire(&sched("30m", Some("hour"), None), NOW),
+            Some(at_1430)
+        );
     }
 
     #[test]
@@ -237,7 +259,13 @@ mod tests {
 
     #[test]
     fn align_helpers() {
-        assert_eq!(duration_to_next_align(NOW, Align::Hour).as_secs(), 3600 - (NOW % 3600) as u64);
-        assert_eq!(duration_to_next_align(NOW, Align::Day).as_secs(), 86_400 - (NOW % 86_400) as u64);
+        assert_eq!(
+            duration_to_next_align(NOW, Align::Hour).as_secs(),
+            3600 - (NOW % 3600) as u64
+        );
+        assert_eq!(
+            duration_to_next_align(NOW, Align::Day).as_secs(),
+            86_400 - (NOW % 86_400) as u64
+        );
     }
 }

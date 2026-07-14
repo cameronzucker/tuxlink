@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { MENU_TREE, type MenuActionId, type MenuNode } from './menuModel';
+import { menuAnchorId } from '../../onboarding/menuAnchors';
 import './chrome.css';
 
 interface MenuBarProps {
@@ -32,6 +33,7 @@ function MenuItems({ items, onPick }: { items: MenuNode[]; onPick: (id: MenuActi
               disabled
               aria-disabled="true"
               title="Coming in a future release"
+              data-tour-anchor={node.id}
             >
               {node.label}
               <span className="tux-v01" aria-hidden="true">soon</span>
@@ -39,7 +41,13 @@ function MenuItems({ items, onPick }: { items: MenuNode[]; onPick: (id: MenuActi
           );
         }
         return (
-          <button key={node.id} type="button" className="tux-mi" onClick={() => node.id && onPick(node.id)}>
+          <button
+            key={node.id}
+            type="button"
+            className="tux-mi"
+            onClick={() => node.id && onPick(node.id)}
+            data-tour-anchor={node.id}
+          >
             {node.label}
             {node.accel && <span className="tux-accel">{node.accel}</span>}
           </button>
@@ -82,6 +90,7 @@ export function MenuBar({ onAction }: MenuBarProps) {
               e.stopPropagation();
               setOpenLabel((cur) => (cur === menu.label ? null : menu.label));
             }}
+            data-tour-anchor={menuAnchorId(menu.label)}
           >
             {menu.label}
           </button>

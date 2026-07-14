@@ -223,6 +223,7 @@ pub async fn persist_cms_impl(
         close_to_tray: true,
         close_prompt_seen: false,
         active_connection: None,
+        onboarding: Some(crate::config::OnboardingConfig::default()),
     };
 
     // Step 4: Create keyring entry handle (needed for rollback in step 7).
@@ -468,6 +469,7 @@ pub async fn persist_offline_impl(
         close_to_tray: true,
         close_prompt_seen: false,
         active_connection: None,
+        onboarding: Some(crate::config::OnboardingConfig::default()),
     };
 
     // Single atomic write to config.json. No keyring involved.

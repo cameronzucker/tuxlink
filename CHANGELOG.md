@@ -31,6 +31,38 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.90.0](https://github.com/cameronzucker/tuxlink/compare/v0.89.1...v0.90.0) (2026-07-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* **contacts:** the standalone Favorites panel is gone; the Favorites sidebar entry opens the unified Contacts surface pre-filtered to starred dials (same Connect behavior, one visual language).
+
+### Features
+
+* **catalog,ft8ui:** setup surface is the panel's FULL BODY (QA r3 finding 2, firstrun-v2 mock) ([5402e34](https://github.com/cameronzucker/tuxlink/commit/5402e34e8a8549e22abe0fa1acb71b3b77210514))
+* **catalog,shell:** QA r3 findings 4/7 — live NN/min tab badge; sentence-case ribbon labels ([c8ec9c7](https://github.com/cameronzucker/tuxlink/commit/c8ec9c7a94d3d2f47f843c50e7dd9c5904878ebf))
+* **contacts:** ONE address surface — Favorites and Heard become scopes of Contacts (tuxlink-sbf03) ([9d1813c](https://github.com/cameronzucker/tuxlink/commit/9d1813cf6735317a475ecc59f5b2bf003dab31b1))
+* **docs:** agent-only Pat + Winlink Express corpus; index mcp-knowledge for Elmer ([b3fe078](https://github.com/cameronzucker/tuxlink/commit/b3fe07885b4c75525cd3d6032d279aa2897d41cf))
+* **elmer:** system prompt directs product/config questions to the docs tools ([64ff77d](https://github.com/cameronzucker/tuxlink/commit/64ff77d18e09b9a75b942e5cbc259defe7320fbc))
+* **mcp:** docs_read tool — give docs_search a destination ([1578769](https://github.com/cameronzucker/tuxlink/commit/157876950f8e34931b3808e65cbe5c18fdf76196))
+* **mcp:** Ft8Port + heard-station aggregation ([efae08d](https://github.com/cameronzucker/tuxlink/commit/efae08d0359d67d0ab530565f93dbf17a5c0cb21))
+* **mcp:** SearchPort::doc + rename DocsHitDto.path to slug ([61ffb99](https://github.com/cameronzucker/tuxlink/commit/61ffb99789be92b8d91e4f7fa27f583cd52b11b0))
+* **mcp:** six FT-8 tools — status, heard stations, start/stop, band, devices ([2420f03](https://github.com/cameronzucker/tuxlink/commit/2420f033df378d874c25fa934a22e7fc5fceb0cc))
+* **search:** Index::read_doc — return a whole document, not a snippet ([a04b8f2](https://github.com/cameronzucker/tuxlink/commit/a04b8f29f13810f353d3a9d25cfbf93ecbc6ae6a))
+
+
+### Bug Fixes
+
+* **catalog,ft8ui,wwv:** QA r3 findings 3/5/6 — overlay z-index dead-on-arrival, popover clip, WWV wording+layout ([2c736dc](https://github.com/cameronzucker/tuxlink/commit/2c736dc1eea2aa4110998a5403dd850b79f33dc2))
+* **contacts,shell:** Codex adrev round 1 — remount keys, star race guard, MHz freq, scope-switch selection reset, contact_id precedence ([dc51b0a](https://github.com/cameronzucker/tuxlink/commit/dc51b0a1c87c3649b6706cae006770e89990e6c8))
+* **ft8:** deflake the jt9 version probe — retry ETXTBSY spawns within the probe deadline ([2c71be7](https://github.com/cameronzucker/tuxlink/commit/2c71be7d5aeb2a945fa59c437b79dbe4532a0490))
+* **ft8:** FT-8 listening is session-scoped — retire boot autostart + persisted enabled (QA r3 finding 1) ([0dc1399](https://github.com/cameronzucker/tuxlink/commit/0dc13996114764e0429ae07a4ddc121d40bcc84e))
+* **search:** docs_search hard-errored on any natural-language question ([265be3a](https://github.com/cameronzucker/tuxlink/commit/265be3ada00414fc4728ec903c1731ef7a3f5938))
+* **search:** import Index from its defining module, not through docs_index ([7541c25](https://github.com/cameronzucker/tuxlink/commit/7541c25490b7081754acc972741985b330140f5a))
+* **search:** keep agent-only docs out of the Help sidebar; stop mangling non-ASCII ([68c8070](https://github.com/cameronzucker/tuxlink/commit/68c8070b09fb6c7550b380ddc5636adbeb5765f2))
+* **search:** register orphaned space-weather topic + guard registry drift ([e652677](https://github.com/cameronzucker/tuxlink/commit/e652677502d366bccdce4c7b0cca374d546534c5))
+
 ## [0.89.1](https://github.com/cameronzucker/tuxlink/compare/v0.89.0...v0.89.1) (2026-07-13)
 
 

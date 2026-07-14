@@ -1,0 +1,14 @@
+{
+  "routine": "no-terminal-path-demo",
+  "schema_version": 1,
+  "transmit_mode": "attended",
+  "on_interrupted": "stay",
+  "inputs": [],
+  "triggers": [{ "type": "manual" }],
+  "tracks": [
+    {
+      "name": "t1",
+      "steps": [{ "id": "s1", "action": "local.note", "params": {} }]
+    }
+  ]
+}

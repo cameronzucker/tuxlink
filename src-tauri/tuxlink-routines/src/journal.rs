@@ -33,15 +33,41 @@ pub enum RunState {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RunEvent {
     /// First entry of every journal; `snapshot` is the fully resolved
-    /// definition the run executes (spec §7).
-    RunStarted { routine: String, snapshot: serde_json::Value },
-    StateChanged { state: RunState },
+    /// definition the run executes (spec §7). `dry_run` (plan-3 task 5,
+    /// additive — `#[serde(default)]` so older journals without the field
+    /// still parse as `false`) is set true only by `Engine::start_dry_run`
+    /// (`engine.rs`), whose registry mirrors every real action with a
+    /// scripted `FakeAction` (`dryrun.rs`) — a dry run's `RunStarted` is
+    /// the single durable record that no real action was ever invoked for
+    /// this run.
+    RunStarted {
+        routine: String,
+        snapshot: serde_json::Value,
+        #[serde(default)]
+        dry_run: bool,
+    },
+    StateChanged {
+        state: RunState,
+    },
     /// Written BEFORE the action executes (intent-before-effect).
-    StepIntent { step: StepId, action: String, resolved_params: serde_json::Value },
-    StepOk { step: StepId, output: serde_json::Value },
-    StepErr { step: StepId, error: StepError },
+    StepIntent {
+        step: StepId,
+        action: String,
+        resolved_params: serde_json::Value,
+    },
+    StepOk {
+        step: StepId,
+        output: serde_json::Value,
+    },
+    StepErr {
+        step: StepId,
+        error: StepError,
+    },
     /// Terminal entry. A journal without one is an interrupted run.
-    RunFinished { state: RunState, reason: Option<String> },
+    RunFinished {
+        state: RunState,
+        reason: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -82,7 +108,13 @@ impl JournalWriter {
             0
         };
         let file = OpenOptions::new().create(true).append(true).open(&path)?;
-        Ok(JournalWriter { file, path, run_id: run_id.to_string(), seq, now })
+        Ok(JournalWriter {
+            file,
+            path,
+            run_id: run_id.to_string(),
+            seq,
+            now,
+        })
     }
 
     pub fn path(&self) -> PathBuf {
@@ -133,7 +165,8 @@ pub fn scan_interrupted(dir: &Path) -> std::io::Result<Vec<(String, PathBuf)>> {
             Err(_) => {
                 // Corrupted or unreadable journal: derive run_id from filename
                 // and report as interrupted. Do not fail the scan.
-                let run_id = path.file_stem()
+                let run_id = path
+                    .file_stem()
                     .and_then(|stem| stem.to_str())
                     .unwrap_or_default()
                     .to_string();
@@ -144,7 +177,13 @@ pub fn scan_interrupted(dir: &Path) -> std::io::Result<Vec<(String, PathBuf)>> {
             }
         };
 
-        let finished = matches!(entries.last(), Some(JournalEntry { event: RunEvent::RunFinished { .. }, .. }));
+        let finished = matches!(
+            entries.last(),
+            Some(JournalEntry {
+                event: RunEvent::RunFinished { .. },
+                ..
+            })
+        );
         if !finished {
             // Derive run_id from first entry if available; otherwise from filename (FINDING 1).
             let run_id = if let Some(first) = entries.first() {
@@ -180,14 +219,28 @@ mod tests {
     fn appends_are_readable_in_order_with_monotonic_seq() {
         let dir = tempfile::tempdir().unwrap();
         let mut w = JournalWriter::create(dir.path(), "run-0001", fixed_now).unwrap();
-        w.append(RunEvent::RunStarted { routine: "t".into(), snapshot: json!({}) }).unwrap();
+        w.append(RunEvent::RunStarted {
+            routine: "t".into(),
+            snapshot: json!({}),
+            dry_run: false,
+        })
+        .unwrap();
         w.append(RunEvent::StepIntent {
             step: StepId("s1".into()),
             action: "radio.connect".into(),
             resolved_params: json!({"bands": ["40m"]}),
-        }).unwrap();
-        w.append(RunEvent::StepOk { step: StepId("s1".into()), output: json!({"connected": true}) }).unwrap();
-        w.append(RunEvent::RunFinished { state: RunState::Completed, reason: None }).unwrap();
+        })
+        .unwrap();
+        w.append(RunEvent::StepOk {
+            step: StepId("s1".into()),
+            output: json!({"connected": true}),
+        })
+        .unwrap();
+        w.append(RunEvent::RunFinished {
+            state: RunState::Completed,
+            reason: None,
+        })
+        .unwrap();
 
         let entries = read_journal(&w.path()).unwrap();
         assert_eq!(entries.len(), 4);
@@ -195,7 +248,13 @@ mod tests {
         assert_eq!(entries[0].ts_unix, 1_752_400_000);
         let seqs: Vec<u64> = entries.iter().map(|e| e.seq).collect();
         assert_eq!(seqs, vec![0, 1, 2, 3]);
-        assert!(matches!(entries[3].event, RunEvent::RunFinished { state: RunState::Completed, .. }));
+        assert!(matches!(
+            entries[3].event,
+            RunEvent::RunFinished {
+                state: RunState::Completed,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -205,11 +264,18 @@ mod tests {
         let verbatim = "VARA: DISCONNECTED (link timeout after 90s)";
         w.append(RunEvent::StepErr {
             step: StepId("s1".into()),
-            error: StepError::Action { action: "radio.connect".into(), cause: verbatim.into() },
-        }).unwrap();
+            error: StepError::Action {
+                action: "radio.connect".into(),
+                cause: verbatim.into(),
+            },
+        })
+        .unwrap();
         let entries = read_journal(&w.path()).unwrap();
         match &entries[0].event {
-            RunEvent::StepErr { error: StepError::Action { cause, .. }, .. } => {
+            RunEvent::StepErr {
+                error: StepError::Action { cause, .. },
+                ..
+            } => {
                 assert_eq!(cause, verbatim);
             }
             other => panic!("expected StepErr, got {other:?}"),
@@ -222,16 +288,31 @@ mod tests {
         // scan_interrupted() is what launch-time recovery calls.
         let dir = tempfile::tempdir().unwrap();
         let mut done = JournalWriter::create(dir.path(), "run-done", fixed_now).unwrap();
-        done.append(RunEvent::RunStarted { routine: "a".into(), snapshot: json!({}) }).unwrap();
-        done.append(RunEvent::RunFinished { state: RunState::Completed, reason: None }).unwrap();
+        done.append(RunEvent::RunStarted {
+            routine: "a".into(),
+            snapshot: json!({}),
+            dry_run: false,
+        })
+        .unwrap();
+        done.append(RunEvent::RunFinished {
+            state: RunState::Completed,
+            reason: None,
+        })
+        .unwrap();
 
         let mut dead = JournalWriter::create(dir.path(), "run-dead", fixed_now).unwrap();
-        dead.append(RunEvent::RunStarted { routine: "b".into(), snapshot: json!({}) }).unwrap();
+        dead.append(RunEvent::RunStarted {
+            routine: "b".into(),
+            snapshot: json!({}),
+            dry_run: false,
+        })
+        .unwrap();
         dead.append(RunEvent::StepIntent {
             step: StepId("s1".into()),
             action: "radio.connect".into(),
             resolved_params: json!({}),
-        }).unwrap();
+        })
+        .unwrap();
 
         let found = scan_interrupted(dir.path()).unwrap();
         assert_eq!(found.len(), 1);
@@ -242,7 +323,10 @@ mod tests {
     fn journal_lines_are_one_json_object_each() {
         let dir = tempfile::tempdir().unwrap();
         let mut w = JournalWriter::create(dir.path(), "run-0003", fixed_now).unwrap();
-        w.append(RunEvent::StateChanged { state: RunState::AwaitingRadio }).unwrap();
+        w.append(RunEvent::StateChanged {
+            state: RunState::AwaitingRadio,
+        })
+        .unwrap();
         let raw = std::fs::read_to_string(w.path()).unwrap();
         for line in raw.lines() {
             let v: serde_json::Value = serde_json::from_str(line).expect("each line is JSON");
@@ -262,7 +346,10 @@ mod tests {
         let found = scan_interrupted(dir.path()).unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].0, "run-empty-crash");
-        assert_eq!(found[0].1.file_stem().unwrap().to_str().unwrap(), "run-empty-crash");
+        assert_eq!(
+            found[0].1.file_stem().unwrap().to_str().unwrap(),
+            "run-empty-crash"
+        );
     }
 
     #[test]
@@ -274,8 +361,19 @@ mod tests {
 
         // Write one valid completed journal.
         let mut valid = JournalWriter::create(dir.path(), "run-valid", fixed_now).unwrap();
-        valid.append(RunEvent::RunStarted { routine: "a".into(), snapshot: json!({}) }).unwrap();
-        valid.append(RunEvent::RunFinished { state: RunState::Completed, reason: None }).unwrap();
+        valid
+            .append(RunEvent::RunStarted {
+                routine: "a".into(),
+                snapshot: json!({}),
+                dry_run: false,
+            })
+            .unwrap();
+        valid
+            .append(RunEvent::RunFinished {
+                state: RunState::Completed,
+                reason: None,
+            })
+            .unwrap();
 
         // Write one corrupted journal (invalid JSON).
         let torn_path = dir.path().join("run-torn.jsonl");
@@ -299,17 +397,27 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         {
             let mut w = JournalWriter::create(dir.path(), "run-resume", fixed_now).unwrap();
-            w.append(RunEvent::RunStarted { routine: "a".into(), snapshot: json!({}) }).unwrap();
+            w.append(RunEvent::RunStarted {
+                routine: "a".into(),
+                snapshot: json!({}),
+                dry_run: false,
+            })
+            .unwrap();
             w.append(RunEvent::StepIntent {
                 step: StepId("s1".into()),
                 action: "radio.connect".into(),
                 resolved_params: json!({}),
-            }).unwrap();
+            })
+            .unwrap();
         } // writer dropped; journal has 2 entries (seq 0, 1) but no RunFinished
 
         {
             let mut w = JournalWriter::create(dir.path(), "run-resume", fixed_now).unwrap();
-            w.append(RunEvent::RunFinished { state: RunState::Interrupted, reason: None }).unwrap();
+            w.append(RunEvent::RunFinished {
+                state: RunState::Interrupted,
+                reason: None,
+            })
+            .unwrap();
         }
 
         let entries = read_journal(&dir.path().join("run-resume.jsonl")).unwrap();

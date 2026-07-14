@@ -1,0 +1,17 @@
+{
+  "routine": "call-recursion-demo",
+  "schema_version": 1,
+  "transmit_mode": "attended",
+  "on_interrupted": "stay",
+  "inputs": [],
+  "triggers": [{ "type": "manual" }],
+  "tracks": [
+    {
+      "name": "t1",
+      "steps": [
+        { "id": "c1", "control": "call", "routine": "call-recursion-demo", "args": {}, "sync": true },
+        { "id": "e1", "control": "end", "failed": false }
+      ]
+    }
+  ]
+}

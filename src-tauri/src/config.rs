@@ -19,7 +19,13 @@ use std::sync::Mutex;
 /// reject a config carrying `"rig"`, so the field set change bumps the version
 /// (the trash_auto_purge class). The bump also lets a v5 file be classified
 /// `MigrateAdditive` by an intermediate build rather than `Unsupported`.
-pub const CONFIG_SCHEMA_VERSION: u32 = 6;
+///
+/// Bumped 6 → 7 (tuxlink-10bkw): added the always-serialized top-level
+/// `onboarding` section (first-run tour + first-open tips). A pre-v7 file
+/// lacks the key; load normalizes it to Some, seeding the tips_seen ["*"]
+/// sentinel when wizard_completed is already true (upgrade cohort must not
+/// get first-open tips on surfaces they have used for months).
+pub const CONFIG_SCHEMA_VERSION: u32 = 7;
 
 /// What to do with an on-disk config of a given `schema_version` (Phase 2,
 /// tuxlink-7iy2). A v1 file is a breaking migration candidate; a version ≥2 but
@@ -388,6 +394,12 @@ pub struct Config {
     /// pattern), so this addition does NOT bump `CONFIG_SCHEMA_VERSION`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wwv_offair: Option<WwvOffairConfig>,
+    /// First-run tour / hint state (tuxlink-10bkw). Option so load can
+    /// distinguish "absent on disk" (pre-v7 file → normalize_onboarding
+    /// seeds the upgrade-cohort sentinel) from a present default section.
+    /// Always Some after deserialize; wizard-persist writes Some(default).
+    #[serde(default)]
+    pub onboarding: Option<OnboardingConfig>,
 }
 
 impl Config {
@@ -424,6 +436,20 @@ impl Config {
             self.rig.cat_baud = legacy_baud;
         }
     }
+
+    /// tuxlink-10bkw: a file written before v7 has no `onboarding` key. If the
+    /// wizard was already completed there, the operator predates the tips
+    /// system — seed the ["*"] sentinel so first-open tips never fire on
+    /// surfaces they have used for months (the tour OFFER still shows once).
+    fn normalize_onboarding(&mut self) {
+        if self.onboarding.is_none() {
+            self.onboarding = Some(if self.wizard_completed {
+                OnboardingConfig { tour_completed: false, tips_seen: vec!["*".to_string()] }
+            } else {
+                OnboardingConfig::default()
+            });
+        }
+    }
 }
 
 impl<'de> Deserialize<'de> for Config {
@@ -435,6 +461,7 @@ impl<'de> Deserialize<'de> for Config {
         // we run the post-deserialize rig migration before handing the value back.
         let mut config = Config::deserialize(deserializer)?;
         config.migrate_rig_from_legacy_ardop();
+        config.normalize_onboarding();
         Ok(config)
     }
 }
@@ -577,6 +604,23 @@ pub struct PrivacyConfig {
     /// `#[serde(default)]` migrates pre-686 configs transparently (additive field).
     #[serde(default = "default_position_source")]
     pub position_source: PositionSource,
+}
+
+/// First-run tour / first-open tip state (tuxlink-10bkw). See
+/// `Config.onboarding` for why this is `Option`-wrapped rather than bare.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OnboardingConfig {
+    /// True once the operator finished, skipped (incl. ESC), or declined the
+    /// first-run tour. Help → "Replay tour" is the only reset path (it does
+    /// NOT clear this flag; replay just runs the tour again).
+    #[serde(default)]
+    pub tour_completed: bool,
+    /// Tip IDs already shown once. The single value ["*"] is the upgrade-
+    /// cohort sentinel: treat every tip as seen (IDs live in the frontend
+    /// registry; Rust never enumerates them — that is the point).
+    #[serde(default)]
+    pub tips_seen: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1906,7 +1950,7 @@ mod tests {
             "review_inbound_before_download", "aprs",
             "trash_auto_purge", "trash_retention_days",
             "close_to_tray", "close_prompt_seen",
-            "active_connection",
+            "active_connection", "onboarding",
         ];
         expected.sort_unstable();
         assert_eq!(
@@ -3088,6 +3132,48 @@ mod tests {
             "plughw:1,0",
             "capture_device must survive a serialize→deserialize round-trip"
         );
+    }
+
+    // --- tuxlink-10bkw: OnboardingConfig schema v7 + upgrade-cohort sentinel ---
+
+    #[test]
+    fn onboarding_defaults_and_roundtrip() {
+        // config_json's fixture hardcodes `"wizard_completed": true`; flip it to
+        // false here so this exercises a genuinely fresh profile (no upgrade
+        // cohort involved) — the CODE (fixture shape) wins over the task
+        // brief's literal `config_json(CONFIG_SCHEMA_VERSION, "")` call, which
+        // would otherwise seed the sentinel and fail the "no sentinel" assert.
+        let raw = config_json(CONFIG_SCHEMA_VERSION, "")
+            .replace("\"wizard_completed\": true", "\"wizard_completed\": false");
+        let cfg: Config = serde_json::from_str(&raw).expect("minimal config deserializes");
+        let ob = cfg.onboarding.as_ref().expect("normalize_onboarding fills None");
+        assert!(!ob.tour_completed);
+        assert!(ob.tips_seen.is_empty(), "fresh profile: no sentinel");
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("\"onboarding\""), "always serialized once Some");
+    }
+
+    #[test]
+    fn pre_v7_wizard_completed_seeds_tip_sentinel() {
+        // A v6 file (no onboarding key) from an operator who finished the wizard:
+        // migration must seed the all-seen sentinel so months-old surfaces don't
+        // tip. config_json's fixture already hardcodes `wizard_completed: true`.
+        let raw = config_json(6, "");
+        let cfg: Config = serde_json::from_str(&raw).expect("v6 loads additively");
+        let ob = cfg.onboarding.as_ref().unwrap();
+        assert!(!ob.tour_completed, "tour offer still shows once for upgraders");
+        assert_eq!(ob.tips_seen, vec!["*".to_string()], "sentinel = all tips seen");
+    }
+
+    #[test]
+    fn pre_v7_wizard_not_completed_gets_clean_default() {
+        // Flip config_json's hardcoded `wizard_completed: true` to false so this
+        // exercises the "operator never finished the wizard" branch.
+        let raw = config_json(6, "")
+            .replace("\"wizard_completed\": true", "\"wizard_completed\": false");
+        let cfg: Config = serde_json::from_str(&raw).expect("v6 loads additively");
+        let ob = cfg.onboarding.as_ref().unwrap();
+        assert!(ob.tips_seen.is_empty(), "pre-wizard profile: no sentinel");
     }
 
     // --- tuxlink-dfmf: VaraUiConfig persistence + migration tests ---

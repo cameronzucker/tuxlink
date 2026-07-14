@@ -21,6 +21,9 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) })
 import { invoke } from '@tauri-apps/api/core';
 import { StationFinderPanel } from './StationFinderPanel';
 import { Ft8ListenerProvider } from '../ft8ui/useFt8Listener';
+// tuxlink-10bkw Task 6: the panel calls useFirstOpenTip('find-a-station'),
+// which throws outside a <HintProvider> ancestor.
+import { HintProvider } from '../onboarding/HintProvider';
 
 /** A listener snapshot in a live, decoding state — the strip's live body arm.
  *  Shape mirrors `Ft8Snapshot` (ft8Types.ts) exactly; a drifted fixture would
@@ -49,9 +52,11 @@ function renderPanel() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <Ft8ListenerProvider>
-        <StationFinderPanel onClose={() => {}} />
-      </Ft8ListenerProvider>
+      <HintProvider>
+        <Ft8ListenerProvider>
+          <StationFinderPanel onClose={() => {}} />
+        </Ft8ListenerProvider>
+      </HintProvider>
     </QueryClientProvider>,
   );
 }

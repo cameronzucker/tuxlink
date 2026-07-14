@@ -13,7 +13,11 @@ pub trait EntityResolver: Send + Sync {
     async fn resolve(&self, entity: &EntityRef) -> Result<serde_json::Value, SnapshotError>;
 }
 
-fn walk_refs(value: &serde_json::Value, out: &mut Vec<EntityRef>) {
+/// `pub(crate)` so `validate::refs` can reuse the exact same walk to collect
+/// refs scoped to a single step's `params`/`args` (this fn's caller,
+/// `collect_refs`, only offers the whole-definition set with no step
+/// attribution — the validator needs per-step attribution for `Finding`).
+pub(crate) fn walk_refs(value: &serde_json::Value, out: &mut Vec<EntityRef>) {
     match value {
         serde_json::Value::String(s) => {
             if let Some(r) = EntityRef::parse(s) {
@@ -95,8 +99,11 @@ mod tests {
     #[tokio::test]
     async fn refs_are_replaced_with_resolved_values() {
         let def = RoutineDef::parse(DEF).unwrap();
-        let resolver = FakeResolver::new()
-            .entity("station-set", "or-gateways", json!(["W7DEF-10", "K7ABC-10"]));
+        let resolver = FakeResolver::new().entity(
+            "station-set",
+            "or-gateways",
+            json!(["W7DEF-10", "K7ABC-10"]),
+        );
         let snapshot = resolve_snapshot(&def, &resolver).await.unwrap();
         let stations = &snapshot["tracks"][0]["steps"][0]["params"]["stations"];
         assert_eq!(stations, &json!(["W7DEF-10", "K7ABC-10"]));

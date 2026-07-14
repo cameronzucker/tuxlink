@@ -199,6 +199,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Provisioning is non-transmit + ungated; the mock is used in both the
         // scenario and no-scenario branches (like egress/abort/write/compose).
         provision: Arc::new(mocks::MockProvision),
+        // tuxlink-10bkw: point_at spotlight — no live webview in this
+        // tier-2 harness, so the mock always reports "shown".
+        ui_hint: Arc::new(mocks::MockUiHint),
+        // Off-air WWV capture (tuxlink-l44dm) is RECEIVE-ONLY + ungated; the mock
+        // is used in both branches (there is no scenario-seeded WWV world).
+        wwv: Arc::new(mocks::MockWwv),
+        // FT-8 is receive-only + ungated + non-tainting; like provisioning, the
+        // mock serves both branches (the scenario World seeds no FT-8 decodes).
+        ft8: Arc::new(mocks::MockFt8),
     };
     let router = TuxlinkMcp::new(Arc::new(state));
 

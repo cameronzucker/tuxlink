@@ -1,0 +1,17 @@
+{
+  "routine": "auto-tx-unacked-demo",
+  "schema_version": 1,
+  "transmit_mode": "automatic",
+  "on_interrupted": "stay",
+  "inputs": [],
+  "triggers": [{ "type": "manual" }],
+  "tracks": [
+    {
+      "name": "t1",
+      "steps": [
+        { "id": "s1", "action": "radio.connect", "params": {} },
+        { "id": "e1", "control": "end", "failed": false }
+      ]
+    }
+  ]
+}

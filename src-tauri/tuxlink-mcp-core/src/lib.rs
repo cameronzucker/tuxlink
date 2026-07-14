@@ -29,9 +29,9 @@ pub mod transport_uds;
 pub mod validate;
 
 pub use ports::{
-    AbortPort, ComposePort, ConfigPort, DevicePort, EgressPort, EgressPortError, LogPort,
+    AbortPort, ComposePort, ConfigPort, DevicePort, EgressPort, EgressPortError, Ft8Port, LogPort,
     MailboxPort, PortError, PredictionPort, ProvisionPort, SearchPort, StationPort, StatusPort,
-    WritePort, WritePortError,
+    UiHintPort, WritePort, WritePortError, WwvPort,
 };
 pub use router::TuxlinkMcp;
 pub use transport_uds::serve;
@@ -91,10 +91,21 @@ pub struct McpState {
     /// Offline HF propagation prediction + space-weather reads. Read-only —
     /// never taints, never gates.
     pub prediction: Arc<dyn PredictionPort>,
+    /// Off-air WWV space-weather capture (tuxlink-l44dm). RECEIVE-ONLY: tunes
+    /// the rig to WWV and listens, never transmits — so it is NOT routed through
+    /// the transmit consent gate. It yields parsed numeric indices (never free
+    /// text), so it never taints either.
+    pub wwv: Arc<dyn WwvPort>,
     /// VARA-under-WINE provisioning (tuxlink-w7212). The probes are read-only;
     /// `vara_install_start` is NON-TRANSMIT (installs software via pkexec's own
     /// password prompt) so it does NOT pass through the transmit consent gate.
     pub provision: Arc<dyn ProvisionPort>,
+    /// UI spatial-help port (tuxlink-10bkw): `point_at` spotlights a
+    /// registered anchor in the main webview and awaits the frontend's
+    /// honest ack. Never navigates, opens panels, or fires actions.
+    pub ui_hint: Arc<dyn UiHintPort>,
+    /// FT-8 listener. Receive-only; none taint, none egress-gated.
+    pub ft8: Arc<dyn Ft8Port>,
 }
 
 /// Serializable shape returned by the `server_info` tool.
@@ -157,8 +168,10 @@ pub mod test_support {
     use crate::ports::{
         AbortPort, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto, AudioDevicesDto,
         BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto, ChannelReliabilityDto,
-        ComposeDraftDto, ComposePort, ConfigPort, ConfigViewDto, DevicePort, DocsHitDto,
-        EgressPort, EgressPortError, FolderDto, GatewayAntennaDto, GatewayDto, GribRequestDto,
+        ComposeDraftDto, ComposePort, ConfigPort, ConfigViewDto, DevicePort, DocBodyDto,
+        DocsHitDto, EgressPort, EgressPortError, FolderDto, Ft8AudioDeviceDto, Ft8HeardStationDto,
+        Ft8Port, Ft8StatusDto, GatewayAntennaDto, GatewayDto,
+        GribRequestDto,
         LogLineDto, LogPort, MailboxPort, MessageMetaDto, ModemStatusDto, PacketConfigDto,
         PacketWriteDto, ParsedMessageDto, PathPredictionDto, PlatformInfoDto, PortError,
         PositionStatusDto, PredictRequestDto, PredictionPort, PrinterDto, ProvisionPort,
@@ -166,7 +179,7 @@ pub mod test_support {
         SearchResultsDto, SendFormDto, SerialDeviceDto, SessionIntentDto, SolarSnapshotDto,
         StationFilterDto, StationListDto, StationModeDto, StationPort, StatusPort, VaraCheckpointDto,
         VaraConfigDto, VaraEngineDto, VaraInstallStatusDto, VaraInstallSummaryDto, VaraProbeDto,
-        VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
+        VaraStatusDto, VaraWriteDto, UiHintPort, WritePort, WritePortError, WwvCaptureDto, WwvPort,
     };
     use crate::validate::{
         validate_address, validate_attachment_dest, validate_body, validate_drive_level,
@@ -187,6 +200,12 @@ pub mod test_support {
     pub const SEED_GW_GRID: &str = "FN31";
     pub const SEED_GW_FREQ_KHZ: f64 = 7104.0;
     pub const SEED_TX_GRID: &str = "CN87";
+
+    /// FT-8 fixtures: the one station [`MockFt8::heard_stations`] seeds, and the
+    /// slot stamp it reports as both `last_heard_utc_ms` and the listener's
+    /// `last_slot_utc_ms`.
+    pub const SEED_FT8_CALL: &str = "K7RA";
+    pub const SEED_FT8_HEARD_MS: u64 = 1_770_000_000_000;
 
     pub struct MockStatus;
     #[async_trait]
@@ -310,9 +329,16 @@ pub mod test_support {
         async fn docs(&self, _query: &str) -> Result<Vec<DocsHitDto>, PortError> {
             Ok(vec![DocsHitDto {
                 title: "Getting started".into(),
-                path: "user-guide/start.md".into(),
+                slug: "user-guide/start.md".into(),
                 snippet: "Connect to a CMS gateway.".into(),
             }])
+        }
+        async fn doc(&self, slug: &str) -> Result<Option<DocBodyDto>, PortError> {
+            Ok(Some(DocBodyDto {
+                slug: slug.to_string(),
+                title: "Test doc".to_string(),
+                body: "Full body text.".to_string(),
+            }))
         }
         async fn catalog(&self) -> Result<Vec<CatalogEntryDto>, PortError> {
             Ok(vec![CatalogEntryDto {
@@ -808,6 +834,88 @@ pub mod test_support {
         }
     }
 
+    /// A mock [`UiHintPort`]. Always reports the hint as shown; read-only
+    /// (never touches the guard) since `point_at` is a display-only spotlight,
+    /// not an egress.
+    pub struct MockUiHint;
+    #[async_trait]
+    impl UiHintPort for MockUiHint {
+        async fn point_at(&self, _anchor_id: &str) -> Result<(), PortError> {
+            Ok(())
+        }
+    }
+
+    /// A mock [`WwvPort`]. `capture` returns a confident decode (updated, with
+    /// the seeded indices + the voice provenance); `cat_configured` reports the
+    /// rig tunable. RECEIVE-ONLY by construction — it never touches the guard,
+    /// so a capture on a DISARMED guard still succeeds (it is not a transmit).
+    pub struct MockWwv;
+
+    #[async_trait]
+    impl WwvPort for MockWwv {
+        async fn capture(&self) -> Result<WwvCaptureDto, PortError> {
+            Ok(WwvCaptureDto {
+                updated: true,
+                no_copy: false,
+                source: "rf-wwv-voice".into(),
+                sfi: Some(150.0),
+                a_index: Some(8.0),
+                k_index: Some(2.0),
+            })
+        }
+        async fn cat_configured(&self) -> Result<bool, PortError> {
+            Ok(true)
+        }
+    }
+
+    /// A mock [`Ft8Port`]. Receive-only and UNGATED by contract: every method
+    /// returns a canned value WITHOUT touching the guard, so a test on a
+    /// DISARMED guard proves the FT-8 surface neither gates nor taints.
+    /// `heard_stations` seeds ONE recognizable station ([`SEED_FT8_CALL`]).
+    pub struct MockFt8;
+
+    #[async_trait]
+    impl Ft8Port for MockFt8 {
+        async fn status(&self) -> Result<Ft8StatusDto, PortError> {
+            Ok(Ft8StatusDto {
+                state: "listening".into(),
+                blocked_reason: None,
+                band: "20m".into(),
+                dial_hz: 14_074_000,
+                sweep_enabled: false,
+                device_name: Some("USB Audio CODEC".into()),
+                last_slot_utc_ms: Some(SEED_FT8_HEARD_MS),
+                last_failure: None,
+            })
+        }
+        async fn heard_stations(&self) -> Result<Vec<Ft8HeardStationDto>, PortError> {
+            Ok(vec![Ft8HeardStationDto {
+                call: SEED_FT8_CALL.into(),
+                grid: Some(SEED_GW_GRID.into()),
+                best_snr_db: -7,
+                freq_hz: 1_240,
+                band: "20m".into(),
+                last_heard_utc_ms: SEED_FT8_HEARD_MS,
+                times_heard: 3,
+            }])
+        }
+        async fn start(&self) -> Result<(), PortError> {
+            Ok(())
+        }
+        async fn stop(&self) -> Result<(), PortError> {
+            Ok(())
+        }
+        async fn set_band(&self, _band: &str) -> Result<(), PortError> {
+            Ok(())
+        }
+        async fn list_audio_devices(&self) -> Result<Vec<Ft8AudioDeviceDto>, PortError> {
+            Ok(vec![Ft8AudioDeviceDto {
+                human_name: "USB Audio CODEC".into(),
+                stable_id: "usb-codec-00".into(),
+            }])
+        }
+    }
+
     /// Build an [`McpState`] around the supplied guard, wiring all mock ports.
     /// The egress/abort flags are internal; use [`state_with_egress_probes`] to
     /// observe whether a gated egress op actually ran or an abort fired.
@@ -861,6 +969,9 @@ pub mod test_support {
             stations: Arc::new(MockStation),
             prediction: Arc::new(MockPrediction),
             provision: Arc::new(MockProvision::new(Arc::clone(&op_ran))),
+            ui_hint: Arc::new(MockUiHint),
+            wwv: Arc::new(MockWwv),
+            ft8: Arc::new(MockFt8),
         })
     }
 
@@ -891,6 +1002,9 @@ pub mod test_support {
             stations: Arc::new(MockStation),
             prediction: Arc::new(MockPrediction),
             provision: Arc::new(MockProvision::new(Arc::clone(&op_ran))),
+            ui_hint: Arc::new(MockUiHint),
+            wwv: Arc::new(MockWwv),
+            ft8: Arc::new(MockFt8),
         };
         (state, op_ran, aborted, staged)
     }

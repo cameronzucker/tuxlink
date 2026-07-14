@@ -48,7 +48,10 @@ mod tests {
     #[test]
     fn resolves_step_outputs_by_path() {
         let mut vars = RunVars::default();
-        vars.set_step_output(&StepId("s1".into()), json!({"connected": true, "gateway": "W7DEF-10"}));
+        vars.set_step_output(
+            &StepId("s1".into()),
+            json!({"connected": true, "gateway": "W7DEF-10"}),
+        );
         assert_eq!(vars.resolve("s1.connected").unwrap(), json!(true));
         assert_eq!(vars.resolve("s1.gateway").unwrap(), json!("W7DEF-10"));
     }

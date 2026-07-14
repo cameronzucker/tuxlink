@@ -4521,6 +4521,7 @@ mod native_read_state_tests {
             close_to_tray: true,
             close_prompt_seen: false,
             active_connection: None,
+            onboarding: Some(crate::config::OnboardingConfig::default()),
         }
     }
 
@@ -6394,6 +6395,7 @@ mod native_read_state_tests {
             close_to_tray: true,
             close_prompt_seen: false,
             active_connection: None,
+            onboarding: Some(crate::config::OnboardingConfig::default()),
         }
     }
 

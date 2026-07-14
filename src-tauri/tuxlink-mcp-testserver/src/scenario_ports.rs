@@ -25,7 +25,8 @@ use async_trait::async_trait;
 
 use tuxlink_mcp_core::ports::{
     ArdopConfigDto, AudioDevicesDto, BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto,
-    ConfigPort, ConfigViewDto, DevicePort, DocsHitDto, FolderDto, LogLineDto, LogPort, MailboxPort,
+    ConfigPort, ConfigViewDto, DevicePort, DocBodyDto, DocsHitDto, FolderDto, LogLineDto, LogPort,
+    MailboxPort,
     MessageMetaDto, ModemStatusDto, PacketConfigDto, ParsedMessageDto, PathPredictionDto,
     PeerListDto, PlatformInfoDto, PortError, PositionStatusDto, PredictRequestDto, PredictionPort,
     PrinterDto, RigConfigDto, RigStatusDto, SearchPort, SearchQueryDto, SearchResultsDto,
@@ -205,6 +206,16 @@ impl SearchPort for ScenarioSearch {
             })
             .cloned()
             .collect())
+    }
+    async fn doc(&self, slug: &str) -> Result<Option<DocBodyDto>, PortError> {
+        // The scenario world only seeds search-hit shape (title/slug/snippet),
+        // not a separate full-body dataset — reuse the seeded snippet as the
+        // body rather than fabricating content the fixture never provided.
+        Ok(self.0.docs.iter().find(|d| d.slug == slug).map(|d| DocBodyDto {
+            slug: d.slug.clone(),
+            title: d.title.clone(),
+            body: d.snippet.clone(),
+        }))
     }
     async fn catalog(&self) -> Result<Vec<CatalogEntryDto>, PortError> {
         Ok(self.0.catalog.clone())

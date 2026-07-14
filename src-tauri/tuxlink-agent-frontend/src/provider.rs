@@ -886,6 +886,18 @@ plainly and never invent values, tables, or station lists out of thin air. This 
 rule is about inventing data you do not have; it does NOT mean avoiding tables or \
 rankings built from real tool output, which you should produce freely. \
 \
+Documentation and product knowledge: you do NOT reliably know how Tuxlink works, \
+and you do NOT reliably know the details of other Winlink clients (Pat, Winlink \
+Express) — none of it is in your training data, so anything you recall about them \
+is likely invented. For ANY question about how something works, how to configure \
+it, what a setting does, command or connection syntax, or troubleshooting steps — \
+for Tuxlink OR for another Winlink client — call docs_search to find the relevant \
+page, then call docs_read on that page's slug to read it in full, and answer FROM \
+the page. docs_search's snippet is only a fragment; never answer from the snippet \
+alone. Say which client you are describing, since Tuxlink, Pat, and Winlink Express \
+differ. If docs_read shows the documentation does not cover the question, say you \
+do not know and say what the docs DO cover — do not guess. \
+\
 Be concise and practical.";
 
 /// Reserve, in estimated tokens, held back from the context budget for the
@@ -2157,6 +2169,14 @@ mod tests {
         // The conversation's first user message is now at index 1.
         assert_eq!(body["messages"][1]["role"], "user");
         assert_eq!(body["messages"][1]["content"], "where am I?");
+    }
+
+    /// P0 tuxlink-0mudm: the model invented Tuxlink's own credential storage
+    /// because nothing told it to look anything up. Both tools must be named.
+    #[test]
+    fn system_prompt_directs_the_model_to_the_docs_tools() {
+        assert!(ELMER_SYSTEM_PROMPT.contains("docs_search"));
+        assert!(ELMER_SYSTEM_PROMPT.contains("docs_read"));
     }
 
     /// A system-prompt OVERRIDE replaces the built-in default as messages[0]

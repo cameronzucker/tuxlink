@@ -32,6 +32,7 @@ pub mod winlink;
 pub mod winlink_backend;
 pub mod wizard;
 pub mod mcp_ports;
+pub mod onboarding_bridge;
 pub mod ft8;
 pub mod geomag;
 pub mod modem_commands;
@@ -853,6 +854,15 @@ pub fn run() {
         // for the MCP server's agent caller. `EgressGuard` is the single
         // authoritative gate; arm/disarm/status commands are registered below.
         .manage(std::sync::Arc::new(crate::ui_core::security::EgressGuard::new()))
+        // tuxlink-10bkw: keyed pending-ack map for the point_at MCP tool
+        // (backend→webview spotlight). Managed unconditionally (the
+        // `onboarding_point_at_ack` command is registered below regardless of
+        // whether the MCP server's `.setup()` branch wires a live
+        // `MonolithUiHintPort`), so a frontend ack never hits an unmanaged
+        // state panic.
+        .manage(std::sync::Arc::new(
+            crate::onboarding_bridge::PointAtPending::default(),
+        ))
         .setup(|app| {
             use tauri::Manager as _;  // brings .state() into scope for the setup closure
 
@@ -1629,6 +1639,23 @@ pub fn run() {
                         provision: std::sync::Arc::new(
                             crate::mcp_ports::MonolithProvisionPort::new(h.clone()),
                         ),
+                        // tuxlink-10bkw: point_at spotlight — emits to the
+                        // main webview and awaits its ack via the
+                        // unconditionally-managed `PointAtPending` above.
+                        ui_hint: std::sync::Arc::new(
+                            crate::mcp_ports::MonolithUiHintPort::new(h.clone()),
+                        ),
+                        // tuxlink-l44dm: off-air WWV space-weather capture.
+                        // RECEIVE-ONLY (tunes the rig and listens; never keys the
+                        // transmitter), so it is ungated and non-tainting.
+                        wwv: std::sync::Arc::new(crate::mcp_ports::MonolithWwvPort),
+                        // tuxlink-dof5j: the FT-8 listener. Receive-only — it
+                        // never keys the transmitter, so none of its methods
+                        // gate; its decodes carry no free-form text worth
+                        // tainting (77-bit payload, 13-char capped free text).
+                        ft8: std::sync::Arc::new(crate::mcp_ports::MonolithFt8Port::new(
+                            h.clone(),
+                        )),
                     });
                     let router = tuxlink_mcp_core::router::TuxlinkMcp::new(mcp_state);
 
@@ -1716,6 +1743,12 @@ pub fn run() {
                     stations: std::sync::Arc::new(crate::mcp_ports::MonolithStationPort::new(h_elmer.clone(), guard_elmer.clone())),
                     prediction: std::sync::Arc::new(crate::mcp_ports::MonolithPredictionPort::new(h_elmer.clone())),
                     provision: std::sync::Arc::new(crate::mcp_ports::MonolithProvisionPort::new(h_elmer.clone())),
+                    ui_hint: std::sync::Arc::new(crate::mcp_ports::MonolithUiHintPort::new(h_elmer.clone())),
+                    // tuxlink-l44dm: RECEIVE-ONLY off-air WWV capture — Elmer's
+                    // only way to refresh space weather with no internet.
+                    wwv: std::sync::Arc::new(crate::mcp_ports::MonolithWwvPort),
+                    // tuxlink-dof5j: FT-8 listener. Receive-only; never gates, never taints.
+                    ft8: std::sync::Arc::new(crate::mcp_ports::MonolithFt8Port::new(h_elmer.clone())),
                 });
 
                 // Perform the async MCP duplex handshake synchronously from setup.
@@ -2194,6 +2227,8 @@ pub fn run() {
             crate::ui_commands::config_set_review_inbound, // tuxlink-bsiy (review-pending-messages preference)
             crate::ui_commands::config_set_active_connection, // tuxlink-7ppfq (persist operator-selected connection)
             crate::ui_commands::config_set_trash_auto_purge, // tuxlink-wl7n (trash auto-purge + retention)
+            crate::ui_commands::config_set_onboarding, // tuxlink-10bkw (first-run tour state)
+            crate::onboarding_bridge::onboarding_point_at_ack, // tuxlink-10bkw (point_at frontend ack)
             // Task 10 (tuxlink-1hu): find-messages search commands
             crate::search::commands::tauri_search_run,
             crate::search::commands::tauri_search_list_saved,

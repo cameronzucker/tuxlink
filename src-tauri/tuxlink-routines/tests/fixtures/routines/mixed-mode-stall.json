@@ -1,0 +1,18 @@
+{
+  "routine": "mixed-mode-stall-demo",
+  "schema_version": 1,
+  "transmit_mode": "automatic",
+  "transmit_ack": { "by": "KK7ABC", "at": "2026-07-13T20:00:00Z" },
+  "on_interrupted": "stay",
+  "inputs": [],
+  "triggers": [{ "type": "manual" }],
+  "tracks": [
+    {
+      "name": "t1",
+      "steps": [
+        { "id": "c1", "control": "call", "routine": "mixed-mode-stall-callee", "args": {}, "sync": true },
+        { "id": "e1", "control": "end", "failed": false }
+      ]
+    }
+  ]
+}
