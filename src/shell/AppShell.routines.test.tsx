@@ -51,6 +51,11 @@ vi.mock('@tauri-apps/api/core', () => ({
     // an empty finding list rather than falling through to `undefined`
     // (`ValBar`'s `findings.filter(...)` would throw on that).
     if (cmd === 'routines_validate_draft') return [];
+    // CanvasTab's (Task 10) `layoutCanvas` calls `.map` on the action
+    // registry unconditionally — resolve with an empty registry rather than
+    // `undefined` (every action then renders as "unknown", which is a valid,
+    // non-crashing render, not a test concern here).
+    if (cmd === 'routines_actions_list') return [];
     return undefined;
   }),
 }));
