@@ -339,7 +339,19 @@ pub fn get_routine(state: &RoutinesState, name: &str) -> Result<RoutineDef, UiEr
 /// draft, it is not a routine at all, and there is nothing to store. The serde
 /// error is passed through verbatim so the builder can point at the line.
 pub fn save_routine(state: &RoutinesState, def_json: &str) -> Result<SaveResult, UiError> {
-    let def = RoutineDef::parse(def_json).map_err(|e| UiError::Rejected(e.to_string()))?;
+    let mut def = RoutineDef::parse(def_json).map_err(|e| UiError::Rejected(e.to_string()))?;
+    // The consent envelope is not writable through this path (spec §4/§13):
+    // the automatic-transmit acknowledgment is recorded only by a UI act, and
+    // this save path is agent-reachable over MCP (`routines_save`). Whatever
+    // ack the caller sent — forged, or replayed from `routines_get` — is
+    // discarded; the routine keeps the acknowledgment already on disk, if
+    // any. This happens BEFORE validation so the returned findings describe
+    // the def as stored (an unacked automatic routine reports
+    // AUTO_TX_UNACKED even when the request body carried an ack).
+    def.transmit_ack = state
+        .store
+        .get(&def.routine)
+        .and_then(|on_disk| on_disk.transmit_ack);
     let findings = validate_def(state, &def);
     // Save even with errors (spec §10: errors block enable/run, never save).
     // `store.save` still rejects a name that would escape the store directory —
@@ -986,6 +998,93 @@ mod tests {
         let (_dir, state, _sink, _c) = test_state();
         let err = save_routine(&state, &def_json("../config", log_step())).unwrap_err();
         assert!(matches!(err, UiError::Rejected(_)));
+    }
+
+    // ── save: the consent envelope is not writable through save ──────────
+
+    /// A routine JSON body whose call-graph transmits (`radio.connect`) with
+    /// `transmit_mode: automatic` — enableable ONLY with a recorded ack —
+    /// optionally smuggling a `transmit_ack` in the save body.
+    fn auto_tx_json(name: &str, ack: Option<serde_json::Value>) -> String {
+        let mut body = json!({
+            "routine": name,
+            "schema_version": 1,
+            "transmit_mode": "automatic",
+            "triggers": [{"type": "manual"}],
+            "tracks": [{"name": "t", "steps": [
+                {"id": "s1", "action": "radio.connect", "params": {}},
+                {"id": "e1", "control": "end"}
+            ]}]
+        });
+        if let Some(ack) = ack {
+            body["transmit_ack"] = ack;
+        }
+        body.to_string()
+    }
+
+    /// C1 regression (PR #1117 final review + Codex adrev, independently):
+    /// `save_routine` is agent-reachable over MCP (`routines_save`), and spec
+    /// §4/§13 promise the automatic-transmit acknowledgment is recorded only
+    /// by a UI act. A forged (or `routines_get`-replayed) `transmit_ack` in
+    /// the save body must be discarded — otherwise an agent could arm an
+    /// automatic transmitting routine with no operator act.
+    #[test]
+    fn save_discards_a_caller_supplied_transmit_ack() {
+        let (_dir, state, _sink, _c) = test_state();
+
+        let forged = json!({"by": "KK7ABC", "at": "2026-07-14T00:00:00Z"});
+        let result =
+            save_routine(&state, &auto_tx_json("forged-ack", Some(forged))).unwrap();
+
+        // The findings must describe the def AS STORED: with the smuggled ack
+        // discarded this IS an unacknowledged automatic routine.
+        assert!(result.blocked, "an unacked automatic routine saves blocked");
+        assert!(result.findings.iter().any(|f| f.code == "AUTO_TX_UNACKED"));
+        assert_eq!(
+            get_routine(&state, "forged-ack").unwrap().transmit_ack,
+            None,
+            "the forged ack must never reach the store"
+        );
+
+        // And the bypass end-to-end: enable refuses, exactly as if the save
+        // body had carried no ack at all.
+        let result = set_routine_enabled(&state, "forged-ack", true, NOW, 0).unwrap();
+        assert!(!result.enabled, "a forged ack must not arm an automatic routine");
+        assert!(result.findings.iter().any(|f| f.code == "AUTO_TX_UNACKED"));
+        assert!(!state.store.is_enabled("forged-ack"));
+    }
+
+    /// The other half of the C1 contract: an acknowledgment a UI act DID
+    /// record survives later saves verbatim — an agent editing a routine
+    /// (supplying no ack, or a different forged one) neither clears nor
+    /// replaces the operator's recorded consent.
+    #[test]
+    fn save_preserves_the_on_disk_ack_a_ui_act_recorded() {
+        let (_dir, state, _sink, _c) = test_state();
+        save_routine(&state, &auto_tx_json("acked", None)).unwrap();
+
+        // Stamp the ack the way the UI-only command does: a direct store
+        // write, not the caller-reachable save path.
+        let operator_ack = tuxlink_routines::types::TransmitAck {
+            by: "KK7ABC".to_string(),
+            at: "2026-07-14T00:00:00Z".to_string(),
+        };
+        let mut def = get_routine(&state, "acked").unwrap();
+        def.transmit_ack = Some(operator_ack.clone());
+        state.store.save(&def).unwrap();
+
+        let forged = json!({"by": "N0CALL", "at": "1999-01-01T00:00:00Z"});
+        let result = save_routine(&state, &auto_tx_json("acked", Some(forged))).unwrap();
+
+        assert!(
+            result.findings.iter().all(|f| f.code != "AUTO_TX_UNACKED"),
+            "the preserved ack keeps the routine acknowledged"
+        );
+        assert_eq!(
+            get_routine(&state, "acked").unwrap().transmit_ack,
+            Some(operator_ack),
+            "the UI-recorded ack survives a caller save verbatim"
+        );
     }
 
     // ── enable: errors refuse; the fleet check runs ──────────────────────
