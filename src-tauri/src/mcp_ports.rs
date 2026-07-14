@@ -3621,15 +3621,20 @@ fn map_run_status(s: crate::routines::commands::RunStatusDto) -> RunStatusDto {
 /// Map a [`UiError`](crate::ui_commands::UiError) from the routines command
 /// layer onto a [`PortError`]. `NotFound` maps to [`PortError::NotFound`] —
 /// unlike `wwv_port_err`'s domain, a routine/run name IS the primary
-/// "does this exist" signal for `get`/`validate`/`journal_get`; everything
-/// else is `Internal`. Every message crosses `redact_err` first — a cheap
-/// no-op on the clean domain strings this layer produces, kept for the same
-/// boundary discipline every other port applies.
+/// "does this exist" signal for `get`/`validate`/`journal_get`. `Rejected`
+/// maps to [`PortError::InvalidInput`]: on this surface a rejection is
+/// always a caller-input refusal (an unparseable save body, a routine name
+/// that would escape the store) the agent can fix and retry — the same
+/// invalid-input shape [`RoutinesRunError::Refused`] takes on the run path,
+/// per the M2 review finding. Everything else is `Internal`. Every message
+/// crosses `redact_err` first — a cheap no-op on the clean domain strings
+/// this layer produces, kept for the same boundary discipline every other
+/// port applies.
 fn routines_port_err(e: crate::ui_commands::UiError) -> PortError {
     use crate::ui_commands::UiError;
     match e {
         UiError::NotFound(_) => PortError::NotFound,
-        UiError::Rejected(m) => PortError::Internal(redact_err(m)),
+        UiError::Rejected(m) => PortError::InvalidInput(redact_err(m)),
         UiError::NotConfigured(reason) | UiError::Unavailable { reason } => {
             PortError::Unavailable(redact_err(reason))
         }
@@ -3771,12 +3776,14 @@ impl RoutinesPort for MonolithRoutinesPort {
         script_json: Option<String>,
     ) -> Result<DryRunStartedDto, PortError> {
         let state = self.state();
+        // Malformed opaque-string args are the CALLER's error (M2): surface
+        // them invalid-input like `run`'s Refused, never Internal.
         let args: serde_json::Value = serde_json::from_str(&args_json)
-            .map_err(|e| PortError::Internal(format!("args_json is not valid JSON: {e}")))?;
+            .map_err(|e| PortError::InvalidInput(format!("args_json is not valid JSON: {e}")))?;
         let script: Option<crate::routines::commands::DryRunScriptDto> =
             match script_json {
                 Some(s) => Some(serde_json::from_str(&s).map_err(|e| {
-                    PortError::Internal(format!("script_json is not valid JSON: {e}"))
+                    PortError::InvalidInput(format!("script_json is not valid JSON: {e}"))
                 })?),
                 None => None,
             };

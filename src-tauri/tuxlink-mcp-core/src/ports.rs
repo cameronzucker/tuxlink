@@ -39,6 +39,13 @@ pub enum PortError {
     /// connected, …). Carries an operator-facing reason.
     #[error("unavailable: {0}")]
     Unavailable(String),
+    /// The CALLER's input was malformed or refused (unparseable JSON in an
+    /// opaque-string argument like `args_json`, a routine name that would
+    /// escape the store directory, …). The router surfaces this as an
+    /// invalid-request tool error — the agent can fix its input and retry —
+    /// never as an internal error, which would mis-signal a server bug.
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
     /// An internal error occurred fulfilling the request.
     #[error("internal error: {0}")]
     Internal(String),

@@ -32,9 +32,15 @@ use crate::{server_info_view, McpState};
 const KNOWLEDGE_MIME: &str = "text/markdown";
 
 /// Map a [`PortError`] onto an rmcp tool error. Read tools surface the failure
-/// to the agent rather than crashing the transport.
+/// to the agent rather than crashing the transport. A caller-input refusal
+/// ([`PortError::InvalidInput`]) is the agent's to fix — it surfaces as an
+/// invalid request (the same wire shape [`RoutinesRunError::Refused`] takes),
+/// never as an internal error that reads as a server bug.
 fn port_err(e: PortError) -> ErrorData {
-    ErrorData::internal_error(e.to_string(), None)
+    match e {
+        PortError::InvalidInput(reason) => ErrorData::invalid_request(reason, None),
+        other => ErrorData::internal_error(other.to_string(), None),
+    }
 }
 
 /// Map an [`EgressPortError`] onto an rmcp tool error. A `Denied` is an
@@ -2192,6 +2198,31 @@ mod tests {
         ));
         assert!(expired.message.contains("not authorized to transmit"));
         assert!(expired.message.contains("ARM the Agent-send control"));
+    }
+
+    /// M2 (PR #1117 review): a caller-input refusal and a server fault must
+    /// not share a wire code. `InvalidInput` (malformed `args_json`, a
+    /// store-escaping routine name) is the agent's to fix — invalid request;
+    /// everything else stays an internal error.
+    #[test]
+    fn port_err_splits_caller_input_from_server_faults() {
+        use rmcp::model::ErrorCode;
+
+        let bad_input = port_err(PortError::InvalidInput(
+            "args_json is not valid JSON: expected value at line 1".to_string(),
+        ));
+        assert_eq!(bad_input.code, ErrorCode::INVALID_REQUEST);
+        assert!(bad_input.message.contains("args_json is not valid JSON"));
+
+        assert_eq!(
+            port_err(PortError::Internal("db exploded".to_string())).code,
+            ErrorCode::INTERNAL_ERROR
+        );
+        assert_eq!(
+            port_err(PortError::NotFound).code,
+            ErrorCode::INTERNAL_ERROR,
+            "NotFound keeps its existing internal-error mapping — M2 narrows nothing else"
+        );
     }
 
     fn handler() -> TuxlinkMcp {
