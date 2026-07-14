@@ -94,12 +94,27 @@
 //! [`session::build_routines_state_for_app`] + `.manage()`s the result; Task 6
 //! registers the commands.
 //!
+//! **Plan 2 Task 6 (this landing — the feature becomes reachable):**
+//! [`commands`] is the Tauri command surface (authoring, the enable gate,
+//! run/dry-run/cancel/status/journal/consent, and CRUD for the two authorable
+//! `@`-entities), and [`validation`] is the [`MonolithValidationContext`] —
+//! the production `ValidationContext` that lets the plan-3 validator run
+//! against the REAL stores + the REAL action registry, which is what makes
+//! validate-on-save and the block-on-errors enable gate possible. Every
+//! command is a thin shim over a service fn taking `&RoutinesState`
+//! (`search/commands.rs`'s pattern), so the logic is unit-tested without a
+//! Tauri runtime. Task 6 also routes `routines_dry_run` through the engine's
+//! own [`tuxlink_routines::engine::Engine::start_dry_run`] (the registry swap
+//! that makes a dry run touch nothing real) and bounds the session's live-run
+//! registry (Task 5a's carried Low finding).
+//!
 //! That other, banned six-syllable term for scripted automation never
 //! appears in this module's symbols, JSON keys, or docs (spec Global
 //! Constraints) — the feature is Routines.
 
 pub mod actions;
 pub mod arbiter;
+pub mod commands;
 pub mod consent;
 pub mod events;
 pub mod presets;
@@ -107,12 +122,16 @@ pub mod resolver;
 pub mod session;
 pub mod station_sets;
 pub mod store;
+pub mod validation;
 
 pub use arbiter::{
     ArbiterError, Holder, HolderInfo, InteractiveSessionGuard, RadioArbiter, RadioLease,
 };
+pub use commands::{DryRunStarted, EnableResult, RunStatusDto, SaveResult};
 pub use consent::{closure_transmits, ConsentRegistry};
-pub use events::{RoutinesEvent, RoutinesEventSink, TauriRoutinesEventSink, ROUTINES_EVENT};
+pub use events::{
+    LibraryEntity, RoutinesEvent, RoutinesEventSink, TauriRoutinesEventSink, ROUTINES_EVENT,
+};
 pub use presets::{PresetError, RadioPreset, RadioPresetStore};
 pub use resolver::MonolithEntityResolver;
 pub use session::{
@@ -121,6 +140,7 @@ pub use session::{
 };
 pub use station_sets::{StationSet, StationSetError, StationSetStore};
 pub use store::{DefinitionStore, RoutineSummary, StoreError};
+pub use validation::MonolithValidationContext;
 
 use std::io::Write;
 use std::path::Path;

@@ -46,6 +46,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tauri::AppHandle;
@@ -53,9 +54,10 @@ use tokio_util::sync::CancellationToken;
 
 use tuxlink_routines::action::ActionRegistry;
 use tuxlink_routines::consent::ConsentPort;
+use tuxlink_routines::dryrun::DryRunScript;
 use tuxlink_routines::engine::{Engine, EngineConfig, RunHandle};
 use tuxlink_routines::error::EngineError;
-use tuxlink_routines::journal::{read_journal, RunEvent, RunState};
+use tuxlink_routines::journal::{read_journal, JournalEntry, RunEvent, RunState};
 use tuxlink_routines::snapshot::EntityResolver;
 use tuxlink_routines::types::{OnInterrupted, RoutineDef, TransmitMode};
 
@@ -77,8 +79,41 @@ use super::store::DefinitionStore;
 /// cycle, short enough that a wedged action doesn't hang a run forever.
 const DEFAULT_TIMEOUT_S: u64 = 300;
 
-/// Wall-clock unix seconds — the engine + arbiter `now` source.
-fn unix_now_secs() -> i64 {
+/// How many TERMINAL run entries the in-memory `runs` registry keeps (Task 5a's
+/// carried Low finding: the map grew without bound — one entry per run for the
+/// life of the process). Live (non-terminal) runs are NEVER evicted, however
+/// many there are: cancelling a run requires its token. Terminal entries are a
+/// read-through cache only — the journal on disk is the durable record, and
+/// [`RoutinesState::run_status`] falls back to it for an evicted run, so
+/// eviction costs a file read, never an answer.
+const MAX_TERMINAL_RUNS: usize = 100;
+
+/// A run id must be safe to interpolate into a journal filename. Engine-minted
+/// ids are `run-<unix>-<nnnn>`; this is the chokepoint that stops a
+/// caller-supplied `"../config"` from escaping the journal directory when a
+/// command reads `<journal_dir>/<run_id>.jsonl` (same discipline as
+/// `store::valid_name`).
+pub(crate) fn valid_run_id(run_id: &str) -> bool {
+    !run_id.is_empty()
+        && run_id.len() <= 64
+        && run_id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// Has the run reached a terminal state (spec §8)? Terminal entries are
+/// evictable from the in-memory registry; non-terminal ones are not.
+fn is_terminal(state: RunState) -> bool {
+    matches!(
+        state,
+        RunState::Completed | RunState::Failed | RunState::Cancelled | RunState::Interrupted
+    )
+}
+
+/// Wall-clock unix seconds — the engine + arbiter `now` source, and the command
+/// layer's `now` for the enable-time fleet check (`validate_fleet` takes an
+/// explicit `now_unix` rather than reading a hidden clock).
+pub(crate) fn unix_now_secs() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -114,6 +149,12 @@ struct RunEntry {
     dry_run: bool,
     cancel: CancellationToken,
     state: RunState,
+    /// Monotonic insertion order, used only by [`prune_terminal_runs`] to evict
+    /// the OLDEST terminal entries first. A `HashMap` has no order of its own
+    /// and `run_id`'s embedded timestamp has 1-second granularity (two runs
+    /// started in the same second would be untotally-ordered), so the sequence
+    /// is carried explicitly rather than derived from the id.
+    seq: u64,
 }
 
 /// The fast in-memory answer to `routines_run_status` (plan Task 6). The full,
@@ -141,8 +182,27 @@ pub struct RoutinesState {
     pub presets: Arc<RadioPresetStore>,
     pub station_sets: Arc<StationSetStore>,
     pub arbiter: Arc<RadioArbiter>,
-    /// Live + recently-finished runs, keyed by run_id.
+    /// The real action catalog, shared with the engine. Held here (not only
+    /// inside the engine's private config) so the Task-6 command layer can build
+    /// a [`super::validation::MonolithValidationContext`] whose
+    /// `action_descriptor()` answers come from the SAME registry the executor
+    /// resolves against — the validator can never disagree with runtime about
+    /// what an action is or what it declares.
+    pub registry: Arc<ActionRegistry>,
+    /// Where the engine writes run journals. Held here (the engine keeps its
+    /// `EngineConfig` private) so `routines_journal` can read a run's durable
+    /// record back, and so [`Self::run_status`] can answer for a run whose
+    /// in-memory entry was evicted.
+    pub journal_dir: PathBuf,
+    /// Identity store path (`identities.json`), needed by the command layer's
+    /// validation context to answer `@identity:` reference existence.
+    pub identity_store_path: PathBuf,
+    /// Live + recently-finished runs, keyed by run_id. Bounded: at most
+    /// [`MAX_TERMINAL_RUNS`] terminal entries are retained (plus every live
+    /// run). See [`prune_terminal_runs`].
     runs: Mutex<HashMap<String, RunEntry>>,
+    /// Monotonic insertion counter for `runs` (see [`RunEntry::seq`]).
+    run_seq: AtomicU64,
     sink: Arc<dyn RoutinesEventSink>,
     /// The attended-mode parking desk (spec §4). Transmit steps in attended
     /// runs park here; [`RoutinesState::grant_consent`] releases them.
@@ -164,6 +224,9 @@ impl RoutinesState {
         presets: Arc<RadioPresetStore>,
         station_sets: Arc<StationSetStore>,
         arbiter: Arc<RadioArbiter>,
+        registry: Arc<ActionRegistry>,
+        journal_dir: PathBuf,
+        identity_store_path: PathBuf,
         sink: Arc<dyn RoutinesEventSink>,
         consent: Arc<ConsentRegistry>,
         transmit_names: HashSet<String>,
@@ -174,11 +237,23 @@ impl RoutinesState {
             presets,
             station_sets,
             arbiter,
+            registry,
+            journal_dir,
+            identity_store_path,
             runs: Mutex::new(HashMap::new()),
+            run_seq: AtomicU64::new(0),
             sink,
             consent,
             transmit_names,
         }
+    }
+
+    /// Emit a routines event on the state's sink. The command layer (Task 6)
+    /// uses this to announce library mutations
+    /// ([`RoutinesEvent::LibraryChanged`]) so every open window re-reads the
+    /// list it is showing.
+    pub fn emit(&self, event: &RoutinesEvent) {
+        self.sink.emit(event);
     }
 
     /// Start a routine by name. Looks the definition up in the store, then
@@ -193,7 +268,28 @@ impl RoutinesState {
             .store
             .get(name)
             .ok_or_else(|| RoutineStartError::UnknownRoutine(name.to_string()))?;
-        self.start_routine_def(&def, args, false).await
+        self.start_routine_def(&def, args, None).await
+    }
+
+    /// Start a DRY run of a routine by name (spec §10 layer 3). Routes through
+    /// the engine's [`Engine::start_dry_run`] — the canonical fake-world entry
+    /// point, which swaps EVERY real action for a capability-mirroring
+    /// `FakeAction` before the executor ever resolves one. Nothing real is
+    /// touched: no rig, no transmitter, no CMS, no disk beyond the journal.
+    ///
+    /// `script` (default: optimistic) is what an unscripted action returns; see
+    /// [`DryRunScript`].
+    pub async fn start_dry_run(
+        self: &Arc<Self>,
+        name: &str,
+        args: serde_json::Value,
+        script: DryRunScript,
+    ) -> Result<String, RoutineStartError> {
+        let def = self
+            .store
+            .get(name)
+            .ok_or_else(|| RoutineStartError::UnknownRoutine(name.to_string()))?;
+        self.start_routine_def(&def, args, Some(script)).await
     }
 
     /// The single start chokepoint (the consent seam — see the module doc).
@@ -204,8 +300,9 @@ impl RoutinesState {
         self: &Arc<Self>,
         def: &RoutineDef,
         args: serde_json::Value,
-        dry_run: bool,
+        dry_run: Option<DryRunScript>,
     ) -> Result<String, RoutineStartError> {
+        let dry_run_flag = dry_run.is_some();
         // ── CONSENT GATE (slice 5b, spec §4) ─────────────────────────────
         // Compute the transmit closure over the definition + the store's
         // routine lookup (the snapshot resolver inlines @refs but never inlines
@@ -220,9 +317,10 @@ impl RoutinesState {
         // Dry-runs (plan 3) bypass the gate entirely: a dry-run mocks the radio
         // boundary and cannot key a transmitter, so authorization to transmit
         // is not the question a dry-run asks — you dry-run precisely to rehearse
-        // an as-yet-unacknowledged routine. `dry_run` also forces the engine's
-        // effective attended flag to false, so a dry-run never parks either.
-        if !dry_run {
+        // an as-yet-unacknowledged routine. `Engine::start_dry_run` also forces
+        // the engine's effective attended flag to false, so a dry-run never
+        // parks either.
+        if !dry_run_flag {
             let lookup = |name: &str| self.store.get(name);
             let transmits = |name: &str| self.transmit_names.contains(name);
             if closure_transmits(def, &lookup, &transmits)
@@ -235,29 +333,45 @@ impl RoutinesState {
             }
         }
 
+        // A dry run goes through the engine's OWN dry-run entry point, which is
+        // what swaps the registry for capability-mirroring fakes. Passing
+        // `dry_run: true` to `start_run_ext` would only have suppressed consent
+        // parking while STILL executing the real action catalog — a fake-world
+        // run that keys a real transmitter. The two paths are kept adjacent here
+        // so that mistake cannot be made silently again.
         let RunHandle {
             run_id,
             cancel,
             done,
-        } = self.engine.start_run_ext(def, args, 0, false, dry_run).await?;
+        } = match dry_run {
+            Some(script) => self.engine.start_dry_run(def, args, script).await?,
+            None => {
+                self.engine
+                    .start_run_ext(def, args, 0, false, false)
+                    .await?
+            }
+        };
 
         {
             let mut runs = lock(&self.runs);
+            let seq = self.run_seq.fetch_add(1, Ordering::Relaxed);
             runs.insert(
                 run_id.clone(),
                 RunEntry {
                     routine: def.routine.clone(),
-                    dry_run,
+                    dry_run: dry_run_flag,
                     cancel,
                     state: RunState::Running,
+                    seq,
                 },
             );
+            prune_terminal_runs(&mut runs);
         }
 
         self.sink.emit(&RoutinesEvent::RunStarted {
             run_id: run_id.clone(),
             routine: def.routine.clone(),
-            dry_run,
+            dry_run: dry_run_flag,
         });
 
         // Watcher: await the run's terminus, update the registry, emit
@@ -279,6 +393,9 @@ impl RoutinesState {
                 if let Some(entry) = runs.get_mut(&watch_id) {
                     entry.state = state;
                 }
+                // This run just became terminal — it may have pushed the
+                // terminal-entry count over the cap.
+                prune_terminal_runs(&mut runs);
             }
             this.sink.emit(&RoutinesEvent::RunFinished {
                 run_id: watch_id,
@@ -317,15 +434,76 @@ impl RoutinesState {
         self.consent.grant(run_id, step_id)
     }
 
-    /// Fast in-memory run status (plan Task 6's `routines_run_status`).
+    /// Run status (Task 6's `routines_run_status`). Answers from the in-memory
+    /// registry when the run is there, and falls back to the run's JOURNAL when
+    /// it is not — a terminal entry evicted by [`prune_terminal_runs`], or a run
+    /// from a previous process lifetime, still reports honestly rather than
+    /// vanishing. `None` means no such run has ever existed on this station.
     pub fn run_status(&self, run_id: &str) -> Option<RunStatusSnapshot> {
-        let runs = lock(&self.runs);
-        runs.get(run_id).map(|e| RunStatusSnapshot {
+        {
+            let runs = lock(&self.runs);
+            if let Some(e) = runs.get(run_id) {
+                return Some(RunStatusSnapshot {
+                    run_id: run_id.to_string(),
+                    routine: e.routine.clone(),
+                    dry_run: e.dry_run,
+                    state: e.state,
+                });
+            }
+        }
+        self.run_status_from_journal(run_id)
+    }
+
+    /// Reconstruct a run's status from its journal: the routine name +
+    /// dry-run stamp come from `RunStarted`, the state from the terminal
+    /// `RunFinished` (a journal with no `RunFinished` is a run this process
+    /// never finished — recovery will mark it `Interrupted`; until then it
+    /// reads as `Running`, which is what it was when the record was written).
+    fn run_status_from_journal(&self, run_id: &str) -> Option<RunStatusSnapshot> {
+        let entries = self.journal_entries(run_id)?;
+        let mut routine = None;
+        let mut dry_run = false;
+        let mut state = RunState::Running;
+        for entry in entries {
+            match entry.event {
+                RunEvent::RunStarted {
+                    routine: name,
+                    dry_run: dry,
+                    ..
+                } => {
+                    routine = Some(name);
+                    dry_run = dry;
+                }
+                RunEvent::RunFinished { state: s, .. } => state = s,
+                _ => {}
+            }
+        }
+        Some(RunStatusSnapshot {
             run_id: run_id.to_string(),
-            routine: e.routine.clone(),
-            dry_run: e.dry_run,
-            state: e.state,
+            routine: routine?,
+            dry_run,
+            state,
         })
+    }
+
+    /// A run's full journal, verbatim (Task 6's `routines_journal`). `None` if
+    /// `run_id` is not a well-formed run id, or no journal exists for it.
+    /// Every `StepErr.cause` in the returned entries is the underlying
+    /// VARA/CAT/HTTP text (spec §11) — the command layer passes them through
+    /// untouched.
+    pub fn journal_entries(&self, run_id: &str) -> Option<Vec<JournalEntry>> {
+        if !valid_run_id(run_id) {
+            return None;
+        }
+        let path = self.journal_dir.join(format!("{run_id}.jsonl"));
+        read_journal(&path).ok()
+    }
+
+    /// How many runs the in-memory registry currently holds (live + retained
+    /// terminal). Exists for the eviction test — the cap is an invariant worth
+    /// asserting, and the `runs` map itself is private.
+    pub fn registered_run_count(&self) -> usize {
+        lock(&self.runs).len()
     }
 
     /// Launch-time recovery (spec §8). Marks every interrupted journal
@@ -352,7 +530,7 @@ impl RoutinesState {
             match snapshot_def_from_journal(&run.journal_path) {
                 Some(def) if def.on_interrupted == OnInterrupted::Resume => {
                     match self
-                        .start_routine_def(&def, serde_json::json!({}), false)
+                        .start_routine_def(&def, serde_json::json!({}), None)
                         .await
                     {
                         Ok(_) => resumed += 1,
@@ -382,6 +560,31 @@ impl RoutinesState {
 /// brief, non-`await`, and panic-free, so recovering the inner value is safe.
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Bound the `runs` registry (Task 5a's carried Low finding). Retains every
+/// LIVE run — a live run's `CancellationToken` is the only way to cancel it, so
+/// evicting one would strand it uncancellable — and the [`MAX_TERMINAL_RUNS`]
+/// most-recent TERMINAL runs, dropping the oldest terminal entries beyond that.
+///
+/// Dropping a terminal entry loses nothing: the journal on disk is the durable
+/// record, and [`RoutinesState::run_status`] falls back to it, so an evicted
+/// run still answers a status query (one file read instead of a map hit).
+fn prune_terminal_runs(runs: &mut HashMap<String, RunEntry>) {
+    let mut terminal: Vec<(u64, String)> = runs
+        .iter()
+        .filter(|(_, e)| is_terminal(e.state))
+        .map(|(id, e)| (e.seq, id.clone()))
+        .collect();
+    if terminal.len() <= MAX_TERMINAL_RUNS {
+        return;
+    }
+    // Oldest first, then drop from the front until the cap is met.
+    terminal.sort_by_key(|(seq, _)| *seq);
+    let excess = terminal.len() - MAX_TERMINAL_RUNS;
+    for (_, run_id) in terminal.into_iter().take(excess) {
+        runs.remove(&run_id);
+    }
 }
 
 /// Is a routine's automatic-transmit acknowledgment recorded (spec §4)? True
@@ -449,11 +652,13 @@ pub fn build_routines_state(
         config_dir.join("radio-presets.json"),
     ));
     let station_sets = Arc::new(StationSetStore::open(config_dir.join("station-sets.json")));
+    let identity_store_path = config_dir.join("identities.json");
+    let journal_dir = config_dir.join("routines-runs");
 
     let resolver: Arc<dyn EntityResolver> = Arc::new(MonolithEntityResolver::new(
         presets.clone(),
         station_sets.clone(),
-        config_dir.join("identities.json"),
+        identity_store_path.clone(),
     ));
 
     // Consent wiring (slice 5b, spec §4): capture the transmitting action names
@@ -465,9 +670,14 @@ pub fn build_routines_state(
     let consent = Arc::new(ConsentRegistry::new(sink.clone()));
     let transmit_names = transmit_action_names(&registry);
 
+    // ONE registry `Arc`, shared by the engine (which resolves actions from it)
+    // and the state (whose command layer builds the validation context's
+    // `action_descriptor()` from it). Two copies could drift; one cannot.
+    let registry = Arc::new(registry);
+
     let engine = Arc::new(Engine::new(EngineConfig {
-        journal_dir: config_dir.join("routines-runs"),
-        registry: Arc::new(registry),
+        journal_dir: journal_dir.clone(),
+        registry: registry.clone(),
         resolver,
         now: unix_now_secs,
         default_timeout_s: DEFAULT_TIMEOUT_S,
@@ -481,6 +691,9 @@ pub fn build_routines_state(
         presets,
         station_sets,
         arbiter,
+        registry,
+        journal_dir,
+        identity_store_path,
         sink,
         consent,
         transmit_names,
@@ -707,6 +920,7 @@ mod tests {
             w.append(RunEvent::RunStarted {
                 routine: "stayer".into(),
                 snapshot: serde_json::to_value(&def).unwrap(),
+                dry_run: false,
             })
             .unwrap();
         }
@@ -748,6 +962,7 @@ mod tests {
             w.append(RunEvent::RunStarted {
                 routine: "resumer".into(),
                 snapshot: serde_json::to_value(&def).unwrap(),
+                dry_run: false,
             })
             .unwrap();
         }
@@ -778,6 +993,158 @@ mod tests {
         // RunFinished{Completed} on the sink is the resumed run's (the
         // interrupted run finished Interrupted, not Completed).
         wait_until(|| count_finished(&sink.events(), RunState::Completed) == 1).await;
+    }
+
+    // ========================================================================
+    // Task 6 — the runs registry is BOUNDED (5a's carried Low finding)
+    // ========================================================================
+
+    #[tokio::test]
+    async fn terminal_runs_are_evicted_past_the_cap_and_still_answer_from_the_journal() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, _sink) = test_state(
+            dir.path().to_path_buf(),
+            FakeAction::new("local.log").ok(json!({})),
+        );
+        state
+            .store
+            .save(&minimal_def("quick", OnInterrupted::Stay))
+            .unwrap();
+
+        // Run more routines than the cap allows to retain.
+        let overflow = MAX_TERMINAL_RUNS + 10;
+        let mut first_run_id = None;
+        for i in 0..overflow {
+            let run_id = state.start_routine("quick", json!({})).await.unwrap();
+            if i == 0 {
+                first_run_id = Some(run_id.clone());
+            }
+            // Let each run reach its terminus before starting the next, so the
+            // registry is full of TERMINAL entries (live runs are never evicted).
+            wait_until(|| state.run_status(&run_id).map(|s| s.state) == Some(RunState::Completed))
+                .await;
+        }
+
+        // The map is bounded — it did not grow to `overflow` entries.
+        let count = state.registered_run_count();
+        assert!(
+            count <= MAX_TERMINAL_RUNS,
+            "the runs registry must be bounded at {MAX_TERMINAL_RUNS}, holds {count}"
+        );
+
+        // And the OLDEST run — evicted from memory — still answers honestly,
+        // read back from its journal. Eviction costs a file read, not an answer.
+        let first = first_run_id.unwrap();
+        let status = state
+            .run_status(&first)
+            .expect("an evicted run still answers from its journal");
+        assert_eq!(status.routine, "quick");
+        assert_eq!(status.state, RunState::Completed);
+        assert!(!status.dry_run);
+    }
+
+    #[tokio::test]
+    async fn a_live_run_is_never_evicted() {
+        let dir = tempfile::tempdir().unwrap();
+        // A hanging action: this run stays live for the whole test.
+        let (state, _sink) = test_state(
+            dir.path().to_path_buf(),
+            FakeAction::new("local.log").hang(),
+        );
+        state
+            .store
+            .save(&minimal_def("hangs", OnInterrupted::Stay))
+            .unwrap();
+
+        // Every one of these runs stays LIVE (the action hangs), so none is
+        // evictable — the cap applies only to terminal entries.
+        let mut ids = Vec::new();
+        for _ in 0..(MAX_TERMINAL_RUNS + 5) {
+            ids.push(state.start_routine("hangs", json!({})).await.unwrap());
+        }
+        assert_eq!(
+            state.registered_run_count(),
+            ids.len(),
+            "live runs must never be evicted — their cancel token is the only way to stop them"
+        );
+        // Each is still cancellable, which is the reason they must be retained.
+        for id in &ids {
+            assert!(
+                state.cancel_run(id),
+                "a retained live run stays cancellable"
+            );
+        }
+    }
+
+    #[test]
+    fn valid_run_id_rejects_a_traversing_id_before_any_journal_path_is_built() {
+        assert!(valid_run_id("run-1752400000-0000"));
+        assert!(!valid_run_id("../../etc/passwd"));
+        assert!(!valid_run_id("run/../escape"));
+        assert!(!valid_run_id(""));
+        assert!(!valid_run_id("RUN-UPPER"));
+    }
+
+    #[tokio::test]
+    async fn journal_entries_refuses_a_traversing_run_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, _sink) = test_state(
+            dir.path().to_path_buf(),
+            FakeAction::new("local.log").ok(json!({})),
+        );
+        assert!(state.journal_entries("../../etc/passwd").is_none());
+        assert!(state.journal_entries("run-nonexistent").is_none());
+    }
+
+    // ========================================================================
+    // Task 6 — dry runs go through the engine's registry swap
+    // ========================================================================
+
+    /// The bug this test locks down: `start_routine_def` used to pass its
+    /// `dry_run` flag to `start_run_ext`, which only suppresses consent parking
+    /// — the REAL action catalog still executed. A "dry run" that keys a real
+    /// transmitter is worse than no dry run at all.
+    #[tokio::test]
+    async fn a_dry_run_executes_no_real_action() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = Arc::new(
+            FakeAction::new("radio.tx")
+                .with_capabilities(true, true, false)
+                .ok(json!({"sent": true})),
+        );
+        let (state, sink) = state_with(dir.path().to_path_buf(), std::slice::from_ref(&real));
+
+        // Automatic + transmitting + unacked: a REAL run is refused outright.
+        state
+            .store
+            .save(&tx_def("auto", TransmitMode::Automatic, None))
+            .unwrap();
+        assert!(state.start_routine("auto", json!({})).await.is_err());
+
+        // The DRY run proceeds — and completes — without touching the real
+        // action, because the engine replaced the whole registry with fakes.
+        let run_id = state
+            .start_dry_run("auto", json!({}), DryRunScript::new())
+            .await
+            .expect("a dry run is never consent-gated");
+        wait_until(|| count_finished(&sink.events(), RunState::Completed) == 1).await;
+
+        assert!(
+            real.calls().is_empty(),
+            "a dry run must never execute the real transmit action"
+        );
+        assert!(
+            state.run_status(&run_id).map(|s| s.dry_run) == Some(true),
+            "the run is stamped as a dry run"
+        );
+        // The journal's own dry_run stamp is the durable proof.
+        let entries = state.journal_entries(&run_id).unwrap();
+        assert!(
+            entries
+                .iter()
+                .any(|e| matches!(&e.event, RunEvent::RunStarted { dry_run: true, .. })),
+            "the journal records that no real action was invoked for this run"
+        );
     }
 
     // ========================================================================
@@ -850,7 +1217,10 @@ mod tests {
                     return (run_id, step_id);
                 }
             }
-            assert!(std::time::Instant::now() < deadline, "no AwaitingConsent event");
+            assert!(
+                std::time::Instant::now() < deadline,
+                "no AwaitingConsent event"
+            );
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
@@ -986,7 +1356,10 @@ mod tests {
         assert_eq!(ev_run, run_id);
         assert_eq!(ev_step, "s1");
         // Parked: the transmit action has NOT executed.
-        assert!(action.calls().is_empty(), "must not transmit before consent");
+        assert!(
+            action.calls().is_empty(),
+            "must not transmit before consent"
+        );
 
         // Operator grants: the transmit action now runs, and the run completes.
         assert!(state.grant_consent(&run_id, "s1"), "a step was parked");
@@ -1063,7 +1436,10 @@ mod tests {
         // is automatic — attended-ness propagated down the call.
         let (child_run, child_step) = wait_awaiting(&sink).await;
         assert_eq!(child_step, "s1");
-        assert!(action.calls().is_empty(), "child must not transmit unattended");
+        assert!(
+            action.calls().is_empty(),
+            "child must not transmit unattended"
+        );
 
         // Grant the child's transmit; the whole chain then completes.
         assert!(state.grant_consent(&child_run, &child_step));
@@ -1083,11 +1459,11 @@ mod tests {
         let mut def = tx_def("att-resume", TransmitMode::Attended, None);
         def.on_interrupted = OnInterrupted::Resume;
         {
-            let mut w =
-                JournalWriter::create(&journal_dir, "run-dead-tx", fixed_now).unwrap();
+            let mut w = JournalWriter::create(&journal_dir, "run-dead-tx", fixed_now).unwrap();
             w.append(RunEvent::RunStarted {
                 routine: "att-resume".into(),
                 snapshot: serde_json::to_value(&def).unwrap(),
+                dry_run: false,
             })
             .unwrap();
         }

@@ -1648,7 +1648,9 @@ pub fn run() {
                         // tuxlink-l44dm: off-air WWV space-weather capture.
                         // RECEIVE-ONLY (tunes the rig and listens; never keys the
                         // transmitter), so it is ungated and non-tainting.
-                        wwv: std::sync::Arc::new(crate::mcp_ports::MonolithWwvPort),
+                        wwv: std::sync::Arc::new(crate::mcp_ports::MonolithWwvPort::new(
+                            h.clone(),
+                        )),
                         // tuxlink-dof5j: the FT-8 listener. Receive-only — it
                         // never keys the transmitter, so none of its methods
                         // gate; its decodes carry no free-form text worth
@@ -1746,7 +1748,7 @@ pub fn run() {
                     ui_hint: std::sync::Arc::new(crate::mcp_ports::MonolithUiHintPort::new(h_elmer.clone())),
                     // tuxlink-l44dm: RECEIVE-ONLY off-air WWV capture — Elmer's
                     // only way to refresh space weather with no internet.
-                    wwv: std::sync::Arc::new(crate::mcp_ports::MonolithWwvPort),
+                    wwv: std::sync::Arc::new(crate::mcp_ports::MonolithWwvPort::new(h_elmer.clone())),
                     // tuxlink-dof5j: FT-8 listener. Receive-only; never gates, never taints.
                     ft8: std::sync::Arc::new(crate::mcp_ports::MonolithFt8Port::new(h_elmer.clone())),
                 });
@@ -2467,6 +2469,35 @@ pub fn run() {
             crate::ft8::commands::ft8_waterfall_subscribe,
             crate::ft8::commands::ft8_waterfall_unsubscribe,
             crate::geomag::magnetic_declination,
+            // Routines (plan 2 Task 6, tuxlink-ofw4s): the command surface that
+            // makes the feature user-reachable. Authoring (list/get/save/delete)
+            // — `routines_save` validates and returns findings but NEVER blocks
+            // a save; the enable gate (`routines_set_enabled`) is what refuses a
+            // routine with validation errors, and runs the fleet check against
+            // everything already enabled. Runs go through the transmit-consent
+            // start gate in `routines::session`; `routines_dry_run` swaps the
+            // whole action registry for fakes and touches nothing real.
+            // `routines_presets_*` / `routines_station_sets_*` are the CRUD for
+            // the two entities a routine can reference (`@preset:`,
+            // `@station-set:`) — without them those entities would be
+            // hand-edit-JSON-only (plan amendment 2026-07-13).
+            crate::routines::commands::routines_list,
+            crate::routines::commands::routines_get,
+            crate::routines::commands::routines_save,
+            crate::routines::commands::routines_delete,
+            crate::routines::commands::routines_set_enabled,
+            crate::routines::commands::routines_run,
+            crate::routines::commands::routines_dry_run,
+            crate::routines::commands::routines_cancel,
+            crate::routines::commands::routines_run_status,
+            crate::routines::commands::routines_journal,
+            crate::routines::commands::routines_consent_grant,
+            crate::routines::commands::routines_presets_list,
+            crate::routines::commands::routines_presets_save,
+            crate::routines::commands::routines_presets_delete,
+            crate::routines::commands::routines_station_sets_list,
+            crate::routines::commands::routines_station_sets_save,
+            crate::routines::commands::routines_station_sets_delete,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

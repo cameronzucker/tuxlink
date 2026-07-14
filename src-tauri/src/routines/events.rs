@@ -104,6 +104,27 @@ pub enum RoutinesEvent {
         #[serde(rename = "stepId")]
         step_id: String,
     },
+    /// The routines LIBRARY changed — a definition, preset, or station-set was
+    /// created, updated, deleted, enabled, or disabled (Task 6's command layer
+    /// emits this after every successful mutation). The payload deliberately
+    /// carries only *what* changed, not the new value: a listener re-reads
+    /// through the same commands it already uses, so there is exactly one
+    /// read path and no chance of the event and the store disagreeing.
+    LibraryChanged {
+        /// Which collection changed.
+        entity: LibraryEntity,
+        /// The affected entry's name.
+        name: String,
+    },
+}
+
+/// Which routines collection a [`RoutinesEvent::LibraryChanged`] refers to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LibraryEntity {
+    Routine,
+    Preset,
+    StationSet,
 }
 
 /// Side-effect sink the session emits routine events into (the `ft8::events`
@@ -202,6 +223,33 @@ mod tests {
         let j: serde_json::Value = serde_json::to_value(&ac).unwrap();
         assert_eq!(j["kind"], "awaitingConsent");
         assert_eq!(j["stepId"], "s2");
+    }
+
+    #[test]
+    fn library_changed_serializes_camelcase_entity_tags() {
+        // serde `rename_all` on an enum renames variant TAGS (the project's
+        // standing serde pitfall) — assert the exact wire strings the frontend
+        // switches on, so a rename can't silently break the listener.
+        let e = RoutinesEvent::LibraryChanged {
+            entity: LibraryEntity::StationSet,
+            name: "or-gateways".into(),
+        };
+        let j: serde_json::Value = serde_json::to_value(&e).unwrap();
+        assert_eq!(j["kind"], "libraryChanged");
+        assert_eq!(j["entity"], "stationSet");
+        assert_eq!(j["name"], "or-gateways");
+
+        for (entity, tag) in [
+            (LibraryEntity::Routine, "routine"),
+            (LibraryEntity::Preset, "preset"),
+        ] {
+            let j = serde_json::to_value(RoutinesEvent::LibraryChanged {
+                entity,
+                name: "x".into(),
+            })
+            .unwrap();
+            assert_eq!(j["entity"], tag);
+        }
     }
 
     #[test]

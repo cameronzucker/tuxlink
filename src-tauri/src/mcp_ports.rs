@@ -2907,22 +2907,41 @@ fn wwv_port_err(e: crate::ui_commands::UiError) -> PortError {
     }
 }
 
-/// [`WwvPort`] adapter over the off-air WWV capture commands. Holds no handle —
-/// both commands read the on-disk config directly (an unused `AppHandle` field
-/// would be dead code), so this is a unit struct.
-pub struct MonolithWwvPort;
+/// [`WwvPort`] adapter over the off-air WWV capture commands.
+///
+/// Holds an `AppHandle` solely to reach the globally-`.manage()`d
+/// `Arc<RadioArbiter>`: routines plan 2 Task 5c made `wwv_offair_refresh` take
+/// the arbiter (an off-air capture SEIZES the rig — it tunes to the WWV dial and
+/// listens — so it must take an interactive lease rather than yanking the radio
+/// out from under a running routine). Tauri injects that `State` for free on the
+/// IPC path; an in-process caller like this port has to fetch it, which is what
+/// `MonolithDataService::wwv_capture` (the routines-side caller) already does.
+pub struct MonolithWwvPort {
+    app: AppHandle,
+}
+
+impl MonolithWwvPort {
+    pub fn new(app: AppHandle) -> Self {
+        Self { app }
+    }
+}
 
 #[async_trait]
 impl WwvPort for MonolithWwvPort {
     async fn capture(&self) -> Result<WwvCaptureDto, PortError> {
         use crate::catalog::stations_cache::{Clock, SystemClock};
+        use tauri::Manager as _;
 
         // Same clock the solar snapshot loader uses — the capture stamps the
         // ingested snapshot and picks the WWV dial for the current UTC hour.
         let now_ms = SystemClock.now_millis();
-        let out = crate::wwv_offair::commands::wwv_offair_refresh(now_ms)
-            .await
-            .map_err(wwv_port_err)?;
+        let out = crate::wwv_offair::commands::wwv_offair_refresh(
+            now_ms,
+            self.app
+                .state::<std::sync::Arc<crate::routines::arbiter::RadioArbiter>>(),
+        )
+        .await
+        .map_err(wwv_port_err)?;
 
         // Flatten the optional SolarIndices into the three optional fields. A
         // no-copy capture carries no indices (nothing was written), so all three
