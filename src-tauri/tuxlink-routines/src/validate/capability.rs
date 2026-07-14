@@ -40,16 +40,24 @@ pub const STEP_TIMEOUT_LIKELY_INSUFFICIENT: &str = "STEP_TIMEOUT_LIKELY_INSUFFIC
 const WWV_ACTION: &str = "data.spacewx_wwv";
 
 /// Minimum step timeout (seconds) a `data.spacewx_wwv` step needs to
-/// reliably finish (plan-4 amendment task 1). **Derivation:** the WWV
-/// space-weather segment airs at :18 past the hour. Worst case, the step
-/// starts the instant *after* :18 has just elapsed, so the wait for the
-/// NEXT :18 mark alone can be up to 59 minutes; add the several minutes
-/// (~5-6 min) the segment itself takes to transmit, be tuned into, and
-/// captured, and the worst-case total is ≈65 minutes = 3900 seconds. A step
-/// timeout under that floor can fire before a legitimate worst-case capture
-/// ever finishes — which reads to the operator as a spurious step failure
-/// ("WWV timed out") rather than the true cause ("WWV just wasn't due yet").
-pub const WWV_MIN_TIMEOUT_S: u64 = 3900;
+/// reliably finish (plan-4 amendment task 1; re-derived for the Codex P3
+/// finding on PR #1117). **Derivation — must match the shipped scheduler**
+/// (`next_capture`, monolith `routines/actions/data.rs`, which a monolith
+/// test asserts this constant against): the action captures at the NEAREST
+/// of TWO windows per hour — WWV's :18 bulletin (capture opens :17:55,
+/// 1075 s into the hour) and WWVH's :45 (opens :44:55, 2695 s), each with a
+/// 70 s capture span. The worst case is arriving the instant the WWVH span
+/// closes (:46:05, 2765 s into the hour): the nearest next window is the
+/// NEXT hour's WWV open at 4675 s absolute — a 1910 s (~32 min) wait. Add
+/// the 70 s capture dwell plus ~5 min (300 s) for STT model load/decode and
+/// rig save/tune/restore, and the floor is 1910 + 70 + 300 = 2280 seconds
+/// (38 min). A step timeout under that floor can fire before a legitimate
+/// worst-case capture ever finishes — which reads to the operator as a
+/// spurious step failure ("WWV timed out") rather than the true cause
+/// ("neither WWV nor WWVH was due yet"). The previous 3900 s (65 min) floor
+/// assumed a single hourly :18 window and over-warned: it flagged 45-50 min
+/// timeouts the dual-window scheduler comfortably meets.
+pub const WWV_MIN_TIMEOUT_S: u64 = 2280;
 
 /// Append every capability finding for `def` into `findings`. Called by
 /// `validate()` (task 2 wiring) alongside `refs::check`.
@@ -146,7 +154,7 @@ fn check_step_capability(
 /// the engine's configured runtime default (`executor.rs`'s
 /// `ExecCtx.default_timeout_s`, an app-level knob, not part of
 /// `RoutineDef`), so a step relying on that unknown default cannot be
-/// statically proven to meet the 3900s floor.
+/// statically proven to meet the floor.
 fn check_wwv_timeout(
     def: &RoutineDef,
     track_name: &str,
@@ -171,10 +179,10 @@ fn check_wwv_timeout(
             STEP_TIMEOUT_LIKELY_INSUFFICIENT,
             def.routine.clone(),
             format!(
-                "step \"{}\" runs \"{WWV_ACTION}\" with {timeout_clause} — the WWV space-weather \
-                 segment airs at :18 past the hour and, worst case, isn't due and captured for up \
-                 to {WWV_MIN_TIMEOUT_S}s (~65 min); a shorter timeout will likely fire before a \
-                 legitimate capture completes",
+                "step \"{}\" runs \"{WWV_ACTION}\" with {timeout_clause} — the space-weather \
+                 segment airs twice hourly (WWV :18, WWVH :45) and, worst case, isn't due and \
+                 captured for up to {WWV_MIN_TIMEOUT_S}s (~38 min); a shorter timeout will \
+                 likely fire before a legitimate capture completes",
                 action_step.id.0,
             ),
         )
@@ -409,7 +417,7 @@ mod tests {
         assert_eq!(hits.len(), 1, "{findings:?}");
         assert_eq!(hits[0].severity, Severity::Warning);
         assert_eq!(hits[0].step, Some(StepId("s1".into())));
-        assert!(hits[0].message.contains("3900"), "{:?}", hits[0]);
+        assert!(hits[0].message.contains("2280"), "{:?}", hits[0]);
     }
 
     #[test]
