@@ -13,11 +13,16 @@
  *    fleet-ops table, wired to `onNavigate` below: a row double-click or the
  *    ⋯ menu's Edit opens the designer on that routine; the header's "＋ New
  *    Routine" opens a fresh, unsaved draft).
- *  - `{ view: 'designer'; routine; tab }` renders a placeholder — Task 9
- *    supplies the real `RoutineDesigner` (src/routines/designer/RoutineDesigner.tsx).
- *    An empty `routine` name means a fresh, unsaved draft.
+ *  - `{ view: 'designer'; routine; tab }` renders `RoutineDesigner` (Task 9,
+ *    src/routines/designer/RoutineDesigner.tsx) — the real designer shell,
+ *    replacing Task 7's one-line placeholder outright. An empty `routine`
+ *    name means a fresh, unsaved draft (`RoutineDesigner` never fetches a
+ *    def for it). `onBack` returns to the dashboard; `onTabChange` updates
+ *    just the `tab` field of this same designer view (Design/Runs/Settings),
+ *    keeping `routine` fixed.
  */
 import { RoutinesDashboard } from './RoutinesDashboard';
+import { RoutineDesigner } from './designer/RoutineDesigner';
 import './RoutinesSurface.css';
 
 export type DesignerTab = 'design' | 'runs' | 'settings';
@@ -42,14 +47,15 @@ export function RoutinesSurface({ view, onNavigate }: RoutinesSurfaceProps) {
       />
     );
   }
-  // Task 9 stub: RoutineDesigner doesn't exist yet. One line, no fake
-  // controls — Task 9 replaces this outright with the real designer shell
-  // (header, tabs, canvas). Empty `routine` is a fresh draft (Routines → New
-  // Routine…); a non-empty name is an existing routine opened for edit
-  // (Task 8's row double-click, once wired).
+  // Empty `routine` is a fresh draft (Routines → New Routine…); a non-empty
+  // name is an existing routine opened for edit (the dashboard's row
+  // double-click / ⋯ menu Edit).
   return (
-    <div className="surface" data-testid="routine-designer-placeholder">
-      Routine Designer — {view.routine || 'new draft'} ({view.tab})
-    </div>
+    <RoutineDesigner
+      routine={view.routine}
+      tab={view.tab}
+      onBack={() => onNavigate({ view: 'dashboard' })}
+      onTabChange={(tab) => onNavigate({ view: 'designer', routine: view.routine, tab })}
+    />
   );
 }

@@ -1,0 +1,275 @@
+/* RoutineDesigner.css — routines plan-5 Task 9 (designer shell).
+ *
+ * Transplanted from the approved mock
+ * (dev/scratch/routines-ui-mocks/designer-canvas.html)'s `.designer-head` /
+ * `.tabs` / `.valbar` rules, swapping the mock's standalone `:root` token
+ * names for this app's real `var(--…)` tokens (src/App.css) so the surface
+ * re-themes with every color scheme. `.surface` / `.btn` / `.btn-accent` /
+ * `.btn-ghost` / `.dismiss` duplicate RoutinesDashboard.css's copies —
+ * established convention in this codebase (RoutinesDashboard.css's own
+ * header comment): each routines surface file owns its own copy rather than
+ * assuming another file's stylesheet loaded alongside it, since designer and
+ * dashboard are never mounted together. The canvas/palette rules from the
+ * mock (`.lane`, `.node`, `.edge`, `.palette`, …) are Task 10-12's concern —
+ * this file stops at the shell + valbar.
+ */
+.surface {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.btn {
+  font-family: var(--sans, inherit);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 5px 12px;
+  line-height: 1.2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btn-accent {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #1a0e02;
+}
+
+.btn-ghost {
+  background: none;
+}
+
+.dismiss {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.load-error {
+  padding: 18px;
+  color: var(--error);
+  font-size: 13px;
+}
+
+/* ---- designer header ---- */
+.designer-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px 0;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.back {
+  font-size: 12px;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.dname {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.dname-input {
+  font-size: 15px;
+  font-weight: 600;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 2px 8px;
+  min-width: 220px;
+}
+
+.dstate {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-faint);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.unsaved {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--unread-dot);
+  flex: 0 0 auto;
+}
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  margin-left: 26px;
+  align-self: flex-end;
+}
+
+.tab {
+  padding: 7px 16px 8px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: none;
+  cursor: pointer;
+}
+
+.tab.active {
+  background: var(--bg);
+  border-color: var(--border-strong);
+  color: var(--accent-2);
+  font-weight: 600;
+}
+
+.dactions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding-bottom: 6px;
+}
+
+/* ---- tab body ---- */
+.design-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tab-body-placeholder {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 20px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+/* ---- always-on validation status bar ---- */
+.valbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 12px;
+  height: 30px;
+  white-space: nowrap;
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+
+.valbar .ok {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.valbar .err {
+  color: var(--error);
+  font-weight: 600;
+}
+
+.valbar .warn {
+  color: var(--accent-2);
+  font-weight: 600;
+}
+
+.valbar .code {
+  font-family: var(--mono);
+  color: var(--accent);
+}
+
+.valbar .msg {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.valbar .right {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+
+/* ---- Export JSON dialog — inline-overlay convention (ImportJsonDialog.tsx) ---- */
+.dlg-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 55%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.dlg {
+  width: min(640px, 92vw);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 16px 18px;
+  color: var(--text);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 45%);
+}
+
+.dlg-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.dlg-textarea {
+  flex: 1;
+  min-height: 320px;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.dlg-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
