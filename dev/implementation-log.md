@@ -5,6 +5,28 @@ shipped, bug-hunt cycles, adversarial reviews). Keyed by date + topic.
 
 ---
 
+## 2026-07-14 — Routines plans 2+4 merged (#1115, #1117); efcc8 security fix; plan-5 UI plan drafted
+
+Agent crag-lupine-lichen. Plan 2 unblocked by fixing its own flaky quit-gate
+drain-timeout test deterministically (channel-park instead of a 500 ms
+wall-clock sleep; `ef10bbee`) — operator merged #1115. All 5 review findings
+on plan 4 (bd tuxlink-efcc8) fixed and merged (#1117 @ `ed69cc60`): the C1
+MCP transmit-consent bypass (save path now discards caller `transmit_ack`
+before validation; regression tests both directions), the C2 testserver
+`--workspace` compile break (MockRoutines; compiled locally on the Pi), M2
+`PortError::InvalidInput` → `invalid_request`, M1 spec §14 wording, and the
+Codex P3 WWV floor re-derivation (3900→2280 s for the :18/:45 nearest-window
+scheduler, with a monolith drift-guard test pinning the leaf constant to
+`next_capture`'s real constants). Process traps recorded in the handoff:
+stacked PRs based off non-main branches get zero CI (`ci.yml` branch filter),
+and retargeting emits no runnable event — an empty commit arms the first run.
+Plan-5 (operator UI) implementation plan re-drafted to
+`dev/scratch/routines-p5-ui-plan-draft.md` (15 tasks; UI-only
+`routines_acknowledge_automatic` consent stamp required by the C1 fix); bd
+tuxlink-fdmg9 tracks execution. Four merged routines worktrees disposed per
+ADR 0009. New flaky-test bug filed for `tuxlink-jt9`
+`signal_death_is_classified_with_stderr_tail` (arm64).
+
 ## 2026-07-13 — v0.90.0 shipped; first-run tour + spatial hint system shipped (PR #1114); r788i arm/session UX designed
 
 - Merged #1089 (contacts consolidation) + #1090 (jt9 deflake) on green; released v0.90.0 (manual release-merge dispatch, operator-approved, after the cron was dropped by GitHub).
