@@ -2419,6 +2419,15 @@ pub fn run() {
                         ft8: std::sync::Arc::new(crate::mcp_ports::MonolithFt8Port::new(
                             h.clone(),
                         )),
+                        // Routines (spec §13): the 10-tool operator-automation
+                        // surface, deliberately excluding consent-grant (a UI
+                        // act only, spec §4). Fetches the managed
+                        // `Arc<RoutinesState>` fresh per call (managed a few
+                        // lines below this setup block, order-independent
+                        // since the port only touches it on first use).
+                        routines: std::sync::Arc::new(crate::mcp_ports::MonolithRoutinesPort::new(
+                            h.clone(),
+                        )),
                     });
                     let router = tuxlink_mcp_core::router::TuxlinkMcp::new(mcp_state);
 
@@ -2512,6 +2521,9 @@ pub fn run() {
                     wwv: std::sync::Arc::new(crate::mcp_ports::MonolithWwvPort::new(h_elmer.clone())),
                     // tuxlink-dof5j: FT-8 listener. Receive-only; never gates, never taints.
                     ft8: std::sync::Arc::new(crate::mcp_ports::MonolithFt8Port::new(h_elmer.clone())),
+                    // Routines (spec §13): the 10-tool operator-automation surface,
+                    // deliberately excluding consent-grant (a UI act only, spec §4).
+                    routines: std::sync::Arc::new(crate::mcp_ports::MonolithRoutinesPort::new(h_elmer.clone())),
                 });
 
                 // Perform the async MCP duplex handshake synchronously from setup.

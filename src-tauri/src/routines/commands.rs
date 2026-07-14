@@ -356,6 +356,17 @@ pub fn save_routine(state: &RoutinesState, def_json: &str) -> Result<SaveResult,
     })
 }
 
+/// Validate one routine by name against the live station, WITHOUT saving or
+/// running anything. The SAME Finding list [`save_routine`]/[`run_routine`]
+/// compute (spec §10: one validator, no privileged path) — this is a pure
+/// read for a caller (the MCP `routines_validate` tool) that wants the
+/// validator's opinion without staging a save. Fresh context per call, same
+/// as [`validate_def`]: a preset/station-set created a second ago counts.
+pub fn validate_routine(state: &RoutinesState, name: &str) -> Result<Vec<Finding>, UiError> {
+    let def = get_routine(state, name)?;
+    Ok(validate_def(state, &def))
+}
+
 pub fn delete_routine(state: &RoutinesState, name: &str) -> Result<(), UiError> {
     state.store.delete(name)?;
     state.emit(&RoutinesEvent::LibraryChanged {

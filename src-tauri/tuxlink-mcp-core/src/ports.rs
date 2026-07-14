@@ -1270,3 +1270,216 @@ pub trait Ft8Port: Send + Sync {
     /// Enumerate the audio capture devices the listener can use.
     async fn list_audio_devices(&self) -> Result<Vec<Ft8AudioDeviceDto>, PortError>;
 }
+
+// ---------------------------------------------------------------------------
+// Routines (spec §13) — operator-automation authoring + control. 10 tools,
+// deliberately EXCLUDING consent-grant: the design-time transmit
+// acknowledgment (spec §4) is recorded by a UI act only, and no method here
+// takes a parameter that could supply it.
+//
+// `list`/`get`/`validate` are read-only. `save` never blocks on validation
+// findings (spec §10: a half-written draft still saves). `enable`/`disable`
+// convey a validation-blocked enable as `EnableResultDto { blocked: true,
+// enabled: false }` — Ok, not Err (spec §10's "errors block enable" is a
+// DTO field, not a tool failure); disable is never blocked. `run` is the one
+// method with its own error type ([`RoutinesRunError`]): a blocked run OR an
+// `automatic`-transmit routine's missing design-time acknowledgment surfaces
+// as [`RoutinesRunError::Refused`], carrying the SAME message the commands
+// layer produces, verbatim — the router does not add remedy text (unlike
+// [`EgressPortError::Denied`]/[`WritePortError::Denied`], this is never an
+// `EgressGuard` arm/taint decision). `dry_run` is refused by NOTHING: it
+// routes through the engine's fake-world entry point, which swaps every
+// action for a capability-mirroring fake BEFORE the executor resolves one —
+// structurally unable to touch a real action, whatever the routine's
+// validation/consent state.
+//
+// None of these methods taint the session or pass through the `EgressGuard`:
+// routines authoring/control is local file + engine state, not egress.
+// ---------------------------------------------------------------------------
+
+/// Validation severity, mirroring the engine's `Severity` (spec §10: `Error`
+/// blocks enable/run; `Warning` never does).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum FindingSeverityDto {
+    Error,
+    Warning,
+}
+
+/// One validation finding, mirroring the engine's `Finding` field-for-field.
+/// `message` is the operator-facing explanation and ALWAYS names the
+/// offending entity verbatim (spec §10) — nothing in this crate paraphrases
+/// it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FindingDto {
+    /// Machine-readable class, e.g. `"UNRESOLVED_REF"`, `"UNKNOWN_ACTION"`.
+    pub code: String,
+    pub severity: FindingSeverityDto,
+    pub routine: String,
+    /// The track this finding is scoped to, when it is track-scoped.
+    pub track: Option<String>,
+    /// The step this finding is scoped to, when it is step-scoped.
+    pub step: Option<String>,
+    pub message: String,
+}
+
+/// One routine library entry ([`RoutinesPort::list`]). `trigger_kinds` is
+/// curated down to each trigger's tag (`"schedule"` / `"manual"`) — mcp-core
+/// stays free of the routines engine's full trigger/step/track type graph;
+/// the complete definition is available verbatim via [`RoutinesPort::get`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RoutineSummaryDto {
+    pub routine: String,
+    /// `"attended"` or `"automatic"`.
+    pub transmit_mode: String,
+    pub enabled: bool,
+    pub trigger_kinds: Vec<String>,
+}
+
+/// [`RoutinesPort::save`]'s result. The routine IS saved regardless of
+/// `findings` (spec §10: save never blocks) — `blocked` is the pre-computed
+/// "cannot enable/run as it stands" bit.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SaveResultDto {
+    pub routine: String,
+    pub findings: Vec<FindingDto>,
+    pub blocked: bool,
+}
+
+/// [`RoutinesPort::enable`]/[`RoutinesPort::disable`]'s result. `enabled` is
+/// the state the routine is ACTUALLY in after the call: a refused enable
+/// reports `enabled: false, blocked: true` plus the blocking findings — this
+/// is how spec §10's "errors block enable" reaches the agent (a DTO field,
+/// never a tool error).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EnableResultDto {
+    pub routine: String,
+    pub enabled: bool,
+    pub blocked: bool,
+    pub findings: Vec<FindingDto>,
+}
+
+/// A run's state (spec §8), mirroring the engine's `RunState` exactly.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RunStateDto {
+    Pending,
+    Running,
+    Waiting,
+    AwaitingConsent,
+    AwaitingRadio,
+    Completed,
+    Failed,
+    Cancelled,
+    Interrupted,
+}
+
+/// Fast in-memory answer to [`RoutinesPort::run_status`]. The full,
+/// step-by-step record is [`RoutinesPort::journal_get`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RunStatusDto {
+    pub run_id: String,
+    pub routine: String,
+    pub dry_run: bool,
+    pub state: RunStateDto,
+}
+
+/// [`RoutinesPort::dry_run`]'s start response: the run id to poll, plus the
+/// validator's findings (informational only — a dry run is never blocked by
+/// them; see the trait doc).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DryRunStartedDto {
+    pub run_id: String,
+    pub findings: Vec<FindingDto>,
+}
+
+/// Failure modes [`RoutinesPort::run`] can surface. Distinct from
+/// [`EgressPortError`]/[`WritePortError`]: a routines refusal is NEVER an
+/// `EgressGuard` arm/taint decision — routines authoring/running has nothing
+/// to do with that gate — so the router must NOT append the "ask the
+/// operator to ARM" remedy text those two attach to their `Denied` variant.
+/// [`RoutinesRunError::Refused`] is surfaced to the agent completely
+/// verbatim.
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum RoutinesRunError {
+    /// The routine name is unknown.
+    #[error("routine not found")]
+    NotFound,
+    /// The run was refused: a blocking validation error (spec §10), or an
+    /// `automatic`-transmit routine missing its design-time acknowledgment
+    /// (spec §4/§13, recorded by a UI act only — no method on this trait can
+    /// supply it). The string IS the operator-facing refusal text, exactly as
+    /// the commands layer produced it; the router does not rewrite it.
+    #[error("{0}")]
+    Refused(String),
+    /// An operational failure after the checks above passed.
+    #[error("internal error: {0}")]
+    Internal(String),
+}
+
+/// Routines: the 10-tool MCP surface for the operator-automation feature
+/// (spec §13) — `list` / `get` / `validate` / `save` / `enable` / `disable` /
+/// `run` / `run_status` / `journal_get` / `dry_run`. See the module note
+/// above for the shared error/blocking conventions. Object-safe so
+/// [`crate::McpState`] can hold it as `Arc<dyn RoutinesPort>`.
+#[async_trait]
+pub trait RoutinesPort: Send + Sync {
+    /// List every routine in the library. Read-only.
+    async fn list(&self) -> Result<Vec<RoutineSummaryDto>, PortError>;
+    /// Read one routine's full definition, exactly as stored (spec §14 JSON
+    /// shape — the same shape [`RoutinesPort::save`] accepts). `Err`
+    /// ([`PortError::NotFound`]) when the name is unknown. Read-only.
+    async fn get(&self, name: &str) -> Result<serde_json::Value, PortError>;
+    /// Validate one routine by name against the live station, WITHOUT saving
+    /// or running anything — the SAME validator [`RoutinesPort::save`] /
+    /// [`RoutinesPort::run`] use (spec §10: one validator, no privileged
+    /// path). Read-only.
+    async fn validate(&self, name: &str) -> Result<Vec<FindingDto>, PortError>;
+    /// Parse + save `def_json` (spec §14 shape). NEVER refused by validation
+    /// findings — a half-written draft still saves; `findings`/`blocked` in
+    /// the result say what is wrong. Refused only on a parse failure or a
+    /// routine name that would escape the routine store.
+    async fn save(&self, def_json: String) -> Result<SaveResultDto, PortError>;
+    /// Enable a routine so its triggers can fire it. See the module note for
+    /// the Ok-with-`blocked`-flag contract; `Err` only for an unknown name.
+    async fn enable(&self, name: &str) -> Result<EnableResultDto, PortError>;
+    /// Disable a routine. Never blocked, however invalid the routine
+    /// currently is; `Err` only for an unknown name.
+    async fn disable(&self, name: &str) -> Result<EnableResultDto, PortError>;
+    /// Start a real run with the given JSON-object `args_json`. Refused
+    /// ([`RoutinesRunError::Refused`], verbatim) when a validation error
+    /// blocks it, or when the routine is `automatic`-transmit and lacks its
+    /// design-time acknowledgment (spec §4/§13). An automatic routine that
+    /// ALREADY carries the acknowledgment runs the SAME whether invoked from
+    /// the UI or from here — the acknowledgment is a design-time gate that
+    /// covers every invoker, not a per-caller consent (this is deliberate,
+    /// not a gap). Returns the run id.
+    async fn run(&self, name: &str, args_json: String) -> Result<String, RoutinesRunError>;
+    /// Start a DRY run — the fake world (spec §10 layer 3). Refused by
+    /// NOTHING: not a blocking validation error, not a missing automatic-
+    /// transmit acknowledgment — rehearsing an as-yet-unfit-to-run routine is
+    /// the point. The impl MUST route this through the engine's dedicated
+    /// fake-world entry point (mirroring
+    /// [`RoutinesState::start_dry_run`](../../../src/routines/session.rs)),
+    /// which swaps every action for a capability-mirroring fake BEFORE the
+    /// executor resolves one, so this is structurally unable to touch a real
+    /// action — no rig seized, no carrier keyed, no message queued, no
+    /// gateway dialed, regardless of `script_json`. `args_json` is the JSON
+    /// input object; `script_json`, when present, is a JSON object shaping
+    /// the fake world's per-action outcomes (absent = an all-succeeds fake
+    /// world).
+    async fn dry_run(
+        &self,
+        name: &str,
+        args_json: String,
+        script_json: Option<String>,
+    ) -> Result<DryRunStartedDto, PortError>;
+    /// Fast in-memory run status. `Ok(None)` when the run id is unknown.
+    /// Read-only.
+    async fn run_status(&self, run_id: &str) -> Result<Option<RunStatusDto>, PortError>;
+    /// The full, durable step-by-step journal for a run, each entry VERBATIM
+    /// (spec §11) — a failed step's cause is the actual VARA/CAT/HTTP failure
+    /// text the action surfaced, never paraphrased. `Err`
+    /// ([`PortError::NotFound`]) for an unknown run id. Read-only.
+    async fn journal_get(&self, run_id: &str) -> Result<Vec<serde_json::Value>, PortError>;
+}
