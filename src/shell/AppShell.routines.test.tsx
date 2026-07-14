@@ -167,12 +167,53 @@ describe('Routines menu + inline surface mount', () => {
     expect(screen.queryByTestId('folder-sidebar')).not.toBeInTheDocument();
   });
 
-  it('opening another surface (Settings) closes the Routines surface', async () => {
+  // Post-review narrowing (task-7 reviewer finding): only mail-domain actions
+  // that navigate the main pane back to the mailbox close the surface
+  // (ROUTINES_CLOSING_MENU_ACTIONS in AppShell.tsx). Overlays layer over it
+  // and view/chrome toggles restyle it in place — mirroring the existing
+  // overlay interplay, where SettingsPanel / StationFinderPanel /
+  // RequestCenter are position:fixed overlays that never close each other or
+  // the pane beneath them.
+
+  it('a mailbox-navigating action (Message → New Message) closes the surface', async () => {
+    renderShell();
+    clickMenu('Routines', /^Routines$/);
+    expect(await screen.findByTestId('routines-dashboard')).toBeInTheDocument();
+    clickMenu('Message', /New Message/);
+    expect(screen.queryByTestId('routines-dashboard')).not.toBeInTheDocument();
+    // The mailbox master-detail is restored.
+    expect(screen.getByTestId('folder-sidebar')).toBeInTheDocument();
+  });
+
+  it('a color-scheme change re-themes the surface without closing it', async () => {
+    renderShell();
+    clickMenu('Routines', /^Routines$/);
+    expect(await screen.findByTestId('routines-dashboard')).toBeInTheDocument();
+    // Scheme items live in the View → Color scheme submenu; its items are in
+    // the DOM once the View dropdown is open (MenuBar renders submenus
+    // unconditionally inside the open dropdown; CSS handles the reveal).
+    clickMenu('View', /Night \/ tactical \(red\)/);
+    expect(screen.getByTestId('routines-dashboard')).toBeInTheDocument();
+    expect(screen.queryByTestId('folder-sidebar')).not.toBeInTheDocument();
+  });
+
+  it('the radio-panel toggle (Ctrl+Shift+M muscle memory) does not close the surface', async () => {
+    renderShell();
+    clickMenu('Routines', /^Routines$/);
+    expect(await screen.findByTestId('routines-dashboard')).toBeInTheDocument();
+    clickMenu('View', /Toggle Radio Panel/);
+    expect(screen.getByTestId('routines-dashboard')).toBeInTheDocument();
+  });
+
+  it('opening the Settings overlay layers it OVER the surface without closing it', async () => {
     renderShell();
     clickMenu('Routines', /^Routines$/);
     expect(await screen.findByTestId('routines-dashboard')).toBeInTheDocument();
     clickMenu('Tools', /Settings…/);
+    // SettingsPanel is a position:fixed inset-0 overlay — it renders over the
+    // routines surface exactly as it renders over the mailbox, and closing it
+    // returns the operator to where they were. Routines stays mounted.
     expect(await screen.findByTestId('settings-panel', {}, { timeout: 5000 })).toBeInTheDocument();
-    expect(screen.queryByTestId('routines-dashboard')).not.toBeInTheDocument();
+    expect(screen.getByTestId('routines-dashboard')).toBeInTheDocument();
   });
 });

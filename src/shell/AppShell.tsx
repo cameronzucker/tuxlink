@@ -164,6 +164,31 @@ import { emitPeerPrefill, type PeerPrefill } from '../peers/peerPrefillEvent';
 // routines plan-5 Task 7: type-only import (the component itself is lazy-loaded below).
 import type { RoutinesView } from '../routines/RoutinesSurface';
 
+// routines plan-5 Task 7 (post-review narrowing): the menu actions that CLOSE
+// the inline Routines surface — exactly the mail-domain actions whose effect
+// lives in the mailbox master-detail pane that Routines replaced, so firing
+// one is unambiguous "navigate back to the mailbox" intent (and lets the
+// operator SEE the message their reply/archive/delete/print acted on).
+//
+// Everything else leaves the surface open, mirroring the existing overlay
+// interplay: Settings / Station Finder / Request Center / Elmer / Verify CMS /
+// About / Theme Designer are all position:fixed overlays (or separate Tauri
+// windows: Help docs, Logging) that render OVER the main pane and never close
+// each other or the pane beneath them — opening Settings over the mailbox
+// doesn't close the mailbox, so opening it over Routines doesn't close
+// Routines. Pure view/chrome toggles (color scheme, mailbox bar, radio panel
+// — including its Ctrl+Shift+M accelerator) and the tour restyle/decorate the
+// shell and must never eject the operator from the surface they're reading.
+const ROUTINES_CLOSING_MENU_ACTIONS = new Set<string>([
+  'menu:message:new',
+  'menu:message:reply',
+  'menu:message:reply_all',
+  'menu:message:forward',
+  'menu:message:archive',
+  'menu:message:delete',
+  'menu:message:print',
+]);
+
 /** Phase D1 — display name for the RF modem session that BLOCKS an FT-8 listener
  *  start (it owns the radio + audio device). Deliberately partial: `telnet` is not
  *  an RF mode and never blocks FT-8, so it maps to nothing. */
@@ -541,10 +566,11 @@ function AppShellInner() {
   // routines plan-5 Task 7 (spec §12): the inline full-pane Routines surface.
   // null = closed (the normal mailbox master-detail shows). Opened from
   // Routines → Routines (dashboard) or Routines → New Routine… (a fresh
-  // designer draft). Closed by any OTHER menu action — see onMenuAction below
-  // — the surface's own "back" is simply choosing something else, mirroring
-  // how every other opener here (settingsOpen, catalogBuilderOpen, …) is a
-  // plain boolean/state flag the handler sets directly.
+  // designer draft). Closed only by menu actions that navigate the main pane
+  // back to the mailbox (ROUTINES_CLOSING_MENU_ACTIONS, top of file);
+  // overlays open OVER it and view toggles restyle it in place, mirroring
+  // how the existing overlay flags (settingsOpen, catalogBuilderOpen, …)
+  // never close each other or the pane beneath.
   const [routinesView, setRoutinesView] = useState<RoutinesView | null>(null);
   // tuxlink-qjgx Task 8: Report Issue modal state. The controller drives the
   // Save As → export → GitHub URL flow; AppShell owns the state so the modal
@@ -1656,10 +1682,13 @@ function AppShellInner() {
     : undefined;
 
   const onMenuAction = useCallback((id: string) => {
-    // routines plan-5 Task 7 (spec §12): the inline Routines surface leaves
-    // via ANY other menu action — its own "back" is simply choosing
-    // something else, so there is no dedicated close control to wire.
-    if (routinesView && !id.startsWith('menu:routines:')) setRoutinesView(null);
+    // routines plan-5 Task 7 (spec §12): the Routines surface has no
+    // dedicated close control — it closes when a menu action navigates the
+    // main pane back to the mailbox. Only the mail-domain actions in
+    // ROUTINES_CLOSING_MENU_ACTIONS (see its comment for the classification)
+    // qualify; overlays layer over the surface and view/chrome toggles
+    // restyle it in place.
+    if (routinesView && ROUTINES_CLOSING_MENU_ACTIONS.has(id)) setRoutinesView(null);
     dispatchMenuAction(id, handlers);
   }, [handlers, routinesView]);
   useAccelerators(onMenuAction);
