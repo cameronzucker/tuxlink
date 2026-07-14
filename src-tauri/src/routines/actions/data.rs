@@ -31,11 +31,13 @@
 //!   spec'd behavior. **This has a real, documented consequence for routine
 //!   authors:** the engine's default step timeout (300 s,
 //!   `actions/mod.rs`'s `DEFAULT_TIMEOUT_S`) is far shorter than the
-//!   longest possible wait for the next window (up to ~3600 s) — an author
-//!   MUST set `timeout_s` to cover the worst-case wait plus the ~70 s dwell
-//!   plus STT model load (a generous `timeout_s: 3900` covers it), or the
-//!   engine's own `tokio::time::timeout` (`executor.rs`) aborts the step
-//!   before the window ever arrives. This is stated here and in
+//!   longest possible wait for the nearest window (up to 1910 s, arriving
+//!   just as the WWVH span closes) — an author MUST set `timeout_s` to
+//!   cover the worst-case wait plus the ~70 s dwell plus STT model load
+//!   (the validator's floor, `WWV_MIN_TIMEOUT_S` = 2280 s, is exactly that
+//!   sum — a drift-guard test below pins it to THIS module's constants), or
+//!   the engine's own `tokio::time::timeout` (`executor.rs`) aborts the
+//!   step before the window ever arrives. This is stated here and in
 //!   [`SpaceWxWwv`]'s own doc, not silently discovered by a routine author
 //!   at 03:00.
 //!
@@ -947,6 +949,42 @@ mod tests {
         let got = next_capture(HOUR_BOUNDARY_S + 2700);
         assert_eq!(got.delay_s, 0);
         assert_eq!(got.label, "WWVH :45");
+    }
+
+    /// Drift guard (Codex P3, PR #1117): the validator's
+    /// `WWV_MIN_TIMEOUT_S` floor lives in the leaf crate, which cannot see
+    /// this module's schedule constants — this test pins the two together.
+    /// The floor must equal THIS scheduler's worst-case wait (arriving the
+    /// instant the WWVH span closes, waiting for next hour's WWV open) plus
+    /// the capture dwell plus the 300 s STT/decode/rig-restore margin the
+    /// floor's doc derives. If the schedule here changes (a window moves, a
+    /// third window appears, the dwell grows), this fails and points at the
+    /// constant to re-derive — the validator must never again disagree with
+    /// the action it validates (the original P3: a 3900 s single-window
+    /// floor over-warning on timeouts this dual-window scheduler meets).
+    #[test]
+    fn validator_wwv_floor_matches_this_scheduler_worst_case() {
+        // Worst case by construction: one second past the WWVH capture
+        // span, nearest window is next hour's WWV.
+        let just_past_wwvh = HOUR_BOUNDARY_S + WWVH_START_S + CAPTURE_SPAN_S;
+        let got = next_capture(just_past_wwvh);
+        assert_eq!(got.label, "WWV :18");
+        let worst_wait = HOUR_S + WWV_START_S - (WWVH_START_S + CAPTURE_SPAN_S);
+        assert_eq!(got.delay_s, worst_wait);
+
+        // And no arrival time waits longer: sweep the full hour.
+        let max_wait = (0..HOUR_S)
+            .map(|s| next_capture(HOUR_BOUNDARY_S + s).delay_s)
+            .max()
+            .unwrap();
+        assert_eq!(max_wait, worst_wait);
+
+        const STT_AND_RESTORE_MARGIN_S: u64 = 300;
+        assert_eq!(
+            tuxlink_routines::validate::capability::WWV_MIN_TIMEOUT_S,
+            worst_wait + CAPTURE_SPAN_S + STT_AND_RESTORE_MARGIN_S,
+            "the validator's WWV timeout floor drifted from the shipped schedule — re-derive it"
+        );
     }
 
     // ======================================================================

@@ -38,15 +38,15 @@ use tauri::{AppHandle, Emitter, Manager};
 use tuxlink_mcp_core::ports::{
     AbortPort, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto, AudioCardDto, AudioDevicesDto,
     BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto, ChannelReliabilityDto, ComposeDraftDto,
-    ComposePort, ConfigPort, ConfigViewDto, DevicePort, DocBodyDto, DocsHitDto, EgressPort,
-    EgressPortError,
-    FolderDto, Ft8AudioDeviceDto, Ft8HeardStationDto, Ft8Port, Ft8StatusDto,
-    GatewayAntennaDto, GatewayDto, GribRequestDto, LogLineDto, LogPort, MailboxPort,
-    MessageMetaDto, ModemStatusDto, OutboxReadPort, PacketConfigDto, PacketWriteDto,
-    ParsedMessageDto, PathPredictionDto, PeerChannelDto, PeerDto, PeerListDto,
-    PlatformInfoDto, PortError, PositionStatusDto,
+    ComposePort, ConfigPort, ConfigViewDto, DevicePort, DocBodyDto, DocsHitDto, DryRunStartedDto,
+    EgressPort, EgressPortError, EnableResultDto, FindingDto, FindingSeverityDto, FolderDto,
+    Ft8AudioDeviceDto, Ft8HeardStationDto, Ft8Port, Ft8StatusDto, GatewayAntennaDto, GatewayDto,
+    GribRequestDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto, ModemStatusDto,
+    OutboxReadPort, PacketConfigDto, PacketWriteDto, ParsedMessageDto, PathPredictionDto,
+    PeerChannelDto, PeerDto, PeerListDto, PlatformInfoDto, PortError, PositionStatusDto,
     PredictRequestDto, PredictionPort, PrinterDto, ProvisionPort, QsyCandidateDto, RigConfigDto,
-    RigStatusDto, RunningModemDto, SearchPort, SearchQueryDto, SearchResultsDto,
+    RigStatusDto, RoutineSummaryDto, RoutinesPort, RoutinesRunError, RunStateDto, RunStatusDto,
+    RunningModemDto, SaveResultDto, SearchPort, SearchQueryDto, SearchResultsDto,
     SelectedConnectionDto, SendFormDto, SerialDeviceDto, SessionIntentDto, SolarSnapshotDto,
     StagedRecordDto, StationFilterDto, StationListDto, StationModeDto, StationPort, StatusPort,
     UiHintPort, VaraCheckpointDto, VaraConfigDto, VaraEngineDto, VaraInstallStatusDto,
@@ -3524,6 +3524,294 @@ impl Ft8Port for MonolithFt8Port {
                 stable_id: d.stable_id.value,
             })
             .collect())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Routines port (spec §13) — operator-automation authoring + control.
+//
+// Every method wraps the SAME service fns `routines::commands` uses for the
+// Tauri command surface (`list_routines` / `get_routine` / `validate_routine`
+// / `save_routine` / `set_routine_enabled` / `run_routine` /
+// `dry_run_routine` / `run_status` / `run_journal`) — no parallel
+// validation/execution logic lives here. This adapter's only job is
+// fetching the managed `Arc<RoutinesState>`, calling the service fn, and
+// curating the result into the mcp-core DTOs.
+//
+// `dry_run` reaches `RoutinesState::start_dry_run` (via `dry_run_routine`),
+// the SAME structural guarantee the Tauri command relies on: the engine
+// swaps every action for a capability-mirroring fake BEFORE the executor
+// resolves one, so this port is exactly as unable to touch a real action as
+// the UI's dry-run button — regardless of validation state or a missing
+// automatic-transmit acknowledgment.
+//
+// None of these methods touch the `EgressGuard`: routines authoring/control
+// is local file + engine state, not egress, so nothing here taints or gates.
+// ---------------------------------------------------------------------------
+
+/// Map one [`tuxlink_routines::validate::Finding`] onto the agent-facing DTO.
+fn map_finding(f: tuxlink_routines::validate::Finding) -> FindingDto {
+    FindingDto {
+        code: f.code.to_string(),
+        severity: match f.severity {
+            tuxlink_routines::validate::Severity::Error => FindingSeverityDto::Error,
+            tuxlink_routines::validate::Severity::Warning => FindingSeverityDto::Warning,
+        },
+        routine: f.routine,
+        track: f.track,
+        step: f.step.map(|s| s.0),
+        message: f.message,
+    }
+}
+
+/// Curate a [`tuxlink_routines::types::Trigger`] down to its tag
+/// (`"schedule"` / `"manual"`) for `RoutineSummaryDto::trigger_kinds` —
+/// mcp-core stays free of the routines engine's trigger/step/track type
+/// graph; the full definition is available verbatim via
+/// [`RoutinesPort::get`].
+fn trigger_kind(t: &tuxlink_routines::types::Trigger) -> String {
+    match t {
+        tuxlink_routines::types::Trigger::Schedule { .. } => "schedule".to_string(),
+        tuxlink_routines::types::Trigger::Manual => "manual".to_string(),
+    }
+}
+
+/// Curate the routines-store list-view row into the agent-facing DTO.
+fn map_routine_summary(s: crate::routines::store::RoutineSummary) -> RoutineSummaryDto {
+    RoutineSummaryDto {
+        routine: s.routine,
+        transmit_mode: match s.transmit_mode {
+            tuxlink_routines::types::TransmitMode::Attended => "attended".to_string(),
+            tuxlink_routines::types::TransmitMode::Automatic => "automatic".to_string(),
+        },
+        enabled: s.enabled,
+        trigger_kinds: s.triggers.iter().map(trigger_kind).collect(),
+    }
+}
+
+/// Map the engine's `RunState` onto the agent-facing DTO, exhaustively (a
+/// future engine state must get a deliberate arm here, not a silent
+/// catch-all).
+fn map_run_state(s: tuxlink_routines::journal::RunState) -> RunStateDto {
+    use tuxlink_routines::journal::RunState as EngineRunState;
+    match s {
+        EngineRunState::Pending => RunStateDto::Pending,
+        EngineRunState::Running => RunStateDto::Running,
+        EngineRunState::Waiting => RunStateDto::Waiting,
+        EngineRunState::AwaitingConsent => RunStateDto::AwaitingConsent,
+        EngineRunState::AwaitingRadio => RunStateDto::AwaitingRadio,
+        EngineRunState::Completed => RunStateDto::Completed,
+        EngineRunState::Failed => RunStateDto::Failed,
+        EngineRunState::Cancelled => RunStateDto::Cancelled,
+        EngineRunState::Interrupted => RunStateDto::Interrupted,
+    }
+}
+
+/// Curate the commands layer's `RunStatusDto` (a monolith-local type, distinct
+/// from mcp-core's [`RunStatusDto`]) into the agent-facing DTO.
+fn map_run_status(s: crate::routines::commands::RunStatusDto) -> RunStatusDto {
+    RunStatusDto {
+        run_id: s.run_id,
+        routine: s.routine,
+        dry_run: s.dry_run,
+        state: map_run_state(s.state),
+    }
+}
+
+/// Map a [`UiError`](crate::ui_commands::UiError) from the routines command
+/// layer onto a [`PortError`]. `NotFound` maps to [`PortError::NotFound`] —
+/// unlike `wwv_port_err`'s domain, a routine/run name IS the primary
+/// "does this exist" signal for `get`/`validate`/`journal_get`. `Rejected`
+/// maps to [`PortError::InvalidInput`]: on this surface a rejection is
+/// always a caller-input refusal (an unparseable save body, a routine name
+/// that would escape the store) the agent can fix and retry — the same
+/// invalid-input shape [`RoutinesRunError::Refused`] takes on the run path,
+/// per the M2 review finding. Everything else is `Internal`. Every message
+/// crosses `redact_err` first — a cheap no-op on the clean domain strings
+/// this layer produces, kept for the same boundary discipline every other
+/// port applies.
+fn routines_port_err(e: crate::ui_commands::UiError) -> PortError {
+    use crate::ui_commands::UiError;
+    match e {
+        UiError::NotFound(_) => PortError::NotFound,
+        UiError::Rejected(m) => PortError::InvalidInput(redact_err(m)),
+        UiError::NotConfigured(reason) | UiError::Unavailable { reason } => {
+            PortError::Unavailable(redact_err(reason))
+        }
+        UiError::AuthFailed { reason } | UiError::Transport { reason } => {
+            PortError::Internal(redact_err(reason))
+        }
+        UiError::Cancelled => PortError::Internal("cancelled".to_string()),
+        UiError::Internal { detail } => PortError::Internal(redact_err(detail)),
+    }
+}
+
+/// Map a [`UiError`](crate::ui_commands::UiError) from
+/// [`run_routine`](crate::routines::commands::run_routine) onto a
+/// [`RoutinesRunError`]. `Rejected` is EITHER a blocking validation error OR
+/// the automatic-transmit design-time-acknowledgment refusal (spec §4/§13) —
+/// both already carry the operator-facing text verbatim, so it crosses
+/// UNREDACTED and UNMODIFIED into `Refused`: these are LOCAL domain-authored
+/// strings, never echoed remote/wire content, so `redact_err` (a
+/// secure-login-token scrubber for CMS/VARA protocol text) has no business
+/// touching it — the router's verbatim contract (spec §13) requires the
+/// string the agent sees to be byte-for-byte what the commands layer
+/// produced.
+fn routines_run_port_err(e: crate::ui_commands::UiError) -> RoutinesRunError {
+    use crate::ui_commands::UiError;
+    match e {
+        UiError::NotFound(_) => RoutinesRunError::NotFound,
+        UiError::Rejected(m) => RoutinesRunError::Refused(m),
+        UiError::NotConfigured(reason) | UiError::Unavailable { reason } => {
+            RoutinesRunError::Internal(redact_err(reason))
+        }
+        UiError::AuthFailed { reason } | UiError::Transport { reason } => {
+            RoutinesRunError::Internal(redact_err(reason))
+        }
+        UiError::Cancelled => RoutinesRunError::Internal("cancelled".to_string()),
+        UiError::Internal { detail } => RoutinesRunError::Internal(redact_err(detail)),
+    }
+}
+
+/// [`RoutinesPort`] adapter over `routines::commands`' service fns (spec
+/// §13). Holds an `AppHandle` solely to reach the globally-`.manage()`d
+/// `Arc<RoutinesState>` — every method fetches it fresh (matching the other
+/// port adapters' pattern), so a call always sees the live managed state.
+pub struct MonolithRoutinesPort {
+    app: AppHandle,
+}
+
+impl MonolithRoutinesPort {
+    pub fn new(app: AppHandle) -> Self {
+        Self { app }
+    }
+
+    fn state(&self) -> Arc<crate::routines::session::RoutinesState> {
+        self.app
+            .state::<Arc<crate::routines::session::RoutinesState>>()
+            .inner()
+            .clone()
+    }
+
+    /// Shared enable/disable body: `set_routine_enabled` IS `enable`/`disable`
+    /// dispatched on the `enabled` bool (see `routines::commands`), so wrapping
+    /// it once here (rather than duplicating the fetch+call+curate shape in
+    /// both trait methods) keeps this adapter a thin pass-through.
+    async fn set_enabled(&self, name: &str, enabled: bool) -> Result<EnableResultDto, PortError> {
+        let state = self.state();
+        let result = crate::routines::commands::set_routine_enabled(
+            &state,
+            name,
+            enabled,
+            crate::routines::session::unix_now_secs(),
+            crate::routines::session::local_utc_offset_seconds(),
+        )
+        .map_err(routines_port_err)?;
+        Ok(EnableResultDto {
+            routine: result.routine,
+            enabled: result.enabled,
+            blocked: result.blocked,
+            findings: result.findings.into_iter().map(map_finding).collect(),
+        })
+    }
+}
+
+#[async_trait]
+impl RoutinesPort for MonolithRoutinesPort {
+    async fn list(&self) -> Result<Vec<RoutineSummaryDto>, PortError> {
+        let state = self.state();
+        Ok(crate::routines::commands::list_routines(&state)
+            .into_iter()
+            .map(map_routine_summary)
+            .collect())
+    }
+
+    async fn get(&self, name: &str) -> Result<serde_json::Value, PortError> {
+        let state = self.state();
+        let def =
+            crate::routines::commands::get_routine(&state, name).map_err(routines_port_err)?;
+        serde_json::to_value(&def)
+            .map_err(|e| PortError::Internal(format!("serialize routine: {e}")))
+    }
+
+    async fn validate(&self, name: &str) -> Result<Vec<FindingDto>, PortError> {
+        let state = self.state();
+        let findings =
+            crate::routines::commands::validate_routine(&state, name).map_err(routines_port_err)?;
+        Ok(findings.into_iter().map(map_finding).collect())
+    }
+
+    async fn save(&self, def_json: String) -> Result<SaveResultDto, PortError> {
+        let state = self.state();
+        let result = crate::routines::commands::save_routine(&state, &def_json)
+            .map_err(routines_port_err)?;
+        Ok(SaveResultDto {
+            routine: result.routine,
+            findings: result.findings.into_iter().map(map_finding).collect(),
+            blocked: result.blocked,
+        })
+    }
+
+    async fn enable(&self, name: &str) -> Result<EnableResultDto, PortError> {
+        self.set_enabled(name, true).await
+    }
+
+    async fn disable(&self, name: &str) -> Result<EnableResultDto, PortError> {
+        self.set_enabled(name, false).await
+    }
+
+    async fn run(&self, name: &str, args_json: String) -> Result<String, RoutinesRunError> {
+        let state = self.state();
+        let args: serde_json::Value = serde_json::from_str(&args_json)
+            .map_err(|e| RoutinesRunError::Refused(format!("args_json is not valid JSON: {e}")))?;
+        crate::routines::commands::run_routine(&state, name, args)
+            .await
+            .map_err(routines_run_port_err)
+    }
+
+    async fn dry_run(
+        &self,
+        name: &str,
+        args_json: String,
+        script_json: Option<String>,
+    ) -> Result<DryRunStartedDto, PortError> {
+        let state = self.state();
+        // Malformed opaque-string args are the CALLER's error (M2): surface
+        // them invalid-input like `run`'s Refused, never Internal.
+        let args: serde_json::Value = serde_json::from_str(&args_json)
+            .map_err(|e| PortError::InvalidInput(format!("args_json is not valid JSON: {e}")))?;
+        let script: Option<crate::routines::commands::DryRunScriptDto> =
+            match script_json {
+                Some(s) => Some(serde_json::from_str(&s).map_err(|e| {
+                    PortError::InvalidInput(format!("script_json is not valid JSON: {e}"))
+                })?),
+                None => None,
+            };
+        let started = crate::routines::commands::dry_run_routine(&state, name, args, script)
+            .await
+            .map_err(routines_port_err)?;
+        Ok(DryRunStartedDto {
+            run_id: started.run_id,
+            findings: started.findings.into_iter().map(map_finding).collect(),
+        })
+    }
+
+    async fn run_status(&self, run_id: &str) -> Result<Option<RunStatusDto>, PortError> {
+        let state = self.state();
+        Ok(crate::routines::commands::run_status(&state, run_id).map(map_run_status))
+    }
+
+    async fn journal_get(&self, run_id: &str) -> Result<Vec<serde_json::Value>, PortError> {
+        let state = self.state();
+        let entries =
+            crate::routines::commands::run_journal(&state, run_id).map_err(routines_port_err)?;
+        entries
+            .into_iter()
+            .map(|e| {
+                serde_json::to_value(&e)
+                    .map_err(|err| PortError::Internal(format!("serialize journal entry: {err}")))
+            })
+            .collect()
     }
 }
 

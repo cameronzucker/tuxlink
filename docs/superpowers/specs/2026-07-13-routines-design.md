@@ -71,6 +71,8 @@ The designer is a **structured, auto-laid-out flowchart** (paradigm decision: op
 - **Design canvas:** lanes align at *declared temporal anchors* — schedule offsets, delay steps ("+5 min"), synchronization points. Cross-track dependencies (e.g., a track consuming `last_heard_gateway` set by another track) draw an alignment rule across lanes.
 - **Run monitor:** timing is exact; lanes render against a true shared timeline (Gantt-like) with each step's actual start/end from the run journal.
 
+**One cadence per routine (2026-07-14 amendment).** A routine's `triggers` are manual plus **at most one** schedule. Parallel lanes inside one routine share that single cadence by construction — every lane advances off the same clock, so "parallel lanes" means same-cadence concurrent work, never multiple independent cadences braided into one routine. A station task that genuinely needs more than one cadence (e.g. a 30-minute connect poll alongside a separate 6-hour weather post) is authored as **multiple routines** — composed via `Control::Call` (one routine invokes another) or simply left to coexist in the fleet, each on its own schedule — not as a second schedule trigger bolted onto one routine. The validator enforces this at design time (`MULTIPLE_SCHEDULES`, §10); the fleet-level `SCHEDULE_COLLISION` / `SAME_EFFECT_OVERLAP` checks (§10) are what catch the cross-routine contention that a second schedule on one routine used to obscure.
+
 ## 6. Action catalog (v1)
 
 Curated, typed action registry (Approach A — operator-selected over auto-generating blocks from the ~200-command Tauri surface, which would produce untyped contracts, no transmit metadata, and reference rot on internal refactors). Adding an action later = implementing the action trait + declaring its schema; the registry is the growth path toward broader coverage if alpha demands.
@@ -258,7 +260,7 @@ One JSON schema; the export format is the storage format. Individual files under
 }
 ```
 
-Load-bearing conventions: **`@`-references** name every external entity (what reference validation resolves); **`stepId.output`** paths are the variable system the type-checker walks; `schema_version` gates evolution. Default failure semantics: a step without a failure branch fails the run (verbatim cause, journaled); a failure branch makes failure a handled path.
+Load-bearing conventions: **`@`-references** name every external entity (what reference validation resolves); **`stepId.output`** paths are the variable system the type-checker walks; `schema_version` gates evolution. `triggers` is manual plus **at most one** schedule (§5's one-cadence rule) — the parser accepts the array as written and the validator warns (`MULTIPLE_SCHEDULES`, the same design-time enforcement §5 names) on a second `{ "type": "schedule", … }` entry; a task that needs more than one cadence is multiple routine files, not multiple schedule entries in one. Default failure semantics: a step without a failure branch fails the run (verbatim cause, journaled); a failure branch makes failure a handled path.
 
 ## 15. Testing
 

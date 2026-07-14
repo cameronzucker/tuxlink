@@ -22,7 +22,7 @@ use serde::Deserialize;
 use tuxlink_routines::action::ActionDescriptor;
 use tuxlink_routines::types::RoutineDef;
 use tuxlink_routines::validate::{
-    validate, validate_fleet, Finding, Severity, StaticContext, StationProfile,
+    validate, validate_fleet, Finding, StaticContext, StationProfile,
 };
 
 const FIXTURES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/routines");
@@ -125,6 +125,18 @@ fn known_action(name: &str) -> ActionDescriptor {
             transmits: false,
             needs_internet: false,
         },
+        "data.read" => ActionDescriptor {
+            name: "data.read",
+            needs_radio: false,
+            transmits: false,
+            needs_internet: false,
+        },
+        "data.spacewx_wwv" => ActionDescriptor {
+            name: "data.spacewx_wwv",
+            needs_radio: true,
+            transmits: false,
+            needs_internet: false,
+        },
         other => panic!(
             "fixture context references unknown action \"{other}\" — add it to \
              known_action() in tests/validator_corpus.rs"
@@ -194,6 +206,27 @@ fn single_fixture<'a>(
     panic!("no single fixture named \"{name}\" in manifest.json");
 }
 
+fn fleet_fixture<'a>(
+    manifest: &'a Manifest,
+    name: &str,
+) -> (&'a [String], &'a [String], i64, &'a ContextSpec) {
+    for entry in &manifest.fixtures {
+        if let FixtureEntry::Fleet {
+            name: n,
+            files,
+            expected_codes,
+            now_unix,
+            context,
+        } = entry
+        {
+            if n == name {
+                return (files.as_slice(), expected_codes.as_slice(), *now_unix, context);
+            }
+        }
+    }
+    panic!("no fleet fixture named \"{name}\" in manifest.json");
+}
+
 // --- The corpus-wide test ---------------------------------------------------
 
 /// Every finding-code constant defined across `src/validate/*.rs` (checked
@@ -232,6 +265,10 @@ const ALL_FINDING_CODES: &[&str] = &[
     // fleet.rs
     "SCHEDULE_COLLISION",
     "SAME_EFFECT_OVERLAP",
+    // triggers.rs (plan-4 amendment task 1: one-cadence spec change)
+    "MULTIPLE_SCHEDULES",
+    // capability.rs (plan-4 amendment task 1: WWV timeout heuristic)
+    "STEP_TIMEOUT_LIKELY_INSUFFICIENT",
 ];
 
 #[test]
@@ -324,44 +361,49 @@ fn ics_log_cycle_and_net_checkin_grounding_scenarios_are_fully_valid() {
 }
 
 #[test]
-fn deployment_poll_grounding_scenario_has_zero_errors_and_documented_warnings() {
-    // Spec §1 grounding scenario 2: the 30m connect track running parallel
-    // to the 6h wx-post track's +5m cross-track re-dial legitimately trips
-    // two Warnings (never an Error) — CROSS_TRACK_VAR (the re-dial reads a
-    // different track's step output) and SAME_RIG_PARALLEL_LANES (both
-    // tracks touch the station's one default rig). Plan 3 task 6 calls
-    // these out explicitly; this test pins them so a validator regression
-    // that silently drops either warning (or promotes one to an Error) is
-    // caught here, not just in the generic set-equality loop above.
+fn deployment_fleet_coexistence_grounding_scenario_has_zero_errors_and_zero_warnings() {
+    // Spec §1 grounding scenario 2, re-authored per the 2026-07-14
+    // one-cadence spec amendment (§5/§14): the old single "deployment-poll"
+    // routine carried TWO schedule triggers (a 30m connect poll and a 6h
+    // wx-post) on one routine, which the one-cadence rule now forbids
+    // (MULTIPLE_SCHEDULES). It is re-authored as two SEPARATE routines, each
+    // with its own single schedule: "deployment-connect-cycle" (30m radio
+    // poll) and "wx-post-and-catalog" (6h, reads the last-connected gateway
+    // via a same-track `data.read` step — no cross-track var, and no radio
+    // touch of its own, so it never contends for the rig). The pair is the
+    // SCHEDULE_COLLISION-free demonstration of fleet coexistence the plan-4
+    // amendment calls for: both routines individually valid, and the fleet
+    // check adds nothing on top (no collision, no shared-effect overlap).
+    // This test pins that "zero findings, both individually and as a fleet"
+    // guarantee so a validator regression is caught here, not just in the
+    // generic set-equality loop above.
     let manifest = load_manifest();
-    let (file, expected_codes, context) = single_fixture(&manifest, "deployment-poll");
-    let def = load_routine(file);
+    let (files, expected_codes, now_unix, context) =
+        fleet_fixture(&manifest, "deployment-fleet-coexistence");
     let ctx = build_context(context);
-    let findings = validate(&def, &ctx);
 
-    let errors: Vec<&Finding> = findings
-        .iter()
-        .filter(|f| f.severity == Severity::Error)
-        .collect();
+    // Each routine is individually clean.
+    for file in files {
+        let def = load_routine(file);
+        let findings = validate(&def, &ctx);
+        assert!(
+            findings.is_empty(),
+            "\"{file}\" should individually validate clean, got {findings:?}"
+        );
+    }
+
+    // The fleet check adds nothing on top: no SCHEDULE_COLLISION (only one
+    // of the pair touches the radio), no SAME_EFFECT_OVERLAP (they share no
+    // data.* action name).
+    let defs: Vec<RoutineDef> = files.iter().map(|f| load_routine(f)).collect();
+    let findings = validate_fleet(&defs, &ctx, now_unix, 0);
     assert!(
-        errors.is_empty(),
-        "deployment-poll grounding scenario should have zero errors, got {errors:?}"
+        findings.is_empty(),
+        "deployment-fleet-coexistence should have zero findings, got {findings:?}"
     );
-
-    let warning_codes: HashSet<&str> = findings
-        .iter()
-        .filter(|f| f.severity == Severity::Warning)
-        .map(|f| f.code)
-        .collect();
-    let expected = as_str_set(expected_codes);
-    assert_eq!(
-        warning_codes, expected,
-        "deployment-poll warning codes mismatch: findings={findings:?}"
-    );
-    assert_eq!(
-        expected,
-        HashSet::from(["CROSS_TRACK_VAR", "SAME_RIG_PARALLEL_LANES"]),
-        "manifest.json drifted from plan-3 task 6's documented deployment-poll warnings"
+    assert!(
+        expected_codes.is_empty(),
+        "manifest.json drifted from the documented zero-findings deployment-fleet-coexistence demo"
     );
 }
 

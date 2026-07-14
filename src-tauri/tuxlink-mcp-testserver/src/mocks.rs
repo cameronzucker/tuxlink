@@ -16,13 +16,15 @@ use async_trait::async_trait;
 use tuxlink_mcp_core::ports::{
     AbortPort, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto, AudioDevicesDto, BackendStatusDto,
     BluetoothDeviceDto, CatalogEntryDto, ChannelReliabilityDto, ComposeDraftDto, ComposePort,
-    ConfigPort, ConfigViewDto, DevicePort, DocBodyDto, DocsHitDto, EgressPort, EgressPortError,
-    FolderDto, Ft8AudioDeviceDto, Ft8HeardStationDto, Ft8Port, Ft8StatusDto,
+    ConfigPort, ConfigViewDto, DevicePort, DocBodyDto, DocsHitDto, DryRunStartedDto, EgressPort,
+    EgressPortError, EnableResultDto,
+    FindingDto, FolderDto, Ft8AudioDeviceDto, Ft8HeardStationDto, Ft8Port, Ft8StatusDto,
     GatewayAntennaDto, GatewayDto, GribRequestDto, LogLineDto, LogPort, MailboxPort,
     MessageMetaDto, ModemStatusDto, PacketConfigDto, PacketWriteDto, ParsedMessageDto,
     PathPredictionDto, PeerListDto, PlatformInfoDto, PortError, PositionStatusDto,
     PredictRequestDto, PredictionPort, PrinterDto, ProvisionPort, QsyCandidateDto, RigConfigDto,
-    RigStatusDto, SearchPort, SearchQueryDto, SearchResultsDto, SendFormDto, SerialDeviceDto,
+    RigStatusDto, RoutineSummaryDto, RoutinesPort, RoutinesRunError, RunStateDto, RunStatusDto,
+    SaveResultDto, SearchPort, SearchQueryDto, SearchResultsDto, SendFormDto, SerialDeviceDto,
     SessionIntentDto,
     SolarSnapshotDto, StationFilterDto, StationListDto, StationModeDto, StationPort, StatusPort,
     UiHintPort, VaraCheckpointDto, VaraConfigDto, VaraEngineDto, VaraInstallStatusDto,
@@ -52,6 +54,10 @@ pub const SEED_TX_GRID: &str = "CN87";
 /// listener's `last_slot_utc_ms`.
 pub const SEED_FT8_CALL: &str = "K7RA";
 pub const SEED_FT8_HEARD_MS: u64 = 1_770_000_000_000;
+/// Routines fixtures (spec §13): the one routine `MockRoutines::list` seeds,
+/// and the run id its `run`/`dry_run`/`run_status` answers cohere around.
+pub const SEED_ROUTINE: &str = "morning-check-in";
+pub const SEED_ROUTINE_RUN_ID: &str = "run-0001";
 
 pub struct MockStatus;
 
@@ -745,5 +751,118 @@ impl Ft8Port for MockFt8 {
             human_name: "USB Audio CODEC".into(),
             stable_id: "usb-codec-00".into(),
         }])
+    }
+}
+
+/// A mock [`RoutinesPort`] (spec §13, plan 4). Canned like its siblings:
+/// no method touches the guard — routines tools never arm-gate, and the ONE
+/// that taints (`routines_journal_get`, verbatim wire content) taints in the
+/// ROUTER (`TaintReason::RoutinesJournal`), so the tier-2 round-trip proves
+/// that with any port underneath. `list` seeds ONE recognizable routine
+/// ([`SEED_ROUTINE`]); `run`/`dry_run` hand back [`SEED_ROUTINE_RUN_ID`] and
+/// `run_status`/`journal_get` answer for it, so an agent can walk
+/// run → status → journal end-to-end. There is deliberately NO method that
+/// records a transmit acknowledgment — the port trait has none (spec §4).
+pub struct MockRoutines;
+
+#[async_trait]
+impl RoutinesPort for MockRoutines {
+    async fn list(&self) -> Result<Vec<RoutineSummaryDto>, PortError> {
+        Ok(vec![RoutineSummaryDto {
+            routine: SEED_ROUTINE.into(),
+            transmit_mode: "attended".into(),
+            enabled: true,
+            trigger_kinds: vec!["schedule".into(), "manual".into()],
+        }])
+    }
+    async fn get(&self, name: &str) -> Result<serde_json::Value, PortError> {
+        if name != SEED_ROUTINE {
+            return Err(PortError::NotFound);
+        }
+        Ok(serde_json::json!({
+            "routine": SEED_ROUTINE,
+            "schema_version": 1,
+            "transmit_mode": "attended",
+            "triggers": [{"type": "schedule", "every": "30m"}, {"type": "manual"}],
+            "tracks": [{"name": "t", "steps": [
+                {"id": "s1", "action": "local.log", "params": {}},
+                {"id": "e1", "control": "end"}
+            ]}],
+        }))
+    }
+    async fn validate(&self, name: &str) -> Result<Vec<FindingDto>, PortError> {
+        if name != SEED_ROUTINE {
+            return Err(PortError::NotFound);
+        }
+        Ok(Vec::new())
+    }
+    async fn save(&self, _def_json: String) -> Result<SaveResultDto, PortError> {
+        Ok(SaveResultDto {
+            routine: SEED_ROUTINE.into(),
+            findings: Vec::new(),
+            blocked: false,
+        })
+    }
+    async fn enable(&self, name: &str) -> Result<EnableResultDto, PortError> {
+        Ok(EnableResultDto {
+            routine: name.to_string(),
+            enabled: true,
+            blocked: false,
+            findings: Vec::new(),
+        })
+    }
+    async fn disable(&self, name: &str) -> Result<EnableResultDto, PortError> {
+        Ok(EnableResultDto {
+            routine: name.to_string(),
+            enabled: false,
+            blocked: false,
+            findings: Vec::new(),
+        })
+    }
+    async fn run(&self, name: &str, _args_json: String) -> Result<String, RoutinesRunError> {
+        if name != SEED_ROUTINE {
+            return Err(RoutinesRunError::NotFound);
+        }
+        Ok(SEED_ROUTINE_RUN_ID.to_string())
+    }
+    async fn dry_run(
+        &self,
+        name: &str,
+        _args_json: String,
+        _script_json: Option<String>,
+    ) -> Result<DryRunStartedDto, PortError> {
+        if name != SEED_ROUTINE {
+            return Err(PortError::NotFound);
+        }
+        Ok(DryRunStartedDto {
+            run_id: SEED_ROUTINE_RUN_ID.to_string(),
+            findings: Vec::new(),
+        })
+    }
+    async fn run_status(&self, run_id: &str) -> Result<Option<RunStatusDto>, PortError> {
+        if run_id != SEED_ROUTINE_RUN_ID {
+            return Ok(None);
+        }
+        Ok(Some(RunStatusDto {
+            run_id: run_id.to_string(),
+            routine: SEED_ROUTINE.into(),
+            dry_run: false,
+            state: RunStateDto::Completed,
+        }))
+    }
+    async fn journal_get(&self, run_id: &str) -> Result<Vec<serde_json::Value>, PortError> {
+        if run_id != SEED_ROUTINE_RUN_ID {
+            return Err(PortError::NotFound);
+        }
+        Ok(vec![
+            serde_json::json!({
+                "run_id": run_id, "seq": 0,
+                "event": {"type": "run_started", "routine": SEED_ROUTINE, "snapshot": {}, "dry_run": false},
+            }),
+            serde_json::json!({
+                "run_id": run_id, "seq": 1,
+                "event": {"type": "run_completed", "routine": SEED_ROUTINE},
+            }),
+        ])
     }
 }

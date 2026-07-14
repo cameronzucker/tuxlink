@@ -208,6 +208,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // FT-8 is receive-only + ungated + non-tainting; like provisioning, the
         // mock serves both branches (the scenario World seeds no FT-8 decodes).
         ft8: Arc::new(mocks::MockFt8),
+        // Routines (spec §13): canned in both branches (the scenario World
+        // seeds no routine library). The journal taint fires in the router,
+        // so the tier-2 round-trip exercises it over this mock as-is.
+        routines: Arc::new(mocks::MockRoutines),
     };
     let router = TuxlinkMcp::new(Arc::new(state));
 

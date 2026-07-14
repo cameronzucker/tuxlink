@@ -30,8 +30,8 @@ pub mod validate;
 
 pub use ports::{
     AbortPort, ComposePort, ConfigPort, DevicePort, EgressPort, EgressPortError, Ft8Port, LogPort,
-    MailboxPort, PortError, PredictionPort, ProvisionPort, SearchPort, StationPort, StatusPort,
-    UiHintPort, WritePort, WritePortError, WwvPort,
+    MailboxPort, PortError, PredictionPort, ProvisionPort, RoutinesPort, RoutinesRunError,
+    SearchPort, StationPort, StatusPort, UiHintPort, WritePort, WritePortError, WwvPort,
 };
 pub use router::TuxlinkMcp;
 pub use transport_uds::serve;
@@ -106,6 +106,11 @@ pub struct McpState {
     pub ui_hint: Arc<dyn UiHintPort>,
     /// FT-8 listener. Receive-only; none taint, none egress-gated.
     pub ft8: Arc<dyn Ft8Port>,
+    /// Routines (spec §13): the 10-tool operator-automation surface —
+    /// list/get/validate/save/enable/disable/run/run_status/journal_get/
+    /// dry_run. Deliberately EXCLUDES consent-grant (a UI-only act, spec §4).
+    /// None of these methods taint or pass through the `EgressGuard`.
+    pub routines: Arc<dyn RoutinesPort>,
 }
 
 /// Serializable shape returned by the `server_info` tool.
@@ -169,17 +174,18 @@ pub mod test_support {
         AbortPort, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto, AudioDevicesDto,
         BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto, ChannelReliabilityDto,
         ComposeDraftDto, ComposePort, ConfigPort, ConfigViewDto, DevicePort, DocBodyDto,
-        DocsHitDto, EgressPort, EgressPortError, FolderDto, Ft8AudioDeviceDto, Ft8HeardStationDto,
-        Ft8Port, Ft8StatusDto, GatewayAntennaDto, GatewayDto,
-        GribRequestDto,
-        LogLineDto, LogPort, MailboxPort, MessageMetaDto, ModemStatusDto, PacketConfigDto,
-        PacketWriteDto, ParsedMessageDto, PathPredictionDto, PlatformInfoDto, PortError,
-        PositionStatusDto, PredictRequestDto, PredictionPort, PrinterDto, ProvisionPort,
-        PeerListDto, QsyCandidateDto, RigConfigDto, RigStatusDto, SearchPort, SearchQueryDto,
-        SearchResultsDto, SendFormDto, SerialDeviceDto, SessionIntentDto, SolarSnapshotDto,
-        StationFilterDto, StationListDto, StationModeDto, StationPort, StatusPort, VaraCheckpointDto,
-        VaraConfigDto, VaraEngineDto, VaraInstallStatusDto, VaraInstallSummaryDto, VaraProbeDto,
-        VaraStatusDto, VaraWriteDto, UiHintPort, WritePort, WritePortError, WwvCaptureDto, WwvPort,
+        DocsHitDto, DryRunStartedDto, EgressPort, EgressPortError, EnableResultDto, FindingDto,
+        FolderDto, Ft8AudioDeviceDto, Ft8HeardStationDto, Ft8Port, Ft8StatusDto, GatewayAntennaDto,
+        GatewayDto, GribRequestDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto,
+        ModemStatusDto, PacketConfigDto, PacketWriteDto, ParsedMessageDto, PathPredictionDto,
+        PeerListDto, PlatformInfoDto, PortError, PositionStatusDto, PredictRequestDto,
+        PredictionPort, PrinterDto, ProvisionPort, QsyCandidateDto, RigConfigDto, RigStatusDto,
+        RoutineSummaryDto, RoutinesPort, RoutinesRunError, RunStateDto, RunStatusDto,
+        SaveResultDto, SearchPort, SearchQueryDto, SearchResultsDto, SendFormDto, SerialDeviceDto,
+        SessionIntentDto, SolarSnapshotDto, StationFilterDto, StationListDto, StationModeDto,
+        StationPort, StatusPort, UiHintPort, VaraCheckpointDto, VaraConfigDto, VaraEngineDto,
+        VaraInstallStatusDto, VaraInstallSummaryDto, VaraProbeDto, VaraStatusDto, VaraWriteDto,
+        WritePort, WritePortError, WwvCaptureDto, WwvPort,
     };
     use crate::validate::{
         validate_address, validate_attachment_dest, validate_body, validate_drive_level,
@@ -916,6 +922,134 @@ pub mod test_support {
         }
     }
 
+    /// The name of the one routine [`MockRoutines`] treats as `automatic`-
+    /// transmit with NO recorded design-time acknowledgment. `run` on this
+    /// name is ALWAYS refused with [`UNACKED_REFUSAL`], verbatim, mirroring
+    /// [`crate::ports::RoutinesRunError::Refused`]'s contract; `dry_run` on
+    /// the SAME name always succeeds (see [`MockRoutines::dry_run`]) — the
+    /// canary the router's dry-run tests assert on.
+    pub const UNACKED_ROUTINE: &str = "auto-unacked";
+
+    /// The exact refusal text [`MockRoutines::run`] returns for
+    /// [`UNACKED_ROUTINE`] — mirrors the real
+    /// `RoutineStartError::UnacknowledgedAutomatic` message shape (spec §4)
+    /// closely enough to exercise the router's "surface verbatim, no remedy
+    /// text" contract; the router/test asserts against this SAME constant
+    /// rather than a duplicated literal, so the two cannot drift apart.
+    pub const UNACKED_REFUSAL: &str = "routine 'auto-unacked' transmits under automatic control \
+        but has no recorded acknowledgment — open its Settings and acknowledge \
+        automatic-transmission responsibility (Part 97 automatic-control rules) before running it";
+
+    /// The one routine [`MockRoutines::list`] seeds.
+    pub const SEED_ROUTINE: &str = "morning-check-in";
+
+    /// A mock [`RoutinesPort`]. `run` on [`UNACKED_ROUTINE`] is ALWAYS
+    /// refused (verbatim [`UNACKED_REFUSAL`]) and never flips `real_action_ran`;
+    /// `run` on any OTHER name flips `real_action_ran` — the probe the
+    /// dry-run canary test proves stays false. `dry_run` NEVER touches
+    /// `real_action_ran`, for ANY name including [`UNACKED_ROUTINE`] — it
+    /// flips the SEPARATE `dry_run_ran` probe instead, modeling the real
+    /// impl's structural guarantee that `start_dry_run` swaps every action
+    /// for a fake before the executor ever resolves one. Neither method
+    /// touches the `EgressGuard` — routines never gate on it.
+    pub struct MockRoutines {
+        real_action_ran: Arc<AtomicBool>,
+        dry_run_ran: Arc<AtomicBool>,
+    }
+
+    impl MockRoutines {
+        pub fn new(real_action_ran: Arc<AtomicBool>, dry_run_ran: Arc<AtomicBool>) -> Self {
+            Self {
+                real_action_ran,
+                dry_run_ran,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl RoutinesPort for MockRoutines {
+        async fn list(&self) -> Result<Vec<RoutineSummaryDto>, PortError> {
+            Ok(vec![RoutineSummaryDto {
+                routine: SEED_ROUTINE.into(),
+                transmit_mode: "attended".into(),
+                enabled: true,
+                trigger_kinds: vec!["schedule".into()],
+            }])
+        }
+        async fn get(&self, name: &str) -> Result<serde_json::Value, PortError> {
+            Ok(serde_json::json!({
+                "routine": name,
+                "schema_version": 1,
+                "transmit_mode": if name == UNACKED_ROUTINE { "automatic" } else { "attended" },
+                "triggers": [{"type": "manual"}],
+                "tracks": [],
+            }))
+        }
+        async fn validate(&self, _name: &str) -> Result<Vec<FindingDto>, PortError> {
+            Ok(Vec::new())
+        }
+        async fn save(&self, _def_json: String) -> Result<SaveResultDto, PortError> {
+            Ok(SaveResultDto {
+                routine: SEED_ROUTINE.into(),
+                findings: Vec::new(),
+                blocked: false,
+            })
+        }
+        async fn enable(&self, name: &str) -> Result<EnableResultDto, PortError> {
+            Ok(EnableResultDto {
+                routine: name.to_string(),
+                enabled: true,
+                blocked: false,
+                findings: Vec::new(),
+            })
+        }
+        async fn disable(&self, name: &str) -> Result<EnableResultDto, PortError> {
+            Ok(EnableResultDto {
+                routine: name.to_string(),
+                enabled: false,
+                blocked: false,
+                findings: Vec::new(),
+            })
+        }
+        async fn run(&self, name: &str, _args_json: String) -> Result<String, RoutinesRunError> {
+            if name == UNACKED_ROUTINE {
+                return Err(RoutinesRunError::Refused(UNACKED_REFUSAL.to_string()));
+            }
+            self.real_action_ran.store(true, Ordering::SeqCst);
+            Ok("run-0001".to_string())
+        }
+        async fn dry_run(
+            &self,
+            _name: &str,
+            _args_json: String,
+            _script_json: Option<String>,
+        ) -> Result<DryRunStartedDto, PortError> {
+            // Structural guarantee: NEVER touches `real_action_ran`, for any
+            // name (including UNACKED_ROUTINE) — a dry run is never blocked
+            // by anything, and it can never reach a real action either.
+            self.dry_run_ran.store(true, Ordering::SeqCst);
+            Ok(DryRunStartedDto {
+                run_id: "dry-0001".to_string(),
+                findings: Vec::new(),
+            })
+        }
+        async fn run_status(&self, run_id: &str) -> Result<Option<RunStatusDto>, PortError> {
+            Ok(Some(RunStatusDto {
+                run_id: run_id.to_string(),
+                routine: SEED_ROUTINE.into(),
+                dry_run: false,
+                state: RunStateDto::Completed,
+            }))
+        }
+        async fn journal_get(&self, run_id: &str) -> Result<Vec<serde_json::Value>, PortError> {
+            Ok(vec![serde_json::json!({
+                "run_id": run_id,
+                "seq": 0,
+                "event": {"type": "run_started", "routine": SEED_ROUTINE, "snapshot": {}, "dry_run": false},
+            })])
+        }
+    }
+
     /// Build an [`McpState`] around the supplied guard, wiring all mock ports.
     /// The egress/abort flags are internal; use [`state_with_egress_probes`] to
     /// observe whether a gated egress op actually ran or an abort fired.
@@ -972,14 +1106,21 @@ pub mod test_support {
             ui_hint: Arc::new(MockUiHint),
             wwv: Arc::new(MockWwv),
             ft8: Arc::new(MockFt8),
+            routines: Arc::new(MockRoutines::new(
+                Arc::new(AtomicBool::new(false)),
+                Arc::new(AtomicBool::new(false)),
+            )),
         })
     }
 
-    /// Full probe builder: returns `(state, op_ran, aborted, staged)`. `op_ran`
-    /// is shared by the egress + write mocks (flipped inside the gated op);
-    /// `staged` is flipped by the ungated compose mock on a successful stage.
-    pub fn state_with_all_probes(
+    /// Shared assembler behind [`state_with_all_probes`] and
+    /// [`state_with_routines_probes`]: every port except `routines` is the
+    /// same baseline wiring either caller needs, so it lives here once and
+    /// each caller supplies its own single [`MockRoutines`] — never a
+    /// throwaway one that gets built and then immediately overwritten.
+    fn state_with_probes_and_routines(
         guard: EgressGuard,
+        routines: Arc<dyn RoutinesPort>,
     ) -> (McpState, Arc<AtomicBool>, Arc<AtomicBool>, Arc<AtomicBool>) {
         let guard = Arc::new(guard);
         let op_ran = Arc::new(AtomicBool::new(false));
@@ -1005,8 +1146,44 @@ pub mod test_support {
             ui_hint: Arc::new(MockUiHint),
             wwv: Arc::new(MockWwv),
             ft8: Arc::new(MockFt8),
+            routines,
         };
         (state, op_ran, aborted, staged)
+    }
+
+    /// Full probe builder: returns `(state, op_ran, aborted, staged)`. `op_ran`
+    /// is shared by the egress + write mocks (flipped inside the gated op);
+    /// `staged` is flipped by the ungated compose mock on a successful stage.
+    pub fn state_with_all_probes(
+        guard: EgressGuard,
+    ) -> (McpState, Arc<AtomicBool>, Arc<AtomicBool>, Arc<AtomicBool>) {
+        let routines = Arc::new(MockRoutines::new(
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        ));
+        state_with_probes_and_routines(guard, routines)
+    }
+
+    /// Build an [`McpState`] wired with a [`MockRoutines`] whose
+    /// `real_action_ran`/`dry_run_ran` probes are returned to the caller —
+    /// the router's `routines_run`/`routines_dry_run` canary tests need to
+    /// observe them directly (unlike [`state_with_all_probes`]'s shared
+    /// `op_ran`, which the egress/write mocks flip, not routines). Every
+    /// OTHER port is the same baseline [`state_with_probes_and_routines`]
+    /// wires, so this is deliberately built on top of it rather than
+    /// duplicated.
+    pub fn state_with_routines_probes(
+        guard: EgressGuard,
+    ) -> (McpState, Arc<AtomicBool>, Arc<AtomicBool>) {
+        let real_action_ran = Arc::new(AtomicBool::new(false));
+        let dry_run_ran = Arc::new(AtomicBool::new(false));
+        let routines = Arc::new(MockRoutines::new(
+            Arc::clone(&real_action_ran),
+            Arc::clone(&dry_run_ran),
+        ));
+        let (state, _op_ran, _aborted, _staged) =
+            state_with_probes_and_routines(guard, routines);
+        (state, real_action_ran, dry_run_ran)
     }
 }
 

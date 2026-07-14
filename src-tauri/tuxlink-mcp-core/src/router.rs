@@ -23,8 +23,8 @@ use rmcp::{tool, tool_handler, tool_router, ErrorData, RoleServer};
 use crate::content;
 use crate::ports::{
     ArdopWriteDto, ComposeDraftDto, EgressPortError, GribRequestDto, PacketWriteDto, PortError,
-    PredictRequestDto, QsyCandidateDto, SearchQueryDto, SendFormDto, SessionIntentDto,
-    StationFilterDto, VaraEngineDto, VaraWriteDto, WritePortError,
+    PredictRequestDto, QsyCandidateDto, RoutinesRunError, SearchQueryDto, SendFormDto,
+    SessionIntentDto, StationFilterDto, VaraEngineDto, VaraWriteDto, WritePortError,
 };
 use crate::{server_info_view, McpState};
 
@@ -32,9 +32,15 @@ use crate::{server_info_view, McpState};
 const KNOWLEDGE_MIME: &str = "text/markdown";
 
 /// Map a [`PortError`] onto an rmcp tool error. Read tools surface the failure
-/// to the agent rather than crashing the transport.
+/// to the agent rather than crashing the transport. A caller-input refusal
+/// ([`PortError::InvalidInput`]) is the agent's to fix — it surfaces as an
+/// invalid request (the same wire shape [`RoutinesRunError::Refused`] takes),
+/// never as an internal error that reads as a server bug.
 fn port_err(e: PortError) -> ErrorData {
-    ErrorData::internal_error(e.to_string(), None)
+    match e {
+        PortError::InvalidInput(reason) => ErrorData::invalid_request(reason, None),
+        other => ErrorData::internal_error(other.to_string(), None),
+    }
 }
 
 /// Map an [`EgressPortError`] onto an rmcp tool error. A `Denied` is an
@@ -93,6 +99,22 @@ fn write_err(e: WritePortError) -> ErrorData {
         ),
         WritePortError::Invalid(reason) => ErrorData::invalid_request(reason, None),
         WritePortError::Failed(reason) => ErrorData::internal_error(reason, None),
+    }
+}
+
+/// Map a [`RoutinesRunError`] onto an rmcp tool error. `Refused` is surfaced
+/// to the agent COMPLETELY VERBATIM — no added remedy text, unlike
+/// [`egress_err`]/[`write_err`]'s `Denied` handling — because it is NEVER an
+/// `EgressGuard` arm/taint decision: routines authoring/running has nothing
+/// to do with that gate (spec §13). The refusal is either a blocking
+/// validation error or an `automatic` routine's missing design-time
+/// transmit acknowledgment (spec §4), and in both cases the message already
+/// names the fix.
+fn routines_run_err(e: RoutinesRunError) -> ErrorData {
+    match e {
+        RoutinesRunError::NotFound => ErrorData::internal_error("routine not found", None),
+        RoutinesRunError::Refused(reason) => ErrorData::invalid_request(reason, None),
+        RoutinesRunError::Internal(reason) => ErrorData::internal_error(reason, None),
     }
 }
 
@@ -1232,7 +1254,188 @@ impl TuxlinkMcp {
         description = "List the audio capture devices the FT-8 listener can use, with the stable id to select. Use when ft8_status reports it is blocked needing a device."
     )]
     pub async fn ft8_list_audio_devices(&self) -> Result<CallToolResult, ErrorData> {
-        let dto = self.state.ft8.list_audio_devices().await.map_err(port_err)?;
+        let dto = self
+            .state
+            .ft8
+            .list_audio_devices()
+            .await
+            .map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    // ----- Routines (spec §13): operator-automation authoring + control. -----
+    //
+    // 10 tools, deliberately EXCLUDING consent-grant: the design-time
+    // transmit acknowledgment (spec §4) is recorded by a UI act only, and no
+    // tool here accepts a parameter that could supply it. `routines_enable`/
+    // `routines_run` on an automatic routine that ALREADY carries the
+    // acknowledgment succeed over MCP BY DESIGN — the acknowledgment is a
+    // design-time gate that covers every invoker, not a per-caller consent.
+    // An UNacknowledged automatic routine's run refusal is surfaced VERBATIM
+    // via `routines_run_err` (no added remedy text): it is not an
+    // EgressGuard arm/taint decision, so the arm-related language the other
+    // denial paths carry would be wrong here. None of these tools taint or
+    // pass through the EgressGuard.
+
+    #[tool(
+        name = "routines_list",
+        description = "List every routine in the automation library: name, transmit mode (attended/automatic), whether it is enabled, and its trigger kinds (schedule/manual). Read-only."
+    )]
+    pub async fn routines_list(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self.state.routines.list().await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
+        name = "routines_get",
+        description = "Read one routine's full definition exactly as stored — the same JSON shape routines_save accepts: routine, schema_version, transmit_mode, transmit_ack (if any), triggers, tracks/steps. Read-only."
+    )]
+    pub async fn routines_get(
+        &self,
+        params: Parameters<RoutineGetParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(RoutineGetParams { name }) = params;
+        let dto = self.state.routines.get(&name).await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
+        name = "routines_validate",
+        description = "Validate one routine by name against the live station — the SAME validator routines_save/routines_run use (one validator, no privileged path). Returns every finding: code, severity (error/warning), and a message that names the offending entity verbatim. Does not save or run anything. Read-only."
+    )]
+    pub async fn routines_validate(
+        &self,
+        params: Parameters<RoutineValidateParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(RoutineValidateParams { name }) = params;
+        let dto = self
+            .state
+            .routines
+            .validate(&name)
+            .await
+            .map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
+        name = "routines_save",
+        description = "Parse and save a routine definition (def_json, the same JSON shape routines_get returns: routine, schema_version, transmit_mode, triggers, tracks). NEVER refused by validation findings — a half-written draft still saves, and the result's findings/blocked say what is wrong so you can iterate. Refused only when def_json fails to parse or its routine name is invalid."
+    )]
+    pub async fn routines_save(
+        &self,
+        params: Parameters<RoutineSaveParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(RoutineSaveParams { def_json }) = params;
+        let dto = self.state.routines.save(def_json).await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
+        name = "routines_enable",
+        description = "Enable a routine so its triggers can fire it. Refused (enabled: false, blocked: true, plus the blocking findings — a normal RESULT, not a tool error) when a validation ERROR blocks it; a fleet check runs too, so a schedule collision with an already-enabled routine is reported as a warning without blocking. Enabling an automatic routine that ALREADY carries its design-time transmit acknowledgment (spec §4) succeeds over MCP by design — that acknowledgment covers every invoker, not just the UI."
+    )]
+    pub async fn routines_enable(
+        &self,
+        params: Parameters<RoutineEnableParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(RoutineEnableParams { name }) = params;
+        let dto = self.state.routines.enable(&name).await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
+        name = "routines_disable",
+        description = "Disable a routine. Never blocked, however invalid the routine currently is — a routine you could not turn off would be a trap."
+    )]
+    pub async fn routines_disable(
+        &self,
+        params: Parameters<RoutineDisableParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(RoutineDisableParams { name }) = params;
+        let dto = self.state.routines.disable(&name).await.map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
+        name = "routines_run",
+        description = "Start a REAL run of a routine by name, with optional JSON-object args_json (default \"{}\"). Refused when a validation error blocks it, or when the routine is automatic-transmit and lacks its design-time acknowledgment (spec §4) — that acknowledgment is recorded ONLY by a UI act in the routine's Settings, no parameter here can supply it, so this specific refusal is expected and persists until the OPERATOR acknowledges it; the refusal message is surfaced to you verbatim, do not paraphrase it back. An automatic routine that ALREADY carries the acknowledgment runs over MCP exactly as it would from the UI — this is by design, not a gap: the acknowledgment covers every invoker. Returns the run id; poll routines_run_status / routines_journal_get."
+    )]
+    pub async fn routines_run(
+        &self,
+        params: Parameters<RoutineRunParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(RoutineRunParams { name, args_json }) = params;
+        let run_id = self
+            .state
+            .routines
+            .run(&name, args_json.unwrap_or_else(|| "{}".to_string()))
+            .await
+            .map_err(routines_run_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(run_id)?]))
+    }
+
+    #[tool(
+        name = "routines_dry_run",
+        description = "Start a DRY run: rehearses a routine with EVERY action swapped for a capability-mirroring fake before anything runs, so nothing real is ever touched — no rig seized, no carrier keyed, no message queued, no gateway dialed. Refused by NOTHING: not a validation error, not a missing automatic-transmit acknowledgment — rehearsing an as-yet-unfit-to-run routine is the whole point. Optional args_json (default \"{}\") and script_json (a JSON object shaping the fake world's per-action outcomes, e.g. {\"outcomes\":{\"radio.connect\":[{\"kind\":\"err\",\"cause\":\"VARA: BUSY\"}]}}; omit for an all-succeeds fake world). Returns the run id (poll routines_run_status / routines_journal_get) plus the validator's findings — informational only, never blocking here."
+    )]
+    pub async fn routines_dry_run(
+        &self,
+        params: Parameters<RoutineDryRunParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(RoutineDryRunParams {
+            name,
+            args_json,
+            script_json,
+        }) = params;
+        let dto = self
+            .state
+            .routines
+            .dry_run(
+                &name,
+                args_json.unwrap_or_else(|| "{}".to_string()),
+                script_json,
+            )
+            .await
+            .map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
+        name = "routines_run_status",
+        description = "Fast in-memory status of a run: routine name, whether it is a dry run, and its state (pending/running/waiting/awaiting_consent/awaiting_radio/completed/failed/cancelled/interrupted). Returns null for an unknown run id. For the full step-by-step record use routines_journal_get. Read-only."
+    )]
+    pub async fn routines_run_status(
+        &self,
+        params: Parameters<RoutineRunStatusParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(RoutineRunStatusParams { run_id }) = params;
+        let dto = self
+            .state
+            .routines
+            .run_status(&run_id)
+            .await
+            .map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
+        name = "routines_journal_get",
+        description = "The full, durable step-by-step journal for a run, every entry VERBATIM — a failed step's cause is the actual VARA/CAT/HTTP failure text the action surfaced, never paraphrased. May contain untrusted wire content, so calling this taints the session. Read-only."
+    )]
+    pub async fn routines_journal_get(
+        &self,
+        params: Parameters<RoutineJournalGetParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(RoutineJournalGetParams { run_id }) = params;
+        let dto = self
+            .state
+            .routines
+            .journal_get(&run_id)
+            .await
+            .map_err(port_err)?;
+        self.state
+            .guard
+            .taint(tuxlink_security::TaintReason::RoutinesJournal);
         Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 }
@@ -1293,6 +1496,81 @@ pub struct SlugParams {
 pub struct BandParams {
     /// The amateur band to set the FT-8 listener to (e.g. `"20m"`, `"40m"`).
     pub band: String,
+}
+
+/// `{ "name": "morning-check-in" }` — input for `routines_get`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RoutineGetParams {
+    /// The routine's name, exactly as `routines_list` reports it.
+    pub name: String,
+}
+
+/// `{ "name": "..." }` — input for `routines_validate`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RoutineValidateParams {
+    /// The routine's name, exactly as `routines_list` reports it.
+    pub name: String,
+}
+
+/// `{ "def_json": "{...}" }` — input for `routines_save`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RoutineSaveParams {
+    /// The routine definition, as a JSON string (the same shape `routines_get`
+    /// returns).
+    pub def_json: String,
+}
+
+/// `{ "name": "..." }` — input for `routines_enable`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RoutineEnableParams {
+    /// The routine's name, exactly as `routines_list` reports it.
+    pub name: String,
+}
+
+/// `{ "name": "..." }` — input for `routines_disable`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RoutineDisableParams {
+    /// The routine's name, exactly as `routines_list` reports it.
+    pub name: String,
+}
+
+/// `{ "name": "...", "args_json": null }` — input for `routines_run`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RoutineRunParams {
+    /// The routine's name, exactly as `routines_list` reports it.
+    pub name: String,
+    /// The run's input args, as a JSON object string; omit for `"{}"`.
+    #[serde(default)]
+    pub args_json: Option<String>,
+}
+
+/// `{ "name": "...", "args_json": null, "script_json": null }` — input for
+/// `routines_dry_run`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RoutineDryRunParams {
+    /// The routine's name, exactly as `routines_list` reports it.
+    pub name: String,
+    /// The run's input args, as a JSON object string; omit for `"{}"`.
+    #[serde(default)]
+    pub args_json: Option<String>,
+    /// A JSON object scripting the fake world's per-action outcomes; omit
+    /// for an all-succeeds fake world.
+    #[serde(default)]
+    pub script_json: Option<String>,
+}
+
+/// `{ "run_id": "..." }` — input for `routines_run_status`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RoutineRunStatusParams {
+    /// The run id returned by `routines_run` / `routines_dry_run`.
+    pub run_id: String,
+}
+
+/// `{ "run_id": "..." }` — input for `routines_journal_get`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RoutineJournalGetParams {
+    /// The run id returned by `routines_run` / `routines_dry_run`.
+    pub run_id: String,
 }
 
 /// `{ "freq_hz": 7104000 }` — input for `rig_tune`.
@@ -1922,6 +2200,31 @@ mod tests {
         assert!(expired.message.contains("ARM the Agent-send control"));
     }
 
+    /// M2 (PR #1117 review): a caller-input refusal and a server fault must
+    /// not share a wire code. `InvalidInput` (malformed `args_json`, a
+    /// store-escaping routine name) is the agent's to fix — invalid request;
+    /// everything else stays an internal error.
+    #[test]
+    fn port_err_splits_caller_input_from_server_faults() {
+        use rmcp::model::ErrorCode;
+
+        let bad_input = port_err(PortError::InvalidInput(
+            "args_json is not valid JSON: expected value at line 1".to_string(),
+        ));
+        assert_eq!(bad_input.code, ErrorCode::INVALID_REQUEST);
+        assert!(bad_input.message.contains("args_json is not valid JSON"));
+
+        assert_eq!(
+            port_err(PortError::Internal("db exploded".to_string())).code,
+            ErrorCode::INTERNAL_ERROR
+        );
+        assert_eq!(
+            port_err(PortError::NotFound).code,
+            ErrorCode::INTERNAL_ERROR,
+            "NotFound keeps its existing internal-error mapping — M2 narrows nothing else"
+        );
+    }
+
     fn handler() -> TuxlinkMcp {
         TuxlinkMcp::new(Arc::new(state_with_guard(EgressGuard::new())))
     }
@@ -2101,9 +2404,185 @@ mod tests {
         h.ft8_status().await.unwrap();
         h.ft8_heard_stations().await.unwrap();
         h.ft8_list_audio_devices().await.unwrap();
+        // Routines authoring/control has nothing to do with the EgressGuard
+        // (spec §13): none of its reads taint.
+        h.routines_list().await.unwrap();
         assert!(
             !h.state.guard.is_tainted(),
-            "read-only status/config/docs/devices/ft8 tools must NOT taint a fresh guard"
+            "read-only status/config/docs/devices/ft8/routines tools must NOT taint a fresh guard"
+        );
+    }
+
+    // --- Routines (spec §13): the 10-tool MCP surface, no consent-grant ---
+
+    /// spec §13: the design-time transmit acknowledgment (spec §4) is a UI
+    /// act only — there is no MCP tool that can grant it. Assert both the
+    /// negative (no consent-grant-shaped tool name) and the positive (all 10
+    /// routines tools ARE registered) against the router's real tool list.
+    #[test]
+    fn routines_tool_list_has_no_consent_grant_and_has_all_ten_tools() {
+        let names: Vec<String> = TuxlinkMcp::tool_router()
+            .list_all()
+            .into_iter()
+            .map(|t| t.name.to_string())
+            .collect();
+        assert!(
+            !names.iter().any(|n| n.to_lowercase().contains("consent")),
+            "the MCP surface must not expose a consent-grant tool (spec §13 — \
+             the design-time ack is a UI act only): {names:?}"
+        );
+        for tool in [
+            "routines_list",
+            "routines_get",
+            "routines_validate",
+            "routines_save",
+            "routines_enable",
+            "routines_disable",
+            "routines_run",
+            "routines_run_status",
+            "routines_journal_get",
+            "routines_dry_run",
+        ] {
+            assert!(
+                names.iter().any(|n| n == tool),
+                "missing tool {tool:?} in router list: {names:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn routines_run_refuses_an_unacked_automatic_routine_verbatim() {
+        let h = handler();
+        let err = h
+            .routines_run(Parameters(RoutineRunParams {
+                name: crate::test_support::UNACKED_ROUTINE.to_string(),
+                args_json: None,
+            }))
+            .await
+            .expect_err("an unacked automatic routine must be refused");
+        assert_eq!(
+            err.message.to_string(),
+            crate::test_support::UNACKED_REFUSAL,
+            "the refusal must reach the agent VERBATIM — no remedy text, no rewrite"
+        );
+    }
+
+    #[tokio::test]
+    async fn routines_dry_run_never_touches_a_real_action_even_for_an_unacked_routine() {
+        let (state, real_action_ran, dry_run_ran) =
+            crate::test_support::state_with_routines_probes(EgressGuard::new());
+        let h = TuxlinkMcp::new(Arc::new(state));
+
+        // The REAL run of this exact routine is refused (verbatim)...
+        let real_err = h
+            .routines_run(Parameters(RoutineRunParams {
+                name: crate::test_support::UNACKED_ROUTINE.to_string(),
+                args_json: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            real_err.message.to_string(),
+            crate::test_support::UNACKED_REFUSAL
+        );
+        assert!(
+            !real_action_ran.load(Ordering::SeqCst),
+            "a refused run must never touch the real-action probe"
+        );
+
+        // ...but the SAME routine's dry run proceeds and STILL never flips
+        // the real-action probe — the canary that a dry run is structurally
+        // unable to touch a real action, whatever the routine's consent
+        // state.
+        h.routines_dry_run(Parameters(RoutineDryRunParams {
+            name: crate::test_support::UNACKED_ROUTINE.to_string(),
+            args_json: None,
+            script_json: None,
+        }))
+        .await
+        .expect("a dry run is refused by nothing, not even a missing ack");
+        assert!(
+            dry_run_ran.load(Ordering::SeqCst),
+            "the dry run must have executed via the fake-world path"
+        );
+        assert!(
+            !real_action_ran.load(Ordering::SeqCst),
+            "a dry run must NEVER touch the real-action probe"
+        );
+    }
+
+    #[tokio::test]
+    async fn routines_enable_conveys_a_block_as_a_dto_field_not_a_tool_error() {
+        let h = handler();
+        // The mock always reports a clean enable; the load-bearing assertion
+        // is the SHAPE — enable/disable return Ok(EnableResultDto), never
+        // Err, so a real blocked-enable is conveyed via `blocked`/`enabled`,
+        // never a tool failure (spec §10).
+        let result = h
+            .routines_enable(Parameters(RoutineEnableParams {
+                name: crate::test_support::SEED_ROUTINE.to_string(),
+            }))
+            .await
+            .expect("enable is Ok even when blocked — blocked is a DTO field, not an Err");
+        let dto: crate::ports::EnableResultDto = json_of(&result);
+        assert!(dto.enabled);
+        assert!(!dto.blocked);
+    }
+
+    #[tokio::test]
+    async fn routines_run_status_and_journal_round_trip() {
+        let h = handler();
+        let status_result = h
+            .routines_run_status(Parameters(RoutineRunStatusParams {
+                run_id: "run-0001".into(),
+            }))
+            .await
+            .unwrap();
+        let status: Option<crate::ports::RunStatusDto> = json_of(&status_result);
+        assert_eq!(status.unwrap().run_id, "run-0001");
+
+        let journal_result = h
+            .routines_journal_get(Parameters(RoutineJournalGetParams {
+                run_id: "run-0001".into(),
+            }))
+            .await
+            .unwrap();
+        let entries: Vec<serde_json::Value> = json_of(&journal_result);
+        assert!(
+            !entries.is_empty(),
+            "the mock seeds at least one journal entry"
+        );
+    }
+
+    /// A run's journal entries carry verbatim step outputs/errors — the actual
+    /// gateway/CMS/VARA wire text a failed or completed step surfaced (see the
+    /// tool description) — the same untrusted-content shape as
+    /// `session_log_snapshot`. It must taint the session the same way.
+    #[tokio::test]
+    async fn routines_journal_get_taints() {
+        let h = handler();
+        assert!(!h.state.guard.is_tainted());
+        h.routines_journal_get(Parameters(RoutineJournalGetParams {
+            run_id: "run-0001".into(),
+        }))
+        .await
+        .unwrap();
+        assert!(
+            h.state.guard.is_tainted(),
+            "routines_journal_get must taint: journal entries carry verbatim wire content"
+        );
+    }
+
+    /// Structural metadata / operator-authored content — routines_list must
+    /// stay untainted (contrast with `routines_journal_get_taints` above).
+    #[tokio::test]
+    async fn routines_list_does_not_taint() {
+        let h = handler();
+        assert!(!h.state.guard.is_tainted());
+        h.routines_list().await.unwrap();
+        assert!(
+            !h.state.guard.is_tainted(),
+            "routines_list is structural metadata and must NOT taint"
         );
     }
 
