@@ -1414,7 +1414,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "routines_journal_get",
-        description = "The full, durable step-by-step journal for a run, every entry VERBATIM — a failed step's cause is the actual VARA/CAT/HTTP failure text the action surfaced, never paraphrased. Read-only."
+        description = "The full, durable step-by-step journal for a run, every entry VERBATIM — a failed step's cause is the actual VARA/CAT/HTTP failure text the action surfaced, never paraphrased. May contain untrusted wire content, so calling this taints the session. Read-only."
     )]
     pub async fn routines_journal_get(
         &self,
@@ -1427,6 +1427,9 @@ impl TuxlinkMcp {
             .journal_get(&run_id)
             .await
             .map_err(port_err)?;
+        self.state
+            .guard
+            .taint(tuxlink_security::TaintReason::RoutinesJournal);
         Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 }
@@ -2517,6 +2520,38 @@ mod tests {
         assert!(
             !entries.is_empty(),
             "the mock seeds at least one journal entry"
+        );
+    }
+
+    /// A run's journal entries carry verbatim step outputs/errors — the actual
+    /// gateway/CMS/VARA wire text a failed or completed step surfaced (see the
+    /// tool description) — the same untrusted-content shape as
+    /// `session_log_snapshot`. It must taint the session the same way.
+    #[tokio::test]
+    async fn routines_journal_get_taints() {
+        let h = handler();
+        assert!(!h.state.guard.is_tainted());
+        h.routines_journal_get(Parameters(RoutineJournalGetParams {
+            run_id: "run-0001".into(),
+        }))
+        .await
+        .unwrap();
+        assert!(
+            h.state.guard.is_tainted(),
+            "routines_journal_get must taint: journal entries carry verbatim wire content"
+        );
+    }
+
+    /// Structural metadata / operator-authored content — routines_list must
+    /// stay untainted (contrast with `routines_journal_get_taints` above).
+    #[tokio::test]
+    async fn routines_list_does_not_taint() {
+        let h = handler();
+        assert!(!h.state.guard.is_tainted());
+        h.routines_list().await.unwrap();
+        assert!(
+            !h.state.guard.is_tainted(),
+            "routines_list is structural metadata and must NOT taint"
         );
     }
 

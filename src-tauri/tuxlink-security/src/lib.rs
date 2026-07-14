@@ -61,6 +61,9 @@ pub enum TaintReason {
     SearchResults,
     /// `session_log_snapshot` — may contain untrusted wire content.
     SessionLog,
+    /// `routines_journal_get` — a run's step outputs/errors carry verbatim
+    /// wire content (gateway/CMS/VARA text), same as `session_log_snapshot`.
+    RoutinesJournal,
 }
 
 impl TaintReason {
@@ -73,6 +76,7 @@ impl TaintReason {
             TaintReason::MessageRead => "message_read",
             TaintReason::SearchResults => "search_results",
             TaintReason::SessionLog => "session_log",
+            TaintReason::RoutinesJournal => "routines_journal",
         }
     }
 }
@@ -620,5 +624,6 @@ mod tests {
         assert_eq!(TaintReason::MessageRead.as_str(), "message_read");
         assert_eq!(TaintReason::SearchResults.as_str(), "search_results");
         assert_eq!(TaintReason::SessionLog.as_str(), "session_log");
+        assert_eq!(TaintReason::RoutinesJournal.as_str(), "routines_journal");
     }
 }

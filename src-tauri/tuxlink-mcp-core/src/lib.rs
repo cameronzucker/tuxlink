@@ -1113,11 +1113,14 @@ pub mod test_support {
         })
     }
 
-    /// Full probe builder: returns `(state, op_ran, aborted, staged)`. `op_ran`
-    /// is shared by the egress + write mocks (flipped inside the gated op);
-    /// `staged` is flipped by the ungated compose mock on a successful stage.
-    pub fn state_with_all_probes(
+    /// Shared assembler behind [`state_with_all_probes`] and
+    /// [`state_with_routines_probes`]: every port except `routines` is the
+    /// same baseline wiring either caller needs, so it lives here once and
+    /// each caller supplies its own single [`MockRoutines`] — never a
+    /// throwaway one that gets built and then immediately overwritten.
+    fn state_with_probes_and_routines(
         guard: EgressGuard,
+        routines: Arc<dyn RoutinesPort>,
     ) -> (McpState, Arc<AtomicBool>, Arc<AtomicBool>, Arc<AtomicBool>) {
         let guard = Arc::new(guard);
         let op_ran = Arc::new(AtomicBool::new(false));
@@ -1143,12 +1146,22 @@ pub mod test_support {
             ui_hint: Arc::new(MockUiHint),
             wwv: Arc::new(MockWwv),
             ft8: Arc::new(MockFt8),
-            routines: Arc::new(MockRoutines::new(
-                Arc::new(AtomicBool::new(false)),
-                Arc::new(AtomicBool::new(false)),
-            )),
+            routines,
         };
         (state, op_ran, aborted, staged)
+    }
+
+    /// Full probe builder: returns `(state, op_ran, aborted, staged)`. `op_ran`
+    /// is shared by the egress + write mocks (flipped inside the gated op);
+    /// `staged` is flipped by the ungated compose mock on a successful stage.
+    pub fn state_with_all_probes(
+        guard: EgressGuard,
+    ) -> (McpState, Arc<AtomicBool>, Arc<AtomicBool>, Arc<AtomicBool>) {
+        let routines = Arc::new(MockRoutines::new(
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        ));
+        state_with_probes_and_routines(guard, routines)
     }
 
     /// Build an [`McpState`] wired with a [`MockRoutines`] whose
@@ -1156,18 +1169,20 @@ pub mod test_support {
     /// the router's `routines_run`/`routines_dry_run` canary tests need to
     /// observe them directly (unlike [`state_with_all_probes`]'s shared
     /// `op_ran`, which the egress/write mocks flip, not routines). Every
-    /// OTHER port is the same baseline [`state_with_all_probes`] wires, so
-    /// this stays a thin wrapper rather than a second full assembler.
+    /// OTHER port is the same baseline [`state_with_probes_and_routines`]
+    /// wires, so this is deliberately built on top of it rather than
+    /// duplicated.
     pub fn state_with_routines_probes(
         guard: EgressGuard,
     ) -> (McpState, Arc<AtomicBool>, Arc<AtomicBool>) {
-        let (mut state, _op_ran, _aborted, _staged) = state_with_all_probes(guard);
         let real_action_ran = Arc::new(AtomicBool::new(false));
         let dry_run_ran = Arc::new(AtomicBool::new(false));
-        state.routines = Arc::new(MockRoutines::new(
+        let routines = Arc::new(MockRoutines::new(
             Arc::clone(&real_action_ran),
             Arc::clone(&dry_run_ran),
         ));
+        let (state, _op_ran, _aborted, _staged) =
+            state_with_probes_and_routines(guard, routines);
         (state, real_action_ran, dry_run_ran)
     }
 }
