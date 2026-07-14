@@ -1,0 +1,26 @@
+{
+  "routine": "deployment-connect-cycle",
+  "schema_version": 1,
+  "transmit_mode": "automatic",
+  "transmit_ack": { "by": "KK7ABC", "at": "2026-07-13T20:00:00Z" },
+  "on_interrupted": "stay",
+  "inputs": [],
+  "triggers": [
+    { "type": "schedule", "every": "30m", "align": "hour", "if_missed": "skip" }
+  ],
+  "tracks": [
+    {
+      "name": "connect",
+      "steps": [
+        {
+          "id": "c1",
+          "action": "radio.connect",
+          "params": { "stations": "@station-set:or-gateways", "bands": ["40m", "80m"] },
+          "timeout_s": 300,
+          "on_radio_busy": "wait"
+        },
+        { "id": "ce1", "control": "end", "failed": false }
+      ]
+    }
+  ]
+}

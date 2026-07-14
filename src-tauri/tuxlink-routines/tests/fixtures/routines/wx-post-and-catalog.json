@@ -1,0 +1,34 @@
+{
+  "routine": "wx-post-and-catalog",
+  "schema_version": 1,
+  "transmit_mode": "automatic",
+  "transmit_ack": { "by": "KK7ABC", "at": "2026-07-13T20:00:00Z" },
+  "on_interrupted": "stay",
+  "inputs": [],
+  "triggers": [
+    { "type": "schedule", "every": "6h", "align": "hour", "if_missed": "skip" }
+  ],
+  "tracks": [
+    {
+      "name": "wx-post",
+      "steps": [
+        {
+          "id": "w0",
+          "action": "data.read",
+          "params": { "key": "last_connected_gateway" }
+        },
+        {
+          "id": "w1",
+          "action": "compose.message",
+          "params": { "template": "wx-tabular", "gateway": "$w0.value" }
+        },
+        {
+          "id": "w2",
+          "action": "log.entry",
+          "params": { "note": "wx-post cataloged against $w0.value" }
+        },
+        { "id": "we1", "control": "end", "failed": false }
+      ]
+    }
+  ]
+}

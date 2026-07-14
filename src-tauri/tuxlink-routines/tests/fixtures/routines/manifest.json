@@ -259,6 +259,30 @@
       }
     },
     {
+      "kind": "single",
+      "name": "MULTIPLE_SCHEDULES",
+      "file": "multiple-schedules.json",
+      "expected_codes": ["MULTIPLE_SCHEDULES"],
+      "context": {
+        "actions": ["local.note"],
+        "entities": [],
+        "profile": { "has_internet": false, "rigs": [] },
+        "sibling_routines": []
+      }
+    },
+    {
+      "kind": "single",
+      "name": "STEP_TIMEOUT_LIKELY_INSUFFICIENT",
+      "file": "step-timeout-likely-insufficient.json",
+      "expected_codes": ["STEP_TIMEOUT_LIKELY_INSUFFICIENT"],
+      "context": {
+        "actions": ["data.spacewx_wwv"],
+        "entities": [],
+        "profile": { "has_internet": false, "rigs": ["FT-710"] },
+        "sibling_routines": []
+      }
+    },
+    {
       "kind": "fleet",
       "name": "SCHEDULE_COLLISION",
       "files": ["schedule-collision.a.json", "schedule-collision.b.json"],
@@ -297,12 +321,13 @@
       }
     },
     {
-      "kind": "single",
-      "name": "deployment-poll",
-      "file": "deployment-poll.json",
-      "expected_codes": ["CROSS_TRACK_VAR", "SAME_RIG_PARALLEL_LANES"],
+      "kind": "fleet",
+      "name": "deployment-fleet-coexistence",
+      "files": ["deployment-connect-cycle.json", "wx-post-and-catalog.json"],
+      "expected_codes": [],
+      "now_unix": 1784124420,
       "context": {
-        "actions": ["radio.connect", "compose.message"],
+        "actions": ["radio.connect", "data.read", "compose.message", "log.entry"],
         "entities": [{ "kind": "station-set", "name": "or-gateways" }],
         "profile": { "has_internet": false, "rigs": ["FT-710"] },
         "sibling_routines": []

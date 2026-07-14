@@ -16,7 +16,10 @@
 //! remaining per-module check fn. Task 5 wires `fleet`
 //! (`SCHEDULE_COLLISION`, `SAME_EFFECT_OVERLAP`) into `validate_fleet` only
 //! — it is a cross-routine check over the whole set being enabled, so it
-//! has no place in per-routine `validate()`.
+//! has no place in per-routine `validate()`. Plan-4 task 1 (the 2026-07-14
+//! one-cadence spec amendment) wires `triggers` (`MULTIPLE_SCHEDULES`) and
+//! adds `capability`'s `STEP_TIMEOUT_LIKELY_INSUFFICIENT` (WWV timeout
+//! heuristic).
 
 pub mod capability;
 pub mod consent;
@@ -26,6 +29,7 @@ pub mod findings;
 pub mod fleet;
 pub mod refs;
 pub mod structure;
+pub mod triggers;
 
 pub use context::{StaticContext, StationProfile, ValidationContext};
 pub use findings::{Finding, Severity};
@@ -46,6 +50,7 @@ pub fn validate(def: &RoutineDef, ctx: &dyn ValidationContext) -> Vec<Finding> {
     contracts::check(def, &mut findings);
     structure::check(def, ctx, &mut findings);
     consent::check(def, ctx, &mut findings);
+    triggers::check(def, &mut findings);
 
     sort_findings(&mut findings);
     findings

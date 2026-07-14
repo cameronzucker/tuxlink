@@ -170,6 +170,14 @@ pub fn next_fire(trigger: &Trigger, now_unix: i64, utc_offset_seconds: i32) -> O
 
 /// Whole fires elapsed between `last_seen_unix` and `now_unix` (spec §8
 /// missed-fire record). Manual triggers never miss.
+///
+/// **Window-blind.** This is pure `(now - last_seen) / interval` — it does
+/// not know about a `Trigger::Schedule`'s `window` gate, so a windowed
+/// overnight routine reports phantom misses for the hours it was never due
+/// to fire in anyway (the gap includes window-closed time as if it were
+/// open). [`missed_fires_windowed`] is the window/align-aware sibling that
+/// fixes this; this function is kept as-is (additive change, not a
+/// replacement) so existing callers keep compiling unchanged.
 pub fn missed_fires(trigger: &Trigger, last_seen_unix: i64, now_unix: i64) -> u64 {
     let Trigger::Schedule { every, .. } = trigger else {
         return 0;
@@ -181,6 +189,50 @@ pub fn missed_fires(trigger: &Trigger, last_seen_unix: i64, now_unix: i64) -> u6
         return 0;
     }
     ((now_unix - last_seen_unix) / interval) as u64
+}
+
+/// Window/align-aware sibling of [`missed_fires`] (plan-4 amendment task 1):
+/// counts only the fires [`next_fire`]'s own walk would actually have
+/// produced between `last_seen_unix` and `now_unix` — honoring both the
+/// `align` grid and the `window` gate the same way `next_fire` does — so a
+/// windowed overnight routine (e.g. `window: "22:00-06:00"` closed, or the
+/// inverse) stops reporting phantom misses for hours it was never due to
+/// fire in. Additive alongside [`missed_fires`]: same
+/// trigger/last-seen/now shape, one extra `utc_offset_seconds` parameter
+/// threaded exactly the way `next_fire` and `within_window` already take it
+/// — existing [`missed_fires`] call sites are untouched and keep compiling.
+///
+/// Walks `next_fire` forward from `last_seen_unix`, counting every fire
+/// `<= now_unix`, same shape as `fleet.rs`'s `fire_times_within_horizon`
+/// walk. Manual triggers and unparseable `every`/`window` strings report 0
+/// (via `next_fire` returning `None` immediately), matching `missed_fires`'s
+/// own fail-closed contract. Bounded by a generous iteration guard so a
+/// pathological gap (a fine-grained interval left unseen for a very long
+/// time) cannot spin forever; in practice `if_missed` policy only cares
+/// whether the count is nonzero, so hitting the guard still yields a
+/// correct "definitely missed at least this many" lower bound.
+pub fn missed_fires_windowed(
+    trigger: &Trigger,
+    last_seen_unix: i64,
+    now_unix: i64,
+    utc_offset_seconds: i32,
+) -> u64 {
+    if now_unix <= last_seen_unix {
+        return 0;
+    }
+    const ITERATION_GUARD: u64 = 100_000;
+    let mut count = 0u64;
+    let mut cursor = last_seen_unix;
+    while count < ITERATION_GUARD {
+        match next_fire(trigger, cursor, utc_offset_seconds) {
+            Some(t) if t <= now_unix => {
+                count += 1;
+                cursor = t;
+            }
+            _ => break,
+        }
+    }
+    count
 }
 
 #[cfg(test)]
@@ -357,6 +409,93 @@ mod tests {
         let last = NOW - (2 * 3600 + 5 * 60);
         assert_eq!(missed_fires(&sched("30m", None, None), last, NOW), 4);
         assert_eq!(missed_fires(&Trigger::Manual, last, NOW), 0);
+    }
+
+    // --- missed_fires_windowed (window/align-aware sibling) ------------
+
+    #[test]
+    fn windowed_missed_fires_matches_naive_missed_fires_when_there_is_no_window() {
+        // No window configured: every fire the epoch-anchored grid would
+        // have produced in the gap is a real miss, same count the naive
+        // divide-by-interval math produces.
+        let last = NOW - (2 * 3600 + 5 * 60);
+        let trigger = sched("30m", None, None);
+        assert_eq!(
+            missed_fires_windowed(&trigger, last, NOW, 0),
+            missed_fires(&trigger, last, NOW)
+        );
+    }
+
+    #[test]
+    fn windowed_missed_fires_reports_zero_for_a_gap_entirely_inside_a_closed_overnight_window() {
+        // window "06:00-22:00" (open 06:00-22:00, closed 22:00-06:00).
+        // last_seen at 22:00 (window just closed), now at 05:00 the next
+        // morning (window still closed, an hour before it reopens) — a 30m
+        // schedule was never due to fire at all during this entirely-closed
+        // gap, so the window-aware count must be 0. The naive
+        // divide-by-interval `missed_fires` would instead report
+        // (7h / 30m) = 14 phantom misses for the same gap.
+        let day_base = NOW - (NOW % 86_400);
+        let last = day_base + 22 * 3600; // 22:00 — window just closed
+        let now = day_base + 29 * 3600; // 05:00 next day — still closed
+        let trigger = sched("30m", Some("hour"), Some("06:00-22:00"));
+
+        assert_eq!(
+            missed_fires_windowed(&trigger, last, now, 0),
+            0,
+            "an overnight-closed window must report zero misses, not phantom ones"
+        );
+        assert!(
+            missed_fires(&trigger, last, now) > 0,
+            "sanity: the naive (window-blind) count for the same gap is nonzero, proving the \
+             windowed version actually fixes something"
+        );
+    }
+
+    #[test]
+    fn windowed_missed_fires_counts_only_the_fires_that_actually_land_inside_a_narrow_window() {
+        // A narrow 1h window ("10:00-11:00") only ever admits two 30m-grid
+        // fires per day (10:00, 10:30 — 11:00 itself is the window's
+        // exclusive close). Gap: yesterday 09:00 (closed, before the
+        // window) to today 09:00 (closed again, before today's window
+        // opens) — exactly one day later. Only yesterday's two in-window
+        // fires land inside that gap; today's 10:00/10:30 haven't happened
+        // yet relative to `now`.
+        let day_base = NOW - (NOW % 86_400);
+        let last = day_base + 9 * 3600; // 09:00, closed
+        let now = day_base + 86_400 + 9 * 3600; // next day 09:00, closed
+        let trigger = sched("30m", Some("hour"), Some("10:00-11:00"));
+
+        assert_eq!(missed_fires_windowed(&trigger, last, now, 0), 2);
+        // Sanity: the naive count for the same 24h gap is much larger (24h
+        // / 30m = 48), proving the window narrowed it down for real.
+        assert_eq!(missed_fires(&trigger, last, now), 48);
+    }
+
+    #[test]
+    fn windowed_missed_fires_is_zero_for_manual_triggers() {
+        let last = NOW - 3600;
+        assert_eq!(missed_fires_windowed(&Trigger::Manual, last, NOW, 0), 0);
+    }
+
+    #[test]
+    fn windowed_missed_fires_respects_utc_offset_for_the_window_gate() {
+        // Same shape as the overnight-closed-window test, but the window is
+        // authored in local time at a non-zero offset — the windowed count
+        // must gate using the SAME local clock `next_fire`/`within_window`
+        // use, not silently fall back to UTC.
+        let day_base = NOW - (NOW % 86_400);
+        let arizona_offset = -7 * 3600;
+        // UTC instants that read as local 22:00 / local 05:00 at UTC-7.
+        let last = day_base + 29 * 3600; // UTC 29:00 == local 22:00 (next day rollover)
+        let now = day_base + 36 * 3600; // UTC 36:00 == local 05:00
+        let trigger = sched("30m", Some("hour"), Some("06:00-22:00"));
+
+        assert_eq!(
+            missed_fires_windowed(&trigger, last, now, arizona_offset),
+            0,
+            "the gap is entirely inside the closed window in LOCAL time"
+        );
     }
 
     #[test]
