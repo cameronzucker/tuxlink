@@ -345,13 +345,20 @@ pub fn save_routine(state: &RoutinesState, def_json: &str) -> Result<SaveResult,
     // this save path is agent-reachable over MCP (`routines_save`). Whatever
     // ack the caller sent — forged, or replayed from `routines_get` — is
     // discarded; the routine keeps the acknowledgment already on disk, if
-    // any. This happens BEFORE validation so the returned findings describe
-    // the def as stored (an unacked automatic routine reports
-    // AUTO_TX_UNACKED even when the request body carried an ack).
-    def.transmit_ack = state
-        .store
-        .get(&def.routine)
-        .and_then(|on_disk| on_disk.transmit_ack);
+    // any, PROVIDED the incoming def is still automatic — leaving automatic
+    // clears it (see the match arm below). This happens BEFORE validation so
+    // the returned findings describe the def as stored (an unacked automatic
+    // routine reports AUTO_TX_UNACKED even when the request body carried an
+    // ack).
+    def.transmit_ack = match def.transmit_mode {
+        tuxlink_routines::types::TransmitMode::Automatic => state
+            .store
+            .get(&def.routine)
+            .and_then(|on_disk| on_disk.transmit_ack),
+        // Leaving automatic revokes the standing acknowledgment: a stale ack
+        // must never silently re-arm a routine flipped back to automatic later.
+        _ => None,
+    };
     let findings = validate_def(state, &def);
     // Save even with errors (spec §10: errors block enable/run, never save).
     // `store.save` still rejects a name that would escape the store directory —
@@ -514,6 +521,35 @@ fn introduced_findings(armed: Vec<Finding>, baseline: Vec<Finding>) -> Vec<Findi
         }
     }
     introduced
+}
+
+/// Record the Part 97 automatic-transmission acknowledgment (spec §4). This is
+/// THE ONLY writer of `transmit_ack`: `save_routine` discards caller-supplied
+/// acks (C1), and this command is registered only as a Tauri command — the MCP
+/// surface has no path to it (spec §13's tool list is closed at 10).
+pub fn acknowledge_automatic(
+    state: &RoutinesState,
+    name: &str,
+    callsign: &str,
+    at_rfc3339: &str,
+) -> Result<(), UiError> {
+    let mut def = get_routine(state, name)?;
+    if def.transmit_mode != tuxlink_routines::types::TransmitMode::Automatic {
+        return Err(UiError::Rejected(format!(
+            "routine \"{name}\" is not in automatic transmit mode — the automatic-transmission \
+             acknowledgment applies only to automatic routines"
+        )));
+    }
+    def.transmit_ack = Some(tuxlink_routines::types::TransmitAck {
+        by: callsign.to_string(),
+        at: at_rfc3339.to_string(),
+    });
+    state.store.save(&def)?;
+    state.emit(&RoutinesEvent::LibraryChanged {
+        entity: LibraryEntity::Routine,
+        name: name.to_string(),
+    });
+    Ok(())
 }
 
 // ============================================================================
@@ -757,6 +793,24 @@ pub async fn routines_consent_grant(
     step_id: String,
 ) -> Result<bool, UiError> {
     Ok(grant_consent(&state, &run_id, &step_id))
+}
+
+/// Record the Part 97 automatic-transmission acknowledgment for `name` as the
+/// station's active identity, at the current instant. **Operator-only**: this
+/// is a UI command; the MCP surface has no path to it (spec §13's tool list is
+/// closed at 10 — see `tuxlink-mcp-core/src/router.rs`'s closed-list guard).
+#[tauri::command]
+pub async fn routines_acknowledge_automatic(
+    state: State<'_, Arc<RoutinesState>>,
+    backend: State<'_, crate::app_backend::BackendState>,
+    name: String,
+) -> Result<(), UiError> {
+    let b = backend
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".into()))?;
+    let callsign = b.active_identity()?.mycall().as_str().to_uppercase();
+    let at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    acknowledge_automatic(&state, &name, &callsign, &at)
 }
 
 /// The schedule-status read path. Keeps its historical `missed_fires` name — it
@@ -1063,15 +1117,9 @@ mod tests {
         let (_dir, state, _sink, _c) = test_state();
         save_routine(&state, &auto_tx_json("acked", None)).unwrap();
 
-        // Stamp the ack the way the UI-only command does: a direct store
-        // write, not the caller-reachable save path.
-        let operator_ack = tuxlink_routines::types::TransmitAck {
-            by: "KK7ABC".to_string(),
-            at: "2026-07-14T00:00:00Z".to_string(),
-        };
-        let mut def = get_routine(&state, "acked").unwrap();
-        def.transmit_ack = Some(operator_ack.clone());
-        state.store.save(&def).unwrap();
+        // Stamp the ack the way the UI-only command does.
+        acknowledge_automatic(&state, "acked", "KK7ABC", "2026-07-14T00:00:00Z").unwrap();
+        let operator_ack = get_routine(&state, "acked").unwrap().transmit_ack.unwrap();
 
         let forged = json!({"by": "N0CALL", "at": "1999-01-01T00:00:00Z"});
         let result = save_routine(&state, &auto_tx_json("acked", Some(forged))).unwrap();
@@ -1085,6 +1133,57 @@ mod tests {
             Some(operator_ack),
             "the UI-recorded ack survives a caller save verbatim"
         );
+    }
+
+    /// Global Constraint 2: switching a routine away from automatic clears the
+    /// stored acknowledgment, so a later switch BACK to automatic requires a
+    /// fresh UI act (a stale ack must never silently re-arm).
+    #[test]
+    fn save_clears_the_ack_when_transmit_mode_leaves_automatic() {
+        let (_dir, state, _sink, _c) = test_state();
+        save_routine(&state, &auto_tx_json("flip", None)).unwrap();
+        acknowledge_automatic(&state, "flip", "KK7ABC", "2026-07-14T00:00:00Z").unwrap();
+        assert!(get_routine(&state, "flip").unwrap().transmit_ack.is_some());
+
+        // Same routine, resaved as attended: the ack must be gone from disk.
+        let attended = auto_tx_json("flip", None).replace("\"automatic\"", "\"attended\"");
+        save_routine(&state, &attended).unwrap();
+        assert_eq!(get_routine(&state, "flip").unwrap().transmit_ack, None);
+
+        // Back to automatic: NOT acked (blocked), fresh acknowledgment required.
+        let result = save_routine(&state, &auto_tx_json("flip", None)).unwrap();
+        assert!(result.findings.iter().any(|f| f.code == "AUTO_TX_UNACKED"));
+    }
+
+    #[test]
+    fn acknowledge_automatic_stamps_and_unblocks_enable() {
+        let (_dir, state, sink, _c) = test_state();
+        save_routine(&state, &auto_tx_json("auto", None)).unwrap();
+        let blocked = set_routine_enabled(&state, "auto", true, NOW, 0).unwrap();
+        assert!(!blocked.enabled);
+
+        acknowledge_automatic(&state, "auto", "KK7ABC", "2026-07-14T00:00:00Z").unwrap();
+        let ack = get_routine(&state, "auto").unwrap().transmit_ack.unwrap();
+        assert_eq!(ack.by, "KK7ABC");
+        assert!(sink.events().iter().any(|e| matches!(e,
+            RoutinesEvent::LibraryChanged { entity: LibraryEntity::Routine, name } if name == "auto")));
+
+        let armed = set_routine_enabled(&state, "auto", true, NOW, 0).unwrap();
+        assert!(armed.enabled, "the UI act is the consent envelope: {:?}", armed.findings);
+    }
+
+    #[test]
+    fn acknowledge_automatic_refuses_non_automatic_and_unknown_routines() {
+        let (_dir, state, _sink, _c) = test_state();
+        save_routine(&state, &def_json("attended", log_step())).unwrap();
+        assert!(matches!(
+            acknowledge_automatic(&state, "attended", "KK7ABC", "2026-07-14T00:00:00Z"),
+            Err(UiError::Rejected(_))
+        ));
+        assert!(matches!(
+            acknowledge_automatic(&state, "ghost", "KK7ABC", "2026-07-14T00:00:00Z"),
+            Err(UiError::NotFound(_))
+        ));
     }
 
     // ── enable: errors refuse; the fleet check runs ──────────────────────
