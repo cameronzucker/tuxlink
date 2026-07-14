@@ -260,7 +260,7 @@ One JSON schema; the export format is the storage format. Individual files under
 }
 ```
 
-Load-bearing conventions: **`@`-references** name every external entity (what reference validation resolves); **`stepId.output`** paths are the variable system the type-checker walks; `schema_version` gates evolution. `triggers` is manual plus **at most one** schedule (§5's one-cadence rule) — the format does not accept a second `{ "type": "schedule", … }` entry in the same array; a task that needs more than one cadence is multiple routine files, not multiple schedule entries in one. Default failure semantics: a step without a failure branch fails the run (verbatim cause, journaled); a failure branch makes failure a handled path.
+Load-bearing conventions: **`@`-references** name every external entity (what reference validation resolves); **`stepId.output`** paths are the variable system the type-checker walks; `schema_version` gates evolution. `triggers` is manual plus **at most one** schedule (§5's one-cadence rule) — the parser accepts the array as written and the validator warns (`MULTIPLE_SCHEDULES`, the same design-time enforcement §5 names) on a second `{ "type": "schedule", … }` entry; a task that needs more than one cadence is multiple routine files, not multiple schedule entries in one. Default failure semantics: a step without a failure branch fails the run (verbatim cause, journaled); a failure branch makes failure a handled path.
 
 ## 15. Testing
 
