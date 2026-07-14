@@ -6,7 +6,7 @@
 
 ## READ THIS FIRST — where to resume
 
-1. **Check CI on PR #1115** (`gh pr checks 1115`). It was **6 checks pending, 0 failing** at handoff. If green → **ask the operator to merge** (they merge; agent merges are permission-blocked). If red → fix-forward on `bd-tuxlink-ofw4s/routines-p2`.
+1. **CI on PR #1115 is GREEN — all 13 checks passed, both arches** (confirmed after this handoff was first written; includes the workspace clippy/test `verify` job on amd64 + arm64 and clean `.deb` installs on trixie). The PR is flagged **draft** only because it was opened that way pending CI. Next agent: run `gh pr ready 1115`, then **ask the operator to merge** (they merge; agent merges are permission-blocked). Do NOT re-run or re-check CI.
 2. **Then read the operator's decision below on sequencing** — they want the fastest honest path to a **live on-air test**, and the answer materially reorders the remaining plans.
 3. Wire-walk for plan 2 is **WAIVED by the operator** (2026-07-14) — they will test live on hardware instead. Do not re-gate on it.
 
@@ -29,7 +29,7 @@ Plan 2 = the engine mounted into the app as a **running, supervised automation r
 - **17 Tauri commands** — validate-on-save (one shared registry: validator and runtime cannot disagree), enable/run blocked on errors only, fleet-delta collision reporting, fake-world dry-run, preset + station-set CRUD. **This is the whole operator surface today — there is no UI yet.**
 - **Timezone-correct windows** — quiet hours were evaluated in UTC (7h off in Arizona); now local, offset read per-call for DST.
 
-**Gates at handoff:** 176 leaf + 265 routines + 7 quit-gate tests green on the merged tree; `clippy --all-targets --locked -D warnings` clean; both lockfiles `--locked`-consistent; no "workflow" token anywhere.
+**Gates at handoff:** CI green both arches (13/13). Locally: 176 leaf + 265 routines + 7 quit-gate tests green on the merged tree; `clippy --all-targets --locked -D warnings` clean; both lockfiles `--locked`-consistent; no "workflow" token anywhere.
 
 **Review record:** ~20 real defects caught and fixed across 9 fix rounds. The load-bearing ones: a **dry-run that executed the REAL action catalog** with consent parking suppressed (would have keyed the transmitter); a **stale due-set firing disabled routines**; the **quit-resurrects-cancelled-run** bug; a scheduler **lost wakeup** (first-ever enabled routine could silently never fire); **P1 path traversal** in the definition store; a **Critical arbiter lease leak** on task abort; **lying leases** on cancelled WWV/listen captures.
 
