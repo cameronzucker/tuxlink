@@ -5,7 +5,8 @@
  * tested and reusable across every routines surface (library list, run
  * status, schedule status).
  */
-import type { RunState, Trigger } from './routinesApi';
+import type { IfMissed, RunState, StepError, Trigger } from './routinesApi';
+import { asUiError } from '../mailbox/types';
 
 /**
  * The scheduler's `ITERATION_GUARD` (spec §8) caps how many missed fires it
@@ -72,4 +73,64 @@ const RUN_STATE_LABELS: Record<RunState, string> = {
 
 export function formatRunState(s: RunState): string {
   return RUN_STATE_LABELS[s];
+}
+
+/**
+ * The `if_missed` schedule policy → an operator-facing one-liner (dashboard
+ * Task 8's Trigger column). `'skip'` and `'run_once_on_launch'` are the only
+ * two `IfMissed` values (routinesApi.ts).
+ */
+export function formatIfMissed(im: IfMissed): string {
+  return im === 'skip' ? 'missed: skip' : 'missed: run once on launch';
+}
+
+/**
+ * The operator-facing cause text out of a failed step's `StepError`
+ * (dashboard Task 8's Last-result column). `'action'`'s `detail.cause` and
+ * `'unset_variable'`'s `detail` are already operator-facing text produced by
+ * the backend — returned VERBATIM, never re-worded (task-8 brief binding
+ * constraint 4). `'timeout'` and `'cancelled'` carry no message of their own
+ * on the wire, so this synthesizes a short label for those two.
+ */
+export function formatStepErrorCause(e: StepError): string {
+  switch (e.kind) {
+    case 'action':
+      return e.detail.cause;
+    case 'unset_variable':
+      return e.detail;
+    case 'timeout':
+      return `timeout after ${e.detail.seconds}s`;
+    case 'cancelled':
+      return 'cancelled';
+  }
+}
+
+/**
+ * The operator-facing message out of a rejected `invoke()` call — the
+ * dashboard's arbiter-refusal strip (flow 6) and the import dialog's
+ * save-failure text both need this. Mirrors `UiError`'s Rust-side
+ * `refusal_reason` mapping (src-tauri/src/routines/scheduler.rs:1016-1028)
+ * in TypeScript: `NotConfigured` / `NotFound` / `Rejected` carry their
+ * operator-facing text directly in `detail` and are returned VERBATIM, never
+ * re-worded (task-8 brief binding constraint 4/9). Falls back to the raw
+ * thrown value's own message when it isn't the `UiError` discriminated-union
+ * shape (e.g. a plain string or `Error` from a non-Tauri test harness).
+ */
+export function formatUiError(e: unknown): string {
+  const ui = asUiError(e);
+  if (!ui) return e instanceof Error ? e.message : typeof e === 'string' ? e : String(e);
+  switch (ui.kind) {
+    case 'NotConfigured':
+    case 'NotFound':
+    case 'Rejected':
+      return ui.detail;
+    case 'AuthFailed':
+    case 'Transport':
+    case 'Unavailable':
+      return ui.detail.reason;
+    case 'Internal':
+      return ui.detail.detail;
+    case 'Cancelled':
+      return 'cancelled';
+  }
 }

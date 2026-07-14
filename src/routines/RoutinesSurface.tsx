@@ -9,8 +9,10 @@
  * "pop out" (Global Constraint 6 / task-7 binding constraint 2).
  *
  * View switch:
- *  - `{ view: 'dashboard' }` renders `RoutinesDashboard` (Task 8's fleet-ops
- *    table; this task lands a minimal compile stub of it).
+ *  - `{ view: 'dashboard' }` renders `RoutinesDashboard` (Task 8's real
+ *    fleet-ops table, wired to `onNavigate` below: a row double-click or the
+ *    ⋯ menu's Edit opens the designer on that routine; the header's "＋ New
+ *    Routine" opens a fresh, unsaved draft).
  *  - `{ view: 'designer'; routine; tab }` renders a placeholder — Task 9
  *    supplies the real `RoutineDesigner` (src/routines/designer/RoutineDesigner.tsx).
  *    An empty `routine` name means a fresh, unsaved draft.
@@ -26,15 +28,19 @@ export type RoutinesView =
 
 export interface RoutinesSurfaceProps {
   view: RoutinesView;
-  /** Navigate to another RoutinesView (e.g. dashboard row double-click →
-   *  designer). Unused by the Task 8/9 placeholders this task lands; it is
-   *  this task's plumbing for those tasks to call. */
+  /** Navigate to another RoutinesView — the dashboard's row double-click / Edit
+   *  and "＋ New Routine" all resolve through this (Task 8). */
   onNavigate: (next: RoutinesView) => void;
 }
 
-export function RoutinesSurface({ view }: RoutinesSurfaceProps) {
+export function RoutinesSurface({ view, onNavigate }: RoutinesSurfaceProps) {
   if (view.view === 'dashboard') {
-    return <RoutinesDashboard />;
+    return (
+      <RoutinesDashboard
+        onOpenDesigner={(routine, tab) => onNavigate({ view: 'designer', routine, tab: tab ?? 'design' })}
+        onNewRoutine={() => onNavigate({ view: 'designer', routine: '', tab: 'design' })}
+      />
+    );
   }
   // Task 9 stub: RoutineDesigner doesn't exist yet. One line, no fake
   // controls — Task 9 replaces this outright with the real designer shell

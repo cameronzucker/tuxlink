@@ -60,6 +60,18 @@ beforeEach(() => {
         return Promise.resolve([]);
       case 'routines_validate':
         return Promise.resolve([]);
+      case 'routines_get':
+        return Promise.resolve({
+          routine: 'morning-ics',
+          schema_version: 1,
+          transmit_mode: 'attended',
+          triggers: [],
+          tracks: [{ name: 't1', steps: [] }],
+        });
+      case 'routines_actions_list':
+        return Promise.resolve([
+          { name: 'radio.connect', needsRadio: true, transmits: false, needsInternet: false },
+        ]);
       default:
         return Promise.resolve([]);
     }
@@ -79,9 +91,13 @@ describe('useRoutines — initial load', () => {
     expect(callsFor('routines_missed_fires').length).toBeGreaterThanOrEqual(1);
     expect(callsFor('routines_next_fires').length).toBeGreaterThanOrEqual(1);
     expect(callsFor('routines_fleet_check').length).toBeGreaterThanOrEqual(1);
+    expect(callsFor('routines_actions_list').length).toBeGreaterThanOrEqual(1);
     const validateCalls = callsFor('routines_validate');
     expect(validateCalls.length).toBeGreaterThanOrEqual(1);
     expect(validateCalls[0]?.[1]).toEqual({ name: 'morning-ics' });
+    const getCalls = callsFor('routines_get');
+    expect(getCalls.length).toBeGreaterThanOrEqual(1);
+    expect(getCalls[0]?.[1]).toEqual({ name: 'morning-ics' });
 
     expect(result.current.summaries).toEqual([
       { routine: 'morning-ics', transmitMode: 'attended', enabled: true, triggers: [] },
@@ -90,6 +106,8 @@ describe('useRoutines — initial load', () => {
     expect(result.current.scheduleStatus).toEqual([]);
     expect(result.current.fleetFindings).toEqual([]);
     expect(result.current.findingsByRoutine).toEqual({ 'morning-ics': [] });
+    expect(result.current.defsByRoutine['morning-ics']?.tracks).toHaveLength(1);
+    expect(result.current.actionsByName['radio.connect']?.transmits).toBe(false);
   });
 
   it('registers the listener before the caller can observe the first commit', async () => {

@@ -12,12 +12,16 @@
  * so they don't trigger a refresh here.
  *
  * `refresh()` loads, in parallel: `listRoutines`, `missedFires`, `nextFires`,
- * `fleetCheck`, plus a per-routine `validateRoutine` for every summary
- * `listRoutines` returned (also run in parallel). A save or a schedule tick
- * can emit several of the trigger events in a short burst (e.g. a save emits
- * `libraryChanged` and the caller's own re-read races it) — a 150ms trailing
- * debounce coalesces a burst into one refresh, mirroring
- * `useFt8Listener.ts`'s `REHYDRATE_DEBOUNCE_MS` precedent.
+ * `fleetCheck`, `listActions` (the action catalog, fetched once — not per
+ * routine), plus a per-routine `validateRoutine` + `getRoutine` for every
+ * summary `listRoutines` returned (also run in parallel — the dashboard
+ * Task 8 brief's «N tracks · M steps» meta line and TX-mode column both need
+ * the full `RoutineDef`, not just the summary, so this hook fetches it
+ * lazily alongside validation rather than opening a second read path). A
+ * save or a schedule tick can emit several of the trigger events in a short
+ * burst (e.g. a save emits `libraryChanged` and the caller's own re-read
+ * races it) — a 150ms trailing debounce coalesces a burst into one refresh,
+ * mirroring `useFt8Listener.ts`'s `REHYDRATE_DEBOUNCE_MS` precedent.
  *
  * Guards against state updates after unmount (`mountedRef`) and against a
  * stale in-flight refresh clobbering a newer one (`generationRef`), mirroring
@@ -30,9 +34,13 @@ import {
   nextFires as fetchNextFires,
   fleetCheck,
   validateRoutine,
+  getRoutine,
+  listActions,
   type RoutineSummary,
   type ScheduleStatus,
   type Finding,
+  type RoutineDef,
+  type ActionInfo,
 } from './routinesApi';
 import { listenRoutinesEvents } from './routinesEvents';
 
@@ -49,6 +57,14 @@ export interface UseRoutinesResult {
   /** Fleet-wide findings (`routines_fleet_check`) — cross-routine issues that
    *  don't attach to any single routine. */
   fleetFindings: Finding[];
+  /** Full routine definitions per routine name (`routines_get`), fetched
+   *  lazily alongside validation. */
+  defsByRoutine: Record<string, RoutineDef>;
+  /** The action catalog (`routines_actions_list`), keyed by action name —
+   *  lets a caller check `ActionInfo.transmits` for a routine's steps
+   *  without any hardcoded action-name list. Fetched once per refresh, not
+   *  per routine. */
+  actionsByName: Record<string, ActionInfo>;
   /** Force an immediate, generation-gated re-read. */
   refresh(): Promise<void>;
 }
@@ -59,6 +75,8 @@ export function useRoutines(): UseRoutinesResult {
   const [nextFiresByRoutine, setNextFiresByRoutine] = useState<Record<string, number>>({});
   const [findingsByRoutine, setFindingsByRoutine] = useState<Record<string, Finding[]>>({});
   const [fleetFindings, setFleetFindings] = useState<Finding[]>([]);
+  const [defsByRoutine, setDefsByRoutine] = useState<Record<string, RoutineDef>>({});
+  const [actionsByName, setActionsByName] = useState<Record<string, ActionInfo>>({});
 
   const mountedRef = useRef(true);
   const generationRef = useRef(0);
@@ -67,13 +85,14 @@ export function useRoutines(): UseRoutinesResult {
   const refresh = useCallback(async () => {
     const gen = (generationRef.current += 1);
     try {
-      const [summariesResult, scheduleStatusResult, nextFiresResult, fleetFindingsResult] =
-        await Promise.all([listRoutines(), missedFires(), fetchNextFires(), fleetCheck()]);
+      const [summariesResult, scheduleStatusResult, nextFiresResult, fleetFindingsResult, actionsResult] =
+        await Promise.all([listRoutines(), missedFires(), fetchNextFires(), fleetCheck(), listActions()]);
 
-      const findingsEntries = await Promise.all(
-        summariesResult.map(
-          async (s) => [s.routine, await validateRoutine(s.routine)] as const,
-        ),
+      const perRoutineEntries = await Promise.all(
+        summariesResult.map(async (s) => {
+          const [findings, def] = await Promise.all([validateRoutine(s.routine), getRoutine(s.routine)]);
+          return [s.routine, findings, def] as const;
+        }),
       );
 
       if (!mountedRef.current || gen !== generationRef.current) return; // unmounted or superseded
@@ -81,7 +100,9 @@ export function useRoutines(): UseRoutinesResult {
       setSummaries(summariesResult);
       setScheduleStatus(scheduleStatusResult);
       setNextFiresByRoutine(Object.fromEntries(nextFiresResult.map((nf) => [nf.routine, nf.at])));
-      setFindingsByRoutine(Object.fromEntries(findingsEntries));
+      setFindingsByRoutine(Object.fromEntries(perRoutineEntries.map(([name, findings]) => [name, findings])));
+      setDefsByRoutine(Object.fromEntries(perRoutineEntries.map(([name, , def]) => [name, def])));
+      setActionsByName(Object.fromEntries(actionsResult.map((a) => [a.name, a])));
       setFleetFindings(fleetFindingsResult);
     } catch {
       // No Tauri runtime (test/dev harness) or a command failed — leave the
@@ -150,6 +171,8 @@ export function useRoutines(): UseRoutinesResult {
     nextFires: nextFiresByRoutine,
     findingsByRoutine,
     fleetFindings,
+    defsByRoutine,
+    actionsByName,
     refresh,
   };
 }
