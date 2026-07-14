@@ -60,6 +60,8 @@ mod tests {
             invoker,
             run_id: "run-parent".into(),
             depth: 0,
+            attended: false,
+            consent: None,
         }, path)
     }
 

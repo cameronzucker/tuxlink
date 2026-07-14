@@ -51,4 +51,13 @@ impl ActionRegistry {
     pub fn descriptors(&self) -> Vec<ActionDescriptor> {
         self.actions.values().map(|a| a.descriptor()).collect()
     }
+
+    /// Every registered action, in arbitrary order. The monolith's consent
+    /// layer (plan 2 Task 5b) consumes this to rebuild a registry in which
+    /// every `transmits: true` action is wrapped in a consent gate — the
+    /// wrapper preserves the inner descriptor (including `name`), so a
+    /// re-`register` of the wrapped action keys under the same catalog name.
+    pub fn actions(&self) -> impl Iterator<Item = Arc<dyn Action>> + '_ {
+        self.actions.values().cloned()
+    }
 }

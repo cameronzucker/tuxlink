@@ -22,18 +22,29 @@
 //! via the `routines_run_status` / `routines_journal` commands (plan Task 6).
 //! See `events.rs`'s module doc for the "keep it simple and honest" rationale.
 //!
-//! ## The consent seam (slice 5b)
+//! ## The consent enforcement (slice 5b, spec §4)
 //!
-//! [`RoutinesState::start_routine_def`] is the single start chokepoint. Slice
-//! 5b installs consent enforcement THERE (spec §4: refuse a run whose snapshot
-//! contains `transmits: true` steps unless the definition's `transmit_mode` is
-//! declared and, for automatic mode, a `transmit_ack` is recorded; park
-//! attended-mode transmits on a consent channel). This slice leaves the seam
-//! clean and does NOT build the wrapper — recovery's resume path also flows
-//! through `start_routine_def`, so 5b's enforcement will cover resumed runs for
-//! free.
+//! [`RoutinesState::start_routine_def`] is the single start chokepoint, and
+//! slice 5b installs consent enforcement THERE:
+//!
+//! * **Start gate.** [`closure_transmits`] walks the definition + the store's
+//!   routine lookup; a transmitting `automatic` routine with no recorded
+//!   [`ack_is_recorded`] acknowledgment is refused with the typed,
+//!   operator-facing [`RoutineStartError::UnacknowledgedAutomatic`]. Attended
+//!   and non-transmitting routines start.
+//! * **Attended pause.** [`build_routines_state`] installs the
+//!   [`ConsentRegistry`] as the engine's [`tuxlink_routines::consent::ConsentPort`]
+//!   (via `EngineConfig.consent`). When an attended run reaches a `transmits`
+//!   step, the executor parks on the registry — BEFORE the step timeout, so the
+//!   parked wait is a true waiting state, not charged against the timeout — and
+//!   the step resumes on [`RoutinesState::grant_consent`]. The engine computes
+//!   the per-run effective attended flag (`start_run_ext`), so automatic and dry
+//!   runs never park.
+//!
+//! Recovery's resume path also flows through `start_routine_def`, so both the
+//! gate and the attended pause cover resumed runs for free.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -41,11 +52,12 @@ use tauri::AppHandle;
 use tokio_util::sync::CancellationToken;
 
 use tuxlink_routines::action::ActionRegistry;
+use tuxlink_routines::consent::ConsentPort;
 use tuxlink_routines::engine::{Engine, EngineConfig, RunHandle};
 use tuxlink_routines::error::EngineError;
 use tuxlink_routines::journal::{read_journal, RunEvent, RunState};
 use tuxlink_routines::snapshot::EntityResolver;
-use tuxlink_routines::types::{OnInterrupted, RoutineDef};
+use tuxlink_routines::types::{OnInterrupted, RoutineDef, TransmitMode};
 
 use super::actions::cat::MonolithRigService;
 use super::actions::data::MonolithDataService;
@@ -53,6 +65,7 @@ use super::actions::local::MonolithLocalService;
 use super::actions::radio::{MonolithAprsService, MonolithConnectService, MonolithListenService};
 use super::actions::{build_registry, ActionDeps};
 use super::arbiter::RadioArbiter;
+use super::consent::{closure_transmits, transmit_action_names, ConsentRegistry};
 use super::events::{RoutinesEvent, RoutinesEventSink, TauriRoutinesEventSink};
 use super::presets::RadioPresetStore;
 use super::resolver::MonolithEntityResolver;
@@ -78,6 +91,16 @@ fn unix_now_secs() -> i64 {
 pub enum RoutineStartError {
     #[error("routine '{0}' not found")]
     UnknownRoutine(String),
+    /// The consent gate (spec §4): a routine whose call-graph closure transmits
+    /// and declares `transmit_mode: automatic` cannot start without a recorded
+    /// acknowledgment (callsign + timestamp, both non-empty). The message is
+    /// operator-facing — it names the routine and the fix.
+    #[error(
+        "routine '{routine}' transmits under automatic control but has no recorded \
+         acknowledgment — open its Settings and acknowledge automatic-transmission \
+         responsibility (Part 97 automatic-control rules) before running it"
+    )]
+    UnacknowledgedAutomatic { routine: String },
     #[error(transparent)]
     Engine(#[from] EngineError),
 }
@@ -121,6 +144,12 @@ pub struct RoutinesState {
     /// Live + recently-finished runs, keyed by run_id.
     runs: Mutex<HashMap<String, RunEntry>>,
     sink: Arc<dyn RoutinesEventSink>,
+    /// The attended-mode parking desk (spec §4). Transmit steps in attended
+    /// runs park here; [`RoutinesState::grant_consent`] releases them.
+    consent: Arc<ConsentRegistry>,
+    /// Catalog action names that transmit (from the engine registry's
+    /// descriptors), used by the start gate's [`closure_transmits`] predicate.
+    transmit_names: HashSet<String>,
 }
 
 impl RoutinesState {
@@ -128,6 +157,7 @@ impl RoutinesState {
     /// seam: production supplies the real engine (built by
     /// [`build_routines_state`]); tests supply an engine over a fake registry
     /// plus a recording sink.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         engine: Arc<Engine>,
         store: Arc<DefinitionStore>,
@@ -135,6 +165,8 @@ impl RoutinesState {
         station_sets: Arc<StationSetStore>,
         arbiter: Arc<RadioArbiter>,
         sink: Arc<dyn RoutinesEventSink>,
+        consent: Arc<ConsentRegistry>,
+        transmit_names: HashSet<String>,
     ) -> Self {
         Self {
             engine,
@@ -144,6 +176,8 @@ impl RoutinesState {
             arbiter,
             runs: Mutex::new(HashMap::new()),
             sink,
+            consent,
+            transmit_names,
         }
     }
 
@@ -172,18 +206,40 @@ impl RoutinesState {
         args: serde_json::Value,
         dry_run: bool,
     ) -> Result<String, RoutineStartError> {
-        // ── CONSENT SEAM (slice 5b) ──────────────────────────────────────
-        // 5b inserts the transmit-consent check HERE, before start_run: refuse
-        // a run whose snapshot carries `transmits: true` steps unless
-        // transmit_mode is declared + (automatic) transmit_ack recorded, and
-        // park attended transmits on a consent channel emitting
-        // RoutinesEvent::AwaitingConsent. Intentionally absent in this slice.
+        // ── CONSENT GATE (slice 5b, spec §4) ─────────────────────────────
+        // Compute the transmit closure over the definition + the store's
+        // routine lookup (the snapshot resolver inlines @refs but never inlines
+        // Call steps — those resolve by name at runtime — so the closure walk
+        // is over the definition, mirroring the validator's future walk). A
+        // transmitting automatic routine needs a recorded acknowledgment; an
+        // attended one is allowed to start and pauses at each transmit step
+        // (the executor parks on the ConsentRegistry installed as the engine's
+        // ConsentPort in `build_routines_state`). A non-transmitting routine
+        // starts unconditionally, whatever its mode.
+        //
+        // Dry-runs (plan 3) bypass the gate entirely: a dry-run mocks the radio
+        // boundary and cannot key a transmitter, so authorization to transmit
+        // is not the question a dry-run asks — you dry-run precisely to rehearse
+        // an as-yet-unacknowledged routine. `dry_run` also forces the engine's
+        // effective attended flag to false, so a dry-run never parks either.
+        if !dry_run {
+            let lookup = |name: &str| self.store.get(name);
+            let transmits = |name: &str| self.transmit_names.contains(name);
+            if closure_transmits(def, &lookup, &transmits)
+                && def.transmit_mode == TransmitMode::Automatic
+                && !ack_is_recorded(def)
+            {
+                return Err(RoutineStartError::UnacknowledgedAutomatic {
+                    routine: def.routine.clone(),
+                });
+            }
+        }
 
         let RunHandle {
             run_id,
             cancel,
             done,
-        } = self.engine.start_run(def, args).await?;
+        } = self.engine.start_run_ext(def, args, 0, false, dry_run).await?;
 
         {
             let mut runs = lock(&self.runs);
@@ -246,6 +302,19 @@ impl RoutinesState {
             }
             None => false,
         }
+    }
+
+    /// Grant per-transmission consent for a parked attended-mode transmit step
+    /// (spec §4). Returns `false` if no step with that `(run_id, step_id)` is
+    /// currently parked (already granted, cancelled, or never parked). Task 6
+    /// wires the `routines_consent_grant` command to this.
+    ///
+    /// **Operator-only (spec §13).** This is reachable solely from the UI
+    /// command; the MCP surface has NO parameter that can supply consent — the
+    /// design-time acknowledgment is the only consent envelope agents touch, and
+    /// it is recorded by a UI act. Do not expose a grant path to the MCP tools.
+    pub fn grant_consent(&self, run_id: &str, step_id: &str) -> bool {
+        self.consent.grant(run_id, step_id)
     }
 
     /// Fast in-memory run status (plan Task 6's `routines_run_status`).
@@ -315,6 +384,17 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Is a routine's automatic-transmit acknowledgment recorded (spec §4)? True
+/// iff `transmit_ack` is present AND both its `by` (callsign) and `at`
+/// (timestamp) are non-empty after trimming — the exact rule plan 3's validator
+/// applies for "unacknowledged auto-TX cannot be enabled", kept identical here
+/// so enforcement and validation never disagree.
+fn ack_is_recorded(def: &RoutineDef) -> bool {
+    def.transmit_ack
+        .as_ref()
+        .is_some_and(|a| !a.by.trim().is_empty() && !a.at.trim().is_empty())
+}
+
 /// Read a dead run's journal and deserialize its `RunStarted.snapshot` back
 /// into a [`RoutineDef`] (the fully-resolved definition the run was executing).
 /// `None` if the journal is unreadable, empty, or its snapshot no longer
@@ -376,6 +456,15 @@ pub fn build_routines_state(
         config_dir.join("identities.json"),
     ));
 
+    // Consent wiring (slice 5b, spec §4): capture the transmitting action names
+    // from the registry descriptors (the start gate's closure predicate), and
+    // install the ConsentRegistry as the engine's ConsentPort. The executor
+    // parks an attended run's transmit steps on it BEFORE the step timeout — no
+    // action-wrapping and no per-run registry swap; the per-run park decision is
+    // the engine's effective attended flag applied in `run_action_step_shared`.
+    let consent = Arc::new(ConsentRegistry::new(sink.clone()));
+    let transmit_names = transmit_action_names(&registry);
+
     let engine = Arc::new(Engine::new(EngineConfig {
         journal_dir: config_dir.join("routines-runs"),
         registry: Arc::new(registry),
@@ -383,9 +472,19 @@ pub fn build_routines_state(
         now: unix_now_secs,
         default_timeout_s: DEFAULT_TIMEOUT_S,
         lookup: Some(store.lookup_fn()),
+        consent: Some(consent.clone() as Arc<dyn ConsentPort>),
     }));
 
-    RoutinesState::new(engine, store, presets, station_sets, arbiter, sink)
+    RoutinesState::new(
+        engine,
+        store,
+        presets,
+        station_sets,
+        arbiter,
+        sink,
+        consent,
+        transmit_names,
+    )
 }
 
 /// The `lib.rs` `.setup()` entry point: resolve the config dir, build the real
@@ -414,8 +513,8 @@ mod tests {
     use tuxlink_routines::fakes::FakeAction;
     use tuxlink_routines::journal::JournalWriter;
     use tuxlink_routines::types::{
-        ActionStep, BusyPolicy, Step, StepId, Track, TransmitMode, Trigger,
-        SUPPORTED_SCHEMA_VERSION,
+        ActionStep, BusyPolicy, Control, ControlStep, Step, StepId, Track, TransmitAck,
+        TransmitMode, Trigger, SUPPORTED_SCHEMA_VERSION,
     };
 
     fn fixed_now() -> i64 {
@@ -679,5 +778,332 @@ mod tests {
         // RunFinished{Completed} on the sink is the resumed run's (the
         // interrupted run finished Interrupted, not Completed).
         wait_until(|| count_finished(&sink.events(), RunState::Completed) == 1).await;
+    }
+
+    // ========================================================================
+    // Slice 5b — transmit-consent enforcement (spec §4)
+    // ========================================================================
+
+    /// A `radio.tx` FakeAction flagged `transmits: true` — the wrapper wraps it.
+    fn tx_action() -> Arc<FakeAction> {
+        Arc::new(
+            FakeAction::new("radio.tx")
+                .with_capabilities(true, true, false)
+                .ok(json!({"sent": true})),
+        )
+    }
+
+    fn ack(by: &str, at: &str) -> TransmitAck {
+        TransmitAck {
+            by: by.into(),
+            at: at.into(),
+        }
+    }
+
+    /// Build a state whose registry holds the given (already-built) actions.
+    /// `build_routines_state` installs the ConsentRegistry as the engine's
+    /// ConsentPort, so an attended run's transmit steps park in the executor.
+    fn state_with(
+        config_dir: PathBuf,
+        actions: &[Arc<FakeAction>],
+    ) -> (Arc<RoutinesState>, Arc<RecordingSink>) {
+        let mut reg = ActionRegistry::default();
+        for a in actions {
+            reg.register(a.clone());
+        }
+        let arbiter = Arc::new(RadioArbiter::new(fixed_now));
+        let sink = Arc::new(RecordingSink::default());
+        let sink_dyn: Arc<dyn RoutinesEventSink> = sink.clone();
+        let state = Arc::new(build_routines_state(config_dir, reg, arbiter, sink_dyn));
+        (state, sink)
+    }
+
+    /// A one-transmit-step routine (`radio.tx`), with the given mode + ack.
+    fn tx_def(name: &str, mode: TransmitMode, ack: Option<TransmitAck>) -> RoutineDef {
+        RoutineDef {
+            routine: name.into(),
+            schema_version: SUPPORTED_SCHEMA_VERSION,
+            transmit_mode: mode,
+            transmit_ack: ack,
+            on_interrupted: OnInterrupted::Stay,
+            inputs: vec![],
+            triggers: vec![Trigger::Manual],
+            tracks: vec![Track {
+                name: "t".into(),
+                steps: vec![Step::Action(ActionStep {
+                    id: StepId("s1".into()),
+                    action: "radio.tx".into(),
+                    params: json!({}),
+                    timeout_s: None,
+                    on_radio_busy: BusyPolicy::Wait,
+                })],
+            }],
+        }
+    }
+
+    /// Block until an `AwaitingConsent` event appears; return its (run, step).
+    async fn wait_awaiting(sink: &RecordingSink) -> (String, String) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            for e in sink.events() {
+                if let RoutinesEvent::AwaitingConsent { run_id, step_id } = e {
+                    return (run_id, step_id);
+                }
+            }
+            assert!(std::time::Instant::now() < deadline, "no AwaitingConsent event");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    // ── Start-gate matrix ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn gate_attended_tx_is_allowed_to_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, sink) = state_with(dir.path().to_path_buf(), &[tx_action()]);
+        state
+            .store
+            .save(&tx_def("att", TransmitMode::Attended, None))
+            .unwrap();
+        // Attended + transmitting starts even with NO ack — it pauses at the
+        // transmit step (spec §4).
+        let run_id = state.start_routine("att", json!({})).await.unwrap();
+        // It parks rather than transmitting; release it so the task ends cleanly.
+        wait_awaiting(&sink).await;
+        state.cancel_run(&run_id);
+    }
+
+    #[tokio::test]
+    async fn gate_automatic_acked_starts() {
+        let dir = tempfile::tempdir().unwrap();
+        let action = tx_action();
+        let (state, _sink) = state_with(dir.path().to_path_buf(), std::slice::from_ref(&action));
+        state
+            .store
+            .save(&tx_def(
+                "auto",
+                TransmitMode::Automatic,
+                Some(ack("KK7ABC", "2026-07-13T20:00:00Z")),
+            ))
+            .unwrap();
+        let run_id = state.start_routine("auto", json!({})).await.unwrap();
+        // Automatic + acked does NOT park: the transmit action runs unattended.
+        wait_until(|| !action.calls().is_empty()).await;
+        wait_until(|| state.run_status(&run_id).map(|s| s.state) == Some(RunState::Completed))
+            .await;
+    }
+
+    #[tokio::test]
+    async fn gate_automatic_unacked_is_refused_with_operator_message() {
+        let dir = tempfile::tempdir().unwrap();
+        let action = tx_action();
+        let (state, sink) = state_with(dir.path().to_path_buf(), std::slice::from_ref(&action));
+        state
+            .store
+            .save(&tx_def("auto", TransmitMode::Automatic, None))
+            .unwrap();
+        let err = state.start_routine("auto", json!({})).await.unwrap_err();
+        match &err {
+            RoutineStartError::UnacknowledgedAutomatic { routine } => {
+                assert_eq!(routine, "auto");
+                // Operator-facing message names the routine and the fix.
+                let msg = err.to_string();
+                assert!(msg.contains("auto"), "message names the routine: {msg}");
+                assert!(
+                    msg.contains("acknowledge") || msg.contains("acknowledgment"),
+                    "message tells the operator to acknowledge: {msg}"
+                );
+            }
+            other => panic!("expected UnacknowledgedAutomatic, got {other:?}"),
+        }
+        // Refused BEFORE any run started: no run, no transmit, no event.
+        assert!(action.calls().is_empty(), "the transmit action never ran");
+        assert!(
+            !sink
+                .events()
+                .iter()
+                .any(|e| matches!(e, RoutinesEvent::RunStarted { .. })),
+            "no run was started"
+        );
+    }
+
+    /// An ack whose fields are whitespace-only is NOT a recorded ack (same rule
+    /// the validator applies): the automatic routine is still refused.
+    #[tokio::test]
+    async fn gate_automatic_blank_ack_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, _sink) = state_with(dir.path().to_path_buf(), &[tx_action()]);
+        state
+            .store
+            .save(&tx_def(
+                "auto",
+                TransmitMode::Automatic,
+                Some(ack("   ", "  ")),
+            ))
+            .unwrap();
+        let err = state.start_routine("auto", json!({})).await.unwrap_err();
+        assert!(matches!(
+            err,
+            RoutineStartError::UnacknowledgedAutomatic { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn gate_non_transmitting_starts_regardless_of_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        // Automatic mode + NO ack, but the routine's only action does not
+        // transmit → the closure does not transmit → it starts unconditionally.
+        let log = Arc::new(FakeAction::new("local.log").ok(json!({})));
+        let (state, _sink) = state_with(dir.path().to_path_buf(), &[log]);
+        state
+            .store
+            .save(&minimal_def("quiet-auto", OnInterrupted::Stay))
+            .unwrap();
+        // minimal_def is attended; make an automatic, unacked, non-TX variant:
+        let mut def = minimal_def("quiet-auto2", OnInterrupted::Stay);
+        def.transmit_mode = TransmitMode::Automatic;
+        def.transmit_ack = None;
+        state.store.save(&def).unwrap();
+        let run_id = state.start_routine("quiet-auto2", json!({})).await.unwrap();
+        wait_until(|| state.run_status(&run_id).map(|s| s.state) == Some(RunState::Completed))
+            .await;
+    }
+
+    // ── Attended pause: park / grant / cancel ────────────────────────────
+
+    #[tokio::test]
+    async fn attended_run_parks_at_tx_step_and_grant_resumes_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let action = tx_action();
+        let (state, sink) = state_with(dir.path().to_path_buf(), std::slice::from_ref(&action));
+        state
+            .store
+            .save(&tx_def("att", TransmitMode::Attended, None))
+            .unwrap();
+
+        let run_id = state.start_routine("att", json!({})).await.unwrap();
+        let (ev_run, ev_step) = wait_awaiting(&sink).await;
+        assert_eq!(ev_run, run_id);
+        assert_eq!(ev_step, "s1");
+        // Parked: the transmit action has NOT executed.
+        assert!(action.calls().is_empty(), "must not transmit before consent");
+
+        // Operator grants: the transmit action now runs, and the run completes.
+        assert!(state.grant_consent(&run_id, "s1"), "a step was parked");
+        wait_until(|| !action.calls().is_empty()).await;
+        wait_until(|| count_finished(&sink.events(), RunState::Completed) == 1).await;
+    }
+
+    #[tokio::test]
+    async fn cancel_while_parked_ends_cancelled_and_never_transmits() {
+        let dir = tempfile::tempdir().unwrap();
+        let action = tx_action();
+        let (state, sink) = state_with(dir.path().to_path_buf(), std::slice::from_ref(&action));
+        state
+            .store
+            .save(&tx_def("att", TransmitMode::Attended, None))
+            .unwrap();
+
+        let run_id = state.start_routine("att", json!({})).await.unwrap();
+        wait_awaiting(&sink).await;
+        assert!(action.calls().is_empty());
+
+        assert!(state.cancel_run(&run_id));
+        wait_until(|| count_finished(&sink.events(), RunState::Cancelled) == 1).await;
+        // The carrier was never keyed.
+        assert!(
+            action.calls().is_empty(),
+            "cancel while parked must never execute the transmit action"
+        );
+    }
+
+    // ── Closure-through-call under an attended parent ────────────────────
+
+    #[tokio::test]
+    async fn closure_through_call_parks_under_attended_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let action = tx_action();
+        let (state, sink) = state_with(dir.path().to_path_buf(), std::slice::from_ref(&action));
+
+        // Child transmits; child's OWN mode is automatic (acked) — but called by
+        // an attended parent, its transmit step must still pause (spec §10).
+        state
+            .store
+            .save(&tx_def(
+                "tx-child",
+                TransmitMode::Automatic,
+                Some(ack("KK7ABC", "2026-07-13T20:00:00Z")),
+            ))
+            .unwrap();
+        // Parent is attended and only calls the child (no TX step of its own).
+        let parent = RoutineDef {
+            routine: "att-parent".into(),
+            schema_version: SUPPORTED_SCHEMA_VERSION,
+            transmit_mode: TransmitMode::Attended,
+            transmit_ack: None,
+            on_interrupted: OnInterrupted::Stay,
+            inputs: vec![],
+            triggers: vec![Trigger::Manual],
+            tracks: vec![Track {
+                name: "t".into(),
+                steps: vec![Step::Control(ControlStep {
+                    id: StepId("c1".into()),
+                    control: Control::Call {
+                        routine: "tx-child".into(),
+                        args: json!({}),
+                        sync: true,
+                    },
+                })],
+            }],
+        };
+        state.store.save(&parent).unwrap();
+
+        let _parent_run = state.start_routine("att-parent", json!({})).await.unwrap();
+        // The CHILD run parks at its transmit step even though the child itself
+        // is automatic — attended-ness propagated down the call.
+        let (child_run, child_step) = wait_awaiting(&sink).await;
+        assert_eq!(child_step, "s1");
+        assert!(action.calls().is_empty(), "child must not transmit unattended");
+
+        // Grant the child's transmit; the whole chain then completes.
+        assert!(state.grant_consent(&child_run, &child_step));
+        wait_until(|| !action.calls().is_empty()).await;
+    }
+
+    // ── Recovery-resume routes through the same gate ─────────────────────
+
+    #[tokio::test]
+    async fn recovery_resume_of_attended_tx_parks_not_auto_transmits() {
+        let dir = tempfile::tempdir().unwrap();
+        let action = tx_action();
+        let (state, sink) = state_with(dir.path().to_path_buf(), std::slice::from_ref(&action));
+
+        // A dead journal for an attended, resume-policy, transmitting routine.
+        let journal_dir = dir.path().join("routines-runs");
+        let mut def = tx_def("att-resume", TransmitMode::Attended, None);
+        def.on_interrupted = OnInterrupted::Resume;
+        {
+            let mut w =
+                JournalWriter::create(&journal_dir, "run-dead-tx", fixed_now).unwrap();
+            w.append(RunEvent::RunStarted {
+                routine: "att-resume".into(),
+                snapshot: serde_json::to_value(&def).unwrap(),
+            })
+            .unwrap();
+        }
+
+        let report = state.recover().await.unwrap();
+        assert_eq!(report.interrupted, 1);
+        assert_eq!(report.resumed, 1, "resume policy re-invokes from snapshot");
+
+        // The resumed run flows through start_routine_def → the SAME consent
+        // gate → it PARKS at the transmit step; it does NOT auto-transmit on
+        // boot (spec §8's "this may key the radio shortly after boot" is exactly
+        // what attended mode prevents).
+        wait_awaiting(&sink).await;
+        assert!(
+            action.calls().is_empty(),
+            "a resumed attended-TX run must park, never auto-transmit"
+        );
     }
 }

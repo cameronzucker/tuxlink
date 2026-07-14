@@ -7,6 +7,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::action::{Action, ActionDescriptor};
 use crate::compose::{Provenance, RoutineInvoker};
+use crate::consent::ConsentPort;
 use crate::error::{SnapshotError, StepError};
 use crate::refs::EntityRef;
 use crate::snapshot::EntityResolver;
@@ -93,6 +94,60 @@ impl Action for FakeAction {
             Outcome::Hang => {
                 cancel.cancelled().await;
                 Err(StepError::Cancelled)
+            }
+        }
+    }
+}
+
+/// Scriptable [`ConsentPort`] for executor tests: records every park and, per
+/// its behavior, either grants after a (virtual-time) delay or never grants
+/// (used to exercise the executor's cancel-while-parked path).
+pub struct FakeConsent {
+    behavior: ConsentBehavior,
+    parked: Mutex<Vec<(String, String)>>,
+}
+
+enum ConsentBehavior {
+    /// Grant `Ok(())` after sleeping `Duration` (advances under paused time).
+    GrantAfter(std::time::Duration),
+    /// Never grant — the park stays pending until the future is dropped.
+    Never,
+}
+
+impl FakeConsent {
+    /// A port that grants consent `delay` after the step parks. `Duration::ZERO`
+    /// grants on the next poll.
+    pub fn granting_after(delay: std::time::Duration) -> Self {
+        Self { behavior: ConsentBehavior::GrantAfter(delay), parked: Mutex::new(Vec::new()) }
+    }
+
+    /// A port that never grants — the step stays parked until cancellation
+    /// drops the park future.
+    pub fn never() -> Self {
+        Self { behavior: ConsentBehavior::Never, parked: Mutex::new(Vec::new()) }
+    }
+
+    /// Every `(run_id, step_id)` that parked on this port, in park order.
+    pub fn parked(&self) -> Vec<(String, String)> {
+        self.parked.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl ConsentPort for FakeConsent {
+    async fn park(&self, run_id: &str, step_id: &str) -> Result<(), StepError> {
+        self.parked
+            .lock()
+            .unwrap()
+            .push((run_id.to_string(), step_id.to_string()));
+        match self.behavior {
+            ConsentBehavior::GrantAfter(d) => {
+                tokio::time::sleep(d).await;
+                Ok(())
+            }
+            ConsentBehavior::Never => {
+                std::future::pending::<()>().await;
+                unreachable!()
             }
         }
     }
