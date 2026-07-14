@@ -65,6 +65,7 @@ use tuxlink_routines::validate::{
 };
 
 use super::events::{LibraryEntity, RoutinesEvent};
+use super::export::{export_run_bundle, BundleResult};
 use super::presets::{PresetError, RadioPreset};
 use super::scheduler::{
     anchor_on_enable, next_fires_report, schedule_status, NextFire, ScheduleStatus,
@@ -722,6 +723,22 @@ pub fn grant_consent(state: &RoutinesState, run_id: &str, step_id: &str) -> bool
     state.grant_consent(run_id, step_id)
 }
 
+/// Operator "take the radio" (plan-5 Task 4): the graceful half of the
+/// take-the-radio flow (`RadioArbiter::operator_take`, `arbiter.rs:837`) —
+/// asks the CURRENT run-holder (if any) to release the rig at its next step
+/// boundary, rather than evicting it outright. `rig` defaults to
+/// [`super::actions::DEFAULT_RIG_ID`] when unset (v1's single-rig
+/// placeholder identifier). Returns `false` when the rig is free or held by
+/// an interactive session (an interactive holder is never affected by this
+/// call — the operator does not need to take the radio from themself).
+///
+/// **Operator-only.** This is a UI command; the MCP surface has no path to it.
+pub fn take_radio(state: &RoutinesState, rig: Option<&str>) -> bool {
+    state
+        .arbiter
+        .operator_take(rig.unwrap_or(super::actions::DEFAULT_RIG_ID))
+}
+
 /// Everything the scheduler has to say about why fires did not happen, per
 /// routine: fires that elapsed while the app was CLOSED (spec §8: "misses are
 /// recorded visibly either way"), the last fire the gate REFUSED (verbatim), and
@@ -1082,6 +1099,29 @@ pub async fn routines_fleet_check(
     state: State<'_, Arc<RoutinesState>>,
 ) -> Result<Vec<Finding>, UiError> {
     Ok(fleet_check(&state, unix_now_secs(), local_utc_offset_seconds()))
+}
+
+/// Export one run's full record — definition snapshot, journal, engine
+/// context — as a single redacted JSON file (plan-5 Task 4, spec §11).
+/// **UI-only**; not on the MCP surface.
+#[tauri::command]
+pub async fn routines_export_run_bundle(
+    state: State<'_, Arc<RoutinesState>>,
+    run_id: String,
+    output_path: String,
+) -> Result<BundleResult, UiError> {
+    export_run_bundle(&state, &run_id, &output_path)
+}
+
+/// The operator's "take the radio" button (plan-5 Task 4): asks the current
+/// run-holder to release the rig gracefully. **Operator-only**; not on the
+/// MCP surface.
+#[tauri::command]
+pub async fn routines_take_radio(
+    state: State<'_, Arc<RoutinesState>>,
+    rig: Option<String>,
+) -> Result<bool, UiError> {
+    Ok(take_radio(&state, rig.as_deref()))
 }
 
 #[tauri::command]

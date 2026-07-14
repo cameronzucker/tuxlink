@@ -3321,6 +3321,10 @@ pub fn run() {
             // `routines_next_fires`/`routines_runs_list` (plan-5 Task 3) are the
             // dashboard's scheduler next-fire report and the runs tab's journal
             // enumeration — UI-only, same closed-MCP-list rule.
+            // `routines_export_run_bundle`/`routines_take_radio` (plan-5 Task 4)
+            // are the redacted run-bundle export (redaction is an EXPORT-boundary
+            // property — on-screen journal views stay raw) and the operator's
+            // graceful take-the-radio ask — UI-only, same closed-MCP-list rule.
             crate::routines::commands::routines_list,
             crate::routines::commands::routines_get,
             crate::routines::commands::routines_save,
@@ -3346,6 +3350,8 @@ pub fn run() {
             crate::routines::commands::routines_fleet_check,
             crate::routines::commands::routines_next_fires,
             crate::routines::commands::routines_runs_list,
+            crate::routines::commands::routines_export_run_bundle,
+            crate::routines::commands::routines_take_radio,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

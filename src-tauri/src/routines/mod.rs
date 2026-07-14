@@ -135,6 +135,7 @@ pub mod arbiter;
 pub mod commands;
 pub mod consent;
 pub mod events;
+pub mod export;
 pub mod presets;
 pub mod resolver;
 pub mod scheduler;
@@ -151,6 +152,7 @@ pub use consent::{closure_transmits, ConsentRegistry};
 pub use events::{
     LibraryEntity, RoutinesEvent, RoutinesEventSink, TauriRoutinesEventSink, ROUTINES_EVENT,
 };
+pub use export::BundleResult;
 pub use presets::{PresetError, RadioPreset, RadioPresetStore};
 pub use resolver::MonolithEntityResolver;
 pub use scheduler::{
