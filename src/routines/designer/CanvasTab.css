@@ -190,6 +190,13 @@
   border-left-color: var(--error);
 }
 
+.node-unplaced {
+  border-left-color: var(--error);
+  border-style: dashed;
+  border-left-style: solid;
+  opacity: 0.85;
+}
+
 .unknown-badge {
   color: var(--error);
   font-size: 9px;
@@ -289,6 +296,15 @@
 
 .path .edge {
   width: 26px;
+}
+
+/* steps the layout couldn't place in any flow row (post-branch, referenced
+   by no arm) — surfaced as a dashed-separated final strip, never hidden */
+.unplaced-row {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(238, 107, 107, 0.4);
+  gap: 8px;
 }
 
 .add-track-btn {

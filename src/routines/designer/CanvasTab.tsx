@@ -60,6 +60,7 @@ function NodeView({
   if (node.kind === 'end') classes.push('endnode', node.title.includes('failed') ? 'err' : 'ok');
   if (selected) classes.push('selected');
   if (node.unknown) classes.push('node-unknown');
+  if (node.unplaced) classes.push('node-unplaced');
 
   return (
     <div
@@ -71,6 +72,7 @@ function NodeView({
         {node.transmits && <span className="tx-dot" data-testid={`tx-dot-${node.id}`} />}
         <span>{node.title}</span>
         {node.unknown && <span className="unknown-badge">⚠ unknown</span>}
+        {node.unplaced && <span className="unknown-badge">⚠ unplaced</span>}
         {selected && node.kind !== 'trigger' && (
           <button
             type="button"
@@ -108,7 +110,17 @@ function EdgeView({
   armedInsert: ArmedInsertPosition | null;
   onInsertAt: (pos: ArmedInsertPosition) => void;
 }) {
-  const armed = !!armedInsert && armedInsert.trackIdx === trackIdx && armedInsert.afterStepId === edge.from;
+  // Arm/highlight from `edge.insertAfter` — the model-owned insertStep
+  // semantics (`null` = prepend for trigger/head edges), never `edge.from`
+  // ('trigger-0' would findIndex-miss in defDraft.insertStep and APPEND).
+  const armed =
+    edge.insertPoint &&
+    !!armedInsert &&
+    armedInsert.trackIdx === trackIdx &&
+    armedInsert.afterStepId === edge.insertAfter;
+  // The two branch lead edges share `from` (the branch id) — the label
+  // suffix keeps their testids unique (insert-s2-ok / insert-s2-err).
+  const insertTestId = `insert-${edge.from}${edge.label ? `-${edge.label}` : ''}`;
   return (
     <div className={`edge${armed ? ' armed' : ''}`} data-testid={`edge-${edge.from}-${edge.to}`}>
       {edge.label && <span className={`lbl ${edge.label}`}>{edge.label}</span>}
@@ -116,9 +128,13 @@ function EdgeView({
         <button
           type="button"
           className="plus"
-          aria-label={`Insert step after ${edge.from}`}
-          data-testid={`insert-${edge.from}`}
-          onClick={() => onInsertAt({ trackIdx, afterStepId: edge.from })}
+          aria-label={
+            edge.insertAfter === null
+              ? 'Insert step at the start of the track'
+              : `Insert step after ${edge.insertAfter}`
+          }
+          data-testid={insertTestId}
+          onClick={() => onInsertAt({ trackIdx, afterStepId: edge.insertAfter })}
         >
           ＋
         </button>
@@ -181,8 +197,20 @@ function Lane({
   onRemoveStep: (stepId: string) => void;
 }) {
   const mainRow = lane.rows[0] ?? [];
-  const fanRows = lane.rows.slice(1);
+  const extraRows = lane.rows.slice(1);
+  // The final row is all-`unplaced` when the layout couldn't place some steps
+  // (canvasModel appends it after the branch fan-out rows); a fan row's first
+  // node is never unplaced, so the flag on `row[0]` separates the two kinds.
+  const fanRows = extraRows.filter((row) => !row[0]?.unplaced);
+  const unplacedRows = extraRows.filter((row) => row[0]?.unplaced === true);
   const branchNode = mainRow.find((n) => n.kind === 'branch');
+  // A headless lane (no trigger heads — every lane but the first) gets a
+  // synthetic prepend edge from the model; FlowSegment only renders edges
+  // BETWEEN nodes, so the head edge is rendered here, before the first node.
+  const headEdge =
+    mainRow.length > 0
+      ? lane.edges.find((e) => e.from === `head-${trackIdx}` && e.to === mainRow[0]!.id)
+      : undefined;
 
   return (
     <div className="lane" data-testid={`lane-${trackIdx}`}>
@@ -195,6 +223,9 @@ function Lane({
         </span>
       ))}
       <div className="flow">
+        {headEdge && (
+          <EdgeView edge={headEdge} trackIdx={trackIdx} armedInsert={armedInsert} onInsertAt={onInsertAt} />
+        )}
         {mainRow.map((node, i) => (
           <FlowSegment
             key={node.id}
@@ -241,6 +272,19 @@ function Lane({
           })}
         </div>
       )}
+      {unplacedRows.map((row, i) => (
+        <div className="flow unplaced-row" key={`unplaced-${i}`} data-testid={`unplaced-row-${trackIdx}`}>
+          {row.map((node) => (
+            <NodeView
+              key={node.id}
+              node={node}
+              selected={node.id === selectedStepId}
+              onSelect={onSelect}
+              onRemoveStep={onRemoveStep}
+            />
+          ))}
+        </div>
+      ))}
     </div>
   );
 }

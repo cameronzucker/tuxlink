@@ -118,6 +118,15 @@ describe('CanvasTab — insert points', () => {
     expect(onInsertAt).toHaveBeenCalledWith({ trackIdx: 0, afterStepId: 's1' });
   });
 
+  it('the trigger→first-step edge arms a PREPEND ({trackIdx, afterStepId: null}), never the synthetic trigger id', () => {
+    // 'trigger-0' is not a step id — defDraft.insertStep's findIndex would
+    // miss it and APPEND. The trigger edge must arm the documented
+    // afterStepId:null prepend contract instead.
+    const { onInsertAt } = renderTab();
+    fireEvent.click(screen.getByTestId('insert-trigger-0'));
+    expect(onInsertAt).toHaveBeenCalledWith({ trackIdx: 0, afterStepId: null });
+  });
+
   it('the insert point matching armedInsert renders the armed (amber) class', () => {
     const armed: ArmedInsertPosition = { trackIdx: 0, afterStepId: 's1' };
     renderTab({ armedInsert: armed });
@@ -162,10 +171,54 @@ describe('CanvasTab — branch fan-out + anchors + deps', () => {
     expect(screen.getByTestId('node-s4')).toBeInTheDocument();
   });
 
+  it('renders BOTH routine-level triggers on the first lane; track 2 gets no fabricated trigger', () => {
+    renderTab({ draft: BRANCH_DEF });
+    const lane1 = screen.getByTestId('lane-0');
+    expect(lane1).toContainElement(screen.getByTestId('node-trigger-0'));
+    expect(lane1).toContainElement(screen.getByTestId('node-trigger-1'));
+    // Track 2 renders headless (its lane-tag is the head label) but keeps a
+    // prepend insert point via the synthetic head edge.
+    const lane2 = screen.getByTestId('lane-1');
+    expect(lane2.querySelector('.node.trigger')).toBeNull();
+    expect(lane2).toContainElement(screen.getByTestId('insert-head-1'));
+  });
+
+  it('the two branch lead-edge insert points have distinct testids and both arm after the branch step', () => {
+    const { onInsertAt } = renderTab({ draft: BRANCH_DEF });
+    const okInsert = screen.getByTestId('insert-s2-ok');
+    const errInsert = screen.getByTestId('insert-s2-err');
+    expect(okInsert).not.toBe(errInsert);
+    fireEvent.click(okInsert);
+    expect(onInsertAt).toHaveBeenLastCalledWith({ trackIdx: 0, afterStepId: 's2' });
+    fireEvent.click(errInsert);
+    expect(onInsertAt).toHaveBeenLastCalledWith({ trackIdx: 0, afterStepId: 's2' });
+  });
+
   it('renders the delay anchor and the cross-track dependency chip', () => {
     renderTab({ draft: BRANCH_DEF });
     expect(screen.getByTestId('anchor-rule')).toHaveTextContent('+5 min');
     expect(screen.getByTestId('dep-1-0')).toHaveTextContent('s1.last_heard_gateway');
+  });
+
+  it('surfaces a post-branch step no arm references with a visible unplaced marker', () => {
+    const draft: RoutineDef = {
+      ...BRANCH_DEF,
+      tracks: [
+        {
+          ...BRANCH_DEF.tracks[0]!,
+          steps: [
+            ...BRANCH_DEF.tracks[0]!.steps,
+            { id: 's9', action: 'local.notify', params: { message: 'orphan' } },
+          ],
+        },
+        BRANCH_DEF.tracks[1]!,
+      ],
+    };
+    renderTab({ draft });
+    const orphan = screen.getByTestId('node-s9');
+    expect(orphan).toHaveTextContent(/unplaced/i);
+    expect(orphan.className).toContain('node-unplaced');
+    expect(screen.getByTestId('unplaced-row-0')).toContainElement(orphan);
   });
 });
 

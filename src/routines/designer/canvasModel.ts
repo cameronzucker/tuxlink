@@ -35,6 +35,13 @@ export interface CanvasNode {
    *  covers the error path — this model's job is only to never crash
    *  rendering one). Always `false` for trigger/control nodes. */
   unknown: boolean;
+  /** True for a step the layout could not place in any flow row — a step
+   *  sitting after a branch in `track.steps` that no branch arm references.
+   *  Such steps are appended as the lane's FINAL row so the canvas never
+   *  silently hides a step that IS in the def (a canvas that hides steps
+   *  lies to the operator). The validator owns flagging WHY it's
+   *  unreachable; this model's job is only to keep it visible. */
+  unplaced: boolean;
 }
 
 export interface CanvasEdge {
@@ -42,14 +49,25 @@ export interface CanvasEdge {
   to: string;
   label?: 'ok' | 'err';
   insertPoint: boolean;
+  /** What arming this edge's ＋ means for `defDraft.insertStep`: the step id
+   *  to insert AFTER, or `null` for "prepend to the track" (`insertStep`'s
+   *  documented `afterStepId === null` contract). `null` on the edge out of
+   *  the trigger head — `'trigger-0'` is a synthetic node id, not a step id
+   *  `insertStep` could ever find (its findIndex-miss APPENDS, the exact
+   *  opposite of what inserting at the head of the flow means) — and on the
+   *  synthetic head edge of a trigger-less lane. */
+  insertAfter: string | null;
 }
 
 export interface CanvasLane {
   track: string;
-  /** `rows[0]` is the track's main sequential flow (trigger + steps up to and
-   *  including a branch, if any). A branch step fans the lane into two more
-   *  rows: `rows[1]` is the `then` (ok) chain, `rows[2]` is the `else` (err)
-   *  chain (mock's `.branch-out` > two `.path`s). No branch → `rows.length === 1`. */
+  /** `rows[0]` is the track's main sequential flow (the routine-level trigger
+   *  heads — FIRST lane only — plus steps up to and including a branch, if
+   *  any). A branch step fans the lane into two more rows: the `then` (ok)
+   *  chain, then the `else` (err) chain (mock's `.branch-out` > two
+   *  `.path`s). If any of the track's steps were placed in NO row (after a
+   *  branch, referenced by no arm), one final all-`unplaced` row carries
+   *  them. No branch, nothing unplaced → `rows.length === 1`. */
   rows: CanvasNode[][];
   edges: CanvasEdge[];
 }
@@ -74,15 +92,18 @@ export interface CanvasModel {
 // Node builders
 // ============================================================================
 
-function triggerNode(trigger: Trigger, trackIdx: number): CanvasNode {
+/** `idx` is the trigger's index in `def.triggers` (routine-level — triggers
+ *  fire the whole routine, they are NOT per-track). */
+function triggerNode(trigger: Trigger, idx: number): CanvasNode {
   return {
-    id: `trigger-${trackIdx}`,
+    id: `trigger-${idx}`,
     kind: 'trigger',
     title: trigger.type,
     bodyLines: trigger.type === 'schedule' ? [formatTrigger(trigger)] : [],
     category: 'ctl',
     transmits: false,
     unknown: false,
+    unplaced: false,
   };
 }
 
@@ -123,13 +144,20 @@ function toNode(step: Step, actionsByName: Map<string, ActionInfo>): CanvasNode 
       category: actionCategory(info),
       transmits: info?.transmits ?? false,
       unknown: !info,
+      unplaced: false,
     };
   }
   return controlNode(step);
 }
 
 function controlNode(step: ControlStep): CanvasNode {
-  const base = { id: step.id, category: 'ctl' as const, transmits: false, unknown: false };
+  const base = {
+    id: step.id,
+    category: 'ctl' as const,
+    transmits: false,
+    unknown: false,
+    unplaced: false,
+  };
   switch (step.control) {
     case 'branch':
       return { ...base, kind: 'branch', title: `${step.id} branch`, bodyLines: [`on ${step.on}`] };
@@ -173,7 +201,7 @@ function buildChain(
     if (!step) continue; // dangling then/else reference — the validator's own finding covers this; never crash here
     const node = toNode(step, actionsByName);
     nodes.push(node);
-    if (prevId) edges.push({ from: prevId, to: node.id, insertPoint: true });
+    if (prevId) edges.push({ from: prevId, to: node.id, insertPoint: true, insertAfter: prevId });
     prevId = node.id;
   }
   return { nodes, edges };
@@ -244,25 +272,51 @@ export function layoutCanvas(def: RoutineDef, actions: ActionInfo[]): CanvasMode
   const lanes: CanvasLane[] = def.tracks.map((track: Track, trackIdx: number): CanvasLane => {
     const edges: CanvasEdge[] = [];
     const mainRow: CanvasNode[] = [];
+    const placed = new Set<string>();
     let prevId: string | null = null;
 
-    const trigger = def.triggers[trackIdx];
-    if (trigger) {
-      const node = triggerNode(trigger, trackIdx);
-      mainRow.push(node);
-      prevId = node.id;
+    // Triggers are ROUTINE-level (they fire the whole routine; the wire model
+    // has no per-track trigger), so ALL of `def.triggers` head the FIRST lane
+    // only. Secondary lanes render headless — their `.lane-tag` (TRACK N ·
+    // NAME) is the parallel-track head label; fabricating a duplicate trigger
+    // chip per lane (as the static mock happens to draw) would misstate the
+    // model. Edges BETWEEN trigger heads carry no insert point (a step can't
+    // go between two triggers); the edge out of the last trigger into the
+    // first step arms `insertAfter: null` — defDraft.insertStep's documented
+    // prepend contract ('trigger-N' is not a step id it could ever find).
+    if (trackIdx === 0) {
+      def.triggers.forEach((trigger, i) => {
+        const node = triggerNode(trigger, i);
+        if (prevId) edges.push({ from: prevId, to: node.id, insertPoint: false, insertAfter: null });
+        mainRow.push(node);
+        prevId = node.id;
+      });
     }
 
     let branchStep: (ControlStep & { control: 'branch' }) | null = null;
+    let isFirstStep = true;
     for (const step of track.steps) {
       const node = toNode(step, actionsByName);
       mainRow.push(node);
-      if (prevId) edges.push({ from: prevId, to: node.id, insertPoint: true });
+      placed.add(node.id);
+      if (prevId) {
+        edges.push({
+          from: prevId,
+          to: node.id,
+          insertPoint: true,
+          insertAfter: isFirstStep ? null : prevId,
+        });
+      } else {
+        // Headless lane (no trigger heads): a synthetic head edge so the
+        // track's prepend position stays insertable from the canvas.
+        edges.push({ from: `head-${trackIdx}`, to: node.id, insertPoint: true, insertAfter: null });
+      }
+      isFirstStep = false;
       prevId = node.id;
 
       if ('control' in step && step.control === 'branch') {
         branchStep = step;
-        break; // the rest of track.steps is reached via branchStep.then/else below, not main-row order
+        break; // steps past the branch are reached via branchStep.then/else below, not main-row order
       }
     }
 
@@ -271,17 +325,39 @@ export function layoutCanvas(def: RoutineDef, actions: ActionInfo[]): CanvasMode
     if (branchStep) {
       const thenChain = buildChain(branchStep.then, stepsById, actionsByName);
       const elseChain = buildChain(branchStep.else, stepsById, actionsByName);
+      for (const n of thenChain.nodes) placed.add(n.id);
+      for (const n of elseChain.nodes) placed.add(n.id);
       rows.push(thenChain.nodes);
       rows.push(elseChain.nodes);
       if (thenChain.nodes[0]) {
-        edges.push({ from: branchStep.id, to: thenChain.nodes[0].id, label: 'ok', insertPoint: true });
+        edges.push({
+          from: branchStep.id,
+          to: thenChain.nodes[0].id,
+          label: 'ok',
+          insertPoint: true,
+          insertAfter: branchStep.id,
+        });
       }
       edges.push(...thenChain.edges);
       if (elseChain.nodes[0]) {
-        edges.push({ from: branchStep.id, to: elseChain.nodes[0].id, label: 'err', insertPoint: true });
+        edges.push({
+          from: branchStep.id,
+          to: elseChain.nodes[0].id,
+          label: 'err',
+          insertPoint: true,
+          insertAfter: branchStep.id,
+        });
       }
       edges.push(...elseChain.edges);
     }
+
+    // Any step of this track placed in NO row (after the first branch,
+    // referenced by no arm) is appended as one final all-`unplaced` row —
+    // surfaced, never silently dropped.
+    const unplacedNodes = track.steps
+      .filter((s) => !placed.has(s.id))
+      .map((s): CanvasNode => ({ ...toNode(s, actionsByName), unplaced: true }));
+    if (unplacedNodes.length > 0) rows.push(unplacedNodes);
 
     return { track: track.name, rows, edges };
   });
