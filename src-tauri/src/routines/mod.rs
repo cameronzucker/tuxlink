@@ -108,7 +108,9 @@ pub mod session;
 pub mod station_sets;
 pub mod store;
 
-pub use arbiter::{ArbiterError, Holder, HolderInfo, RadioArbiter, RadioLease};
+pub use arbiter::{
+    ArbiterError, Holder, HolderInfo, InteractiveSessionGuard, RadioArbiter, RadioLease,
+};
 pub use consent::{closure_transmits, ConsentRegistry};
 pub use events::{RoutinesEvent, RoutinesEventSink, TauriRoutinesEventSink, ROUTINES_EVENT};
 pub use presets::{PresetError, RadioPreset, RadioPresetStore};

@@ -53,6 +53,113 @@
 //! Spec: `docs/superpowers/specs/2026-07-13-routines-design.md` §9. Plan:
 //! `docs/superpowers/plans/2026-07-13-routines-02-actions-arbiter-mount.md`
 //! Task 2.
+//!
+//! ## Interactive-lease wiring (plan 2 Task 5c) — coverage and named gaps
+//!
+//! [`RadioArbiter::interactive_acquire_unless_run_held`] and
+//! [`InteractiveSessionGuard`] close the "serial-busy gap" 4b's ledger note
+//! flagged: today's operator UI never registered ANY arbiter hold, so a
+//! routine's own `acquire()` could not tell "operator is mid-session" from
+//! "rig is free." Wired (both directions — acquire on open, release on
+//! close/error, verified never to evict a routine's own already-held `Run`
+//! lease):
+//!
+//! - `ui_commands::packet_connect` (session-scoped RAII guard — the whole
+//!   dial+exchange is one call).
+//! - `modem_commands::modem_ardop_connect` (acquire) /
+//!   `modem_ardop_disconnect` (release — GATED on listener-armed as of fix
+//!   round 2, H1 reopen: see `modem_commands::take_interactive_seq_for_stop`.
+//!   Stop while an ardop listener is armed does NOT release — ardopcf is
+//!   still owned by the listener's consumer task, physically unaffected by
+//!   `reset_to_stopped()`'s no-op).
+//! - `modem_commands::ardop_open_session` (acquire, plus a chained auto-arm
+//!   through `ardop_listen_inner` when the intent auto-arms — see below) /
+//!   `ardop_close_session` (release).
+//! - `ui_commands::ardop_listen` / `ardop_set_listen` (release on
+//!   `enabled=false` ONLY when no live session remains —
+//!   `ui_commands::disarm_should_release_interactive_hold`. A bare
+//!   disarm-without-Stop must NOT release (ardopcf is still running,
+//!   transport handed back to the session); an arm→Stop→disarm sequence
+//!   MUST release at disarm, because fix round 2 made Stop-while-armed
+//!   deliberately not release — see the fix-round note below for the full
+//!   pairing).
+//! - `winlink::modem::vara::commands::vara_open_session` (acquire) /
+//!   `vara_close_session` (release).
+//! - `wwv_offair::commands::wwv_offair_refresh` (session-scoped RAII guard).
+//!
+//! **`ardop_listen` correction (fix round, H1):** an EARLIER revision of
+//! this doc claimed `modem_commands::ardop_open_session`/`ardop_listen`
+//! were unreachable — "today's frontend does not actually invoke [them]."
+//! That claim was FALSE for `ardop_listen`: `src/radio/sections/
+//! useListenerState.ts`'s `arm()` calls `invoke(commands.listen)`, and
+//! `src/radio/modes/ArdopRadioPanel.tsx` wires `commands.listen =
+//! 'ardop_listen'` to the panel's Arm button — a live, operator-reachable
+//! call site (`ArdopRadioPanel.test.tsx`'s `'Arm button click fires
+//! ardop_listen'` test proves it). `ardop_listen_inner` can additionally
+//! self-spawn ardopcf via `start_modem_listen_only` when the modem isn't
+//! already running — an ARDOP session-occupancy path that does NOT go
+//! through `modem_ardop_connect` at all, so that function's wiring alone
+//! did not cover it. This was a real, unwired hole: a routine's own
+//! `acquire()` had no way to see that the operator's listener held the
+//! rig. Fixed this round — see `modem_commands::acquire_or_reuse_interactive_for_ardop`.
+//! `ardop_open_session` itself remains unreached by any current frontend
+//! call site (confirmed again this round), but is wired anyway per the same
+//! function's shared-acquire-or-reuse helper, since it is the OTHER
+//! documented way to occupy the ARDOP rig outside `modem_ardop_connect`.
+//!
+//! **VARA's `vara_listen` does NOT have the same hole (checked, not
+//! assumed):** `ui_commands::arm_vara_listener_inner` refuses to arm unless
+//! `VaraSession`'s state is already `Open` (`VaraState::Open`), and the
+//! ONLY production code path that transitions VARA to `Open` is
+//! `vara_open_session_inner`, whose ONLY caller is `vara_open_session` —
+//! which already acquires the interactive hold before opening. So whenever
+//! `vara_listen` can succeed, the interactive (or Run) hold for the rig is
+//! already registered by the session-open call that necessarily preceded
+//! it; there is no VARA-analog of ARDOP's self-spawn-without-open path.
+//! `vara_listen`/`vara_set_listen` were left unwired on purpose.
+//!
+//! **Named, NOT wired** (documented per this task's explicit "an honest
+//! partial wiring with named gaps beats a leaky 'complete' one" allowance):
+//!
+//! - `mcp_ports.rs`'s `vara_stop_session` egress-port method calls
+//!   `vara_stop_session_inner` directly (bypassing the outer
+//!   `vara_close_session` this module wires) — an MCP-agent-initiated VARA
+//!   stop does not release an interactive hold. A different actor class than
+//!   "operator UI," out of this task's literal scope.
+//!
+//! ## M1 fix round — seq-guarded release
+//!
+//! [`RadioArbiter::interactive_release`] used to be unconditional (modulo
+//! only the "is `rig` currently `Interactive`-held at all" check) — see that
+//! method's current doc for the exact race this allowed (a routine's shared-
+//! command teardown releasing an operator's fresh hold that pre-empted the
+//! routine's own, never-actually-acquired, no-op). Every acquire method now
+//! returns the `seq` it stamped (or `None` on the `unless_run_held` skip
+//! path); every wired release call site threads that `seq` through so a
+//! stale release is a guaranteed no-op instead of a guaranteed stomp.
+//!
+//! ## Fix round 2 — the Stop/disarm pairing (H1 reopen)
+//!
+//! Re-review of the H1 fix found a reopened hole: pressing **Stop**
+//! (`modem_ardop_disconnect`) while an ardop listener is **ARMED**
+//! (`TransportOwner::ListenerArmed`; ardopcf spawned by the arm) still
+//! unconditionally took + released the interactive seq, even though
+//! `modem_ardop_disconnect_inner`'s `reset_to_stopped()` is a no-op for the
+//! transport in that state — the listener's consumer task, not the
+//! session, owns it. The arbiter would report the rig free while ardopcf
+//! kept running. Fixed by gating the release on listener-armed
+//! (`modem_commands::take_interactive_seq_for_stop`) and pairing it with a
+//! new release branch on the disarm side
+//! (`ui_commands::disarm_should_release_interactive_hold`) — otherwise a
+//! Stop-while-armed followed by disarm would leak the hold forever (Stop
+//! defers it, and a disarm that ALSO never releases means nothing ever
+//! does). The discriminator for "does disarm release": `session`'s status
+//! reads `ModemState::Stopped` — set unconditionally by
+//! `reset_to_stopped()` — iff Stop already ran. Four sequences, walked in
+//! the fix round's report: arm→disarm (hold survives — Stop is still the
+//! real chokepoint); arm→Stop→disarm (hold released at disarm); arm→
+//! inbound-session→session-ends (hold survives — the listener keeps
+//! running); arm→Stop-while-armed (hold survives, deferred to disarm).
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -498,9 +605,31 @@ impl RadioArbiter {
     /// (and will time out on their own budget, or get their turn after
     /// [`Self::interactive_release`]); this method only evicts the ACTIVE
     /// holder, it does not flush the queue.
-    pub fn interactive_acquire(&self, rig: &str) {
+    ///
+    /// **Returns the acquired `seq`** (plan 2 Task 5c M1 fix) — thread this
+    /// to [`Self::interactive_release`] for a seq-guarded release. See that
+    /// method's doc for why an unguarded release is unsafe.
+    pub fn interactive_acquire(&self, rig: &str) -> u64 {
         let mut rigs = self.rigs.lock().unwrap();
         let state = rigs.entry(rig.to_string()).or_default();
+        self.interactive_acquire_locked(state, rig)
+    }
+
+    /// Locked core of [`Self::interactive_acquire`] — caller already holds
+    /// `self.rigs`'s lock and has looked up (or default-inserted) `state`
+    /// for `rig`. Factored out so [`Self::interactive_acquire_unless_run_held`]
+    /// can share the exact eviction logic under the SAME lock acquisition it
+    /// uses for its own Run-holder check, closing the TOCTOU window a
+    /// separate `status()` call + `interactive_acquire()` call would leave
+    /// open between "checked who holds it" and "evicted."
+    ///
+    /// Returns the freshly-minted `seq` stamped onto the installed
+    /// `Interactive` hold (plan 2 Task 5c M1 fix) — callers thread this
+    /// through to [`Self::interactive_release`] so a later release can be
+    /// guarded against having been pre-empted by a SUBSEQUENT interactive
+    /// acquire (e.g. the operator seizing the rig mid-routine-dial — see
+    /// [`Self::interactive_release`]'s doc for the exact race this closes).
+    fn interactive_acquire_locked(&self, state: &mut RigState, rig: &str) -> u64 {
         if let Some(prev) = state.active.take() {
             if let Holder::Run { run_id, step } = &prev.holder {
                 prev.cancel.cancel();
@@ -531,25 +660,136 @@ impl RadioArbiter {
             seq,
         });
         tracing::info!(target: "tuxlink::routines::arbiter", rig, holder = "operator (interactive)", "acquired");
+        seq
+    }
+
+    /// Interactive acquire that SKIPS eviction when `rig` is currently held
+    /// by a `Run` holder (plan 2 Task 5c, "interactive lease wiring" —
+    /// closes the serial-busy gap 4b's ledger note flagged).
+    ///
+    /// **Why this exists, not a plain [`Self::interactive_acquire`] call:**
+    /// several backend command functions that open/close a physical modem
+    /// session (`modem_ardop_connect`/`modem_ardop_disconnect`,
+    /// `vara_open_session`/`vara_close_session`, `wwv_offair_refresh`) are
+    /// SHARED — called both by the operator's UI (via Tauri IPC) and by a
+    /// routine's own service adapter (`MonolithConnectService`,
+    /// `MonolithDataService`) AFTER that routine step has already acquired
+    /// its OWN [`RadioLease`] via [`Self::acquire`] for a `Holder::Run`.
+    /// Unconditionally calling `interactive_acquire` from inside one of
+    /// those shared functions would evict — and CANCEL — the very routine
+    /// step that is calling it, as an unintended side effect of the
+    /// routine's own dial. This method closes that hole: when `rig` is
+    /// ALREADY `Run`-held at the moment this runs, the call is a no-op
+    /// (the routine holding it is trusted to release its own lease when its
+    /// step completes); otherwise it behaves exactly like
+    /// [`Self::interactive_acquire`] (installs `Interactive`, evicting a
+    /// STALE `Interactive` record or a `Run` holder that is NOT the one
+    /// currently making this call — e.g. two overlapping routine runs
+    /// racing a shared command function, which is a genuine conflict this
+    /// method intentionally still resolves in the operator's favor, same as
+    /// a plain `interactive_acquire` always has).
+    ///
+    /// **Known, documented race window:** the Run-holder check and the
+    /// eviction happen under ONE lock acquisition here, so there is no
+    /// TOCTOU window WITHIN this call. But a routine's own
+    /// [`Self::acquire`] call (which installs the `Run` holder this method
+    /// checks for) is a SEPARATE call on a separate task — if an operator's
+    /// call to this method and a routine's `acquire()` race concurrently
+    /// for the same free rig, one wins the lock first and the other
+    /// observes its outcome (exactly the same interleaving `acquire`
+    /// vs. `acquire` already has today for two contending `Run` holders).
+    /// This is not a NEW race: today the operator's UI has NO arbiter
+    /// awareness at all, so this method is a strict improvement (it closes
+    /// the gap for the overwhelmingly common case — a UI action starting
+    /// while no routine currently holds the lease), not a claim of a
+    /// hardened mutex across every conceivable interleaving.
+    ///
+    /// **Returns `Some(seq)`** when this call actually installed (or
+    /// refreshed) an `Interactive` hold — thread it to
+    /// [`Self::interactive_release`] for a seq-guarded release. **Returns
+    /// `None`** on the skip path (already `Run`-held) — nothing was
+    /// acquired, so there is nothing for the caller to release later; a
+    /// caller holding `None` MUST NOT call `interactive_release` at all
+    /// (not even with `None` — see that method's doc for why `None` there
+    /// means something else entirely).
+    pub fn interactive_acquire_unless_run_held(&self, rig: &str) -> Option<u64> {
+        let mut rigs = self.rigs.lock().unwrap();
+        let state = rigs.entry(rig.to_string()).or_default();
+        if let Some(active) = &state.active {
+            if matches!(active.holder, Holder::Run { .. }) {
+                tracing::info!(
+                    target: "tuxlink::routines::arbiter",
+                    rig,
+                    "interactive_acquire_unless_run_held: skipped — already Run-held \
+                     (this call originated from inside that run's own step)",
+                );
+                return None;
+            }
+        }
+        Some(self.interactive_acquire_locked(state, rig))
     }
 
     /// Releases an interactive hold installed by [`Self::interactive_acquire`]
-    /// and promotes the next FIFO waiter, if any. A no-op if `rig` is not
-    /// currently held by `Interactive` (already released, or pre-empted by a
-    /// later `interactive_acquire` call) — this never clobbers someone else's
-    /// hold.
-    pub fn interactive_release(&self, rig: &str) {
+    /// / [`Self::interactive_acquire_unless_run_held`] and promotes the next
+    /// FIFO waiter, if any.
+    ///
+    /// **`seq` — the M1 guard (plan 2 Task 5c fix round):** pass
+    /// `Some(seq)` (the value the matching acquire call returned) to make
+    /// this release a no-op UNLESS the CURRENT `Interactive` hold's `seq`
+    /// still matches — i.e. unless it is still the SAME hold this caller
+    /// acquired. This closes the race an unguarded release had: a routine
+    /// dials through a shared command function (`modem_ardop_connect` /
+    /// `vara_open_session`) via `interactive_acquire_unless_run_held`,
+    /// which no-ops (`None`) because the routine already holds `Run`. Later,
+    /// while the routine is still mid-dial, the OPERATOR takes the rig via
+    /// `interactive_acquire` — this evicts the routine's `Run` lease and
+    /// installs a fresh `Interactive` hold under a NEW seq. When the
+    /// routine's own teardown (`modem_ardop_disconnect` /
+    /// `vara_close_session`) now runs, an UNGUARDED `interactive_release`
+    /// would see `state.active.holder == Interactive` and release it —
+    /// stomping the operator's fresh hold out from under them, even though
+    /// the routine never held it in the first place. Seq-guarding fixes
+    /// this: the routine's release call carries no seq to defend (it got
+    /// `None` from its own no-op acquire, so per the caller contract above
+    /// it never calls this method at all) — but the general mechanism also
+    /// protects any OTHER caller that legitimately acquired-then-got-
+    /// pre-empted from releasing a hold that has since moved on.
+    ///
+    /// **`seq == None` is the LEGACY unconditional release** — a no-op if
+    /// `rig` is not currently held by `Interactive` at all, but (unlike the
+    /// `Some` form) does NOT check `seq` — it releases WHOEVER currently
+    /// holds `Interactive`, unconditionally. Reserved for a caller that
+    /// never went through the seq-returning acquire API in the first place
+    /// (e.g. a hypothetical standalone operator "release the radio" UI
+    /// action wired directly to this method, not paired with its own
+    /// `interactive_acquire` call). **No production call site uses this
+    /// form today** — every wired caller (`modem_ardop_connect`/
+    /// `_disconnect`, `vara_open_session`/`_close_session`,
+    /// `ardop_listen`/`ardop_set_listen`, `InteractiveSessionGuard`) has
+    /// migrated to `Some(seq)`. Do not add a new unguarded `None` call site
+    /// without re-litigating this doc — it reintroduces exactly the M1 bug.
+    pub fn interactive_release(&self, rig: &str, seq: Option<u64>) {
         let rejected = {
             let mut rigs = self.rigs.lock().unwrap();
             let Some(state) = rigs.get_mut(rig) else {
                 return;
             };
-            let is_interactive = matches!(
-                state.active.as_ref().map(|a| &a.holder),
-                Some(Holder::Interactive)
-            );
-            if !is_interactive {
-                return;
+            let current_seq = match state.active.as_ref() {
+                Some(active) if matches!(active.holder, Holder::Interactive) => active.seq,
+                _ => return,
+            };
+            if let Some(want) = seq {
+                if want != current_seq {
+                    tracing::info!(
+                        target: "tuxlink::routines::arbiter",
+                        rig,
+                        want_seq = want,
+                        current_seq,
+                        "interactive_release: stale seq — a later interactive_acquire \
+                         already pre-empted this hold; NOT releasing it",
+                    );
+                    return;
+                }
             }
             state.active = None;
             tracing::info!(target: "tuxlink::routines::arbiter", rig, "released (interactive)");
@@ -748,6 +988,50 @@ fn promote_next_locked(
         }
     }
     rejected
+}
+
+/// RAII guard for a genuinely single-call, UI-shared session function (plan 2
+/// Task 5c) — e.g. `wwv_offair_refresh`, `ui_commands::packet_connect`.
+/// Unlike ARDOP/VARA's open/close command PAIR (where the acquire and
+/// release live in two separate `#[tauri::command]` functions called at two
+/// separate times), these functions open, use, AND close the rig within one
+/// async call — a plain RAII guard is both simpler and safer here (covers
+/// every early `?` return automatically, no risk of a forgotten release
+/// arm).
+///
+/// Acquires via [`RadioArbiter::interactive_acquire_unless_run_held`] at
+/// construction (a documented no-op when the caller is itself a routine
+/// step that already holds its own `Run` lease); releases via
+/// [`RadioArbiter::interactive_release`] on `Drop`, seq-guarded (plan 2
+/// Task 5c M1 fix) — the `Option<u64>` the acquire call returned is stashed
+/// and threaded through to the release call, so a `Drop` racing a LATER
+/// `interactive_acquire` (the operator seizing the rig again before this
+/// guard's scope ends) does not stomp that fresh hold. `None` (the
+/// Run-held-skip case) means `Drop` calls release NOT AT ALL — there is
+/// nothing this guard acquired to give back.
+pub struct InteractiveSessionGuard<'a> {
+    arbiter: &'a RadioArbiter,
+    rig: String,
+    seq: Option<u64>,
+}
+
+impl<'a> InteractiveSessionGuard<'a> {
+    pub fn acquire(arbiter: &'a RadioArbiter, rig: &str) -> Self {
+        let seq = arbiter.interactive_acquire_unless_run_held(rig);
+        Self {
+            arbiter,
+            rig: rig.to_string(),
+            seq,
+        }
+    }
+}
+
+impl Drop for InteractiveSessionGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(seq) = self.seq {
+            self.arbiter.interactive_release(&self.rig, Some(seq));
+        }
+    }
 }
 
 /// RAII lease over a rig. Dropping it releases the hold and promotes the next
@@ -1149,7 +1433,7 @@ mod tests {
             "expected Timeout naming the operator, got {err2:?}"
         );
 
-        arbiter.interactive_release("g90");
+        arbiter.interactive_release("g90", None);
         assert!(arbiter.status("g90").is_none());
 
         let cancel3 = CancellationToken::new();
@@ -1198,7 +1482,7 @@ mod tests {
             .expect("operator hold must survive the stale lease's drop");
         assert_eq!(status_after.holder, Holder::Interactive);
 
-        arbiter.interactive_release("g90");
+        arbiter.interactive_release("g90", None);
     }
 
     #[tokio::test]
@@ -1273,7 +1557,7 @@ mod tests {
         );
         let status2 = arbiter.status("g90").expect("still held");
         assert_eq!(status2.holder, Holder::Interactive);
-        arbiter.interactive_release("g90");
+        arbiter.interactive_release("g90", None);
     }
 
     #[tokio::test]
@@ -1282,6 +1566,209 @@ mod tests {
         let arbiter = RadioArbiter::new(test_now);
         assert!(arbiter.status("never-touched").is_none());
         assert!(!arbiter.operator_take("never-touched"));
+    }
+
+    // -----------------------------------------------------------------
+    // interactive_acquire_unless_run_held (plan 2 Task 5c)
+    // -----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn unless_run_held_acquires_normally_when_rig_is_free() {
+        reset_test_clock();
+        let arbiter = RadioArbiter::new(test_now);
+        let seq = arbiter.interactive_acquire_unless_run_held("g90");
+        assert!(
+            seq.is_some(),
+            "a genuine acquire (rig free) must return Some(seq) — callers thread \
+             this to a seq-guarded interactive_release"
+        );
+        let status = arbiter.status("g90").expect("must now be held");
+        assert_eq!(status.holder, Holder::Interactive);
+    }
+
+    #[tokio::test]
+    async fn unless_run_held_skips_eviction_when_a_run_holds_it() {
+        reset_test_clock();
+        let arbiter = RadioArbiter::new(test_now);
+        let cancel_run = CancellationToken::new();
+        let lease_run = arbiter
+            .acquire(
+                "g90",
+                run_holder("r1", "connect"),
+                BusyPolicy::Fail,
+                Duration::from_secs(1),
+                &cancel_run,
+            )
+            .await
+            .unwrap();
+
+        let seq = arbiter.interactive_acquire_unless_run_held("g90");
+        assert!(
+            seq.is_none(),
+            "the skip path must return None — the caller acquired NOTHING, so \
+             it must not (and per interactive_release's contract, structurally \
+             cannot correctly) call interactive_release at all"
+        );
+
+        // The run's own token must NOT have been cancelled — this is the
+        // whole point: a routine's own dial calling through a shared
+        // command function must never cancel itself.
+        assert!(
+            !cancel_run.is_cancelled(),
+            "must not evict/cancel a Run holder"
+        );
+        let status = arbiter.status("g90").expect("run still holds it");
+        assert_eq!(status.holder, run_holder("r1", "connect"));
+
+        drop(lease_run);
+        assert!(arbiter.status("g90").is_none());
+    }
+
+    #[tokio::test]
+    async fn unless_run_held_still_evicts_a_stale_interactive_holder() {
+        reset_test_clock();
+        let arbiter = RadioArbiter::new(test_now);
+        arbiter.interactive_acquire("g90");
+        advance_test_clock(5);
+        // A second call (e.g. a fresh operator session after a crash that
+        // never called interactive_release) must still refresh the hold,
+        // exactly like a plain `interactive_acquire` would.
+        arbiter.interactive_acquire_unless_run_held("g90");
+        let status = arbiter.status("g90").expect("still held");
+        assert_eq!(status.holder, Holder::Interactive);
+        assert_eq!(status.held_for_s, 0, "must be the FRESH hold, not the stale one");
+    }
+
+    // -----------------------------------------------------------------
+    // M1 fix round: seq-guarded interactive_release
+    // -----------------------------------------------------------------
+
+    /// M1's exact race, reproduced end to end: a routine's shared-command
+    /// dial calls `interactive_acquire_unless_run_held` (no-op — it already
+    /// holds `Run`), the operator seizes the rig mid-dial via
+    /// `interactive_acquire` (installing a NEW seq), and the routine's
+    /// teardown later calls the guarded release with the STALE seq it
+    /// captured from its own (no-op) acquire attempt — which per the
+    /// caller contract is `None`, so the routine-path release must not even
+    /// be attempted. This test proves the mechanism a level deeper: even if
+    /// a caller ignored that contract and released with a stale `Some`
+    /// seq (modeling any future seq-guarded caller, not just this one), the
+    /// operator's hold survives. The matching-seq release still works.
+    #[tokio::test]
+    async fn m1_stale_seq_release_does_not_stomp_a_later_operator_hold() {
+        reset_test_clock();
+        let arbiter = RadioArbiter::new(test_now);
+
+        // The routine acquires its own Run lease first (the shared command
+        // function's caller already holds this before ever touching the
+        // arbiter's interactive API).
+        let cancel_run = CancellationToken::new();
+        let lease_run = arbiter
+            .acquire(
+                "g90",
+                run_holder("routine-1", "connect"),
+                BusyPolicy::Fail,
+                Duration::from_secs(1),
+                &cancel_run,
+            )
+            .await
+            .unwrap();
+
+        // The shared command function's own interactive-lease wiring runs
+        // NEXT, from inside the routine's own step — this is the no-op skip
+        // path (`unless_run_held`), exactly as `modem_ardop_connect` /
+        // `vara_open_session` do today.
+        let routine_seq = arbiter.interactive_acquire_unless_run_held("g90");
+        assert_eq!(
+            routine_seq, None,
+            "must be the no-op skip path — the routine already holds Run"
+        );
+        let status = arbiter.status("g90").expect("run still holds it");
+        assert_eq!(status.holder, run_holder("routine-1", "connect"));
+
+        // The operator now takes the rig mid-dial (spec §9 hard seizure) —
+        // evicts the routine's Run lease and installs a fresh Interactive
+        // hold under seq2.
+        let seq2 = arbiter.interactive_acquire("g90");
+        assert!(
+            cancel_run.is_cancelled(),
+            "the operator's seizure must have evicted (and cancelled) the routine's lease"
+        );
+        let status_after_seize = arbiter.status("g90").expect("operator now holds it");
+        assert_eq!(status_after_seize.holder, Holder::Interactive);
+        assert_eq!(status_after_seize.held_for_s, 0);
+
+        // The routine's own lease drop (once its code notices the
+        // cancellation) is a documented no-op — covered by the existing
+        // `interactive_acquire_evicts_a_run_holder_and_cancels_its_token`
+        // test. What THIS test targets is the routine's TEARDOWN call —
+        // `modem_ardop_disconnect` / `vara_close_session`'s
+        // `interactive_release` — racing the seizure.
+        drop(lease_run);
+
+        // Case A: the routine's teardown, per the caller contract (its own
+        // acquire returned `None`), must not call `interactive_release` at
+        // all. Simulate a caller that (incorrectly) tries anyway with a
+        // stale `Some` seq that does NOT match the operator's fresh seq2 —
+        // proving the guard mechanism itself, independent of contract
+        // discipline at the call site.
+        let stale_seq = seq2.wrapping_sub(1); // any seq other than seq2 — arbiter seqs are a strictly monotonic global counter, so this is guaranteed distinct
+        arbiter.interactive_release("g90", Some(stale_seq));
+        let status_survives = arbiter
+            .status("g90")
+            .expect("operator hold MUST survive a stale-seq release — this is the M1 fix");
+        assert_eq!(status_survives.holder, Holder::Interactive);
+        assert_eq!(
+            status_survives.held_for_s, 0,
+            "must still be the SAME hold (seq2), not re-granted"
+        );
+
+        // Case B: an explicit release with the MATCHING seq (seq2) still
+        // works — the guard only rejects STALE seqs, not correct ones.
+        arbiter.interactive_release("g90", Some(seq2));
+        assert!(
+            arbiter.status("g90").is_none(),
+            "a matching-seq release must actually release the hold"
+        );
+    }
+
+    /// The routine-path no-op contract, spelled out end to end: when
+    /// `interactive_acquire_unless_run_held` returns `None` (Run-held
+    /// skip), the caller has nothing to release — this test documents (and
+    /// enforces, via the arbiter's own state) that skipping the release
+    /// call entirely is correct, by never calling it and confirming the
+    /// routine's own `Run` lease alone governs the hold's lifetime.
+    #[tokio::test]
+    async fn m1_routine_skip_path_never_calls_release_and_run_lease_alone_governs() {
+        reset_test_clock();
+        let arbiter = RadioArbiter::new(test_now);
+        let cancel_run = CancellationToken::new();
+        let lease_run = arbiter
+            .acquire(
+                "g90",
+                run_holder("routine-1", "connect"),
+                BusyPolicy::Fail,
+                Duration::from_secs(1),
+                &cancel_run,
+            )
+            .await
+            .unwrap();
+
+        let seq = arbiter.interactive_acquire_unless_run_held("g90");
+        assert_eq!(seq, None);
+        // No call to interactive_release here — the caller contract per
+        // interactive_acquire_unless_run_held's doc.
+
+        assert_eq!(
+            arbiter.status("g90").expect("still held").holder,
+            run_holder("routine-1", "connect"),
+            "the Run lease alone still governs — the skipped no-op left nothing behind"
+        );
+        drop(lease_run);
+        assert!(
+            arbiter.status("g90").is_none(),
+            "dropping the Run lease is the ONLY thing that released the rig"
+        );
     }
 
     /// CRITICAL-finding regression test: the promote-then-drop leak. A
@@ -1435,7 +1922,10 @@ mod tests {
         enum Held {
             None,
             Run(RadioLease),
-            Interactive,
+            /// Carries the acquired `seq` (M1 fix round) so `Op::Release`
+            /// exercises the seq-guarded `interactive_release` path, not
+            /// just the legacy unconditional one.
+            Interactive(u64),
         }
 
         proptest! {
@@ -1476,13 +1966,13 @@ mod tests {
                                 }
                             }
                             Op::AcquireInteractive => {
-                                arbiter.interactive_acquire(rig);
-                                held = Held::Interactive;
+                                let seq = arbiter.interactive_acquire(rig);
+                                held = Held::Interactive(seq);
                             }
                             Op::Release => {
                                 match held {
                                     Held::Run(lease) => drop(lease),
-                                    Held::Interactive => arbiter.interactive_release(rig),
+                                    Held::Interactive(seq) => arbiter.interactive_release(rig, Some(seq)),
                                     Held::None => {}
                                 }
                                 held = Held::None;

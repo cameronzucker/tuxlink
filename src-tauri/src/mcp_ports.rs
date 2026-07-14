@@ -1261,6 +1261,8 @@ impl EgressPort for MonolithEgressPort {
                 crate::modem_commands::modem_ardop_connect(
                     app.clone(),
                     app.state::<Arc<crate::modem_status::ModemSession>>(),
+                    // plan 2 Task 5c: interactive-lease wiring param.
+                    app.state::<Arc<crate::routines::arbiter::RadioArbiter>>(),
                     target,
                     freq_hz,
                     qsy,
@@ -1385,6 +1387,8 @@ impl EgressPort for MonolithEgressPort {
                     app.state::<Arc<crate::winlink::modem::vara::VaraSession>>(),
                     app.state::<Arc<crate::session_log::SessionLogState>>(),
                     app.state::<Arc<crate::ui_commands::VaraListenState>>(),
+                    // plan 2 Task 5c: interactive-lease wiring param.
+                    app.state::<Arc<crate::routines::arbiter::RadioArbiter>>(),
                     map_session_intent(intent),
                     transport_kind,
                 )
@@ -1415,6 +1419,8 @@ impl EgressPort for MonolithEgressPort {
                     app.clone(),
                     app.state::<crate::app_backend::BackendState>(),
                     app.state::<Arc<crate::session_log::SessionLogState>>(),
+                    // plan 2 Task 5c: interactive-lease wiring param.
+                    app.state::<Arc<crate::routines::arbiter::RadioArbiter>>(),
                     call,
                     path,
                     None,
@@ -1490,6 +1496,12 @@ impl AbortPort for MonolithAbortPort {
         crate::modem_commands::modem_ardop_disconnect(
             self.app.clone(),
             self.app.state::<Arc<crate::modem_status::ModemSession>>(),
+            // plan 2 Task 5c fix round 2: listener-armed gate param.
+            self.app
+                .state::<Arc<crate::ui_commands::ArdopListenState>>(),
+            // plan 2 Task 5c: interactive-lease wiring param.
+            self.app
+                .state::<Arc<crate::routines::arbiter::RadioArbiter>>(),
         )
         .await
         .map_err(|e| PortError::Internal(redact_err(e)))
@@ -2308,20 +2320,26 @@ fn map_gateway_antenna_in(a: GatewayAntennaDto) -> crate::catalog::stations::Gat
 /// `find_stations` filter accepts; `60m` uses the channelized 5 MHz allocation
 /// span. Edges are inclusive. Used for the client-side BAND filter — a gateway
 /// is kept when at least one of its dials maps to a requested band.
+/// Inclusive `(lo_khz, hi_khz, label)` amateur-band edges. `pub(crate)` (not
+/// module-private) so `routines::actions::radio::band_range` (plan 2 Task
+/// 5c's `GatewayFrequencyResolver`) reads the SAME table this file's
+/// `khz_to_band` uses, rather than a second, independently-maintained copy
+/// that could drift — see [`khz_to_band`]'s own doc for the edge-value
+/// rationale/citation.
+pub(crate) const BANDS: &[(f64, f64, &str)] = &[
+    (1800.0, 2000.0, "160m"),
+    (3500.0, 4000.0, "80m"),
+    (5300.0, 5410.0, "60m"),
+    (7000.0, 7300.0, "40m"),
+    (10100.0, 10150.0, "30m"),
+    (14000.0, 14350.0, "20m"),
+    (18068.0, 18168.0, "17m"),
+    (21000.0, 21450.0, "15m"),
+    (24890.0, 24990.0, "12m"),
+    (28000.0, 29700.0, "10m"),
+];
+
 fn khz_to_band(khz: f64) -> Option<&'static str> {
-    // Inclusive ranges, low..=high in kHz.
-    const BANDS: &[(f64, f64, &str)] = &[
-        (1800.0, 2000.0, "160m"),
-        (3500.0, 4000.0, "80m"),
-        (5300.0, 5410.0, "60m"),
-        (7000.0, 7300.0, "40m"),
-        (10100.0, 10150.0, "30m"),
-        (14000.0, 14350.0, "20m"),
-        (18068.0, 18168.0, "17m"),
-        (21000.0, 21450.0, "15m"),
-        (24890.0, 24990.0, "12m"),
-        (28000.0, 29700.0, "10m"),
-    ];
     for (lo, hi, label) in BANDS {
         if khz >= *lo && khz <= *hi {
             return Some(label);

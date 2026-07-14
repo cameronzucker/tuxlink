@@ -3,6 +3,7 @@ pub mod basemap;
 pub mod bootstrap;
 pub mod tiles;
 pub mod catalog;
+pub mod connection_history;
 pub mod contacts;
 pub mod compose_window;
 pub mod config;
@@ -1919,6 +1920,19 @@ pub fn run() {
                 let routines_state = std::sync::Arc::new(
                     crate::routines::session::build_routines_state_for_app(app.handle()),
                 );
+                // plan 2 Task 5c: `Arc<RadioArbiter>` ALSO managed on its own
+                // (not just nested inside `RoutinesState`) — the interactive-
+                // lease wiring's shared command functions
+                // (`modem_ardop_connect`/`vara_open_session`/`packet_connect`/
+                // `wwv_offair_refresh`) take `State<'_, Arc<RadioArbiter>>`
+                // directly, since they run both from the operator's UI (which
+                // has no `RoutinesState` of its own to unwrap) and from a
+                // routine's own service adapters. This MUST be the exact same
+                // `Arc` `routines_state.arbiter` holds — `RadioArbiter`'s
+                // `Run`-vs-`Interactive` bookkeeping (the whole point of
+                // `interactive_acquire_unless_run_held`) only works if every
+                // caller shares ONE arbiter instance.
+                app.manage(std::sync::Arc::clone(&routines_state.arbiter));
                 app.manage(std::sync::Arc::clone(&routines_state));
                 tauri::async_runtime::spawn(async move {
                     match routines_state.recover().await {

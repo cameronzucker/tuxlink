@@ -214,6 +214,12 @@ pub struct VaraSession {
     /// VARA's single-App acceptor. Deliberately OUTSIDE `inner` so the probe
     /// never has to take the session lock to read/refresh the cache.
     reachable_cache: Mutex<Option<(std::time::Instant, bool)>>,
+    /// The `RadioArbiter` `Interactive`-hold `seq` currently registered on
+    /// behalf of THIS session's occupancy, if any (plan 2 Task 5c fix
+    /// round — M1). Written by `vara_open_session` on a successful acquire;
+    /// read + cleared (`take`) by `vara_close_session`. Decoupled from
+    /// `inner`'s mutex — same rationale as [`close_generation`](Self::close_generation).
+    interactive_seq: Mutex<Option<u64>>,
 }
 
 struct VaraSessionInner {
@@ -330,7 +336,21 @@ impl VaraSession {
             transport_return_rx: Mutex::new(Some(return_rx)),
             close_generation: AtomicU64::new(0),
             reachable_cache: Mutex::new(None),
+            interactive_seq: Mutex::new(None),
         }
+    }
+
+    /// Take (read + clear) the registered interactive-hold seq (plan 2
+    /// Task 5c fix round — M1). See [`Self::interactive_seq`] field doc.
+    /// A second call (e.g. a belt-and-suspenders release from a caller
+    /// that already ran) finds `None` and correctly no-ops.
+    pub fn take_interactive_seq(&self) -> Option<u64> {
+        self.interactive_seq.lock().unwrap().take()
+    }
+
+    /// Register the interactive-hold seq for this session's occupancy.
+    pub fn set_interactive_seq(&self, seq: u64) {
+        *self.interactive_seq.lock().unwrap() = Some(seq);
     }
 
     /// Read-only cmd-port reachability, classified WITHOUT holding `inner`
@@ -1550,6 +1570,13 @@ pub async fn vara_open_session(
     session: State<'_, std::sync::Arc<VaraSession>>,
     log: State<'_, Arc<SessionLogState>>,
     listen_state: State<'_, std::sync::Arc<crate::ui_commands::VaraListenState>>,
+    // plan 2 Task 5c: interactive-lease wiring — same shared-function
+    // rationale as `modem_ardop_connect`'s `arbiter` param (see that
+    // function's doc comment). `vara_open_session` is called both by the
+    // operator's VARA panel/ribbon (IPC) and by
+    // `MonolithConnectService::connect_attempt`'s VARA branch, which has
+    // already acquired its own `Run` lease before calling this.
+    arbiter: State<'_, Arc<crate::routines::arbiter::RadioArbiter>>,
     intent: SessionIntent,
     transport_kind: TransportKind,
 ) -> Result<VaraStatus, String> {
@@ -1606,6 +1633,28 @@ pub async fn vara_open_session(
         .map_err(|e| format!("FT8 yield task failed: {e}"))?
         .map_err(|e| e.device_busy_message())?;
 
+    // plan 2 Task 5c: register the interactive hold NOW, right before the
+    // actual TCP open — a documented no-op when this call is happening from
+    // inside a routine's own already-Run-held dial (see the `arbiter`
+    // param's doc comment above).
+    //
+    // M1 fix round: the returned `Option<u64>` seq is stashed on `session`
+    // (surviving until `vara_close_session` — a SEPARATE later command
+    // invocation) so that release can be seq-guarded rather than
+    // unconditional. An unconditional release at `vara_close_session`
+    // could otherwise stomp an operator hold that pre-empted this one
+    // mid-open (the exact M1 race) — e.g. a routine dials via
+    // `vara_open_session` (this call's `Run`-held skip is a no-op, seq =
+    // `None`), the operator seizes the rig via `interactive_acquire`
+    // (installing a fresh seq), and the routine's later
+    // `vara_close_session` teardown must not release the operator's fresh
+    // hold.
+    let rig = crate::routines::actions::DEFAULT_RIG_ID;
+    let seq = arbiter.interactive_acquire_unless_run_held(rig);
+    if let Some(s) = seq {
+        session.set_interactive_seq(s);
+    }
+
     match vara_open_session_inner(
         &session,
         &ui_cfg,
@@ -1640,6 +1689,21 @@ pub async fn vara_open_session(
                 LogLevel::Error,
                 format!("VARA: open failed — {e}"),
             );
+            // plan 2 Task 5c: the TCP transport never opened — release the
+            // interactive hold now rather than stranding it until a Close
+            // Session that has nothing open to close. No-op in the
+            // routine-driven (Run-held) case, matching `modem_ardop_connect`'s
+            // failure-path release. M1 fix round: seq-guarded — release
+            // ONLY the seq this call itself just acquired (`seq`, the local
+            // var from moments ago), never the session's field
+            // unconditionally (which could by now hold something else if a
+            // pathological caller opened a second time before closing the
+            // first — belt-and-suspenders, also clear the session field so
+            // a later close doesn't find and re-release a stale value).
+            if let Some(s) = seq {
+                arbiter.interactive_release(rig, Some(s));
+                session.take_interactive_seq();
+            }
             return Err(e);
         }
     }
@@ -1977,6 +2041,21 @@ pub fn vara_close_session(
     session: State<'_, std::sync::Arc<VaraSession>>,
     log: State<'_, Arc<SessionLogState>>,
     listen_state: State<'_, std::sync::Arc<crate::ui_commands::VaraListenState>>,
+    // plan 2 Task 5c: the release half of `vara_open_session`'s
+    // interactive-lease wiring.
+    //
+    // M1 fix round: release is now SEQ-GUARDED, not unconditional.
+    // `session.take_interactive_seq()` (below) reads back whichever seq
+    // `vara_open_session` stashed (or `None` if that call's own acquire was
+    // the Run-held skip case, or a prior teardown already took it) —
+    // `interactive_release(rig, Some(seq))` then no-ops unless `seq` still
+    // matches the CURRENT `Interactive` hold. The pre-fix unconditional
+    // release could stomp an operator hold that pre-empted a routine's own
+    // no-op acquire mid-open (the exact M1 race). A routine-triggered close
+    // (this function is also called from
+    // `MonolithConnectService::connect_attempt`'s VARA cleanup) still safely
+    // no-ops when nothing was ever stashed.
+    arbiter: State<'_, Arc<crate::routines::arbiter::RadioArbiter>>,
 ) -> Result<VaraStatus, String> {
     // Capture whether the transport was open BEFORE the close, so the log
     // line distinguishes "actually closed something" from a no-op idempotent
@@ -1993,6 +2072,10 @@ pub fn vara_close_session(
         // Signal the consumer task to drain. Emits its own log line.
         crate::ui_commands::disarm_vara_listener_inner(&app, &log, &listen_state);
     }
+    // Read back BEFORE the transport teardown — a stashed seq, if any,
+    // belongs to the arbiter hold for this session regardless of how the
+    // close itself goes.
+    let interactive_seq = session.take_interactive_seq();
     let result = vara_close_session_inner(&session, &listen_state);
     if was_open {
         emit_vara_log(
@@ -2001,6 +2084,9 @@ pub fn vara_close_session(
             LogLevel::Info,
             "VARA: transport closed".to_string(),
         );
+    }
+    if let Some(seq) = interactive_seq {
+        arbiter.interactive_release(crate::routines::actions::DEFAULT_RIG_ID, Some(seq));
     }
     result
 }
@@ -2515,12 +2601,18 @@ pub async fn modem_vara_b2f_exchange(
     );
 
     match &result {
-        Ok(()) => emit_vara_log(
-            &app,
-            &log,
-            LogLevel::Info,
-            format!("VARA B2F: exchange with {target_clean} complete"),
-        ),
+        Ok(()) => {
+            emit_vara_log(
+                &app,
+                &log,
+                LogLevel::Info,
+                format!("VARA B2F: exchange with {target_clean} complete"),
+            );
+            // plan 2 Task 5c (`connection_history`): the B2F exchange
+            // concluded successfully — this IS the VARA session/exchange-
+            // completion chokepoint.
+            crate::connection_history::record_success(&target_clean, transport_kind.as_str());
+        }
         Err(e) => emit_vara_log(
             &app,
             &log,

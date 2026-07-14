@@ -301,6 +301,42 @@ pub fn modem_get_status(session: State<'_, Arc<ModemSession>>) -> ModemStatus {
     modem_get_status_inner(&session)
 }
 
+/// Plan 2 Task 5c fix round 2 (H1 reopen — "Stop while an ardop listener is
+/// ARMED"): should `modem_ardop_disconnect` take + release the session's
+/// stashed interactive seq THIS call?
+///
+/// **Invariant: the interactive hold tracks PHYSICAL rig occupancy — an
+/// armed listener OR a live session transport — not `modem_ardop_disconnect`'s
+/// own call lifecycle.** When the listener is ARMED, the consumer task (not
+/// the session) owns the transport (`ArdopListenState::is_armed`,
+/// `ui_commands::ardop_listener_consumer_task`'s `session.take_transport()`),
+/// so `modem_ardop_disconnect_inner`'s `reset_to_stopped()` is a no-op for
+/// the transport — ardopcf keeps running under the listener's ownership.
+/// Taking + releasing the hold here would tell the arbiter the rig is free
+/// while it is still physically occupied, letting a routine dial straight
+/// over a still-running ardopcf. So: while armed, leave the seq stashed —
+/// the eventual disarm (`ui_commands::disarm_should_release_interactive_hold`'s
+/// no-live-session branch of `ardop_set_listen_inner`) or a real
+/// `ardop_close_session` releases it once the listener actually drains.
+///
+/// When NOT armed, behavior is unchanged from the pre-fix-round-2 shape:
+/// `session.take_interactive_seq()` reads back whichever seq
+/// `acquire_or_reuse_interactive_for_ardop` stashed (`None` if this call's
+/// own acquire was the Run-held skip case, or a prior teardown already took
+/// it) — seq-guarded (M1 fix round), so a stale seq is a safe no-op.
+///
+/// Extracted as a small, pure-ish helper (no `AppHandle`/Tauri `State`) so
+/// the H1-reopen gate has direct unit coverage without a Tauri mock runtime.
+pub(crate) fn take_interactive_seq_for_stop(
+    session: &Arc<ModemSession>,
+    listener_armed: bool,
+) -> Option<u64> {
+    if listener_armed {
+        return None;
+    }
+    session.take_interactive_seq()
+}
+
 /// Disconnect the modem: takes the live transport handle, resets status to
 /// Stopped, and shuts the transport down (best-effort `DISCONNECT` on the
 /// cmd socket).
@@ -308,7 +344,36 @@ pub fn modem_get_status(session: State<'_, Arc<ModemSession>>) -> ModemStatus {
 pub async fn modem_ardop_disconnect(
     app: AppHandle,
     session: State<'_, Arc<ModemSession>>,
+    // plan 2 Task 5c fix round 2 (H1 reopen): threaded so the interactive-
+    // hold release can be gated on whether the ardop listener is ARMED —
+    // see `take_interactive_seq_for_stop`'s doc for the invariant this
+    // closes (Stop-while-armed used to release the hold even though
+    // ardopcf, owned by the armed listener's consumer task, kept running).
+    listen_state: State<'_, Arc<crate::ui_commands::ArdopListenState>>,
+    // plan 2 Task 5c: the release half of `modem_ardop_connect`'s (and, fix
+    // round H1, `ardop_open_session`'s / `ardop_listen`'s) interactive-lease
+    // wiring — this is the ONE real, frontend-reachable teardown chokepoint
+    // for every way an ARDOP session can occupy the rig, since all three
+    // acquire paths install into this same `ModemSession`.
+    //
+    // M1 fix round: release is now SEQ-GUARDED, not unconditional.
+    // `session.take_interactive_seq()` reads back whichever seq
+    // `acquire_or_reuse_interactive_for_ardop` stashed (or `None` if this
+    // call's own acquire was the Run-held skip case, or if a prior
+    // teardown already took it) — `interactive_release(rig, Some(seq))`
+    // then no-ops unless `seq` still matches the CURRENT `Interactive`
+    // hold. An unconditional release here (the pre-fix behavior) could
+    // stomp an operator hold that pre-empted a routine's own no-op acquire
+    // mid-dial — the M1 race. A routine-triggered disconnect (this
+    // function is also called from `MonolithConnectService::connect_attempt`'s
+    // ARDOP cleanup) still safely no-ops when nothing was ever stashed.
+    arbiter: State<'_, Arc<crate::routines::arbiter::RadioArbiter>>,
 ) -> Result<(), String> {
+    // Read back BEFORE the transport teardown moves — a stashed seq, if
+    // any, belongs to the arbiter hold for this session regardless of how
+    // the disconnect itself goes. Gated on listener-armed (fix round 2,
+    // H1 reopen) — see `take_interactive_seq_for_stop`'s doc.
+    let interactive_seq = take_interactive_seq_for_stop(session.inner(), listen_state.is_armed());
     // tuxlink-ab9h: run the abort + link-disconnect (bounded 5 s) OFF the
     // WebKitGTK main thread. A synchronous command here blocks the UI event
     // loop, so the operator's Stop/Disconnect click could not dispatch and
@@ -325,6 +390,9 @@ pub async fn modem_ardop_disconnect(
     // MSRV 1.76; this match keeps the project's 1.75 floor.)
     if let Err(ref e) = result {
         emit_modem_error(&app, e);
+    }
+    if let Some(seq) = interactive_seq {
+        arbiter.interactive_release(crate::routines::actions::DEFAULT_RIG_ID, Some(seq));
     }
     result
 }
@@ -1058,6 +1126,12 @@ pub async fn ardop_open_session(
     log: State<'_, Arc<crate::session_log::SessionLogState>>,
     session: State<'_, Arc<ModemSession>>,
     listen_state: State<'_, Arc<crate::ui_commands::ArdopListenState>>,
+    // plan 2 Task 5c fix round (H1): interactive-lease wiring — this is the
+    // OTHER documented way (besides `modem_ardop_connect` / `ardop_listen`'s
+    // self-spawn) to occupy the ARDOP rig. No current frontend call site
+    // reaches this command, but it is wired for parity — see
+    // `routines::arbiter`'s module doc.
+    arbiter: State<'_, Arc<crate::routines::arbiter::RadioArbiter>>,
     intent: SessionIntent,
     transport_kind: crate::winlink::listener::transport::TransportKind,
 ) -> Result<ModemStatus, String> {
@@ -1084,6 +1158,16 @@ pub async fn ardop_open_session(
         );
     }
 
+    // plan 2 Task 5c fix round (H1): register the interactive hold NOW,
+    // right before the actual spawn — after every early `?` gate above, so
+    // a caller that never reaches the radio never registers a hold with
+    // nothing to release. See `acquire_or_reuse_interactive_for_ardop`'s
+    // doc for the reuse semantics (relevant when this open's own auto-arm
+    // below chains into `ardop_listen_inner`).
+    let rig = crate::routines::actions::DEFAULT_RIG_ID;
+    let session_for_hold: Arc<ModemSession> = session.inner().clone();
+    let hold = acquire_or_reuse_interactive_for_ardop(arbiter.inner(), &session_for_hold, rig);
+
     // Spawn the modem on a blocking thread (bind-wait + init can be slow,
     // same pattern as the listener arm path).
     let session_arc: Arc<ModemSession> = session.inner().clone();
@@ -1092,7 +1176,7 @@ pub async fn ardop_open_session(
     let session_id_clone = session_id.clone();
     // tuxlink-ngsk: route this session's cmd-port traffic into the session log.
     let wire = ardop_wire_sink(&app);
-    let res = tokio::task::spawn_blocking(move || {
+    let spawn_result = tokio::task::spawn_blocking(move || {
         ardop_open_session_inner(
             &session_arc,
             &session_id_clone,
@@ -1107,20 +1191,37 @@ pub async fn ardop_open_session(
             },
         )
     })
-    .await
-    .map_err(|e| format!("modem spawn task failed: {e}"))?;
-
-    res?;
+    .await;
+    // Every failure path below releases the freshly-acquired hold (a no-op
+    // for the Reused/Skipped cases) — nothing is left running to occupy the
+    // rig on a failed open.
+    let res = match spawn_result {
+        Ok(inner) => inner,
+        Err(e) => {
+            hold.release_if_fresh(arbiter.inner(), &session_for_hold, rig);
+            return Err(format!("modem spawn task failed: {e}"));
+        }
+    };
+    if let Err(e) = res {
+        hold.release_if_fresh(arbiter.inner(), &session_for_hold, rig);
+        return Err(e);
+    }
 
     // Auto-arm the listener when the intent calls for it (spec §2 + §3).
     // Best-effort: a failure here does NOT tear down the transport — open
-    // and arm are distinct contracts.
+    // and arm are distinct contracts. `ardop_listen_inner` sees this open's
+    // freshly-registered hold on `session` and REUSES it (no double-acquire)
+    // — and if the auto-arm itself fails, `ardop_listen_inner`'s own
+    // failure path releases only if IT froze a fresh hold, which it did not
+    // here, so the still-open transport's hold correctly survives an
+    // auto-arm failure.
     if intent.auto_arms_listener() {
         if let Err(e) = crate::ui_commands::ardop_listen_inner(
             &app,
             log.inner(),
             session.inner(),
             listen_state.inner(),
+            &arbiter,
         )
         .await
         {
@@ -1156,6 +1257,13 @@ pub async fn ardop_close_session_inner(
     log: &Arc<crate::session_log::SessionLogState>,
     session: &Arc<ModemSession>,
     listen_state: &Arc<crate::ui_commands::ArdopListenState>,
+    // plan 2 Task 5c fix round (H1): threaded to `ardop_set_listen_inner`
+    // (its `enabled=true` re-arm branch needs it) — the `enabled=false`
+    // disarm this function actually calls does NOT touch the arbiter (see
+    // `ardop_set_listen_inner`'s doc for why); the release for THIS
+    // session's occupancy happens in the outer [`ardop_close_session`]
+    // command, after this inner sequence completes.
+    arbiter: &Arc<crate::routines::arbiter::RadioArbiter>,
 ) -> Result<(), String> {
     // tuxlink-pdnw (Codex Phase 3-4 P1 #5): bump the close-generation
     // FIRST, before any consumer-shutdown signal or in-flight worker
@@ -1171,10 +1279,9 @@ pub async fn ardop_close_session_inner(
     // ardop_set_listen_inner already calls session.abort_in_flight() +
     // session.send_listen_command(false) when armed; this covers the
     // abort-during-B2F path (Codex 2026-06-03 P1 #3 fix).
-    let _ = crate::ui_commands::ardop_set_listen_inner(
-        app, log, session, listen_state, false,
-    )
-    .await;
+    let _ =
+        crate::ui_commands::ardop_set_listen_inner(app, log, session, listen_state, arbiter, false)
+            .await;
 
     // Steps 2 + 3: modem_ardop_disconnect_inner does the abort_in_flight
     // call (best-effort) + reset_to_stopped (which clears active_intent +
@@ -1207,8 +1314,28 @@ pub async fn ardop_close_session(
     log: State<'_, Arc<crate::session_log::SessionLogState>>,
     session: State<'_, Arc<ModemSession>>,
     listen_state: State<'_, Arc<crate::ui_commands::ArdopListenState>>,
+    // plan 2 Task 5c fix round (H1): the release half of `ardop_open_session`'s
+    // (and any `ardop_listen`-self-spawn's) interactive-lease wiring. Reads
+    // back whatever seq is currently stashed on `session` — seq-guarded
+    // (M1), so a stale/already-released seq is a safe no-op, matching
+    // `modem_ardop_disconnect`'s release. No current frontend call site
+    // reaches this command (see `routines::arbiter`'s module doc), but it
+    // is wired for parity — a `ModemSession` opened via `ardop_open_session`
+    // and closed via this command must not leak the arbiter hold.
+    arbiter: State<'_, Arc<crate::routines::arbiter::RadioArbiter>>,
 ) -> Result<(), String> {
-    ardop_close_session_inner(&app, log.inner(), session.inner(), listen_state.inner()).await
+    let result = ardop_close_session_inner(
+        &app,
+        log.inner(),
+        session.inner(),
+        listen_state.inner(),
+        arbiter.inner(),
+    )
+    .await;
+    if let Some(seq) = session.take_interactive_seq() {
+        arbiter.interactive_release(crate::routines::actions::DEFAULT_RIG_ID, Some(seq));
+    }
+    result
 }
 
 /// Build the [`InitConfig`] passed to `ModemTransport::init` from the
@@ -1518,6 +1645,100 @@ pub fn check_identity_present(cfg: &Config) -> Result<(), String> {
     }
 }
 
+/// Outcome of [`acquire_or_reuse_interactive_for_ardop`] (plan 2 Task 5c fix
+/// round, H1): distinguishes "this call froze a brand-new arbiter hold" from
+/// "this call is reusing a hold some EARLIER call on the same
+/// [`ModemSession`] already registered" — the distinction matters for
+/// failure-path cleanup. If the surrounding operation fails right after a
+/// `Fresh` acquire, releasing is correct (nothing is left running to occupy
+/// the rig). If it fails after a `Reused` observation, releasing would be
+/// WRONG — the earlier holder (e.g. an already-open `modem_ardop_connect`
+/// session that this call's `ardop_listen` auto-arm is layering on top of)
+/// is still relying on the hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InteractiveHold {
+    /// Freshly acquired by this call — `u64` is the seq.
+    Fresh(u64),
+    /// Reused from an earlier acquire already registered on this session's
+    /// `interactive_seq` field — `u64` is that seq.
+    Reused(u64),
+    /// The arbiter skipped the acquire (`rig` is `Run`-held — this call is
+    /// itself happening from inside a routine's own already-Run-held step).
+    /// Nothing was acquired; there is nothing to release.
+    Skipped,
+}
+
+impl InteractiveHold {
+    /// The seq now backing this session's interactive occupancy, if any
+    /// (`Fresh` or `Reused`); `None` for `Skipped`. Production call sites
+    /// only need `release_if_fresh`; this accessor exists for the H1 tests
+    /// (asserting the exact seq threaded through `ModemSession`) and any
+    /// future diagnostic caller — `#[allow(dead_code)]` because the plain
+    /// `--lib` target (no `#[cfg(test)]`) has no production caller today.
+    #[allow(dead_code)]
+    pub(crate) fn seq(&self) -> Option<u64> {
+        match self {
+            InteractiveHold::Fresh(s) | InteractiveHold::Reused(s) => Some(*s),
+            InteractiveHold::Skipped => None,
+        }
+    }
+
+    /// Release iff this call itself froze a FRESH hold — a documented no-op
+    /// for `Reused` (not this call's alone to give back — an earlier holder
+    /// on the same session still needs it) and `Skipped` (nothing was
+    /// acquired). Also clears the session's `interactive_seq` field on the
+    /// `Fresh` release path so a later teardown's `take_interactive_seq`
+    /// does not find (and try to release) an already-released stale seq.
+    pub(crate) fn release_if_fresh(
+        &self,
+        arbiter: &Arc<crate::routines::arbiter::RadioArbiter>,
+        session: &Arc<ModemSession>,
+        rig: &str,
+    ) {
+        if let InteractiveHold::Fresh(seq) = self {
+            arbiter.interactive_release(rig, Some(*seq));
+            session.take_interactive_seq();
+        }
+    }
+}
+
+/// Acquire (or reuse) the `RadioArbiter` interactive hold for the ARDOP rig,
+/// scoped to `session` (plan 2 Task 5c fix round, H1 — closes the
+/// `ardop_listen`/`ardop_open_session` gap named in `routines::arbiter`'s
+/// module doc). Idempotent within one open's lifetime: if `session` already
+/// has a hold registered (peeked via [`ModemSession::interactive_seq`] —
+/// e.g. `ardop_open_session`'s own acquire ran moments ago and this call is
+/// its chained `ardop_listen_inner` auto-arm), REUSES that seq instead of
+/// acquiring a second one — a second `interactive_acquire_unless_run_held`
+/// call would see the FIRST call's own `Interactive` hold (not a `Run`
+/// hold), so it would evict-and-reinstall it under a new seq: functionally
+/// harmless (the eviction path is documented to silently replace a stale
+/// `Interactive` record) but a needless seq churn this reuse check avoids,
+/// and keeps `ModemSession::interactive_seq` a stable handle across an
+/// open's chained acquire calls.
+///
+/// The three ARDOP call sites that can occupy the rig — `modem_ardop_connect`,
+/// `ardop_open_session`, `ardop_listen` (which can self-spawn ardopcf via
+/// `start_modem_listen_only` independent of the other two) — all route
+/// through this one function so exactly ONE arbiter hold ever backs a given
+/// `ModemSession`'s ARDOP occupancy, however it was opened.
+pub(crate) fn acquire_or_reuse_interactive_for_ardop(
+    arbiter: &Arc<crate::routines::arbiter::RadioArbiter>,
+    session: &Arc<ModemSession>,
+    rig: &str,
+) -> InteractiveHold {
+    if let Some(existing) = session.interactive_seq() {
+        return InteractiveHold::Reused(existing);
+    }
+    match arbiter.interactive_acquire_unless_run_held(rig) {
+        Some(seq) => {
+            session.set_interactive_seq(seq);
+            InteractiveHold::Fresh(seq)
+        }
+        None => InteractiveHold::Skipped,
+    }
+}
+
 /// ARDOP connect Tauri command. Returns an actionable error when
 /// audio devices are not yet configured (operator must complete
 /// Settings → ARDOP before calling).
@@ -1531,6 +1752,15 @@ pub fn check_identity_present(cfg: &Config) -> Result<(), String> {
 pub async fn modem_ardop_connect(
     app: AppHandle,
     session: State<'_, Arc<ModemSession>>,
+    // plan 2 Task 5c: interactive-lease wiring. `modem_ardop_connect` is
+    // SHARED between the operator's ARDOP panel (Tauri IPC) and a routine's
+    // own `MonolithConnectService` (which calls this function directly,
+    // AFTER already holding its own `Run` lease) — see
+    // `RadioArbiter::interactive_acquire_unless_run_held`'s doc for why a
+    // plain `interactive_acquire` here would incorrectly cancel a routine's
+    // own dial. `Arc<RadioArbiter>` is globally `.manage()`d (`lib.rs`), so
+    // Tauri injects this for free on the IPC path — no frontend change.
+    arbiter: State<'_, Arc<crate::routines::arbiter::RadioArbiter>>,
     target: String,
     // rig-control Task 8: tune frequency for the (single) dial. Optional —
     // `None` (the legacy `{ target }` invoke) skips the pre-audio CAT tune.
@@ -1592,6 +1822,23 @@ pub async fn modem_ardop_connect(
     // to regardless of this flag.
     let qsy_on_fail = cfg.rig.qsy_on_fail;
 
+    // plan 2 Task 5c: register the interactive hold NOW — the operator (or a
+    // routine, in which case this is a documented no-op — see the arbiter
+    // method's own doc) is about to seize the physical modem. Placed here
+    // (after every early `?` gate above, right before the actual spawn/dial)
+    // so a caller that never reaches the radio never registers a hold that
+    // then has nothing to release.
+    //
+    // M1 fix round: acquired via `acquire_or_reuse_interactive_for_ardop`
+    // (not a bare `interactive_acquire_unless_run_held` call) so the seq is
+    // stashed on `ModemSession` for `modem_ardop_disconnect` (a SEPARATE
+    // later command invocation) to release with a seq-guarded call — an
+    // unconditional release there could otherwise stomp an operator hold
+    // that pre-empted this one mid-dial (the exact M1 race).
+    let rig = crate::routines::actions::DEFAULT_RIG_ID;
+    let session_arc_for_hold = Arc::clone(session.inner());
+    let hold = acquire_or_reuse_interactive_for_ardop(arbiter.inner(), &session_arc_for_hold, rig);
+
     let session = Arc::clone(session.inner());
     // tuxlink-ngsk: route this session's cmd-port traffic into the session log.
     let wire = ardop_wire_sink(&app);
@@ -1618,6 +1865,17 @@ pub async fn modem_ardop_connect(
     // is MSRV 1.76; this match keeps the project's 1.75 floor.)
     if let Err(ref e) = result {
         emit_modem_error(&app, e);
+        // plan 2 Task 5c: the ARQ link never came up (or the spawn/init
+        // itself failed) — `modem_ardop_connect_*` already reset the
+        // session/dropped the transport on every one of these paths, so
+        // there is no persisted "session" for a later `modem_ardop_disconnect`
+        // to release from. Release the interactive hold NOW rather than
+        // leaving it stranded until an operator disconnect that has nothing
+        // left to disconnect. `release_if_fresh` is a no-op when this call
+        // was the Run-held skip case above, or (M1) when it merely REUSED an
+        // already-open session's hold — releasing on failure must never
+        // stomp a hold this call didn't itself freshly acquire.
+        hold.release_if_fresh(arbiter.inner(), &session_arc_for_hold, rig);
     }
     result
 }
@@ -1720,6 +1978,10 @@ pub async fn modem_ardop_b2f_exchange(
     // `run_ardop_connect_b2f_with_transport`), so keep a clone for the
     // post-await error emit below.
     let app_for_emit = app.clone();
+    // plan 2 Task 5c (`connection_history`): `target` moves into the `move`
+    // closure below (borrowed by `run_ardop_connect_b2f_with_transport`), so
+    // keep a clone for the post-await success record.
+    let target_for_history = target.clone();
     let result = tokio::task::spawn_blocking(move || {
         // Snapshot the close-generation BEFORE the transport take
         // (tuxlink-pdnw, Codex Phase 3-4 P1 #1): if `ardop_close_session_inner`
@@ -1754,6 +2016,11 @@ pub async fn modem_ardop_b2f_exchange(
     // is MSRV 1.76; this match keeps the project's 1.75 floor.)
     if let Err(ref e) = result {
         emit_modem_error(&app_for_emit, e);
+    } else {
+        // plan 2 Task 5c (`connection_history`): the B2F exchange concluded
+        // successfully — this IS the ARDOP session/exchange-completion
+        // chokepoint.
+        crate::connection_history::record_success(&target_for_history, "ardop-hf");
     }
     result
 }
@@ -2555,6 +2822,50 @@ mod tests {
         modem_ardop_disconnect_inner(&session).unwrap();
 
         assert_eq!(session.status_snapshot().state, ModemState::Stopped);
+    }
+
+    // -----------------------------------------------------------------
+    // plan 2 Task 5c fix round 2 — H1 reopen: `take_interactive_seq_for_stop`
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn take_interactive_seq_for_stop_leaves_seq_stashed_when_listener_armed() {
+        let session = Arc::new(ModemSession::new());
+        session.set_interactive_seq(42);
+
+        let taken = take_interactive_seq_for_stop(&session, /* listener_armed */ true);
+
+        assert_eq!(
+            taken, None,
+            "Stop-while-armed must not take the seq off the session"
+        );
+        assert_eq!(
+            session.interactive_seq(),
+            Some(42),
+            "the seq must stay stashed for the eventual disarm/close release"
+        );
+    }
+
+    #[test]
+    fn take_interactive_seq_for_stop_takes_seq_when_listener_not_armed() {
+        let session = Arc::new(ModemSession::new());
+        session.set_interactive_seq(7);
+
+        let taken = take_interactive_seq_for_stop(&session, /* listener_armed */ false);
+
+        assert_eq!(taken, Some(7));
+        assert_eq!(
+            session.interactive_seq(),
+            None,
+            "not armed — Stop is the real teardown chokepoint and must take the seq"
+        );
+    }
+
+    #[test]
+    fn take_interactive_seq_for_stop_is_a_noop_when_nothing_stashed() {
+        let session = Arc::new(ModemSession::new());
+        assert_eq!(take_interactive_seq_for_stop(&session, true), None);
+        assert_eq!(take_interactive_seq_for_stop(&session, false), None);
     }
 
     #[test]
@@ -4276,9 +4587,205 @@ mod tests {
     #[test]
     fn ardop_close_session_signature_is_stable() {
         // Compile-time anchor: ardop_close_session takes (app, log,
-        // session, listen_state) — the four args the Phase 5
-        // RadioSessionPanel sends through the Tauri dispatcher.
+        // session, listen_state, arbiter) — the five args the Phase 5
+        // RadioSessionPanel + the plan 2 Task 5c fix round's arbiter
+        // param send through the Tauri dispatcher.
         let _addr: usize = ardop_close_session as *const () as usize;
+    }
+
+    // -----------------------------------------------------------------
+    // plan 2 Task 5c fix round — H1: acquire_or_reuse_interactive_for_ardop
+    // -----------------------------------------------------------------
+    //
+    // `ardop_listen_inner` / `ardop_open_session` / `modem_ardop_connect`
+    // all route their interactive-lease acquire through this one helper
+    // (this is the exact mechanism `ardop_listen`'s Arm button now wires —
+    // see `routines::arbiter`'s module doc for the H1 finding this closes).
+    // These tests exercise the helper directly rather than the full
+    // `#[tauri::command]` wrappers (which need an `AppHandle` this test
+    // module has no harness for) — the helper IS the wiring; the command
+    // wrappers are thin dispatch around it.
+
+    /// A `RadioArbiter` needs a `now: fn() -> i64` clock; tests don't care
+    /// about wall-clock values, only ordering, so a constant works.
+    fn zero_now() -> i64 {
+        0
+    }
+
+    fn test_run_holder(run_id: &str) -> crate::routines::arbiter::Holder {
+        crate::routines::arbiter::Holder::Run {
+            run_id: run_id.to_string(),
+            step: "s".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn h1_listener_arm_registers_a_hold_that_blocks_a_routine_acquire() {
+        let arbiter = Arc::new(crate::routines::arbiter::RadioArbiter::new(zero_now));
+        let session = Arc::new(ModemSession::new());
+        let rig = crate::routines::actions::DEFAULT_RIG_ID;
+
+        // Precondition: the rig is free, so a routine's own acquire would
+        // succeed immediately — this is the "no hold at all" gap H1 found
+        // (an armed listener occupied the physical modem with nothing
+        // registered in the arbiter).
+        assert!(arbiter.status(rig).is_none());
+
+        // Simulate `ardop_listen_inner`'s arm: acquire (or reuse) the
+        // interactive hold for this session.
+        let hold = acquire_or_reuse_interactive_for_ardop(&arbiter, &session, rig);
+        assert!(
+            matches!(hold, InteractiveHold::Fresh(_)),
+            "the rig was free — this must be a FRESH acquire, not a reuse or skip"
+        );
+        let status = arbiter
+            .status(rig)
+            .expect("listener-arm must register a hold");
+        assert_eq!(status.holder, crate::routines::arbiter::Holder::Interactive);
+
+        // Now a routine's OWN acquire (its own dial, unrelated to the
+        // listener) must see the rig as busy and resolve per its
+        // BusyPolicy — proving H1's fix: a routine can no longer dial over
+        // an armed listener with the arbiter none the wiser.
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let fail_err = arbiter
+            .acquire(
+                rig,
+                test_run_holder("routine-fail"),
+                tuxlink_routines::types::BusyPolicy::Fail,
+                Duration::from_millis(50),
+                &cancel,
+            )
+            .await
+            .expect_err("BusyPolicy::Fail must reject while the listener holds the rig");
+        assert!(
+            matches!(
+                fail_err,
+                crate::routines::arbiter::ArbiterError::Busy { .. }
+            ),
+            "expected Busy, got {fail_err:?}"
+        );
+
+        let cancel2 = tokio_util::sync::CancellationToken::new();
+        let wait_err = arbiter
+            .acquire(
+                rig,
+                test_run_holder("routine-wait"),
+                tuxlink_routines::types::BusyPolicy::Wait,
+                Duration::from_millis(20),
+                &cancel2,
+            )
+            .await
+            .expect_err("BusyPolicy::Wait must time out while the listener holds the rig");
+        assert!(
+            matches!(
+                wait_err,
+                crate::routines::arbiter::ArbiterError::Timeout { .. }
+            ),
+            "expected Timeout, got {wait_err:?}"
+        );
+
+        // "listener-stop releases": simulate the disarm→close teardown
+        // (`modem_ardop_disconnect`'s pattern — take + seq-guarded release)
+        // and confirm the rig is free again, unblocking a routine acquire.
+        let taken = session.take_interactive_seq();
+        assert_eq!(
+            taken,
+            hold.seq(),
+            "the stashed seq must match what the acquire returned"
+        );
+        if let Some(seq) = taken {
+            arbiter.interactive_release(rig, Some(seq));
+        }
+        assert!(
+            arbiter.status(rig).is_none(),
+            "listener-stop must release the hold — the rig is free again"
+        );
+
+        let cancel3 = tokio_util::sync::CancellationToken::new();
+        let lease = arbiter
+            .acquire(
+                rig,
+                test_run_holder("routine-after-release"),
+                tuxlink_routines::types::BusyPolicy::Fail,
+                Duration::from_secs(1),
+                &cancel3,
+            )
+            .await
+            .expect("a routine acquire must succeed now that the listener released");
+        drop(lease);
+    }
+
+    #[tokio::test]
+    async fn h1_acquire_or_reuse_reuses_an_existing_session_hold_without_churning_seq() {
+        // Models `ardop_open_session`'s acquire immediately followed by its
+        // chained auto-arm calling into `ardop_listen_inner` — the SAME
+        // session, same call chain. The second call must NOT re-acquire
+        // (which would evict-and-reinstall its own hold under a new seq);
+        // it must observe the session's already-stashed seq and reuse it.
+        let arbiter = Arc::new(crate::routines::arbiter::RadioArbiter::new(zero_now));
+        let session = Arc::new(ModemSession::new());
+        let rig = crate::routines::actions::DEFAULT_RIG_ID;
+
+        let first = acquire_or_reuse_interactive_for_ardop(&arbiter, &session, rig);
+        let InteractiveHold::Fresh(first_seq) = first else {
+            panic!("expected Fresh on a free rig, got {first:?}");
+        };
+
+        let second = acquire_or_reuse_interactive_for_ardop(&arbiter, &session, rig);
+        assert_eq!(
+            second,
+            InteractiveHold::Reused(first_seq),
+            "the chained call must reuse the session's already-stashed seq, not re-acquire"
+        );
+
+        // release_if_fresh on the REUSED outcome must be a no-op — a
+        // failure in the auto-arm step must not release the still-open
+        // session's hold that the FIRST call is relying on.
+        second.release_if_fresh(&arbiter, &session, rig);
+        let status = arbiter
+            .status(rig)
+            .expect("a Reused release must NOT have released the hold");
+        assert_eq!(status.holder, crate::routines::arbiter::Holder::Interactive);
+
+        // The FRESH acquirer's own release_if_fresh DOES release it.
+        first.release_if_fresh(&arbiter, &session, rig);
+        assert!(arbiter.status(rig).is_none());
+    }
+
+    #[tokio::test]
+    async fn h1_acquire_or_reuse_skips_when_run_held_and_release_if_fresh_is_a_noop() {
+        // Models a routine's OWN dial calling into `ardop_listen_inner`
+        // (e.g. an auto-arming RadioOnly/P2p intent) from inside a step
+        // that already holds `Run` — must be Skipped, and a failure in the
+        // arm must not touch the routine's own Run lease.
+        let arbiter = Arc::new(crate::routines::arbiter::RadioArbiter::new(zero_now));
+        let session = Arc::new(ModemSession::new());
+        let rig = crate::routines::actions::DEFAULT_RIG_ID;
+
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let lease_run = arbiter
+            .acquire(
+                rig,
+                test_run_holder("routine-1"),
+                tuxlink_routines::types::BusyPolicy::Fail,
+                Duration::from_secs(1),
+                &cancel,
+            )
+            .await
+            .unwrap();
+
+        let hold = acquire_or_reuse_interactive_for_ardop(&arbiter, &session, rig);
+        assert_eq!(hold, InteractiveHold::Skipped);
+        assert_eq!(hold.seq(), None);
+
+        hold.release_if_fresh(&arbiter, &session, rig);
+        let status = arbiter
+            .status(rig)
+            .expect("the routine's OWN Run lease must be untouched by the no-op release");
+        assert_eq!(status.holder, test_run_holder("routine-1"));
+
+        drop(lease_run);
     }
 
     // ── tuxlink-0ye6 Task 3.6 — modem_ardop_b2f_exchange widening ──────────

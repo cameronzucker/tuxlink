@@ -2315,6 +2315,16 @@ impl NativeBackend {
         // so the single-flight flag is correctly cleared on this early return.
         let session_id = self.active_identity()?;
         let base = session_id.mycall().as_str().to_uppercase();
+        // plan 2 Task 5c (`connection_history`): capture the DIALED target
+        // callsign BEFORE `role` moves into `resolve_packet_endpoint` below —
+        // `None` for a `Listen` role (an inbound-answer session; no target
+        // callsign is known until a peer answers, and recording nothing for
+        // that case is unchanged from today's behavior, not a regression).
+        let dial_target = if let PacketRole::DialTo { call, .. } = &role {
+            Some(call.clone())
+        } else {
+            None
+        };
         // Decide the armed-state status before `role` is moved into resolve
         // (tuxlink-orj): Listen → Listening (armed), DialTo → Connecting (dial).
         let initial_status = initial_packet_status(&role, ssid);
@@ -2362,6 +2372,15 @@ impl NativeBackend {
             self.aborting.load(Ordering::SeqCst) || self.disconnecting.load(Ordering::SeqCst);
         match abort_aware_outcome(outcome, stopped) {
             Ok(()) => {
+                // plan 2 Task 5c (`connection_history`): "connect, forward
+                // staged outbox traffic" completed successfully — this IS
+                // the session/exchange-completion chokepoint for packet
+                // (radio.rs's own doc: "does dial + B2F exchange in one
+                // call"). Only for a DialTo session — an inbound Listen
+                // answer has no dialed target to record.
+                if let Some(ref target) = dial_target {
+                    crate::connection_history::record_success(target, "packet");
+                }
                 self.set_status(BackendStatus::Connected {
                     transport: format!("Packet-{ssid}"),
                     peer: "packet".to_string(),

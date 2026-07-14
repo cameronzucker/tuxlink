@@ -196,6 +196,20 @@ pub struct InboxSummaryDto {
     pub unread: usize,
 }
 
+/// Outcome of `data.read` with `source: "last_connected_gateway"` (plan 2
+/// Task 5c — the honest gap `data.rs`'s prior module doc named, now closed
+/// via `crate::connection_history`). Mirrors
+/// `connection_history::LastConnectedGateway` field-for-field — a NEW,
+/// decoupled type per this module's established "narrow port, mirrored DTO"
+/// pattern (see [`RigStateDto`]'s doc).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LastConnectedGatewayDto {
+    pub callsign: String,
+    pub transport: String,
+    pub at_unix: i64,
+}
+
 /// The `data.*` action family's delegation seam (spec §6 "Update space
 /// weather from WWV" (radio-actions table), "Internet actions", and "Read
 /// data" (local-actions table); plan Task 4c). One trait, not four — `data.rs`
@@ -244,6 +258,14 @@ pub trait DataService: Send + Sync {
     /// `position_status`, NOT `config_read`). `None` when no grid is
     /// available (empty `ui_grid`).
     async fn read_grid(&self) -> Result<Option<String>, String>;
+
+    /// `data.read` with `source: "last_connected_gateway"` (plan 2 Task 5c)
+    /// — the durable record `crate::connection_history` persists on every
+    /// successful packet/ARDOP/VARA session or B2F exchange completion.
+    /// `None` when nothing has ever been recorded — `DataRead::execute`
+    /// surfaces that as an honest-gap-style error (not a silent `null`),
+    /// same posture as the pre-Task-5c placeholder this method replaces.
+    async fn read_last_connected_gateway(&self) -> Result<Option<LastConnectedGatewayDto>, String>;
 }
 
 /// The `local.*` action family's delegation seam (spec §6 "Local actions";

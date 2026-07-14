@@ -86,7 +86,17 @@ pub struct WwvRefreshOutcome {
 /// WWV manually (see `wwv_offair_cat_configured`) and capture proceeds
 /// directly against the configured audio device.
 #[tauri::command]
-pub async fn wwv_offair_refresh(now_ms: u64) -> Result<WwvRefreshOutcome, UiError> {
+pub async fn wwv_offair_refresh(
+    now_ms: u64,
+    // plan 2 Task 5c: interactive-lease wiring. `wwv_offair_refresh` is
+    // called both by the operator's WWV panel (`src/wwv/wwvApi.ts`, IPC)
+    // and by `MonolithDataService::wwv_capture` — routines'
+    // `data.spacewx_wwv` action, which has already acquired its own `Run`
+    // lease for the capture window before calling through to this
+    // function. `Arc<RadioArbiter>` is globally `.manage()`d, so Tauri
+    // injects this for free on the IPC path.
+    arbiter: tauri::State<'_, std::sync::Arc<crate::routines::arbiter::RadioArbiter>>,
+) -> Result<WwvRefreshOutcome, UiError> {
     let cfg = crate::config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
     let rig_cfg_opt = crate::modem_commands::rig_config_from(&cfg.rig);
     let close_serial = cfg.rig.close_serial_sequencing;
@@ -103,6 +113,15 @@ pub async fn wwv_offair_refresh(now_ms: u64) -> Result<WwvRefreshOutcome, UiErro
         .map_err(|reason| UiError::Unavailable { reason })?;
     let (year, month, hour) = utc_year_month_hour(now_ms);
     let freq_hz = crate::wwv_offair::freq::freq_for_utc_hour(hour);
+
+    // plan 2 Task 5c: acquired only once every pre-flight config/model-
+    // resolution gate above has passed (matching `modem_ardop_connect`'s
+    // placement) — the guard drops (releasing) at function exit, covering
+    // the capture below on every remaining return path.
+    let _interactive = crate::routines::arbiter::InteractiveSessionGuard::acquire(
+        &arbiter,
+        crate::routines::actions::DEFAULT_RIG_ID,
+    );
 
     let outcome = tokio::task::spawn_blocking(move || -> Result<WwvRefreshOutcome, String> {
         // Capture FIRST, then load the Whisper model: model load can take

@@ -155,6 +155,27 @@ impl StationsCache {
         self.persist();
     }
 
+    /// Cache-only read of every stored listing for `mode`, across ALL keys
+    /// currently present (any `service_codes`/`history_hours` combination) —
+    /// NEVER triggers a network fetch, regardless of TTL/freshness. Used by
+    /// `routines::actions::radio::GatewayFrequencyResolver` (plan 2 Task 5c)
+    /// to resolve a gateway's HF dial frequency from whatever
+    /// `data.stationlist_update` (or the Find-a-Station UI) most recently
+    /// populated. Scanning every key (rather than building one exact
+    /// `CacheKey` and doing a keyed lookup) is deliberate: a routine author
+    /// who fetched with non-default `service_codes`/`history_hours` must not
+    /// silently miss the data because of a keying mismatch the resolver has
+    /// no way to know about.
+    pub fn peek_by_mode(&self, mode: ListingMode) -> Vec<StationListing> {
+        self.data
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(k, _)| k.mode == mode)
+            .map(|(_, v)| v.clone())
+            .collect()
+    }
+
     /// Serve fresh-from-cache, else fetch (coalescing same-key concurrent callers), else stale.
     pub async fn get_or_fetch<F, E>(&self, key: CacheKey, fetch: F) -> Result<StationListing, E>
     where
@@ -518,6 +539,35 @@ mod tests {
         clock.advance(30_000);
         cache.get_or_fetch(key(ListingMode::VaraHf), failing()).await.unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn peek_by_mode_returns_every_key_for_that_mode_without_fetching() {
+        let clock = Arc::new(MockClock::new(0));
+        let cache = StationsCache::new(60_000, 0, clock);
+        // Two distinct keys, same mode, different service_codes — both must
+        // come back; a different mode must not.
+        let key_a = CacheKey { mode: ListingMode::ArdopHf, service_codes: "PUBLIC".into(), history_hours: 168 };
+        let key_b = CacheKey { mode: ListingMode::ArdopHf, service_codes: "MARS".into(), history_hours: 24 };
+        let key_other_mode = key(ListingMode::VaraHf);
+        cache.insert(key_a, listing(ListingMode::ArdopHf, "a"));
+        cache.insert(key_b, listing(ListingMode::ArdopHf, "b"));
+        cache.insert(key_other_mode, listing(ListingMode::VaraHf, "v"));
+
+        let mut raws: Vec<String> = cache
+            .peek_by_mode(ListingMode::ArdopHf)
+            .into_iter()
+            .map(|l| l.raw)
+            .collect();
+        raws.sort();
+        assert_eq!(raws, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn peek_by_mode_empty_when_nothing_cached() {
+        let clock = Arc::new(MockClock::new(0));
+        let cache = StationsCache::new(60_000, 0, clock);
+        assert!(cache.peek_by_mode(ListingMode::VaraHf).is_empty());
     }
 
     #[tokio::test]

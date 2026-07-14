@@ -83,17 +83,20 @@
 //!   the `aprs-position:new` event stream. There is no backend store a Rust
 //!   action can read; [`DataRead::execute`] below does not fake one.
 //!
-//! - **`data.read`'s `last_connected_gateway` has NO backend seam either —
-//!   also genuine, and flagged as load-bearing (pending spec amendment).**
-//!   The peer/gateway of the last successful connect exists only
+//! - **`data.read`'s `last_connected_gateway` — RESOLVED (plan 2 Task 5c).**
+//!   The peer/gateway of the last successful connect used to exist only
 //!   TRANSIENTLY, inside `BackendStatus::Connected { peer, since_iso }`
-//!   (`winlink_backend.rs`) while the session is live — it evaporates the
-//!   moment the session returns to `Disconnected`. No durable
-//!   connect-history store persists it. This is the SAME missing data
-//!   `radio.rs`'s HF gateway-frequency gap ultimately wants for "redial the
-//!   gateway I last actually reached" — a real fix is a persisted
-//!   connect-history log, unbuilt as of this task. See [`DataRead::execute`]
-//!   for the exact wording surfaced to a routine author.
+//!   (`winlink_backend.rs`) while the session was live. `crate::connection_history`
+//!   now persists `{callsign, transport, at_unix}` to
+//!   `last-connected-gateway.json` (beside `config.json`) on every
+//!   successful packet dial (`winlink_backend.rs`'s `packet_connect_inner`),
+//!   ARDOP B2F exchange (`modem_commands.rs`'s `modem_ardop_b2f_exchange`),
+//!   and VARA B2F exchange (`vara/commands.rs`'s `modem_vara_b2f_exchange`)
+//!   — the SAME three "session/exchange completion" chokepoints
+//!   `radio.rs`'s HF gateway-frequency resolver reads for its OWN gateway
+//!   data. `DataRead::execute` still returns an honest error (not a silent
+//!   `null`) when nothing has EVER been recorded yet (a fresh install/config
+//!   dir) — see [`LAST_CONNECTED_GATEWAY_NO_RECORD`].
 //!
 //! Plan: `docs/superpowers/plans/2026-07-13-routines-02-actions-arbiter-mount.md`
 //! Task 4. Spec: `docs/superpowers/specs/2026-07-13-routines-design.md` §6.
@@ -114,7 +117,8 @@ use crate::routines::arbiter::RadioArbiter;
 
 use super::{
     busy_policy_from_params, rig_id_from_params, run_holder_from_params, step_timeout_from_params,
-    DataService, InboxSummaryDto, StationlistOutcome, SwpcOutcome, WwvCaptureOutcome,
+    DataService, InboxSummaryDto, LastConnectedGatewayDto, StationlistOutcome, SwpcOutcome,
+    WwvCaptureOutcome,
 };
 
 // ============================================================================
@@ -495,15 +499,15 @@ const HEARD_STATIONS_UNSUPPORTED: &str =
      persists them anywhere a routine step can read them from — this source stays unavailable \
      until a backend-side heard-stations record exists.";
 
-/// Verbatim honest-gap message for `source: "last_connected_gateway"` — see
-/// this module's doc comment ("NO backend seam either") for the full recon.
-/// Operator-facing wording only: no internal type/module names, no
-/// process/scheduling references — just what is and isn't available and why.
-const LAST_CONNECTED_GATEWAY_UNSUPPORTED: &str =
-    "data.read source=last_connected_gateway: tuxlink does not keep a persistent record of the \
-     gateway it last connected to. That information is known only while a session is actively \
-     connected and is lost the moment the session disconnects — this source stays unavailable \
-     until session-history persistence is added.";
+/// `source: "last_connected_gateway"` when `connection_history` has NO
+/// record yet (plan 2 Task 5c: the gap is closed — persistence exists — but
+/// a fresh install/config dir genuinely has nothing recorded until the
+/// first successful packet/ARDOP/VARA session completes). An honest,
+/// operator-facing "not yet" message, not the prior "unsupported" framing.
+const LAST_CONNECTED_GATEWAY_NO_RECORD: &str =
+    "data.read source=last_connected_gateway: tuxlink has not recorded a successful radio-gateway \
+     connection yet. This source becomes available once a Packet, ARDOP, or VARA session \
+     completes successfully.";
 
 /// `data.read` — read-only tuxlink state. No capability flags (no rig, no
 /// internet, no transmit) — every `source` is either a local read or an
@@ -582,10 +586,27 @@ impl Action for DataRead {
                 action: DATA_READ.to_string(),
                 cause: HEARD_STATIONS_UNSUPPORTED.to_string(),
             }),
-            ReadSource::LastConnectedGateway => Err(StepError::Action {
-                action: DATA_READ.to_string(),
-                cause: LAST_CONNECTED_GATEWAY_UNSUPPORTED.to_string(),
-            }),
+            ReadSource::LastConnectedGateway => {
+                let record = tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => return Err(StepError::Cancelled),
+                    res = self.data.read_last_connected_gateway() => res,
+                }
+                .map_err(|cause| StepError::Action {
+                    action: DATA_READ.to_string(),
+                    cause,
+                })?;
+                match record {
+                    Some(r) => serde_json::to_value(&r).map_err(|e| StepError::Action {
+                        action: DATA_READ.to_string(),
+                        cause: format!("output serialize: {e}"),
+                    }),
+                    None => Err(StepError::Action {
+                        action: DATA_READ.to_string(),
+                        cause: LAST_CONNECTED_GATEWAY_NO_RECORD.to_string(),
+                    }),
+                }
+            }
         }
     }
 }
@@ -614,9 +635,13 @@ impl MonolithDataService {
 #[async_trait]
 impl DataService for MonolithDataService {
     async fn wwv_capture(&self, now_ms: u64) -> Result<WwvCaptureOutcome, String> {
-        let outcome = crate::wwv_offair::commands::wwv_offair_refresh(now_ms)
-            .await
-            .map_err(|e| format!("{e:?}"))?;
+        let outcome = crate::wwv_offair::commands::wwv_offair_refresh(
+            now_ms,
+            self.app
+                .state::<std::sync::Arc<crate::routines::arbiter::RadioArbiter>>(),
+        )
+        .await
+        .map_err(|e| format!("{e:?}"))?;
         Ok(WwvCaptureOutcome {
             updated: outcome.updated,
             indices: outcome.indices,
@@ -694,6 +719,14 @@ impl DataService for MonolithDataService {
             Some(status.ui_grid)
         })
     }
+
+    async fn read_last_connected_gateway(&self) -> Result<Option<LastConnectedGatewayDto>, String> {
+        Ok(crate::connection_history::read_last().map(|r| LastConnectedGatewayDto {
+            callsign: r.callsign,
+            transport: r.transport,
+            at_unix: r.at_unix,
+        }))
+    }
 }
 
 // ============================================================================
@@ -736,6 +769,8 @@ mod tests {
     type InboxFn = dyn Fn() -> Result<InboxSummaryDto, String> + Send + Sync;
     type SpaceWeatherFn = dyn Fn() -> Result<Option<SolarSnapshot>, String> + Send + Sync;
     type GridFn = dyn Fn() -> Result<Option<String>, String> + Send + Sync;
+    type LastConnectedGatewayFn =
+        dyn Fn() -> Result<Option<LastConnectedGatewayDto>, String> + Send + Sync;
 
     struct FakeDataService {
         wwv: Box<WwvFn>,
@@ -750,6 +785,7 @@ mod tests {
         inbox: Box<InboxFn>,
         space_weather: Box<SpaceWeatherFn>,
         grid: Box<GridFn>,
+        last_connected_gateway: Box<LastConnectedGatewayFn>,
     }
 
     impl Default for FakeDataService {
@@ -764,6 +800,9 @@ mod tests {
                 inbox: Box::new(|| panic!("read_inbox_summary not expected in this test")),
                 space_weather: Box::new(|| panic!("read_space_weather not expected in this test")),
                 grid: Box::new(|| panic!("read_grid not expected in this test")),
+                last_connected_gateway: Box::new(|| {
+                    panic!("read_last_connected_gateway not expected in this test")
+                }),
             }
         }
     }
@@ -821,6 +860,13 @@ mod tests {
             self.grid = Box::new(f);
             self
         }
+        fn with_last_connected_gateway(
+            mut self,
+            f: impl Fn() -> Result<Option<LastConnectedGatewayDto>, String> + Send + Sync + 'static,
+        ) -> Self {
+            self.last_connected_gateway = Box::new(f);
+            self
+        }
     }
 
     #[async_trait]
@@ -849,6 +895,11 @@ mod tests {
         }
         async fn read_grid(&self) -> Result<Option<String>, String> {
             (self.grid)()
+        }
+        async fn read_last_connected_gateway(
+            &self,
+        ) -> Result<Option<LastConnectedGatewayDto>, String> {
+            (self.last_connected_gateway)()
         }
     }
 
@@ -1383,27 +1434,67 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn read_last_connected_gateway_is_documented_honest_gap() {
-        let action = DataRead::new(Arc::new(FakeDataService::default()));
+    async fn read_last_connected_gateway_happy_path() {
+        let data = FakeDataService::default().with_last_connected_gateway(|| {
+            Ok(Some(LastConnectedGatewayDto {
+                callsign: "W7DEF-10".to_string(),
+                transport: "ardop-hf".to_string(),
+                at_unix: 1_752_400_000,
+            }))
+        });
+        let action = DataRead::new(Arc::new(data));
+        let out = action
+            .execute(
+                json!({"source": "last_connected_gateway"}),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("must succeed when a record exists");
+        assert_eq!(out["callsign"], json!("W7DEF-10"));
+        assert_eq!(out["transport"], json!("ardop-hf"));
+        assert_eq!(out["atUnix"], json!(1_752_400_000_i64));
+    }
+
+    #[tokio::test]
+    async fn read_last_connected_gateway_no_record_is_an_honest_error() {
+        let data = FakeDataService::default().with_last_connected_gateway(|| Ok(None));
+        let action = DataRead::new(Arc::new(data));
         let err = action
             .execute(
                 json!({"source": "last_connected_gateway"}),
                 CancellationToken::new(),
             )
             .await
-            .expect_err("last_connected_gateway has no backend seam — must error");
+            .expect_err("no record yet must error, not return null");
         match err {
             StepError::Action { action, cause } => {
                 assert_eq!(action, "data.read");
-                assert_eq!(cause, LAST_CONNECTED_GATEWAY_UNSUPPORTED);
+                assert_eq!(cause, LAST_CONNECTED_GATEWAY_NO_RECORD);
                 assert!(
-                    cause.contains("session-history persistence"),
-                    "must name the real seam gap in operator-facing terms"
+                    !cause.contains(".rs"),
+                    "must read as an operator diagnostic, not a source-file reference"
                 );
-                assert!(
-                    !cause.contains("BackendStatus") && !cause.contains(".rs"),
-                    "must read as an operator diagnostic, not an internal type/module reference"
-                );
+            }
+            other => panic!("expected StepError::Action, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn read_last_connected_gateway_verbatim_error_passthrough() {
+        let data = FakeDataService::default()
+            .with_last_connected_gateway(|| Err("disk read failed".to_string()));
+        let action = DataRead::new(Arc::new(data));
+        let err = action
+            .execute(
+                json!({"source": "last_connected_gateway"}),
+                CancellationToken::new(),
+            )
+            .await
+            .expect_err("must surface");
+        match err {
+            StepError::Action { action, cause } => {
+                assert_eq!(action, "data.read");
+                assert_eq!(cause, "disk read failed");
             }
             other => panic!("expected StepError::Action, got {other:?}"),
         }

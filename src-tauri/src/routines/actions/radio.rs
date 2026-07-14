@@ -99,6 +99,30 @@
 //!
 //! Plan: `docs/superpowers/plans/2026-07-13-routines-02-actions-arbiter-mount.md`
 //! Task 4. Spec: `docs/superpowers/specs/2026-07-13-routines-design.md` §6, §9.
+//!
+//! ## RESOLVED (plan 2 Task 5c) — the ARDOP/VARA gateway-frequency gap above
+//!
+//! [`GatewayFrequencyResolver`] below IS the seam the recon above asked for:
+//! it reads `catalog::stations_cache::StationsCache::peek_by_mode` (a
+//! cache-only read added this task — never triggers a fetch), filters
+//! `Gateway.frequencies_khz` to the requested band's edges (the SAME
+//! `crate::mcp_ports::BANDS` table the station-finder's client-side BAND
+//! filter uses — reused, not duplicated), and returns every matching
+//! frequency in Hz. [`MonolithConnectService::connect_attempt`] now drives a
+//! REAL ARDOP or VARA dial (`modem_commands::modem_ardop_connect` +
+//! `modem_ardop_b2f_exchange`, or `vara::commands::vara_open_session` +
+//! `modem_vara_b2f_exchange`) over each resolved frequency in order,
+//! whichever ONE of ARDOP/VARA is configured (`cfg.modem_ardop`/
+//! `cfg.modem_vara`). Two honest gaps remain, both HARD errors naming the
+//! gap rather than a silent guess:
+//!
+//! - **No cached frequency data for the station/band** (cache empty, or no
+//!   gateway/frequency in range) — the routine author is told to run
+//!   `data.stationlist_update` first.
+//! - **Both ARDOP and VARA configured simultaneously** — `radio.connect` has
+//!   no way to know which HF modem the routine author intends for THIS
+//!   station; the error names the ambiguity rather than guessing (guessing
+//!   wrong would key/tune a live radio via the wrong modem program).
 
 use std::sync::Arc;
 
@@ -130,6 +154,136 @@ use super::{
 /// per-rig override) can reference/override it without duplicating the
 /// magic number.
 pub const CHANNEL_BUSY_RMS_THRESHOLD: f32 = 0.02;
+
+// ============================================================================
+// GatewayFrequencyResolver (plan 2 Task 5c) — see this module's "RESOLVED"
+// doc note above for the full recon/rationale.
+// ============================================================================
+
+/// Look up `label` (e.g. `"40m"`) in [`crate::mcp_ports::BANDS`] — the SAME
+/// inclusive-edge table the station-finder's client-side BAND filter uses —
+/// and return its `(lo_khz, hi_khz)` range. Case-insensitive (`"40M"`
+/// matches `"40m"`, mirroring `mcp_ports::any_freq_in_bands`). `None` for an
+/// unrecognized label.
+pub(crate) fn band_range(label: &str) -> Option<(f64, f64)> {
+    crate::mcp_ports::BANDS
+        .iter()
+        .find(|(_, _, l)| l.eq_ignore_ascii_case(label))
+        .map(|(lo, hi, _)| (*lo, *hi))
+}
+
+/// Honest failure from [`GatewayFrequencyResolver::resolve`] — no dial
+/// frequency could be resolved for `station`+`band`. Distinguishes "the
+/// cache has never been populated for this mode at all" (`cache_age_s:
+/// None`) from "the cache has data, but none of it matches this
+/// station/band" (`cache_age_s: Some`, the freshest matching listing's age)
+/// — both cases point the routine author at the same fix
+/// (`data.stationlist_update`), but the age tells them whether they need a
+/// first-ever fetch or a re-fetch of stale data.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct NoFrequencyError {
+    pub station: String,
+    pub band: String,
+    pub cache_age_s: Option<i64>,
+}
+
+impl NoFrequencyError {
+    /// Operator/routine-author-facing message — verbatim per Global
+    /// Constraints (never paraphrased downstream), names station/band/
+    /// cache-age exactly as plan 2 Task 5c's ledger requires.
+    pub fn message(&self) -> String {
+        match self.cache_age_s {
+            None => format!(
+                "radio.connect: no cached gateway-frequency data for station {} band {:?} — \
+                 run data.stationlist_update first",
+                self.station, self.band
+            ),
+            Some(age_s) => format!(
+                "radio.connect: no {} frequency found for gateway {} in the cached station \
+                 list (cache age {age_s}s) — the gateway may not operate on {}, or the cached \
+                 list is stale; re-run data.stationlist_update",
+                self.band, self.station, self.band
+            ),
+        }
+    }
+}
+
+/// Resolves `(station, band)` → candidate dial frequencies in Hz, reading
+/// ONLY `catalog::stations_cache::StationsCache`'s already-populated cache
+/// (`peek_by_mode` — never triggers a fetch; see this module's "RESOLVED"
+/// doc note above). `mode` picks which listing to search
+/// (`ListingMode::ArdopHf` vs `ListingMode::VaraHf`) — a gateway's ARDOP
+/// channel list and VARA channel list are DISTINCT listings, not a shared
+/// frequency set, so the caller (which already knows which HF modem is
+/// configured) must say which one it wants.
+pub(crate) struct GatewayFrequencyResolver {
+    cache: Arc<crate::catalog::stations_cache::StationsCache>,
+}
+
+impl GatewayFrequencyResolver {
+    pub fn new(cache: Arc<crate::catalog::stations_cache::StationsCache>) -> Self {
+        Self { cache }
+    }
+
+    /// `now_ms` is injected (not read internally) so this stays a pure,
+    /// deterministic function over `self.cache`'s current contents — the
+    /// same testability discipline `RadioArbiter::new`'s `now: fn() -> i64`
+    /// param and `data.rs`'s `SpaceWxWwv::now_ms` already establish in this
+    /// module family.
+    pub fn resolve(
+        &self,
+        mode: crate::catalog::stations::ListingMode,
+        station: &str,
+        band: &str,
+        now_ms: u64,
+    ) -> Result<Vec<u64>, NoFrequencyError> {
+        let listings = self.cache.peek_by_mode(mode);
+        let no_freq = || NoFrequencyError {
+            station: station.to_string(),
+            band: band.to_string(),
+            cache_age_s: None,
+        };
+        if listings.is_empty() {
+            return Err(no_freq());
+        }
+
+        let Some((lo, hi)) = band_range(band) else {
+            return Err(no_freq());
+        };
+
+        let mut freqs_hz: Vec<u64> = Vec::new();
+        let mut freshest_ms: Option<u64> = None;
+        for listing in &listings {
+            if let Some(f) = listing.fetched_at_ms {
+                freshest_ms = Some(freshest_ms.map_or(f, |cur| cur.max(f)));
+            }
+            for gateway in &listing.gateways {
+                if !gateway.callsign.eq_ignore_ascii_case(station) {
+                    continue;
+                }
+                for &khz in &gateway.frequencies_khz {
+                    if khz >= lo && khz <= hi {
+                        let hz = (khz * 1000.0).round() as u64;
+                        if !freqs_hz.contains(&hz) {
+                            freqs_hz.push(hz);
+                        }
+                    }
+                }
+            }
+        }
+
+        if freqs_hz.is_empty() {
+            let cache_age_s = freshest_ms.map(|f| (now_ms.saturating_sub(f) / 1000) as i64);
+            return Err(NoFrequencyError {
+                station: station.to_string(),
+                band: band.to_string(),
+                cache_age_s,
+            });
+        }
+
+        Ok(freqs_hz)
+    }
+}
 
 // ============================================================================
 // radio.connect
@@ -574,60 +728,196 @@ impl ConnectService for MonolithConnectService {
         // `packet_transport_from_config` itself reads below — if packet IS
         // configured, a supplied `band` is simply inert (packet's channel
         // is fixed by TNC config) and this falls through to the real dial.
-        // Only a genuinely HF-shaped attempt — a band was supplied AND
-        // packet is NOT the configured transport — hits the documented,
-        // honest gap: no gateway-frequency resolver exists yet to pick an
-        // ARDOP/VARA dial frequency from a band label (see this module's
-        // doc comment).
-        if cfg.packet.link.is_none() {
-            // Non-packet transport: BOTH shapes are the same unwired HF gap.
-            // With a band we can say so precisely; without one (packet-shaped
-            // params against an ARDOP/VARA station) the honest answer is
-            // still "HF dialing isn't wired", not the misleading "no KISS
-            // link configured" that falling through would produce.
-            return Err(match band {
-                Some(band) => format!(
-                    "radio.connect: no gateway-frequency resolver is wired for HF band \
-                     {band:?} yet (station {station}) — ARDOP/VARA dialing needs a real \
-                     per-gateway channel lookup Task 5's session wiring must supply; see \
-                     routines/actions/radio.rs's module doc for the exact gap"
-                ),
-                None => format!(
-                    "radio.connect: station {station} was given band-less (packet-shaped) \
-                     params but no packet KISS link is configured — and HF (ARDOP/VARA) \
-                     dialing is not wired yet (no gateway-frequency resolver); supply \
-                     bands once Task 5 closes that gap, or configure packet"
-                ),
-            });
+        if cfg.packet.link.is_some() {
+            let transport = crate::ui_commands::packet_transport_from_config(
+                &cfg,
+                station.to_string(),
+                Vec::new(),
+                crate::winlink::session::SessionIntent::Cms,
+            )
+            .map_err(|e| format!("{e:?}"))?;
+
+            return match backend.connect(transport, None).await {
+                Ok(session) => {
+                    // Packet is a transient dial-exchange-disconnect, same
+                    // shape as `cms_connect`/`packet_connect` — best-effort
+                    // close; a close failure doesn't undo the successful
+                    // exchange that already happened.
+                    let _ = backend.disconnect(session).await;
+                    Ok(ConnectOutcome {
+                        connected: true,
+                        gateway: Some(station.to_string()),
+                        error: None,
+                    })
+                }
+                Err(e) => Ok(ConnectOutcome {
+                    connected: false,
+                    gateway: None,
+                    error: Some(e.to_string()),
+                }),
+            };
         }
 
-        let transport = crate::ui_commands::packet_transport_from_config(
-            &cfg,
-            station.to_string(),
-            Vec::new(),
-            crate::winlink::session::SessionIntent::Cms,
-        )
-        .map_err(|e| format!("{e:?}"))?;
+        // Packet is NOT configured. A band-less attempt against a non-packet
+        // station has nothing to dial — HF (ARDOP/VARA) always needs a band
+        // to pick a channel.
+        let Some(band) = band else {
+            return Err(format!(
+                "radio.connect: station {station} was given band-less (packet-shaped) params \
+                 but no packet KISS link is configured; supply a band to dial ARDOP/VARA HF, \
+                 or configure packet"
+            ));
+        };
 
-        match backend.connect(transport, None).await {
-            Ok(session) => {
-                // Packet is a transient dial-exchange-disconnect, same
-                // shape as `cms_connect`/`packet_connect` — best-effort
-                // close; a close failure doesn't undo the successful
-                // exchange that already happened.
-                let _ = backend.disconnect(session).await;
-                Ok(ConnectOutcome {
-                    connected: true,
-                    gateway: Some(station.to_string()),
-                    error: None,
-                })
+        // Exactly ONE of ARDOP/VARA must be configured — `radio.connect` has
+        // no basis to guess between two configured HF modems (see this
+        // module's "RESOLVED" doc note above).
+        let (mode, dial_ardop) = match (cfg.modem_ardop.is_some(), cfg.modem_vara.is_some()) {
+            (true, false) => (crate::catalog::stations::ListingMode::ArdopHf, true),
+            (false, true) => (crate::catalog::stations::ListingMode::VaraHf, false),
+            (true, true) => {
+                return Err(format!(
+                    "radio.connect: both ARDOP and VARA are configured (station {station} band \
+                     {band:?}) — radio.connect cannot determine which HF modem to dial; \
+                     configure only one HF modem for automated routines, or dial this gateway \
+                     from the ARDOP/VARA panel directly"
+                ));
             }
-            Err(e) => Ok(ConnectOutcome {
-                connected: false,
-                gateway: None,
-                error: Some(e.to_string()),
-            }),
+            (false, false) => {
+                return Err(format!(
+                    "radio.connect: no packet KISS link, ARDOP, or VARA is configured — station \
+                     {station} band {band:?} has no transport to dial (Settings)"
+                ));
+            }
+        };
+
+        let cache = self
+            .app
+            .state::<Arc<crate::catalog::stations_cache::StationsCache>>();
+        let resolver = GatewayFrequencyResolver::new(cache.inner().clone());
+        let now_ms = super::data::system_now_ms();
+        let freqs_hz = resolver
+            .resolve(mode, station, band, now_ms)
+            .map_err(|e| e.message())?;
+
+        let mut last_error: Option<String> = None;
+        for freq_hz in freqs_hz {
+            let outcome = if dial_ardop {
+                self.ardop_connect_and_exchange(station, freq_hz).await
+            } else {
+                self.vara_connect_and_exchange(station, freq_hz).await
+            };
+            match outcome {
+                Ok(()) => {
+                    return Ok(ConnectOutcome {
+                        connected: true,
+                        gateway: Some(station.to_string()),
+                        error: None,
+                    });
+                }
+                Err(e) => last_error = Some(e),
+            }
         }
+
+        Ok(ConnectOutcome {
+            connected: false,
+            gateway: None,
+            error: last_error,
+        })
+    }
+}
+
+impl MonolithConnectService {
+    /// Real ARDOP HF dial + B2F exchange for ONE resolved `freq_hz`,
+    /// mirroring `mcp_ports.rs`'s `ardop_connect` + `ardop_b2f_exchange`
+    /// egress-port call shape exactly (the same two command functions, the
+    /// same `Arc<ModemSession>` state resolution). Always tears the modem
+    /// session down afterward (`modem_ardop_disconnect`, best-effort) —
+    /// `radio.connect` is a transient dial-exchange-disconnect per attempt
+    /// (this module's doc comment), so the NEXT resolved frequency (or the
+    /// next station/band combination) always starts from a clean, unheld
+    /// modem. A CONNECT-class failure never reaches the disconnect call
+    /// (the connect command has already reset/dropped the transport
+    /// internally on that path) — see `modem_commands.rs`'s
+    /// `modem_ardop_connect_post_consume_with_factory` doc.
+    async fn ardop_connect_and_exchange(&self, station: &str, freq_hz: u64) -> Result<(), String> {
+        let app = self.app.clone();
+        crate::modem_commands::modem_ardop_connect(
+            app.clone(),
+            app.state::<Arc<crate::modem_status::ModemSession>>(),
+            app.state::<Arc<crate::routines::arbiter::RadioArbiter>>(),
+            station.to_string(),
+            Some(freq_hz),
+            None,
+        )
+        .await?;
+
+        let exchange_result = crate::modem_commands::modem_ardop_b2f_exchange(
+            app.clone(),
+            app.state::<Arc<crate::modem_status::ModemSession>>(),
+            station.to_string(),
+            crate::winlink::session::SessionIntent::Cms,
+            crate::winlink::listener::transport::TransportKind::Ardop,
+        )
+        .await;
+
+        let _ = crate::modem_commands::modem_ardop_disconnect(
+            app.clone(),
+            app.state::<Arc<crate::modem_status::ModemSession>>(),
+            // plan 2 Task 5c fix round 2: listener-armed gate param.
+            app.state::<Arc<crate::ui_commands::ArdopListenState>>(),
+            app.state::<Arc<crate::routines::arbiter::RadioArbiter>>(),
+        )
+        .await;
+
+        exchange_result
+    }
+
+    /// Real VARA HF dial + B2F exchange for ONE resolved `freq_hz`, mirroring
+    /// `mcp_ports.rs`'s `vara_open_session` + `vara_b2f_exchange` egress-port
+    /// call shape. `TransportKind::VaraHf` (not `VaraFm`) — a Winlink
+    /// gateway B2F dial, not a peer/digipeater channel. Always closes the
+    /// session afterward (`vara_close_session`, best-effort) — same
+    /// transient-per-attempt rationale as the ARDOP path above.
+    async fn vara_connect_and_exchange(&self, station: &str, freq_hz: u64) -> Result<(), String> {
+        use crate::winlink::listener::transport::TransportKind;
+        use crate::winlink::modem::vara::VaraSession;
+        use crate::winlink::session::SessionIntent;
+
+        let app = self.app.clone();
+        crate::winlink::modem::vara::commands::vara_open_session(
+            app.clone(),
+            app.state::<Arc<VaraSession>>(),
+            app.state::<Arc<crate::session_log::SessionLogState>>(),
+            app.state::<Arc<crate::ui_commands::VaraListenState>>(),
+            app.state::<Arc<crate::routines::arbiter::RadioArbiter>>(),
+            SessionIntent::Cms,
+            TransportKind::VaraHf,
+        )
+        .await?;
+
+        let exchange_result = crate::winlink::modem::vara::commands::modem_vara_b2f_exchange(
+            app.clone(),
+            app.state::<Arc<crate::session_log::SessionLogState>>(),
+            app.state::<Arc<VaraSession>>(),
+            station.to_string(),
+            SessionIntent::Cms,
+            TransportKind::VaraHf,
+            Some(freq_hz),
+            None,
+            None,
+        )
+        .await;
+
+        let _ = crate::winlink::modem::vara::commands::vara_close_session(
+            app.clone(),
+            app.state::<Arc<VaraSession>>(),
+            app.state::<Arc<crate::session_log::SessionLogState>>(),
+            app.state::<Arc<crate::ui_commands::VaraListenState>>(),
+            app.state::<Arc<crate::routines::arbiter::RadioArbiter>>(),
+        );
+
+        exchange_result
     }
 }
 
@@ -1473,6 +1763,207 @@ mod tests {
             .unwrap();
         assert_eq!(*observed.lock().unwrap(), Some(true));
         assert!(arb.status(rig).is_none(), "lease released after send");
+    }
+
+    // ======================================================================
+    // GatewayFrequencyResolver (plan 2 Task 5c)
+    // ======================================================================
+
+    use crate::catalog::stations::{Gateway, ListingMode, StationListing};
+    use crate::catalog::stations_cache::StationsCache;
+
+    fn gateway(callsign: &str, freqs_khz: &[f64]) -> Gateway {
+        Gateway {
+            channel: format!("{callsign}.WINLINK"),
+            callsign: callsign.to_string(),
+            sysop_name: None,
+            grid: None,
+            location: None,
+            frequencies_khz: freqs_khz.to_vec(),
+            last_update: None,
+            email: None,
+            homepage: None,
+            antenna: None,
+        }
+    }
+
+    /// Builds a cache whose ONE stored entry's `fetched_at_ms` is exactly
+    /// `fetched_at_ms` — `StationsCache::insert` always re-stamps from its
+    /// clock, so the clock itself is fixed to that value (not passed
+    /// through as a plain struct field, which `insert` would silently
+    /// overwrite).
+    fn cache_with(mode: ListingMode, gateways: Vec<Gateway>, fetched_at_ms: u64) -> Arc<StationsCache> {
+        let cache = Arc::new(StationsCache::new(
+            u64::MAX,
+            0,
+            Arc::new(FixedClock(fetched_at_ms)),
+        ));
+        let listing = StationListing {
+            mode,
+            title: None,
+            gateways,
+            raw: "test".to_string(),
+            parsed_ok: true,
+            fetched_at_ms: None,
+        };
+        cache.insert(
+            crate::catalog::stations_cache::CacheKey {
+                mode,
+                service_codes: "PUBLIC".to_string(),
+                history_hours: 168,
+            },
+            listing,
+        );
+        cache
+    }
+
+    struct FixedClock(u64);
+    impl crate::catalog::stations_cache::Clock for FixedClock {
+        fn now_millis(&self) -> u64 {
+            self.0
+        }
+    }
+
+    #[test]
+    fn band_range_known_labels_case_insensitive() {
+        assert_eq!(band_range("40m"), Some((7000.0, 7300.0)));
+        assert_eq!(band_range("40M"), Some((7000.0, 7300.0)));
+        assert_eq!(band_range("20m"), Some((14000.0, 14350.0)));
+    }
+
+    #[test]
+    fn band_range_unknown_label_is_none() {
+        assert_eq!(band_range("6m"), None);
+        assert_eq!(band_range("not-a-band"), None);
+    }
+
+    #[test]
+    fn resolve_filters_frequencies_to_the_requested_band() {
+        // Two gateways, only one of which has a frequency actually inside
+        // 40m; the other's frequencies are 80m/20m and must be excluded.
+        let cache = cache_with(
+            ListingMode::ArdopHf,
+            vec![
+                gateway("W7DEF-10", &[3589.0, 7101.6, 14096.4]),
+                gateway("K7ABC-10", &[3600.0, 21050.0]),
+            ],
+            1_000,
+        );
+        let resolver = GatewayFrequencyResolver::new(cache);
+        let freqs = resolver
+            .resolve(ListingMode::ArdopHf, "W7DEF-10", "40m", 2_000)
+            .expect("must resolve — 7101.6 kHz is in 40m");
+        assert_eq!(freqs, vec![7_101_600]);
+    }
+
+    #[test]
+    fn resolve_matches_callsign_case_insensitively() {
+        let cache = cache_with(
+            ListingMode::VaraHf,
+            vec![gateway("w7def-10", &[7101.6])],
+            0,
+        );
+        let resolver = GatewayFrequencyResolver::new(cache);
+        let freqs = resolver
+            .resolve(ListingMode::VaraHf, "W7DEF-10", "40m", 0)
+            .unwrap();
+        assert_eq!(freqs, vec![7_101_600]);
+    }
+
+    #[test]
+    fn resolve_dedupes_identical_frequencies() {
+        let cache = cache_with(
+            ListingMode::ArdopHf,
+            vec![gateway("W7DEF-10", &[7101.6, 7101.6])],
+            0,
+        );
+        let resolver = GatewayFrequencyResolver::new(cache);
+        let freqs = resolver
+            .resolve(ListingMode::ArdopHf, "W7DEF-10", "40m", 0)
+            .unwrap();
+        assert_eq!(freqs, vec![7_101_600]);
+    }
+
+    #[test]
+    fn resolve_no_frequency_error_names_station_band_and_cache_age_when_cache_has_data() {
+        let cache = cache_with(
+            ListingMode::ArdopHf,
+            // W7DEF-10 exists in the cache, but has no 40m frequency.
+            vec![gateway("W7DEF-10", &[14096.4])],
+            1_000,
+        );
+        let resolver = GatewayFrequencyResolver::new(cache);
+        let err = resolver
+            .resolve(ListingMode::ArdopHf, "W7DEF-10", "40m", 1_000 + 30_000)
+            .expect_err("no matching frequency must error");
+        assert_eq!(err.station, "W7DEF-10");
+        assert_eq!(err.band, "40m");
+        assert_eq!(err.cache_age_s, Some(30));
+        let msg = err.message();
+        assert!(msg.contains("W7DEF-10"));
+        assert!(msg.contains("40m"));
+        assert!(msg.contains("30s"));
+        assert!(msg.contains("data.stationlist_update"));
+    }
+
+    #[test]
+    fn resolve_no_frequency_error_when_station_not_in_cache_at_all() {
+        let cache = cache_with(
+            ListingMode::ArdopHf,
+            vec![gateway("K7ABC-10", &[7101.6])],
+            0,
+        );
+        let resolver = GatewayFrequencyResolver::new(cache);
+        let err = resolver
+            .resolve(ListingMode::ArdopHf, "W7DEF-10", "40m", 0)
+            .expect_err("station not present must error");
+        assert_eq!(err.station, "W7DEF-10");
+        assert_eq!(
+            err.cache_age_s,
+            Some(0),
+            "cache has SOME data for the mode (freshest listing tracked), just not this station"
+        );
+    }
+
+    #[test]
+    fn resolve_empty_cache_reports_no_cache_age() {
+        let cache = Arc::new(StationsCache::new(u64::MAX, 0, Arc::new(FixedClock(0))));
+        let resolver = GatewayFrequencyResolver::new(cache);
+        let err = resolver
+            .resolve(ListingMode::ArdopHf, "W7DEF-10", "40m", 0)
+            .expect_err("empty cache must error");
+        assert_eq!(err.cache_age_s, None, "no entry at all — never fetched");
+        assert!(err.message().contains("run data.stationlist_update"));
+    }
+
+    #[test]
+    fn resolve_unrecognized_band_label_is_a_no_frequency_error() {
+        let cache = cache_with(
+            ListingMode::ArdopHf,
+            vec![gateway("W7DEF-10", &[7101.6])],
+            0,
+        );
+        let resolver = GatewayFrequencyResolver::new(cache);
+        let err = resolver
+            .resolve(ListingMode::ArdopHf, "W7DEF-10", "not-a-band", 0)
+            .expect_err("unrecognized band label must error, not panic");
+        assert_eq!(err.band, "not-a-band");
+    }
+
+    #[test]
+    fn resolve_wrong_mode_finds_nothing_even_with_matching_station_in_another_mode() {
+        // ARDOP and VARA channel lists are DISTINCT listings — a station
+        // cached under VaraHf must not satisfy an ArdopHf resolve.
+        let cache = cache_with(
+            ListingMode::VaraHf,
+            vec![gateway("W7DEF-10", &[7101.6])],
+            0,
+        );
+        let resolver = GatewayFrequencyResolver::new(cache);
+        let err = resolver
+            .resolve(ListingMode::ArdopHf, "W7DEF-10", "40m", 0)
+            .expect_err("wrong mode must not find the VARA-cached entry");
+        assert_eq!(err.cache_age_s, None);
     }
 
     // ======================================================================

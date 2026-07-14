@@ -374,6 +374,25 @@ pub struct ModemSession {
     /// reconnects (a fresh connect would otherwise spawn a second poller while
     /// the first is still draining its final read/sleep).
     rig_poll_handle: Mutex<Option<std::thread::JoinHandle<()>>>,
+    /// The `RadioArbiter` `Interactive`-hold `seq` currently registered on
+    /// behalf of THIS session's ARDOP occupancy, if any (plan 2 Task 5c
+    /// fix round — H1/M1). Written by whichever of `modem_ardop_connect` /
+    /// `ardop_open_session` / `ardop_listen` first acquires the hold for a
+    /// given open (see `modem_commands::acquire_or_reuse_interactive_for_ardop`,
+    /// the single write path — it peeks this field first so a chained
+    /// auto-arm inside the SAME open call reuses the hold instead of
+    /// evicting-and-reinstalling its own hold under a fresh seq). Read +
+    /// cleared (`take`) by whichever teardown command runs first —
+    /// `modem_ardop_disconnect` (the real, frontend-reachable teardown for
+    /// BOTH a `modem_ardop_connect` dial and an `ardop_listen` self-spawn,
+    /// since both install into this same `ModemSession`) or
+    /// `ardop_close_session` (wired for parity even though no current
+    /// frontend call site reaches it).
+    ///
+    /// Decoupled from `inner`'s mutex — same rationale as
+    /// [`close_generation`](Self::close_generation): a lock-free read/write
+    /// here never contends with a status poll holding `inner`.
+    interactive_seq: Mutex<Option<u64>>,
 }
 
 impl std::fmt::Debug for ModemSession {
@@ -519,7 +538,34 @@ impl ModemSession {
             transport_return_rx: Mutex::new(Some(return_rx)),
             rig_poll_stop: Arc::new(AtomicBool::new(false)),
             rig_poll_handle: Mutex::new(None),
+            interactive_seq: Mutex::new(None),
         }
+    }
+
+    /// Peek the currently-registered interactive-hold seq for this
+    /// session's ARDOP occupancy, if any. Non-destructive — used to decide
+    /// whether a chained acquire (e.g. an `ardop_open_session` auto-arm
+    /// calling into `ardop_listen_inner`) should reuse the existing hold
+    /// instead of acquiring a fresh one. See [`Self::interactive_seq`]
+    /// field doc for the full lifecycle.
+    pub fn interactive_seq(&self) -> Option<u64> {
+        *self.interactive_seq.lock().unwrap()
+    }
+
+    /// Register the interactive-hold seq for this session's ARDOP
+    /// occupancy. Called once per fresh acquire (never called when reusing
+    /// an existing hold — see [`Self::interactive_seq`]).
+    pub fn set_interactive_seq(&self, seq: u64) {
+        *self.interactive_seq.lock().unwrap() = Some(seq);
+    }
+
+    /// Take (read + clear) the registered interactive-hold seq. The
+    /// teardown chokepoint (`modem_ardop_disconnect` / `ardop_close_session`)
+    /// calls this exactly once per open; a SECOND teardown call (e.g. a
+    /// belt-and-suspenders release from a caller that already ran) finds
+    /// `None` and correctly no-ops rather than double-releasing.
+    pub fn take_interactive_seq(&self) -> Option<u64> {
+        self.interactive_seq.lock().unwrap().take()
     }
 
     pub fn status_snapshot(&self) -> ModemStatus {
