@@ -918,9 +918,17 @@ mod quit_gate_tests {
     /// test double. Needs a multi-thread test runtime (see the test below)
     /// so blocking one worker thread does not also wedge the test's own
     /// polling.
+    /// Blocks its worker thread until the test drops (or sends on) the
+    /// paired `release` sender — NOT a timed sleep. A wall-clock block would
+    /// make "the run is still live when the drain times out" a scheduling
+    /// race on a contended CI runner (the 2026-07-14 amd64 flake: a 500ms
+    /// block left only ~350ms of margin past the 150ms drain bound, and the
+    /// runner blew it). Parking on a channel makes the wedge deterministic;
+    /// a panicking test unwedges it too, because unwinding drops the sender
+    /// and `recv()` returns immediately.
     struct WedgedBlockingAction {
         name: &'static str,
-        block_for: Duration,
+        release: std::sync::Mutex<Option<std::sync::mpsc::Receiver<()>>>,
     }
 
     #[async_trait]
@@ -939,7 +947,10 @@ mod quit_gate_tests {
             _params: serde_json::Value,
             _cancel: CancellationToken,
         ) -> Result<serde_json::Value, StepError> {
-            std::thread::sleep(self.block_for);
+            let parked = self.release.lock().unwrap().take();
+            if let Some(rx) = parked {
+                let _ = rx.recv();
+            }
             Ok(serde_json::json!({}))
         }
     }
@@ -1148,9 +1159,12 @@ mod quit_gate_tests {
         let app = tauri::test::mock_app();
         let app_handle = app.handle().clone();
 
+        // Held until after the assertions below — the action stays parked
+        // (and the run stays live) however slowly CI schedules the drain.
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
         let (state, _dir) = test_state(Arc::new(WedgedBlockingAction {
             name: "local.wedged",
-            block_for: Duration::from_millis(500),
+            release: std::sync::Mutex::new(Some(release_rx)),
         }));
         app.manage(Arc::clone(&state));
 
@@ -1168,9 +1182,10 @@ mod quit_gate_tests {
             move |_h| {
                 let _ = exit_tx.send(state_for_exit.live_run_count());
             },
-            // Short bound (NOT the real 5s ROUTINES_QUIT_DRAIN_TIMEOUT, and
-            // well short of the action's 500ms block) so this test proves
-            // the timeout path without waiting out the real bound.
+            // Short bound (NOT the real 5s ROUTINES_QUIT_DRAIN_TIMEOUT) so
+            // this test proves the timeout path without waiting out the
+            // real bound; the action cannot finish regardless — it is
+            // parked on `release_rx` until this test lets it go.
             Duration::from_millis(150),
         );
 
@@ -1179,9 +1194,9 @@ mod quit_gate_tests {
             .expect("on_exit did not fire within 3s — the timeout did not bound the wait")
             .expect("on_exit sender dropped without sending");
 
-        // The action is still mid-`std::thread::sleep` at this point (150ms
-        // drain bound < 500ms block) — the run is still live, proving this
-        // genuinely hit the timeout branch rather than a lucky fast drain.
+        // The action is still parked on the release channel at this point —
+        // the run is still live, proving this genuinely hit the timeout
+        // branch rather than a lucky fast drain.
         assert_eq!(
             live_at_exit, 1,
             "on_exit fired while the run was still live — the timeout must not silently wait forever"
@@ -1197,6 +1212,11 @@ mod quit_gate_tests {
             logged,
             "a timed-out drain must warn naming that runs failed to reach terminus"
         );
+
+        // Unwedge the parked worker so the abandoned run reaches a terminal
+        // state instead of squatting on a global-runtime thread for the rest
+        // of the test binary's life.
+        drop(release_tx);
     }
 
     #[test]
