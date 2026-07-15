@@ -11,45 +11,28 @@
  * no per-routine ordinal on the wire — the list shows the real (short) run id
  * instead, newest-first by start time.
  *
- * ---- ganttModel: what the journal ACTUALLY carries (read before editing) ----
+ * ---- ganttModel: what the journal carries (read before editing) ----
  *
- * `RunEvent::StateChanged` (journal.rs:49-51) is `{ state: RunState }` ONLY —
- * no step id, no track, no rig, no delay length. This is true for EVERY
- * parked state (`waiting`, `awaiting_consent`, `awaiting_radio`), not just
- * the arbiter-refusal case the brief calls out explicitly. Two consequences
- * this module works around rather than fabricating data to paper over:
+ * `RunEvent::StateChanged` (journal.rs) is `{ state, step?, rig? }`:
+ * `step`/`rig` are additive optional fields (tuxlink-xvd1i) an enriched
+ * engine populates — the transmit step whose consent park begins/ends, the
+ * delay control step whose wait begins/ends, and (parked states only) the
+ * step's verbatim "rig" param. Journals written BEFORE the enrichment carry
+ * neither field, and this module must render those exactly as it always has,
+ * so BOTH paths below are load-bearing:
  *
- * 1. `Control::Delay` (executor.rs:450-475) journals ONLY
- *    `StateChanged{Waiting}` before the sleep and `StateChanged{Running}`
- *    after — no `StepIntent` at all for the delay itself (unlike
- *    `Control::Call`, which does journal an intent). There is no step id to
- *    hang a delay bar off of.
- * 2. An attended-mode consent park (`awaiting_consent`) most plausibly
- *    happens BEFORE the retried step's own `StepIntent` is written (intent-
- *    before-effect means intent logs right before invoking, and the consent
- *    gate blocks the invoke) — so at the moment parking begins there is
- *    typically no OPEN intent to attribute it to either.
+ * 1. Exact path: a parked `state_changed` naming a `step` attributes the
+ *    parked interval to that step's lane directly (control steps have ids
+ *    and appear in the snapshot's tracks, so a delay bar lands on the delay
+ *    step's own lane). `radioAwaitRig` likewise returns the `rig` named on
+ *    the parked entry when present.
  *
- * `closeParkedWindow()` below handles both cases with ONE mechanism: when a
- * parked state begins, snapshot whichever step intents are currently OPEN
- * (unresolved). If any are open, attribute the parked interval to each of
- * those steps' lanes (the step that's mid-invocation when it discovers it
- * needs the radio, say). If none are open (the common case for a bare delay,
- * and the common case for a pre-intent consent gate), attribute it instead to
- * the lane of the most recently CLOSED step — the last thing that actually
- * ran, which is the best-effort "where we are" anchor the journal supports.
- * If neither exists (parking at the very start of a run, before any step has
- * even opened), the interval is dropped rather than invented a lane for it.
- *
- * The same "no step id on state_changed" gap is why the arbiter-refusal
- * banner (binding constraint 7) can't read a `rig` field off the
- * `state_changed` entry directly — there isn't one. `radioAwaitRig()` below
- * instead reads the real `rig` param off the journal's most recent
- * `step_intent.resolved_params` (the actual per-step field a radio action
- * reads to target a lease, `actions/mod.rs:462-468`'s `rig_id_from_params`,
- * defaulting to `"default"` exactly as the Rust side does) — verbatim journal
- * data, just sourced from the adjacent `step_intent` rather than a
- * nonexistent field on `state_changed` itself.
+ * 2. Legacy fallback (pre-enrichment journals): `closeParkedWindow()`'s
+ *    original mechanism, verbatim — attribute to whichever step intents were
+ *    OPEN when parking began; if none, to the most recently CLOSED step; if
+ *    neither, drop the interval rather than invent a lane. `radioAwaitRig`
+ *    falls back to the `rig` param off the most recent `step_intent`
+ *    (`actions/mod.rs`'s `rig_id_from_params`, defaulting `"default"`).
  *
  * A third open-intent case — separate from the parked windows above — is a
  * `step_intent` with no `step_ok`/`step_err` AT ALL by the end of the
@@ -174,7 +157,12 @@ export function ganttModel(entries: JournalEntry[], now: number = Math.floor(Dat
 
   const openByStep = new Map<string, JournalEntry>();
   let lastClosed: { stepId: string; ts: number } | null = null;
-  let parked: { state: RunState; ts: number; openSnapshot: Map<string, JournalEntry> } | null = null;
+  let parked: {
+    state: RunState;
+    ts: number;
+    openSnapshot: Map<string, JournalEntry>;
+    exactStep?: string;
+  } | null = null;
 
   const pushBar = (bar: GanttBar, stepId: string | undefined) => {
     const idx = stepId !== undefined ? stepToTrack.get(stepId) : undefined;
@@ -183,9 +171,20 @@ export function ganttModel(entries: JournalEntry[], now: number = Math.floor(Dat
 
   const closeParked = (ts: number) => {
     if (!parked) return;
-    const { state, ts: t0, openSnapshot } = parked;
+    const { state, ts: t0, openSnapshot, exactStep } = parked;
     const kind: GanttBar['kind'] = state === 'waiting' ? 'delay' : 'consent';
-    if (openSnapshot.size > 0) {
+    if (exactStep !== undefined) {
+      // Enriched journal (tuxlink-xvd1i): the state_changed entry names the
+      // step itself — exact attribution, no heuristic. The intent entry is
+      // attached when the parked step has an open intent (a consent park);
+      // a bare delay control step has none.
+      const intentEntry = openSnapshot.get(exactStep);
+      const fields = intentEntry ? stepIntentFields(intentEntry.event) : null;
+      pushBar(
+        { kind, parkedState: state, stepId: exactStep, action: fields?.action, t0, t1: ts, intentEntry },
+        exactStep,
+      );
+    } else if (openSnapshot.size > 0) {
       for (const [stepId, intentEntry] of openSnapshot) {
         const fields = stepIntentFields(intentEntry.event);
         pushBar(
@@ -230,7 +229,7 @@ export function ganttModel(entries: JournalEntry[], now: number = Math.floor(Dat
       }
       case 'state_changed':
         if (ev.state === 'waiting' || ev.state === 'awaiting_consent' || ev.state === 'awaiting_radio') {
-          parked = { state: ev.state, ts: entry.ts_unix, openSnapshot: new Map(openByStep) };
+          parked = { state: ev.state, ts: entry.ts_unix, openSnapshot: new Map(openByStep), exactStep: ev.step };
         } else if (parked) {
           closeParked(entry.ts_unix);
         }
@@ -273,14 +272,18 @@ export function ganttModel(entries: JournalEntry[], now: number = Math.floor(Dat
   return { lanes, t0, t1, live };
 }
 
-/** The rig a currently-parked `awaiting_radio` state pertains to. The
- *  journal's `state_changed` entry carries no `rig` field (module doc) — this
- *  reads the real `rig` param off the most recent `step_intent`, mirroring
- *  the Rust side's own default (`actions/mod.rs`'s `rig_id_from_params`,
- *  `DEFAULT_RIG_ID = "default"`). */
+/** The rig a currently-parked `awaiting_radio` state pertains to. An enriched
+ *  journal (tuxlink-xvd1i) names it on the `state_changed` entry itself —
+ *  that wins. Legacy journals carry no `rig` field there, so the pre-existing
+ *  fallback remains: the `rig` param off the most recent `step_intent`,
+ *  mirroring the Rust side's own default (`actions/mod.rs`'s
+ *  `rig_id_from_params`, `DEFAULT_RIG_ID = "default"`). */
 export function radioAwaitRig(entries: JournalEntry[]): string {
   for (let i = entries.length - 1; i >= 0; i--) {
     const ev = entries[i]!.event;
+    if (ev.type === 'state_changed' && typeof ev.rig === 'string') {
+      return ev.rig;
+    }
     if (ev.type === 'step_intent') {
       const params = ev.resolved_params;
       if (params && typeof params === 'object' && typeof (params as { rig?: unknown }).rig === 'string') {

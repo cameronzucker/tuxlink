@@ -48,6 +48,23 @@ pub enum RunEvent {
     },
     StateChanged {
         state: RunState,
+        /// The step this transition pertains to, when the emitter has one in
+        /// scope: the transmit step whose consent park begins/ends, the delay
+        /// control step whose wait begins/ends. Additive (`#[serde(default)]`,
+        /// same pattern as `RunStarted::dry_run`) — journals written before
+        /// this field parse as `None`, and `None` serializes to the legacy
+        /// shape (no key). The run monitor prefers this over its
+        /// adjacent-step-intent heuristic (RunsTab.tsx `ganttModel`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        step: Option<StepId>,
+        /// The verbatim `"rig"` string param of the step, populated only on
+        /// parked-state entries (`AwaitingConsent` now; `AwaitingRadio` when
+        /// an emitter exists) and only when the resolved params carry one.
+        /// The engine crate has no rig semantics — no defaulting here; the
+        /// frontend supplies the `"default"` display fallback, mirroring the
+        /// app layer's `rig_id_from_params`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rig: Option<String>,
     },
     /// Written BEFORE the action executes (intent-before-effect).
     StepIntent {
@@ -325,6 +342,8 @@ mod tests {
         let mut w = JournalWriter::create(dir.path(), "run-0003", fixed_now).unwrap();
         w.append(RunEvent::StateChanged {
             state: RunState::AwaitingRadio,
+            step: None,
+            rig: None,
         })
         .unwrap();
         let raw = std::fs::read_to_string(w.path()).unwrap();
@@ -423,5 +442,77 @@ mod tests {
         let entries = read_journal(&dir.path().join("run-resume.jsonl")).unwrap();
         let seqs: Vec<u64> = entries.iter().map(|e| e.seq).collect();
         assert_eq!(seqs, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn state_changed_without_context_fields_parses_as_none() {
+        // A pre-enrichment journal line, byte-for-byte: parsing it is the
+        // back-compat contract for every .jsonl already on disk.
+        let legacy = r#"{"ts_unix":1752400000,"run_id":"run-1","seq":0,"event":{"type":"state_changed","state":"waiting"}}"#;
+        let entry: JournalEntry = serde_json::from_str(legacy).unwrap();
+        match &entry.event {
+            RunEvent::StateChanged { state, step, rig } => {
+                assert_eq!(*state, RunState::Waiting);
+                assert!(step.is_none());
+                assert!(rig.is_none());
+            }
+            other => panic!("expected StateChanged, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn state_changed_none_fields_serialize_to_legacy_shape() {
+        // skip_serializing_if keeps the None-shape byte-identical to the
+        // legacy wire format — an enriched build writing un-enriched entries
+        // produces journals older readers have always seen.
+        let event = RunEvent::StateChanged {
+            state: RunState::Waiting,
+            step: None,
+            rig: None,
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({"type": "state_changed", "state": "waiting"})
+        );
+    }
+
+    #[test]
+    fn state_changed_context_fields_round_trip() {
+        let event = RunEvent::StateChanged {
+            state: RunState::AwaitingConsent,
+            step: Some(StepId("s2".into())),
+            rig: Some("g90".into()),
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        // StepId is a serde newtype: it rides the wire as a bare string,
+        // matching step_intent's existing "step" field shape.
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "type": "state_changed",
+                "state": "awaiting_consent",
+                "step": "s2",
+                "rig": "g90"
+            })
+        );
+        let back: RunEvent = serde_json::from_value(json).unwrap();
+        assert_eq!(back, event);
+    }
+
+    #[test]
+    fn state_changed_tolerates_unknown_future_fields() {
+        // Pins the absence of deny_unknown_fields: an OLD build reading a
+        // journal written by a NEWER build (with fields this build doesn't
+        // know) must not fail the parse.
+        let future = r#"{"type":"state_changed","state":"waiting","step":"d1","some_future_field":42}"#;
+        let event: RunEvent = serde_json::from_str(future).unwrap();
+        match event {
+            RunEvent::StateChanged { state, step, .. } => {
+                assert_eq!(state, RunState::Waiting);
+                assert_eq!(step, Some(StepId("d1".into())));
+            }
+            other => panic!("expected StateChanged, got {other:?}"),
+        }
     }
 }
