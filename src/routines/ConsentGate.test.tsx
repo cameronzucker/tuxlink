@@ -23,6 +23,16 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: mockListen }));
 
 import { ConsentGate, type ParkedRun } from './ConsentGate';
 
+// Raw stylesheet for the z-index pin (mirrors MenuBar.test.tsx's proven
+// import.meta.glob '?raw' pattern — jsdom applies no real stacking, so the
+// occlusion invariant is pinned at the stylesheet source, not computed style).
+const CONSENT_CSS_MODULES = import.meta.glob('./ConsentGate.css', {
+  eager: true,
+  query: '?raw',
+  import: 'default',
+}) as Record<string, string>;
+const consentCss = CONSENT_CSS_MODULES['./ConsentGate.css'];
+
 const RUN_ID = 'run-12';
 const STEP_ID = 's4';
 const ROUTINE = 'Net-opening checklist';
@@ -235,6 +245,49 @@ describe('ConsentGate — (e) launch recovery', () => {
     await act(async () => {});
     expect(screen.queryByTestId('consent-gate-modal')).not.toBeInTheDocument();
   });
+
+  // Reviewer fix 3: a parked run whose journal carries NO step_intent must
+  // still surface (cannot hide) — step rendered as unknown, Confirm disabled
+  // (granting needs a real stepId), Cancel run still available.
+  it('parks a run with no step_intent in the journal: modal shows, Confirm disabled, Cancel enabled', async () => {
+    const NO_INTENT_RUN = 'run-no-intent';
+    runsListResult = [
+      { runId: NO_INTENT_RUN, routine: 'Journal-less routine', dryRun: false, startedUnix: 1000, state: 'awaiting_consent', finishedUnix: null },
+    ];
+    mockInvoke.mockImplementation((cmd?: string, args?: Record<string, unknown>) => {
+      if (cmd === undefined) return Promise.resolve();
+      if (cmd === 'routines_runs_list') return Promise.resolve(runsListResult);
+      if (cmd === 'routines_run_status') {
+        return Promise.resolve(
+          args?.runId === NO_INTENT_RUN
+            ? { runId: NO_INTENT_RUN, routine: 'Journal-less routine', dryRun: false, state: 'awaiting_consent' }
+            : null,
+        );
+      }
+      // Journal with no step_intent entry at all.
+      if (cmd === 'routines_journal') {
+        return Promise.resolve([
+          { ts_unix: 1000, run_id: NO_INTENT_RUN, seq: 1, event: { type: 'state_changed', state: 'awaiting_consent' } },
+        ]);
+      }
+      if (cmd === 'routines_cancel') return Promise.resolve(true);
+      return Promise.resolve([]);
+    });
+
+    render(<ConsentGate />);
+    expect(await screen.findByTestId('consent-gate-modal')).toBeInTheDocument();
+    expect(screen.getByTestId('consent-gate-routine')).toHaveTextContent('Journal-less routine');
+    expect(screen.getByTestId('consent-gate-run-step')).toHaveTextContent('step unknown — see run journal');
+    expect(screen.getByTestId('consent-gate-confirm')).toBeDisabled();
+    expect(screen.getByTestId('consent-gate-cancel')).not.toBeDisabled();
+
+    // Cancel run remains a working exit.
+    screen.getByTestId('consent-gate-cancel').click();
+    await waitFor(() => {
+      expect(screen.queryByTestId('consent-gate-modal')).not.toBeInTheDocument();
+    });
+    expect(callsFor('routines_cancel').at(-1)?.[1]).toEqual({ runId: NO_INTENT_RUN });
+  });
 });
 
 describe('ConsentGate — multiple parked runs', () => {
@@ -310,5 +363,46 @@ describe('ConsentGate — live duration + reconciliation poll', () => {
 
     await vi.advanceTimersByTimeAsync(5000);
     expect(screen.queryByTestId('consent-gate-modal')).not.toBeInTheDocument();
+  });
+
+  // Reviewer fix 2: a poll tick resolving null is UNKNOWN, not "gone" — the
+  // park is retained and retried next tick; only an explicit
+  // non-awaiting_consent state removes it (asserted by the test above).
+  it('a poll tick resolving null keeps the park (unknown ≠ gone)', async () => {
+    vi.useFakeTimers();
+    render(<ConsentGate />);
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByTestId('consent-gate-modal')).toBeInTheDocument();
+
+    // runStatus now answers null for the parked run (registry rotation /
+    // read racing a backend restart) — the run may still be parked.
+    mockInvoke.mockImplementation((cmd?: string) => {
+      if (cmd === undefined) return Promise.resolve();
+      if (cmd === 'routines_runs_list') return Promise.resolve(runsListResult);
+      if (cmd === 'routines_run_status') return Promise.resolve(null);
+      if (cmd === 'routines_journal') return Promise.resolve(JOURNAL_FIXTURE);
+      return Promise.resolve([]);
+    });
+
+    // Several poll ticks — the park must survive every null read.
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(screen.getByTestId('consent-gate-modal')).toBeInTheDocument();
+  });
+});
+
+// Reviewer fix 1 (CRITICAL): the consent overlay must render ABOVE every
+// other fixed layer — the inset:0 overlay panels (SettingsPanel /
+// StationFinderPanel / RequestCenter / InboundSelectionPanel, all z-1000)
+// and the guided-tour HintOverlay stack (1200-1202). jsdom computes no real
+// stacking contexts, so the invariant is pinned at the stylesheet source
+// (the same technique MenuBar.test.tsx uses for its dropdown z-order pin).
+describe('ConsentGate — cannot hide (z-order pin)', () => {
+  it('the overlay z-index beats the z-1000 panels and the 1200-1202 hint stack', () => {
+    const match = consentCss.match(/\.tux-consent-overlay\s*\{[^}]*z-index:\s*(\d+)/);
+    expect(match).not.toBeNull();
+    const overlayZ = Number(match![1]);
+    expect(overlayZ).toBeGreaterThan(1000); // SettingsPanel & friends
+    expect(overlayZ).toBeGreaterThan(1202); // HintOverlay stack ceiling
   });
 });

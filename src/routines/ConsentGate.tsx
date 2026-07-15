@@ -39,12 +39,19 @@ import './ConsentGate.css';
 /** A single run parked awaiting operator transmit consent. */
 export interface ParkedRun {
   runId: string;
+  /** `''` (UNKNOWN_STEP_ID) when launch recovery found the run parked but its
+   *  journal carried no `step_intent` to name the step — the park still
+   *  surfaces (spec §12: cannot hide), with Confirm disabled (granting
+   *  consent needs a real stepId) and Cancel run available. */
   stepId: string;
   routine: string;
   /** `Date.now()` at the moment THIS UI instance learned of the park — used
    *  only for the live "parked HH:MM:SS" readout, not persisted anywhere. */
   parkedAtMs: number;
 }
+
+/** Sentinel for a launch-recovered park whose journal named no step. */
+export const UNKNOWN_STEP_ID = '';
 
 export interface UseParkedRunsResult {
   /** Oldest-first — the modal always shows `parked[0]`. */
@@ -74,17 +81,19 @@ function sortByParkedAt(list: ParkedRun[]): ParkedRun[] {
  * event fired hours ago, to nobody. Its journal's last `step_intent` names the
  * step that hasn't reached `step_ok`/`step_err`: the engine parks BEFORE
  * executing the transmit, so no completion entry ever follows the parked
- * step's intent while the run sits in this state. Returns `null` if no
- * `step_intent` is found (defensive — the modal simply won't recover that run
- * rather than throwing).
+ * step's intent while the run sits in this state. Returns `UNKNOWN_STEP_ID`
+ * (`''`) if no `step_intent` is found — the run is still parked and MUST
+ * still surface (spec §12: a cannot-hide surface never silently drops a live
+ * park); the modal renders the step as unknown, disables Confirm (granting
+ * needs a real stepId), and leaves Cancel run available.
  */
-async function recoverParkedStepId(runId: string): Promise<string | null> {
+async function recoverParkedStepId(runId: string): Promise<string> {
   const entries = await runJournal(runId);
   for (let i = entries.length - 1; i >= 0; i--) {
     const ev = entries[i].event;
     if (ev.type === 'step_intent') return ev.step;
   }
-  return null;
+  return UNKNOWN_STEP_ID;
 }
 
 export function useParkedRuns(): UseParkedRunsResult {
@@ -133,7 +142,7 @@ export function useParkedRuns(): UseParkedRunsResult {
           if (disposed) return;
           try {
             const stepId = await recoverParkedStepId(r.runId);
-            if (disposed || !mountedRef.current || !stepId) continue;
+            if (disposed || !mountedRef.current) continue;
             setParked((cur) => {
               if (cur.some((p) => p.runId === r.runId)) return cur;
               return sortByParkedAt([
@@ -193,7 +202,13 @@ export function useParkedRuns(): UseParkedRunsResult {
           try {
             const status = await runStatus(p.runId);
             if (!mountedRef.current) return;
-            if (!status || status.state !== 'awaiting_consent') removeRun(p.runId);
+            // A resolved `null` is UNKNOWN, not "gone" — a registry rotation
+            // or a read racing a backend restart can answer null for a run
+            // that is still parked. Dropping the park on null would HIDE a
+            // live consent moment (spec §12: cannot hide). Remove only on an
+            // explicit non-awaiting_consent state; null keeps the park and
+            // retries next tick.
+            if (status && status.state !== 'awaiting_consent') removeRun(p.runId);
           } catch {
             // Transient read failure — leave the entry parked, retry next tick.
           }
@@ -258,7 +273,9 @@ export function ConsentGate({ onParkedChange }: ConsentGateProps) {
   // journal's `step_intent` entry — never invent a message-staging readout
   // the backend doesn't expose (task-14 brief binding constraint 4).
   useEffect(() => {
-    if (!oldest) {
+    if (!oldest || oldest.stepId === UNKNOWN_STEP_ID) {
+      // No step to look up: either nothing is parked, or launch recovery
+      // found no `step_intent` in the journal (the unknown-step park).
       setStepIntent(null);
       return;
     }
@@ -292,6 +309,11 @@ export function ConsentGate({ onParkedChange }: ConsentGateProps) {
   if (!oldest) return null;
 
   const total = parked.length;
+  // Launch recovery couldn't name the parked step (no step_intent in the
+  // journal). The park still shows — cannot hide — but consent can't be
+  // granted without a real stepId, so Confirm is disabled with a plain
+  // explanation; Cancel run stays available.
+  const stepUnknown = oldest.stepId === UNKNOWN_STEP_ID;
 
   // `.catch(() => {})` guards against an unhandled rejection if the backend
   // call itself throws (as opposed to `confirm`'s `false` return, which is
@@ -340,7 +362,8 @@ export function ConsentGate({ onParkedChange }: ConsentGateProps) {
               </span>
               <br />
               <span className="tux-consent-dim" data-testid="consent-gate-run-step">
-                run {oldest.runId} · step {oldest.stepId}
+                run {oldest.runId} ·{' '}
+                {stepUnknown ? 'step unknown — see run journal' : `step ${oldest.stepId}`}
                 {stepIntent ? ` — ${stepIntent.action}` : ''}
               </span>
             </span>
@@ -367,8 +390,9 @@ export function ConsentGate({ onParkedChange }: ConsentGateProps) {
             </div>
           )}
           <div className="tux-consent-p97">
-            Confirm keys the radio now. Cancel ends run {oldest.runId} as cancelled
-            (journaled: cancelled by operator).
+            {stepUnknown
+              ? `The run journal names no transmit step for this park, so consent cannot be granted from here. Cancel ends run ${oldest.runId} as cancelled (journaled: cancelled by operator).`
+              : `Confirm keys the radio now. Cancel ends run ${oldest.runId} as cancelled (journaled: cancelled by operator).`}
           </div>
         </div>
         <div className="tux-consent-foot">
@@ -376,7 +400,8 @@ export function ConsentGate({ onParkedChange }: ConsentGateProps) {
             type="button"
             className="tux-consent-btn-confirm"
             data-testid="consent-gate-confirm"
-            disabled={busy}
+            disabled={busy || stepUnknown}
+            title={stepUnknown ? 'The parked step is unknown — consent cannot be granted; cancel the run instead' : undefined}
             onClick={onConfirm}
           >
             Confirm transmit

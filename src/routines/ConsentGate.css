@@ -11,7 +11,14 @@
   position: fixed;
   inset: 0;
   background: rgba(5, 9, 12, 0.62);
-  z-index: 500;
+  /* Spec §12: consent CANNOT hide — this must beat every other fixed layer:
+   * the inset:0 overlay panels (SettingsPanel / StationFinderPanel /
+   * RequestCenter / InboundSelectionPanel, all z-index 1000) and the
+   * guided-tour HintOverlay stack (1200–1202). An awaitingConsent fired while
+   * Settings is open must render the modal ON TOP, not occluded behind an
+   * inset:0 panel that also covers the menubar/statusbar badges. Pinned by a
+   * stylesheet test in ConsentGate.test.tsx. */
+  z-index: 1300;
   display: flex;
   align-items: center;
   justify-content: center;
