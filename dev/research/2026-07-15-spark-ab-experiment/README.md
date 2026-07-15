@@ -78,3 +78,13 @@ SPARK_API_KEY=dummy codex exec --skip-git-repo-check \
   merges — diff captured for eval, then disposed per ADR 0009; a draft PR may
   exist solely to run CI and is closed unmerged).
 - Shared base SHA (both arms): `e28f67db732c368d94a54b430871e911a1b701aa`.
+
+## Operator directives recorded mid-experiment
+
+- 2026-07-15 (after arm B attempt 1 failed on the Codex↔vLLM tool-protocol
+  seam): follow-up experiments should attempt optimization with a
+  **custom-built worker harness** — the same thesis as Elmer, which achieves
+  good results from smaller local models precisely because its harness is
+  purpose-built for them — rather than adapting Codex CLI, whose tool
+  surface and prompting are tuned for GPT-5.5-class models. Goes in
+  `report.md` §transferability/recommendations.
