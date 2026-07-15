@@ -257,6 +257,16 @@
   color: var(--text-faint);
   cursor: default;
 }
+.bar.running {
+  background: rgba(107, 184, 238, 0.12);
+  border-color: rgba(107, 184, 238, 0.6);
+  color: var(--info);
+}
+.bar.interrupted {
+  background: repeating-linear-gradient(45deg, rgba(245, 159, 60, 0.18) 0 6px, transparent 6px 12px);
+  border: 1px dashed var(--accent);
+  color: var(--accent-2);
+}
 .nowline {
   position: absolute;
   top: -4px;

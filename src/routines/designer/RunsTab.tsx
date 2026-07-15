@@ -50,6 +50,17 @@
  * defaulting to `"default"` exactly as the Rust side does) — verbatim journal
  * data, just sourced from the adjacent `step_intent` rather than a
  * nonexistent field on `state_changed` itself.
+ *
+ * A third open-intent case — separate from the parked windows above — is a
+ * `step_intent` with no `step_ok`/`step_err` AT ALL by the end of the
+ * journal: on a live run this is the step currently executing; on a
+ * terminated run it's the step the process died inside of (the interrupted
+ * scan appends only a terminal `RunFinished`, never a synthetic `StepErr` —
+ * journal.rs's `scan_interrupted`). `ganttModel` flushes every such intent
+ * as an open-ended bar after the entry walk: kind `running` (to the
+ * now-line) while live, kind `interrupted` (to the journal's last entry)
+ * otherwise — without this flush the very step under investigation on a
+ * crashed run would render no bar and vanish from the monitor.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
@@ -88,7 +99,12 @@ const POLL_MS = 2000;
 // ============================================================================
 
 export interface GanttBar {
-  kind: 'ok' | 'fail' | 'delay' | 'consent';
+  /** `running`: a `step_intent` with no `step_ok`/`step_err` yet on a LIVE
+   *  run — the currently-executing step, drawn open-ended to the now-line.
+   *  `interrupted`: the same unclosed intent on a run that reached a terminal
+   *  journal state anyway (crash-mid-step / interrupted recovery) — usually
+   *  the exact step under investigation, drawn to the journal's last entry. */
+  kind: 'ok' | 'fail' | 'delay' | 'consent' | 'running' | 'interrupted';
   /** The verbatim `RunState` for a parked bar (`delay`/`consent`) — one of
    *  `'waiting' | 'awaiting_consent' | 'awaiting_radio'`. Absent for ok/fail. */
   parkedState?: RunState;
@@ -232,6 +248,27 @@ export function ganttModel(entries: JournalEntry[], now: number = Math.floor(Dat
   const t0 = started.ts_unix;
   const lastEntryTs = entries.reduce((max, e) => Math.max(max, e.ts_unix), t0);
   const t1 = live ? Math.max(lastEntryTs, now) : lastEntryTs;
+
+  // Flush every still-open step_intent as an OPEN-ENDED bar: on a live run
+  // it's the currently-executing step (drawn to the now-line); on a
+  // terminated run it's a step the process died inside of (interrupted
+  // recovery) — usually the exact step under investigation — drawn to the
+  // journal's last entry. Without this, an in-progress or crashed-mid-step
+  // step produces NO bar at all and simply vanishes from the monitor.
+  for (const [stepId, intentEntry] of openByStep) {
+    const fields = stepIntentFields(intentEntry.event);
+    pushBar(
+      {
+        kind: live ? 'running' : 'interrupted',
+        stepId,
+        action: fields?.action,
+        t0: intentEntry.ts_unix,
+        t1,
+        intentEntry,
+      },
+      stepId,
+    );
+  }
 
   return { lanes, t0, t1, live };
 }
@@ -500,7 +537,14 @@ export function RunsTab({ routine, highlightRunId }: RunsTabProps) {
               key={r.runId}
               className={`runrow${r.runId === selectedRunId ? ' sel' : ''}`}
               data-testid={`runrow-${r.runId}`}
-              onClick={() => setSelectedRunId(r.runId)}
+              onClick={() => {
+                // Clear the step-detail selection in the SAME event as the
+                // run change — the effect keyed on selectedRunId also clears
+                // it, but one frame later, which paints a stale detail card
+                // for the outgoing run against the incoming run's header.
+                setSelectedRunId(r.runId);
+                setSelectedBar(null);
+              }}
               role="button"
               tabIndex={0}
             >
@@ -624,7 +668,11 @@ export function RunsTab({ routine, highlightRunId }: RunsTabProps) {
                       ? '✕ FAILED'
                       : selectedBar.kind === 'ok'
                         ? '✓ OK'
-                        : `⏸ ${formatRunState(selectedBar.parkedState ?? 'waiting').toUpperCase()}`}
+                        : selectedBar.kind === 'running'
+                          ? '▶ RUNNING'
+                          : selectedBar.kind === 'interrupted'
+                            ? '⚡ INTERRUPTED'
+                            : `⏸ ${formatRunState(selectedBar.parkedState ?? 'waiting').toUpperCase()}`}
                   </span>
                   <span className="act mono">
                     {selectedBar.stepId} {selectedBar.action}
@@ -652,12 +700,25 @@ export function RunsTab({ routine, highlightRunId }: RunsTabProps) {
                       {JSON.stringify(selectedBar.resultEntry.event.output)}
                     </div>
                   )}
-                  {!selectedBar.resultEntry && (
-                    <div className="dim" data-testid="stepdetail-parked">
-                      parked {formatUtc(selectedBar.t0)}
-                      {model.live ? ' — still parked' : ` — ${formatUtc(selectedBar.t1)}`}
+                  {!selectedBar.resultEntry && selectedBar.kind === 'running' && (
+                    <div className="dim" data-testid="stepdetail-running">
+                      started {formatUtc(selectedBar.t0)} — still running, no result journaled yet
                     </div>
                   )}
+                  {!selectedBar.resultEntry && selectedBar.kind === 'interrupted' && (
+                    <div className="dim" data-testid="stepdetail-interrupted">
+                      started {formatUtc(selectedBar.t0)} — never closed: the run ended before this
+                      step journaled a result
+                    </div>
+                  )}
+                  {!selectedBar.resultEntry &&
+                    selectedBar.kind !== 'running' &&
+                    selectedBar.kind !== 'interrupted' && (
+                      <div className="dim" data-testid="stepdetail-parked">
+                        parked {formatUtc(selectedBar.t0)}
+                        {model.live ? ' — still parked' : ` — ${formatUtc(selectedBar.t1)}`}
+                      </div>
+                    )}
                 </div>
               </div>
             )}

@@ -190,6 +190,39 @@ describe('ganttModel (a)', () => {
     expect(model.live).toBe(true);
     expect(model.t1).toBe(T + 1000);
   });
+
+  it('renders a still-open step_intent on a LIVE run as an open-ended running bar to the now-line', () => {
+    const liveJournal = FIXTURE_JOURNAL.slice(0, 4); // s1 closed ok, s2 intent open, run still live
+    const model = ganttModel(liveJournal, T + 1000);
+    const bars = model.lanes[0]!.bars;
+    const running = bars.find((b) => b.kind === 'running');
+    expect(running).toMatchObject({ stepId: 's2', action: 'radio.connect', t0: T + 3, t1: T + 1000 });
+    expect(running!.resultEntry).toBeUndefined();
+    // The closed s1 pair is unchanged alongside it.
+    expect(bars.find((b) => b.kind === 'ok')).toMatchObject({ stepId: 's1' });
+  });
+
+  it('renders an unclosed step_intent on an INTERRUPTED run as a visible interrupted bar ending at the last journal entry', () => {
+    const interruptedJournal: JournalEntry[] = [
+      FIXTURE_JOURNAL[0]!, // run_started at T
+      FIXTURE_JOURNAL[1]!, // s1 intent at T+1
+      FIXTURE_JOURNAL[2]!, // s1 ok at T+2
+      FIXTURE_JOURNAL[3]!, // s2 intent at T+3 — never closed; the process died mid-step
+      {
+        ts_unix: T + 50,
+        run_id: 'run-1',
+        seq: 4,
+        event: { type: 'run_finished', state: 'interrupted', reason: 'recovered at launch' },
+      },
+    ];
+    const model = ganttModel(interruptedJournal, T + 9999);
+    expect(model.live).toBe(false);
+    const bars = model.lanes[0]!.bars;
+    const interrupted = bars.find((b) => b.kind === 'interrupted');
+    expect(interrupted).toMatchObject({ stepId: 's2', action: 'radio.connect', t0: T + 3, t1: T + 50 });
+    expect(interrupted!.resultEntry).toBeUndefined();
+    expect(bars.find((b) => b.kind === 'ok')).toMatchObject({ stepId: 's1' });
+  });
 });
 
 describe('radioAwaitRig', () => {
