@@ -347,8 +347,15 @@ function badgeFor(entry: RunListEntry): StateBadge {
   return STATE_BADGE[entry.state];
 }
 
+/** Compact run-id label. Backend ids are `run-<unixsecs>-<NNNN>`
+ * (executor.rs's `format!("run-{}-{n:04}", now)`), so the first characters
+ * are IDENTICAL for every run started within the same ~11-day window — the
+ * head-slice this shipped with rendered every rail row and the detail header
+ * as the same `run-176845…` label (tuxlink-3awm9 WebKitGTK smoke). Keep the
+ * TAIL: the timestamp's low digits + the per-second counter are the
+ * discriminating part. */
 function shortRunId(runId: string): string {
-  return runId.length > 10 ? runId.slice(0, 10) : runId;
+  return runId.length > 10 ? `…${runId.slice(-9)}` : runId;
 }
 
 // ============================================================================

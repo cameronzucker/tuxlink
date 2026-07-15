@@ -65,6 +65,12 @@ export interface UseRoutinesResult {
    *  without any hardcoded action-name list. Fetched once per refresh, not
    *  per routine. */
   actionsByName: Record<string, ActionInfo>;
+  /** True once the FIRST refresh has settled (success or failure). Until
+   *  then `summaries` is only its initial `[]` — an empty-library UI keyed
+   *  on `summaries.length` alone would falsely tell an operator with saved
+   *  routines that the library is empty while the initial list + per-routine
+   *  validate/get fan-out is still in flight (Codex P2, tuxlink-3awm9). */
+  loaded: boolean;
   /** Force an immediate, generation-gated re-read. */
   refresh(): Promise<void>;
 }
@@ -77,6 +83,7 @@ export function useRoutines(): UseRoutinesResult {
   const [fleetFindings, setFleetFindings] = useState<Finding[]>([]);
   const [defsByRoutine, setDefsByRoutine] = useState<Record<string, RoutineDef>>({});
   const [actionsByName, setActionsByName] = useState<Record<string, ActionInfo>>({});
+  const [loaded, setLoaded] = useState(false);
 
   const mountedRef = useRef(true);
   const generationRef = useRef(0);
@@ -108,6 +115,10 @@ export function useRoutines(): UseRoutinesResult {
       // No Tauri runtime (test/dev harness) or a command failed — leave the
       // last-known state in place rather than clearing it out from under the
       // operator.
+    } finally {
+      // First refresh has settled either way; a superseded generation means
+      // a NEWER refresh is in flight, and that one will flip the flag.
+      if (mountedRef.current && gen === generationRef.current) setLoaded(true);
     }
   }, []);
 
@@ -173,6 +184,7 @@ export function useRoutines(): UseRoutinesResult {
     fleetFindings,
     defsByRoutine,
     actionsByName,
+    loaded,
     refresh,
   };
 }

@@ -9,7 +9,7 @@
 //   ?grid=CN87uo      6-char grid (reproduces the gridToLatLon null gap)
 //   ?grid=            no grid ("Location not set")
 //   ?view=home|browse|grib|ribbon
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import '../../src/App.css';
@@ -57,6 +57,15 @@ import { LiveBandStrip } from '../../src/ft8ui/LiveBandStrip';
 import { Ft8SetupSurface } from '../../src/ft8ui/Ft8SetupSurface';
 import { Ft8ListenerProvider } from '../../src/ft8ui/useFt8Listener';
 import { StationFinderPanel } from '../../src/catalog/StationFinderPanel';
+// Routines operator UI (tuxlink-3awm9): the post-PR-#1118 WebKitGTK smoke.
+// RoutinesSurface is the inline full-pane view-switch AppShell mounts in
+// place of the mailbox panes; ConsentGate is the always-mounted Part 97
+// consent modal. Both are driven here purely off canned runs_list/journal
+// reads — ConsentGate's own launch-recovery path builds its parks from
+// those, so no Tauri event synthesis is needed.
+import { RoutinesSurface } from '../../src/routines/RoutinesSurface';
+import type { RoutinesView, DesignerTab } from '../../src/routines/RoutinesSurface';
+import { ConsentGate } from '../../src/routines/ConsentGate';
 import { ContactsPanel } from '../../src/contacts/ContactsPanel';
 // Onboarding first-run tour fixtures (tuxlink-10bkw Task 7): the REAL
 // HintProvider/HintOverlay/OfferCard mounted over a fake-but-realistic shell
@@ -87,7 +96,7 @@ const view = (params.get('view') ?? 'home') as
   | 'home' | 'browse' | 'grib' | 'ribbon'
   | 'radio-ardop' | 'radio-vara' | 'radio-telnet'
   | 'elmer' | 'sparkline' | 'ft8' | 'finder'
-  | 'contacts' | 'favorites' | 'onboarding';
+  | 'contacts' | 'favorites' | 'onboarding' | 'routines';
 // ?running=1 drives a connected modem / open VARA transport so the running-state
 // footers render: ARDOP/VARA `Send/Receive` (primary) + the red `Stop`
 // (`radio-panel-btn-bad`) button. Without it the fixture pins state to STOPPED, so
@@ -251,8 +260,16 @@ const capturedEventHandlers = new Map<string, (event: { payload: unknown }) => v
         resolve(0);
         return;
       }
-      if (cmd in RESPONSES) setTimeout(() => resolve(RESPONSES[cmd]), 0);
-      else reject(new Error(`harness: no canned response for '${cmd}'`));
+      if (cmd in RESPONSES) {
+        // A function value is an args-aware fixture (routines_get by name,
+        // routines_journal by runId, …) — call it; anything else is the
+        // canned literal, unchanged behavior for every existing view.
+        const canned = RESPONSES[cmd];
+        setTimeout(
+          () => resolve(typeof canned === 'function' ? (canned as (a?: Record<string, unknown>) => unknown)(args) : canned),
+          0,
+        );
+      } else reject(new Error(`harness: no canned response for '${cmd}'`));
     }),
   transformCallback: (cb: unknown) => cb,
 };
@@ -976,6 +993,300 @@ function OnboardingFixtureView() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// view=routines — the plan-5 operator UI (tuxlink-3awm9 WebKitGTK smoke).
+// PR #1118 shipped the whole surface having only ever rendered in
+// vitest/jsdom; this fixture mounts the REAL RoutinesSurface (dashboard +
+// designer canvas/palette/inspector/runs/settings) and the REAL ConsentGate
+// in the production engine, in AppShell's exact frame (ribbon row above,
+// surface in the 1fr panes row — same explicit grid-row pinning as
+// view=onboarding, and same reason).
+//
+//   ?view=routines                                  → dashboard, populated
+//   ?view=routines&empty=1                          → dashboard, empty library
+//   ?view=routines&rview=designer&routine=<name>
+//        &rtab=design|runs|settings                 → designer on <name>
+//   ?view=routines&rview=designer&routine=          → fresh unsaved draft
+//   ?view=routines&consent=1                        → ConsentGate modal over
+//        the dashboard, TWO parks (the "1 of N" pip), recovered from the
+//        canned runs_list/journal exactly like a cold launch would.
+//
+// Wire casing per routinesApi.ts's header table: RoutineDef/Track/Step/
+// Trigger/Finding/JournalEntry as-written snake_case; RoutineSummary/
+// ScheduleStatus/NextFire/RunListEntry/RunStatus/ActionInfo/RadioPreset/
+// StationSet camelCase; RunEvent tags snake_case.
+// ---------------------------------------------------------------------------
+if (view === 'routines') {
+  const nowS = Math.floor(Date.now() / 1000);
+  const emptyLibrary = params.get('empty') === '1';
+  const consentMode = params.get('consent') === '1';
+
+  // --- Definitions (snake_case; the export format IS the storage format) ---
+  const DEF_MORNING = {
+    routine: 'Morning Winlink Check',
+    schema_version: 1,
+    transmit_mode: 'attended',
+    on_interrupted: 'resume',
+    triggers: [
+      { type: 'schedule', every: '30m', align: 'hour', window: '07:00-09:00', if_missed: 'run_once_on_launch' },
+    ],
+    tracks: [
+      {
+        name: 'main',
+        steps: [
+          { id: 's1', action: 'rig.apply_preset', params: { preset: '@preset:40m-vara' }, timeout_s: 30 },
+          { id: 's2', action: 'radio.connect', params: { target: 'N0DAJ', freq_hz: 7103500 }, timeout_s: 180, on_radio_busy: 'wait' },
+          { id: 's3', action: 'local.notify', params: { message: 'Morning check complete' } },
+        ],
+      },
+    ],
+  };
+  const DEF_BEACON = {
+    routine: 'APRS Position Beacon',
+    schema_version: 1,
+    transmit_mode: 'automatic',
+    transmit_ack: { by: 'N7CPZ', at: '2026-07-10T16:20:00Z' },
+    triggers: [{ type: 'schedule', every: '15m', align: null, window: null, if_missed: 'skip' }],
+    tracks: [
+      {
+        name: 'main',
+        steps: [{ id: 'b1', action: 'radio.aprs_send', params: { comment: 'Tuxlink routine beacon' }, timeout_s: 60 }],
+      },
+    ],
+  };
+  // The control-flow showcase: branch arms, a retry, a delay, an end — the
+  // canvas's hardest render (task-10/11's review rounds were all here).
+  const DEF_PREAMBLE = {
+    routine: 'Net Preamble',
+    schema_version: 1,
+    transmit_mode: 'attended',
+    inputs: [{ name: 'net_name', required: true }],
+    triggers: [{ type: 'manual' }],
+    tracks: [
+      {
+        name: 'main',
+        steps: [
+          { id: 'p1', action: 'local.compose', params: { template: 'preamble' } },
+          { id: 'p2', control: 'branch', on: 'connected', then: ['p3'], else: ['p4', 'p5'] },
+          { id: 'p3', action: 'radio.connect', params: { target: 'W7RMS' }, timeout_s: 120 },
+          { id: 'p4', control: 'retry', step: 'p3', attempts: 3, backoff_s: 30 },
+          { id: 'p5', control: 'delay', delay: '2m' },
+          { id: 'p6', control: 'end', failed: false },
+        ],
+      },
+    ],
+  };
+  const DEFS: Record<string, unknown> = {
+    'Morning Winlink Check': DEF_MORNING,
+    'APRS Position Beacon': DEF_BEACON,
+    'Net Preamble': DEF_PREAMBLE,
+  };
+
+  const SUMMARIES = emptyLibrary
+    ? []
+    : [
+        { routine: 'Morning Winlink Check', transmitMode: 'attended', enabled: true, triggers: DEF_MORNING.triggers },
+        { routine: 'APRS Position Beacon', transmitMode: 'automatic', enabled: true, triggers: DEF_BEACON.triggers },
+        { routine: 'Net Preamble', transmitMode: 'attended', enabled: false, triggers: DEF_PREAMBLE.triggers },
+      ];
+
+  const FINDINGS_BY_ROUTINE: Record<string, unknown[]> = {
+    'Morning Winlink Check': [],
+    'APRS Position Beacon': [],
+    'Net Preamble': [
+      {
+        code: 'unreachable_step',
+        severity: 'warning',
+        routine: 'Net Preamble',
+        track: 'main',
+        step: 'p5',
+        message: 'Step p5 is reachable only through the else arm; the 2m delay may exceed the manual-run window',
+      },
+    ],
+  };
+
+  // --- Runs. One awaiting_consent park is ALWAYS present (the dashboard's
+  //     live rail + badge render it); consent=1 adds a second park so the
+  //     modal's "1 of N" pip renders. Newest terminal run of the beacon is a
+  //     FAILURE so the dashboard's failure-cause line (journal-fetched,
+  //     cached) renders too. ---
+  const RUNS = [
+    { runId: 'run-1768456705-0007', routine: 'Morning Winlink Check', dryRun: false, startedUnix: nowS - 95, state: 'awaiting_consent', finishedUnix: null },
+    ...(consentMode
+      ? [{ runId: 'run-1768456770-0008', routine: 'Net Preamble', dryRun: false, startedUnix: nowS - 30, state: 'awaiting_consent', finishedUnix: null }]
+      : []),
+    { runId: 'run-1768456780-0009', routine: 'Net Preamble', dryRun: true, startedUnix: nowS - 20, state: 'running', finishedUnix: null },
+    { runId: 'run-1768453200-0003', routine: 'Morning Winlink Check', dryRun: false, startedUnix: nowS - 3600, state: 'completed', finishedUnix: nowS - 3540 },
+    { runId: 'run-1768449600-0001', routine: 'APRS Position Beacon', dryRun: false, startedUnix: nowS - 7200, state: 'completed', finishedUnix: nowS - 7180 },
+    { runId: 'run-1768455900-0006', routine: 'APRS Position Beacon', dryRun: false, startedUnix: nowS - 900, state: 'failed', finishedUnix: nowS - 880 },
+    { runId: 'run-1768370400-0002', routine: 'Net Preamble', dryRun: false, startedUnix: nowS - 86400, state: 'cancelled', finishedUnix: nowS - 86300 },
+  ].filter((r) => !emptyLibrary);
+
+  const j = (runId: string, seq: number, agoS: number, event: unknown) => ({
+    ts_unix: nowS - agoS,
+    run_id: runId,
+    seq,
+    event,
+  });
+  const JOURNALS: Record<string, unknown[]> = {
+    'run-1768456705-0007': [
+      j('run-1768456705-0007', 0, 95, { type: 'run_started', routine: 'Morning Winlink Check', snapshot: DEF_MORNING, dry_run: false }),
+      j('run-1768456705-0007', 1, 95, { type: 'state_changed', state: 'running' }),
+      j('run-1768456705-0007', 2, 94, { type: 'step_intent', step: 's1', action: 'rig.apply_preset', resolved_params: { preset: '40m-vara' } }),
+      j('run-1768456705-0007', 3, 92, { type: 'step_ok', step: 's1', output: { applied: true } }),
+      j('run-1768456705-0007', 4, 91, { type: 'step_intent', step: 's2', action: 'radio.connect', resolved_params: { target: 'N0DAJ', freq_hz: 7103500 } }),
+      j('run-1768456705-0007', 5, 90, { type: 'state_changed', state: 'awaiting_consent' }),
+    ],
+    'run-1768456770-0008': [
+      j('run-1768456770-0008', 0, 30, { type: 'run_started', routine: 'Net Preamble', snapshot: DEF_PREAMBLE, dry_run: false }),
+      j('run-1768456770-0008', 1, 30, { type: 'state_changed', state: 'running' }),
+      j('run-1768456770-0008', 2, 29, { type: 'step_intent', step: 'p3', action: 'radio.connect', resolved_params: { target: 'W7RMS' } }),
+      j('run-1768456770-0008', 3, 28, { type: 'state_changed', state: 'awaiting_consent' }),
+    ],
+    'run-1768456780-0009': [
+      j('run-1768456780-0009', 0, 20, { type: 'run_started', routine: 'Net Preamble', snapshot: DEF_PREAMBLE, dry_run: true }),
+      j('run-1768456780-0009', 1, 20, { type: 'state_changed', state: 'running' }),
+      j('run-1768456780-0009', 2, 19, { type: 'step_intent', step: 'p1', action: 'local.compose', resolved_params: { template: 'preamble' } }),
+      j('run-1768456780-0009', 3, 18, { type: 'step_ok', step: 'p1', output: null }),
+    ],
+    'run-1768453200-0003': [
+      j('run-1768453200-0003', 0, 3600, { type: 'run_started', routine: 'Morning Winlink Check', snapshot: DEF_MORNING, dry_run: false }),
+      j('run-1768453200-0003', 1, 3598, { type: 'step_intent', step: 's1', action: 'rig.apply_preset', resolved_params: { preset: '40m-vara' } }),
+      j('run-1768453200-0003', 2, 3595, { type: 'step_ok', step: 's1', output: { applied: true } }),
+      j('run-1768453200-0003', 3, 3590, { type: 'step_intent', step: 's2', action: 'radio.connect', resolved_params: { target: 'N0DAJ' } }),
+      j('run-1768453200-0003', 4, 3560, { type: 'step_ok', step: 's2', output: { connected: true } }),
+      j('run-1768453200-0003', 5, 3540, { type: 'run_finished', state: 'completed', reason: null }),
+    ],
+    'run-1768449600-0001': [
+      j('run-1768449600-0001', 0, 7200, { type: 'run_started', routine: 'APRS Position Beacon', snapshot: DEF_BEACON, dry_run: false }),
+      j('run-1768449600-0001', 1, 7185, { type: 'step_ok', step: 'b1', output: null }),
+      j('run-1768449600-0001', 2, 7180, { type: 'run_finished', state: 'completed', reason: null }),
+    ],
+    'run-1768455900-0006': [
+      j('run-1768455900-0006', 0, 900, { type: 'run_started', routine: 'APRS Position Beacon', snapshot: DEF_BEACON, dry_run: false }),
+      j('run-1768455900-0006', 1, 899, { type: 'step_intent', step: 'b1', action: 'radio.aprs_send', resolved_params: { comment: 'Tuxlink routine beacon' } }),
+      j('run-1768455900-0006', 2, 885, {
+        type: 'step_err',
+        step: 'b1',
+        error: { kind: 'action', detail: { action: 'radio.aprs_send', cause: 'PTT keying failed: rig not responding on /dev/ttyUSB0' } },
+      }),
+      j('run-1768455900-0006', 3, 880, { type: 'run_finished', state: 'failed', reason: 'step b1 failed' }),
+    ],
+    'run-1768370400-0002': [
+      j('run-1768370400-0002', 0, 86400, { type: 'run_started', routine: 'Net Preamble', snapshot: DEF_PREAMBLE, dry_run: false }),
+      j('run-1768370400-0002', 1, 86310, { type: 'state_changed', state: 'cancelled' }),
+      j('run-1768370400-0002', 2, 86300, { type: 'run_finished', state: 'cancelled', reason: 'operator cancelled' }),
+    ],
+  };
+
+  // The real registry's 17 actions (src-tauri/src/routines/actions/*.rs),
+  // flags per each module's descriptor intent: radio.* transmit (listen is
+  // RX-only), rig.* need the radio but never key it, data.* fetch over the
+  // internet, local.* are inert.
+  const ACTIONS = [
+    { name: 'local.log', needsRadio: false, transmits: false, needsInternet: false },
+    { name: 'local.notify', needsRadio: false, transmits: false, needsInternet: false },
+    { name: 'local.compose', needsRadio: false, transmits: false, needsInternet: false },
+    { name: 'local.compose_catalog_request', needsRadio: false, transmits: false, needsInternet: false },
+    { name: 'local.set_identity', needsRadio: false, transmits: false, needsInternet: false },
+    { name: 'data.read', needsRadio: false, transmits: false, needsInternet: false },
+    { name: 'data.spacewx_swpc', needsRadio: false, transmits: false, needsInternet: true },
+    { name: 'data.spacewx_wwv', needsRadio: true, transmits: false, needsInternet: false },
+    { name: 'data.stationlist_update', needsRadio: false, transmits: false, needsInternet: true },
+    { name: 'radio.connect', needsRadio: true, transmits: true, needsInternet: false },
+    { name: 'radio.listen', needsRadio: true, transmits: false, needsInternet: false },
+    { name: 'radio.aprs_send', needsRadio: true, transmits: true, needsInternet: false },
+    { name: 'rig.apply_preset', needsRadio: true, transmits: false, needsInternet: false },
+    { name: 'rig.read_state', needsRadio: true, transmits: false, needsInternet: false },
+    { name: 'rig.switch_vfo', needsRadio: true, transmits: false, needsInternet: false },
+    { name: 'rig.tune_atu', needsRadio: true, transmits: true, needsInternet: false },
+    { name: 'rig.validate_preset', needsRadio: false, transmits: false, needsInternet: false },
+  ];
+
+  RESPONSES.routines_list = SUMMARIES;
+  RESPONSES.routines_get = (args?: Record<string, unknown>) => DEFS[String(args?.name)] ?? DEF_MORNING;
+  RESPONSES.routines_validate = (args?: Record<string, unknown>) => FINDINGS_BY_ROUTINE[String(args?.name)] ?? [];
+  RESPONSES.routines_validate_draft = [];
+  RESPONSES.routines_missed_fires = emptyLibrary
+    ? []
+    : [
+        {
+          routine: 'Morning Winlink Check',
+          missed: 2,
+          lastFireUnix: nowS - 5400,
+          lastRefusal: { at: nowS - 1800, reason: 'radio busy: ARDOP session active' },
+          lastSkip: null,
+        },
+      ];
+  RESPONSES.routines_next_fires = emptyLibrary
+    ? []
+    : [
+        { routine: 'Morning Winlink Check', at: nowS + 1260 },
+        { routine: 'APRS Position Beacon', at: nowS + 340 },
+      ];
+  RESPONSES.routines_fleet_check = emptyLibrary
+    ? []
+    : [
+        {
+          code: 'schedule_overlap',
+          severity: 'warning',
+          routine: 'APRS Position Beacon',
+          track: null,
+          step: null,
+          message: 'Beacon fires inside Morning Winlink Check’s 07:00–09:00 window; both need the radio',
+        },
+      ];
+  RESPONSES.routines_actions_list = ACTIONS;
+  RESPONSES.routines_runs_list = (args?: Record<string, unknown>) =>
+    typeof args?.routine === 'string' && args.routine !== '' ? RUNS.filter((r) => r.routine === args.routine) : RUNS;
+  RESPONSES.routines_run_status = (args?: Record<string, unknown>) => {
+    const run = RUNS.find((r) => r.runId === args?.runId);
+    return run ? { runId: run.runId, routine: run.routine, dryRun: run.dryRun, state: run.state } : null;
+  };
+  RESPONSES.routines_journal = (args?: Record<string, unknown>) => JOURNALS[String(args?.runId)] ?? [];
+  RESPONSES.routines_presets_list = [
+    { name: '40m-vara', frequencyHz: 7103500, mode: 'VARA', powerW: 30, atu: true },
+    { name: '20m-ardop', frequencyHz: 14105000, mode: 'ARDOP', powerW: 50, atu: false },
+  ];
+  RESPONSES.routines_station_sets_list = [{ name: 'ares-net', callsigns: ['N0DAJ', 'KD7SSB', 'W7RMS'] }];
+}
+
+function RoutinesFixtureView() {
+  const routineParam = params.get('routine') ?? '';
+  const initial: RoutinesView =
+    params.get('rview') === 'designer'
+      ? { view: 'designer', routine: routineParam, tab: (params.get('rtab') ?? 'design') as DesignerTab }
+      : { view: 'dashboard' };
+  // Real state so snap-click.py can drive dashboard→designer navigation the
+  // way AppShell's setRoutinesView would.
+  const [rv, setRv] = useState<RoutinesView>(initial);
+  return (
+    <div className="layout-b" style={{ height: '100vh' }}>
+      {/* Same explicit grid-row pinning as OnboardingShell (see its comment):
+          only 2 of .layout-b's 5 rows are mounted, so without the pins the
+          surface would auto-place into an `auto` track and collapse. */}
+      <div style={{ gridRow: 3 }}>
+        <DashboardRibbon
+          data={ribbonData}
+          onConnect={() => undefined}
+          connecting={false}
+          onOpenElmer={() => undefined}
+          elmerOpen={false}
+        />
+      </div>
+      <div style={{ gridRow: 4, minHeight: 0 }}>
+        <RoutinesSurface view={rv} onNavigate={setRv} />
+      </div>
+      {/* ConsentGate mounts only under ?consent=1: the canned data always
+          carries an awaiting_consent run (the dashboard's live rail must
+          render it), and an always-mounted gate would modal over every other
+          snapshot — in the real app it would too; the param just picks which
+          truth this PNG tells. */}
+      {params.get('consent') === '1' && <ConsentGate />}
+    </div>
+  );
+}
+
 function Ft8StripFixtureView() {
   const state = (params.get('state') ?? 'decoding') as Ft8UiState;
   const flagsParam = params.get('flags');
@@ -1019,6 +1330,8 @@ createRoot(document.getElementById('root')!).render(
       <FavoritesFixtureView />
     ) : view === 'finder' ? (
       <FinderFixtureView />
+    ) : view === 'routines' ? (
+      <RoutinesFixtureView />
     ) : view === 'onboarding' ? (
       <OnboardingFixtureView />
     ) : view === 'ft8' ? (

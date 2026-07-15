@@ -103,6 +103,17 @@
 }
 
 /* ---- ops table ---- */
+.ops-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-faint);
+}
+
 .ops-wrap {
   flex: 1;
   overflow: hidden auto;
@@ -256,7 +267,12 @@ table.ops {
   font-family: var(--mono);
   font-size: 11.5px;
   color: var(--text-dim);
-  white-space: nowrap;
+  /* No nowrap: `.ops td` is overflow:hidden in a fixed-layout table, so a
+   * nowrap trigger line hard-clips at the column edge with no ellipsis — at
+   * 1366px that silently dropped exactly the ` · window HH:MM-HH:MM` tail of
+   * "every 30m · align hour · window 07:00-09:00" (tuxlink-3awm9 WebKitGTK
+   * smoke). Wrapping keeps the whole schedule visible; the `·` separators
+   * give it natural break points. */
 }
 
 .trig .win {

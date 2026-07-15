@@ -185,7 +185,14 @@
   color: var(--text);
   font-family: var(--mono);
   font-size: 12px;
-  width: 90px;
+  /* 15ch, measured, not tight: the window input's "06:00-22:00" pattern is
+   * 11 mono chars, and the shipped 90px clipped its last character in the
+   * production engine (tuxlink-3awm9 WebKitGTK smoke). ch alone is NOT safe
+   * here — WebKitGTK computes ch from the first listed family (JetBrains
+   * Mono, absent on the Pi: 12ch = 86px) while RENDERING with the wider
+   * fontconfig fallback (scrollWidth 98px for the 11 chars). 15ch = 108px
+   * on that worst-case pair, and keeps scaling if the real font changes. */
+  width: 15ch;
 }
 
 .pill-input input:focus {

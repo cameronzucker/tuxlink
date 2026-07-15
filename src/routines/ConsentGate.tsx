@@ -329,7 +329,7 @@ export function ConsentGate({ onParkedChange, reopenSignal }: ConsentGateProps) 
   // never touch `hidden`.
   const knownParkKeysRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    const keyOf = (p: ParkedRun) => `${p.runId} ${p.stepId}`;
+    const keyOf = (p: ParkedRun) => `${p.runId}\u0000${p.stepId}`;
     const hasNewPark = parked.some((p) => !knownParkKeysRef.current.has(keyOf(p)));
     knownParkKeysRef.current = new Set(parked.map(keyOf));
     if (hasNewPark) setHidden(false);

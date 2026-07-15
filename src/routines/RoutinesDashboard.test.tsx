@@ -583,3 +583,36 @@ describe('RoutinesDashboard — ImportJsonDialog', () => {
     expect(screen.getByText('no End step', { exact: false })).toBeInTheDocument();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Empty library (tuxlink-3awm9 WebKitGTK smoke): a fresh install rendered a
+// bare void under the column headers — the calm empty state must say what
+// this surface is and point at ＋ New Routine / Import JSON….
+// ---------------------------------------------------------------------------
+
+describe('RoutinesDashboard — empty library', () => {
+  it('renders the empty-state copy instead of the ops table when routines_list is empty', async () => {
+    installInvokeMock({
+      routines_list: () => [],
+      routines_runs_list: () => [],
+      routines_missed_fires: () => [],
+      routines_next_fires: () => [],
+      routines_fleet_check: () => [],
+    });
+    renderDashboard();
+    expect(await screen.findByTestId('routines-dashboard-empty')).toHaveTextContent(/No routines yet/);
+    expect(screen.queryByText('Routine', { selector: 'th' })).not.toBeInTheDocument();
+  });
+
+  it('does NOT claim an empty library while the first refresh is still in flight (Codex P2)', async () => {
+    // Every routines read hangs: summaries stays its initial [] but loaded
+    // stays false — the table shell renders, never the "No routines yet" copy.
+    mockInvoke.mockImplementation((cmd?: string) => {
+      if (cmd === undefined) return Promise.resolve();
+      return new Promise(() => undefined);
+    });
+    renderDashboard();
+    expect(await screen.findByText('Routine', { selector: 'th' })).toBeInTheDocument();
+    expect(screen.queryByTestId('routines-dashboard-empty')).not.toBeInTheDocument();
+  });
+});

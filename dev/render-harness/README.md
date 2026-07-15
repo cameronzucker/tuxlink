@@ -34,6 +34,14 @@ WEBKIT_DISABLE_COMPOSITING_MODE=1 LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpip
 `CN87uo`, empty), `view` (`home|browse|grib`). `snapshot.py` args: `url out.png
 [width] [height] [wait_ms]`.
 
+`?view=routines` mounts the plan-5 Routines operator UI (tuxlink-3awm9 smoke):
+the dashboard by default; `&rview=designer&routine=<name>&rtab=design|runs|settings`
+opens the designer (empty `routine` = fresh draft); `&empty=1` empties the
+library; `&consent=1` mounts `<ConsentGate>` over the dashboard with two parks
+recovered from the canned `runs_list`/`journal` (the launch-recovery path — no
+event synthesis). The shim accepts FUNCTION values in `RESPONSES` for
+args-aware fixtures (`routines_get` by name, `routines_journal` by runId).
+
 ## Scope / caveats
 
 - Dev-only. Not shipped, not a CI gate. It renders the front end with **mocked**
