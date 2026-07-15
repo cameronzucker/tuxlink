@@ -11,13 +11,51 @@ import { render, screen, fireEvent, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import type { MessageMeta } from '../mailbox/types';
+import type { RunListEntry, JournalEntry } from '../routines/routinesApi';
+
+// routines plan-5 Task 14 (spec §12): mutable launch-recovery fixture for
+// <ConsentGate>'s `routines_runs_list` read. Referenced inside the
+// `vi.mock('@tauri-apps/api/core', …)` factory below — safe because the
+// factory's inner `invoke` body only runs at actual call time (deep inside a
+// test's `render()`), long after every top-level declaration in this module
+// (including this `let`, declared AFTER the vi.mock call) has initialized.
+// Defaults to `[]` so every PRE-EXISTING test in this file (which never
+// touches this variable) sees no live parked run, unchanged from before.
+let consentRunsListResult: RunListEntry[] = [];
+const CONSENT_TEST_RUN_ID = 'run-consent-1';
+const CONSENT_TEST_ROUTINE = 'Net-opening checklist (attended)';
+const CONSENT_TEST_STEP_ID = 's4';
+const CONSENT_TEST_JOURNAL: JournalEntry[] = [
+  {
+    ts_unix: 1000,
+    run_id: CONSENT_TEST_RUN_ID,
+    seq: 1,
+    event: {
+      type: 'step_intent',
+      step: CONSENT_TEST_STEP_ID,
+      action: 'radio.connect',
+      resolved_params: { gateway: 'W7BO-10' },
+    },
+  },
+];
 
 vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn(async (cmd?: string) => {
+  invoke: vi.fn(async (cmd?: string, args?: Record<string, unknown>) => {
     // Teardown pitfall: invoke mocks are called with NO args at teardown —
     // always resolve rather than falling through to `undefined` command
     // branches that might throw.
     if (cmd === undefined) return undefined;
+    // routines plan-5 Task 14: <ConsentGate>'s launch-recovery reads, mounted
+    // unconditionally at AppShell level (see below).
+    if (cmd === 'routines_runs_list') return consentRunsListResult;
+    if (cmd === 'routines_run_status') {
+      return args?.runId === CONSENT_TEST_RUN_ID
+        ? { runId: CONSENT_TEST_RUN_ID, routine: CONSENT_TEST_ROUTINE, dryRun: false, state: 'awaiting_consent' }
+        : null;
+    }
+    if (cmd === 'routines_journal') {
+      return args?.runId === CONSENT_TEST_RUN_ID ? CONSENT_TEST_JOURNAL : [];
+    }
     if (cmd === 'config_read') return null;
     if (cmd === 'backend_status') return null;
     if (cmd === 'session_log_snapshot') return [];
@@ -226,5 +264,44 @@ describe('Routines menu + inline surface mount', () => {
     // returns the operator to where they were. Routines stays mounted.
     expect(await screen.findByTestId('settings-panel', {}, { timeout: 5000 })).toBeInTheDocument();
     expect(screen.getByTestId('routines-dashboard')).toBeInTheDocument();
+  });
+});
+
+// routines plan-5 Task 14 (spec §12, flow 4): the Part 97 transmit-consent
+// moment, mounted ALWAYS at AppShell level ("consent cannot hide" — visible
+// regardless of which surface is open, not just from inside Routines).
+describe('Task 14: Part 97 consent moment — chrome wiring', () => {
+  beforeEach(() => {
+    consentRunsListResult = [];
+  });
+
+  it('a run parked awaiting consent at launch badges the Routines menu, names it on the status bar, and shows the modal — with no menu ever opened', async () => {
+    consentRunsListResult = [
+      {
+        runId: CONSENT_TEST_RUN_ID,
+        routine: CONSENT_TEST_ROUTINE,
+        dryRun: false,
+        startedUnix: 1000,
+        state: 'awaiting_consent',
+        finishedUnix: null,
+      },
+    ];
+    renderShell();
+
+    expect(await screen.findByTestId('menu-badge-routines')).toHaveTextContent('1');
+    expect(await screen.findByTestId('status-bar-consent')).toHaveTextContent(CONSENT_TEST_ROUTINE);
+    expect(await screen.findByTestId('consent-gate-modal')).toBeInTheDocument();
+    // The mailbox master-detail is still the main pane underneath — the
+    // consent modal overlays it, it does not replace it (unlike the
+    // Routines surface, which is a menu-driven pane swap).
+    expect(screen.getByTestId('folder-sidebar')).toBeInTheDocument();
+  });
+
+  it('with nothing parked, the badge and status-bar consent item are absent', async () => {
+    renderShell();
+    await screen.findByTestId('folder-sidebar');
+    expect(screen.queryByTestId('menu-badge-routines')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('status-bar-consent')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('consent-gate-modal')).not.toBeInTheDocument();
   });
 });

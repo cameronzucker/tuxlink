@@ -130,6 +130,31 @@ describe('MenuBar', () => {
     expect(night).toHaveAttribute('data-tour-anchor', 'menu:view:scheme:night-red');
   });
 
+  // routines plan-5 Task 14 (spec §12): the Part 97 consent moment's amber
+  // count badge on the Routines menu label.
+  describe('badges', () => {
+    it('renders no badge when badges is omitted', () => {
+      render(<MenuBar onAction={vi.fn()} />);
+      expect(screen.queryByTestId('menu-badge-routines')).not.toBeInTheDocument();
+    });
+
+    it('renders no badge when routines count is 0', () => {
+      render(<MenuBar onAction={vi.fn()} badges={{ routines: 0 }} />);
+      expect(screen.queryByTestId('menu-badge-routines')).not.toBeInTheDocument();
+    });
+
+    it('renders the count badge on the Routines label when count > 0', () => {
+      render(<MenuBar onAction={vi.fn()} badges={{ routines: 3 }} />);
+      expect(screen.getByTestId('menu-badge-routines')).toHaveTextContent('3');
+    });
+
+    it('does not badge any other top-level menu', () => {
+      render(<MenuBar onAction={vi.fn()} badges={{ routines: 2 }} />);
+      const fileButton = screen.getByRole('button', { name: 'File' });
+      expect(fileButton).not.toHaveTextContent('2');
+    });
+  });
+
   it('keeps top-app dropdown layers above message-list scroll content', () => {
     const panesZ = requiredZIndex(
       appShellCss,

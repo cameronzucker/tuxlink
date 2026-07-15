@@ -61,3 +61,10 @@
   font-variant-numeric: tabular-nums;
   color: var(--text-faint);
 }
+
+/* task-14: the Part 97 consent moment "cannot hide" — names the oldest
+ * parked run right in peripheral vision, not just behind the modal. */
+.statusbar .status-consent {
+  color: var(--accent-2);
+  font-weight: 600;
+}

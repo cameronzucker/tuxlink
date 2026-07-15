@@ -55,6 +55,14 @@ import { HintOverlay } from '../onboarding/HintOverlay';
 import { OfferCard } from '../onboarding/OfferCard';
 import { stripStats } from '../ft8ui/deriveBandActivity';
 import { CloseBehaviorPrompt } from './CloseBehaviorPrompt';
+// routines plan-5 Task 14 (spec §12, flow 4): the Part 97 transmit-consent
+// moment. ConsentGate is self-managing (its own useParkedRuns() instance) and
+// mounts ALWAYS, like CloseBehaviorPrompt — "consent cannot hide" means the
+// modal must be reachable from every surface, not just the Routines pane.
+// AppShell mirrors its parked list into the MenuBar badge + StatusBar item
+// via onParkedChange, rather than a second hook instance re-subscribing to
+// the same events.
+import { ConsentGate, type ParkedRun } from '../routines/ConsentGate';
 import { useIdentityList, useActiveIdentity, useIdentitySwitch } from './useIdentities';
 import { StatusBar } from './StatusBar';
 import { useStatusData, type StatusTone, type ConfigViewDto } from './useStatus';
@@ -572,6 +580,11 @@ function AppShellInner() {
   // how the existing overlay flags (settingsOpen, catalogBuilderOpen, …)
   // never close each other or the pane beneath.
   const [routinesView, setRoutinesView] = useState<RoutinesView | null>(null);
+  // routines plan-5 Task 14 (spec §12): mirrors <ConsentGate>'s own parked-run
+  // tracking, purely for chrome (MenuBar's amber badge + StatusBar's "N
+  // transmit awaiting consent" item) — AppShell holds no tracking logic of
+  // its own; ConsentGate remains the single source of truth.
+  const [parkedRuns, setParkedRuns] = useState<ParkedRun[]>([]);
   // tuxlink-qjgx Task 8: Report Issue modal state. The controller drives the
   // Save As → export → GitHub URL flow; AppShell owns the state so the modal
   // can be positioned in the global overlay layer.
@@ -1933,7 +1946,7 @@ function AppShellInner() {
   return (
     <div className={`layout-b${isCompact ? ' compact' : ''}`} data-testid="app-shell-root">
       <TitleBar folderLabel={folderLabel(selectedFolder, userFolders)} />
-      <MenuBar onAction={onMenuAction} />
+      <MenuBar onAction={onMenuAction} badges={{ routines: parkedRuns.length }} />
       <ResizeHandles />
       <div className="ribbon-with-search">
         <div className="search-zone" data-testid="search-zone" ref={searchZoneRef}>
@@ -2345,6 +2358,11 @@ function AppShellInner() {
         show={showStatusBar}
         unread={counts.inbox ?? 0}
         outboxQueued={outbox.messages.length}
+        consent={
+          parkedRuns.length > 0
+            ? { count: parkedRuns.length, routine: parkedRuns[0].routine }
+            : null
+        }
       />
 
       {/* tuxlink-perf-coldstart: lazy-mounted overlays. Each module + its CSS
@@ -2422,6 +2440,12 @@ function AppShellInner() {
           its open state via the `show-close-prompt` backend event (no parent
           state flag), so it is always mounted. */}
       <CloseBehaviorPrompt />
+
+      {/* routines plan-5 Task 14 (spec §12): the Part 97 transmit-consent
+          moment. Always mounted — "consent cannot hide" — self-managing like
+          CloseBehaviorPrompt; onParkedChange only mirrors its list into the
+          MenuBar badge + StatusBar item above. */}
+      <ConsentGate onParkedChange={setParkedRuns} />
 
       {catalogBuilderOpen && (
         <Suspense fallback={null}>

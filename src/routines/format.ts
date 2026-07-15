@@ -76,6 +76,20 @@ export function formatRunState(s: RunState): string {
 }
 
 /**
+ * Milliseconds elapsed → `HH:MM:SS` clock (the consent modal's live "parked
+ * NN:NN:NN" readout, task-14 brief). Negative/NaN input clamps to `00:00:00`
+ * rather than rendering a negative or garbage duration (a clock drift or a
+ * `parkedAtMs` set at the instant of read should never show as negative).
+ */
+export function formatParkedDuration(ms: number): string {
+  const totalSeconds = Number.isFinite(ms) ? Math.max(0, Math.floor(ms / 1000)) : 0;
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  return `${pad2(h)}:${pad2(m)}:${pad2(s)}`;
+}
+
+/**
  * The `if_missed` schedule policy → an operator-facing one-liner (dashboard
  * Task 8's Trigger column). `'skip'` and `'run_once_on_launch'` are the only
  * two `IfMissed` values (routinesApi.ts).
