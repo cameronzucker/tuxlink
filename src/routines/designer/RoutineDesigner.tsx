@@ -7,12 +7,14 @@
  * header (← Routines, name, state pill, unsaved dot, Design/Runs/Settings
  * tabs, Dry-run/Export JSON/Save actions) and the always-on `.valbar`
  * validation strip. The Design tab mounts the real `CanvasTab` (Task 10,
- * `./CanvasTab.tsx`) — RoutineDesigner owns `draft`, the fetched `actions`
- * registry, `selectedStepId`, and the armed-insert-point state, and passes
- * them down as controlled props; CanvasTab never calls `defDraft.ts` or the
- * Tauri surface directly. The settings form (Task 11) and runs list
- * (Task 13) mount points below are still minimal inert placeholders — those
- * tasks replace each outright with the real tab body.
+ * `./CanvasTab.tsx`) plus, in its right rail, `PaletteRail` and
+ * `StepInspector` (Task 11, `./PaletteRail.tsx` / `./StepInspector.tsx`) —
+ * RoutineDesigner owns `draft`, the fetched `actions` registry,
+ * `selectedStepId`, and the armed-insert-point state, and passes them down
+ * as controlled props; none of the three ever call `defDraft.ts` or the
+ * Tauri surface directly, only this shell does. The settings form and runs
+ * list (Task 13) mount points below are still minimal inert placeholders —
+ * that task replaces each outright with the real tab body.
  *
  * Load: an existing routine (`routine !== ''`) is fetched with `getRoutine`;
  * a fresh draft (`routine === ''`) is never sent to the backend — binding
@@ -54,10 +56,13 @@ import {
   type RoutineDef,
   type Finding,
   type ActionInfo,
+  type Step,
 } from '../routinesApi';
 import { formatUiError } from '../format';
-import { createDraft, addTrack, removeStep } from './defDraft';
+import { createDraft, addTrack, removeStep, insertStep, updateStep, type StepPatch } from './defDraft';
 import { CanvasTab, type ArmedInsertPosition } from './CanvasTab';
+import { PaletteRail } from './PaletteRail';
+import { StepInspector } from './StepInspector';
 import type { DesignerTab } from '../RoutinesSurface';
 import './RoutineDesigner.css';
 
@@ -145,7 +150,7 @@ function RunsTabPlaceholder({ highlightRunId }: { highlightRunId: string | null 
   );
 }
 
-/** Settings tab mount point (Task 11). */
+/** Settings tab mount point (a later task). */
 function SettingsTabPlaceholder() {
   return (
     <div className="tab-body-placeholder" data-testid="settings-tab-placeholder">
@@ -247,17 +252,17 @@ export function RoutineDesigner({ routine, tab, onBack, onTabChange }: RoutineDe
   }, []);
 
   // Canvas selection + armed-insert-point state (task-10 brief binding
-  // constraint 4): RoutineDesigner is the single owner so Task 11's
-  // PaletteRail can read/clear the same `armedInsert` value CanvasTab renders
-  // as the amber edge.
+  // constraint 4): RoutineDesigner is the single owner so PaletteRail can
+  // read/clear the same `armedInsert` value CanvasTab renders as the amber
+  // edge.
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const [armedInsert, setArmedInsert] = useState<ArmedInsertPosition | null>(null);
 
   /** CanvasTab's ＋ click handler: toggles the armed insert point (clicking
    *  the same one again disarms it; clicking a different one re-arms at the
-   *  new position). Task 11's palette performs the actual `insertStep` call
-   *  once an action is chosen against this armed position — this component
-   *  only tracks WHERE, never WHAT, is being inserted. */
+   *  new position). PaletteRail's `onInsert` (below) performs the actual
+   *  `insertStep` call once an action is chosen against this armed position —
+   *  this component only tracks WHERE, never WHAT, is being inserted. */
   const handleInsertAt = useCallback((pos: ArmedInsertPosition) => {
     setArmedInsert((prev) =>
       prev && prev.trackIdx === pos.trackIdx && prev.afterStepId === pos.afterStepId ? null : pos,
@@ -325,6 +330,39 @@ export function RoutineDesigner({ routine, tab, onBack, onTabChange }: RoutineDe
     [updateDraft],
   );
 
+  /** PaletteRail's click-with-armed-insert handler: PaletteRail builds the
+   *  `Step` value (its own action/control shape, `nextStepId`-assigned id);
+   *  this is where it's actually spliced into the draft at the armed
+   *  position via `defDraft.insertStep`. Disarms afterward (one insert per
+   *  arm — re-arming for a second insert at the same spot is a deliberate
+   *  extra click, not implicit) and selects the new step so its fields are
+   *  immediately editable in `StepInspector`. A stale call with no armed
+   *  position (shouldn't happen — PaletteRail disables its items while
+   *  unarmed) is a no-op rather than a crash. */
+  const handleInsert = useCallback(
+    (step: Step) => {
+      if (!armedInsert) return;
+      const pos = armedInsert;
+      updateDraft((d) => insertStep(d, pos.trackIdx, pos.afterStepId, step));
+      setArmedInsert(null);
+      setSelectedStepId(step.id);
+    },
+    [armedInsert, updateDraft],
+  );
+
+  /** StepInspector's field-edit handler: patches whichever step is currently
+   *  selected. A `null` `selectedStepId` (StepInspector is only ever mounted
+   *  when one is selected, but this guards a stray call after a selection
+   *  clears mid-flight) is a no-op. */
+  const handleStepChange = useCallback(
+    (patch: StepPatch) => {
+      const stepId = selectedStepId;
+      if (!stepId) return;
+      updateDraft((d) => updateStep(d, stepId, patch));
+    },
+    [selectedStepId, updateDraft],
+  );
+
   const handleSave = useCallback(async () => {
     if (!draft) return null;
     setSaving(true);
@@ -383,6 +421,16 @@ export function RoutineDesigner({ routine, tab, onBack, onTabChange }: RoutineDe
     );
   }
 
+  // The selected node's own Step value, for StepInspector — looked up fresh
+  // from `draft` every render (never cached) so an edit that changes the
+  // step's own shape is reflected immediately, and a selection that no
+  // longer resolves (a removed step id — handleRemoveStep already clears
+  // `selectedStepId` in the common path, but this is the defensive fallback)
+  // renders no inspector rather than a stale one.
+  const selectedStep = selectedStepId
+    ? (draft.tracks.flatMap((t) => t.steps).find((s) => s.id === selectedStepId) ?? null)
+    : null;
+
   return (
     <div className="surface" data-testid="routine-designer">
       <div className="designer-head">
@@ -437,16 +485,30 @@ export function RoutineDesigner({ routine, tab, onBack, onTabChange }: RoutineDe
 
       <div className="design-body">
         {tab === 'design' && (
-          <CanvasTab
-            draft={draft}
-            actions={actions}
-            selectedStepId={selectedStepId}
-            onSelect={setSelectedStepId}
-            armedInsert={armedInsert}
-            onInsertAt={handleInsertAt}
-            onRemoveStep={handleRemoveStep}
-            onAddTrack={() => updateDraft((d) => addTrack(d, `track-${d.tracks.length + 1}`))}
-          />
+          <>
+            <CanvasTab
+              draft={draft}
+              actions={actions}
+              selectedStepId={selectedStepId}
+              onSelect={setSelectedStepId}
+              armedInsert={armedInsert}
+              onInsertAt={handleInsertAt}
+              onRemoveStep={handleRemoveStep}
+              onAddTrack={() => updateDraft((d) => addTrack(d, `track-${d.tracks.length + 1}`))}
+            />
+            <div className="design-rail" data-testid="design-rail">
+              <PaletteRail def={draft} actions={actions} armedInsert={armedInsert} onInsert={handleInsert} />
+              {selectedStep && (
+                <StepInspector
+                  key={selectedStep.id}
+                  step={selectedStep}
+                  actions={actions}
+                  onChange={handleStepChange}
+                  onRemove={() => handleRemoveStep(selectedStep.id)}
+                />
+              )}
+            </div>
+          </>
         )}
         {tab === 'runs' && <RunsTabPlaceholder highlightRunId={highlightRunId} />}
         {tab === 'settings' && <SettingsTabPlaceholder />}

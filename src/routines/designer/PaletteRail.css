@@ -1,0 +1,133 @@
+/* PaletteRail.css — routines plan-5 Task 11 (step-insertion palette).
+ *
+ * Transplanted from the approved mock's `.palette`/`.pal-*` rules
+ * (dev/scratch/routines-ui-mocks/designer-canvas.html), swapping the mock's
+ * standalone `:root` token names for this app's real `var(--…)` tokens
+ * (src/App.css) — same convention as CanvasTab.css/RoutineDesigner.css. The
+ * fixed 232px rail width + border-left live on `RoutineDesigner.css`'s
+ * `.design-rail` wrapper (this file's `.palette` fills that wrapper's
+ * available height instead of also claiming its own width/border, so
+ * `StepInspector` can stack below it in the same rail).
+ */
+.palette {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.pal-head {
+  padding: 9px 12px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  color: var(--text-faint);
+}
+
+.pal-search {
+  margin: 0 10px 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--text);
+}
+
+.pal-hint {
+  margin: 0 10px 8px;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  line-height: 1.45;
+}
+
+.pal-hint b {
+  color: var(--accent-2);
+  font-weight: 600;
+}
+
+.pal-scroll {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  padding-bottom: 8px;
+}
+
+.pal-group {
+  padding: 6px 12px 2px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  color: var(--text-faint);
+}
+
+.pal-group.radio {
+  color: var(--modem-accent);
+}
+
+.pal-group.net {
+  color: var(--info);
+}
+
+.pal-group.local {
+  color: var(--form-tag);
+}
+
+.pal-group.ctl {
+  color: var(--accent-2);
+}
+
+.pal-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pal-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.pal-item .flags {
+  margin-left: auto;
+  display: flex;
+  gap: 3px;
+}
+
+.pal-item .flag {
+  font-size: 8.5px;
+  letter-spacing: 0.05em;
+  border: 1px solid var(--border-strong);
+  color: var(--text-faint);
+  border-radius: 2px;
+  padding: 0 3px;
+}
+
+.pal-item .flag.tx {
+  color: var(--accent-2);
+  border-color: rgb(245 159 60 / 50%);
+}
+
+.pal-item .flag.rig {
+  color: var(--modem-accent);
+  border-color: rgb(74 222 128 / 40%);
+}
+
+.pal-item .flag.net {
+  color: var(--info);
+  border-color: rgb(107 184 238 / 40%);
+}
+
+.pal-item.lib {
+  color: var(--accent-2);
+}
