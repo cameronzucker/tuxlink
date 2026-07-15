@@ -73,6 +73,7 @@ import { CanvasTab, sameArm, type ArmedInsertPosition } from './CanvasTab';
 import { PaletteRail } from './PaletteRail';
 import { StepInspector } from './StepInspector';
 import { SettingsTab } from './SettingsTab';
+import { RunsTab } from './RunsTab';
 import type { DesignerTab } from '../RoutinesSurface';
 import './RoutineDesigner.css';
 
@@ -144,18 +145,6 @@ function ValBar({
         </span>
       )}
       <span className="right">{rightMeta}</span>
-    </div>
-  );
-}
-
-/** Runs tab mount point (Task 13). `highlightRunId` is threaded through from
- * this component's dry-run flow so Task 13's real runs list can scroll to /
- * highlight the run a dry-run just started. */
-function RunsTabPlaceholder({ highlightRunId }: { highlightRunId: string | null }) {
-  return (
-    <div className="tab-body-placeholder" data-testid="runs-tab-placeholder">
-      Runs (Task 13) mounts here.
-      {highlightRunId && <span data-testid="highlight-run-id"> highlight: {highlightRunId}</span>}
     </div>
   );
 }
@@ -532,7 +521,7 @@ export function RoutineDesigner({ routine, tab, onBack, onTabChange }: RoutineDe
             </div>
           </>
         )}
-        {tab === 'runs' && <RunsTabPlaceholder highlightRunId={highlightRunId} />}
+        {tab === 'runs' && <RunsTab routine={draft.routine} highlightRunId={highlightRunId} />}
         {tab === 'settings' && (
           <SettingsTab
             key={draft.routine}
