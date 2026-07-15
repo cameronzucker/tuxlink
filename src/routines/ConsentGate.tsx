@@ -54,14 +54,24 @@ export interface ParkedRun {
 export const UNKNOWN_STEP_ID = '';
 
 export interface UseParkedRunsResult {
-  /** Oldest-first — the modal always shows `parked[0]`. */
+  /** Oldest-first — the modal always shows `parked[0]`. Entries are keyed by
+   *  the `(runId, stepId)` PAIR, not runId alone (Codex adrev P1): an
+   *  attended routine with two transmitting steps can emit step 2's
+   *  `awaitingConsent` BEFORE the async grant path finishes removing step
+   *  1's entry — runId-only keying dropped that second park entirely (the
+   *  add-dedupe early-returned on the still-present runId, then the grant's
+   *  removal deleted the entry, leaving the backend parked with no modal, no
+   *  badge, and nothing to re-add until app restart). */
   parked: ParkedRun[];
   /** Grants consent for the named run/step. `false` means the park vanished
    *  (the run moved on, or was resolved from elsewhere) between the operator
    *  opening the modal and clicking Confirm — the stale entry is removed
-   *  either way, matching the brief's "refresh state and close". */
+   *  either way, matching the brief's "refresh state and close". Removes
+   *  ONLY the `(runId, stepId)` pair — a newer park of the same run
+   *  survives. */
   confirm(runId: string, stepId: string): Promise<boolean>;
-  /** Cancels the run outright; the engine journals it as operator-cancelled. */
+  /** Cancels the run outright; the engine journals it as operator-cancelled.
+   *  Removes every parked entry for the runId — the whole run is gone. */
   cancelParked(runId: string): Promise<void>;
 }
 
@@ -104,18 +114,40 @@ export function useParkedRuns(): UseParkedRunsResult {
     parkedRef.current = parked;
   }, [parked]);
 
+  /** Removes EVERY parked entry for the runId — the run-terminal paths
+   *  (`runFinished`, cancel, the poll's explicit non-awaiting_consent read):
+   *  when the whole run is gone, no step of it can still be parked. */
   const removeRun = useCallback((runId: string) => {
     setParked((cur) => cur.filter((p) => p.runId !== runId));
   }, []);
 
+  /** Removes ONLY the `(runId, stepId)` pair — the grant path: consenting to
+   *  step 1 must not delete a step-2 park that raced in while the grant was
+   *  in flight (Codex adrev P1). */
+  const removePair = useCallback((runId: string, stepId: string) => {
+    setParked((cur) => cur.filter((p) => !(p.runId === runId && p.stepId === stepId)));
+  }, []);
+
   const addParked = useCallback((runId: string, stepId: string) => {
     void (async () => {
-      if (parkedRef.current.some((p) => p.runId === runId)) return;
+      // Pair-keyed dedupe (Codex adrev P1): a second transmitting step of the
+      // SAME run must insert even while the first step's entry still exists
+      // (its removal by the async grant path may not have settled yet).
+      if (parkedRef.current.some((p) => p.runId === runId && p.stepId === stepId)) return;
       try {
         const status = await runStatus(runId);
         if (!mountedRef.current || !status) return;
         setParked((cur) => {
-          if (cur.some((p) => p.runId === runId)) return cur;
+          if (cur.some((p) => p.runId === runId && p.stepId === stepId)) return cur;
+          // A real event for a run parked under the unknown-step sentinel
+          // (launch recovery found no step_intent) UPGRADES the sentinel in
+          // place — same underlying park, now with a grantable stepId, so
+          // Confirm becomes available. parkedAtMs is kept: the park started
+          // when we first learned of it, not when the step got named.
+          const sentinel = cur.find((p) => p.runId === runId && p.stepId === UNKNOWN_STEP_ID);
+          if (sentinel) {
+            return sortByParkedAt(cur.map((p) => (p === sentinel ? { ...p, stepId } : p)));
+          }
           return sortByParkedAt([
             ...cur,
             { runId, stepId, routine: status.routine, parkedAtMs: Date.now() },
@@ -198,9 +230,13 @@ export function useParkedRuns(): UseParkedRunsResult {
     if (!hasParked) return;
     const id = setInterval(() => {
       void (async () => {
-        for (const p of parkedRef.current) {
+        // One status read per RUN (entries are keyed by (runId, stepId), but
+        // run state is per-run — a run that left awaiting_consent invalidates
+        // every parked pair it still has here).
+        const runIds = [...new Set(parkedRef.current.map((p) => p.runId))];
+        for (const runId of runIds) {
           try {
-            const status = await runStatus(p.runId);
+            const status = await runStatus(runId);
             if (!mountedRef.current) return;
             // A resolved `null` is UNKNOWN, not "gone" — a registry rotation
             // or a read racing a backend restart can answer null for a run
@@ -208,7 +244,7 @@ export function useParkedRuns(): UseParkedRunsResult {
             // live consent moment (spec §12: cannot hide). Remove only on an
             // explicit non-awaiting_consent state; null keeps the park and
             // retries next tick.
-            if (status && status.state !== 'awaiting_consent') removeRun(p.runId);
+            if (status && status.state !== 'awaiting_consent') removeRun(runId);
           } catch {
             // Transient read failure — leave the entry parked, retry next tick.
           }
@@ -224,10 +260,13 @@ export function useParkedRuns(): UseParkedRunsResult {
       // Either outcome removes the tracked entry: a true grant means the step
       // is proceeding (no longer parked); a false grant means the park
       // vanished out from under us — the brief's "refresh state and close".
-      removeRun(runId);
+      // ONLY this (runId, stepId) pair (Codex adrev P1): the resumed run may
+      // already have parked its NEXT transmitting step and that entry —
+      // possibly inserted while this grant was in flight — must survive.
+      removePair(runId, stepId);
       return granted;
     },
-    [removeRun],
+    [removePair],
   );
 
   const cancelParked = useCallback(
@@ -280,15 +319,20 @@ export function ConsentGate({ onParkedChange, reopenSignal }: ConsentGateProps) 
     onParkedChangeRef.current?.(parked);
   }, [parked]);
 
-  // A brand-new park (a runId this instance hasn't seen before — either a
-  // fresh `awaitingConsent` event or a freshly-recovered launch park) always
-  // re-surfaces the modal, even if an EARLIER park was dismissed via "Keep
-  // parked". Removals (the parked set shrinking) never touch `hidden`.
-  const knownRunIdsRef = useRef<Set<string>>(new Set());
+  // A brand-new park (a (runId, stepId) PAIR this instance hasn't seen before
+  // — a fresh `awaitingConsent` event, a freshly-recovered launch park, or a
+  // later transmitting step of a run whose earlier step was already handled)
+  // always re-surfaces the modal, even if an EARLIER park was dismissed via
+  // "Keep parked". Pair-keyed to match the parked list itself (Codex adrev
+  // P1): step 2 of the same run is a NEW consent moment and must not stay
+  // hidden behind step 1's dismissal. Removals (the parked set shrinking)
+  // never touch `hidden`.
+  const knownParkKeysRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    const hasNewRun = parked.some((p) => !knownRunIdsRef.current.has(p.runId));
-    knownRunIdsRef.current = new Set(parked.map((p) => p.runId));
-    if (hasNewRun) setHidden(false);
+    const keyOf = (p: ParkedRun) => `${p.runId} ${p.stepId}`;
+    const hasNewPark = parked.some((p) => !knownParkKeysRef.current.has(keyOf(p)));
+    knownParkKeysRef.current = new Set(parked.map(keyOf));
+    if (hasNewPark) setHidden(false);
   }, [parked]);
 
   // The statusbar consent item's onClick (wired through AppShell) bumps this

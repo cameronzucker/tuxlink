@@ -479,6 +479,124 @@ describe('ConsentGate — "Keep parked" defer affordance', () => {
   });
 });
 
+// Codex adrev P1: parked entries are keyed by the (runId, stepId) PAIR, not
+// runId alone. An attended routine with two transmitting steps can emit step
+// 2's awaitingConsent BEFORE the async grant path removes step 1's entry —
+// runId-only keying dropped that second park entirely (add-dedupe
+// early-returned on the still-present runId, then the grant's removal
+// deleted it: no modal, no badge, invisible until app restart).
+describe('ConsentGate — pair-keyed parks (Codex adrev P1)', () => {
+  it('the exact race: awaitingConsent(run, s2) fired while step 1 grant is in flight → s2 park survives', async () => {
+    // A grant whose resolution the test controls, so the s2 event can fire
+    // strictly BEFORE step 1's removal settles.
+    let resolveGrant: (v: boolean) => void = () => {};
+    mockInvoke.mockImplementation((cmd?: string, args?: Record<string, unknown>) => {
+      if (cmd === undefined) return Promise.resolve();
+      if (cmd === 'routines_runs_list') return Promise.resolve(runsListResult);
+      if (cmd === 'routines_run_status') {
+        return Promise.resolve(args?.runId === RUN_ID ? RUN_STATUS : null);
+      }
+      if (cmd === 'routines_journal') return Promise.resolve(args?.runId === RUN_ID ? JOURNAL_FIXTURE : []);
+      if (cmd === 'routines_consent_grant') {
+        return new Promise<boolean>((res) => {
+          resolveGrant = res;
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    const onParkedChange = vi.fn();
+    render(<ConsentGate onParkedChange={onParkedChange} />);
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    await screen.findByTestId('consent-gate-modal');
+
+    // Operator confirms step 1 — the grant is now IN FLIGHT (unresolved).
+    screen.getByTestId('consent-gate-confirm').click();
+
+    // Backend resumes, reaches step 2, and emits its park BEFORE the grant
+    // promise resolves (the Codex race). The pair-keyed add must insert it
+    // even though (RUN_ID, s4) is still tracked.
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: 's7' });
+    await act(async () => {});
+
+    // Now the grant settles true → removes ONLY (RUN_ID, s4).
+    act(() => {
+      resolveGrant(true);
+    });
+    await act(async () => {});
+
+    // s7's park exists: modal shows step s7, and the badge feed reports
+    // exactly one parked entry (count 1).
+    expect(screen.getByTestId('consent-gate-modal')).toBeInTheDocument();
+    expect(screen.getByTestId('consent-gate-run-step')).toHaveTextContent('step s7');
+    const last = onParkedChange.mock.calls.at(-1)?.[0] as ParkedRun[];
+    expect(last).toHaveLength(1);
+    expect(last[0]).toMatchObject({ runId: RUN_ID, stepId: 's7' });
+  });
+
+  it('runFinished removes BOTH pairs of the same run when two are parked', async () => {
+    const onParkedChange = vi.fn();
+    render(<ConsentGate onParkedChange={onParkedChange} />);
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    await screen.findByTestId('consent-gate-modal');
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: 's7' });
+    await act(async () => {});
+
+    // Two pair-keyed entries for the one run.
+    expect(onParkedChange.mock.calls.at(-1)?.[0]).toHaveLength(2);
+
+    emit({ kind: 'runFinished', runId: RUN_ID, state: 'cancelled' });
+    await waitFor(() => {
+      expect(screen.queryByTestId('consent-gate-modal')).not.toBeInTheDocument();
+    });
+    expect(onParkedChange.mock.calls.at(-1)?.[0]).toEqual([]);
+  });
+
+  it('a real awaitingConsent upgrades the unknown-step sentinel park in place (Confirm becomes enabled)', async () => {
+    const NO_INTENT_RUN = 'run-no-intent';
+    runsListResult = [
+      { runId: NO_INTENT_RUN, routine: 'Journal-less routine', dryRun: false, startedUnix: 1000, state: 'awaiting_consent', finishedUnix: null },
+    ];
+    mockInvoke.mockImplementation((cmd?: string, args?: Record<string, unknown>) => {
+      if (cmd === undefined) return Promise.resolve();
+      if (cmd === 'routines_runs_list') return Promise.resolve(runsListResult);
+      if (cmd === 'routines_run_status') {
+        return Promise.resolve(
+          args?.runId === NO_INTENT_RUN
+            ? { runId: NO_INTENT_RUN, routine: 'Journal-less routine', dryRun: false, state: 'awaiting_consent' }
+            : null,
+        );
+      }
+      // Journal still has no step_intent — the s4 name arrives via the event.
+      if (cmd === 'routines_journal') {
+        return Promise.resolve([
+          { ts_unix: 1000, run_id: NO_INTENT_RUN, seq: 1, event: { type: 'state_changed', state: 'awaiting_consent' } },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+
+    const onParkedChange = vi.fn();
+    render(<ConsentGate onParkedChange={onParkedChange} />);
+    // Launch recovery parks under the unknown-step sentinel: Confirm disabled.
+    expect(await screen.findByTestId('consent-gate-modal')).toBeInTheDocument();
+    expect(screen.getByTestId('consent-gate-run-step')).toHaveTextContent('step unknown — see run journal');
+    expect(screen.getByTestId('consent-gate-confirm')).toBeDisabled();
+
+    // The real event for the same run names the step → the sentinel entry is
+    // REPLACED (single entry, not a second park), and Confirm enables.
+    emit({ kind: 'awaitingConsent', runId: NO_INTENT_RUN, stepId: 's4' });
+    await waitFor(() => {
+      expect(screen.getByTestId('consent-gate-run-step')).toHaveTextContent('step s4');
+    });
+    expect(screen.getByTestId('consent-gate-confirm')).not.toBeDisabled();
+    expect(screen.queryByTestId('consent-gate-pip')).not.toBeInTheDocument(); // single entry — no "1 of 2"
+    const last = onParkedChange.mock.calls.at(-1)?.[0] as ParkedRun[];
+    expect(last).toHaveLength(1);
+    expect(last[0]).toMatchObject({ runId: NO_INTENT_RUN, stepId: 's4' });
+  });
+});
+
 // Reviewer fix 1 (CRITICAL): the consent overlay must render ABOVE every
 // other fixed layer — the inset:0 overlay panels (SettingsPanel /
 // StationFinderPanel / RequestCenter / InboundSelectionPanel, all z-1000)
