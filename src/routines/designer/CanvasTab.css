@@ -1,0 +1,317 @@
+/* CanvasTab.css — routines plan-5 Task 10 (Design tab canvas).
+ *
+ * Transplanted from the approved mock (dev/scratch/routines-ui-mocks/
+ * designer-canvas.html)'s `.lane` / `.node` / `.edge` / `.branch-out` /
+ * `.anchor-rule` / `.dep-lbl` rules, swapping the mock's standalone `:root`
+ * token names for this app's real `var(--…)` tokens (src/App.css) — same
+ * convention RoutineDesigner.css already follows.
+ *
+ * `.anchor-rule` and `.dep-lbl` are adapted from the mock's absolute,
+ * pixel-offset placement (`left:584px`, `top:-8px;right:26px`) to plain flow
+ * layout: this canvas is auto-laid-out DOM/flex with no coordinate math
+ * (spec §5 — the engine owns geometry, never pixel positions), so a
+ * magic-number cross-lane rule doesn't translate to a generic renderer. The
+ * chip visuals are kept; the absolute geometry is not.
+ *
+ * `.btn`/`.btn-accent` are RoutineDesigner.css's — already loaded whenever
+ * this file's component mounts, since CanvasTab only ever renders inside
+ * RoutineDesigner's Design tab body, never standalone.
+ */
+
+.canvas {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  position: relative;
+  padding: 14px 12px 8px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ---- cross-track temporal anchors ---- */
+.anchor-rule {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 2px 8px;
+  border-bottom: 1px dashed rgba(245, 159, 60, 0.4);
+}
+
+.anchor-lbl {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--accent-2);
+  background: rgba(13, 19, 24, 0.9);
+  border: 1px solid rgba(245, 159, 60, 0.4);
+  border-radius: 3px;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+
+/* ---- lane ---- */
+.lane {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(20, 28, 35, 0.55);
+  padding: 24px 12px 14px;
+  flex: 0 0 auto;
+}
+
+.lane-tag {
+  position: absolute;
+  top: -1px;
+  left: -1px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px 0 6px 0;
+  padding: 2px 10px;
+}
+
+/* ---- cross-track dependency chip (adapted to plain flow — see header) ---- */
+.dep-lbl {
+  display: inline-block;
+  margin: 0 0 8px 4px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--info);
+  background: rgba(13, 19, 24, 0.92);
+  border: 1px dashed rgba(107, 184, 238, 0.5);
+  border-radius: 3px;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+
+.flow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.node {
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--border-strong);
+  border-radius: 6px;
+  position: relative;
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+
+.node.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.node-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.node-body {
+  padding: 3px 7px 4px;
+  font-size: 9.5px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  line-height: 1.5;
+}
+
+.cat-radio {
+  border-left-color: var(--modem-accent);
+}
+
+.cat-radio .node-head {
+  color: var(--modem-accent-2);
+}
+
+.cat-data {
+  border-left-color: var(--info);
+}
+
+.cat-data .node-head {
+  color: var(--info);
+}
+
+.cat-local {
+  border-left-color: var(--form-tag);
+}
+
+.cat-local .node-head {
+  color: var(--form-tag);
+}
+
+.cat-ctl {
+  border-left-color: var(--accent);
+}
+
+.cat-ctl .node-head {
+  color: var(--accent-2);
+}
+
+.node.trigger {
+  border-style: dashed;
+  border-left-style: solid;
+  background: rgba(245, 159, 60, 0.05);
+}
+
+.node.endnode {
+  border-radius: 999px;
+  border-left-width: 1px;
+}
+
+.node.endnode .node-head {
+  border-bottom: none;
+  padding: 5px 10px;
+}
+
+.endnode.ok .node-head {
+  color: var(--success);
+}
+
+.endnode.err .node-head {
+  color: var(--error);
+}
+
+.node-unknown {
+  border-left-color: var(--error);
+}
+
+.node-unplaced {
+  border-left-color: var(--error);
+  border-style: dashed;
+  border-left-style: solid;
+  opacity: 0.85;
+}
+
+.unknown-badge {
+  color: var(--error);
+  font-size: 9px;
+  margin-left: 4px;
+}
+
+.tx-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 4px var(--accent);
+  flex: 0 0 auto;
+}
+
+.node-delete {
+  margin-left: 4px;
+  background: none;
+  border: none;
+  color: var(--error);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.edge {
+  width: 20px;
+  height: 2px;
+  background: var(--border-strong);
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.edge .lbl {
+  position: absolute;
+  top: -17px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: var(--mono);
+  font-size: 9.5px;
+}
+
+.lbl.ok {
+  color: var(--success);
+}
+
+.lbl.err {
+  color: var(--error);
+}
+
+.edge .plus {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  color: var(--text-faint);
+  font-size: 10px;
+  line-height: 13px;
+  text-align: center;
+  z-index: 2;
+  cursor: pointer;
+  padding: 0;
+}
+
+/* an empty track's lone-＋ edge — there is no node after it, so no arrowhead */
+.edge.dangling::after {
+  display: none;
+}
+
+.edge.armed {
+  background: var(--accent);
+}
+
+.edge.armed .plus {
+  border-color: var(--accent);
+  color: var(--accent-2);
+  background: var(--elevated);
+  box-shadow: 0 0 6px rgba(245, 159, 60, 0.5);
+}
+
+.branch-out {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 10px;
+}
+
+.path {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.path .edge {
+  width: 26px;
+}
+
+/* steps the layout couldn't place in any flow row (post-branch, referenced
+   by no arm) — surfaced as a dashed-separated final strip, never hidden */
+.unplaced-row {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(238, 107, 107, 0.4);
+  gap: 8px;
+}
+
+.add-track-btn {
+  align-self: flex-start;
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { MENU_ACTION_IDS, ACCELERATORS } from './menuModel';
+import { MENU_ACTION_IDS, ACCELERATORS, MENU_TREE } from './menuModel';
 
 // Parity with the former Rust menu_event_ids() (menu.rs) — the menu:* vocabulary
 // is the stable contract regardless of producer. Order matches the menu layout.
@@ -8,6 +8,8 @@ const EXPECTED_IDS = [
   'menu:message:new', 'menu:message:reply', 'menu:message:reply_all', 'menu:message:forward', 'menu:message:archive', 'menu:message:delete', 'menu:message:request_center', 'menu:message:grib_request',
   // tuxlink-lqw2: the Session + Mailbox top menus were removed in the pre-Alpha
   // declutter; the surviving Verify CMS Connection moved into Tools (below).
+  // routines plan-5 Task 7: the Routines top menu sits between Message and View.
+  'menu:routines:open', 'menu:routines:new',
   'menu:view:status_bar', 'menu:view:radio_panel',
   'menu:view:scheme:default',
   'menu:view:scheme:github-dark',
@@ -42,5 +44,30 @@ describe('menu model', () => {
   it('no longer binds any accelerator to connect', () => {
     expect(ACCELERATORS.some((a) => a.id === 'menu:session:connect')).toBe(false);
     expect(ACCELERATORS.some((a) => a.combo === 'F5')).toBe(false);
+  });
+
+  // routines plan-5 Task 7 (spec §12): a top-level Routines menu sits between
+  // Message and View, with the "Routines" (open) and "New Routine…" items.
+  it('inserts a top-level Routines menu between Message and View', () => {
+    const labels = MENU_TREE.map((m) => m.label);
+    const messageIdx = labels.indexOf('Message');
+    const viewIdx = labels.indexOf('View');
+    const routinesIdx = labels.indexOf('Routines');
+    expect(routinesIdx).toBe(messageIdx + 1);
+    expect(routinesIdx).toBe(viewIdx - 1);
+
+    const routinesMenu = MENU_TREE.find((m) => m.label === 'Routines');
+    expect(routinesMenu?.items).toEqual([
+      { id: 'menu:routines:open', label: 'Routines' },
+      { id: 'menu:routines:new', label: 'New Routine…' },
+    ]);
+  });
+
+  // Session/Mailbox top menus stay removed (tuxlink-lqw2) — the Routines
+  // insertion must not resurrect them (mock drift guard, task-7 brief).
+  it('does not reintroduce the removed Session or Mailbox top menus', () => {
+    const labels = MENU_TREE.map((m) => m.label);
+    expect(labels).not.toContain('Session');
+    expect(labels).not.toContain('Mailbox');
   });
 });

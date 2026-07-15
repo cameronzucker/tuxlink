@@ -1,0 +1,325 @@
+/* RunsTab.css — routines plan-5 Task 13 (Runs tab: list, monitor, step
+ * detail).
+ *
+ * Transplanted from the approved mock (dev/scratch/routines-ui-mocks/
+ * run-monitor.html)'s `.runs-body` / `.runlist` / `.runmain` / `.gantt` /
+ * `.stepdetail` rules, swapping the mock's standalone `:root` token names for
+ * this app's real `var(--…)` tokens (src/App.css) — same convention
+ * CanvasTab.css / RoutineDesigner.css already follow.
+ *
+ * `.btn`/`.btn-accent` are RoutineDesigner.css's — already loaded whenever
+ * this file's component mounts, since RunsTab only ever renders inside
+ * RoutineDesigner's Runs tab body, never standalone.
+ *
+ * `.dry-banner` / `.radio-banner` are NEW — the mock's run (#12) is neither a
+ * dry run nor an arbiter-refused run, so it has no banner precedent to
+ * transplant. Colors reuse this app's existing token vocabulary
+ * (`--form-tag` for dry-run, matching `.rbadge.dry`'s purple; `--accent`/
+ * `--accent-soft` for the radio-refusal banner, matching the amber
+ * "parked"/consent language used everywhere else in this tab).
+ */
+
+.runs-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ---- run browser (journal list) ---- */
+.runlist {
+  width: 216px;
+  flex: 0 0 216px;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+}
+.runlist-head {
+  padding: 9px 12px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  color: var(--text-faint);
+}
+.runlist-empty {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.runrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.runrow .id {
+  color: var(--text);
+  font-weight: 600;
+}
+.runrow .when {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.runrow.sel {
+  background: var(--accent-soft);
+}
+.rbadge {
+  font-size: 9.5px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  white-space: nowrap;
+}
+.rbadge.run {
+  color: var(--info);
+  border-color: rgba(107, 184, 238, 0.5);
+  background: rgba(107, 184, 238, 0.08);
+}
+.rbadge.ok {
+  color: var(--success);
+  border-color: rgba(93, 214, 160, 0.4);
+}
+.rbadge.fail {
+  color: var(--error);
+  border-color: rgba(238, 107, 107, 0.5);
+}
+.rbadge.cxl {
+  color: var(--text-faint);
+}
+.rbadge.intr {
+  color: var(--accent-2);
+  border-color: rgba(245, 159, 60, 0.5);
+}
+.rbadge.dry {
+  color: var(--form-tag);
+  border-color: rgba(192, 132, 252, 0.4);
+}
+
+/* ---- run monitor main ---- */
+.runmain {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+.runmain-empty,
+.runlist-empty {
+  padding: 16px;
+  font-size: 13px;
+  color: var(--text-faint);
+}
+.runhead {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.runtitle {
+  font-size: 14px;
+  font-weight: 600;
+}
+.runmeta {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.runhead .btn {
+  margin-left: auto;
+}
+.runhead .btn + .btn {
+  margin-left: 0;
+}
+
+.runs-feedback {
+  padding: 6px 16px;
+  font-size: 12px;
+  color: var(--info);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.dry-banner {
+  margin: 10px 16px 0;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(192, 132, 252, 0.4);
+  background: rgba(192, 132, 252, 0.1);
+  color: var(--form-tag);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.radio-banner {
+  margin: 10px 16px 0;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(245, 159, 60, 0.55);
+  background: var(--accent-soft);
+  color: var(--accent-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Gantt */
+.gantt {
+  padding: 14px 16px 6px;
+  overflow: hidden;
+}
+.axis {
+  display: flex;
+  position: relative;
+  height: 18px;
+  margin-left: 148px;
+  margin-right: 8px;
+}
+.axis .t {
+  position: absolute;
+  top: 0;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--text-faint);
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+.lanerow {
+  display: flex;
+  align-items: stretch;
+  margin-bottom: 10px;
+}
+.lanelabel {
+  width: 148px;
+  flex: 0 0 148px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  padding-top: 4px;
+}
+.lanelabel b {
+  display: block;
+  color: var(--text-dim);
+  font-size: 10.5px;
+}
+.track {
+  position: relative;
+  flex: 1;
+  min-height: 40px;
+  background: rgba(20, 28, 35, 0.6);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-right: 8px;
+  overflow: visible;
+}
+.bar {
+  position: absolute;
+  height: 20px;
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  line-height: 18px;
+  padding: 0 6px;
+  white-space: nowrap;
+  border: 1px solid;
+  min-width: 6px;
+  overflow: visible;
+  cursor: pointer;
+}
+.bar.ok {
+  background: rgba(93, 214, 160, 0.14);
+  border-color: rgba(93, 214, 160, 0.55);
+  color: var(--success);
+}
+.bar.fail {
+  background: var(--danger-surface);
+  border-color: var(--error);
+  color: var(--error);
+}
+.bar.consent {
+  background: repeating-linear-gradient(45deg, rgba(245, 159, 60, 0.22) 0 6px, rgba(245, 159, 60, 0.06) 6px 12px);
+  border-color: var(--accent);
+  color: var(--accent-2);
+  font-weight: 700;
+}
+.bar.delay {
+  background: none;
+  border: 1px dashed var(--border-strong);
+  color: var(--text-faint);
+  cursor: default;
+}
+.bar.running {
+  background: rgba(107, 184, 238, 0.12);
+  border-color: rgba(107, 184, 238, 0.6);
+  color: var(--info);
+}
+.bar.interrupted {
+  background: repeating-linear-gradient(45deg, rgba(245, 159, 60, 0.18) 0 6px, transparent 6px 12px);
+  border: 1px dashed var(--accent);
+  color: var(--accent-2);
+}
+.nowline {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  background: var(--info);
+  box-shadow: 0 0 6px rgba(107, 184, 238, 0.7);
+}
+
+/* step detail — verbatim journal */
+.stepdetail {
+  margin: 4px 16px 12px;
+  border: 1px solid rgba(238, 107, 107, 0.4);
+  border-radius: 6px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.sd-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.sd-head .st {
+  color: var(--error);
+  font-weight: 600;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.sd-head .act {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+}
+.sd-head .right {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.sd-body {
+  padding: 8px 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+}
+.sd-body .err {
+  color: var(--error);
+}
+.sd-body .dim {
+  color: var(--text-faint);
+}

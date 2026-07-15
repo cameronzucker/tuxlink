@@ -55,6 +55,14 @@ import { HintOverlay } from '../onboarding/HintOverlay';
 import { OfferCard } from '../onboarding/OfferCard';
 import { stripStats } from '../ft8ui/deriveBandActivity';
 import { CloseBehaviorPrompt } from './CloseBehaviorPrompt';
+// routines plan-5 Task 14 (spec §12, flow 4): the Part 97 transmit-consent
+// moment. ConsentGate is self-managing (its own useParkedRuns() instance) and
+// mounts ALWAYS, like CloseBehaviorPrompt — "consent cannot hide" means the
+// modal must be reachable from every surface, not just the Routines pane.
+// AppShell mirrors its parked list into the MenuBar badge + StatusBar item
+// via onParkedChange, rather than a second hook instance re-subscribing to
+// the same events.
+import { ConsentGate, type ParkedRun } from '../routines/ConsentGate';
 import { useIdentityList, useActiveIdentity, useIdentitySwitch } from './useIdentities';
 import { StatusBar } from './StatusBar';
 import { useStatusData, type StatusTone, type ConfigViewDto } from './useStatus';
@@ -107,6 +115,13 @@ const StationFinderPanel = lazy(() =>
 const RequestCenter = lazy(() =>
   import('../request/RequestCenter').then((m) => ({ default: m.RequestCenter })),
 );
+// routines plan-5 Task 7 (spec §12): the inline full-pane Routines surface —
+// mounts in place of the mailbox master-detail (no folder sidebar), NOT as an
+// overlay; the chrome rows stay visible. Lazy per the cold-start discipline
+// above; only fetches once the operator opens Routines.
+const RoutinesSurface = lazy(() =>
+  import('../routines/RoutinesSurface').then((m) => ({ default: m.RoutinesSurface })),
+);
 // tuxlink-bsiy: inline pending-message selection panel ("Review Pending
 // Messages"). Event-driven — useInboundSelection (below) subscribes to the
 // b2f-event channel and surfaces a prompt; the panel only paints when a
@@ -154,6 +169,33 @@ import { isBuilt } from '../connections/sessionTypes';
 import { connectFor, abortFor, MissingTargetError } from '../connections/connectDispatch';
 import { emitGatewayPrefill } from '../favorites/prefillEvent';
 import { emitPeerPrefill, type PeerPrefill } from '../peers/peerPrefillEvent';
+// routines plan-5 Task 7: type-only import (the component itself is lazy-loaded below).
+import type { RoutinesView } from '../routines/RoutinesSurface';
+
+// routines plan-5 Task 7 (post-review narrowing): the menu actions that CLOSE
+// the inline Routines surface — exactly the mail-domain actions whose effect
+// lives in the mailbox master-detail pane that Routines replaced, so firing
+// one is unambiguous "navigate back to the mailbox" intent (and lets the
+// operator SEE the message their reply/archive/delete/print acted on).
+//
+// Everything else leaves the surface open, mirroring the existing overlay
+// interplay: Settings / Station Finder / Request Center / Elmer / Verify CMS /
+// About / Theme Designer are all position:fixed overlays (or separate Tauri
+// windows: Help docs, Logging) that render OVER the main pane and never close
+// each other or the pane beneath them — opening Settings over the mailbox
+// doesn't close the mailbox, so opening it over Routines doesn't close
+// Routines. Pure view/chrome toggles (color scheme, mailbox bar, radio panel
+// — including its Ctrl+Shift+M accelerator) and the tour restyle/decorate the
+// shell and must never eject the operator from the surface they're reading.
+const ROUTINES_CLOSING_MENU_ACTIONS = new Set<string>([
+  'menu:message:new',
+  'menu:message:reply',
+  'menu:message:reply_all',
+  'menu:message:forward',
+  'menu:message:archive',
+  'menu:message:delete',
+  'menu:message:print',
+]);
 
 /** Phase D1 — display name for the RF modem session that BLOCKS an FT-8 listener
  *  start (it owns the radio + audio device). Deliberately partial: `telnet` is not
@@ -529,6 +571,26 @@ function AppShellInner() {
   // null = closed. Opened from Message → Request Center… ('home') and from
   // Message → GRIB File Request… ('grib').
   const [requestCenter, setRequestCenter] = useState<{ initialView: 'home' | 'browse' | 'grib' } | null>(null);
+  // routines plan-5 Task 7 (spec §12): the inline full-pane Routines surface.
+  // null = closed (the normal mailbox master-detail shows). Opened from
+  // Routines → Routines (dashboard) or Routines → New Routine… (a fresh
+  // designer draft). Closed only by menu actions that navigate the main pane
+  // back to the mailbox (ROUTINES_CLOSING_MENU_ACTIONS, top of file);
+  // overlays open OVER it and view toggles restyle it in place, mirroring
+  // how the existing overlay flags (settingsOpen, catalogBuilderOpen, …)
+  // never close each other or the pane beneath.
+  const [routinesView, setRoutinesView] = useState<RoutinesView | null>(null);
+  // routines plan-5 Task 14 (spec §12): mirrors <ConsentGate>'s own parked-run
+  // tracking, purely for chrome (MenuBar's amber badge + StatusBar's "N
+  // transmit awaiting consent" item) — AppShell holds no tracking logic of
+  // its own; ConsentGate remains the single source of truth.
+  const [parkedRuns, setParkedRuns] = useState<ParkedRun[]>([]);
+  // Reviewer fix (consent modal defer affordance): bumped by the StatusBar
+  // consent item's onClick to ask <ConsentGate> to reopen after "Keep
+  // parked" dismissed it. AppShell owns no dismissal state of its own — this
+  // is purely a one-shot "please reopen" signal, mirroring onParkedChange's
+  // opposite direction (child→parent list vs. parent→child request).
+  const [consentReopenSignal, setConsentReopenSignal] = useState(0);
   // tuxlink-qjgx Task 8: Report Issue modal state. The controller drives the
   // Save As → export → GitHub URL flow; AppShell owns the state so the modal
   // can be positioned in the global overlay layer.
@@ -1610,6 +1672,12 @@ function AppShellInner() {
     },
     openCatalogBuilder: () => setCatalogBuilderOpen(true),
     openRequestCenter: (initialView = 'home') => setRequestCenter({ initialView }),
+    // routines plan-5 Task 7: Routines → Routines opens the dashboard view.
+    openRoutines: () => setRoutinesView({ view: 'dashboard' }),
+    // routines plan-5 Task 7: Routines → New Routine… opens a fresh, unsaved
+    // draft — empty `routine` name is what RoutineDesigner (Task 9) treats as
+    // "new" rather than an existing routine loaded for edit.
+    newRoutine: () => setRoutinesView({ view: 'designer', routine: '', tab: 'design' }),
     // tuxlink-10bkw Task 6: Help → Replay tour restarts the 5-stop guided tour
     // — the same action the first-run offer card's "Start tour" fires.
     replayTour: () => hints.startTour(),
@@ -1632,7 +1700,16 @@ function AppShellInner() {
     ? archiveOpen
     : undefined;
 
-  const onMenuAction = useCallback((id: string) => dispatchMenuAction(id, handlers), [handlers]);
+  const onMenuAction = useCallback((id: string) => {
+    // routines plan-5 Task 7 (spec §12): the Routines surface has no
+    // dedicated close control — it closes when a menu action navigates the
+    // main pane back to the mailbox. Only the mail-domain actions in
+    // ROUTINES_CLOSING_MENU_ACTIONS (see its comment for the classification)
+    // qualify; overlays layer over the surface and view/chrome toggles
+    // restyle it in place.
+    if (routinesView && ROUTINES_CLOSING_MENU_ACTIONS.has(id)) setRoutinesView(null);
+    dispatchMenuAction(id, handlers);
+  }, [handlers, routinesView]);
   useAccelerators(onMenuAction);
 
   const onSelectFolder = useCallback((folder: MailboxFolderRef) => {
@@ -1875,7 +1952,7 @@ function AppShellInner() {
   return (
     <div className={`layout-b${isCompact ? ' compact' : ''}`} data-testid="app-shell-root">
       <TitleBar folderLabel={folderLabel(selectedFolder, userFolders)} />
-      <MenuBar onAction={onMenuAction} />
+      <MenuBar onAction={onMenuAction} badges={{ routines: parkedRuns.length }} />
       <ResizeHandles />
       <div className="ribbon-with-search">
         <div className="search-zone" data-testid="search-zone" ref={searchZoneRef}>
@@ -1956,6 +2033,17 @@ function AppShellInner() {
         />
       </div>
 
+      {routinesView ? (
+        // routines plan-5 Task 7 (spec §12): the inline full-pane Routines
+        // surface REPLACES the mailbox master-detail entirely (no folder
+        // sidebar) — it is a sibling of `.panes` in this same grid row, not
+        // nested inside it, since it never shares the sidebar. The chrome
+        // rows above (titlebar/menubar/ribbon) and below (StatusBar) stay
+        // mounted either way.
+        <Suspense fallback={null}>
+          <RoutinesSurface view={routinesView} onNavigate={setRoutinesView} />
+        </Suspense>
+      ) : (
       <div
         className={`panes${radioPanelMode !== null || aprsOpen ? ' panes--with-dock' : ''}${drawerOpen ? ' drawer-open' : ''}`}
         data-testid="shell-panes"
@@ -2270,11 +2358,18 @@ function AppShellInner() {
           </RadioDrawer>
         )}
       </div>
+      )}
 
       <StatusBar
         show={showStatusBar}
         unread={counts.inbox ?? 0}
         outboxQueued={outbox.messages.length}
+        consent={
+          parkedRuns.length > 0
+            ? { count: parkedRuns.length, routine: parkedRuns[0].routine }
+            : null
+        }
+        onOpenConsent={() => setConsentReopenSignal((n) => n + 1)}
       />
 
       {/* tuxlink-perf-coldstart: lazy-mounted overlays. Each module + its CSS
@@ -2352,6 +2447,12 @@ function AppShellInner() {
           its open state via the `show-close-prompt` backend event (no parent
           state flag), so it is always mounted. */}
       <CloseBehaviorPrompt />
+
+      {/* routines plan-5 Task 14 (spec §12): the Part 97 transmit-consent
+          moment. Always mounted — "consent cannot hide" — self-managing like
+          CloseBehaviorPrompt; onParkedChange only mirrors its list into the
+          MenuBar badge + StatusBar item above. */}
+      <ConsentGate onParkedChange={setParkedRuns} reopenSignal={consentReopenSignal} />
 
       {catalogBuilderOpen && (
         <Suspense fallback={null}>

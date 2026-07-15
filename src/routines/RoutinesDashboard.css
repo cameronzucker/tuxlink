@@ -1,0 +1,535 @@
+/* RoutinesDashboard.css — routines plan-5 Task 8 (fleet-ops dashboard).
+ *
+ * Transplanted from the approved mock
+ * (dev/scratch/routines-ui-mocks/dashboard.html)'s `.surface` / `.ops` /
+ * `.chip` / `.badge-miss` / `.fleet-bar` rules, swapping the mock's
+ * standalone `:root` token names for this app's real `var(--…)` tokens
+ * (App.css) so the surface re-themes with every color scheme. `.surface` /
+ * `.surface-head` / `.surface-title` / `.surface-sub` duplicate
+ * RoutinesSurface.css's shell rules — this component owns its own `.surface`
+ * wrapper (task-7's stub already did; Task 9's designer keeps its own copy
+ * too), so the brief's "transplant into RoutinesDashboard.css" instruction is
+ * followed literally rather than assuming the shared shell wraps this file.
+ */
+.surface {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.surface-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex: 0 0 auto;
+}
+
+.surface-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.surface-sub {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.head-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.btn {
+  font-family: var(--sans, inherit);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 6px 12px;
+  line-height: 1.2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.btn-accent {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #1a0e02;
+}
+
+.btn-ghost {
+  background: none;
+}
+
+/* ---- rejected-run refusal strip (flow 6 — dismissible, verbatim UiError) ---- */
+.refusal-strip {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 18px;
+  background: var(--tux-danger-surface, rgb(238 107 107 / 12%));
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+  color: var(--error);
+  flex: 0 0 auto;
+}
+
+.refusal-strip span {
+  flex: 1;
+}
+
+.dismiss {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+/* ---- ops table ---- */
+.ops-wrap {
+  flex: 1;
+  overflow: hidden auto;
+  min-height: 0;
+}
+
+table.ops {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.ops th {
+  text-align: left;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border-strong);
+  background: var(--surface);
+  white-space: nowrap;
+}
+
+.ops td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+  overflow: hidden;
+}
+
+.ops tr:hover td {
+  background: var(--surface-2);
+}
+
+.rname {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.rmeta {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-top: 1px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.chip .d {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  flex: 0 0 auto;
+}
+
+.chip.running {
+  color: var(--info);
+  border-color: rgb(107 184 238 / 45%);
+  background: rgb(107 184 238 / 8%);
+}
+
+.chip.running .d {
+  background: var(--info);
+}
+
+.chip.enabled {
+  color: var(--success);
+  border-color: rgb(93 214 160 / 40%);
+  background: rgb(93 214 160 / 7%);
+}
+
+.chip.enabled .d {
+  background: var(--success);
+}
+
+.chip.consent {
+  color: var(--accent-2);
+  border-color: rgb(245 159 60 / 55%);
+  background: var(--accent-soft);
+}
+
+.chip.consent .d {
+  background: var(--accent);
+}
+
+.chip.draft {
+  color: var(--error);
+  border-color: rgb(238 107 107 / 50%);
+  background: var(--tux-danger-surface, rgb(238 107 107 / 12%));
+}
+
+.chip.draft .d {
+  background: var(--error);
+}
+
+.chip.disabled {
+  color: var(--text-faint);
+}
+
+.badge-miss {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--accent-2);
+  background: var(--accent-soft);
+  border: 1px solid rgb(245 159 60 / 40%);
+  border-radius: 3px;
+  padding: 1px 6px;
+  margin-top: 4px;
+  white-space: nowrap;
+}
+
+.statuscell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.refusal-note {
+  font-size: 10.5px;
+  color: var(--error);
+  margin-top: 3px;
+}
+
+.skip-note {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  margin-top: 3px;
+}
+
+.trig {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.trig .win {
+  color: var(--text-faint);
+}
+
+.res {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.res .ok {
+  color: var(--success);
+}
+
+.res .fail {
+  color: var(--error);
+}
+
+.res .t {
+  color: var(--text-faint);
+}
+
+.res .detail {
+  color: var(--text-dim);
+  white-space: normal;
+}
+
+.nextfire {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.nextfire .none {
+  color: var(--text-faint);
+}
+
+.txmode {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  padding: 2px 7px;
+  border-radius: 3px;
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.txmode.auto {
+  color: var(--accent-2);
+  border-color: rgb(245 159 60 / 45%);
+  background: var(--accent-soft);
+}
+
+.txmode.attended {
+  color: var(--info);
+  border-color: rgb(107 184 238 / 40%);
+  background: rgb(107 184 238 / 7%);
+}
+
+.txmode.noack {
+  color: var(--error);
+  border-color: rgb(238 107 107 / 45%);
+  background: var(--tux-danger-surface, rgb(238 107 107 / 12%));
+}
+
+.rowact {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+  position: relative;
+}
+
+.ibtn {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ibtn.run {
+  color: var(--modem-accent, var(--success));
+  border-color: rgb(74 222 128 / 40%);
+}
+
+.ibtn.stop {
+  color: var(--accent-2);
+  border-color: rgb(245 159 60 / 40%);
+}
+
+.ibtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.rowmenu {
+  position: absolute;
+  top: 28px;
+  right: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  min-width: 140px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 35%);
+  overflow: hidden;
+}
+
+.rowmenu button {
+  text-align: left;
+  padding: 7px 12px;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.rowmenu button:hover {
+  background: var(--surface);
+}
+
+.rowmenu button.danger {
+  color: var(--error);
+}
+
+/* fleet-check strip = the surface's status bar */
+.fleet-bar {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 6px 18px;
+  background: var(--accent-soft);
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--accent-2);
+  line-height: 1.45;
+  flex: 0 0 auto;
+}
+
+.fleet-bar .tag {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  border: 1px solid rgb(245 159 60 / 45%);
+  border-radius: 3px;
+  padding: 1px 6px;
+  margin-top: 1px;
+  white-space: nowrap;
+}
+
+.fleet-bar .msgs {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+}
+
+.fleet-bar .code {
+  font-family: var(--mono);
+  color: var(--accent);
+}
+
+/* enable-blocked findings render in this same fleet-bar area, styled as
+ * errors instead of warnings (task-8 brief binding constraint 8). */
+.fleet-bar.err {
+  background: var(--tux-danger-surface, rgb(238 107 107 / 12%));
+  color: var(--error);
+}
+
+.fleet-bar.err .tag {
+  border-color: rgb(238 107 107 / 45%);
+}
+
+.fleet-bar.err .code {
+  color: var(--error);
+}
+
+/* ---- Import JSON dialog (ImportJsonDialog.tsx) — inline-overlay convention,
+ * mirrors NewFolderDialog/SettingsPanel. ---- */
+.import-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 55%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.import-dialog {
+  width: min(560px, 92vw);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 16px 18px;
+  color: var(--text);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 45%);
+}
+
+.import-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.import-textarea {
+  flex: 1;
+  min-height: 220px;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.import-error {
+  font-size: 12.5px;
+  color: var(--error);
+  background: var(--tux-danger-surface, rgb(238 107 107 / 12%));
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
+.import-findings {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 160px;
+  overflow-y: auto;
+  font-size: 12px;
+}
+
+.import-ok {
+  color: var(--success);
+}
+
+.import-finding {
+  color: var(--text-dim);
+}
+
+.import-finding.error {
+  color: var(--error);
+}
+
+.import-finding .code {
+  font-family: var(--mono);
+  color: var(--accent);
+}
+
+.import-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

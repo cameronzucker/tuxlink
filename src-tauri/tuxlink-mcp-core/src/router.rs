@@ -2448,6 +2448,50 @@ mod tests {
                 "missing tool {tool:?} in router list: {names:?}"
             );
         }
+
+        // Regression guard (plan-5 Task 1): the routines-prefixed tool list
+        // is pinned CLOSED at EXACTLY these 10 names — sorted equality, not
+        // mere containment, so a new UI-only tool (the automatic-transmit
+        // acknowledgment, a future take-radio/export-bundle) added to the
+        // router by mistake fails this test immediately rather than only
+        // being caught by the (weaker) "no consent-shaped name" check above.
+        let mut routines_names: Vec<&str> = names
+            .iter()
+            .map(String::as_str)
+            .filter(|n| n.starts_with("routines_"))
+            .collect();
+        routines_names.sort_unstable();
+        let mut expected = vec![
+            "routines_disable",
+            "routines_dry_run",
+            "routines_enable",
+            "routines_get",
+            "routines_journal_get",
+            "routines_list",
+            "routines_run",
+            "routines_run_status",
+            "routines_save",
+            "routines_validate",
+        ];
+        expected.sort_unstable();
+        assert_eq!(
+            routines_names, expected,
+            "the routines-prefixed MCP tool list must be EXACTLY the spec §13 \
+             10-tool list — no more, no less: {names:?}"
+        );
+
+        for forbidden in [
+            "routines_acknowledge_automatic",
+            "routines_consent_grant",
+            "routines_take_radio",
+            "routines_export_run_bundle",
+        ] {
+            assert!(
+                !names.iter().any(|n| n == forbidden),
+                "the MCP surface must never expose {forbidden:?} — it is a \
+                 UI-only act with no MCP path (spec §13): {names:?}"
+            );
+        }
     }
 
     #[tokio::test]

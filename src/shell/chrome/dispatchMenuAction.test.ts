@@ -27,6 +27,8 @@ function handlers(): MenuHandlers {
     openElmerModel: vi.fn(),
     openCatalogBuilder: vi.fn(),
     openRequestCenter: vi.fn(),
+    openRoutines: vi.fn(),
+    newRoutine: vi.fn(),
     quit: vi.fn(),
   };
 }
@@ -234,5 +236,19 @@ describe('dispatchMenuAction', () => {
     expect(h.openElmerModel).toHaveBeenCalledOnce();
     // Verify connect_agent is still untouched by this action.
     expect(h.openConnectAgent).not.toHaveBeenCalled();
+  });
+
+  // routines plan-5 Task 7: Routines → Routines opens the dashboard view.
+  it('routes menu:routines:open to openRoutines', () => {
+    const h = handlers();
+    dispatchMenuAction('menu:routines:open', h);
+    expect(h.openRoutines).toHaveBeenCalledOnce();
+  });
+
+  // routines plan-5 Task 7: Routines → New Routine… opens a fresh draft.
+  it('routes menu:routines:new to newRoutine', () => {
+    const h = handlers();
+    dispatchMenuAction('menu:routines:new', h);
+    expect(h.newRoutine).toHaveBeenCalledOnce();
   });
 });

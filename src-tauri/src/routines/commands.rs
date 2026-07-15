@@ -58,15 +58,18 @@ use tauri::State;
 
 use tuxlink_routines::dryrun::{DryRunDefault, DryRunOutcome, DryRunScript};
 use tuxlink_routines::error::EngineError;
-use tuxlink_routines::journal::{JournalEntry, RunState};
+use tuxlink_routines::journal::{read_journal, JournalEntry, RunEvent, RunState};
 use tuxlink_routines::types::RoutineDef;
 use tuxlink_routines::validate::{
     validate, validate_fleet, Finding, Severity, ValidationContext as _,
 };
 
 use super::events::{LibraryEntity, RoutinesEvent};
+use super::export::{export_run_bundle, BundleResult};
 use super::presets::{PresetError, RadioPreset};
-use super::scheduler::{anchor_on_enable, schedule_status, ScheduleStatus};
+use super::scheduler::{
+    anchor_on_enable, next_fires_report, schedule_status, NextFire, ScheduleStatus,
+};
 use super::session::{local_utc_offset_seconds, unix_now_secs, RoutineStartError, RoutinesState};
 use super::station_sets::{StationSet, StationSetError};
 use super::store::{RoutineSummary, StoreError};
@@ -112,6 +115,24 @@ pub struct RunStatusDto {
     pub state: RunState,
 }
 
+/// One run's identity + outcome, for the dashboard/runs-tab history
+/// ([`list_runs`]/`routines_runs_list`). Unlike [`RunStatusDto`] (one run, the
+/// fast in-memory answer), this enumerates every run JOURNAL on disk — a
+/// station that has been up for weeks has journals the in-memory registry
+/// evicted long ago (`RoutinesState`'s `MAX_TERMINAL_RUNS` cap), and the
+/// history view is supposed to answer for all of them, not just the recent
+/// ones still cached in memory.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunListEntry {
+    pub run_id: String,
+    pub routine: String,
+    pub dry_run: bool,
+    pub started_unix: i64,
+    pub state: RunState,
+    pub finished_unix: Option<i64>,
+}
+
 /// A dry-run's start response: the run id to poll, plus the validator's
 /// findings (informational — a dry run is never blocked by them).
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -119,6 +140,21 @@ pub struct RunStatusDto {
 pub struct DryRunStarted {
     pub run_id: String,
     pub findings: Vec<Finding>,
+}
+
+/// One catalog action's declared capabilities (spec §6), as reported by
+/// [`list_actions`] — the SAME [`tuxlink_routines::action::ActionDescriptor`]
+/// the validator and the executor's registry answer with, projected to an
+/// owned, JSON-friendly shape. There is no second, hand-maintained action
+/// list anywhere in the UI surface: the registry is the only source of truth
+/// for "what actions exist and what do they need."
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionInfo {
+    pub name: String,
+    pub needs_radio: bool,
+    pub transmits: bool,
+    pub needs_internet: bool,
 }
 
 /// Caller-supplied dry-run script (all fields optional — the default is an
@@ -345,13 +381,20 @@ pub fn save_routine(state: &RoutinesState, def_json: &str) -> Result<SaveResult,
     // this save path is agent-reachable over MCP (`routines_save`). Whatever
     // ack the caller sent — forged, or replayed from `routines_get` — is
     // discarded; the routine keeps the acknowledgment already on disk, if
-    // any. This happens BEFORE validation so the returned findings describe
-    // the def as stored (an unacked automatic routine reports
-    // AUTO_TX_UNACKED even when the request body carried an ack).
-    def.transmit_ack = state
-        .store
-        .get(&def.routine)
-        .and_then(|on_disk| on_disk.transmit_ack);
+    // any, PROVIDED the incoming def is still automatic — leaving automatic
+    // clears it (see the match arm below). This happens BEFORE validation so
+    // the returned findings describe the def as stored (an unacked automatic
+    // routine reports AUTO_TX_UNACKED even when the request body carried an
+    // ack).
+    def.transmit_ack = match def.transmit_mode {
+        tuxlink_routines::types::TransmitMode::Automatic => state
+            .store
+            .get(&def.routine)
+            .and_then(|on_disk| on_disk.transmit_ack),
+        // Leaving automatic revokes the standing acknowledgment: a stale ack
+        // must never silently re-arm a routine flipped back to automatic later.
+        _ => None,
+    };
     let findings = validate_def(state, &def);
     // Save even with errors (spec §10: errors block enable/run, never save).
     // `store.save` still rejects a name that would escape the store directory —
@@ -376,6 +419,29 @@ pub fn save_routine(state: &RoutinesState, def_json: &str) -> Result<SaveResult,
 /// as [`validate_def`]: a preset/station-set created a second ago counts.
 pub fn validate_routine(state: &RoutinesState, name: &str) -> Result<Vec<Finding>, UiError> {
     let def = get_routine(state, name)?;
+    Ok(validate_def(state, &def))
+}
+
+/// Validate a DRAFT — a `def_json` body the caller has not (yet, or ever)
+/// saved — WITHOUT staging a save. This is the builder's live-validation
+/// panel: findings update as the operator types, and nothing hits disk
+/// until they explicitly save.
+///
+/// Applies the SAME consent-envelope normalization [`save_routine`] does
+/// (plan-5 Task 1, C1): a body-supplied `transmit_ack` is discarded before
+/// validation, replaced with whatever ack is already on disk for a routine
+/// of that name (none, if the routine has never been saved). Without this,
+/// the valbar could report a draft as acknowledged while `save_routine`
+/// would report the saved routine as `AUTO_TX_UNACKED` — the two surfaces
+/// would disagree about the same routine.
+pub fn validate_draft(state: &RoutinesState, def_json: &str) -> Result<Vec<Finding>, UiError> {
+    let mut def = RoutineDef::parse(def_json).map_err(|e| UiError::Rejected(e.to_string()))?;
+    def.transmit_ack = match def.transmit_mode {
+        tuxlink_routines::types::TransmitMode::Automatic => {
+            state.store.get(&def.routine).and_then(|d| d.transmit_ack)
+        }
+        _ => None,
+    };
     Ok(validate_def(state, &def))
 }
 
@@ -516,6 +582,76 @@ fn introduced_findings(armed: Vec<Finding>, baseline: Vec<Finding>) -> Vec<Findi
     introduced
 }
 
+/// Record the Part 97 automatic-transmission acknowledgment (spec §4). This is
+/// THE ONLY writer of `transmit_ack`: `save_routine` discards caller-supplied
+/// acks (C1), and this command is registered only as a Tauri command — the MCP
+/// surface has no path to it (spec §13's tool list is closed at 10).
+pub fn acknowledge_automatic(
+    state: &RoutinesState,
+    name: &str,
+    callsign: &str,
+    at_rfc3339: &str,
+) -> Result<(), UiError> {
+    let mut def = get_routine(state, name)?;
+    if def.transmit_mode != tuxlink_routines::types::TransmitMode::Automatic {
+        return Err(UiError::Rejected(format!(
+            "routine \"{name}\" is not in automatic transmit mode — the automatic-transmission \
+             acknowledgment applies only to automatic routines"
+        )));
+    }
+    def.transmit_ack = Some(tuxlink_routines::types::TransmitAck {
+        by: callsign.to_string(),
+        at: at_rfc3339.to_string(),
+    });
+    state.store.save(&def)?;
+    state.emit(&RoutinesEvent::LibraryChanged {
+        entity: LibraryEntity::Routine,
+        name: name.to_string(),
+    });
+    Ok(())
+}
+
+// ============================================================================
+// Service fns — catalog + fleet reads (plan-5 Task 2)
+// ============================================================================
+
+/// The action catalog, as the registry actually knows it — no hardcoded
+/// list. The builder's action picker and its capability badges (needs
+/// radio / transmits / needs internet) read this, so a new action registered
+/// on the executor's side shows up here with no UI change required. Sorted
+/// by name for a stable, deterministic render.
+pub fn list_actions(state: &RoutinesState) -> Vec<ActionInfo> {
+    let mut out: Vec<ActionInfo> = state
+        .registry
+        .descriptors()
+        .into_iter()
+        .map(|d| ActionInfo {
+            name: d.name.to_string(),
+            needs_radio: d.needs_radio,
+            transmits: d.transmits,
+            needs_internet: d.needs_internet,
+        })
+        .collect();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+/// A read-only fleet-wide check: `validate_fleet` over every CURRENTLY
+/// enabled routine, at the given instant/offset — the same cross-routine
+/// checks (`SCHEDULE_COLLISION`, `SAME_EFFECT_OVERLAP`) [`set_routine_enabled`]
+/// runs at the moment of arming, but callable any time the operator wants a
+/// standing "does anything already-armed collide right now" answer (e.g. a
+/// dashboard health check), without touching any routine's enabled state.
+///
+/// Unlike `set_routine_enabled`'s delta (§"why the findings are a DELTA"
+/// above), this reports the FULL fleet's findings — there is no "routine
+/// being added" to diff against, so every standing finding is in scope.
+pub fn fleet_check(state: &RoutinesState, now_unix: i64, utc_offset_seconds: i32) -> Vec<Finding> {
+    let ctx = MonolithValidationContext::for_state(state);
+    let defs = ctx.enabled_routines();
+    validate_fleet(&defs, &ctx, now_unix, utc_offset_seconds)
+}
+
 // ============================================================================
 // Service fns — runs
 // ============================================================================
@@ -587,6 +723,22 @@ pub fn grant_consent(state: &RoutinesState, run_id: &str, step_id: &str) -> bool
     state.grant_consent(run_id, step_id)
 }
 
+/// Operator "take the radio" (plan-5 Task 4): the graceful half of the
+/// take-the-radio flow (`RadioArbiter::operator_take`, `arbiter.rs:837`) —
+/// asks the CURRENT run-holder (if any) to release the rig at its next step
+/// boundary, rather than evicting it outright. `rig` defaults to
+/// [`super::actions::DEFAULT_RIG_ID`] when unset (v1's single-rig
+/// placeholder identifier). Returns `false` when the rig is free or held by
+/// an interactive session (an interactive holder is never affected by this
+/// call — the operator does not need to take the radio from themself).
+///
+/// **Operator-only.** This is a UI command; the MCP surface has no path to it.
+pub fn take_radio(state: &RoutinesState, rig: Option<&str>) -> bool {
+    state
+        .arbiter
+        .operator_take(rig.unwrap_or(super::actions::DEFAULT_RIG_ID))
+}
+
 /// Everything the scheduler has to say about why fires did not happen, per
 /// routine: fires that elapsed while the app was CLOSED (spec §8: "misses are
 /// recorded visibly either way"), the last fire the gate REFUSED (verbatim), and
@@ -598,6 +750,91 @@ pub fn grant_consent(state: &RoutinesState, run_id: &str, step_id: &str) -> bool
 /// through here. Empty when there is nothing to report.
 pub fn schedule_status_report(state: &RoutinesState) -> Vec<ScheduleStatus> {
     schedule_status(state)
+}
+
+/// Enumerate run journals, newest first, optionally filtered to one routine
+/// (`routines_runs_list`).
+///
+/// Every `*.jsonl` in `state.journal_dir` is one run's durable record. A file
+/// with no `RunEvent::RunStarted` entry at all — foreign, or corrupted before
+/// that first write ever landed — is silently skipped: it is not this
+/// listing's record to report on, the same "ignored, not an error" posture
+/// `tuxlink_routines::journal::scan_interrupted` already takes toward an
+/// unreadable journal.
+///
+/// The terminal state + `finished_unix` come from the journal's own
+/// `RunFinished` entry when there is one. When there is not, the run is
+/// either still going in THIS process or belongs to a previous process
+/// lifetime that crashed before launch recovery reached it, and
+/// [`RoutinesState::run_status`] is consulted: a LIVE registry entry wins
+/// (finished_unix stays `None`), and its absence reads as
+/// [`RunState::Interrupted`] — the same conclusion launch recovery would
+/// reach for this exact journal, reported here eagerly rather than waiting
+/// for recovery to append the entry (mirrors the reasoning of
+/// `RoutinesState::run_status_from_journal`'s "a journal with no
+/// `RunFinished` is a run this process never finished" doc comment, applied
+/// to a run this process — or the CURRENT one, if recovery already ran — is
+/// not actively tracking).
+pub fn list_runs(state: &RoutinesState, routine: Option<&str>, limit: usize) -> Vec<RunListEntry> {
+    let mut out: Vec<RunListEntry> = Vec::new();
+
+    let Ok(dir) = std::fs::read_dir(&state.journal_dir) else {
+        return out;
+    };
+
+    for entry in dir.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let Ok(entries) = read_journal(&path) else {
+            continue; // corrupt/foreign: ignored, not an error
+        };
+        let Some((run_id, started_unix, run_routine, dry_run)) =
+            entries.iter().find_map(|e| match &e.event {
+                RunEvent::RunStarted {
+                    routine: started_routine,
+                    dry_run,
+                    ..
+                } => Some((e.run_id.clone(), e.ts_unix, started_routine.clone(), *dry_run)),
+                _ => None,
+            })
+        else {
+            continue; // no RunStarted entry: foreign/corrupt, ignored
+        };
+
+        if let Some(filter) = routine {
+            if run_routine != filter {
+                continue;
+            }
+        }
+
+        let terminal = entries.iter().rev().find_map(|e| match &e.event {
+            RunEvent::RunFinished { state: s, .. } => Some((*s, e.ts_unix)),
+            _ => None,
+        });
+
+        let (run_state, finished_unix) = match terminal {
+            Some((s, at)) => (s, Some(at)),
+            None => match state.run_status(&run_id) {
+                Some(snapshot) => (snapshot.state, None),
+                None => (RunState::Interrupted, None),
+            },
+        };
+
+        out.push(RunListEntry {
+            run_id,
+            routine: run_routine,
+            dry_run,
+            started_unix,
+            state: run_state,
+            finished_unix,
+        });
+    }
+
+    out.sort_by_key(|e| std::cmp::Reverse(e.started_unix));
+    out.truncate(limit);
+    out
 }
 
 // ============================================================================
@@ -750,6 +987,18 @@ pub async fn routines_journal(
     run_journal(&state, &run_id)
 }
 
+/// The runs tab / dashboard history: every run journal on disk, newest
+/// first, optionally filtered to one routine. **UI-only**; not on the MCP
+/// surface (spec §13's 10-tool list is closed). Pins `limit = 200` — the
+/// dashboard is a recent-history view, not a full-archive export.
+#[tauri::command]
+pub async fn routines_runs_list(
+    state: State<'_, Arc<RoutinesState>>,
+    routine: Option<String>,
+) -> Result<Vec<RunListEntry>, UiError> {
+    Ok(list_runs(&state, routine.as_deref(), 200))
+}
+
 #[tauri::command]
 pub async fn routines_consent_grant(
     state: State<'_, Arc<RoutinesState>>,
@@ -757,6 +1006,24 @@ pub async fn routines_consent_grant(
     step_id: String,
 ) -> Result<bool, UiError> {
     Ok(grant_consent(&state, &run_id, &step_id))
+}
+
+/// Record the Part 97 automatic-transmission acknowledgment for `name` as the
+/// station's active identity, at the current instant. **Operator-only**: this
+/// is a UI command; the MCP surface has no path to it (spec §13's tool list is
+/// closed at 10 — see `tuxlink-mcp-core/src/router.rs`'s closed-list guard).
+#[tauri::command]
+pub async fn routines_acknowledge_automatic(
+    state: State<'_, Arc<RoutinesState>>,
+    backend: State<'_, crate::app_backend::BackendState>,
+    name: String,
+) -> Result<(), UiError> {
+    let b = backend
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".into()))?;
+    let callsign = b.active_identity()?.mycall().as_str().to_uppercase();
+    let at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    acknowledge_automatic(&state, &name, &callsign, &at)
 }
 
 /// The schedule-status read path. Keeps its historical `missed_fires` name — it
@@ -769,6 +1036,92 @@ pub async fn routines_missed_fires(
     state: State<'_, Arc<RoutinesState>>,
 ) -> Result<Vec<ScheduleStatus>, UiError> {
     Ok(schedule_status_report(&state))
+}
+
+/// The dashboard's next-fire report: every enabled, schedule-triggered
+/// routine's next fire instant, at "now" in the operator's local clock —
+/// the same seam `routines_set_enabled`/`routines_fleet_check` resolve
+/// (`unix_now_secs`/`local_utc_offset_seconds`). **UI-only**; not on the MCP
+/// surface (spec §13's 10-tool list is closed).
+#[tauri::command]
+pub async fn routines_next_fires(
+    state: State<'_, Arc<RoutinesState>>,
+) -> Result<Vec<NextFire>, UiError> {
+    Ok(next_fires_report(
+        &state,
+        unix_now_secs(),
+        local_utc_offset_seconds(),
+    ))
+}
+
+/// Validate one SAVED routine by name (spec §10, one validator, no
+/// privileged path). Read-only.
+///
+/// **UI-only.** The MCP surface already has an unrelated tool of the same
+/// name (`tuxlink-mcp-core/src/router.rs`'s `routines_validate`, wired
+/// through `RoutinesPort::validate` / `validate_routine` directly, not
+/// through this shim) — the two are registered on entirely separate
+/// dispatch tables (Tauri's `invoke_handler` vs. the MCP tool router) so the
+/// shared name is not a collision. This command exists so the desktop UI has
+/// its own IPC-reachable path without going through the MCP port machinery.
+#[tauri::command]
+pub async fn routines_validate(
+    state: State<'_, Arc<RoutinesState>>,
+    name: String,
+) -> Result<Vec<Finding>, UiError> {
+    validate_routine(&state, &name)
+}
+
+/// Validate an UNSAVED draft body — the builder's live-validation panel.
+/// **UI-only**; not on the MCP surface (spec §13's 10-tool list is closed).
+#[tauri::command]
+pub async fn routines_validate_draft(
+    state: State<'_, Arc<RoutinesState>>,
+    def_json: String,
+) -> Result<Vec<Finding>, UiError> {
+    validate_draft(&state, &def_json)
+}
+
+/// The action catalog, registry-truth. **UI-only**; not on the MCP surface.
+#[tauri::command]
+pub async fn routines_actions_list(
+    state: State<'_, Arc<RoutinesState>>,
+) -> Result<Vec<ActionInfo>, UiError> {
+    Ok(list_actions(&state))
+}
+
+/// A standing fleet-wide validation read, at "now" in the operator's local
+/// clock — same seam `routines_set_enabled` resolves
+/// (`unix_now_secs`/`local_utc_offset_seconds`). **UI-only**; not on the MCP
+/// surface.
+#[tauri::command]
+pub async fn routines_fleet_check(
+    state: State<'_, Arc<RoutinesState>>,
+) -> Result<Vec<Finding>, UiError> {
+    Ok(fleet_check(&state, unix_now_secs(), local_utc_offset_seconds()))
+}
+
+/// Export one run's full record — definition snapshot, journal, engine
+/// context — as a single redacted JSON file (plan-5 Task 4, spec §11).
+/// **UI-only**; not on the MCP surface.
+#[tauri::command]
+pub async fn routines_export_run_bundle(
+    state: State<'_, Arc<RoutinesState>>,
+    run_id: String,
+    output_path: String,
+) -> Result<BundleResult, UiError> {
+    export_run_bundle(&state, &run_id, &output_path)
+}
+
+/// The operator's "take the radio" button (plan-5 Task 4): asks the current
+/// run-holder to release the rig gracefully. **Operator-only**; not on the
+/// MCP surface.
+#[tauri::command]
+pub async fn routines_take_radio(
+    state: State<'_, Arc<RoutinesState>>,
+    rig: Option<String>,
+) -> Result<bool, UiError> {
+    Ok(take_radio(&state, rig.as_deref()))
 }
 
 #[tauri::command]
@@ -1063,15 +1416,9 @@ mod tests {
         let (_dir, state, _sink, _c) = test_state();
         save_routine(&state, &auto_tx_json("acked", None)).unwrap();
 
-        // Stamp the ack the way the UI-only command does: a direct store
-        // write, not the caller-reachable save path.
-        let operator_ack = tuxlink_routines::types::TransmitAck {
-            by: "KK7ABC".to_string(),
-            at: "2026-07-14T00:00:00Z".to_string(),
-        };
-        let mut def = get_routine(&state, "acked").unwrap();
-        def.transmit_ack = Some(operator_ack.clone());
-        state.store.save(&def).unwrap();
+        // Stamp the ack the way the UI-only command does.
+        acknowledge_automatic(&state, "acked", "KK7ABC", "2026-07-14T00:00:00Z").unwrap();
+        let operator_ack = get_routine(&state, "acked").unwrap().transmit_ack.unwrap();
 
         let forged = json!({"by": "N0CALL", "at": "1999-01-01T00:00:00Z"});
         let result = save_routine(&state, &auto_tx_json("acked", Some(forged))).unwrap();
@@ -1085,6 +1432,57 @@ mod tests {
             Some(operator_ack),
             "the UI-recorded ack survives a caller save verbatim"
         );
+    }
+
+    /// Global Constraint 2: switching a routine away from automatic clears the
+    /// stored acknowledgment, so a later switch BACK to automatic requires a
+    /// fresh UI act (a stale ack must never silently re-arm).
+    #[test]
+    fn save_clears_the_ack_when_transmit_mode_leaves_automatic() {
+        let (_dir, state, _sink, _c) = test_state();
+        save_routine(&state, &auto_tx_json("flip", None)).unwrap();
+        acknowledge_automatic(&state, "flip", "KK7ABC", "2026-07-14T00:00:00Z").unwrap();
+        assert!(get_routine(&state, "flip").unwrap().transmit_ack.is_some());
+
+        // Same routine, resaved as attended: the ack must be gone from disk.
+        let attended = auto_tx_json("flip", None).replace("\"automatic\"", "\"attended\"");
+        save_routine(&state, &attended).unwrap();
+        assert_eq!(get_routine(&state, "flip").unwrap().transmit_ack, None);
+
+        // Back to automatic: NOT acked (blocked), fresh acknowledgment required.
+        let result = save_routine(&state, &auto_tx_json("flip", None)).unwrap();
+        assert!(result.findings.iter().any(|f| f.code == "AUTO_TX_UNACKED"));
+    }
+
+    #[test]
+    fn acknowledge_automatic_stamps_and_unblocks_enable() {
+        let (_dir, state, sink, _c) = test_state();
+        save_routine(&state, &auto_tx_json("auto", None)).unwrap();
+        let blocked = set_routine_enabled(&state, "auto", true, NOW, 0).unwrap();
+        assert!(!blocked.enabled);
+
+        acknowledge_automatic(&state, "auto", "KK7ABC", "2026-07-14T00:00:00Z").unwrap();
+        let ack = get_routine(&state, "auto").unwrap().transmit_ack.unwrap();
+        assert_eq!(ack.by, "KK7ABC");
+        assert!(sink.events().iter().any(|e| matches!(e,
+            RoutinesEvent::LibraryChanged { entity: LibraryEntity::Routine, name } if name == "auto")));
+
+        let armed = set_routine_enabled(&state, "auto", true, NOW, 0).unwrap();
+        assert!(armed.enabled, "the UI act is the consent envelope: {:?}", armed.findings);
+    }
+
+    #[test]
+    fn acknowledge_automatic_refuses_non_automatic_and_unknown_routines() {
+        let (_dir, state, _sink, _c) = test_state();
+        save_routine(&state, &def_json("attended", log_step())).unwrap();
+        assert!(matches!(
+            acknowledge_automatic(&state, "attended", "KK7ABC", "2026-07-14T00:00:00Z"),
+            Err(UiError::Rejected(_))
+        ));
+        assert!(matches!(
+            acknowledge_automatic(&state, "ghost", "KK7ABC", "2026-07-14T00:00:00Z"),
+            Err(UiError::NotFound(_))
+        ));
     }
 
     // ── enable: errors refuse; the fleet check runs ──────────────────────
@@ -1354,6 +1752,32 @@ mod tests {
     async fn cancel_of_an_unknown_run_is_false_not_an_error() {
         let (_dir, state, _sink, _c) = test_state();
         assert!(!cancel_run(&state, "run-nope"));
+    }
+
+    // ── runs list: enumerates journals, newest first ──────────────────────
+
+    #[tokio::test]
+    async fn runs_list_enumerates_journals_newest_first_with_live_and_terminal_states() {
+        let (_dir, state, _sink, _c) = test_state();
+        save_routine(&state, &def_json("quick", log_step())).unwrap();
+        let r1 = run_routine(&state, "quick", json!({})).await.unwrap();
+        wait_until(|| run_status(&state, &r1).map(|s| s.state) == Some(RunState::Completed)).await;
+        let d = dry_run_routine(&state, "quick", json!({}), None).await.unwrap();
+        wait_until(|| run_status(&state, &d.run_id).map(|s| s.state) == Some(RunState::Completed))
+            .await;
+
+        let runs = list_runs(&state, Some("quick"), 200);
+        assert_eq!(runs.len(), 2);
+        assert!(runs[0].started_unix >= runs[1].started_unix, "newest first");
+        assert!(runs.iter().any(|r| r.dry_run), "dry runs are listed and flagged");
+        assert!(runs.iter().all(|r| r.state == RunState::Completed));
+        assert!(runs.iter().all(|r| r.finished_unix.is_some()));
+
+        assert!(
+            list_runs(&state, Some("other"), 200).is_empty(),
+            "routine filter"
+        );
+        assert_eq!(list_runs(&state, None, 1).len(), 1, "limit respected");
     }
 
     // ── consent: a parked attended transmit step resumes on grant ────────
@@ -1638,6 +2062,57 @@ mod tests {
             delete_routine(&state, "alpha"),
             Err(UiError::NotFound(_))
         ));
+    }
+
+    // ── validate_draft: read-only preview, same consent envelope as save ──
+
+    #[test]
+    fn validate_draft_reports_findings_without_saving_and_applies_the_consent_envelope() {
+        let (_dir, state, _sink, _c) = test_state();
+        // Unsaved draft with an unknown action: finding comes back, nothing on disk.
+        let body = def_json("scratch", json!([{"id":"s1","action":"radio.mystery","params":{}}]));
+        let findings = validate_draft(&state, &body).unwrap();
+        assert!(findings.iter().any(|f| f.code == "UNKNOWN_ACTION"));
+        assert!(state.store.get("scratch").is_none(), "validate_draft must not save");
+
+        // The valbar must not be foolable by a smuggled ack: same envelope rule
+        // as save_routine — body acks are ignored, the on-disk ack (none) wins.
+        let forged = json!({"by":"KK7ABC","at":"2026-07-14T00:00:00Z"});
+        let findings = validate_draft(&state, &auto_tx_json("scratch2", Some(forged))).unwrap();
+        assert!(findings.iter().any(|f| f.code == "AUTO_TX_UNACKED"));
+
+        // Parse failure is Rejected with the verbatim serde message.
+        assert!(matches!(validate_draft(&state, "{ nope"), Err(UiError::Rejected(_))));
+    }
+
+    // ── actions_list: registry truth, not a hardcoded catalog ────────────
+
+    #[test]
+    fn actions_list_reports_the_registry_with_capabilities_sorted() {
+        let (_dir, state, _sink, _c) = test_state();
+        let actions = list_actions(&state);
+        let names: Vec<&str> = actions.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, vec!["local.log", "radio.connect"], "sorted, registry-truth");
+        let connect = actions.iter().find(|a| a.name == "radio.connect").unwrap();
+        assert!(connect.needs_radio && connect.transmits && !connect.needs_internet);
+    }
+
+    // ── fleet_check: a read-only view of validate_fleet over enabled routines ──
+
+    #[test]
+    fn fleet_check_reports_standing_collisions_across_enabled_routines() {
+        let (_dir, state, _sink, _c) = test_state();
+        save_routine(&state, &scheduled_radio_routine("first")).unwrap();
+        save_routine(&state, &scheduled_radio_routine("second")).unwrap();
+        assert!(fleet_check(&state, NOW, 0).is_empty(), "nothing enabled yet");
+        set_routine_enabled(&state, "first", true, NOW, 0).unwrap();
+        set_routine_enabled(&state, "second", true, NOW, 0).unwrap();
+        let findings = fleet_check(&state, NOW, 0);
+        assert!(
+            findings.iter().any(|f| f.code == "SCHEDULE_COLLISION"),
+            "{:?}",
+            findings.iter().map(|f| f.code).collect::<Vec<_>>()
+        );
     }
 
     #[test]

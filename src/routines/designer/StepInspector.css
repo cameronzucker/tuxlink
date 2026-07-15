@@ -1,0 +1,141 @@
+/* StepInspector.css — routines plan-5 Task 11 (per-step field editor).
+ *
+ * No direct mock counterpart (the approved mock only draws the palette rail,
+ * not the inspector below it) — styled to match the palette's rail
+ * aesthetic (same tokens, same rough type scale) rather than transplanted
+ * verbatim. `.flag`/`.flags` duplicate PaletteRail.css's copy — established
+ * convention in this codebase (RoutineDesigner.css's own header comment):
+ * each routines surface file owns its own rules rather than assuming another
+ * file's stylesheet is loaded alongside it.
+ */
+.inspector {
+  flex: 0 0 auto;
+  max-height: 50%;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  padding: 10px 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.insp-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.insp-id {
+  font-size: 11px;
+  color: var(--text-faint);
+  flex: 1;
+}
+
+.insp-remove {
+  font-size: 10.5px;
+  color: var(--error);
+  background: none;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.insp-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.insp-label {
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+}
+
+.insp-value {
+  color: var(--text);
+}
+
+.insp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+}
+
+.insp-field input,
+.insp-field select,
+.insp-field textarea {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 11px;
+}
+
+.insp-textarea {
+  resize: vertical;
+  min-height: 100px;
+}
+
+.insp-checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.insp-error {
+  font-size: 10.5px;
+  color: var(--error);
+  white-space: pre-wrap;
+}
+
+.insp-ref-helper {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.ref-chip {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--accent-2);
+  background: rgb(245 159 60 / 10%);
+  border: 1px solid rgb(245 159 60 / 40%);
+  border-radius: 3px;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+
+.flags {
+  margin-left: auto;
+  display: flex;
+  gap: 3px;
+}
+
+.flag {
+  font-size: 8.5px;
+  letter-spacing: 0.05em;
+  border: 1px solid var(--border-strong);
+  color: var(--text-faint);
+  border-radius: 2px;
+  padding: 0 3px;
+}
+
+.flag.tx {
+  color: var(--accent-2);
+  border-color: rgb(245 159 60 / 50%);
+}
+
+.flag.rig {
+  color: var(--modem-accent);
+  border-color: rgb(74 222 128 / 40%);
+}
+
+.flag.net {
+  color: var(--info);
+  border-color: rgb(107 184 238 / 40%);
+}

@@ -66,6 +66,13 @@ export interface MenuHandlers {
    *  browse + WLE inquiries + Saildocs GRIB requests. The optional initialView
    *  selects the inner view ('home' default; 'grib' from GRIB File Request…). */
   openRequestCenter: (initialView?: 'home' | 'browse' | 'grib') => void;
+  /** Open the inline full-pane Routines surface on the dashboard view
+   *  (routines plan-5 Task 7, spec §12). Routines → Routines. */
+  openRoutines: () => void;
+  /** Open the inline Routines surface on a fresh, unsaved designer draft
+   *  (empty routine name — RoutineDesigner/Task 9 treats that as "new").
+   *  Routines → New Routine…. */
+  newRoutine: () => void;
   quit: () => void;
 }
 
@@ -132,6 +139,12 @@ export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
     // the Model section expanded. connect_agent / ConnectAgentModal are UNCHANGED.
     case 'menu:tools:elmer_model':
       h.openElmerModel(); return;
+    // routines plan-5 Task 7: the Routines top menu opens the inline
+    // full-pane surface (spec §12) — no new OS window, no pop-out.
+    case 'menu:routines:open':
+      h.openRoutines(); return;
+    case 'menu:routines:new':
+      h.newRoutine(); return;
   }
   if (id.startsWith('menu:view:scheme:')) {
     const scheme = id.slice('menu:view:scheme:'.length);

@@ -1,0 +1,42 @@
+/* RoutinesSurface.css — routines plan-5 Task 7.
+ *
+ * Skeleton only: the `.surface` / `.surface-head` / `.surface-title` /
+ * `.surface-sub` classes transplanted from the approved mock
+ * (dev/scratch/routines-ui-mocks/dashboard.html), using the existing
+ * cool-slate `var(--…)` tokens from src/App.css. Task 8/9 add table- and
+ * canvas-specific rules to their own stylesheets (RoutinesDashboard.css,
+ * designer/RoutineDesigner.css) — this file stays the shared surface shell.
+ *
+ * `.surface` fills the `.panes` grid row it replaces (AppShell.tsx renders
+ * RoutinesSurface as a sibling of `.panes`, not nested inside it — the
+ * routines surface has no folder sidebar, so it isn't a `.panes` child).
+ */
+.surface {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.surface-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex: 0 0 auto;
+}
+
+.surface-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.surface-sub {
+  font-size: 12px;
+  color: var(--text-faint);
+}

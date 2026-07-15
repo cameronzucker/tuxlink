@@ -5,6 +5,11 @@ import './chrome.css';
 
 interface MenuBarProps {
   onAction: (id: MenuActionId) => void;
+  /** Per-top-menu amber count badges (task-14 brief: the Part 97 consent
+   *  moment "cannot hide" — the Routines menu label carries the count of
+   *  runs parked awaiting operator transmit consent). Only `routines` exists
+   *  today; absent or 0 renders no badge. */
+  badges?: { routines?: number };
 }
 
 function MenuItems({ items, onPick }: { items: MenuNode[]; onPick: (id: MenuActionId) => void }) {
@@ -57,8 +62,9 @@ function MenuItems({ items, onPick }: { items: MenuNode[]; onPick: (id: MenuActi
   );
 }
 
-export function MenuBar({ onAction }: MenuBarProps) {
+export function MenuBar({ onAction, badges }: MenuBarProps) {
   const [openLabel, setOpenLabel] = useState<string | null>(null);
+  const routinesBadge = badges?.routines ?? 0;
 
   const pick = useCallback((id: MenuActionId) => {
     onAction(id);
@@ -93,6 +99,11 @@ export function MenuBar({ onAction }: MenuBarProps) {
             data-tour-anchor={menuAnchorId(menu.label)}
           >
             {menu.label}
+            {menu.label === 'Routines' && routinesBadge > 0 && (
+              <span className="tux-menu-badge" data-testid="menu-badge-routines">
+                {routinesBadge}
+              </span>
+            )}
           </button>
           {openLabel === menu.label && (
             <div className="tux-dropdown">

@@ -43,12 +43,29 @@ export interface StatusBarProps {
    *  When 0 the segment is hidden (peripheral vision shouldn't carry zero-
    *  state noise). The dev fixture forces a value for screenshot reproducibility. */
   outboxQueued: number;
+  /** task-14 (Part 97 consent moment, "cannot hide"): a run parked awaiting
+   *  operator transmit consent, named so the operator sees WHICH routine
+   *  without opening the modal. `null`/absent hides the segment (no live
+   *  park). `routine` is the OLDEST parked run when more than one is queued —
+   *  the same one the consent modal itself is showing. */
+  consent?: { count: number; routine: string } | null;
+  /** Reviewer fix (consent modal defer affordance): clicking the consent
+   *  item re-opens the ConsentGate modal after the operator dismissed it via
+   *  "Keep parked". Absent/no-op when there's nothing to reopen (the item
+   *  itself is hidden whenever `consent` is null/absent anyway). */
+  onOpenConsent?: () => void;
 }
 
 // tuxlink-djnl: React.memo so 2s status polls / shell-level renders don't
 // re-render the status bar when its inputs are unchanged (primitive props
 // shallow-compare cleanly).
-export const StatusBar = memo(function StatusBar({ show, unread, outboxQueued }: StatusBarProps) {
+export const StatusBar = memo(function StatusBar({
+  show,
+  unread,
+  outboxQueued,
+  consent,
+  onOpenConsent,
+}: StatusBarProps) {
   // tuxlink-8g28: ambient offline-map download progress. Subscribed here (not via
   // an AppShell prop) so the indicator is app-level and stays visible after the
   // operator leaves the Offline-maps panel — the panel's own row owns rate/eta;
@@ -85,6 +102,25 @@ export const StatusBar = memo(function StatusBar({ show, unread, outboxQueued }:
       <div className="status-item" data-testid="status-bar-unread">
         {unread} unread
       </div>
+      {consent && consent.count > 0 && (
+        <>
+          <span className="status-divider" aria-hidden="true">·</span>
+          {/* A button, not a div: reviewer fix — clicking it re-opens the
+           *  consent modal after "Keep parked" dismissed it. Consent cannot
+           *  hide from peripheral vision (this item always renders while a
+           *  run is parked); the modal itself can be dismissed and this is
+           *  how the operator brings it back on demand. */}
+          <button
+            type="button"
+            className="status-item status-consent"
+            data-testid="status-bar-consent"
+            onClick={onOpenConsent}
+            title="Reopen the transmit-consent dialog"
+          >
+            ⚠ {consent.count} transmit awaiting consent — {consent.routine}
+          </button>
+        </>
+      )}
       <div className="status-right" data-testid="status-bar-version">
         {APP_VERSION}
       </div>

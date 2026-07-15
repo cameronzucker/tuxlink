@@ -68,6 +68,44 @@ describe('<StatusBar> — mailbox-bar redesign (tuxlink-qxqj)', () => {
     expect(screen.getByTestId('status-bar-download')).toHaveTextContent('Downloading map 47%');
   });
 
+  // routines plan-5 Task 14 (spec §12): the Part 97 consent moment's
+  // status-bar item, naming the (oldest) parked run.
+  it('shows no consent segment when consent is null/absent', () => {
+    render(<StatusBar show unread={0} outboxQueued={0} />);
+    expect(screen.queryByTestId('status-bar-consent')).toBeNull();
+    render(<StatusBar show unread={0} outboxQueued={0} consent={null} />);
+    expect(screen.queryAllByTestId('status-bar-consent')).toHaveLength(0);
+  });
+
+  it('names the parked routine and count when consent is present', () => {
+    render(<StatusBar show unread={0} outboxQueued={0} consent={{ count: 1, routine: 'Net-opening checklist' }} />);
+    expect(screen.getByTestId('status-bar-consent')).toHaveTextContent(
+      '⚠ 1 transmit awaiting consent — Net-opening checklist',
+    );
+  });
+
+  // Final whole-branch review, Fix 1: the consent item is a clickable button
+  // that asks ConsentGate to reopen a "Keep parked"-dismissed modal.
+  it('clicking the consent item calls onOpenConsent', () => {
+    const onOpenConsent = vi.fn();
+    render(
+      <StatusBar
+        show
+        unread={0}
+        outboxQueued={0}
+        consent={{ count: 1, routine: 'Net-opening checklist' }}
+        onOpenConsent={onOpenConsent}
+      />,
+    );
+    screen.getByTestId('status-bar-consent').click();
+    expect(onOpenConsent).toHaveBeenCalledTimes(1);
+  });
+
+  it('hides the consent segment when count is 0', () => {
+    render(<StatusBar show unread={0} outboxQueued={0} consent={{ count: 0, routine: 'x' }} />);
+    expect(screen.queryByTestId('status-bar-consent')).toBeNull();
+  });
+
   it('clears the download segment when the download completes', () => {
     render(<StatusBar show unread={0} outboxQueued={0} />);
     act(() => {
