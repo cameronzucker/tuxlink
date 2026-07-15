@@ -39,12 +39,18 @@
  * mounted surface watching the library; this component doesn't need to wait
  * on it since it already has the fresh value in hand.
  *
- * Mode-switch-away-from-automatic (task brief §1): the ack panel/button only
- * render inside the `transmit_mode === 'automatic'` branch, so switching to
- * Attended hides the whole thing immediately — no separate "clear
- * transmit_ack" patch is needed for the UI to stop showing it. The backend
- * clears the stored `transmit_ack` on the next real Save (Task 1); this
- * component doesn't try to predict/mirror that value locally.
+ * Mode-switch-away-from-automatic (task brief §1): switching to Attended
+ * patches `{ transmit_mode: 'attended', transmit_ack: null }` in ONE call —
+ * the draft's ack is cleared the moment the mode leaves automatic, mirroring
+ * the backend's clear-on-save rule (Task 1). The paired clear is
+ * load-bearing, not cosmetic: without it, acknowledge → switch to Attended →
+ * Save (backend clears the STORED ack) → switch back to Automatic would
+ * re-render a stale green ✓ ACKNOWLEDGED box off the draft's leftover
+ * `transmit_ack` while the stored def is unacked — a consent-display
+ * divergence on a Part 97 surface (display-only, since the backend gates on
+ * the stored def, but exactly the reassurance the operator must be able to
+ * trust). Switching back to Automatic therefore always lands on the
+ * un-acked panel with the Acknowledge button.
  *
  * Schedule editor (task brief §3, spec §5 one-cadence): edits `triggers`,
  * keeping every non-schedule trigger (in practice just `{type:'manual'}`)
@@ -389,7 +395,14 @@ export function SettingsTab({ draft, findings, onChange, onSaved }: SettingsTabP
                   type="button"
                   className={`opt${draft.transmit_mode === 'attended' ? ' sel' : ''}`}
                   data-testid="settings-mode-attended"
-                  onClick={() => onChange({ transmit_mode: 'attended' as TransmitMode })}
+                  // The paired `transmit_ack: null` clear mirrors the
+                  // backend's clear-on-save rule (see the header comment's
+                  // mode-switch-away paragraph) — leaving the stale ack on
+                  // the draft would resurrect a green ACKNOWLEDGED box on a
+                  // later switch back to Automatic. `null` (not `undefined`)
+                  // matches the wire type (`transmit_ack?: TransmitAck |
+                  // null`, a Rust `Option` that serializes `null` cleanly).
+                  onClick={() => onChange({ transmit_mode: 'attended' as TransmitMode, transmit_ack: null })}
                 >
                   <div className="r">
                     <span className="radio" />

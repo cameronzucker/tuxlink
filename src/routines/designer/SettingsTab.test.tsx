@@ -177,7 +177,7 @@ describe('SettingsTab — ack panel (a)', () => {
 });
 
 describe('SettingsTab — mode switch clears the ack panel (b)', () => {
-  it('switching to Attended patches transmit_mode and the ack panel disappears once the draft reflects it', async () => {
+  it('switching to Attended patches transmit_mode AND transmit_ack:null in one call, and the ack panel disappears once the draft reflects it', async () => {
     const onChange = vi.fn();
     const { rerender } = renderTab({
       draft: { ...BASE_DEF, transmit_ack: { by: 'N0CALL', at: '2026-07-08T19:41:22Z' } },
@@ -186,11 +186,14 @@ describe('SettingsTab — mode switch clears the ack panel (b)', () => {
     await screen.findByTestId('settings-ack-acknowledged');
 
     fireEvent.click(screen.getByTestId('settings-mode-attended'));
-    expect(onChange).toHaveBeenCalledWith({ transmit_mode: 'attended' });
+    // The ack clear rides in the SAME patch as the mode change — a
+    // mode-only patch would leave the stale ack on the draft (see the
+    // switch-away-and-back regression test below).
+    expect(onChange).toHaveBeenCalledWith({ transmit_mode: 'attended', transmit_ack: null });
 
     rerender(
       <SettingsTab
-        draft={{ ...BASE_DEF, transmit_mode: 'attended', transmit_ack: { by: 'N0CALL', at: '2026-07-08T19:41:22Z' } }}
+        draft={{ ...BASE_DEF, transmit_mode: 'attended', transmit_ack: null }}
         findings={[]}
         onChange={onChange}
         onSaved={vi.fn()}
@@ -200,6 +203,40 @@ describe('SettingsTab — mode switch clears the ack panel (b)', () => {
     expect(screen.queryByTestId('settings-ack-acknowledged')).not.toBeInTheDocument();
     expect(screen.queryByTestId('settings-ack-pending')).not.toBeInTheDocument();
     expect(screen.queryByText(/ACKNOWLEDGED/)).not.toBeInTheDocument();
+  });
+
+  it('acknowledge → switch to Attended → switch back to Automatic: the ACKNOWLEDGED box is ABSENT and the Acknowledge button renders (no stale consent display)', async () => {
+    // Drive the same controlled-prop loop RoutineDesigner runs: apply each
+    // onChange patch to a live `draft` and rerender, so the draft evolves
+    // exactly as updateSettings would evolve it. This is the reviewer-flagged
+    // sequence — before the paired transmit_ack:null clear, the switch-back
+    // resurrected a stale green ACKNOWLEDGED box while the STORED def was
+    // unacked (the backend clears the stored ack on the attended-mode save).
+    let draft: RoutineDef = { ...BASE_DEF, transmit_ack: { by: 'N0CALL', at: '2026-07-08T19:41:22Z' } };
+    const onSaved = vi.fn();
+    const onChange = vi.fn((patch: Partial<RoutineDef>) => {
+      draft = { ...draft, ...patch };
+    });
+    const { rerender } = render(
+      <SettingsTab draft={draft} findings={[]} onChange={onChange} onSaved={onSaved} />,
+    );
+    await screen.findByTestId('settings-ack-acknowledged');
+
+    // Switch away from automatic…
+    fireEvent.click(screen.getByTestId('settings-mode-attended'));
+    rerender(<SettingsTab draft={draft} findings={[]} onChange={onChange} onSaved={onSaved} />);
+    expect(screen.queryByText(/ACKNOWLEDGED/)).not.toBeInTheDocument();
+
+    // …and back. The draft's ack was cleared with the switch-away, so the
+    // stored-def-matching UN-acked panel renders — never a stale green box
+    // resurrected from a leftover draft value.
+    fireEvent.click(screen.getByTestId('settings-mode-automatic'));
+    rerender(<SettingsTab draft={draft} findings={[]} onChange={onChange} onSaved={onSaved} />);
+
+    expect(screen.queryByTestId('settings-ack-acknowledged')).not.toBeInTheDocument();
+    expect(screen.queryByText(/ACKNOWLEDGED/)).not.toBeInTheDocument();
+    expect(screen.getByTestId('settings-ack-pending')).toBeInTheDocument();
+    expect(screen.getByTestId('settings-ack-button')).toBeInTheDocument();
   });
 });
 
