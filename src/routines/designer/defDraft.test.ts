@@ -192,6 +192,42 @@ describe('insertStepIntoBranchArm', () => {
     // s1 exists but is not a branch control step.
     expect(insertStepIntoBranchArm(def, 0, 's1', 'then', step)).toEqual(def);
   });
+
+  it('MID-ARM (afterStepId names an arm step): id lands right after it in the arm list, storage spliced adjacently', () => {
+    // then arm: s3 → s6; insert after s3 → then:['s3','s5','s6'].
+    const def: RoutineDef = {
+      ...branchDef(),
+      tracks: [
+        {
+          name: 'track-1',
+          steps: [
+            { id: 's1', action: 'radio.connect' },
+            { id: 's2', control: 'branch', on: 's1.connected', then: ['s3', 's6'], else: [] },
+            { id: 's3', action: 'local.notify' },
+            { id: 's6', control: 'end', failed: false },
+          ],
+        },
+      ],
+    };
+    const step: ActionStep = { id: 's5', action: 'aprs.send' };
+    const next = insertStepIntoBranchArm(def, 0, 's2', 'then', step, 's3');
+    const branch = next.tracks[0]!.steps[1] as ControlStep & { control: 'branch' };
+    expect(branch.then).toEqual(['s3', 's5', 's6']);
+    // Storage: adjacent to s3, before s6.
+    expect(next.tracks[0]!.steps.map((s) => s.id)).toEqual(['s1', 's2', 's3', 's5', 's6']);
+  });
+
+  it('afterStepId = the branch\'s own id (an empty arm\'s ＋) or an id not in the arm APPENDS', () => {
+    const def = branchDef();
+    const step: ActionStep = { id: 's5', action: 'aprs.send' };
+    // Branch's own id — the empty-arm ＋'s insertAfter.
+    const viaBranchId = insertStepIntoBranchArm(def, 0, 's2', 'else', step, 's2');
+    expect((viaBranchId.tracks[0]!.steps[1] as ControlStep & { control: 'branch' }).else).toEqual(['s5']);
+    expect(viaBranchId.tracks[0]!.steps.map((s) => s.id)).toEqual(['s1', 's2', 's5', 's3']);
+    // An id in the track but not in this arm — appends too.
+    const viaForeignId = insertStepIntoBranchArm(def, 0, 's2', 'then', step, 's1');
+    expect((viaForeignId.tracks[0]!.steps[1] as ControlStep & { control: 'branch' }).then).toEqual(['s3', 's5']);
+  });
 });
 
 describe('removeStep', () => {
@@ -207,6 +243,71 @@ describe('removeStep', () => {
     const next = removeStep(def, 'does-not-exist');
     expect(next).toEqual(def);
     expect(next).not.toBe(def);
+  });
+
+  it('scrubs the removed id from every branch arm, so a recycled nextStepId never phantom-attaches (delete-then-insert)', () => {
+    const def: RoutineDef = {
+      routine: 'r1',
+      schema_version: 1,
+      transmit_mode: 'attended',
+      triggers: [{ type: 'manual' }],
+      tracks: [
+        {
+          name: 'track-1',
+          steps: [
+            { id: 's1', action: 'radio.connect' },
+            { id: 's2', control: 'branch', on: 's1.connected', then: ['s3'], else: [] },
+            { id: 's3', action: 'local.notify' },
+          ],
+        },
+      ],
+    };
+    // Delete s3 — the arm membership must go with it.
+    const removed = removeStep(def, 's3');
+    const branchAfterRemove = removed.tracks[0]!.steps[1] as ControlStep & { control: 'branch' };
+    expect(branchAfterRemove.then).toEqual([]);
+
+    // nextStepId recycles the freed id…
+    const recycledId = nextStepId(removed);
+    expect(recycledId).toBe('s3');
+    // …and an ordinary insert elsewhere must NOT phantom-attach to any arm.
+    const withNew = insertStep(removed, 0, 's1', { id: recycledId, action: 'aprs.send' });
+    for (const track of withNew.tracks) {
+      for (const s of track.steps) {
+        if ('control' in s && s.control === 'branch') {
+          expect(s.then).not.toContain(recycledId);
+          expect(s.else).not.toContain(recycledId);
+        }
+      }
+    }
+  });
+
+  it('branches not referencing the removed id keep reference equality; tracks with neither the step nor a reference stay untouched', () => {
+    const def: RoutineDef = {
+      routine: 'r1',
+      schema_version: 1,
+      transmit_mode: 'attended',
+      triggers: [{ type: 'manual' }],
+      tracks: [
+        {
+          name: 'track-1',
+          steps: [
+            { id: 's1', action: 'radio.connect' },
+            { id: 's2', control: 'branch', on: 's1.connected', then: ['s3'], else: [] },
+            { id: 's3', action: 'local.notify' },
+            { id: 's4', control: 'branch', on: 's1.ok', then: ['s1'], else: [] },
+          ],
+        },
+        { name: 'track-2', steps: [{ id: 's5', action: 'local.log' }] },
+      ],
+    };
+    const next = removeStep(def, 's3');
+    // The branch that referenced s3 was scrubbed…
+    expect((next.tracks[0]!.steps.find((s) => s.id === 's2') as ControlStep & { control: 'branch' }).then).toEqual([]);
+    // …the branch that didn't keeps its exact reference…
+    expect(next.tracks[0]!.steps.find((s) => s.id === 's4')).toBe(def.tracks[0]!.steps[3]);
+    // …and the track holding neither the step nor a reference keeps its reference.
+    expect(next.tracks[1]).toBe(def.tracks[1]);
   });
 });
 

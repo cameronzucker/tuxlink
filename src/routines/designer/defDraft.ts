@@ -77,21 +77,32 @@ export function insertStep(
 }
 
 /** Insert `step` INTO a branch arm (Task 11 authoring fix, Gap A): both
- * splices the step into `def.tracks[trackIdx].steps` — immediately after the
- * arm's last step already present in that track, or immediately after the
- * branch itself when the arm is empty — AND appends `step.id` to that
- * branch's `then`/`else` id list, so the step lands IN the arm (rendered in
- * the fan row, reachable), never in the unplaced row. No new engine
- * semantics: a branch arm IS its then/else id list (types.rs Branch); this
- * op just performs both existing edits atomically. A `branchStepId` that
- * doesn't resolve to a branch control step in that track is a no-op (fresh,
- * equal-by-value def — same contract as `removeStep`'s missing id). */
+ * splices the step into `def.tracks[trackIdx].steps` AND inserts `step.id`
+ * into that branch's `then`/`else` id list, so the step lands IN the arm
+ * (rendered in the fan row, reachable), never in the unplaced row. No new
+ * engine semantics: a branch arm IS its then/else id list (types.rs Branch);
+ * this op just performs both existing edits atomically.
+ *
+ * `afterStepId` positions the insert WITHIN the arm (the armed mid-arm ＋'s
+ * `insertAfter`): when it names a step already in the arm's id list, the new
+ * id goes into the list immediately after it and storage is spliced
+ * immediately after that step; otherwise — `null`, the branch's own id (an
+ * empty arm's ＋ arms `insertAfter: branchId`), or an id not in the arm —
+ * the id is APPENDED to the arm list and storage is spliced after the arm's
+ * last step present in this track (right after the branch when the arm is
+ * empty). Arm ids that dangle out of the track are the validator's problem,
+ * not ours — this op never throws on them.
+ *
+ * A `branchStepId` that doesn't resolve to a branch control step in that
+ * track is a no-op (fresh, equal-by-value def — same contract as
+ * `removeStep`'s missing id). */
 export function insertStepIntoBranchArm(
   def: RoutineDef,
   trackIdx: number,
   branchStepId: string,
   arm: 'then' | 'else',
   step: Step,
+  afterStepId: string | null = null,
 ): RoutineDef {
   const tracks = def.tracks.map((track, i): Track => {
     if (i !== trackIdx) return track;
@@ -101,18 +112,33 @@ export function insertStepIntoBranchArm(
     if (branchIdx === -1) return { ...track }; // no such branch here — no-op
     const branch = track.steps[branchIdx] as ControlStep & { control: 'branch' };
     const armIds = branch[arm];
-    // Storage splice position: right after the LAST of the arm's steps that
-    // actually lives in this track (arm ids can dangle — validator's
-    // problem, not ours), falling back to right after the branch itself.
+    const armPos = afterStepId === null ? -1 : armIds.indexOf(afterStepId);
+
+    // Arm-list position: right after afterStepId when it's in the arm,
+    // appended otherwise.
+    const newArmIds =
+      armPos === -1
+        ? [...armIds, step.id]
+        : [...armIds.slice(0, armPos + 1), step.id, ...armIds.slice(armPos + 1)];
+
+    // Storage splice position: adjacent to the arm step being inserted
+    // after; for an append, after the LAST of the arm's steps that actually
+    // lives in this track, falling back to right after the branch itself.
     let insertIdx = branchIdx + 1;
-    for (const id of armIds) {
-      const idx = track.steps.findIndex((s) => s.id === id);
-      if (idx !== -1 && idx + 1 > insertIdx) insertIdx = idx + 1;
+    if (armPos !== -1) {
+      const idx = track.steps.findIndex((s) => s.id === afterStepId);
+      if (idx !== -1) insertIdx = idx + 1;
+    } else {
+      for (const id of armIds) {
+        const idx = track.steps.findIndex((s) => s.id === id);
+        if (idx !== -1 && idx + 1 > insertIdx) insertIdx = idx + 1;
+      }
     }
+
     const steps = track.steps.slice();
     steps.splice(insertIdx, 0, step);
     // insertIdx is always > branchIdx, so the branch's own index is stable.
-    steps[branchIdx] = { ...branch, [arm]: [...armIds, step.id] };
+    steps[branchIdx] = { ...branch, [arm]: newArmIds };
     return { ...track, steps };
   });
   return { ...def, tracks };
@@ -121,12 +147,36 @@ export function insertStepIntoBranchArm(
 /** Remove the step with `stepId`, searching every track (a caller doesn't
  * need to know which track a step lives in — control steps like `retry`
  * reference other steps by id across the whole def, not just their own
- * track). A missing id is a no-op (still returns a fresh, equal-by-value
- * def, never mutates or throws). */
+ * track), AND scrub the removed id from every branch's `then`/`else` arm
+ * list across ALL tracks. The scrub is load-bearing, not cosmetic: because
+ * `nextStepId` deliberately recycles freed ids, a dangling arm entry would
+ * silently attach the next UNRELATED step that happens to get the recycled
+ * id (delete s3 from `then:['s3']` → insert anywhere → new step is s3 →
+ * phantom arm membership, double-render). Arms can only reference same-track
+ * steps today, but the scrub walks every track — it's the same walk, and it
+ * keeps the invariant global. A missing id is a no-op (still returns a
+ * fresh, equal-by-value def, never mutates or throws); tracks with neither
+ * the step nor a referencing branch keep their references, as do branches
+ * that don't reference the id. */
 export function removeStep(def: RoutineDef, stepId: string): RoutineDef {
+  const referencesId = (s: Step): boolean =>
+    'control' in s && s.control === 'branch' && (s.then.includes(stepId) || s.else.includes(stepId));
   const tracks = def.tracks.map((track): Track => {
-    if (!track.steps.some((s) => s.id === stepId)) return track; // untouched track keeps its reference
-    return { ...track, steps: track.steps.filter((s) => s.id !== stepId) };
+    const holdsStep = track.steps.some((s) => s.id === stepId);
+    const holdsRef = track.steps.some(referencesId);
+    if (!holdsStep && !holdsRef) return track; // untouched track keeps its reference
+    const steps = track.steps
+      .filter((s) => s.id !== stepId)
+      .map((s): Step => {
+        if (!referencesId(s)) return s; // untouched step keeps its reference
+        const branch = s as ControlStep & { control: 'branch' };
+        return {
+          ...branch,
+          then: branch.then.filter((id) => id !== stepId),
+          else: branch.else.filter((id) => id !== stepId),
+        };
+      });
+    return { ...track, steps };
   });
   return { ...def, tracks };
 }

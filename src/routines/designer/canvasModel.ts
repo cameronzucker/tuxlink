@@ -67,15 +67,17 @@ export interface CanvasEdge {
   insertAfter: string | null;
   /** Present only on an ARM insert edge (Task 11 authoring fix, Gap A):
    *  arming it routes the insert through
-   *  `defDraft.insertStepIntoBranchArm(def, trackIdx, branchId, which, step)`
-   *  — which both splices storage adjacently AND appends the new step's id
-   *  to the branch's then/else list — instead of the plain `insertStep`
-   *  splice (which would land the step in the unplaced row). Emitted for an
-   *  EMPTY arm (a dangling labeled ＋ straight out of the branch — otherwise
-   *  a canvas-authored branch with `then:[], else:[]` has NO armable
-   *  position that reaches either arm) and as the TRAILING ＋ after a
-   *  non-empty arm's last node (skipped when the arm ends in an `end` step —
-   *  appending after end is meaningless). */
+   *  `defDraft.insertStepIntoBranchArm(def, trackIdx, branchId, which, step,
+   *  afterStepId)` — which splices storage adjacently AND inserts the new
+   *  step's id into the branch's then/else list at the position
+   *  `insertAfter` names — instead of the plain `insertStep` splice (which
+   *  would land the step in the unplaced row). Emitted for an EMPTY arm (a
+   *  dangling labeled ＋ straight out of the branch — otherwise a
+   *  canvas-authored branch with `then:[], else:[]` has NO armable position
+   *  that reaches either arm), on every INTRA-arm edge between two arm nodes
+   *  (so a mid-arm ＋ inserts INTO the arm at that position, not unplaced),
+   *  and as the TRAILING ＋ after a non-empty arm's last node (skipped when
+   *  the arm ends in an `end` step — appending after end is meaningless). */
   arm?: { branchId: string; which: 'then' | 'else' };
 }
 
@@ -206,13 +208,21 @@ function controlNode(step: ControlStep): CanvasNode {
 }
 
 // ============================================================================
-// Chain builder (used both for a track's main row and a branch's then/else)
+// Chain builder — a branch's then/else fan rows
 // ============================================================================
 
+/** `arm` is stamped on every intra-chain edge, so a mid-arm ＋ (between two
+ *  arm nodes) routes through `insertStepIntoBranchArm` exactly like the
+ *  empty-arm and trailing-arm ＋s do — the edge's `insertAfter` (the
+ *  preceding arm step) then positions the new id WITHIN the then/else list.
+ *  Without the marker, a mid-arm insert took the plain `insertStep` splice
+ *  and minted an unplaced step: two ＋s in the same fan row behaved
+ *  differently. */
 function buildChain(
   ids: string[],
   stepsById: Map<string, Step>,
   actionsByName: Map<string, ActionInfo>,
+  arm: { branchId: string; which: 'then' | 'else' },
 ): { nodes: CanvasNode[]; edges: CanvasEdge[] } {
   const nodes: CanvasNode[] = [];
   const edges: CanvasEdge[] = [];
@@ -222,7 +232,7 @@ function buildChain(
     if (!step) continue; // dangling then/else reference — the validator's own finding covers this; never crash here
     const node = toNode(step, actionsByName);
     nodes.push(node);
-    if (prevId) edges.push({ from: prevId, to: node.id, insertPoint: true, insertAfter: prevId });
+    if (prevId) edges.push({ from: prevId, to: node.id, insertPoint: true, insertAfter: prevId, arm });
     prevId = node.id;
   }
   return { nodes, edges };
@@ -388,7 +398,7 @@ export function layoutCanvas(def: RoutineDef, actions: ActionInfo[]): CanvasMode
         { which: 'else', label: 'err', ids: branchStep.else },
       ];
       for (const { which, label, ids } of armChains) {
-        const chain = buildChain(ids, stepsById, actionsByName);
+        const chain = buildChain(ids, stepsById, actionsByName, { branchId, which });
         for (const n of chain.nodes) placed.add(n.id);
         rows.push(chain.nodes);
         const first = chain.nodes[0];

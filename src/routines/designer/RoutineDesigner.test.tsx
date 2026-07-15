@@ -293,6 +293,63 @@ describe('RoutineDesigner — flow-2 authoring trace through the real seam (Task
     // Storage splice landed adjacently: s1, s2 (branch), s3.
     expect(exported.tracks[0]!.steps.map((s) => s.id)).toEqual(['s1', 's2', 's3']);
   });
+
+  it('MID-ARM insert: the ＋ between two arm nodes lands the step between them in the fan row (not unplaced), id ordered in the arm list', async () => {
+    installInvokeMock({
+      routines_get: () =>
+        ({
+          routine: 'deployment-poll',
+          schema_version: 1,
+          transmit_mode: 'attended',
+          triggers: [{ type: 'manual' }],
+          tracks: [
+            {
+              name: 'track-1',
+              steps: [
+                { id: 's1', action: 'radio.connect' },
+                { id: 's2', control: 'branch', on: 's1.connected', then: [], else: ['s3', 's4'] },
+                { id: 's3', action: 'radio.connect' },
+                { id: 's4', control: 'end', failed: true },
+              ],
+            },
+          ],
+        }) satisfies RoutineDef,
+      routines_actions_list: () => [
+        { name: 'radio.connect', needsRadio: true, needsInternet: false, transmits: true },
+      ],
+      routines_list: () => [],
+    });
+    renderDesigner({ routine: 'deployment-poll' });
+    await screen.findByTestId('palette-item-radio.connect');
+
+    // Arm the intra-arm ＋ between s3 and s4 (the err arm), insert an action.
+    fireEvent.click(screen.getByTestId('insert-s3'));
+    fireEvent.click(screen.getByTestId('palette-item-radio.connect'));
+
+    // The new step (s5) renders between s3 and s4 IN the fan row — no
+    // unplaced row, no unplaced marker.
+    const s5 = screen.getByTestId('node-s5');
+    expect(s5).not.toHaveTextContent(/unplaced/i);
+    expect(screen.queryByTestId('unplaced-row-0')).not.toBeInTheDocument();
+    const path = s5.closest('.path') as HTMLElement;
+    expect(path).not.toBeNull();
+    const rowIds = Array.from(path.querySelectorAll('[data-testid^="node-"]')).map((el) =>
+      el.getAttribute('data-testid'),
+    );
+    expect(rowIds).toEqual(['node-s3', 'node-s5', 'node-s4']);
+
+    // And the id is ordered correctly in the arm list + storage.
+    fireEvent.click(screen.getByRole('button', { name: 'Export JSON' }));
+    const textarea = (await screen.findByTestId('export-json-textarea')) as HTMLTextAreaElement;
+    const exported = JSON.parse(textarea.value) as RoutineDef;
+    const branch = exported.tracks[0]!.steps.find((s) => s.id === 's2') as {
+      control: 'branch';
+      then: string[];
+      else: string[];
+    };
+    expect(branch.else).toEqual(['s3', 's5', 's4']);
+    expect(exported.tracks[0]!.steps.map((s) => s.id)).toEqual(['s1', 's2', 's3', 's5', 's4']);
+  });
 });
 
 describe('RoutineDesigner — Export JSON dialog', () => {

@@ -320,8 +320,26 @@ describe('layoutCanvas — append-at-end + branch-arm insert points (Task 11 aut
 
   it('an arm ending in an end node emits NO trailing arm ＋ (fixture arms both end in end)', () => {
     const model = layoutCanvas(FIXTURE_DEF, FAKE_ACTIONS);
-    // Both fixture arms are non-empty and end-terminated: no arm edges at all.
-    expect(model.lanes[0]!.edges.filter((e) => e.arm !== undefined)).toEqual([]);
+    // Both fixture arms are non-empty and end-terminated: no DANGLING arm
+    // edges (the intra-arm connectors between arm nodes DO carry the arm
+    // marker — that's the mid-arm insert seam, asserted below).
+    expect(model.lanes[0]!.edges.filter((e) => e.arm !== undefined && e.to === '')).toEqual([]);
+  });
+
+  it('INTRA-arm edges (between two arm nodes) carry the arm marker, so a mid-arm ＋ inserts INTO the arm', () => {
+    const model = layoutCanvas(FIXTURE_DEF, FAKE_ACTIONS);
+    // Fixture then arm: s3 → s4 → s10.
+    const midOk = model.lanes[0]!.edges.find((e) => e.from === 's3' && e.to === 's4');
+    expect(midOk).toEqual({
+      from: 's3',
+      to: 's4',
+      insertPoint: true,
+      insertAfter: 's3',
+      arm: { branchId: 's2', which: 'then' },
+    });
+    // Fixture else arm: s5 → s11.
+    const midErr = model.lanes[0]!.edges.find((e) => e.from === 's5' && e.to === 's11');
+    expect(midErr?.arm).toEqual({ branchId: 's2', which: 'else' });
   });
 });
 

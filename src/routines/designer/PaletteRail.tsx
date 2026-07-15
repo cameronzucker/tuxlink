@@ -167,7 +167,15 @@ export function PaletteRail({ def, actions, armedInsert, onInsert }: PaletteRail
 
   function insertControl(kind: ControlKind) {
     if (!armedInsert) return;
-    onInsert(buildControlStep(kind, nextStepId(def), armedInsert.afterStepId));
+    // Retry's wrap-step seed is the armed position's predecessor — EXCEPT on
+    // an empty arm's ＋, whose `afterStepId` is the branch's own id (not a
+    // step retry could sensibly wrap): leave `step: ''` for the operator to
+    // fill in via the inspector.
+    const wrapStepId =
+      armedInsert.arm && armedInsert.afterStepId === armedInsert.arm.branchId
+        ? null
+        : armedInsert.afterStepId;
+    onInsert(buildControlStep(kind, nextStepId(def), wrapStepId));
   }
 
   function insertLibraryCall(routineName: string) {

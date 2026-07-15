@@ -331,9 +331,13 @@ export function RoutineDesigner({ routine, tab, onBack, onTabChange }: RoutineDe
     setDirty(true);
   }, []);
 
-  /** CanvasTab's ⌫/Delete/Backspace handler. Also clears the selection (and
-   *  an armed insert point anchored to the removed step) so the canvas never
-   *  points at a step id that's no longer in the draft. */
+  /** CanvasTab's ⌫/Delete/Backspace handler. `defDraft.removeStep` itself
+   *  scrubs the removed id from every branch's then/else arm list (so a
+   *  recycled `nextStepId` can never phantom-attach a later step); here we
+   *  additionally clear the UI state anchored on it — the selection, and an
+   *  armed insert point whose `afterStepId` or arm's branch is the removed
+   *  step — so the canvas never points at a step id that's no longer in the
+   *  draft. */
   const handleRemoveStep = useCallback(
     (stepId: string) => {
       updateDraft((d) => removeStep(d, stepId));
@@ -348,12 +352,15 @@ export function RoutineDesigner({ routine, tab, onBack, onTabChange }: RoutineDe
   /** PaletteRail's click-with-armed-insert handler: PaletteRail builds the
    *  `Step` value (its own action/control shape, `nextStepId`-assigned id);
    *  this is where it's actually spliced into the draft at the armed
-   *  position. A position carrying an `arm` marker (a branch-arm ＋) routes
-   *  through `defDraft.insertStepIntoBranchArm` — splice + then/else-list
-   *  append, so the step lands IN the arm — every other position uses the
-   *  plain `defDraft.insertStep` splice. Disarms afterward (one insert per
-   *  arm — re-arming for a second insert at the same spot is a deliberate
-   *  extra click, not implicit) and selects the new step so its fields are
+   *  position. A position carrying an `arm` marker (any branch-arm ＋ —
+   *  empty-arm, mid-arm, or trailing) routes through
+   *  `defDraft.insertStepIntoBranchArm`, with the armed `afterStepId`
+   *  positioning the new id WITHIN the then/else list (append when it's the
+   *  branch's own id, i.e. an empty arm) — so the step lands IN the arm at
+   *  the clicked position; every other position uses the plain
+   *  `defDraft.insertStep` splice. Disarms afterward (one insert per arm —
+   *  re-arming for a second insert at the same spot is a deliberate extra
+   *  click, not implicit) and selects the new step so its fields are
    *  immediately editable in `StepInspector`. A stale call with no armed
    *  position (shouldn't happen — PaletteRail disables its items while
    *  unarmed) is a no-op rather than a crash. */
@@ -363,7 +370,7 @@ export function RoutineDesigner({ routine, tab, onBack, onTabChange }: RoutineDe
       const pos = armedInsert;
       updateDraft((d) =>
         pos.arm
-          ? insertStepIntoBranchArm(d, pos.trackIdx, pos.arm.branchId, pos.arm.which, step)
+          ? insertStepIntoBranchArm(d, pos.trackIdx, pos.arm.branchId, pos.arm.which, step, pos.afterStepId)
           : insertStep(d, pos.trackIdx, pos.afterStepId, step),
       );
       setArmedInsert(null);
