@@ -248,7 +248,7 @@ This project employs bd (Beads) AND Claude Code's built-in primitives (TodoWrite
 
 ## Extended capabilities on this Pi
 
-- **Codex CLI** (adversarial review): `/usr/local/bin/codex` or `npx --yes @openai/codex`; already authenticated. **For directed adrev with custom prompts:** `cat prompt.txt | codex review -` (CLI v0.128.0 rejects combining `--base`/`--commit` with `[PROMPT]`). See [CLAUDE.md](CLAUDE.md#openai-codex-cli--for-build-robust-features-at-least-one-adversarial-round-via-codex-requirement) for full usage.
+- **Codex CLI** (adversarial review): `/usr/local/bin/codex` or `npx --yes @openai/codex`; already authenticated. **For directed adrev with custom prompts:** `cat prompt.txt | codex review -` (CLI v0.128.0 rejects combining `--base`/`--commit` with `[PROMPT]`). See [CLAUDE.md](CLAUDE.md#openai-codex-cli--for-build-robust-features-at-least-one-adversarial-round-via-codex-requirement) for full usage. **Model ceiling: GPT-5.5, never GPT-5.6, for adrev and all tasks until 5.6's deception is assessed as-deployed** — [ADR 0023](docs/adr/0023-ban-gpt-5-6-until-deception-assessed.md).
 - **url-to-markdown** skill: prefer over WebFetch for full-page retrieval. See [CLAUDE.md](CLAUDE.md#url-to-markdown-skill--fetch-full-webpages-not-summaries).
 
 ## Session Completion
