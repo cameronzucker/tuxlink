@@ -61,6 +61,8 @@ data loss / back-compat break), P2 (behavioral edge case, missing test), P3
 (style/nit). Report confirmed counts per severity; discarded findings listed
 with reasons.
 
+**Practicality-cap amendment (2026-07-15, operator, after arm B task 1 concluded but before any later task ran):** worker attempts are capped at 30 minutes wall clock with at most one retry per task; a task not finished inside that envelope records as failed (out-of-band completion path unchanged). Rationale: the cloud baseline ceiling measured in this experiment is ~5-6 min/task (arm A implementers: 309s/311s/330s), so multi-hour local attempts are outside any real-world practicality envelope even at equal quality. Arm B task 1's pre-amendment data (4 attempts, ~3.9h, >1.1M tokens, FAILED) stands as recorded.
+
 ### M5 — Efficiency
 - **Wall time per task, broken down BY AGENT** (amendment 2026-07-15, operator
   request, before any arm's data was scored: an elaboration of the original
