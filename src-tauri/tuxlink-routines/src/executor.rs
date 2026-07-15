@@ -243,6 +243,8 @@ async fn run_action_step_shared(
                 ctx,
                 RunEvent::StateChanged {
                     state: RunState::AwaitingConsent,
+                    step: None,
+                    rig: None,
                 },
             );
             let parked = tokio::select! {
@@ -254,6 +256,8 @@ async fn run_action_step_shared(
                     ctx,
                     RunEvent::StateChanged {
                         state: RunState::Running,
+                        step: None,
+                        rig: None,
                     },
                 ),
                 Err(err) => {
@@ -459,6 +463,8 @@ pub async fn run_track_shared(
                             ctx,
                             RunEvent::StateChanged {
                                 state: RunState::Waiting,
+                                step: None,
+                                rig: None,
                             },
                         );
                         tokio::select! {
@@ -469,6 +475,8 @@ pub async fn run_track_shared(
                             ctx,
                             RunEvent::StateChanged {
                                 state: RunState::Running,
+                                step: None,
+                                rig: None,
                             },
                         );
                         idx += 1;
@@ -1073,13 +1081,15 @@ mod tests {
         assert!(matches!(
             entries[0].event,
             RunEvent::StateChanged {
-                state: RunState::Waiting
+                state: RunState::Waiting,
+                ..
             }
         ));
         assert!(matches!(
             entries[1].event,
             RunEvent::StateChanged {
-                state: RunState::Running
+                state: RunState::Running,
+                ..
             }
         ));
     }
@@ -1411,7 +1421,7 @@ mod tests {
         let states: Vec<RunState> = entries
             .iter()
             .filter_map(|e| match &e.event {
-                RunEvent::StateChanged { state } => Some(*state),
+                RunEvent::StateChanged { state, .. } => Some(*state),
                 _ => None,
             })
             .collect();
@@ -1425,8 +1435,8 @@ mod tests {
             .iter()
             .map(|e| match &e.event {
                 RunEvent::StepIntent { .. } => "intent",
-                RunEvent::StateChanged { state: RunState::AwaitingConsent } => "awaiting",
-                RunEvent::StateChanged { state: RunState::Running } => "running",
+                RunEvent::StateChanged { state: RunState::AwaitingConsent, .. } => "awaiting",
+                RunEvent::StateChanged { state: RunState::Running, .. } => "running",
                 RunEvent::StepOk { .. } => "ok",
                 other => panic!("unexpected {other:?}"),
             })
@@ -1455,7 +1465,7 @@ mod tests {
         let entries = read_journal(&jpath).unwrap();
         assert!(!entries.iter().any(|e| matches!(
             &e.event,
-            RunEvent::StateChanged { state: RunState::AwaitingConsent }
+            RunEvent::StateChanged { state: RunState::AwaitingConsent, .. }
         )));
     }
 
