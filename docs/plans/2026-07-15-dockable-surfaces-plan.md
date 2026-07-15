@@ -373,6 +373,10 @@ pub struct SecondaryWindowSpec {
     pub close_policy: ClosePolicy, // recorded for the lib.rs on_window_event dispatch (Task 4)
 }
 pub fn caller_is_authorized(caller_label: &str) -> bool       // == "main" (single shared copy)
+// The helper does NOT enforce authorization internally — each command body checks
+// caller_is_authorized (or its own rule, e.g. surface_pop_out's main-or-own-label)
+// BEFORE calling it. One policy site per command, stated here so nobody adds a
+// second conflicting check inside the helper.
 pub fn open_secondary_window(app: &AppHandle, caller_label: &str, spec: &SecondaryWindowSpec) -> Result<(), String>
 ```
 
@@ -487,7 +491,7 @@ Events emitted: `dock:changed` (payload `DockSnapshot`, broadcast); `dock:close-
 4. Close-intent round-trip (spec §3): in lib.rs `on_window_event`, add a branch BEFORE the main-window arm: if `SurfaceId::from_window_label(window.label())` is Some → `api.prevent_close()`; emit `dock:close-intent` to that window; spawn a task that waits 1500 ms and then, if the surface is still Popped, calls the dock-back transition with `context: None` (the webview's own `surface_dock_back` invoke with its token normally lands first and the timeout finds Docked → no-op).
 5. Crash wiring (spec §3): after each pop-window spawn, connect the WebKitGTK `web-process-terminated` signal → route into the same dock-back transition (`context: None`). **The in-tree precedent is `src-tauri/src/forms/pdf_export.rs:96-101`** — `window.with_webview(|platform| { let wv = platform.inner(); … })` yields the `webkit2gtk::WebView`; no cfg attribute needed (webkit2gtk is a Linux-target dep, Cargo.toml:187-189, `webkit2gtk = "=2.0.2"`, and wry 0.55.1 already unifies the `v2_40` feature set, so `WebViewExt::connect_web_process_terminated` is available with NO Cargo.toml or Cargo.lock change). **If the signal still proves unreachable, STOP and escalate to the operator — do not improvise a fallback (spec §3).**
 6. `shell_mounted` (spec §3): first call (guard with a `OnceLock`/`AtomicBool` in managed state) walks `SurfaceId::ALL`; for each persisted `Popped`, spawn its window (get-or-focus). Later calls no-op. Never called during wizard (frontend gates it — Task 8).
-7. Park notification (spec §6): the park emission site is `RoutinesEvent::AwaitingConsent` in `src-tauri/src/routines/consent.rs:141-150` (grep `AwaitingConsent`, case-sensitive — lowercase `awaitingConsent` only hits a test assertion). Add: resolve `consent_host_window(registry.snapshot().surfaces.routines)`; if that window exists and is not focused (`is_focused().unwrap_or(false)`), fire a `tauri_plugin_notification` notification ("Routine awaiting transmit consent — <routine>") and call `request_user_attention(Some(UserAttentionType::Critical))` (X11 polish; Wayland no-op accepted).
+7. Park notification (spec §6): the park emission site is `self.sink.emit(&RoutinesEvent::AwaitingConsent {…})` at `src-tauri/src/routines/consent.rs:~198` (grep `AwaitingConsent`, case-sensitive — lowercase `awaitingConsent` only hits a test assertion). Add: resolve `consent_host_window(registry.snapshot().surfaces.routines)`; if that window exists and is not focused (`is_focused().unwrap_or(false)`), fire a `tauri_plugin_notification` notification ("Routine awaiting transmit consent — <routine>") and call `request_user_attention(Some(UserAttentionType::Critical))` (X11 polish; Wayland no-op accepted).
 8. `surface_focus` (spec §5 — the feature's most load-bearing call): get the window by label; `unminimize()`, then `show()`, then `set_focus()`, in that order. On Wayland, Tauri's `set_focus` maps to `gtk_window_present`, whose cross-toplevel activation depends on xdg-activation; labwc supports the protocol. The §13 (Task 13) live pass verifies pathway-click → raise/unminimize on labwc AND X11 as a hard gate; **if `set_focus` does not raise on labwc, STOP and escalate — the pathway principle depends on this call, and a workaround is a spec-level decision.** Window absent (stale pathway) → Ok(()) no-op (the dock:changed reconcile heals the UI).
 
 - [ ] **Step 1: Write the failing pure tests** — transition emit-suppression + context lifecycle in `registry.rs` (factor the mutate+context bookkeeping into a pure fn `apply_with_context(snap: &mut DockSnapshot, surface, target, context) -> bool` so it's testable without an AppHandle):
@@ -562,7 +566,7 @@ git commit -m "feat(aprs): aprs-message:sent own-send echo at aprs_send acceptan
 
 **Files:**
 - Create: `src/dock/dockState.ts`, `src/dock/dockState.test.ts`, `src/dock/dockParity.test.ts`
-- Modify: `src/routing.ts` (append), `src/App.tsx` (route branch + guard predicate)
+- Modify: `src/routing.ts` (append), `src/App.tsx` (route branch + guard predicate), `src-tauri/src/dock/mod.rs` (the Rust half of the parity fixture test — see Step 1)
 - Test: `src/routing.test.ts` (extend — it exists; follow its `parseComposeRoute` test shape), the two new test files
 
 **Interfaces (Produces — Tasks 7–10 rely on these exact names):**
