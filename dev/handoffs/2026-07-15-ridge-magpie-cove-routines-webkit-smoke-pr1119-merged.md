@@ -24,8 +24,14 @@
 - **Main checkout** (`bd-tuxlink-ant8s/ardop-connect-fixes` + staged bd jsonl + README edit + untracked scratch): operator state, untouched all session.
 - Remote branch auto-deleted at merge. ~100 historical worktrees under `worktrees/` remain (pre-existing backlog, untouched).
 
+## NEW after the smoke shipped — operator-commissioned A/B experiment (bd `tuxlink-c5ckf`)
+
+Late in this session the operator commissioned a baseline-feasibility experiment for his work AI-architect concept (rationed Claude Teams seat → Fable orchestrator + LOCAL worker tier on DGX-Spark-class hardware). **The full protocol is in bd `tuxlink-c5ckf` — read it before starting.** Summary: vehicle is `tuxlink-xvd1i`; write plan + briefs ONCE and rubric BEFORE either arm runs; arm A = standard SDD (Sonnet implementers + Opus reviewers, full agent inventory documented, MERGES); arm B = same briefs via Codex CLI → Spark endpoint (Qwen3 Coder Next primary, Qwen 3.5 122b Q4, gpt-oss-120b comparator; NEVER merges); symmetric blind Codex eval; report to dev/research/ shaped for a work proposal.
+
+**Blocking fact for the next session: the Spark endpoint URL/hostname is not discoverable from this Pi** (ssh config / /etc/hosts / mDNS all empty) — it IS up with models loaded per the operator; ask him for it first.
+
 ## What the next session should consider, in order
 
-1. **Routines plan 6 (dockable pop-out) has NO plan** — full build-robust-features (brainstorm → adversarial → plan) BEFORE any code. Do not skip the brainstorm.
-2. **P2 backend follow-up:** journal `state_changed` step/rig context enrichment (from the fen-delta-kite session; find it via `bd ready` — the run monitor's awaiting-radio/delay attribution is a documented heuristic until the journal carries step/rig; mind journal versioning).
+1. **The A/B experiment (`tuxlink-c5ckf` + `tuxlink-xvd1i`)** — operator-commissioned, protocol above. First action: ask for the Spark endpoint URL. Note the experiment's arm A completes the P2 journal-enrichment backlog item as real merged work.
+2. **Routines plan 6 (dockable pop-out) has NO plan** — full build-robust-features (brainstorm → adversarial → plan) BEFORE any code. Do not skip the brainstorm. Needs operator participation, so sequence around his availability.
 3. `tuxlink-r6d63` (light-theme accent chrome) is a quick independent polish item if a session needs a warm-up.
