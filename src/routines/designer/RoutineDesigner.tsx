@@ -59,8 +59,16 @@ import {
   type Step,
 } from '../routinesApi';
 import { formatUiError } from '../format';
-import { createDraft, addTrack, removeStep, insertStep, updateStep, type StepPatch } from './defDraft';
-import { CanvasTab, type ArmedInsertPosition } from './CanvasTab';
+import {
+  createDraft,
+  addTrack,
+  removeStep,
+  insertStep,
+  insertStepIntoBranchArm,
+  updateStep,
+  type StepPatch,
+} from './defDraft';
+import { CanvasTab, sameArm, type ArmedInsertPosition } from './CanvasTab';
 import { PaletteRail } from './PaletteRail';
 import { StepInspector } from './StepInspector';
 import type { DesignerTab } from '../RoutinesSurface';
@@ -265,7 +273,12 @@ export function RoutineDesigner({ routine, tab, onBack, onTabChange }: RoutineDe
    *  this component only tracks WHERE, never WHAT, is being inserted. */
   const handleInsertAt = useCallback((pos: ArmedInsertPosition) => {
     setArmedInsert((prev) =>
-      prev && prev.trackIdx === pos.trackIdx && prev.afterStepId === pos.afterStepId ? null : pos,
+      prev &&
+      prev.trackIdx === pos.trackIdx &&
+      prev.afterStepId === pos.afterStepId &&
+      sameArm(prev.arm, pos.arm)
+        ? null
+        : pos,
     );
   }, []);
 
@@ -325,7 +338,9 @@ export function RoutineDesigner({ routine, tab, onBack, onTabChange }: RoutineDe
     (stepId: string) => {
       updateDraft((d) => removeStep(d, stepId));
       setSelectedStepId((prev) => (prev === stepId ? null : prev));
-      setArmedInsert((prev) => (prev && prev.afterStepId === stepId ? null : prev));
+      setArmedInsert((prev) =>
+        prev && (prev.afterStepId === stepId || prev.arm?.branchId === stepId) ? null : prev,
+      );
     },
     [updateDraft],
   );
@@ -333,7 +348,10 @@ export function RoutineDesigner({ routine, tab, onBack, onTabChange }: RoutineDe
   /** PaletteRail's click-with-armed-insert handler: PaletteRail builds the
    *  `Step` value (its own action/control shape, `nextStepId`-assigned id);
    *  this is where it's actually spliced into the draft at the armed
-   *  position via `defDraft.insertStep`. Disarms afterward (one insert per
+   *  position. A position carrying an `arm` marker (a branch-arm ＋) routes
+   *  through `defDraft.insertStepIntoBranchArm` — splice + then/else-list
+   *  append, so the step lands IN the arm — every other position uses the
+   *  plain `defDraft.insertStep` splice. Disarms afterward (one insert per
    *  arm — re-arming for a second insert at the same spot is a deliberate
    *  extra click, not implicit) and selects the new step so its fields are
    *  immediately editable in `StepInspector`. A stale call with no armed
@@ -343,7 +361,11 @@ export function RoutineDesigner({ routine, tab, onBack, onTabChange }: RoutineDe
     (step: Step) => {
       if (!armedInsert) return;
       const pos = armedInsert;
-      updateDraft((d) => insertStep(d, pos.trackIdx, pos.afterStepId, step));
+      updateDraft((d) =>
+        pos.arm
+          ? insertStepIntoBranchArm(d, pos.trackIdx, pos.arm.branchId, pos.arm.which, step)
+          : insertStep(d, pos.trackIdx, pos.afterStepId, step),
+      );
       setArmedInsert(null);
       setSelectedStepId(step.id);
     },

@@ -222,6 +222,109 @@ describe('layoutCanvas — 2-track fixture', () => {
   });
 });
 
+describe('layoutCanvas — append-at-end + branch-arm insert points (Task 11 authoring fix)', () => {
+  const CONNECT_ONLY: ActionInfo[] = [
+    { name: 'radio.connect', needsRadio: true, needsInternet: false, transmits: true },
+  ];
+
+  function defWithSteps(steps: RoutineDef['tracks'][number]['steps']): RoutineDef {
+    return {
+      routine: 'r',
+      schema_version: 1,
+      transmit_mode: 'attended',
+      triggers: [{ type: 'manual' }],
+      tracks: [{ name: 'track-1', steps }],
+    };
+  }
+
+  it('a single-step lane emits a trailing dangling append ＋ (Gap B: sequential authoring must not dead-end)', () => {
+    const model = layoutCanvas(defWithSteps([{ id: 's1', action: 'radio.connect' }]), CONNECT_ONLY);
+    const trailing = model.lanes[0]!.edges.find((e) => e.to === '' && !e.arm);
+    expect(trailing).toEqual({ from: 's1', to: '', insertPoint: true, insertAfter: 's1' });
+  });
+
+  it('an end-terminated main row emits NO trailing ＋ (appending after end is meaningless)', () => {
+    const model = layoutCanvas(
+      defWithSteps([
+        { id: 's1', action: 'radio.connect' },
+        { id: 's2', control: 'end', failed: false },
+      ]),
+      CONNECT_ONLY,
+    );
+    expect(model.lanes[0]!.edges.filter((e) => e.to === '')).toEqual([]);
+  });
+
+  it('the FIXTURE\'s end-terminated track-2 emits no dangling edge at all (regression guard)', () => {
+    const model = layoutCanvas(FIXTURE_DEF, FAKE_ACTIONS);
+    expect(model.lanes[1]!.edges.filter((e) => e.to === '')).toEqual([]);
+  });
+
+  it('a branch-terminated main row emits no PLAIN trailing ＋ — the arms carry the continuation', () => {
+    const model = layoutCanvas(
+      defWithSteps([
+        { id: 's1', action: 'radio.connect' },
+        { id: 's2', control: 'branch', on: 's1.connected', then: [], else: [] },
+      ]),
+      CONNECT_ONLY,
+    );
+    expect(model.lanes[0]!.edges.filter((e) => e.to === '' && !e.arm)).toEqual([]);
+  });
+
+  it('an EMPTY arm emits a dangling ARM insert edge out of the branch (Gap A: canvas-authored branches start then:[], else:[])', () => {
+    const model = layoutCanvas(
+      defWithSteps([
+        { id: 's1', action: 'radio.connect' },
+        { id: 's2', control: 'branch', on: 's1.connected', then: [], else: [] },
+      ]),
+      CONNECT_ONLY,
+    );
+    const armEdges = model.lanes[0]!.edges.filter((e) => e.arm !== undefined);
+    expect(armEdges).toEqual([
+      {
+        from: 's2',
+        to: '',
+        label: 'ok',
+        insertPoint: true,
+        insertAfter: 's2',
+        arm: { branchId: 's2', which: 'then' },
+      },
+      {
+        from: 's2',
+        to: '',
+        label: 'err',
+        insertPoint: true,
+        insertAfter: 's2',
+        arm: { branchId: 's2', which: 'else' },
+      },
+    ]);
+  });
+
+  it('a NON-EMPTY arm not ending in end emits a trailing ARM append ＋ after its last node, arming the adjacent storage splice', () => {
+    const model = layoutCanvas(
+      defWithSteps([
+        { id: 's1', action: 'radio.connect' },
+        { id: 's2', control: 'branch', on: 's1.connected', then: ['s3'], else: [] },
+        { id: 's3', action: 'radio.connect' },
+      ]),
+      CONNECT_ONLY,
+    );
+    const thenTrailing = model.lanes[0]!.edges.find((e) => e.arm?.which === 'then');
+    expect(thenTrailing).toEqual({
+      from: 's3',
+      to: '',
+      insertPoint: true,
+      insertAfter: 's3',
+      arm: { branchId: 's2', which: 'then' },
+    });
+  });
+
+  it('an arm ending in an end node emits NO trailing arm ＋ (fixture arms both end in end)', () => {
+    const model = layoutCanvas(FIXTURE_DEF, FAKE_ACTIONS);
+    // Both fixture arms are non-empty and end-terminated: no arm edges at all.
+    expect(model.lanes[0]!.edges.filter((e) => e.arm !== undefined)).toEqual([]);
+  });
+});
+
 describe('layoutCanvas — retry control step', () => {
   it('renders a retry step as a ctl node without crashing', () => {
     const def: RoutineDef = {

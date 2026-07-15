@@ -11,6 +11,7 @@ import {
   createDraft,
   nextStepId,
   insertStep,
+  insertStepIntoBranchArm,
   removeStep,
   updateStep,
   updateSettings,
@@ -123,6 +124,73 @@ describe('insertStep', () => {
     const next = insertStep(def, 1, 's3', step);
     expect(next.tracks[1]!.steps.map((s) => s.id)).toEqual(['s3', 's4']);
     expect(next.tracks[0]).toBe(def.tracks[0]);
+  });
+});
+
+describe('insertStepIntoBranchArm', () => {
+  /** track-1: action s1 → branch s2 (then:[s3], else:[]) → s3 end. */
+  function branchDef(): RoutineDef {
+    return {
+      routine: 'r1',
+      schema_version: 1,
+      transmit_mode: 'attended',
+      triggers: [{ type: 'manual' }],
+      tracks: [
+        {
+          name: 'track-1',
+          steps: [
+            { id: 's1', action: 'radio.connect' },
+            { id: 's2', control: 'branch', on: 's1.connected', then: ['s3'], else: [] },
+            { id: 's3', control: 'end', failed: false },
+          ],
+        },
+        { name: 'track-2', steps: [{ id: 's4', action: 'local.log' }] },
+      ],
+    };
+  }
+
+  it('EMPTY arm: splices the step right after the branch and appends its id to that arm', () => {
+    const def = branchDef();
+    const step: ActionStep = { id: 's5', action: 'aprs.send' };
+    const next = insertStepIntoBranchArm(def, 0, 's2', 'else', step);
+    // Storage: right after the branch (else is empty).
+    expect(next.tracks[0]!.steps.map((s) => s.id)).toEqual(['s1', 's2', 's5', 's3']);
+    // Arm list: appended.
+    const branch = next.tracks[0]!.steps[1] as ControlStep & { control: 'branch' };
+    expect(branch.else).toEqual(['s5']);
+    // Untouched branch fields preserved.
+    expect(branch.on).toBe('s1.connected');
+    expect(branch.then).toEqual(['s3']);
+  });
+
+  it('NON-EMPTY arm: splices after the arm\'s last step and appends to the arm (order preserved)', () => {
+    const def = branchDef();
+    const step: ActionStep = { id: 's5', action: 'local.notify' };
+    const next = insertStepIntoBranchArm(def, 0, 's2', 'then', step);
+    expect(next.tracks[0]!.steps.map((s) => s.id)).toEqual(['s1', 's2', 's3', 's5']);
+    const branch = next.tracks[0]!.steps[1] as ControlStep & { control: 'branch' };
+    expect(branch.then).toEqual(['s3', 's5']);
+    expect(branch.else).toEqual([]);
+  });
+
+  it('is immutable: original def untouched, other tracks keep their references', () => {
+    const def = branchDef();
+    const step: ActionStep = { id: 's5', action: 'aprs.send' };
+    const next = insertStepIntoBranchArm(def, 0, 's2', 'else', step);
+    expect(next).not.toBe(def);
+    expect(next.tracks[0]).not.toBe(def.tracks[0]);
+    expect(next.tracks[1]).toBe(def.tracks[1]); // untouched track — same reference
+    // Original untouched: 3 steps, empty else.
+    expect(def.tracks[0]!.steps).toHaveLength(3);
+    expect((def.tracks[0]!.steps[1] as ControlStep & { control: 'branch' }).else).toEqual([]);
+  });
+
+  it('is a no-op (equal-by-value, never throws) when the branch id does not resolve to a branch in that track', () => {
+    const def = branchDef();
+    const step: ActionStep = { id: 's5', action: 'aprs.send' };
+    expect(insertStepIntoBranchArm(def, 0, 'does-not-exist', 'then', step)).toEqual(def);
+    // s1 exists but is not a branch control step.
+    expect(insertStepIntoBranchArm(def, 0, 's1', 'then', step)).toEqual(def);
   });
 });
 

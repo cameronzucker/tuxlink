@@ -27,10 +27,22 @@ import { layoutCanvas, type CanvasEdge, type CanvasNode, type CanvasLane, type C
 import './CanvasTab.css';
 
 /** The armed insert point — owned by `RoutineDesigner`, read here to render
- *  the matching edge amber; Task 11's PaletteRail consumes the same shape. */
+ *  the matching edge amber; Task 11's PaletteRail consumes the same shape.
+ *  `arm` is present only when an ARM insert edge was armed (see
+ *  `CanvasEdge.arm`): RoutineDesigner routes such an insert through
+ *  `defDraft.insertStepIntoBranchArm` so the step lands IN the branch arm
+ *  (fan row + then/else list), not spliced-after-the-branch into the
+ *  unplaced row. */
 export interface ArmedInsertPosition {
   trackIdx: number;
   afterStepId: string | null;
+  arm?: { branchId: string; which: 'then' | 'else' };
+}
+
+/** Arm-marker equality (both absent, or same branch + same arm). */
+export function sameArm(a: ArmedInsertPosition['arm'], b: ArmedInsertPosition['arm']): boolean {
+  if (!a || !b) return !a && !b;
+  return a.branchId === b.branchId && a.which === b.which;
 }
 
 export interface CanvasTabProps {
@@ -110,20 +122,30 @@ function EdgeView({
   armedInsert: ArmedInsertPosition | null;
   onInsertAt: (pos: ArmedInsertPosition) => void;
 }) {
-  // Arm/highlight from `edge.insertAfter` — the model-owned insertStep
-  // semantics (`null` = prepend for trigger/head edges), never `edge.from`
-  // ('trigger-0' would findIndex-miss in defDraft.insertStep and APPEND).
+  // Arm/highlight from `edge.insertAfter` + the arm marker — the model-owned
+  // insert semantics (`null` = prepend for trigger/head edges; `arm` =
+  // branch-arm insert), never `edge.from` ('trigger-0' would findIndex-miss
+  // in defDraft.insertStep and APPEND). The arm marker participates in the
+  // match so an arm ＋ and the plain splice ＋ that share an `insertAfter`
+  // (both anchored on the branch id) never both light up.
   const armed =
     edge.insertPoint &&
     !!armedInsert &&
     armedInsert.trackIdx === trackIdx &&
-    armedInsert.afterStepId === edge.insertAfter;
+    armedInsert.afterStepId === edge.insertAfter &&
+    sameArm(armedInsert.arm, edge.arm);
   // The two branch lead edges share `from` (the branch id) — the label
   // suffix keeps their testids unique (insert-s2-ok / insert-s2-err).
   const insertTestId = `insert-${edge.from}${edge.label ? `-${edge.label}` : ''}`;
-  // An empty track's dangling edge (`to: ''`) has no target node — render
-  // the lone ＋ without the arrowhead pointing at nothing.
+  // A dangling edge (`to: ''` — empty track, trailing append, empty arm) has
+  // no target node — render the lone ＋ without the arrowhead pointing at
+  // nothing.
   const dangling = edge.to === '';
+  const ariaLabel = edge.arm
+    ? `Insert step into ${edge.arm.branchId}'s ${edge.arm.which === 'then' ? 'ok' : 'err'} arm`
+    : edge.insertAfter === null
+      ? 'Insert step at the start of the track'
+      : `Insert step after ${edge.insertAfter}`;
   return (
     <div
       className={`edge${armed ? ' armed' : ''}${dangling ? ' dangling' : ''}`}
@@ -134,13 +156,15 @@ function EdgeView({
         <button
           type="button"
           className="plus"
-          aria-label={
-            edge.insertAfter === null
-              ? 'Insert step at the start of the track'
-              : `Insert step after ${edge.insertAfter}`
-          }
+          aria-label={ariaLabel}
           data-testid={insertTestId}
-          onClick={() => onInsertAt({ trackIdx, afterStepId: edge.insertAfter })}
+          onClick={() =>
+            onInsertAt(
+              edge.arm
+                ? { trackIdx, afterStepId: edge.insertAfter, arm: edge.arm }
+                : { trackIdx, afterStepId: edge.insertAfter },
+            )
+          }
         >
           ＋
         </button>
@@ -217,11 +241,11 @@ function Lane({
     mainRow.length > 0
       ? lane.edges.find((e) => e.from === `head-${trackIdx}` && e.to === mainRow[0]!.id)
       : undefined;
-  // An empty track's DANGLING insert edge (`to: ''` — no target node): the
-  // lone ＋ that keeps a step-less track insertable (New Routine… / Add
-  // track). Rendered after whatever heads the lane (the trigger nodes on
-  // lane 0; nothing on an empty secondary lane).
-  const danglingEdge = lane.edges.find((e) => e.to === '');
+  // The main row's DANGLING insert edge (`to: ''`, no arm marker — arm
+  // dangling edges render inside their fan paths below): an empty track's
+  // lone ＋ (New Routine… / Add track) or a non-empty row's trailing
+  // append-at-end ＋. Rendered after whatever the main flow holds.
+  const danglingEdge = lane.edges.find((e) => e.to === '' && !e.arm);
 
   return (
     <div className="lane" data-testid={`lane-${trackIdx}`}>
@@ -259,9 +283,22 @@ function Lane({
         <div className="branch-out">
           {fanRows.map((row, rowIdx) => {
             const label = rowIdx === 0 ? 'ok' : 'err';
+            const which = rowIdx === 0 ? 'then' : 'else';
+            // Lead edge into the arm's first node — or, for an EMPTY arm, the
+            // dangling arm insert ＋ straight out of the branch (same `from`
+            // + `label`, `to: ''`, arm marker set), found by the same query.
             const leadEdge = branchNode
               ? lane.edges.find((e) => e.from === branchNode.id && e.label === label)
               : undefined;
+            // Trailing arm append ＋ after the arm's last node (absent when
+            // the arm is empty — the lead edge IS the arm ＋ then — or ends
+            // in an `end` node).
+            const trailingArmEdge =
+              branchNode && row.length > 0
+                ? lane.edges.find(
+                    (e) => e.to === '' && e.arm?.branchId === branchNode.id && e.arm.which === which,
+                  )
+                : undefined;
             return (
               <div className="path" key={label}>
                 {leadEdge && (
@@ -281,6 +318,14 @@ function Lane({
                     onRemoveStep={onRemoveStep}
                   />
                 ))}
+                {trailingArmEdge && (
+                  <EdgeView
+                    edge={trailingArmEdge}
+                    trackIdx={trackIdx}
+                    armedInsert={armedInsert}
+                    onInsertAt={onInsertAt}
+                  />
+                )}
               </div>
             );
           })}

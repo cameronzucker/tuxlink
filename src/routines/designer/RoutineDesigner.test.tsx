@@ -241,6 +241,60 @@ describe('RoutineDesigner — Dry-run implicit save (d, flow 5)', () => {
   });
 });
 
+describe('RoutineDesigner — flow-2 authoring trace through the real seam (Task 11 fix)', () => {
+  it('new draft → insert action → trailing ＋ → insert branch → err arm ＋ → insert action INTO the arm: renders in the err fan row (not unplaced) and its id lands in branch.else', async () => {
+    installInvokeMock({
+      routines_actions_list: () => [
+        { name: 'radio.connect', needsRadio: true, needsInternet: false, transmits: true },
+      ],
+      routines_list: () => [],
+    });
+    renderDesigner({ routine: '' });
+
+    // Fresh draft: the lone dangling ＋ off the trigger head. Wait for the
+    // palette's action item (the actions fetch is async).
+    await screen.findByTestId('palette-item-radio.connect');
+
+    // 1. Arm the head ＋, insert radio.connect → s1.
+    fireEvent.click(screen.getByTestId('insert-trigger-0'));
+    fireEvent.click(screen.getByTestId('palette-item-radio.connect'));
+    expect(screen.getByTestId('node-s1')).toBeInTheDocument();
+
+    // 2. The trailing append ＋ after s1 exists (Gap B) — arm it, insert a
+    //    branch → s2 with empty arms.
+    fireEvent.click(screen.getByTestId('insert-s1'));
+    fireEvent.click(screen.getByTestId('palette-control-branch'));
+    expect(screen.getByTestId('node-s2')).toBeInTheDocument();
+
+    // 3. The err arm ＋ is visible on the canvas-authored branch (Gap A) —
+    //    arm it, insert radio.connect INTO the arm → s3.
+    fireEvent.click(screen.getByTestId('insert-s2-err'));
+    fireEvent.click(screen.getByTestId('palette-item-radio.connect'));
+
+    // 4. The inserted step renders as a placed node in the err fan row —
+    //    NOT in the unplaced row.
+    const s3 = screen.getByTestId('node-s3');
+    expect(s3).not.toHaveTextContent(/unplaced/i);
+    expect(screen.queryByTestId('unplaced-row-0')).not.toBeInTheDocument();
+    expect(s3.closest('.path')).not.toBeNull(); // fan row, not the main flow
+
+    // 5. …and its id landed in the branch's else list: verify through the
+    //    draft itself via the Export JSON dialog.
+    fireEvent.click(screen.getByRole('button', { name: 'Export JSON' }));
+    const textarea = (await screen.findByTestId('export-json-textarea')) as HTMLTextAreaElement;
+    const exported = JSON.parse(textarea.value) as RoutineDef;
+    const branch = exported.tracks[0]!.steps.find((s) => s.id === 's2') as {
+      control: 'branch';
+      then: string[];
+      else: string[];
+    };
+    expect(branch.else).toEqual(['s3']);
+    expect(branch.then).toEqual([]);
+    // Storage splice landed adjacently: s1, s2 (branch), s3.
+    expect(exported.tracks[0]!.steps.map((s) => s.id)).toEqual(['s1', 's2', 's3']);
+  });
+});
+
 describe('RoutineDesigner — Export JSON dialog', () => {
   it('opens a read-only dialog with JSON.stringify(draft, null, 2) and a Copy button', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);

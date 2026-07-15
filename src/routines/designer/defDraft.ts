@@ -76,6 +76,48 @@ export function insertStep(
   return { ...def, tracks };
 }
 
+/** Insert `step` INTO a branch arm (Task 11 authoring fix, Gap A): both
+ * splices the step into `def.tracks[trackIdx].steps` — immediately after the
+ * arm's last step already present in that track, or immediately after the
+ * branch itself when the arm is empty — AND appends `step.id` to that
+ * branch's `then`/`else` id list, so the step lands IN the arm (rendered in
+ * the fan row, reachable), never in the unplaced row. No new engine
+ * semantics: a branch arm IS its then/else id list (types.rs Branch); this
+ * op just performs both existing edits atomically. A `branchStepId` that
+ * doesn't resolve to a branch control step in that track is a no-op (fresh,
+ * equal-by-value def — same contract as `removeStep`'s missing id). */
+export function insertStepIntoBranchArm(
+  def: RoutineDef,
+  trackIdx: number,
+  branchStepId: string,
+  arm: 'then' | 'else',
+  step: Step,
+): RoutineDef {
+  const tracks = def.tracks.map((track, i): Track => {
+    if (i !== trackIdx) return track;
+    const branchIdx = track.steps.findIndex(
+      (s) => s.id === branchStepId && 'control' in s && s.control === 'branch',
+    );
+    if (branchIdx === -1) return { ...track }; // no such branch here — no-op
+    const branch = track.steps[branchIdx] as ControlStep & { control: 'branch' };
+    const armIds = branch[arm];
+    // Storage splice position: right after the LAST of the arm's steps that
+    // actually lives in this track (arm ids can dangle — validator's
+    // problem, not ours), falling back to right after the branch itself.
+    let insertIdx = branchIdx + 1;
+    for (const id of armIds) {
+      const idx = track.steps.findIndex((s) => s.id === id);
+      if (idx !== -1 && idx + 1 > insertIdx) insertIdx = idx + 1;
+    }
+    const steps = track.steps.slice();
+    steps.splice(insertIdx, 0, step);
+    // insertIdx is always > branchIdx, so the branch's own index is stable.
+    steps[branchIdx] = { ...branch, [arm]: [...armIds, step.id] };
+    return { ...track, steps };
+  });
+  return { ...def, tracks };
+}
+
 /** Remove the step with `stepId`, searching every track (a caller doesn't
  * need to know which track a step lives in — control steps like `retry`
  * reference other steps by id across the whole def, not just their own

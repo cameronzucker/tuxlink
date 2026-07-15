@@ -245,6 +245,103 @@ describe('CanvasTab — branch fan-out + anchors + deps', () => {
   });
 });
 
+describe('CanvasTab — append-at-end + branch-arm insert points (Task 11 authoring fix)', () => {
+  it('a lane not ending in end renders a trailing ＋ arming an append after its last step (Gap B)', () => {
+    // DEF's track-1 ends in s3 (an action, not end) — the trailing dangling
+    // ＋ must exist and arm {afterStepId: 's3'}.
+    const { onInsertAt } = renderTab();
+    fireEvent.click(screen.getByTestId('insert-s3'));
+    expect(onInsertAt).toHaveBeenCalledWith({ trackIdx: 0, afterStepId: 's3' });
+  });
+
+  const EMPTY_ARMS_DRAFT: RoutineDef = {
+    routine: 'r',
+    schema_version: 1,
+    transmit_mode: 'attended',
+    triggers: [{ type: 'manual' }],
+    tracks: [
+      {
+        name: 'track-1',
+        steps: [
+          { id: 's1', action: 'radio.connect', params: {} },
+          { id: 's2', control: 'branch', on: 's1.connected', then: [], else: [] },
+        ],
+      },
+    ],
+  };
+
+  it('an EMPTY branch arm renders a clickable arm ＋ that arms the arm-marked position (Gap A)', () => {
+    const { onInsertAt } = renderTab({ draft: EMPTY_ARMS_DRAFT });
+    fireEvent.click(screen.getByTestId('insert-s2-err'));
+    expect(onInsertAt).toHaveBeenLastCalledWith({
+      trackIdx: 0,
+      afterStepId: 's2',
+      arm: { branchId: 's2', which: 'else' },
+    });
+    fireEvent.click(screen.getByTestId('insert-s2-ok'));
+    expect(onInsertAt).toHaveBeenLastCalledWith({
+      trackIdx: 0,
+      afterStepId: 's2',
+      arm: { branchId: 's2', which: 'then' },
+    });
+  });
+
+  it('a non-empty arm not ending in end renders a trailing arm ＋ carrying the arm marker', () => {
+    const draft: RoutineDef = {
+      ...EMPTY_ARMS_DRAFT,
+      tracks: [
+        {
+          name: 'track-1',
+          steps: [
+            { id: 's1', action: 'radio.connect', params: {} },
+            { id: 's2', control: 'branch', on: 's1.connected', then: ['s3'], else: [] },
+            { id: 's3', action: 'local.notify', params: {} },
+          ],
+        },
+      ],
+    };
+    const { onInsertAt } = renderTab({ draft });
+    fireEvent.click(screen.getByTestId('insert-s3'));
+    expect(onInsertAt).toHaveBeenLastCalledWith({
+      trackIdx: 0,
+      afterStepId: 's3',
+      arm: { branchId: 's2', which: 'then' },
+    });
+  });
+
+  it('the armed (amber) highlight distinguishes an arm ＋ from its sibling arm ＋ sharing the same afterStepId', () => {
+    renderTab({
+      draft: EMPTY_ARMS_DRAFT,
+      armedInsert: { trackIdx: 0, afterStepId: 's2', arm: { branchId: 's2', which: 'else' } },
+    });
+    // Only the err arm edge lights up — not the ok arm edge, which shares
+    // trackIdx + afterStepId but differs in the arm marker.
+    const errEdge = screen.getByTestId('insert-s2-err').closest('.edge') as HTMLElement;
+    const okEdge = screen.getByTestId('insert-s2-ok').closest('.edge') as HTMLElement;
+    expect(errEdge.className).toContain('armed');
+    expect(okEdge.className).not.toContain('armed');
+  });
+
+  it('an end-terminated lane renders no trailing ＋', () => {
+    const draft: RoutineDef = {
+      ...EMPTY_ARMS_DRAFT,
+      tracks: [
+        {
+          name: 'track-1',
+          steps: [
+            { id: 's1', action: 'radio.connect', params: {} },
+            { id: 's2', control: 'end', failed: false },
+          ],
+        },
+      ],
+    };
+    renderTab({ draft });
+    // No dangling edge at all: the only ＋s lead INTO nodes.
+    expect(screen.queryByTestId('edge-s2-')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('insert-s2')).not.toBeInTheDocument();
+  });
+});
+
 describe('CanvasTab — add track', () => {
   it('the Add track button calls onAddTrack', () => {
     const { onAddTrack } = renderTab();

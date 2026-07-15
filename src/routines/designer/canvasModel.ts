@@ -50,9 +50,10 @@ export interface CanvasNode {
 
 export interface CanvasEdge {
   from: string;
-  /** Target node id — or `''` for the DANGLING insert edge an empty track
-   *  emits (a lone ＋ with no node after it, so a step-less track is never
-   *  uninsertable from the canvas). */
+  /** Target node id — or `''` for a DANGLING insert edge (a lone ＋ with no
+   *  node after it): an empty track's only edge, a non-empty row's trailing
+   *  append-at-end ＋, or an empty/extendable branch arm's ＋ — so no
+   *  authoring position is ever unreachable from the canvas. */
   to: string;
   label?: 'ok' | 'err';
   insertPoint: boolean;
@@ -64,6 +65,18 @@ export interface CanvasEdge {
    *  opposite of what inserting at the head of the flow means) — and on the
    *  synthetic head edge of a trigger-less lane. */
   insertAfter: string | null;
+  /** Present only on an ARM insert edge (Task 11 authoring fix, Gap A):
+   *  arming it routes the insert through
+   *  `defDraft.insertStepIntoBranchArm(def, trackIdx, branchId, which, step)`
+   *  — which both splices storage adjacently AND appends the new step's id
+   *  to the branch's then/else list — instead of the plain `insertStep`
+   *  splice (which would land the step in the unplaced row). Emitted for an
+   *  EMPTY arm (a dangling labeled ＋ straight out of the branch — otherwise
+   *  a canvas-authored branch with `then:[], else:[]` has NO armable
+   *  position that reaches either arm) and as the TRAILING ＋ after a
+   *  non-empty arm's last node (skipped when the arm ends in an `end` step —
+   *  appending after end is meaningless). */
+  arm?: { branchId: string; which: 'then' | 'else' };
 }
 
 export interface CanvasLane {
@@ -302,6 +315,7 @@ export function layoutCanvas(def: RoutineDef, actions: ActionInfo[]): CanvasMode
     }
 
     let branchStep: (ControlStep & { control: 'branch' }) | null = null;
+    let lastMainStep: Step | null = null;
     let isFirstStep = true;
     for (const step of track.steps) {
       const node = toNode(step, actionsByName);
@@ -321,11 +335,33 @@ export function layoutCanvas(def: RoutineDef, actions: ActionInfo[]): CanvasMode
       }
       isFirstStep = false;
       prevId = node.id;
+      lastMainStep = step;
 
       if ('control' in step && step.control === 'branch') {
         branchStep = step;
         break; // steps past the branch are reached via branchStep.then/else below, not main-row order
       }
+    }
+
+    // Trailing append-at-end insert point (Task 11 authoring fix, Gap B):
+    // without it, a non-empty main row only has ＋s leading INTO nodes — a
+    // single-step lane has no armable position AFTER its step, dead-ending
+    // sequential authoring (flow 2's primary motion). Skipped when the row
+    // ends in an `end` step (appending after end is meaningless) or in the
+    // branch (the arms below carry the continuation — a plain trailing ＋
+    // there would arm the same splice-after-branch position as the arm lead
+    // edges and mint unplaced steps).
+    if (
+      lastMainStep !== null &&
+      branchStep === null &&
+      !('control' in lastMainStep && lastMainStep.control === 'end')
+    ) {
+      edges.push({
+        from: lastMainStep.id,
+        to: '',
+        insertPoint: true,
+        insertAfter: lastMainStep.id,
+      });
     }
 
     // An EMPTY track would otherwise render with no insert point at all —
@@ -346,32 +382,54 @@ export function layoutCanvas(def: RoutineDef, actions: ActionInfo[]): CanvasMode
     const rows: CanvasNode[][] = [mainRow];
 
     if (branchStep) {
-      const thenChain = buildChain(branchStep.then, stepsById, actionsByName);
-      const elseChain = buildChain(branchStep.else, stepsById, actionsByName);
-      for (const n of thenChain.nodes) placed.add(n.id);
-      for (const n of elseChain.nodes) placed.add(n.id);
-      rows.push(thenChain.nodes);
-      rows.push(elseChain.nodes);
-      if (thenChain.nodes[0]) {
-        edges.push({
-          from: branchStep.id,
-          to: thenChain.nodes[0].id,
-          label: 'ok',
-          insertPoint: true,
-          insertAfter: branchStep.id,
-        });
+      const branchId = branchStep.id;
+      const armChains: Array<{ which: 'then' | 'else'; label: 'ok' | 'err'; ids: string[] }> = [
+        { which: 'then', label: 'ok', ids: branchStep.then },
+        { which: 'else', label: 'err', ids: branchStep.else },
+      ];
+      for (const { which, label, ids } of armChains) {
+        const chain = buildChain(ids, stepsById, actionsByName);
+        for (const n of chain.nodes) placed.add(n.id);
+        rows.push(chain.nodes);
+        const first = chain.nodes[0];
+        const last = chain.nodes[chain.nodes.length - 1];
+        if (first) {
+          edges.push({
+            from: branchId,
+            to: first.id,
+            label,
+            insertPoint: true,
+            insertAfter: branchId,
+          });
+        } else {
+          // EMPTY arm (Gap A): a canvas-authored branch starts `then:[],
+          // else:[]` — without this dangling ARM insert edge there is no
+          // armable position that reaches either arm at all. Arming it
+          // routes through insertStepIntoBranchArm (splice + arm-list
+          // append), so the inserted step lands IN the arm, not unplaced.
+          edges.push({
+            from: branchId,
+            to: '',
+            label,
+            insertPoint: true,
+            insertAfter: branchId,
+            arm: { branchId, which },
+          });
+        }
+        edges.push(...chain.edges);
+        // Trailing ARM append ＋ after a non-empty arm's last node (Gap B for
+        // arms — sequential authoring inside an arm), skipped when the arm
+        // already ends in an `end` node.
+        if (last && last.kind !== 'end') {
+          edges.push({
+            from: last.id,
+            to: '',
+            insertPoint: true,
+            insertAfter: last.id,
+            arm: { branchId, which },
+          });
+        }
       }
-      edges.push(...thenChain.edges);
-      if (elseChain.nodes[0]) {
-        edges.push({
-          from: branchStep.id,
-          to: elseChain.nodes[0].id,
-          label: 'err',
-          insertPoint: true,
-          insertAfter: branchStep.id,
-        });
-      }
-      edges.push(...elseChain.edges);
     }
 
     // Any step of this track placed in NO row (after the first branch,
