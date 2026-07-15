@@ -30,6 +30,20 @@
 
 use tauri::{AppHandle, LogicalSize, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
+use crate::secondary_window::ClosePolicy;
+
+/// Compose windows' close policy (spec §3, tuxlink-dmwte Task 3): every close
+/// path (in-app Close button + native titlebar X) routes through
+/// [`compose_close_self`] rather than the native window-close APIs
+/// (tuxlink-h2y) — see that command's docstring. Compose's own
+/// get-or-focus/builder body is NOT migrated to
+/// `crate::secondary_window::open_secondary_window` — its dynamic per-draft
+/// label, `.center()` placement, and monitor-height clamp (below) don't fit
+/// that helper's fixed-spec contract. This constant exists so Task 4's
+/// `on_window_event` dispatch table can look up compose's policy for any
+/// `compose-*` label without re-deriving it from the label prefix.
+pub const CLOSE_POLICY: ClosePolicy = ClosePolicy::CommandRouted;
+
 /// Default compose-window inner height (logical px). Bumped to 820 (2026-05-31)
 /// for multi-fieldset HTML Forms.
 const COMPOSE_DEFAULT_INNER_HEIGHT: f64 = 820.0;

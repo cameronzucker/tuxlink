@@ -3,8 +3,16 @@
 //! Single-instance Tauri webview at `/logging` (label "logging"); geometry
 //! persisted by tauri-plugin-window-state. Re-invoking focuses the existing
 //! window. Only the main window may invoke `logging_window_open`.
+//!
+//! **tuxlink-dmwte Task 3:** the get-or-focus + builder + race-guard body
+//! previously inlined here now lives in the shared
+//! `crate::secondary_window::open_secondary_window` helper; this file only
+//! supplies its own label/route/size/decoration constants and the
+//! authorization check.
 
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, WebviewWindow};
+
+use crate::secondary_window::{open_secondary_window, ClosePolicy, SecondaryWindowSpec};
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const LOGGING_WINDOW_LABEL: &str = "logging";
@@ -22,44 +30,19 @@ pub fn logging_window_open(app: AppHandle, caller: WebviewWindow) -> Result<(), 
         ));
     }
 
-    // Idempotent: focus an already-open logging window.
-    if let Some(existing) = app.get_webview_window(LOGGING_WINDOW_LABEL) {
-        existing.show().map_err(|e| format!("show failed: {e}"))?;
-        existing
-            .set_focus()
-            .map_err(|e| format!("set_focus failed: {e}"))?;
-        return Ok(());
-    }
-
-    let build_result = WebviewWindowBuilder::new(
-        &app,
-        LOGGING_WINDOW_LABEL,
-        WebviewUrl::App("/logging".into()),
-    )
-    .title("Tuxlink Logging")
-    .inner_size(820.0, 720.0)
-    .min_inner_size(600.0, 480.0)
-    .resizable(true)
-    // Custom in-app titlebar — matches help_window.rs convention; spec §8.1
-    // deferred custom chrome to v1.1 but both help + logging windows use the
-    // same dark Tuxlink chrome as the main window.
-    .decorations(false)
-    .build();
-
-    match build_result {
-        Ok(_) => Ok(()),
-        // Race-guard: a concurrent call may have raced past get_webview_window
-        // above and hit AlreadyExists from build(). Mirror compose_window pattern.
-        Err(tauri::Error::WindowLabelAlreadyExists(_))
-        | Err(tauri::Error::WebviewLabelAlreadyExists(_)) => {
-            if let Some(existing) = app.get_webview_window(LOGGING_WINDOW_LABEL) {
-                let _ = existing.show();
-                let _ = existing.set_focus();
-            }
-            Ok(())
-        }
-        Err(e) => Err(format!("logging window build failed: {e}")),
-    }
+    let spec = SecondaryWindowSpec {
+        label: LOGGING_WINDOW_LABEL.to_string(),
+        route: "/logging".to_string(),
+        title: "Tuxlink Logging".to_string(),
+        inner_size: (820.0, 720.0),
+        min_inner_size: (600.0, 480.0),
+        // Custom in-app titlebar — matches help_window.rs convention; spec
+        // §8.1 deferred custom chrome to v1.1 but both help + logging windows
+        // use the same dark Tuxlink chrome as the main window.
+        decorations: false,
+        close_policy: ClosePolicy::CloseSelf,
+    };
+    open_secondary_window(&app, caller.label(), &spec)
 }
 
 #[cfg(test)]

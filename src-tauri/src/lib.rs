@@ -17,6 +17,7 @@ pub mod help_window;
 pub mod logging;
 pub mod logging_window;
 pub mod media;
+pub mod secondary_window;
 pub mod stations_window;
 pub mod theme_state;
 pub mod native_mailbox;

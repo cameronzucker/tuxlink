@@ -9,15 +9,24 @@
 //! **Single instance.** There is exactly one Station Data window; re-invoking
 //! `stations_window_open` when it already exists focuses it (matches help).
 //!
-//! **Main-window guard.** As with compose/help, only the main window may invoke
-//! `stations_window_open` — defense-in-depth against a misbehaving frontend
-//! spawning a second one.
+//! **Main-window guard.** As with compose/help, only the main window may
+//! invoke `stations_window_open` — defense-in-depth against a misbehaving
+//! frontend spawning a second one.
 //!
-//! **Native decorations.** Unlike compose/help (custom dark chrome), this window
-//! keeps the OS-native frame. The panel content is the whole window; a bespoke
-//! drag-region titlebar is a deferrable polish item, not a functional gap.
+//! **Native decorations.** Unlike compose/help (custom dark chrome), this
+//! window keeps the OS-native frame. The panel content is the whole window; a
+//! bespoke drag-region titlebar is a deferrable polish item, not a functional
+//! gap.
+//!
+//! **tuxlink-dmwte Task 3:** the get-or-focus + builder + race-guard body that
+//! used to live here directly is now the shared
+//! `crate::secondary_window::open_secondary_window` helper (this file was its
+//! source transplant); this file only supplies its own label/route/size/
+//! decoration constants and the authorization check.
 
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, WebviewWindow};
+
+use crate::secondary_window::{open_secondary_window, ClosePolicy, SecondaryWindowSpec};
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const STATIONS_WINDOW_LABEL: &str = "stations";
@@ -35,40 +44,18 @@ pub fn stations_window_open(app: AppHandle, caller: WebviewWindow) -> Result<(),
         ));
     }
 
-    // Idempotent: focus an already-open Station Data window.
-    if let Some(existing) = app.get_webview_window(STATIONS_WINDOW_LABEL) {
-        existing.show().map_err(|e| format!("show failed: {e}"))?;
-        existing
-            .set_focus()
-            .map_err(|e| format!("set_focus failed: {e}"))?;
-        return Ok(());
-    }
-
-    let build_result = WebviewWindowBuilder::new(
-        &app,
-        STATIONS_WINDOW_LABEL,
-        WebviewUrl::App("/stations".into()),
-    )
-    .title("Tuxlink Station Data")
-    .inner_size(760.0, 720.0)
-    .min_inner_size(420.0, 360.0)
-    .resizable(true)
-    .build();
-
-    match build_result {
-        Ok(_) => Ok(()),
-        // Match the compose/help race-guard: a concurrent call may race past the
-        // get_webview_window check above and hit AlreadyExists from build().
-        Err(tauri::Error::WindowLabelAlreadyExists(_))
-        | Err(tauri::Error::WebviewLabelAlreadyExists(_)) => {
-            if let Some(existing) = app.get_webview_window(STATIONS_WINDOW_LABEL) {
-                let _ = existing.show();
-                let _ = existing.set_focus();
-            }
-            Ok(())
-        }
-        Err(e) => Err(format!("stations window build failed: {e}")),
-    }
+    let spec = SecondaryWindowSpec {
+        label: STATIONS_WINDOW_LABEL.to_string(),
+        route: "/stations".to_string(),
+        title: "Tuxlink Station Data".to_string(),
+        inner_size: (760.0, 720.0),
+        min_inner_size: (420.0, 360.0),
+        // Native decorations (unlike compose/help/logging's custom chrome) —
+        // see the module docstring's "Native decorations" note.
+        decorations: true,
+        close_policy: ClosePolicy::CloseSelf,
+    };
+    open_secondary_window(&app, caller.label(), &spec)
 }
 
 #[cfg(test)]
