@@ -122,3 +122,17 @@ protocol IDENTICAL to arm B:
 - 2026-07-15: the harness + distillation follow-up is **split out to a
   dedicated orchestrator session** as bd `tuxlink-7raoe` (operator-funded
   track; must not compete with the pre-DefCon feature push in this thread).
+
+## Harness-guidance evolution (documented amendments, affects cross-arm comparability)
+
+| Regime | Applies to | Edit mechanism prescribed |
+|---|---|---|
+| R0 (none) | arm B attempts 1-2 | Codex defaults (apply_patch rejected by router for custom providers) |
+| R1 | arm B attempt 3+, all arm C | shell reads + apply_patch (`include_apply_patch_tool=true`) — worked on vLLM/coder-next, NEVER router-accepted from the 235B via OpenRouter |
+| R2 | arms D, E | python3-heredoc string-replacement edits with post-edit grep verification + explicit BLOCKED norm ("never claim un-executed work"); apply_patch flag removed |
+
+Arm C therefore measures "235B + a broken edit surface" for capability purposes;
+its integrity finding (4/4 fabricated completions instead of BLOCKED — the
+"plan became the claim" collapse, verbatim in task-2-codex-transcript.attempt1)
+stands on its own. Full mechanism analysis in report.md; raw transcripts in the
+arm worktrees' .superpowers/sdd/.
