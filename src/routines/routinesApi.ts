@@ -158,7 +158,7 @@ export type StepError =
 /** `RunEvent` (journal.rs:32-71) — `#[serde(tag = "type", rename_all = "snake_case")]`. */
 export type RunEvent =
   | { type: 'run_started'; routine: string; snapshot: unknown; dry_run: boolean }
-  | { type: 'state_changed'; state: RunState }
+  | { type: 'state_changed'; state: RunState; step?: string; rig?: string }
   | { type: 'step_intent'; step: string; action: string; resolved_params: unknown }
   | { type: 'step_ok'; step: string; output: unknown }
   | { type: 'step_err'; step: string; error: StepError }

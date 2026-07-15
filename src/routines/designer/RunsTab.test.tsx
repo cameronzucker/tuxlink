@@ -223,6 +223,62 @@ describe('ganttModel (a)', () => {
     expect(interrupted!.resultEntry).toBeUndefined();
     expect(bars.find((b) => b.kind === 'ok')).toMatchObject({ stepId: 's1' });
   });
+
+  it('attributes a parked window to the exact step named on state_changed, not the heuristic', () => {
+    const snapshot = {
+      tracks: [
+        {
+          name: 'net-control',
+          steps: [
+            { id: 's1', action: 'cat.apply_preset' },
+            { id: 'd1', control: 'delay', delay: '+5m' },
+            { id: 's2', action: 'radio.connect' },
+          ],
+        },
+      ],
+    };
+    const journal: JournalEntry[] = [
+      { ts_unix: T, run_id: 'run-e', seq: 0, event: { type: 'run_started', routine: 'r', snapshot, dry_run: false } },
+      { ts_unix: T + 1, run_id: 'run-e', seq: 1, event: { type: 'step_intent', step: 's1', action: 'cat.apply_preset', resolved_params: {} } },
+      { ts_unix: T + 2, run_id: 'run-e', seq: 2, event: { type: 'step_ok', step: 's1', output: {} } },
+      // Enriched delay park: names d1. The legacy heuristic would have
+      // attributed this window to s1 (most recently CLOSED step).
+      { ts_unix: T + 3, run_id: 'run-e', seq: 3, event: { type: 'state_changed', state: 'waiting', step: 'd1' } },
+      { ts_unix: T + 303, run_id: 'run-e', seq: 4, event: { type: 'state_changed', state: 'running', step: 'd1' } },
+      { ts_unix: T + 400, run_id: 'run-e', seq: 5, event: { type: 'run_finished', state: 'completed', reason: null } },
+    ];
+    const model = ganttModel(journal);
+    const bars = model.lanes[0]!.bars;
+    const delayBar = bars.find((b) => b.kind === 'delay');
+    expect(delayBar).toBeDefined();
+    expect(delayBar!.stepId).toBe('d1');
+    expect(delayBar!.t0).toBe(T + 3);
+    expect(delayBar!.t1).toBe(T + 303);
+    // Exactly one bar for the window — no duplicate heuristic attribution.
+    expect(bars.filter((b) => b.kind === 'delay')).toHaveLength(1);
+  });
+
+  it('falls back to the legacy heuristic when state_changed carries no step (old journals)', () => {
+    const snapshot = {
+      tracks: [
+        { name: 'net-control', steps: [{ id: 's1', action: 'cat.apply_preset' }] },
+      ],
+    };
+    const journal: JournalEntry[] = [
+      { ts_unix: T, run_id: 'run-l', seq: 0, event: { type: 'run_started', routine: 'r', snapshot, dry_run: false } },
+      { ts_unix: T + 1, run_id: 'run-l', seq: 1, event: { type: 'step_intent', step: 's1', action: 'cat.apply_preset', resolved_params: {} } },
+      { ts_unix: T + 2, run_id: 'run-l', seq: 2, event: { type: 'step_ok', step: 's1', output: {} } },
+      { ts_unix: T + 3, run_id: 'run-l', seq: 3, event: { type: 'state_changed', state: 'waiting' } },
+      { ts_unix: T + 63, run_id: 'run-l', seq: 4, event: { type: 'state_changed', state: 'running' } },
+      { ts_unix: T + 70, run_id: 'run-l', seq: 5, event: { type: 'run_finished', state: 'completed', reason: null } },
+    ];
+    const model = ganttModel(journal);
+    const delayBar = model.lanes[0]!.bars.find((b) => b.kind === 'delay');
+    // Legacy behavior preserved verbatim: attributed to the most recently
+    // closed step.
+    expect(delayBar).toBeDefined();
+    expect(delayBar!.stepId).toBe('s1');
+  });
 });
 
 describe('radioAwaitRig', () => {
@@ -232,6 +288,23 @@ describe('radioAwaitRig', () => {
 
   it('defaults to "default" when no step_intent carries a rig param', () => {
     expect(radioAwaitRig(FIXTURE_JOURNAL.slice(0, 2))).toBe('default');
+  });
+
+  it('prefers the rig named on a state_changed entry over the adjacent-intent heuristic', () => {
+    const journal: JournalEntry[] = [
+      { ts_unix: T, run_id: 'run-r', seq: 0, event: { type: 'step_intent', step: 's1', action: 'radio.connect', resolved_params: { rig: 'ft710' } } },
+      { ts_unix: T + 1, run_id: 'run-r', seq: 1, event: { type: 'state_changed', state: 'awaiting_radio', step: 's1', rig: 'g90' } },
+    ];
+    // The exact field wins over the (different) rig on the adjacent intent.
+    expect(radioAwaitRig(journal)).toBe('g90');
+  });
+
+  it('a rig-less state_changed does not shadow the intent fallback', () => {
+    const journal: JournalEntry[] = [
+      { ts_unix: T, run_id: 'run-r2', seq: 0, event: { type: 'step_intent', step: 's1', action: 'radio.connect', resolved_params: { rig: 'ft710' } } },
+      { ts_unix: T + 1, run_id: 'run-r2', seq: 1, event: { type: 'state_changed', state: 'running', step: 's1' } },
+    ];
+    expect(radioAwaitRig(journal)).toBe('ft710');
   });
 });
 
