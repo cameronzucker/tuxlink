@@ -15,6 +15,12 @@ import type { RoutineDef, Finding } from '../routinesApi';
 const { mockInvoke } = vi.hoisted(() => ({ mockInvoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mockInvoke }));
 
+// The Settings tab (Task 12's SettingsTab) reads the active callsign off
+// useStatusData for the Acknowledge button's label — mocked directly
+// (StationRail.test.tsx's established pattern) rather than standing up a
+// real QueryClientProvider ancestor this shell doesn't otherwise need.
+vi.mock('../../shell/useStatus', () => ({ useStatusData: () => ({ callsign: '' }) }));
+
 import { RoutineDesigner } from './RoutineDesigner';
 
 const EXISTING_DEF: RoutineDef = {
@@ -406,6 +412,32 @@ describe('RoutineDesigner — flow-2 authoring trace through the real seam (Task
     };
     expect(branch.else).toEqual(['s4', 's3']);
     expect(exported.tracks[0]!.steps.map((s) => s.id)).toEqual(['s1', 's2', 's4', 's3']);
+  });
+});
+
+describe('RoutineDesigner — Settings tab wiring (Task 12 seam)', () => {
+  it('switching to the Settings tab mounts SettingsTab with the live draft/findings, and editing a setting flows through onChange -> updateSettings -> the draft', async () => {
+    installInvokeMock({
+      routines_actions_list: () => [],
+      routines_list: () => [{ routine: 'deployment-poll', transmitMode: 'attended', enabled: false, triggers: [{ type: 'manual' }] }],
+    });
+    renderDesigner({ tab: 'settings' });
+    await screen.findByTestId('settings-tab');
+
+    // Editing on_interrupted routes through RoutineDesigner's updateDraft ->
+    // defDraft.updateSettings -> marks the draft dirty, same seam every other
+    // tab's edits use.
+    expect(screen.queryByTestId('unsaved-dot')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('settings-interrupted-resume'));
+    expect(screen.getByTestId('unsaved-dot')).toBeInTheDocument();
+
+    // The updated field is reflected in the Export JSON dialog — proof the
+    // patch actually landed in the shell's `draft`, not just a local
+    // SettingsTab-only state.
+    fireEvent.click(screen.getByRole('button', { name: 'Export JSON' }));
+    const textarea = (await screen.findByTestId('export-json-textarea')) as HTMLTextAreaElement;
+    const exported = JSON.parse(textarea.value) as RoutineDef;
+    expect(exported.on_interrupted).toBe('resume');
   });
 });
 

@@ -66,11 +66,13 @@ import {
   insertStep,
   insertStepIntoBranchArm,
   updateStep,
+  updateSettings,
   type StepPatch,
 } from './defDraft';
 import { CanvasTab, sameArm, type ArmedInsertPosition } from './CanvasTab';
 import { PaletteRail } from './PaletteRail';
 import { StepInspector } from './StepInspector';
+import { SettingsTab } from './SettingsTab';
 import type { DesignerTab } from '../RoutinesSurface';
 import './RoutineDesigner.css';
 
@@ -154,15 +156,6 @@ function RunsTabPlaceholder({ highlightRunId }: { highlightRunId: string | null 
     <div className="tab-body-placeholder" data-testid="runs-tab-placeholder">
       Runs (Task 13) mounts here.
       {highlightRunId && <span data-testid="highlight-run-id"> highlight: {highlightRunId}</span>}
-    </div>
-  );
-}
-
-/** Settings tab mount point (a later task). */
-function SettingsTabPlaceholder() {
-  return (
-    <div className="tab-body-placeholder" data-testid="settings-tab-placeholder">
-      Settings (Task 11) mounts here.
     </div>
   );
 }
@@ -540,7 +533,15 @@ export function RoutineDesigner({ routine, tab, onBack, onTabChange }: RoutineDe
           </>
         )}
         {tab === 'runs' && <RunsTabPlaceholder highlightRunId={highlightRunId} />}
-        {tab === 'settings' && <SettingsTabPlaceholder />}
+        {tab === 'settings' && (
+          <SettingsTab
+            key={draft.routine}
+            draft={draft}
+            findings={findings}
+            onChange={(patch) => updateDraft((d) => updateSettings(d, patch))}
+            onSaved={handleSave}
+          />
+        )}
       </div>
 
       <ValBar findings={findings} parseFailure={parseFailure} draft={draft} />
