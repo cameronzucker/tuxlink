@@ -926,8 +926,20 @@ mod quit_gate_tests {
     /// runner blew it). Parking on a channel makes the wedge deterministic;
     /// a panicking test unwedges it too, because unwinding drops the sender
     /// and `recv()` returns immediately.
+    ///
+    /// `entered` closes the OTHER end of the race (the 2026-07-15 amd64
+    /// recurrence, run 29393978852): the park only pins the track task once
+    /// this action's first poll has begun. Requesting quit BEFORE that poll
+    /// lets `cancel_all_live_runs` land first, and the executor's step
+    /// `tokio::select!` can then take its already-fired cancel branch
+    /// without ever polling the action — the run cancels cleanly,
+    /// `live_at_exit` reads 0, and the wedge never wedged. The test must
+    /// await `entered` before quitting; the signal fires inside the same
+    /// synchronous poll that parks, so once received the select can no
+    /// longer switch branches.
     struct WedgedBlockingAction {
         name: &'static str,
+        entered: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
         release: std::sync::Mutex<Option<std::sync::mpsc::Receiver<()>>>,
     }
 
@@ -947,6 +959,9 @@ mod quit_gate_tests {
             _params: serde_json::Value,
             _cancel: CancellationToken,
         ) -> Result<serde_json::Value, StepError> {
+            if let Some(tx) = self.entered.lock().unwrap().take() {
+                let _ = tx.send(());
+            }
             let parked = self.release.lock().unwrap().take();
             if let Some(rx) = parked {
                 let _ = rx.recv();
@@ -1162,14 +1177,28 @@ mod quit_gate_tests {
         // Held until after the assertions below — the action stays parked
         // (and the run stays live) however slowly CI schedules the drain.
         let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel::<()>();
         let (state, _dir) = test_state(Arc::new(WedgedBlockingAction {
             name: "local.wedged",
+            entered: std::sync::Mutex::new(Some(entered_tx)),
             release: std::sync::Mutex::new(Some(release_rx)),
         }));
         app.manage(Arc::clone(&state));
 
         state.store.save(&minimal_def("r1", "local.wedged")).unwrap();
         state.start_routine("r1", json!({})).await.unwrap();
+
+        // Rendezvous BEFORE requesting quit (see WedgedBlockingAction's doc):
+        // quitting while the action's first poll is still pending lets the
+        // cancel land first and the step select cancel cleanly — the run
+        // terminates, live_at_exit reads 0, and the test fails without any
+        // product bug (the 2026-07-15 amd64 recurrence). Once `entered`
+        // resolves, the track task is pinned inside the parked poll and the
+        // run is live at exit by construction.
+        tokio::time::timeout(Duration::from_secs(5), entered_rx)
+            .await
+            .expect("wedged action was never polled within 5s")
+            .expect("wedged action dropped its entered signal");
         assert_eq!(state.live_run_count(), 1);
 
         let (exit_tx, exit_rx) = tokio::sync::oneshot::channel::<usize>();
