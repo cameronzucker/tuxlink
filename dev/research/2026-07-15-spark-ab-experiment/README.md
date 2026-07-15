@@ -88,3 +88,25 @@ SPARK_API_KEY=dummy codex exec --skip-git-repo-check \
   purpose-built for them — rather than adapting Codex CLI, whose tool
   surface and prompting are tuned for GPT-5.5-class models. Goes in
   `report.md` §transferability/recommendations.
+
+## Scale-ladder extension (operator-commissioned 2026-07-15, registered before any scale arm ran)
+
+Additional never-merge replicas via OpenRouter (full-precision hosted serving,
+"two-Sparks / office-inference-server" hardware class), tracking quality vs
+model scale with the harness, briefs, base SHA, reviewer tier, and blind-eval
+protocol IDENTICAL to arm B:
+
+| Arm | Model | Isolates |
+|---|---|---|
+| C | `qwen/qwen3-235b-a22b-2507` | scale (operator's "235b") |
+| D | `qwen/qwen3.5-397b-a17b` | scale (operator's "405b-class") |
+| E | `qwen/qwen3.5-122b-a10b` | quantization — same weights as the Spark panel's Q4 candidate, full precision |
+
+- Endpoint: `https://openrouter.ai/api/v1` (Responses API verified working
+  2026-07-15 with the 235B). Key: OS keyring `service=elmer-openrouter
+  account=teacher`, passed inline per invocation — never on disk or in logs.
+- Worktrees `worktrees/bd-tuxlink-c5ckf-arm-{c,d,e}-*`, claimed by bd
+  `tuxlink-c5ckf`, branched from the shared base `e28f67db`, run sequentially
+  after arm B completes; blind eval extends to `candidate-3/4/5`.
+- Arm B's `include_apply_patch_tool=true` mitigation applies to all scale arms
+  (same Codex↔non-GPT tool-protocol seam).
