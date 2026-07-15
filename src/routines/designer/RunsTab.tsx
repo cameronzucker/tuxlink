@@ -181,7 +181,7 @@ export function ganttModel(entries: JournalEntry[], now: number = Math.floor(Dat
       const intentEntry = openSnapshot.get(exactStep);
       const fields = intentEntry ? stepIntentFields(intentEntry.event) : null;
       pushBar(
-        { kind, parkedState: state, stepId: exactStep, action: fields?.action ?? undefined, t0, t1: ts, intentEntry },
+        { kind, parkedState: state, stepId: exactStep, action: fields?.action, t0, t1: ts, intentEntry },
         exactStep,
       );
     } else if (openSnapshot.size > 0) {

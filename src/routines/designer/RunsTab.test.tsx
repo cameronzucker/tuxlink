@@ -258,6 +258,42 @@ describe('ganttModel (a)', () => {
     expect(bars.filter((b) => b.kind === 'delay')).toHaveLength(1);
   });
 
+  it('attributes an exact consent park to the named step and attaches its open intent, not the heuristic', () => {
+    const snapshot = {
+      tracks: [
+        {
+          name: 'net-control',
+          steps: [
+            { id: 's1', action: 'cat.apply_preset' },
+            { id: 's2', action: 'radio.tx' },
+          ],
+        },
+      ],
+    };
+    const journal: JournalEntry[] = [
+      { ts_unix: T, run_id: 'run-c', seq: 0, event: { type: 'run_started', routine: 'r', snapshot, dry_run: false } },
+      { ts_unix: T + 1, run_id: 'run-c', seq: 1, event: { type: 'step_intent', step: 's1', action: 'cat.apply_preset', resolved_params: {} } },
+      { ts_unix: T + 2, run_id: 'run-c', seq: 2, event: { type: 'step_ok', step: 's1', output: {} } },
+      // s2's intent opens and stays open across the park — a consent park,
+      // unlike the delay-control-step case, has an open step_intent to
+      // attach.
+      { ts_unix: T + 3, run_id: 'run-c', seq: 3, event: { type: 'step_intent', step: 's2', action: 'radio.tx', resolved_params: { rig: 'g90' } } },
+      { ts_unix: T + 4, run_id: 'run-c', seq: 4, event: { type: 'state_changed', state: 'awaiting_consent', step: 's2', rig: 'g90' } },
+      { ts_unix: T + 304, run_id: 'run-c', seq: 5, event: { type: 'state_changed', state: 'running', step: 's2' } },
+      { ts_unix: T + 400, run_id: 'run-c', seq: 6, event: { type: 'run_finished', state: 'completed', reason: null } },
+    ];
+    const model = ganttModel(journal);
+    const bars = model.lanes[0]!.bars;
+    const consentBar = bars.find((b) => b.kind === 'consent');
+    expect(consentBar).toBeDefined();
+    expect(consentBar).toMatchObject({ kind: 'consent', stepId: 's2', action: 'radio.tx', t0: T + 4, t1: T + 304 });
+    expect(consentBar!.intentEntry).toBeDefined();
+    expect(consentBar!.intentEntry!.event.type).toBe('step_intent');
+    // Exactly one consent bar for the window — no duplicate/heuristic
+    // attribution alongside the exact one.
+    expect(bars.filter((b) => b.kind === 'consent')).toHaveLength(1);
+  });
+
   it('falls back to the legacy heuristic when state_changed carries no step (old journals)', () => {
     const snapshot = {
       tracks: [
