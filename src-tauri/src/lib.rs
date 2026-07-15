@@ -8,6 +8,7 @@ pub mod contacts;
 pub mod compose_window;
 pub mod config;
 pub mod consent_gate;
+pub mod dock;
 pub mod favorites;
 pub mod forms;
 pub mod grib;
