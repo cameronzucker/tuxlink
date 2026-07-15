@@ -585,6 +585,12 @@ function AppShellInner() {
   // transmit awaiting consent" item) — AppShell holds no tracking logic of
   // its own; ConsentGate remains the single source of truth.
   const [parkedRuns, setParkedRuns] = useState<ParkedRun[]>([]);
+  // Reviewer fix (consent modal defer affordance): bumped by the StatusBar
+  // consent item's onClick to ask <ConsentGate> to reopen after "Keep
+  // parked" dismissed it. AppShell owns no dismissal state of its own — this
+  // is purely a one-shot "please reopen" signal, mirroring onParkedChange's
+  // opposite direction (child→parent list vs. parent→child request).
+  const [consentReopenSignal, setConsentReopenSignal] = useState(0);
   // tuxlink-qjgx Task 8: Report Issue modal state. The controller drives the
   // Save As → export → GitHub URL flow; AppShell owns the state so the modal
   // can be positioned in the global overlay layer.
@@ -2363,6 +2369,7 @@ function AppShellInner() {
             ? { count: parkedRuns.length, routine: parkedRuns[0].routine }
             : null
         }
+        onOpenConsent={() => setConsentReopenSignal((n) => n + 1)}
       />
 
       {/* tuxlink-perf-coldstart: lazy-mounted overlays. Each module + its CSS
@@ -2445,7 +2452,7 @@ function AppShellInner() {
           moment. Always mounted — "consent cannot hide" — self-managing like
           CloseBehaviorPrompt; onParkedChange only mirrors its list into the
           MenuBar badge + StatusBar item above. */}
-      <ConsentGate onParkedChange={setParkedRuns} />
+      <ConsentGate onParkedChange={setParkedRuns} reopenSignal={consentReopenSignal} />
 
       {catalogBuilderOpen && (
         <Suspense fallback={null}>

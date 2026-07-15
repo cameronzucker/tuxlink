@@ -431,6 +431,68 @@ describe('RunsTab — take the radio (f)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Final whole-branch review, Fix 2: the left rail never refreshed after its
+// one per-routine/mount `listRuns` fetch — a runFinished event now triggers
+// a re-fetch so the rail's badge matches the live pane beside it.
+// ---------------------------------------------------------------------------
+
+describe('RunsTab — left rail refreshes on run-progress events (Fix 2)', () => {
+  it('a runFinished event re-fetches the run list, flipping a rail badge from running to completed', async () => {
+    let routinesEventHandler: ((e: { payload: unknown }) => void) | null = null;
+    mockListen.mockImplementation((event: string, handler: (e: { payload: unknown }) => void) => {
+      if (event === 'routines:event') routinesEventHandler = handler;
+      return Promise.resolve(vi.fn());
+    });
+
+    let listResult: RunListEntry[] = [
+      { ...RUN_1_ENTRY, runId: 'run-live2', state: 'running', finishedUnix: null },
+    ];
+    const liveJournal: JournalEntry[] = [
+      {
+        ts_unix: T,
+        run_id: 'run-live2',
+        seq: 0,
+        event: { type: 'run_started', routine: 'net-opening-checklist', snapshot: SNAPSHOT, dry_run: false },
+      },
+    ];
+
+    installInvokeMock({
+      routines_runs_list: () => listResult,
+      routines_run_status: () => ({
+        runId: 'run-live2',
+        routine: 'net-opening-checklist',
+        dryRun: false,
+        state: 'running',
+      }),
+      routines_journal: () => liveJournal,
+    });
+
+    renderRunsTab();
+    const row = await screen.findByTestId('runrow-run-live2');
+    expect(within(row).getByText('running')).toBeInTheDocument();
+
+    const runsListCallsBefore = callsFor('routines_runs_list').length;
+
+    // The run actually finished — the backend's next `listRuns` answer
+    // reflects it; a `runFinished` event (no routine field on the wire —
+    // module doc) is the nudge that tells this rail to go re-fetch.
+    listResult = [{ ...RUN_1_ENTRY, runId: 'run-live2', state: 'completed', finishedUnix: T + 10 }];
+    act(() => {
+      routinesEventHandler?.({ payload: { kind: 'runFinished', runId: 'run-live2', state: 'completed' } });
+    });
+
+    await waitFor(() => {
+      expect(within(screen.getByTestId('runrow-run-live2')).getByText(/✓ completed/)).toBeInTheDocument();
+    });
+    // The refresh happened via a genuine re-fetch, not incidental re-render —
+    // filtered by command name (feedback_vitest_invoke_mock_cleanup_call's
+    // sibling concern: assert on the real invoke call, not on rendered text
+    // alone).
+    expect(callsFor('routines_runs_list').length).toBeGreaterThan(runsListCallsBefore);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Live polling: every 2s while non-terminal; stops on terminal state.
 // ---------------------------------------------------------------------------
 

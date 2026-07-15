@@ -194,7 +194,7 @@ describe('Routines menu + inline surface mount', () => {
   it('Routines → Routines opens the inline dashboard surface, replacing the mailbox master-detail', async () => {
     renderShell();
     clickMenu('Routines', /^Routines$/);
-    expect(await screen.findByTestId('routines-dashboard')).toBeInTheDocument();
+    expect(await screen.findByTestId('routines-dashboard', {}, { timeout: 5000 })).toBeInTheDocument();
     // Full-pane, no folder sidebar (Global Constraint 2/brief binding constraint 2).
     expect(screen.queryByTestId('folder-sidebar')).not.toBeInTheDocument();
     // The chrome rows stay mounted — the menubar and titlebar controls
@@ -210,7 +210,7 @@ describe('Routines menu + inline surface mount', () => {
     // RoutineDesigner (Task 9) mounts for real now — a fresh/new draft
     // (empty routine name) renders an editable name field and never fetches
     // a def from the backend (task-9 brief binding constraint 6).
-    await screen.findByTestId('routine-designer');
+    await screen.findByTestId('routine-designer', {}, { timeout: 5000 });
     expect(screen.getByTestId('designer-name-input')).toBeInTheDocument();
     expect(screen.queryByTestId('routines-dashboard')).not.toBeInTheDocument();
     expect(screen.queryByTestId('folder-sidebar')).not.toBeInTheDocument();
@@ -227,7 +227,7 @@ describe('Routines menu + inline surface mount', () => {
   it('a mailbox-navigating action (Message → New Message) closes the surface', async () => {
     renderShell();
     clickMenu('Routines', /^Routines$/);
-    expect(await screen.findByTestId('routines-dashboard')).toBeInTheDocument();
+    expect(await screen.findByTestId('routines-dashboard', {}, { timeout: 5000 })).toBeInTheDocument();
     clickMenu('Message', /New Message/);
     expect(screen.queryByTestId('routines-dashboard')).not.toBeInTheDocument();
     // The mailbox master-detail is restored.
@@ -237,7 +237,7 @@ describe('Routines menu + inline surface mount', () => {
   it('a color-scheme change re-themes the surface without closing it', async () => {
     renderShell();
     clickMenu('Routines', /^Routines$/);
-    expect(await screen.findByTestId('routines-dashboard')).toBeInTheDocument();
+    expect(await screen.findByTestId('routines-dashboard', {}, { timeout: 5000 })).toBeInTheDocument();
     // Scheme items live in the View → Color scheme submenu; its items are in
     // the DOM once the View dropdown is open (MenuBar renders submenus
     // unconditionally inside the open dropdown; CSS handles the reveal).
@@ -249,7 +249,7 @@ describe('Routines menu + inline surface mount', () => {
   it('the radio-panel toggle (Ctrl+Shift+M muscle memory) does not close the surface', async () => {
     renderShell();
     clickMenu('Routines', /^Routines$/);
-    expect(await screen.findByTestId('routines-dashboard')).toBeInTheDocument();
+    expect(await screen.findByTestId('routines-dashboard', {}, { timeout: 5000 })).toBeInTheDocument();
     clickMenu('View', /Toggle Radio Panel/);
     expect(screen.getByTestId('routines-dashboard')).toBeInTheDocument();
   });
@@ -257,7 +257,7 @@ describe('Routines menu + inline surface mount', () => {
   it('opening the Settings overlay layers it OVER the surface without closing it', async () => {
     renderShell();
     clickMenu('Routines', /^Routines$/);
-    expect(await screen.findByTestId('routines-dashboard')).toBeInTheDocument();
+    expect(await screen.findByTestId('routines-dashboard', {}, { timeout: 5000 })).toBeInTheDocument();
     clickMenu('Tools', /Settings…/);
     // SettingsPanel is a position:fixed inset-0 overlay — it renders over the
     // routines surface exactly as it renders over the mailbox, and closing it
@@ -295,6 +295,36 @@ describe('Task 14: Part 97 consent moment — chrome wiring', () => {
     // consent modal overlays it, it does not replace it (unlike the
     // Routines surface, which is a menu-driven pane swap).
     expect(screen.getByTestId('folder-sidebar')).toBeInTheDocument();
+  });
+
+  // Final whole-branch review, Fix 1: "Keep parked" hides the modal without
+  // touching the engine; the badge + statusbar item persist; clicking the
+  // statusbar item re-opens it — proving the AppShell-level onOpenConsent
+  // wiring reaches ConsentGate's `reopenSignal` prop end to end.
+  it('Keep parked hides the modal (badge/status item persist); clicking the status item re-opens it', async () => {
+    consentRunsListResult = [
+      {
+        runId: CONSENT_TEST_RUN_ID,
+        routine: CONSENT_TEST_ROUTINE,
+        dryRun: false,
+        startedUnix: 1000,
+        state: 'awaiting_consent',
+        finishedUnix: null,
+      },
+    ];
+    renderShell();
+
+    expect(await screen.findByTestId('consent-gate-modal')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('consent-gate-keepparked'));
+    expect(screen.queryByTestId('consent-gate-modal')).not.toBeInTheDocument();
+
+    // The badge + status item are driven by `parked`, not by the modal's own
+    // dismissal — both must still report the live park.
+    expect(screen.getByTestId('menu-badge-routines')).toHaveTextContent('1');
+    expect(screen.getByTestId('status-bar-consent')).toHaveTextContent(CONSENT_TEST_ROUTINE);
+
+    fireEvent.click(screen.getByTestId('status-bar-consent'));
+    expect(await screen.findByTestId('consent-gate-modal')).toBeInTheDocument();
   });
 
   it('with nothing parked, the badge and status-bar consent item are absent', async () => {

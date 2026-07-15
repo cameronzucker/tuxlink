@@ -246,6 +246,12 @@ export interface ConsentGateProps {
    *  so AppShell can mirror the count/oldest-routine into the MenuBar badge
    *  and StatusBar item without ConsentGate depending on any parent state. */
   onParkedChange?: (parked: ParkedRun[]) => void;
+  /** Bumped (any change, value itself is meaningless) to request the modal
+   *  reopen after the operator dismissed it via "Keep parked" — wired from
+   *  AppShell to the StatusBar consent item's onClick. Consent cannot hide
+   *  the PARK (badge/statusbar item stay put regardless); this only asks the
+   *  MODAL to come back. */
+  reopenSignal?: number;
 }
 
 interface StepIntentInfo {
@@ -253,10 +259,17 @@ interface StepIntentInfo {
   resolvedParams: unknown;
 }
 
-export function ConsentGate({ onParkedChange }: ConsentGateProps) {
+export function ConsentGate({ onParkedChange, reopenSignal }: ConsentGateProps) {
   const { parked, confirm, cancelParked } = useParkedRuns();
   const [stepIntent, setStepIntent] = useState<StepIntentInfo | null>(null);
   const [busy, setBusy] = useState(false);
+  // "Keep parked" (reviewer fix: consent modal defer affordance) hides the
+  // MODAL only — the park itself stays `awaiting_consent` in the engine, and
+  // the MenuBar badge / StatusBar item (driven by `parked` via
+  // `onParkedChange`, below, not by this flag) stay visible throughout.
+  // "Consent cannot hide" still holds: what can hide is the dialog the
+  // operator has already acknowledged is there, not the park's own presence.
+  const [hidden, setHidden] = useState(false);
   // Forces a re-render every second so the "Parked HH:MM:SS" readout ticks
   // without needing to store the formatted string in state.
   const [, setTick] = useState(0);
@@ -266,6 +279,27 @@ export function ConsentGate({ onParkedChange }: ConsentGateProps) {
   useEffect(() => {
     onParkedChangeRef.current?.(parked);
   }, [parked]);
+
+  // A brand-new park (a runId this instance hasn't seen before — either a
+  // fresh `awaitingConsent` event or a freshly-recovered launch park) always
+  // re-surfaces the modal, even if an EARLIER park was dismissed via "Keep
+  // parked". Removals (the parked set shrinking) never touch `hidden`.
+  const knownRunIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const hasNewRun = parked.some((p) => !knownRunIdsRef.current.has(p.runId));
+    knownRunIdsRef.current = new Set(parked.map((p) => p.runId));
+    if (hasNewRun) setHidden(false);
+  }, [parked]);
+
+  // The statusbar consent item's onClick (wired through AppShell) bumps this
+  // to bring a dismissed modal back without waiting for a new park.
+  const prevReopenSignalRef = useRef(reopenSignal);
+  useEffect(() => {
+    if (reopenSignal !== undefined && reopenSignal !== prevReopenSignalRef.current) {
+      setHidden(false);
+    }
+    prevReopenSignalRef.current = reopenSignal;
+  }, [reopenSignal]);
 
   const oldest = parked[0] ?? null;
 
@@ -306,7 +340,7 @@ export function ConsentGate({ onParkedChange }: ConsentGateProps) {
     return () => clearInterval(id);
   }, [oldest?.runId]);
 
-  if (!oldest) return null;
+  if (!oldest || hidden) return null;
 
   const total = parked.length;
   // Launch recovery couldn't name the parked step (no step_intent in the
@@ -333,6 +367,13 @@ export function ConsentGate({ onParkedChange }: ConsentGateProps) {
     void cancelParked(oldest.runId)
       .catch(() => {})
       .finally(() => setBusy(false));
+  };
+  // Display-only: hides the modal, touches nothing else. The park stays
+  // `awaiting_consent`; the badge/statusbar item (driven by `parked`, not by
+  // `hidden`) keep reporting it. No grant, no deny, no skip — the engine
+  // never hears about this click.
+  const onKeepParked = () => {
+    setHidden(true);
   };
 
   return (
@@ -405,6 +446,15 @@ export function ConsentGate({ onParkedChange }: ConsentGateProps) {
             onClick={onConfirm}
           >
             Confirm transmit
+          </button>
+          <button
+            type="button"
+            className="tux-consent-btn-keepparked"
+            data-testid="consent-gate-keepparked"
+            title="Hide this dialog — the run stays parked; the menubar/statusbar badges stay visible"
+            onClick={onKeepParked}
+          >
+            Keep parked
           </button>
           <button
             type="button"

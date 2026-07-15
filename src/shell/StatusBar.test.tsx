@@ -84,6 +84,23 @@ describe('<StatusBar> — mailbox-bar redesign (tuxlink-qxqj)', () => {
     );
   });
 
+  // Final whole-branch review, Fix 1: the consent item is a clickable button
+  // that asks ConsentGate to reopen a "Keep parked"-dismissed modal.
+  it('clicking the consent item calls onOpenConsent', () => {
+    const onOpenConsent = vi.fn();
+    render(
+      <StatusBar
+        show
+        unread={0}
+        outboxQueued={0}
+        consent={{ count: 1, routine: 'Net-opening checklist' }}
+        onOpenConsent={onOpenConsent}
+      />,
+    );
+    screen.getByTestId('status-bar-consent').click();
+    expect(onOpenConsent).toHaveBeenCalledTimes(1);
+  });
+
   it('hides the consent segment when count is 0', () => {
     render(<StatusBar show unread={0} outboxQueued={0} consent={{ count: 0, routine: 'x' }} />);
     expect(screen.queryByTestId('status-bar-consent')).toBeNull();

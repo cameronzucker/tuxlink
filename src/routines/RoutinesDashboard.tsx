@@ -348,7 +348,18 @@ export function RoutinesDashboard({ onOpenDesigner, onNewRoutine }: RoutinesDash
               const menuOpen = openMenuFor === s.routine;
 
               return (
-                <tr key={s.routine} onDoubleClick={() => onOpenDesigner(s.routine)}>
+                <tr
+                  key={s.routine}
+                  onDoubleClick={() =>
+                    // Final whole-branch review, Fix 3: flow 3 "investigate a
+                    // failed run" lands directly on the Runs tab when the
+                    // row's own last-result column already reads FAILED — no
+                    // reason to make the operator re-navigate from Design.
+                    // Every other row keeps the prior default (no tab arg —
+                    // RoutinesSurface's own default).
+                    onOpenDesigner(s.routine, newestTerminal?.state === 'failed' ? 'runs' : undefined)
+                  }
+                >
                   <td>
                     <div className="rname">{s.routine}</div>
                     {def && (

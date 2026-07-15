@@ -63,8 +63,17 @@
 }
 
 /* task-14: the Part 97 consent moment "cannot hide" — names the oldest
- * parked run right in peripheral vision, not just behind the modal. */
+ * parked run right in peripheral vision, not just behind the modal.
+ * Reviewer fix: this is now a <button> (click reopens the dismissed consent
+ * modal) — reset the button chrome so it reads identically to the other
+ * (non-interactive) status-item segments. */
 .statusbar .status-consent {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
   color: var(--accent-2);
   font-weight: 600;
+  cursor: pointer;
 }

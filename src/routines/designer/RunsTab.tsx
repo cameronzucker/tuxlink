@@ -366,20 +366,55 @@ export function RunsTab({ routine, highlightRunId }: RunsTabProps) {
 
   const runsSorted = useMemo(() => [...runs].sort((a, b) => b.startedUnix - a.startedUnix), [runs]);
 
-  // Load the run list once per routine.
+  // Final whole-branch review, Fix 2: the left rail contradicted the live
+  // run-detail pane beside it — `listRuns` was fetched exactly once per
+  // routine/mount and never again, so a row's badge (e.g. "running") went
+  // stale the instant that run actually finished. `loadRuns` is now a
+  // reusable callback: one effect fetches it on mount/routine-change (below),
+  // a second re-fetches on live run-progress events (mirrors
+  // RoutinesDashboard.tsx's own `listRuns` + `listenRoutinesEvents` pairing).
+  const loadRuns = useCallback(async () => {
+    try {
+      const list = await listRuns(routine);
+      setRuns(Array.isArray(list) ? list : []);
+    } catch {
+      setRuns([]);
+    }
+  }, [routine]);
+
+  // Load the run list once per routine/mount.
   useEffect(() => {
-    let cancelled = false;
-    listRuns(routine)
-      .then((list) => {
-        if (!cancelled) setRuns(Array.isArray(list) ? list : []);
+    void loadRuns();
+  }, [loadRuns]);
+
+  // Re-fetch on `runStarted` (a new row the rail hasn't seen yet) and
+  // `runFinished` (the terminating run's own badge — completed/failed/
+  // cancelled/interrupted — replacing whatever live badge it last painted;
+  // this is also the "selected run reaches terminal state" refresh, since a
+  // runFinished for the selected run is exactly that moment). Both event
+  // kinds fire for every routine, not just this pane's `routine` prop, but
+  // `listRuns(routine)` is already server-side scoped, so an out-of-scope
+  // event just costs one harmless extra fetch.
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    listenRoutinesEvents((event) => {
+      if (event.kind === 'runStarted' || event.kind === 'runFinished') {
+        void loadRuns();
+      }
+    })
+      .then((u) => {
+        if (disposed) u();
+        else unlisten = u;
       })
       .catch(() => {
-        if (!cancelled) setRuns([]);
+        // No Tauri runtime in some tests/dev harnesses.
       });
     return () => {
-      cancelled = true;
+      disposed = true;
+      if (unlisten) unlisten();
     };
-  }, [routine]);
+  }, [loadRuns]);
 
   // Default selection: the highlighted run (a just-started dry-run) if it's
   // in the list, otherwise the newest run. Only ever applied once — an

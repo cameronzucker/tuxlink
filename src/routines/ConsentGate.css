@@ -169,6 +169,21 @@
   cursor: default;
 }
 
+/* Reviewer fix: "Keep parked" — display-only, hides the modal without
+ * touching the engine. Ghost styling (transparent fill, dim border/text)
+ * deliberately reads as lower-stakes than Confirm (filled accent) or Cancel
+ * run (error outline) — this button changes nothing about the park itself. */
+.tux-consent-btn-keepparked {
+  background: none;
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
 .tux-consent-btn-cancelrun {
   background: none;
   border: 1px solid rgba(238, 107, 107, 0.55);

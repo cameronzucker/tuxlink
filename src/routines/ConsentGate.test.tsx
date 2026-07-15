@@ -391,6 +391,94 @@ describe('ConsentGate — live duration + reconciliation poll', () => {
   });
 });
 
+// Final whole-branch review, Fix 1 (Important): the consent modal locked the
+// entire app (TitleBar controls, mailbox, Runs monitor all behind the
+// backdrop) with no way out short of granting/cancelling. "Keep parked" hides
+// the MODAL only — the park, badge, and statusbar item all persist.
+describe('ConsentGate — "Keep parked" defer affordance', () => {
+  it('hides the modal without granting/cancelling; the parked list is unchanged', async () => {
+    const onParkedChange = vi.fn();
+    render(<ConsentGate onParkedChange={onParkedChange} />);
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    await screen.findByTestId('consent-gate-modal');
+
+    onParkedChange.mockClear();
+    act(() => {
+      screen.getByTestId('consent-gate-keepparked').click();
+    });
+
+    expect(screen.queryByTestId('consent-gate-modal')).not.toBeInTheDocument();
+    // No engine call — neither grant nor cancel fired.
+    expect(callsFor('routines_consent_grant')).toHaveLength(0);
+    expect(callsFor('routines_cancel')).toHaveLength(0);
+    // The parked list itself is untouched — onParkedChange never fires from
+    // a Keep-parked click (nothing about `parked` changed).
+    expect(onParkedChange).not.toHaveBeenCalled();
+  });
+
+  it('a NEW park re-shows the modal even after Keep parked dismissed the first one', async () => {
+    // A second, distinct run must resolve a real (non-null) runStatus for
+    // useParkedRuns' addParked to actually track it — mirrors the "multiple
+    // parked runs" describe block's own mockInvoke override below.
+    mockInvoke.mockImplementation((cmd?: string, args?: Record<string, unknown>) => {
+      if (cmd === undefined) return Promise.resolve();
+      if (cmd === 'routines_runs_list') return Promise.resolve(runsListResult);
+      if (cmd === 'routines_run_status') {
+        if (args?.runId === RUN_ID) return Promise.resolve(RUN_STATUS);
+        if (args?.runId === 'run-99') {
+          return Promise.resolve({ runId: 'run-99', routine: 'Second routine', dryRun: false, state: 'awaiting_consent' });
+        }
+        return Promise.resolve(null);
+      }
+      if (cmd === 'routines_journal') return Promise.resolve(args?.runId === RUN_ID ? JOURNAL_FIXTURE : []);
+      return Promise.resolve([]);
+    });
+
+    render(<ConsentGate />);
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    await screen.findByTestId('consent-gate-modal');
+    act(() => {
+      screen.getByTestId('consent-gate-keepparked').click();
+    });
+    expect(screen.queryByTestId('consent-gate-modal')).not.toBeInTheDocument();
+
+    emit({ kind: 'awaitingConsent', runId: 'run-99', stepId: 's1' });
+    await waitFor(() => {
+      expect(screen.getByTestId('consent-gate-modal')).toBeInTheDocument();
+    });
+  });
+
+  it('a reopenSignal bump re-shows the modal after Keep parked dismissed it', async () => {
+    const { rerender } = render(<ConsentGate reopenSignal={0} />);
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    await screen.findByTestId('consent-gate-modal');
+    act(() => {
+      screen.getByTestId('consent-gate-keepparked').click();
+    });
+    expect(screen.queryByTestId('consent-gate-modal')).not.toBeInTheDocument();
+
+    rerender(<ConsentGate reopenSignal={1} />);
+    expect(await screen.findByTestId('consent-gate-modal')).toBeInTheDocument();
+  });
+
+  it('Confirm/Cancel/no-Skip behavior is unchanged with Keep parked present', async () => {
+    render(<ConsentGate />);
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    await screen.findByTestId('consent-gate-modal');
+
+    expect(screen.queryByRole('button', { name: /skip/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Confirm transmit/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Cancel run/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Keep parked/ })).toBeInTheDocument();
+
+    screen.getByTestId('consent-gate-confirm').click();
+    await waitFor(() => {
+      expect(screen.queryByTestId('consent-gate-modal')).not.toBeInTheDocument();
+    });
+    expect(callsFor('routines_consent_grant').at(-1)?.[1]).toEqual({ runId: RUN_ID, stepId: STEP_ID });
+  });
+});
+
 // Reviewer fix 1 (CRITICAL): the consent overlay must render ABOVE every
 // other fixed layer — the inset:0 overlay panels (SettingsPanel /
 // StationFinderPanel / RequestCenter / InboundSelectionPanel, all z-1000)

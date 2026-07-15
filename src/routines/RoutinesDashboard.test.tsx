@@ -384,11 +384,24 @@ describe('RoutinesDashboard — fleet bar (e)', () => {
 });
 
 describe('RoutinesDashboard — double-click opens the designer (f)', () => {
-  it('calls onOpenDesigner(routine) on row double-click', async () => {
+  it('calls onOpenDesigner(routine) with no tab on row double-click when the last result is NOT failed', async () => {
     const { onOpenDesigner } = renderDashboard();
     await screen.findByText('morning-sweep');
+    // morning-sweep's newest terminal run is COMPLETED (RUNS fixture) —
+    // default designer landing, no tab argument.
     fireEvent.doubleClick(rowFor('morning-sweep'));
-    expect(onOpenDesigner).toHaveBeenCalledWith('morning-sweep');
+    expect(onOpenDesigner).toHaveBeenCalledWith('morning-sweep', undefined);
+  });
+
+  // Final whole-branch review, Fix 3: `onOpenDesigner(routine, tab?)` was
+  // threaded through RoutinesSurface but never called with a `tab` — flow 3
+  // "investigate a failed run" now lands directly on the Runs tab.
+  it('calls onOpenDesigner(routine, "runs") on row double-click when the last result is FAILED', async () => {
+    const { onOpenDesigner } = renderDashboard();
+    await screen.findByText('deployment-poll');
+    // deployment-poll's newest terminal run is FAILED (run-poll-fail, RUNS fixture).
+    fireEvent.doubleClick(rowFor('deployment-poll'));
+    expect(onOpenDesigner).toHaveBeenCalledWith('deployment-poll', 'runs');
   });
 });
 
