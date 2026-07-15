@@ -553,3 +553,38 @@ describe('RunsTab — live polling', () => {
     expect(callsFor('routines_run_status')).toHaveLength(countAfterTerminal);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Compact run-id labels stay distinguishable (tuxlink-3awm9 WebKitGTK smoke).
+// Backend ids are `run-<unixsecs>-<NNNN>`, so a head-slice rendered EVERY
+// rail row (and the detail header) as the same `run-176845…` label — the
+// discriminating tail (timestamp low digits + counter) is what must survive
+// the shortening.
+// ---------------------------------------------------------------------------
+
+describe('RunsTab — rail labels for realistic backend run ids', () => {
+  it('renders distinct labels for two runs sharing the run-<unixsecs> prefix', async () => {
+    const runA: RunListEntry = { ...RUN_1_ENTRY, runId: 'run-1768456705-0007', startedUnix: T + 60 };
+    const runB: RunListEntry = { ...RUN_1_ENTRY, runId: 'run-1768456705-0008', startedUnix: T };
+    installInvokeMock({
+      routines_runs_list: () => [runA, runB],
+      routines_run_status: () => ({
+        runId: runA.runId,
+        routine: 'net-opening-checklist',
+        dryRun: false,
+        state: 'cancelled',
+      }),
+      routines_journal: () => [],
+    });
+
+    renderRunsTab();
+
+    // Both compact labels exist and differ — the tail (timestamp low digits
+    // + counter) survives the shortening. findAll: the selected run's id
+    // also renders in the detail header, legitimately.
+    const labelsA = await screen.findAllByText('…6705-0007');
+    const labelsB = await screen.findAllByText('…6705-0008');
+    expect(labelsA.length).toBeGreaterThan(0);
+    expect(labelsB.length).toBeGreaterThan(0);
+  });
+});

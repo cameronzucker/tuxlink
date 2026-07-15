@@ -318,6 +318,16 @@ export function RoutinesDashboard({ onOpenDesigner, onNewRoutine }: RoutinesDash
         </div>
       )}
 
+      {/* Calm empty state, MessageList's EMPTY_FOLDER_COPY idiom: a fresh
+          install opening Routines rendered a bare void under the column
+          headers (tuxlink-3awm9 WebKitGTK smoke) — say what this surface is
+          and point at the two ways in. */}
+      {summaries.length === 0 ? (
+        <div className="ops-empty" data-testid="routines-dashboard-empty">
+          No routines yet. Click ＋ New Routine to build one on the canvas, or Import JSON… to load
+          a shared definition.
+        </div>
+      ) : (
       <div className="ops-wrap">
         <table className="ops">
           <thead>
@@ -325,10 +335,14 @@ export function RoutinesDashboard({ onOpenDesigner, onNewRoutine }: RoutinesDash
               <th style={{ width: '20%' }}>Routine</th>
               <th style={{ width: '18%' }}>Status</th>
               <th style={{ width: '17%' }}>Trigger</th>
-              <th style={{ width: '24%' }}>Last result</th>
+              <th style={{ width: '19%' }}>Last result</th>
               <th style={{ width: '8%' }}>Next fire</th>
               <th style={{ width: '8%' }}>TX mode</th>
-              <th style={{ width: '5%' }} />
+              {/* Controls column is FIXED-px: at 1024px wide, its former 5%
+                  (51px) flex-crushed the run/stop button to a sliver beside
+                  the ⋯ menu (tuxlink-3awm9 WebKitGTK smoke) — controls don't
+                  scale with viewport. Slack taken from Last result (24→19%). */}
+              <th style={{ width: 72 }} />
             </tr>
           </thead>
           <tbody>
@@ -528,6 +542,7 @@ export function RoutinesDashboard({ onOpenDesigner, onNewRoutine }: RoutinesDash
           </tbody>
         </table>
       </div>
+      )}
 
       {enableBlocked && enableBlocked.length > 0 && (
         <div className="fleet-bar err">
