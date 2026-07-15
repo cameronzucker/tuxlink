@@ -239,12 +239,21 @@ async fn run_action_step_shared(
     // action is NEVER reached, so no carrier is ever keyed without consent.
     if ctx.attended && action.descriptor().transmits {
         if let Some(consent) = &ctx.consent {
+            // Verbatim context for the monitor (tuxlink-xvd1i): the step that
+            // is parking, and its literal "rig" param when it has one. No
+            // defaulting here — the engine has no rig semantics (app layer's
+            // `rig_id_from_params` and the frontend own the "default"
+            // fallback); absent means absent.
+            let rig = resolved
+                .get("rig")
+                .and_then(|v| v.as_str())
+                .map(String::from);
             journal(
                 ctx,
                 RunEvent::StateChanged {
                     state: RunState::AwaitingConsent,
-                    step: None,
-                    rig: None,
+                    step: Some(step.id.clone()),
+                    rig,
                 },
             );
             let parked = tokio::select! {
@@ -256,7 +265,7 @@ async fn run_action_step_shared(
                     ctx,
                     RunEvent::StateChanged {
                         state: RunState::Running,
-                        step: None,
+                        step: Some(step.id.clone()),
                         rig: None,
                     },
                 ),
@@ -463,7 +472,13 @@ pub async fn run_track_shared(
                             ctx,
                             RunEvent::StateChanged {
                                 state: RunState::Waiting,
-                                step: None,
+                                // The delay control step's own id (control
+                                // steps have ids and appear in the snapshot's
+                                // tracks) — this is what lets the monitor draw
+                                // the delay bar on an exact lane instead of
+                                // attributing it to an adjacent step
+                                // (tuxlink-xvd1i).
+                                step: Some(c.id.clone()),
                                 rig: None,
                             },
                         );
@@ -475,7 +490,7 @@ pub async fn run_track_shared(
                             ctx,
                             RunEvent::StateChanged {
                                 state: RunState::Running,
-                                step: None,
+                                step: Some(c.id.clone()),
                                 rig: None,
                             },
                         );
@@ -1078,20 +1093,24 @@ mod tests {
         run_track(&track, &mut vars, &ctx).await.unwrap();
         assert!(start.elapsed() >= std::time::Duration::from_secs(300));
         let entries = read_journal(&jpath).unwrap();
-        assert!(matches!(
+        assert_eq!(
             entries[0].event,
             RunEvent::StateChanged {
                 state: RunState::Waiting,
-                ..
-            }
-        ));
-        assert!(matches!(
+                step: Some(StepId("d1".into())),
+                rig: None,
+            },
+            "the Waiting entry must name the delay control step"
+        );
+        assert_eq!(
             entries[1].event,
             RunEvent::StateChanged {
                 state: RunState::Running,
-                ..
-            }
-        ));
+                step: Some(StepId("d1".into())),
+                rig: None,
+            },
+            "the Running resume must name the same step, closing the window exactly"
+        );
     }
 
     #[test]
@@ -1404,7 +1423,7 @@ mod tests {
         let step = ActionStep {
             id: StepId("s1".into()),
             action: "radio.tx".into(),
-            params: json!({}),
+            params: json!({"rig": "g90"}),
             timeout_s: Some(1),
             on_radio_busy: BusyPolicy::Wait,
         };
@@ -1418,17 +1437,27 @@ mod tests {
 
         // The journal is honest: AwaitingConsent then Running bracket the park.
         let entries = read_journal(&jpath).unwrap();
-        let states: Vec<RunState> = entries
+        let states: Vec<(RunState, Option<StepId>, Option<String>)> = entries
             .iter()
             .filter_map(|e| match &e.event {
-                RunEvent::StateChanged { state, .. } => Some(*state),
+                RunEvent::StateChanged { state, step, rig } => {
+                    Some((*state, step.clone(), rig.clone()))
+                }
                 _ => None,
             })
             .collect();
         assert_eq!(
             states,
-            vec![RunState::AwaitingConsent, RunState::Running],
-            "journal must show AwaitingConsent then Running around the park"
+            vec![
+                (
+                    RunState::AwaitingConsent,
+                    Some(StepId("s1".into())),
+                    Some("g90".into())
+                ),
+                (RunState::Running, Some(StepId("s1".into())), None),
+            ],
+            "the park must name the transmit step and its verbatim rig param; \
+             the resume names the step only"
         );
         // Ordering: AwaitingConsent lands AFTER the step's intent, before ok.
         let kinds: Vec<&str> = entries
@@ -1442,6 +1471,47 @@ mod tests {
             })
             .collect();
         assert_eq!(kinds, vec!["intent", "awaiting", "running", "ok"]);
+    }
+
+    /// tuxlink-xvd1i: a transmit step whose params carry no "rig" key journals
+    /// rig: None — the engine records verbatim data only; the "default" rig is
+    /// an app/frontend display concern (`rig_id_from_params`), never invented
+    /// by the executor.
+    #[tokio::test(start_paused = true)]
+    async fn consent_park_without_rig_param_journals_rig_none() {
+        let tx = Arc::new(
+            FakeAction::new("radio.tx")
+                .with_capabilities(true, true, false)
+                .ok(json!({"sent": true})),
+        );
+        let mut reg = ActionRegistry::default();
+        reg.register(tx);
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ctx, jpath) = ctx(reg, dir.path());
+        ctx.attended = true;
+        ctx.consent = Some(Arc::new(crate::fakes::FakeConsent::granting_after(
+            Duration::from_secs(1),
+        )));
+        let track = Track {
+            name: "t".into(),
+            steps: vec![action("s1", "radio.tx", json!({"to": "W7ABC"}))],
+        };
+        let mut vars = RunVars::default();
+        run_track(&track, &mut vars, &ctx).await.unwrap();
+
+        let entries = read_journal(&jpath).unwrap();
+        let parked = entries
+            .iter()
+            .find_map(|e| match &e.event {
+                RunEvent::StateChanged {
+                    state: RunState::AwaitingConsent,
+                    step,
+                    rig,
+                } => Some((step.clone(), rig.clone())),
+                _ => None,
+            })
+            .expect("an AwaitingConsent entry must exist");
+        assert_eq!(parked, (Some(StepId("s1".into())), None));
     }
 
     /// A non-transmitting action in an attended run does NOT park (nothing to
