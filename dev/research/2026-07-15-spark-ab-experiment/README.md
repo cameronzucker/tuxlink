@@ -71,10 +71,10 @@ SPARK_API_KEY=dummy codex exec --skip-git-repo-check \
 
 ## Arm worktrees
 
-- Arm A: `worktrees/bd-tuxlink-xvd1i-arm-a/`, branch
-  `bd-tuxlink-xvd1i/journal-statechanged-step-rig` (claims bd `tuxlink-xvd1i`;
-  MERGES via PR).
-- Arm B: `worktrees/bd-tuxlink-c5ckf-arm-b/`, branch
+- Arm A: `worktrees/bd-tuxlink-xvd1i-arm-a/`, branch `bd-tuxlink-xvd1i/arm-a`
+  (claims bd `tuxlink-xvd1i`; MERGES via PR).
+- Arm B: `worktrees/bd-tuxlink-c5ckf-arm-b-spark-replica/`, branch
   `bd-tuxlink-c5ckf/arm-b-spark-replica` (claims bd `tuxlink-c5ckf`; NEVER
   merges — diff captured for eval, then disposed per ADR 0009; a draft PR may
   exist solely to run CI and is closed unmerged).
+- Shared base SHA (both arms): `e28f67db732c368d94a54b430871e911a1b701aa`.
