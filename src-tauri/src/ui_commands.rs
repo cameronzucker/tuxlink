@@ -10740,6 +10740,7 @@ hw:CARD=Device,DEV=0
             close_prompt_seen: false,
             active_connection: None,
             onboarding: Some(crate::config::OnboardingConfig::default()),
+            dock: crate::dock::DockSurfaces::default(),
         }
     }
 
@@ -11113,6 +11114,7 @@ hw:CARD=Device,DEV=0
             close_prompt_seen: false,
             active_connection: None,
             onboarding: Some(crate::config::OnboardingConfig::default()),
+            dock: crate::dock::DockSurfaces::default(),
         };
         let tmp = tempfile::tempdir().expect("tmpdir");
         let state = BackendState::new();
@@ -12693,6 +12695,7 @@ hw:CARD=Device,DEV=0
             close_prompt_seen: false,
             active_connection: None,
             onboarding: Some(crate::config::OnboardingConfig::default()),
+            dock: crate::dock::DockSurfaces::default(),
         }
     }
 

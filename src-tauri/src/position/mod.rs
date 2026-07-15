@@ -139,6 +139,7 @@ mod tests {
             close_prompt_seen: false,
             active_connection: None,
             onboarding: Some(crate::config::OnboardingConfig::default()),
+            dock: crate::dock::DockSurfaces::default(),
         }
     }
 
