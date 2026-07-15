@@ -119,3 +119,6 @@ protocol IDENTICAL to arm B:
   distill-track economics). Caveats for the proposal: provider-ToS/compliance
   check before training on frontier traces; the distilled worker is a
   narrow-distribution component, not a general agent.
+- 2026-07-15: the harness + distillation follow-up is **split out to a
+  dedicated orchestrator session** as bd `tuxlink-7raoe` (operator-funded
+  track; must not compete with the pre-DefCon feature push in this thread).
