@@ -137,6 +137,7 @@ cat /tmp/codex-prompt.txt | npx --yes @openai/codex review - 2>&1 \
 The custom-prompt pattern is what worked for the `tuxlink-4ek` ARDOP UI adrev (2026-05-30); the prior `--base + prompt` syntax produces a 5-line argparse error stub and the tee'd file contains nothing useful. **If you see the stub, the prompt got rejected — re-run with the stdin pattern.** Verifying: `wc -l dev/adversarial/*-codex.md` — a real review produces ~1500–4000+ lines including the diff + Codex's exec commands + final findings block; a stub is ~5 lines.
 
 - **Authentication:** ChatGPT-mode, cached at `~/.codex/auth.json`. Already authenticated — no setup needed.
+- **Model ceiling — GPT-5.5, no GPT-5.6 ([ADR 0023](docs/adr/0023-ban-gpt-5-6-until-deception-assessed.md)):** Codex rounds (and every other GPT-backed task) run on GPT-5.5 or earlier. GPT-5.6 is banned — for adrev and all tasks — until its cheating/deception behavior is honestly assessed as-deployed in a Tuxlink context. If a Codex invocation would default to 5.6, pin it to 5.5; a round that ran on 5.6 does not satisfy the "at least one round via Codex" requirement and must be re-run. See the ADR for the bar to lift the ban.
 - **When to use:** when a workflow (notably `superpowers:build-robust-features`) explicitly calls for "at least one round via Codex." Substitute Claude agents only when this is genuinely unavailable — it isn't unavailable here.
 - **MCP-server mode:** `npx --yes @openai/codex mcp-server` — expose Codex as an MCP server if you want the main loop to call it like a tool.
 
