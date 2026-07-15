@@ -57,7 +57,7 @@ function NodeView({
 }) {
   const classes = ['node', `cat-${node.category}`];
   if (node.kind === 'trigger') classes.push('trigger');
-  if (node.kind === 'end') classes.push('endnode', node.title.includes('failed') ? 'err' : 'ok');
+  if (node.kind === 'end') classes.push('endnode', node.failed ? 'err' : 'ok');
   if (selected) classes.push('selected');
   if (node.unknown) classes.push('node-unknown');
   if (node.unplaced) classes.push('node-unplaced');
@@ -121,8 +121,14 @@ function EdgeView({
   // The two branch lead edges share `from` (the branch id) — the label
   // suffix keeps their testids unique (insert-s2-ok / insert-s2-err).
   const insertTestId = `insert-${edge.from}${edge.label ? `-${edge.label}` : ''}`;
+  // An empty track's dangling edge (`to: ''`) has no target node — render
+  // the lone ＋ without the arrowhead pointing at nothing.
+  const dangling = edge.to === '';
   return (
-    <div className={`edge${armed ? ' armed' : ''}`} data-testid={`edge-${edge.from}-${edge.to}`}>
+    <div
+      className={`edge${armed ? ' armed' : ''}${dangling ? ' dangling' : ''}`}
+      data-testid={`edge-${edge.from}-${edge.to}`}
+    >
       {edge.label && <span className={`lbl ${edge.label}`}>{edge.label}</span>}
       {edge.insertPoint && (
         <button
@@ -211,6 +217,11 @@ function Lane({
     mainRow.length > 0
       ? lane.edges.find((e) => e.from === `head-${trackIdx}` && e.to === mainRow[0]!.id)
       : undefined;
+  // An empty track's DANGLING insert edge (`to: ''` — no target node): the
+  // lone ＋ that keeps a step-less track insertable (New Routine… / Add
+  // track). Rendered after whatever heads the lane (the trigger nodes on
+  // lane 0; nothing on an empty secondary lane).
+  const danglingEdge = lane.edges.find((e) => e.to === '');
 
   return (
     <div className="lane" data-testid={`lane-${trackIdx}`}>
@@ -240,6 +251,9 @@ function Lane({
             onRemoveStep={onRemoveStep}
           />
         ))}
+        {danglingEdge && (
+          <EdgeView edge={danglingEdge} trackIdx={trackIdx} armedInsert={armedInsert} onInsertAt={onInsertAt} />
+        )}
       </div>
       {fanRows.length > 0 && (
         <div className="branch-out">

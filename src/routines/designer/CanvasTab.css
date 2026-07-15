@@ -270,6 +270,11 @@
   padding: 0;
 }
 
+/* an empty track's lone-＋ edge — there is no node after it, so no arrowhead */
+.edge.dangling::after {
+  display: none;
+}
+
 .edge.armed {
   background: var(--accent);
 }

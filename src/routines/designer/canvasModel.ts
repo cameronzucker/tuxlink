@@ -42,10 +42,17 @@ export interface CanvasNode {
    *  lies to the operator). The validator owns flagging WHY it's
    *  unreachable; this model's job is only to keep it visible. */
   unplaced: boolean;
+  /** `end` nodes only: the end step's own `failed` flag (drives the ok/err
+   *  end-node styling — the view must never re-derive it from title text).
+   *  Absent on every other kind. */
+  failed?: boolean;
 }
 
 export interface CanvasEdge {
   from: string;
+  /** Target node id — or `''` for the DANGLING insert edge an empty track
+   *  emits (a lone ＋ with no node after it, so a step-less track is never
+   *  uninsertable from the canvas). */
   to: string;
   label?: 'ok' | 'err';
   insertPoint: boolean;
@@ -180,6 +187,7 @@ function controlNode(step: ControlStep): CanvasNode {
         kind: 'end',
         title: `${step.id} end · ${step.failed ? 'failed' : 'complete'}`,
         bodyLines: step.reason ? [step.reason] : [],
+        failed: step.failed === true,
       };
   }
 }
@@ -318,6 +326,21 @@ export function layoutCanvas(def: RoutineDef, actions: ActionInfo[]): CanvasMode
         branchStep = step;
         break; // steps past the branch are reached via branchStep.then/else below, not main-row order
       }
+    }
+
+    // An EMPTY track would otherwise render with no insert point at all —
+    // exactly the "New Routine…" (createDraft → empty track-1) and Add-track
+    // first flows Task 11's palette starts from. Emit one DANGLING insert
+    // edge (`to: ''` — no target node) arming the prepend contract: out of
+    // the last trigger head on lane 0, out of the synthetic lane head on a
+    // headless lane.
+    if (track.steps.length === 0) {
+      edges.push({
+        from: prevId ?? `head-${trackIdx}`,
+        to: '',
+        insertPoint: true,
+        insertAfter: null,
+      });
     }
 
     const rows: CanvasNode[][] = [mainRow];

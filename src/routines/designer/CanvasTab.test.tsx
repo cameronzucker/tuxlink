@@ -135,6 +135,29 @@ describe('CanvasTab — insert points', () => {
     const otherEdge = screen.getByTestId('edge-s2-s3');
     expect(otherEdge.className).not.toContain('armed');
   });
+
+  it('an EMPTY track still renders a clickable ＋ (dangling edge) arming {trackIdx, afterStepId: null}', () => {
+    // The "New Routine…" (createDraft → lone trigger + empty track-1) and
+    // Add-track (empty track-2) first flows — both lanes must stay
+    // insertable or Task 11's palette dead-ends on its very first flow.
+    const emptyDef: RoutineDef = {
+      routine: '',
+      schema_version: 1,
+      transmit_mode: 'attended',
+      triggers: [{ type: 'manual' }],
+      tracks: [
+        { name: 'track-1', steps: [] },
+        { name: 'track-2', steps: [] },
+      ],
+    };
+    const { onInsertAt } = renderTab({ draft: emptyDef });
+    // Lane 0: the dangling ＋ hangs off the trigger head.
+    fireEvent.click(screen.getByTestId('insert-trigger-0'));
+    expect(onInsertAt).toHaveBeenLastCalledWith({ trackIdx: 0, afterStepId: null });
+    // Lane 1 (headless AND empty): the dangling ＋ hangs off the lane head.
+    fireEvent.click(screen.getByTestId('insert-head-1'));
+    expect(onInsertAt).toHaveBeenLastCalledWith({ trackIdx: 1, afterStepId: null });
+  });
 });
 
 describe('CanvasTab — branch fan-out + anchors + deps', () => {

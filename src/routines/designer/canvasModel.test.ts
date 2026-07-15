@@ -171,7 +171,7 @@ describe('layoutCanvas — 2-track fixture', () => {
     expect(headEdge).toEqual({ from: 'head-1', to: 's6', insertPoint: true, insertAfter: null });
   });
 
-  it('an added (empty) track renders as a labeled, headless lane — never a crash', () => {
+  it('an added (empty) track renders as a labeled, headless lane with a dangling prepend insert point — never a crash, never uninsertable', () => {
     // The exact shape this task's own Add-track button produces: one more
     // trigger-less, step-less track than there are triggers.
     const def: RoutineDef = {
@@ -183,7 +183,42 @@ describe('layoutCanvas — 2-track fixture', () => {
     const lane3 = model3.lanes[2]!;
     expect(lane3.track).toBe('track-3');
     expect(lane3.rows).toEqual([[]]); // headless AND empty — no undefined node, no crash
-    expect(lane3.edges).toEqual([]);
+    // A step-less track must never be uninsertable: exactly one DANGLING
+    // insert edge (no target node) arming the prepend contract.
+    expect(lane3.edges).toEqual([
+      { from: 'head-2', to: '', insertPoint: true, insertAfter: null },
+    ]);
+  });
+
+  it('a createDraft-shaped def (one trigger, empty track) has exactly one insert edge, arming a prepend from the trigger head', () => {
+    // The "New Routine…" first flow: createDraft() → manual trigger + one
+    // empty track. Without a dangling insert edge the canvas would render a
+    // lone trigger with zero ＋ anywhere — Task 11's palette dead-ends.
+    const def: RoutineDef = {
+      routine: '',
+      schema_version: 1,
+      transmit_mode: 'attended',
+      triggers: [{ type: 'manual' }],
+      tracks: [{ name: 'track-1', steps: [] }],
+    };
+    const model1 = layoutCanvas(def, []);
+    const lane = model1.lanes[0]!;
+    expect(lane.rows[0]!.map((n) => n.id)).toEqual(['trigger-0']);
+    const insertEdges = lane.edges.filter((e) => e.insertPoint);
+    expect(insertEdges).toEqual([
+      { from: 'trigger-0', to: '', insertPoint: true, insertAfter: null },
+    ]);
+  });
+
+  it('end nodes carry the step\'s own failed flag (view never re-derives it from title text)', () => {
+    const [lane1] = model.lanes;
+    const okEnd = lane1!.rows[1]!.find((n) => n.id === 's10')!;
+    const errEnd = lane1!.rows[2]!.find((n) => n.id === 's11')!;
+    expect(okEnd.failed).toBe(false);
+    expect(errEnd.failed).toBe(true);
+    // Non-end nodes don't carry the flag at all.
+    const s1 = lane1!.rows[0]!.find((n) => n.id === 's1')!;
+    expect(s1.failed).toBeUndefined();
   });
 });
 
