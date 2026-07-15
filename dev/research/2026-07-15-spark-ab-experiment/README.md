@@ -110,3 +110,12 @@ protocol IDENTICAL to arm B:
   after arm B completes; blind eval extends to `candidate-3/4/5`.
 - Arm B's `include_apply_patch_tool=true` mitigation applies to all scale arms
   (same Codex↔non-GPT tool-protocol seam).
+- 2026-07-15 (follow-up to the harness directive): beyond runtime enforcement
+  of the disclosure contract (constrained tool surface), **distill it** —
+  fine-tune the local worker on execution-tier traces. This experiment
+  produces the paired supervision signal by construction: per frozen brief,
+  arm A's Sonnet transcript is the gold trace and arm B's transcript the
+  negative. Every future SDD run accretes more pairs as a byproduct (Elmer
+  distill-track economics). Caveats for the proposal: provider-ToS/compliance
+  check before training on frontier traces; the distilled worker is a
+  narrow-distribution component, not a general agent.
