@@ -104,8 +104,26 @@ describe('layoutCanvas — 2-track fixture', () => {
     const [lane1] = model.lanes;
     const okEdge = lane1!.edges.find((e) => e.from === 's2' && e.label === 'ok');
     const errEdge = lane1!.edges.find((e) => e.from === 's2' && e.label === 'err');
-    expect(okEdge).toEqual({ from: 's2', to: 's3', label: 'ok', insertPoint: true, insertAfter: 's2' });
-    expect(errEdge).toEqual({ from: 's2', to: 's5', label: 'err', insertPoint: true, insertAfter: 's2' });
+    // Lead ＋s into populated arms carry the arm marker (arm-position-0 —
+    // front of the then/else list), so they route through
+    // insertStepIntoBranchArm and the ok/err pair stays distinguishable to
+    // the armed-highlight match despite sharing insertAfter.
+    expect(okEdge).toEqual({
+      from: 's2',
+      to: 's3',
+      label: 'ok',
+      insertPoint: true,
+      insertAfter: 's2',
+      arm: { branchId: 's2', which: 'then' },
+    });
+    expect(errEdge).toEqual({
+      from: 's2',
+      to: 's5',
+      label: 'err',
+      insertPoint: true,
+      insertAfter: 's2',
+      arm: { branchId: 's2', which: 'else' },
+    });
     // Every edge into a STEP is an insert point; only the connectors between
     // two trigger heads (nothing insertable between triggers) are not.
     const stepEdges = lane1!.edges.filter((e) => !e.to.startsWith('trigger-'));
@@ -308,12 +326,24 @@ describe('layoutCanvas — append-at-end + branch-arm insert points (Task 11 aut
       ]),
       CONNECT_ONLY,
     );
-    const thenTrailing = model.lanes[0]!.edges.find((e) => e.arm?.which === 'then');
+    // The lead ＋ into the arm's first node also carries the arm marker now
+    // (arm-position-0), so scope the lookup to the DANGLING (to: '') edge.
+    const thenTrailing = model.lanes[0]!.edges.find((e) => e.arm?.which === 'then' && e.to === '');
     expect(thenTrailing).toEqual({
       from: 's3',
       to: '',
       insertPoint: true,
       insertAfter: 's3',
+      arm: { branchId: 's2', which: 'then' },
+    });
+    // And the lead ＋ arms the front-of-arm position, arm-marked.
+    const thenLead = model.lanes[0]!.edges.find((e) => e.from === 's2' && e.label === 'ok');
+    expect(thenLead).toEqual({
+      from: 's2',
+      to: 's3',
+      label: 'ok',
+      insertPoint: true,
+      insertAfter: 's2',
       arm: { branchId: 's2', which: 'then' },
     });
   });

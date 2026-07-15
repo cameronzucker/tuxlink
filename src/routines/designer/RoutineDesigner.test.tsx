@@ -350,6 +350,63 @@ describe('RoutineDesigner — flow-2 authoring trace through the real seam (Task
     expect(branch.else).toEqual(['s3', 's5', 's4']);
     expect(exported.tracks[0]!.steps.map((s) => s.id)).toEqual(['s1', 's2', 's3', 's5', 's4']);
   });
+
+  it('ARM-LEAD insert: the ＋ between the branch and a populated arm\'s first node prepends INTO that arm (not unplaced)', async () => {
+    installInvokeMock({
+      routines_get: () =>
+        ({
+          routine: 'deployment-poll',
+          schema_version: 1,
+          transmit_mode: 'attended',
+          triggers: [{ type: 'manual' }],
+          tracks: [
+            {
+              name: 'track-1',
+              steps: [
+                { id: 's1', action: 'radio.connect' },
+                { id: 's2', control: 'branch', on: 's1.connected', then: [], else: ['s3'] },
+                { id: 's3', action: 'radio.connect' },
+              ],
+            },
+          ],
+        }) satisfies RoutineDef,
+      routines_actions_list: () => [
+        { name: 'radio.connect', needsRadio: true, needsInternet: false, transmits: true },
+      ],
+      routines_list: () => [],
+    });
+    renderDesigner({ routine: 'deployment-poll' });
+    await screen.findByTestId('palette-item-radio.connect');
+
+    // Arm the err LEAD ＋ (between the branch and s3), insert an action.
+    fireEvent.click(screen.getByTestId('insert-s2-err'));
+    fireEvent.click(screen.getByTestId('palette-item-radio.connect'));
+
+    // The new step (s4) renders BEFORE s3 in the err fan row — no unplaced
+    // row, no unplaced marker.
+    const s4 = screen.getByTestId('node-s4');
+    expect(s4).not.toHaveTextContent(/unplaced/i);
+    expect(screen.queryByTestId('unplaced-row-0')).not.toBeInTheDocument();
+    const path = s4.closest('.path') as HTMLElement;
+    expect(path).not.toBeNull();
+    const rowIds = Array.from(path.querySelectorAll('[data-testid^="node-"]')).map((el) =>
+      el.getAttribute('data-testid'),
+    );
+    expect(rowIds).toEqual(['node-s4', 'node-s3']);
+
+    // And the id landed at the FRONT of the else list, storage adjacent to
+    // the branch.
+    fireEvent.click(screen.getByRole('button', { name: 'Export JSON' }));
+    const textarea = (await screen.findByTestId('export-json-textarea')) as HTMLTextAreaElement;
+    const exported = JSON.parse(textarea.value) as RoutineDef;
+    const branch = exported.tracks[0]!.steps.find((s) => s.id === 's2') as {
+      control: 'branch';
+      then: string[];
+      else: string[];
+    };
+    expect(branch.else).toEqual(['s4', 's3']);
+    expect(exported.tracks[0]!.steps.map((s) => s.id)).toEqual(['s1', 's2', 's4', 's3']);
+  });
 });
 
 describe('RoutineDesigner — Export JSON dialog', () => {

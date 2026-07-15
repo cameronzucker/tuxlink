@@ -217,14 +217,25 @@ describe('insertStepIntoBranchArm', () => {
     expect(next.tracks[0]!.steps.map((s) => s.id)).toEqual(['s1', 's2', 's3', 's5', 's6']);
   });
 
-  it('afterStepId = the branch\'s own id (an empty arm\'s ＋) or an id not in the arm APPENDS', () => {
+  it('afterStepId = the branch\'s own id is ARM-POSITION-0: front of the arm list, storage right after the branch', () => {
     const def = branchDef();
     const step: ActionStep = { id: 's5', action: 'aprs.send' };
-    // Branch's own id — the empty-arm ＋'s insertAfter.
+    // Empty arm (the empty-arm ＋'s insertAfter is the branch id): prepend ≡
+    // append — same observable result as the original empty-arm behavior.
     const viaBranchId = insertStepIntoBranchArm(def, 0, 's2', 'else', step, 's2');
     expect((viaBranchId.tracks[0]!.steps[1] as ControlStep & { control: 'branch' }).else).toEqual(['s5']);
     expect(viaBranchId.tracks[0]!.steps.map((s) => s.id)).toEqual(['s1', 's2', 's5', 's3']);
-    // An id in the track but not in this arm — appends too.
+    // POPULATED arm (the lead ＋ into the arm's first node also arms the
+    // branch id): the new id lands at the FRONT of then, before s3.
+    const viaLead = insertStepIntoBranchArm(def, 0, 's2', 'then', step, 's2');
+    expect((viaLead.tracks[0]!.steps[1] as ControlStep & { control: 'branch' }).then).toEqual(['s5', 's3']);
+    expect(viaLead.tracks[0]!.steps.map((s) => s.id)).toEqual(['s1', 's2', 's5', 's3']);
+  });
+
+  it('afterStepId = an id not in the arm APPENDS (fallback)', () => {
+    const def = branchDef();
+    const step: ActionStep = { id: 's5', action: 'aprs.send' };
+    // s1 is in the track but not in the then arm — appends.
     const viaForeignId = insertStepIntoBranchArm(def, 0, 's2', 'then', step, 's1');
     expect((viaForeignId.tracks[0]!.steps[1] as ControlStep & { control: 'branch' }).then).toEqual(['s3', 's5']);
   });

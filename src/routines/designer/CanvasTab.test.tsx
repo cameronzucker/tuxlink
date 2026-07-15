@@ -206,15 +206,38 @@ describe('CanvasTab — branch fan-out + anchors + deps', () => {
     expect(lane2).toContainElement(screen.getByTestId('insert-head-1'));
   });
 
-  it('the two branch lead-edge insert points have distinct testids and both arm after the branch step', () => {
+  it('the two branch lead-edge insert points have distinct testids and each arms ITS OWN arm at position 0', () => {
     const { onInsertAt } = renderTab({ draft: BRANCH_DEF });
     const okInsert = screen.getByTestId('insert-s2-ok');
     const errInsert = screen.getByTestId('insert-s2-err');
     expect(okInsert).not.toBe(errInsert);
+    // Lead ＋s into populated arms carry the arm marker: arming one routes
+    // through insertStepIntoBranchArm (front of that arm's id list — the
+    // branch's own id is the arm-position-0 contract), never the plain
+    // splice-after-branch that would mint an unplaced step.
     fireEvent.click(okInsert);
-    expect(onInsertAt).toHaveBeenLastCalledWith({ trackIdx: 0, afterStepId: 's2' });
+    expect(onInsertAt).toHaveBeenLastCalledWith({
+      trackIdx: 0,
+      afterStepId: 's2',
+      arm: { branchId: 's2', which: 'then' },
+    });
     fireEvent.click(errInsert);
-    expect(onInsertAt).toHaveBeenLastCalledWith({ trackIdx: 0, afterStepId: 's2' });
+    expect(onInsertAt).toHaveBeenLastCalledWith({
+      trackIdx: 0,
+      afterStepId: 's2',
+      arm: { branchId: 's2', which: 'else' },
+    });
+  });
+
+  it('arming the ok lead ＋ does NOT light the err lead ＋ (populated arms share afterStepId but differ in arm marker)', () => {
+    renderTab({
+      draft: BRANCH_DEF,
+      armedInsert: { trackIdx: 0, afterStepId: 's2', arm: { branchId: 's2', which: 'then' } },
+    });
+    const okEdge = screen.getByTestId('insert-s2-ok').closest('.edge') as HTMLElement;
+    const errEdge = screen.getByTestId('insert-s2-err').closest('.edge') as HTMLElement;
+    expect(okEdge.className).toContain('armed');
+    expect(errEdge.className).not.toContain('armed');
   });
 
   it('renders the delay anchor and the cross-track dependency chip', () => {

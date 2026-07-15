@@ -71,13 +71,15 @@ export interface CanvasEdge {
    *  afterStepId)` — which splices storage adjacently AND inserts the new
    *  step's id into the branch's then/else list at the position
    *  `insertAfter` names — instead of the plain `insertStep` splice (which
-   *  would land the step in the unplaced row). Emitted for an EMPTY arm (a
-   *  dangling labeled ＋ straight out of the branch — otherwise a
+   *  would land the step in the unplaced row). Emitted on EVERY arm ＋: the
+   *  empty arm's dangling labeled ＋ straight out of the branch (otherwise a
    *  canvas-authored branch with `then:[], else:[]` has NO armable position
-   *  that reaches either arm), on every INTRA-arm edge between two arm nodes
-   *  (so a mid-arm ＋ inserts INTO the arm at that position, not unplaced),
-   *  and as the TRAILING ＋ after a non-empty arm's last node (skipped when
-   *  the arm ends in an `end` step — appending after end is meaningless). */
+   *  that reaches either arm), the LEAD ＋ into a populated arm's first node
+   *  (arm-position-0 — front of the then/else list), every INTRA-arm edge
+   *  between two arm nodes (so a mid-arm ＋ inserts INTO the arm at that
+   *  position, not unplaced), and the TRAILING ＋ after a non-empty arm's
+   *  last node (skipped when the arm ends in an `end` step — appending
+   *  after end is meaningless). */
   arm?: { branchId: string; which: 'then' | 'else' };
 }
 
@@ -404,19 +406,27 @@ export function layoutCanvas(def: RoutineDef, actions: ActionInfo[]): CanvasMode
         const first = chain.nodes[0];
         const last = chain.nodes[chain.nodes.length - 1];
         if (first) {
+          // Lead ＋ into a populated arm's first node: carries the arm
+          // marker too — arming it means "insert at the FRONT of this arm"
+          // (`insertAfter: branchId` is insertStepIntoBranchArm's
+          // arm-position-0 contract), never the plain splice-after-branch
+          // that would mint an unplaced step. The marker also keeps the ok
+          // and err lead ＋s distinguishable to the armed-highlight match
+          // (both share `afterStepId: branchId`).
           edges.push({
             from: branchId,
             to: first.id,
             label,
             insertPoint: true,
             insertAfter: branchId,
+            arm: { branchId, which },
           });
         } else {
           // EMPTY arm (Gap A): a canvas-authored branch starts `then:[],
           // else:[]` — without this dangling ARM insert edge there is no
           // armable position that reaches either arm at all. Arming it
-          // routes through insertStepIntoBranchArm (splice + arm-list
-          // append), so the inserted step lands IN the arm, not unplaced.
+          // routes through insertStepIntoBranchArm, so the inserted step
+          // lands IN the arm, not unplaced.
           edges.push({
             from: branchId,
             to: '',

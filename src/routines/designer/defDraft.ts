@@ -83,15 +83,19 @@ export function insertStep(
  * engine semantics: a branch arm IS its then/else id list (types.rs Branch);
  * this op just performs both existing edits atomically.
  *
- * `afterStepId` positions the insert WITHIN the arm (the armed mid-arm ＋'s
- * `insertAfter`): when it names a step already in the arm's id list, the new
- * id goes into the list immediately after it and storage is spliced
- * immediately after that step; otherwise — `null`, the branch's own id (an
- * empty arm's ＋ arms `insertAfter: branchId`), or an id not in the arm —
- * the id is APPENDED to the arm list and storage is spliced after the arm's
- * last step present in this track (right after the branch when the arm is
- * empty). Arm ids that dangle out of the track are the validator's problem,
- * not ours — this op never throws on them.
+ * `afterStepId` positions the insert WITHIN the arm (the armed arm ＋'s
+ * `insertAfter`): when it is the branch's OWN id (the ＋ straight out of the
+ * branch — an empty arm's dangling ＋ or the lead ＋ into a populated arm's
+ * first node), the new id goes to the FRONT of the then/else list and
+ * storage is spliced right after the branch (arm-position-0; for an empty
+ * arm prepend ≡ append, so this subsumes the old empty-arm behavior). When
+ * it names a step already in the arm's id list, the new id goes into the
+ * list immediately after it and storage is spliced immediately after that
+ * step. Otherwise — `null` or an id not in the arm — the id is APPENDED to
+ * the arm list and storage is spliced after the arm's last step present in
+ * this track (right after the branch when the arm is empty). Arm ids that
+ * dangle out of the track are the validator's problem, not ours — this op
+ * never throws on them.
  *
  * A `branchStepId` that doesn't resolve to a branch control step in that
  * track is a no-op (fresh, equal-by-value def — same contract as
@@ -112,26 +116,34 @@ export function insertStepIntoBranchArm(
     if (branchIdx === -1) return { ...track }; // no such branch here — no-op
     const branch = track.steps[branchIdx] as ControlStep & { control: 'branch' };
     const armIds = branch[arm];
-    const armPos = afterStepId === null ? -1 : armIds.indexOf(afterStepId);
 
-    // Arm-list position: right after afterStepId when it's in the arm,
-    // appended otherwise.
-    const newArmIds =
-      armPos === -1
-        ? [...armIds, step.id]
-        : [...armIds.slice(0, armPos + 1), step.id, ...armIds.slice(armPos + 1)];
-
-    // Storage splice position: adjacent to the arm step being inserted
-    // after; for an append, after the LAST of the arm's steps that actually
-    // lives in this track, falling back to right after the branch itself.
+    let newArmIds: string[];
     let insertIdx = branchIdx + 1;
-    if (armPos !== -1) {
-      const idx = track.steps.findIndex((s) => s.id === afterStepId);
-      if (idx !== -1) insertIdx = idx + 1;
+    if (afterStepId === branchStepId) {
+      // Arm-position-0: the ＋ straight out of the branch (empty arm's
+      // dangling ＋, or the lead ＋ into a populated arm's first node) —
+      // front of the arm list, storage right after the branch.
+      newArmIds = [step.id, ...armIds];
     } else {
-      for (const id of armIds) {
-        const idx = track.steps.findIndex((s) => s.id === id);
-        if (idx !== -1 && idx + 1 > insertIdx) insertIdx = idx + 1;
+      const armPos = afterStepId === null ? -1 : armIds.indexOf(afterStepId);
+      // Arm-list position: right after afterStepId when it's in the arm,
+      // appended otherwise.
+      newArmIds =
+        armPos === -1
+          ? [...armIds, step.id]
+          : [...armIds.slice(0, armPos + 1), step.id, ...armIds.slice(armPos + 1)];
+      // Storage splice position: adjacent to the arm step being inserted
+      // after; for an append, after the LAST of the arm's steps that
+      // actually lives in this track, falling back to right after the
+      // branch itself.
+      if (armPos !== -1) {
+        const idx = track.steps.findIndex((s) => s.id === afterStepId);
+        if (idx !== -1) insertIdx = idx + 1;
+      } else {
+        for (const id of armIds) {
+          const idx = track.steps.findIndex((s) => s.id === id);
+          if (idx !== -1 && idx + 1 > insertIdx) insertIdx = idx + 1;
+        }
       }
     }
 
