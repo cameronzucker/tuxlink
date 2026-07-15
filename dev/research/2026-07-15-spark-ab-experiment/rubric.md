@@ -62,7 +62,16 @@ data loss / back-compat break), P2 (behavioral edge case, missing test), P3
 with reasons.
 
 ### M5 — Efficiency
-- Wall time per task (worker start → completion report).
+- **Wall time per task, broken down BY AGENT** (amendment 2026-07-15, operator
+  request, before any arm's data was scored: an elaboration of the original
+  "wall time per task" line, flagged here per this rubric's post-hoc rule).
+  For every task in every arm, report each agent's start → completion wall
+  clock separately: implementer, task reviewer, fix subagent(s), and (whole
+  branch) the final reviewer — plus per-arm totals and the
+  implementation-vs-review split. Sources: harness-reported `duration_ms` for
+  Claude agents; dispatched/finished stamps in each arm's
+  `.superpowers/sdd/timing.log` for Codex workers. Failed/retried worker
+  attempts count in the arm's total wall clock AND are itemized per attempt.
 - Tokens where the harness reports them (Codex prints `tokens used`; Claude
   subagent usage as visible to the orchestrator).
 - Intervention count (per the policy above).
