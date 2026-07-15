@@ -603,4 +603,16 @@ describe('RoutinesDashboard — empty library', () => {
     expect(await screen.findByTestId('routines-dashboard-empty')).toHaveTextContent(/No routines yet/);
     expect(screen.queryByText('Routine', { selector: 'th' })).not.toBeInTheDocument();
   });
+
+  it('does NOT claim an empty library while the first refresh is still in flight (Codex P2)', async () => {
+    // Every routines read hangs: summaries stays its initial [] but loaded
+    // stays false — the table shell renders, never the "No routines yet" copy.
+    mockInvoke.mockImplementation((cmd?: string) => {
+      if (cmd === undefined) return Promise.resolve();
+      return new Promise(() => undefined);
+    });
+    renderDashboard();
+    expect(await screen.findByText('Routine', { selector: 'th' })).toBeInTheDocument();
+    expect(screen.queryByTestId('routines-dashboard-empty')).not.toBeInTheDocument();
+  });
 });
