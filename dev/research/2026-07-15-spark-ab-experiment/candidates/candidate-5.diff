@@ -1,0 +1,554 @@
+diff --git a/src-tauri/tuxlink-routines/src/executor.rs b/src-tauri/tuxlink-routines/src/executor.rs
+index 5dbba1fc..42718308 100644
+--- a/src-tauri/tuxlink-routines/src/executor.rs
++++ b/src-tauri/tuxlink-routines/src/executor.rs
+@@ -239,10 +239,21 @@ async fn run_action_step_shared(
+     // action is NEVER reached, so no carrier is ever keyed without consent.
+     if ctx.attended && action.descriptor().transmits {
+         if let Some(consent) = &ctx.consent {
++            // Verbatim context for the monitor (tuxlink-xvd1i): the step that
++            // is parking, and its literal "rig" param when it has one. No
++            // defaulting here — the engine has no rig semantics (app layer's
++            // `rig_id_from_params` and the frontend own the "default"
++            // fallback); absent means absent.
++            let rig = resolved
++                .get("rig")
++                .and_then(|v| v.as_str())
++                .map(String::from);
+             journal(
+                 ctx,
+                 RunEvent::StateChanged {
+                     state: RunState::AwaitingConsent,
++                    step: Some(step.id.clone()),
++                    rig,
+                 },
+             );
+             let parked = tokio::select! {
+@@ -254,6 +265,8 @@ async fn run_action_step_shared(
+                     ctx,
+                     RunEvent::StateChanged {
+                         state: RunState::Running,
++                        step: Some(step.id.clone()),
++                        rig: None,
+                     },
+                 ),
+                 Err(err) => {
+@@ -459,6 +472,14 @@ pub async fn run_track_shared(
+                             ctx,
+                             RunEvent::StateChanged {
+                                 state: RunState::Waiting,
++                                // The delay control step's own id (control
++                                // steps have ids and appear in the snapshot's
++                                // tracks) — this is what lets the monitor draw
++                                // the delay bar on an exact lane instead of
++                                // attributing it to an adjacent step
++                                // (tuxlink-xvd1i).
++                                step: Some(c.id.clone()),
++                                rig: None,
+                             },
+                         );
+                         tokio::select! {
+@@ -469,6 +490,8 @@ pub async fn run_track_shared(
+                             ctx,
+                             RunEvent::StateChanged {
+                                 state: RunState::Running,
++                                step: Some(c.id.clone()),
++                                rig: None,
+                             },
+                         );
+                         idx += 1;
+@@ -1070,18 +1093,24 @@ mod tests {
+         run_track(&track, &mut vars, &ctx).await.unwrap();
+         assert!(start.elapsed() >= std::time::Duration::from_secs(300));
+         let entries = read_journal(&jpath).unwrap();
+-        assert!(matches!(
++        assert_eq!(
+             entries[0].event,
+             RunEvent::StateChanged {
+-                state: RunState::Waiting
+-            }
+-        ));
+-        assert!(matches!(
++                state: RunState::Waiting,
++                step: Some(StepId("d1".into())),
++                rig: None,
++            },
++            "the Waiting entry must name the delay control step"
++        );
++        assert_eq!(
+             entries[1].event,
+             RunEvent::StateChanged {
+-                state: RunState::Running
+-            }
+-        ));
++                state: RunState::Running,
++                step: Some(StepId("d1".into())),
++                rig: None,
++            },
++            "the Running resume must name the same step, closing the window exactly"
++        );
+     }
+ 
+     #[test]
+@@ -1394,7 +1423,7 @@ mod tests {
+         let step = ActionStep {
+             id: StepId("s1".into()),
+             action: "radio.tx".into(),
+-            params: json!({}),
++            params: json!({"rig": "g90"}),
+             timeout_s: Some(1),
+             on_radio_busy: BusyPolicy::Wait,
+         };
+@@ -1408,25 +1437,34 @@ mod tests {
+ 
+         // The journal is honest: AwaitingConsent then Running bracket the park.
+         let entries = read_journal(&jpath).unwrap();
+-        let states: Vec<RunState> = entries
++        let states: Vec<(RunState, Option<StepId>, Option<String>)> = entries
+             .iter()
+             .filter_map(|e| match &e.event {
+-                RunEvent::StateChanged { state } => Some(*state),
++                RunEvent::StateChanged { state, step, rig } => {
++                    Some((*state, step.clone(), rig.clone()))
++                }
+                 _ => None,
+             })
+             .collect();
+         assert_eq!(
+             states,
+-            vec![RunState::AwaitingConsent, RunState::Running],
+-            "journal must show AwaitingConsent then Running around the park"
++            vec![
++                (
++                    RunState::AwaitingConsent,
++                    Some(StepId("s1".into())),
++                    Some("g90".into())
++                ),
++                (RunState::Running, Some(StepId("s1".into())), None),
++            ],
++            "the park must name the transmit step and its verbatim rig param;              the resume names the step only"
+         );
+         // Ordering: AwaitingConsent lands AFTER the step's intent, before ok.
+         let kinds: Vec<&str> = entries
+             .iter()
+             .map(|e| match &e.event {
+                 RunEvent::StepIntent { .. } => "intent",
+-                RunEvent::StateChanged { state: RunState::AwaitingConsent } => "awaiting",
+-                RunEvent::StateChanged { state: RunState::Running } => "running",
++                RunEvent::StateChanged { state: RunState::AwaitingConsent, .. } => "awaiting",
++                RunEvent::StateChanged { state: RunState::Running, .. } => "running",
+                 RunEvent::StepOk { .. } => "ok",
+                 other => panic!("unexpected {other:?}"),
+             })
+@@ -1434,6 +1472,47 @@ mod tests {
+         assert_eq!(kinds, vec!["intent", "awaiting", "running", "ok"]);
+     }
+ 
++    /// tuxlink-xvd1i: a transmit step whose params carry no "rig" key journals
++    /// rig: None — the engine records verbatim data only; the "default" rig is
++    /// an app/frontend display concern (`rig_id_from_params`), never invented
++    /// by the executor.
++    #[tokio::test(start_paused = true)]
++    async fn consent_park_without_rig_param_journals_rig_none() {
++        let tx = Arc::new(
++            FakeAction::new("radio.tx")
++                .with_capabilities(true, true, false)
++                .ok(json!({"sent": true})),
++        );
++        let mut reg = ActionRegistry::default();
++        reg.register(tx);
++        let dir = tempfile::tempdir().unwrap();
++        let (mut ctx, jpath) = ctx(reg, dir.path());
++        ctx.attended = true;
++        ctx.consent = Some(Arc::new(crate::fakes::FakeConsent::granting_after(
++            Duration::from_secs(1),
++        )));
++        let track = Track {
++            name: "t".into(),
++            steps: vec![action("s1", "radio.tx", json!({"to": "W7ABC"}))],
++        };
++        let mut vars = RunVars::default();
++        run_track(&track, &mut vars, &ctx).await.unwrap();
++
++        let entries = read_journal(&jpath).unwrap();
++        let parked = entries
++            .iter()
++            .find_map(|e| match &e.event {
++                RunEvent::StateChanged {
++                    state: RunState::AwaitingConsent,
++                    step,
++                    rig,
++                } => Some((step.clone(), rig.clone())),
++                _ => None,
++            })
++            .expect("an AwaitingConsent entry must exist");
++        assert_eq!(parked, (Some(StepId("s1".into())), None));
++    }
++
+     /// A non-transmitting action in an attended run does NOT park (nothing to
+     /// consent to), even with a consent port present — parking is gated on the
+     /// action's `transmits` descriptor, not merely on attended-ness.
+@@ -1455,7 +1534,7 @@ mod tests {
+         let entries = read_journal(&jpath).unwrap();
+         assert!(!entries.iter().any(|e| matches!(
+             &e.event,
+-            RunEvent::StateChanged { state: RunState::AwaitingConsent }
++            RunEvent::StateChanged { state: RunState::AwaitingConsent, .. }
+         )));
+     }
+ 
+diff --git a/src-tauri/tuxlink-routines/src/journal.rs b/src-tauri/tuxlink-routines/src/journal.rs
+index 9cbb1868..5cb820a4 100644
+--- a/src-tauri/tuxlink-routines/src/journal.rs
++++ b/src-tauri/tuxlink-routines/src/journal.rs
+@@ -48,6 +48,23 @@ pub enum RunEvent {
+     },
+     StateChanged {
+         state: RunState,
++        /// The step this transition pertains to, when the emitter has one in
++        /// scope: the transmit step whose consent park begins/ends, the delay
++        /// control step whose wait begins/ends. Additive (`#[serde(default)]`,
++        /// same pattern as `RunStarted::dry_run`) — journals written before
++        /// this field parse as `None`, and `None` serializes to the legacy
++        /// shape (no key). The run monitor prefers this over its
++        /// adjacent-step-intent heuristic (RunsTab.tsx `ganttModel`).
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        step: Option<StepId>,
++        /// The verbatim `"rig"` string param of the step, populated only on
++        /// parked-state entries (`AwaitingConsent` now; `AwaitingRadio` when
++        /// an emitter exists) and only when the resolved params carry one.
++        /// The engine crate has no rig semantics — no defaulting here; the
++        /// frontend supplies the `"default"` display fallback, mirroring the
++        /// app layer's `rig_id_from_params`.
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        rig: Option<String>,
+     },
+     /// Written BEFORE the action executes (intent-before-effect).
+     StepIntent {
+@@ -325,6 +342,8 @@ mod tests {
+         let mut w = JournalWriter::create(dir.path(), "run-0003", fixed_now).unwrap();
+         w.append(RunEvent::StateChanged {
+             state: RunState::AwaitingRadio,
++            step: None,
++            rig: None,
+         })
+         .unwrap();
+         let raw = std::fs::read_to_string(w.path()).unwrap();
+@@ -424,4 +443,77 @@ mod tests {
+         let seqs: Vec<u64> = entries.iter().map(|e| e.seq).collect();
+         assert_eq!(seqs, vec![0, 1, 2]);
+     }
++
++    #[test]
++    fn state_changed_without_context_fields_parses_as_none() {
++        // A pre-enrichment journal line, byte-for-byte: parsing it is the
++        // back-compat contract for every .jsonl already on disk.
++        let legacy = r#"{"ts_unix":1752400000,"run_id":"run-1","seq":0,"event":{"type":"state_changed","state":"waiting"}}"#;
++        let entry: JournalEntry = serde_json::from_str(legacy).unwrap();
++        match &entry.event {
++            RunEvent::StateChanged { state, step, rig } => {
++                assert_eq!(*state, RunState::Waiting);
++                assert!(step.is_none());
++                assert!(rig.is_none());
++            }
++            other => panic!("expected StateChanged, got {other:?}"),
++        }
++    }
++
++    #[test]
++    fn state_changed_none_fields_serialize_to_legacy_shape() {
++        // skip_serializing_if keeps the None-shape byte-identical to the
++        // legacy wire format — an enriched build writing un-enriched entries
++        // produces journals older readers have always seen.
++        let event = RunEvent::StateChanged {
++            state: RunState::Waiting,
++            step: None,
++            rig: None,
++        };
++        let json = serde_json::to_value(&event).unwrap();
++        assert_eq!(
++            json,
++            serde_json::json!({"type": "state_changed", "state": "waiting"})
++        );
++    }
++
++    #[test]
++    fn state_changed_context_fields_round_trip() {
++        let event = RunEvent::StateChanged {
++            state: RunState::AwaitingConsent,
++            step: Some(StepId("s2".into())),
++            rig: Some("g90".into()),
++        };
++        let json = serde_json::to_value(&event).unwrap();
++        // StepId is a serde newtype: it rides the wire as a bare string,
++        // matching step_intent's existing "step" field shape.
++        assert_eq!(
++            json,
++            serde_json::json!({
++                "type": "state_changed",
++                "state": "awaiting_consent",
++                "step": "s2",
++                "rig": "g90"
++            })
++        );
++        let back: RunEvent = serde_json::from_value(json).unwrap();
++        assert_eq!(back, event);
++    }
++
++    #[test]
++    fn state_changed_tolerates_unknown_future_fields() {
++        // Pins the absence of deny_unknown_fields: an OLD build reading a
++        // journal written by a NEWER build (with fields this build doesn't
++        // know) must not fail the parse.
++        let future = r#"{"type":"state_changed","state":"waiting","step":"d1","some_future_field":42}"#;
++        let event: RunEvent = serde_json::from_str(future).unwrap();
++        match event {
++            RunEvent::StateChanged { state, step, .. } => {
++                assert_eq!(state, RunState::Waiting);
++                assert_eq!(step, Some(StepId("d1".into())));
++            }
++            other => panic!("expected StateChanged, got {other:?}"),
++        }
++    }
++
+ }
+diff --git a/src/routines/designer/RunsTab.test.tsx b/src/routines/designer/RunsTab.test.tsx
+index 77ee90b9..2ebcefcb 100644
+--- a/src/routines/designer/RunsTab.test.tsx
++++ b/src/routines/designer/RunsTab.test.tsx
+@@ -223,6 +223,62 @@ describe('ganttModel (a)', () => {
+     expect(interrupted!.resultEntry).toBeUndefined();
+     expect(bars.find((b) => b.kind === 'ok')).toMatchObject({ stepId: 's1' });
+   });
++
++  it('attributes a parked window to the exact step named on state_changed, not the heuristic', () => {
++    const snapshot = {
++      tracks: [
++        {
++          name: 'net-control',
++          steps: [
++            { id: 's1', action: 'cat.apply_preset' },
++            { id: 'd1', control: 'delay', delay: '+5m' },
++            { id: 's2', action: 'radio.connect' },
++          ],
++        },
++      ],
++    };
++    const journal: JournalEntry[] = [
++      { ts_unix: T, run_id: 'run-e', seq: 0, event: { type: 'run_started', routine: 'r', snapshot, dry_run: false } },
++      { ts_unix: T + 1, run_id: 'run-e', seq: 1, event: { type: 'step_intent', step: 's1', action: 'cat.apply_preset', resolved_params: {} } },
++      { ts_unix: T + 2, run_id: 'run-e', seq: 2, event: { type: 'step_ok', step: 's1', output: {} } },
++      // Enriched delay park: names d1. The legacy heuristic would have
++      // attributed this window to s1 (most recently CLOSED step).
++      { ts_unix: T + 3, run_id: 'run-e', seq: 3, event: { type: 'state_changed', state: 'waiting', step: 'd1' } },
++      { ts_unix: T + 303, run_id: 'run-e', seq: 4, event: { type: 'state_changed', state: 'running', step: 'd1' } },
++      { ts_unix: T + 400, run_id: 'run-e', seq: 5, event: { type: 'run_finished', state: 'completed', reason: null } },
++    ];
++    const model = ganttModel(journal);
++    const bars = model.lanes[0]!.bars;
++    const delayBar = bars.find((b) => b.kind === 'delay');
++    expect(delayBar).toBeDefined();
++    expect(delayBar!.stepId).toBe('d1');
++    expect(delayBar!.t0).toBe(T + 3);
++    expect(delayBar!.t1).toBe(T + 303);
++    // Exactly one bar for the window — no duplicate heuristic attribution.
++    expect(bars.filter((b) => b.kind === 'delay')).toHaveLength(1);
++  });
++
++  it('falls back to the legacy heuristic when state_changed carries no step (old journals)', () => {
++    const snapshot = {
++      tracks: [
++        { name: 'net-control', steps: [{ id: 's1', action: 'cat.apply_preset' }] },
++      ],
++    };
++    const journal: JournalEntry[] = [
++      { ts_unix: T, run_id: 'run-l', seq: 0, event: { type: 'run_started', routine: 'r', snapshot, dry_run: false } },
++      { ts_unix: T + 1, run_id: 'run-l', seq: 1, event: { type: 'step_intent', step: 's1', action: 'cat.apply_preset', resolved_params: {} } },
++      { ts_unix: T + 2, run_id: 'run-l', seq: 2, event: { type: 'step_ok', step: 's1', output: {} } },
++      { ts_unix: T + 3, run_id: 'run-l', seq: 3, event: { type: 'state_changed', state: 'waiting' } },
++      { ts_unix: T + 63, run_id: 'run-l', seq: 4, event: { type: 'state_changed', state: 'running' } },
++      { ts_unix: T + 70, run_id: 'run-l', seq: 5, event: { type: 'run_finished', state: 'completed', reason: null } },
++    ];
++    const model = ganttModel(journal);
++    const delayBar = model.lanes[0]!.bars.find((b) => b.kind === 'delay');
++    // Legacy behavior preserved verbatim: attributed to the most recently
++    // closed step.
++    expect(delayBar).toBeDefined();
++    expect(delayBar!.stepId).toBe('s1');
++  });
+ });
+ 
+ describe('radioAwaitRig', () => {
+@@ -233,6 +289,23 @@ describe('radioAwaitRig', () => {
+   it('defaults to "default" when no step_intent carries a rig param', () => {
+     expect(radioAwaitRig(FIXTURE_JOURNAL.slice(0, 2))).toBe('default');
+   });
++
++  it('prefers the rig named on a state_changed entry over the adjacent-intent heuristic', () => {
++    const journal: JournalEntry[] = [
++      { ts_unix: T, run_id: 'run-r', seq: 0, event: { type: 'step_intent', step: 's1', action: 'radio.connect', resolved_params: { rig: 'ft710' } } },
++      { ts_unix: T + 1, run_id: 'run-r', seq: 1, event: { type: 'state_changed', state: 'awaiting_radio', step: 's1', rig: 'g90' } },
++    ];
++    // The exact field wins over the (different) rig on the adjacent intent.
++    expect(radioAwaitRig(journal)).toBe('g90');
++  });
++
++  it('a rig-less state_changed does not shadow the intent fallback', () => {
++    const journal: JournalEntry[] = [
++      { ts_unix: T, run_id: 'run-r2', seq: 0, event: { type: 'step_intent', step: 's1', action: 'radio.connect', resolved_params: { rig: 'ft710' } } },
++      { ts_unix: T + 1, run_id: 'run-r2', seq: 1, event: { type: 'state_changed', state: 'running', step: 's1' } },
++    ];
++    expect(radioAwaitRig(journal)).toBe('ft710');
++  });
+ });
+ 
+ // ---------------------------------------------------------------------------
+diff --git a/src/routines/designer/RunsTab.tsx b/src/routines/designer/RunsTab.tsx
+index b8cf6f54..866c745f 100644
+--- a/src/routines/designer/RunsTab.tsx
++++ b/src/routines/designer/RunsTab.tsx
+@@ -13,43 +13,26 @@
+  *
+  * ---- ganttModel: what the journal ACTUALLY carries (read before editing) ----
+  *
+- * `RunEvent::StateChanged` (journal.rs:49-51) is `{ state: RunState }` ONLY —
+- * no step id, no track, no rig, no delay length. This is true for EVERY
+- * parked state (`waiting`, `awaiting_consent`, `awaiting_radio`), not just
+- * the arbiter-refusal case the brief calls out explicitly. Two consequences
+- * this module works around rather than fabricating data to paper over:
++ * `RunEvent::StateChanged` (journal.rs) is `{ state, step?, rig? }`:
++ * `step`/`rig` are additive optional fields (tuxlink-xvd1i) an enriched
++ * engine populates — the transmit step whose consent park begins/ends, the
++ * delay control step whose wait begins/ends, and (parked states only) the
++ * step's verbatim "rig" param. Journals written BEFORE the enrichment carry
++ * neither field, and this module must render those exactly as it always has,
++ * so BOTH paths below are load-bearing:
+  *
+- * 1. `Control::Delay` (executor.rs:450-475) journals ONLY
+- *    `StateChanged{Waiting}` before the sleep and `StateChanged{Running}`
+- *    after — no `StepIntent` at all for the delay itself (unlike
+- *    `Control::Call`, which does journal an intent). There is no step id to
+- *    hang a delay bar off of.
+- * 2. An attended-mode consent park (`awaiting_consent`) most plausibly
+- *    happens BEFORE the retried step's own `StepIntent` is written (intent-
+- *    before-effect means intent logs right before invoking, and the consent
+- *    gate blocks the invoke) — so at the moment parking begins there is
+- *    typically no OPEN intent to attribute it to either.
++ * 1. Exact path: a parked `state_changed` naming a `step` attributes the
++ *    parked interval to that step's lane directly (control steps have ids
++ *    and appear in the snapshot's tracks, so a delay bar lands on the delay
++ *    step's own lane). `radioAwaitRig` likewise returns the `rig` named on
++ *    the parked entry when present.
+  *
+- * `closeParkedWindow()` below handles both cases with ONE mechanism: when a
+- * parked state begins, snapshot whichever step intents are currently OPEN
+- * (unresolved). If any are open, attribute the parked interval to each of
+- * those steps' lanes (the step that's mid-invocation when it discovers it
+- * needs the radio, say). If none are open (the common case for a bare delay,
+- * and the common case for a pre-intent consent gate), attribute it instead to
+- * the lane of the most recently CLOSED step — the last thing that actually
+- * ran, which is the best-effort "where we are" anchor the journal supports.
+- * If neither exists (parking at the very start of a run, before any step has
+- * even opened), the interval is dropped rather than invented a lane for it.
+- *
+- * The same "no step id on state_changed" gap is why the arbiter-refusal
+- * banner (binding constraint 7) can't read a `rig` field off the
+- * `state_changed` entry directly — there isn't one. `radioAwaitRig()` below
+- * instead reads the real `rig` param off the journal's most recent
+- * `step_intent.resolved_params` (the actual per-step field a radio action
+- * reads to target a lease, `actions/mod.rs:462-468`'s `rig_id_from_params`,
+- * defaulting to `"default"` exactly as the Rust side does) — verbatim journal
+- * data, just sourced from the adjacent `step_intent` rather than a
+- * nonexistent field on `state_changed` itself.
++ * 2. Legacy fallback (pre-enrichment journals): `closeParkedWindow()`'s
++ *    original mechanism, verbatim — attribute to whichever step intents were
++ *    OPEN when parking began; if none, to the most recently CLOSED step; if
++ *    neither, drop the interval rather than invent a lane. `radioAwaitRig`
++ *    falls back to the `rig` param off the most recent `step_intent`
++ *    (`actions/mod.rs`'s `rig_id_from_params`, defaulting `"default"`).
+  *
+  * A third open-intent case — separate from the parked windows above — is a
+  * `step_intent` with no `step_ok`/`step_err` AT ALL by the end of the
+@@ -174,7 +157,12 @@ export function ganttModel(entries: JournalEntry[], now: number = Math.floor(Dat
+ 
+   const openByStep = new Map<string, JournalEntry>();
+   let lastClosed: { stepId: string; ts: number } | null = null;
+-  let parked: { state: RunState; ts: number; openSnapshot: Map<string, JournalEntry> } | null = null;
++  let parked: {
++    state: RunState;
++    ts: number;
++    openSnapshot: Map<string, JournalEntry>;
++    exactStep?: string;
++  } | null = null;
+ 
+   const pushBar = (bar: GanttBar, stepId: string | undefined) => {
+     const idx = stepId !== undefined ? stepToTrack.get(stepId) : undefined;
+@@ -183,9 +171,20 @@ export function ganttModel(entries: JournalEntry[], now: number = Math.floor(Dat
+ 
+   const closeParked = (ts: number) => {
+     if (!parked) return;
+-    const { state, ts: t0, openSnapshot } = parked;
++    const { state, ts: t0, openSnapshot, exactStep } = parked;
+     const kind: GanttBar['kind'] = state === 'waiting' ? 'delay' : 'consent';
+-    if (openSnapshot.size > 0) {
++    if (exactStep !== undefined) {
++      // Enriched journal (tuxlink-xvd1i): the state_changed entry names the
++      // step itself — exact attribution, no heuristic. The intent entry is
++      // attached when the parked step has an open intent (a consent park);
++      // a bare delay control step has none.
++      const intentEntry = openSnapshot.get(exactStep);
++      const fields = intentEntry ? stepIntentFields(intentEntry.event) : null;
++      pushBar(
++        { kind, parkedState: state, stepId: exactStep, action: fields?.action ?? undefined, t0, t1: ts, intentEntry },
++        exactStep,
++      );
++    } else if (openSnapshot.size > 0) {
+       for (const [stepId, intentEntry] of openSnapshot) {
+         const fields = stepIntentFields(intentEntry.event);
+         pushBar(
+@@ -230,7 +229,7 @@ export function ganttModel(entries: JournalEntry[], now: number = Math.floor(Dat
+       }
+       case 'state_changed':
+         if (ev.state === 'waiting' || ev.state === 'awaiting_consent' || ev.state === 'awaiting_radio') {
+-          parked = { state: ev.state, ts: entry.ts_unix, openSnapshot: new Map(openByStep) };
++          parked = { state: ev.state, ts: entry.ts_unix, openSnapshot: new Map(openByStep), exactStep: ev.step };
+         } else if (parked) {
+           closeParked(entry.ts_unix);
+         }
+@@ -273,14 +272,18 @@ export function ganttModel(entries: JournalEntry[], now: number = Math.floor(Dat
+   return { lanes, t0, t1, live };
+ }
+ 
+-/** The rig a currently-parked `awaiting_radio` state pertains to. The
+- *  journal's `state_changed` entry carries no `rig` field (module doc) — this
+- *  reads the real `rig` param off the most recent `step_intent`, mirroring
+- *  the Rust side's own default (`actions/mod.rs`'s `rig_id_from_params`,
+- *  `DEFAULT_RIG_ID = "default"`). */
++/** The rig a currently-parked `awaiting_radio` state pertains to. An enriched
++ *  journal (tuxlink-xvd1i) names it on the `state_changed` entry itself —
++ *  that wins. Legacy journals carry no `rig` field there, so the pre-existing
++ *  fallback remains: the `rig` param off the most recent `step_intent`,
++ *  mirroring the Rust side's own default (`actions/mod.rs`'s
++ *  `rig_id_from_params`, `DEFAULT_RIG_ID = "default"`). */
+ export function radioAwaitRig(entries: JournalEntry[]): string {
+   for (let i = entries.length - 1; i >= 0; i--) {
+     const ev = entries[i]!.event;
++    if (ev.type === 'state_changed' && typeof ev.rig === 'string') {
++      return ev.rig;
++    }
+     if (ev.type === 'step_intent') {
+       const params = ev.resolved_params;
+       if (params && typeof params === 'object' && typeof (params as { rig?: unknown }).rig === 'string') {
+diff --git a/src/routines/routinesApi.ts b/src/routines/routinesApi.ts
+index 9058f25b..5e9fd7cb 100644
+--- a/src/routines/routinesApi.ts
++++ b/src/routines/routinesApi.ts
+@@ -158,7 +158,7 @@ export type StepError =
+ /** `RunEvent` (journal.rs:32-71) — `#[serde(tag = "type", rename_all = "snake_case")]`. */
+ export type RunEvent =
+   | { type: 'run_started'; routine: string; snapshot: unknown; dry_run: boolean }
+-  | { type: 'state_changed'; state: RunState }
++  | { type: 'state_changed'; state: RunState; step?: string; rig?: string }
+   | { type: 'step_intent'; step: string; action: string; resolved_params: unknown }
+   | { type: 'step_ok'; step: string; output: unknown }
+   | { type: 'step_err'; step: string; error: StepError }
