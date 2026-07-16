@@ -205,4 +205,27 @@ mod tests {
         assert_eq!(consent_host_window(DockMode::Docked), "main");
         assert_eq!(consent_host_window(DockMode::Popped), "pop-routines");
     }
+
+    /// Cross-language wire-shape parity (spec §10, the k61j composed-seam
+    /// class; adrev R5-F10/F11). Both this test and the TS-side
+    /// `dockParity.test.ts` assert against the SAME committed fixture —
+    /// `src/dock/dock-wire-fixture.json` — so a drift between the two
+    /// languages' understanding of the wire shape fails on whichever side
+    /// changed without the other. `Value` equality, NOT string comparison:
+    /// whitespace/key order must not matter.
+    #[test]
+    fn wire_fixture_parity() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../../src/dock/dock-wire-fixture.json"))
+                .expect("fixture must be valid JSON");
+        for key in ["routinesDocked", "routinesPopped"] {
+            let variant = fixture
+                .get(key)
+                .unwrap_or_else(|| panic!("fixture missing variant {key}"));
+            let snap: DockSnapshot = serde_json::from_value(variant.clone())
+                .unwrap_or_else(|e| panic!("{key} did not deserialize into DockSnapshot: {e}"));
+            let round_tripped = serde_json::to_value(&snap).expect("DockSnapshot must serialize");
+            assert_eq!(&round_tripped, variant, "{key} round-trip mismatch");
+        }
+    }
 }

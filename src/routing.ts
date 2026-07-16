@@ -13,6 +13,10 @@
 // calls it with `window.location.pathname` to decide which tree to mount;
 // `<Compose>` for a compose route, the wizard/shell otherwise.
 
+// bd tuxlink-dmwte: type-only import for parsePopRoute's return type below —
+// no runtime cycle with dockState (which does not import from routing.ts).
+import type { SurfaceId } from './dock/dockState';
+
 /**
  * If `pathname` is a compose route (`/compose/<draftId>`), return the decoded
  * `draftId`; otherwise return `null`.
@@ -67,4 +71,45 @@ export function parseLoggingRoute(pathname: string): boolean {
  */
 export function parseStationsRoute(pathname: string): boolean {
   return /^\/stations\/?$/.test(pathname);
+}
+
+// bd tuxlink-dmwte, spec §3 wire table: the three pop-out routes for the
+// dockable surfaces (Routines / Tac Map / APRS Chat). The map is literal
+// (never derived) because the route segment drops the surface id's
+// underscore irregularly: `tac_map` -> `/pop/tacmap`, `aprs_chat` ->
+// `/pop/aprschat`.
+const POP_ROUTE_SURFACE: Record<string, SurfaceId> = {
+  routines: 'routines',
+  tacmap: 'tac_map',
+  aprschat: 'aprs_chat',
+};
+
+/**
+ * If `pathname` is a pop-out route (`/pop/<slug>`), return the `SurfaceId`
+ * it maps to per spec §3's wire table. Trailing slash tolerated. The
+ * surface-id form itself (e.g. `/pop/tac_map`) is NOT a route and returns
+ * `null`, same as any other unrelated path.
+ */
+export function parsePopRoute(pathname: string): SurfaceId | null {
+  const m = pathname.match(/^\/pop\/([a-z]+)\/?$/);
+  if (!m) return null;
+  return POP_ROUTE_SURFACE[m[1]] ?? null;
+}
+
+/**
+ * True for any of the app's five secondary-window kinds (compose, help,
+ * logging, stations, pop-*). Composes the four existing parsers plus
+ * `parsePopRoute` — main-window-only side effects (first-paint emission
+ * suppression, wizard probing) guard on this so a restored pop window that
+ * loads before main can never run them from the wrong window (adrev
+ * Codex-9, spec §4).
+ */
+export function isSecondaryWindow(pathname: string): boolean {
+  return (
+    parseComposeRoute(pathname) !== null ||
+    parseHelpRoute(pathname) ||
+    parseLoggingRoute(pathname) ||
+    parseStationsRoute(pathname) ||
+    parsePopRoute(pathname) !== null
+  );
 }
