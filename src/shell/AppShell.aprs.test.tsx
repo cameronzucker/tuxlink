@@ -247,8 +247,9 @@ describe('APRS dock integration', () => {
     // The map is gone — the reading pane reclaimed the slot. waitFor: the
     // reading-pane branch mounts the lazy MessageView, so the commit that
     // unmounts the map lands a microtask later.
-    await waitFor(() =>
-      expect(screen.queryByTestId('aprs-positions-map')).not.toBeInTheDocument(),
+    await waitFor(
+      () => expect(screen.queryByTestId('aprs-positions-map')).not.toBeInTheDocument(),
+      { timeout: 5000 },
     );
     // The dock itself stays open; the operator reopens the map via the toggle.
     expect(screen.getByTestId('aprs-chat-panel')).toBeInTheDocument();

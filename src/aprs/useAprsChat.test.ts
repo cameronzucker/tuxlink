@@ -270,6 +270,106 @@ describe('useAprsChat (open channel)', () => {
       expect(result.current.messages.filter((x) => x.id === 'P7')).toHaveLength(1);
     });
 
+    // Cross-window duplicate rows for msgid-less messages (review loop-4 F1).
+    // An inbound message WITHOUT a msgid heard LIVE by a freshly-popped client
+    // window ALSO arrives in the host's snapshot under the HOST's local id.
+    // Deduping by `.id` alone can't collapse them (the two windows minted
+    // different local ids), so mergeSnapshot adds a content-identity fallback
+    // for msgid-less rows: same from/text/to/direction AND `at` within a small
+    // tolerance ⇒ one row (both windows stamp `at` with their own Date.now()
+    // when they heard the same broadcast, so the two stamps are close but not
+    // identical — tolerance, not exact match).
+    describe('msgid-less cross-window dedup (loop-4 F1)', () => {
+      it('collapses a live msgid-less row and its snapshot twin (different local ids) into ONE', async () => {
+        const { result } = renderHook(() => useAprsChat({ snapshotRole: 'client' }));
+        await waitFor(() => expect(handlers['aprs-chat:snapshot']).toBeDefined());
+        // Heard LIVE by this client window (mints a per-window local id, at=now).
+        act(() => {
+          handlers['aprs-message:new']?.({
+            payload: { sender: 'KE7ABC', addressee: '', text: 'net check-in', msgid: null },
+          });
+        });
+        const liveAt = result.current.messages[0].at;
+        // The SAME frame, as the host heard it: no msgid, host's own local id,
+        // `at` a hair off the client's stamp (same broadcast, two windows).
+        act(() =>
+          handlers['aprs-chat:snapshot']({
+            payload: [
+              {
+                id: 'host-local-42',
+                direction: 'in',
+                from: 'KE7ABC',
+                to: null,
+                text: 'net check-in',
+                kind: 'message',
+                msgid: null,
+                at: liveAt + 40,
+              },
+            ],
+          }),
+        );
+        expect(result.current.messages).toHaveLength(1);
+      });
+
+      it('keeps two genuinely-distinct msgid-less messages (same text, at beyond tolerance) as TWO rows', async () => {
+        const { result } = renderHook(() => useAprsChat({ snapshotRole: 'client' }));
+        await waitFor(() => expect(handlers['aprs-chat:snapshot']).toBeDefined());
+        act(() => {
+          handlers['aprs-message:new']?.({
+            payload: { sender: 'KE7ABC', addressee: '', text: 'CQ', msgid: null },
+          });
+        });
+        const liveAt = result.current.messages[0].at;
+        // Same text, but heard 60 s earlier (well past the dedup tolerance) — a
+        // real repeat of an unacked frame, not the same frame double-counted.
+        act(() =>
+          handlers['aprs-chat:snapshot']({
+            payload: [
+              {
+                id: 'host-local-7',
+                direction: 'in',
+                from: 'KE7ABC',
+                to: null,
+                text: 'CQ',
+                kind: 'message',
+                msgid: null,
+                at: liveAt - 60_000,
+              },
+            ],
+          }),
+        );
+        expect(result.current.messages).toHaveLength(2);
+      });
+
+      it('keeps two msgid-less messages with same text but different senders as TWO rows', async () => {
+        const { result } = renderHook(() => useAprsChat({ snapshotRole: 'client' }));
+        await waitFor(() => expect(handlers['aprs-chat:snapshot']).toBeDefined());
+        act(() => {
+          handlers['aprs-message:new']?.({
+            payload: { sender: 'KE7ABC', addressee: '', text: 'roger', msgid: null },
+          });
+        });
+        const liveAt = result.current.messages[0].at;
+        act(() =>
+          handlers['aprs-chat:snapshot']({
+            payload: [
+              {
+                id: 'host-local-9',
+                direction: 'in',
+                from: 'W7RPT-9',
+                to: null,
+                text: 'roger',
+                kind: 'message',
+                msgid: null,
+                at: liveAt + 10,
+              },
+            ],
+          }),
+        );
+        expect(result.current.messages).toHaveLength(2);
+      });
+    });
+
     describe('retry amendment (250ms cadence / 3s give-up)', () => {
       beforeEach(() => { vi.useFakeTimers(); });
       afterEach(() => { vi.useRealTimers(); });

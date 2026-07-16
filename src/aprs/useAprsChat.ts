@@ -105,23 +105,79 @@ function stateRank(state: DeliveryState | undefined): number {
   return 2;
 }
 
+/// Tolerance for the msgid-less content-identity dedup below. `at` is stamped
+/// per-window with `Date.now()` at the moment each window HEARS the frame (see
+/// the `aprs-message:new` handler), NOT a shared backend clock — so the same
+/// broadcast delivered to two windows yields two close-but-not-identical stamps.
+/// 2 s comfortably covers realistic inter-window event-dispatch skew while
+/// staying well under the interval at which a station would retransmit an
+/// identical unacked frame (seconds-to-minutes), so genuine repeats stay
+/// distinct.
+const MSGIDLESS_DEDUP_AT_TOLERANCE_MS = 2000;
+
+/// Content identity for a msgid-less row: same sender, addressee, text, and
+/// direction. `at` is compared separately (with tolerance) because two windows
+/// stamp their own receive clock. Excludes `at` and the per-window `id`.
+function msgidlessContentKey(m: ChannelMessage): string {
+  return JSON.stringify([m.from, m.to, m.text, m.direction]);
+}
+
 /// Merge a host snapshot into the client's feed, deduping on `id` and keeping
 /// the more-progressed delivery state per id. Returns the same reference when
 /// nothing changed. The merged feed is re-sorted by `at` so a snapshot's older
 /// messages interleave correctly with any live events heard before it landed.
+///
+/// msgid-less content fallback (review loop-4 F1): an inbound message with NO
+/// msgid heard LIVE by a freshly-popped client ALSO arrives in the host's
+/// snapshot under the HOST's local id — deduping by `.id` alone can't collapse
+/// them (each window minted its own `local-N`). For a snapshot row whose `msgid`
+/// is absent, if an existing msgid-less row matches on content AND `at` is
+/// within tolerance, it's the same frame heard twice → keep the one row (React
+/// key stability) rather than mint a duplicate. Live listeners are untouched;
+/// this fires only on snapshot merge. Rows carrying a `msgid` keep the
+/// exact-`id` path (outbound + acked APRS text already dedupe cleanly by id).
 function mergeSnapshot(prev: ChannelMessage[], incoming: ChannelMessage[]): ChannelMessage[] {
   if (incoming.length === 0) return prev;
   const byId = new Map(prev.map((m) => [m.id, m]));
+  // Content index of the EXISTING msgid-less rows only — a snapshot row falls
+  // back to this when its `id` finds no match. Built from `prev` (not rows added
+  // mid-merge) so two genuinely-distinct snapshot rows can't collapse together.
+  const msgidlessByContent = new Map<string, ChannelMessage[]>();
+  for (const m of prev) {
+    if (m.msgid == null) {
+      const key = msgidlessContentKey(m);
+      const bucket = msgidlessByContent.get(key);
+      if (bucket === undefined) msgidlessByContent.set(key, [m]);
+      else bucket.push(m);
+    }
+  }
   let changed = false;
   for (const s of incoming) {
     const existing = byId.get(s.id);
-    if (existing === undefined) {
-      byId.set(s.id, s);
-      changed = true;
-    } else if (stateRank(s.state) > stateRank(existing.state)) {
-      byId.set(s.id, s);
-      changed = true;
+    if (existing !== undefined) {
+      if (stateRank(s.state) > stateRank(existing.state)) {
+        byId.set(s.id, s);
+        changed = true;
+      }
+      continue;
     }
+    if (s.msgid == null) {
+      const twin = msgidlessByContent
+        .get(msgidlessContentKey(s))
+        ?.find((c) => Math.abs(c.at - s.at) <= MSGIDLESS_DEDUP_AT_TOLERANCE_MS);
+      if (twin !== undefined) {
+        // Same frame, two windows. Keep the existing row's local id (React key
+        // stability); apply the newer-stateRank rule as for id-matched rows
+        // (inbound rows are rank 0, so this is a no-op today but stays uniform).
+        if (stateRank(s.state) > stateRank(twin.state)) {
+          byId.set(twin.id, { ...s, id: twin.id });
+          changed = true;
+        }
+        continue;
+      }
+    }
+    byId.set(s.id, s);
+    changed = true;
   }
   if (!changed) return prev;
   return [...byId.values()].sort((a, b) => a.at - b.at);
