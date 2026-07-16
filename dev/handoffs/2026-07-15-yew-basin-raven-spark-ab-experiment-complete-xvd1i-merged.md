@@ -87,3 +87,37 @@ and remains the dedicated-session track; local branches
 bd-tuxlink-7raoe/arm-{f,g}-* and bd-tuxlink-c5ckf/arm-* remain local-only.
 Operator authorization recorded: the Spark is agent-operable (memory:
 project_spark_agent_operable).
+
+## Final addendum (2026-07-16, session close)
+
+- **PRs:** #1121 (vehicle) and #1122 (experiment bundle + milestone-0 addendum)
+  are MERGED. **#1123 (prose companion report, docs-only) is OPEN** — merge it
+  first thing. Its branch `bd-tuxlink-7raoe/prose-report` +
+  worktree `worktrees/bd-tuxlink-7raoe-prose-report` dispose after merge.
+- **Distribution artifacts delivered to the operator:** a Teams-channel prose
+  post (in-session) and `report-prose.md` (PR #1123) — named-models narrative
+  incl. the tiered-subagent and overnight-run operational model.
+- **CI note:** `tuxlink-8vt7b` — flaky `packet_answer_p2p_intent_records_
+  incoming_accepted_observation` (winlink_backend), ~2/3 failure rate on
+  amd64 tonight, evidence chain in the issue. Main's red runs are this flake
+  + the known jt9-arm64 provisioning flake, NOT real breaks.
+- **SECOND-SPARK ANALYSIS + RETRACTION (read both notes in `tuxlink-7raoe`):**
+  the "122B at the quality knee / 397B zero gain" inference was retracted as
+  a ceiling-effect overreach after operator pushback (Elmer testing shows
+  real 397B-vs-122B disparity on open-ended work). Standing conclusions:
+  single Spark clears the practicality bar; 2nd unit = throughput case
+  proven, capability case plausible-pending-ladder.
+- **NEXT SESSION MANDATE (operator-directed): the graduated difficulty
+  LADDER, run overnight** — milestone 1 of `tuxlink-7raoe`. Design rungs
+  that EXPRESS what rich briefs suppress (underspecified briefs, discovery,
+  recovery from wrong assumptions) — upper rungs are where Elmer's
+  397B/122B disparity should appear. Reuse: the frozen c5ckf brief style for
+  lower rungs, the R2 guidance regime, the runner script pattern
+  (per-invocation codex -c overrides; NEVER edit ~/.codex/config.toml), the
+  30-min cap, orchestrator verification of every claim, per-model integrity
+  screening. The Spark is agent-operable incl. sudo docker (memory:
+  project_spark_agent_operable); the 122B-NVFP4 serving recipe (4 shims:
+  developer-role + non-leading-system template patches, enable_thinking
+  false, R2) is in report.md §Addendum; RESTORE coder-next after any swap.
+  Real-backlog vehicles preferred (ladder rungs from `bd ready`, e.g.
+  tuxlink-10dh5 per-step parked windows as a mid rung).
