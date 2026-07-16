@@ -11,9 +11,10 @@ never automatic.
 
 - **↗ Pop out.** A text-labeled control in the surface's own header (the
   Routines dashboard, the Tac Map toggle, the APRS Chat panel) moves that
-  surface to a new window. The main window's menu item for a popped surface
-  relabels to show the ↗ marker (for example, "Routines ↗") and clicking it
-  focuses the popped window instead of reopening the pane inline.
+  surface to a new window. The main window's control for a popped surface
+  relabels to show the ↗ marker (for example, "Routines ↗" in the menu, or the
+  Tac Map toggle and APRS tab each marked accordingly) and clicking it focuses
+  the popped window instead of reopening the pane inline.
 - **⇤ Dock back.** The popped window's title bar carries a ⇤ control that
   returns the surface to the main window and brings it to the front there —
   the inline pane you land on is exactly where you left off.

@@ -13,7 +13,7 @@ close-intent + crash-signal core, config schema v8 persistence, and the three
 wired consumers — Routines, Tac Map, APRS Chat — each with a text-labeled ↗
 Pop out entry point and a popped-window ⇤ dock-back / ✕ availability-only
 close (spec §5 AMD-2: ✕ never commandeers the reading pane or an active dock
-tab on return). Four review loops (12 rounds total) across the task sequence
+tab on return). Four review loops (14 rounds total) across the task sequence
 caught, among others: a CRITICAL unreachable APRS Chat pop-out entry point
 (loop 4 r3 — the feature's second surface had no way in), a popped-chat
 HintProvider crash that blanked the WebKitGTK window on pop (task 11 smoke,
