@@ -116,12 +116,24 @@
 
 .ops-wrap {
   flex: 1;
-  overflow: hidden auto;
+  /* Horizontal scroll added for the pop-out surface (tuxlink-dmwte task 11):
+     the dashboard now renders in a Routines pop window whose 420px floor is far
+     below the six fixed columns' needs. Without a horizontal axis the
+     `table-layout: fixed` columns collapse and their headers/cells OVERLAP
+     ("LAST RESULT"/"NEXT FIRE"/"TX MODE" ran together) on real WebKitGTK. With
+     the table's `min-width` below, narrow widths scroll cleanly instead. The
+     docked mailbox pane is always wider than that floor, so it never scrolls —
+     `width: 100%` wins there and this is invisible. */
+  overflow: auto;
   min-height: 0;
 }
 
 table.ops {
   width: 100%;
+  /* Keep the six columns legible down to the pop window's 420px floor: below
+     this the container scrolls (see `.ops-wrap`) rather than crushing columns
+     into overlap. Above it, `width: 100%` governs and there is no scroll. */
+  min-width: 680px;
   table-layout: fixed;
   border-collapse: collapse;
   font-size: 12.5px;

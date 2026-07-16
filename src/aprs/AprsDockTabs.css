@@ -6,10 +6,19 @@
    mutually-exclusive chat⇄modem tabs. */
 .aprs-dock-tabs {
   display: flex;
+  flex-wrap: wrap;
   align-items: stretch;
   background: var(--bg, #0b1015);
   border-bottom: 1px solid var(--border, #2a3140);
 }
+/* Graceful crowding (tuxlink-dmwte task 11): the vacated Tac Map state swaps the
+   compact [⊞ Map][↗ Pop out] pair for the wider [Tac Map ↗ — in window][⇤ dock
+   back] pathway, which — with the tab group + close — overflows the dock's ~400px
+   floor and pushed the Modem tab and × close off the right edge. `flex-wrap`
+   drops whole controls (never a broken label; siblings are `nowrap`) to a second
+   row only when the single row can't hold them, so every control stays reachable
+   at the narrow width. No effect when the row already fits (the docked state, and
+   any wider dock). */
 
 .aprs-dock-tabgroup {
   display: flex;
@@ -187,6 +196,16 @@
   border: none;
   border-right: 1px solid var(--border, #2a3140);
   color: var(--modem-accent, #4ade80);
+  /* Same one-line guarantee as `.aprs-dock-map-popout` above (tuxlink-dmwte
+     task 11): `.aprs-dock-tabs` is a NON-wrapping flex row with
+     `align-items: stretch`, so without `nowrap` the longer "Tac Map ↗ — in
+     window" label wraps to two/three lines and, via stretch, inflates the
+     entire dock header's height — the WebKitGTK flex-crush the docked pop-out
+     control was already hardened against but this vacated-state pathway was
+     missed (spec §10 R5-F18). Keep glyph + label on one line. */
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
 }
 .aprs-dock-map-focus:hover,
 .aprs-dock-map-dockback:hover {

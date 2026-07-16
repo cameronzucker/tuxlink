@@ -2,6 +2,7 @@ import { useEffect, useState, lazy, Suspense, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import { AppShell } from './shell/AppShell';
+import { HintProvider } from './onboarding/HintProvider';
 import { ErrorBoundary } from './ErrorBoundary';
 import {
   parseComposeRoute,
@@ -144,9 +145,22 @@ export default function App() {
     // Popped-surface webview: render <PoppedSurfaceHost> for /pop/<surface>
     // (bd tuxlink-dmwte, spec §3/§4). Same lazy + Suspense pattern. Task 7
     // replaces the placeholder body.
+    //
+    // HintProvider wraps the surface for the same reason QueryClientProvider
+    // wraps the whole tree (see the block comment above the branch switch): a
+    // popped surface renders shared components that call `useFirstOpenTip()` —
+    // AprsChatPanel's first-open tip is the concrete case — and `useHints()`
+    // THROWS with no provider, blanking the pop window (caught here by the
+    // WebKitGTK render smoke, tuxlink-dmwte task 11). The main window gets its
+    // HintProvider from AppShell; a popped window has no AppShell, so it must
+    // provide the ambient onboarding context the surface expects. By the time a
+    // surface is poppable the tour is long complete (config `tour_completed`),
+    // so no offer card appears here.
     content = (
       <Suspense fallback={<div data-testid="app-loading" />}>
-        <PoppedSurfaceHost surface={popSurface} />
+        <HintProvider>
+          <PoppedSurfaceHost surface={popSurface} />
+        </HintProvider>
       </Suspense>
     );
   } else if (wizardCompleted === null) {
