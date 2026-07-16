@@ -5,6 +5,30 @@ shipped, bug-hunt cycles, adversarial reviews). Keyed by date + topic.
 
 ---
 
+## 2026-07-16 — Dockable surfaces shipped: Routines/Tac Map/APRS Chat pop out to their own windows (tuxlink-dmwte, plan 6/6)
+
+Agent poplar-mink-chasm. 12-task subagent-driven build off the dockable-surfaces
+design spec (mechanism layer under Routines §12): the generic `DockRegistry` +
+close-intent + crash-signal core, config schema v8 persistence, and the three
+wired consumers — Routines, Tac Map, APRS Chat — each with a text-labeled ↗
+Pop out entry point and a popped-window ⇤ dock-back / ✕ availability-only
+close (spec §5 AMD-2: ✕ never commandeers the reading pane or an active dock
+tab on return). Four review loops (12 rounds total) across the task sequence
+caught, among others: a CRITICAL unreachable APRS Chat pop-out entry point
+(loop 4 r3 — the feature's second surface had no way in), a popped-chat
+HintProvider crash that blanked the WebKitGTK window on pop (task 11 smoke,
+now unit-regression-guarded), a close-intent race where re-popping inside the
+1.5s dock-back timeout could destroy the fresh window (loop 2, fixed with a
+per-surface pop-generation guard), and an `aprs_status` backend-truth gap
+where the popped Tac Map/Chat strips read no live transport state (loop 4 r2,
+fixed by making transport kind queryable off real backend state instead of a
+window-local guess). Task 11 added pop-window + vacated-slot WebKitGTK render
+fixtures; task 12 (this entry) adds the tracked `dev/measure-webview-marginal-memory.py`
+harness (PSS via `/proc/<pid>/smaps_rollup`, self-tested pure parsers) and a
+user-guide "Pop-out windows" page stating the ~30 MiB-class marginal cost per
+extra window without defensiveness, pending an operator re-measurement on the
+converged build per spec §10.
+
 ## 2026-07-14 — Routines plans 2+4 merged (#1115, #1117); efcc8 security fix; plan-5 UI plan drafted
 
 Agent crag-lupine-lichen. Plan 2 unblocked by fixing its own flaky quit-gate
