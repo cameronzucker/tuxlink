@@ -110,6 +110,75 @@ describe('useAprsConnectSequence', () => {
     expect(mockInvoke).toHaveBeenCalledWith('aprs_listen_start');
   });
 
+  // -- tuxlink-dmwte: disconnect keys off backend truth, not just the local ref --
+  //
+  // A popped/remounted connect strip mounts a FRESH useAprsConnectSequence whose
+  // activeTransport ref is null (it never saw the connect). Disconnect must query
+  // aprs_status at click time and tear down the transport the BACKEND names.
+
+  it('(a) a remounted instance (null ref) tears down the UV-Pro transport the backend names', async () => {
+    const setLink = vi.fn(async () => {});
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'aprs_status') {
+        return Promise.resolve({ listening: true, transport: 'UvproNative' });
+      }
+      return Promise.resolve(undefined);
+    });
+    // This instance NEVER connected — exactly a popped-out chat surface remounted
+    // after the connect happened in another window. Its ref is null.
+    const { result } = renderHook(() => useAprsConnectSequence('Tcp', setLink));
+    await act(async () => {
+      await result.current.disconnect();
+    });
+    expect(mockInvoke).toHaveBeenCalledWith('aprs_status');
+    // Backend truth (UvproNative) drives the session teardown, not the null ref.
+    expect(mockInvoke).toHaveBeenCalledWith('uvpro_disconnect');
+  });
+
+  it('(b) a remounted instance does only listen-stop when the backend reports no UV-Pro transport', async () => {
+    const setLink = vi.fn(async () => {});
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'aprs_status') {
+        return Promise.resolve({ listening: false, transport: null });
+      }
+      return Promise.resolve(undefined);
+    });
+    // Picker reads UvproNative, but the backend is authoritative: transport null ⇒
+    // no UV-Pro session to tear down, only the listen-stop path runs.
+    const { result } = renderHook(() => useAprsConnectSequence('UvproNative', setLink));
+    await act(async () => {
+      await result.current.disconnect();
+    });
+    expect(mockInvoke).toHaveBeenCalledWith('aprs_listen_stop');
+    expect(mockInvoke).not.toHaveBeenCalledWith('uvpro_disconnect');
+  });
+
+  it('(c) falls back to the local ref when the aprs_status query rejects', async () => {
+    const setLink = vi.fn(async () => {});
+    let failStatus = false;
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'aprs_status') {
+        return failStatus
+          ? Promise.reject(new Error('backend offline'))
+          : Promise.resolve({ listening: false, transport: null });
+      }
+      return Promise.resolve(undefined);
+    });
+    // Connect on UV-Pro so the local ref records UvproNative, THEN fail the query.
+    const { result } = renderHook(() => useAprsConnectSequence('UvproNative', setLink));
+    await act(async () => {
+      await result.current.connect();
+    });
+    failStatus = true;
+    mockInvoke.mockClear();
+    await act(async () => {
+      await result.current.disconnect();
+    });
+    // The query was attempted, rejected, and the local ref (UvproNative) drove teardown.
+    expect(mockInvoke).toHaveBeenCalledWith('aprs_status');
+    expect(mockInvoke).toHaveBeenCalledWith('uvpro_disconnect');
+  });
+
   it('drives the connecting flag true while in flight and false when settled', async () => {
     const setLink = vi.fn(async () => {});
     const { result } = renderHook(() => useAprsConnectSequence('Tcp', setLink));

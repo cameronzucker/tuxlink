@@ -3201,6 +3201,7 @@ pub fn run() {
             crate::ui_commands::aprs_config_set,      // tuxlink-2f2n (APRS config write)
             crate::ui_commands::aprs_listen_start,    // tuxlink-2f2n (start APRS engine)
             crate::ui_commands::aprs_listen_stop,     // tuxlink-2f2n (stop APRS engine)
+            crate::ui_commands::aprs_status,          // tuxlink-dmwte (live transport truth for remounted strips)
             crate::ui_commands::aprs_send,            // tuxlink-2f2n (queue APRS message)
             crate::ui_commands::aprs_abort,           // tuxlink-2f2n (abort in-flight APRS TX)
             crate::identity::commands::identity_list,        // tuxlink-7iy2 (Phase 2 identity CRUD)

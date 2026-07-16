@@ -4326,6 +4326,41 @@ pub async fn aprs_listen_stop(
     Ok(())
 }
 
+/// Snapshot of the APRS engine's live connection, queryable from ANY window.
+/// `listening` mirrors the `aprs-listening:change` bool (whose payload is frozen
+/// for compat); `transport` is the `KissLinkConfig::wire_kind()` token of the
+/// transport the live listener came up on (`"Tcp"` / `"Serial"` / `"Bluetooth"` /
+/// `"UvproNative"`) or `null` when idle. camelCase on the wire to match the TS
+/// `PacketLinkKind` vocabulary the frontend teardown-keys off.
+///
+/// tuxlink-dmwte: the connect strip's `useAprsConnectSequence` records the live
+/// transport in a per-hook-instance ref; a popped/remounted strip has a fresh
+/// (null) ref and would skip transport-specific teardown. This command is the
+/// backend truth it queries at disconnect time instead.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AprsStatusDto {
+    /// True while the APRS engine is listening. Same truth as the frozen
+    /// `aprs-listening:change` event payload.
+    pub listening: bool,
+    /// Wire-kind token of the live transport, or `None`/`null` when idle.
+    pub transport: Option<String>,
+}
+
+/// Report the APRS engine's live connection so any window (notably a popped-out
+/// chat surface with a fresh `useAprsConnectSequence` ref) can tear down the
+/// CORRECT transport at disconnect time (tuxlink-dmwte). Callable from any window
+/// — like the other `aprs_*` commands it carries no caller/capability gate.
+#[tauri::command]
+pub async fn aprs_status(
+    aprs: State<'_, crate::winlink::aprs::engine::AprsState>,
+) -> Result<AprsStatusDto, UiError> {
+    Ok(AprsStatusDto {
+        listening: aprs.is_listening(),
+        transport: aprs.transport(),
+    })
+}
+
 /// Queue an APRS text message to `call`. Returns the minted msgid so the frontend
 /// can render + reconcile the outgoing bubble against later ack/timeout events.
 #[tauri::command]

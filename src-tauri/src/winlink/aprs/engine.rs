@@ -773,6 +773,14 @@ struct AprsHandle {
 pub struct AprsState {
     inner: std::sync::Mutex<Option<AprsHandle>>,
     listening: Arc<AtomicBool>,
+    /// The wire-kind token of the transport the LIVE listener came up on
+    /// (`KissLinkConfig::wire_kind()`: `"Tcp"` / `"Serial"` / `"Bluetooth"` /
+    /// `"UvproNative"`), or `None` when not listening. This is the backend truth
+    /// the disconnect path keys teardown off — a popped/remounted connect strip
+    /// no longer has the ref that recorded the connect, so it asks `aprs_status`
+    /// which transport is live instead of leaking the session (tuxlink-dmwte).
+    /// Set on a successful `start`/`start_native`, cleared on `stop`.
+    transport: std::sync::Mutex<Option<String>>,
     counter: AtomicU64,
     in_flight: Arc<AtomicUsize>,
 }
@@ -780,6 +788,25 @@ pub struct AprsState {
 impl AprsState {
     pub fn is_listening(&self) -> bool {
         self.listening.load(Ordering::SeqCst)
+    }
+
+    /// Record the transport the live listener came up on (its
+    /// `KissLinkConfig::wire_kind()` token). Called by `start`/`start_native` on a
+    /// successful connect; the value is what `aprs_status` reports to the frontend.
+    pub fn set_transport(&self, wire_kind: impl Into<String>) {
+        *self.transport.lock().unwrap() = Some(wire_kind.into());
+    }
+
+    /// Forget the live transport (listener torn down). Called by `stop`.
+    pub fn clear_transport(&self) {
+        *self.transport.lock().unwrap() = None;
+    }
+
+    /// The wire-kind token of the currently-live transport, or `None` when not
+    /// listening. The authoritative answer to "what did we connect on?" for a
+    /// connect strip that lost its local ref to a pop-out/remount (tuxlink-dmwte).
+    pub fn transport(&self) -> Option<String> {
+        self.transport.lock().unwrap().clone()
     }
 
     /// Open the link, build the engine + sink, spawn the blocking driver, store the handle.
@@ -811,6 +838,9 @@ impl AprsState {
         let abort_for_task = abort.clone();
         tokio::task::spawn_blocking(move || run(link, engine, cmd_rx, listening, abort_for_task));
         *self.inner.lock().unwrap() = Some(AprsHandle { cmd_tx, abort });
+        // Record the live transport in the frontend's vocabulary so a remounted
+        // connect strip can query it for teardown (tuxlink-dmwte).
+        self.set_transport(cfg.wire_kind());
         Ok(())
     }
 
@@ -858,6 +888,11 @@ impl AprsState {
             )
         });
         *self.inner.lock().unwrap() = Some(AprsHandle { cmd_tx, abort });
+        // The native path is always the UV-Pro GAIA transport; record it in the
+        // frontend's `PacketLinkKind` vocabulary (matches
+        // `KissLinkConfig::UvproNative.wire_kind()`) so a remounted connect strip
+        // knows to tear the session down via `uvpro_disconnect` (tuxlink-dmwte).
+        self.set_transport("UvproNative");
         Ok(())
     }
 
@@ -865,6 +900,9 @@ impl AprsState {
         if let Some(h) = self.inner.lock().unwrap().take() {
             h.abort.store(true, Ordering::SeqCst);
         }
+        // Forget the live transport regardless of whether a handle was present, so
+        // `aprs_status` reports `transport: None` once torn down (tuxlink-dmwte).
+        self.clear_transport();
     }
 
     /// Send an APRS message. `dest = Some(callsign)` is a **directed** message
@@ -1455,6 +1493,62 @@ mod tests {
     fn aprs_state_starts_not_listening() {
         let st = AprsState::default();
         assert!(!st.is_listening());
+    }
+
+    #[test]
+    fn aprs_state_starts_with_no_transport() {
+        let st = AprsState::default();
+        assert_eq!(st.transport(), None);
+    }
+
+    #[test]
+    fn set_transport_records_the_wire_kind() {
+        let st = AprsState::default();
+        st.set_transport("UvproNative");
+        assert_eq!(st.transport().as_deref(), Some("UvproNative"));
+        // A later connect on a different transport overwrites, not appends.
+        st.set_transport("Tcp");
+        assert_eq!(st.transport().as_deref(), Some("Tcp"));
+    }
+
+    #[test]
+    fn clear_transport_forgets_the_live_transport() {
+        let st = AprsState::default();
+        st.set_transport("Bluetooth");
+        assert_eq!(st.transport().as_deref(), Some("Bluetooth"));
+        st.clear_transport();
+        assert_eq!(st.transport(), None);
+    }
+
+    #[test]
+    fn stop_clears_the_transport() {
+        // `stop` is the disconnect path: it must forget the live transport even
+        // when no driver handle was ever stored (tuxlink-dmwte).
+        let st = AprsState::default();
+        st.set_transport("UvproNative");
+        st.stop();
+        assert_eq!(st.transport(), None);
+    }
+
+    #[test]
+    fn kiss_link_wire_kind_matches_frontend_packet_link_kind() {
+        use crate::winlink::ax25::link::KissLinkConfig;
+        assert_eq!(
+            KissLinkConfig::Tcp { host: "127.0.0.1".into(), port: 8001 }.wire_kind(),
+            "Tcp"
+        );
+        assert_eq!(
+            KissLinkConfig::Serial { device: "/dev/ttyUSB0".into(), baud: 9600 }.wire_kind(),
+            "Serial"
+        );
+        assert_eq!(
+            KissLinkConfig::Bluetooth { mac: "38:D2:00:01:55:5C".into() }.wire_kind(),
+            "Bluetooth"
+        );
+        assert_eq!(
+            KissLinkConfig::UvproNative { mac: "38:D2:00:01:55:5C".into() }.wire_kind(),
+            "UvproNative"
+        );
     }
 
     // -- Position RX (tuxlink-6vgt) -----------------------------------------

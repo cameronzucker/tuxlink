@@ -93,12 +93,31 @@ export function useAprsConnectSequence(
   }, [onConnect]);
 
   const disconnect = useCallback(async () => {
-    const active = activeTransport.current;
+    // Ask the BACKEND which transport is actually live, AT CLICK TIME. The local
+    // ref only knows about connects THIS hook instance performed — a popped-out or
+    // remounted connect strip (AprsChatSurface) mounts a fresh instance whose ref
+    // is null, so keying teardown off the ref alone would skip the UV-Pro session
+    // cleanup and leak the live session (tuxlink-dmwte). aprs_status is the truth;
+    // fall back to the local ref only if the query fails.
+    let active: PacketLinkKind | null;
+    try {
+      const status = await invoke<{ listening: boolean; transport: PacketLinkKind | null }>(
+        'aprs_status',
+      );
+      active = status.transport;
+    } catch (err) {
+      // Backend unreachable — degrade to the optimistic local ref (correct for the
+      // window that performed the connect; null for a remount, which then does the
+      // plain listen-stop path). Match the file's console.error logging style.
+      console.error('aprs_status query failed; falling back to local transport ref', err);
+      active = activeTransport.current;
+    }
     try {
       await invoke('aprs_listen_stop');
     } finally {
       // Clean up the UV-Pro session even if stopping the engine threw — keyed to
-      // the transport that was actually live, not the (possibly edited) picker.
+      // the transport the BACKEND named (authoritative), not the (possibly edited)
+      // picker and not this instance's ref.
       if (active === 'UvproNative') {
         await invoke('uvpro_disconnect').catch(() => undefined);
       }
