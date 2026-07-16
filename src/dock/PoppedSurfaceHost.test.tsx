@@ -311,16 +311,23 @@ describe('PoppedSurfaceHost — strips + consent (behaviors 5 + 6)', () => {
     expect(screen.queryByTestId('consent-gate-stub')).not.toBeInTheDocument();
   });
 
-  it('passes the dock_state_get context through to the surface component', async () => {
+  it('unwraps the token envelope and passes its state half to the surface component', async () => {
+    // tuxlink-dmwte task 8 (seam note 1): the registry stores the full envelope
+    // `{ foreground, state }`; the host UNWRAPS `.state` so the component gets
+    // the bare token state (matching SurfaceComponentProps.context).
     invokeMock.mockImplementation((cmd?: string) =>
       cmd === 'dock_state_get'
         ? Promise.resolve({
             surfaces: { routines: 'popped', tac_map: 'docked', aprs_chat: 'docked' },
-            context: { routines: { view: 'dashboard' }, tac_map: null, aprs_chat: null },
+            context: {
+              routines: { foreground: true, state: { view: { view: 'dashboard' } } },
+              tac_map: null,
+              aprs_chat: null,
+            },
           })
         : Promise.resolve());
     renderHost(<PoppedSurfaceHost surface="routines" />);
     await waitFor(() => expect(screen.getByTestId('surface-routines')).toBeInTheDocument());
-    expect(lastComponentContext).toEqual({ view: 'dashboard' });
+    expect(lastComponentContext).toEqual({ view: { view: 'dashboard' } });
   });
 });

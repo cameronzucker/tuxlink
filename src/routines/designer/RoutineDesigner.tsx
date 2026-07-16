@@ -46,7 +46,7 @@
  * No fs-write plugin exists yet, so copy — not file-write — is the honest v1
  * (the storage format IS the export format, spec §14).
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   getRoutine,
   saveRoutine,
@@ -84,6 +84,20 @@ export interface RoutineDesignerProps {
   tab: DesignerTab;
   onBack: () => void;
   onTabChange: (tab: DesignerTab) => void;
+  /** Seed the designer from a continuity token's in-progress draft
+   *  (tuxlink-dmwte task 8, spec §7). When present the designer mounts on this
+   *  exact draft and SKIPS its `getRoutine` fetch — so popping from / docking
+   *  back to the designer preserves the operator's unsaved canvas edits. */
+  initialDraft?: RoutineDef;
+  /** Reports the live draft upward on every change so a host (the popped
+   *  window's registry Component, or AppShell inline) can collect it into the
+   *  continuity token at pop-out / dock-back time (tuxlink-dmwte task 8). */
+  onDraftChange?: (draft: RoutineDef) => void;
+  /** When provided, the designer header shows a text-labeled "↗ Pop out"
+   *  affordance (spec §5) that pops the Routines surface to its own window
+   *  carrying THIS designer view + draft. Absent inside the popped window
+   *  itself (there is nothing to pop out to). */
+  onPopOut?: () => void;
 }
 
 /** Debounce window for the always-on validation bar (spec §12 flow 2). */
@@ -201,14 +215,26 @@ function ExportJsonDialog({ draft, onClose }: { draft: RoutineDef; onClose: () =
   );
 }
 
-export function RoutineDesigner({ routine, tab, onBack, onTabChange }: RoutineDesignerProps) {
+export function RoutineDesigner({
+  routine,
+  tab,
+  onBack,
+  onTabChange,
+  initialDraft,
+  onDraftChange,
+  onPopOut,
+}: RoutineDesignerProps) {
   // Fixed at mount: whether this designer opened on a brand-new, unsaved
   // draft (empty `routine`) — the name field stays editable for the whole
   // session even after the operator types a name, since the routine isn't
   // considered "loaded from the backend" until a real Save happens.
   const [isNewDraft] = useState(() => routine === '');
 
-  const [draft, setDraft] = useState<RoutineDef | null>(null);
+  // A continuity-token draft (spec §7) seeds the designer at mount and SUPPRESSES
+  // the `getRoutine` fetch below — captured at mount so a later prop-identity
+  // change (there is none per current navigation) can't re-trigger a fetch.
+  const [seededFromToken] = useState(() => initialDraft != null);
+  const [draft, setDraft] = useState<RoutineDef | null>(() => initialDraft ?? null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [findings, setFindings] = useState<Finding[]>([]);
@@ -264,8 +290,20 @@ export function RoutineDesigner({ routine, tab, onBack, onTabChange }: RoutineDe
     );
   }, []);
 
-  // Load the def once, per `routine`.
+  // Report the live draft upward for continuity-token collection (spec §7):
+  // the host reads the LATEST reported draft at pop-out / dock-back time. Kept
+  // in a ref so a changing `onDraftChange` identity doesn't re-fire the effect.
+  const onDraftChangeRef = useRef(onDraftChange);
+  onDraftChangeRef.current = onDraftChange;
   useEffect(() => {
+    if (draft) onDraftChangeRef.current?.(draft);
+  }, [draft]);
+
+  // Load the def once, per `routine`. A token-seeded designer already has its
+  // draft (set at mount) and must NOT fetch — that would clobber the operator's
+  // in-progress edits with the last-saved def.
+  useEffect(() => {
+    if (seededFromToken) return;
     let cancelled = false;
     if (routine === '') {
       setDraft(createDraft());
@@ -285,7 +323,7 @@ export function RoutineDesigner({ routine, tab, onBack, onTabChange }: RoutineDe
     return () => {
       cancelled = true;
     };
-  }, [routine]);
+  }, [routine, seededFromToken]);
 
   // Always-on validation (flow 2): re-validate 400ms after every draft
   // change, including the initial load.
@@ -477,6 +515,17 @@ export function RoutineDesigner({ routine, tab, onBack, onTabChange }: RoutineDe
           ))}
         </span>
         <span className="dactions">
+          {onPopOut && (
+            <button
+              type="button"
+              className="btn"
+              data-testid="routines-designer-popout"
+              title="Open Routines in its own window"
+              onClick={onPopOut}
+            >
+              ↗ Pop out
+            </button>
+          )}
           <button type="button" className="btn" disabled={dryRunning} onClick={() => void handleDryRun()}>
             Dry-run
           </button>

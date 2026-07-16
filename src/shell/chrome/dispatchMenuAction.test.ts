@@ -29,6 +29,7 @@ function handlers(): MenuHandlers {
     openRequestCenter: vi.fn(),
     openRoutines: vi.fn(),
     newRoutine: vi.fn(),
+    dockBackRoutines: vi.fn(),
     quit: vi.fn(),
   };
 }
@@ -250,5 +251,12 @@ describe('dispatchMenuAction', () => {
     const h = handlers();
     dispatchMenuAction('menu:routines:new', h);
     expect(h.newRoutine).toHaveBeenCalledOnce();
+  });
+
+  // tuxlink-dmwte task 8: Routines → Dock Routines back.
+  it('routes menu:routines:dockback to dockBackRoutines', () => {
+    const h = handlers();
+    dispatchMenuAction('menu:routines:dockback', h);
+    expect(h.dockBackRoutines).toHaveBeenCalledOnce();
   });
 });

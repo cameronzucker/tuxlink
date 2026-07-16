@@ -612,3 +612,72 @@ describe('ConsentGate — cannot hide (z-order pin)', () => {
     expect(overlayZ).toBeGreaterThan(1202); // HintOverlay stack ceiling
   });
 });
+
+// tuxlink-dmwte task 8, behavior 6 (spec §6): the ConsentGate splits along the
+// data/modal seam it already has. `renderModal={false}` (the main window while
+// Routines is popped) must keep the data hook + `onParkedChange` mirroring
+// running — the amber badge and StatusBar item never move — while rendering NO
+// modal in that window (the popped host renders it instead).
+describe('ConsentGate — renderModal split (behavior 6)', () => {
+  it('renderModal={false} renders no modal but still reports the parked list upward', async () => {
+    const onParkedChange = vi.fn();
+    render(<ConsentGate renderModal={false} onParkedChange={onParkedChange} />);
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    await waitFor(() => {
+      const last = onParkedChange.mock.calls.at(-1)?.[0] as ParkedRun[] | undefined;
+      expect(last?.length).toBe(1);
+    });
+    // The data half kept running: the parked list was reported for the badge.
+    const last = onParkedChange.mock.calls.at(-1)?.[0] as ParkedRun[];
+    expect(last[0]).toMatchObject({ runId: RUN_ID, stepId: STEP_ID, routine: ROUTINE });
+    // ...but this window renders no modal (the popped host owns it).
+    expect(screen.queryByTestId('consent-gate-modal')).not.toBeInTheDocument();
+  });
+
+  it('renderModal defaults to true — the modal renders as before', async () => {
+    render(<ConsentGate />);
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    expect(await screen.findByTestId('consent-gate-modal')).toBeInTheDocument();
+  });
+
+  it('renderModal={true} renders the modal (the popped host case)', async () => {
+    render(<ConsentGate renderModal={true} />);
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    expect(await screen.findByTestId('consent-gate-modal')).toBeInTheDocument();
+  });
+});
+
+// tuxlink-dmwte task 8, behavior 8 (spec §6, adrev R2-F8): a launch-recovered
+// park seeds its "Parked HH:MM:SS" duration from the journal's `step_intent`
+// timestamp, NOT this UI instance's learn-time — so opening the app (or moving
+// the modal to a different host window) cannot reset a Part 97 surface's
+// asserted duration. Live-event parks (below) keep Date.now(): the event IS the
+// park moment.
+describe('ConsentGate — journal-seeded park duration (behavior 8)', () => {
+  it('a launch-recovered park counts from the journal step_intent timestamp, not learn-time', async () => {
+    vi.useFakeTimers();
+    // "Now" is 2000s; the step_intent journal entry is stamped 1002s (see
+    // JOURNAL_FIXTURE) — so the park is (2000 - 1002) = 998s = 00:16:38 old,
+    // NOT ~00:00:00 as a learn-time seed would show.
+    vi.setSystemTime(2_000_000);
+    runsListResult = [
+      { runId: RUN_ID, routine: ROUTINE, dryRun: false, startedUnix: 1000, state: 'awaiting_consent', finishedUnix: null },
+    ];
+    render(<ConsentGate />);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByTestId('consent-gate-modal')).toBeInTheDocument();
+    // 998 seconds → 00:16:38.
+    expect(screen.getByTestId('consent-gate-parked')).toHaveTextContent('00:16:38');
+  });
+
+  it('a live-event park counts from Date.now() (the event is the park moment)', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(2_000_000);
+    render(<ConsentGate />);
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByTestId('consent-gate-modal')).toBeInTheDocument();
+    // Just parked — near-zero elapsed, NOT the journal's 998s.
+    expect(screen.getByTestId('consent-gate-parked')).toHaveTextContent('00:00:00');
+  });
+});

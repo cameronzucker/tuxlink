@@ -6,6 +6,7 @@
 // (backend Task 3). Do not "restore" it.
 import { useCallback, useEffect, useRef, useState, type ComponentType } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import type { SurfaceId } from './dockState';
 import { useStatusData } from '../shell/useStatus';
 import { AprsPositionsMap } from '../aprs/AprsPositionsMap';
@@ -19,6 +20,8 @@ import type { ModemLinkFields } from '../radio/sections/ModemLinkSection';
 import type { PacketConfigDto, PacketLinkKind } from '../packet/packetTypes';
 import { UvproControlStrip } from '../uvpro/UvproControlStrip';
 import { RoutinesSurface, type RoutinesView } from '../routines/RoutinesSurface';
+import { isRoutinesView, type RoutinesTokenState } from '../routines/routinesToken';
+import type { RoutineDef } from '../routines/routinesApi';
 import { RoutinesStrip, TacMapStrip, ChatStrip } from './strips';
 
 /** Task 8–10 extend this shape (task-7 brief's normative interface block —
@@ -187,33 +190,75 @@ function AprsChatSurface(_props: SurfaceComponentProps) {
 
 // ---- Routines -----------------------------------------------------------
 //
-// Renders RoutinesSurface with `view` seeded from the continuity token's
-// `state` (default dashboard) and registers a getContext callback reporting
-// the CURRENT view back to the host, so a dock-back token round-trips the
-// operator's place in the designer. Task 8 finishes this surface's wiring
-// (consent-gating prop, deeper designer state).
-function isRoutinesView(value: unknown): value is RoutinesView {
-  if (!value || typeof value !== 'object') return false;
-  const v = value as { view?: unknown };
-  if (v.view === 'dashboard') return true;
-  if (v.view === 'designer') {
-    const d = value as { routine?: unknown; tab?: unknown };
-    return (
-      typeof d.routine === 'string' &&
-      (d.tab === 'design' || d.tab === 'runs' || d.tab === 'settings')
-    );
-  }
-  return false;
-}
-
+// Renders RoutinesSurface seeded from the continuity token's `state` half
+// (spec §7). Token-shape contract (tuxlink-dmwte task 8): the registry stores
+// the FULL envelope `{ foreground, state }` per surface; `PoppedSurfaceHost`
+// UNWRAPS `.state` and passes it here as `context`, so `context` is the bare
+// token state `{ view, draft }` (or null) — matching this file's
+// `SurfaceComponentProps.context` doc ("the token's `state` half"). The
+// getContext callback reports that same bare `{ view, draft }` shape back; the
+// host re-wraps it in the envelope on every dock-back.
+//
+// The live draft is held in a ref (not state): getContext reads it at
+// dock-back time, so a keystroke-frequency re-registration is unnecessary —
+// re-registering only on `view` change keeps the reported closure fresh for
+// the value that DOES need capture (the re-registration contract above), while
+// the ref supplies the always-current draft.
 function RoutinesPopped({ context, registerGetContext }: SurfaceComponentProps) {
+  const seed = (context ?? null) as RoutinesTokenState | null;
   const [view, setView] = useState<RoutinesView>(
-    isRoutinesView(context) ? context : { view: 'dashboard' },
+    seed && isRoutinesView(seed.view) ? seed.view : { view: 'dashboard' },
   );
+  // The seed draft is consumed by the FIRST (token) designer render only; any
+  // navigation clears it so re-opening a routine fetches fresh rather than
+  // re-seeding from the stale popped-in draft.
+  const [seedDraft, setSeedDraft] = useState<RoutineDef | undefined>(seed?.draft);
+  const draftRef = useRef<RoutineDef | undefined>(seed?.draft);
+
+  const onNavigate = useCallback((next: RoutinesView) => {
+    setSeedDraft(undefined);
+    setView(next);
+  }, []);
+
   useEffect(() => {
-    registerGetContext(() => view);
+    registerGetContext(() => ({ view, draft: draftRef.current }) satisfies RoutinesTokenState);
   }, [registerGetContext, view]);
-  return <RoutinesSurface view={view} onNavigate={setView} />;
+
+  // Cross-window menu-verb forwarding (spec §5, adrev R4-F6): a "New Routine…"
+  // menu click on MAIN while Routines is popped focuses this window and emits
+  // `dock:intent`; the popped surface forwards it to the dashboard's existing
+  // new-routine entry point (a fresh, unsaved designer draft).
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    listen<{ surface: SurfaceId; intent: string }>('dock:intent', (event) => {
+      if (event.payload.surface === 'routines' && event.payload.intent === 'new_routine') {
+        onNavigate({ view: 'designer', routine: '', tab: 'design' });
+      }
+    })
+      .then((u) => {
+        if (disposed) u();
+        else unlisten = u;
+      })
+      .catch(() => {
+        // No Tauri runtime (test/dev harness).
+      });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [onNavigate]);
+
+  return (
+    <RoutinesSurface
+      view={view}
+      onNavigate={onNavigate}
+      initialDraft={seedDraft}
+      onDraftChange={(d) => {
+        draftRef.current = d;
+      }}
+    />
+  );
 }
 
 export const SURFACE_REGISTRY: Record<SurfaceId, SurfaceRegistryEntry> = {

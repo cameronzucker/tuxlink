@@ -538,6 +538,49 @@ pub(crate) fn live_routine_run_count<R: tauri::Runtime>(app_handle: &tauri::AppH
         .unwrap_or(0)
 }
 
+/// How many live routine runs are parked `AwaitingConsent`. `0` when
+/// `RoutinesState` is not yet managed (same edge case as
+/// [`live_routine_run_count`]). Read by [`default_confirm`] to name
+/// awaiting-consent runs distinctly in the graceful-quit prompt
+/// (tuxlink-dmwte task 8, spec §6, adrev R4-F11).
+pub(crate) fn awaiting_consent_run_count<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+) -> usize {
+    use tauri::Manager as _;
+    app_handle
+        .try_state::<std::sync::Arc<crate::routines::session::RoutinesState>>()
+        .map(|s| s.awaiting_consent_run_count())
+        .unwrap_or(0)
+}
+
+/// The graceful-quit prompt wording (tuxlink-dmwte task 8, spec §6, adrev
+/// R4-F11). `live_runs` is every non-terminal run; `awaiting_consent` is the
+/// subset parked awaiting operator transmit consent (`awaiting_consent <=
+/// live_runs` by construction — a parked run is non-terminal). Awaiting-consent
+/// runs are named distinctly so the operator knows a run is one Confirm from
+/// its purpose before choosing to kill it:
+///
+/// - only running: `"2 routines running — stop them and exit?"` (unchanged)
+/// - only awaiting: `"1 routine waiting for transmit consent — stop them and exit?"`
+/// - both:         `"1 routine running, 1 waiting for transmit consent — stop them and exit?"`
+///
+/// Pure + unit-tested (see `quit_prompt_message_*` below) so the wording is
+/// pinned without a live dialog.
+pub(crate) fn quit_prompt_message(live_runs: usize, awaiting_consent: usize) -> String {
+    let running = live_runs.saturating_sub(awaiting_consent);
+    let noun = |n: usize| if n == 1 { "routine" } else { "routines" };
+    let phrase = match (running, awaiting_consent) {
+        // No awaiting-consent runs → the original wording, byte-for-byte.
+        (r, 0) => format!("{r} {} running", noun(r)),
+        // Only awaiting-consent runs.
+        (0, w) => format!("{w} {} waiting for transmit consent", noun(w)),
+        // A mix: name each cohort. The second clause drops the noun (it shares
+        // the first clause's subject) per the spec §6 example.
+        (r, w) => format!("{r} {} running, {w} waiting for transmit consent", noun(r)),
+    };
+    format!("{phrase} — stop them and exit?")
+}
+
 /// The abort-on-quit path (tuxlink-13v2l Task 8c AC-4): fire Elmer's
 /// `cancel_and_abort` (bounded, `CANCEL_DRAIN_TIMEOUT` = 5s) BEFORE `exit(0)`
 /// so any in-flight ARDOP/VARA/CMS transmission receives an abort signal,
@@ -631,10 +674,14 @@ pub(crate) fn default_confirm<R: tauri::Runtime>(
 ) -> impl FnOnce(usize) -> bool + Send + 'static {
     move |live_runs: usize| {
         use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
-        let noun = if live_runs == 1 { "routine" } else { "routines" };
+        // Awaiting-consent runs are named distinctly (tuxlink-dmwte task 8,
+        // spec §6, adrev R4-F11). Read from app state at prompt time — a
+        // wording detail only; the `live_runs` the gate ACTS on is still the
+        // caller's single reading (see `quit_with_routines_gate`'s doc).
+        let awaiting = awaiting_consent_run_count(&app_handle);
         app_handle
             .dialog()
-            .message(format!("{live_runs} {noun} running — stop them and exit?"))
+            .message(quit_prompt_message(live_runs, awaiting))
             .title("Quit Tuxlink")
             .buttons(MessageDialogButtons::OkCancelCustom(
                 "Stop and Exit".into(),
@@ -838,6 +885,46 @@ mod quit_gate_tests {
 
     fn fixed_now() -> i64 {
         1_752_400_000
+    }
+
+    // tuxlink-dmwte task 8, behavior 10 (spec §6, adrev R4-F11): the
+    // graceful-quit prompt names awaiting-consent runs distinctly.
+    #[test]
+    fn quit_prompt_message_running_only_keeps_original_wording() {
+        assert_eq!(
+            quit_prompt_message(2, 0),
+            "2 routines running — stop them and exit?"
+        );
+        assert_eq!(
+            quit_prompt_message(1, 0),
+            "1 routine running — stop them and exit?"
+        );
+    }
+
+    #[test]
+    fn quit_prompt_message_awaiting_only_names_transmit_consent() {
+        assert_eq!(
+            quit_prompt_message(1, 1),
+            "1 routine waiting for transmit consent — stop them and exit?"
+        );
+        assert_eq!(
+            quit_prompt_message(3, 3),
+            "3 routines waiting for transmit consent — stop them and exit?"
+        );
+    }
+
+    #[test]
+    fn quit_prompt_message_mixed_names_both_cohorts() {
+        // The spec §6 example verbatim: one running, one awaiting.
+        assert_eq!(
+            quit_prompt_message(2, 1),
+            "1 routine running, 1 waiting for transmit consent — stop them and exit?"
+        );
+        // Plurals on the running cohort; awaiting stays singular.
+        assert_eq!(
+            quit_prompt_message(4, 1),
+            "3 routines running, 1 waiting for transmit consent — stop them and exit?"
+        );
     }
 
     struct NoopSink;

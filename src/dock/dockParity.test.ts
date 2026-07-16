@@ -23,11 +23,18 @@ describe('dock wire fixture parity (spec §10)', () => {
     const snap = fixture.routinesPopped as DockSnapshot;
     expect(snap.surfaces.routines).toBe('popped');
     expect(consentHostWindow(snap.surfaces)).toBe('pop-routines');
+    // The per-surface context is the continuity ENVELOPE `{ foreground, state }`
+    // (tuxlink-dmwte task 8, spec §5/§7) — the `foreground` bit drives the main
+    // window's ⇤-vs-✕ presentation, and `state` is the opaque Routines token
+    // (`{ view, draft }`). The backend stores/forwards this verbatim (opaque
+    // `serde_json::Value`); the Rust parity test round-trips it without
+    // inspecting the internal shape, so this frontend shape is authoritative.
     expect(snap.context.routines).toEqual({
-      view: 'designer',
-      routine: 'morning-ics-cycle',
-      tab: 'design',
-      draft: {},
+      foreground: true,
+      state: {
+        view: { view: 'designer', routine: 'morning-ics-cycle', tab: 'design' },
+        draft: {},
+      },
     });
     expect(snap.context.tac_map).toBeNull();
     expect(snap.context.aprs_chat).toBeNull();

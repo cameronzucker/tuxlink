@@ -25,16 +25,28 @@ import './PoppedSurfaceHost.css';
 export function PoppedSurfaceHost({ surface }: { surface: SurfaceId }) {
   const entry = SURFACE_REGISTRY[surface];
 
-  // The continuity token's `context` half (spec §7) — fetched once at mount
-  // from `dock_state_get`, the "destination host consumes it at mount" read
-  // the spec describes. Null until loaded (and null if absent on the wire).
+  // The continuity token's `state` half (spec §7) — fetched once at mount from
+  // `dock_state_get`, the "destination host consumes it at mount" read the spec
+  // describes. Null until loaded (and null if absent on the wire).
+  //
+  // Token-shape contract (tuxlink-dmwte task 8): the registry stores the FULL
+  // envelope `{ foreground, state }` per surface (the `foreground` bit is a
+  // main-window ⇤-vs-✕ presentation concern, spec §5 — irrelevant to the host).
+  // This host UNWRAPS `.state` here so the surface Component receives the bare
+  // token state, matching `SurfaceComponentProps.context` ("the token's `state`
+  // half"). Symmetric with dock-back below, which RE-WRAPS the Component's
+  // reported bare state as `{ foreground, state }`. This is the single,
+  // documented unwrap site (seam note 1).
   const [context, setContext] = useState<unknown | null>(null);
   const [contextLoaded, setContextLoaded] = useState(false);
   useEffect(() => {
     let mounted = true;
     invoke<DockSnapshot>('dock_state_get')
       .then((snap) => {
-        if (mounted) setContext(snap.context[surface] ?? null);
+        if (mounted) {
+          const envelope = snap.context[surface] as { state?: unknown } | null;
+          setContext(envelope?.state ?? null);
+        }
       })
       .catch(() => {
         // No Tauri runtime (test/dev harness) — stays null.
@@ -149,10 +161,13 @@ export function PoppedSurfaceHost({ surface }: { surface: SurfaceId }) {
     <div className="pop-surface-host" data-testid={`pop-surface-host-${surface}`}>
       <PopTitleBar title={entry.title} onDockBack={runDockBack} onClose={runClose} />
       <div className="pop-surface-body">
-        {/* Consent modal mounts here for Routines only (spec §6) — always
-         *  mounted, self-managing, like AppShell's instance. Task 8 wires the
-         *  gating prop that lets it reach out of this window when needed. */}
-        {surface === 'routines' && <ConsentGate />}
+        {/* Consent modal mounts here for Routines only (spec §6). Whenever this
+         *  host is mounted, Routines IS popped, so this window IS the consent
+         *  host — `renderModal` is unconditionally true here (spec §6:
+         *  `consentHostWindow` resolves to `pop-routines`). AppShell's own
+         *  instance passes `renderModal={false}` in that same state, so exactly
+         *  one modal renders. */}
+        {surface === 'routines' && <ConsentGate renderModal={true} />}
         {contextLoaded && (
           <Component context={context} registerGetContext={registerGetContext} />
         )}

@@ -23,6 +23,7 @@
  */
 import { RoutinesDashboard } from './RoutinesDashboard';
 import { RoutineDesigner } from './designer/RoutineDesigner';
+import type { RoutineDef } from './routinesApi';
 import './RoutinesSurface.css';
 
 export type DesignerTab = 'design' | 'runs' | 'settings';
@@ -36,14 +37,28 @@ export interface RoutinesSurfaceProps {
   /** Navigate to another RoutinesView — the dashboard's row double-click / Edit
    *  and "＋ New Routine" all resolve through this (Task 8). */
   onNavigate: (next: RoutinesView) => void;
+  /** When provided, both the dashboard header and the designer header show a
+   *  text-labeled "↗ Pop out" affordance (tuxlink-dmwte task 8, spec §5) that
+   *  pops the Routines surface to its own window. Absent inside the popped
+   *  window (there is nothing to pop out to). */
+  onPopOut?: () => void;
+  /** Continuity-token draft (spec §7) — seeds the designer and suppresses its
+   *  fetch when the current view is the designer. Ignored for the dashboard
+   *  view (nothing to seed). */
+  initialDraft?: RoutineDef;
+  /** Reports the designer's live draft upward for token collection at pop-out
+   *  / dock-back time (tuxlink-dmwte task 8). Only fires from the designer
+   *  view. */
+  onDraftChange?: (draft: RoutineDef) => void;
 }
 
-export function RoutinesSurface({ view, onNavigate }: RoutinesSurfaceProps) {
+export function RoutinesSurface({ view, onNavigate, onPopOut, initialDraft, onDraftChange }: RoutinesSurfaceProps) {
   if (view.view === 'dashboard') {
     return (
       <RoutinesDashboard
         onOpenDesigner={(routine, tab) => onNavigate({ view: 'designer', routine, tab: tab ?? 'design' })}
         onNewRoutine={() => onNavigate({ view: 'designer', routine: '', tab: 'design' })}
+        onPopOut={onPopOut}
       />
     );
   }
@@ -65,6 +80,9 @@ export function RoutinesSurface({ view, onNavigate }: RoutinesSurfaceProps) {
       tab={view.tab}
       onBack={() => onNavigate({ view: 'dashboard' })}
       onTabChange={(tab) => onNavigate({ view: 'designer', routine: view.routine, tab })}
+      initialDraft={initialDraft}
+      onDraftChange={onDraftChange}
+      onPopOut={onPopOut}
     />
   );
 }

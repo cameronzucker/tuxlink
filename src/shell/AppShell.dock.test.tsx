@@ -1,0 +1,220 @@
+// AppShell ⇄ dock-registry wiring (tuxlink-dmwte task 8, spec §5/§6).
+// The dock-state module is mocked so this suite controls the snapshot the
+// shell sees: Routines docked vs popped, and a popped→docked foreground
+// arrival. Mock scaffold copied from AppShell.routines.test.tsx (that file
+// knows which backends a real AppShell mount needs).
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { ReactNode } from 'react';
+import type { MessageMeta } from '../mailbox/types';
+import type { DockSnapshot, DockMode } from '../dock/dockState';
+
+// --- dock-state module mock ------------------------------------------------
+// `useDockState` returns the mutable `dockRef.current`; the transition test
+// reassigns it to a fresh object and `rerender`s so the shell's `dock:changed`
+// effect (keyed on the snapshot) fires. Spies + the mutable ref go through
+// `vi.hoisted` since the `vi.mock` factory is hoisted above module top-level.
+const { mockFocusSurface, mockPopOut, mockDockBack, dockRef } = vi.hoisted(() => ({
+  mockFocusSurface: vi.fn(async () => {}),
+  mockPopOut: vi.fn(async () => {}),
+  mockDockBack: vi.fn(async () => {}),
+  dockRef: { current: null as DockSnapshot | null },
+}));
+
+function snapshot(routines: DockMode, context: unknown = null): DockSnapshot {
+  return {
+    surfaces: { routines, tac_map: 'docked', aprs_chat: 'docked' },
+    context: { routines: context, tac_map: null, aprs_chat: null },
+  };
+}
+
+vi.mock('../dock/dockState', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../dock/dockState')>();
+  return {
+    ...actual, // keep the real consentHostWindow + SURFACE_WINDOW_LABEL
+    useDockState: () => dockRef.current,
+    focusSurface: mockFocusSurface,
+    popOut: mockPopOut,
+    dockBack: mockDockBack,
+  };
+});
+
+const CHAT_INBOX_MSG: MessageMeta = {
+  id: 'INBOX1',
+  subject: 'Inbox subject',
+  from: 'KK4XYZ@winlink.org',
+  to: [],
+  date: '2026-05-19T14:00:00Z',
+  unread: true,
+  bodySize: 100,
+  hasAttachments: false,
+};
+
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn(async (cmd?: string) => {
+    if (cmd === undefined) return undefined;
+    if (cmd === 'routines_runs_list') return [];
+    if (cmd === 'config_read') return null;
+    if (cmd === 'backend_status') return null;
+    if (cmd === 'session_log_snapshot') return [];
+    if (cmd === 'modem_get_status') {
+      return {
+        state: 'stopped', peer: null, mode: null, widthHz: null, pttBackend: null,
+        snDb: null, vuDbfs: null, throughputBps: null,
+        bytesRx: 0, bytesTx: 0, uptimeSec: 0,
+        arqFlags: { busy: false, rx: false, tx: false }, lastError: null,
+      };
+    }
+    if (cmd === 'packet_config_get') {
+      return {
+        ssid: 7, listenDefault: true, linkKind: null, btMac: null, tcpHost: null,
+        tcpPort: null, serialDevice: null, serialBaud: null, txdelay: 30,
+        persistence: 63, slotTime: 10, paclen: 128, maxframe: 4, t1Ms: 3000, n2Retries: 10,
+      };
+    }
+    if (cmd === 'position_status') return { gps_ready: false, broadcast_grid: '', ui_grid: '' };
+    if (cmd === 'tauri_search_list_saved') return [];
+    if (cmd === 'tauri_search_list_recent') return [];
+    if (cmd === 'contacts_read') return [];
+    if (cmd === 'contacts_suggestions') return [];
+    if (cmd === 'aprs_config_get') return { listenDefault: false };
+    if (cmd === 'mailbox_list') return [CHAT_INBOX_MSG];
+    if (cmd === 'routines_validate_draft') return [];
+    if (cmd === 'routines_actions_list') return [];
+    return undefined;
+  }),
+}));
+
+vi.mock('react-virtuoso', () => ({
+  Virtuoso: ({ data, itemContent }: { data: MessageMeta[]; itemContent: (i: number, m: MessageMeta) => unknown }) => (
+    <div data-testid="virtuoso-mock">
+      {data.map((m, i) => (<div key={m.id}>{itemContent(i, m) as ReactNode}</div>))}
+    </div>
+  ),
+}));
+
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn(async () => () => {}),
+  emit: vi.fn(async () => {}),
+}));
+
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: () => ({ setTitle: vi.fn(async () => {}) }),
+}));
+
+vi.mock('../map/basemapLeaflet', async () => {
+  const L = (await import('leaflet')).default;
+  return {
+    buildBaseLayers: () => [L.layerGroup()],
+    OSM_ATTRIBUTION: '© OpenStreetMap contributors',
+    flavorBackground: () => '#34373d',
+  };
+});
+
+import { AppShell } from './AppShell';
+import { emit } from '@tauri-apps/api/event';
+
+function renderShell() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <AppShell />
+    </QueryClientProvider>,
+  );
+}
+
+function clickMenu(top: string, item: RegExp) {
+  const menubar = screen.getByRole('menubar');
+  fireEvent.click(within(menubar).getByRole('button', { name: top }));
+  const matches = within(menubar).getAllByRole('button', { name: item });
+  fireEvent.click(matches[matches.length - 1]);
+}
+
+describe('AppShell dock wiring (task 8)', () => {
+  beforeEach(() => {
+    globalThis.localStorage?.clear?.();
+    // Clears call history on ALL mocks (including the module-level invoke mock)
+    // without wiping their implementations — so per-test `shell_mounted` counts
+    // don't accumulate across the suite.
+    vi.clearAllMocks();
+    dockRef.current = snapshot('docked');
+  });
+
+  it('while Routines is popped, Routines → Routines focuses the window instead of swapping the pane', async () => {
+    dockRef.current = snapshot('popped');
+    renderShell();
+    await screen.findByTestId('folder-sidebar');
+
+    // While popped, the top-level label reads "Routines ↗" (the pathway back).
+    clickMenu('Routines ↗', /^Routines$/);
+    // No inline pane swap — the mailbox stays and the popped window is focused.
+    expect(screen.queryByTestId('routines-dashboard')).not.toBeInTheDocument();
+    expect(screen.getByTestId('folder-sidebar')).toBeInTheDocument();
+    await waitFor(() => expect(mockFocusSurface).toHaveBeenCalledWith('routines'));
+  });
+
+  it('while Routines is popped, New Routine… focuses the window and emits the new-routine intent', async () => {
+    dockRef.current = snapshot('popped');
+    renderShell();
+    await screen.findByTestId('folder-sidebar');
+
+    clickMenu('Routines ↗', /New Routine…/);
+    expect(screen.queryByTestId('routine-designer')).not.toBeInTheDocument();
+    await waitFor(() => expect(mockFocusSurface).toHaveBeenCalledWith('routines'));
+    expect(emit).toHaveBeenCalledWith('dock:intent', { surface: 'routines', intent: 'new_routine' });
+  });
+
+  it('a foreground popped→docked arrival opens the inline surface on the token view', async () => {
+    dockRef.current = snapshot('popped');
+    const { rerender } = renderShell();
+    await screen.findByTestId('folder-sidebar');
+
+    // ⇤ Dock back (foreground) arrives: routines now docked, token foreground
+    // with a designer view (fresh draft — no backend fetch).
+    dockRef.current = snapshot('docked', {
+      foreground: true,
+      state: { view: { view: 'designer', routine: '', tab: 'design' } },
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    rerender(
+      <QueryClientProvider client={qc}>
+        <AppShell />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByTestId('routine-designer', {}, { timeout: 5000 })).toBeInTheDocument();
+  });
+
+  it('a NON-foreground popped→docked arrival leaves the mailbox pane alone (availability)', async () => {
+    dockRef.current = snapshot('popped');
+    const { rerender } = renderShell();
+    await screen.findByTestId('folder-sidebar');
+
+    dockRef.current = snapshot('docked', {
+      foreground: false,
+      state: { view: { view: 'dashboard' } },
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    rerender(
+      <QueryClientProvider client={qc}>
+        <AppShell />
+      </QueryClientProvider>,
+    );
+
+    // Availability semantics: no pane theft — the mailbox stays put.
+    expect(screen.getByTestId('folder-sidebar')).toBeInTheDocument();
+    expect(screen.queryByTestId('routines-dashboard')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('routine-designer')).not.toBeInTheDocument();
+  });
+
+  it('invokes shell_mounted once on mount (launch restoration signal, spec §3)', async () => {
+    const core = await import('@tauri-apps/api/core');
+    renderShell();
+    await screen.findByTestId('folder-sidebar');
+    const calls = (core.invoke as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c) => c[0] === 'shell_mounted',
+    );
+    expect(calls).toHaveLength(1);
+  });
+});

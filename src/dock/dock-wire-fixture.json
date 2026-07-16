@@ -6,7 +6,13 @@
   "routinesPopped": {
     "surfaces": { "routines": "popped", "tac_map": "docked", "aprs_chat": "docked" },
     "context": {
-      "routines": { "view": "designer", "routine": "morning-ics-cycle", "tab": "design", "draft": {} },
+      "routines": {
+        "foreground": true,
+        "state": {
+          "view": { "view": "designer", "routine": "morning-ics-cycle", "tab": "design" },
+          "draft": {}
+        }
+      },
       "tac_map": null,
       "aprs_chat": null
     }

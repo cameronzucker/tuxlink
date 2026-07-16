@@ -97,13 +97,31 @@ function sortByParkedAt(list: ParkedRun[]): ParkedRun[] {
  * park); the modal renders the step as unknown, disables Confirm (granting
  * needs a real stepId), and leaves Cancel run available.
  */
-async function recoverParkedStepId(runId: string): Promise<string> {
+/** The recovered park's step id AND the wall-clock (ms) the park actually
+ *  began, seeded from the journal so the duration readout survives a launch or
+ *  a host-window change (spec §6, adrev R2-F8). */
+interface RecoveredPark {
+  stepId: string;
+  /** `ts_unix * 1000` of the `step_intent` entry — the moment the run parked
+   *  awaiting consent — or `null` when no `step_intent` is found (the park
+   *  still surfaces; `parkedAtMs` falls back to learn-time). */
+  parkedAtMs: number | null;
+}
+
+async function recoverParkedStepId(runId: string): Promise<RecoveredPark> {
   const entries = await runJournal(runId);
   for (let i = entries.length - 1; i >= 0; i--) {
-    const ev = entries[i].event;
-    if (ev.type === 'step_intent') return ev.step;
+    const entry = entries[i];
+    if (entry.event.type === 'step_intent') {
+      // `ts_unix` is unix SECONDS (journal.rs); the duration display works in
+      // ms. A recovered park counts from THIS journal timestamp, not from when
+      // this UI instance happened to learn of it (adrev R2-F8) — so a Part 97
+      // surface's asserted "parked HH:MM:SS" cannot silently reset on launch
+      // or when the modal moves to a different host window.
+      return { stepId: entry.event.step, parkedAtMs: entry.ts_unix * 1000 };
+    }
   }
-  return UNKNOWN_STEP_ID;
+  return { stepId: UNKNOWN_STEP_ID, parkedAtMs: null };
 }
 
 export function useParkedRuns(): UseParkedRunsResult {
@@ -173,13 +191,15 @@ export function useParkedRuns(): UseParkedRunsResult {
         for (const r of live) {
           if (disposed) return;
           try {
-            const stepId = await recoverParkedStepId(r.runId);
+            const { stepId, parkedAtMs } = await recoverParkedStepId(r.runId);
             if (disposed || !mountedRef.current) continue;
             setParked((cur) => {
               if (cur.some((p) => p.runId === r.runId)) return cur;
               return sortByParkedAt([
                 ...cur,
-                { runId: r.runId, stepId, routine: r.routine, parkedAtMs: Date.now() },
+                // Journal-seeded when the step_intent carried a timestamp;
+                // otherwise learn-time (Date.now()) as the honest fallback.
+                { runId: r.runId, stepId, routine: r.routine, parkedAtMs: parkedAtMs ?? Date.now() },
               ]);
             });
           } catch {
@@ -291,6 +311,14 @@ export interface ConsentGateProps {
    *  the PARK (badge/statusbar item stay put regardless); this only asks the
    *  MODAL to come back. */
   reopenSignal?: number;
+  /** Whether THIS window renders the consent modal (spec §6 — the modal lives
+   *  on the window HOSTING the Routines surface, resolved by
+   *  `consentHostWindow`). Defaults `true` so existing callers (and the popped
+   *  host, which IS the host whenever it is mounted) are unchanged. When
+   *  `false` (main window while Routines is popped) the data hook + the
+   *  `onParkedChange` badge mirroring keep running — only the modal render is
+   *  suppressed, so the amber MenuBar badge / StatusBar item never move. */
+  renderModal?: boolean;
 }
 
 interface StepIntentInfo {
@@ -298,7 +326,7 @@ interface StepIntentInfo {
   resolvedParams: unknown;
 }
 
-export function ConsentGate({ onParkedChange, reopenSignal }: ConsentGateProps) {
+export function ConsentGate({ onParkedChange, reopenSignal, renderModal = true }: ConsentGateProps) {
   const { parked, confirm, cancelParked } = useParkedRuns();
   const [stepIntent, setStepIntent] = useState<StepIntentInfo | null>(null);
   const [busy, setBusy] = useState(false);
@@ -383,6 +411,13 @@ export function ConsentGate({ onParkedChange, reopenSignal }: ConsentGateProps) 
     const id = setInterval(() => setTick((t) => t + 1), 1000);
     return () => clearInterval(id);
   }, [oldest?.runId]);
+
+  // The modal-render seam (spec §6): every hook above — the data hook, the
+  // `onParkedChange` badge mirroring, the reopen/tick effects — has already run
+  // by here, so the main window keeps driving the amber badge even when it is
+  // NOT the modal host. Only the modal's DOM is suppressed. This return sits
+  // AFTER all hooks by construction (Rules of Hooks).
+  if (!renderModal) return null;
 
   if (!oldest || hidden) return null;
 

@@ -66,6 +66,12 @@ export const MENU_TREE: TopMenu[] = [
   { label: 'Routines', items: [
     { id: 'menu:routines:open', label: 'Routines' },
     { id: 'menu:routines:new', label: 'New Routine…' },
+    // tuxlink-dmwte task 8 (spec §5): "Dock Routines back" — a STATIC tree
+    // member so its id stays in the vocabulary, but MenuBar renders it ONLY
+    // while the Routines surface is popped (the dynamic gating is MenuBar-level,
+    // exactly like the `badges` special case — MENU_TREE carries no dynamic
+    // label/visibility affordance of its own).
+    { id: 'menu:routines:dockback', label: 'Dock Routines back' },
   ] },
   { label: 'View', items: [
     // Session-log items removed in radio-panel-shell P1.6 — the bottom

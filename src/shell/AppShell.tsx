@@ -18,6 +18,7 @@
 
 import { useState, useCallback, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { emit } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { MessageList } from '../mailbox/MessageList';
@@ -171,6 +172,13 @@ import { emitGatewayPrefill } from '../favorites/prefillEvent';
 import { emitPeerPrefill, type PeerPrefill } from '../peers/peerPrefillEvent';
 // routines plan-5 Task 7: type-only import (the component itself is lazy-loaded below).
 import type { RoutinesView } from '../routines/RoutinesSurface';
+// tuxlink-dmwte task 8: dock-registry wiring for the pop-out / dock-back shell
+// capability (spec §5/§6). `routinesToken` is dependency-light so importing
+// `isRoutinesView` as a value here doesn't pull the heavy Routines chunk into
+// the cold-start bundle.
+import { useDockState, popOut, dockBack, focusSurface, consentHostWindow } from '../dock/dockState';
+import { isRoutinesView } from '../routines/routinesToken';
+import type { RoutineDef } from '../routines/routinesApi';
 
 // routines plan-5 Task 7 (post-review narrowing): the menu actions that CLOSE
 // the inline Routines surface — exactly the mail-domain actions whose effect
@@ -580,6 +588,21 @@ function AppShellInner() {
   // how the existing overlay flags (settingsOpen, catalogBuilderOpen, …)
   // never close each other or the pane beneath.
   const [routinesView, setRoutinesView] = useState<RoutinesView | null>(null);
+  // tuxlink-dmwte task 8 (spec §5/§6): the dock registry subscription. `null`
+  // until the first snapshot lands (useDockState contract) — treat null as
+  // "all docked, no pathway UI" everywhere it's read (seam note 5). The
+  // Routines surface is the only dockable consumer AppShell hosts inline; while
+  // it is popped the inline pane returns to the mailbox and the menu/consent
+  // affordances become pathway/focus-routing forms.
+  const dock = useDockState();
+  const routinesPopped = dock?.surfaces.routines === 'popped';
+  const consentHost = dock ? consentHostWindow(dock.surfaces) : 'main';
+  // The continuity-token draft carried inline: seeded by a ⇤ foreground
+  // dock-back arrival (spec §5), cleared on any in-surface navigation so
+  // re-opening a routine fetches fresh. The ref mirrors the live designer draft
+  // (reported via onDraftChange) so the inline ↗ pop-out can collect it.
+  const [routinesInitialDraft, setRoutinesInitialDraft] = useState<RoutineDef | undefined>(undefined);
+  const routinesDraftRef = useRef<RoutineDef | undefined>(undefined);
   // routines plan-5 Task 14 (spec §12): mirrors <ConsentGate>'s own parked-run
   // tracking, purely for chrome (MenuBar's amber badge + StatusBar's "N
   // transmit awaiting consent" item) — AppShell holds no tracking logic of
@@ -591,6 +614,68 @@ function AppShellInner() {
   // is purely a one-shot "please reopen" signal, mirroring onParkedChange's
   // opposite direction (child→parent list vs. parent→child request).
   const [consentReopenSignal, setConsentReopenSignal] = useState(0);
+
+  // tuxlink-dmwte task 8, behavior 9 (spec §3): launch-restoration signal. The
+  // registry spawns a window for every surface persisted `Popped` on the FIRST
+  // arrival of `shell_mounted`; later arrivals are idempotent no-ops. Fired
+  // from AppShell's mount effect because AppShell is NOT in the wizard tree —
+  // the gating is structural, so a first-run wizard never triggers restoration
+  // and a mid-session wizard exit that mounts AppShell restores then.
+  useEffect(() => {
+    void invoke('shell_mounted').catch(() => {
+      // No Tauri runtime (test/dev harness) — restoration is a backend concern.
+    });
+  }, []);
+
+  // tuxlink-dmwte task 8, behavior 2 (spec §5): while Routines is popped the
+  // inline pane returns to the mailbox — force `routinesView` closed. Guards
+  // the case where the surface was open inline and then popped out.
+  useEffect(() => {
+    if (routinesPopped) setRoutinesView(null);
+  }, [routinesPopped]);
+
+  // tuxlink-dmwte task 8, behavior 5 (spec §5): a ⇤ foreground dock-back
+  // (popped→docked with `context.routines.foreground === true`) opens the
+  // inline surface on the token's view (fallback dashboard) and restores its
+  // draft. `foreground === false` (✕ / Ctrl+W / WM close — availability
+  // semantics) leaves the current pane alone: no pane theft. Tracks the prior
+  // mode in a ref so only the transition edge applies, not every snapshot.
+  const prevRoutinesModeRef = useRef<'docked' | 'popped' | null>(null);
+  useEffect(() => {
+    if (!dock) return;
+    const prev = prevRoutinesModeRef.current;
+    const cur = dock.surfaces.routines;
+    prevRoutinesModeRef.current = cur;
+    if (prev !== 'popped' || cur !== 'docked') return;
+    const envelope = dock.context.routines as
+      | { foreground?: boolean; state?: { view?: unknown; draft?: RoutineDef } | null }
+      | null;
+    if (!envelope?.foreground) return; // availability semantics — pane untouched
+    const state = envelope.state ?? null;
+    setRoutinesView(isRoutinesView(state?.view) ? state!.view : { view: 'dashboard' });
+    setRoutinesInitialDraft(state?.draft);
+  }, [dock]);
+
+  // In-surface navigation clears the carried token draft (so re-opening a
+  // routine fetches fresh) — mirrors RoutinesPopped's `onNavigate`. Wraps
+  // `setRoutinesView` for the inline surface + the mailbox-close menu path.
+  const onRoutinesNavigate = useCallback((next: RoutinesView | null) => {
+    setRoutinesInitialDraft(undefined);
+    routinesDraftRef.current = undefined;
+    setRoutinesView(next);
+  }, []);
+
+  // Inline ↗ Pop out (spec §5, behavior 1): pops the Routines surface to its
+  // own window carrying the current view + (designer-only) live draft as the
+  // continuity token's `state`. The backend forces the pane back to the
+  // mailbox via the `dock:changed` emit the pop-out triggers (behavior 2).
+  const onRoutinesPopOut = useCallback(() => {
+    const view: RoutinesView = routinesView ?? { view: 'dashboard' };
+    const draft = view.view === 'designer' ? routinesDraftRef.current : undefined;
+    void popOut('routines', { foreground: true, state: { view, draft } }).catch((err) => {
+      console.error('[dock] Routines pop-out failed:', err);
+    });
+  }, [routinesView]);
   // tuxlink-qjgx Task 8: Report Issue modal state. The controller drives the
   // Save As → export → GitHub URL flow; AppShell owns the state so the modal
   // can be positioned in the global overlay layer.
@@ -1673,16 +1758,41 @@ function AppShellInner() {
     openCatalogBuilder: () => setCatalogBuilderOpen(true),
     openRequestCenter: (initialView = 'home') => setRequestCenter({ initialView }),
     // routines plan-5 Task 7: Routines → Routines opens the dashboard view.
-    openRoutines: () => setRoutinesView({ view: 'dashboard' }),
+    // tuxlink-dmwte task 8, behavior 2 (spec §5): while popped, the menu never
+    // swaps the inline pane — it focuses the popped window instead (the visual
+    // pathway back).
+    openRoutines: () => {
+      if (routinesPopped) { void focusSurface('routines'); return; }
+      onRoutinesNavigate({ view: 'dashboard' });
+    },
     // routines plan-5 Task 7: Routines → New Routine… opens a fresh, unsaved
     // draft — empty `routine` name is what RoutineDesigner (Task 9) treats as
     // "new" rather than an existing routine loaded for edit.
-    newRoutine: () => setRoutinesView({ view: 'designer', routine: '', tab: 'design' }),
+    // tuxlink-dmwte task 8, behavior 4 (spec §5, adrev R4-F6): while popped, a
+    // menu verb targeting the surface focuses the window AND forwards the intent
+    // as a surface-scoped `dock:intent` event — never a silent no-op, never a
+    // second inline copy. The popped host forwards it to the new-routine entry.
+    newRoutine: () => {
+      if (routinesPopped) {
+        void focusSurface('routines');
+        void emit('dock:intent', { surface: 'routines', intent: 'new_routine' });
+        return;
+      }
+      onRoutinesNavigate({ view: 'designer', routine: '', tab: 'design' });
+    },
+    // tuxlink-dmwte task 8, behavior 3 (spec §5): Routines → Dock Routines back
+    // — foreground dock-back with `state: null` (main cannot supply the popped
+    // window's live view/draft; Routines falls back to the dashboard).
+    dockBackRoutines: () => {
+      void dockBack('routines', { foreground: true, state: null }).catch((err) => {
+        console.error('[dock] Routines dock-back failed:', err);
+      });
+    },
     // tuxlink-10bkw Task 6: Help → Replay tour restarts the 5-stop guided tour
     // — the same action the first-run offer card's "Start tour" fires.
     replayTour: () => hints.startTour(),
     quit: () => { void invoke('app_quit'); },
-  }), [openMessage, archiveOpen, selectedMessage, deleteByIdAndFolder, reportIssueController, aprsOpen, dockTab, hints]);
+  }), [openMessage, archiveOpen, selectedMessage, deleteByIdAndFolder, reportIssueController, aprsOpen, dockTab, hints, routinesPopped, onRoutinesNavigate]);
 
   const editDraft = useCallback((draftId: string) => {
     void invoke('compose_window_open', { draftId });
@@ -1707,9 +1817,9 @@ function AppShellInner() {
     // ROUTINES_CLOSING_MENU_ACTIONS (see its comment for the classification)
     // qualify; overlays layer over the surface and view/chrome toggles
     // restyle it in place.
-    if (routinesView && ROUTINES_CLOSING_MENU_ACTIONS.has(id)) setRoutinesView(null);
+    if (routinesView && ROUTINES_CLOSING_MENU_ACTIONS.has(id)) onRoutinesNavigate(null);
     dispatchMenuAction(id, handlers);
-  }, [handlers, routinesView]);
+  }, [handlers, routinesView, onRoutinesNavigate]);
   useAccelerators(onMenuAction);
 
   const onSelectFolder = useCallback((folder: MailboxFolderRef) => {
@@ -1952,7 +2062,7 @@ function AppShellInner() {
   return (
     <div className={`layout-b${isCompact ? ' compact' : ''}`} data-testid="app-shell-root">
       <TitleBar folderLabel={folderLabel(selectedFolder, userFolders)} />
-      <MenuBar onAction={onMenuAction} badges={{ routines: parkedRuns.length }} />
+      <MenuBar onAction={onMenuAction} badges={{ routines: parkedRuns.length }} dockPopped={routinesPopped} />
       <ResizeHandles />
       <div className="ribbon-with-search">
         <div className="search-zone" data-testid="search-zone" ref={searchZoneRef}>
@@ -2033,15 +2143,22 @@ function AppShellInner() {
         />
       </div>
 
-      {routinesView ? (
+      {routinesView && !routinesPopped ? (
         // routines plan-5 Task 7 (spec §12): the inline full-pane Routines
         // surface REPLACES the mailbox master-detail entirely (no folder
         // sidebar) — it is a sibling of `.panes` in this same grid row, not
         // nested inside it, since it never shares the sidebar. The chrome
         // rows above (titlebar/menubar/ribbon) and below (StatusBar) stay
-        // mounted either way.
+        // mounted either way. tuxlink-dmwte task 8: hidden while popped (the
+        // surface lives in its own window; the pane returns to the mailbox).
         <Suspense fallback={null}>
-          <RoutinesSurface view={routinesView} onNavigate={setRoutinesView} />
+          <RoutinesSurface
+            view={routinesView}
+            onNavigate={onRoutinesNavigate}
+            onPopOut={onRoutinesPopOut}
+            initialDraft={routinesInitialDraft}
+            onDraftChange={(d) => { routinesDraftRef.current = d; }}
+          />
         </Suspense>
       ) : (
       <div
@@ -2369,7 +2486,14 @@ function AppShellInner() {
             ? { count: parkedRuns.length, routine: parkedRuns[0].routine }
             : null
         }
-        onOpenConsent={() => setConsentReopenSignal((n) => n + 1)}
+        // tuxlink-dmwte task 8, behavior 7 (spec §5, adrev R4-F5/R5-F8): the
+        // consent badge/StatusBar item click routes on dock state — hosting =
+        // main bumps the reopen signal (the existing behavior); hosting =
+        // popped focuses the Routines window (the modal lives there).
+        onOpenConsent={() => {
+          if (consentHost === 'main') setConsentReopenSignal((n) => n + 1);
+          else void focusSurface('routines');
+        }}
       />
 
       {/* tuxlink-perf-coldstart: lazy-mounted overlays. Each module + its CSS
@@ -2452,7 +2576,16 @@ function AppShellInner() {
           moment. Always mounted — "consent cannot hide" — self-managing like
           CloseBehaviorPrompt; onParkedChange only mirrors its list into the
           MenuBar badge + StatusBar item above. */}
-      <ConsentGate onParkedChange={setParkedRuns} reopenSignal={consentReopenSignal} />
+      {/* tuxlink-dmwte task 8, behavior 6 (spec §6): the modal renders on the
+          window HOSTING Routines. This main-window instance keeps its data hook
+          + `onParkedChange` badge mirroring running always; `renderModal` is
+          false while Routines is popped (the popped host renders the modal),
+          so exactly one modal shows across both windows. */}
+      <ConsentGate
+        onParkedChange={setParkedRuns}
+        reopenSignal={consentReopenSignal}
+        renderModal={consentHost === 'main'}
+      />
 
       {catalogBuilderOpen && (
         <Suspense fallback={null}>
