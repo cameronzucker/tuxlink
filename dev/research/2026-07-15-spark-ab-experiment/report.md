@@ -193,3 +193,71 @@ Findings, triaged:
   `.superpowers/sdd/` (archived per ADR 0009 at disposal; local-only).
 - The three-beat confabulation exhibit (operator training material): archived
   arm C transcript, beats at lines 410-690 / 1299-1329 / 1333-1349.
+
+---
+
+# Addendum — Milestone 0 of `tuxlink-7raoe` (same session, operator-directed)
+
+Two free experiments before any hardware decision, run after the main report:
+**arm F** (deconfound: coder-next FP8 on the existing Spark under R2) and
+**arm G** (quantization: `nvidia/Qwen3.5-122B-A10B-NVFP4` on the same single
+Spark, same frozen briefs, 30-min cap / 1 retry).
+
+## Confound corrections to the main report
+
+1. **Harness (major):** arm F went **3/3 clean at 15/21/27 min** — inside the
+   cap on every task, zero retries, honest reports — on the identical
+   model/hardware that recorded 1/3 with ~218 min of attempts under R0/R1.
+   Arm B's "not yet feasible" verdict measured the harness, not the Spark.
+2. **Thermal (second-order, operator-surfaced):** the Spark's cumulative
+   throttle accumulators show ~876 s SW + ~147 s HW thermal slowdown since
+   boot, currently inactive; the only sustained load in that window was arm
+   B's runs during a documented >100 °F garage event (failed rack-AC smart
+   plug; independent R730 temp alarm). Adds skew to arm B's timings; cannot
+   explain the bulk of the excess (~15 throttle-minutes vs ~155 excess
+   minutes), which remains harness-attributed.
+
+## Arm F result (Spark coder-next, R2)
+
+3/3 worker-complete, 0 retries. Whole-arm Opus review: spec-faithful, gates
+green, **1 Important hygiene defect** (a verbatim-duplicated ganttModel test
+pasted at root scope — why vitest showed 22) + 3 minors ⇒ 1 notional fix
+round (D/E scored 0). Quality tier: below 122B/397B, decisively above the
+pre-R2 record.
+
+## Arm G result (122B NVFP4 on the single Spark)
+
+3/3 substantive-complete: task 1 **at-cap** (30 min — work verified green;
+the cap fired while it wrote its completion report), task 2 in-cap (23 min),
+task 3 at-cap with the known `dry_run` plan-defect unresolved on two fixtures
+(vitest green, typecheck red) ⇒ **1 fix round** (2-line orchestrator fix,
+disclosed in the commit). Honest throughout — no fabrications at this quant.
+Whole-arm Opus review: **Ready — zero Critical/Important**, two cosmetic minors, and none of arm F's hygiene-defect class (tests correctly placed, no duplicates). The reviewer also independently retired the stale-rig concern for this candidate (intent-before-effect ordering makes the backward scan hit the current intent first).
+
+**Serving caveats (all logged in the arm ledgers):** standing the 122B up for
+Codex took four shims — R2 prompts, a chat-template patch mapping the
+`developer` role to system, a second patch rendering non-leading system
+messages inline instead of raising, and template-forced `enable_thinking =
+false` (vLLM's reasoning items poisoned Codex's history echo with schema
+errors). Arm G therefore ran no-think; arm E's OpenRouter reasoning config is
+unknown, so the quant comparison carries that asterisk. The Spark was
+restored to the original coder-next container (docker start of the preserved
+container) after arm G.
+
+## Milestone-0 verdicts
+
+- **The existing single Spark is inside the practicality envelope** for
+  execution-tier work under a fit harness: coder-next at ~15–27 min/task
+  (modest quality tier), 122B-NVFP4 at ~23–30+ min/task (near-the-cap; higher
+  quality tier, one plan-defect fix round).
+- **NVFP4 did not measurably degrade the 122B's execution quality** on this
+  task set (same completions as full-precision arm E; one fix round vs zero —
+  within noise of a single defect, and that defect was the plan's own
+  pothole). The quantization half of the open question resolves toward "the
+  weights survive Q4-class quantization for this work."
+- **A second Spark is therefore a throughput/latency purchase, not a
+  feasibility one:** it buys headroom under the cap (tensor-parallel decode)
+  and BF16/FP8 precision margin, but the single unit already clears the bar.
+  The cheaper lever first: the `tuxlink-7raoe` harness, which attacks both
+  token volume (prefill-dominated wall-clock on bandwidth-limited hardware)
+  and the per-model serving shims.
