@@ -110,7 +110,7 @@ export function PoppedSurfaceHost({ surface }: { surface: SurfaceId }) {
   // Ctrl+W — semantically honest: close IS dock-back (spec §4).
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.key === 'w') {
+      if (e.ctrlKey && e.key.toLowerCase() === 'w') {
         e.preventDefault();
         runClose();
       }

@@ -204,7 +204,7 @@ describe('strip vitals render from mocked hook data (review-loop-3 F4c)', () => 
     render(<ChatStrip />);
     const text = screen.getByTestId('pop-strip-chat').textContent ?? '';
     expect(text).toContain('last heard N0CALL');
-    expect(text).toContain('0 unread');
+    expect(text).not.toContain('unread');
   });
 
   it('ChatStrip shows "no stations heard" when nothing has been heard', () => {

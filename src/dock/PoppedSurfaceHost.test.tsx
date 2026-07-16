@@ -167,6 +167,14 @@ describe('PoppedSurfaceHost — ✕ / Ctrl+W (behavior 1 + 3)', () => {
     window.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(true);
   });
+
+  it('Ctrl+W with a capital "W" (CapsLock) still drives the same envelope as lowercase Ctrl+W', async () => {
+    renderHost(<PoppedSurfaceHost surface="tac_map" />);
+    fireEvent.keyDown(window, { key: 'W', ctrlKey: true });
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith('surface_dock_back',
+        expect.objectContaining({ surface: 'tac_map', context: expect.objectContaining({ foreground: false }) })));
+  });
 });
 
 describe('PoppedSurfaceHost — close-intent (behavior 2)', () => {

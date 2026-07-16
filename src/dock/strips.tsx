@@ -67,9 +67,9 @@ export function RoutinesStrip() {
   return (
     <div className="pop-strip" data-testid="pop-strip-routines">
       <span className="pop-strip-item">{parked.length} parked</span>
-      <span className="pop-strip-divider">·</span>
+      <span className="pop-strip-divider" aria-hidden="true">·</span>
       <span className="pop-strip-item">{running} running</span>
-      <span className="pop-strip-divider">·</span>
+      <span className="pop-strip-divider" aria-hidden="true">·</span>
       <span className="pop-strip-item">
         {soonest !== null ? `next ${formatUtc(soonest)}` : 'no scheduled fire'}
       </span>
@@ -115,17 +115,12 @@ export function TacMapStrip() {
 export function ChatStrip() {
   const { heardStations } = useAprsChat();
   const lastHeard = heardStations[0];
+  // No unread stat: real unread tracking doesn't exist yet — a fabricated "0 unread" is worse than absence (no-stubs rule).
   return (
     <div className="pop-strip" data-testid="pop-strip-chat">
       <span className="pop-strip-item">
         {lastHeard ? `last heard ${lastHeard.call}` : 'no stations heard'}
       </span>
-      <span className="pop-strip-divider">·</span>
-      {/* Unread count placeholder (spec §4) — a real unread model for the
-       *  chat surface doesn't exist yet; TX/connect state is deliberately
-       *  omitted here (AprsConnectStrip at the top of this same window
-       *  already owns it — adrev R4-F8). */}
-      <span className="pop-strip-item">0 unread</span>
     </div>
   );
 }
