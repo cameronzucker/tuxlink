@@ -105,6 +105,35 @@ pub struct InboundMsg {
     pub kind: MsgKind,
 }
 
+/// Own-send echo for one of OUR outgoing messages, emitted at driver-loop
+/// Send/Broadcast dequeue (Task 5, spec §7 "Data continuity across the
+/// move") — the same acceptance point the frontend's optimistic local
+/// append fires at today. Every window's chat feed is reconstructible from
+/// backend events alone; this event is what lets a window OTHER than the
+/// sender's see the operator's own transmitted traffic (e.g. after a
+/// dock-back destroyed the popped window's local-only history).
+///
+/// Wire field names are literal snake_case (`at_ms`, NOT `atMs`) — this DTO
+/// intentionally does NOT carry `#[serde(rename_all = "camelCase")]`, unlike
+/// [`InboundMsg`]/[`StateChange`]/[`InboundPos`] above, per the pinned wire
+/// contract (spec §7 / plan Task 5).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SentMsgDto {
+    /// The tracking id `aprs_send` already returns to the invoking window: a
+    /// real wire msgid for a directed send, or the `b`-prefixed UI-only
+    /// handle for a broadcast.
+    pub msgid: String,
+    /// "" = broadcast — matches [`InboundMsg::addressee`]'s convention so the
+    /// frontend's "→ all" rendering applies uniformly to heard AND own-sent
+    /// broadcasts.
+    pub addressee: String,
+    pub text: String,
+    /// Backend wall-clock epoch milliseconds at acceptance (NOT the driver's
+    /// Instant-relative `now_ms` — that has no meaning outside one driver
+    /// run and cannot serve as a displayed message timestamp).
+    pub at_ms: u64,
+}
+
 /// Delivery lifecycle of one of OUR outgoing messages.
 ///
 /// Wire forms (camelCase) are exactly `"sent"`, `"acked"`, `"timedOut"`,
@@ -187,6 +216,11 @@ pub struct InboundPos {
 /// a Tauri event emitter; tests implement it with a recording sink.
 pub trait EventSink: Send {
     fn emit_message(&self, ev: InboundMsg);
+    /// Emit the own-send echo (`aprs-message:sent`) for an accepted outgoing
+    /// message — fired at driver-loop Send/Broadcast dequeue (Task 5, spec
+    /// §7). No default impl: every sink (production Tauri emitter, every
+    /// test double) must decide explicitly whether/how to record this.
+    fn emit_sent(&self, ev: SentMsgDto);
     fn emit_state(&self, ev: StateChange);
     fn emit_listening(&self, on: bool);
     /// Emit a position report decoded from a heard frame (`aprs-position:new`).
@@ -562,6 +596,26 @@ impl AprsEngine {
         self.sink.emit_listening(on);
     }
 
+    /// Build + emit the own-send echo (Task 5, spec §7) — the SINGLE
+    /// `SentMsgDto` construction site for the production paths, shared by
+    /// BOTH driver loops' per-command dispatch (`apply_command` below for
+    /// the KISS link; `NativeDriver::apply_command` for the UV-Pro native
+    /// path). Called at the exact point a Send/Broadcast command is
+    /// dequeued: the message is accepted and its msgid/local-id already
+    /// exists. `at_ms` is stamped HERE from the wall clock
+    /// (`now_epoch_ms`), never from the drivers' `Instant`-relative
+    /// `now_ms` values (those are driver-start-relative and carry no
+    /// wall-clock meaning). `addressee` is "" for a broadcast (matches
+    /// `InboundMsg`'s blank-addressee-is-broadcast convention).
+    pub fn emit_sent_echo(&self, msgid: &str, addressee: &str, text: &str) {
+        self.sink.emit_sent(SentMsgDto {
+            msgid: msgid.to_string(),
+            addressee: addressee.to_string(),
+            text: text.to_string(),
+            at_ms: now_epoch_ms(),
+        });
+    }
+
     fn addressed_to_us(&self, addressee: &str) -> bool {
         addressee == fmt_callsign(&self.identity.source)
     }
@@ -663,6 +717,19 @@ fn text_hash(text: &str) -> String {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     text.hash(&mut h);
     format!("h{:x}", h.finish())
+}
+
+/// Wall-clock epoch milliseconds "now", for [`SentMsgDto::at_ms`]. Distinct
+/// from the driver's `now_ms` closures (`started.elapsed().as_millis()`),
+/// which are `Instant`-relative to driver start and carry no wall-clock
+/// meaning — they gate retransmit/dedupe timing, not a frontend-displayed
+/// timestamp. Mirrors the existing `utc_now_ms` idiom (`ft8/traits.rs`).
+fn now_epoch_ms() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0)
 }
 
 // ---------------------------------------------------------------------------
@@ -869,6 +936,31 @@ fn mint_msgid(n: u64) -> String {
     String::from_utf8(s).unwrap()
 }
 
+/// Apply one dequeued driver command to the engine — the KISS analogue of
+/// `native_driver::NativeDriver::apply_command`. Extracted out of `run`'s
+/// inline match so the Send/Broadcast dequeue point (where the own-send echo
+/// fires, Task 5 / spec §7) is unit-testable without a live `ByteLink`.
+///
+/// The echo fires HERE, before delegating to `enqueue_send`/`enqueue_broadcast`:
+/// the command was accepted off the channel and its msgid/local-id already
+/// exists (minted upstream in `AprsState::send`), which is the acceptance
+/// point the spec pins — independent of whether the subsequent frame-encode
+/// inside `enqueue_*` later succeeds (a same-tick `TimedOut` on encode
+/// failure is a real, if rare, possible follow-on transition).
+fn apply_command(engine: &mut AprsEngine, cmd: TxCommand, now_ms: u64) {
+    match cmd {
+        TxCommand::Send { dest, text, msgid } => {
+            engine.emit_sent_echo(&msgid, &dest, &text);
+            engine.enqueue_send(&dest, &text, &msgid, now_ms)
+        }
+        TxCommand::Broadcast { text, local_id } => {
+            engine.emit_sent_echo(&local_id, "", &text);
+            engine.enqueue_broadcast(&text, &local_id, now_ms)
+        }
+        TxCommand::Abort => engine.abort(),
+    }
+}
+
 /// The blocking driver. Runs on `spawn_blocking`; owns the link + engine; polls
 /// the link, drains commands, drives the retransmit clock; exits on abort/EOF/error.
 fn run(
@@ -902,15 +994,7 @@ fn run(
             Err(_) => break,
         }
         while let Ok(cmd) = cmd_rx.try_recv() {
-            match cmd {
-                TxCommand::Send { dest, text, msgid } => {
-                    engine.enqueue_send(&dest, &text, &msgid, now_ms())
-                }
-                TxCommand::Broadcast { text, local_id } => {
-                    engine.enqueue_broadcast(&text, &local_id, now_ms())
-                }
-                TxCommand::Abort => engine.abort(),
-            }
+            apply_command(&mut engine, cmd, now_ms());
         }
         for frame in engine.tick(now_ms()) {
             let _ = link.write_all(&frame);
@@ -935,6 +1019,12 @@ pub struct TauriEventSink {
 impl EventSink for TauriEventSink {
     fn emit_message(&self, ev: InboundMsg) {
         let _ = self.app.emit("aprs-message:new", &ev);
+    }
+    fn emit_sent(&self, ev: SentMsgDto) {
+        // Broadcast to every window (Task 5, spec §7) — same emit shape as
+        // `aprs-message:new`; the sending window dedupes by msgid against
+        // its own optimistic local append, every other window appends fresh.
+        let _ = self.app.emit("aprs-message:sent", &ev);
     }
     fn emit_state(&self, ev: StateChange) {
         if ev.state.is_terminal() {
@@ -974,6 +1064,7 @@ mod tests {
     #[derive(Default, Clone)]
     struct RecSink {
         msgs: Arc<Mutex<Vec<InboundMsg>>>,
+        sent: Arc<Mutex<Vec<SentMsgDto>>>,
         states: Arc<Mutex<Vec<StateChange>>>,
         positions: Arc<Mutex<Vec<InboundPos>>>,
         telemetry: Arc<Mutex<Vec<InboundTelemetry>>>,
@@ -982,6 +1073,9 @@ mod tests {
     impl EventSink for RecSink {
         fn emit_message(&self, ev: InboundMsg) {
             self.msgs.lock().unwrap().push(ev);
+        }
+        fn emit_sent(&self, ev: SentMsgDto) {
+            self.sent.lock().unwrap().push(ev);
         }
         fn emit_state(&self, ev: StateChange) {
             self.states.lock().unwrap().push(ev);
@@ -1643,5 +1737,77 @@ mod tests {
         let pos = sink.positions.lock().unwrap();
         assert_eq!(pos.len(), 2, "a precision change at the same spot must re-emit");
         assert_eq!(pos[1].ambiguity, 1);
+    }
+
+    // -- Own-send echo (tuxlink-dmwte Task 5, spec §7) ----------------------
+
+    #[test]
+    fn driver_dequeue_of_send_emits_own_send_echo_with_minted_msgid() {
+        // Drives a `TxCommand::Send` through `apply_command` — the exact
+        // extraction of `run()`'s per-command dispatch, i.e. the real
+        // driver-loop dequeue point — and asserts the echo carries the
+        // already-minted msgid, the destination as `addressee` (a directed
+        // send is never blank), and the text verbatim.
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        apply_command(
+            &mut engine,
+            TxCommand::Send {
+                dest: "KK6XYZ".into(),
+                text: "hello".into(),
+                msgid: "07".into(),
+            },
+            0,
+        );
+        let sent = sink.sent.lock().unwrap();
+        assert_eq!(sent.len(), 1, "exactly one own-send echo for one dequeued Send");
+        assert_eq!(sent[0].msgid, "07", "echo carries the already-minted msgid, not a fresh one");
+        assert_eq!(sent[0].addressee, "KK6XYZ", "a directed send's addressee is the destination call");
+        assert_eq!(sent[0].text, "hello");
+        assert!(sent[0].at_ms > 0, "at_ms is a real wall-clock stamp, not the driver's relative now_ms");
+
+        // The state-transition side effect (Sent) still fires too — the echo
+        // is additive, not a replacement for the existing delivery-state event.
+        assert!(sink
+            .states
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|s| s.msgid == "07" && s.state == DeliveryState::Sent));
+    }
+
+    #[test]
+    fn driver_dequeue_of_broadcast_emits_echo_with_blank_addressee() {
+        // A broadcast has no wire msgid — the echo must carry the UI-only
+        // `local_id` as `msgid` and normalize the (non-existent) recipient
+        // to "" (matching InboundMsg's blank-addressee-is-broadcast convention),
+        // NOT `None`/omitted.
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        apply_command(
+            &mut engine,
+            TxCommand::Broadcast {
+                text: "ALCON test".into(),
+                local_id: "bX".into(),
+            },
+            0,
+        );
+        let sent = sink.sent.lock().unwrap();
+        assert_eq!(sent.len(), 1, "exactly one own-send echo for one dequeued Broadcast");
+        assert_eq!(sent[0].msgid, "bX", "echo carries the UI-only local_id as msgid");
+        assert_eq!(sent[0].addressee, "", "broadcast normalizes to a blank addressee, not None/omitted");
+        assert_eq!(sent[0].text, "ALCON test");
+    }
+
+    #[test]
+    fn apply_command_abort_emits_no_echo() {
+        // Abort dequeues through the same match; it must not spuriously emit
+        // a sent-echo (only Send/Broadcast mint an echo).
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        engine.enqueue_send("KK6XYZ", "a", "01", 0);
+        sink.sent.lock().unwrap().clear(); // isolate: enqueue_send itself never echoes
+        apply_command(&mut engine, TxCommand::Abort, 0);
+        assert!(sink.sent.lock().unwrap().is_empty(), "Abort must not emit an own-send echo");
     }
 }
