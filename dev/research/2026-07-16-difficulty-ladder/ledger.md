@@ -25,3 +25,4 @@ Append-only during the run. Times UTC.
 2026-07-16T13:36:45Z SPARK STATE CHANGE: docker stop vllm (coder-next, container PRESERVED); docker run vllm-q122 (nvidia/Qwen3.5-122B-A10B-NVFP4, served name qwen35-122b-nvfp4, 131072 ctx, patched chat template mounted ro from /home/administrator/serving). Model load in progress.
 2026-07-16T13:50:01Z SPARK STATE CHANGE: vllm-q122 relaunched WITH --enable-auto-tool-choice --tool-call-parser qwen3_coder (first launch omitted them — smoke showed 22.7k tokens, zero visible output: tool calls never parsed)
 2026-07-16T14:03:10Z Q122 harness smoke PASS (real shell call round-trip, 45.4k tok). Rung 1 dispatching
+2026-07-16T17:26:23Z SPARK STATE CHANGE: vllm-q122 stopped+removed; original vllm container started; /v1/models verified = qwen3-coder-next. SPARK RESTORED TO AS-FOUND STATE. (Patched template file remains at /home/administrator/serving/ as a persistent serving asset for future swaps.)
