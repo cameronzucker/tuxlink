@@ -39,6 +39,15 @@ function tacMapSnapshot(tac_map: DockMode, context: unknown = null): DockSnapsho
   };
 }
 
+// tuxlink-dmwte task 10: flips aprs_chat's mode/context; routines + tac_map
+// stay docked/null throughout (task 10 does not touch them).
+function aprsChatSnapshot(aprs_chat: DockMode, context: unknown = null): DockSnapshot {
+  return {
+    surfaces: { routines: 'docked', tac_map: 'docked', aprs_chat },
+    context: { routines: null, tac_map: null, aprs_chat: context },
+  };
+}
+
 vi.mock('../dock/dockState', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../dock/dockState')>();
   return {
@@ -312,6 +321,87 @@ describe('AppShell dock wiring (task 8)', () => {
     expect(screen.queryByTestId('aprs-positions-map')).not.toBeInTheDocument();
     // The chat dock itself is unaffected (aprsOpen stays true).
     expect(screen.getByTestId('aprs-chat-panel')).toBeInTheDocument();
+  });
+
+  // --- Task 10: APRS Chat pop-out placeholder + dock-aware flows -----------
+
+  it('behavior 3: while aprs_chat is popped, the APRS tab body is a placeholder with focus + ⇤ dock-back', async () => {
+    // Open the dock on the APRS tab while chat is still DOCKED.
+    dockRef.current = snapshot('docked'); // aprs_chat docked (default)
+    const { rerender } = renderShell();
+    await screen.findByTestId('folder-sidebar');
+    fireEvent.click(screen.getByTestId('dash-aprs-control'));
+    await screen.findByTestId('aprs-chat-panel', {}, { timeout: 5000 });
+
+    // The chat is popped out (↗ from the panel header) — the tab body swaps to a placeholder.
+    dockRef.current = aprsChatSnapshot('popped');
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    rerender(
+      <QueryClientProvider client={qc}>
+        <AppShell />
+      </QueryClientProvider>,
+    );
+
+    const placeholder = await screen.findByTestId('aprs-chat-popped-placeholder');
+    expect(placeholder).toHaveTextContent('APRS Chat ↗ — in its own window');
+    expect(placeholder).toHaveTextContent('click to focus');
+    expect(screen.queryByTestId('aprs-chat-panel')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('aprs-chat-focus'));
+    await waitFor(() => expect(mockFocusSurface).toHaveBeenCalledWith('aprs_chat'));
+
+    fireEvent.click(screen.getByTestId('aprs-chat-dockback'));
+    await waitFor(() =>
+      expect(mockDockBack).toHaveBeenCalledWith('aprs_chat', { foreground: true, state: null }),
+    );
+  });
+
+  it('behavior 3: an aprs_chat foreground popped→docked arrival opens the dock on the APRS tab', async () => {
+    dockRef.current = aprsChatSnapshot('popped');
+    const { rerender } = renderShell();
+    await screen.findByTestId('folder-sidebar');
+    expect(screen.queryByTestId('aprs-dock-surface')).not.toBeInTheDocument();
+
+    dockRef.current = aprsChatSnapshot('docked', { foreground: true, state: null });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    rerender(
+      <QueryClientProvider client={qc}>
+        <AppShell />
+      </QueryClientProvider>,
+    );
+
+    // ⇤ activates the tab: the dock opens on APRS and the real panel renders (chat is docked now).
+    expect(await screen.findByTestId('aprs-dock-surface')).toBeInTheDocument();
+    expect(await screen.findByTestId('aprs-chat-panel', {}, { timeout: 5000 })).toBeInTheDocument();
+  });
+
+  it('behavior 3: a NON-foreground aprs_chat popped→docked arrival opens neither the dock nor the tab', async () => {
+    dockRef.current = aprsChatSnapshot('popped');
+    const { rerender } = renderShell();
+    await screen.findByTestId('folder-sidebar');
+
+    dockRef.current = aprsChatSnapshot('docked', { foreground: false, state: null });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    rerender(
+      <QueryClientProvider client={qc}>
+        <AppShell />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.queryByTestId('aprs-dock-surface')).not.toBeInTheDocument();
+  });
+
+  it('behavior 4: while aprs_chat is popped, the first-run listening switch focuses the window instead of opening the dock', async () => {
+    // No radio configured (packet_config_get.linkKind === null) + not listening
+    // ⇒ the ribbon control takes the first-run branch, which now routes on dock state.
+    dockRef.current = aprsChatSnapshot('popped');
+    renderShell();
+    await screen.findByTestId('folder-sidebar');
+
+    fireEvent.click(screen.getByTestId('dash-aprs-control'));
+    await waitFor(() => expect(mockFocusSurface).toHaveBeenCalledWith('aprs_chat'));
+    // Behavior 4: it must NOT escort the operator to the in-dock placeholder.
+    expect(screen.queryByTestId('aprs-dock-surface')).not.toBeInTheDocument();
   });
 
   it('invokes shell_mounted once on mount (launch restoration signal, spec §3)', async () => {

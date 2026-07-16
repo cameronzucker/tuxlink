@@ -134,13 +134,64 @@
  * reflow the operator saw on opening Station Data (tuxlink-hzwc bug #10). */
 .layout-b .aprs-dock-surface > .aprs-chat,
 .layout-b .aprs-dock-surface > .env-panel,
-.layout-b .aprs-dock-surface > .radio-panel {
+.layout-b .aprs-dock-surface > .radio-panel,
+.layout-b .aprs-dock-surface > .aprs-chat-popped-placeholder {
   flex: 1 1 auto;
   min-height: 0;
   /* `.radio-panel` ships `height: 100%`, which (as a flex child sharing the
    * column with the fixed-height tab row) would overflow by the tab-row height.
    * Let flex own the height so the body fills exactly the space below the tabs. */
   height: auto;
+}
+
+/* tuxlink-dmwte task 10 (spec §5): the in-dock APRS tab placeholder shown while
+ * APRS Chat is popped to its own window — a centered focus affordance plus a
+ * ⇤ dock-back link, mirroring the Tac Map "in window" pathway styling. */
+.layout-b .aprs-dock-surface > .aprs-chat-popped-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px 16px;
+  text-align: center;
+}
+.aprs-chat-popped-focus {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 14px;
+  font: inherit;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid var(--border, #2a3140);
+  border-radius: 6px;
+  color: var(--text, #cbd5e1);
+}
+.aprs-chat-popped-focus:hover {
+  background: var(--modem-accent-soft, rgba(74, 222, 128, 0.1));
+  border-color: var(--modem-accent, #4ade80);
+}
+.aprs-chat-popped-title {
+  font-size: 13px;
+  color: var(--modem-accent, #4ade80);
+}
+.aprs-chat-popped-sub {
+  font-size: 11px;
+  color: var(--text-dim, #7c8794);
+}
+.aprs-chat-popped-dockback {
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  color: var(--modem-accent, #4ade80);
+}
+.aprs-chat-popped-dockback:hover {
+  text-decoration: underline;
 }
 
 /* tuxlink-r4je: the Contacts pseudo-folder mounts ContactsPanel as a single

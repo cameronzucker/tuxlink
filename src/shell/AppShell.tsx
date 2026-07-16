@@ -277,6 +277,7 @@ const EnvPanel = lazy(loadEnvPanel);
 // the shared right dock (chat ⇄ modem). AppShell lifts one useAprsChat instance
 // so the status-strip control (unread/listening) + the dock panel share state.
 import { useAprsChat } from '../aprs/useAprsChat';
+import { useAprsConnectSequence } from '../aprs/useAprsConnectSequence';
 import { useEgressArm } from '../security/useEgressArm';
 import { useAprsPositions } from '../aprs/useAprsPositions';
 import { useEnvStations } from '../aprs/useEnvStations';
@@ -292,8 +293,6 @@ import { UvproControlStrip } from '../uvpro/UvproControlStrip';
 // dock header that hosts transport+radio selection and Connect/Disconnect for
 // ALL transports (the fresh-install path the in-panel toggle couldn't satisfy).
 import { AprsConnectStrip } from '../aprs/AprsConnectStrip';
-import type { ModemLinkFields } from '../radio/sections/ModemLinkSection';
-import type { PacketLinkKind } from '../packet/packetTypes';
 const ArdopRadioPanel = lazy(loadArdopRadioPanel);
 const VaraRadioPanel = lazy(loadVaraRadioPanel);
 const SearchDropdown = lazy(() =>
@@ -509,7 +508,9 @@ function AppShellInner() {
   const egressArm = useEgressArm();
   // APRS tactical chat — lifted here (single instance) so the status-strip
   // control (unread/listening) and the dock panel share one state. (spec §1,§3)
-  const aprs = useAprsChat();
+  // tuxlink-dmwte task 10 (spec §7): host role — the main shell answers
+  // snapshot requests from a popped APRS Chat window and its ChatStrip.
+  const aprs = useAprsChat({ snapshotRole: 'host' });
   // tuxlink-6vgt: heard-station positions, lifted alongside the chat so the
   // reading-pane map and the dock share one subscription.
   // tuxlink-dmwte task 9 (spec §7): host role — the main shell answers
@@ -611,6 +612,10 @@ function AppShellInner() {
   // `null` dock (no snapshot yet) reads as docked, same convention as
   // `routinesPopped` above.
   const tacMapPopped = dock?.surfaces.tac_map === 'popped';
+  // tuxlink-dmwte task 10 (spec §5): the APRS Chat surface. When popped, the
+  // in-dock APRS tab shows a placeholder and the dock-opening flows focus the
+  // window instead. `null` dock reads as docked (same convention as above).
+  const aprsChatPopped = dock?.surfaces.aprs_chat === 'popped';
   const consentHost = dock ? consentHostWindow(dock.surfaces) : 'main';
   // The continuity-token draft carried inline: seeded by a ⇤ foreground
   // dock-back arrival (spec §5), cleared on any in-surface navigation so
@@ -688,6 +693,36 @@ function AppShellInner() {
     setAprsOpen(true);
     setAprsMapOpen(true);
   }, [dock]);
+
+  // tuxlink-dmwte task 10 (spec §5): a ⇤ foreground dock-back for APRS Chat
+  // (popped→docked with `context.aprs_chat.foreground === true`) ACTIVATES the
+  // tab — open the dock (`aprsOpen`) on the APRS tab (`dockTab: 'aprs'`).
+  // `foreground === false` (✕ / Ctrl+W / WM close — availability semantics)
+  // changes neither. Mirrors the tac_map arrival ref above.
+  const prevAprsChatModeRef = useRef<'docked' | 'popped' | null>(null);
+  useEffect(() => {
+    if (!dock) return;
+    const prev = prevAprsChatModeRef.current;
+    const cur = dock.surfaces.aprs_chat;
+    prevAprsChatModeRef.current = cur;
+    if (prev !== 'popped' || cur !== 'docked') return;
+    const envelope = dock.context.aprs_chat as DockContextEnvelope;
+    if (!envelope?.foreground) return; // availability semantics — no tab activation
+    setAprsOpen(true);
+    setDockTab('aprs');
+  }, [dock]);
+
+  // tuxlink-dmwte task 10 (behavior 4, spec §5): the dock-opening flows that
+  // reach the APRS connect strip (first-run listening setup, connect-failure
+  // retry) route on dock state — a popped chat window has no in-dock strip, so
+  // focus the window instead of opening the dead placeholder (adrev R4-F9).
+  const focusOrOpenAprsChat = useCallback(() => {
+    if (aprsChatPopped) {
+      void focusSurface('aprs_chat');
+      return;
+    }
+    openAprsChat();
+  }, [aprsChatPopped, openAprsChat]);
 
   // In-surface navigation clears the carried token draft (so re-opening a
   // routine fetches fresh) — mirrors RoutinesPopped's `onNavigate`. Wraps
@@ -943,54 +978,11 @@ function AppShellInner() {
         return null;
     }
   })();
-  // The most-recent link-persist promise. onAprsConnect awaits it before
-  // aprs_listen_start so the backend reads the JUST-PERSISTED link, not a stale
-  // one (Codex adrev 2026-06-14 P1 race: setLink's packet_config_set is async).
-  const aprsLinkPersist = useRef<Promise<void>>(Promise.resolve());
-  // The transport the LIVE listener actually came up on (set on a successful
-  // connect, cleared on disconnect). Teardown keys off THIS, not the editable
-  // aprsLinkKind — otherwise changing the picker while listening would skip the
-  // UV-Pro session cleanup (Codex adrev 2026-06-14 P1). null = not listening.
-  const aprsActiveTransport = useRef<PacketLinkKind | null>(null);
-  const onAprsLinkChange = useCallback(
-    (fields: ModemLinkFields) => {
-      aprsLinkPersist.current = packetConfig.setLink(fields);
-    },
-    [packetConfig],
-  );
-  const onAprsConnect = useCallback(async () => {
-    // Wait for the picked link to actually persist before arming.
-    await aprsLinkPersist.current;
-    if (aprsLinkKind === 'UvproNative') {
-      // Ride the native session: connect it first (rejects propagate), then arm
-      // the listener. If arming fails (e.g. no active identity), roll the
-      // session back so a failed connect never leaves the UV-Pro connected.
-      await invoke('uvpro_connect', {});
-      try {
-        await invoke('aprs_listen_start');
-      } catch (err) {
-        await invoke('uvpro_disconnect').catch(() => undefined);
-        throw err;
-      }
-    } else {
-      await invoke('aprs_listen_start');
-    }
-    // Record the transport the listener actually came up on for teardown.
-    aprsActiveTransport.current = aprsLinkKind;
-  }, [aprsLinkKind]);
-  const onAprsDisconnect = useCallback(async () => {
-    const active = aprsActiveTransport.current;
-    try {
-      await invoke('aprs_listen_stop');
-    } finally {
-      // Clean up the UV-Pro session even if stopping the engine threw — keyed to
-      // the transport that was actually live, not the (possibly edited) picker.
-      if (active === 'UvproNative') {
-        await invoke('uvpro_disconnect').catch(() => undefined);
-      }
-      aprsActiveTransport.current = null;
-    }
-  }, []);
+  // tuxlink-dmwte task 10, Rider A: the two-step UvproNative arm + rollback +
+  // transport-keyed teardown + Codex 2026-06-14 P1 link-persist race fix now
+  // live in ONE shared hook, consumed here AND by the popped AprsChatSurface
+  // (src/dock/surfaceRegistry.tsx) so the sequence exists exactly once.
+  const aprsConn = useAprsConnectSequence(aprsLinkKind, packetConfig.setLink);
 
   // Status-bar APRS control (tuxlink-l0z5; tuxlink-a1j3): the ribbon's on/off
   // switch starts/stops the listener via the SAME composed sequences the dock
@@ -1001,36 +993,28 @@ function AppShellInner() {
   // a reject never optimistically flips the switch — the aprs-listening:change
   // event is the only thing that does.
   // tuxlink-28o0: a SINGLE in-flight "connecting" flag, shared by every surface
-  // that can start the listener (the status-bar control + the dock connect strip),
-  // so they show "Connecting…" together. `listening` was already shared backend
-  // truth; this closes the in-flight gap the operator hit (status-bar connect, but
-  // the dock strip still read "Connect"). Routed through one wrapper so a connect
-  // from EITHER surface flips it.
-  const [aprsConnecting, setAprsConnecting] = useState(false);
-  const runAprsConnect = useCallback(async () => {
-    setAprsConnecting(true);
-    try {
-      await onAprsConnect();
-    } finally {
-      setAprsConnecting(false);
-    }
-  }, [onAprsConnect]);
+  // that can start the listener (the status-bar control + the dock connect
+  // strip), so they show "Connecting…" together — now owned by the shared
+  // `aprsConn` hook (tuxlink-dmwte task 10, Rider A).
+  const aprsConnecting = aprsConn.connecting;
   const [aprsToggling, setAprsToggling] = useState(false);
   const onToggleAprsListening = useCallback(async () => {
     if (aprsToggling || aprsConnecting) return;
     // Not listening + NO radio configured: there is nothing to start. Rather than
     // fire a connect that fails silently (the tuxlink-ube7 "does nothing" report),
-    // just open the APRS panel — its connect strip auto-expands the radio picker
-    // when there's no link, so the operator lands exactly where they set one up.
-    // This first-run setup is the ONLY case where the control touches the dock.
+    // reach the APRS connect strip's radio picker — its auto-expands when there's
+    // no link, so the operator lands exactly where they set one up.
+    // tuxlink-dmwte task 10 (behavior 4, spec §5): while APRS Chat is POPPED the
+    // in-dock placeholder has no picker, so focus the popped window instead of
+    // escorting the operator to a dead placeholder (adrev R4-F9).
     if (!aprs.listening && aprsLinkKind == null) {
-      openAprsChat();
+      focusOrOpenAprsChat();
       return;
     }
     if (aprs.listening) {
       setAprsToggling(true);
       try {
-        await onAprsDisconnect();
+        await aprsConn.disconnect();
       } catch {
         // Backend truth: a failed stop leaves `listening` as-is.
       } finally {
@@ -1039,23 +1023,24 @@ function AppShellInner() {
     } else {
       // tuxlink-a1j3: pure on/off — start listening with the last-configured radio
       // WITHOUT opening the dock (only the no-config first run above does).
-      // tuxlink-28o0: via the shared wrapper so the dock strip shows Connecting… too.
+      // tuxlink-28o0: via the shared hook so the dock strip shows Connecting… too.
       try {
-        await runAprsConnect();
+        await aprsConn.connect();
       } catch {
         // Backend truth: a failed start leaves the indicator Off; the reason is
-        // in the structured log (tuxlink-xyi7). Open the dock so the operator
-        // lands on the connect strip — failure visible, retry + radio picker in
-        // hand. This line was the WRITTEN INTENT of this catch since a1j3
-        // ("Open the dock to retry via the strip") but the body shipped EMPTY:
-        // with a configured-but-unreachable radio (UV-Pro off/out of range) the
-        // click burned a BT-timeout worth of seconds and then did nothing, and
-        // since the ribbon chip is the only discoverable APRS surface, tac
-        // chat/map were unreachable entirely (operator live-test 2026-07-12).
-        openAprsChat();
+        // in the structured log (tuxlink-xyi7). Reach the connect strip so the
+        // operator lands on it — failure visible, retry + radio picker in hand.
+        // This line was the WRITTEN INTENT of this catch since a1j3 but shipped
+        // EMPTY: with a configured-but-unreachable radio (UV-Pro off/out of
+        // range) the click burned a BT-timeout worth of seconds and then did
+        // nothing, and since the ribbon chip is the only discoverable APRS
+        // surface, tac chat/map were unreachable (operator live-test 2026-07-12).
+        // tuxlink-dmwte task 10 (behavior 4): dock-state-aware — focus the popped
+        // window rather than opening the dead in-dock placeholder.
+        focusOrOpenAprsChat();
       }
     }
-  }, [aprsToggling, aprsConnecting, aprs.listening, aprsLinkKind, runAprsConnect, onAprsDisconnect, openAprsChat]);
+  }, [aprsToggling, aprsConnecting, aprs.listening, aprsLinkKind, aprsConn, focusOrOpenAprsChat]);
 
   // Task C2 (plan tuxlink-b026z.4 §Ribbon): Station Intelligence (FT-8)
   // listener status + toggle, consumed by the ribbon badge. `ft8Listener` is
@@ -2482,6 +2467,39 @@ function AppShellInner() {
                 <EnvPanel stations={envStations.stations} focusCall={focusCall} focusNonce={focusNonce} />
               </Suspense>
             ) : dockTab === 'aprs' ? (
+              aprsChatPopped ? (
+                /* tuxlink-dmwte task 10 (behavior 3, spec §5): while APRS Chat
+                   is popped to its own window, the in-dock tab body is a
+                   placeholder — the real strip + panel live in the pop-out.
+                   Clicking focuses the window; ⇤ docks it back (foreground, so
+                   the arrival re-activates this tab). Other tabs untouched. */
+                <div className="aprs-chat-popped-placeholder" data-testid="aprs-chat-popped-placeholder">
+                  <button
+                    type="button"
+                    className="aprs-chat-popped-focus"
+                    data-testid="aprs-chat-focus"
+                    title="Focus the APRS Chat window"
+                    onClick={() => void focusSurface('aprs_chat')}
+                  >
+                    <span className="aprs-chat-popped-title">APRS Chat ↗ — in its own window</span>
+                    <span className="aprs-chat-popped-sub">click to focus</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="aprs-chat-popped-dockback"
+                    data-testid="aprs-chat-dockback"
+                    aria-label="Dock APRS Chat back inline"
+                    title="Dock APRS Chat back inline"
+                    onClick={() => {
+                      void dockBack('aprs_chat', { foreground: true, state: null }).catch((err) => {
+                        console.error('[dock] APRS Chat dock-back failed:', err);
+                      });
+                    }}
+                  >
+                    ⇤ dock back
+                  </button>
+                </div>
+              ) : (
               <>
                 {/* bd-tuxlink-ckmb: the connect surface lives in the dock-header
                     band, ABOVE the chat, for ALL transports (the fresh-install
@@ -2499,9 +2517,9 @@ function AppShellInner() {
                   serialDevice={packetConfig.config?.serialDevice ?? undefined}
                   serialBaud={packetConfig.config?.serialBaud ?? undefined}
                   btMac={packetConfig.config?.btMac ?? undefined}
-                  onConnect={runAprsConnect}
-                  onDisconnect={onAprsDisconnect}
-                  onLinkChange={onAprsLinkChange}
+                  onConnect={aprsConn.connect}
+                  onDisconnect={aprsConn.disconnect}
+                  onLinkChange={aprsConn.onLinkChange}
                 />
                 <Suspense fallback={null}>
                   <AprsChatPanel
@@ -2521,6 +2539,7 @@ function AppShellInner() {
                   />
                 </Suspense>
               </>
+              )
             ) : (
               radioBody
             )}

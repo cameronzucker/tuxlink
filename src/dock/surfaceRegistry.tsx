@@ -5,7 +5,6 @@
 // field here — first-spawn sizes live Rust-side in `pop_window_spec`
 // (backend Task 3). Do not "restore" it.
 import { useCallback, useEffect, useRef, useState, type ComponentType } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { SurfaceId } from './dockState';
 import { useStatusData } from '../shell/useStatus';
@@ -15,9 +14,9 @@ import { useEnvStations } from '../aprs/useEnvStations';
 import { AprsChatPanel } from '../aprs/AprsChatPanel';
 import { AprsConnectStrip } from '../aprs/AprsConnectStrip';
 import { useAprsChat } from '../aprs/useAprsChat';
+import { useAprsConnectSequence } from '../aprs/useAprsConnectSequence';
 import { usePacketConfig } from '../packet/usePacketConfig';
-import type { ModemLinkFields } from '../radio/sections/ModemLinkSection';
-import type { PacketConfigDto, PacketLinkKind } from '../packet/packetTypes';
+import type { PacketConfigDto } from '../packet/packetTypes';
 import { UvproControlStrip } from '../uvpro/UvproControlStrip';
 import { RoutinesSurface, type RoutinesView } from '../routines/RoutinesSurface';
 import { isRoutinesView, type RoutinesTokenState } from '../routines/routinesToken';
@@ -86,12 +85,14 @@ function TacMapSurface(_props: SurfaceComponentProps) {
 // ---- APRS Chat ----------------------------------------------------------
 //
 // Composes AprsConnectStrip above AprsChatPanel, mirroring AppShell's dock
-// composition (AppShell.tsx ~2313-2334) — the strip stays a separate
+// composition (AppShell.tsx ~2434-2522) — the strip stays a separate
 // component owned by the hosting container (adrev Codex-7: folding it into
 // the panel would break the existing APRS ownership model). The
-// transport-specific connect/disconnect sequence is AppShell's own composed
-// logic (AppShell.tsx ~811-899), replicated here rather than factored out —
-// it is not a shared hook today; see the task-7 report for a follow-up note.
+// transport-specific connect/disconnect sequence is the shared
+// `useAprsConnectSequence` hook (tuxlink-dmwte task 10, Rider A) — the same
+// composed logic AppShell's dock header uses, captured once. `snapshotRole:
+// 'client'` seeds this freshly-popped window's feed from the main shell's
+// snapshot + own-send echo (spec §7) instead of starting empty.
 function radioLabelFor(c: PacketConfigDto | null | undefined): string | null {
   if (!c) return null;
   switch (c.linkKind) {
@@ -109,65 +110,19 @@ function radioLabelFor(c: PacketConfigDto | null | undefined): string | null {
 }
 
 function AprsChatSurface(_props: SurfaceComponentProps) {
-  const aprs = useAprsChat();
+  const aprs = useAprsChat({ snapshotRole: 'client' });
   const packetConfig = usePacketConfig();
-  const [connecting, setConnecting] = useState(false);
   const linkKind = packetConfig.config?.linkKind ?? null;
-  // The most-recent link-persist promise + the transport the LIVE listener
-  // actually came up on — mirrors AppShell's aprsLinkPersist/aprsActiveTransport
-  // refs (AppShell.tsx ~831-836) and their rationale (await the persist before
-  // arming; teardown keys off the transport that was actually live, not the
-  // editable picker).
-  const linkPersist = useRef<Promise<void>>(Promise.resolve());
-  const activeTransport = useRef<PacketLinkKind | null>(null);
-
-  const onLinkChange = useCallback(
-    (fields: ModemLinkFields) => {
-      linkPersist.current = packetConfig.setLink(fields);
-    },
-    [packetConfig],
-  );
-
-  const onConnect = useCallback(async () => {
-    await linkPersist.current;
-    if (linkKind === 'UvproNative') {
-      await invoke('uvpro_connect', {});
-      try {
-        await invoke('aprs_listen_start');
-      } catch (err) {
-        await invoke('uvpro_disconnect').catch(() => undefined);
-        throw err;
-      }
-    } else {
-      await invoke('aprs_listen_start');
-    }
-    activeTransport.current = linkKind;
-  }, [linkKind]);
-
-  const onDisconnect = useCallback(async () => {
-    const active = activeTransport.current;
-    try {
-      await invoke('aprs_listen_stop');
-    } finally {
-      if (active === 'UvproNative') await invoke('uvpro_disconnect').catch(() => undefined);
-      activeTransport.current = null;
-    }
-  }, []);
-
-  const runConnect = useCallback(async () => {
-    setConnecting(true);
-    try {
-      await onConnect();
-    } finally {
-      setConnecting(false);
-    }
-  }, [onConnect]);
+  // The ONE shared connect/disconnect sequence (tuxlink-dmwte task 10, Rider
+  // A) — the two-step UvproNative arm + rollback + transport-keyed teardown +
+  // Codex P1 link-persist race fix all live in the hook now.
+  const conn = useAprsConnectSequence(linkKind, packetConfig.setLink);
 
   return (
     <div className="pop-aprs-chat">
       <AprsConnectStrip
         listening={aprs.listening}
-        externalConnecting={connecting}
+        externalConnecting={conn.connecting}
         linkKind={linkKind}
         radioLabel={radioLabelFor(packetConfig.config)}
         allowUvproNative
@@ -176,9 +131,9 @@ function AprsChatSurface(_props: SurfaceComponentProps) {
         serialDevice={packetConfig.config?.serialDevice ?? undefined}
         serialBaud={packetConfig.config?.serialBaud ?? undefined}
         btMac={packetConfig.config?.btMac ?? undefined}
-        onConnect={runConnect}
-        onDisconnect={onDisconnect}
-        onLinkChange={onLinkChange}
+        onConnect={conn.connect}
+        onDisconnect={conn.disconnect}
+        onLinkChange={conn.onLinkChange}
       />
       <AprsChatPanel
         messages={aprs.messages}

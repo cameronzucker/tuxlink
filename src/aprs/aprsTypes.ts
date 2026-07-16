@@ -29,6 +29,20 @@ export interface InboundMsgDto {
   kind?: 'message' | 'raw';
 }
 
+/// Payload of `aprs-message:sent` — the backend own-send echo (spec §7,
+/// tuxlink-dmwte task 10), emitted broadcast at `aprs_send` acceptance from
+/// BOTH driver loops. Every window consumes it so its feed is reconstructible
+/// from backend events alone; the sending window dedupes it against its own
+/// optimistic append by `msgid`. `addressee` is the directed callsign, or `""`
+/// for a broadcast. NOTE the field names deviate from the camelCase norm: the
+/// timestamp is `at_ms` (snake_case) — mirrored verbatim from the wire.
+export interface SentMsgDto {
+  msgid: string;
+  addressee: string;
+  text: string;
+  at_ms: number;
+}
+
 /// Payload of `aprs-message:state` — a delivery-state transition for a
 /// previously-sent outgoing message, keyed by its backend-minted tracking id.
 export interface StateChangeDto {

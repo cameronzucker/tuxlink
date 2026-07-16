@@ -97,7 +97,10 @@ function formatAge(ms: number): string {
 }
 
 export function TacMapStrip() {
-  const { positions } = useAprsPositions();
+  // Rider B (Task 9 review): seed from the host snapshot (spec §7) — a bare
+  // useAprsPositions() would show "no packets heard" beside a live-seeded map,
+  // a false-liveness signal (spec §4 violation class).
+  const { positions } = useAprsPositions({ snapshotRole: 'client' });
   const now = useNowTick();
   const newest = positions.reduce<number | null>(
     (max, p) => (max === null || p.at > max ? p.at : max),
@@ -113,7 +116,10 @@ export function TacMapStrip() {
 }
 
 export function ChatStrip() {
-  const { heardStations } = useAprsChat();
+  // Rider B: same seeding as TacMapStrip — the last-heard vital seeds from the
+  // host snapshot (spec §7) so a fresh pop-out window doesn't read "no stations
+  // heard" beside a seeded chat feed.
+  const { heardStations } = useAprsChat({ snapshotRole: 'client' });
   const lastHeard = heardStations[0];
   // No unread stat: real unread tracking doesn't exist yet — a fabricated "0 unread" is worse than absence (no-stubs rule).
   return (

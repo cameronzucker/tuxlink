@@ -189,6 +189,18 @@ describe('strip vitals render from mocked hook data (review-loop-3 F4c)', () => 
     expect(screen.getByTestId('pop-strip-routines').textContent).toContain('no scheduled fire');
   });
 
+  it("TacMapStrip mounts its positions hook in client role (seeds from the host snapshot, spec §4)", () => {
+    render(<TacMapStrip />);
+    // Rider B: a bare useAprsPositions() would show "no packets heard" beside a
+    // seeded live map — a false-liveness signal. The client role seeds it.
+    expect(mockUseAprsPositions).toHaveBeenCalledWith({ snapshotRole: 'client' });
+  });
+
+  it('ChatStrip mounts its chat hook in client role (seeds last-heard from the host snapshot)', () => {
+    render(<ChatStrip />);
+    expect(mockUseAprsChat).toHaveBeenCalledWith({ snapshotRole: 'client' });
+  });
+
   it("TacMapStrip formats the last-packet age from the mocked hook's positions", () => {
     const now = Date.now();
     mockUseAprsPositions.mockReturnValue({
