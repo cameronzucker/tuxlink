@@ -98,6 +98,50 @@ pub fn dock_back(
     }
 }
 
+/// Generation-guarded dock-back, used ONLY by the `on_window_event`
+/// close-intent liveness timeout (spec §3, behavior 4; adrev Round-2). The
+/// timer samples the surface's pop generation when the WM-close arms it, then
+/// passes it here as `expected_pop_generation`. The transition runs IFF that
+/// generation still holds — the compare and the mutation are one indivisible
+/// step inside the registry's single mutex ([`DockRegistry::transition_if_pop_generation`]),
+/// so a re-pop cannot slip between them.
+///
+/// This closes the re-pop race the plain [`dock_back`] left open: WM-close arms
+/// the 1.5 s timer → the webview's own `surface_dock_back` lands (Docked, window
+/// destroyed) → the user re-pops within 1.5 s (new window, generation bumped) →
+/// the stale timer fires. With the plain path, that timer would find `Popped`,
+/// run an EFFECTIVE dock-back, and destroy the freshly re-popped window while
+/// clearing its new continuity token. The generation guard makes the stale
+/// timer a no-op instead.
+///
+/// The residual "re-pop between the transition and `destroy()`" window is not
+/// exploitable: the transition is EFFECTIVE (and we reach `destroy()`) only when
+/// the surface was still `Popped` at generation `expected_pop_generation` — i.e.
+/// the webview never docked back (the hung-webview case this timer exists for).
+/// A surface that is still `Popped` with a live window cannot be re-popped
+/// (`surface_pop_out` on a live window only focuses; it runs no transition and
+/// bumps no generation), so `destroy()` always targets the original hung window,
+/// never a fresh one.
+pub fn dock_back_if_generation(
+    app: &AppHandle,
+    registry: &DockRegistry,
+    surface: SurfaceId,
+    context: Option<serde_json::Value>,
+    expected_pop_generation: u64,
+) {
+    if registry.transition_if_pop_generation(
+        app,
+        surface,
+        DockMode::Docked,
+        context,
+        expected_pop_generation,
+    ) {
+        if let Some(window) = app.get_webview_window(surface.window_label()) {
+            let _ = window.destroy();
+        }
+    }
+}
+
 /// Focus a popped surface (spec §5, behavior 8) — the single most load-bearing
 /// call in the feature (every visual pathway ends here). `unminimize` → `show`
 /// → `set_focus`, in that order. A stale pathway (window absent) is a no-op

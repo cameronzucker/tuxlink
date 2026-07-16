@@ -2882,10 +2882,28 @@ pub fn run() {
             // the timeout finds a no-op. This is the backend-intercept pattern
             // (the main window's proven close path), NOT compose's frontend
             // onCloseRequested, which depends on a live webview (adrev R3-F4).
+            //
+            // Re-pop race (adrev Round-2): the fallback timer is guarded by the
+            // surface's pop generation, sampled HERE while the window is live and
+            // `Popped`. Without the guard, this timeline destroys a fresh window:
+            // WM-close arms the timer → the webview's own `surface_dock_back`
+            // lands (Docked, window destroyed) → the user re-pops within 1.5 s
+            // (a NEW window, generation bumped) → the stale timer fires, finds
+            // `Popped`, and its dock-back is EFFECTIVE — destroying the freshly
+            // re-popped window and clearing its new continuity token. The
+            // `Docked`-only no-op suppression does not cover that (the surface IS
+            // `Popped` again). `dock_back_if_generation` docks back ONLY if the
+            // generation still matches, atomically under the registry mutex.
             if let Some(surface) = crate::dock::SurfaceId::from_window_label(window.label()) {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
                     let app_handle = window.app_handle().clone();
+                    let armed_pop_generation = {
+                        use tauri::Manager as _;
+                        let registry =
+                            app_handle.state::<crate::dock::registry::DockRegistry>();
+                        registry.pop_generation(surface)
+                    };
                     use tauri::Emitter as _;
                     let _ = app_handle.emit_to(
                         surface.window_label(),
@@ -2897,8 +2915,16 @@ pub fn run() {
                         use tauri::Manager as _;
                         let registry = app_handle.state::<crate::dock::registry::DockRegistry>();
                         // If the webview already docked back, the surface is
-                        // `Docked` and this is a no-op (no emit, no destroy).
-                        crate::dock::commands::dock_back(&app_handle, &registry, surface, None);
+                        // `Docked` and this is a no-op. If it docked back AND was
+                        // re-popped, the generation no longer matches and this is
+                        // ALSO a no-op — the fresh window survives (adrev Round-2).
+                        crate::dock::commands::dock_back_if_generation(
+                            &app_handle,
+                            &registry,
+                            surface,
+                            None,
+                            armed_pop_generation,
+                        );
                     });
                 }
                 // A pop-* window's close is fully handled here; never fall through

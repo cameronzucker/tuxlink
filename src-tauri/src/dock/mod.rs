@@ -47,6 +47,18 @@ impl SurfaceId {
     pub fn from_window_label(label: &str) -> Option<SurfaceId> {
         SurfaceId::ALL.into_iter().find(|s| s.window_label() == label)
     }
+
+    /// Dense `0..3` index for this surface, matching [`SurfaceId::ALL`]'s order
+    /// (`Routines`=0, `TacMap`=1, `AprsChat`=2). Used to index the registry's
+    /// per-surface pop-generation array the same way [`DockSurfaces`] maps a
+    /// surface to its field.
+    pub(crate) fn index(self) -> usize {
+        match self {
+            SurfaceId::Routines => 0,
+            SurfaceId::TacMap => 1,
+            SurfaceId::AprsChat => 2,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
