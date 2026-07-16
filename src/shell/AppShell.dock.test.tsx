@@ -323,6 +323,52 @@ describe('AppShell dock wiring (task 8)', () => {
     expect(screen.getByTestId('aprs-chat-panel')).toBeInTheDocument();
   });
 
+  it('regression (spec §5 AMD-2): ↗ pop-out clears aprsMapOpen so a NON-foreground dock-back does not spring the inline map back into the pane', async () => {
+    // Inline map open, tac_map still docked.
+    dockRef.current = snapshot('docked');
+    const { rerender } = renderShell();
+    await screen.findByTestId('folder-sidebar');
+    fireEvent.click(screen.getByTestId('dash-aprs-control'));
+    await screen.findByTestId('aprs-chat-panel', {}, { timeout: 5000 });
+    fireEvent.click(screen.getByTestId('aprs-map-toggle'));
+    expect(await screen.findByTestId('aprs-positions-map', {}, { timeout: 5000 })).toBeInTheDocument();
+
+    // ↗ pop the map out. The handler must clear `aprsMapOpen` (not just call
+    // popOut) — otherwise nothing resets the flag while popped and it is
+    // still true the instant the map docks back.
+    fireEvent.click(screen.getByTestId('aprs-map-popout'));
+    await waitFor(() =>
+      expect(mockPopOut).toHaveBeenCalledWith('tac_map', { foreground: true, state: null }),
+    );
+
+    // Backend confirms the pop-out.
+    dockRef.current = tacMapSnapshot('popped');
+    let qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    rerender(
+      <QueryClientProvider client={qc}>
+        <AppShell />
+      </QueryClientProvider>,
+    );
+    expect(screen.queryByTestId('aprs-positions-map')).not.toBeInTheDocument();
+
+    // A non-foreground popped→docked arrival — ✕ / Ctrl+W / WM close, per the
+    // arrival effect's `foreground: false` early-return (availability
+    // semantics; no pane theft). This is NOT the ⇤ restore path.
+    dockRef.current = tacMapSnapshot('docked', { foreground: false, state: null });
+    qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    rerender(
+      <QueryClientProvider client={qc}>
+        <AppShell />
+      </QueryClientProvider>,
+    );
+
+    // The inline map must NOT spring back and commandeer the reading pane —
+    // the mailbox stays put.
+    expect(screen.queryByTestId('aprs-positions-map')).not.toBeInTheDocument();
+    // The chat dock itself is unaffected (aprsOpen stays true).
+    expect(screen.getByTestId('aprs-chat-panel')).toBeInTheDocument();
+  });
+
   // --- Task 10: APRS Chat pop-out placeholder + dock-aware flows -----------
 
   it('behavior 3: while aprs_chat is popped, the APRS tab body is a placeholder with focus + ⇤ dock-back', async () => {

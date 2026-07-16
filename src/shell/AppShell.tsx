@@ -2134,7 +2134,7 @@ function AppShellInner() {
           aprs={{
             listening: aprs.listening,
             unread: aprsUnread,
-            onOpen: openAprsChat,
+            onOpen: focusOrOpenAprsChat,
             onToggleListening: onToggleAprsListening,
             toggleBusy: aprsToggling || aprsConnecting,
           }}
@@ -2448,6 +2448,18 @@ function AppShellInner() {
               // carries the viewport across — the token's `state` stays null.
               mapPopped={tacMapPopped}
               onPopOutMap={() => {
+                // Spec §5 AMD-2: ✕ / Ctrl+W / WM close is availability-only and
+                // must never commandeer the reading pane. The popped→docked
+                // arrival effect above only re-sets `aprsMapOpen` on a
+                // `foreground: true` arrival (the ⇤ dock-back path) — a
+                // non-foreground close leaves `aprsMapOpen` untouched. Without
+                // clearing it here, that flag stays stuck `true` while popped,
+                // so a non-foreground close snaps the render guard
+                // (`aprsOpen && aprsMapOpen && !tacMapPopped`) back to true the
+                // instant `tacMapPopped` flips false, and the inline map
+                // springs back into the reading pane uninvited (mirrors the
+                // `routinesPopped` guard's `setRoutinesView(null)` class above).
+                setAprsMapOpen(false);
                 void popOut('tac_map', { foreground: true, state: null }).catch((err) => {
                   console.error('[dock] Tac Map pop-out failed:', err);
                 });
