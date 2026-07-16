@@ -70,3 +70,20 @@
    report.md §Transferability.
 3. Quick wins if idle: `tuxlink-10dh5` (per-step parked windows — natural now),
    `tuxlink-r6d63` (light-theme ribbon), `tuxlink-y6195` (plan-5 test debt).
+
+## Late addendum — milestone 0 of tuxlink-7raoe (same session, operator-directed)
+
+After the main close, two operator-directed experiments ran (report.md
+§Addendum): arm F (Spark coder-next under R2: 3/3 at 15-27min — arm B's
+verdict was harness-confounded, plus a confirmed second-order thermal
+confound from the >100F garage event) and arm G (122B-NVFP4 on the single
+Spark: 3/3 substantive at 23-30min, quality parity with full-precision arm E,
+whole-arm review Ready/0-important). VERDICT: single Spark clears the
+practicality bar; second Spark = throughput/precision, not feasibility.
+The Spark's vLLM was swapped for arm G and RESTORED to the original
+coder-next container. Arm F/G worktrees disposed per ADR 0009 (forensics in
+.claude/worktree-archives/). tuxlink-7raoe carries the serving-shim backlog
+and remains the dedicated-session track; local branches
+bd-tuxlink-7raoe/arm-{f,g}-* and bd-tuxlink-c5ckf/arm-* remain local-only.
+Operator authorization recorded: the Spark is agent-operable (memory:
+project_spark_agent_operable).
