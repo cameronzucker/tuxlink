@@ -125,11 +125,14 @@ export function AprsDockTabs({
                 type="button"
                 className="aprs-dock-map-popout"
                 data-testid="aprs-map-popout"
-                aria-label="Open the Tac Map in its own window"
                 title="Open the Tac Map in its own window"
                 onClick={onPopOutMap}
               >
+                {/* Text-labeled, never icon-only (spec §1 visual-pathway rule +
+                    §5 text-labeled requirement) — mirrors the map focus /
+                    dock-back pathway controls below. */}
                 <span className="aprs-dock-map-popout-glyph" aria-hidden="true">↗</span>
+                Pop out
               </button>
             )}
           </>

@@ -70,10 +70,23 @@ export interface UseAprsChat {
   setConfig: (dto: AprsConfigDto) => Promise<void>;
 }
 
+/// Per-window (per module-instance) id namespace for msgid-less rows (review
+/// loop-4 F5). Each window's `useAprsChat` counts `local-N` from its own
+/// counter starting at 1, so a bare `local-1` in the host and a `local-1` in a
+/// popped client are DIFFERENT frames — yet `mergeSnapshot`'s exact-`id` branch
+/// would treat them as the same row and silently DROP the incoming snapshot row
+/// (its content-identity fallback never running). Prefixing the counter with a
+/// once-minted module-scope random token makes cross-window local ids
+/// collision-free: the exact-id branch can never false-match across windows, so
+/// the msgid-less content fallback reliably collapses genuine twins instead.
+/// `Math.random().toString(36).slice(2, 8)` is the repo's established
+/// cheap-uniqueness idiom (src/routing.ts, src/mailbox/replyActions.ts);
+/// determinism is not required here (no test pins the literal `local-N` shape).
+const LOCAL_ID_PREFIX = `local-${Math.random().toString(36).slice(2, 8)}`;
 let localIdSeq = 0;
 function nextLocalId(): string {
   localIdSeq += 1;
-  return `local-${localIdSeq}`;
+  return `${LOCAL_ID_PREFIX}-${localIdSeq}`;
 }
 
 /// Set `.state` on the message whose `.msgid === msgid`. Stamps `ackedAt` when
@@ -130,7 +143,8 @@ function msgidlessContentKey(m: ChannelMessage): string {
 /// msgid-less content fallback (review loop-4 F1): an inbound message with NO
 /// msgid heard LIVE by a freshly-popped client ALSO arrives in the host's
 /// snapshot under the HOST's local id — deduping by `.id` alone can't collapse
-/// them (each window minted its own `local-N`). For a snapshot row whose `msgid`
+/// them (each window minted its own namespaced `local-<rand>-N`, now guaranteed
+/// distinct across windows by `LOCAL_ID_PREFIX`). For a snapshot row whose `msgid`
 /// is absent, if an existing msgid-less row matches on content AND `at` is
 /// within tolerance, it's the same frame heard twice → keep the one row (React
 /// key stability) rather than mint a duplicate. Live listeners are untouched;

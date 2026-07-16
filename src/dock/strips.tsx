@@ -13,6 +13,7 @@
 import { useEffect, useState } from 'react';
 import { useAprsPositions } from '../aprs/useAprsPositions';
 import { useAprsChat } from '../aprs/useAprsChat';
+import { countUnread } from '../aprs/aprsUnread';
 import { useRoutines } from '../routines/useRoutines';
 import { useParkedRuns } from '../routines/ConsentGate';
 import { listRuns, type RunState } from '../routines/routinesApi';
@@ -119,14 +120,38 @@ export function ChatStrip() {
   // Rider B: same seeding as TacMapStrip — the last-heard vital seeds from the
   // host snapshot (spec §7) so a fresh pop-out window doesn't read "no stations
   // heard" beside a seeded chat feed.
-  const { heardStations } = useAprsChat({ snapshotRole: 'client' });
+  const { messages, heardStations } = useAprsChat({ snapshotRole: 'client' });
   const lastHeard = heardStations[0];
-  // No unread stat: real unread tracking doesn't exist yet — a fabricated "0 unread" is worse than absence (no-stubs rule).
+
+  // Unread reuses AppShell's REAL mechanism — countUnread (src/aprs/aprsUnread.ts:
+  // inbound messages past a seen-watermark), the same helper AppShell drives for
+  // the in-dock unread badge.
+  //
+  // Watermark semantics in THIS window: the popped window's AprsChatPanel renders
+  // this same live feed directly above the strip, so the operator is always
+  // "viewing" the chat here — the honest analogue of AppShell's
+  // `viewingAprsChat === true` branch, which likewise reports 0. AppShell's own
+  // seen-watermark is dock-open-keyed local state that never travels to a popped
+  // window (spec §7 continuity is feed-only), and a cross-window "messages since
+  // this window lost focus" signal is not plumbed. So, exactly as AppShell does
+  // while the chat tab is the active view, we advance the watermark on every
+  // arriving message; countUnread then honestly reports 0 while the popped feed
+  // is on screen. A true-but-boring 0 beats a fabricated count (no-stubs rule),
+  // and advancing (rather than a fixed mount watermark) avoids the very
+  // climbs-forever bug AppShell fixed for the always-visible strip count.
+  const [seenAt, setSeenAt] = useState(() => Date.now());
+  useEffect(() => {
+    setSeenAt(Date.now());
+  }, [messages.length]);
+  const unread = countUnread(messages, seenAt);
+
   return (
     <div className="pop-strip" data-testid="pop-strip-chat">
       <span className="pop-strip-item">
         {lastHeard ? `last heard ${lastHeard.call}` : 'no stations heard'}
       </span>
+      <span className="pop-strip-divider" aria-hidden="true">·</span>
+      <span className="pop-strip-item" data-testid="pop-strip-chat-unread">{unread} unread</span>
     </div>
   );
 }

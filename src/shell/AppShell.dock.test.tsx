@@ -369,7 +369,25 @@ describe('AppShell dock wiring (task 8)', () => {
     expect(screen.getByTestId('aprs-chat-panel')).toBeInTheDocument();
   });
 
-  // --- Task 10: APRS Chat pop-out placeholder + dock-aware flows -----------
+  // --- Task 10: APRS Chat pop-out entry point + placeholder + dock-aware flows
+
+  it('entry point (spec §5): the docked APRS chat header shows ↗ Pop out; clicking pops the surface out', async () => {
+    dockRef.current = snapshot('docked'); // aprs_chat docked (default)
+    renderShell();
+    await screen.findByTestId('folder-sidebar');
+    fireEvent.click(screen.getByTestId('dash-aprs-control'));
+    await screen.findByTestId('aprs-chat-panel', {}, { timeout: 5000 });
+
+    // Text-labeled entry point in the chat panel header (never icon-only).
+    const popout = screen.getByTestId('aprs-chat-popout');
+    expect(popout).toHaveTextContent('Pop out');
+    expect(popout).toHaveAccessibleName(/pop out/i);
+
+    fireEvent.click(popout);
+    await waitFor(() =>
+      expect(mockPopOut).toHaveBeenCalledWith('aprs_chat', { foreground: true, state: null }),
+    );
+  });
 
   it('behavior 3: while aprs_chat is popped, the APRS tab body is a placeholder with focus + ⇤ dock-back', async () => {
     // Open the dock on the APRS tab while chat is still DOCKED.
@@ -392,6 +410,9 @@ describe('AppShell dock wiring (task 8)', () => {
     expect(placeholder).toHaveTextContent('APRS Chat ↗ — in its own window');
     expect(placeholder).toHaveTextContent('click to focus');
     expect(screen.queryByTestId('aprs-chat-panel')).not.toBeInTheDocument();
+    // The panel (and thus its header ↗ Pop out entry point) is gone while
+    // popped — no duplicate pop-out affordance in the placeholder.
+    expect(screen.queryByTestId('aprs-chat-popout')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId('aprs-chat-focus'));
     await waitFor(() => expect(mockFocusSurface).toHaveBeenCalledWith('aprs_chat'));

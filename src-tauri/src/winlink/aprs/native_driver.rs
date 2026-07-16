@@ -107,6 +107,7 @@ pub fn run_native(
     cmd_rx: Receiver<TxCommand>,
     listening: Arc<AtomicBool>,
     abort: Arc<AtomicBool>,
+    transport: Arc<std::sync::Mutex<Option<String>>>,
 ) {
     let started = Instant::now();
     let now_ms = || started.elapsed().as_millis() as u64;
@@ -141,6 +142,11 @@ pub fn run_native(
     driver.engine.abort();
     listening.store(false, Ordering::SeqCst);
     driver.engine.set_listening(false);
+    // Self-termination (session disconnect / channel close): forget the transport
+    // at the SAME point `listening` goes false, so `aprs_status` can never observe
+    // `{listening:false, transport:Some}` (tuxlink-dmwte review loop-4 F6). `stop`
+    // also clears unconditionally; both converging on `None` is idempotent.
+    *transport.lock().unwrap() = None;
 }
 
 #[cfg(test)]

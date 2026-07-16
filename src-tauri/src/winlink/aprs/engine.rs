@@ -779,8 +779,12 @@ pub struct AprsState {
     /// the disconnect path keys teardown off — a popped/remounted connect strip
     /// no longer has the ref that recorded the connect, so it asks `aprs_status`
     /// which transport is live instead of leaking the session (tuxlink-dmwte).
-    /// Set on a successful `start`/`start_native`, cleared on `stop`.
-    transport: std::sync::Mutex<Option<String>>,
+    /// Set on a successful `start`/`start_native`, cleared on `stop` AND on the
+    /// driver's own self-termination (link death / channel close) — a clone of
+    /// this `Arc` travels into the blocking driver so its teardown can forget the
+    /// transport at the same point it flips `listening` false, closing the
+    /// `{listening:false, transport:Some}` window (tuxlink-dmwte review loop-4 F6).
+    transport: Arc<std::sync::Mutex<Option<String>>>,
     counter: AtomicU64,
     in_flight: Arc<AtomicUsize>,
 }
@@ -809,6 +813,15 @@ impl AprsState {
         self.transport.lock().unwrap().clone()
     }
 
+    /// A clone of the shared transport handle, handed to the blocking driver so
+    /// its self-termination teardown can clear the transport (the same clone the
+    /// driver sets to `None` alongside `listening.store(false)`). Cloning the
+    /// `Arc` keeps every reader — `transport()` / `aprs_status` — pointed at the
+    /// one cell (tuxlink-dmwte review loop-4 F6).
+    fn transport_handle(&self) -> Arc<std::sync::Mutex<Option<String>>> {
+        self.transport.clone()
+    }
+
     /// Open the link, build the engine + sink, spawn the blocking driver, store the handle.
     ///
     /// `cfg` is any directly-connectable KISS byte-pipe — `Bluetooth` RFCOMM, `Tcp`
@@ -834,13 +847,18 @@ impl AprsState {
         });
         let engine = AprsEngine::new(identity, sink);
         let (cmd_tx, cmd_rx) = mpsc::channel::<TxCommand>();
+        // Record the live transport in the frontend's vocabulary so a remounted
+        // connect strip can query it for teardown (tuxlink-dmwte). Set BEFORE the
+        // spawn so the driver's self-termination clear (run's teardown) can never
+        // race ahead of the set and leave a stale token behind.
+        self.set_transport(cfg.wire_kind());
         let listening = self.listening.clone();
         let abort_for_task = abort.clone();
-        tokio::task::spawn_blocking(move || run(link, engine, cmd_rx, listening, abort_for_task));
+        let transport = self.transport_handle();
+        tokio::task::spawn_blocking(move || {
+            run(link, engine, cmd_rx, listening, abort_for_task, transport)
+        });
         *self.inner.lock().unwrap() = Some(AprsHandle { cmd_tx, abort });
-        // Record the live transport in the frontend's vocabulary so a remounted
-        // connect strip can query it for teardown (tuxlink-dmwte).
-        self.set_transport(cfg.wire_kind());
         Ok(())
     }
 
@@ -875,8 +893,16 @@ impl AprsState {
         let engine = AprsEngine::new(identity, sink);
         let (cmd_tx, cmd_rx) = mpsc::channel::<TxCommand>();
         let tx: Box<dyn crate::winlink::aprs::native_driver::AprsFrameTx> = Box::new(session);
+        // The native path is always the UV-Pro GAIA transport; record it in the
+        // frontend's `PacketLinkKind` vocabulary (matches
+        // `KissLinkConfig::UvproNative.wire_kind()`) so a remounted connect strip
+        // knows to tear the session down via `uvpro_disconnect` (tuxlink-dmwte).
+        // Set BEFORE the spawn so the driver's self-termination clear can't race
+        // ahead of the set (same ordering as `start`).
+        self.set_transport("UvproNative");
         let listening = self.listening.clone();
         let abort_for_task = abort.clone();
+        let transport = self.transport_handle();
         tokio::task::spawn_blocking(move || {
             crate::winlink::aprs::native_driver::run_native(
                 aprs_rx,
@@ -885,14 +911,10 @@ impl AprsState {
                 cmd_rx,
                 listening,
                 abort_for_task,
+                transport,
             )
         });
         *self.inner.lock().unwrap() = Some(AprsHandle { cmd_tx, abort });
-        // The native path is always the UV-Pro GAIA transport; record it in the
-        // frontend's `PacketLinkKind` vocabulary (matches
-        // `KissLinkConfig::UvproNative.wire_kind()`) so a remounted connect strip
-        // knows to tear the session down via `uvpro_disconnect` (tuxlink-dmwte).
-        self.set_transport("UvproNative");
         Ok(())
     }
 
@@ -1007,6 +1029,7 @@ fn run(
     cmd_rx: mpsc::Receiver<TxCommand>,
     listening: Arc<AtomicBool>,
     abort: Arc<AtomicBool>,
+    transport: Arc<std::sync::Mutex<Option<String>>>,
 ) {
     let started = std::time::Instant::now();
     let now_ms = || started.elapsed().as_millis() as u64;
@@ -1045,6 +1068,11 @@ fn run(
     engine.abort();
     listening.store(false, Ordering::SeqCst);
     engine.set_listening(false);
+    // Self-termination (link close / read error / stop): forget the transport at
+    // the SAME point `listening` goes false, so `aprs_status` can never observe
+    // `{listening:false, transport:Some}` (tuxlink-dmwte review loop-4 F6). `stop`
+    // also clears unconditionally; both converging on `None` is idempotent.
+    *transport.lock().unwrap() = None;
 }
 
 /// `EventSink` that forwards engine events to the UI via Tauri events, and
@@ -1527,6 +1555,25 @@ mod tests {
         let st = AprsState::default();
         st.set_transport("UvproNative");
         st.stop();
+        assert_eq!(st.transport(), None);
+    }
+
+    #[test]
+    fn driver_self_termination_clears_transport_via_shared_handle() {
+        // The blocking driver (`run` / `run_native`) receives a clone of the
+        // shared transport handle and sets it to `None` at teardown — the same
+        // point it flips `listening` false — so a link death / channel close that
+        // stops the driver WITHOUT a `stop()` call still forgets the transport,
+        // and `aprs_status` can never report `{listening:false, transport:Some}`
+        // (tuxlink-dmwte review loop-4 F6). Exercise that clear through the same
+        // cloned handle the driver holds and confirm `AprsState::transport()`
+        // (what `aprs_status` reads) reflects it.
+        let st = AprsState::default();
+        st.set_transport("Tcp");
+        assert_eq!(st.transport().as_deref(), Some("Tcp"));
+        let handle = st.transport_handle();
+        // What the driver's teardown does on self-termination:
+        *handle.lock().unwrap() = None;
         assert_eq!(st.transport(), None);
     }
 

@@ -18,9 +18,13 @@
 // field. Directed addressing is a leading `CALL:` token in the one compose
 // field; tapping a heard station's feed row seeds that token.
 //
-// Inline only — NO pop-up windows (hard project rule). The surface is a single
-// narrow column constrained to the dock width; it does not require or add side
-// columns.
+// The surface is a single narrow column constrained to the dock width; it does
+// not require or add side columns. It renders in TWO contexts (tuxlink-dmwte
+// dockable surfaces, spec §4): inline in the right dock (composed under
+// AprsConnectStrip by AppShell), AND inside the popped APRS Chat window via the
+// surfaceRegistry's AprsChatSurface wrapper. The panel itself is context-blind;
+// the docked mount passes an `onPopOut` handler (rendering the ↗ Pop out header
+// affordance), the popped mount omits it (no self-pop from inside the window).
 //
 // RF-honesty: delivery chips reflect ONLY the backend-reported `DeliveryState`
 // (sent / acked / timedOut / rejected) — no fabricated "delivered". Broadcasts
@@ -247,6 +251,12 @@ export interface AprsChatPanelProps {
   /// Optional device-control slot rendered above the composer. The seam for the
   /// UV-Pro native control surface; undefined until the native backend lands.
   controlStrip?: ReactNode;
+  /// Pop the APRS Chat surface out to its own OS window (spec §5 entry point:
+  /// "the APRS chat panel header"). Renders the text-labeled "↗ Pop out" header
+  /// affordance ONLY when provided — AppShell passes it in the DOCKED context;
+  /// the popped-window wrapper (surfaceRegistry's AprsChatSurface) omits it, so
+  /// the button never renders inside the popped window itself.
+  onPopOut?: () => void;
 }
 
 export function AprsChatPanel({
@@ -255,6 +265,7 @@ export function AprsChatPanel({
   getConfig,
   setConfig,
   controlStrip,
+  onPopOut,
 }: AprsChatPanelProps) {
   // tuxlink-10bkw Task 6: first-open discretionary tip (hintRegistry 'aprs').
   useFirstOpenTip('aprs');
@@ -373,6 +384,21 @@ export function AprsChatPanel({
     <section className="aprs-chat" data-testid="aprs-chat-panel" data-tour-anchor="aprs">
       <header className="aprs-chat-h">
         <span className="aprs-chat-title">APRS Channel</span>
+        {onPopOut && (
+          // Spec §5 entry point (the APRS chat panel header): text-labeled
+          // "↗ Pop out", never icon-only (spec §1). Present only in the docked
+          // context — AppShell passes onPopOut; the popped wrapper does not.
+          <button
+            type="button"
+            className="aprs-chat-popout"
+            data-testid="aprs-chat-popout"
+            title="Open APRS Chat in its own window"
+            onClick={onPopOut}
+          >
+            <span className="aprs-chat-popout-glyph" aria-hidden="true">↗</span>
+            Pop out
+          </button>
+        )}
       </header>
 
       <p

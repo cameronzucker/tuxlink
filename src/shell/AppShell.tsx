@@ -724,6 +724,19 @@ function AppShellInner() {
     openAprsChat();
   }, [aprsChatPopped, openAprsChat]);
 
+  // Inline ↗ Pop out (spec §5 entry point: the APRS chat panel header). Pops
+  // the APRS Chat surface to its own window; chat carries no continuity token
+  // (its feed continuity is the snapshot handshake + own-send echo, spec §7),
+  // so `state: null`, foreground semantics matching the map's pattern. The
+  // backend's `dock:changed` emit swaps the in-dock tab body to the placeholder
+  // (behavior 3). Only rendered in the docked context — the popped wrapper omits
+  // onPopOut, so no self-pop from inside the popped window.
+  const onAprsChatPopOut = useCallback(() => {
+    void popOut('aprs_chat', { foreground: true, state: null }).catch((err) => {
+      console.error('[dock] APRS Chat pop-out failed:', err);
+    });
+  }, []);
+
   // In-surface navigation clears the carried token draft (so re-opening a
   // routine fetches fresh) — mirrors RoutinesPopped's `onNavigate`. Wraps
   // `setRoutinesView` for the inline surface + the mailbox-close menu path.
@@ -2539,6 +2552,7 @@ function AppShellInner() {
                     send={aprs.send}
                     getConfig={aprs.getConfig}
                     setConfig={aprs.setConfig}
+                    onPopOut={onAprsChatPopOut}
                     controlStrip={
                       // The native UV-Pro device detail (channel/freq/battery)
                       // remains co-presented with chat once connected-native; the

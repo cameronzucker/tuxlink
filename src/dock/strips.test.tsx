@@ -13,7 +13,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, waitFor, act } from '@testing-library/react';
 import type { HeardPosition } from '../aprs/aprsTypes';
-import type { HeardStation } from '../aprs/aprsTypes';
+import type { HeardStation, ChannelMessage } from '../aprs/aprsTypes';
 import type { RunListEntry } from '../routines/routinesApi';
 
 const { mockUseAprsPositions } = vi.hoisted(() => ({ mockUseAprsPositions: vi.fn() }));
@@ -57,6 +57,20 @@ function heardStation(partial: Partial<HeardStation> = {}): HeardStation {
   return { call: 'KI7ABC', lastHeard: Date.now(), ...partial };
 }
 
+function channelMessage(partial: Partial<ChannelMessage> = {}): ChannelMessage {
+  return {
+    id: 'm1',
+    direction: 'in',
+    from: 'KK6XYZ',
+    to: null,
+    text: 'hi',
+    kind: 'message',
+    msgid: null,
+    at: Date.now(),
+    ...partial,
+  };
+}
+
 function run(partial: Partial<RunListEntry> = {}): RunListEntry {
   return {
     runId: 'r1',
@@ -72,7 +86,7 @@ function run(partial: Partial<RunListEntry> = {}): RunListEntry {
 beforeEach(() => {
   vi.clearAllMocks();
   mockUseAprsPositions.mockReturnValue({ positions: [] });
-  mockUseAprsChat.mockReturnValue({ heardStations: [] });
+  mockUseAprsChat.mockReturnValue({ heardStations: [], messages: [] });
   mockUseRoutines.mockReturnValue({ nextFires: {} });
   mockUseParkedRuns.mockReturnValue({ parked: [] });
   mockListRuns.mockResolvedValue([]);
@@ -212,16 +226,36 @@ describe('strip vitals render from mocked hook data (review-loop-3 F4c)', () => 
   });
 
   it("ChatStrip shows the last-heard callsign from the mocked hook's heardStations", () => {
-    mockUseAprsChat.mockReturnValue({ heardStations: [heardStation({ call: 'N0CALL' })] });
+    mockUseAprsChat.mockReturnValue({
+      heardStations: [heardStation({ call: 'N0CALL' })],
+      messages: [],
+    });
     render(<ChatStrip />);
     const text = screen.getByTestId('pop-strip-chat').textContent ?? '';
     expect(text).toContain('last heard N0CALL');
-    expect(text).not.toContain('unread');
   });
 
   it('ChatStrip shows "no stations heard" when nothing has been heard', () => {
-    mockUseAprsChat.mockReturnValue({ heardStations: [] });
+    mockUseAprsChat.mockReturnValue({ heardStations: [], messages: [] });
     render(<ChatStrip />);
     expect(screen.getByTestId('pop-strip-chat').textContent).toContain('no stations heard');
+  });
+
+  it('ChatStrip wires the REAL unread count (countUnread), reading 0 while the popped feed is viewed', () => {
+    // The strip co-renders with the popped window's live feed, so it is always
+    // the "viewing" context (AppShell's viewingAprsChat===true analogue): even
+    // with inbound traffic present, countUnread against the advancing seen-
+    // watermark honestly reports 0. A true-but-boring 0, not a fabricated count.
+    const now = Date.now();
+    mockUseAprsChat.mockReturnValue({
+      heardStations: [heardStation({ call: 'N0CALL' })],
+      messages: [
+        channelMessage({ id: 'a', direction: 'in', at: now - 4000 }),
+        channelMessage({ id: 'b', direction: 'in', at: now - 1000 }),
+      ],
+    });
+    render(<ChatStrip />);
+    const unread = screen.getByTestId('pop-strip-chat-unread');
+    expect(unread).toHaveTextContent('0 unread');
   });
 });

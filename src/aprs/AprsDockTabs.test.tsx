@@ -80,7 +80,12 @@ describe('AprsDockTabs', () => {
       />,
     );
     expect(screen.getByTestId('aprs-map-toggle')).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId('aprs-map-popout'));
+    // Text-labeled, never icon-only (spec §1/§5): the control carries a visible
+    // "Pop out" label and an accessible name including it.
+    const popout = screen.getByTestId('aprs-map-popout');
+    expect(popout).toHaveTextContent('Pop out');
+    expect(popout).toHaveAccessibleName(/pop out/i);
+    fireEvent.click(popout);
     expect(onPopOutMap).toHaveBeenCalledTimes(1);
   });
 

@@ -139,19 +139,30 @@
   line-height: 1;
 }
 
-/* Pop the Tac Map out to its own window (tuxlink-dmwte task 9) — a compact ↗
-   glyph button pinned right next to the Map toggle, same rail rhythm. */
+/* Pop the Tac Map out to its own window (tuxlink-dmwte task 9) — a text-labeled
+   "↗ Pop out" control pinned right next to the Map toggle, same rail rhythm
+   (spec §1/§5: pathway affordances always carry their text label, never
+   icon-only). `white-space: nowrap` keeps the glyph + label on one line so the
+   control row can't crush the label onto two rows at the ~400px dock width. */
 .aprs-dock-map-popout {
   flex: 0 0 auto;
-  padding: 8px 10px;
+  padding: 8px 11px;
   font: inherit;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1;
   background: transparent;
   border: none;
   border-right: 1px solid var(--border, #2a3140);
   color: var(--text-faint, #94a3b8);
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.aprs-dock-map-popout-glyph {
+  font-size: 13px;
+  line-height: 1;
 }
 .aprs-dock-map-popout:hover {
   color: var(--text, #cbd5e1);
