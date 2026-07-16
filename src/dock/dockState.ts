@@ -63,14 +63,14 @@ export function consentHostWindow(s: DockSurfaces): 'main' | 'pop-routines' {
  * Returns `null` until the first snapshot lands (mount-time only — no
  * loading state is threaded beyond that single instant).
  *
- * Reconcile-read TOCTOU guard (review-loop-3 F1): the reconcile get is
- * in-flight concurrently with the live listener, so a real `dock:changed`
- * event can land AFTER the reconcile invoke is issued but BEFORE it
+ * TOCTOU guard (review-loop-3 F1): BOTH the initial get and the reconcile
+ * get are in-flight concurrently with the live listener, so a real
+ * `dock:changed` event can land AFTER either invoke is issued but BEFORE it
  * resolves. That event's payload is always at-least-as-new as any
  * `dock_state_get` response (Rust emits `dock:changed` synchronously with
  * every registry mutation, spec §3), so an `eventSeen` flag set by the
- * listener gates the reconcile's `setSnapshot` — a stale reconcile response
- * must never clobber a newer event snapshot.
+ * listener gates BOTH gets' `setSnapshot` calls — a stale get response,
+ * initial or reconcile, must never clobber a newer event snapshot.
  */
 export function useDockState(): DockSnapshot | null {
   const [snapshot, setSnapshot] = useState<DockSnapshot | null>(null);
@@ -95,7 +95,15 @@ export function useDockState(): DockSnapshot | null {
 
         const initial = await invoke<DockSnapshot>('dock_state_get');
         if (disposed) return;
-        setSnapshot(initial);
+        // Guarded by `eventSeen` for the same reason as the reconcile apply
+        // below: a `dock:changed` event that landed while this initial get
+        // was in flight is newer than the initial get's own response (Rust
+        // emits it synchronously with every mutation), so applying the
+        // initial get here would clobber that newer state with a stale one
+        // (TOCTOU regression, review-loop-3 F1, initial-get leg). Skipping
+        // is always safe — an event snapshot always originates from a
+        // backend mutation and is complete on its own.
+        if (!disposed && !eventSeen) setSnapshot(initial);
 
         // Reconcile read (spec §5): closes the gap between the listener
         // settling and the initial read landing. Guarded by `eventSeen` — a

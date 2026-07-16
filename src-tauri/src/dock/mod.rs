@@ -206,19 +206,27 @@ mod tests {
         assert_eq!(consent_host_window(DockMode::Popped), "pop-routines");
     }
 
-    /// Cross-language wire-shape parity (spec §10, the k61j composed-seam
-    /// class; adrev R5-F10/F11). Both this test and the TS-side
-    /// `dockParity.test.ts` assert against the SAME committed fixture —
-    /// `src/dock/dock-wire-fixture.json` — so a drift between the two
-    /// languages' understanding of the wire shape fails on whichever side
-    /// changed without the other. `Value` equality, NOT string comparison:
-    /// whitespace/key order must not matter.
+    /// Cross-language wire-shape AND semantic parity (spec §10, the k61j
+    /// composed-seam class; adrev R5-F10/F11). Both this test and the
+    /// TS-side `dockParity.test.ts` assert against the SAME committed
+    /// fixture — `src/dock/dock-wire-fixture.json` — so a drift between the
+    /// two languages' understanding of the wire shape fails on whichever
+    /// side changed without the other (`Value` equality for the round-trip,
+    /// NOT string comparison: whitespace/key order must not matter). This
+    /// test ALSO asserts, per variant, that `surfaces.routines` holds the
+    /// mode the variant's name promises and that `consent_host_window`
+    /// resolves the way `dockParity.test.ts` asserts on the TS side — a
+    /// fixture edit that changes either now breaks the Rust side too, not
+    /// just TS.
     #[test]
     fn wire_fixture_parity() {
         let fixture: serde_json::Value =
             serde_json::from_str(include_str!("../../../src/dock/dock-wire-fixture.json"))
                 .expect("fixture must be valid JSON");
-        for key in ["routinesDocked", "routinesPopped"] {
+        for (key, want_mode, want_host) in [
+            ("routinesDocked", DockMode::Docked, "main"),
+            ("routinesPopped", DockMode::Popped, "pop-routines"),
+        ] {
             let variant = fixture
                 .get(key)
                 .unwrap_or_else(|| panic!("fixture missing variant {key}"));
@@ -226,6 +234,15 @@ mod tests {
                 .unwrap_or_else(|e| panic!("{key} did not deserialize into DockSnapshot: {e}"));
             let round_tripped = serde_json::to_value(&snap).expect("DockSnapshot must serialize");
             assert_eq!(&round_tripped, variant, "{key} round-trip mismatch");
+            assert_eq!(
+                snap.surfaces.routines, want_mode,
+                "{key}'s surfaces.routines must match what the variant name promises"
+            );
+            assert_eq!(
+                consent_host_window(snap.surfaces.routines),
+                want_host,
+                "{key} must resolve consent_host_window to {want_host}"
+            );
         }
     }
 }

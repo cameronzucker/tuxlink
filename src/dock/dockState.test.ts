@@ -113,16 +113,46 @@ describe('useDockState', () => {
     await waitFor(() => expect(result.current?.surfaces.routines).toBe('popped'));
   });
 
-  it('a dock:changed event landing during the in-flight reconcile get wins over the reconcile response (TOCTOU guard, review-loop-3 F1)', async () => {
+  it('a dock:changed event landing during the in-flight INITIAL get wins over the initial response (TOCTOU guard, both legs of review-loop-3 F1)', async () => {
     let handler: ((e: { payload: DockSnapshot }) => void) | undefined;
     mockListen.mockImplementation((_event: string, cb: (e: { payload: DockSnapshot }) => void) => {
       handler = cb;
       return Promise.resolve(unlistenFn);
     });
 
-    // Manually control the resolution of BOTH `dock_state_get` invocations
-    // so the exact interleaving (listen -> first get resolves -> event
-    // fires NEWER -> reconcile get resolves STALE) can be forced.
+    // --- Leg 1: the event lands while the INITIAL get is still in flight ---
+    // Both the initial and reconcile invokes resolve to the same pending
+    // promise here — only the initial apply's guard is under test in this
+    // leg, so the reconcile apply resolving alongside it is inert either way.
+    let resolveInitialGet!: (v: DockSnapshot) => void;
+    const initialGet = new Promise<DockSnapshot>((resolve) => {
+      resolveInitialGet = resolve;
+    });
+    mockInvoke.mockImplementation((cmd?: string) => {
+      if (cmd === undefined) return Promise.resolve();
+      return initialGet;
+    });
+
+    const { result: initialLegResult, unmount: unmountInitialLeg } = renderHook(() => useDockState());
+    expect(initialLegResult.current).toBeNull();
+
+    // A real dock:changed event lands BEFORE the initial get resolves — it
+    // is newer than anything the initial get can return.
+    handler?.({ payload: snapshot({ routines: 'popped' }) });
+    await waitFor(() => expect(initialLegResult.current?.surfaces.routines).toBe('popped'));
+
+    // The initial get NOW resolves with a STALE ('docked') snapshot. It
+    // must NOT clobber the event's newer 'popped' state.
+    await act(async () => {
+      resolveInitialGet(snapshot({ routines: 'docked' }));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(initialLegResult.current?.surfaces.routines).toBe('popped');
+    unmountInitialLeg();
+
+    // --- Leg 2: the event lands while the RECONCILE get is still in flight ---
+    // `handler` is reassigned by the still-active `mockListen.mockImplementation`
+    // above as soon as this leg's `renderHook` mounts and re-subscribes.
     let resolveFirstGet!: (v: DockSnapshot) => void;
     let resolveReconcileGet!: (v: DockSnapshot) => void;
     const firstGet = new Promise<DockSnapshot>((resolve) => {
