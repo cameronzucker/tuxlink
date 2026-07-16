@@ -37,11 +37,20 @@ use crate::secondary_window::ClosePolicy;
 /// [`compose_close_self`] rather than the native window-close APIs
 /// (tuxlink-h2y) — see that command's docstring. Compose's own
 /// get-or-focus/builder body is NOT migrated to
-/// `crate::secondary_window::open_secondary_window` — its dynamic per-draft
-/// label, `.center()` placement, and monitor-height clamp (below) don't fit
-/// that helper's fixed-spec contract. This constant exists so Task 4's
-/// `on_window_event` dispatch table can look up compose's policy for any
-/// `compose-*` label without re-deriving it from the label prefix.
+/// `crate::secondary_window::open_secondary_window`, for two reasons (the
+/// per-draft label is NOT one of them — `SecondaryWindowSpec.label` is an
+/// owned `String`, so a per-call dynamic label fits fine):
+/// 1. `.center()` placement is not expressible through the helper's fixed
+///    builder chain (no centered field on the spec, no `.center()` call in
+///    the helper) — dropping it would be a behavior change.
+/// 2. The post-build monitor-height clamp below runs only on a genuinely NEW
+///    build, never on refocus of an existing window; the helper's
+///    `Result<(), String>` return can't distinguish "built new" from "found
+///    existing", so that differential clamp timing can't be expressed without
+///    extending the helper's contracted interface (which other tasks consume).
+/// This constant exists so Task 4's `on_window_event` dispatch table can look
+/// up compose's policy for any `compose-*` label without re-deriving it from
+/// the label prefix.
 pub const CLOSE_POLICY: ClosePolicy = ClosePolicy::CommandRouted;
 
 /// Default compose-window inner height (logical px). Bumped to 820 (2026-05-31)
