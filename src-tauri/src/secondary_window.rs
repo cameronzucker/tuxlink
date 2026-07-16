@@ -11,8 +11,9 @@
 //! not change any of their labels, routes, sizes, or decoration values.
 //!
 //! **Authorization is NOT enforced here.** Each command body checks
-//! [`caller_is_authorized`] (or its own rule — e.g. `compose_window.rs` keeps
-//! its own copy for F7 defense-in-depth commentary; a future
+//! [`caller_is_authorized`] (or its own rule — `compose_window.rs` keeps a
+//! thin pure-fn wrapper that delegates to this module's shared
+//! [`caller_is_authorized`] for its F7 defense-in-depth; a future
 //! `surface_pop_out` may use a main-or-own-label variant) BEFORE calling
 //! [`open_secondary_window`]. One policy site per command — do not add a
 //! second, potentially-conflicting check inside the helper.
@@ -37,8 +38,26 @@ pub enum ClosePolicy {
     DockBack,
 }
 
+/// Whether [`open_secondary_window`] created a fresh window or focused one that
+/// was already live.
+///
+/// Callers that must run build-only side effects branch on this:
+/// `compose_window.rs`'s post-build monitor-height clamp runs only on
+/// [`SpawnOutcome::BuiltNew`], and Task 4's `surface_pop_out` must likewise
+/// distinguish a window that already exists live (no pop-out transition) from
+/// one it just spawned (play the transition). Callers that only need
+/// get-or-focus (help/logging/stations) ignore the value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpawnOutcome {
+    /// A new window was constructed by this call.
+    BuiltNew,
+    /// A window with this label already existed and was shown + focused —
+    /// either via the up-front get-or-focus path or the build-time race guard.
+    FocusedExisting,
+}
+
 /// A secondary window's full construction contract: label, route, sizing,
-/// chrome, and its close policy.
+/// chrome, centering, and its close policy.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SecondaryWindowSpec {
     pub label: String,
@@ -47,6 +66,10 @@ pub struct SecondaryWindowSpec {
     pub inner_size: (f64, f64),
     pub min_inner_size: (f64, f64),
     pub decorations: bool,
+    /// Apply `WebviewWindowBuilder::center()` on a fresh build when `true`.
+    /// Only `compose_window.rs` sets this (its historical placement); every
+    /// other secondary window leaves placement to the WM (`false`).
+    pub centered: bool,
     pub close_policy: ClosePolicy,
 }
 
@@ -83,6 +106,7 @@ pub fn pop_window_spec(surface: crate::dock::SurfaceId) -> SecondaryWindowSpec {
         inner_size,
         min_inner_size: (420.0, 360.0),
         decorations: false,
+        centered: false,
         close_policy: ClosePolicy::DockBack,
     }
 }
@@ -100,7 +124,7 @@ pub fn open_secondary_window(
     app: &AppHandle,
     caller_label: &str,
     spec: &SecondaryWindowSpec,
-) -> Result<(), String> {
+) -> Result<SpawnOutcome, String> {
     tracing::debug!(
         caller = caller_label,
         label = %spec.label,
@@ -113,10 +137,10 @@ pub fn open_secondary_window(
         existing
             .set_focus()
             .map_err(|e| format!("set_focus failed: {e}"))?;
-        return Ok(());
+        return Ok(SpawnOutcome::FocusedExisting);
     }
 
-    let build_result = WebviewWindowBuilder::new(
+    let mut builder = WebviewWindowBuilder::new(
         app,
         spec.label.as_str(),
         WebviewUrl::App(spec.route.clone().into()),
@@ -125,11 +149,14 @@ pub fn open_secondary_window(
     .inner_size(spec.inner_size.0, spec.inner_size.1)
     .min_inner_size(spec.min_inner_size.0, spec.min_inner_size.1)
     .resizable(true)
-    .decorations(spec.decorations)
-    .build();
+    .decorations(spec.decorations);
+    if spec.centered {
+        builder = builder.center();
+    }
+    let build_result = builder.build();
 
     match build_result {
-        Ok(_) => Ok(()),
+        Ok(_) => Ok(SpawnOutcome::BuiltNew),
         // Match the compose/help/logging/stations race-guard: a concurrent
         // call may race past the get_webview_window check above and hit
         // AlreadyExists from build().
@@ -139,7 +166,7 @@ pub fn open_secondary_window(
                 let _ = existing.show();
                 let _ = existing.set_focus();
             }
-            Ok(())
+            Ok(SpawnOutcome::FocusedExisting)
         }
         Err(e) => Err(format!(
             "secondary window build failed (label {}): {e}",
@@ -171,6 +198,7 @@ mod tests {
         assert_eq!(map.inner_size, (1100.0, 750.0));
         assert!(matches!(map.close_policy, ClosePolicy::DockBack));
         assert!(!map.decorations);
+        assert!(!map.centered); // pop windows leave placement to the WM
         let routines = pop_window_spec(SurfaceId::Routines);
         assert_eq!(routines.inner_size, (960.0, 680.0));
         let chat = pop_window_spec(SurfaceId::AprsChat);

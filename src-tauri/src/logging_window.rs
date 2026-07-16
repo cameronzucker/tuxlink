@@ -40,9 +40,11 @@ pub fn logging_window_open(app: AppHandle, caller: WebviewWindow) -> Result<(), 
         // §8.1 deferred custom chrome to v1.1 but both help + logging windows
         // use the same dark Tuxlink chrome as the main window.
         decorations: false,
+        centered: false,
         close_policy: ClosePolicy::CloseSelf,
     };
-    open_secondary_window(&app, caller.label(), &spec)
+    // Logging ignores the spawn outcome (get-or-focus is all it needs).
+    open_secondary_window(&app, caller.label(), &spec).map(|_| ())
 }
 
 #[cfg(test)]

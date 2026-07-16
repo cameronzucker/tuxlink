@@ -53,9 +53,11 @@ pub fn stations_window_open(app: AppHandle, caller: WebviewWindow) -> Result<(),
         // Native decorations (unlike compose/help/logging's custom chrome) —
         // see the module docstring's "Native decorations" note.
         decorations: true,
+        centered: false,
         close_policy: ClosePolicy::CloseSelf,
     };
-    open_secondary_window(&app, caller.label(), &spec)
+    // Station Data ignores the spawn outcome (get-or-focus is all it needs).
+    open_secondary_window(&app, caller.label(), &spec).map(|_| ())
 }
 
 #[cfg(test)]

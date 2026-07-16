@@ -52,9 +52,11 @@ pub fn help_window_open(app: AppHandle, caller: WebviewWindow) -> Result<(), Str
         // and OS-native GTK gray looked jarring next to the main client's
         // dark Tuxlink chrome.
         decorations: false,
+        centered: false,
         close_policy: ClosePolicy::CloseSelf,
     };
-    open_secondary_window(&app, caller.label(), &spec)
+    // Help ignores the spawn outcome (get-or-focus is all it needs).
+    open_secondary_window(&app, caller.label(), &spec).map(|_| ())
 }
 
 #[cfg(test)]

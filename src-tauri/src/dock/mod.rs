@@ -126,7 +126,7 @@ pub fn apply_transition(surfaces: &mut DockSurfaces, surface: SurfaceId, target:
 pub fn consent_host_window(routines_mode: DockMode) -> &'static str {
     match routines_mode {
         DockMode::Docked => "main",
-        DockMode::Popped => "pop-routines",
+        DockMode::Popped => SurfaceId::Routines.window_label(),
     }
 }
 
