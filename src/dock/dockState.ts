@@ -30,6 +30,26 @@ export interface DockSnapshot {
 }
 
 /**
+ * The envelope shape every `DockSnapshot.context[surface]` slot carries (spec
+ * §7 continuity token): `foreground` distinguishes a ⇤-style dock-back
+ * (steal the pane / focus the mailbox onto this surface's state) from a
+ * ✕/Ctrl+W/WM-close arrival (availability only — no pane theft); `state` is
+ * the surface's own opaque continuity payload, shaped per-surface (Routines
+ * carries `{ view, draft }`; tac_map and aprs_chat carry `null` — neither has
+ * inline state worth restoring).
+ *
+ * Formalized here (review debt from Task 8, which left AppShell's routines-
+ * arrival code with an ad-hoc inline `{ foreground?: boolean; state?: {...} |
+ * null } | null` type of its own) so every consumer — Task 8's routines
+ * arrival effect and Task 9's tac_map arrival effect alike — shares ONE
+ * definition instead of restating the shape at each call site. Callers narrow
+ * `state` to their own surface's payload shape at the point of use (`state`
+ * stays `unknown` here deliberately — this type does not know per-surface
+ * shapes).
+ */
+export type DockContextEnvelope = { foreground?: boolean; state?: unknown } | null | undefined;
+
+/**
  * Wire table (spec §3) — copied verbatim from the spec, never derived: the
  * window-label form drops the surface id's underscore irregularly
  * (`tac_map` → `pop-tacmap`, `aprs_chat` → `pop-aprschat`).

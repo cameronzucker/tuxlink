@@ -29,6 +29,16 @@ function snapshot(routines: DockMode, context: unknown = null): DockSnapshot {
   };
 }
 
+// tuxlink-dmwte task 9: same shape as `snapshot()` above, but flips tac_map's
+// mode/context instead of routines' — routines stays docked/null throughout
+// (task 9 does not touch it).
+function tacMapSnapshot(tac_map: DockMode, context: unknown = null): DockSnapshot {
+  return {
+    surfaces: { routines: 'docked', tac_map, aprs_chat: 'docked' },
+    context: { routines: null, tac_map: context, aprs_chat: null },
+  };
+}
+
 vi.mock('../dock/dockState', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../dock/dockState')>();
   return {
@@ -206,6 +216,102 @@ describe('AppShell dock wiring (task 8)', () => {
     expect(screen.getByTestId('folder-sidebar')).toBeInTheDocument();
     expect(screen.queryByTestId('routines-dashboard')).not.toBeInTheDocument();
     expect(screen.queryByTestId('routine-designer')).not.toBeInTheDocument();
+  });
+
+  // --- Task 9: Tac Map pop-out wiring + positions snapshot handshake -------
+
+  it('behavior 1: clicking ↗ in the map header controls pops the Tac Map out', async () => {
+    renderShell();
+    await screen.findByTestId('folder-sidebar');
+    fireEvent.click(screen.getByTestId('dash-aprs-control'));
+    await screen.findByTestId('aprs-chat-panel', {}, { timeout: 5000 });
+
+    fireEvent.click(screen.getByTestId('aprs-map-popout'));
+    await waitFor(() =>
+      expect(mockPopOut).toHaveBeenCalledWith('tac_map', { foreground: true, state: null }),
+    );
+  });
+
+  it('behavior 2: while tac_map is popped, the toggle control shows the "in window" pathway; ⇤ dock back invokes dockBack', async () => {
+    dockRef.current = tacMapSnapshot('popped');
+    renderShell();
+    await screen.findByTestId('folder-sidebar');
+    fireEvent.click(screen.getByTestId('dash-aprs-control'));
+    await screen.findByTestId('aprs-chat-panel', {}, { timeout: 5000 });
+
+    // The Map toggle + pop-out are gone — replaced by the focus/dock-back pathway.
+    expect(screen.queryByTestId('aprs-map-toggle')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('aprs-map-popout')).not.toBeInTheDocument();
+    const focus = screen.getByTestId('aprs-map-focus');
+    expect(focus).toHaveTextContent('Tac Map ↗ — in window');
+    fireEvent.click(focus);
+    await waitFor(() => expect(mockFocusSurface).toHaveBeenCalledWith('tac_map'));
+
+    fireEvent.click(screen.getByTestId('aprs-map-dockback'));
+    await waitFor(() =>
+      expect(mockDockBack).toHaveBeenCalledWith('tac_map', { foreground: true, state: null }),
+    );
+  });
+
+  it('behavior 2: a tac_map foreground popped→docked arrival opens the inline map (aprsOpen AND aprsMapOpen)', async () => {
+    dockRef.current = tacMapSnapshot('popped');
+    const { rerender } = renderShell();
+    await screen.findByTestId('folder-sidebar');
+    // No dock/map yet — the arrival below must open BOTH from scratch.
+    expect(screen.queryByTestId('aprs-dock-surface')).not.toBeInTheDocument();
+
+    dockRef.current = tacMapSnapshot('docked', { foreground: true, state: null });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    rerender(
+      <QueryClientProvider client={qc}>
+        <AppShell />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByTestId('aprs-dock-surface')).toBeInTheDocument();
+    expect(await screen.findByTestId('aprs-positions-map', {}, { timeout: 5000 })).toBeInTheDocument();
+  });
+
+  it('behavior 2: a NON-foreground tac_map popped→docked arrival changes neither aprsOpen nor aprsMapOpen', async () => {
+    dockRef.current = tacMapSnapshot('popped');
+    const { rerender } = renderShell();
+    await screen.findByTestId('folder-sidebar');
+
+    dockRef.current = tacMapSnapshot('docked', { foreground: false, state: null });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    rerender(
+      <QueryClientProvider client={qc}>
+        <AppShell />
+      </QueryClientProvider>,
+    );
+
+    // Availability semantics: no dock/map materializes from a non-foreground arrival.
+    expect(screen.queryByTestId('aprs-dock-surface')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('aprs-positions-map')).not.toBeInTheDocument();
+  });
+
+  it('behavior 2: once tac_map becomes popped, the inline map never renders — even if aprsMapOpen was already true', async () => {
+    dockRef.current = snapshot('docked'); // tac_map docked (default)
+    const { rerender } = renderShell();
+    await screen.findByTestId('folder-sidebar');
+    fireEvent.click(screen.getByTestId('dash-aprs-control'));
+    await screen.findByTestId('aprs-chat-panel', {}, { timeout: 5000 });
+    fireEvent.click(screen.getByTestId('aprs-map-toggle'));
+    expect(await screen.findByTestId('aprs-positions-map', {}, { timeout: 5000 })).toBeInTheDocument();
+
+    // tac_map flips to popped (e.g. the ↗ affordance was used) — the inline
+    // map disappears regardless of the still-true `aprsMapOpen` local state.
+    dockRef.current = tacMapSnapshot('popped');
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    rerender(
+      <QueryClientProvider client={qc}>
+        <AppShell />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.queryByTestId('aprs-positions-map')).not.toBeInTheDocument();
+    // The chat dock itself is unaffected (aprsOpen stays true).
+    expect(screen.getByTestId('aprs-chat-panel')).toBeInTheDocument();
   });
 
   it('invokes shell_mounted once on mount (launch restoration signal, spec §3)', async () => {

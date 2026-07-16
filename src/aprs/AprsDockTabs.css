@@ -139,6 +139,49 @@
   line-height: 1;
 }
 
+/* Pop the Tac Map out to its own window (tuxlink-dmwte task 9) — a compact ↗
+   glyph button pinned right next to the Map toggle, same rail rhythm. */
+.aprs-dock-map-popout {
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border, #2a3140);
+  color: var(--text-faint, #94a3b8);
+  cursor: pointer;
+}
+.aprs-dock-map-popout:hover {
+  color: var(--text, #cbd5e1);
+  background: var(--surface-3, #11171d);
+}
+
+/* While the Tac Map is popped, the toggle+pop-out slot swaps to this pathway:
+   a labeled "in window" focus control plus an adjacent dock-back action
+   (tuxlink-dmwte task 9, spec §5) — mirrors the Routines pathway pattern. */
+.aprs-dock-map-popped {
+  display: flex;
+  align-items: stretch;
+}
+.aprs-dock-map-focus,
+.aprs-dock-map-dockback {
+  padding: 8px 13px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border, #2a3140);
+  color: var(--modem-accent, #4ade80);
+}
+.aprs-dock-map-focus:hover,
+.aprs-dock-map-dockback:hover {
+  background: var(--modem-accent-soft, rgba(74, 222, 128, 0.1));
+}
+
 /* Close the dock surface (frees the reading pane when no radio session is
    active). Fixed-width, pushed to the right end of the row. */
 .aprs-dock-close {

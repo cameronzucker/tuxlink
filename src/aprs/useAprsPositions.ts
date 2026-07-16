@@ -9,10 +9,32 @@
 //
 // Mirrors useAprsChat.ts's listen pattern (mounted-guarded subscribe, jsdom
 // catch). This hook is RX-only — there is no send/config surface.
+//
+// Cross-window snapshot handshake (tuxlink-dmwte task 9, spec §7), copied from
+// useEnvStations.ts:38-131's host/client mechanics: a freshly-popped Tac Map
+// window starts with an empty accumulator and would otherwise show no pins
+// until the next beacon (minutes, on a sparse channel). The pop-out (client)
+// requests a snapshot on mount; the main shell (host) answers with its
+// current per-callsign positions, so the new window shows the live roster
+// immediately and keeps updating from the shared event stream thereafter.
+//
+// Retry amendment (spec §7): unlike useEnvStations' single fire-and-forget
+// request, the client here re-emits the request every 250 ms until the first
+// reply lands or 3 s elapses — the pop-out window can spin up and register
+// its listener before the main shell's host listener is live (no ordering
+// guarantee across OS windows), so a single request can go unanswered. The
+// bounded retry self-heals that race without polling forever.
 
-import { useEffect, useMemo, useState } from 'react';
-import { listen } from '@tauri-apps/api/event';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { listen, emit } from '@tauri-apps/api/event';
 import type { HeardPosition, InboundPosDto } from './aprsTypes';
+
+const SNAPSHOT_REQUEST = 'aprs-positions:request-snapshot';
+const SNAPSHOT_REPLY = 'aprs-positions:snapshot';
+/// Retry cadence for the client's snapshot request (spec §7 retry amendment).
+const SNAPSHOT_RETRY_MS = 250;
+/// Total time the client keeps retrying before giving up cleanly.
+const SNAPSHOT_GIVE_UP_MS = 3000;
 
 /// A heard position is dropped from the map after this long without a re-beacon.
 /// Default 3 h: while many stations beacon every ~10–30 min, others (mountaintop
@@ -23,6 +45,17 @@ export const POSITION_TTL_MS = 3 * 60 * 60 * 1000;
 /// How often the silent-station sweep runs, so a pin drops even with no new
 /// traffic on the channel.
 const PRUNE_INTERVAL_MS = 60 * 1000;
+
+export interface UseAprsPositionsOptions {
+  /// `'host'` (the main shell, mounted from launch) answers snapshot requests
+  /// with its current per-callsign positions. `'client'` (a pop-out window,
+  /// e.g. the popped Tac Map) requests + seeds from a snapshot on mount, with
+  /// the spec §7 retry amendment (250 ms cadence, 3 s give-up). Omitted ⇒
+  /// neither — a standalone instance (e.g. a unit test, or any caller that
+  /// predates this handshake) emits/subscribes nothing beyond the existing
+  /// `aprs-position:new` feed.
+  snapshotRole?: 'host' | 'client';
+}
 
 export interface UseAprsPositions {
   /// Heard stations' latest positions, one per callsign (latest-position-wins).
@@ -47,13 +80,18 @@ function pruneStale(byCall: Map<string, HeardPosition>, now: number): Map<string
   return next;
 }
 
-export function useAprsPositions(): UseAprsPositions {
+export function useAprsPositions(opts?: UseAprsPositionsOptions): UseAprsPositions {
+  const role = opts?.snapshotRole;
   // Keyed by callsign so a re-beacon (or a move) overwrites the prior fix.
   const [byCall, setByCall] = useState<Map<string, HeardPosition>>(new Map());
+  // Latest accumulator, read by the host's snapshot responder without making
+  // the subscription effect depend on `byCall` (mirrors useEnvStations).
+  const byCallRef = useRef(byCall);
+  byCallRef.current = byCall;
 
   useEffect(() => {
     let mounted = true;
-    let unlisten: (() => void) | null = null;
+    const unlisteners: Array<() => void> = [];
 
     listen<InboundPosDto>('aprs-position:new', (event) => {
       if (!mounted) return;
@@ -89,11 +127,73 @@ export function useAprsPositions(): UseAprsPositions {
           un();
           return;
         }
-        unlisten = un;
+        unlisteners.push(un);
       })
       .catch(() => {
         // listen() unavailable (jsdom without Tauri — mocked in tests).
       });
+
+    if (role === 'host') {
+      // Answer a new window's request with the current roster.
+      listen(SNAPSHOT_REQUEST, () => {
+        if (!mounted) return;
+        void emit(SNAPSHOT_REPLY, [...byCallRef.current.values()]).catch(() => {});
+      })
+        .then((un) => {
+          if (!mounted) un();
+          else unlisteners.push(un);
+        })
+        .catch(() => {});
+    }
+
+    if (role === 'client') {
+      // Retry state (spec §7 retry amendment): re-emit the request every
+      // SNAPSHOT_RETRY_MS until the first reply lands, giving up cleanly
+      // after SNAPSHOT_GIVE_UP_MS. Both timers are cleared on reply, on
+      // give-up, and on unmount — never left running past any of the three.
+      let retryTimer: ReturnType<typeof setInterval> | null = null;
+      let giveUpTimer: ReturnType<typeof setTimeout> | null = null;
+      const stopRetry = () => {
+        if (retryTimer !== null) {
+          clearInterval(retryTimer);
+          retryTimer = null;
+        }
+        if (giveUpTimer !== null) {
+          clearTimeout(giveUpTimer);
+          giveUpTimer = null;
+        }
+      };
+      unlisteners.push(stopRetry);
+
+      // Register the reply listener FIRST, then request — so the host's
+      // answer (whenever it arrives) can't be missed.
+      listen<HeardPosition[]>(SNAPSHOT_REPLY, (e) => {
+        if (!mounted) return;
+        stopRetry();
+        const incoming = e.payload ?? [];
+        setByCall((prev) => {
+          const next = new Map(prev);
+          for (const p of incoming) {
+            const existing = next.get(p.call);
+            // Don't clobber a fresher locally-heard fix with an older snapshot.
+            if (!existing || existing.at < p.at) next.set(p.call, p);
+          }
+          return pruneStale(next, Date.now());
+        });
+      })
+        .then((un) => {
+          if (!mounted) {
+            un();
+            return;
+          }
+          unlisteners.push(un);
+          const request = () => void emit(SNAPSHOT_REQUEST).catch(() => {});
+          request(); // fire immediately on mount
+          retryTimer = setInterval(request, SNAPSHOT_RETRY_MS);
+          giveUpTimer = setTimeout(stopRetry, SNAPSHOT_GIVE_UP_MS);
+        })
+        .catch(() => {});
+    }
 
     // Periodic sweep so a station that goes silent eventually drops off the map
     // even when no further traffic arrives to trigger the per-fix prune.
@@ -104,10 +204,10 @@ export function useAprsPositions(): UseAprsPositions {
 
     return () => {
       mounted = false;
-      unlisten?.();
+      for (const un of unlisteners) un();
       clearInterval(sweep);
     };
-  }, []);
+  }, [role]);
 
   // tuxlink-xsv5: memoize the array so its REFERENCE is stable across renders
   // (it changes only when `byCall` actually changes). Returning a fresh

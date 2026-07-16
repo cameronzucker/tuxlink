@@ -176,7 +176,14 @@ import type { RoutinesView } from '../routines/RoutinesSurface';
 // capability (spec §5/§6). `routinesToken` is dependency-light so importing
 // `isRoutinesView` as a value here doesn't pull the heavy Routines chunk into
 // the cold-start bundle.
-import { useDockState, popOut, dockBack, focusSurface, consentHostWindow } from '../dock/dockState';
+import {
+  useDockState,
+  popOut,
+  dockBack,
+  focusSurface,
+  consentHostWindow,
+  type DockContextEnvelope,
+} from '../dock/dockState';
 import { isRoutinesView } from '../routines/routinesToken';
 import type { RoutineDef } from '../routines/routinesApi';
 
@@ -505,7 +512,10 @@ function AppShellInner() {
   const aprs = useAprsChat();
   // tuxlink-6vgt: heard-station positions, lifted alongside the chat so the
   // reading-pane map and the dock share one subscription.
-  const aprsPositions = useAprsPositions();
+  // tuxlink-dmwte task 9 (spec §7): host role — the main shell answers
+  // snapshot requests from the popped Tac Map window (mirrors envStations'
+  // host role directly below).
+  const aprsPositions = useAprsPositions({ snapshotRole: 'host' });
   // tuxlink-2phz: heard weather + telemetry, merged by callsign. Lifted to the
   // shell (like positions) so the per-channel history ring buffers from launch —
   // opening the Station Data tab later shows the buffered series, not an empty
@@ -596,6 +606,11 @@ function AppShellInner() {
   // affordances become pathway/focus-routing forms.
   const dock = useDockState();
   const routinesPopped = dock?.surfaces.routines === 'popped';
+  // tuxlink-dmwte task 9 (spec §5): the Tac Map is the other dockable surface
+  // AppShell hosts inline (in the reading-pane slot, spec §5's map pathways).
+  // `null` dock (no snapshot yet) reads as docked, same convention as
+  // `routinesPopped` above.
+  const tacMapPopped = dock?.surfaces.tac_map === 'popped';
   const consentHost = dock ? consentHostWindow(dock.surfaces) : 'main';
   // The continuity-token draft carried inline: seeded by a ⇤ foreground
   // dock-back arrival (spec §5), cleared on any in-surface navigation so
@@ -647,13 +662,31 @@ function AppShellInner() {
     const cur = dock.surfaces.routines;
     prevRoutinesModeRef.current = cur;
     if (prev !== 'popped' || cur !== 'docked') return;
-    const envelope = dock.context.routines as
-      | { foreground?: boolean; state?: { view?: unknown; draft?: RoutineDef } | null }
-      | null;
+    const envelope = dock.context.routines as DockContextEnvelope;
     if (!envelope?.foreground) return; // availability semantics — pane untouched
-    const state = envelope.state ?? null;
+    const state = (envelope.state ?? null) as { view?: unknown; draft?: RoutineDef } | null;
     setRoutinesView(isRoutinesView(state?.view) ? state!.view : { view: 'dashboard' });
     setRoutinesInitialDraft(state?.draft);
+  }, [dock]);
+
+  // tuxlink-dmwte task 9 (spec §5): a ⇤ foreground dock-back for the Tac Map
+  // (popped→docked with `context.tac_map.foreground === true`) opens the
+  // inline map's two preconditions — `aprsOpen` (the dock is open) AND
+  // `aprsMapOpen` (the map fills the reading-pane slot). `foreground ===
+  // false` (✕ / Ctrl+W / WM close — availability semantics) changes neither.
+  // Mirrors `prevRoutinesModeRef` above: tracks the prior mode in a ref so
+  // only the popped→docked transition edge applies, not every snapshot.
+  const prevTacMapModeRef = useRef<'docked' | 'popped' | null>(null);
+  useEffect(() => {
+    if (!dock) return;
+    const prev = prevTacMapModeRef.current;
+    const cur = dock.surfaces.tac_map;
+    prevTacMapModeRef.current = cur;
+    if (prev !== 'popped' || cur !== 'docked') return;
+    const envelope = dock.context.tac_map as DockContextEnvelope;
+    if (!envelope?.foreground) return; // availability semantics — neither flag changes
+    setAprsOpen(true);
+    setAprsMapOpen(true);
   }, [dock]);
 
   // In-surface navigation clears the carried token draft (so re-opening a
@@ -2232,9 +2265,13 @@ function AppShellInner() {
           // the heard-positions map EXPANDS INTO the reading-pane region (left
           // of the right-side chat dock). The MessageList column stays; only
           // the reading pane is replaced by the map. Closing the toggle (or the
-          // dock) restores the normal reading pane. A later issue makes this a
-          // pop-out window — this in-pane render does not preclude that.
-          if (aprsOpen && aprsMapOpen) {
+          // dock) restores the normal reading pane.
+          // tuxlink-dmwte task 9 (spec §5): the pop-out issue landed — while
+          // the Tac Map is popped to its own window, the inline map NEVER
+          // renders here regardless of `aprsMapOpen` (no dual-rendering of the
+          // same live subscription in two places at once); the reading pane
+          // falls through to the normal mailbox view instead.
+          if (aprsOpen && aprsMapOpen && !tacMapPopped) {
             return (
               // tuxlink-kkr5: the fallback MUST occupy the reading-pane grid
               // slot. AprsPositionsMap is lazy() and pulls the leaflet +
@@ -2420,6 +2457,25 @@ function AppShellInner() {
               }}
               mapOpen={aprsMapOpen}
               onToggleMap={() => setAprsMapOpen((o) => !o)}
+              // tuxlink-dmwte task 9 (spec §5, behavior 1): ↗ in the map
+              // header controls pops the Tac Map to its own window.
+              // `usePersistedViewport` (not the continuity token) is what
+              // carries the viewport across — the token's `state` stays null.
+              mapPopped={tacMapPopped}
+              onPopOutMap={() => {
+                void popOut('tac_map', { foreground: true, state: null }).catch((err) => {
+                  console.error('[dock] Tac Map pop-out failed:', err);
+                });
+              }}
+              // While popped, the toggle control instead renders the "Tac Map
+              // ↗ — in window" pathway (focuses the window) + an adjacent "⇤
+              // dock back" action (spec §5, behavior 2 / Global Constraints).
+              onFocusMap={() => void focusSurface('tac_map')}
+              onDockBackMap={() => {
+                void dockBack('tac_map', { foreground: true, state: null }).catch((err) => {
+                  console.error('[dock] Tac Map dock-back failed:', err);
+                });
+              }}
             />
             {dockTab === 'stations' ? (
               <Suspense fallback={null}>

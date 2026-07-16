@@ -62,4 +62,74 @@ describe('AprsDockTabs', () => {
     fireEvent.click(screen.getByTestId('aprs-dock-popout'));
     expect(onPopOut).toHaveBeenCalledTimes(1);
   });
+
+  // tuxlink-dmwte task 9 (spec §5, behavior 1): a ↗ pop-out control sits beside
+  // the Map toggle when NOT popped, and invokes onPopOutMap.
+  it('shows a Tac Map pop-out control beside the Map toggle when onPopOutMap is provided, and invokes it', () => {
+    const onPopOutMap = vi.fn();
+    render(
+      <AprsDockTabs
+        active="aprs"
+        unread={0}
+        modemEnabled
+        onSelect={() => {}}
+        onClose={() => {}}
+        mapOpen={false}
+        onToggleMap={() => {}}
+        onPopOutMap={onPopOutMap}
+      />,
+    );
+    expect(screen.getByTestId('aprs-map-toggle')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('aprs-map-popout'));
+    expect(onPopOutMap).toHaveBeenCalledTimes(1);
+  });
+
+  it('omits the Tac Map pop-out control when onPopOutMap is not provided', () => {
+    render(
+      <AprsDockTabs
+        active="aprs"
+        unread={0}
+        modemEnabled
+        onSelect={() => {}}
+        onClose={() => {}}
+        mapOpen={false}
+        onToggleMap={() => {}}
+      />,
+    );
+    expect(screen.queryByTestId('aprs-map-popout')).not.toBeInTheDocument();
+  });
+
+  // Behavior 2 (spec §5): while popped, the Map toggle + pop-out slot SWAPS to
+  // the "Tac Map ↗ — in window" focus pathway + an adjacent "⇤ dock back"
+  // action — the Map toggle and pop-out button are both gone.
+  it('while mapPopped, renders the "in window" pathway + dock-back INSTEAD of the Map toggle/pop-out', () => {
+    const onFocusMap = vi.fn();
+    const onDockBackMap = vi.fn();
+    render(
+      <AprsDockTabs
+        active="aprs"
+        unread={0}
+        modemEnabled
+        onSelect={() => {}}
+        onClose={() => {}}
+        mapOpen={false}
+        onToggleMap={() => {}}
+        onPopOutMap={() => {}}
+        mapPopped
+        onFocusMap={onFocusMap}
+        onDockBackMap={onDockBackMap}
+      />,
+    );
+    expect(screen.queryByTestId('aprs-map-toggle')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('aprs-map-popout')).not.toBeInTheDocument();
+    const focus = screen.getByTestId('aprs-map-focus');
+    expect(focus).toHaveTextContent('Tac Map ↗ — in window');
+    fireEvent.click(focus);
+    expect(onFocusMap).toHaveBeenCalledTimes(1);
+
+    const dockBack = screen.getByTestId('aprs-map-dockback');
+    expect(dockBack).toHaveTextContent('⇤ dock back');
+    fireEvent.click(dockBack);
+    expect(onDockBackMap).toHaveBeenCalledTimes(1);
+  });
 });

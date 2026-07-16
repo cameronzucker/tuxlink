@@ -60,15 +60,18 @@ export interface SurfaceRegistryEntry {
 // ---- Tac Map -----------------------------------------------------------
 //
 // Mounts its own hooks exactly as AppShell does for the in-pane map
-// (AppShell.tsx ~2137-2146): useAprsPositions() for the live positions,
-// useEnvStations({snapshotRole:'client'}) so the pop-out seeds from the main
-// shell's snapshot instead of an empty roster (tuxlink-hzwc bug #4 precedent
-// — see src/aprs/StationsView.tsx for the identical snapshot-client
-// pattern), and useStatusData().grid for the first-run/recenter center.
-// `onFocusStation` is omitted — that callback drives AppShell's own Station
-// Data dock tab, which has no equivalent surface in this standalone window.
+// (AppShell.tsx ~2270+): useAprsPositions({snapshotRole:'client'}) (spec §7,
+// tuxlink-dmwte task 9 — mirrors envStations' snapshot-client role directly
+// below) so this freshly-popped window seeds its heard-positions roster from
+// the main shell's snapshot instead of starting empty and waiting on the next
+// beacon, useEnvStations({snapshotRole:'client'}) for the same reason on the
+// WX/telemetry side (tuxlink-hzwc bug #4 precedent — see
+// src/aprs/StationsView.tsx for the identical pattern), and
+// useStatusData().grid for the first-run/recenter center. `onFocusStation` is
+// omitted — that callback drives AppShell's own Station Data dock tab, which
+// has no equivalent surface in this standalone window.
 function TacMapSurface(_props: SurfaceComponentProps) {
-  const { positions } = useAprsPositions();
+  const { positions } = useAprsPositions({ snapshotRole: 'client' });
   const envStations = useEnvStations({ snapshotRole: 'client' });
   const statusData = useStatusData();
   return (

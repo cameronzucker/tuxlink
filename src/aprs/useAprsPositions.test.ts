@@ -1,9 +1,12 @@
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mirror useAprsChat.test.ts's listen idiom: capture the registered handler per
 // channel so the test can drive `aprs-position:new` payloads synchronously.
+// `emitMock` backs the snapshot-handshake tests (spec §7) — mirrors
+// useEnvStations.test.ts's listen/emit mock pattern.
 const handlers: Record<string, (e: { payload: unknown }) => void> = {};
+const emitMock = vi.fn((_name: string, _payload?: unknown) => Promise.resolve());
 vi.mock('@tauri-apps/api/event', () => ({
   listen: (name: string, cb: (e: { payload: unknown }) => void) => {
     handlers[name] = cb;
@@ -11,6 +14,7 @@ vi.mock('@tauri-apps/api/event', () => ({
       delete handlers[name];
     });
   },
+  emit: (name: string, payload?: unknown) => emitMock(name, payload),
 }));
 
 import { useAprsPositions } from './useAprsPositions';
@@ -34,6 +38,7 @@ const BASE = {
 describe('useAprsPositions', () => {
   beforeEach(() => {
     for (const k of Object.keys(handlers)) delete handlers[k];
+    emitMock.mockClear();
   });
 
   it('starts empty', () => {
@@ -184,6 +189,111 @@ describe('useAprsPositions', () => {
         vi.advanceTimersByTime(10 * 60 * 1000);
       });
       expect(result.current.positions).toHaveLength(1);
+    });
+  });
+
+  // Cross-window snapshot handshake (tuxlink-dmwte task 9, spec §7) — copied
+  // mechanics from useEnvStations.test.ts's host/client suite, plus the retry
+  // amendment's own load-bearing coverage.
+  describe('snapshot handshake (spec §7)', () => {
+    it('omits the handshake entirely when snapshotRole is not given (existing callers unaffected)', async () => {
+      renderHook(() => useAprsPositions());
+      await act(async () => {});
+      expect(handlers['aprs-positions:request-snapshot']).toBeUndefined();
+      expect(handlers['aprs-positions:snapshot']).toBeUndefined();
+      expect(emitMock).not.toHaveBeenCalled();
+    });
+
+    it('host answers a snapshot request with its current roster', async () => {
+      const { result } = renderHook(() => useAprsPositions({ snapshotRole: 'host' }));
+      await act(async () => {});
+      emitPos(BASE);
+      expect(result.current.positions).toHaveLength(1);
+      await waitFor(() => expect(handlers['aprs-positions:request-snapshot']).toBeDefined());
+      emitMock.mockClear();
+      act(() => handlers['aprs-positions:request-snapshot']({ payload: undefined }));
+      expect(emitMock).toHaveBeenCalledWith(
+        'aprs-positions:snapshot',
+        expect.arrayContaining([expect.objectContaining({ call: 'KK6XYZ' })]),
+      );
+    });
+
+    it('client requests a snapshot on mount (after registering its reply listener) and seeds from the reply', async () => {
+      const { result } = renderHook(() => useAprsPositions({ snapshotRole: 'client' }));
+      await waitFor(() => expect(handlers['aprs-positions:snapshot']).toBeDefined());
+      expect(emitMock).toHaveBeenCalledWith('aprs-positions:request-snapshot', undefined);
+      const snap = [
+        { call: 'WX7FGZ-7', lat: 10, lon: 20, symbolTable: '/', symbolCode: '-', comment: '', ambiguity: 0, via: [], isObject: false, at: Date.now() },
+      ];
+      act(() => handlers['aprs-positions:snapshot']({ payload: snap }));
+      expect(result.current.positions.map((p) => p.call)).toContain('WX7FGZ-7');
+    });
+
+    // The retry path is the load-bearing test (spec §10): a pop-out window's
+    // client-role hook has no ordering guarantee against the host's listener
+    // registration across separate OS windows, so a single fire-and-forget
+    // request (useEnvStations' original mechanism) can go unanswered forever.
+    // This simulates the host being slow to subscribe (its listener simply
+    // isn't registered/consumed yet) and asserts the client keeps re-emitting
+    // on a 250ms cadence until a reply lands — then stops. A second case
+    // asserts the 3s give-up fires cleanly when no reply ever arrives.
+    describe('retry amendment (250ms cadence / 3s give-up)', () => {
+      beforeEach(() => {
+        vi.useFakeTimers();
+      });
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      it('re-emits the request every 250ms until the reply arrives, then stops retrying', async () => {
+        const { result } = renderHook(() => useAprsPositions({ snapshotRole: 'client' }));
+        // Flush the listen().then(...) mount microtasks before advancing fake
+        // timers (the reply listener + first request fire from that chain).
+        await act(async () => {
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        expect(handlers['aprs-positions:snapshot']).toBeDefined();
+
+        // Host listener registers 600ms late (simulated: nothing answers the
+        // request yet) — the retry interval (250ms) must have fired at least
+        // twice more by then.
+        await act(async () => {
+          vi.advanceTimersByTime(600);
+        });
+        const requestCalls = emitMock.mock.calls.filter((c) => c[0] === 'aprs-positions:request-snapshot');
+        expect(requestCalls.length).toBeGreaterThanOrEqual(2);
+
+        // The host "arrives" and answers.
+        const snap = [
+          { call: 'KE7ABC', lat: 1, lon: 2, symbolTable: '/', symbolCode: '-', comment: '', ambiguity: 0, via: [], isObject: false, at: Date.now() },
+        ];
+        act(() => handlers['aprs-positions:snapshot']({ payload: snap }));
+        expect(result.current.positions.map((p) => p.call)).toContain('KE7ABC');
+
+        // Retries stop: no further request emissions past the reply.
+        emitMock.mockClear();
+        await act(async () => {
+          vi.advanceTimersByTime(1000);
+        });
+        expect(emitMock.mock.calls.filter((c) => c[0] === 'aprs-positions:request-snapshot')).toHaveLength(0);
+      });
+
+      it('gives up cleanly after 3s with no reply (no runaway interval)', async () => {
+        renderHook(() => useAprsPositions({ snapshotRole: 'client' }));
+        await act(async () => {
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        await act(async () => {
+          vi.advanceTimersByTime(3000);
+        });
+        emitMock.mockClear();
+        await act(async () => {
+          vi.advanceTimersByTime(1000);
+        });
+        expect(emitMock.mock.calls.filter((c) => c[0] === 'aprs-positions:request-snapshot')).toHaveLength(0);
+      });
     });
   });
 });
