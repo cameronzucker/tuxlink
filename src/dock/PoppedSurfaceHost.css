@@ -1,0 +1,86 @@
+/* PoppedSurfaceHost.css — popped-surface window chrome (spec §4).
+ * Titlebar reuses `.tux-titlebar` (src/shell/chrome/chrome.css); this file
+ * carries the pop-specific additions: the ⇤ dock-back control, the centered
+ * static title, and the bottom mini status strip (chrome option B). Strip
+ * tokens are the same cool-slate vars StatusBar.css uses
+ * (--surface/--border/--text-dim/--text-faint), so a popped window's chrome
+ * matches the main window's under every color scheme with zero per-scheme
+ * CSS (tuxlink-8za).
+ */
+
+.pop-surface-host {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--bg);
+}
+
+.pop-surface-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+
+/* ---- Title bar additions ---- */
+
+.pop-titlebar .pop-dockback {
+  /* Sits left of the drag region; needs its own z-index so the absolutely-
+   * positioned .tux-drag span (inset:0) never swallows its clicks. */
+  z-index: 1;
+  width: auto;
+  border-radius: var(--radius-control);
+  padding: 0 10px;
+  margin-right: 8px;
+  font-size: var(--type-heading);
+}
+
+.pop-titlebar .pop-title {
+  z-index: 1;
+  flex: 1;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* AprsChatSurface's wrapper — gives AprsConnectStrip + AprsChatPanel a
+ * bounded flex column so the panel's own internal message-list scroll region
+ * (flex:1;min-height:0) resolves against a real height, matching how the
+ * in-dock AppShell composition sizes it (a fixed-height dock column) rather
+ * than falling back to whole-window scroll. */
+.pop-aprs-chat {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ---- Mini status strip (chrome option B) ---- */
+
+.pop-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 26px;
+  padding: 0 14px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: var(--type-control);
+  white-space: nowrap;
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+
+.pop-strip-item {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.pop-strip-divider {
+  color: var(--text-faint);
+  font-size: var(--type-micro);
+}
