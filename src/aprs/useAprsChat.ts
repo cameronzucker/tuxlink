@@ -318,7 +318,13 @@ export function useAprsChat(opts?: UseAprsChatOptions): UseAprsChat {
         state: 'sent',
         at: Date.now(),
       };
-      setMessages((prev) => [...prev, msg]);
+      // Guard against the echo-first race: if the backend's own-send echo
+      // (`aprs-message:sent`) is handled before this `await invoke(...)`
+      // continuation resumes, the echo handler's msgid-dedupe already
+      // appended this message — don't double it. Same msgid guard the echo
+      // handler uses, applied symmetrically here so ordering between the two
+      // paths (whichever runs first) always yields exactly one message.
+      setMessages((prev) => (prev.some((m) => m.msgid === id) ? prev : [...prev, msg]));
       return id;
     },
     [],

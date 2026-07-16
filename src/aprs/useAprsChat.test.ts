@@ -144,6 +144,34 @@ describe('useAprsChat (open channel)', () => {
       expect(result.current.messages.filter((m) => m.msgid === 'A1')).toHaveLength(1);
     });
 
+    it('dedupes when the echo arrives BEFORE send\'s invoke resolves (echo-first race)', async () => {
+      const { invoke } = await import('@tauri-apps/api/core');
+      let resolveInvoke!: (v: string) => void;
+      (invoke as ReturnType<typeof vi.fn>).mockImplementationOnce(
+        () => new Promise<string>((resolve) => { resolveInvoke = resolve; }),
+      );
+      const { result } = renderHook(() => useAprsChat());
+      await act(async () => {});
+      let sendPromise!: Promise<string>;
+      act(() => {
+        sendPromise = result.current.send('KK6XYZ', 'hi');
+      });
+      // The backend's own-send echo lands on the wire and is handled BEFORE
+      // send's `invoke` call resolves back into this window's continuation —
+      // the exact ordering the msgid guard on the optimistic append exists to
+      // close (see the guard's comment in useAprsChat.ts).
+      act(() => {
+        handlers['aprs-message:sent']?.({
+          payload: { msgid: 'A1', addressee: 'KK6XYZ', text: 'hi', at_ms: 1_700_000_000_000 },
+        });
+      });
+      await act(async () => {
+        resolveInvoke('A1');
+        await sendPromise;
+      });
+      expect(result.current.messages.filter((m) => m.msgid === 'A1')).toHaveLength(1);
+    });
+
     it('appends an echo for a send that happened in another window (from: me, to, at from at_ms)', async () => {
       const { result } = renderHook(() => useAprsChat());
       await act(async () => {});
