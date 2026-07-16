@@ -3,6 +3,8 @@
 //! The wire-contract table in spec §3 is NORMATIVE; the strings below are
 //! copied from it, never derived (label/route drop the underscore).
 
+pub mod commands;
+pub mod park_notify;
 pub mod registry;
 
 use serde::{Deserialize, Serialize};

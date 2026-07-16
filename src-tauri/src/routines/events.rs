@@ -201,6 +201,16 @@ impl RoutinesEventSink for TauriRoutinesEventSink {
     fn emit(&self, event: &RoutinesEvent) {
         use tauri::Emitter as _;
         let _ = self.app.emit(ROUTINES_EVENT, event);
+
+        // Park notification (spec §6, dockable-surfaces behavior 7): when a run
+        // parks awaiting transmit consent, fire the Tauri-side attention channel
+        // (desktop notification + X11 urgency hint) if the consent host window is
+        // unfocused. Placed HERE — the sink is where the event lands and it holds
+        // the `AppHandle` — so the pure consent engine stays clean; the dock/
+        // notification mechanics live in `crate::dock::park_notify`.
+        if let RoutinesEvent::AwaitingConsent { run_id, .. } = event {
+            crate::dock::park_notify::notify_awaiting_consent(&self.app, run_id);
+        }
     }
 }
 

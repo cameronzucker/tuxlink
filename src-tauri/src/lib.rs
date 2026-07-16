@@ -1568,6 +1568,19 @@ pub fn run() {
         // window calls theme_get_scheme to bootstrap and listens for
         // color_scheme_changed events emitted by theme_broadcast_scheme.
         .manage(crate::theme_state::ThemeState::default())
+        // tuxlink-dmwte Task 4 (spec §3): the dock registry — runtime authority
+        // for each surface's dock state, seeded from the persisted config `dock`
+        // section (config v8). The in-memory registry is authoritative while the
+        // app runs; the config write is write-through. Continuity tokens (§7) are
+        // runtime-only and start empty. `RestorationGate` (managed beside it)
+        // guards `shell_mounted` so launch restoration spawns popped windows
+        // exactly once.
+        .manage(crate::dock::registry::DockRegistry::new(
+            crate::config::read_config()
+                .map(|c| c.dock)
+                .unwrap_or_default(),
+        ))
+        .manage(crate::dock::registry::RestorationGate::default())
         // Task 5 (tuxlink-686): managed PositionArbiter — shared by config_set_grid
         // and (Task 11) the gpsd task. Built above the Builder so the binding
         // remains available for Task 11's clone. `.clone()` here increments the
@@ -2858,6 +2871,41 @@ pub fn run() {
             // from both places (`quit_with_routines_gate`) rather than one
             // calling into the other.
             //
+            // tuxlink-dmwte Task 4 (spec §3, behavior 4): the pop-* close-intent
+            // round-trip. Catch `CloseRequested` for a dockable surface's window
+            // BEFORE the main arm: prevent the close, emit a close-intent to that
+            // window's webview (it flushes its continuity token via
+            // surface_dock_back — ✕ availability semantics), and arm a 1.5 s
+            // liveness timeout that docks back with `None` if the webview never
+            // answered (a hung/dead webview cannot wedge the close). The webview's
+            // own dock-back normally lands first, leaving the surface `Docked`, so
+            // the timeout finds a no-op. This is the backend-intercept pattern
+            // (the main window's proven close path), NOT compose's frontend
+            // onCloseRequested, which depends on a live webview (adrev R3-F4).
+            if let Some(surface) = crate::dock::SurfaceId::from_window_label(window.label()) {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let app_handle = window.app_handle().clone();
+                    use tauri::Emitter as _;
+                    let _ = app_handle.emit_to(
+                        surface.window_label(),
+                        "dock:close-intent",
+                        serde_json::json!({ "surface": surface }),
+                    );
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                        use tauri::Manager as _;
+                        let registry = app_handle.state::<crate::dock::registry::DockRegistry>();
+                        // If the webview already docked back, the surface is
+                        // `Docked` and this is a no-op (no emit, no destroy).
+                        crate::dock::commands::dock_back(&app_handle, &registry, surface, None);
+                    });
+                }
+                // A pop-* window's close is fully handled here; never fall through
+                // to the main-window / default arms.
+                return;
+            }
+
             // Guard on "main" so Task 14's compose windows close normally (they
             // need real close + unsaved-draft handling, not hide-to-tray).
             if window.label() == "main" {
@@ -3022,6 +3070,12 @@ pub fn run() {
             crate::compose_window::compose_close_self,  // tuxlink-h2y (self-only close)
             crate::help_window::help_window_open,       // tuxlink-0gsy (spec §3)
             crate::stations_window::stations_window_open, // tuxlink-2phz (env panel pop-out)
+            // tuxlink-dmwte Task 4 (spec §3/§5): dockable-surfaces registry commands.
+            crate::dock::commands::surface_pop_out,
+            crate::dock::commands::surface_dock_back,
+            crate::dock::commands::surface_focus,
+            crate::dock::commands::dock_state_get,
+            crate::dock::commands::shell_mounted,
             crate::theme_state::theme_get_scheme,       // tuxlink-0gsy (spec §8.2)
             crate::theme_state::theme_broadcast_scheme, // tuxlink-0gsy (spec §8.2)
             crate::search::commands::docs_search,       // tuxlink-0gsy (spec §9.3)
