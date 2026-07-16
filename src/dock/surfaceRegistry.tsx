@@ -31,7 +31,16 @@ export interface SurfaceComponentProps {
    *  it in a ref and calls it at every dock-back path (⇤, ✕, Ctrl+W,
    *  close-intent) to build the outgoing token's `state`. Surfaces with no
    *  internal state to carry (tac_map, aprs_chat) never call it — the
-   *  host's ref stays null. */
+   *  host's ref stays null.
+   *
+   *  Re-registration contract (review-loop-3 F3): register a FRESH closure
+   *  whenever the state it reports changes — call `registerGetContext`
+   *  inside a `useEffect` whose deps include that state, not once with `[]`.
+   *  A `[]`-deps registration captures the value live at mount time in its
+   *  closure forever, so every later dock-back would ship that stale
+   *  mount-time snapshot as `state` instead of the surface's current place.
+   *  See `RoutinesPopped` below for the canonical pattern — it already does
+   *  this correctly (`useEffect(() => registerGetContext(() => view), [registerGetContext, view])`). */
   registerGetContext: (fn: () => unknown | null) => void;
 }
 

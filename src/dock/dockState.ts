@@ -62,6 +62,15 @@ export function consentHostWindow(s: DockSurfaces): 'main' | 'pop-routines' {
  *
  * Returns `null` until the first snapshot lands (mount-time only — no
  * loading state is threaded beyond that single instant).
+ *
+ * Reconcile-read TOCTOU guard (review-loop-3 F1): the reconcile get is
+ * in-flight concurrently with the live listener, so a real `dock:changed`
+ * event can land AFTER the reconcile invoke is issued but BEFORE it
+ * resolves. That event's payload is always at-least-as-new as any
+ * `dock_state_get` response (Rust emits `dock:changed` synchronously with
+ * every registry mutation, spec §3), so an `eventSeen` flag set by the
+ * listener gates the reconcile's `setSnapshot` — a stale reconcile response
+ * must never clobber a newer event snapshot.
  */
 export function useDockState(): DockSnapshot | null {
   const [snapshot, setSnapshot] = useState<DockSnapshot | null>(null);
@@ -69,8 +78,12 @@ export function useDockState(): DockSnapshot | null {
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | null = null;
+    // Set by the `dock:changed` handler below; gates the reconcile apply
+    // (see the TOCTOU note in this function's doc comment above).
+    let eventSeen = false;
 
     listen<DockSnapshot>('dock:changed', (event) => {
+      eventSeen = true;
       if (!disposed) setSnapshot(event.payload);
     })
       .then(async (u) => {
@@ -85,9 +98,14 @@ export function useDockState(): DockSnapshot | null {
         setSnapshot(initial);
 
         // Reconcile read (spec §5): closes the gap between the listener
-        // settling and the initial read landing.
+        // settling and the initial read landing. Guarded by `eventSeen` — a
+        // `dock:changed` event that landed while this reconcile get was in
+        // flight is newer than the reconcile's own response, so applying
+        // the reconcile here would be a TOCTOU regression (review-loop-3
+        // F1). Skip the apply when that happened; the event's own
+        // `setSnapshot` call already carries the freshest state.
         const reconciled = await invoke<DockSnapshot>('dock_state_get');
-        if (!disposed) setSnapshot(reconciled);
+        if (!disposed && !eventSeen) setSnapshot(reconciled);
       })
       .catch(() => {
         // No Tauri runtime (test/dev harness without a mock) — snapshot

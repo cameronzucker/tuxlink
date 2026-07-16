@@ -11,7 +11,7 @@
 // reconcile `dock_state_get` follows the initial read.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { renderHook, waitFor, act } from '@testing-library/react';
 import {
   consentHostWindow,
   useDockState,
@@ -111,6 +111,51 @@ describe('useDockState', () => {
 
     handler?.({ payload: snapshot({ routines: 'popped' }) });
     await waitFor(() => expect(result.current?.surfaces.routines).toBe('popped'));
+  });
+
+  it('a dock:changed event landing during the in-flight reconcile get wins over the reconcile response (TOCTOU guard, review-loop-3 F1)', async () => {
+    let handler: ((e: { payload: DockSnapshot }) => void) | undefined;
+    mockListen.mockImplementation((_event: string, cb: (e: { payload: DockSnapshot }) => void) => {
+      handler = cb;
+      return Promise.resolve(unlistenFn);
+    });
+
+    // Manually control the resolution of BOTH `dock_state_get` invocations
+    // so the exact interleaving (listen -> first get resolves -> event
+    // fires NEWER -> reconcile get resolves STALE) can be forced.
+    let resolveFirstGet!: (v: DockSnapshot) => void;
+    let resolveReconcileGet!: (v: DockSnapshot) => void;
+    const firstGet = new Promise<DockSnapshot>((resolve) => {
+      resolveFirstGet = resolve;
+    });
+    const reconcileGet = new Promise<DockSnapshot>((resolve) => {
+      resolveReconcileGet = resolve;
+    });
+    let getCalls = 0;
+    mockInvoke.mockImplementation((cmd?: string) => {
+      if (cmd === undefined) return Promise.resolve();
+      getCalls += 1;
+      return getCalls === 1 ? firstGet : reconcileGet;
+    });
+
+    const { result } = renderHook(() => useDockState());
+
+    // First get resolves with the docked baseline.
+    resolveFirstGet(snapshot({ routines: 'docked' }));
+    await waitFor(() => expect(result.current?.surfaces.routines).toBe('docked'));
+
+    // A real dock:changed event lands while the reconcile get is still
+    // in flight — it is NEWER than anything the reconcile can return.
+    handler?.({ payload: snapshot({ routines: 'popped' }) });
+    await waitFor(() => expect(result.current?.surfaces.routines).toBe('popped'));
+
+    // The reconcile get NOW resolves with a STALE ('docked') snapshot. It
+    // must NOT clobber the event's newer 'popped' state.
+    await act(async () => {
+      resolveReconcileGet(snapshot({ routines: 'docked' }));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(result.current?.surfaces.routines).toBe('popped');
   });
 });
 

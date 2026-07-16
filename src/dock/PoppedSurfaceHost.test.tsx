@@ -189,11 +189,61 @@ describe('PoppedSurfaceHost — close-intent (behavior 2)', () => {
   });
 });
 
+describe('PoppedSurfaceHost — dock-back rejection (behavior 2, review-loop-3 F2)', () => {
+  it('logs console.error and keeps the window rendered when surface_dock_back rejects (✕ path)', async () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    invokeMock.mockImplementation((cmd?: string) => {
+      if (cmd === 'dock_state_get') return Promise.resolve(emptySnapshot());
+      if (cmd === 'surface_dock_back') return Promise.reject(new Error('backend unavailable'));
+      return Promise.resolve();
+    });
+    renderHost(<PoppedSurfaceHost surface="tac_map" />);
+    fireEvent.click(screen.getByRole('button', { name: /^close$/i }));
+
+    await waitFor(() =>
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('[dock] dock-back failed for tac_map'),
+        expect.any(Error),
+      ));
+    // No crash — the host is still mounted and rendering.
+    expect(screen.getByTestId('pop-surface-host-tac_map')).toBeInTheDocument();
+    consoleErrorSpy.mockRestore();
+  });
+
+  it('logs console.error when surface_dock_back rejects via the ⇤ dock-back path', async () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    invokeMock.mockImplementation((cmd?: string) => {
+      if (cmd === 'dock_state_get') return Promise.resolve(emptySnapshot());
+      if (cmd === 'surface_dock_back') return Promise.reject(new Error('backend unavailable'));
+      return Promise.resolve();
+    });
+    renderHost(<PoppedSurfaceHost surface="routines" />);
+    fireEvent.click(screen.getByRole('button', { name: /dock back into main window/i }));
+
+    await waitFor(() =>
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('[dock] dock-back failed for routines'),
+        expect.any(Error),
+      ));
+    expect(screen.getByTestId('pop-surface-host-routines')).toBeInTheDocument();
+    consoleErrorSpy.mockRestore();
+  });
+});
+
 describe('PoppedSurfaceHost — theme (behavior 4)', () => {
   it('applies the stored scheme on mount', () => {
     localStorage.setItem(COLOR_SCHEME_STORAGE_KEY, 'github-dark');
     renderHost(<PoppedSurfaceHost surface="tac_map" />);
     expect(document.documentElement.dataset.theme).toBe('github-dark');
+  });
+
+  it('the mount apply passes broadcast:false — a popped window is a listener, never an originator (review-loop-3 F5)', async () => {
+    localStorage.setItem(COLOR_SCHEME_STORAGE_KEY, 'github-dark');
+    renderHost(<PoppedSurfaceHost surface="tac_map" />);
+    // Give the dynamic import inside applyColorScheme a tick to settle, so
+    // a wrongly-broadcasting mount apply would have had the chance to fire.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(invokeMock).not.toHaveBeenCalledWith('theme_broadcast_scheme', expect.anything());
   });
 
   it('storage event on tuxlink.colorScheme re-applies the scheme', () => {

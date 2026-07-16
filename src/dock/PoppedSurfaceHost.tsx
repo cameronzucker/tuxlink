@@ -59,16 +59,29 @@ export function PoppedSurfaceHost({ surface }: { surface: SurfaceId }) {
     return getContextRef.current ? getContextRef.current() : null;
   }, []);
 
+  // Rejection is near-impossible on the backend (persist is best-effort,
+  // destroy ignores not-found — review-loop-3 F2 backend analysis), so this
+  // is NOT a retry loop. It just makes a failure visible instead of a
+  // silently-stranded window: an unhandled rejection here would otherwise
+  // vanish, and the operator would be left staring at a popped window that
+  // never docked back with no error surfaced anywhere.
+  const logDockBackFailure = useCallback(
+    (err: unknown) => {
+      console.error(`[dock] dock-back failed for ${surface}:`, err);
+    },
+    [surface],
+  );
+
   /** ✕ / Ctrl+W / close-intent semantics — availability, not foreground
    *  (spec §3). */
   const runClose = useCallback(() => {
-    void dockBack(surface, { foreground: false, state: collectState() });
-  }, [surface, collectState]);
+    dockBack(surface, { foreground: false, state: collectState() }).catch(logDockBackFailure);
+  }, [surface, collectState, logDockBackFailure]);
 
   /** ⇤ Dock back — foreground semantics (spec §4). */
   const runDockBack = useCallback(() => {
-    void dockBack(surface, { foreground: true, state: collectState() });
-  }, [surface, collectState]);
+    dockBack(surface, { foreground: true, state: collectState() }).catch(logDockBackFailure);
+  }, [surface, collectState, logDockBackFailure]);
 
   // Close-intent round-trip (spec §3 "Close handling"): the backend catches
   // the WM's CloseRequested, calls prevent_close, and emits this event so the
@@ -112,7 +125,12 @@ export function PoppedSurfaceHost({ surface }: { surface: SurfaceId }) {
   // token set (colorScheme.ts:57-58; scheme-key-only would leave popped
   // windows stale on a custom-theme edit while scheme stays 'custom').
   useEffect(() => {
-    applyColorScheme(loadColorScheme());
+    // broadcast:false on the MOUNT apply too (review-loop-3 F5) — a popped
+    // window is a LISTENER window, never an originator, for theme changes
+    // (tuxlink-och6 invariant, mirrors useHelpTheme.ts's initial read). The
+    // storage-listener re-applies below already pass this; the mount call
+    // was the one inconsistent site.
+    applyColorScheme(loadColorScheme(), { broadcast: false });
     const onStorage = (e: StorageEvent) => {
       if (e.key === COLOR_SCHEME_STORAGE_KEY || e.key === CUSTOM_THEME_STORAGE_KEY) {
         // broadcast:false — we're responding to another window's change, not
