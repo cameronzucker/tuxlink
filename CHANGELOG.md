@@ -31,6 +31,21 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.93.0](https://github.com/cameronzucker/tuxlink/compare/v0.92.1...v0.93.0) (2026-07-17)
+
+
+### Features
+
+* **routines:** human label + description on every action descriptor, through to ActionInfo ([a8d0f3d](https://github.com/cameronzucker/tuxlink/commit/a8d0f3dbc142c2e458774ab0acddb10d37a1183c))
+* **routines:** render human action labels in palette, inspector, and canvas ([a42ece1](https://github.com/cameronzucker/tuxlink/commit/a42ece186131ac97540b3f86b56e2360d47a4b77))
+
+
+### Bug Fixes
+
+* **routines:** double-quote the descriptor label/description string literals ([532b097](https://github.com/cameronzucker/tuxlink/commit/532b097b5fb863c61d7acbd2738ce54a07f080f4))
+* **routines:** Escape defers to open popup menus, not just dialogs ([b7bec04](https://github.com/cameronzucker/tuxlink/commit/b7bec040d2d563ee4d85d839c3eb3be8eec0aef0))
+* **routines:** give the inline surface a way home — ← Mailbox button, Escape, menu item, honest titlebar ([19c4d62](https://github.com/cameronzucker/tuxlink/commit/19c4d624987d04fda47256a416a08a6659ea565c))
+
 ## [0.92.1](https://github.com/cameronzucker/tuxlink/compare/v0.92.0...v0.92.1) (2026-07-17)
 
 
