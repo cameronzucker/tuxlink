@@ -251,8 +251,8 @@ impl Action for ComposeMessage {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
             name: LOCAL_COMPOSE,
-            label: 'Compose message',
-            description: 'Stage a Winlink message in the outbox for the next connection.',
+            label: "Compose message",
+            description: "Stage a Winlink message in the outbox for the next connection.",
             needs_radio: false,
             transmits: false,
             needs_internet: false,
@@ -394,8 +394,8 @@ impl Action for ComposeCatalogRequest {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
             name: LOCAL_COMPOSE_CATALOG_REQUEST,
-            label: 'Compose catalog request',
-            description: 'Stage a WL2K catalog request message in the outbox.',
+            label: "Compose catalog request",
+            description: "Stage a WL2K catalog request message in the outbox.",
             needs_radio: false,
             transmits: false,
             needs_internet: false,
@@ -485,8 +485,8 @@ impl Action for SetIdentity {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
             name: LOCAL_SET_IDENTITY,
-            label: 'Set station identity',
-            description: 'Switch the active callsign for the rest of this run only.',
+            label: "Set station identity",
+            description: "Switch the active callsign for the rest of this run only.",
             needs_radio: false,
             transmits: false,
             needs_internet: false,
@@ -552,8 +552,8 @@ impl Action for LogEntry {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
             name: LOCAL_LOG,
-            label: 'Write log entry',
-            description: 'Write a line to the station log.',
+            label: "Write log entry",
+            description: "Write a line to the station log.",
             needs_radio: false,
             transmits: false,
             needs_internet: false,
@@ -610,8 +610,8 @@ impl Action for Notify {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
             name: LOCAL_NOTIFY,
-            label: 'Show notification',
-            description: 'Show a desktop notification.',
+            label: "Show notification",
+            description: "Show a desktop notification.",
             needs_radio: false,
             transmits: false,
             needs_internet: false,

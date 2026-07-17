@@ -244,8 +244,8 @@ impl Action for SpaceWxWwv {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
             name: DATA_SPACEWX_WWV,
-            label: 'Capture WWV space weather',
-            description: 'Wait for the :18/:45 WWV broadcast window, then capture and decode space weather off-air.',
+            label: "Capture WWV space weather",
+            description: "Wait for the :18/:45 WWV broadcast window, then capture and decode space weather off-air.",
             needs_radio: true,
             transmits: false,
             needs_internet: false,
@@ -374,8 +374,8 @@ impl Action for SpaceWxSwpc {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
             name: DATA_SPACEWX_SWPC,
-            label: 'Fetch SWPC space weather',
-            description: 'Fetch current space weather from NOAA SWPC online.',
+            label: "Fetch SWPC space weather",
+            description: "Fetch current space weather from NOAA SWPC online.",
             needs_radio: false,
             transmits: false,
             needs_internet: true,
@@ -440,8 +440,8 @@ impl Action for StationlistUpdate {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
             name: DATA_STATIONLIST_UPDATE,
-            label: 'Update gateway list',
-            description: 'Refresh gateway info from the Winlink status API.',
+            label: "Update gateway list",
+            description: "Refresh gateway info from the Winlink status API.",
             needs_radio: false,
             transmits: false,
             needs_internet: true,
@@ -535,8 +535,8 @@ impl Action for DataRead {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
             name: DATA_READ,
-            label: 'Read app data',
-            description: 'Read tuxlink state (inbox, catalog, prior captures) into the run.',
+            label: "Read app data",
+            description: "Read tuxlink state (inbox, catalog, prior captures) into the run.",
             needs_radio: false,
             transmits: false,
             needs_internet: false,
