@@ -62,9 +62,10 @@ export function RoutinesSurface({ view, onNavigate, onPopOut, initialDraft, onDr
   // tuxlink-9se1x: Escape returns to the mailbox — from the DASHBOARD only.
   // In the designer a stray Escape would silently discard an unsaved draft,
   // so it stays inert there (the "← Routines" button is the deliberate path).
-  // Guards: an open dialog owns Escape (ImportJsonDialog closes itself on the
-  // same keydown without preventDefault; the consent modal must never be
-  // dismissed underneath), and typing surfaces keep their key events.
+  // Guards: an open dialog or popup menu owns Escape (ImportJsonDialog closes
+  // itself on the same keydown without preventDefault; the consent modal must
+  // never be dismissed underneath; the dashboard's row menu must dismiss, not
+  // the whole surface — Codex P3), and typing surfaces keep their key events.
   useEffect(() => {
     if (view.view !== 'dashboard' || !onClose) return;
     const close = onClose;
@@ -72,7 +73,7 @@ export function RoutinesSurface({ view, onNavigate, onPopOut, initialDraft, onDr
       if (e.key !== 'Escape' || e.defaultPrevented) return;
       const t = e.target as HTMLElement | null;
       if (t && (t.isContentEditable || /^(?:INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
-      if (document.querySelector('[role="dialog"]')) return;
+      if (document.querySelector('[role="dialog"], [role="menu"]')) return;
       close();
     }
     window.addEventListener('keydown', onKey);

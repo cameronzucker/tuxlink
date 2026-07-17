@@ -82,6 +82,20 @@ describe('RoutinesSurface — back to mailbox (tuxlink-9se1x)', () => {
     }
   });
 
+  it('Escape is ignored while a row menu is open (the menu owns Escape — Codex P3)', async () => {
+    const onClose = vi.fn();
+    await renderDashboardSurface(onClose);
+    const menu = document.createElement('div');
+    menu.setAttribute('role', 'menu');
+    document.body.appendChild(menu);
+    try {
+      fireEvent.keyDown(window, { key: 'Escape' });
+      expect(onClose).not.toHaveBeenCalled();
+    } finally {
+      menu.remove();
+    }
+  });
+
   it('Escape is ignored while typing in an input', async () => {
     const onClose = vi.fn();
     await renderDashboardSurface(onClose);
