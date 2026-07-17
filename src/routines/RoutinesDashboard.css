@@ -561,3 +561,17 @@ table.ops {
   justify-content: flex-end;
   gap: 8px;
 }
+
+/* tuxlink-9se1x: "← Mailbox" in the dashboard header — same idiom as the
+ * designer's "← Routines" (RoutineDesigner.css .back). */
+.surface-head .back {
+  font-size: 12px;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 8px 4px 0;
+}
+.surface-head .back:hover {
+  color: var(--text);
+}

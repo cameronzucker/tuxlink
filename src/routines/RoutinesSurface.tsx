@@ -21,6 +21,7 @@
  *    just the `tab` field of this same designer view (Design/Runs/Settings),
  *    keeping `routine` fixed.
  */
+import { useEffect } from 'react';
 import { RoutinesDashboard } from './RoutinesDashboard';
 import { RoutineDesigner } from './designer/RoutineDesigner';
 import type { RoutineDef } from './routinesApi';
@@ -50,15 +51,41 @@ export interface RoutinesSurfaceProps {
    *  / dock-back time (tuxlink-dmwte task 8). Only fires from the designer
    *  view. */
   onDraftChange?: (draft: RoutineDef) => void;
+  /** Close the surface back to the mailbox (tuxlink-9se1x). Provided by the
+   *  inline AppShell host only — absent in the popped window, where there is
+   *  no mailbox pane to return to. Drives the dashboard's "← Mailbox" button
+   *  and the dashboard-level Escape shortcut. */
+  onClose?: () => void;
 }
 
-export function RoutinesSurface({ view, onNavigate, onPopOut, initialDraft, onDraftChange }: RoutinesSurfaceProps) {
+export function RoutinesSurface({ view, onNavigate, onPopOut, initialDraft, onDraftChange, onClose }: RoutinesSurfaceProps) {
+  // tuxlink-9se1x: Escape returns to the mailbox — from the DASHBOARD only.
+  // In the designer a stray Escape would silently discard an unsaved draft,
+  // so it stays inert there (the "← Routines" button is the deliberate path).
+  // Guards: an open dialog owns Escape (ImportJsonDialog closes itself on the
+  // same keydown without preventDefault; the consent modal must never be
+  // dismissed underneath), and typing surfaces keep their key events.
+  useEffect(() => {
+    if (view.view !== 'dashboard' || !onClose) return;
+    const close = onClose;
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || /^(?:INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      if (document.querySelector('[role="dialog"]')) return;
+      close();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [view.view, onClose]);
+
   if (view.view === 'dashboard') {
     return (
       <RoutinesDashboard
         onOpenDesigner={(routine, tab) => onNavigate({ view: 'designer', routine, tab: tab ?? 'design' })}
         onNewRoutine={() => onNavigate({ view: 'designer', routine: '', tab: 'design' })}
         onPopOut={onPopOut}
+        onClose={onClose}
       />
     );
   }

@@ -17,10 +17,17 @@ interface MenuBarProps {
    *  dynamic-affordance seam MENU_TREE deliberately lacks — same MenuBar-level
    *  special-case pattern as `badges`. */
   dockPopped?: boolean;
+  /** tuxlink-9se1x: whether the Routines surface is open INLINE in the main
+   *  pane right now — gates the "Back to Mailbox" item (meaningless when the
+   *  surface is closed or popped to its own window). */
+  routinesInlineOpen?: boolean;
 }
 
 /** The static "Dock Routines back" item is hidden unless Routines is popped. */
 const ROUTINES_DOCKBACK_ID = 'menu:routines:dockback';
+
+/** tuxlink-9se1x: "Back to Mailbox" is hidden unless the surface is open inline. */
+const ROUTINES_CLOSE_ID = 'menu:routines:close';
 
 function MenuItems({ items, onPick }: { items: MenuNode[]; onPick: (id: MenuActionId) => void }) {
   return (
@@ -72,7 +79,7 @@ function MenuItems({ items, onPick }: { items: MenuNode[]; onPick: (id: MenuActi
   );
 }
 
-export function MenuBar({ onAction, badges, dockPopped = false }: MenuBarProps) {
+export function MenuBar({ onAction, badges, dockPopped = false, routinesInlineOpen = false }: MenuBarProps) {
   const [openLabel, setOpenLabel] = useState<string | null>(null);
   const routinesBadge = badges?.routines ?? 0;
 
@@ -100,10 +107,15 @@ export function MenuBar({ onAction, badges, dockPopped = false }: MenuBarProps) 
         // the "Dock Routines back" item appear only while the surface is
         // popped. When docked, the dockback item is filtered from the dropdown
         // (it stays in MENU_TREE / the vocabulary — just not rendered).
-        const items =
-          isRoutines && !dockPopped
-            ? menu.items.filter((n) => n.id !== ROUTINES_DOCKBACK_ID)
-            : menu.items;
+        const items = isRoutines
+          ? menu.items.filter(
+              (n) =>
+                // dockback only while popped; Back to Mailbox only while the
+                // surface is open inline (tuxlink-9se1x).
+                (n.id !== ROUTINES_DOCKBACK_ID || dockPopped) &&
+                (n.id !== ROUTINES_CLOSE_ID || routinesInlineOpen),
+            )
+          : menu.items;
         const topLabel = isRoutines && dockPopped ? 'Routines ↗' : menu.label;
         return (
           <div

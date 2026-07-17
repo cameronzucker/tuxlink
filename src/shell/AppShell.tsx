@@ -335,6 +335,16 @@ const PSEUDO_FOLDER_LABELS: Record<string, string> = {
 /// slugs. For system folders → `FOLDER_LABELS`; for user folders → the
 /// display name from the registry; for an unknown slug → the slug itself
 /// (graceful fallback while the registry refetches after a create/rename).
+/** tuxlink-9se1x: what the titlebar/window title says while the Routines
+ *  surface owns the main pane — the mailbox folder label misled ("Inbox"
+ *  while no mailbox is visible was part of the stranded feeling). */
+function routinesChromeLabel(view: RoutinesView): string {
+  if (view.view === 'designer') {
+    return view.routine ? `Routines · ${view.routine}` : 'Routines · new routine';
+  }
+  return 'Routines';
+}
+
 function folderLabel(
   folder: MailboxFolderRef,
   userFolders: { slug: string; displayName: string }[],
@@ -1384,12 +1394,16 @@ function AppShellInner() {
 
   // Native titlebar: mock B shows "Tuxlink — Inbox". Track the active folder.
   useEffect(() => {
+    const label =
+      routinesView && !routinesPopped
+        ? routinesChromeLabel(routinesView)
+        : folderLabel(selectedFolder, userFolders);
     try {
-      void getCurrentWindow().setTitle(`Tuxlink — ${folderLabel(selectedFolder, userFolders)}`);
+      void getCurrentWindow().setTitle(`Tuxlink — ${label}`);
     } catch {
       /* no Tauri runtime (tests) — title is cosmetic */
     }
-  }, [selectedFolder, userFolders]);
+  }, [selectedFolder, userFolders, routinesView, routinesPopped]);
 
   // The parsed message the reading pane is showing — drives menu/accelerator
   // Reply/Reply All/Forward. Same query key as MessageView's useMessage, so
@@ -1796,6 +1810,11 @@ function AppShellInner() {
       if (routinesPopped) { void focusSurface('routines'); return; }
       onRoutinesNavigate({ view: 'dashboard' });
     },
+    // tuxlink-9se1x: Routines -> Back to Mailbox. MenuBar only renders the
+    // item while the surface is open inline, so no popped/closed branch here.
+    closeRoutines: () => {
+      onRoutinesNavigate(null);
+    },
     // routines plan-5 Task 7: Routines → New Routine… opens a fresh, unsaved
     // draft — empty `routine` name is what RoutineDesigner (Task 9) treats as
     // "new" rather than an existing routine loaded for edit.
@@ -2092,8 +2111,8 @@ function AppShellInner() {
 
   return (
     <div className={`layout-b${isCompact ? ' compact' : ''}`} data-testid="app-shell-root">
-      <TitleBar folderLabel={folderLabel(selectedFolder, userFolders)} />
-      <MenuBar onAction={onMenuAction} badges={{ routines: parkedRuns.length }} dockPopped={routinesPopped} />
+      <TitleBar folderLabel={routinesView && !routinesPopped ? routinesChromeLabel(routinesView) : folderLabel(selectedFolder, userFolders)} />
+      <MenuBar onAction={onMenuAction} badges={{ routines: parkedRuns.length }} dockPopped={routinesPopped} routinesInlineOpen={routinesView !== null && !routinesPopped} />
       <ResizeHandles />
       <div className="ribbon-with-search">
         <div className="search-zone" data-testid="search-zone" ref={searchZoneRef}>
@@ -2189,6 +2208,7 @@ function AppShellInner() {
             onPopOut={onRoutinesPopOut}
             initialDraft={routinesInitialDraft}
             onDraftChange={(d) => { routinesDraftRef.current = d; }}
+            onClose={() => onRoutinesNavigate(null)}
           />
         </Suspense>
       ) : (

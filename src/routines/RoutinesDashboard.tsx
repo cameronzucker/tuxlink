@@ -55,6 +55,11 @@ export interface RoutinesDashboardProps {
    *  affordance (tuxlink-dmwte task 8, spec §5) that pops the Routines surface
    *  to its own window. Absent inside the popped window itself. */
   onPopOut?: () => void;
+  /** Return to the mailbox (tuxlink-9se1x). Provided by the inline host only;
+   *  absent in the popped window, where there is no mailbox pane to return
+   *  to. Renders the "← Mailbox" button, mirroring the designer's
+   *  "← Routines" idiom. */
+  onClose?: () => void;
 }
 
 /** Non-terminal `RunState`s — a routine with one of these is "live". */
@@ -120,7 +125,7 @@ function fleetTagText(findings: Finding[]): string {
   return `FLEET CHECK · ${parts.join(', ')}`;
 }
 
-export function RoutinesDashboard({ onOpenDesigner, onNewRoutine, onPopOut }: RoutinesDashboardProps) {
+export function RoutinesDashboard({ onOpenDesigner, onNewRoutine, onPopOut, onClose }: RoutinesDashboardProps) {
   const {
     summaries,
     scheduleStatus,
@@ -295,6 +300,17 @@ export function RoutinesDashboard({ onOpenDesigner, onNewRoutine, onPopOut }: Ro
   return (
     <div className="surface" data-testid="routines-dashboard">
       <div className="surface-head">
+        {onClose && (
+          <button
+            type="button"
+            className="back"
+            data-testid="routines-dashboard-close"
+            title="Back to the mailbox (Esc)"
+            onClick={onClose}
+          >
+            ← Mailbox
+          </button>
+        )}
         <span className="surface-title">Routines</span>
         <span className="surface-sub">
           {summaries.length} routine{summaries.length === 1 ? '' : 's'}
