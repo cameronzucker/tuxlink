@@ -43,12 +43,12 @@
 }
 
 .sect-title {
-  font-size: 13px;
+  font-size: var(--type-body);
   font-weight: 600;
 }
 
 .sect-sub {
-  font-size: 11px;
+  font-size: var(--type-meta);
   color: var(--text-faint);
   margin-left: auto;
   font-family: var(--mono);
@@ -85,7 +85,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--type-body);
   font-weight: 600;
 }
 
@@ -105,7 +105,7 @@
 }
 
 .opt .desc {
-  font-size: 10.5px;
+  font-size: var(--type-meta);
   color: var(--text-dim);
   margin-top: 3px;
   line-height: 1.4;
@@ -113,8 +113,8 @@
 
 .ack {
   margin-top: 9px;
-  border: 1px solid rgba(93, 214, 160, 0.4);
-  background: rgba(93, 214, 160, 0.06);
+  border: 1px solid color-mix(in srgb, var(--success) 40%, transparent);
+  background: color-mix(in srgb, var(--success) 6%, transparent);
   border-radius: 6px;
   padding: 7px 12px;
 }
@@ -129,13 +129,13 @@
   align-items: center;
   gap: 8px;
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: var(--type-meta);
   color: var(--success);
   font-weight: 600;
 }
 
 .ack .words {
-  font-size: 10.5px;
+  font-size: var(--type-meta);
   color: var(--text-dim);
   margin-top: 4px;
   line-height: 1.45;
@@ -160,7 +160,7 @@
 .flabel {
   width: 150px;
   flex: 0 0 150px;
-  font-size: 10px;
+  font-size: var(--type-micro);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-faint);
@@ -175,7 +175,7 @@
   border-radius: 5px;
   padding: 2px 8px;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: var(--type-control);
   color: var(--text);
 }
 
@@ -184,7 +184,7 @@
   border: none;
   color: var(--text);
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: var(--type-control);
   /* 15ch, measured, not tight: the window input's "06:00-22:00" pattern is
    * 11 mono chars, and the shipped 90px clipped its last character in the
    * production engine (tuxlink-3awm9 WebKitGTK smoke). ch alone is NOT safe
@@ -209,7 +209,7 @@
 .seg button {
   padding: 4px 12px;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: var(--type-meta);
   color: var(--text-dim);
   background: var(--surface-2);
   border: none;
@@ -223,7 +223,7 @@
 }
 
 .note {
-  font-size: 10.5px;
+  font-size: var(--type-meta);
   color: var(--text-faint);
   line-height: 1.45;
   margin-top: 6px;
@@ -278,14 +278,14 @@
 }
 
 .enrow .st {
-  font-size: 13px;
+  font-size: var(--type-body);
   font-weight: 600;
   color: var(--modem-accent-2);
 }
 
 .fleetres {
   margin-top: 8px;
-  border: 1px solid rgba(245, 159, 60, 0.45);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
   background: var(--accent-soft);
   border-radius: 6px;
   padding: 8px 12px;
@@ -293,14 +293,14 @@
 
 .fleetres .h {
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: var(--type-micro);
   letter-spacing: 0.08em;
   color: var(--accent-2);
   font-weight: 700;
 }
 
 .fleetres .m {
-  font-size: 11.5px;
+  font-size: var(--type-meta);
   color: var(--text-dim);
   margin-top: 3px;
   line-height: 1.5;
@@ -313,22 +313,24 @@
 
 .enable-blocked {
   margin-top: 8px;
-  border: 1px solid rgba(238, 107, 107, 0.45);
-  background: var(--danger-surface, rgba(238, 107, 107, 0.12));
+  border: 1px solid color-mix(in srgb, var(--error) 45%, transparent);
+  /* App.css defines --tux-danger-surface (not --danger-surface) — the old
+   * name only worked via its fallback. Retokenize fix, tuxlink-h82wg. */
+  background: var(--tux-danger-surface, rgb(238 107 107 / 12%));
   border-radius: 6px;
   padding: 8px 12px;
 }
 
 .enable-blocked .h {
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: var(--type-micro);
   letter-spacing: 0.08em;
   color: var(--error);
   font-weight: 700;
 }
 
 .enable-blocked .m {
-  font-size: 11.5px;
+  font-size: var(--type-meta);
   color: var(--text-dim);
   margin-top: 3px;
   line-height: 1.5;
@@ -340,7 +342,7 @@
 }
 
 .insp-error {
-  font-size: 11px;
+  font-size: var(--type-meta);
   color: var(--error);
   margin-top: 6px;
 }
@@ -354,7 +356,7 @@
 }
 
 .entity-head {
-  font-size: 11px;
+  font-size: var(--type-meta);
   font-weight: 600;
   color: var(--text-dim);
   margin-bottom: 6px;
@@ -365,13 +367,13 @@
 .entity-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: var(--type-control);
   margin-bottom: 8px;
 }
 
 .entity-table th {
   text-align: left;
-  font-size: 10px;
+  font-size: var(--type-micro);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-faint);
@@ -386,11 +388,11 @@
 
 .entity-table td.mono {
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: var(--type-meta);
 }
 
 .entity-table button {
-  font-size: 11px;
+  font-size: var(--type-control);
   color: var(--text-dim);
   background: transparent;
   border: 1px solid var(--border-strong);
@@ -414,6 +416,6 @@
   border-radius: 5px;
   padding: 4px 8px;
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--type-control);
   width: 110px;
 }

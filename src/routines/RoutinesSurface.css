@@ -32,11 +32,11 @@
 }
 
 .surface-title {
-  font-size: 16px;
+  font-size: var(--type-heading);
   font-weight: 600;
 }
 
 .surface-sub {
-  font-size: 12px;
+  font-size: var(--type-control);
   color: var(--text-faint);
 }
