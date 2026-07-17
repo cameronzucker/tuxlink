@@ -1,0 +1,10 @@
+# M2a overlay: merged onto bundled mini_textbased.yaml (order matters).
+# OPENROUTER_API_KEY is injected per-invocation from the OS keyring by
+# run-cell.sh (never on disk).
+agent:
+  mode: yolo
+  step_limit: 0
+  cost_limit: 0
+model:
+  model_class: openrouter_textbased
+  model_name: qwen/qwen3.5-122b-a10b
