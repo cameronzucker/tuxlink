@@ -636,12 +636,29 @@ impl RoutinesScheduler {
 
     /// Spawn the loop as a tokio task and return its handle. This is what
     /// `lib.rs` `.setup()` calls.
+    ///
+    /// `.setup()` runs on the plain main thread, where NO tokio runtime
+    /// context exists: a bare `tokio::spawn` here panicked with "there is no
+    /// reactor running" and took the whole app down at startup (v0.92.0).
+    /// The scheduler tests, meanwhile, call this INSIDE their
+    /// `#[tokio::test(start_paused = true)]` runtimes and need the loop on
+    /// THAT runtime, or virtual time cannot drive it. So: spawn onto the
+    /// ambient runtime when one is entered, and fall back to the app's
+    /// global runtime (`tauri::async_runtime`, the same one every other
+    /// background task in `lib.rs` lives on) when none is.
     pub fn spawn(state: Arc<RoutinesState>, now: NowFn, utc_offset: OffsetFn) -> SchedulerHandle {
         let scheduler = Self::new(state, now, utc_offset);
         let handle = SchedulerHandle {
             cancel: scheduler.cancel.clone(),
         };
-        tokio::spawn(scheduler.run());
+        match tokio::runtime::Handle::try_current() {
+            Ok(ambient) => {
+                ambient.spawn(scheduler.run());
+            }
+            Err(_) => {
+                tauri::async_runtime::spawn(scheduler.run());
+            }
+        }
         handle
     }
 
