@@ -54,14 +54,21 @@ jobs:
           fi
           echo "K=$ITERATIONS_RAW" >> "$GITHUB_ENV"
 
+      # Mirror ci.yml EXACTLY: pnpm pinned to 10 via action-setup, independent of
+      # Node. Node's own corepack would otherwise resolve pnpm 11 under Node 24,
+      # which rejects the pnpm-10 lockfile's overrides under --frozen-lockfile.
+      # That pnpm-11 mismatch is NOT a CI risk (CI pins 10); pinning here keeps
+      # the fingerprint faithful to what CI actually runs.
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node }}
-          cache: pnpm
+          cache: 'pnpm'
 
       - name: Runtime provenance
         run: |
