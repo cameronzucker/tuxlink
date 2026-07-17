@@ -115,7 +115,7 @@
 //! (`tuxlink_routines::scheduler`'s pure `next_fire`/`missed_fires`) but the
 //! tick loop was deliberately left to the app layer, because firing means
 //! creating a run and run creation is what [`session`] owns. One tokio task
-//! ([`scheduler::RoutinesScheduler::spawn`], wired in `lib.rs` `.setup()`)
+//! ([`scheduler::RoutinesScheduler::spawn_with`], wired in `lib.rs` `.setup()`)
 //! computes the earliest fire across the enabled fleet, sleeps to it, fires
 //! every routine due at that instant through the same gated path the operator's
 //! Run button takes, and recomputes — waking early on any routine-library

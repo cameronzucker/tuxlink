@@ -2939,10 +2939,21 @@ pub fn run() {
                 // closure re-reads `chrono::Local` on every use rather than
                 // caching a value at spawn time — DST changes the answer twice
                 // a year, and the scheduler runs for the app's whole lifetime.
-                app.manage(crate::routines::scheduler::RoutinesScheduler::spawn(
+                // bd-tuxlink-dl01e: `.setup()` is a sync closure with no
+                // ambient Tokio reactor — bare `tokio::spawn` panics here
+                // (verified: every release launch). `spawn_with` hands the
+                // scheduler's loop future back so IT gets spawned via
+                // `tauri::async_runtime::spawn`, the app-wide convention for
+                // every other setup-time background task (see the recovery
+                // spawn just above), matching the rest of `.setup()` while
+                // keeping `scheduler.rs` itself free of a `tauri` dependency.
+                app.manage(crate::routines::scheduler::RoutinesScheduler::spawn_with(
                     routines_state,
                     std::sync::Arc::new(crate::routines::session::unix_now_secs),
                     std::sync::Arc::new(crate::routines::session::local_utc_offset_seconds),
+                    |fut| {
+                        tauri::async_runtime::spawn(fut);
+                    },
                 ));
             }
 

@@ -160,6 +160,7 @@
 //! journals, which launch recovery reconciles.
 
 use std::collections::{BTreeMap, HashSet};
+use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -634,14 +635,40 @@ impl RoutinesScheduler {
         }
     }
 
-    /// Spawn the loop as a tokio task and return its handle. This is what
-    /// `lib.rs` `.setup()` calls.
-    pub fn spawn(state: Arc<RoutinesState>, now: NowFn, utc_offset: OffsetFn) -> SchedulerHandle {
+    /// Build the loop and hand its control handle back to the caller, who
+    /// spawns the returned future on whatever runtime handle it holds.
+    ///
+    /// bd-tuxlink-dl01e: this used to be `fn spawn(..) -> SchedulerHandle`
+    /// and called bare `tokio::spawn(scheduler.run())` internally. That
+    /// panics ("there is no reactor running, must be called from the
+    /// context of a Tokio 1.x runtime") when the caller is Tauri's
+    /// `.setup()` hook — a plain sync closure with no ambient Tokio
+    /// reactor — which is exactly the only production call site
+    /// (`lib.rs`), so the release binary panicked on every launch before
+    /// the first window ever rendered. Every OTHER setup-time background
+    /// task in `lib.rs` avoids this by using `tauri::async_runtime::spawn`
+    /// instead of `tokio::spawn`, but this module deliberately does not
+    /// depend on `tauri` (see the module doc and `commands.rs`'s
+    /// domain/binding split — the routines domain logic is meant to be
+    /// testable with no Tauri runtime at all), so pulling in
+    /// `tauri::async_runtime` here to fix the caller's problem would
+    /// undo that boundary for no reason. Instead the spawning DECISION
+    /// moves to the caller: `spawn_with` builds the scheduler and boxes
+    /// its loop as a future, and the caller supplies the actual spawn
+    /// call — `tauri::async_runtime::spawn` in `lib.rs` (which is
+    /// runtime-agnostic and safe from `.setup()`), `tokio::spawn` in
+    /// `#[tokio::test]`s (which already have a runtime).
+    pub fn spawn_with(
+        state: Arc<RoutinesState>,
+        now: NowFn,
+        utc_offset: OffsetFn,
+        spawner: impl FnOnce(Pin<Box<dyn Future<Output = ()> + Send>>),
+    ) -> SchedulerHandle {
         let scheduler = Self::new(state, now, utc_offset);
         let handle = SchedulerHandle {
             cancel: scheduler.cancel.clone(),
         };
-        tokio::spawn(scheduler.run());
+        spawner(Box::pin(scheduler.run()));
         handle
     }
 
@@ -1185,10 +1212,13 @@ mod tests {
         /// through the live tick loop, not just the pure `earliest_fire`
         /// helper.
         fn start_with_offset(&self, utc_offset_seconds: i32) -> SchedulerHandle {
-            RoutinesScheduler::spawn(
+            RoutinesScheduler::spawn_with(
                 Arc::clone(&self.state),
                 virtual_now(self.origin),
                 Arc::new(move || utc_offset_seconds),
+                |fut| {
+                    tokio::spawn(fut);
+                },
             )
         }
 
@@ -2313,6 +2343,72 @@ mod tests {
             "only the enabled, schedule-triggered routine is reported, at the \
              next 30-minute grid instant; the disabled and the manual-only \
              routines are both absent"
+        );
+    }
+
+    // ── spawn_with is runtime-agnostic (bd-tuxlink-dl01e) ──────────────────
+
+    /// Regression for bd-tuxlink-dl01e: the release binary panicked on every
+    /// launch, before any window rendered, with "there is no reactor
+    /// running, must be called from the context of a Tokio 1.x runtime" at
+    /// this file's `spawn`. The pre-fix `spawn` called bare
+    /// `tokio::spawn(scheduler.run())` internally — safe from a
+    /// `#[tokio::test]` (which always has a runtime), but the ONLY
+    /// production caller is Tauri's `.setup()` hook, a plain sync closure
+    /// with no ambient Tokio reactor at all. No `#[tokio::test]` in this
+    /// file could ever have caught that, because `#[tokio::test]` is
+    /// exactly the runtime context production does not have.
+    ///
+    /// This is a plain `#[test]` — deliberately NOT `#[tokio::test]` — that
+    /// calls `spawn_with` from a bare `std::thread::spawn`, matching the
+    /// `.setup()` call site's actual runtime posture (none). It must not
+    /// panic. It would have caught the bug directly if `spawn_with` still
+    /// called `tokio::spawn` internally; it does not (see the doc comment
+    /// on `spawn_with`) — the spawn decision now belongs to the caller, so
+    /// this test also stands as a guard against a future regression that
+    /// reintroduces a bare `tokio::spawn` inside this module.
+    ///
+    /// Residual gap: this test cannot exercise `lib.rs`'s actual spawner —
+    /// `tauri::async_runtime::spawn` — because that requires a live Tauri
+    /// app context unavailable in a unit test. It proves `scheduler.rs`'s
+    /// own code, up to and including handing the boxed future to the
+    /// caller, is runtime-agnostic; whether `lib.rs` wires a runtime-safe
+    /// spawner is a one-line call verified by reading `lib.rs`, not by this
+    /// suite. The scheduler's own tick loop (`RoutinesScheduler::run`) is
+    /// exercised only under `#[tokio::test]` elsewhere in this file, same
+    /// as before this fix — only the SPAWNING is now decoupled from a
+    /// runtime requirement.
+    #[test]
+    fn spawn_with_does_not_require_an_ambient_tokio_runtime() {
+        let outcome = std::thread::spawn(|| {
+            let dir = tempfile::tempdir().unwrap();
+            let mut reg = ActionRegistry::default();
+            reg.register(Arc::new(FakeAction::new("local.log").ok(json!({}))));
+            let sink: Arc<dyn RoutinesEventSink> = Arc::new(RecordingSink::default());
+            let state = Arc::new(build_routines_state(
+                dir.path().to_path_buf(),
+                reg,
+                Arc::new(RadioArbiter::new(|| BASE)),
+                sink,
+            ));
+
+            // `drop` as the spawner never actually spawns anything — there
+            // is no runtime on this thread to spawn onto. Boxing and
+            // dropping the future proves `spawn_with` itself performs no
+            // Tokio-runtime operation; only a real spawner (e.g.
+            // `tauri::async_runtime::spawn` in `lib.rs`, `tokio::spawn` in
+            // this file's other, `#[tokio::test]`-backed tests) would.
+            let handle =
+                RoutinesScheduler::spawn_with(state, Arc::new(|| BASE), Arc::new(|| 0), drop);
+            handle.stop(); // idempotent control-surface call, no runtime needed
+        })
+        .join();
+
+        assert!(
+            outcome.is_ok(),
+            "spawn_with must not panic when called from a thread with no \
+             Tokio runtime — this is the exact posture of Tauri's .setup() \
+             hook that bd-tuxlink-dl01e panicked from"
         );
     }
 }
