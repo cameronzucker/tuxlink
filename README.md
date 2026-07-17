@@ -473,8 +473,7 @@ reading is the entire feature.
 
 - **Dockable surfaces and Routines.** Multi-window pop-out and the Routines
   automation engine are built and covered by CI, including the consent-gating
-  paths; field validation across a full release cycle of real operator use is
-  pending at the next release cut.
+  paths; field validation is pending at the next release cut.
 - **VARA peer-to-peer on the air.** The VARA gateway-session path is on-air
   validated (above); direct station-to-station VARA sessions are built and
   awaiting on-air verification.
