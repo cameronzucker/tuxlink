@@ -33,6 +33,21 @@ case "$ARM" in
     BASE_URL=https://openrouter.ai/api/v1
     KEY_ENV=OPENROUTER_API_KEY
     OPENROUTER_API_KEY="$(secret-tool lookup service elmer-openrouter account teacher)"; export OPENROUTER_API_KEY ;;
+  n235)
+    PROVIDER=openrouter; MODEL=qwen/qwen3-235b-a22b-2507
+    BASE_URL=https://openrouter.ai/api/v1
+    KEY_ENV=OPENROUTER_API_KEY
+    OPENROUTER_API_KEY="$(secret-tool lookup service elmer-openrouter account teacher)"; export OPENROUTER_API_KEY ;;
+  ns120)
+    PROVIDER=openrouter; MODEL=nvidia/nemotron-3-super-120b-a12b
+    BASE_URL=https://openrouter.ai/api/v1
+    KEY_ENV=OPENROUTER_API_KEY
+    OPENROUTER_API_KEY="$(secret-tool lookup service elmer-openrouter account teacher)"; export OPENROUTER_API_KEY ;;
+  nu550)
+    PROVIDER=openrouter; MODEL=nvidia/nemotron-3-ultra-550b-a55b
+    BASE_URL=https://openrouter.ai/api/v1
+    KEY_ENV=OPENROUTER_API_KEY
+    OPENROUTER_API_KEY="$(secret-tool lookup service elmer-openrouter account teacher)"; export OPENROUTER_API_KEY ;;
   *) echo "unknown arm: $ARM" >&2; exit 2 ;;
 esac
 

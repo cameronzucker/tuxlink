@@ -26,3 +26,17 @@ Append-only during the run. Times UTC.
 2026-07-16T13:50:01Z SPARK STATE CHANGE: vllm-q122 relaunched WITH --enable-auto-tool-choice --tool-call-parser qwen3_coder (first launch omitted them — smoke showed 22.7k tokens, zero visible output: tool calls never parsed)
 2026-07-16T14:03:10Z Q122 harness smoke PASS (real shell call round-trip, 45.4k tok). Rung 1 dispatching
 2026-07-16T17:26:23Z SPARK STATE CHANGE: vllm-q122 stopped+removed; original vllm container started; /v1/models verified = qwen3-coder-next. SPARK RESTORED TO AS-FOUND STATE. (Patched template file remains at /home/administrator/serving/ as a persistent serving asset for future swaps.)
+
+## EXTENSION (post-hoc, operator-requested 2026-07-16 ~18:45Z)
+
+Operator reviewed the report and commissioned three additional hosted arms
+under the SAME frozen briefs/rubric/keys/R2/caps (flagged post-hoc per the
+rubric rule): N235 = qwen/qwen3-235b-a22b-2507 rungs 1-6 (strongest
+two-Spark candidate per his Elmer tests; first fair R2 test after the
+c5ckf arm-C harness confound), NS120 = nvidia/nemotron-3-super-120b-a12b
+rungs 1-6 (the NVFP4 candidate already in the Spark HF cache), NU550 =
+nvidia/nemotron-3-ultra-550b-a55b rungs 4-6 (E122 treatment). ARCHITECTURE
+NOTE recorded for the report: both Nemotrons are MoE (A12B/A55B active),
+NOT the dense line the operator recalled; flagged to him before dispatch.
+Smokes: all three passed real shell round-trips. Worktrees
+bd-tuxlink-7raoe-ladder-arm-{n235,ns120,nu550} at b82b404d.
