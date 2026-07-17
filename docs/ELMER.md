@@ -68,7 +68,7 @@ disarmed or tainted Elmer sees every tool name but has most of them denied at
 call time, with a plain-language reason. The router's own module doc
 codifies this as a design decision, not an oversight: "gate at the operation,
 not the list."
-([`src-tauri/src/elmer/executor.rs:16-19`](../src-tauri/src/elmer/executor.rs))
+([`src-tauri/src/elmer/executor.rs:22,114`](../src-tauri/src/elmer/executor.rs))
 
 ### 2.3 Entry paths, guard, transports
 
@@ -161,14 +161,21 @@ state as untrusted rather than risking a false allow
 
 ### 3.3 Typed-callsign validation against modem-command injection
 
-Every callsign an agent supplies as a connect target passes through
-`validate_wire_callsign` before it reaches a transport's wire grammar: a base
-of 3-7 alphanumeric characters, with an optional `-1`..`-15`, `-T`, or `-R`
-SSID suffix. The function is applied before any MYCALL or CONNECT send, so a
-malformed or crafted string, such as one carrying embedded control
+On the VARA path, every callsign passes through `validate_wire_callsign`
+before it reaches the modem's command channel: a base of 3-7 alphanumeric
+characters, with an optional `-1`..`-15`, `-T`, or `-R` SSID suffix
+([`src-tauri/src/winlink/callsign.rs:32-55`](../src-tauri/src/winlink/callsign.rs)).
+The check is applied to both the station's own MYCALL registration and the
+agent-supplied connect target before either is written to the wire
+([`src-tauri/src/winlink/modem/vara/commands.rs:2814,2818`](../src-tauri/src/winlink/modem/vara/commands.rs)),
+so a malformed or crafted string, such as one carrying embedded control
 sequences or attempting to inject additional modem commands, is rejected
 before it becomes a wire-level command rather than sanitized after the fact.
-([`src-tauri/src/winlink/callsign.rs:1-9,32-55`](../src-tauri/src/winlink/callsign.rs))
+
+The scope of this validation is the VARA path only. The ARDOP and AX.25
+packet connect targets do not pass an equivalent callsign-grammar check
+before reaching their wire grammars; that gap is stated in
+[§6](#6-honest-limits).
 
 ### 3.4 Real per-transport aborts
 
@@ -199,10 +206,12 @@ arm window: predict which path (band, mode, gateway) is likely to work with
 ([`src-tauri/tuxlink-mcp-core/src/ports.rs:844`](../src-tauri/tuxlink-mcp-core/src/ports.rs)),
 dial a station with an agent-chosen target, and, for ARDOP and VARA, an
 agent-chosen frequency and a list of QSY candidates to try in order. Both
-`ardop_connect` and `vara_b2f_exchange` accept
-`target: String, freq_hz: Option<u64>, qsy_candidates:
-Option<Vec<QsyCandidateDto>>` as shipped parameters, not a design intent
-([`src-tauri/tuxlink-mcp-core/src/ports.rs:930-935,953-959`](../src-tauri/tuxlink-mcp-core/src/ports.rs)).
+`ardop_connect` and `vara_b2f_exchange` accept a `target: String`, a
+`freq_hz: Option<u64>`, and `qsy_candidates: Option<Vec<QsyCandidateDto>>`
+as shipped parameters, not a design intent; `vara_b2f_exchange`
+additionally takes a `SessionIntentDto` and an optional `VaraEngineDto`
+selecting which VARA engine the target uses
+([`src-tauri/tuxlink-mcp-core/src/ports.rs:930-935,953-960`](../src-tauri/tuxlink-mcp-core/src/ports.rs)).
 AX.25 packet dial is also live, taking `call: String, path: Vec<String>`
 for the target and digipeater path
 ([`src-tauri/tuxlink-mcp-core/src/ports.rs:979`](../src-tauri/tuxlink-mcp-core/src/ports.rs)),
@@ -217,11 +226,11 @@ model as everything else:
 
 - **Setup**, without armed send-authority, because installing software is
   not a transmission: `vara_engine_available` and `vara_install_status`
-  report whether the build carries the guided Wine install engine and how
-  far an install has progressed, and `vara_install_start` runs the guided
-  installer against a VARA `.exe` the operator already downloaded. The
-  install still prompts for the OS password at the machine, so it cannot run
-  fully unattended.
+  report whether the build carries the guided Wine install engine (x86-64
+  Linux only) and how far an install has progressed, and
+  `vara_install_start` runs the guided installer against a VARA `.exe` the
+  operator already downloaded. The install still prompts for the OS password
+  at the machine, so it cannot run fully unattended.
 - **Diagnostics**, always available: `vara_status` and `vara_probe`, the
   latter opening VARA's command port read-only to classify what answered.
 - **Configuration**, requiring armed send-authority: `config_set_vara` sets
@@ -334,6 +343,14 @@ agent-send design spec documents this as open, not shipped, work: "Add
 ([`docs/superpowers/specs/2026-07-01-elmer-agent-send-design.md:39,85`](superpowers/specs/2026-07-01-elmer-agent-send-design.md)).
 Until it lands, an agent that opens a packet connection has no dedicated stop
 tool for that transport the way it does for CMS, ARDOP, and VARA.
+
+**Callsign-grammar validation covers the VARA path only.** The ARDOP connect
+target goes into the modem's `ARQCALL <target> <repeat>` command line, and
+the AX.25 packet connect target into its address field, without the
+`validate_wire_callsign` check that gates the VARA MYCALL and connect target
+([§3.3](#33-typed-callsign-validation-against-modem-command-injection);
+ARDOP wire line at
+[`src-tauri/src/winlink/modem/ardop/session.rs:429`](../src-tauri/src/winlink/modem/ardop/session.rs)).
 
 **Two tools were removed from the agent surface entirely, not merely
 undocumented.** `packet_listen` and `telnet_p2p_connect` are absent from the
