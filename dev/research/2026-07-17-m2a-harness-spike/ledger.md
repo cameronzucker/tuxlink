@@ -124,3 +124,78 @@
   Post-hoc probe planned (flagged per rubric): one pi-e122-r5 run at
   --thinking high after registered cells close, to isolate the thinking
   knob.
+2026-07-17T05:17:05Z mini-cn-r3 attempt-1 FINISHED: 30m AT-CAP (exit
+  124) at step 91. All 4 files touched; typecheck RED (1 unused-var),
+  4 tests failing / 123 passing; no report. Notable: model attempted
+  `cd /testbed` near cap — SWE-bench training prior leaking through the
+  mini loop. Committed; tree reset; attempt-2 dispatched 05:21Z.
+2026-07-17T05:19:48Z pi-e122-r5 POST-HOC PROBE (--thinking high,
+  flagged) FINISHED: 30m AT-CAP, tree = another Rust-side workaround
+  (stations_window.rs + lib.rs + frontend edits), no report. Usage: 40
+  turns, 1.36M in / 10.1k out, reasoning ≈ 38 tokens — the thinking
+  knob (medium→high) did NOT change deliberation volume on the
+  OpenRouter completions route; capabilities/allow-emit mentioned ZERO
+  times in session. CONCLUSION for milestone 2: E122's key-exact
+  diagnosis under Codex was a Responses-API-route property (reasoning
+  preserved per-turn), not recoverable via Pi's thinking flag on
+  chat-completions; a milestone-2 harness for hybrid-reasoning models
+  must use a reasoning-preserving wire route. Probe committed on the arm
+  branch.
+2026-07-17T05:53:21Z mini-cn-r3 attempt-2 FINISHED: 30m AT-CAP. Panels
+  wired, typecheck green at kill, but ZERO test files touched and both
+  stale pinning tests red. CELL VERDICT mini-cn-r3: FAILED both attempts
+  (envelope reproduces under text-based loop). Committed.
+2026-07-17T05:58:00Z SPARK STATE CHANGE: docker stop vllm (CN container
+  PRESERVED); docker run vllm-q122 per the ladder recipe reconstructed
+  from the live container config + ledger flags (image cu130-nightly,
+  HF-cache + patched-template ro mounts, served qwen35-122b-nvfp4,
+  131072 ctx, --enable-auto-tool-choice --tool-call-parser qwen3_coder).
+  Model load in progress; health poll running.
+2026-07-17T06:23:00Z SPARK STATE CHANGE (launch incident + fix): first
+  vllm-q122 launch exited immediately — the image ENTRYPOINT is already
+  ["vllm","serve"], and passing "serve <model>" doubles the subcommand
+  (the earlier docker-inspect .Args view merges the entrypoint tail,
+  which misled the reconstruction). Container removed, relaunched with
+  the model passed positionally — loading normally. Same latent bug
+  fixed in the spark-dashboard profile launcher (app.py) + committed on
+  the Spark repo + service restarted. ~26 min lost to the failed launch
+  window.
+2026-07-17T06:34:00Z Q122 healthy (~11 min load, in line with ladder's
+  ~13). Q122 harness smokes: Pi PASS (tool-call round-trip + file write),
+  mini text-based PASS. pi-q122-r3 attempt-1 dispatched 06:40Z.
+2026-07-17T07:07:09Z pi-q122-r3 attempt-1 FINISHED: 30m AT-CAP (exit
+  124). All 4 files touched, typecheck GREEN, 3 tests failing / 124
+  passing, no report. Further at cap than the Codex Q122 baseline a1
+  (sites, zero tests). Committed; tree reset; attempt-2 dispatched
+  07:12Z.
+2026-07-17T07:40:12Z pi-q122-r3 attempt-2 FINISHED: 30m AT-CAP.
+  Typecheck RED (mockReport import shape — third occurrence of this
+  exact trap across Pi attempts), 2 collection errors. CELL VERDICT
+  pi-q122-r3: FAILED both attempts (envelope, matches Codex baseline;
+  a1 was the furthest Q122 tree measured: typecheck green + both test
+  files). Committed. mini-q122-r3 attempt-1 (final registered cell)
+  dispatched 07:45Z.
+2026-07-17T08:12:55Z mini-q122-r3 attempt-1 FINISHED: 30m AT-CAP. 4
+  files, typecheck GREEN, 3 tests red; hit the mockReport trap and was
+  mid-repair at kill. Committed; reset; attempt-2 dispatched 08:15Z.
+2026-07-17T08:45:47Z mini-q122-r3 attempt-2 FINISHED: 30m AT-CAP.
+  Typecheck RED (mockReport trap — 5th occurrence across the spike),
+  6 tests red. CELL VERDICT mini-q122-r3: FAILED both attempts.
+  ALL SIX REGISTERED CELLS CLOSED — every cell FAILED both attempts;
+  the spike's discriminating value is in the failure ANATOMY (see
+  report.md findings F1-F4).
+2026-07-17T08:49:00Z SPARK STATE CHANGE: CN restore executed VIA THE
+  SPARK DASHBOARD's switch API (its first live exercise, as planned):
+  vllm-q122 stopped cleanly (Exited 0), vllm container started, health
+  poll streaming container logs through the switch status endpoint.
+2026-07-17T08:54:00Z CN RESTORED (~4.5 min from warm container start);
+  /v1/models = qwen3-coder-next 262144 ctx; dashboard switch state
+  returned to idle. SPARK AT AS-FOUND STATE. Dashboard switch control:
+  live test PASS.
+2026-07-17T08:56:00Z All 6 worker worktrees disposed per ADR 0009:
+  inventories clean (candidates committed on their LOCAL-ONLY never-merge
+  bd-tuxlink-7raoe/m2a-* branches, ladder-arm pattern); .superpowers/sdd
+  forensics archived to .claude/worktree-archives/
+  bd-tuxlink-7raoe-m2a-<cell>-sdd-forensics-<ts>.tar.gz (6 archives);
+  rm -rf + git worktree prune. Only the orchestrator spike worktree
+  remains (disposed after its PR merges).
