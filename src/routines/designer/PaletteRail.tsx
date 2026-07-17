@@ -94,6 +94,8 @@ function PaletteItem({
   flags,
   armed,
   lib,
+  sub,
+  desc,
   onClick,
 }: {
   label: string;
@@ -101,6 +103,11 @@ function PaletteItem({
   flags?: Array<'RIG' | 'TX' | 'NET'>;
   armed: boolean;
   lib?: boolean;
+  /** Raw registry id, rendered as mono subtext under a human label
+   *  (tuxlink-5lfxk). Omitted when the label IS the id. */
+  sub?: string;
+  /** One-line human description — surfaces as the hover tooltip. */
+  desc?: string;
   onClick: () => void;
 }) {
   return (
@@ -109,9 +116,13 @@ function PaletteItem({
       className={`pal-item${lib ? ' lib' : ''}`}
       data-testid={testId}
       disabled={!armed}
+      title={desc}
       onClick={onClick}
     >
-      <span>{label}</span>
+      <span className="pal-label">
+        <span>{label}</span>
+        {sub && <span className="pal-sub">{sub}</span>}
+      </span>
       {flags && flags.length > 0 && (
         <span className="flags">
           {flags.map((f) => (
@@ -152,9 +163,12 @@ export function PaletteRail({ def, actions, armedInsert, onInsert }: PaletteRail
   const q = filter.trim().toLowerCase();
   const matches = (label: string) => q === '' || label.toLowerCase().includes(q);
 
-  const radioActions = actions.filter((a) => a.needsRadio && matches(a.name));
-  const internetActions = actions.filter((a) => !a.needsRadio && a.needsInternet && matches(a.name));
-  const localActions = actions.filter((a) => !a.needsRadio && !a.needsInternet && matches(a.name));
+  // tuxlink-5lfxk: the filter matches the human label OR the raw id, so
+  // "compose" and "local.compose" both find the same entry.
+  const matchesAction = (a: ActionInfo) => matches(a.name) || matches(a.label);
+  const radioActions = actions.filter((a) => a.needsRadio && matchesAction(a));
+  const internetActions = actions.filter((a) => !a.needsRadio && a.needsInternet && matchesAction(a));
+  const localActions = actions.filter((a) => !a.needsRadio && !a.needsInternet && matchesAction(a));
   const controlItems = CONTROL_FLOW_ITEMS.filter((c) => matches(c.label));
   const libraryItems = routines.filter((r) => matches(r.routine));
 
@@ -209,7 +223,9 @@ export function PaletteRail({ def, actions, armedInsert, onInsert }: PaletteRail
             {radioActions.map((a) => (
               <PaletteItem
                 key={a.name}
-                label={a.name}
+                label={a.label || a.name}
+                sub={a.label ? a.name : undefined}
+                desc={a.description || undefined}
                 testId={`palette-item-${a.name}`}
                 flags={flagsFor(a)}
                 armed={armed}
@@ -224,7 +240,9 @@ export function PaletteRail({ def, actions, armedInsert, onInsert }: PaletteRail
             {internetActions.map((a) => (
               <PaletteItem
                 key={a.name}
-                label={a.name}
+                label={a.label || a.name}
+                sub={a.label ? a.name : undefined}
+                desc={a.description || undefined}
                 testId={`palette-item-${a.name}`}
                 flags={flagsFor(a)}
                 armed={armed}
@@ -239,7 +257,9 @@ export function PaletteRail({ def, actions, armedInsert, onInsert }: PaletteRail
             {localActions.map((a) => (
               <PaletteItem
                 key={a.name}
-                label={a.name}
+                label={a.label || a.name}
+                sub={a.label ? a.name : undefined}
+                desc={a.description || undefined}
                 testId={`palette-item-${a.name}`}
                 flags={flagsFor(a)}
                 armed={armed}

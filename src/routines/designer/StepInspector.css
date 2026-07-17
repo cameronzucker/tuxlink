@@ -26,13 +26,13 @@
 }
 
 .insp-id {
-  font-size: 11px;
+  font-size: var(--type-meta);
   color: var(--text-faint);
   flex: 1;
 }
 
 .insp-remove {
-  font-size: 10.5px;
+  font-size: var(--type-control);
   color: var(--error);
   background: none;
   border: 1px solid var(--border-strong);
@@ -45,11 +45,11 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: var(--type-control);
 }
 
 .insp-label {
-  font-size: 10px;
+  font-size: var(--type-micro);
   letter-spacing: 0.05em;
   color: var(--text-faint);
 }
@@ -62,7 +62,7 @@
   display: flex;
   flex-direction: column;
   gap: 3px;
-  font-size: 11px;
+  font-size: var(--type-control);
 }
 
 .insp-field input,
@@ -73,7 +73,7 @@
   border: 1px solid var(--border-strong);
   border-radius: 4px;
   padding: 4px 6px;
-  font-size: 11px;
+  font-size: var(--type-control);
 }
 
 .insp-textarea {
@@ -88,7 +88,7 @@
 }
 
 .insp-error {
-  font-size: 10.5px;
+  font-size: var(--type-meta);
   color: var(--error);
   white-space: pre-wrap;
 }
@@ -101,10 +101,10 @@
 
 .ref-chip {
   font-family: var(--mono);
-  font-size: 9.5px;
+  font-size: var(--type-micro);
   color: var(--accent-2);
-  background: rgb(245 159 60 / 10%);
-  border: 1px solid rgb(245 159 60 / 40%);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
   border-radius: 3px;
   padding: 1px 6px;
   cursor: pointer;
@@ -117,7 +117,7 @@
 }
 
 .flag {
-  font-size: 8.5px;
+  font-size: var(--type-micro);
   letter-spacing: 0.05em;
   border: 1px solid var(--border-strong);
   color: var(--text-faint);
@@ -127,15 +127,15 @@
 
 .flag.tx {
   color: var(--accent-2);
-  border-color: rgb(245 159 60 / 50%);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
 }
 
 .flag.rig {
   color: var(--modem-accent);
-  border-color: rgb(74 222 128 / 40%);
+  border-color: color-mix(in srgb, var(--modem-accent, var(--success)) 40%, transparent);
 }
 
 .flag.net {
   color: var(--info);
-  border-color: rgb(107 184 238 / 40%);
+  border-color: color-mix(in srgb, var(--info) 40%, transparent);
 }

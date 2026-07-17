@@ -19,7 +19,7 @@
 
 .pal-head {
   padding: 9px 12px 6px;
-  font-size: 10px;
+  font-size: var(--type-micro);
   font-weight: 600;
   letter-spacing: 0.09em;
   color: var(--text-faint);
@@ -31,13 +31,13 @@
   border: 1px solid var(--border-strong);
   border-radius: 5px;
   padding: 4px 8px;
-  font-size: 11px;
+  font-size: var(--type-meta);
   color: var(--text);
 }
 
 .pal-hint {
   margin: 0 10px 8px;
-  font-size: 10.5px;
+  font-size: var(--type-meta);
   color: var(--text-faint);
   line-height: 1.45;
 }
@@ -57,7 +57,7 @@
 .pal-group {
   padding: 6px 12px 2px;
   font-family: var(--mono);
-  font-size: 9.5px;
+  font-size: var(--type-micro);
   letter-spacing: 0.1em;
   color: var(--text-faint);
 }
@@ -85,7 +85,7 @@
   gap: 6px;
   padding: 2px 12px;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: var(--type-meta);
   color: var(--text);
   background: none;
   border: none;
@@ -105,7 +105,7 @@
 }
 
 .pal-item .flag {
-  font-size: 8.5px;
+  font-size: var(--type-micro);
   letter-spacing: 0.05em;
   border: 1px solid var(--border-strong);
   color: var(--text-faint);
@@ -115,19 +115,34 @@
 
 .pal-item .flag.tx {
   color: var(--accent-2);
-  border-color: rgb(245 159 60 / 50%);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
 }
 
 .pal-item .flag.rig {
   color: var(--modem-accent);
-  border-color: rgb(74 222 128 / 40%);
+  border-color: color-mix(in srgb, var(--modem-accent, var(--success)) 40%, transparent);
 }
 
 .pal-item .flag.net {
   color: var(--info);
-  border-color: rgb(107 184 238 / 40%);
+  border-color: color-mix(in srgb, var(--info) 40%, transparent);
 }
 
 .pal-item.lib {
   color: var(--accent-2);
+}
+
+/* tuxlink-5lfxk: human label over the raw registry id. The id stays visible
+ * as mono fine-print — it is what params and journal entries reference. */
+.pal-item .pal-label {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  min-width: 0;
+}
+.pal-item .pal-sub {
+  font-family: var(--mono);
+  font-size: var(--type-micro);
+  color: var(--text-dim);
 }

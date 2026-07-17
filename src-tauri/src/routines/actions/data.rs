@@ -244,6 +244,8 @@ impl Action for SpaceWxWwv {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
             name: DATA_SPACEWX_WWV,
+            label: "Capture WWV space weather",
+            description: "Wait for the :18/:45 WWV broadcast window, then capture and decode space weather off-air.",
             needs_radio: true,
             transmits: false,
             needs_internet: false,
@@ -372,6 +374,8 @@ impl Action for SpaceWxSwpc {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
             name: DATA_SPACEWX_SWPC,
+            label: "Fetch SWPC space weather",
+            description: "Fetch current space weather from NOAA SWPC online.",
             needs_radio: false,
             transmits: false,
             needs_internet: true,
@@ -436,6 +440,8 @@ impl Action for StationlistUpdate {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
             name: DATA_STATIONLIST_UPDATE,
+            label: "Update gateway list",
+            description: "Refresh gateway info from the Winlink status API.",
             needs_radio: false,
             transmits: false,
             needs_internet: true,
@@ -529,6 +535,8 @@ impl Action for DataRead {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
             name: DATA_READ,
+            label: "Read app data",
+            description: "Read tuxlink state (inbox, catalog, prior captures) into the run.",
             needs_radio: false,
             transmits: false,
             needs_internet: false,
@@ -1207,6 +1215,8 @@ mod tests {
             system_now_ms,
         );
         let d = action.descriptor();
+        // tuxlink-5lfxk: every shipped action carries human palette copy.
+        assert!(!d.label.is_empty() && !d.description.is_empty());
         assert!(d.needs_radio);
         assert!(!d.transmits);
         assert!(!d.needs_internet);
@@ -1259,6 +1269,8 @@ mod tests {
     fn spacewx_swpc_descriptor_flags_needs_internet() {
         let action = SpaceWxSwpc::new(Arc::new(FakeDataService::default()));
         let d = action.descriptor();
+        // tuxlink-5lfxk: every shipped action carries human palette copy.
+        assert!(!d.label.is_empty() && !d.description.is_empty());
         assert!(!d.needs_radio);
         assert!(!d.transmits);
         assert!(d.needs_internet);
@@ -1344,6 +1356,8 @@ mod tests {
     fn stationlist_update_descriptor_flags_needs_internet() {
         let action = StationlistUpdate::new(Arc::new(FakeDataService::default()));
         let d = action.descriptor();
+        // tuxlink-5lfxk: every shipped action carries human palette copy.
+        assert!(!d.label.is_empty() && !d.description.is_empty());
         assert!(!d.needs_radio);
         assert!(!d.transmits);
         assert!(d.needs_internet);
@@ -1555,6 +1569,8 @@ mod tests {
     fn read_descriptor_has_no_capabilities() {
         let action = DataRead::new(Arc::new(FakeDataService::default()));
         let d = action.descriptor();
+        // tuxlink-5lfxk: every shipped action carries human palette copy.
+        assert!(!d.label.is_empty() && !d.description.is_empty());
         assert!(!d.needs_radio);
         assert!(!d.transmits);
         assert!(!d.needs_internet);

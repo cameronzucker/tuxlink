@@ -1210,6 +1210,8 @@ mod tests {
         fn descriptor(&self) -> crate::action::ActionDescriptor {
             crate::action::ActionDescriptor {
                 name: "test.panic",
+                label: "",
+                description: "",
                 needs_radio: false,
                 transmits: false,
                 needs_internet: false,

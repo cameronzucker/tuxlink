@@ -72,6 +72,11 @@ export const MENU_TREE: TopMenu[] = [
     // exactly like the `badges` special case — MENU_TREE carries no dynamic
     // label/visibility affordance of its own).
     { id: 'menu:routines:dockback', label: 'Dock Routines back' },
+    // tuxlink-9se1x: "Back to Mailbox" — same STATIC-tree / MenuBar-gated
+    // pattern as dockback, rendered ONLY while the surface is open inline
+    // (the pre-Alpha declutter removed the Mailbox menu that was the mock's
+    // implicit way home; this is its replacement).
+    { id: 'menu:routines:close', label: 'Back to Mailbox' },
   ] },
   { label: 'View', items: [
     // Session-log items removed in radio-panel-shell P1.6 — the bottom

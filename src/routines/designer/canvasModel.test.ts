@@ -12,12 +12,12 @@ import { layoutCanvas } from './canvasModel';
  *  needs the radio (not the network its name suggests), and `aprs.send`
  *  transmits despite having no "radio." prefix. */
 const FAKE_ACTIONS: ActionInfo[] = [
-  { name: 'radio.connect', needsRadio: true, needsInternet: false, transmits: true },
-  { name: 'data.read', needsRadio: false, needsInternet: true, transmits: false },
-  { name: 'local.notify', needsRadio: false, needsInternet: false, transmits: false },
-  { name: 'aprs.send', needsRadio: true, needsInternet: false, transmits: true },
-  { name: 'data.spacewx_wwv', needsRadio: true, needsInternet: false, transmits: false },
-  { name: 'local.compose', needsRadio: false, needsInternet: false, transmits: false },
+  { name: 'radio.connect', label: '', description: '', needsRadio: true, needsInternet: false, transmits: true },
+  { name: 'data.read', label: '', description: '', needsRadio: false, needsInternet: true, transmits: false },
+  { name: 'local.notify', label: '', description: '', needsRadio: false, needsInternet: false, transmits: false },
+  { name: 'aprs.send', label: '', description: '', needsRadio: true, needsInternet: false, transmits: true },
+  { name: 'data.spacewx_wwv', label: '', description: '', needsRadio: true, needsInternet: false, transmits: false },
+  { name: 'local.compose', label: '', description: '', needsRadio: false, needsInternet: false, transmits: false },
 ];
 
 /** Mirrors designer-canvas.html's shape: track 1 is a connect-cycle
@@ -242,7 +242,7 @@ describe('layoutCanvas — 2-track fixture', () => {
 
 describe('layoutCanvas — append-at-end + branch-arm insert points (Task 11 authoring fix)', () => {
   const CONNECT_ONLY: ActionInfo[] = [
-    { name: 'radio.connect', needsRadio: true, needsInternet: false, transmits: true },
+    { name: 'radio.connect', label: '', description: '', needsRadio: true, needsInternet: false, transmits: true },
   ];
 
   function defWithSteps(steps: RoutineDef['tracks'][number]['steps']): RoutineDef {
@@ -392,7 +392,7 @@ describe('layoutCanvas — retry control step', () => {
       ],
     };
 
-    const model = layoutCanvas(def, [{ name: 'radio.connect', needsRadio: true, needsInternet: false, transmits: true }]);
+    const model = layoutCanvas(def, [{ name: 'radio.connect', label: '', description: '', needsRadio: true, needsInternet: false, transmits: true }]);
 
     const retryNode = model.lanes[0]!.rows[0]!.find((n) => n.id === 's2');
     expect(retryNode).toBeDefined();
@@ -445,8 +445,8 @@ describe('layoutCanvas — steps no branch arm references', () => {
     };
 
     const model = layoutCanvas(def, [
-      { name: 'radio.connect', needsRadio: true, needsInternet: false, transmits: true },
-      { name: 'local.notify', needsRadio: false, needsInternet: false, transmits: false },
+      { name: 'radio.connect', label: '', description: '', needsRadio: true, needsInternet: false, transmits: true },
+      { name: 'local.notify', label: '', description: '', needsRadio: false, needsInternet: false, transmits: false },
     ]);
 
     const lane = model.lanes[0]!;

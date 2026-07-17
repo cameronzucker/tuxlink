@@ -173,6 +173,8 @@ mod tests {
 
         const RADIO_CONNECT: ActionDescriptor = ActionDescriptor {
             name: "radio.connect",
+            label: "",
+            description: "",
             needs_radio: true,
             transmits: true,
             needs_internet: false,

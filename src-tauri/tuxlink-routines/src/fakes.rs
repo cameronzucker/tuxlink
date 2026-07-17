@@ -33,6 +33,8 @@ impl FakeAction {
             name,
             descriptor: ActionDescriptor {
                 name,
+                label: "",
+                description: "",
                 needs_radio: false,
                 transmits: false,
                 needs_internet: false,
@@ -51,6 +53,8 @@ impl FakeAction {
     ) -> Self {
         self.descriptor = ActionDescriptor {
             name: self.name,
+            label: "",
+            description: "",
             needs_radio,
             transmits,
             needs_internet,

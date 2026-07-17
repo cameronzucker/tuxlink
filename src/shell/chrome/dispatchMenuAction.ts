@@ -79,6 +79,8 @@ export interface MenuHandlers {
    *  Routines falls back to the dashboard (accepted). Only meaningful while
    *  Routines is popped; MenuBar only shows the item then. */
   dockBackRoutines: () => void;
+  /** tuxlink-9se1x: Routines -> Back to Mailbox closes the inline surface. */
+  closeRoutines: () => void;
   quit: () => void;
 }
 
@@ -156,6 +158,9 @@ export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
     // main-side dock-back rule.
     case 'menu:routines:dockback':
       h.dockBackRoutines(); return;
+    // tuxlink-9se1x: close the inline surface back to the mailbox.
+    case 'menu:routines:close':
+      h.closeRoutines(); return;
   }
   if (id.startsWith('menu:view:scheme:')) {
     const scheme = id.slice('menu:view:scheme:'.length);

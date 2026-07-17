@@ -152,6 +152,11 @@ pub struct DryRunStarted {
 #[serde(rename_all = "camelCase")]
 pub struct ActionInfo {
     pub name: String,
+    /// Human-readable palette label (tuxlink-5lfxk). May be empty for a
+    /// registry entry that declares none; the UI falls back to `name`.
+    pub label: String,
+    /// One-line human description (tuxlink-5lfxk). May be empty.
+    pub description: String,
     pub needs_radio: bool,
     pub transmits: bool,
     pub needs_internet: bool,
@@ -627,6 +632,8 @@ pub fn list_actions(state: &RoutinesState) -> Vec<ActionInfo> {
         .into_iter()
         .map(|d| ActionInfo {
             name: d.name.to_string(),
+            label: d.label.to_string(),
+            description: d.description.to_string(),
             needs_radio: d.needs_radio,
             transmits: d.transmits,
             needs_internet: d.needs_internet,
