@@ -1284,6 +1284,21 @@ mod tests {
             .expect("the routine fired")
     }
 
+    // ── spawn needs no ambient runtime ───────────────────────────────────────
+
+    /// v0.92.0 crashed at startup: `lib.rs` `.setup()` runs on the plain main
+    /// thread with no tokio runtime entered, and the bare `tokio::spawn` in
+    /// [`RoutinesScheduler::spawn`] panicked with "there is no reactor
+    /// running". A plain `#[test]` (NOT `#[tokio::test]`) mirrors that call
+    /// shape exactly: this must spawn onto the app's global runtime instead
+    /// of panicking, and the returned handle's `stop` must still work.
+    #[test]
+    fn spawn_without_an_ambient_runtime_does_not_panic() {
+        let h = Harness::log();
+        let sched = h.start();
+        sched.stop();
+    }
+
     // ── the loop fires ───────────────────────────────────────────────────────
 
     #[tokio::test(start_paused = true)]
