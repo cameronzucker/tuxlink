@@ -5,6 +5,27 @@ shipped, bug-hunt cycles, adversarial reviews). Keyed by date + topic.
 
 ---
 
+## 2026-07-17 — Routines demo polish: navigation home, human action labels, design-system retokenize (tuxlink-9se1x / 5lfxk / h82wg, PR #1138)
+
+Overnight operator-authorized pass (session fox-cypress-pika) fixing the three
+defects grounded by the same-day fidelity pass against the approved mocks:
+the inline surface was a navigation dead-end (no way back to the mailbox; the
+approved mock's implicit exit was the Mailbox menu, removed in the pre-Alpha
+declutter with no replacement), the constructor rendered raw registry ids
+(no human copy existed anywhere in the descriptor stack), and every Routines
+stylesheet bypassed the type scale (8.5-10.5px literals; zero tokens).
+Shipped: "← Mailbox" + Escape (dialog/menu-guarded, dashboard-only) + menu
+item + honest titlebar; label/description on all 17 production
+ActionDescriptors threaded through ActionInfo to palette/inspector/canvas;
+124 size + 61 color tokenizations, which also surfaced a live bug (failed-run
+gantt bars on a nonexistent --danger-surface token). Verified live on the R2
+against a provenance-checked embedded debug build (plain cargo-build debug
+binaries load devUrl and were silently rendering the converge worktree's
+vite — captures of that state are the before set). Codex round: one P3
+(Escape vs open row menu), fixed. Same session, earlier: v0.92.0's fatal
+startup panic (raw tokio::spawn in RoutinesScheduler::spawn from Tauri
+setup()) fixed and shipped as v0.92.1 (PR #1132, tuxlink-j1f30).
+
 ## 2026-07-16 — Dockable surfaces shipped: Routines/Tac Map/APRS Chat pop out to their own windows (tuxlink-dmwte, plan 6/6)
 
 Agent poplar-mink-chasm. 12-task subagent-driven build off the dockable-surfaces
