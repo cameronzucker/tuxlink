@@ -13,17 +13,19 @@
 //! **Authorization is NOT enforced here.** Each command body checks
 //! [`caller_is_authorized`] (or its own rule — `compose_window.rs` keeps a
 //! thin pure-fn wrapper that delegates to this module's shared
-//! [`caller_is_authorized`] for its F7 defense-in-depth; a future
-//! `surface_pop_out` may use a main-or-own-label variant) BEFORE calling
-//! [`open_secondary_window`]. One policy site per command — do not add a
-//! second, potentially-conflicting check inside the helper.
+//! [`caller_is_authorized`] for its F7 defense-in-depth; `surface_pop_out`
+//! in `dock/commands.rs` uses its own main-or-own-label variant,
+//! `caller_may_drive`) BEFORE calling [`open_secondary_window`]. One policy
+//! site per command — do not add a second, potentially-conflicting check
+//! inside the helper.
 
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 /// How a secondary window's close action is handled (spec §3, adrev R3-F7).
-/// Recorded on [`SecondaryWindowSpec`] so `lib.rs`'s `on_window_event`
-/// dispatch (Task 4) can route `CloseRequested` per window without
-/// re-deriving policy from the label at dispatch time.
+/// Recorded on [`SecondaryWindowSpec`] as declarative documentation of each
+/// window's close semantics — `lib.rs`'s `on_window_event` dispatches
+/// `CloseRequested` by window label (`SurfaceId::from_window_label` / the
+/// `"main"` check), not by looking up this policy at dispatch time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClosePolicy {
     /// Plain single-purpose windows (help/logging/stations): the native

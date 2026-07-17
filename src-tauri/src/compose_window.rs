@@ -51,9 +51,10 @@ use crate::secondary_window::{
 /// existing window (no clamp) — the differential clamp timing that the old
 /// `Result<(), String>` return could not carry.
 ///
-/// This constant exists so Task 4's `on_window_event` dispatch table can look
-/// up compose's policy for any `compose-*` label without re-deriving it from
-/// the label prefix.
+/// This constant is declarative documentation of compose's close semantics —
+/// `lib.rs`'s `on_window_event` dispatches `CloseRequested` for the
+/// `compose-*` label directly (it does not look this policy up at dispatch
+/// time).
 pub const CLOSE_POLICY: ClosePolicy = ClosePolicy::CommandRouted;
 
 /// Default compose-window inner height (logical px). Bumped to 820 (2026-05-31)

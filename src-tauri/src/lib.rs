@@ -2983,15 +2983,15 @@ pub fn run() {
             // generation still matches, atomically under the registry mutex.
             if let Some(surface) = crate::dock::SurfaceId::from_window_label(window.label()) {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    use tauri::Emitter as _;
+                    use tauri::Manager as _;
                     api.prevent_close();
                     let app_handle = window.app_handle().clone();
                     let armed_pop_generation = {
-                        use tauri::Manager as _;
                         let registry =
                             app_handle.state::<crate::dock::registry::DockRegistry>();
                         registry.pop_generation(surface)
                     };
-                    use tauri::Emitter as _;
                     let _ = app_handle.emit_to(
                         surface.window_label(),
                         "dock:close-intent",
@@ -2999,7 +2999,6 @@ pub fn run() {
                     );
                     tauri::async_runtime::spawn(async move {
                         tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-                        use tauri::Manager as _;
                         let registry = app_handle.state::<crate::dock::registry::DockRegistry>();
                         // If the webview already docked back, the surface is
                         // `Docked` and this is a no-op. If it docked back AND was
