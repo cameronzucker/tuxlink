@@ -12,6 +12,14 @@
 // the reading pane BESIDE whichever tenant (chat or modem) is currently active,
 // so the map can ride along with either. It carries its own on/off state
 // (aria-pressed), distinct from the mutually-exclusive chat⇄modem tabs.
+//
+// Tac Map pop-out (tuxlink-dmwte task 9, spec §5): the same header slot grows a
+// ↗ pop-out affordance next to the Map toggle. Once popped, the whole slot
+// SWAPS to a "Tac Map ↗ — in window" pathway (focuses the popped window) plus
+// an adjacent "⇤ dock back" action — mirroring how the Routines pathway
+// replaces its own affordance while popped (Global Constraints rule: a popped
+// surface's docked-side control always resolves to focus-or-dock-back, never
+// a dead toggle).
 
 import './AprsDockTabs.css';
 
@@ -38,6 +46,21 @@ export interface AprsDockTabsProps {
   /// Toggle the heard-positions map open/closed. When set, a "Map" control is
   /// rendered in the dock header; absent ⇒ no toggle (e.g. legacy callers).
   onToggleMap?: () => void;
+  /// Whether the Tac Map surface is currently popped to its own window
+  /// (tuxlink-dmwte task 9, spec §5). When true, this control's ENTIRE
+  /// rendering swaps from the Map toggle + pop-out button to the "in window"
+  /// focus pathway + dock-back action below.
+  mapPopped?: boolean;
+  /// Pop the Tac Map out to its own window (spec §5, behavior 1). Renders a ↗
+  /// button beside the Map toggle when provided and `mapPopped` is false;
+  /// absent ⇒ no pop-out affordance.
+  onPopOutMap?: () => void;
+  /// Focus the already-popped Tac Map window — the "Tac Map ↗ — in window"
+  /// control's click target while `mapPopped` is true.
+  onFocusMap?: () => void;
+  /// Dock the Tac Map back inline — the adjacent "⇤ dock back" control's click
+  /// target while `mapPopped` is true.
+  onDockBackMap?: () => void;
 }
 
 export function AprsDockTabs({
@@ -50,25 +73,70 @@ export function AprsDockTabs({
   onClose,
   mapOpen,
   onToggleMap,
+  mapPopped,
+  onPopOutMap,
+  onFocusMap,
+  onDockBackMap,
 }: AprsDockTabsProps) {
   return (
     <div className="aprs-dock-tabs" data-testid="aprs-dock-tabs">
-      {onToggleMap && (
-        <button
-          type="button"
-          className={`aprs-dock-maptoggle ${mapOpen ? 'is-active' : ''}`}
-          data-testid="aprs-map-toggle"
-          aria-pressed={Boolean(mapOpen)}
-          title={
-            mapOpen
-              ? 'Hide the heard-positions map'
-              : 'Show heard stations on a map beside the chat or modem'
-          }
-          onClick={onToggleMap}
-        >
-          <span className="aprs-dock-map-glyph" aria-hidden="true">⊞</span>
-          Map
-        </button>
+      {mapPopped ? (
+        <div className="aprs-dock-map-popped" data-testid="aprs-map-popped-controls">
+          <button
+            type="button"
+            className="aprs-dock-map-focus"
+            data-testid="aprs-map-focus"
+            title="Focus the Tac Map window"
+            onClick={onFocusMap}
+          >
+            Tac Map ↗ — in window
+          </button>
+          <button
+            type="button"
+            className="aprs-dock-map-dockback"
+            data-testid="aprs-map-dockback"
+            aria-label="Dock the Tac Map back inline"
+            title="Dock the Tac Map back inline"
+            onClick={onDockBackMap}
+          >
+            ⇤ dock back
+          </button>
+        </div>
+      ) : (
+        onToggleMap && (
+          <>
+            <button
+              type="button"
+              className={`aprs-dock-maptoggle ${mapOpen ? 'is-active' : ''}`}
+              data-testid="aprs-map-toggle"
+              aria-pressed={Boolean(mapOpen)}
+              title={
+                mapOpen
+                  ? 'Hide the heard-positions map'
+                  : 'Show heard stations on a map beside the chat or modem'
+              }
+              onClick={onToggleMap}
+            >
+              <span className="aprs-dock-map-glyph" aria-hidden="true">⊞</span>
+              Map
+            </button>
+            {onPopOutMap && (
+              <button
+                type="button"
+                className="aprs-dock-map-popout"
+                data-testid="aprs-map-popout"
+                title="Open the Tac Map in its own window"
+                onClick={onPopOutMap}
+              >
+                {/* Text-labeled, never icon-only (spec §1 visual-pathway rule +
+                    §5 text-labeled requirement) — mirrors the map focus /
+                    dock-back pathway controls below. */}
+                <span className="aprs-dock-map-popout-glyph" aria-hidden="true">↗</span>
+                Pop out
+              </button>
+            )}
+          </>
+        )
       )}
       <div className="aprs-dock-tabgroup" role="tablist" aria-label="Dock view">
         <button

@@ -25,7 +25,11 @@ use std::sync::Mutex;
 /// lacks the key; load normalizes it to Some, seeding the tips_seen ["*"]
 /// sentinel when wizard_completed is already true (upgrade cohort must not
 /// get first-open tips on surfaces they have used for months).
-pub const CONFIG_SCHEMA_VERSION: u32 = 7;
+///
+/// Bumped 7 → 8 (tuxlink-dmwte): added the always-serialized top-level 'dock'
+/// section (dockable-surfaces popped/docked persistence, spec §3). Runtime
+/// context tokens are NOT persisted.
+pub const CONFIG_SCHEMA_VERSION: u32 = 8;
 
 /// What to do with an on-disk config of a given `schema_version` (Phase 2,
 /// tuxlink-7iy2). A v1 file is a breaking migration candidate; a version ≥2 but
@@ -400,6 +404,12 @@ pub struct Config {
     /// Always Some after deserialize; wizard-persist writes Some(default).
     #[serde(default)]
     pub onboarding: Option<OnboardingConfig>,
+    /// Dockable-surfaces layout (tuxlink-dmwte, spec §3): which surfaces are
+    /// popped into their own OS windows. Always-serialized; `#[serde(default)]`
+    /// migrates pre-8 files (absent → all docked). Geometry is NOT here —
+    /// tauri-plugin-window-state owns it per window label.
+    #[serde(default)]
+    pub dock: crate::dock::DockSurfaces,
 }
 
 impl Config {
@@ -1950,7 +1960,7 @@ mod tests {
             "review_inbound_before_download", "aprs",
             "trash_auto_purge", "trash_retention_days",
             "close_to_tray", "close_prompt_seen",
-            "active_connection", "onboarding",
+            "active_connection", "onboarding", "dock",
         ];
         expected.sort_unstable();
         assert_eq!(
@@ -1960,6 +1970,31 @@ mod tests {
              and update this golden set (tuxlink-ulrz).",
             CONFIG_SCHEMA_VERSION
         );
+    }
+
+    // tuxlink-dmwte Task 2: a v7 fixture naturally lacks "dock" — serde
+    // default must fill it all-Docked, and the schema classifier must treat
+    // v7 as additively migratable while v8 (current) loads as-is.
+    #[test]
+    fn v7_config_loads_with_default_dock_section() {
+        // A v7 fixture naturally lacks "dock"; serde default must fill it all-Docked.
+        let cfg: Config = serde_json::from_str(&config_json(7, ""))
+            .expect("v7 file must load additively");
+        assert_eq!(cfg.dock, crate::dock::DockSurfaces::default());
+        assert_eq!(detect_schema_action(7), SchemaAction::MigrateAdditive);
+        assert_eq!(detect_schema_action(8), SchemaAction::Current);
+    }
+
+    // tuxlink-dmwte Task 2: dock state set on the Rust side round-trips
+    // through the config's JSON serialization per spec §3's wire shape.
+    #[test]
+    fn dock_section_persists_popped_state() {
+        let mut cfg: Config = serde_json::from_str(&config_json(CONFIG_SCHEMA_VERSION, "")).unwrap();
+        cfg.dock.set(crate::dock::SurfaceId::TacMap, crate::dock::DockMode::Popped);
+        let v: serde_json::Value = serde_json::to_value(&cfg).unwrap();
+        // Spec §3 JSON literal: {"routines":"docked","tac_map":"popped","aprs_chat":"docked"}
+        assert_eq!(v["dock"]["tac_map"], "popped");
+        assert_eq!(v["dock"]["routines"], "docked");
     }
 
     // tuxlink-7ppfq Contract 2: a config written before `active_connection`

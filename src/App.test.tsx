@@ -69,7 +69,51 @@ vi.mock('./help/LoggingView', () => ({
   },
 }));
 
+// bd tuxlink-dmwte task 11 regression guard: the popped-surface webview
+// (/pop/<surface>) crashed to a blank window because AprsChatPanel's
+// useFirstOpenTip('aprs') hard-throws when no HintProvider is above it, and
+// App.tsx's /pop route branch had none (the fix wraps it in <HintProvider>).
+// The real SURFACE_REGISTRY entries pull in leaflet/protomaps/live APRS +
+// routines hooks (already exercised by PoppedSurfaceHost.test.tsx and
+// AprsPositionsMap.test.tsx) — mock the registry the same way that file does,
+// but keep ONE real hook call in the aprs_chat sentinel: useFirstOpenTip
+// itself. That reproduces the exact crash mechanism from the WebKitGTK smoke
+// (useHints() throws "must be used inside <HintProvider>") without mounting
+// the rest of AprsChatPanel.
+vi.mock('./dock/surfaceRegistry', () => ({
+  SURFACE_REGISTRY: {
+    routines: {
+      id: 'routines',
+      title: 'Routines — Tuxlink',
+      Component: () => <div data-testid="pop-routines-surface-mock" />,
+      StatusStrip: () => <div data-testid="pop-routines-strip-mock" />,
+    },
+    tac_map: {
+      id: 'tac_map',
+      title: 'Tac Map — Tuxlink',
+      Component: () => <div data-testid="pop-tacmap-surface-mock" />,
+      StatusStrip: () => <div data-testid="pop-tacmap-strip-mock" />,
+    },
+    aprs_chat: {
+      id: 'aprs_chat',
+      title: 'APRS Chat — Tuxlink',
+      Component: () => {
+        useFirstOpenTip('aprs'); // the real regression trigger — see comment above
+        return <div data-testid="pop-aprschat-surface-mock" />;
+      },
+      StatusStrip: () => <div data-testid="pop-aprschat-strip-mock" />,
+    },
+  },
+}));
+// PoppedSurfaceHost mounts ConsentGate directly (not via the registry) for
+// the routines surface only; stub it the same way PoppedSurfaceHost.test.tsx
+// does — its own (heavy, routines-API-backed) internals are out of scope here.
+vi.mock('./routines/ConsentGate', () => ({
+  ConsentGate: () => <div data-testid="consent-gate-mock" />,
+}));
+
 import { invoke } from '@tauri-apps/api/core';
+import { useFirstOpenTip } from './onboarding/HintProvider';
 
 function routeInvoke(wizardCompleted: boolean) {
   (invoke as ReturnType<typeof vi.fn>).mockImplementation((cmd: string) => {
@@ -245,5 +289,76 @@ describe('<App> compact mount smoke (tuxlink-h7q7)', () => {
     render(<App />);
     const root = await screen.findByTestId('app-shell-root');
     expect(root.classList.contains('compact')).toBe(true);
+  });
+});
+
+// bd tuxlink-dmwte task 11: regression guard for the fix that wraps App.tsx's
+// /pop/<surface> branch in <HintProvider>. Before this fix, popping APRS Chat
+// out into its own webview rendered a blank window — AprsChatPanel's
+// useFirstOpenTip('aprs') call throws "useHints must be used inside
+// <HintProvider>" with no provider above it, and the /pop branch had none.
+// There was no automated coverage of the /pop route at all, so a future
+// change that drops the wrap would ship silently. Asserts each of the three
+// dockable surfaces' pop-out route renders <PoppedSurfaceHost>'s chrome (the
+// ⇤ dock-back button — PoppedSurfaceHost.test.tsx's accessible name) without
+// throwing.
+describe('<App> popped-surface routing (bd tuxlink-dmwte task 11)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listenMock.mockImplementation(async () => () => {});
+    routeInvoke(true);
+    // PoppedSurfaceHost reads `dock_state_get` at mount (unwraps the
+    // continuity-token envelope); routeInvoke's default undefined fallback
+    // would throw inside PoppedSurfaceHost's .then() on `snap.context[...]`.
+    const base = (invoke as ReturnType<typeof vi.fn>).getMockImplementation()!;
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation((cmd: string) => {
+      if (cmd === 'dock_state_get') {
+        return Promise.resolve({
+          surfaces: { routines: 'popped', tac_map: 'popped', aprs_chat: 'popped' },
+          context: { routines: null, tac_map: null, aprs_chat: null },
+        });
+      }
+      return base(cmd);
+    });
+  });
+  afterEach(() => setPath('/'));
+
+  it('renders <PoppedSurfaceHost> for /pop/routines without throwing', async () => {
+    currentLabel = 'pop-routines';
+    setPath('/pop/routines');
+    render(<App />);
+    // The surface Component only mounts once `dock_state_get` resolves
+    // (contextLoaded) — wait on it rather than the title-bar chrome (which
+    // paints a render tick earlier and would race the assertion below).
+    await waitFor(() =>
+      expect(screen.getByTestId('pop-routines-surface-mock')).toBeInTheDocument(),
+    );
+    expect(screen.getByRole('button', { name: /dock back into main window/i })).toBeInTheDocument();
+    expect(screen.queryByTestId('error-boundary-fallback')).not.toBeInTheDocument();
+  });
+
+  it('renders <PoppedSurfaceHost> for /pop/tacmap without throwing', async () => {
+    currentLabel = 'pop-tacmap';
+    setPath('/pop/tacmap');
+    render(<App />);
+    await waitFor(() =>
+      expect(screen.getByTestId('pop-tacmap-surface-mock')).toBeInTheDocument(),
+    );
+    expect(screen.getByRole('button', { name: /dock back into main window/i })).toBeInTheDocument();
+    expect(screen.queryByTestId('error-boundary-fallback')).not.toBeInTheDocument();
+  });
+
+  // The concrete regression: only the aprs_chat surface calls
+  // useFirstOpenTip, so this is the case that actually caught the missing
+  // HintProvider in production.
+  it('renders <PoppedSurfaceHost> for /pop/aprschat without throwing (the WebKitGTK-smoke regression)', async () => {
+    currentLabel = 'pop-aprschat';
+    setPath('/pop/aprschat');
+    render(<App />);
+    await waitFor(() =>
+      expect(screen.getByTestId('pop-aprschat-surface-mock')).toBeInTheDocument(),
+    );
+    expect(screen.getByRole('button', { name: /dock back into main window/i })).toBeInTheDocument();
+    expect(screen.queryByTestId('error-boundary-fallback')).not.toBeInTheDocument();
   });
 });

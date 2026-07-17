@@ -22,13 +22,40 @@
 //! and position keyed by the window label. Each compose window gets a unique
 //! label `compose-<draftId>`, so per-draft geometry is remembered across
 //! restores. The plugin is registered in `lib.rs`'s `run()` builder (the
-//! integration commit, §4.3) — this file only builds the `WebviewWindowBuilder`.
+//! integration commit, §4.3) — this file only supplies the
+//! `SecondaryWindowSpec` and the post-build monitor-height clamp; the window
+//! construction lives in `crate::secondary_window::open_secondary_window`.
 //!
 //! **Registration:** `compose_window_open` is a Tauri command appended to
 //! `ui_commands.rs`'s append-only command list. The `invoke_handler`
 //! registration lands in the orchestrator integration commit (spec §4.3).
 
-use tauri::{AppHandle, LogicalSize, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, LogicalSize, Manager, WebviewWindow};
+
+use crate::secondary_window::{
+    open_secondary_window, ClosePolicy, SecondaryWindowSpec, SpawnOutcome,
+};
+
+/// Compose windows' close policy (spec §3, tuxlink-dmwte Task 3):
+/// [`ClosePolicy::CommandRouted`] — every close path (in-app Close button +
+/// native titlebar X) routes through [`compose_close_self`] rather than the
+/// native window-close APIs (tuxlink-h2y); see that command's docstring for
+/// why (window-class close under XSS closes the wrong window).
+///
+/// Compose's get-or-focus/builder/race-guard body IS migrated onto
+/// `crate::secondary_window::open_secondary_window`. The two interface gaps
+/// that previously blocked the migration were closed by a minimal extension of
+/// the shared helper: `SecondaryWindowSpec.centered` expresses compose's
+/// `.center()` placement, and the [`SpawnOutcome`] return distinguishes a fresh
+/// build (apply the post-build monitor-height clamp below) from a refocus of an
+/// existing window (no clamp) — the differential clamp timing that the old
+/// `Result<(), String>` return could not carry.
+///
+/// This constant is declarative documentation of compose's close semantics —
+/// `lib.rs`'s `on_window_event` dispatches `CloseRequested` for the
+/// `compose-*` label directly (it does not look this policy up at dispatch
+/// time).
+pub const CLOSE_POLICY: ClosePolicy = ClosePolicy::CommandRouted;
 
 /// Default compose-window inner height (logical px). Bumped to 820 (2026-05-31)
 /// for multi-fieldset HTML Forms.
@@ -50,19 +77,17 @@ fn clamped_compose_height(default_h: f64, monitor_logical_h: f64, margin: f64) -
     default_h.min(avail)
 }
 
-/// The window label authorized to open compose windows. Only the main window
-/// may spawn compose windows (Codex integration round, defense-in-depth for F7).
-const MAIN_WINDOW_LABEL: &str = "main";
-
 /// Pure guard: is `caller_label` authorized to invoke `compose_window_open`?
 ///
-/// Only the `main` window may open compose windows. Extracted as a pure
-/// function so it is unit-testable without a Tauri runtime (the command itself
-/// needs a live `WebviewWindow`, which requires the full runtime — verified at
-/// M2 operator smoke per testing-pitfalls.md §9). Mirrors the `menu_event_ids`
-/// / `tray_event_ids` testable-surface convention.
+/// Only the `main` window may open compose windows (Codex integration round,
+/// defense-in-depth for F7). Delegates to the shared
+/// [`crate::secondary_window::caller_is_authorized`] rule (main-only) — this
+/// thin wrapper keeps compose's F7 commentary and its unit tests attached to
+/// the compose command, while the authorization logic has one home. Pure, so
+/// it is unit-testable without a Tauri runtime (the command itself needs a live
+/// `WebviewWindow`, verified at M2 operator smoke per testing-pitfalls.md §9).
 pub fn caller_is_authorized(caller_label: &str) -> bool {
-    caller_label == MAIN_WINDOW_LABEL
+    crate::secondary_window::caller_is_authorized(caller_label)
 }
 
 /// Upper bound on a `draft_id`'s length. Generated ids (`newDraftId` in
@@ -131,47 +156,27 @@ pub fn compose_window_open(
     validate_draft_id(&draft_id)?;
 
     let label = format!("compose-{}", draft_id);
-    let url = format!("/compose/{}", draft_id);
+    let route = format!("/compose/{}", draft_id);
 
-    // Attempt to focus an already-open window first (idempotent open).
-    if let Some(existing) = app.get_webview_window(&label) {
-        existing
-            .show()
-            .map_err(|e| format!("show failed: {e}"))?;
-        existing
-            .set_focus()
-            .map_err(|e| format!("set_focus failed: {e}"))?;
-        return Ok(());
-    }
-
-    // Build a new compose window. `tauri-plugin-window-state` hooks into
-    // the WebviewWindow lifecycle via `.on_window_event` registered in
-    // `lib.rs`'s `run()` builder (integration commit). The builder does
-    // not need to call the plugin explicitly — the plugin's `Builder` hook
-    // restores + saves window state automatically once registered.
+    // Default compose size (2026-05-31, operator feedback): bumped from 720x560
+    // to 1100x820 because HTML Forms v0.1 (PR #177) shipped multi-fieldset forms
+    // (ICS-309 with up to 30 log entries; Damage Assessment with 15 6-column
+    // category grids) that were unusably cramped at the prior 720x560 default.
+    // Min bumped from 480x360 to 720x560 (the old default) so the user can
+    // shrink but not back to the toy-sized floor. `tauri-plugin-window-state`
+    // persists per-label geometry — only new drafts use this default.
     //
-    // Race guard (Codex P2): a concurrent call that races past the
-    // `get_webview_window` check above can hit `build()` and receive an
-    // `AlreadyExists` error. Treat that as success — the window exists,
-    // attempt to focus it before returning.
-    // Centered placement. A Gmail-style bottom-right DOCK was attempted (ng3
-    // smoke #8) but the Pi's labwc/Wayland compositor owns window placement —
-    // a client can neither set nor query a separate window's absolute position,
-    // so `.position()` is ignored and the window lands center regardless.
-    // Operator accepted centered for v0.0.1; the true in-window docked panel
-    // (which CAN position itself, and is also faster) is filed for revisit.
-    // Default size bumped from 720x560 to 1100x820 (2026-05-31, operator
-    // feedback): HTML Forms v0.1 (PR #177) shipped multi-fieldset forms
-    // (ICS-309 with up to 30 log entries; Damage Assessment with 15
-    // 6-column category grids) that were unusably cramped at the prior
-    // 720x560 default. Min bumped from 480x360 to 720x560 (the old default)
-    // so the user can shrink but not back to the toy-sized floor.
-    // tauri-plugin-window-state persists per-label geometry — operators who
-    // resize a specific compose window get their choice remembered; only
-    // new drafts use this default.
-    // Best-effort pre-creation clamp against the primary monitor's usable
-    // height (Codex adrev R1 #12). The post-build clamp below catches the
-    // caller-not-primary-monitor case and any window-state-restored geometry.
+    // Centered placement (`SecondaryWindowSpec.centered`): a Gmail-style
+    // bottom-right dock was attempted (ng3 smoke #8) but the Pi's labwc/Wayland
+    // compositor owns window placement — a client can neither set nor query a
+    // separate window's absolute position, so `.position()` is ignored and the
+    // window lands center regardless. Operator accepted centered for v0.0.1;
+    // the true in-window docked panel is filed for revisit.
+    //
+    // Best-effort pre-creation clamp against the primary monitor's usable height
+    // (Codex adrev R1 #12); this is the default height carried on the spec. The
+    // post-build clamp below catches the caller-not-primary-monitor case and any
+    // window-state-restored geometry.
     let inner_h = match app.primary_monitor() {
         Ok(Some(monitor)) => {
             let logical_h = monitor.size().height as f64 / monitor.scale_factor();
@@ -180,53 +185,44 @@ pub fn compose_window_open(
         _ => COMPOSE_DEFAULT_INNER_HEIGHT,
     };
 
-    let build_result = WebviewWindowBuilder::new(
-        &app,
-        &label,
-        WebviewUrl::App(url.into()),
-    )
-    .title("New Message — Tuxlink")
-    .inner_size(1100.0, inner_h)
-    .min_inner_size(720.0, 560.0)
-    .resizable(true)
-    .decorations(false)
-    .center()
-    .build();
+    // Get-or-focus + builder + `AlreadyExists` race guard are delegated to the
+    // shared helper (tuxlink-dmwte Task 3). `centered: true` reproduces
+    // compose's historical `.center()`; `CLOSE_POLICY` (CommandRouted) records
+    // the close semantics for Task 4's dispatch table. `decorations: false` is
+    // compose's custom in-app chrome, preserved from the prior builder chain.
+    let spec = SecondaryWindowSpec {
+        label: label.clone(),
+        route,
+        title: "New Message — Tuxlink".to_string(),
+        inner_size: (1100.0, inner_h),
+        min_inner_size: (720.0, 560.0),
+        decorations: false,
+        centered: true,
+        close_policy: CLOSE_POLICY,
+    };
 
-    match build_result {
-        Ok(_) => {
-            // Post-build clamp (Codex adrev R1 #12): the window may land on a
-            // non-primary monitor, or tauri-plugin-window-state may have
-            // restored an oversized height that overrides the default. Re-clamp
-            // against the window's ACTUAL monitor. Only shrinks, never grows;
-            // the 0.5px epsilon avoids a set_size jitter loop.
-            if let Some(win) = app.get_webview_window(&label) {
-                if let (Ok(Some(monitor)), Ok(size)) = (win.current_monitor(), win.inner_size()) {
-                    let scale = monitor.scale_factor();
-                    let logical_h = monitor.size().height as f64 / scale;
-                    let cur_h = size.height as f64 / scale;
-                    let max_h = clamped_compose_height(cur_h, logical_h, COMPOSE_VERTICAL_MARGIN);
-                    if cur_h > max_h + 0.5 {
-                        let cur_w = size.width as f64 / scale;
-                        let _ = win.set_size(LogicalSize::new(cur_w, max_h));
-                    }
+    // The post-build monitor-height clamp runs ONLY on a genuinely new build
+    // (never on refocus of an existing window) — the differential timing the
+    // helper's `Result<(), String>` return could not express, now carried by
+    // `SpawnOutcome`.
+    if open_secondary_window(&app, caller.label(), &spec)? == SpawnOutcome::BuiltNew {
+        // Post-build clamp (Codex adrev R1 #12): the window may land on a
+        // non-primary monitor, or tauri-plugin-window-state may have restored an
+        // oversized height that overrides the default. Re-clamp against the
+        // window's ACTUAL monitor. Only shrinks, never grows; the 0.5px epsilon
+        // avoids a set_size jitter loop.
+        if let Some(win) = app.get_webview_window(&label) {
+            if let (Ok(Some(monitor)), Ok(size)) = (win.current_monitor(), win.inner_size()) {
+                let scale = monitor.scale_factor();
+                let logical_h = monitor.size().height as f64 / scale;
+                let cur_h = size.height as f64 / scale;
+                let max_h = clamped_compose_height(cur_h, logical_h, COMPOSE_VERTICAL_MARGIN);
+                if cur_h > max_h + 0.5 {
+                    let cur_w = size.width as f64 / scale;
+                    let _ = win.set_size(LogicalSize::new(cur_w, max_h));
                 }
             }
         }
-        Err(tauri::Error::WindowLabelAlreadyExists(_))
-        | Err(tauri::Error::WebviewLabelAlreadyExists(_)) => {
-            // Concurrent open race: another call already created the window.
-            // Focus it and return success (same as the sequential-dupe path
-            // handled by `get_webview_window` at the top of this function).
-            // `WebviewWindowBuilder` creates both a window and a webview, so
-            // either variant can be emitted depending on which layer fires
-            // first (Codex P2 fix).
-            if let Some(existing) = app.get_webview_window(&label) {
-                let _ = existing.show();
-                let _ = existing.set_focus();
-            }
-        }
-        Err(e) => return Err(format!("compose window build failed: {e}")),
     }
 
     Ok(())

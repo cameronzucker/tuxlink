@@ -51,6 +51,10 @@ import './RoutinesDashboard.css';
 export interface RoutinesDashboardProps {
   onOpenDesigner: (routine: string, tab?: DesignerTab) => void;
   onNewRoutine: () => void;
+  /** When provided, the dashboard header shows a text-labeled "↗ Pop out"
+   *  affordance (tuxlink-dmwte task 8, spec §5) that pops the Routines surface
+   *  to its own window. Absent inside the popped window itself. */
+  onPopOut?: () => void;
 }
 
 /** Non-terminal `RunState`s — a routine with one of these is "live". */
@@ -116,7 +120,7 @@ function fleetTagText(findings: Finding[]): string {
   return `FLEET CHECK · ${parts.join(', ')}`;
 }
 
-export function RoutinesDashboard({ onOpenDesigner, onNewRoutine }: RoutinesDashboardProps) {
+export function RoutinesDashboard({ onOpenDesigner, onNewRoutine, onPopOut }: RoutinesDashboardProps) {
   const {
     summaries,
     scheduleStatus,
@@ -296,6 +300,17 @@ export function RoutinesDashboard({ onOpenDesigner, onNewRoutine }: RoutinesDash
           {summaries.length} routine{summaries.length === 1 ? '' : 's'}
         </span>
         <span className="head-actions">
+          {onPopOut && (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              data-testid="routines-dashboard-popout"
+              title="Open Routines in its own window"
+              onClick={onPopOut}
+            >
+              ↗ Pop out
+            </button>
+          )}
           <button type="button" className="btn btn-ghost" onClick={() => setImportOpen(true)}>
             Import JSON…
           </button>

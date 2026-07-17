@@ -8,6 +8,7 @@ pub mod contacts;
 pub mod compose_window;
 pub mod config;
 pub mod consent_gate;
+pub mod dock;
 pub mod favorites;
 pub mod forms;
 pub mod grib;
@@ -16,6 +17,7 @@ pub mod help_window;
 pub mod logging;
 pub mod logging_window;
 pub mod media;
+pub mod secondary_window;
 pub mod stations_window;
 pub mod theme_state;
 pub mod native_mailbox;
@@ -536,6 +538,49 @@ pub(crate) fn live_routine_run_count<R: tauri::Runtime>(app_handle: &tauri::AppH
         .unwrap_or(0)
 }
 
+/// How many live routine runs are parked `AwaitingConsent`. `0` when
+/// `RoutinesState` is not yet managed (same edge case as
+/// [`live_routine_run_count`]). Read by [`default_confirm`] to name
+/// awaiting-consent runs distinctly in the graceful-quit prompt
+/// (tuxlink-dmwte task 8, spec §6, adrev R4-F11).
+pub(crate) fn awaiting_consent_run_count<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+) -> usize {
+    use tauri::Manager as _;
+    app_handle
+        .try_state::<std::sync::Arc<crate::routines::session::RoutinesState>>()
+        .map(|s| s.awaiting_consent_run_count())
+        .unwrap_or(0)
+}
+
+/// The graceful-quit prompt wording (tuxlink-dmwte task 8, spec §6, adrev
+/// R4-F11). `live_runs` is every non-terminal run; `awaiting_consent` is the
+/// subset parked awaiting operator transmit consent (`awaiting_consent <=
+/// live_runs` by construction — a parked run is non-terminal). Awaiting-consent
+/// runs are named distinctly so the operator knows a run is one Confirm from
+/// its purpose before choosing to kill it:
+///
+/// - only running: `"2 routines running — stop them and exit?"` (unchanged)
+/// - only awaiting: `"1 routine waiting for transmit consent — stop them and exit?"`
+/// - both:         `"1 routine running, 1 waiting for transmit consent — stop them and exit?"`
+///
+/// Pure + unit-tested (see `quit_prompt_message_*` below) so the wording is
+/// pinned without a live dialog.
+pub(crate) fn quit_prompt_message(live_runs: usize, awaiting_consent: usize) -> String {
+    let running = live_runs.saturating_sub(awaiting_consent);
+    let noun = |n: usize| if n == 1 { "routine" } else { "routines" };
+    let phrase = match (running, awaiting_consent) {
+        // No awaiting-consent runs → the original wording, byte-for-byte.
+        (r, 0) => format!("{r} {} running", noun(r)),
+        // Only awaiting-consent runs.
+        (0, w) => format!("{w} {} waiting for transmit consent", noun(w)),
+        // A mix: name each cohort. The second clause drops the noun (it shares
+        // the first clause's subject) per the spec §6 example.
+        (r, w) => format!("{r} {} running, {w} waiting for transmit consent", noun(r)),
+    };
+    format!("{phrase} — stop them and exit?")
+}
+
 /// The abort-on-quit path (tuxlink-13v2l Task 8c AC-4): fire Elmer's
 /// `cancel_and_abort` (bounded, `CANCEL_DRAIN_TIMEOUT` = 5s) BEFORE `exit(0)`
 /// so any in-flight ARDOP/VARA/CMS transmission receives an abort signal,
@@ -629,10 +674,14 @@ pub(crate) fn default_confirm<R: tauri::Runtime>(
 ) -> impl FnOnce(usize) -> bool + Send + 'static {
     move |live_runs: usize| {
         use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
-        let noun = if live_runs == 1 { "routine" } else { "routines" };
+        // Awaiting-consent runs are named distinctly (tuxlink-dmwte task 8,
+        // spec §6, adrev R4-F11). Read from app state at prompt time — a
+        // wording detail only; the `live_runs` the gate ACTS on is still the
+        // caller's single reading (see `quit_with_routines_gate`'s doc).
+        let awaiting = awaiting_consent_run_count(&app_handle);
         app_handle
             .dialog()
-            .message(format!("{live_runs} {noun} running — stop them and exit?"))
+            .message(quit_prompt_message(live_runs, awaiting))
             .title("Quit Tuxlink")
             .buttons(MessageDialogButtons::OkCancelCustom(
                 "Stop and Exit".into(),
@@ -836,6 +885,46 @@ mod quit_gate_tests {
 
     fn fixed_now() -> i64 {
         1_752_400_000
+    }
+
+    // tuxlink-dmwte task 8, behavior 10 (spec §6, adrev R4-F11): the
+    // graceful-quit prompt names awaiting-consent runs distinctly.
+    #[test]
+    fn quit_prompt_message_running_only_keeps_original_wording() {
+        assert_eq!(
+            quit_prompt_message(2, 0),
+            "2 routines running — stop them and exit?"
+        );
+        assert_eq!(
+            quit_prompt_message(1, 0),
+            "1 routine running — stop them and exit?"
+        );
+    }
+
+    #[test]
+    fn quit_prompt_message_awaiting_only_names_transmit_consent() {
+        assert_eq!(
+            quit_prompt_message(1, 1),
+            "1 routine waiting for transmit consent — stop them and exit?"
+        );
+        assert_eq!(
+            quit_prompt_message(3, 3),
+            "3 routines waiting for transmit consent — stop them and exit?"
+        );
+    }
+
+    #[test]
+    fn quit_prompt_message_mixed_names_both_cohorts() {
+        // The spec §6 example verbatim: one running, one awaiting.
+        assert_eq!(
+            quit_prompt_message(2, 1),
+            "1 routine running, 1 waiting for transmit consent — stop them and exit?"
+        );
+        // Plurals on the running cohort; awaiting stays singular.
+        assert_eq!(
+            quit_prompt_message(4, 1),
+            "3 routines running, 1 waiting for transmit consent — stop them and exit?"
+        );
     }
 
     struct NoopSink;
@@ -1566,6 +1655,19 @@ pub fn run() {
         // window calls theme_get_scheme to bootstrap and listens for
         // color_scheme_changed events emitted by theme_broadcast_scheme.
         .manage(crate::theme_state::ThemeState::default())
+        // tuxlink-dmwte Task 4 (spec §3): the dock registry — runtime authority
+        // for each surface's dock state, seeded from the persisted config `dock`
+        // section (config v8). The in-memory registry is authoritative while the
+        // app runs; the config write is write-through. Continuity tokens (§7) are
+        // runtime-only and start empty. `RestorationGate` (managed beside it)
+        // guards `shell_mounted` so launch restoration spawns popped windows
+        // exactly once.
+        .manage(crate::dock::registry::DockRegistry::new(
+            crate::config::read_config()
+                .map(|c| c.dock)
+                .unwrap_or_default(),
+        ))
+        .manage(crate::dock::registry::RestorationGate::default())
         // Task 5 (tuxlink-686): managed PositionArbiter — shared by config_set_grid
         // and (Task 11) the gpsd task. Built above the Builder so the binding
         // remains available for Task 11's clone. `.clone()` here increments the
@@ -2856,6 +2958,66 @@ pub fn run() {
             // from both places (`quit_with_routines_gate`) rather than one
             // calling into the other.
             //
+            // tuxlink-dmwte Task 4 (spec §3, behavior 4): the pop-* close-intent
+            // round-trip. Catch `CloseRequested` for a dockable surface's window
+            // BEFORE the main arm: prevent the close, emit a close-intent to that
+            // window's webview (it flushes its continuity token via
+            // surface_dock_back — ✕ availability semantics), and arm a 1.5 s
+            // liveness timeout that docks back with `None` if the webview never
+            // answered (a hung/dead webview cannot wedge the close). The webview's
+            // own dock-back normally lands first, leaving the surface `Docked`, so
+            // the timeout finds a no-op. This is the backend-intercept pattern
+            // (the main window's proven close path), NOT compose's frontend
+            // onCloseRequested, which depends on a live webview (adrev R3-F4).
+            //
+            // Re-pop race (adrev Round-2): the fallback timer is guarded by the
+            // surface's pop generation, sampled HERE while the window is live and
+            // `Popped`. Without the guard, this timeline destroys a fresh window:
+            // WM-close arms the timer → the webview's own `surface_dock_back`
+            // lands (Docked, window destroyed) → the user re-pops within 1.5 s
+            // (a NEW window, generation bumped) → the stale timer fires, finds
+            // `Popped`, and its dock-back is EFFECTIVE — destroying the freshly
+            // re-popped window and clearing its new continuity token. The
+            // `Docked`-only no-op suppression does not cover that (the surface IS
+            // `Popped` again). `dock_back_if_generation` docks back ONLY if the
+            // generation still matches, atomically under the registry mutex.
+            if let Some(surface) = crate::dock::SurfaceId::from_window_label(window.label()) {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    use tauri::Emitter as _;
+                    use tauri::Manager as _;
+                    api.prevent_close();
+                    let app_handle = window.app_handle().clone();
+                    let armed_pop_generation = {
+                        let registry =
+                            app_handle.state::<crate::dock::registry::DockRegistry>();
+                        registry.pop_generation(surface)
+                    };
+                    let _ = app_handle.emit_to(
+                        surface.window_label(),
+                        "dock:close-intent",
+                        serde_json::json!({ "surface": surface }),
+                    );
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                        let registry = app_handle.state::<crate::dock::registry::DockRegistry>();
+                        // If the webview already docked back, the surface is
+                        // `Docked` and this is a no-op. If it docked back AND was
+                        // re-popped, the generation no longer matches and this is
+                        // ALSO a no-op — the fresh window survives (adrev Round-2).
+                        crate::dock::commands::dock_back_if_generation(
+                            &app_handle,
+                            &registry,
+                            surface,
+                            None,
+                            armed_pop_generation,
+                        );
+                    });
+                }
+                // A pop-* window's close is fully handled here; never fall through
+                // to the main-window / default arms.
+                return;
+            }
+
             // Guard on "main" so Task 14's compose windows close normally (they
             // need real close + unsaved-draft handling, not hide-to-tray).
             if window.label() == "main" {
@@ -3020,6 +3182,12 @@ pub fn run() {
             crate::compose_window::compose_close_self,  // tuxlink-h2y (self-only close)
             crate::help_window::help_window_open,       // tuxlink-0gsy (spec §3)
             crate::stations_window::stations_window_open, // tuxlink-2phz (env panel pop-out)
+            // tuxlink-dmwte Task 4 (spec §3/§5): dockable-surfaces registry commands.
+            crate::dock::commands::surface_pop_out,
+            crate::dock::commands::surface_dock_back,
+            crate::dock::commands::surface_focus,
+            crate::dock::commands::dock_state_get,
+            crate::dock::commands::shell_mounted,
             crate::theme_state::theme_get_scheme,       // tuxlink-0gsy (spec §8.2)
             crate::theme_state::theme_broadcast_scheme, // tuxlink-0gsy (spec §8.2)
             crate::search::commands::docs_search,       // tuxlink-0gsy (spec §9.3)
@@ -3032,6 +3200,7 @@ pub fn run() {
             crate::ui_commands::aprs_config_set,      // tuxlink-2f2n (APRS config write)
             crate::ui_commands::aprs_listen_start,    // tuxlink-2f2n (start APRS engine)
             crate::ui_commands::aprs_listen_stop,     // tuxlink-2f2n (stop APRS engine)
+            crate::ui_commands::aprs_status,          // tuxlink-dmwte (live transport truth for remounted strips)
             crate::ui_commands::aprs_send,            // tuxlink-2f2n (queue APRS message)
             crate::ui_commands::aprs_abort,           // tuxlink-2f2n (abort in-flight APRS TX)
             crate::identity::commands::identity_list,        // tuxlink-7iy2 (Phase 2 identity CRUD)

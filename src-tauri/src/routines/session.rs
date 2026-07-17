@@ -527,6 +527,18 @@ impl RoutinesState {
             .count()
     }
 
+    /// How many live runs are parked `AwaitingConsent` — a subset of
+    /// [`Self::live_run_count`] (a parked run is non-terminal, so it is also
+    /// "live"). The graceful-quit prompt (tuxlink-dmwte task 8, spec §6, adrev
+    /// R4-F11) names these distinctly ("waiting for transmit consent") so the
+    /// operator knows a run is one Confirm from its purpose before killing it.
+    pub fn awaiting_consent_run_count(&self) -> usize {
+        lock(&self.runs)
+            .values()
+            .filter(|e| e.state == RunState::AwaitingConsent)
+            .count()
+    }
+
     /// Cancel EVERY currently non-terminal run (Task 6c, spec §8's
     /// graceful-quit path: "...stop them and exit?" resolves to cancelling
     /// every live run as CANCELLED). Terminal entries are left untouched.

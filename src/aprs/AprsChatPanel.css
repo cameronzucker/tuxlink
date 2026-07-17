@@ -38,6 +38,34 @@
   color: var(--modem-accent, #4ade80);
 }
 
+/* Pop the APRS Chat surface out to its own window (tuxlink-dmwte, spec §5) —
+   text-labeled "↗ Pop out" pinned to the right end of the header (never
+   icon-only, spec §1). `white-space: nowrap` keeps the glyph + label on one
+   line at the ~400px dock width. */
+.aprs-chat-popout {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--modem-accent) 30%, transparent);
+  border-radius: 5px;
+  color: var(--modem-accent, #4ade80);
+}
+.aprs-chat-popout:hover {
+  background: var(--modem-accent-soft, rgba(74, 222, 128, 0.1));
+}
+.aprs-chat-popout-glyph {
+  font-size: 13px;
+  line-height: 1;
+}
+
 /* Listening indicator — honest state. */
 .aprs-listening {
   display: inline-flex;

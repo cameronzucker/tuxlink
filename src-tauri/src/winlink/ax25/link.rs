@@ -69,6 +69,24 @@ pub enum KissLinkConfig {
     UvproNative { mac: String },
 }
 
+impl KissLinkConfig {
+    /// The frontend-facing wire string for this link kind — the SAME token the
+    /// `PacketConfigDto.link_kind` field carries and the TS `PacketLinkKind` union
+    /// matches on (`"Tcp"` | `"Serial"` | `"Bluetooth"` | `"Managed"` |
+    /// `"UvproNative"`). Reused (not a parallel enum) so the APRS engine can record
+    /// the live transport in exactly the vocabulary the frontend already teardown-
+    /// keys off (tuxlink-dmwte: authoritative transport for a remounted connect strip).
+    pub fn wire_kind(&self) -> &'static str {
+        match self {
+            KissLinkConfig::Tcp { .. } => "Tcp",
+            KissLinkConfig::Serial { .. } => "Serial",
+            KissLinkConfig::Bluetooth { .. } => "Bluetooth",
+            KissLinkConfig::ManagedDireWolf { .. } => "Managed",
+            KissLinkConfig::UvproNative { .. } => "UvproNative",
+        }
+    }
+}
+
 /// A bidirectional, thread-movable byte stream — the KISS pipe the AX.25 state
 /// machine reads framed bytes from and writes framed bytes to. Blanket-implemented
 /// for any `Read + Write + Send` (so `TcpStream`, a `serialport` handle, and the

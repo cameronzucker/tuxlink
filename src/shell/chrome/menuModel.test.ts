@@ -9,7 +9,11 @@ const EXPECTED_IDS = [
   // tuxlink-lqw2: the Session + Mailbox top menus were removed in the pre-Alpha
   // declutter; the surviving Verify CMS Connection moved into Tools (below).
   // routines plan-5 Task 7: the Routines top menu sits between Message and View.
-  'menu:routines:open', 'menu:routines:new',
+  // tuxlink-dmwte task 8: `menu:routines:dockback` is a STATIC tree member
+  // (MenuBar shows it only while Routines is popped — the dynamic gating is
+  // MenuBar-level, exactly like the `badges` special case). Its id is always in
+  // the vocabulary regardless of dock state.
+  'menu:routines:open', 'menu:routines:new', 'menu:routines:dockback',
   'menu:view:status_bar', 'menu:view:radio_panel',
   'menu:view:scheme:default',
   'menu:view:scheme:github-dark',
@@ -57,9 +61,12 @@ describe('menu model', () => {
     expect(routinesIdx).toBe(viewIdx - 1);
 
     const routinesMenu = MENU_TREE.find((m) => m.label === 'Routines');
+    // tuxlink-dmwte task 8: the "Dock Routines back" item is a static tree
+    // member; MenuBar filters it out unless the Routines surface is popped.
     expect(routinesMenu?.items).toEqual([
       { id: 'menu:routines:open', label: 'Routines' },
       { id: 'menu:routines:new', label: 'New Routine…' },
+      { id: 'menu:routines:dockback', label: 'Dock Routines back' },
     ]);
   });
 

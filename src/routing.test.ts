@@ -5,7 +5,14 @@
 // that keeps compose windows from listening for menu:file:new.
 
 import { describe, it, expect } from 'vitest';
-import { parseComposeRoute, parseHelpRoute, parseLoggingRoute, parseStationsRoute } from './routing';
+import {
+  parseComposeRoute,
+  parseHelpRoute,
+  parseLoggingRoute,
+  parseStationsRoute,
+  parsePopRoute,
+  isSecondaryWindow,
+} from './routing';
 
 describe('parseComposeRoute', () => {
   it('matches /compose/<draftId> and returns the draftId', () => {
@@ -112,5 +119,32 @@ describe('parseStationsRoute', () => {
   });
   it('returns false for /stations/extra', () => {
     expect(parseStationsRoute('/stations/extra')).toBe(false);
+  });
+});
+
+// bd tuxlink-dmwte, spec §3 wire table: the three pop-out routes for
+// Routines / Tac Map / APRS Chat. Same shape as parseComposeRoute, but the
+// map is literal — the route segment drops the underscore irregularly
+// (tacmap, aprschat), the surface id keeps it.
+describe('parsePopRoute', () => {
+  it('maps the three pop routes to surface ids (spec §3 table — underscore dropped in route, kept in id)', () => {
+    expect(parsePopRoute('/pop/routines')).toBe('routines');
+    expect(parsePopRoute('/pop/tacmap')).toBe('tac_map');
+    expect(parsePopRoute('/pop/aprschat')).toBe('aprs_chat');
+    expect(parsePopRoute('/pop/tacmap/')).toBe('tac_map');       // trailing slash tolerated
+    expect(parsePopRoute('/pop/tac_map')).toBeNull();            // the id form is NOT a route
+    expect(parsePopRoute('/pop')).toBeNull();
+    expect(parsePopRoute('/')).toBeNull();
+  });
+});
+
+// adrev Codex-9: pop windows must not run main-only side effects (first-paint
+// emission, wizard probing). isSecondaryWindow is the shared guard predicate.
+describe('isSecondaryWindow', () => {
+  it('covers all five secondary kinds (adrev Codex-9: pop windows must not run main-only side effects)', () => {
+    for (const p of ['/compose/d1', '/help', '/logging', '/stations', '/pop/routines', '/pop/tacmap', '/pop/aprschat']) {
+      expect(isSecondaryWindow(p)).toBe(true);
+    }
+    expect(isSecondaryWindow('/')).toBe(false);
   });
 });

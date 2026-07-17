@@ -64,13 +64,23 @@ impl NativeDriver {
         }
     }
 
-    /// Apply a queued command (the native analogue of the KISS `run()` command arm).
+    /// Apply a queued command (the native analogue of the KISS `run()` command
+    /// arm — engine.rs's `apply_command`). The own-send echo (Task 5, spec §7)
+    /// fires HERE on Send/Broadcast dequeue, exactly as on the KISS path: spec
+    /// §7's "reconstructible from backend events alone" invariant is
+    /// transport-general, so the UV-Pro native chat path must echo too.
+    /// `emit_sent_echo` is the single shared `SentMsgDto` construction site;
+    /// it stamps `at_ms` from the wall clock internally (the `now_ms`
+    /// parameter here is `Instant`-relative to driver start, same as the KISS
+    /// driver's, and is deliberately NOT the `at_ms` source on either path).
     fn apply_command(&mut self, cmd: TxCommand, now_ms: u64) {
         match cmd {
             TxCommand::Send { dest, text, msgid } => {
+                self.engine.emit_sent_echo(&msgid, &dest, &text);
                 self.engine.enqueue_send(&dest, &text, &msgid, now_ms)
             }
             TxCommand::Broadcast { text, local_id } => {
+                self.engine.emit_sent_echo(&local_id, "", &text);
                 self.engine.enqueue_broadcast(&text, &local_id, now_ms)
             }
             TxCommand::Abort => self.engine.abort(),
@@ -97,6 +107,7 @@ pub fn run_native(
     cmd_rx: Receiver<TxCommand>,
     listening: Arc<AtomicBool>,
     abort: Arc<AtomicBool>,
+    transport: Arc<std::sync::Mutex<Option<String>>>,
 ) {
     let started = Instant::now();
     let now_ms = || started.elapsed().as_millis() as u64;
@@ -131,12 +142,17 @@ pub fn run_native(
     driver.engine.abort();
     listening.store(false, Ordering::SeqCst);
     driver.engine.set_listening(false);
+    // Self-termination (session disconnect / channel close): forget the transport
+    // at the SAME point `listening` goes false, so `aprs_status` can never observe
+    // `{listening:false, transport:Some}` (tuxlink-dmwte review loop-4 F6). `stop`
+    // also clears unconditionally; both converging on `None` is idempotent.
+    *transport.lock().unwrap() = None;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::winlink::aprs::engine::{EventSink, InboundMsg, InboundPos, StateChange};
+    use crate::winlink::aprs::engine::{EventSink, InboundMsg, InboundPos, SentMsgDto, StateChange};
     use crate::winlink::aprs::telemetry_store::InboundTelemetry;
     use crate::winlink::aprs::weather::WeatherReport;
     use crate::winlink::aprs::identity::AprsIdentity;
@@ -146,12 +162,16 @@ mod tests {
     #[derive(Default, Clone)]
     struct RecSink {
         msgs: Arc<Mutex<Vec<InboundMsg>>>,
+        sent: Arc<Mutex<Vec<SentMsgDto>>>,
         states: Arc<Mutex<Vec<StateChange>>>,
         positions: Arc<Mutex<Vec<InboundPos>>>,
     }
     impl EventSink for RecSink {
         fn emit_message(&self, ev: InboundMsg) {
             self.msgs.lock().unwrap().push(ev);
+        }
+        fn emit_sent(&self, ev: SentMsgDto) {
+            self.sent.lock().unwrap().push(ev);
         }
         fn emit_state(&self, ev: StateChange) {
             self.states.lock().unwrap().push(ev);
@@ -250,6 +270,49 @@ mod tests {
         assert_eq!(sent.len(), 1);
         let decoded = Frame::decode(&sent[0]).unwrap();
         assert_eq!(decoded.info, b":KK6XYZ   :hi{07");
+    }
+
+    // -- Own-send echo (tuxlink-dmwte Task 5, spec §7) — native-path parity
+    // with engine.rs's KISS-driver `apply_command` tests. --------------------
+
+    #[test]
+    fn native_dequeue_of_send_emits_own_send_echo_with_minted_msgid() {
+        let sink = RecSink::default();
+        let engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        let mut nd = NativeDriver::new(engine, Box::new(RecTx::default()));
+        nd.apply_command(
+            TxCommand::Send {
+                dest: "KK6XYZ".into(),
+                text: "hello".into(),
+                msgid: "07".into(),
+            },
+            0,
+        );
+        let sent = sink.sent.lock().unwrap();
+        assert_eq!(sent.len(), 1, "exactly one own-send echo for one dequeued Send");
+        assert_eq!(sent[0].msgid, "07", "echo carries the already-minted msgid");
+        assert_eq!(sent[0].addressee, "KK6XYZ");
+        assert_eq!(sent[0].text, "hello");
+        assert!(sent[0].at_ms > 0, "at_ms is wall-clock, not the driver's relative now_ms (0 here)");
+    }
+
+    #[test]
+    fn native_dequeue_of_broadcast_emits_echo_with_blank_addressee() {
+        let sink = RecSink::default();
+        let engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        let mut nd = NativeDriver::new(engine, Box::new(RecTx::default()));
+        nd.apply_command(
+            TxCommand::Broadcast {
+                text: "ALCON test".into(),
+                local_id: "bX".into(),
+            },
+            0,
+        );
+        let sent = sink.sent.lock().unwrap();
+        assert_eq!(sent.len(), 1, "exactly one own-send echo for one dequeued Broadcast");
+        assert_eq!(sent[0].msgid, "bX", "echo carries the UI-only local_id as msgid");
+        assert_eq!(sent[0].addressee, "", "broadcast normalizes to a blank addressee");
+        assert_eq!(sent[0].text, "ALCON test");
     }
 
     #[test]

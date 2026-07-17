@@ -105,6 +105,35 @@ pub struct InboundMsg {
     pub kind: MsgKind,
 }
 
+/// Own-send echo for one of OUR outgoing messages, emitted at driver-loop
+/// Send/Broadcast dequeue (Task 5, spec §7 "Data continuity across the
+/// move") — the same acceptance point the frontend's optimistic local
+/// append fires at today. Every window's chat feed is reconstructible from
+/// backend events alone; this event is what lets a window OTHER than the
+/// sender's see the operator's own transmitted traffic (e.g. after a
+/// dock-back destroyed the popped window's local-only history).
+///
+/// Wire field names are literal snake_case (`at_ms`, NOT `atMs`) — this DTO
+/// intentionally does NOT carry `#[serde(rename_all = "camelCase")]`, unlike
+/// [`InboundMsg`]/[`StateChange`]/[`InboundPos`] above, per the pinned wire
+/// contract (spec §7 / plan Task 5).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SentMsgDto {
+    /// The tracking id `aprs_send` already returns to the invoking window: a
+    /// real wire msgid for a directed send, or the `b`-prefixed UI-only
+    /// handle for a broadcast.
+    pub msgid: String,
+    /// "" = broadcast — matches [`InboundMsg::addressee`]'s convention so the
+    /// frontend's "→ all" rendering applies uniformly to heard AND own-sent
+    /// broadcasts.
+    pub addressee: String,
+    pub text: String,
+    /// Backend wall-clock epoch milliseconds at acceptance (NOT the driver's
+    /// Instant-relative `now_ms` — that has no meaning outside one driver
+    /// run and cannot serve as a displayed message timestamp).
+    pub at_ms: u64,
+}
+
 /// Delivery lifecycle of one of OUR outgoing messages.
 ///
 /// Wire forms (camelCase) are exactly `"sent"`, `"acked"`, `"timedOut"`,
@@ -187,6 +216,11 @@ pub struct InboundPos {
 /// a Tauri event emitter; tests implement it with a recording sink.
 pub trait EventSink: Send {
     fn emit_message(&self, ev: InboundMsg);
+    /// Emit the own-send echo (`aprs-message:sent`) for an accepted outgoing
+    /// message — fired at driver-loop Send/Broadcast dequeue (Task 5, spec
+    /// §7). No default impl: every sink (production Tauri emitter, every
+    /// test double) must decide explicitly whether/how to record this.
+    fn emit_sent(&self, ev: SentMsgDto);
     fn emit_state(&self, ev: StateChange);
     fn emit_listening(&self, on: bool);
     /// Emit a position report decoded from a heard frame (`aprs-position:new`).
@@ -562,6 +596,26 @@ impl AprsEngine {
         self.sink.emit_listening(on);
     }
 
+    /// Build + emit the own-send echo (Task 5, spec §7) — the SINGLE
+    /// `SentMsgDto` construction site for the production paths, shared by
+    /// BOTH driver loops' per-command dispatch (`apply_command` below for
+    /// the KISS link; `NativeDriver::apply_command` for the UV-Pro native
+    /// path). Called at the exact point a Send/Broadcast command is
+    /// dequeued: the message is accepted and its msgid/local-id already
+    /// exists. `at_ms` is stamped HERE from the wall clock
+    /// (`now_epoch_ms`), never from the drivers' `Instant`-relative
+    /// `now_ms` values (those are driver-start-relative and carry no
+    /// wall-clock meaning). `addressee` is "" for a broadcast (matches
+    /// `InboundMsg`'s blank-addressee-is-broadcast convention).
+    pub fn emit_sent_echo(&self, msgid: &str, addressee: &str, text: &str) {
+        self.sink.emit_sent(SentMsgDto {
+            msgid: msgid.to_string(),
+            addressee: addressee.to_string(),
+            text: text.to_string(),
+            at_ms: now_epoch_ms(),
+        });
+    }
+
     fn addressed_to_us(&self, addressee: &str) -> bool {
         addressee == fmt_callsign(&self.identity.source)
     }
@@ -665,6 +719,19 @@ fn text_hash(text: &str) -> String {
     format!("h{:x}", h.finish())
 }
 
+/// Wall-clock epoch milliseconds "now", for [`SentMsgDto::at_ms`]. Distinct
+/// from the driver's `now_ms` closures (`started.elapsed().as_millis()`),
+/// which are `Instant`-relative to driver start and carry no wall-clock
+/// meaning — they gate retransmit/dedupe timing, not a frontend-displayed
+/// timestamp. Mirrors the existing `utc_now_ms` idiom (`ft8/traits.rs`).
+fn now_epoch_ms() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0)
+}
+
 // ---------------------------------------------------------------------------
 // Async lifecycle (Task 10): managed `AprsState`, the blocking driver, and the
 // Tauri event sink.
@@ -706,6 +773,18 @@ struct AprsHandle {
 pub struct AprsState {
     inner: std::sync::Mutex<Option<AprsHandle>>,
     listening: Arc<AtomicBool>,
+    /// The wire-kind token of the transport the LIVE listener came up on
+    /// (`KissLinkConfig::wire_kind()`: `"Tcp"` / `"Serial"` / `"Bluetooth"` /
+    /// `"UvproNative"`), or `None` when not listening. This is the backend truth
+    /// the disconnect path keys teardown off — a popped/remounted connect strip
+    /// no longer has the ref that recorded the connect, so it asks `aprs_status`
+    /// which transport is live instead of leaking the session (tuxlink-dmwte).
+    /// Set on a successful `start`/`start_native`, cleared on `stop` AND on the
+    /// driver's own self-termination (link death / channel close) — a clone of
+    /// this `Arc` travels into the blocking driver so its teardown can forget the
+    /// transport at the same point it flips `listening` false, closing the
+    /// `{listening:false, transport:Some}` window (tuxlink-dmwte review loop-4 F6).
+    transport: Arc<std::sync::Mutex<Option<String>>>,
     counter: AtomicU64,
     in_flight: Arc<AtomicUsize>,
 }
@@ -713,6 +792,34 @@ pub struct AprsState {
 impl AprsState {
     pub fn is_listening(&self) -> bool {
         self.listening.load(Ordering::SeqCst)
+    }
+
+    /// Record the transport the live listener came up on (its
+    /// `KissLinkConfig::wire_kind()` token). Called by `start`/`start_native` on a
+    /// successful connect; the value is what `aprs_status` reports to the frontend.
+    pub fn set_transport(&self, wire_kind: impl Into<String>) {
+        *self.transport.lock().unwrap() = Some(wire_kind.into());
+    }
+
+    /// Forget the live transport (listener torn down). Called by `stop`.
+    pub fn clear_transport(&self) {
+        *self.transport.lock().unwrap() = None;
+    }
+
+    /// The wire-kind token of the currently-live transport, or `None` when not
+    /// listening. The authoritative answer to "what did we connect on?" for a
+    /// connect strip that lost its local ref to a pop-out/remount (tuxlink-dmwte).
+    pub fn transport(&self) -> Option<String> {
+        self.transport.lock().unwrap().clone()
+    }
+
+    /// A clone of the shared transport handle, handed to the blocking driver so
+    /// its self-termination teardown can clear the transport (the same clone the
+    /// driver sets to `None` alongside `listening.store(false)`). Cloning the
+    /// `Arc` keeps every reader — `transport()` / `aprs_status` — pointed at the
+    /// one cell (tuxlink-dmwte review loop-4 F6).
+    fn transport_handle(&self) -> Arc<std::sync::Mutex<Option<String>>> {
+        self.transport.clone()
     }
 
     /// Open the link, build the engine + sink, spawn the blocking driver, store the handle.
@@ -740,9 +847,17 @@ impl AprsState {
         });
         let engine = AprsEngine::new(identity, sink);
         let (cmd_tx, cmd_rx) = mpsc::channel::<TxCommand>();
+        // Record the live transport in the frontend's vocabulary so a remounted
+        // connect strip can query it for teardown (tuxlink-dmwte). Set BEFORE the
+        // spawn so the driver's self-termination clear (run's teardown) can never
+        // race ahead of the set and leave a stale token behind.
+        self.set_transport(cfg.wire_kind());
         let listening = self.listening.clone();
         let abort_for_task = abort.clone();
-        tokio::task::spawn_blocking(move || run(link, engine, cmd_rx, listening, abort_for_task));
+        let transport = self.transport_handle();
+        tokio::task::spawn_blocking(move || {
+            run(link, engine, cmd_rx, listening, abort_for_task, transport)
+        });
         *self.inner.lock().unwrap() = Some(AprsHandle { cmd_tx, abort });
         Ok(())
     }
@@ -778,8 +893,16 @@ impl AprsState {
         let engine = AprsEngine::new(identity, sink);
         let (cmd_tx, cmd_rx) = mpsc::channel::<TxCommand>();
         let tx: Box<dyn crate::winlink::aprs::native_driver::AprsFrameTx> = Box::new(session);
+        // The native path is always the UV-Pro GAIA transport; record it in the
+        // frontend's `PacketLinkKind` vocabulary (matches
+        // `KissLinkConfig::UvproNative.wire_kind()`) so a remounted connect strip
+        // knows to tear the session down via `uvpro_disconnect` (tuxlink-dmwte).
+        // Set BEFORE the spawn so the driver's self-termination clear can't race
+        // ahead of the set (same ordering as `start`).
+        self.set_transport("UvproNative");
         let listening = self.listening.clone();
         let abort_for_task = abort.clone();
+        let transport = self.transport_handle();
         tokio::task::spawn_blocking(move || {
             crate::winlink::aprs::native_driver::run_native(
                 aprs_rx,
@@ -788,6 +911,7 @@ impl AprsState {
                 cmd_rx,
                 listening,
                 abort_for_task,
+                transport,
             )
         });
         *self.inner.lock().unwrap() = Some(AprsHandle { cmd_tx, abort });
@@ -798,6 +922,9 @@ impl AprsState {
         if let Some(h) = self.inner.lock().unwrap().take() {
             h.abort.store(true, Ordering::SeqCst);
         }
+        // Forget the live transport regardless of whether a handle was present, so
+        // `aprs_status` reports `transport: None` once torn down (tuxlink-dmwte).
+        self.clear_transport();
     }
 
     /// Send an APRS message. `dest = Some(callsign)` is a **directed** message
@@ -869,6 +996,31 @@ fn mint_msgid(n: u64) -> String {
     String::from_utf8(s).unwrap()
 }
 
+/// Apply one dequeued driver command to the engine — the KISS analogue of
+/// `native_driver::NativeDriver::apply_command`. Extracted out of `run`'s
+/// inline match so the Send/Broadcast dequeue point (where the own-send echo
+/// fires, Task 5 / spec §7) is unit-testable without a live `ByteLink`.
+///
+/// The echo fires HERE, before delegating to `enqueue_send`/`enqueue_broadcast`:
+/// the command was accepted off the channel and its msgid/local-id already
+/// exists (minted upstream in `AprsState::send`), which is the acceptance
+/// point the spec pins — independent of whether the subsequent frame-encode
+/// inside `enqueue_*` later succeeds (a same-tick `TimedOut` on encode
+/// failure is a real, if rare, possible follow-on transition).
+fn apply_command(engine: &mut AprsEngine, cmd: TxCommand, now_ms: u64) {
+    match cmd {
+        TxCommand::Send { dest, text, msgid } => {
+            engine.emit_sent_echo(&msgid, &dest, &text);
+            engine.enqueue_send(&dest, &text, &msgid, now_ms)
+        }
+        TxCommand::Broadcast { text, local_id } => {
+            engine.emit_sent_echo(&local_id, "", &text);
+            engine.enqueue_broadcast(&text, &local_id, now_ms)
+        }
+        TxCommand::Abort => engine.abort(),
+    }
+}
+
 /// The blocking driver. Runs on `spawn_blocking`; owns the link + engine; polls
 /// the link, drains commands, drives the retransmit clock; exits on abort/EOF/error.
 fn run(
@@ -877,6 +1029,7 @@ fn run(
     cmd_rx: mpsc::Receiver<TxCommand>,
     listening: Arc<AtomicBool>,
     abort: Arc<AtomicBool>,
+    transport: Arc<std::sync::Mutex<Option<String>>>,
 ) {
     let started = std::time::Instant::now();
     let now_ms = || started.elapsed().as_millis() as u64;
@@ -902,15 +1055,7 @@ fn run(
             Err(_) => break,
         }
         while let Ok(cmd) = cmd_rx.try_recv() {
-            match cmd {
-                TxCommand::Send { dest, text, msgid } => {
-                    engine.enqueue_send(&dest, &text, &msgid, now_ms())
-                }
-                TxCommand::Broadcast { text, local_id } => {
-                    engine.enqueue_broadcast(&text, &local_id, now_ms())
-                }
-                TxCommand::Abort => engine.abort(),
-            }
+            apply_command(&mut engine, cmd, now_ms());
         }
         for frame in engine.tick(now_ms()) {
             let _ = link.write_all(&frame);
@@ -923,6 +1068,11 @@ fn run(
     engine.abort();
     listening.store(false, Ordering::SeqCst);
     engine.set_listening(false);
+    // Self-termination (link close / read error / stop): forget the transport at
+    // the SAME point `listening` goes false, so `aprs_status` can never observe
+    // `{listening:false, transport:Some}` (tuxlink-dmwte review loop-4 F6). `stop`
+    // also clears unconditionally; both converging on `None` is idempotent.
+    *transport.lock().unwrap() = None;
 }
 
 /// `EventSink` that forwards engine events to the UI via Tauri events, and
@@ -935,6 +1085,12 @@ pub struct TauriEventSink {
 impl EventSink for TauriEventSink {
     fn emit_message(&self, ev: InboundMsg) {
         let _ = self.app.emit("aprs-message:new", &ev);
+    }
+    fn emit_sent(&self, ev: SentMsgDto) {
+        // Broadcast to every window (Task 5, spec §7) — same emit shape as
+        // `aprs-message:new`; the sending window dedupes by msgid against
+        // its own optimistic local append, every other window appends fresh.
+        let _ = self.app.emit("aprs-message:sent", &ev);
     }
     fn emit_state(&self, ev: StateChange) {
         if ev.state.is_terminal() {
@@ -974,6 +1130,7 @@ mod tests {
     #[derive(Default, Clone)]
     struct RecSink {
         msgs: Arc<Mutex<Vec<InboundMsg>>>,
+        sent: Arc<Mutex<Vec<SentMsgDto>>>,
         states: Arc<Mutex<Vec<StateChange>>>,
         positions: Arc<Mutex<Vec<InboundPos>>>,
         telemetry: Arc<Mutex<Vec<InboundTelemetry>>>,
@@ -982,6 +1139,9 @@ mod tests {
     impl EventSink for RecSink {
         fn emit_message(&self, ev: InboundMsg) {
             self.msgs.lock().unwrap().push(ev);
+        }
+        fn emit_sent(&self, ev: SentMsgDto) {
+            self.sent.lock().unwrap().push(ev);
         }
         fn emit_state(&self, ev: StateChange) {
             self.states.lock().unwrap().push(ev);
@@ -1363,6 +1523,81 @@ mod tests {
         assert!(!st.is_listening());
     }
 
+    #[test]
+    fn aprs_state_starts_with_no_transport() {
+        let st = AprsState::default();
+        assert_eq!(st.transport(), None);
+    }
+
+    #[test]
+    fn set_transport_records_the_wire_kind() {
+        let st = AprsState::default();
+        st.set_transport("UvproNative");
+        assert_eq!(st.transport().as_deref(), Some("UvproNative"));
+        // A later connect on a different transport overwrites, not appends.
+        st.set_transport("Tcp");
+        assert_eq!(st.transport().as_deref(), Some("Tcp"));
+    }
+
+    #[test]
+    fn clear_transport_forgets_the_live_transport() {
+        let st = AprsState::default();
+        st.set_transport("Bluetooth");
+        assert_eq!(st.transport().as_deref(), Some("Bluetooth"));
+        st.clear_transport();
+        assert_eq!(st.transport(), None);
+    }
+
+    #[test]
+    fn stop_clears_the_transport() {
+        // `stop` is the disconnect path: it must forget the live transport even
+        // when no driver handle was ever stored (tuxlink-dmwte).
+        let st = AprsState::default();
+        st.set_transport("UvproNative");
+        st.stop();
+        assert_eq!(st.transport(), None);
+    }
+
+    #[test]
+    fn driver_self_termination_clears_transport_via_shared_handle() {
+        // The blocking driver (`run` / `run_native`) receives a clone of the
+        // shared transport handle and sets it to `None` at teardown — the same
+        // point it flips `listening` false — so a link death / channel close that
+        // stops the driver WITHOUT a `stop()` call still forgets the transport,
+        // and `aprs_status` can never report `{listening:false, transport:Some}`
+        // (tuxlink-dmwte review loop-4 F6). Exercise that clear through the same
+        // cloned handle the driver holds and confirm `AprsState::transport()`
+        // (what `aprs_status` reads) reflects it.
+        let st = AprsState::default();
+        st.set_transport("Tcp");
+        assert_eq!(st.transport().as_deref(), Some("Tcp"));
+        let handle = st.transport_handle();
+        // What the driver's teardown does on self-termination:
+        *handle.lock().unwrap() = None;
+        assert_eq!(st.transport(), None);
+    }
+
+    #[test]
+    fn kiss_link_wire_kind_matches_frontend_packet_link_kind() {
+        use crate::winlink::ax25::link::KissLinkConfig;
+        assert_eq!(
+            KissLinkConfig::Tcp { host: "127.0.0.1".into(), port: 8001 }.wire_kind(),
+            "Tcp"
+        );
+        assert_eq!(
+            KissLinkConfig::Serial { device: "/dev/ttyUSB0".into(), baud: 9600 }.wire_kind(),
+            "Serial"
+        );
+        assert_eq!(
+            KissLinkConfig::Bluetooth { mac: "38:D2:00:01:55:5C".into() }.wire_kind(),
+            "Bluetooth"
+        );
+        assert_eq!(
+            KissLinkConfig::UvproNative { mac: "38:D2:00:01:55:5C".into() }.wire_kind(),
+            "UvproNative"
+        );
+    }
+
     // -- Position RX (tuxlink-6vgt) -----------------------------------------
 
     /// Build a KISS-wrapped inbound UI frame with an arbitrary destination call
@@ -1643,5 +1878,77 @@ mod tests {
         let pos = sink.positions.lock().unwrap();
         assert_eq!(pos.len(), 2, "a precision change at the same spot must re-emit");
         assert_eq!(pos[1].ambiguity, 1);
+    }
+
+    // -- Own-send echo (tuxlink-dmwte Task 5, spec §7) ----------------------
+
+    #[test]
+    fn driver_dequeue_of_send_emits_own_send_echo_with_minted_msgid() {
+        // Drives a `TxCommand::Send` through `apply_command` — the exact
+        // extraction of `run()`'s per-command dispatch, i.e. the real
+        // driver-loop dequeue point — and asserts the echo carries the
+        // already-minted msgid, the destination as `addressee` (a directed
+        // send is never blank), and the text verbatim.
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        apply_command(
+            &mut engine,
+            TxCommand::Send {
+                dest: "KK6XYZ".into(),
+                text: "hello".into(),
+                msgid: "07".into(),
+            },
+            0,
+        );
+        let sent = sink.sent.lock().unwrap();
+        assert_eq!(sent.len(), 1, "exactly one own-send echo for one dequeued Send");
+        assert_eq!(sent[0].msgid, "07", "echo carries the already-minted msgid, not a fresh one");
+        assert_eq!(sent[0].addressee, "KK6XYZ", "a directed send's addressee is the destination call");
+        assert_eq!(sent[0].text, "hello");
+        assert!(sent[0].at_ms > 0, "at_ms is a real wall-clock stamp, not the driver's relative now_ms");
+
+        // The state-transition side effect (Sent) still fires too — the echo
+        // is additive, not a replacement for the existing delivery-state event.
+        assert!(sink
+            .states
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|s| s.msgid == "07" && s.state == DeliveryState::Sent));
+    }
+
+    #[test]
+    fn driver_dequeue_of_broadcast_emits_echo_with_blank_addressee() {
+        // A broadcast has no wire msgid — the echo must carry the UI-only
+        // `local_id` as `msgid` and normalize the (non-existent) recipient
+        // to "" (matching InboundMsg's blank-addressee-is-broadcast convention),
+        // NOT `None`/omitted.
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        apply_command(
+            &mut engine,
+            TxCommand::Broadcast {
+                text: "ALCON test".into(),
+                local_id: "bX".into(),
+            },
+            0,
+        );
+        let sent = sink.sent.lock().unwrap();
+        assert_eq!(sent.len(), 1, "exactly one own-send echo for one dequeued Broadcast");
+        assert_eq!(sent[0].msgid, "bX", "echo carries the UI-only local_id as msgid");
+        assert_eq!(sent[0].addressee, "", "broadcast normalizes to a blank addressee, not None/omitted");
+        assert_eq!(sent[0].text, "ALCON test");
+    }
+
+    #[test]
+    fn apply_command_abort_emits_no_echo() {
+        // Abort dequeues through the same match; it must not spuriously emit
+        // a sent-echo (only Send/Broadcast mint an echo).
+        let sink = RecSink::default();
+        let mut engine = AprsEngine::new(identity(), Box::new(sink.clone()));
+        engine.enqueue_send("KK6XYZ", "a", "01", 0);
+        sink.sent.lock().unwrap().clear(); // isolate: enqueue_send itself never echoes
+        apply_command(&mut engine, TxCommand::Abort, 0);
+        assert!(sink.sent.lock().unwrap().is_empty(), "Abort must not emit an own-send echo");
     }
 }

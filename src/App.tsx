@@ -2,8 +2,16 @@ import { useEffect, useState, lazy, Suspense, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import { AppShell } from './shell/AppShell';
+import { HintProvider } from './onboarding/HintProvider';
 import { ErrorBoundary } from './ErrorBoundary';
-import { parseComposeRoute, parseHelpRoute, parseLoggingRoute, parseStationsRoute } from './routing';
+import {
+  parseComposeRoute,
+  parseHelpRoute,
+  parseLoggingRoute,
+  parseStationsRoute,
+  parsePopRoute,
+  isSecondaryWindow,
+} from './routing';
 import './App.css';
 import './styles/controls.css';
 
@@ -32,6 +40,12 @@ const LoggingView = lazy(() =>
 const StationsView = lazy(() =>
   import('./aprs/StationsView').then((m) => ({ default: m.StationsView })),
 );
+// bd tuxlink-dmwte: separate Tauri webview for a popped-out dockable surface
+// (Routines / Tac Map / APRS Chat, spec §3/§4). Same lazy pattern — off the
+// main window's cold-start critical path. Task 7 replaces the placeholder.
+const PoppedSurfaceHost = lazy(() =>
+  import('./dock/PoppedSurfaceHost').then((m) => ({ default: m.PoppedSurfaceHost })),
+);
 
 // One QueryClient for the app lifetime. Mailbox/status queries live under it
 // (Task 12 useMailbox, Task 16 useStatus). Retry is off so a NotConfigured
@@ -57,14 +71,18 @@ export default function App() {
   const isLoggingWindow = parseLoggingRoute(window.location.pathname);
   // tuxlink-2phz: Station Data pop-out webview branch — single-instance, no params.
   const isStationsWindow = parseStationsRoute(window.location.pathname);
+  // bd tuxlink-dmwte: pop-out webview branch — /pop/<surface> (spec §3). Not
+  // single-instance (three distinct routes, one per surface), so this
+  // yields the resolved SurfaceId rather than a boolean.
+  const popSurface = parsePopRoute(window.location.pathname);
 
   // Amendment E.7.7: signal the backend that the main window's first paint is
   // complete so env-probe-runner can start its "after first paint" probes.
-  // Only the main window emits this — secondary windows (compose, help, logging)
-  // are not the target. Deferred via queueMicrotask so React's commit phase
-  // finishes before the IPC call.
+  // Only the main window emits this — secondary windows (compose, help,
+  // logging, stations, pop-*) are not the target. Deferred via queueMicrotask
+  // so React's commit phase finishes before the IPC call.
   useEffect(() => {
-    if (isComposeWindow || isHelpWindow || isLoggingWindow || isStationsWindow) return;
+    if (isSecondaryWindow(window.location.pathname)) return;
     queueMicrotask(() => {
       invoke('emit_first_paint_complete').catch(() => {
         /* silently no-op if backend unavailable (e.g., logging in Degraded mode) */
@@ -73,14 +91,15 @@ export default function App() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Wizard-completed probe — only meaningful for the main window. Skipped for
-  // compose windows (which render <Compose> below regardless), help windows
-  // (which render <HelpView> below regardless), and logging windows.
+  // every secondary window kind (compose, help, logging, stations, pop-*) —
+  // isSecondaryWindow is a superset of the four booleans this used to check
+  // individually; behavior for those four is unchanged (adrev Codex-9).
   useEffect(() => {
-    if (isComposeWindow || isHelpWindow || isLoggingWindow || isStationsWindow) return;
+    if (isSecondaryWindow(window.location.pathname)) return;
     invoke<boolean>('get_wizard_completed')
       .then(setWizardCompleted)
       .catch(() => setWizardCompleted(false));
-  }, [isComposeWindow, isHelpWindow, isLoggingWindow, isStationsWindow]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Select the branch's content first; QueryClientProvider wraps the whole
   // tree below so every branch has access to react-query context (tuxlink-n4hz:
@@ -120,6 +139,28 @@ export default function App() {
     content = (
       <Suspense fallback={<div data-testid="app-loading" />}>
         <StationsView />
+      </Suspense>
+    );
+  } else if (popSurface !== null) {
+    // Popped-surface webview: render <PoppedSurfaceHost> for /pop/<surface>
+    // (bd tuxlink-dmwte, spec §3/§4). Same lazy + Suspense pattern. Task 7
+    // replaces the placeholder body.
+    //
+    // HintProvider wraps the surface for the same reason QueryClientProvider
+    // wraps the whole tree (see the block comment above the branch switch): a
+    // popped surface renders shared components that call `useFirstOpenTip()` —
+    // AprsChatPanel's first-open tip is the concrete case — and `useHints()`
+    // THROWS with no provider, blanking the pop window (caught here by the
+    // WebKitGTK render smoke, tuxlink-dmwte task 11). The main window gets its
+    // HintProvider from AppShell; a popped window has no AppShell, so it must
+    // provide the ambient onboarding context the surface expects. By the time a
+    // surface is poppable the tour is long complete (config `tour_completed`),
+    // so no offer card appears here.
+    content = (
+      <Suspense fallback={<div data-testid="app-loading" />}>
+        <HintProvider>
+          <PoppedSurfaceHost surface={popSurface} />
+        </HintProvider>
       </Suspense>
     );
   } else if (wizardCompleted === null) {

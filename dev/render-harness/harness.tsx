@@ -89,6 +89,22 @@ import type { RadioPanelMode } from '../../src/radio/types';
 import type { CatalogEntry } from '../../src/catalog/types';
 import type { StatusBarData } from '../../src/shell/useStatus';
 import type { MessageMeta } from '../../src/mailbox/types';
+// Dockable surfaces (tuxlink-dmwte task 11, spec §4/§5/§10): the REAL popped
+// window shell + the docked-side pathway affordances, smoked on WebKitGTK.
+//   ?view=pop-routines | pop-tacmap | pop-aprschat   — the popped OS window
+//   ?view=vacated-routines | vacated-tacmap | vacated-aprschat — main-shell traces
+//   ?view=header-routines | header-tacmap | header-aprschat — docked ↗ affordances
+import { PoppedSurfaceHost } from '../../src/dock/PoppedSurfaceHost';
+import type { SurfaceId } from '../../src/dock/dockState';
+import { MenuBar } from '../../src/shell/chrome/MenuBar';
+import { AprsDockTabs } from '../../src/aprs/AprsDockTabs';
+import { AprsChatPanel } from '../../src/aprs/AprsChatPanel';
+import type { AprsConfigDto, ChannelMessage, HeardPosition } from '../../src/aprs/aprsTypes';
+// AprsPositionsMap (mounted inside the popped Tac Map surface) renders through
+// Leaflet; its stylesheet is otherwise pulled in only by LeafletMap.tsx, which
+// this harness does not mount. Import it directly so the popped map's controls
+// + tile pane are styled exactly as shipped.
+import 'leaflet/dist/leaflet.css';
 
 const params = new URLSearchParams(location.search);
 const grid = params.has('grid') ? params.get('grid') : 'CN87';
@@ -96,7 +112,19 @@ const view = (params.get('view') ?? 'home') as
   | 'home' | 'browse' | 'grib' | 'ribbon'
   | 'radio-ardop' | 'radio-vara' | 'radio-telnet'
   | 'elmer' | 'sparkline' | 'ft8' | 'finder'
-  | 'contacts' | 'favorites' | 'onboarding' | 'routines';
+  | 'contacts' | 'favorites' | 'onboarding' | 'routines'
+  | 'pop-routines' | 'pop-tacmap' | 'pop-aprschat'
+  | 'vacated-routines' | 'vacated-tacmap' | 'vacated-aprschat'
+  | 'header-routines' | 'header-tacmap' | 'header-aprschat';
+
+// tuxlink-dmwte task 11: the dockable-surfaces fixture families. `ROUTINES_FAMILY`
+// gates the big routines-data block below (the popped/header/vacated Routines
+// fixtures reuse the plan-5 routines_* canned reads); `DOCK_FAMILY` gates the
+// dock-surface shim additions (dock_state_get, aprs/packet/position reads, the
+// snapshot-handshake host answers).
+const ROUTINES_FAMILY =
+  view === 'routines' || view === 'pop-routines' || view === 'header-routines' || view === 'vacated-routines';
+const DOCK_FAMILY = view.startsWith('pop-') || view.startsWith('vacated-') || view.startsWith('header-');
 // ?running=1 drives a connected modem / open VARA transport so the running-state
 // footers render: ARDOP/VARA `Send/Receive` (primary) + the red `Stop`
 // (`radio-panel-btn-bad`) button. Without it the fixture pins state to STOPPED, so
@@ -249,15 +277,59 @@ const RESPONSES: Record<string, unknown> = {
 // lets a fixture synthesize the backend event a `listen()` call is waiting
 // on (e.g. HintProvider's 'onboarding:point-at') with no real Tauri event
 // bus. Harmless for every other view: they never look this map up.
-const capturedEventHandlers = new Map<string, (event: { payload: unknown }) => void>();
+//
+// A Set per event (not a single slot): a popped surface can have two live
+// subscribers to the SAME event — e.g. the popped APRS window mounts BOTH the
+// chat panel's `useAprsChat` and the status strip's `useAprsChat`, each
+// listening 'aprs-chat:snapshot'. A single-slot map would seed only the last
+// registrant and leave the other empty (tuxlink-dmwte task 11).
+type CapturedHandler = (event: { payload: unknown }) => void;
+const capturedEventHandlers = new Map<string, Set<CapturedHandler>>();
+
+/** Synthesize a backend event to every live subscriber (see above). */
+function deliverEvent(name: string, payload: unknown): void {
+  const set = capturedEventHandlers.get(name);
+  if (!set) return;
+  for (const handler of set) handler({ payload });
+}
+
+// The popped-window label `getCurrentWindow()` resolves to (spec §3 wire
+// table). PopTitleBar reads `__TAURI_INTERNALS__.metadata.currentWindow.label`
+// at mount via getCurrentWindow(); without it the pop fixtures throw before
+// first paint. The min/max handlers only fire on click, so the label just has
+// to exist and be plausible.
+const popWindowLabel =
+  view === 'pop-tacmap' ? 'pop-tacmap' : view === 'pop-aprschat' ? 'pop-aprschat' : view === 'pop-routines' ? 'pop-routines' : 'main';
 
 // Tauri v2 routes invoke() through window.__TAURI_INTERNALS__.invoke(cmd, args).
 (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
+  metadata: { currentWindow: { label: popWindowLabel } },
   invoke: (cmd: string, args?: Record<string, unknown>) =>
     new Promise((resolve, reject) => {
       if (cmd === 'plugin:event|listen' && typeof args?.event === 'string' && typeof args.handler === 'function') {
-        capturedEventHandlers.set(args.event, args.handler as (event: { payload: unknown }) => void);
+        const ev = args.event;
+        let set = capturedEventHandlers.get(ev);
+        if (!set) {
+          set = new Set<CapturedHandler>();
+          capturedEventHandlers.set(ev, set);
+        }
+        set.add(args.handler as CapturedHandler);
         resolve(0);
+        return;
+      }
+      if (cmd === 'plugin:event|emit' && typeof args?.event === 'string') {
+        // Snapshot-handshake host answer (spec §7): the harness plays the main
+        // shell, so a freshly-popped CLIENT window (Tac Map / APRS Chat) that
+        // requests a seed roster gets a populated feed back — the same
+        // request/answer path `useEnvStations` already ships. Without this the
+        // pop fixtures render an empty map + empty chat and the crush cases
+        // (long feed, dense pins) never appear.
+        if (args.event === 'aprs-positions:request-snapshot') {
+          setTimeout(() => deliverEvent('aprs-positions:snapshot', SEED_POSITIONS), 0);
+        } else if (args.event === 'aprs-chat:request-snapshot') {
+          setTimeout(() => deliverEvent('aprs-chat:snapshot', SEED_CHAT), 0);
+        }
+        resolve(null);
         return;
       }
       if (cmd in RESPONSES) {
@@ -273,6 +345,75 @@ const capturedEventHandlers = new Map<string, (event: { payload: unknown }) => v
     }),
   transformCallback: (cb: unknown) => cb,
 };
+
+// ---------------------------------------------------------------------------
+// Dockable surfaces (tuxlink-dmwte task 11) — seed rosters + shim reads.
+//
+// SEED_* are delivered as the host's snapshot-handshake answer (see the emit
+// branch above) so a popped Tac Map / APRS Chat window renders a live map +
+// populated feed — the crush cases (long feed rows, dense pins) that an empty
+// fixture would never surface. Run/fix data is realistic for the operator's
+// Seattle-area net (callsigns match the routines fixtures).
+// ---------------------------------------------------------------------------
+const DOCK_NOW_MS = Date.now();
+const SEED_POSITIONS: HeardPosition[] = [
+  { call: 'N0DAJ-9', lat: 47.6205, lon: -122.3493, symbolTable: '/', symbolCode: '>', comment: 'Mobile — I-5 NB', at: DOCK_NOW_MS - 42_000, ambiguity: 0, via: [] },
+  { call: 'KD7SSB', lat: 47.6512, lon: -122.3010, symbolTable: '/', symbolCode: '-', comment: 'Home QTH', at: DOCK_NOW_MS - 138_000, ambiguity: 0, via: [] },
+  { call: 'W7RMS-1', lat: 47.6039, lon: -122.3301, symbolTable: '/', symbolCode: '#', comment: 'Capitol Hill digi', at: DOCK_NOW_MS - 305_000, ambiguity: 0, via: [] },
+  { call: 'N7CPZ-7', lat: 47.5990, lon: -122.3350, symbolTable: '/', symbolCode: '[', comment: 'HT — walking', at: DOCK_NOW_MS - 20_000, ambiguity: 1, via: [] },
+];
+const SEED_CHAT: ChannelMessage[] = [
+  { id: '27', direction: 'in', from: 'N0DAJ', to: null, text: 'Net starts 1900 local on the 2m machine — check in early.', kind: 'message', msgid: '27', at: DOCK_NOW_MS - 640_000 },
+  { id: '28', direction: 'in', from: 'KD7SSB', to: 'N7CPZ', text: 'Copy — will check in from the north end of the county.', kind: 'message', msgid: '28', at: DOCK_NOW_MS - 470_000 },
+  { id: 'b12', direction: 'out', from: 'N7CPZ', to: null, text: 'Good morning net — N7CPZ mobile, monitoring the channel.', kind: 'message', msgid: 'b12', at: DOCK_NOW_MS - 300_000, state: 'acked', ackedAt: DOCK_NOW_MS - 296_000 },
+  { id: '29', direction: 'in', from: 'W7RMS', to: null, text: 'QSL, 59 into Seattle. Digi on Capitol Hill is hot today.', kind: 'message', msgid: '29', at: DOCK_NOW_MS - 118_000 },
+  { id: 'd3', direction: 'out', from: 'N7CPZ', to: 'KD7SSB', text: 'See you at the ARES meeting Thursday.', kind: 'message', msgid: 'd3', at: DOCK_NOW_MS - 28_000, state: 'sent' },
+];
+
+if (DOCK_FAMILY) {
+  // The dock registry snapshot PoppedSurfaceHost consumes at mount (spec §3).
+  // The named surface is `popped`; the Routines context carries the continuity
+  // token (spec §7) so a pop-routines&rview=designer fixture opens the designer
+  // with the token's view, exactly as a real pop-from-designer would.
+  const dockRoutineParam = params.get('routine') ?? '';
+  const routinesTokenState =
+    params.get('rview') === 'designer'
+      ? { view: { view: 'designer', routine: dockRoutineParam, tab: params.get('rtab') ?? 'design' } }
+      : { view: { view: 'dashboard' } };
+  const popped = (s: string) => (view === `pop-${s}` || view === `vacated-${s}` ? 'popped' : 'docked');
+  RESPONSES.dock_state_get = {
+    surfaces: { routines: popped('routines'), tac_map: popped('tacmap'), aprs_chat: popped('aprschat') },
+    context: { routines: { foreground: false, state: routinesTokenState }, tac_map: null, aprs_chat: null },
+  };
+  // Surface-hook mount-time reads (all disconnected/idle — action calls fire
+  // only on click and reject harmlessly).
+  RESPONSES.aprs_config_get = { sourceSsid: 7, tocall: 'APTUX0', path: 'WIDE1-1,WIDE2-1' } satisfies AprsConfigDto;
+  RESPONSES.aprs_config_set = null;
+  RESPONSES.packet_config_get = {
+    ssid: 7,
+    listenDefault: true,
+    linkKind: 'Serial',
+    tcpHost: null,
+    tcpPort: null,
+    serialDevice: '/dev/ttyUSB0',
+    serialBaud: 9600,
+    btMac: null,
+  };
+  RESPONSES.packet_config_set = null;
+  RESPONSES.aprs_listen_start = null;
+  RESPONSES.aprs_listen_stop = null;
+  RESPONSES.uvpro_connect = null;
+  RESPONSES.uvpro_disconnect = null;
+  RESPONSES.backend_status = null;
+  RESPONSES.position_status = {
+    gps_state: 'BroadcastAtPrecision',
+    position_source: 'Gps',
+    broadcast_grid: grid ?? '',
+    ui_grid: grid ?? '',
+    active_connection: null,
+  };
+  RESPONSES.basemap_list_packs = { packs: [], total_bytes: 0 };
+}
 
 // Realistic fixture data for the ribbon view (operator-verified callsign N7CPZ).
 const ribbonData: StatusBarData = {
@@ -886,8 +1027,7 @@ function OnboardingFixtureController({ state }: { state: string }) {
       case 'pointat':
         hints.declineOffer();
         setTimeout(() => {
-          const handler = capturedEventHandlers.get('onboarding:point-at');
-          handler?.({ payload: { request_id: 1, anchor_id: 'ribbon-connect' } });
+          deliverEvent('onboarding:point-at', { request_id: 1, anchor_id: 'ribbon-connect' });
         }, 40);
         break;
       default:
@@ -1016,10 +1156,15 @@ function OnboardingFixtureView() {
 // ScheduleStatus/NextFire/RunListEntry/RunStatus/ActionInfo/RadioPreset/
 // StationSet camelCase; RunEvent tags snake_case.
 // ---------------------------------------------------------------------------
-if (view === 'routines') {
+if (ROUTINES_FAMILY) {
   const nowS = Math.floor(Date.now() / 1000);
   const emptyLibrary = params.get('empty') === '1';
   const consentMode = params.get('consent') === '1';
+  // The popped Routines host ALWAYS mounts ConsentGate (spec §6), which auto-
+  // modals over the oldest parked run. `&park=0` drops the awaiting_consent
+  // runs so the dashboard/designer chrome renders unobscured — the modal-up
+  // state is its own fixture (default pop-routines, or &consent=1).
+  const suppressParks = params.get('park') === '0';
 
   // --- Definitions (snake_case; the export format IS the storage format) ---
   const DEF_MORNING = {
@@ -1120,7 +1265,7 @@ if (view === 'routines') {
     { runId: 'run-1768449600-0001', routine: 'APRS Position Beacon', dryRun: false, startedUnix: nowS - 7200, state: 'completed', finishedUnix: nowS - 7180 },
     { runId: 'run-1768455900-0006', routine: 'APRS Position Beacon', dryRun: false, startedUnix: nowS - 900, state: 'failed', finishedUnix: nowS - 880 },
     { runId: 'run-1768370400-0002', routine: 'Net Preamble', dryRun: false, startedUnix: nowS - 86400, state: 'cancelled', finishedUnix: nowS - 86300 },
-  ].filter((r) => !emptyLibrary);
+  ].filter((r) => !emptyLibrary && !(suppressParks && r.state === 'awaiting_consent'));
 
   const j = (runId: string, seq: number, agoS: number, event: unknown) => ({
     ts_unix: nowS - agoS,
@@ -1322,6 +1467,185 @@ function Ft8StripFixtureView() {
   );
 }
 
+// ===========================================================================
+// Dockable surfaces (tuxlink-dmwte task 11, spec §4/§5/§10)
+// ===========================================================================
+
+// Family 1 — the popped OS window: the REAL PoppedSurfaceHost per surface. It
+// fills the viewport itself (`.pop-surface-host { height: 100vh }`), so no
+// wrapper. The Tauri-IPC shim above feeds dock_state_get / the routines reads /
+// the snapshot-handshake answers, so this is the shipped window, not a mock.
+//
+// HintProvider mirrors App.tsx's pop-branch wrapper (App.tsx renders every
+// /pop/<surface> webview inside one): AprsChatPanel calls useFirstOpenTip('aprs'),
+// whose useHints() throws with no provider. Without this the popped APRS Chat
+// window renders BLANK — the defect this smoke exists to catch (tuxlink-dmwte
+// task 11). Wrapping here keeps the fixture faithful to the fixed shipped tree.
+function PopSurfaceFixtureView({ surface }: { surface: SurfaceId }) {
+  return (
+    <HintProvider>
+      <PoppedSurfaceHost surface={surface} />
+    </HintProvider>
+  );
+}
+
+// A representative right-dock column: the vacated-slot + docked-header dock
+// affordances live in AppShell's fixed-width right dock, and their crush cases
+// (spec §10) only reproduce at that bounded width. 400px mirrors the shipped
+// dock column (AprsDockTabs.css documents the "~400px dock width"); the border
+// makes the bound visible in the shot.
+function DockColumn({ children, label }: { children: React.ReactNode; label: string }) {
+  return (
+    <div style={{ minHeight: '100vh', background: 'var(--bg)', padding: 24, boxSizing: 'border-box' }}>
+      <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 8, fontFamily: 'sans-serif' }}>{label}</div>
+      <div
+        style={{
+          width: 400,
+          border: '1px solid var(--border)',
+          borderRadius: 8,
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+          background: 'var(--surface)',
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// Family 2 — vacated-slot main-shell traces (spec §5). Each is the REAL
+// affordance component in its popped-surface state.
+function VacatedFixtureView() {
+  if (view === 'vacated-routines') {
+    // The Routines menu reads "Routines ↗" and the dropdown gains "Dock
+    // Routines back". Closed shows the pathway label; snap-click.py on
+    // [data-tour-anchor="menu:routines"] opens the dropdown for the item shot.
+    return (
+      <div style={{ minHeight: '100vh', background: 'var(--bg)' }}>
+        <div className="tux-titlebar" style={{ borderBottom: '1px solid var(--border)' }}>
+          <span className="tux-app-name">Tuxlink</span>
+        </div>
+        <MenuBar onAction={() => undefined} badges={{ routines: 1 }} dockPopped />
+      </div>
+    );
+  }
+  if (view === 'vacated-tacmap') {
+    // The map toggle slot SWAPS to the "Tac Map ↗ — in window" pathway + a
+    // "⇤ dock back" action (AprsDockTabs, mapPopped).
+    return (
+      <DockColumn label="APRS dock — Tac Map popped (vacated slot)">
+        <AprsDockTabs
+          active="aprs"
+          unread={3}
+          modemEnabled
+          stationCount={4}
+          onSelect={() => undefined}
+          onClose={() => undefined}
+          mapPopped
+          onFocusMap={() => undefined}
+          onDockBackMap={() => undefined}
+        />
+      </DockColumn>
+    );
+  }
+  // vacated-aprschat: the dock keeps its other tabs; the APRS tab body is the
+  // focus-me placeholder. This mirrors AppShell.tsx:2501-2526 (the placeholder
+  // is inline JSX there, not a component) so its `.aprs-chat-popped-*` classes
+  // — from AppShell.css, already imported — render on real WebKitGTK.
+  return (
+    <DockColumn label="APRS dock — APRS Chat popped (vacated tab body)">
+      <AprsDockTabs
+        active="aprs"
+        unread={0}
+        modemEnabled
+        stationCount={4}
+        onSelect={() => undefined}
+        onClose={() => undefined}
+        mapOpen={false}
+        onToggleMap={() => undefined}
+      />
+      <div className="aprs-chat-popped-placeholder" data-testid="aprs-chat-popped-placeholder">
+        <button type="button" className="aprs-chat-popped-focus" title="Focus the APRS Chat window">
+          <span className="aprs-chat-popped-title">APRS Chat ↗ — in its own window</span>
+          <span className="aprs-chat-popped-sub">click to focus</span>
+        </button>
+        <button type="button" className="aprs-chat-popped-dockback" aria-label="Dock APRS Chat back inline" title="Dock APRS Chat back inline">
+          ⇤ dock back
+        </button>
+      </div>
+    </DockColumn>
+  );
+}
+
+// Family 3 — the docked-state headers carrying the ↗ Pop out affordance (spec
+// §5 entry points; the affordance is a WebKitGTK flex-crush candidate, R5-F18).
+function HeaderFixtureView() {
+  if (view === 'header-routines') {
+    // Dashboard (default) or designer header, both showing "↗ Pop out". Reuses
+    // the plan-5 routines skeleton (DashboardRibbon + RoutinesSurface in a
+    // pinned .layout-b grid), now with onPopOut wired.
+    const initial: RoutinesView =
+      params.get('rview') === 'designer'
+        ? { view: 'designer', routine: params.get('routine') ?? '', tab: (params.get('rtab') ?? 'design') as DesignerTab }
+        : { view: 'dashboard' };
+    return <HeaderRoutines initial={initial} />;
+  }
+  if (view === 'header-tacmap') {
+    // The Tac Map header control: the Map toggle + the "↗ Pop out" button
+    // beside it (AprsDockTabs docked, onPopOutMap provided).
+    return (
+      <DockColumn label="APRS dock — Tac Map docked (↗ Pop out affordance)">
+        <AprsDockTabs
+          active="aprs"
+          unread={3}
+          modemEnabled
+          stationCount={4}
+          onSelect={() => undefined}
+          onClose={() => undefined}
+          mapOpen={false}
+          onToggleMap={() => undefined}
+          onPopOutMap={() => undefined}
+        />
+      </DockColumn>
+    );
+  }
+  // header-aprschat: the APRS chat panel header carries "↗ Pop out". Real
+  // AprsChatPanel with a populated feed (SEED_CHAT) so the header sits above
+  // real traffic, not an empty pane. HintProvider because AprsChatPanel's
+  // useFirstOpenTip('aprs') needs it (in the app it comes from AppShell).
+  return (
+    <DockColumn label="APRS dock — APRS Chat docked (↗ Pop out affordance)">
+      <HintProvider>
+        <div style={{ height: 620, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          <AprsChatPanel
+            messages={SEED_CHAT}
+            send={async () => 'b99'}
+            getConfig={async () => RESPONSES.aprs_config_get as AprsConfigDto}
+            setConfig={async () => undefined}
+            onPopOut={() => undefined}
+          />
+        </div>
+      </HintProvider>
+    </DockColumn>
+  );
+}
+
+function HeaderRoutines({ initial }: { initial: RoutinesView }) {
+  const [rv, setRv] = useState<RoutinesView>(initial);
+  return (
+    <div className="layout-b" style={{ height: '100vh' }}>
+      <div style={{ gridRow: 3 }}>
+        <DashboardRibbon data={ribbonData} onConnect={() => undefined} connecting={false} onOpenElmer={() => undefined} elmerOpen={false} />
+      </div>
+      <div style={{ gridRow: 4, minHeight: 0 }}>
+        <RoutinesSurface view={rv} onNavigate={setRv} onPopOut={() => undefined} />
+      </div>
+    </div>
+  );
+}
+
 createRoot(document.getElementById('root')!).render(
   <QueryClientProvider client={queryClient}>
     {view === 'contacts' ? (
@@ -1332,6 +1656,16 @@ createRoot(document.getElementById('root')!).render(
       <FinderFixtureView />
     ) : view === 'routines' ? (
       <RoutinesFixtureView />
+    ) : view === 'pop-routines' ? (
+      <PopSurfaceFixtureView surface="routines" />
+    ) : view === 'pop-tacmap' ? (
+      <PopSurfaceFixtureView surface="tac_map" />
+    ) : view === 'pop-aprschat' ? (
+      <PopSurfaceFixtureView surface="aprs_chat" />
+    ) : view.startsWith('vacated-') ? (
+      <VacatedFixtureView />
+    ) : view.startsWith('header-') ? (
+      <HeaderFixtureView />
     ) : view === 'onboarding' ? (
       <OnboardingFixtureView />
     ) : view === 'ft8' ? (

@@ -73,6 +73,12 @@ export interface MenuHandlers {
    *  (empty routine name — RoutineDesigner/Task 9 treats that as "new").
    *  Routines → New Routine…. */
   newRoutine: () => void;
+  /** Dock the popped Routines window back inline, foreground semantics
+   *  (tuxlink-dmwte task 8, spec §5). The main-side dock-back rule sends
+   *  `state: null` — main cannot know the popped window's live view/draft, so
+   *  Routines falls back to the dashboard (accepted). Only meaningful while
+   *  Routines is popped; MenuBar only shows the item then. */
+  dockBackRoutines: () => void;
   quit: () => void;
 }
 
@@ -145,6 +151,11 @@ export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
       h.openRoutines(); return;
     case 'menu:routines:new':
       h.newRoutine(); return;
+    // tuxlink-dmwte task 8 (spec §5): dock the popped Routines window back
+    // inline (foreground). AppShell's handler sends `state: null` per the
+    // main-side dock-back rule.
+    case 'menu:routines:dockback':
+      h.dockBackRoutines(); return;
   }
   if (id.startsWith('menu:view:scheme:')) {
     const scheme = id.slice('menu:view:scheme:'.length);

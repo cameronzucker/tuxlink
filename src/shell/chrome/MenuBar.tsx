@@ -10,7 +10,17 @@ interface MenuBarProps {
    *  runs parked awaiting operator transmit consent). Only `routines` exists
    *  today; absent or 0 renders no badge. */
   badges?: { routines?: number };
+  /** Whether the Routines surface is currently popped to its own window
+   *  (tuxlink-dmwte task 8, spec §5). While true the Routines top-level label
+   *  reads "Routines ↗" (the visual pathway back to the window) and the
+   *  "Dock Routines back" item is shown; while false it is hidden. This is the
+   *  dynamic-affordance seam MENU_TREE deliberately lacks — same MenuBar-level
+   *  special-case pattern as `badges`. */
+  dockPopped?: boolean;
 }
+
+/** The static "Dock Routines back" item is hidden unless Routines is popped. */
+const ROUTINES_DOCKBACK_ID = 'menu:routines:dockback';
 
 function MenuItems({ items, onPick }: { items: MenuNode[]; onPick: (id: MenuActionId) => void }) {
   return (
@@ -62,7 +72,7 @@ function MenuItems({ items, onPick }: { items: MenuNode[]; onPick: (id: MenuActi
   );
 }
 
-export function MenuBar({ onAction, badges }: MenuBarProps) {
+export function MenuBar({ onAction, badges, dockPopped = false }: MenuBarProps) {
   const [openLabel, setOpenLabel] = useState<string | null>(null);
   const routinesBadge = badges?.routines ?? 0;
 
@@ -84,34 +94,46 @@ export function MenuBar({ onAction, badges }: MenuBarProps) {
 
   return (
     <div className="tux-menubar" role="menubar">
-      {MENU_TREE.map((menu) => (
-        <div
-          key={menu.label}
-          className={`tux-menu${openLabel === menu.label ? ' tux-open' : ''}`}
-          // hover-to-switch once a menu is open (native menubar behavior)
-          onMouseEnter={() => setOpenLabel((cur) => (cur ? menu.label : cur))}
-        >
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setOpenLabel((cur) => (cur === menu.label ? null : menu.label));
-            }}
-            data-tour-anchor={menuAnchorId(menu.label)}
+      {MENU_TREE.map((menu) => {
+        const isRoutines = menu.label === 'Routines';
+        // Dynamic Routines affordances (spec §5): the "↗" pathway suffix and
+        // the "Dock Routines back" item appear only while the surface is
+        // popped. When docked, the dockback item is filtered from the dropdown
+        // (it stays in MENU_TREE / the vocabulary — just not rendered).
+        const items =
+          isRoutines && !dockPopped
+            ? menu.items.filter((n) => n.id !== ROUTINES_DOCKBACK_ID)
+            : menu.items;
+        const topLabel = isRoutines && dockPopped ? 'Routines ↗' : menu.label;
+        return (
+          <div
+            key={menu.label}
+            className={`tux-menu${openLabel === menu.label ? ' tux-open' : ''}`}
+            // hover-to-switch once a menu is open (native menubar behavior)
+            onMouseEnter={() => setOpenLabel((cur) => (cur ? menu.label : cur))}
           >
-            {menu.label}
-            {menu.label === 'Routines' && routinesBadge > 0 && (
-              <span className="tux-menu-badge" data-testid="menu-badge-routines">
-                {routinesBadge}
-              </span>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setOpenLabel((cur) => (cur === menu.label ? null : menu.label));
+              }}
+              data-tour-anchor={menuAnchorId(menu.label)}
+            >
+              {topLabel}
+              {isRoutines && routinesBadge > 0 && (
+                <span className="tux-menu-badge" data-testid="menu-badge-routines">
+                  {routinesBadge}
+                </span>
+              )}
+            </button>
+            {openLabel === menu.label && (
+              <div className="tux-dropdown">
+                <MenuItems items={items} onPick={pick} />
+              </div>
             )}
-          </button>
-          {openLabel === menu.label && (
-            <div className="tux-dropdown">
-              <MenuItems items={menu.items} onPick={pick} />
-            </div>
-          )}
-        </div>
-      ))}
+          </div>
+        );
+      })}
     </div>
   );
 }

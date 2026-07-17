@@ -6,10 +6,19 @@
    mutually-exclusive chat⇄modem tabs. */
 .aprs-dock-tabs {
   display: flex;
+  flex-wrap: wrap;
   align-items: stretch;
   background: var(--bg, #0b1015);
   border-bottom: 1px solid var(--border, #2a3140);
 }
+/* Graceful crowding (tuxlink-dmwte task 11): the vacated Tac Map state swaps the
+   compact [⊞ Map][↗ Pop out] pair for the wider [Tac Map ↗ — in window][⇤ dock
+   back] pathway, which — with the tab group + close — overflows the dock's ~400px
+   floor and pushed the Modem tab and × close off the right edge. `flex-wrap`
+   drops whole controls (never a broken label; siblings are `nowrap`) to a second
+   row only when the single row can't hold them, so every control stays reachable
+   at the narrow width. No effect when the row already fits (the docked state, and
+   any wider dock). */
 
 .aprs-dock-tabgroup {
   display: flex;
@@ -137,6 +146,70 @@
 .aprs-dock-map-glyph {
   font-size: 13px;
   line-height: 1;
+}
+
+/* Pop the Tac Map out to its own window (tuxlink-dmwte task 9) — a text-labeled
+   "↗ Pop out" control pinned right next to the Map toggle, same rail rhythm
+   (spec §1/§5: pathway affordances always carry their text label, never
+   icon-only). `white-space: nowrap` keeps the glyph + label on one line so the
+   control row can't crush the label onto two rows at the ~400px dock width. */
+.aprs-dock-map-popout {
+  flex: 0 0 auto;
+  padding: 8px 11px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border, #2a3140);
+  color: var(--text-faint, #94a3b8);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.aprs-dock-map-popout-glyph {
+  font-size: 13px;
+  line-height: 1;
+}
+.aprs-dock-map-popout:hover {
+  color: var(--text, #cbd5e1);
+  background: var(--surface-3, #11171d);
+}
+
+/* While the Tac Map is popped, the toggle+pop-out slot swaps to this pathway:
+   a labeled "in window" focus control plus an adjacent dock-back action
+   (tuxlink-dmwte task 9, spec §5) — mirrors the Routines pathway pattern. */
+.aprs-dock-map-popped {
+  display: flex;
+  align-items: stretch;
+}
+.aprs-dock-map-focus,
+.aprs-dock-map-dockback {
+  padding: 8px 13px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border, #2a3140);
+  color: var(--modem-accent, #4ade80);
+  /* Same one-line guarantee as `.aprs-dock-map-popout` above (tuxlink-dmwte
+     task 11): `.aprs-dock-tabs` is a NON-wrapping flex row with
+     `align-items: stretch`, so without `nowrap` the longer "Tac Map ↗ — in
+     window" label wraps to two/three lines and, via stretch, inflates the
+     entire dock header's height — the WebKitGTK flex-crush the docked pop-out
+     control was already hardened against but this vacated-state pathway was
+     missed (spec §10 R5-F18). Keep glyph + label on one line. */
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+}
+.aprs-dock-map-focus:hover,
+.aprs-dock-map-dockback:hover {
+  background: var(--modem-accent-soft, rgba(74, 222, 128, 0.1));
 }
 
 /* Close the dock surface (frees the reading pane when no radio session is
