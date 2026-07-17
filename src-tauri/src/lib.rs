@@ -970,6 +970,8 @@ mod quit_gate_tests {
         fn descriptor(&self) -> ActionDescriptor {
             ActionDescriptor {
                 name: self.name,
+                label: "",
+                description: "",
                 needs_radio: false,
                 transmits: false,
                 needs_internet: false,
@@ -1037,6 +1039,8 @@ mod quit_gate_tests {
         fn descriptor(&self) -> ActionDescriptor {
             ActionDescriptor {
                 name: self.name,
+                label: "",
+                description: "",
                 needs_radio: false,
                 transmits: false,
                 needs_internet: false,

@@ -251,6 +251,8 @@ impl Action for ComposeMessage {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
             name: LOCAL_COMPOSE,
+            label: 'Compose message',
+            description: 'Stage a Winlink message in the outbox for the next connection.',
             needs_radio: false,
             transmits: false,
             needs_internet: false,
@@ -392,6 +394,8 @@ impl Action for ComposeCatalogRequest {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
             name: LOCAL_COMPOSE_CATALOG_REQUEST,
+            label: 'Compose catalog request',
+            description: 'Stage a WL2K catalog request message in the outbox.',
             needs_radio: false,
             transmits: false,
             needs_internet: false,
@@ -481,6 +485,8 @@ impl Action for SetIdentity {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
             name: LOCAL_SET_IDENTITY,
+            label: 'Set station identity',
+            description: 'Switch the active callsign for the rest of this run only.',
             needs_radio: false,
             transmits: false,
             needs_internet: false,
@@ -546,6 +552,8 @@ impl Action for LogEntry {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
             name: LOCAL_LOG,
+            label: 'Write log entry',
+            description: 'Write a line to the station log.',
             needs_radio: false,
             transmits: false,
             needs_internet: false,
@@ -602,6 +610,8 @@ impl Action for Notify {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
             name: LOCAL_NOTIFY,
+            label: 'Show notification',
+            description: 'Show a desktop notification.',
             needs_radio: false,
             transmits: false,
             needs_internet: false,
@@ -1022,6 +1032,8 @@ mod tests {
     fn compose_descriptor_has_no_capabilities() {
         let action = ComposeMessage::new(Arc::new(FakeLocalService::default()));
         let d = action.descriptor();
+        // tuxlink-5lfxk: every shipped action carries human palette copy.
+        assert!(!d.label.is_empty() && !d.description.is_empty());
         assert!(!d.needs_radio);
         assert!(!d.transmits);
         assert!(!d.needs_internet);
@@ -1141,6 +1153,8 @@ mod tests {
     fn catalog_request_descriptor_has_no_capabilities() {
         let action = ComposeCatalogRequest::new(Arc::new(FakeLocalService::default()));
         let d = action.descriptor();
+        // tuxlink-5lfxk: every shipped action carries human palette copy.
+        assert!(!d.label.is_empty() && !d.description.is_empty());
         assert!(!d.needs_radio);
         assert!(!d.transmits);
         assert!(!d.needs_internet);
@@ -1242,6 +1256,8 @@ mod tests {
     fn set_identity_descriptor_has_no_capabilities() {
         let action = SetIdentity::new();
         let d = action.descriptor();
+        // tuxlink-5lfxk: every shipped action carries human palette copy.
+        assert!(!d.label.is_empty() && !d.description.is_empty());
         assert!(!d.needs_radio);
         assert!(!d.transmits);
         assert!(!d.needs_internet);
@@ -1306,6 +1322,8 @@ mod tests {
     fn log_descriptor_has_no_capabilities() {
         let action = LogEntry::new(Arc::new(FakeLocalService::default()));
         let d = action.descriptor();
+        // tuxlink-5lfxk: every shipped action carries human palette copy.
+        assert!(!d.label.is_empty() && !d.description.is_empty());
         assert!(!d.needs_radio);
         assert!(!d.transmits);
         assert!(!d.needs_internet);
@@ -1390,6 +1408,8 @@ mod tests {
     fn notify_descriptor_has_no_capabilities() {
         let action = Notify::new(Arc::new(FakeLocalService::default()));
         let d = action.descriptor();
+        // tuxlink-5lfxk: every shipped action carries human palette copy.
+        assert!(!d.label.is_empty() && !d.description.is_empty());
         assert!(!d.needs_radio);
         assert!(!d.transmits);
         assert!(!d.needs_internet);

@@ -16,6 +16,11 @@ use crate::error::StepError;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub struct ActionDescriptor {
     pub name: &'static str,
+    /// Human-readable palette/inspector label (tuxlink-5lfxk). Empty in test
+    /// fakes; the UI falls back to `name` when empty.
+    pub label: &'static str,
+    /// One-line human description for the palette/inspector (tuxlink-5lfxk).
+    pub description: &'static str,
     pub needs_radio: bool,
     pub transmits: bool,
     pub needs_internet: bool,

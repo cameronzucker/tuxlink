@@ -337,6 +337,8 @@ impl Action for RadioConnect {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
             name: RADIO_CONNECT,
+            label: 'Connect to gateway',
+            description: 'Try a Winlink connection across the station set and band set, exchanging mail on success.',
             needs_radio: true,
             transmits: true,
             needs_internet: false,
@@ -520,6 +522,8 @@ impl Action for RadioListen {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
             name: RADIO_LISTEN,
+            label: 'Listen on frequency',
+            description: 'Dwell on the rig for a set time and report what was heard.',
             needs_radio: true,
             transmits: false,
             needs_internet: false,
@@ -615,6 +619,8 @@ impl Action for RadioAprsSend {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
             name: RADIO_APRS_SEND,
+            label: 'Send APRS packet',
+            description: 'Transmit an APRS packet via the APRS service.',
             needs_radio: true,
             transmits: true,
             needs_internet: false,

@@ -178,6 +178,8 @@ impl Action for RigReadState {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
             name: RIG_READ_STATE,
+            label: 'Read rig state',
+            description: 'Read live frequency, mode, and PTT from the radio over CAT.',
             needs_radio: true,
             transmits: false,
             needs_internet: false,
@@ -320,6 +322,8 @@ impl Action for RigValidatePreset {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
             name: RIG_VALIDATE_PRESET,
+            label: 'Validate radio preset',
+            description: "Compare the radio's live state against a saved preset.",
             needs_radio: true,
             transmits: false,
             needs_internet: false,
@@ -425,6 +429,8 @@ impl Action for RigApplyPreset {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
             name: RIG_APPLY_PRESET,
+            label: 'Apply radio preset',
+            description: "Set the radio's frequency and mode from a saved preset.",
             needs_radio: true,
             transmits: false,
             needs_internet: false,
@@ -534,6 +540,8 @@ impl Action for RigSwitchVfo {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
             name: RIG_SWITCH_VFO,
+            label: 'Switch VFO',
+            description: "Switch the radio's active VFO.",
             needs_radio: true,
             transmits: false,
             needs_internet: false,
@@ -599,6 +607,8 @@ impl Action for RigTuneAtu {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
             name: RIG_TUNE_ATU,
+            label: 'Tune antenna (ATU)',
+            description: "Run the antenna tuner's tune cycle (keys the transmitter briefly).",
             needs_radio: true,
             transmits: true,
             needs_internet: false,
@@ -1282,6 +1292,8 @@ mod tests {
     async fn tune_atu_descriptor_flags_transmits_true() {
         let action = RigTuneAtu::new(arbiter());
         let d = action.descriptor();
+        // tuxlink-5lfxk: every shipped action carries human palette copy.
+        assert!(!d.label.is_empty() && !d.description.is_empty());
         assert!(d.needs_radio);
         assert!(
             d.transmits,
@@ -1293,6 +1305,8 @@ mod tests {
     async fn switch_vfo_descriptor_flags_transmits_false() {
         let action = RigSwitchVfo::new(arbiter());
         let d = action.descriptor();
+        // tuxlink-5lfxk: every shipped action carries human palette copy.
+        assert!(!d.label.is_empty() && !d.description.is_empty());
         assert!(d.needs_radio);
         assert!(!d.transmits);
     }
