@@ -212,6 +212,11 @@ export interface DryRunStarted {
 
 export interface ActionInfo {
   name: string;
+  /** Human palette label (tuxlink-5lfxk). May be empty (test fakes); render
+   *  `label || name`. */
+  label: string;
+  /** One-line human description (tuxlink-5lfxk). May be empty. */
+  description: string;
   needsRadio: boolean;
   transmits: boolean;
   needsInternet: boolean;

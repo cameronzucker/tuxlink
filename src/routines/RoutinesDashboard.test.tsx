@@ -166,10 +166,10 @@ const FINDINGS_BY_ROUTINE: Record<string, Finding[]> = {
 };
 
 const ACTIONS: ActionInfo[] = [
-  { name: 'radio.connect', needsRadio: true, transmits: true, needsInternet: false },
-  { name: 'mailbox.check', needsRadio: false, transmits: false, needsInternet: true },
-  { name: 'wwv.decode', needsRadio: true, transmits: false, needsInternet: false },
-  { name: 'ics309.build', needsRadio: false, transmits: false, needsInternet: false },
+  { name: 'radio.connect', label: '', description: '', needsRadio: true, transmits: true, needsInternet: false },
+  { name: 'mailbox.check', label: '', description: '', needsRadio: false, transmits: false, needsInternet: true },
+  { name: 'wwv.decode', label: '', description: '', needsRadio: true, transmits: false, needsInternet: false },
+  { name: 'ics309.build', label: '', description: '', needsRadio: false, transmits: false, needsInternet: false },
 ];
 
 const RUNS: RunListEntry[] = [

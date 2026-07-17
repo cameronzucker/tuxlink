@@ -10,8 +10,8 @@ import type { ActionInfo, RoutineDef } from '../routinesApi';
 import { CanvasTab, type ArmedInsertPosition } from './CanvasTab';
 
 const ACTIONS: ActionInfo[] = [
-  { name: 'radio.connect', needsRadio: true, needsInternet: false, transmits: true },
-  { name: 'local.notify', needsRadio: false, needsInternet: false, transmits: false },
+  { name: 'radio.connect', label: '', description: '', needsRadio: true, needsInternet: false, transmits: true },
+  { name: 'local.notify', label: '', description: '', needsRadio: false, needsInternet: false, transmits: false },
 ];
 
 const DEF: RoutineDef = {

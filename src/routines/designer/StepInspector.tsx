@@ -166,6 +166,9 @@ export function StepInspector({ step, actions, onChange, onRemove }: StepInspect
         <>
           <div className="insp-row">
             <span className="insp-label">action</span>
+            {/* tuxlink-5lfxk: human label first; the raw id stays visible as
+                mono secondary (it is what params/journals reference). */}
+            {info?.label && <span className="insp-value">{info.label}</span>}
             <span className="insp-value mono">{step.action}</span>
             <span className="flags">
               {info?.needsRadio && <span className="flag rig">RIG</span>}
