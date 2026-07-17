@@ -1,0 +1,12 @@
+# M2a overlay: merged onto bundled mini_textbased.yaml (order matters).
+agent:
+  mode: yolo
+  step_limit: 0
+  cost_limit: 0
+model:
+  model_class: litellm_textbased
+  model_name: openai/qwen35-122b-nvfp4
+  cost_tracking: ignore_errors
+  model_kwargs:
+    api_base: https://inference.twin-bramble.ts.net/v1
+    api_key: dummy
