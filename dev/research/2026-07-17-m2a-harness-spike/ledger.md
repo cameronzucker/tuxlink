@@ -52,3 +52,75 @@
       Responses arm's default reasoning effort).
   (4) mini × OpenRouter E122 (openrouter_textbased direct client): pass.
   Q122 smokes deferred to the Spark swap wave, per ladder discipline.
+2026-07-17T03:38:50Z WAVE 1 dispatched: pi-cn-r3 (Spark) ∥ pi-e122-r5
+  (OpenRouter), timeout 1800 each.
+2026-07-17T03:43:32Z pi-e122-r5 attempt-1 FINISHED (4.6m wall, exit 0 —
+  NO delivery seam; clean final message with Status contract honored).
+  VERIFICATION: gates re-run by orchestrator — typecheck green, vitest
+  7/7 green (claims TRUE, integrity honest); diff = exactly the 2 claimed
+  files; report file present. MECHANISM GRADE vs rung-5 key: WRONG —
+  window-scoped-emit theory (changed host reply to emitTo('stations',...)
+  and rewrote the snapshot test to pin emitTo); capability ACL never
+  considered; fix is at the reply site while the DENIED call is the
+  stations-window request, so the handshake would still not deliver in a
+  real runtime. Completion: FAILED (acceptance criterion 1). Usage from
+  Pi session: 44 assistant turns, 1.80M input / 13.2k output, reasoning
+  tokens ≈ 24 — the model essentially did not deliberate under
+  chat-completions --thinking medium, vs the Codex Responses run whose
+  REASONING reached the key-exact diagnosis before the seam ate delivery.
+  a1 candidate committed on the arm branch; tree reset to b82b404d
+  (named-file restore, committed); attempt-2 dispatched 03:52Z.
+2026-07-17T03:51:26Z pi-e122-r5 attempt-2 FINISHED (4.7m wall, exit 0).
+  FAILED with a NEW SEAM VARIANT: same wrong emit-broadcast theory moved
+  to the backend (lib.rs app.listen→emit forwarding — non-functional; the
+  ACL-denied request never leaves the stations webview). Spawned a cold
+  cargo check mid-run (doomed-cargo class, cf. ladder CN r5 a1). Final
+  turn emitted XML-style function-call syntax Pi does not parse → landed
+  as thinking content → empty final message, session ended on stop. NO
+  report, NO status line, no false claims (integrity honest). Usage: 47
+  turns, 2.20M in / 18.1k out, reasoning ≈ 44 tokens. a2 committed.
+  CELL VERDICT pi-e122-r5: FAILED both attempts — the Codex Responses
+  seam did NOT reproduce (both Pi attempts had working delivery
+  mechanics), but E122's correct-ACL-diagnosis capability ALSO did not
+  reproduce under chat-completions: near-zero reasoning tokens both
+  attempts vs the Codex arm's deliberation that reached the key. The
+  ladder's "reasoning-limited vs harness-limited" split is thus
+  API-ROUTE-DEPENDENT, not just harness-dependent.
+2026-07-17T03:53:41Z mini-e122-r5 attempt-1 dispatched (OpenRouter slot
+  freed by pi-e122-r5 close; 2-concurrent cap respected).
+2026-07-17T04:08:47Z pi-cn-r3 attempt-1 FINISHED: 30m AT-CAP (exit 124),
+  killed mid-test-writing. All 4 target files touched (sites 1-7 wired +
+  partial tests — FURTHER than the Codex baseline a1, which had sites and
+  ZERO tests). Orchestrator gates: typecheck RED (mockReport import shape
+  in both test files), vitest 3 failed / 123 passed. No report; no claims
+  (integrity n/a). Completion: FAILED at cap. Usage: 36 turns, 2.94M in /
+  16.4k out. Committed; tree reset; attempt-2 dispatched 04:12Z.
+2026-07-17T04:10:12Z mini-e122-r5 attempt-1 FINISHED (16.5m, clean
+  submit; report + in-file Status line per contract). Mechanism graded
+  WRONG vs key: emit-inside-.then() listener-timing race theory — the
+  exact class the key excludes; ACL never considered; fix moves emit
+  BEFORE listener registration (would still be ACL-denied in reality).
+  Gates re-verified green (typecheck + 7/7) — claims TRUE, integrity
+  honest. Step 33, $0.16. Completion: FAILED (criterion 1). Committed;
+  tree reset; attempt-2 dispatched 04:15Z.
+2026-07-17T04:42:40Z pi-cn-r3 attempt-2 FINISHED: 30m AT-CAP (exit 124)
+  again. Tree further than a1: sites + tests in both files, typecheck
+  GREEN, 3 tests failing (124 passing), no report. Usage: 34 turns,
+  2.76M in / 13.1k out. Committed. CELL VERDICT pi-cn-r3: FAILED both
+  attempts — envelope failure REPRODUCES under Pi (matches Codex
+  baseline), though both Pi attempts stood further along at cap than the
+  Codex counterparts (a1 sites+partial tests vs sites-only; a2
+  typecheck-green vs syntax-broken). Spark slot freed; mini-cn-r3
+  attempt-1 dispatched 04:47Z.
+2026-07-17T04:45:14Z mini-e122-r5 attempt-2 FINISHED: 30m AT-CAP (exit
+  124), ZERO edits — still exploring when killed (a1's report file
+  remains in sdd; tree untouched, nothing to commit). CELL VERDICT
+  mini-e122-r5: FAILED (a1 wrong listener-timing mechanism delivered
+  clean; a2 no delivery). CROSS-HARNESS E122 rung-5 tally: the correct
+  ACL diagnosis appeared ONLY under Codex's Responses API (where
+  delivery died on the seam); Pi and mini both produced fast shallow
+  wrong theories with near-zero deliberation. Removing the seam did NOT
+  recover the capability — the reasoning route itself was the enabler.
+  Post-hoc probe planned (flagged per rubric): one pi-e122-r5 run at
+  --thinking high after registered cells close, to isolate the thinking
+  knob.
