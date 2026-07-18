@@ -31,13 +31,13 @@
   border: 1px solid var(--border-strong);
   border-radius: 5px;
   padding: 4px 8px;
-  font-size: var(--type-meta);
+  font-size: var(--type-control);
   color: var(--text);
 }
 
 .pal-hint {
   margin: 0 10px 8px;
-  font-size: var(--type-meta);
+  font-size: var(--type-control);
   color: var(--text-faint);
   line-height: 1.45;
 }
@@ -55,9 +55,9 @@
 }
 
 .pal-group {
-  padding: 6px 12px 2px;
+  padding: 8px 12px 3px;
   font-family: var(--mono);
-  font-size: var(--type-micro);
+  font-size: var(--type-meta);
   letter-spacing: 0.1em;
   color: var(--text-faint);
 }
@@ -83,9 +83,9 @@
   width: 100%;
   align-items: center;
   gap: 6px;
-  padding: 2px 12px;
+  padding: 4px 12px;
   font-family: var(--mono);
-  font-size: var(--type-meta);
+  font-size: var(--type-control);
   color: var(--text);
   background: none;
   border: none;
@@ -143,6 +143,6 @@
 }
 .pal-item .pal-sub {
   font-family: var(--mono);
-  font-size: var(--type-micro);
+  font-size: var(--type-meta);
   color: var(--text-dim);
 }

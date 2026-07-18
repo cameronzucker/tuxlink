@@ -17,6 +17,12 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: mockInvoke }));
 const { mockListen } = vi.hoisted(() => ({ mockListen: vi.fn() }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: mockListen }));
 
+// tuxlink-7ewvq item 8: the settings sections mount inline in the Design view
+// now, so any test reaching the designer also mounts SettingsTab, which reads
+// the active callsign off useStatusData — mocked directly (same pattern as
+// RoutineDesigner.test.tsx) rather than standing up a QueryClientProvider.
+vi.mock('../shell/useStatus', () => ({ useStatusData: () => ({ callsign: '' }) }));
+
 import { RoutinesSurface } from './RoutinesSurface';
 
 beforeEach(() => {

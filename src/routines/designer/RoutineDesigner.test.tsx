@@ -230,7 +230,9 @@ describe('RoutineDesigner — Save never blocks (c)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     // Scoped to the valbar (the inline settings can surface findings too).
-    await within(screen.getByTestId('valbar')).findByText('AUTO_TX_UNACKED');
+    // 3s timeout: the Design view mounts the inline settings sections now
+    // (tuxlink-7ewvq item 8), and the default 1s is marginal on a loaded Pi.
+    await within(screen.getByTestId('valbar')).findByText('AUTO_TX_UNACKED', {}, { timeout: 3000 });
     expect(screen.queryByTestId('unsaved-dot')).not.toBeInTheDocument();
     expect(within(screen.getByTestId('valbar')).getByText(/✓ 1 error/)).toBeInTheDocument();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
