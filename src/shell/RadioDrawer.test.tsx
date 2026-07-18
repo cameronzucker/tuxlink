@@ -94,6 +94,20 @@ describe('RadioDrawer', () => {
     );
     expect(document.activeElement).toBe(screen.getByTestId('radio-drawer-grip'));
   });
+
+  // tuxlink-fh53x: the drawer root is display:contents on desktop — zero
+  // rect, so findMountedAnchor can never resolve it. Hosting the tour's
+  // radio-dock anchor here is what produced the contentless centered card;
+  // the anchor lives on RadioPanel's boxed root (and the APRS dock surface)
+  // instead.
+  it('does not host a data-tour-anchor on its boxless root', () => {
+    render(
+      <RadioDrawer open={false} onToggle={() => {}} sessionState="disconnected">
+        <div />
+      </RadioDrawer>,
+    );
+    expect(screen.getByTestId('radio-drawer')).not.toHaveAttribute('data-tour-anchor');
+  });
 });
 
 describe('RadioDrawer.css desktop scoping guard (F9)', () => {

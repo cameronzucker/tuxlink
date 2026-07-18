@@ -281,6 +281,28 @@ describe('AppShell dock wiring (task 8)', () => {
     expect(await screen.findByTestId('aprs-positions-map', {}, { timeout: 5000 })).toBeInTheDocument();
   });
 
+  // tuxlink-fh53x: when APRS owns the dock (no radio-mode panel mounted), the
+  // dock surface itself hosts the tour's 'radio-dock' anchor so the tour can
+  // spotlight the dock column instead of skipping the stop. (When the modem
+  // tab shows a RadioPanel inside this surface, both elements carry the
+  // anchor and querySelector resolves the outer surface — same spotlight.)
+  it('tuxlink-fh53x: the APRS dock surface carries the radio-dock tour anchor', async () => {
+    dockRef.current = tacMapSnapshot('popped');
+    const { rerender } = renderShell();
+    await screen.findByTestId('folder-sidebar');
+
+    dockRef.current = tacMapSnapshot('docked', { foreground: true, state: null });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    rerender(
+      <QueryClientProvider client={qc}>
+        <AppShell />
+      </QueryClientProvider>,
+    );
+
+    const surface = await screen.findByTestId('aprs-dock-surface');
+    expect(surface).toHaveAttribute('data-tour-anchor', 'radio-dock');
+  });
+
   it('behavior 2: a NON-foreground tac_map popped→docked arrival changes neither aprsOpen nor aprsMapOpen', async () => {
     dockRef.current = tacMapSnapshot('popped');
     const { rerender } = renderShell();

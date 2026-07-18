@@ -25,7 +25,15 @@ function stubRect(el: Element, rect: Partial<DOMRect>) {
 }
 
 /** Drives the provider via its public actions, mirroring Probe in HintProvider.test.tsx. */
-function Harness({ onAnchorClick, showMailboxAnchor = false }: { onAnchorClick: () => void; showMailboxAnchor?: boolean }) {
+function Harness({
+  onAnchorClick,
+  showMailboxAnchor = false,
+  showRadioDockAnchor = false,
+}: {
+  onAnchorClick: () => void;
+  showMailboxAnchor?: boolean;
+  showRadioDockAnchor?: boolean;
+}) {
   const hints = useHints();
   return (
     <div>
@@ -33,6 +41,7 @@ function Harness({ onAnchorClick, showMailboxAnchor = false }: { onAnchorClick: 
         Connect
       </button>
       {showMailboxAnchor && <div data-tour-anchor="mailbox" />}
+      {showRadioDockAnchor && <div data-tour-anchor="radio-dock" data-testid="fake-radio-dock" />}
       <button onClick={hints.startTour}>startTour</button>
       <button onClick={hints.advance}>advance</button>
       <button onClick={hints.back}>back</button>
@@ -432,5 +441,76 @@ describe('HintOverlay', () => {
     await waitFor(() => expect(screen.queryByTestId('hint-overlay-popover')).toBeNull());
 
     expect(invoke).not.toHaveBeenCalledWith('config_set_onboarding', expect.anything());
+  });
+
+  // tuxlink-fh53x: the radio-dock stop is conditionally present exactly like
+  // mailbox (the dock only mounts when a radio mode or APRS is active), so it
+  // must use the same fallback:'skip' contract — auto-advance past the stop
+  // when the anchor is missing, never a screen-centered card that references
+  // nothing (the operator-reported "contentless Step 4 of 5").
+  describe('tuxlink-fh53x: radio-dock stop', () => {
+    it('auto-skips to Elmer when no radio-dock anchor is mounted', async () => {
+      render(
+        <HintProvider>
+          <Harness onAnchorClick={() => {}} />
+        </HintProvider>,
+      );
+      await waitFor(() => expect(screen.getByText('Connect')).toBeInTheDocument());
+      stubRect(screen.getByText('Connect'), ANCHOR_RECT);
+
+      fireEvent.click(screen.getByText('startTour'));
+      await waitFor(() => expect(screen.getByTestId('hint-overlay-next')).toBeInTheDocument());
+
+      // Step 1 spotlights ribbon-connect; Next auto-skips mailbox (no anchor,
+      // fallback:'skip') and lands on contacts, centered.
+      fireEvent.click(screen.getByTestId('hint-overlay-next'));
+      await waitFor(() => {
+        expect(screen.getByTestId('hint-overlay-live')).toHaveTextContent('Step 3 of 5: Contacts');
+      });
+
+      // Next from contacts: radio-dock has NO anchor mounted here, so the
+      // tour must auto-advance straight to Elmer — never a centered
+      // "Step 4 of 5: Radio dock" card.
+      fireEvent.click(screen.getByTestId('hint-overlay-next'));
+      await waitFor(() => {
+        expect(screen.getByTestId('hint-overlay-live')).toHaveTextContent('Step 5 of 5: Elmer');
+      });
+      expect(screen.getByTestId('hint-overlay-popover')).toHaveClass('hint-overlay__popover--center');
+    });
+
+    it('spotlights the radio dock when a boxed anchor is mounted', async () => {
+      render(
+        <HintProvider>
+          <Harness onAnchorClick={() => {}} showRadioDockAnchor />
+        </HintProvider>,
+      );
+      await waitFor(() => expect(screen.getByText('Connect')).toBeInTheDocument());
+      stubRect(screen.getByText('Connect'), ANCHOR_RECT);
+      stubRect(screen.getByTestId('fake-radio-dock'), {
+        top: 200, left: 300, width: 150, height: 60, bottom: 260, right: 450,
+      });
+
+      fireEvent.click(screen.getByText('startTour'));
+      await waitFor(() => expect(screen.getByTestId('hint-overlay-next')).toBeInTheDocument());
+
+      // Next past mailbox-skip to contacts, then Next to radio-dock.
+      fireEvent.click(screen.getByTestId('hint-overlay-next'));
+      await waitFor(() => {
+        expect(screen.getByTestId('hint-overlay-live')).toHaveTextContent('Step 3 of 5: Contacts');
+      });
+      fireEvent.click(screen.getByTestId('hint-overlay-next'));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('hint-overlay-live')).toHaveTextContent('Step 4 of 5: Radio dock');
+      });
+      // A real spotlight, not the centered fallback: 4 dim panels + the
+      // blocker exactly over the padded anchor hole.
+      expect(screen.getAllByTestId('hint-overlay-panel')).toHaveLength(4);
+      const blocker = screen.getByTestId('hint-overlay-blocker');
+      expect(blocker.style.top).toBe('192px'); // 200 - 8 padding
+      expect(blocker.style.left).toBe('292px'); // 300 - 8 padding
+      expect(blocker.style.width).toBe('166px'); // 150 + 16 padding
+      expect(blocker.style.height).toBe('76px'); // 60 + 16 padding
+    });
   });
 });
