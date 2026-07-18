@@ -297,8 +297,11 @@ with nothing to authorize
 
 ## 5. Models
 
-Elmer treats a local Ollama instance and cloud providers as equal peers,
-all reached through an OpenAI-compatible chat-completions endpoint. Seven
+Elmer treats a local Ollama instance and cloud providers as equal peers.
+Most presets are reached through an OpenAI-compatible chat-completions
+endpoint; Anthropic is the exception, routed through its native Messages API
+(`https://api.anthropic.com/v1/messages`, selected by provider detection on
+the endpoint origin). Seven
 presets ship out of the box: `localOllama` (loopback, no key required),
 `openai`, `anthropic`, `openrouter`, `gemini`, `groq`, and `custom` for any
 other OpenAI-compatible endpoint
