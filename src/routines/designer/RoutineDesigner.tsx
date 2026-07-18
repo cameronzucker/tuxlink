@@ -5,7 +5,7 @@
  * Replaces RoutinesSurface's Task 7 one-line placeholder. Layout is the
  * approved mock verbatim (dev/scratch/routines-ui-mocks/designer-canvas.html):
  * header (← Routines, name, state pill, unsaved dot, Design/Runs/Settings
- * tabs, Dry-run/Export JSON/Save actions) and the always-on `.valbar`
+ * tabs, Dry-run/Export routine/Save actions) and the always-on `.valbar`
  * validation strip. The Design tab mounts the real `CanvasTab` (Task 10,
  * `./CanvasTab.tsx`) plus, in its right rail, `PaletteRail` and
  * `StepInspector` (Task 11, `./PaletteRail.tsx` / `./StepInspector.tsx`) —
@@ -103,6 +103,32 @@ export interface RoutineDesignerProps {
 /** Debounce window for the always-on validation bar (spec §12 flow 2). */
 const VALIDATE_DEBOUNCE_MS = 400;
 
+/**
+ * Derive the wire-format routine id from whatever the operator typed
+ * (bd tuxlink-iizmk item 7). The backend's name rule — kebab-case, starts
+ * a-z, chars [a-z0-9-], length 1-64 — is the STORAGE id format; it must
+ * never reject a human typing "Test Routine 1" into the name field. The
+ * designer keeps the typed text as local display state and stores THIS
+ * derivation in `draft.routine`, so Save always sends a wire-legal name.
+ *
+ * Rules: lowercase; whitespace/underscore runs → '-'; every other
+ * out-of-alphabet char stripped; dash runs collapsed; leading non-a-z
+ * stripped (the id must start a-z — a leading digit prefixes nothing);
+ * trimmed to 64; trailing dashes dropped. An input with no usable chars
+ * (all symbols) derives '' — the draft name stays empty and Save stays
+ * blocked exactly as it is today for an unnamed draft.
+ */
+export function slugifyRoutineName(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[\s_]+/g, '-')
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^[^a-z]+/, '')
+    .slice(0, 64)
+    .replace(/-+$/, '');
+}
+
 /* tuxlink-7ewvq: two tabs, not three. 'runs' KEEPS its wire value (routing +
  * continuity tokens store it) but reads 'History' — 'Runs' was ambiguous
  * (the verb? the history?). 'settings' is gone as a tab: its sections render
@@ -196,7 +222,9 @@ function ExportJsonDialog({ draft, onClose }: { draft: RoutineDef; onClose: () =
         onClick={(e) => e.stopPropagation()}
       >
         <div className="dlg-head">
-          <span>Export JSON</span>
+          {/* item 10 (bd tuxlink-iizmk): the operator exports a ROUTINE; the
+              file happening to be JSON is an implementation detail. */}
+          <span>Export routine</span>
           <button type="button" className="dismiss" aria-label="Close" onClick={onClose}>
             ×
           </button>
@@ -244,6 +272,12 @@ export function RoutineDesigner({
   // session even after the operator types a name, since the routine isn't
   // considered "loaded from the backend" until a real Save happens.
   const [isNewDraft] = useState(() => routine === '');
+
+  // The name field's DISPLAY text (item 7): the operator types anything here;
+  // `draft.routine` only ever holds `slugifyRoutineName(nameText)`. Seeded
+  // from a continuity-token draft's stored (already-wire-format) name so a
+  // pop-out/dock-back round trip doesn't blank the field.
+  const [nameText, setNameText] = useState(() => initialDraft?.routine ?? '');
 
   // A continuity-token draft (spec §7) seeds the designer at mount and SUPPRESSES
   // the `getRoutine` fetch below — captured at mount so a later prop-identity
@@ -525,16 +559,25 @@ export function RoutineDesigner({
           ← Routines
         </button>
         {isNewDraft ? (
-          <input
-            className="dname-input"
-            data-testid="designer-name-input"
-            placeholder="Untitled routine"
-            value={draft.routine}
-            onChange={(e) => {
-              const name = e.target.value;
-              updateDraft((d) => ({ ...d, routine: name }));
-            }}
-          />
+          <span className="dname-wrap">
+            <input
+              className="dname-input"
+              data-testid="designer-name-input"
+              placeholder="Untitled routine"
+              value={nameText}
+              onChange={(e) => {
+                const typed = e.target.value;
+                setNameText(typed);
+                const slug = slugifyRoutineName(typed);
+                updateDraft((d) => ({ ...d, routine: slug }));
+              }}
+            />
+            {draft.routine !== '' && draft.routine !== nameText && (
+              <span className="dname-derived" data-testid="derived-name">
+                saves as {draft.routine}
+              </span>
+            )}
+          </span>
         ) : (
           <span className="dname">{draft.routine}</span>
         )}
@@ -574,7 +617,7 @@ export function RoutineDesigner({
             Dry-run
           </button>
           <button type="button" className="btn" onClick={() => setExportOpen(true)}>
-            Export JSON
+            Export routine
           </button>
           <button
             type="button"

@@ -360,6 +360,13 @@ table.ops {
   position: relative;
 }
 
+/* item 8 (bd tuxlink-iizmk): the row-actions cell must NOT clip — the ⋯ menu
+ * is absolutely positioned inside `.rowact` (this cell's child), so `.ops td`'s
+ * overflow:hidden would otherwise cut the dropdown off at the cell edge. */
+.ops td.actcell {
+  overflow: visible;
+}
+
 .ibtn {
   width: 24px;
   height: 24px;
@@ -391,10 +398,14 @@ table.ops {
 }
 
 .rowmenu {
+  /* Anchored to `.rowact` (position:relative), its PARENT — item 8: as a
+   * td-level sibling this absolute box resolved against the app window and
+   * painted under the window chrome. z-index 30 matches the app's other
+   * in-flow dropdowns (SearchDropdown) so it clears the table rows below. */
   position: absolute;
   top: 28px;
   right: 0;
-  z-index: 5;
+  z-index: 30;
   display: flex;
   flex-direction: column;
   min-width: 140px;

@@ -1,6 +1,7 @@
 /**
- * ImportJsonDialog — the dashboard's "Import JSON…" header action (routines
- * plan-5 Task 8).
+ * ImportJsonDialog — the dashboard's "Import routine…" header action (routines
+ * plan-5 Task 8; relabeled from "Import JSON" per bd tuxlink-iizmk item 10 —
+ * the operator imports a routine, JSON is the carrier format).
  *
  * Textarea paste → `JSON.parse` → `saveRoutine(parsed)` → findings shown.
  * Save NEVER blocks (spec §10 / task-8 brief binding constraint 7): a draft
@@ -70,11 +71,13 @@ export function ImportJsonDialog({ onClose, onSaved }: ImportJsonDialogProps) {
       <div
         className="import-dialog"
         role="dialog"
-        aria-label="Import routine JSON"
+        aria-label="Import routine"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="import-head">
-          <span>Import JSON</span>
+          {/* item 10 (bd tuxlink-iizmk): "Import routine", not "Import JSON" —
+              the operator imports a routine; JSON is the carrier format. */}
+          <span>Import routine</span>
           <button type="button" className="dismiss" aria-label="Close" onClick={onClose}>
             ×
           </button>

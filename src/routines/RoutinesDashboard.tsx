@@ -327,8 +327,10 @@ export function RoutinesDashboard({ onOpenDesigner, onNewRoutine, onPopOut, onCl
               ↗ Pop out
             </button>
           )}
+          {/* item 10 (bd tuxlink-iizmk): the operator imports a ROUTINE; the
+              file happening to be JSON is an implementation detail. */}
           <button type="button" className="btn btn-ghost" onClick={() => setImportOpen(true)}>
-            Import JSON…
+            Import routine…
           </button>
           <button type="button" className="btn btn-accent" onClick={onNewRoutine}>
             ＋ New Routine
@@ -359,8 +361,8 @@ export function RoutinesDashboard({ onOpenDesigner, onNewRoutine, onPopOut, onCl
           library is still loading — render the bare table shell meanwhile. */}
       {loaded && summaries.length === 0 ? (
         <div className="ops-empty" data-testid="routines-dashboard-empty">
-          No routines yet. Click ＋ New Routine to build one on the canvas, or Import JSON… to load
-          a shared definition.
+          No routines yet. Click ＋ New Routine to build one on the canvas, or Import routine… to
+          load a shared definition.
         </div>
       ) : (
       <div className="ops-wrap">
@@ -483,7 +485,10 @@ export function RoutinesDashboard({ onOpenDesigner, onNewRoutine, onPopOut, onCl
                   <td>
                     <span className={`txmode ${tx.cls}`}>{tx.text}</span>
                   </td>
-                  <td>
+                  {/* item 8 (bd tuxlink-iizmk): `actcell` lifts `.ops td`'s
+                      overflow:hidden so the row menu (absolutely positioned
+                      inside `.rowact` below) isn't clipped by its own cell. */}
+                  <td className="actcell">
                     <div className="rowact">
                       {liveRun ? (
                         <button
@@ -534,42 +539,48 @@ export function RoutinesDashboard({ onOpenDesigner, onNewRoutine, onPopOut, onCl
                       >
                         ⋯
                       </button>
-                    </div>
-                    {menuOpen && (
-                      <div className="rowmenu" role="menu">
-                        <button
-                          type="button"
-                          role="menuitem"
-                          onClick={() => {
-                            setOpenMenuFor(null);
-                            onOpenDesigner(s.routine);
-                          }}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          role="menuitem"
-                          onClick={() => void handleToggleEnabled(s.routine, s.enabled)}
-                        >
-                          {s.enabled ? 'Disable' : 'Enable'}
-                        </button>
-                        {pendingDelete === s.routine ? (
+                      {/* item 8 (bd tuxlink-iizmk): the menu MUST live inside
+                          `.rowact` — the row's only position:relative anchor.
+                          As a td-level sibling its position:absolute resolved
+                          against the app window itself, painting the menu at
+                          the window's top-right corner underneath the chrome
+                          ("opens behind the main window"). */}
+                      {menuOpen && (
+                        <div className="rowmenu" role="menu">
                           <button
                             type="button"
                             role="menuitem"
-                            className="danger"
-                            onClick={() => void handleDeleteConfirmed(s.routine)}
+                            onClick={() => {
+                              setOpenMenuFor(null);
+                              onOpenDesigner(s.routine);
+                            }}
                           >
-                            Confirm delete
+                            Edit
                           </button>
-                        ) : (
-                          <button type="button" role="menuitem" onClick={() => setPendingDelete(s.routine)}>
-                            Delete
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => void handleToggleEnabled(s.routine, s.enabled)}
+                          >
+                            {s.enabled ? 'Disable' : 'Enable'}
                           </button>
-                        )}
-                      </div>
-                    )}
+                          {pendingDelete === s.routine ? (
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="danger"
+                              onClick={() => void handleDeleteConfirmed(s.routine)}
+                            >
+                              Confirm delete
+                            </button>
+                          ) : (
+                            <button type="button" role="menuitem" onClick={() => setPendingDelete(s.routine)}>
+                              Delete
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </td>
                 </tr>
               );

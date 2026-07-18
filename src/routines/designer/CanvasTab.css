@@ -212,15 +212,25 @@
   flex: 0 0 auto;
 }
 
+/* item 5 (bd tuxlink-iizmk): the delete affordance was a bare ⌫ at meta font
+ * size with a ~10px hit area — it rendered as a few clipped pixels in the
+ * real app. Raw px on purpose: 20px is the minimum interactive target and
+ * 14px the glyph-legibility floor; neither may shrink with a compact type
+ * scale (see project convention: a11y floors stay raw px, untokenized). */
 .node-delete {
   margin-left: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  min-height: 20px;
   background: none;
   border: none;
   color: var(--error);
   cursor: pointer;
-  font-size: var(--type-meta);
+  font-size: 14px;
   line-height: 1;
-  padding: 0 2px;
+  padding: 0;
 }
 
 .edge {

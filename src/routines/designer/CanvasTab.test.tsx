@@ -98,10 +98,20 @@ describe('CanvasTab — selection', () => {
     expect(screen.getByTestId('node-s2').className).not.toContain('selected');
   });
 
-  it('clicking the ⌫ affordance on a selected node calls onRemoveStep', () => {
+  it('clicking the delete affordance on a selected node calls onRemoveStep', () => {
     const { onRemoveStep } = renderTab({ selectedStepId: 's1' });
     fireEvent.click(screen.getByTestId('delete-s1'));
     expect(onRemoveStep).toHaveBeenCalledWith('s1');
+  });
+
+  // bd tuxlink-iizmk item 5: the old ⌫ glyph fell back to a substituted font
+  // on WebKitGTK and rendered as a few clipped pixels. The affordance now
+  // shows a plain × (universally available) inside a real hit target.
+  it('the delete affordance renders the × glyph (not the fragile ⌫)', () => {
+    renderTab({ selectedStepId: 's1' });
+    const btn = screen.getByTestId('delete-s1');
+    expect(btn.textContent).toBe('×');
+    expect(btn.className).toContain('node-delete');
   });
 
   it('pressing Backspace with a node selected calls onRemoveStep', () => {
