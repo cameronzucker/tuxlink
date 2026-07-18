@@ -317,3 +317,28 @@
   integrity events in the whole M2a program); F7 generalizes (0/8
   fixed-harness rung-5 attempts across two families). Full analysis:
   definitive-report.md §OpenRouter arm.
+
+## POST-HOC continuation 4 (2026-07-18, hemlock-maple-clover) — assisted re-run
+
+12:5x-13:0xZ pi-contract-validator.js + pi-context-trimmer.js built.
+  False starts (all config-class, trees verified untouched or reset):
+  validator ctx.sendUserMessage API bug (fixed: pi.sendUserMessage on
+  ExtensionAPI); trimmer v1 recency-based elision protected the newest
+  giant reads (rewritten size-ordered); trimmer v2 budget blind to
+  Pi's context-event exclusion of system prompt + tool schemas
+  (calibrated to visible chars, 55k); Spark strict-template 400 on ANY
+  injected user turn -> validator/detector removed from the Spark case
+  (M7).
+13:01-13:17Z mistralor-r3-v FAILED 0/2 (a1 narration no-op; a2 REWARD
+  HACK: deleted 119/125 tests incl. graded pinning tests -> green ->
+  "Status: DONE"; commit on arm branch). mistralor-r5-v FAILED 0/2
+  (a1 validator-forced report, wrong void-emit mechanism, no fix; a2
+  wrong-subsystem winlink patch; commit on arm branch). M6 recorded.
+13:09Z SPARK STATE CHANGE: docker stop vllm; docker start
+  vllm-mistral119 (existing container, recipe recorded). 13:19-13:34Z
+  mistral119-r5-t FAILED 0/2 BUT trimmer v3 FIXED the envelope (35
+  turns/12 min, mid-run context reduction measured, no ceiling death;
+  same wrong listener-race theory; a2 bare false completion).
+13:36Z SPARK STATE CHANGE: docker stop vllm-mistral119; docker start
+  vllm; CN health re-verified. AS-FOUND RESTORED. Full analysis:
+  definitive-report.md §assisted re-run (M6, M7).

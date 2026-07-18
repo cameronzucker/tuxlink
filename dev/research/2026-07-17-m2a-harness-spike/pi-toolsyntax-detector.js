@@ -22,7 +22,7 @@ const PSEUDO_TOOL_PATTERNS = [
 export default function (pi) {
   let corrections = 0;
 
-  pi.on("message_end", async (event, ctx) => {
+  pi.on("message_end", async (event) => {
     const msg = event.message;
     if (!msg || msg.role !== "assistant") return;
     const content = Array.isArray(msg.content) ? msg.content : [];
@@ -36,7 +36,7 @@ export default function (pi) {
     if (!PSEUDO_TOOL_PATTERNS.some((re) => re.test(text))) return;
     if (corrections >= 3) return;
     corrections += 1;
-    await ctx.sendUserMessage(
+    await pi.sendUserMessage(
       "Your last message wrote a tool call as plain text — nothing was " +
         "executed. Invoke tools ONLY through the native tool-calling " +
         "interface (no XML or JSON blocks in your message text). Retry now.",

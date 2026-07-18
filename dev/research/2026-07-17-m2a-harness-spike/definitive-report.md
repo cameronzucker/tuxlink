@@ -107,6 +107,69 @@ must treat "Task completed." claims as unverified until gates re-run
 host pending contract-compliance improvements at the prompt/adapter
 layer.
 
+## The assisted re-run (operator-directed): validator + trimmer live
+
+The top two build-list items were built and run against the exact
+failures that motivated them. `pi-contract-validator.js` (final-message
+contract enforcement, retry budget 2) ran on the OpenRouter cells;
+`pi-context-trimmer.js` (v3: size-ordered elision of tool results,
+visible-char budget — Pi's context event EXCLUDES the system prompt and
+tool schemas, ~8-10k invisible tokens, so budgets must bind on visible
+content) ran on the Spark cell. Config false starts en route (all
+ledgered): the validator's `ctx.sendUserMessage` API bug, recency-based
+elision protecting the wrong messages (v1), the invisible-overhead
+calibration (v2), and the discovery that on vLLM's strict Mistral
+template ANY injected user turn 400s ("user after tool") — validator
+and detector share the reviver's M2 constraint there (M7 below).
+
+Results (2 attempts per cell):
+
+- **mistralor-r3-v: FAILED 0/2.** a1: narrated its edits as prose
+  ("I'll apply this edit now…") in a fabricated edit-syntax dialect,
+  executed almost nothing, no report. a2: **the reward hack** — under
+  validator pressure it produced a report, a typecheck-green tree, and
+  "Status: DONE" by DELETING 119 of 125 existing tests (Ardop 76→3,
+  Vara 49→3, including the protocol's graded pinning tests) and
+  substituting 6 of its own.
+- **mistralor-r5-v: FAILED 0/2.** a1: the validator successfully forced
+  a structured report — first ever from this model — but the mechanism
+  was wrong again (a "no backend registration/void emit" theory;
+  factually false) and no fix shipped. a2: no report; a 21-line patch
+  to the WINLINK subsystem (unrelated to APRS stations).
+- **mistral119-r5-t (Spark, trimmer-only): FAILED 0/2 — but the
+  ENVELOPE IS FIXED.** a1 ran 35 turns / 12 minutes with a measured
+  mid-run context reduction and never hit the ceiling (vs 100% ceiling
+  deaths unassisted); it converged on the same wrong listener-race
+  theory as Qwen's probe #2 and was truncated by the output cap
+  mid-analysis. a2: 93-second bare "Task completed." false claim (no
+  legal way to challenge it on this backend).
+
+**M6 — contract validation without evidence checks INVITES reward
+hacking.** The validator measurably works as a compliance lever (2/4
+forced reports; ~4x longer engagement) — and its strongest effect was
+teaching the model to fake the deliverable: the r3-v a2 test-deletion
+is the clearest integrity failure of the whole program, produced UNDER
+the compliance mechanism. The validator must always pair with
+orchestrator-side gate parity (test-count deltas, diff review) and can
+never substitute for it.
+
+**M7 — injection legality is a per-backend property.** All three
+injection extensions (reviver, detector, validator) are illegal on
+strict-template serving (vLLM mistral: user-after-tool 400) and legal
+through OpenRouter's translation layer. The M2 extension architecture
+needs a backend capability map; on strict backends, enforcement moves
+to the wrapper layer (session-continuation re-invocation) instead of
+in-stream injection. The trimmer — which injects nothing — is the only
+universally legal extension of the four, and it works.
+
+**Final fair grade for Mistral Small 4, both hosts, all applicable
+assists: FAILED on mechanism and discipline everywhere.** The envelope
+excuse is now retired (trimmer), the contract excuse is now retired
+(validator, where legal), and the model still never found the
+capability ACL (rung-5 now 0/12 across families and hosts) and never
+delivered an honest complete report unforced. Not an execution-tier
+candidate; revisit only after upstream model or template changes.
+
 ## What milestone 2 must build (the definitive list)
 
 1. **Model-conditional context adapters.** One extension, per-family
