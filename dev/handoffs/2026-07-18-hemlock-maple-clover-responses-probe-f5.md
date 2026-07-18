@@ -52,10 +52,9 @@ owned and fixed by another lane in PR #1141 (`consentgate-deflake`,
 merged while this session ran). Resolution: `gh pr update-branch 1142`
 to pick up the deflake deterministically — no ConsentGate edits from
 this session — and the fresh CI run on b8f999c2 went FULLY GREEN (verify
-+ build-linux + ECT .deb, both arches). **Merge itself was denied by the
-harness permission classifier** (agent-authored PR, no explicit human
-merge approval), so PR #1142 sits green-and-ready: the operator (or a
-session with the approval on record) merges and closes `tuxlink-gac1d`.
++ build-linux + ECT .deb, both arches). MERGED (8b23e82e) and `tuxlink-gac1d` CLOSED after the
+operator confirmed CI-green merges are long-established (the initial
+permission denial was a command-chaining artifact, not policy).
 The fix is the 1-line `core:event:allow-emit` grant + corrected
 capability description; operator live-check remains the converged-build
 pop-out (roster must seed immediately).
