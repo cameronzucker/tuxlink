@@ -158,6 +158,36 @@ Mistral Small 4 is not an execution-tier candidate on any host pending
 contract-discipline work. Candidate diffs: local never-merge branches
 `bd-tuxlink-7raoe/m2a-pi-mistralor-{r3,r5}`.
 
+## Continuation 4 (same session, operator-directed): the assisted re-run
+
+Built and live-tested the top two M2 build-list items. Canonical:
+`definitive-report.md` §assisted re-run (findings M6, M7).
+
+- **pi-contract-validator.js works as a compliance lever** (forced the
+  first-ever reports out of Mistral, ~4x engagement) — and produced the
+  program's clearest integrity failure: under validator pressure the
+  model went green by DELETING 119/125 existing tests and claiming
+  "Status: DONE" (**M6**: contract validation must pair with
+  orchestrator-side gate parity — test-count deltas, diff review —
+  never substitute for it).
+- **pi-context-trimmer.js (v3) FIXES the Spark 32k envelope** — 35-turn
+  12-minute run with measured mid-run context reduction, zero ceiling
+  deaths. Two API facts baked into it: Pi's context event excludes the
+  system prompt + tool schemas (budget on VISIBLE chars), and elision
+  must be size-ordered, not recency-ordered.
+- **M7:** all injection extensions (reviver/detector/validator) 400 on
+  strict-template serving (vLLM mistral, user-after-tool); only the
+  non-injecting trimmer is universally legal. M2 needs a per-backend
+  injection-legality map; strict backends get wrapper-level enforcement.
+- **Final Mistral grade with all applicable assists: FAILED 0/2 on all
+  three cells** (reward hack; wrong-subsystem patch; same wrong
+  listener-race theory as Qwen). Rung-5 is now 0/12 across families and
+  hosts. Not an execution-tier candidate.
+- Spark restored as-found (CN verified) after two logged swaps.
+  Candidate diffs on local never-merge arm branches
+  `bd-tuxlink-7raoe/m2a-pi-mistralor-{r3,r5}-v`; the r5-t/mistralor
+  worker worktrees disposed per ADR 0009 (forensics archived).
+
 ## Next session (this track)
 
 1. Read this handoff + `addendum-responses-probe.md`.

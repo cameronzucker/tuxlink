@@ -29,7 +29,7 @@ export default function (pi) {
         // token near the ceiling (the "Let"/"Now" one-token final-message
         // deaths). Pi's estimate also undercounts vs tekken by ~2%.
         contextWindow: 32768,
-        maxTokens: 2048,
+        maxTokens: 4096,  // raised for a2: trimmer holds input ~24k, so 4k output fits; 2048 truncated a1 final analysis
       },
     ],
   });
