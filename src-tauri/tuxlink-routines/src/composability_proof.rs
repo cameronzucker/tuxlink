@@ -33,7 +33,11 @@ mod tests {
         Arc::new(Engine::new(EngineConfig {
             journal_dir: dir.to_path_buf(),
             registry: Arc::new(reg),
-            resolver: Arc::new(FakeResolver::new()),
+            resolver: Arc::new(FakeResolver::new().entity(
+                "preset",
+                "40m-vara",
+                json!({"frequencyHz": 7_103_500, "mode": "vara-hf"}),
+            )),
             now: fixed_now,
             default_timeout_s: 30,
             lookup: None,
