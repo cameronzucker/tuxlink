@@ -312,7 +312,9 @@
   .layout-b .dashboard .dash-item.dash-aprs,
   .layout-b .dashboard .dash-divider.dash-divider--aprs { display: none; }
 }
-@media (max-width: 1280px) {
+/* On-connect yields BEFORE APRS: the operator ranked the APRS presence above
+ * a settings toggle that also lives in Settings. */
+@media (max-width: 1520px) {
   .layout-b .dashboard .dash-item.dash-item--onconnect,
   .layout-b .dashboard .dash-divider.dash-divider--onconnect { display: none; }
 }
