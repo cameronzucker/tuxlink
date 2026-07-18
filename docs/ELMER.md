@@ -14,8 +14,13 @@ through the same 79-tool surface that an external AI agent reaches over the
 Model Context Protocol (MCP). Elmer and an external MCP client are two entry
 paths into one router, gated by the same security model. There is no
 Elmer-only shortcut and no external-agent-only capability: whatever tool
-exists, both paths call it, and both paths are subject to the same
-authorization gate described in [§3](#3-security-model).
+exists, both paths call it. Authorization splits by tool class, not by
+caller: direct egress and write tools are gated by the Agent-send arming
+model in [§3](#3-security-model), while the Routines tools carry their own
+authorization (the validator, the operator's stored design-time transmit
+acknowledgement, and the attended-consent moment). By design, `routines_run`
+on an already-acknowledged automatic routine does not pass through the
+egress guard.
 
 An amateur radio operator remains the control operator of record for every
 transmission. Elmer assists with drafting, diagnosis, and station operation;
@@ -65,9 +70,9 @@ The in-process invoker exposes this full surface unfiltered to Elmer,
 including egress-marked tools. Arming is enforced at the point each tool
 calls into its port implementation, not by hiding tools from the list: a
 disarmed or tainted Elmer sees every tool name but has most of them denied at
-call time, with a plain-language reason. The router's own module doc
-codifies this as a design decision, not an oversight: "gate at the operation,
-not the list."
+call time, with a plain-language reason. The in-process invoker's
+module doc codifies this as a design decision, not an oversight: "gate at
+the operation, not the list."
 ([`src-tauri/src/elmer/executor.rs:22,114`](../src-tauri/src/elmer/executor.rs))
 
 ### 2.3 Entry paths, guard, transports

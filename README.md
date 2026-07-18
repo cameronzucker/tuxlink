@@ -63,8 +63,8 @@ browser-served web UI.
 | AI-agent control (MCP server) | No | No | Yes |
 | Automation routines (flowchart designer, schedule triggers) | Not documented | Scriptable (CRON-like scheduled connect / QSY commands); no visual designer | Yes (designer, dashboard, run journal, consent gating) |
 | In-app AI assistant (Elmer) | Not documented | Not documented | Yes |
-| Multi-window operation (pop surfaces into separate OS windows) | Not documented | No (single web UI / CLI surface) | Yes |
-| FT8 band monitoring | No | No | Yes (receive-only) |
+| Multi-window operation (pop surfaces into separate OS windows) | Not documented | No ([single web UI / CLI surface](docs/knowledge/pat-winlink.md)) | Yes |
+| FT8 band monitoring | Not documented | Not documented | Yes (receive-only) |
 | Off-air space weather (WWV/WWVH decode) | Not documented | Not documented | Yes |
 
 Tuxlink takes a third path: it implements the Winlink B2F protocol itself,
@@ -134,7 +134,7 @@ Tuxlink ships the following on Linux for x86_64 and arm64:
   inline; ARQ bandwidth is selectable; and a live quality meter, an ARDOP frame
   ribbon, and the session log track the link as it runs, freeze-free, with a
   working abort.
-- **VARA HF / VARA FM, on-air validated.** The VARA panel dials Winlink
+- **VARA HF, on-air validated; VARA FM supported.** The VARA panel dials Winlink
   gateways end to end: it selects the ARQ bandwidth (500 / 2300 / 2750 Hz) to
   match the gateway channel's advertised width, takes the channel's published
   center frequency and dials the rig to the correct sideband spot over CAT,
