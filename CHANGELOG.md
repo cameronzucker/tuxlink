@@ -31,6 +31,30 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.94.0](https://github.com/cameronzucker/tuxlink/compare/v0.93.0...v0.94.0) (2026-07-18)
+
+
+### Features
+
+* **contacts:** manual vs observed channel provenance — UI-authored dials survive upsert (tuxlink-6vn4x, tuxlink-f0th0) ([1847f39](https://github.com/cameronzucker/tuxlink/commit/1847f39204cabb94c0b01670ad353f2b93fbaa77))
+* **contacts:** mock-parity surface — radio dials, groups on detail, editor in pane (tuxlink-6vn4x cluster) ([d5e5623](https://github.com/cameronzucker/tuxlink/commit/d5e56239cbe4b01b48ebf3c21c038b06f8b3ca51))
+* **routines:** key/value params editor + readable type scale (tuxlink-7ewvq items 7,9) ([9ce0dae](https://github.com/cameronzucker/tuxlink/commit/9ce0dae1a0392e3785803412380f00959bf4776c))
+
+
+### Bug Fixes
+
+* **contacts:** Codex adrev dispositions — cap-safe manual dials, retargeted round-trips, no hidden observed variants ([75263ba](https://github.com/cameronzucker/tuxlink/commit/75263ba7ad7a6f2816cdaeebb06f34486da0e8d8))
+* **lint:** reword merge_for_upsert doc — a line-leading "+" read as a markdown list marker, tripping clippy doc_lazy_continuation ([0f8193b](https://github.com/cameronzucker/tuxlink/commit/0f8193beae54295e7e0b2acb134704688469f157))
+* **onboarding:** radio-dock tour stop skips when absent and anchors the boxed panel root (tuxlink-fh53x) ([2922292](https://github.com/cameronzucker/tuxlink/commit/2922292bb861ee55edbe49a477bf32ef2593f468))
+* **routines:** de-baffle the designer — stray oval, palette gating, jargon, tabs (tuxlink-7ewvq items 1-6,8) ([3c9dffd](https://github.com/cameronzucker/tuxlink/commit/3c9dffdddaca6abeff167535d74cc5ada68f1b74))
+* **routines:** four operator-reported defects — human-name save, in-window row menu, Import routine label, real delete target (tuxlink-iizmk items 5/7/8/10) ([1fb8393](https://github.com/cameronzucker/tuxlink/commit/1fb83932295d6715113951aab51c33ad28c8e31a))
+* **shell:** on-connect tier yields at 1520px, before APRS — operator ranked APRS higher ([e9e48ef](https://github.com/cameronzucker/tuxlink/commit/e9e48ef0e6f94635e1e42d37f5d2ecffb61f3019))
+* **shell:** ribbon action group survives any width — clipping middle wrapper (pass 4) ([604c8e8](https://github.com/cameronzucker/tuxlink/commit/604c8e8f54e7b8976cd46d34b18acdd911e1c51a))
+* **shell:** ribbon degradation ladder to the 900px window minimum (pass 2) ([a353490](https://github.com/cameronzucker/tuxlink/commit/a353490767be2a00e24fee66fa532ffecaf16526))
+* **shell:** ribbon ladder tiers double-class their subjects — cascade tie left every tier dead ([36c4e5f](https://github.com/cameronzucker/tuxlink/commit/36c4e5fad82d4fed5766f64a87c33e938f36fc7e))
+* **shell:** ribbon width budget at 1920 + Station Intel relabel (pass 1) ([6f5d2a8](https://github.com/cameronzucker/tuxlink/commit/6f5d2a8c487baaac6cc76ea33c1e4a707b7c33ab))
+* **test:** serialize the packet loopback exchange test — its observation guard captured other serial tests' sinks (tuxlink-8vt7b) ([e3ef444](https://github.com/cameronzucker/tuxlink/commit/e3ef4449b92a5aaa76bd0f445204d94bb8cb78bc))
+
 ## [0.93.0](https://github.com/cameronzucker/tuxlink/compare/v0.92.1...v0.93.0) (2026-07-17)
 
 
