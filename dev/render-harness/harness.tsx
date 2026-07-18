@@ -25,6 +25,12 @@ import '../../src/styles/controls.css';
 import '../../src/shell/AppShell.css';
 import { RequestCenter } from '../../src/request/RequestCenter';
 import { DashboardRibbon } from '../../src/shell/DashboardRibbon';
+// `&real=1` (observability wire-walk, bd tuxlink-iizmk): a REAL run captured
+// 2026-07-18 from the R2 converge build (7d801187) via the MCP shim —
+// heron-observability-probe, run-1784416315-0000, verbatim journal from
+// routines_journal_get. Real engine data through the real UI components; only
+// the IPC transport is shimmed.
+import REAL_RUN_20260718 from './real-run-20260718.json';
 // Radio panes (tuxlink-zj9se): mount each pane standalone in the dock layout so
 // its CSS (RadioPanel.css + per-mode + section CSS, imported by the components
 // themselves) renders in the real WebKitGTK engine for the token-migration
@@ -1427,6 +1433,18 @@ if (ROUTINES_FAMILY) {
     { name: '20m-ardop', frequencyHz: 14105000, mode: 'ARDOP', powerW: 50, atu: false },
   ];
   RESPONSES.routines_station_sets_list = [{ name: 'ares-net', callsigns: ['N0DAJ', 'KD7SSB', 'W7RMS'] }];
+
+  // Overlay the captured REAL run (`&real=1`). Mutates the arrays/maps the
+  // RESPONSES closures already capture by reference, so order here is safe.
+  if (params.get('real') === '1') {
+    const rr = REAL_RUN_20260718 as { def: Record<string, unknown>; run: Record<string, unknown>; journal: unknown[] };
+    const name = String(rr.def.routine);
+    DEFS[name] = rr.def;
+    FINDINGS_BY_ROUTINE[name] = [];
+    SUMMARIES.push({ routine: name, transmitMode: String(rr.def.transmit_mode), enabled: false, triggers: rr.def.triggers as never });
+    RUNS.unshift(rr.run as never);
+    JOURNALS[String(rr.run.runId)] = rr.journal;
+  }
 }
 
 function RoutinesFixtureView() {
