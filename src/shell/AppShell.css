@@ -265,12 +265,24 @@
   border-bottom: 1px solid var(--border);
   padding: 0 18px;
   align-items: center;
-  gap: 28px;
+  /* tuxlink-t698l: 28px gaps across ~16 gap slots (items + dividers) burned
+   * ~450px of a 1920 row and squeezed the cells into wrapping/clipping. */
+  gap: 14px;
   font-size: var(--type-control);
   /* ng3 smoke #6: never let a long connection/rejection string reflow the ribbon
    * or push the right-pinned Connect button off-screen. */
   overflow: hidden;
-  --dash-connection-slot: clamp(210px, 18vw, 260px);
+  --dash-connection-slot: clamp(180px, 14vw, 260px);
+}
+/* tuxlink-t698l: cells whose content must never wrap or clip (identity, grid,
+ * clock, the On-connect segmented control). They refuse the flex squeeze;
+ * the search zone (flex 0 1 560px, min 240px) and the ellipsizing cells
+ * (connection slot, APRS / Station Intel captions) absorb it instead. */
+.layout-b .dashboard .dash-item--rigid {
+  flex: 0 0 auto;
+}
+.layout-b .dashboard .dash-item--rigid .dash-value {
+  white-space: nowrap;
 }
 /* tuxlink-a8x6: keep the whole Connection cell stable as the label changes
  * between Idle/Connected/Error and Telnet/Packet/ARDOP/VARA. Only the text
@@ -378,6 +390,10 @@
   flex-direction: row;
   align-items: center;
   gap: 10px;
+  /* tuxlink-t698l: the action button never shrinks and keeps clearance from
+   * the last middle cell even when the auto margin collapses under squeeze. */
+  flex: 0 0 auto;
+  padding-left: 6px;
 }
 /* .connect-button and .abort-button visual styles (font/color/background/
    border/padding/border-radius/cursor/:disabled/:hover) are now provided by
@@ -721,7 +737,9 @@
 .layout-b .dashboard .dash-grid-display {
   display: flex;
   align-items: center;
-  gap: 6px;
+  /* tuxlink-t698l: 8px matches the ribbon's intra-cell rhythm (dot-to-text
+   * gaps elsewhere); 6px read as cramped next to the segmented control. */
+  gap: 8px;
   flex-wrap: nowrap;
 }
 /* The clickable grid value — styled as a transparent button so it responds to

@@ -364,7 +364,7 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
       </div>
       <div className="dash-divider" />
 
-      <div className="dash-item dash-item--grid">
+      <div className="dash-item dash-item--grid dash-item--rigid">
         <div className="dash-label">Grid</div>
         <GridEdit
           grid={grid}
@@ -396,7 +396,7 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
 
       {position && (
         <>
-          <div className="dash-item">
+          <div className="dash-item dash-item--rigid">
             <div className="dash-label">Position</div>
             <div className="dash-value good" data-testid="ribbon-position">
               {position}
@@ -406,7 +406,7 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
         </>
       )}
 
-      <div className="dash-item">
+      <div className="dash-item dash-item--rigid">
         <div className="dash-label">UTC / Local</div>
         <ClockCell grid={grid} />
       </div>
@@ -427,7 +427,7 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
       {onReviewInboundChange && (
         <>
           <div className="dash-divider" />
-          <div className="dash-item">
+          <div className="dash-item dash-item--rigid">
             <div className="dash-label">On connect</div>
             <div
               className="seg"
@@ -546,7 +546,11 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
           <>
             <div className="dash-divider" />
             <div className="dash-item dash-ft8">
-              <div className="dash-label">FT-8</div>
+              {/* tuxlink-tg6ow: the chip is the Station Intelligence
+                  listener control — label the FUNCTION, not the transport
+                  mode (operator decision 2026-07-18). testids keep the
+                  historical dash-ft8-* names. */}
+              <div className="dash-label">Station Intel</div>
               <button
                 type="button"
                 className="dash-ft8-control"
