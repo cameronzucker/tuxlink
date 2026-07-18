@@ -4,10 +4,12 @@
 //! (the same seam production actions plug into), `$`-references and branch
 //! decisions asserted from what each action actually RECEIVED.
 //!
-//! Also the negative half: the two routine classes the operator would value
-//! most are demonstrated to be REJECTED by today's engine — nested output
-//! paths (`$s1.indices.k_index`) and numeric branch conditions — pinning the
-//! missing links the round-2 build must close rather than hand-waving them.
+//! The R2 section documents the two links round 2 closed: nested output
+//! paths (`$s1.indices.k_index`) and the branch comparison form
+//! (`op`/`value`). Both were pinned here as NEGATIVE proofs when the file
+//! landed; the tests now assert the positive behavior, and one deliberate
+//! negative remains (a bare numeric branch without a comparison stays a
+//! hard error; truthiness guessing is banned).
 
 #[cfg(test)]
 mod tests {
@@ -213,14 +215,12 @@ mod tests {
         assert_eq!(log.calls()[0]["message"], json!("W7DEF-10"));
     }
 
-    /// R2 (negative proof) — "Propagation-gated band plan" is the routine an
-    /// operator would most want: fetch space weather, branch on the K-index,
-    /// pick 80 m vs 40 m. TODAY'S ENGINE REJECTS BOTH HALVES, and these tests
-    /// pin the exact failures (the round-2 missing links):
-    ///  - `$s1.indices.k_index` — nested output fields are unreachable
-    ///    (VarPath is step + ONE flat key).
-    ///  - branch on a NUMBER — conditions are strictly boolean; there is no
-    ///    comparison form, so a threshold gate cannot be expressed.
+    /// R2 — "Propagation-gated band plan": fetch space weather, gate on the
+    /// K-index, pick the band. Both halves were NEGATIVE proofs when this file
+    /// landed (nested output paths unreachable, numeric branch a hard error);
+    /// round 2 closed both links and these tests now assert the positive
+    /// behavior, plus one retained negative: a bare numeric branch with NO
+    /// comparison stays a hard error (guessing truthiness is banned).
     const R2_NESTED: &str = r#"{
       "routine": "propagation-gate-nested", "schema_version": 1,
       "transmit_mode": "attended", "on_interrupted": "stay",
@@ -233,7 +233,7 @@ mod tests {
     }"#;
 
     #[tokio::test]
-    async fn r2_nested_output_path_is_unreachable_today() {
+    async fn r2_nested_output_path_resolves() {
         let dir = tempfile::tempdir().unwrap();
         let swpc = Arc::new(FakeAction::new("data.spacewx_swpc").ok(
             json!({"forecast_updated": true, "indices": {"sfi": 145.0, "k_index": 5.0}}),
@@ -250,19 +250,86 @@ mod tests {
             .await
             .unwrap();
 
-        // The data IS there (swpc ran) but the deep path cannot be resolved:
-        // the run fails and the log step never receives anything.
+        // Round-2 link #1 closed: the deep path resolves and the log step
+        // receives the RESOLVED number, not the token and not a failure.
         assert_eq!(swpc.calls().len(), 1);
-        assert_eq!(log.calls().len(), 0);
-        assert_eq!(
-            outcome.state,
-            RunState::Failed,
-            "nested $-paths are missing-link #1: this SHOULD work and does not"
-        );
+        assert_eq!(log.calls()[0]["message"], json!(5.0));
+        assert_eq!(outcome.state, RunState::Completed);
     }
 
-    const R2_NUMERIC_BRANCH: &str = r#"{
-      "routine": "propagation-gate-branch", "schema_version": 1,
+    /// The comparison form: `k_index >= 4` picks the disturbed-band plan.
+    /// Nested `on` path + `op`/`value` exercise BOTH closed links in one
+    /// routine, and the journal is asserted for the decree events
+    /// (`branch_taken`, `step_skipped`) so the decision and the not-taken
+    /// remainder are durably explained.
+    const R2_CMP_BRANCH: &str = r#"{
+      "routine": "propagation-gate-cmp", "schema_version": 1,
+      "transmit_mode": "attended", "on_interrupted": "stay",
+      "inputs": [], "triggers": [{"type": "manual"}],
+      "tracks": [{ "name": "t", "steps": [
+        { "id": "s1", "action": "data.spacewx_swpc", "params": {} },
+        { "id": "s2", "control": "branch", "on": "s1.indices.k_index",
+          "op": "gte", "value": 4, "then": ["s3"], "else": ["s4"] },
+        { "id": "s3", "action": "local.log", "params": {"message": "disturbed"} },
+        { "id": "end1", "control": "end", "failed": false },
+        { "id": "s4", "action": "local.log", "params": {"message": "quiet"} }
+      ]}]
+    }"#;
+
+    #[tokio::test]
+    async fn r2_numeric_branch_comparison_gates_the_band_plan() {
+        let dir = tempfile::tempdir().unwrap();
+        let swpc = Arc::new(FakeAction::new("data.spacewx_swpc").ok(
+            json!({"forecast_updated": true, "indices": {"sfi": 145.0, "k_index": 5.0}}),
+        ));
+        let log = Arc::new(FakeAction::new("local.log").ok(json!({})));
+
+        let eng = engine_with(vec![swpc.clone(), log.clone()], dir.path());
+        let def = RoutineDef::parse(R2_CMP_BRANCH).unwrap();
+        let handle = eng.start_run(&def, json!({})).await.unwrap();
+        let run_id = handle.run_id.clone();
+        let outcome = handle.done.await.unwrap();
+
+        // Round-2 link #2 closed: 5.0 >= 4 takes the then arm; end1 stops the
+        // run before the quiet arm.
+        assert_eq!(outcome.state, RunState::Completed);
+        assert_eq!(log.calls().len(), 1);
+        assert_eq!(log.calls()[0]["message"], json!("disturbed"));
+
+        // Decree events: the decision and the never-run remainder are durable.
+        let entries =
+            crate::journal::read_journal(&dir.path().join(format!("{run_id}.jsonl"))).unwrap();
+        let branch = entries
+            .iter()
+            .find_map(|e| match &e.event {
+                crate::journal::RunEvent::BranchTaken {
+                    step,
+                    value,
+                    took_then,
+                    target,
+                    ..
+                } if step.0 == "s2" => Some((value.clone(), *took_then, target.clone())),
+                _ => None,
+            })
+            .expect("branch decision must be journaled");
+        assert_eq!(branch.0, json!(5.0));
+        assert!(branch.1, "5.0 >= 4 takes the then arm");
+        assert_eq!(branch.2.unwrap().0, "s3");
+        let skipped: Vec<&str> = entries
+            .iter()
+            .filter_map(|e| match &e.event {
+                crate::journal::RunEvent::StepSkipped { step, .. } => Some(step.0.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(skipped, vec!["s4"], "the quiet arm is recorded as skipped");
+    }
+
+    /// Retained negative: a bare numeric branch with NO comparison is still a
+    /// hard, verbatim error. Truthiness guessing stays banned; the fix for a
+    /// number is the comparison form, not coercion.
+    const R2_BARE_NUMERIC_BRANCH: &str = r#"{
+      "routine": "propagation-gate-bare", "schema_version": 1,
       "transmit_mode": "attended", "on_interrupted": "stay",
       "inputs": [], "triggers": [{"type": "manual"}],
       "tracks": [{ "name": "t", "steps": [
@@ -276,15 +343,13 @@ mod tests {
     }"#;
 
     #[tokio::test]
-    async fn r2_branching_on_a_number_is_a_hard_error_today() {
+    async fn r2_bare_numeric_branch_remains_a_hard_error() {
         let dir = tempfile::tempdir().unwrap();
-        // Even with the index FLATTENED into the output, branch rejects it:
-        // conditions are strictly boolean.
         let swpc = Arc::new(FakeAction::new("data.spacewx_flat").ok(json!({"k_index": 5.0})));
         let log = Arc::new(FakeAction::new("local.log").ok(json!({})));
 
         let eng = engine_with(vec![swpc.clone(), log.clone()], dir.path());
-        let def = RoutineDef::parse(R2_NUMERIC_BRANCH).unwrap();
+        let def = RoutineDef::parse(R2_BARE_NUMERIC_BRANCH).unwrap();
         let outcome = eng
             .start_run(&def, json!({}))
             .await
@@ -295,10 +360,6 @@ mod tests {
 
         assert_eq!(swpc.calls().len(), 1);
         assert_eq!(log.calls().len(), 0, "neither branch arm can run");
-        assert_eq!(
-            outcome.state,
-            RunState::Failed,
-            "numeric branch conditions are missing-link #2: a threshold gate cannot be expressed"
-        );
+        assert_eq!(outcome.state, RunState::Failed);
     }
 }

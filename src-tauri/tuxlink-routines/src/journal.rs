@@ -66,6 +66,27 @@ pub enum RunEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rig: Option<String>,
     },
+    /// A branch decision, durable (observability decree O1, wire-walk
+    /// 2026-07-18): the resolved condition value, which arm was chosen, and
+    /// the jump target. Branch is JUMP semantics; without this record,
+    /// History cannot explain why execution went where it did.
+    BranchTaken {
+        step: StepId,
+        /// The condition's variable path, verbatim from the definition.
+        on: String,
+        /// The RESOLVED value the condition evaluated against.
+        value: serde_json::Value,
+        /// `true` = the `then` arm; `false` = the `else` arm.
+        took_then: bool,
+        /// First step of the chosen arm; `None` = empty arm, fell through.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target: Option<StepId>,
+    },
+    /// A step the run never executed, recorded when its track concludes
+    /// (observability decree O2): the post-failure remainder, steps a branch
+    /// path never reached, steps after a terminating `end`. `reason` says
+    /// which of those it was.
+    StepSkipped { step: StepId, reason: String },
     /// Written BEFORE the action executes (intent-before-effect).
     StepIntent {
         step: StepId,

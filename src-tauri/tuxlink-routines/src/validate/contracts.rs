@@ -265,6 +265,8 @@ mod tests {
             id: StepId(id.into()),
             control: Control::Branch {
                 on: on.into(),
+                op: None,
+                value: None,
                 then: vec![],
                 r#else: vec![],
             },
