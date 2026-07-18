@@ -86,16 +86,45 @@ dashboard changes.
   with `git worktree move`. Session-log audit: zero worker references,
   no contamination.
 
+## Continuation (same session, operator-directed): probe #3 — definitive
+
+The operator correctly flagged the F5 handoff as premature: the collapse
+was undiagnosed and no fixed-harness re-test had run. Completed in
+continuation:
+
+- **F6 (root cause):** the Qwen3.5 template opens `<think>` only for an
+  assistant turn following a USER message; agentic continuations (ending
+  at `function_call_output`) never re-enter thinking. Proven by 3
+  ablation rounds + logging-proxy capture of Pi's exact requests,
+  bidirectionally (0 vs 439 reasoning tokens on the same request).
+- **Both mandated M2 extensions built** in the spike dir:
+  `pi-think-reviver.js` (transient user-turn nudge via Pi's context
+  event; restores thinking every turn) and `pi-toolsyntax-detector.js`
+  (pseudo-tool-call retry, budget 3).
+- **Fixed-harness re-probe (pi-e122-r5-responses2): FAILED 0/2** — both
+  attempts clean, in-envelope, honest, thinking on all 103 turns, and
+  both produced confident WRONG frontend/IPC theories; the capability
+  ACL was never found in any of 3 fixed-Pi runs.
+- **F7 (definitive verdict):** rung-5 diagnosis is a MODEL-capability
+  limit for E122, not a harness artifact — the ladder's
+  "harness-limited" verdict for this cell is overturned. Supervision
+  design must route rung-5-class diagnosis above the local model tier.
+  The reviver needs a think-budget guard (one 82k-token runaway spiral).
+- Worker worktree `bd-tuxlink-7raoe-m2a-pi-e122-r5-responses2` disposed
+  per ADR 0009 (candidate diffs on the local never-merge arm branch
+  `bd-tuxlink-7raoe/m2a-pi-e122-r5-responses2`, commits 98e79c18 +
+  3b0990b1; sdd forensics archived).
+
 ## Next session (this track)
 
 1. Read this handoff + `addendum-responses-probe.md`.
-2. **M2 scope decision with the operator is now fully unblocked** — both
-   mandatory pre-design inputs exist (F2 + F5). The supervision-tier
-   design should NOT assume `api: "openai-responses"` restores
-   deliberation for hybrid-reasoning models; one targeted experiment on
-   the reasoning-collapse mechanism (Qwen multi-turn template vs
-   OpenRouter provider variance vs reasoning-item replay) precedes it.
-3. M2 extension backlog so far: (a) reasoning-preserving route handling,
-   (b) non-native tool-syntax detector/retry, (c) filesystem path-guard.
+2. **M2 scope decision with the operator is now fully unblocked and
+   fully informed** — F2 + F5 + F6 (template mechanism, fixed) + F7
+   (rung-5 diagnosis = model-capability limit; route such work above the
+   local tier). No further pre-design experiments outstanding.
+3. M2 extension backlog: (a) reasoning route + reviver (BUILT — needs a
+   think-budget guard against runaway spirals), (b) tool-syntax
+   detector/retry (BUILT — awaiting a live trigger to validate, e.g. the
+   Spark rung-3 re-runs), (c) filesystem path-guard (unbuilt).
 4. Mistral-on-Spark joins the test matrix AFTER the follow-ups are built
    (operator directive, comment on tuxlink-7raoe).

@@ -138,3 +138,13 @@ report, honest gates) but NOT the diagnosis — reasoning still collapsed to
 ~0 in the agentic loop and the mechanism grade was WRONG (n=1). F2's
 "route property" conclusion is refined, not overturned: route + per-turn
 reasoning persistence, not route alone.
+
+## Post-hoc addendum 2 (2026-07-18, same session)
+
+The reasoning collapse was root-caused (F6: Qwen3.5 template opens
+<think> only after a user turn) and fixed with a Pi extension; the
+mandated tool-syntax detector was built; and the fixed-harness re-probe
+ran 2 attempts — both WRONG on the graded mechanism with thinking
+restored on every turn. F7: rung-5 diagnosis is a model-capability
+limit, not a harness artifact; the "harness-limited" verdict for this
+cell is overturned. See `addendum-responses-probe2.md`.
