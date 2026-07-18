@@ -199,3 +199,32 @@
   bd-tuxlink-7raoe-m2a-<cell>-sdd-forensics-<ts>.tar.gz (6 archives);
   rm -rf + git worktree prune. Only the orchestrator spike worktree
   remains (disposed after its PR merges).
+
+## POST-HOC (2026-07-18, hemlock-maple-clover) — Responses-route probe
+
+2026-07-18T03:22:06Z pi-e122-r5-responses FALSE START: dispatched under
+  the harness Bash tool (10-min timeout risk to the envelope); killed
+  ~80s in, worker tree verified untouched, relaunched detached. Not an
+  attempt.
+2026-07-18T03:23:24Z pi-e122-r5-responses attempt-1 dispatched
+  (post-hoc probe #2, flagged): identical treatment to pi-e122-r5 except
+  provider registered with api:"openai-responses"
+  (pi-openrouter-responses.js). Pre-flight curl smoke: /responses
+  returns reasoning items for this model (111 reasoning tokens on a
+  one-word task).
+2026-07-18T03:23:57Z INCIDENT: orchestrator created an unrelated
+  worktree (origin/main checkout incl. grading keys) INSIDE the worker
+  tree via relative-path git worktree add; moved out ~03:26Z. Session
+  audit: zero worker references to the nested path; no dev/research
+  reads. Deviation found by the same audit: worker's first 4 commands
+  walked the PARENT repo root and read the operator checkout's
+  StationsView.tsx once (Pi has no fs sandbox) before re-anchoring.
+2026-07-18T03:28:30Z pi-e122-r5-responses attempt-1 FINISHED exit 0 —
+  5m06s CLEAN COMPLETION (vs 3x 30-min at-cap on completions route).
+  Report delivered, Status DONE, gates honest (typecheck + 7/7 vitest
+  re-verified orchestrator-side). GRADE: WRONG — frontend
+  listener-race theory + microtask-delay workaround; capability ACL
+  never mentioned. Reasoning ≈34 tokens across 25 turns (collapse after
+  opening turns). Candidate diff committed on local arm branch
+  (da1057db, NEVER MERGE). Full analysis: addendum-responses-probe.md
+  (finding F5 — route necessary-but-not-sufficient; F2 refined).
