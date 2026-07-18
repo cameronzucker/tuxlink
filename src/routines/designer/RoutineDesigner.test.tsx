@@ -9,7 +9,7 @@
  * useRoutines.test.tsx's proven pattern).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, within } from '@testing-library/react';
 import type { RoutineDef, Finding } from '../routinesApi';
 
 const { mockInvoke } = vi.hoisted(() => ({ mockInvoke: vi.fn() }));
@@ -83,17 +83,32 @@ function callsFor(cmd: string) {
 }
 
 describe('RoutineDesigner — load + header (a)', () => {
-  it('loads an existing routine and renders its name + all three tabs', async () => {
+  // tuxlink-7ewvq items 5+8: 'Runs' was ambiguous (Run? Run history?) — the
+  // tab reads 'History'; the Settings tab is GONE (its sections render inline
+  // below the canvas in the Design view instead of behind a third tab).
+  it('loads an existing routine and renders its name + the Design/History tabs (no Settings tab)', async () => {
     renderDesigner({ routine: 'deployment-poll' });
     await screen.findByText('deployment-poll');
     expect(screen.getByRole('button', { name: 'Design' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Runs' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'History' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Runs' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Settings' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '← Routines' })).toBeInTheDocument();
 
     const getCalls = callsFor('routines_get');
     expect(getCalls).toHaveLength(1);
     expect(getCalls[0]?.[1]).toEqual({ name: 'deployment-poll' });
+  });
+
+  // tuxlink-7ewvq item 6: the bare transmit_mode value ('attended') rendered
+  // as an unexplained chip next to the title. It reads as a labeled chip with
+  // a plain-language tooltip now.
+  it('renders the transmit-mode chip labeled and with an explanatory tooltip', async () => {
+    renderDesigner({ routine: 'deployment-poll' });
+    await screen.findByText('deployment-poll');
+    const chip = screen.getByTestId('transmit-mode-chip');
+    expect(chip).toHaveTextContent('TX: attended');
+    expect(chip.getAttribute('title')).toMatch(/transmit/i);
   });
 
   it('a fresh/new draft (empty routine name) renders an editable name field and skips routines_get', async () => {
@@ -109,10 +124,10 @@ describe('RoutineDesigner — load + header (a)', () => {
     expect(onBack).toHaveBeenCalledTimes(1);
   });
 
-  it('clicking a tab calls onTabChange with that tab', async () => {
+  it('clicking the History tab calls onTabChange with the wire value "runs"', async () => {
     const { onTabChange } = renderDesigner();
     await screen.findByText('deployment-poll');
-    fireEvent.click(screen.getByRole('button', { name: 'Runs' }));
+    fireEvent.click(screen.getByRole('button', { name: 'History' }));
     expect(onTabChange).toHaveBeenCalledWith('runs');
   });
 });
@@ -161,11 +176,14 @@ describe('RoutineDesigner — always-on validation bar (b, flow 2)', () => {
     const sentDef = JSON.parse((calls[0]![1] as { defJson: string }).defJson) as RoutineDef;
     expect(sentDef.tracks).toHaveLength(2); // the added track is in the sent body
 
-    expect(screen.getByText('MULTIPLE_SCHEDULES')).toBeInTheDocument();
+    // Scoped to the valbar — the inline settings sections (tuxlink-7ewvq
+    // item 8) render the same finding codes in the Design view too.
+    const valbar = within(screen.getByTestId('valbar'));
+    expect(valbar.getByText('MULTIPLE_SCHEDULES')).toBeInTheDocument();
     expect(
-      screen.getByText('2 schedules declared; one cadence per routine.', { exact: false }),
+      valbar.getByText('2 schedules declared; one cadence per routine.', { exact: false }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/⚠ 1 warning/)).toBeInTheDocument();
+    expect(valbar.getByText(/⚠ 1 warning/)).toBeInTheDocument();
   });
 
   it('a Rejected parse failure from validateDraft renders its verbatim message as a single error line', async () => {
@@ -211,9 +229,10 @@ describe('RoutineDesigner — Save never blocks (c)', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
-    await screen.findByText('AUTO_TX_UNACKED');
+    // Scoped to the valbar (the inline settings can surface findings too).
+    await within(screen.getByTestId('valbar')).findByText('AUTO_TX_UNACKED');
     expect(screen.queryByTestId('unsaved-dot')).not.toBeInTheDocument();
-    expect(screen.getByText(/✓ 1 error/)).toBeInTheDocument();
+    expect(within(screen.getByTestId('valbar')).getByText(/✓ 1 error/)).toBeInTheDocument();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
     const saveCalls = callsFor('routines_save');
@@ -415,14 +434,16 @@ describe('RoutineDesigner — flow-2 authoring trace through the real seam (Task
   });
 });
 
-describe('RoutineDesigner — Settings tab wiring (Task 12 seam)', () => {
-  it('switching to the Settings tab mounts SettingsTab with the live draft/findings, and editing a setting flows through onChange -> updateSettings -> the draft', async () => {
+describe('RoutineDesigner — inline settings wiring (Task 12 seam, tuxlink-7ewvq item 8)', () => {
+  it('the Design view renders the settings sections inline below the canvas, and editing a setting flows through onChange -> updateSettings -> the draft', async () => {
     installInvokeMock({
       routines_actions_list: () => [],
       routines_list: () => [{ routine: 'deployment-poll', transmitMode: 'attended', enabled: false, triggers: [{ type: 'manual' }] }],
     });
-    renderDesigner({ tab: 'settings' });
+    renderDesigner({ tab: 'design' });
     await screen.findByTestId('settings-tab');
+    // The canvas and the settings sections co-exist in the same view.
+    expect(screen.getByTestId('canvas-tab')).toBeInTheDocument();
 
     // Editing on_interrupted routes through RoutineDesigner's updateDraft ->
     // defDraft.updateSettings -> marks the draft dirty, same seam every other
@@ -438,6 +459,40 @@ describe('RoutineDesigner — Settings tab wiring (Task 12 seam)', () => {
     const textarea = (await screen.findByTestId('export-json-textarea')) as HTMLTextAreaElement;
     const exported = JSON.parse(textarea.value) as RoutineDef;
     expect(exported.on_interrupted).toBe('resume');
+  });
+
+  // Continuity-token compat: a stored tab === 'settings' (from before the tab
+  // was removed) renders the Design view — the settings live there now.
+  it('tab="settings" renders the Design view (compat for stored tokens)', async () => {
+    renderDesigner({ tab: 'settings' });
+    await screen.findByTestId('canvas-tab');
+    expect(screen.getByTestId('settings-tab')).toBeInTheDocument();
+  });
+});
+
+// tuxlink-7ewvq item 2: with no insert point chosen on the canvas, clicking a
+// palette action appends it to the END of the routine — the palette is
+// directly usable without the ＋-first dance.
+describe('RoutineDesigner — palette append-to-end fallback', () => {
+  it('an unarmed palette click appends the step to the end of the track', async () => {
+    installInvokeMock({
+      routines_actions_list: () => [
+        { name: 'local.log', label: 'Log', description: '', needsRadio: false, transmits: false, needsInternet: false },
+      ],
+    });
+    renderDesigner();
+    await screen.findByText('deployment-poll');
+    await screen.findByTestId('palette-item-local.log');
+
+    fireEvent.click(screen.getByTestId('palette-item-local.log'));
+
+    // Proof via Export JSON: the new step is the LAST step of track 1.
+    fireEvent.click(screen.getByRole('button', { name: 'Export JSON' }));
+    const textarea = (await screen.findByTestId('export-json-textarea')) as HTMLTextAreaElement;
+    const exported = JSON.parse(textarea.value) as RoutineDef;
+    const steps = exported.tracks[0]!.steps;
+    const last = steps[steps.length - 1]!;
+    expect('action' in last && last.action).toBe('local.log');
   });
 });
 

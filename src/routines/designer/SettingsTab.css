@@ -89,7 +89,10 @@
   font-weight: 600;
 }
 
-.radio {
+/* Scoped under .opt — a bare `.radio` selector here leaked onto
+ * PaletteRail's `.pal-group.radio` category header and rendered as a stray
+ * oval in the Design tab's palette (tuxlink-7ewvq item 1). */
+.opt .radio {
   width: 14px;
   height: 14px;
   border-radius: 50%;
