@@ -334,7 +334,7 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
 
   return (
     <div className="dashboard" data-testid="dashboard-ribbon" role="banner">
-      <div className="dash-item">
+      <div className="dash-item dash-item--rigid">
         <div className="dash-label">Callsign</div>
         {/* Phase 7 (tuxlink-noa0): when the identity-switch handler is wired
             (production AppShell path), render the IdentitySwitcher AS the
@@ -396,13 +396,13 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
 
       {position && (
         <>
-          <div className="dash-item dash-item--rigid">
+          <div className="dash-item dash-item--rigid dash-item--position">
             <div className="dash-label">Position</div>
             <div className="dash-value good" data-testid="ribbon-position">
               {position}
             </div>
           </div>
-          <div className="dash-divider" />
+          <div className="dash-divider dash-divider--position" />
         </>
       )}
 
@@ -426,8 +426,8 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
 
       {onReviewInboundChange && (
         <>
-          <div className="dash-divider" />
-          <div className="dash-item dash-item--rigid">
+          <div className="dash-divider dash-divider--onconnect" />
+          <div className="dash-item dash-item--rigid dash-item--onconnect">
             <div className="dash-label">On connect</div>
             <div
               className="seg"
@@ -460,7 +460,7 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
 
       {aprs && (
         <>
-          <div className="dash-divider" />
+          <div className="dash-divider dash-divider--aprs" />
           <div className="dash-item dash-aprs">
             <div className="dash-label">APRS</div>
             {/* One control, mirroring the Connection item's dot+label pattern (not
@@ -544,7 +544,7 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
                 : 'idle';
         return (
           <>
-            <div className="dash-divider" />
+            <div className="dash-divider dash-divider--intel" />
             <div className="dash-item dash-ft8">
               {/* tuxlink-tg6ow: the chip is the Station Intelligence
                   listener control — label the FUNCTION, not the transport

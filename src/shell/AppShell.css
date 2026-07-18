@@ -284,6 +284,29 @@
 .layout-b .dashboard .dash-item--rigid .dash-value {
   white-space: nowrap;
 }
+
+/* tuxlink-t698l pass 2: graceful degradation to the 900px window minimum.
+ * The identity, clock, connection, and Connect cells always survive; optional
+ * cells drop WHOLE (with their dividers) at width tiers, instead of the row
+ * amputating whatever happens to be rightmost. Tiers are window widths; the
+ * ribbon spans the window. */
+@media (max-width: 1560px) {
+  .layout-b .dashboard .dash-ft8,
+  .layout-b .dashboard .dash-divider--intel { display: none; }
+}
+@media (max-width: 1420px) {
+  .layout-b .dashboard .dash-aprs,
+  .layout-b .dashboard .dash-divider--aprs { display: none; }
+}
+@media (max-width: 1280px) {
+  .layout-b .dashboard .dash-item--onconnect,
+  .layout-b .dashboard .dash-divider--onconnect { display: none; }
+}
+@media (max-width: 1120px) {
+  .layout-b .dashboard .dash-item--position,
+  .layout-b .dashboard .dash-divider--position { display: none; }
+  .layout-b .dashboard { gap: 10px; }
+}
 /* tuxlink-a8x6: keep the whole Connection cell stable as the label changes
  * between Idle/Connected/Error and Telnet/Packet/ARDOP/VARA. Only the text
  * inside the slot may ellipsize; neighboring ribbon controls must not shift. */
