@@ -15,9 +15,33 @@
   overflow: hidden;
 }
 
-.contacts-panel--editing {
-  display: block;
-  overflow: auto;
+/* Editor-in-pane (tuxlink-pw5nk): the editor renders in the detail region —
+ * the roster stays mounted. A roster click while editing pulses the border. */
+.contact-editor-host {
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+
+.contact-editor-host--pulse {
+  animation: contact-editor-pulse 0.5s ease-out 1;
+}
+
+@keyframes contact-editor-pulse {
+  0% {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+  100% {
+    border-color: transparent;
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .contact-editor-host--pulse {
+    animation: none;
+    border-color: var(--accent);
+  }
 }
 
 /* ============================================================================
@@ -1102,4 +1126,60 @@
   margin-left: 7px;
   flex: none;
   display: inline;
+}
+
+/* ============================================================================
+ * Detail GROUPS chips (tuxlink-6vn4x, mock panel 1).
+ * ========================================================================== */
+.contact-groups {
+  margin: 0 0 18px;
+}
+
+.contact-groups-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.contact-group-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px 3px 10px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+}
+
+.contact-group-chip-remove {
+  padding: 0 4px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.contact-group-chip-remove:hover {
+  color: var(--error);
+}
+
+.contact-group-add {
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: none;
+  border: 1px dashed var(--border-strong);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.contact-group-add:hover {
+  color: var(--text);
+  background: var(--surface-2);
 }

@@ -16,7 +16,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => undefined) })
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
 
 import { ContactsPanel } from './ContactsPanel';
-import type { Contact, Group, Suggestion } from './types';
+import type { Channel, Contact, Group, Suggestion } from './types';
 
 const NOW = '2026-06-07T00:00:00Z';
 
@@ -386,7 +386,10 @@ describe('<ContactsPanel> — Recent section + reachability (Task T-F)', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-describe('<ContactsPanel> — editor', () => {
+// tuxlink-pw5nk: the editor renders IN THE DETAIL PANE — it no longer takes
+// over the whole panel (the "list collapsed" perception). The roster stays
+// mounted; roster clicks while editing are pulse-no-ops; Save/Cancel exit.
+describe('<ContactsPanel> — editor in the detail pane', () => {
   it('+ New opens the editor; saving an entered callsign calls contact_upsert', async () => {
     routeInvoke({});
     renderPanel();
@@ -400,6 +403,205 @@ describe('<ContactsPanel> — editor', () => {
       expect(invoke).toHaveBeenCalledWith(
         'contact_upsert',
         expect.objectContaining({ contact: expect.objectContaining({ callsign: 'N0DXE' }) }),
+      ),
+    );
+  });
+
+  it('the editor renders in the detail pane and the roster stays mounted + populated', async () => {
+    routeInvoke({ contacts: [ALICE, NONAME], groups: [TEAM] });
+    renderPanel();
+    await screen.findByTestId('contact-row-c-alice');
+    fireEvent.click(screen.getByTestId('contacts-new'));
+
+    // The editor lives INSIDE the detail pane…
+    const pane = await screen.findByTestId('contacts-detail-pane');
+    expect(within(pane).getByTestId('contact-editor')).toBeInTheDocument();
+    // …and the roster did NOT unmount: rows are still there and clickable.
+    expect(screen.getByTestId('contacts-roster')).toBeInTheDocument();
+    expect(screen.getByTestId('contact-row-c-alice')).toBeInTheDocument();
+    expect(screen.getByTestId('contact-row-c-noname')).toBeInTheDocument();
+  });
+
+  it('a roster row click while editing is a NO-OP that pulses the editor border', async () => {
+    routeInvoke({ contacts: [ALICE], groups: [TEAM] });
+    renderPanel();
+    await screen.findByTestId('contact-row-c-alice');
+    fireEvent.click(screen.getByTestId('contacts-new'));
+    await screen.findByTestId('contact-editor');
+
+    fireEvent.click(screen.getByTestId('contact-row-c-alice'));
+    // No navigation: the editor is still open, no contact detail replaced it.
+    expect(screen.getByTestId('contact-editor')).toBeInTheDocument();
+    expect(screen.queryByTestId('contact-detail')).not.toBeInTheDocument();
+    // The one-shot pulse class landed on the editor host.
+    expect(screen.getByTestId('contact-editor-host')).toHaveClass('contact-editor-host--pulse');
+    // Group-header selection is equally a no-op.
+    fireEvent.click(screen.getByTestId('group-name-g-team'));
+    expect(screen.queryByTestId('group-management')).not.toBeInTheDocument();
+    expect(screen.getByTestId('contact-editor')).toBeInTheDocument();
+  });
+
+  it('Cancel leaves the editor and roster selection works again', async () => {
+    routeInvoke({ contacts: [ALICE] });
+    renderPanel();
+    await screen.findByTestId('contact-row-c-alice');
+    fireEvent.click(screen.getByTestId('contacts-new'));
+    await screen.findByTestId('contact-editor');
+    fireEvent.click(screen.getByTestId('editor-cancel'));
+    await waitFor(() => expect(screen.queryByTestId('contact-editor')).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId('contact-row-c-alice'));
+    expect(await screen.findByTestId('contact-detail')).toBeInTheDocument();
+  });
+
+  it('Edit on a selected contact swaps the detail pane to the editor (roster intact)', async () => {
+    routeInvoke({ contacts: [ALICE] });
+    renderPanel();
+    fireEvent.click(await screen.findByTestId('contact-row-c-alice'));
+    fireEvent.click(await screen.findByTestId('contact-edit'));
+    const pane = await screen.findByTestId('contacts-detail-pane');
+    expect(within(pane).getByTestId('contact-editor')).toBeInTheDocument();
+    expect(screen.getByTestId('contact-row-c-alice')).toBeInTheDocument();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// tuxlink-6vn4x: the detail "Reachability & connect" renders the UNION of
+// manual dials + observed channels keyed by (transport, freq_hz): a matching
+// observed row fuses its honest stats onto the dial; a virgin dial reads
+// "no attempts yet"; a matched observed row never renders twice.
+const DIAL_MANUAL_VARA: Channel = {
+  transport: 'vara-hf', target_callsign: 'N0DAJ', via: [],
+  freq_hz: 7_103_500, bandwidth: null, direction: 'unknown',
+  counts: { ok: 0, fail: 0 }, last_seen: '', last_ok: null,
+  last_ok_direction: null, source: 'manual',
+};
+const OBSERVED_VARA_MATCH: Channel = {
+  transport: 'vara-hf', target_callsign: 'N0DAJ', via: [],
+  freq_hz: 7_103_500, bandwidth: null, direction: 'outgoing',
+  counts: { ok: 5, fail: 2 }, last_seen: '2026-07-11T09:00:00-07:00',
+  last_ok: '2026-07-11T09:00:00-07:00', last_ok_direction: 'outgoing',
+  source: 'observed',
+};
+const DIAL_MANUAL_ARDOP: Channel = {
+  transport: 'ardop', target_callsign: 'N0DAJ', via: [],
+  freq_hz: 7_103_500, bandwidth: null, direction: 'unknown',
+  counts: { ok: 0, fail: 0 }, last_seen: '', last_ok: null,
+  last_ok_direction: null, source: 'manual',
+};
+const FUSED: Contact = {
+  id: 'c-fused',
+  name: 'Doug Jarmuth',
+  callsign: 'N0DAJ',
+  channels: [DIAL_MANUAL_VARA, OBSERVED_VARA_MATCH, DIAL_MANUAL_ARDOP],
+  created_at: NOW,
+  updated_at: NOW,
+};
+
+describe('<ContactsPanel> — reachability dial/observed fusion (tuxlink-6vn4x)', () => {
+  it('fuses observed stats onto the matching manual dial; a virgin dial reads "no attempts yet"; no duplicate row', async () => {
+    routeInvoke({ contacts: [FUSED] });
+    renderPanel();
+    fireEvent.click(await screen.findByTestId('contact-row-c-fused'));
+    await screen.findByTestId('contact-reachability');
+
+    // Row 0: the VARA dial fused with its observation — the honest verb comes
+    // from the observed channel, and the row is marked as a dial.
+    const row0 = screen.getByTestId('reach-channel-c-fused-0');
+    expect(row0).toHaveTextContent('dial');
+    expect(screen.getByTestId('reach-channel-status-c-fused-0')).toHaveTextContent(/reached/);
+
+    // Row 1: the ARDOP dial has no observations — no claim, "no attempts yet".
+    const row1 = screen.getByTestId('reach-channel-c-fused-1');
+    expect(row1).toHaveTextContent('dial');
+    expect(screen.getByTestId('reach-channel-status-c-fused-1')).toHaveTextContent('no attempts yet');
+
+    // The matched observed channel does NOT render a second time.
+    expect(screen.queryByTestId('reach-channel-c-fused-2')).not.toBeInTheDocument();
+  });
+
+  it('Connect on a fused dial dispatches the p2p seam via the observed channel (existing wiring, not reinvented)', async () => {
+    routeInvoke({ contacts: [FUSED] });
+    renderPanel();
+    fireEvent.click(await screen.findByTestId('contact-row-c-fused'));
+    fireEvent.click(await screen.findByTestId('reach-channel-connect-c-fused-0'));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith(
+        'modem_vara_b2f_exchange',
+        expect.objectContaining({
+          target: 'N0DAJ', intent: 'p2p', transportKind: 'vara-hf', freqHz: 7_103_500,
+        }),
+      ),
+    );
+    expect(invoke).not.toHaveBeenCalledWith('cms_connect', expect.anything());
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// tuxlink-6vn4x mock panel 1: GROUPS chips on the contact detail — removable
+// membership chips + the same add-to-group picker pattern the bulk bar uses;
+// all mutations route through group_upsert.
+describe('<ContactsPanel> — detail GROUPS chips', () => {
+  it('shows membership chips; × removes via group_upsert', async () => {
+    routeInvoke({ contacts: [ALICE], groups: [TEAM] });
+    renderPanel();
+    fireEvent.click(await screen.findByTestId('contact-row-c-alice'));
+    const groupsCard = await screen.findByTestId('contact-groups');
+    expect(within(groupsCard).getByTestId('contact-group-chip-g-team')).toHaveTextContent('Team Alpha');
+
+    fireEvent.click(within(groupsCard).getByTestId('contact-group-remove-g-team'));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith(
+        'group_upsert',
+        expect.objectContaining({ group: expect.objectContaining({ id: 'g-team', members: [] }) }),
+      ),
+    );
+  });
+
+  it('"+ add to group" opens the picker (bulk pattern); picking an existing group adds membership via group_upsert', async () => {
+    routeInvoke({ contacts: [ALICE, NONAME], groups: [TEAM] });
+    renderPanel();
+    fireEvent.click(await screen.findByTestId('contact-row-c-noname'));
+    const groupsCard = await screen.findByTestId('contact-groups');
+    // NONAME is in no group — no chips, just the add affordance.
+    expect(within(groupsCard).queryByTestId('contact-group-chip-g-team')).not.toBeInTheDocument();
+
+    fireEvent.click(within(groupsCard).getByTestId('contact-group-add'));
+    fireEvent.click(await screen.findByTestId('contact-groups-group-g-team'));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith(
+        'group_upsert',
+        expect.objectContaining({
+          group: expect.objectContaining({
+            id: 'g-team',
+            members: [
+              { type: 'contact', contact_id: 'c-alice' },
+              { type: 'contact', contact_id: 'c-noname' },
+            ],
+          }),
+        }),
+      ),
+    );
+  });
+
+  it('the picker create form makes a new group containing the contact via group_upsert', async () => {
+    routeInvoke({ contacts: [NONAME], groups: [] });
+    renderPanel();
+    fireEvent.click(await screen.findByTestId('contact-row-c-noname'));
+    fireEvent.click(await screen.findByTestId('contact-group-add'));
+    fireEvent.change(await screen.findByTestId('contact-groups-newgroup-input'), {
+      target: { value: 'Net Ops' },
+    });
+    fireEvent.click(screen.getByTestId('contact-groups-newgroup-add'));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith(
+        'group_upsert',
+        expect.objectContaining({
+          group: expect.objectContaining({
+            name: 'Net Ops',
+            members: [{ type: 'contact', contact_id: 'c-noname' }],
+          }),
+        }),
       ),
     );
   });
