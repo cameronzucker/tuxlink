@@ -1,0 +1,14 @@
+# M2a overlay: merged onto bundled mini_textbased.yaml (order matters).
+# step/cost limits disabled — the external `timeout 1800` cap is the only
+# envelope, matching the ladder regime.
+agent:
+  mode: yolo
+  step_limit: 0
+  cost_limit: 0
+model:
+  model_class: litellm_textbased
+  model_name: openai/qwen3-coder-next
+  cost_tracking: ignore_errors
+  model_kwargs:
+    api_base: https://inference.twin-bramble.ts.net/v1
+    api_key: dummy

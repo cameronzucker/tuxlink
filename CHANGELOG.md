@@ -31,6 +31,109 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.93.0](https://github.com/cameronzucker/tuxlink/compare/v0.92.1...v0.93.0) (2026-07-17)
+
+
+### Features
+
+* **routines:** human label + description on every action descriptor, through to ActionInfo ([a8d0f3d](https://github.com/cameronzucker/tuxlink/commit/a8d0f3dbc142c2e458774ab0acddb10d37a1183c))
+* **routines:** render human action labels in palette, inspector, and canvas ([a42ece1](https://github.com/cameronzucker/tuxlink/commit/a42ece186131ac97540b3f86b56e2360d47a4b77))
+
+
+### Bug Fixes
+
+* **routines:** double-quote the descriptor label/description string literals ([532b097](https://github.com/cameronzucker/tuxlink/commit/532b097b5fb863c61d7acbd2738ce54a07f080f4))
+* **routines:** Escape defers to open popup menus, not just dialogs ([b7bec04](https://github.com/cameronzucker/tuxlink/commit/b7bec040d2d563ee4d85d839c3eb3be8eec0aef0))
+* **routines:** give the inline surface a way home — ← Mailbox button, Escape, menu item, honest titlebar ([19c4d62](https://github.com/cameronzucker/tuxlink/commit/19c4d624987d04fda47256a416a08a6659ea565c))
+
+## [0.92.1](https://github.com/cameronzucker/tuxlink/compare/v0.92.0...v0.92.1) (2026-07-17)
+
+
+### Bug Fixes
+
+* **routines:** spawn the scheduler onto the app runtime when no ambient tokio runtime exists ([b088cea](https://github.com/cameronzucker/tuxlink/commit/b088cea202be5bd4bc1c62e2eaea1f1e9c451c48))
+
+## [0.92.0](https://github.com/cameronzucker/tuxlink/compare/v0.91.0...v0.92.0) (2026-07-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* **routines:** routines_save (MCP) and the save_routine Tauri command no longer persist transmit_ack from the request body; the acknowledgment is recorded exclusively by the UI consent act.
+
+### Features
+
+* **aprs:** aprs_status backend truth — live transport kind queryable; disconnect routes teardown off backend state at click time (tuxlink-dmwte review loop 4) ([a1f872c](https://github.com/cameronzucker/tuxlink/commit/a1f872cc2e207032c1da73a2758f4f024e38ea9a))
+* **aprs:** aprs-message:sent own-send echo at Send/Broadcast acceptance in BOTH driver loops (spec §7, tuxlink-dmwte task 5) ([b7f0162](https://github.com/cameronzucker/tuxlink/commit/b7f01625f7d35205610b80e79e34ff58d3272efa))
+* **aprschat:** pop-out wiring — sent-echo dedupe, snapshot handshake, placeholder + dock-aware flows; extract shared useAprsConnectSequence; seed popped strips as snapshot clients (spec §5/§7, tuxlink-dmwte task 10) ([683f64e](https://github.com/cameronzucker/tuxlink/commit/683f64e2bb19b7d5a14e99a3255ec7366ba57a10))
+* **config:** schema v8 — dock section persists popped/docked per surface (spec §3, tuxlink-dmwte task 2) ([f2ac1e1](https://github.com/cameronzucker/tuxlink/commit/f2ac1e1441e97275ffe9f37cfa88e10ee82042ea))
+* **dock:** frontend wire mirror + useDockState (listen-first) + pop routes + isSecondaryWindow guard + two-sided parity fixture (spec §3/§5/§10, tuxlink-dmwte task 6) ([ae80ca1](https://github.com/cameronzucker/tuxlink/commit/ae80ca13058a95000cb8fbec5df31b30c267c6bc))
+* **dock:** PoppedSurfaceHost — labeled chrome, Ctrl+W, close-intent token flush, theme storage listener, mini strips (spec §4, tuxlink-dmwte task 7) ([97016e1](https://github.com/cameronzucker/tuxlink/commit/97016e1420e21f6db32be3c96d5278c74550d344))
+* **dock:** registry + commands + close-intent + crash signal + shell_mounted restoration + park notification (spec §3/§6, tuxlink-dmwte task 4) ([2b28547](https://github.com/cameronzucker/tuxlink/commit/2b28547eee411bda77cbc3fd41129cd648b1fa97))
+* **dock:** SurfaceId/DockMode wire contract + pure transition core (spec §3, tuxlink-dmwte task 1) ([c6a6527](https://github.com/cameronzucker/tuxlink/commit/c6a6527ebd38e7370a554feb75322fca32b423af))
+* **mcp:** RoutinesPort — the 10-tool routines surface for agents ([7721cab](https://github.com/cameronzucker/tuxlink/commit/7721cab5fe9e1d41aff7118807702d5a6d93ce84))
+* **routines-ui:** event channel types, library hook, display formatters ([09908f7](https://github.com/cameronzucker/tuxlink/commit/09908f77fdfe5df7087353971e61be4d59ec7cb6))
+* **routines-ui:** fleet dashboard — ops table, missed/refused/skipped visibility, fleet check strip ([33f4d31](https://github.com/cameronzucker/tuxlink/commit/33f4d31a20c886c2caeab80d44328d2d26e99f9d))
+* **routines-ui:** Part 97 consent moment — modal + menubar/statusbar badges, launch recovery, cannot hide ([ea75f79](https://github.com/cameronzucker/tuxlink/commit/ea75f790dc33066ab0041378b3e19d8a889c51c4))
+* **routines-ui:** registry-driven palette, step insertion, step inspector ([4c7adbe](https://github.com/cameronzucker/tuxlink/commit/4c7adbe3f4c20b3958d3ab91d83c02e095802675))
+* **routines-ui:** routine designer shell — draft model, never-blocking save, always-on validation bar ([3ccd338](https://github.com/cameronzucker/tuxlink/commit/3ccd338ddfe6dc0911aba38d22a39f95066a3177))
+* **routines-ui:** Routines menu + inline full-pane surface mount ([6b6a1c3](https://github.com/cameronzucker/tuxlink/commit/6b6a1c3681dbd2fc9523fb6f99c984ad2843d900))
+* **routines-ui:** run monitor prefers exact step/rig off state_changed, heuristic kept as legacy fallback (tuxlink-xvd1i task 3) ([4f45fe9](https://github.com/cameronzucker/tuxlink/commit/4f45fe9b263ab6c0e01a1ffbdcbc3e13774a2d4e))
+* **routines-ui:** runs tab — journal-truth run monitor, verbatim step detail, redacted bundle export ([6a9509f](https://github.com/cameronzucker/tuxlink/commit/6a9509f3e89bc59791dd5f1d6ae2083fb2b0652d))
+* **routines-ui:** settings tab — transmit mode + Part 97 acknowledgment, schedule, enable gate, entity management ([b616c96](https://github.com/cameronzucker/tuxlink/commit/b616c960cda101da1a83821ad1e2ebcbe722fcb2))
+* **routines-ui:** structured auto-laid-out canvas — lanes, branch fan-out, anchors, insert points ([b942a9e](https://github.com/cameronzucker/tuxlink/commit/b942a9e778d37551b581cd862a01cf8e398bd9b1))
+* **routines-ui:** typed invoke bindings + command manifest for all 27 routines commands ([2b444af](https://github.com/cameronzucker/tuxlink/commit/2b444af571c2c231a1ae8609a90270a76802750f))
+* **routines:** executor journals step/rig context at consent-park and delay sites (tuxlink-xvd1i task 2) ([465a792](https://github.com/cameronzucker/tuxlink/commit/465a792395774a776a206fdcfbc43487356801a6))
+* **routines:** one-cadence amendment package — spec, validator, scheduler, corpus ([c9eaba7](https://github.com/cameronzucker/tuxlink/commit/c9eaba7746c460cf69defc96ae35dbcddbd47ac1))
+* **routines:** pop-out e2e — affordances, continuity token, menu verbs, ConsentGate split + badge routing + journal-seeded duration + quit-prompt wording (spec §5/§6/§7, tuxlink-dmwte task 8) ([e098a06](https://github.com/cameronzucker/tuxlink/commit/e098a061244f7a4607822006160a37d8007da6a2))
+* **routines:** reconciler counts missed fires window-aware ([3e7cd4e](https://github.com/cameronzucker/tuxlink/commit/3e7cd4e763a771ab63da5f77191071a29f69e151))
+* **routines:** redacted run-bundle export + operator take-the-radio commands ([1b0e526](https://github.com/cameronzucker/tuxlink/commit/1b0e526f0c82b21759f3f6776856bbbd7b6423b9))
+* **routines:** RunEvent::StateChanged gains optional step/rig context fields (tuxlink-xvd1i task 1) ([5703d02](https://github.com/cameronzucker/tuxlink/commit/5703d022a16d6389bab0a456230689c51b43f220))
+* **routines:** runs enumeration + next-fire report commands for the dashboard and runs tab ([8019056](https://github.com/cameronzucker/tuxlink/commit/80190569fa15f1afcfb779e2b72bf77a21c1959e))
+* **routines:** UI read commands — validate (stored + draft), action catalog, fleet check ([24f76f1](https://github.com/cameronzucker/tuxlink/commit/24f76f14ee95474a5d01240ddd98be4ed9858fca))
+* **routines:** UI-only Part 97 acknowledgment command; save clears ack when mode leaves automatic ([fca5770](https://github.com/cameronzucker/tuxlink/commit/fca5770cd1921d6043eb46af04ca98ba7212ecac))
+* **tacmap:** pop-out wiring + positions snapshot handshake with 250ms/3s retry (spec §5/§7, tuxlink-dmwte task 9) ([6e7fffc](https://github.com/cameronzucker/tuxlink/commit/6e7fffc947c8de885bd1e9cae5967f650b3e34f1))
+
+
+### Bug Fixes
+
+* **aprschat:** content-identity fallback dedupe for msgid-less rows in snapshot merge; 5s budget on map-unmount waitFor (tuxlink-dmwte review loop 4) ([fc48027](https://github.com/cameronzucker/tuxlink/commit/fc48027ba731b9aa710d5272de1f5275131abaf7))
+* **aprschat:** msgid-guard the optimistic send append — closes the echo-before-invoke-resolution duplicate (tuxlink-dmwte task 10 review fix) ([5fbd380](https://github.com/cameronzucker/tuxlink/commit/5fbd380e711a1ffdaefeb9cfb6e34633f28298df))
+* **dock:** close-intent timeout guarded by per-surface pop generation — stale timer can no longer dock back a re-popped window (tuxlink-dmwte review loop 2) ([dc9a8cc](https://github.com/cameronzucker/tuxlink/commit/dc9a8cc685425e681689fa30155ecc120d4dd3b2))
+* **dock:** guard BOTH useDockState get legs behind eventSeen; Rust parity test asserts consent-host semantics per variant (tuxlink-dmwte review loop 3) ([0231572](https://github.com/cameronzucker/tuxlink/commit/023157292360cb325ec9769d81f069da44ccf75d))
+* **dock:** loop-3 round-1 hardening — reconcile TOCTOU guard, visible dock-back failure, getContext contract note, strips tests, broadcast:false on mount apply (tuxlink-dmwte review loop 3) ([3b6617c](https://github.com/cameronzucker/tuxlink/commit/3b6617cdb5f0f059fba59b95f09ec2a0c104201f))
+* **dock:** loop-3 round-3 polish — CapsLock-proof Ctrl+W, title ellipsis min-width, control no-shrink, aria-hidden dividers, drop fabricated unread stat (tuxlink-dmwte review loop 3) ([da1254b](https://github.com/cameronzucker/tuxlink/commit/da1254bd489ec637b0d0cd4eeafdd526e7f93071))
+* **dock:** loop-4 round-3 batch — APRS Chat pop-out entry point (spec §5, was unreachable), text-labeled Tac Map ↗, real unread vital in ChatStrip, per-window local-id namespace, transport cleared on driver self-termination, stale comment (tuxlink-dmwte review loop 4) ([7fdc680](https://github.com/cameronzucker/tuxlink/commit/7fdc680a0729c96cfb486b831821dea64562a94a))
+* **lint:** hoist Manager/Emitter trait imports to the CloseRequested block top — E0599 on window.app_handle() caught in final review; de-stale ClosePolicy comments (tuxlink-dmwte task 13) ([48adf43](https://github.com/cameronzucker/tuxlink/commit/48adf436c04098a5eeb26cb7ea9726dfd1d720be))
+* **lint:** sort_by_key(Reverse) for the runs-list newest-first sort — clippy unnecessary_sort_by ([2cf5dff](https://github.com/cameronzucker/tuxlink/commit/2cf5dffd6c82c541b0d922d1b754d15a65121da2))
+* **mcp:** caller-input refusals surface as invalid_request, not internal_error (efcc8 M2) ([9b08f25](https://github.com/cameronzucker/tuxlink/commit/9b08f25e633261c6de906a33c6d24d9a324d02fb))
+* **mcp:** taint the session on routines_journal_get — journal carries wire content ([5d2c7bc](https://github.com/cameronzucker/tuxlink/commit/5d2c7bc6c646ca7d8b1480838d78dd718385fe74))
+* **mcp:** testserver McpState gains the routines port — --workspace compile break (efcc8 C2) ([f225a42](https://github.com/cameronzucker/tuxlink/commit/f225a429add29186bfc27bc97f90f3e768353a51))
+* **routines-ui:** arm membership survives deletion and mid-arm inserts join the arm ([c5e9382](https://github.com/cameronzucker/tuxlink/commit/c5e9382f1769922c28691c9cc2a6ec7b585e5056))
+* **routines-ui:** branch arms and lane tails are insertable — flow-2 authoring completes on canvas ([1c66f99](https://github.com/cameronzucker/tuxlink/commit/1c66f996f43fd6bd7b70a856fb9a64ded677657b))
+* **routines-ui:** canvas models routine-level triggers, surfaces unplaced steps, unambiguous insert seam ([5806cec](https://github.com/cameronzucker/tuxlink/commit/5806cecf6a318a155a501c21eee2938c1807d679))
+* **routines-ui:** consent modal is unconditionally topmost; parks survive null reads and missing intents ([9c401b1](https://github.com/cameronzucker/tuxlink/commit/9c401b1ff52724090d3a123a97cdc0e05a480e0b))
+* **routines-ui:** consent parks keyed by (runId, stepId) — second transmit step of a run can no longer vanish ([5d8d15c](https://github.com/cameronzucker/tuxlink/commit/5d8d15c43f261a19577d6a0561c96c9be020b22d))
+* **routines-ui:** empty tracks stay insertable — dangling head insert edge; end-node state from the model ([0f3cf4d](https://github.com/cameronzucker/tuxlink/commit/0f3cf4da0acfc80716b97a7febb2c6e75a48d16e))
+* **routines-ui:** final-review wave — consent defer-to-badge, live runs rail, failed-row deep-link, deflake ([a447ecf](https://github.com/cameronzucker/tuxlink/commit/a447ecf46ec94a56be2ce2db0c99feb84cb01d07))
+* **routines-ui:** four render defects from the first real-WebKitGTK smoke (tuxlink-3awm9) ([7967b1a](https://github.com/cameronzucker/tuxlink/commit/7967b1a9ad6ec7e4cc478f562a247cf80be183f8))
+* **routines-ui:** gate the empty-library copy on first-load completion (Codex P2) ([2c1fbeb](https://github.com/cameronzucker/tuxlink/commit/2c1fbebf7eb53263d37767115d40bdd065c8616a))
+* **routines-ui:** only mail-domain menu actions close the routines surface ([a6ea335](https://github.com/cameronzucker/tuxlink/commit/a6ea3350df3df932a1a5c988e18b694001102b42))
+* **routines-ui:** open step intents render as running/interrupted Gantt bars instead of vanishing ([a3bee54](https://github.com/cameronzucker/tuxlink/commit/a3bee54d2c2ceb9adacac9e7e85ea8330a75445d))
+* **routines-ui:** populated-arm lead ＋ inserts at arm front — every fan-row ＋ is arm-marked ([e2b2493](https://github.com/cameronzucker/tuxlink/commit/e2b24932e94d300b823c360ec38d55c9ceb26325))
+* **routines-ui:** switching off automatic clears the draft ack with the mode — no stale ACKNOWLEDGED box ([5aef185](https://github.com/cameronzucker/tuxlink/commit/5aef185295480f065c4f5b8bf02dc37357b88660))
+* **routines:** re-derive the WWV timeout floor for the dual-window scheduler (Codex P3) ([e7aa9ae](https://github.com/cameronzucker/tuxlink/commit/e7aa9aeaf102c59f072eea948617fe367ad6a49a))
+* **routines:** save path discards caller-supplied transmit_ack — MCP consent bypass (efcc8 C1) ([ba3d429](https://github.com/cameronzucker/tuxlink/commit/ba3d429246d87bc0ec26b9ed4233713be0ffb89d))
+* **search:** register 38-pop-out-windows in BUNDLED_TOPICS — the docs-registry guard test caught the missing Rust-side entry (tuxlink-dmwte task 13 CI fix) ([5f7aea1](https://github.com/cameronzucker/tuxlink/commit/5f7aea17e08c887e9e7f7bda6379eb30f8521482))
+* **shell:** pop-out clears aprsMapOpen so ✕ dock-back never re-commandeers the reading pane (spec §5 AMD-2); ribbon APRS chip routes via focusOrOpenAprsChat (tuxlink-dmwte review loop 4) ([bcc4dc4](https://github.com/cameronzucker/tuxlink/commit/bcc4dc4dc6d52911ff802e29105cc7b6d737300c))
+* **tests:** add dock field to the two full-Config literals in integration tests — E0063 on both CI arches (tuxlink-dmwte task 13 CI fix) ([b44e171](https://github.com/cameronzucker/tuxlink/commit/b44e171fb6859453f32bad2f15d050254384282c))
+
+
+### Refactors
+
+* **routines-ui:** spell ConsentGate park-key separator as an escape, not a raw NUL byte ([fe423c5](https://github.com/cameronzucker/tuxlink/commit/fe423c5d5e72a37cfcb12dc5c18c450592bc7565))
+* **windows:** migrate compose onto open_secondary_window via centered flag + SpawnOutcome return (spec §3 four-window mandate, tuxlink-dmwte review loop 1) ([a7efc2c](https://github.com/cameronzucker/tuxlink/commit/a7efc2c0debb38e7b97604fd36ca2c77d7410f98))
+* **windows:** shared open_secondary_window helper + ClosePolicy; migrate windows; pop-* capabilities (spec §3, tuxlink-dmwte task 3) ([72bdf55](https://github.com/cameronzucker/tuxlink/commit/72bdf55d3e8db51879057a1ec1842e28d0e64243))
+
 ## [0.91.0](https://github.com/cameronzucker/tuxlink/compare/v0.90.0...v0.91.0) (2026-07-13)
 
 

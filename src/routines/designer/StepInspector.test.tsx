@@ -48,7 +48,7 @@ beforeEach(() => {
 });
 
 const ACTIONS: ActionInfo[] = [
-  { name: 'radio.connect', needsRadio: true, needsInternet: false, transmits: true },
+  { name: 'radio.connect', label: '', description: '', needsRadio: true, needsInternet: false, transmits: true },
 ];
 
 const ACTION_STEP: ActionStep = {

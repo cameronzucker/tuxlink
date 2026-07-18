@@ -14,6 +14,8 @@ const EXPECTED_IDS = [
   // MenuBar-level, exactly like the `badges` special case). Its id is always in
   // the vocabulary regardless of dock state.
   'menu:routines:open', 'menu:routines:new', 'menu:routines:dockback',
+  // tuxlink-9se1x: 'Back to Mailbox' — static member, MenuBar-gated to inline-open.
+  'menu:routines:close',
   'menu:view:status_bar', 'menu:view:radio_panel',
   'menu:view:scheme:default',
   'menu:view:scheme:github-dark',
@@ -67,6 +69,7 @@ describe('menu model', () => {
       { id: 'menu:routines:open', label: 'Routines' },
       { id: 'menu:routines:new', label: 'New Routine…' },
       { id: 'menu:routines:dockback', label: 'Dock Routines back' },
+      { id: 'menu:routines:close', label: 'Back to Mailbox' },
     ]);
   });
 

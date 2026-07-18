@@ -346,12 +346,16 @@ mod tests {
 
     const RADIO_TX: ActionDescriptor = ActionDescriptor {
         name: "radio.tx",
+        label: "",
+        description: "",
         needs_radio: true,
         transmits: true,
         needs_internet: false,
     };
     const LOCAL_NOTE: ActionDescriptor = ActionDescriptor {
         name: "local.note",
+        label: "",
+        description: "",
         needs_radio: false,
         transmits: false,
         needs_internet: false,

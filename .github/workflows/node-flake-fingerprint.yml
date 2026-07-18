@@ -1,0 +1,145 @@
+name: Node flake fingerprint (tuxlink-niiug)
+
+# Differential flake-fingerprint for the Node 20 -> 24 bump (GHSA-j23x-pffj-fxpv).
+# NOT a merge gate. Manually dispatched. Runs the frontend verification suite
+# K times per cell across {Node 20 control, Node 24 treatment} x {amd64, arm64}
+# on the SAME runner classes ci.yml uses, then reports per-cell green-run rate and
+# the failing-test fingerprint. A single green run cannot distinguish a safe change
+# from one that adds a flake to a no-retry, dual-arch, 4500-test pipeline; this can.
+#
+# Cargo/clippy are Node-independent and omitted. Webkit system deps are not needed
+# for typecheck / vite build / jsdom vitest, so ci.yml's heavy apt install is
+# skipped: it does not affect the vitest concurrency flakes this measures.
+
+on:
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: "Suite repetitions per cell (integer)"
+        required: true
+        default: "8"
+
+jobs:
+  fingerprint:
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20", "24"]
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 330
+    env:
+      # Untrusted-input hygiene: dispatch input reaches shells only via env, never
+      # inlined into run:. Validated as an integer before any use (see below).
+      ITERATIONS_RAW: ${{ github.event.inputs.iterations }}
+      NODE_MAJOR: ${{ matrix.node }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate inputs
+        run: |
+          if ! printf '%s' "$ITERATIONS_RAW" | grep -Eq '^[0-9]+$'; then
+            echo "iterations must be a positive integer, got: $ITERATIONS_RAW" >&2
+            exit 1
+          fi
+          if [ "$ITERATIONS_RAW" -lt 1 ] || [ "$ITERATIONS_RAW" -gt 40 ]; then
+            echo "iterations out of range 1..40: $ITERATIONS_RAW" >&2
+            exit 1
+          fi
+          echo "K=$ITERATIONS_RAW" >> "$GITHUB_ENV"
+
+      # Mirror ci.yml EXACTLY: pnpm pinned to 10 via action-setup, independent of
+      # Node. Node's own corepack would otherwise resolve pnpm 11 under Node 24,
+      # which rejects the pnpm-10 lockfile's overrides under --frozen-lockfile.
+      # That pnpm-11 mismatch is NOT a CI risk (CI pins 10); pinning here keeps
+      # the fingerprint faithful to what CI actually runs.
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+          cache: 'pnpm'
+
+      - name: Runtime provenance
+        run: |
+          echo "node: $(node --version)"
+          echo "pnpm: $(pnpm --version)"
+          echo "arch: $ARCH ($(uname -m))"
+          echo "cores: $(nproc)"
+
+      - name: Install deps (frozen)
+        run: pnpm install --frozen-lockfile
+
+      - name: Deterministic gate (typecheck + build)
+        id: deterministic
+        run: |
+          set +e
+          pnpm typecheck > typecheck.log 2>&1; echo "typecheck_rc=$?" >> "$GITHUB_OUTPUT"
+          pnpm build > build.log 2>&1;         echo "build_rc=$?"     >> "$GITHUB_OUTPUT"
+          tail -5 typecheck.log build.log || true
+
+      - name: Flake loop (vitest x K)
+        run: |
+          set +e
+          mkdir -p fp
+          green=0
+          for i in $(seq 1 "$K"); do
+            pnpm vitest run --reporter=json --outputFile="fp/run-$i.json" > "fp/run-$i.log" 2>&1
+            rc=$?
+            if [ "$rc" -eq 0 ]; then green=$((green+1)); fi
+            echo "run $i: rc=$rc"
+          done
+          echo "GREEN_RUNS=$green/$K" | tee fp/summary.txt
+
+          echo "" | tee -a fp/summary.txt
+          echo "Failing tests across the $K runs (occurrences :: test):" | tee -a fp/summary.txt
+          node -e '
+            const fs=require("fs");
+            const K=Number(process.env.K);
+            const counts={};
+            for(let i=1;i<=K;i++){
+              const p="fp/run-"+i+".json";
+              if(!fs.existsSync(p))continue;
+              let j; try{j=JSON.parse(fs.readFileSync(p,"utf8"))}catch(e){continue}
+              for(const f of (j.testResults||[])){
+                for(const a of (f.assertionResults||[])){
+                  if(a.status==="failed"){
+                    const file=f.name?f.name.split("/").slice(-1)[0]:"?";
+                    const key=file+" :: "+a.title;
+                    counts[key]=(counts[key]||0)+1;
+                  }
+                }
+              }
+            }
+            const rows=Object.entries(counts).sort((a,b)=>b[1]-a[1]);
+            if(!rows.length){console.log("  (none — any red runs were infra/exit-level; see run-*.log)")}
+            for(const [k,v] of rows){console.log("  "+v+"x  "+k)}
+          ' | tee -a fp/summary.txt
+
+      - name: Upload fingerprint
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fingerprint-node${{ matrix.node }}-${{ matrix.arch }}
+          path: fp/
+
+      - name: Summary to job log
+        if: always()
+        run: |
+          {
+            echo "### Node $NODE_MAJOR / $ARCH"
+            echo "typecheck_rc=${{ steps.deterministic.outputs.typecheck_rc }} build_rc=${{ steps.deterministic.outputs.build_rc }}"
+            echo '```'
+            cat fp/summary.txt 2>/dev/null || echo "(no summary — job failed before the loop)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -293,18 +293,24 @@ mod tests {
 
     const RADIO_CONNECT: ActionDescriptor = ActionDescriptor {
         name: "radio.connect",
+        label: "",
+        description: "",
         needs_radio: true,
         transmits: true,
         needs_internet: false,
     };
     const WEB_LOOKUP: ActionDescriptor = ActionDescriptor {
         name: "data.web_lookup",
+        label: "",
+        description: "",
         needs_radio: false,
         transmits: false,
         needs_internet: true,
     };
     const LOCAL_NOTE: ActionDescriptor = ActionDescriptor {
         name: "local.note",
+        label: "",
+        description: "",
         needs_radio: false,
         transmits: false,
         needs_internet: false,

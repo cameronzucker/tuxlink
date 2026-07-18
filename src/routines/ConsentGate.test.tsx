@@ -326,12 +326,27 @@ describe('ConsentGate — multiple parked runs', () => {
   });
 });
 
+/** tuxlink-7kv0q: drain the park pipeline (event handling or the mount-recovery
+ *  invoke chain) under FAKE timers. One `advanceTimersByTimeAsync(0)` yields a
+ *  single macrotask pass, but the chain is several promise ticks deep — how
+ *  many passes it needs varies by scheduler (Node 24 lost the coin-flip on
+ *  arm64 CI; the contended dev Pi lost it locally). Poll the DOM between
+ *  passes, bounded so a genuinely broken mount still fails the assert instead
+ *  of hanging. findByTestId is NOT safe here: testing-library's waitFor under
+ *  mocked timers with the live park-duration interval can spin. */
+async function flushUntilModal(ticks = 25) {
+  for (let i = 0; i < ticks; i += 1) {
+    if (screen.queryByTestId('consent-gate-modal')) return;
+    await vi.advanceTimersByTimeAsync(0);
+  }
+}
+
 describe('ConsentGate — live duration + reconciliation poll', () => {
   it('ticks the "Parked" duration display every second', async () => {
     vi.useFakeTimers();
     render(<ConsentGate />);
     emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
-    await vi.advanceTimersByTimeAsync(0);
+    await flushUntilModal();
     expect(screen.getByTestId('consent-gate-modal')).toBeInTheDocument();
 
     const before = screen.getByTestId('consent-gate-parked').textContent;
@@ -344,7 +359,7 @@ describe('ConsentGate — live duration + reconciliation poll', () => {
     vi.useFakeTimers();
     render(<ConsentGate />);
     emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
-    await vi.advanceTimersByTimeAsync(0);
+    await flushUntilModal();
     expect(screen.getByTestId('consent-gate-modal')).toBeInTheDocument();
 
     // The run advanced past awaiting_consent from elsewhere (e.g. another
@@ -372,7 +387,7 @@ describe('ConsentGate — live duration + reconciliation poll', () => {
     vi.useFakeTimers();
     render(<ConsentGate />);
     emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
-    await vi.advanceTimersByTimeAsync(0);
+    await flushUntilModal();
     expect(screen.getByTestId('consent-gate-modal')).toBeInTheDocument();
 
     // runStatus now answers null for the parked run (registry rotation /
@@ -664,7 +679,7 @@ describe('ConsentGate — journal-seeded park duration (behavior 8)', () => {
       { runId: RUN_ID, routine: ROUTINE, dryRun: false, startedUnix: 1000, state: 'awaiting_consent', finishedUnix: null },
     ];
     render(<ConsentGate />);
-    await vi.advanceTimersByTimeAsync(0);
+    await flushUntilModal();
     expect(screen.getByTestId('consent-gate-modal')).toBeInTheDocument();
     // 998 seconds → 00:16:38.
     expect(screen.getByTestId('consent-gate-parked')).toHaveTextContent('00:16:38');
@@ -675,7 +690,7 @@ describe('ConsentGate — journal-seeded park duration (behavior 8)', () => {
     vi.setSystemTime(2_000_000);
     render(<ConsentGate />);
     emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
-    await vi.advanceTimersByTimeAsync(0);
+    await flushUntilModal();
     expect(screen.getByTestId('consent-gate-modal')).toBeInTheDocument();
     // Just parked — near-zero elapsed, NOT the journal's 998s.
     expect(screen.getByTestId('consent-gate-parked')).toHaveTextContent('00:00:00');

@@ -25,7 +25,7 @@
 
 .btn {
   font-family: var(--sans, inherit);
-  font-size: 12px;
+  font-size: var(--type-control);
   font-weight: 600;
   color: var(--text);
   background: var(--surface-2);
@@ -48,7 +48,7 @@
 .btn-accent {
   background: var(--accent);
   border-color: var(--accent);
-  color: #1a0e02;
+  color: var(--tux-accent-fg);
 }
 
 .btn-ghost {
@@ -59,7 +59,7 @@
   background: none;
   border: none;
   color: inherit;
-  font-size: 14px;
+  font-size: var(--type-body);
   line-height: 1;
   cursor: pointer;
   padding: 0 2px;
@@ -68,7 +68,7 @@
 .load-error {
   padding: 18px;
   color: var(--error);
-  font-size: 13px;
+  font-size: var(--type-body);
 }
 
 /* ---- designer header ---- */
@@ -83,7 +83,7 @@
 }
 
 .back {
-  font-size: 12px;
+  font-size: var(--type-control);
   color: var(--text-dim);
   background: none;
   border: none;
@@ -92,12 +92,12 @@
 }
 
 .dname {
-  font-size: 15px;
+  font-size: var(--type-heading);
   font-weight: 600;
 }
 
 .dname-input {
-  font-size: 15px;
+  font-size: var(--type-heading);
   font-weight: 600;
   background: var(--surface-2);
   color: var(--text);
@@ -109,7 +109,7 @@
 
 .dstate {
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: var(--type-micro);
   color: var(--text-faint);
   border: 1px solid var(--border-strong);
   border-radius: 999px;
@@ -133,7 +133,7 @@
 
 .tab {
   padding: 7px 16px 8px;
-  font-size: 12.5px;
+  font-size: var(--type-control);
   color: var(--text-dim);
   border: 1px solid transparent;
   border-bottom: none;
@@ -171,7 +171,7 @@
   overflow: auto;
   padding: 20px;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: var(--type-body);
 }
 
 /* ---- Design tab right rail — PaletteRail + StepInspector (Task 11) ----
@@ -198,7 +198,7 @@
   padding: 6px 16px;
   border-top: 1px solid var(--border);
   background: var(--surface);
-  font-size: 12px;
+  font-size: var(--type-control);
   height: 30px;
   white-space: nowrap;
   overflow: hidden;
@@ -234,7 +234,7 @@
 .valbar .right {
   margin-left: auto;
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: var(--type-micro);
   color: var(--text-faint);
 }
 
@@ -267,7 +267,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 14px;
+  font-size: var(--type-body);
   font-weight: 600;
 }
 
@@ -276,7 +276,7 @@
   min-height: 320px;
   resize: vertical;
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: var(--type-control);
   background: var(--surface-2);
   color: var(--text);
   border: 1px solid var(--border-strong);

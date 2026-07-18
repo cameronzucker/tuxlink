@@ -163,7 +163,9 @@ function toNode(step: Step, actionsByName: Map<string, ActionInfo>): CanvasNode 
     return {
       id: step.id,
       kind: 'action',
-      title: `${step.id} ${step.action}`,
+      // tuxlink-5lfxk: human label on the node card; raw id only when the
+      // registry has no copy (unknown/fake actions).
+      title: `${step.id} ${info?.label || step.action}`,
       bodyLines: summarizeParams(step.params),
       category: actionCategory(info),
       transmits: info?.transmits ?? false,

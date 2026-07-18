@@ -35,11 +35,11 @@ beforeEach(() => {
 });
 
 const ACTIONS: ActionInfo[] = [
-  { name: 'radio.connect', needsRadio: true, needsInternet: false, transmits: true },
-  { name: 'local.notify', needsRadio: false, needsInternet: false, transmits: false },
+  { name: 'radio.connect', label: '', description: '', needsRadio: true, needsInternet: false, transmits: true },
+  { name: 'local.notify', label: '', description: '', needsRadio: false, needsInternet: false, transmits: false },
   // A made-up action absent from any hardcoded name list — the RADIO/
   // INTERNET/LOCAL grouping must derive purely from its flags.
-  { name: 'zzz.custom', needsRadio: false, needsInternet: true, transmits: false },
+  { name: 'zzz.custom', label: '', description: '', needsRadio: false, needsInternet: true, transmits: false },
 ];
 
 const EMPTY_DEF: RoutineDef = {
