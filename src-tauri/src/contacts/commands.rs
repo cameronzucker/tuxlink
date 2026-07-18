@@ -106,13 +106,13 @@ pub fn contacts_read(
 ///   silently flip an existing record's tier ([`contact_confirm`] is the only
 ///   tier writer) nor wipe observed reachability with the editor's snapshot.
 /// - CHANNELS split by provenance: the recorder owns observed rows, the UI
-///   owns manual rows. `final.channels` = stored channels with
+///   owns manual rows. `final.channels` is the stored channels with
 ///   `source == Observed` (preserved verbatim — the UI can neither edit nor
 ///   forge an observation, so incoming rows claiming `Observed` are IGNORED)
-///   + incoming channels with `source == Manual` taken as-is (additions,
-///   edits, and removals of manual rows all flow through by replacement — a
-///   stored manual row absent from the incoming manual set is gone). An
-///   incoming manual row that matches a stored observed row on
+///   plus the incoming channels with `source == Manual` taken as-is
+///   (additions, edits, and removals of manual rows all flow through by
+///   replacement — a stored manual row absent from the incoming manual set
+///   is gone). An incoming manual row that matches a stored observed row on
 ///   `(transport, freq_hz)` is kept ALONGSIDE it: the UI may fuse the pair
 ///   for display, but the store stays honest about provenance. Stored
 ///   `Unknown`-source rows (written by a future binary) are preserved like
