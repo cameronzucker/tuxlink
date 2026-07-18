@@ -148,3 +148,10 @@ ran 2 attempts — both WRONG on the graded mechanism with thinking
 restored on every turn. F7: rung-5 diagnosis is a model-capability
 limit, not a harness artifact; the "harness-limited" verdict for this
 cell is overturned. See `addendum-responses-probe2.md`.
+
+## Definitive consolidation (2026-07-18)
+
+The full spike + follow-ups + operator-directed Mistral round are
+consolidated in `definitive-report.md` (findings F1-F7 + M1-M4 and the
+milestone-2 build list). That document is the entry point; this file and
+the two addenda remain the running record.
