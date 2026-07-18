@@ -75,6 +75,7 @@ diff (§5) and were operator-flagged in bd `tuxlink-iizmk`.
 | 8 | **`predict_path`** | 0 in corpus; operator-flagged | `data.predict_path`; pairs with `data.find_stations` for propagation-gated gateway choice (the R2 "propagation-gated band plan" proof scenario). |
 | 9 | **Real `rig_tune`** (arbitrary freq/mode, not preset-bound) | 0 in corpus; operator-flagged | Either a `rig.tune` action or an inline-frequency form of `rig.apply_preset`. |
 | 10 | **`mailbox_move`**, `verify_cms_connection`, remaining tier-2 writes | 0 in corpus | With the rank-5 write-family plumbing in place these are additive registry entries. |
+| 11 | **VARA setup** (apply audio/PTT devices + engine bounce) | 0 in corpus; operator-flagged 2026-07-18 | On top of bd `tuxlink-iww9r`'s VARA.ini stop-edit-start module (parallel agent, in flight): a routines action so a station-provisioning routine can apply VARA device/PTT settings the same way the agent can. Same tier-2 authority class both sides. Related: the station-level `list_audio_devices` MCP tool (bd `tuxlink-hq9g0`, PR #1155) unified the diagnosis side; device *enumeration* stays design-time for routines, device *application* is the routine-shaped step. |
 
 ## 5. Full surface diff (50 agent tools -> routines), for the ADR appendix
 
