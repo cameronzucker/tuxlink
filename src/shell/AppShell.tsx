@@ -2450,7 +2450,7 @@ function AppShellInner() {
             (a flex column) that fills the one dock column. The `!aprsOpen`
             radio-panel-only path stays a bare grid item — unchanged. */}
         {aprsOpen ? (
-          <div className="aprs-dock-surface" data-testid="aprs-dock-surface">
+          <div className="aprs-dock-surface" data-testid="aprs-dock-surface" data-tour-anchor="radio-dock">
             <AprsDockTabs
               active={dockTab}
               unread={aprsUnread}

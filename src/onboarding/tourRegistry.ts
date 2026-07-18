@@ -27,7 +27,7 @@ export const TOUR_STOPS: HintEntry[] = [
     id: 'radio-dock', anchor: 'radio-dock',
     title: 'Radio dock',
     body: 'When you start a radio mode (ARDOP, VARA, packet), its panel docks here — arming a listener, session status, and the dial all live in it.',
-    requiredPanelState: 'radio-dock-open', fallback: 'center',
+    requiredPanelState: 'radio-dock-open', fallback: 'skip',
     openHint: 'Pick a radio mode from the ribbon to open its dock panel.',
   },
   {
