@@ -1477,21 +1477,29 @@ function ReachabilityBlock({
   const channels = contact.channels ?? [];
   const endpoints = contact.endpoints ?? [];
   // tuxlink-6vn4x: the union of manual dials + observed channels, keyed by
-  // (transport, freq_hz). A dial with a matching observed row fuses the
-  // observation's stats onto itself; a matched observed row does NOT render a
-  // second time. A dial with no observations shows "no attempts yet".
+  // (transport, freq_hz). A dial fuses ONE matching observed row's stats onto
+  // itself (the most recently seen — it carries the freshest via/status); a
+  // dial with no observations shows "no attempts yet". Observed rows the
+  // fusion did NOT consume still render — the backend deliberately keeps
+  // distinct observations at the same frequency when via/bandwidth differ
+  // (direct vs digipeater), and hiding those hid a real connect option
+  // (Codex adrev 2026-07-18 P2).
   const manual = channels.filter((ch) => ch.source === 'manual');
   const observed = channels.filter((ch) => ch.source !== 'manual');
   const keyOf = (ch: ReachChannel) => `${ch.transport}|${ch.freq_hz ?? ''}`;
-  const manualKeys = new Set(manual.map(keyOf));
+  const consumed = new Set<ReachChannel>();
+  const fuseFor = (d: ReachChannel): ReachChannel | null => {
+    const candidates = observed
+      .filter((o) => keyOf(o) === keyOf(d) && !consumed.has(o))
+      .sort((a, b) => b.last_seen.localeCompare(a.last_seen));
+    const best = candidates[0] ?? null;
+    if (best) consumed.add(best);
+    return best;
+  };
   const rows: Array<{ channel: ReachChannel; observed: ReachChannel | null; isDial: boolean }> = [
-    ...manual.map((d) => ({
-      channel: d,
-      observed: observed.find((o) => keyOf(o) === keyOf(d)) ?? null,
-      isDial: true,
-    })),
+    ...manual.map((d) => ({ channel: d, observed: fuseFor(d), isDial: true })),
     ...observed
-      .filter((o) => !manualKeys.has(keyOf(o)))
+      .filter((o) => !consumed.has(o))
       .map((o) => ({ channel: o, observed: null, isDial: false })),
   ];
   if (rows.length === 0 && endpoints.length === 0) return null;

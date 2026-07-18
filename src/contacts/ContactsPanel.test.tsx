@@ -520,6 +520,37 @@ describe('<ContactsPanel> — reachability dial/observed fusion (tuxlink-6vn4x)'
     expect(screen.queryByTestId('reach-channel-c-fused-2')).not.toBeInTheDocument();
   });
 
+  // Codex adrev 2026-07-18 P2: the backend deliberately keeps distinct
+  // observations at the same (transport, freq) when via/bandwidth differ
+  // (direct vs digipeater). Fusion consumes ONE observed row (freshest
+  // last_seen); the other variant must still render as its own row — hiding
+  // it hid a real connect option.
+  it('a second observed variant at the same transport+freq (different via) still renders as its own row', async () => {
+    const OBSERVED_VARA_DIGI: Channel = {
+      ...OBSERVED_VARA_MATCH,
+      via: ['DIGI1'],
+      counts: { ok: 1, fail: 0 },
+      last_seen: '2026-07-10T09:00:00-07:00', // older than the direct match
+    };
+    const contact: Contact = {
+      ...FUSED,
+      id: 'c-multi',
+      channels: [DIAL_MANUAL_VARA, OBSERVED_VARA_MATCH, OBSERVED_VARA_DIGI],
+    };
+    routeInvoke({ contacts: [contact] });
+    renderPanel();
+    fireEvent.click(await screen.findByTestId('contact-row-c-multi'));
+    await screen.findByTestId('contact-reachability');
+
+    // Row 0: the dial, fused with the FRESHEST observed variant (the direct one).
+    expect(screen.getByTestId('reach-channel-c-multi-0')).toHaveTextContent('dial');
+    // Row 1: the digipeater variant renders as its own (non-dial) row.
+    const row1 = screen.getByTestId('reach-channel-c-multi-1');
+    expect(row1).toBeInTheDocument();
+    expect(row1).toHaveTextContent('DIGI1');
+    expect(row1).not.toHaveTextContent('no attempts yet');
+  });
+
   it('Connect on a fused dial dispatches the p2p seam via the observed channel (existing wiring, not reinvented)', async () => {
     routeInvoke({ contacts: [FUSED] });
     renderPanel();

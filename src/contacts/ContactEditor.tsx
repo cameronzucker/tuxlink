@@ -155,7 +155,10 @@ export function ContactEditor({ contact, onSave, onCancel }: ContactEditorProps)
       const freqHz = parseDialFreq(d.freqText);
       if (freqHz == null) continue;
       if (d.original && d.original.transport === d.transport && d.original.freq_hz === freqHz) {
-        manual.push(d.original);
+        // Round-trip the original row (history preserved) but ALWAYS retarget
+        // it at the CURRENT callsign — a callsign edit must not leave the dial
+        // connecting to the previous station (Codex adrev 2026-07-18 P2).
+        manual.push({ ...d.original, target_callsign: trimmedCallsign });
       } else {
         manual.push(manualChannel(d.transport, freqHz, trimmedCallsign));
       }

@@ -680,13 +680,17 @@ impl ContactsStore {
 
     /// Per-contact channel bounding (R3-F4): rotated observations (via/freq
     /// churn) on one contact cannot grow it without bound; oldest-`last_seen`
-    /// is evicted.
+    /// is evicted. Manual dials are NEVER eviction candidates (Codex adrev
+    /// 2026-07-18 P2: their empty `last_seen` sorted them oldest, so
+    /// observation churn silently deleted operator-entered dials) — the cap
+    /// governs the recorder's own rows only.
     fn enforce_channel_cap(c: &mut Contact) {
         while c.channels.len() > PER_CONTACT_CHANNEL_CAP {
             let victim = c
                 .channels
                 .iter()
                 .enumerate()
+                .filter(|(_, ch)| ch.source != ChannelSource::Manual)
                 .min_by(|(_, a), (_, b)| a.last_seen.cmp(&b.last_seen))
                 .map(|(i, _)| i);
             match victim {
@@ -1410,6 +1414,49 @@ mod tests {
         }
         assert_eq!(s.contacts().len(), 1, "all observations on one contact");
         assert_eq!(s.contacts()[0].channels.len(), PER_CONTACT_CHANNEL_CAP);
+    }
+
+    #[test]
+    fn channel_cap_never_evicts_a_manual_dial() {
+        // Codex adrev 2026-07-18 P2: a manual dial's empty `last_seen` sorted
+        // it as the OLDEST row, so observation churn past the cap silently
+        // deleted operator-entered dials. Manual rows are never eviction
+        // candidates — the cap governs the recorder's own rows only.
+        let dir = tempdir().unwrap();
+        let mut s = ContactsStore::open(dir.path().join("contacts.json"));
+        let mut c = contact("c1"); // callsign W6ABC-7
+        c.channels = vec![Channel {
+            transport: ChannelTransport::VaraHf,
+            target_callsign: "W6ABC-7".into(),
+            via: vec![],
+            freq_hz: Some(7_101_000),
+            bandwidth: None,
+            direction: Direction::Unknown,
+            counts: AttemptCounts::default(),
+            last_seen: String::new(), // editor-minted virgin dial
+            last_ok: None,
+            last_ok_direction: None,
+            source: ChannelSource::Manual,
+        }];
+        s.contact_upsert(c).unwrap();
+
+        for i in 0..80u32 {
+            let mut o = rf_obs("W6ABC-7", Direction::Outgoing, ObservationPhase::B2fOk);
+            if let ObservedPath::Rf { ref mut via, .. } = o.path {
+                *via = vec![format!("DIGI{i}")];
+            }
+            let ts = format!("2026-07-11T12:{:02}:{:02}-07:00", i / 60, i % 60);
+            s.apply_observation(&o, ts).unwrap();
+        }
+
+        let c = &s.contacts()[0];
+        assert!(
+            c.channels
+                .iter()
+                .any(|ch| ch.source == ChannelSource::Manual && ch.last_seen.is_empty()),
+            "the virgin manual dial survives cap churn"
+        );
+        assert!(c.channels.len() <= PER_CONTACT_CHANNEL_CAP + 1);
     }
 
     #[test]

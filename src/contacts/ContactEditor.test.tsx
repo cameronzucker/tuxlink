@@ -121,6 +121,24 @@ describe('<ContactEditor> — Radio dials', () => {
     expect(saved.channels).toEqual([OBSERVED_CH, MANUAL_CH]);
   });
 
+  // Codex adrev 2026-07-18 P2: round-tripping an unchanged dial verbatim kept
+  // the OLD target_callsign after a callsign edit, so the saved contact showed
+  // the new callsign while its dial still connected to the previous station.
+  it('a callsign edit retargets round-tripped unchanged dials at the new callsign', async () => {
+    const onSave = vi.fn<(c: Contact) => Promise<void>>(async () => {});
+    render(<ContactEditor contact={DOUG} onSave={onSave} onCancel={vi.fn()} />);
+
+    fireEvent.change(screen.getByTestId('editor-callsign'), { target: { value: 'N0DAJ-7' } });
+    fireEvent.click(screen.getByTestId('editor-save'));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    const saved = onSave.mock.calls[0][0];
+    expect(saved.channels).toEqual([
+      OBSERVED_CH, // observed rows stay verbatim — history is the recorder's
+      { ...MANUAL_CH, target_callsign: 'N0DAJ-7' },
+    ]);
+  });
+
   it('a changed dial becomes a fresh manual channel; a removed dial is dropped; observed survives', async () => {
     const onSave = vi.fn<(c: Contact) => Promise<void>>(async () => {});
     render(<ContactEditor contact={DOUG} onSave={onSave} onCancel={vi.fn()} />);
