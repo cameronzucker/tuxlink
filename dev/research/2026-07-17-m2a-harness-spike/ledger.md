@@ -228,3 +228,32 @@
   opening turns). Candidate diff committed on local arm branch
   (da1057db, NEVER MERGE). Full analysis: addendum-responses-probe.md
   (finding F5 — route necessary-but-not-sufficient; F2 refined).
+
+## POST-HOC continuation (2026-07-18, hemlock-maple-clover) — probe #3
+
+2026-07-18T04:40–05:25Z DIAGNOSIS of the F5 reasoning collapse: 3 ablation
+  rounds against /responses + logging-proxy capture of Pi's exact
+  per-turn requests (4-turn mini-task; collapse reproduced 44/0/1/1).
+  Controlling variable isolated: input ending at function_call_output
+  vs a trailing user message (0 vs 439 reasoning tokens, both
+  directions, 2/2). FINDING F6: Qwen3.5 template opens <think> only
+  after a USER turn — agentic loops never re-enter thinking.
+2026-07-18T05:25Z EXTENSIONS BUILT: pi-think-reviver.js (context-event
+  transient user-turn nudge; validated on mini-task 36/13/21/280 vs
+  44/0/1/1) and pi-toolsyntax-detector.js (mandatory work item 2,
+  message_end pseudo-tool-call retry, budget 3).
+2026-07-18T05:31:39Z pi-e122-r5-responses2 attempt-1 dispatched (fixed
+  harness: responses route + reviver + detector).
+2026-07-18T05:47:45Z attempt-1 FINISHED exit 0 — 16m06s clean. Reasoning
+  EVERY turn (47 turns, 87k reasoning tok incl. one 81,920 runaway
+  spiral). GRADE: WRONG (emit-is-window-local theory, emitTo
+  workaround; ACL never named). Commit 98e79c18; tree reset (185584b7).
+2026-07-18T05:50:48Z attempt-2 dispatched.
+2026-07-18T05:59:04Z attempt-2 FINISHED exit 0 — 8m16s clean. Reasoning
+  every turn (56 turns, 7.5k tok). GRADE: WRONG (webview-scoping
+  theory; new Rust backend commands, non-minimal wrong layer; ACL never
+  named). Commit 3b0990b1. Detector never triggered either attempt.
+  CELL VERDICT: FAILED 0/2 with harness fixed. FINDING F7 (definitive):
+  rung-5 diagnosis is a MODEL-capability limit for E122, not harness —
+  the ladder's "harness-limited" verdict for this cell is overturned.
+  Full analysis: addendum-responses-probe2.md.
