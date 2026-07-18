@@ -111,12 +111,35 @@ describe('PaletteRail — filter', () => {
 });
 
 describe('PaletteRail — click-with-armed-insert', () => {
-  it('an action item is disabled (no onInsert call) while nothing is armed', () => {
-    const { onInsert } = renderPalette({ armedInsert: null });
+  // tuxlink-7ewvq item 2: the palette used to render disabled (opacity .45,
+  // unreadable, inert) until a ＋ was clicked on the canvas — it read as
+  // broken. Items are ALWAYS live now: an unarmed click still builds the step
+  // and hands it to onInsert (the owner appends it to the end of the track).
+  it('an action item is enabled and calls onInsert even while nothing is armed', () => {
+    const { onInsert } = renderPalette({ armedInsert: null, def: EMPTY_DEF });
     const btn = screen.getByTestId('palette-item-radio.connect');
-    expect(btn).toBeDisabled();
+    expect(btn).not.toBeDisabled();
     fireEvent.click(btn);
-    expect(onInsert).not.toHaveBeenCalled();
+    expect(onInsert).toHaveBeenCalledWith({ id: 's1', action: 'radio.connect', params: {} });
+  });
+
+  it('the unarmed hint explains both paths in plain language (no "armed" jargon)', () => {
+    renderPalette({ armedInsert: null });
+    const hint = screen.getByTestId('palette-hint');
+    expect(hint.textContent).toMatch(/add it to the end/i);
+    expect(hint.textContent).toMatch(/＋ on the canvas/);
+    expect(hint.textContent).not.toMatch(/arm/i);
+  });
+
+  it('the armed hint names the insertion spot by the step it follows, without "armed" jargon', () => {
+    const def: RoutineDef = {
+      ...EMPTY_DEF,
+      tracks: [{ name: 'track-1', steps: [{ id: 's5', action: 'radio.connect', params: {} }] }],
+    };
+    renderPalette({ armedInsert: { trackIdx: 0, afterStepId: 's5' }, def });
+    const hint = screen.getByTestId('palette-hint');
+    expect(hint.textContent).toMatch(/adding after/i);
+    expect(hint.textContent).not.toMatch(/\barmed\b/i);
   });
 
   it('clicking an action item with an armed insert point calls onInsert with an action step whose action matches, via nextStepId', () => {

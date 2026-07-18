@@ -35,7 +35,7 @@
  * the same handler," so it's left out rather than half-built. Noted in the
  * Task 11 PR body.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { listRoutines, type ActionInfo, type RoutineDef, type RoutineSummary, type Step } from '../routinesApi';
 import { nextStepId } from './defDraft';
 import type { ArmedInsertPosition } from './CanvasTab';
@@ -92,7 +92,6 @@ function PaletteItem({
   label,
   testId,
   flags,
-  armed,
   lib,
   sub,
   desc,
@@ -101,7 +100,6 @@ function PaletteItem({
   label: string;
   testId: string;
   flags?: Array<'RIG' | 'TX' | 'NET'>;
-  armed: boolean;
   lib?: boolean;
   /** Raw registry id, rendered as mono subtext under a human label
    *  (tuxlink-5lfxk). Omitted when the label IS the id. */
@@ -110,12 +108,14 @@ function PaletteItem({
   desc?: string;
   onClick: () => void;
 }) {
+  // tuxlink-7ewvq item 2: NEVER disabled. The old disabled-until-armed
+  // palette rendered dim and inert, and read as broken; an unarmed click now
+  // appends to the end of the routine (the owner resolves the position).
   return (
     <button
       type="button"
       className={`pal-item${lib ? ' lib' : ''}`}
       data-testid={testId}
-      disabled={!armed}
       title={desc}
       onClick={onClick}
     >
@@ -172,29 +172,70 @@ export function PaletteRail({ def, actions, armedInsert, onInsert }: PaletteRail
   const controlItems = CONTROL_FLOW_ITEMS.filter((c) => matches(c.label));
   const libraryItems = routines.filter((r) => matches(r.routine));
 
-  const armed = armedInsert !== null;
-
+  // tuxlink-7ewvq item 2: items are always live. With a position chosen on
+  // the canvas the step lands there; without one, the owner appends it to the
+  // end of the track. This component still only builds the Step value.
   function insertAction(name: string) {
-    if (!armedInsert) return;
     onInsert({ id: nextStepId(def), action: name, params: {} });
   }
 
   function insertControl(kind: ControlKind) {
-    if (!armedInsert) return;
-    // Retry's wrap-step seed is the armed position's predecessor — EXCEPT on
+    // Retry's wrap-step seed is the chosen position's predecessor — EXCEPT on
     // an empty arm's ＋, whose `afterStepId` is the branch's own id (not a
-    // step retry could sensibly wrap): leave `step: ''` for the operator to
-    // fill in via the inspector.
+    // step retry could sensibly wrap), and when no position is chosen at all:
+    // leave `step: ''` for the operator to fill in via the inspector.
     const wrapStepId =
-      armedInsert.arm && armedInsert.afterStepId === armedInsert.arm.branchId
+      !armedInsert || (armedInsert.arm && armedInsert.afterStepId === armedInsert.arm.branchId)
         ? null
         : armedInsert.afterStepId;
     onInsert(buildControlStep(kind, nextStepId(def), wrapStepId));
   }
 
   function insertLibraryCall(routineName: string) {
-    if (!armedInsert) return;
     onInsert({ id: nextStepId(def), control: 'call', routine: routineName });
+  }
+
+  /** Human name for the step a chosen insert position follows — the hint
+   *  says "Adding after Connect radio", never a bare step id. */
+  function stepTitleOf(stepId: string): string {
+    const step = def.tracks.flatMap((t) => t.steps).find((s) => s.id === stepId);
+    if (!step) return stepId;
+    if ('action' in step) {
+      const info = actions.find((a) => a.name === step.action);
+      return info?.label || step.action;
+    }
+    return step.control;
+  }
+
+  function hintText(): ReactNode {
+    if (!armedInsert) {
+      return (
+        <>
+          Click an action to add it to the end of the routine — or click a ＋ on the canvas
+          first to choose the exact spot.
+        </>
+      );
+    }
+    if (armedInsert.arm) {
+      return (
+        <>
+          Adding into the <b>{armedInsert.arm.which === 'then' ? 'ok' : 'err'}</b> path — pick an
+          action.
+        </>
+      );
+    }
+    if (armedInsert.afterStepId === null) {
+      return (
+        <>
+          Adding at the <b>start</b> — pick an action.
+        </>
+      );
+    }
+    return (
+      <>
+        Adding after <b>{stepTitleOf(armedInsert.afterStepId)}</b> — pick an action.
+      </>
+    );
   }
 
   return (
@@ -208,13 +249,7 @@ export function PaletteRail({ def, actions, armedInsert, onInsert }: PaletteRail
         onChange={(e) => setFilter(e.target.value)}
       />
       <div className="pal-hint" data-testid="palette-hint">
-        {armed ? (
-          <>
-            Insert point <b>armed</b>. Pick an action below.
-          </>
-        ) : (
-          'Arm an insert point (＋ on the canvas) first.'
-        )}
+        {hintText()}
       </div>
       <div className="pal-scroll">
         {radioActions.length > 0 && (
@@ -228,7 +263,6 @@ export function PaletteRail({ def, actions, armedInsert, onInsert }: PaletteRail
                 desc={a.description || undefined}
                 testId={`palette-item-${a.name}`}
                 flags={flagsFor(a)}
-                armed={armed}
                 onClick={() => insertAction(a.name)}
               />
             ))}
@@ -245,7 +279,6 @@ export function PaletteRail({ def, actions, armedInsert, onInsert }: PaletteRail
                 desc={a.description || undefined}
                 testId={`palette-item-${a.name}`}
                 flags={flagsFor(a)}
-                armed={armed}
                 onClick={() => insertAction(a.name)}
               />
             ))}
@@ -262,7 +295,6 @@ export function PaletteRail({ def, actions, armedInsert, onInsert }: PaletteRail
                 desc={a.description || undefined}
                 testId={`palette-item-${a.name}`}
                 flags={flagsFor(a)}
-                armed={armed}
                 onClick={() => insertAction(a.name)}
               />
             ))}
@@ -276,7 +308,6 @@ export function PaletteRail({ def, actions, armedInsert, onInsert }: PaletteRail
                 key={c.kind}
                 label={c.label}
                 testId={`palette-control-${c.kind}`}
-                armed={armed}
                 onClick={() => insertControl(c.kind)}
               />
             ))}
@@ -290,7 +321,6 @@ export function PaletteRail({ def, actions, armedInsert, onInsert }: PaletteRail
                 key={r.routine}
                 label={`★ ${r.routine}`}
                 testId={`palette-library-${r.routine}`}
-                armed={armed}
                 lib
                 onClick={() => insertLibraryCall(r.routine)}
               />

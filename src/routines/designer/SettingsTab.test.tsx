@@ -418,3 +418,24 @@ describe('SettingsTab — if-interrupted section', () => {
     expect(onChange).toHaveBeenCalledWith({ on_interrupted: 'resume' });
   });
 });
+
+// tuxlink-7ewvq item 1: SettingsTab.css declared a BARE `.radio` utility (the
+// option-card's fake radio dot). RoutineDesigner loads this stylesheet on
+// every tab, so the bare selector leaked onto PaletteRail's `.pal-group.radio`
+// ("RADIO" category header) and squashed it into a stray 28x14 bordered oval
+// below the palette hint — the operator's "random oval of no discernible
+// provenance". The dot's selector must stay scoped under `.opt`.
+describe('SettingsTab.css — no bare .radio selector leak', () => {
+  const CSS = import.meta.glob('./SettingsTab.css', {
+    eager: true,
+    query: '?raw',
+    import: 'default',
+  }) as Record<string, string>;
+  const css = CSS['./SettingsTab.css']!;
+
+  it('scopes the radio-dot rule under .opt', () => {
+    expect(css).toMatch(/\.opt \.radio\s*{/);
+    // No top-of-line bare `.radio {` anywhere (the leaking form).
+    expect(css).not.toMatch(/^\.radio\s*{/m);
+  });
+});

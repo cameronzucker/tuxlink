@@ -65,7 +65,7 @@
   top: -1px;
   left: -1px;
   font-family: var(--mono);
-  font-size: var(--type-micro);
+  font-size: var(--type-meta);
   letter-spacing: 0.08em;
   color: var(--text-faint);
   background: var(--surface-2);
@@ -113,9 +113,9 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  padding: 3px 7px;
+  padding: 4px 9px;
   font-family: var(--mono);
-  font-size: var(--type-meta);
+  font-size: var(--type-control);
   font-weight: 600;
   color: var(--text);
   border-bottom: 1px solid var(--border);
@@ -123,8 +123,8 @@
 }
 
 .node-body {
-  padding: 3px 7px 4px;
-  font-size: var(--type-micro);
+  padding: 4px 9px 5px;
+  font-size: var(--type-meta);
   color: var(--text-dim);
   font-family: var(--mono);
   line-height: 1.5;
@@ -256,14 +256,14 @@
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  width: 15px;
-  height: 15px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   background: var(--surface);
   border: 1px solid var(--border-strong);
-  color: var(--text-faint);
-  font-size: var(--type-micro);
-  line-height: 13px;
+  color: var(--text-dim);
+  font-size: var(--type-control);
+  line-height: 18px;
   text-align: center;
   z-index: 2;
   cursor: pointer;

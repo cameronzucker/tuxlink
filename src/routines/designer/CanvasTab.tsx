@@ -249,8 +249,16 @@ function Lane({
 
   return (
     <div className="lane" data-testid={`lane-${trackIdx}`}>
-      <span className="lane-tag">
-        TRACK {trackIdx + 1} · {lane.track.toUpperCase()}
+      {/* tuxlink-7ewvq: a generic auto-name (track-1, track-2, …) is display
+          noise — 'TRACK 1 · TRACK-1' explained nothing. Only a name the
+          operator actually chose earns a spot next to the number. */}
+      <span
+        className="lane-tag"
+        title="Tracks run in parallel when the routine starts; steps inside a track run in order."
+      >
+        {/^track-?\d+$/i.test(lane.track)
+          ? `TRACK ${trackIdx + 1}`
+          : `TRACK ${trackIdx + 1} · ${lane.track.toUpperCase()}`}
       </span>
       {deps.map((dep, i) => (
         <span key={i} className="dep-lbl" data-testid={`dep-${trackIdx}-${i}`}>
@@ -402,8 +410,14 @@ export function CanvasTab({
           onRemoveStep={onRemoveStep}
         />
       ))}
-      <button type="button" className="btn add-track-btn" data-testid="add-track-btn" onClick={onAddTrack}>
-        ＋ Add track
+      <button
+        type="button"
+        className="btn add-track-btn"
+        data-testid="add-track-btn"
+        title="Adds a second track that runs in parallel with this one when the routine starts."
+        onClick={onAddTrack}
+      >
+        ＋ Add parallel track
       </button>
     </div>
   );

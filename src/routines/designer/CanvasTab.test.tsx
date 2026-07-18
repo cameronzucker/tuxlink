@@ -372,3 +372,36 @@ describe('CanvasTab — add track', () => {
     expect(onAddTrack).toHaveBeenCalledTimes(1);
   });
 });
+
+// tuxlink-7ewvq items 4+5: 'TRACK 1 · TRACK-1' (a generic auto-name echoed
+// back at itself) meant nothing to the operator, and 'Add track' gave no clue
+// what a track IS. Generic names collapse to the number; both surfaces carry
+// a plain-language tooltip.
+describe('CanvasTab — lane tags + Add track language (tuxlink-7ewvq)', () => {
+  it('a generic track name (track-1) renders as just TRACK 1, with a tooltip explaining tracks', () => {
+    renderTab(); // FIXTURE_DEF's first track is named 'track-1'
+    const tag = screen.getByTestId('lane-0').querySelector('.lane-tag')!;
+    expect(tag.textContent).toBe('TRACK 1');
+    expect(tag.getAttribute('title')).toMatch(/parallel/i);
+  });
+
+  it('a custom track name still shows alongside the number', () => {
+    renderTab({
+      draft: {
+        routine: 'r', schema_version: 1, transmit_mode: 'attended',
+        triggers: [{ type: 'manual' }],
+        tracks: [{ name: 'aprs-watch', steps: [] }],
+      },
+    });
+    const tag = screen.getByTestId('lane-0').querySelector('.lane-tag')!;
+    expect(tag.textContent).toContain('TRACK 1');
+    expect(tag.textContent).toContain('APRS-WATCH');
+  });
+
+  it('the add-track button reads "Add parallel track" and explains itself', () => {
+    renderTab();
+    const btn = screen.getByTestId('add-track-btn');
+    expect(btn.textContent).toContain('Add parallel track');
+    expect(btn.getAttribute('title')).toMatch(/parallel/i);
+  });
+});

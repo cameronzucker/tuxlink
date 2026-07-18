@@ -103,11 +103,26 @@ export interface RoutineDesignerProps {
 /** Debounce window for the always-on validation bar (spec §12 flow 2). */
 const VALIDATE_DEBOUNCE_MS = 400;
 
-const TAB_LABELS: Record<DesignerTab, string> = {
-  design: 'Design',
-  runs: 'Runs',
-  settings: 'Settings',
-};
+/* tuxlink-7ewvq: two tabs, not three. 'runs' KEEPS its wire value (routing +
+ * continuity tokens store it) but reads 'History' — 'Runs' was ambiguous
+ * (the verb? the history?). 'settings' is gone as a tab: its sections render
+ * inline below the canvas in the Design view, so a stored tab === 'settings'
+ * simply lands on Design. */
+const VISIBLE_TABS: ReadonlyArray<{ tab: DesignerTab; label: string }> = [
+  { tab: 'design', label: 'Design' },
+  { tab: 'runs', label: 'History' },
+];
+
+/** Plain-language explanation for the header's transmit-mode chip. */
+function transmitModeTooltip(mode: string): string {
+  if (mode === 'attended') {
+    return 'Transmit mode: attended — this routine only transmits while you are at the radio as control operator. Change it under Routine settings, below the canvas.';
+  }
+  if (mode === 'automatic') {
+    return 'Transmit mode: automatic — this routine may transmit unattended (scheduled runs). Change it under Routine settings, below the canvas.';
+  }
+  return `Transmit mode: ${mode}. Change it under Routine settings, below the canvas.`;
+}
 
 function stepCountOf(def: RoutineDef): number {
   return def.tracks.reduce((n, t) => n + t.steps.length, 0);
@@ -386,8 +401,26 @@ export function RoutineDesigner({
    *  unarmed) is a no-op rather than a crash. */
   const handleInsert = useCallback(
     (step: Step) => {
-      if (!armedInsert) return;
+      // tuxlink-7ewvq item 2: no chosen position is a first-class path now —
+      // the step appends to the END of the current track (the one holding
+      // the selection, else the first), so the palette is directly usable
+      // without arming a ＋ first.
       const pos = armedInsert;
+      if (!pos) {
+        setDraft((d) => {
+          if (!d) return d;
+          const selTrackIdx = selectedStepId
+            ? d.tracks.findIndex((t) => t.steps.some((s) => s.id === selectedStepId))
+            : -1;
+          const trackIdx = selTrackIdx >= 0 ? selTrackIdx : 0;
+          const steps = d.tracks[trackIdx]?.steps ?? [];
+          const afterStepId = steps.length > 0 ? steps[steps.length - 1]!.id : null;
+          return insertStep(d, trackIdx, afterStepId, step);
+        });
+        setDirty(true);
+        setSelectedStepId(step.id);
+        return;
+      }
       updateDraft((d) =>
         pos.arm
           ? insertStepIntoBranchArm(d, pos.trackIdx, pos.arm.branchId, pos.arm.which, step, pos.afterStepId)
@@ -396,7 +429,7 @@ export function RoutineDesigner({
       setArmedInsert(null);
       setSelectedStepId(step.id);
     },
-    [armedInsert, updateDraft],
+    [armedInsert, selectedStepId, updateDraft],
   );
 
   /** StepInspector's field-edit handler: patches whichever step is currently
@@ -480,6 +513,11 @@ export function RoutineDesigner({
     ? (draft.tracks.flatMap((t) => t.steps).find((s) => s.id === selectedStepId) ?? null)
     : null;
 
+  // 'settings' survives in the DesignerTab type for continuity-token compat
+  // (a token stored before the tab was removed) but renders the Design view —
+  // the settings sections live inline there now.
+  const effectiveTab: DesignerTab = tab === 'settings' ? 'design' : tab;
+
   return (
     <div className="surface" data-testid="routine-designer">
       <div className="designer-head">
@@ -500,17 +538,23 @@ export function RoutineDesigner({
         ) : (
           <span className="dname">{draft.routine}</span>
         )}
-        <span className="dstate">{draft.transmit_mode}</span>
+        <span
+          className="dstate"
+          data-testid="transmit-mode-chip"
+          title={transmitModeTooltip(draft.transmit_mode)}
+        >
+          TX: {draft.transmit_mode}
+        </span>
         {dirty && <span className="unsaved" data-testid="unsaved-dot" title="unsaved changes" />}
         <span className="tabs">
-          {(Object.keys(TAB_LABELS) as DesignerTab[]).map((t) => (
+          {VISIBLE_TABS.map(({ tab: t, label }) => (
             <button
               key={t}
               type="button"
-              className={`tab${tab === t ? ' active' : ''}`}
+              className={`tab${effectiveTab === t ? ' active' : ''}`}
               onClick={() => onTabChange(t)}
             >
-              {TAB_LABELS[t]}
+              {label}
             </button>
           ))}
         </span>
@@ -544,18 +588,32 @@ export function RoutineDesigner({
       </div>
 
       <div className="design-body">
-        {tab === 'design' && (
+        {effectiveTab === 'design' && (
           <>
-            <CanvasTab
-              draft={draft}
-              actions={actions}
-              selectedStepId={selectedStepId}
-              onSelect={setSelectedStepId}
-              armedInsert={armedInsert}
-              onInsertAt={handleInsertAt}
-              onRemoveStep={handleRemoveStep}
-              onAddTrack={() => updateDraft((d) => addTrack(d, `track-${d.tracks.length + 1}`))}
-            />
+            <div className="design-main" data-testid="design-main">
+              <CanvasTab
+                draft={draft}
+                actions={actions}
+                selectedStepId={selectedStepId}
+                onSelect={setSelectedStepId}
+                armedInsert={armedInsert}
+                onInsertAt={handleInsertAt}
+                onRemoveStep={handleRemoveStep}
+                onAddTrack={() => updateDraft((d) => addTrack(d, `track-${d.tracks.length + 1}`))}
+              />
+              {/* tuxlink-7ewvq item 8: settings live HERE, in the canvas
+                  column's otherwise-empty space, not behind a third tab. */}
+              <div className="inline-settings" data-testid="inline-settings">
+                <div className="inline-settings-head">ROUTINE SETTINGS</div>
+                <SettingsTab
+                  key={draft.routine}
+                  draft={draft}
+                  findings={findings}
+                  onChange={(patch) => updateDraft((d) => updateSettings(d, patch))}
+                  onSaved={handleSave}
+                />
+              </div>
+            </div>
             <div className="design-rail" data-testid="design-rail">
               <PaletteRail def={draft} actions={actions} armedInsert={armedInsert} onInsert={handleInsert} />
               {selectedStep && (
@@ -570,16 +628,7 @@ export function RoutineDesigner({
             </div>
           </>
         )}
-        {tab === 'runs' && <RunsTab routine={draft.routine} highlightRunId={highlightRunId} />}
-        {tab === 'settings' && (
-          <SettingsTab
-            key={draft.routine}
-            draft={draft}
-            findings={findings}
-            onChange={(patch) => updateDraft((d) => updateSettings(d, patch))}
-            onSaved={handleSave}
-          />
-        )}
+        {effectiveTab === 'runs' && <RunsTab routine={draft.routine} highlightRunId={highlightRunId} />}
       </div>
 
       <ValBar findings={findings} parseFailure={parseFailure} draft={draft} />
