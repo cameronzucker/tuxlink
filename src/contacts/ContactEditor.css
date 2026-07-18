@@ -47,6 +47,61 @@
   border-color: var(--accent);
 }
 
+/* ---- Radio dials (manual channels — tuxlink-6vn4x) ---- */
+.contact-editor-dial {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.contact-editor-dial-transport {
+  min-width: 96px;
+}
+
+.contact-editor-dial-freq {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono, monospace);
+}
+
+.contact-editor-dial-unit {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.contact-editor-dial-remove {
+  padding: 2px 8px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-dim);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.contact-editor-dial-remove:hover {
+  color: var(--error);
+  border-color: color-mix(in srgb, var(--error) 40%, transparent);
+}
+
+.contact-editor-dial-add {
+  align-self: flex-start;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: none;
+  border: 1px dashed var(--border-strong);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.contact-editor-dial-add:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
 .contact-editor-actions {
   display: flex;
   justify-content: flex-end;

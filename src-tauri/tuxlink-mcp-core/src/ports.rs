@@ -574,6 +574,19 @@ pub struct PeerChannelDto {
     pub ok: u32,
     pub fail: u32,
     pub last_seen: String,
+    /// Who authored the row: `"observed"` (the recorder, from a real
+    /// concluded attempt) | `"manual"` (operator-entered in the contact
+    /// editor) | `"unknown"` (future-binary quarantine). Defaults to
+    /// `"observed"` when absent — a pre-`source` server means every row it
+    /// serves was recorder-written (tuxlink-f0th0).
+    #[serde(default = "default_peer_channel_source")]
+    pub source: String,
+}
+
+/// serde default for [`PeerChannelDto::source`]: a payload from a
+/// pre-`source` server carries only recorder-written rows.
+fn default_peer_channel_source() -> String {
+    "observed".to_string()
 }
 
 /// One curated peer-station roster entry — since the contacts-superset pivot

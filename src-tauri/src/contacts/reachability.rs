@@ -86,6 +86,27 @@ pub enum ChannelTransport {
     Unknown,
 }
 
+/// Who authored a channel row. `Observed` = written by the observation
+/// recorder from a real concluded attempt; `Manual` = operator-entered
+/// through the contact editor (tuxlink-6vn4x). The default (and every
+/// pre-`source` record on disk) is `Observed`, so existing `contacts.json`
+/// files load unchanged. Single-word tags, so `snake_case` and the file's
+/// prevailing `kebab-case` are the same wire form (`"observed"` /
+/// `"manual"`); the shape test below pins them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelSource {
+    #[default]
+    Observed,
+    Manual,
+    /// Module serde policy [R4-5]: a variant written by a future binary
+    /// quarantines to `Unknown` instead of failing the whole file load.
+    /// Merge/observation logic treats `Unknown` like `Observed` (preserved,
+    /// never forgeable from the UI) so no row is silently dropped.
+    #[serde(other)]
+    Unknown,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum Direction {
@@ -180,6 +201,12 @@ pub struct Channel {
     /// records and on channels that have never completed a session.
     #[serde(default)]
     pub last_ok_direction: Option<Direction>,
+    /// Who authored this row: the observation recorder (`Observed`) or the
+    /// operator through the contact editor (`Manual`). `#[serde(default)]` =
+    /// `Observed`, so every pre-`source` record loads unchanged
+    /// (tuxlink-6vn4x back-compat).
+    #[serde(default)]
+    pub source: ChannelSource,
 }
 
 /// One network reachability row (telnet P2P).
@@ -314,6 +341,7 @@ mod tests {
             last_seen: "2026-07-11T12:05:00-07:00".into(),
             last_ok: Some("2026-07-11T12:05:00-07:00".into()),
             last_ok_direction: Some(Direction::Outgoing),
+            source: ChannelSource::Observed,
         };
         let json = serde_json::to_string(&ch).unwrap();
         assert!(json.contains(r#""last_ok":"2026-07-11T12:05:00-07:00""#), "{json}");
@@ -321,6 +349,57 @@ mod tests {
             json.contains(r#""last_ok_direction":"outgoing""#),
             "last_ok_direction serializes as the kebab-case Direction tag: {json}"
         );
+        assert_eq!(serde_json::from_str::<Channel>(&json).unwrap(), ch);
+    }
+
+    #[test]
+    fn channel_source_wire_shape_is_pinned_exactly() {
+        // Shape pin per the serde rename_all memory (tags only): the wire
+        // forms ARE "observed" / "manual" — the on-disk / TS / agent contract.
+        assert_eq!(serde_json::to_string(&ChannelSource::Observed).unwrap(), r#""observed""#);
+        assert_eq!(serde_json::to_string(&ChannelSource::Manual).unwrap(), r#""manual""#);
+        assert_eq!(serde_json::to_string(&ChannelSource::Unknown).unwrap(), r#""unknown""#);
+        assert_eq!(
+            serde_json::from_str::<ChannelSource>(r#""manual""#).unwrap(),
+            ChannelSource::Manual
+        );
+        // [R4-5] forward-compat: a future source tag quarantines to Unknown.
+        assert_eq!(
+            serde_json::from_str::<ChannelSource>(r#""telepathy""#).unwrap(),
+            ChannelSource::Unknown
+        );
+        // The Default IS Observed — the pre-`source` file back-compat hinges
+        // on this (an existing contacts.json must load unchanged).
+        assert_eq!(ChannelSource::default(), ChannelSource::Observed);
+    }
+
+    #[test]
+    fn channel_without_source_loads_as_observed_and_manual_round_trips() {
+        // Back-compat: a pre-`source` on-disk channel (no `source` key at
+        // all) deserializes as Observed via `#[serde(default)]`.
+        let ch: Channel = serde_json::from_str(
+            r#"{"transport":"vara-hf","target_callsign":"W6ABC-7",
+                "last_seen":"2026-07-11T12:00:00-07:00"}"#,
+        )
+        .expect("a record without source must load");
+        assert_eq!(ch.source, ChannelSource::Observed, "absent source defaults to Observed");
+
+        // A Manual channel round-trips with the pinned "manual" wire tag.
+        let ch = Channel {
+            transport: ChannelTransport::VaraHf,
+            target_callsign: "W6ABC-7".into(),
+            via: vec![],
+            freq_hz: Some(7_101_000),
+            bandwidth: None,
+            direction: Direction::Unknown,
+            counts: AttemptCounts::default(),
+            last_seen: "2026-07-11T12:05:00-07:00".into(),
+            last_ok: None,
+            last_ok_direction: None,
+            source: ChannelSource::Manual,
+        };
+        let json = serde_json::to_string(&ch).unwrap();
+        assert!(json.contains(r#""source":"manual""#), "{json}");
         assert_eq!(serde_json::from_str::<Channel>(&json).unwrap(), ch);
     }
 
