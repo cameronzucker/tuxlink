@@ -272,6 +272,126 @@ export function ganttModel(entries: JournalEntry[], now: number = Math.floor(Dat
   return { lanes, t0, t1, live };
 }
 
+// ============================================================================
+// stepListModel — the chronological step list (observability decree O5/O6/O7,
+// wire-walk 2026-07-18). The Gantt is the TIMELINE view and collapses to a
+// sliver on sub-second runs; this list is the scale-independent record: every
+// executed step with its post-resolution params and output, every verbatim
+// failure, every branch decision, every never-run step with its reason.
+// Journals written before the branch_taken/step_skipped enrichment simply
+// produce no such rows — executed steps and failures still list fully.
+// ============================================================================
+
+export interface StepListRow {
+  kind: 'ok' | 'fail' | 'branch' | 'skipped' | 'park' | 'finished' | 'running' | 'interrupted';
+  /** Sort/render key: the seq of the row's PRIMARY entry (a step's intent, so
+   *  a step appears where it STARTED in the narrative). */
+  seq: number;
+  ts: number;
+  stepId?: string;
+  action?: string;
+  durationS?: number;
+  /** Post-`$`-resolution params off the step_intent. */
+  params?: unknown;
+  output?: unknown;
+  /** Verbatim failure cause (never paraphrased). */
+  cause?: string;
+  branch?: { on: string; value: unknown; tookThen: boolean; target?: string };
+  /** step_skipped's reason, or run_finished's reason. */
+  reason?: string;
+  state?: RunState;
+}
+
+export function stepListModel(entries: JournalEntry[]): StepListRow[] {
+  const rows: StepListRow[] = [];
+  const open = new Map<string, JournalEntry>();
+  const finished = entries.some((e) => e.event.type === 'run_finished');
+
+  for (const entry of entries) {
+    const ev = entry.event;
+    switch (ev.type) {
+      case 'step_intent':
+        open.set(ev.step, entry);
+        break;
+      case 'step_ok':
+      case 'step_err': {
+        const intent = open.get(ev.step);
+        const fields = intent ? stepIntentFields(intent.event) : null;
+        rows.push({
+          kind: ev.type === 'step_ok' ? 'ok' : 'fail',
+          seq: intent?.seq ?? entry.seq,
+          ts: intent?.ts_unix ?? entry.ts_unix,
+          stepId: ev.step,
+          action: fields?.action,
+          durationS: intent ? entry.ts_unix - intent.ts_unix : undefined,
+          params: fields?.resolved_params,
+          output: ev.type === 'step_ok' ? ev.output : undefined,
+          cause: ev.type === 'step_err' ? formatStepErrorCause(ev.error) : undefined,
+        });
+        open.delete(ev.step);
+        break;
+      }
+      case 'branch_taken':
+        rows.push({
+          kind: 'branch',
+          seq: entry.seq,
+          ts: entry.ts_unix,
+          stepId: ev.step,
+          branch: { on: ev.on, value: ev.value, tookThen: ev.took_then, target: ev.target },
+        });
+        break;
+      case 'step_skipped':
+        rows.push({
+          kind: 'skipped',
+          seq: entry.seq,
+          ts: entry.ts_unix,
+          stepId: ev.step,
+          reason: ev.reason,
+        });
+        break;
+      case 'state_changed':
+        if (ev.state === 'waiting' || ev.state === 'awaiting_consent' || ev.state === 'awaiting_radio') {
+          rows.push({ kind: 'park', seq: entry.seq, ts: entry.ts_unix, stepId: ev.step, state: ev.state });
+        }
+        break;
+      case 'run_finished':
+        rows.push({ kind: 'finished', seq: entry.seq, ts: entry.ts_unix, state: ev.state, reason: ev.reason ?? undefined });
+        break;
+      case 'run_started':
+        break;
+    }
+  }
+
+  // Unclosed intents: the currently-executing step on a live run, or the step
+  // the process died inside of on a terminated one (same rationale as the
+  // ganttModel flush — without this the step under investigation vanishes).
+  for (const [stepId, intent] of open) {
+    const fields = stepIntentFields(intent.event);
+    rows.push({
+      kind: finished ? 'interrupted' : 'running',
+      seq: intent.seq,
+      ts: intent.ts_unix,
+      stepId,
+      action: fields?.action,
+      params: fields?.resolved_params,
+    });
+  }
+
+  rows.sort((a, b) => a.seq - b.seq);
+  return rows;
+}
+
+const ROW_ICON: Record<StepListRow['kind'], string> = {
+  ok: '✓',
+  fail: '✕',
+  branch: '⑂',
+  skipped: '⊘',
+  park: '⏸',
+  finished: '■',
+  running: '▶',
+  interrupted: '⚡',
+};
+
 /** The rig a currently-parked `awaiting_radio` state pertains to. An enriched
  *  journal (tuxlink-xvd1i) names it on the `state_changed` entry itself —
  *  that wins. Legacy journals carry no `rig` field there, so the pre-existing
@@ -509,6 +629,7 @@ export function RunsTab({ routine, highlightRunId }: RunsTabProps) {
   }, [selectedRunId, fetchStatusAndJournal]);
 
   const model = useMemo(() => ganttModel(journal), [journal]);
+  const stepRows = useMemo(() => stepListModel(journal), [journal]);
 
   // Auto-select a step to inspect (flow 3 "investigate failed run"): the
   // first failing bar if any, else the first parked bar, else nothing. Reset
@@ -704,6 +825,73 @@ export function RunsTab({ routine, highlightRunId }: RunsTabProps) {
                 </div>
               ))}
             </div>
+
+            {stepRows.length > 0 && (
+              <div className="steplist" data-testid="steplist">
+                <div className="sl-head">STEPS — what ran, what didn't, and why</div>
+                {stepRows.map((row) => (
+                  <div
+                    className={`slrow ${row.kind}`}
+                    key={`${row.seq}-${row.kind}`}
+                    data-testid={`slrow-${row.stepId ?? row.kind}-${row.kind}`}
+                  >
+                    <div className="sl-line">
+                      <span className={`sl-icon ${row.kind}`}>{ROW_ICON[row.kind]}</span>
+                      <span className="sl-when mono">{formatUtc(row.ts)}</span>
+                      {row.stepId && <span className="sl-step mono">{row.stepId}</span>}
+                      {row.action && <span className="sl-action mono">{row.action}</span>}
+                      {row.kind === 'branch' && row.branch && (
+                        <span className="sl-branch">
+                          {row.branch.on} = <span className="mono">{JSON.stringify(row.branch.value)}</span>{' '}
+                          → {row.branch.tookThen ? 'then' : 'else'} arm
+                          {row.branch.target ? ` (${row.branch.target})` : ' (empty — fell through)'}
+                        </span>
+                      )}
+                      {row.kind === 'skipped' && <span className="sl-reason dim">{row.reason}</span>}
+                      {row.kind === 'park' && (
+                        <span className="sl-reason dim">{formatRunState(row.state ?? 'waiting').toLowerCase()}</span>
+                      )}
+                      {row.kind === 'finished' && (
+                        <span className="sl-reason">
+                          {formatRunState(row.state ?? 'completed')}
+                          {row.reason ? ` — ${row.reason}` : ''}
+                        </span>
+                      )}
+                      {row.kind === 'running' && <span className="sl-reason dim">still running</span>}
+                      {row.kind === 'interrupted' && (
+                        <span className="sl-reason dim">never closed — the run ended inside this step</span>
+                      )}
+                      {row.durationS !== undefined && <span className="sl-dur dim">{row.durationS}s</span>}
+                    </div>
+                    {row.cause && (
+                      <div className="sl-cause err" data-testid={`slrow-cause-${row.stepId}`}>
+                        {row.cause}
+                      </div>
+                    )}
+                    {(row.params !== undefined || row.output !== undefined) && row.kind !== 'fail' && (
+                      <details className="sl-io">
+                        <summary>params / output</summary>
+                        {row.params !== undefined && (
+                          <div className="sl-io-line mono" data-testid={`slrow-params-${row.stepId}`}>
+                            params {JSON.stringify(row.params)}
+                          </div>
+                        )}
+                        {row.output !== undefined && (
+                          <div className="sl-io-line mono" data-testid={`slrow-output-${row.stepId}`}>
+                            output {JSON.stringify(row.output)}
+                          </div>
+                        )}
+                      </details>
+                    )}
+                    {row.kind === 'fail' && row.params !== undefined && (
+                      <div className="sl-io-line mono dim" data-testid={`slrow-params-${row.stepId}`}>
+                        params {JSON.stringify(row.params)}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
 
             {selectedBar && (
               <div className="stepdetail" data-testid="stepdetail">
