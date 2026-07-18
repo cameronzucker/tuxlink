@@ -37,7 +37,10 @@ describe('AppShell desktop regression guard (tuxlink-h7q7)', () => {
   });
 
   it('gives the Connection ribbon cell a stable slot while ellipsizing only its text (tuxlink-a8x6)', () => {
-    expect(desktopCss).toContain('--dash-connection-slot: clamp(210px, 18vw, 260px)');
+    // tuxlink-t698l: slot tightened to clamp(180px, 14vw, 260px) as part of
+    // the ribbon width-budget fix; the guarded INTENT (fixed slot, text-only
+    // ellipsis) is unchanged.
+    expect(desktopCss).toContain('--dash-connection-slot: clamp(180px, 14vw, 260px)');
     expect(desktopCss).toMatch(
       /\.dashboard \.dash-item--connection\s*\{[^}]*flex:\s*0 0 var\(--dash-connection-slot\);[^}]*inline-size:\s*var\(--dash-connection-slot\);/,
     );
