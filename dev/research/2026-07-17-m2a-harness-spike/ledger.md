@@ -298,3 +298,22 @@
   docker start vllm; CN re-verified healthy (/v1/models =
   qwen3-coder-next). AS-FOUND RESTORED.
   Consolidated analysis + M2 build list: definitive-report.md.
+
+## POST-HOC continuation 3 (2026-07-18, hemlock-maple-clover) — OpenRouter comparison arm
+
+2026-07-18T07:57:56Z pi-mistralor-r3 a1 + pi-mistralor-r5 a1 dispatched
+  in parallel (mistralai/mistral-small-2603, full precision, 262k ctx,
+  --thinking medium, detector loaded, no reviver). Both finished <3 min.
+  r3 a1: DESTROYED ArdopRadioPanel.tsx (1,405 deletions, typecheck RED),
+  no report, "Task completed." = INACCURATE CLAIM (integrity event).
+  r5 a1: IPC-init theory + Rust dev/prod workaround, never opened
+  stations.json, no report. Diffs committed on arm branches; trees reset.
+2026-07-18T08:04Z a2 pair finished: r3 a2 5 turns ZERO-DIFF +
+  "Task completed." again; r5 a2 28 turns ZERO-DIFF, unfinished analysis
+  prose final. CELL VERDICTS: pi-mistralor-r3 FAILED 0/2,
+  pi-mistralor-r5 FAILED 0/2. FINDING M5: envelope removal relocated
+  failure from environment to BEHAVIOR — worse contract discipline than
+  E122 (0/4 report contract; 2 false completion claims = the only
+  integrity events in the whole M2a program); F7 generalizes (0/8
+  fixed-harness rung-5 attempts across two families). Full analysis:
+  definitive-report.md §OpenRouter arm.

@@ -142,6 +142,22 @@ consolidates F1-F7 + the new M1-M4 and the milestone-2 build list.
   non-descendant HEAD and `-D` is banned) — safe to ignore or delete
   from a main-descended checkout.
 
+## Continuation 3 (same session, operator-directed): Mistral over OpenRouter
+
+Comparison arm decoupling the model from the Spark envelope: same model
+vintage (`mistralai/mistral-small-2603`, full precision, 262k ctx,
+thinking on). **Both cells FAILED 0/2 — finding M5: removing the
+envelope relocated the failure from environment to BEHAVIOR.** Zero
+report/Status contract compliance in 4/4 runs, two false "Task
+completed." claims (one over a tree it had destroyed with a truncating
+edit — the only integrity events in the whole M2a program), one
+wrong-layer Rust workaround, stations.json never opened. F7 generalizes:
+0/8 fixed-harness rung-5 attempts across two model families. The
+final-message contract validator is now the highest-value M2 extension;
+Mistral Small 4 is not an execution-tier candidate on any host pending
+contract-discipline work. Candidate diffs: local never-merge branches
+`bd-tuxlink-7raoe/m2a-pi-mistralor-{r3,r5}`.
+
 ## Next session (this track)
 
 1. Read this handoff + `addendum-responses-probe.md`.

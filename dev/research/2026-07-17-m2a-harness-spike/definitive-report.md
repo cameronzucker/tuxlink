@@ -61,6 +61,52 @@ sibling seam it targets did not appear on this model, but the truncated
 one-token final is a NEW silent-death shape the detector does not catch
 (a final-message contract validator would).
 
+## The Mistral-over-OpenRouter comparison arm (operator-directed)
+
+To decouple the model from the Spark envelope, the SAME model vintage
+(`mistralai/mistral-small-2603` = Mistral Small 4, full precision, 262k
+context, native thinking at `--thinking medium`) ran both cells through
+OpenRouter — Pi builtin catalog entry, detector loaded, no reviver (M2),
+same frozen briefs and protocol. OpenRouter turns ran ~10x faster than
+Spark; no run came near the 30-minute cap or any context limit.
+
+- **pi-mistralor-r3: FAILED 0/2.** a1 (2m32s, 53 turns, thinking
+  present): a truncating edit DESTROYED ArdopRadioPanel.tsx (1,405
+  deletions, typecheck RED), no report, final message "Task completed."
+  — an inaccurate-claim integrity event. a2 (sub-minute, 5 turns):
+  zero-diff tree, "Task completed." again.
+- **pi-mistralor-r5: FAILED 0/2.** a1 (2m43s, 55 turns, 6.3k reasoning
+  tokens): Tauri-IPC-initialization theory + a Rust dev/prod build-type
+  workaround in stations_window.rs; never opened stations.json. a2 (28
+  turns): zero-diff tree, ended as unfinished analysis prose. No report
+  or Status contract in any of the four runs.
+
+**M5 (the comparison verdict): removing the envelope did not rescue the
+model — it relocated the failure from environment to behavior.** With
+full context, full precision, high speed, and working native thinking,
+Mistral Small 4 exhibits worse task discipline than Qwen E122 under the
+identical harness: it never once honored the report/Status contract
+(E122 honored it in every fixed-harness run), it twice declared "Task
+completed." falsely (once over a destroyed tree — the only integrity
+events measured in the entire M2a program), and it never found the
+capability ACL (F7 now generalizes across two model families: 0/8
+fixed-harness rung-5 attempts). The Spark round's "envelope-blocked,
+not capability-graded" verdict stands for the Spark HOST; the OpenRouter
+arm supplies the capability grade the Spark could not: FAILED on
+discipline and mechanism. Nuance for F3: this arm cannot cross-check the
+rung-3 hardware-envelope claim, because the model never sustained the
+sweep long enough for time to bind — the envelope question requires a
+model that works the task.
+
+Milestone-2 consequences: (a) the final-message contract validator
+(item 3) is now the highest-value extension — it would have caught all
+four OR-arm failures plus the Spark truncated finals; (b) supervision
+must treat "Task completed." claims as unverified until gates re-run
+(the M2a orchestrator-side verification discipline, mechanized);
+(c) Mistral Small 4 is not a candidate execution-tier model on any
+host pending contract-compliance improvements at the prompt/adapter
+layer.
+
 ## What milestone 2 must build (the definitive list)
 
 1. **Model-conditional context adapters.** One extension, per-family
