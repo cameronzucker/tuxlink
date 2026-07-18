@@ -115,6 +115,49 @@ continuation:
   `bd-tuxlink-7raoe/m2a-pi-e122-r5-responses2`, commits 98e79c18 +
   3b0990b1; sdd forensics archived).
 
+## Continuation 2 (same session, operator-directed): the Mistral round
+
+Operator: "run whatever you'd like on the Spark." First-ever serve of the
+mistral119 profile and both spike cells run against it. Canonical:
+`dev/research/2026-07-17-m2a-harness-spike/definitive-report.md` —
+consolidates F1-F7 + the new M1-M4 and the milestone-2 build list.
+
+- **M1:** the model cannot serve with MLA on this host (TRITON_MLA, the
+  only GB10-nightly MLA backend, crashes on its latent-attention dims);
+  `VLLM_MLA_DISABLE=1` works but caps context at 32k. Working recipe now
+  in the dashboard's profiles.json.
+- **M2:** the F6 think-reviver is ILLEGAL in Mistral's role grammar
+  (template 400s on user-after-tool) — context adapters must be
+  model-family-conditional.
+- **M3/M4:** Pi's token estimate diverges from tekken, and Pi NEVER
+  auto-compacts mid-run in -p mode — fatal at a 32k window.
+- **Cells: pi-mistral119-r3 FAILED 0/2, pi-mistral119-r5 FAILED 0/2 —
+  every death an envelope death (ceiling x no-compaction), zero-diff
+  trees. Mistral is envelope-blocked on this host, NOT capability-graded;
+  its rung-5 exploration was promisingly aimed (reached the src-tauri
+  command/event layer).**
+- Spark restored as-found (CN serving, verified) after the round.
+- Local branches `bd-tuxlink-7raoe/m2a-pi-mistral119-{r3,r5}` remain as
+  pointers at base b82b404d (zero commits; `-d` refuses from a
+  non-descendant HEAD and `-D` is banned) — safe to ignore or delete
+  from a main-descended checkout.
+
+## Continuation 3 (same session, operator-directed): Mistral over OpenRouter
+
+Comparison arm decoupling the model from the Spark envelope: same model
+vintage (`mistralai/mistral-small-2603`, full precision, 262k ctx,
+thinking on). **Both cells FAILED 0/2 — finding M5: removing the
+envelope relocated the failure from environment to BEHAVIOR.** Zero
+report/Status contract compliance in 4/4 runs, two false "Task
+completed." claims (one over a tree it had destroyed with a truncating
+edit — the only integrity events in the whole M2a program), one
+wrong-layer Rust workaround, stations.json never opened. F7 generalizes:
+0/8 fixed-harness rung-5 attempts across two model families. The
+final-message contract validator is now the highest-value M2 extension;
+Mistral Small 4 is not an execution-tier candidate on any host pending
+contract-discipline work. Candidate diffs: local never-merge branches
+`bd-tuxlink-7raoe/m2a-pi-mistralor-{r3,r5}`.
+
 ## Next session (this track)
 
 1. Read this handoff + `addendum-responses-probe.md`.

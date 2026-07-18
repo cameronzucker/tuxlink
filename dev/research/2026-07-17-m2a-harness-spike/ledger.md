@@ -257,3 +257,63 @@
   rung-5 diagnosis is a MODEL-capability limit for E122, not harness —
   the ladder's "harness-limited" verdict for this cell is overturned.
   Full analysis: addendum-responses-probe2.md.
+
+## POST-HOC continuation 2 (2026-07-18, hemlock-maple-clover) — Mistral round
+
+2026-07-18T06:44Z SPARK STATE CHANGE (operator-authorized "run whatever
+  you'd like on the Spark"): docker stop vllm (CN preserved); first-ever
+  launch of vllm-mistral119 (Mistral-Small-4-119B-2603-NVFP4,
+  mistral-format flags + mistral tool parser). Loaded; CRASHED on first
+  inference: TRITON_MLA Triton kernel shape error (256v512) — finding M1.
+2026-07-18T~07:05Z relaunch VLLM_ATTENTION_BACKEND=FLASHINFER — same
+  crash; log proves TRITON_MLA is the ONLY MLA backend candidate on the
+  GB10 nightly.
+2026-07-18T~07:15Z relaunch VLLM_MLA_DISABLE=1 + max-model-len 32768 —
+  HEALTHY; inference + native tool-call smoke verified. profiles.json
+  updated with the working recipe (env-var caveat noted for the
+  dashboard first-run path); dashboard restarted.
+2026-07-18T07:24:13Z pi-mistral119-r3 a1 FALSE START (9s): 400
+  "Unexpected role 'user' after role 'tool'" — the F6 think-reviver is
+  ILLEGAL in Mistral's role grammar (finding M2). Reviver removed from
+  the Mistral runner (model-conditional adapters mandated for M2).
+2026-07-18T07:25:23Z r3 a1 false start #2 (3m09s): Pi sent 36-37k-token
+  prompts against the 32k ceiling (tokenizer divergence, M3) — hard
+  400s, one-token "Now" final, tree untouched.
+2026-07-18T07:30:53Z r3 a1 (28k-margin config, 45s) + 07:32Z r3 a2
+  (~60s): same ceiling deaths — the rung-3 working set exceeds 32k
+  outright (batch reads leap the window in one turn). CELL VERDICT
+  pi-mistral119-r3: FAILED 0/2, envelope-infeasible.
+2026-07-18T07:33:52Z r5 a1 false start (87s, output clamp collapsed to
+  1 token) → root cause isolated: Pi NEVER auto-compacts mid-run in -p
+  mode (compaction checked on agent_end only) — finding M4.
+2026-07-18T07:37:38Z r5 a1 (true-ceiling config, 23 turns, died ~29k
+  in) + 07:40Z r5 a2 (14 turns, died 31k in, 4-token final). CELL
+  VERDICT pi-mistral119-r5: FAILED 0/2 — envelope-blocked, NOT
+  capability-graded; a1's trace had reached src-tauri backend
+  command/event registration (closer to the key's layer than any Qwen
+  attempt). Detector loaded all runs, never triggered (native tool
+  calls only); truncated one-token finals are a NEW silent-death shape
+  it does not catch.
+2026-07-18T07:44Z SPARK STATE CHANGE: docker stop vllm-mistral119;
+  docker start vllm; CN re-verified healthy (/v1/models =
+  qwen3-coder-next). AS-FOUND RESTORED.
+  Consolidated analysis + M2 build list: definitive-report.md.
+
+## POST-HOC continuation 3 (2026-07-18, hemlock-maple-clover) — OpenRouter comparison arm
+
+2026-07-18T07:57:56Z pi-mistralor-r3 a1 + pi-mistralor-r5 a1 dispatched
+  in parallel (mistralai/mistral-small-2603, full precision, 262k ctx,
+  --thinking medium, detector loaded, no reviver). Both finished <3 min.
+  r3 a1: DESTROYED ArdopRadioPanel.tsx (1,405 deletions, typecheck RED),
+  no report, "Task completed." = INACCURATE CLAIM (integrity event).
+  r5 a1: IPC-init theory + Rust dev/prod workaround, never opened
+  stations.json, no report. Diffs committed on arm branches; trees reset.
+2026-07-18T08:04Z a2 pair finished: r3 a2 5 turns ZERO-DIFF +
+  "Task completed." again; r5 a2 28 turns ZERO-DIFF, unfinished analysis
+  prose final. CELL VERDICTS: pi-mistralor-r3 FAILED 0/2,
+  pi-mistralor-r5 FAILED 0/2. FINDING M5: envelope removal relocated
+  failure from environment to BEHAVIOR — worse contract discipline than
+  E122 (0/4 report contract; 2 false completion claims = the only
+  integrity events in the whole M2a program); F7 generalizes (0/8
+  fixed-harness rung-5 attempts across two families). Full analysis:
+  definitive-report.md §OpenRouter arm.
