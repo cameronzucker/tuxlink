@@ -334,6 +334,10 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
 
   return (
     <div className="dashboard" data-testid="dashboard-ribbon" role="banner">
+      {/* tuxlink-t698l pass 4: the middle cells clip INSIDE this wrapper when
+          the row is genuinely too tight; the Elmer chip and Connect button are
+          siblings AFTER it and therefore always render (900px window min). */}
+      <div className="dash-cells">
       <div className="dash-item dash-item--rigid">
         <div className="dash-label">Callsign</div>
         {/* Phase 7 (tuxlink-noa0): when the identity-switch handler is wired
@@ -573,6 +577,8 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
           </>
         );
       })()}
+
+      </div>
 
       {/* Merged Elmer × Agent-send control — ONE ribbon slot. Display-only:
           shows arm/taint state at a glance and opens the Elmer drawer on click.

@@ -278,6 +278,16 @@
  * clock, the On-connect segmented control). They refuse the flex squeeze;
  * the search zone (flex 0 1 560px, min 240px) and the ellipsizing cells
  * (connection slot, APRS / Station Intel captions) absorb it instead. */
+/* tuxlink-t698l pass 4: the clipping middle — everything except the Elmer
+ * chip and Connect, which sit outside it and always render. */
+.layout-b .dashboard .dash-cells {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
 .layout-b .dashboard .dash-item--rigid {
   flex: 0 0 auto;
 }
@@ -309,7 +319,10 @@
 @media (max-width: 1120px) {
   .layout-b .dashboard .dash-item.dash-item--position,
   .layout-b .dashboard .dash-divider.dash-divider--position { display: none; }
-  .layout-b .dashboard { gap: 10px; }
+  /* The grid keeps its VALUE; the GPS/MANUAL source segments yield. */
+  .layout-b .dashboard .dash-item--grid .dash-source-segments { display: none; }
+  .layout-b .dashboard,
+  .layout-b .dashboard .dash-cells { gap: 10px; }
 }
 /* tuxlink-a8x6: keep the whole Connection cell stable as the label changes
  * between Idle/Connected/Error and Telnet/Packet/ARDOP/VARA. Only the text
