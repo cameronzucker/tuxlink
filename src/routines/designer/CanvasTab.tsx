@@ -96,7 +96,10 @@ function NodeView({
               onRemoveStep(node.id);
             }}
           >
-            ⌫
+            {/* item 5 (bd tuxlink-iizmk): × replaces ⌫ — the erase-left glyph
+                fell back to a substituted font on WebKitGTK and rendered as a
+                few clipped pixels at the node-head's meta font size. */}
+            ×
           </button>
         )}
       </div>

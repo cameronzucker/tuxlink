@@ -96,6 +96,14 @@
   font-weight: 600;
 }
 
+/* item 7 (bd tuxlink-iizmk): the name input + its derived-wire-id fine print
+ * stack vertically in the header slot the bare input used to occupy. */
+.dname-wrap {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
 .dname-input {
   font-size: var(--type-heading);
   font-weight: 600;
@@ -105,6 +113,14 @@
   border-radius: 4px;
   padding: 2px 8px;
   min-width: 220px;
+}
+
+/* Subtle mono fine print showing the wire id the typed name will save as —
+ * only rendered when the derivation differs from the typed text. */
+.dname-derived {
+  font-family: var(--mono);
+  font-size: var(--type-micro);
+  color: var(--text-faint);
 }
 
 .dstate {

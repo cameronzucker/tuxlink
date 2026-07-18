@@ -488,15 +488,38 @@ describe('RoutinesDashboard — header actions', () => {
     expect(onNewRoutine).toHaveBeenCalledTimes(1);
   });
 
-  it('opens the Import JSON dialog', async () => {
+  // bd tuxlink-iizmk item 10: the affordance reads "Import routine…" — the
+  // operator imports a routine; JSON is only the carrier format.
+  it('opens the Import routine dialog', async () => {
     renderDashboard();
     await screen.findByText('morning-sweep');
-    fireEvent.click(screen.getByRole('button', { name: 'Import JSON…' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Import routine…' }));
     expect(screen.getByTestId('import-json-textarea')).toBeInTheDocument();
   });
 });
 
 describe('RoutinesDashboard — row menu: enable/disable, delete', () => {
+  // bd tuxlink-iizmk item 8: the ⋯ menu rendered "behind the main window" —
+  // `.rowmenu` (position:absolute) sat as a td-level SIBLING of `.rowact`,
+  // so it resolved its containing block against the app window and painted
+  // at the window's top-right corner under the chrome. The fix anchors it
+  // INSIDE `.rowact` (the row's position:relative box) and lifts the cell's
+  // overflow:hidden via `.actcell`. jsdom does no layout, so the test pins
+  // the structural invariants the fix depends on.
+  it('the ⋯ menu renders visible, anchored inside the positioned .rowact box, in an unclipped cell', async () => {
+    renderDashboard();
+    await screen.findByText('morning-sweep');
+    fireEvent.click(within(rowFor('morning-sweep')).getByRole('button', { name: 'Actions for morning-sweep' }));
+
+    const menu = screen.getByRole('menu');
+    expect(menu).toBeVisible();
+    expect(within(menu).getByRole('menuitem', { name: 'Edit' })).toBeVisible();
+    // Anchor: the menu's PARENT is the position:relative .rowact box.
+    expect(menu.parentElement?.classList.contains('rowact')).toBe(true);
+    // No clipping: the owning cell opts out of `.ops td`'s overflow:hidden.
+    expect(menu.closest('td')?.classList.contains('actcell')).toBe(true);
+  });
+
   it('Enable/Disable invokes setEnabled with the flipped enabled value', async () => {
     renderDashboard();
     await screen.findByText('morning-sweep');
@@ -546,7 +569,7 @@ describe('RoutinesDashboard — ImportJsonDialog', () => {
   it('shows a parse error inline for invalid JSON', async () => {
     renderDashboard();
     await screen.findByText('morning-sweep');
-    fireEvent.click(screen.getByRole('button', { name: 'Import JSON…' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Import routine…' }));
     fireEvent.change(screen.getByTestId('import-json-textarea'), { target: { value: 'not json' } });
     fireEvent.click(screen.getByRole('button', { name: 'Import' }));
 
@@ -564,7 +587,7 @@ describe('RoutinesDashboard — ImportJsonDialog', () => {
     });
     renderDashboard();
     await screen.findByText('morning-sweep');
-    fireEvent.click(screen.getByRole('button', { name: 'Import JSON…' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Import routine…' }));
 
     const def = {
       routine: 'imported',
@@ -587,7 +610,7 @@ describe('RoutinesDashboard — ImportJsonDialog', () => {
 // ---------------------------------------------------------------------------
 // Empty library (tuxlink-3awm9 WebKitGTK smoke): a fresh install rendered a
 // bare void under the column headers — the calm empty state must say what
-// this surface is and point at ＋ New Routine / Import JSON….
+// this surface is and point at ＋ New Routine / Import routine….
 // ---------------------------------------------------------------------------
 
 describe('RoutinesDashboard — empty library', () => {

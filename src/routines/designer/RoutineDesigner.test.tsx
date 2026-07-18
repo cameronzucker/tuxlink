@@ -21,7 +21,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: mockInvoke }));
 // real QueryClientProvider ancestor this shell doesn't otherwise need.
 vi.mock('../../shell/useStatus', () => ({ useStatusData: () => ({ callsign: '' }) }));
 
-import { RoutineDesigner } from './RoutineDesigner';
+import { RoutineDesigner, slugifyRoutineName } from './RoutineDesigner';
 
 const EXISTING_DEF: RoutineDef = {
   routine: 'deployment-poll',
@@ -115,6 +115,40 @@ describe('RoutineDesigner — load + header (a)', () => {
     renderDesigner({ routine: '' });
     await screen.findByTestId('designer-name-input');
     expect(callsFor('routines_get')).toHaveLength(0);
+  });
+
+  // bd tuxlink-iizmk item 7: the operator types a HUMAN name ("Test Routine
+  // 1"); the kebab-case wire id is DERIVED by slugification and stored in the
+  // draft — Save must never see the human text and reject it.
+  it('typing a human name keeps the display text, derives the wire id into the draft, and shows it as fine print', async () => {
+    renderDesigner({ routine: '' });
+    const input = (await screen.findByTestId('designer-name-input')) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'Test Routine 1' } });
+
+    expect(input.value).toBe('Test Routine 1');
+    expect(screen.getByTestId('derived-name')).toHaveTextContent('saves as test-routine-1');
+
+    // The DRAFT carries the wire id — proof via the Export routine dialog.
+    fireEvent.click(screen.getByRole('button', { name: 'Export routine' }));
+    const textarea = (await screen.findByTestId('export-json-textarea')) as HTMLTextAreaElement;
+    expect((JSON.parse(textarea.value) as RoutineDef).routine).toBe('test-routine-1');
+  });
+
+  it('the derived-id fine print stays hidden when the typed text already IS the wire id', async () => {
+    renderDesigner({ routine: '' });
+    const input = await screen.findByTestId('designer-name-input');
+    fireEvent.change(input, { target: { value: 'test-routine-1' } });
+    expect(screen.queryByTestId('derived-name')).not.toBeInTheDocument();
+  });
+
+  it('an all-symbols name derives nothing: the draft name stays empty and no fine print renders', async () => {
+    renderDesigner({ routine: '' });
+    const input = await screen.findByTestId('designer-name-input');
+    fireEvent.change(input, { target: { value: '!!! ***' } });
+    expect(screen.queryByTestId('derived-name')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Export routine' }));
+    const textarea = (await screen.findByTestId('export-json-textarea')) as HTMLTextAreaElement;
+    expect((JSON.parse(textarea.value) as RoutineDef).routine).toBe('');
   });
 
   it('clicking ← Routines calls onBack', async () => {
@@ -307,7 +341,7 @@ describe('RoutineDesigner — flow-2 authoring trace through the real seam (Task
 
     // 5. …and its id landed in the branch's else list: verify through the
     //    draft itself via the Export JSON dialog.
-    fireEvent.click(screen.getByRole('button', { name: 'Export JSON' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Export routine' }));
     const textarea = (await screen.findByTestId('export-json-textarea')) as HTMLTextAreaElement;
     const exported = JSON.parse(textarea.value) as RoutineDef;
     const branch = exported.tracks[0]!.steps.find((s) => s.id === 's2') as {
@@ -366,7 +400,7 @@ describe('RoutineDesigner — flow-2 authoring trace through the real seam (Task
     expect(rowIds).toEqual(['node-s3', 'node-s5', 'node-s4']);
 
     // And the id is ordered correctly in the arm list + storage.
-    fireEvent.click(screen.getByRole('button', { name: 'Export JSON' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Export routine' }));
     const textarea = (await screen.findByTestId('export-json-textarea')) as HTMLTextAreaElement;
     const exported = JSON.parse(textarea.value) as RoutineDef;
     const branch = exported.tracks[0]!.steps.find((s) => s.id === 's2') as {
@@ -423,7 +457,7 @@ describe('RoutineDesigner — flow-2 authoring trace through the real seam (Task
 
     // And the id landed at the FRONT of the else list, storage adjacent to
     // the branch.
-    fireEvent.click(screen.getByRole('button', { name: 'Export JSON' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Export routine' }));
     const textarea = (await screen.findByTestId('export-json-textarea')) as HTMLTextAreaElement;
     const exported = JSON.parse(textarea.value) as RoutineDef;
     const branch = exported.tracks[0]!.steps.find((s) => s.id === 's2') as {
@@ -457,7 +491,7 @@ describe('RoutineDesigner — inline settings wiring (Task 12 seam, tuxlink-7ewv
     // The updated field is reflected in the Export JSON dialog — proof the
     // patch actually landed in the shell's `draft`, not just a local
     // SettingsTab-only state.
-    fireEvent.click(screen.getByRole('button', { name: 'Export JSON' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Export routine' }));
     const textarea = (await screen.findByTestId('export-json-textarea')) as HTMLTextAreaElement;
     const exported = JSON.parse(textarea.value) as RoutineDef;
     expect(exported.on_interrupted).toBe('resume');
@@ -489,7 +523,7 @@ describe('RoutineDesigner — palette append-to-end fallback', () => {
     fireEvent.click(screen.getByTestId('palette-item-local.log'));
 
     // Proof via Export JSON: the new step is the LAST step of track 1.
-    fireEvent.click(screen.getByRole('button', { name: 'Export JSON' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Export routine' }));
     const textarea = (await screen.findByTestId('export-json-textarea')) as HTMLTextAreaElement;
     const exported = JSON.parse(textarea.value) as RoutineDef;
     const steps = exported.tracks[0]!.steps;
@@ -498,14 +532,36 @@ describe('RoutineDesigner — palette append-to-end fallback', () => {
   });
 });
 
-describe('RoutineDesigner — Export JSON dialog', () => {
+describe('slugifyRoutineName — wire-id derivation (bd tuxlink-iizmk item 7)', () => {
+  it.each([
+    ['Test Routine 1', 'test-routine-1'],
+    ['  Morning  Sweep  ', 'morning-sweep'],
+    ['snake_case_name', 'snake-case-name'],
+    ['3rd Watch', 'rd-watch'], // leading non-a-z stripped until a letter
+    ['123', ''], // no usable chars at all → empty, Save stays blocked
+    ['---', ''],
+    ["What's Up? (v2)", 'whats-up-v2'],
+    ['ALL CAPS', 'all-caps'],
+  ])('derives %j → %j', (input, expected) => {
+    expect(slugifyRoutineName(input)).toBe(expected);
+  });
+
+  it('trims to 64 chars and never ends with a dash', () => {
+    const slug = slugifyRoutineName(`${'a'.repeat(63)}-tail`);
+    expect(slug.length).toBeLessThanOrEqual(64);
+    expect(slug.endsWith('-')).toBe(false);
+    expect(slug).toBe('a'.repeat(63)); // char 64 would be the dash — dropped
+  });
+});
+
+describe('RoutineDesigner — Export routine dialog', () => {
   it('opens a read-only dialog with JSON.stringify(draft, null, 2) and a Copy button', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.assign(navigator, { clipboard: { writeText } });
 
     renderDesigner();
     await screen.findByText('deployment-poll');
-    fireEvent.click(screen.getByRole('button', { name: 'Export JSON' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Export routine' }));
 
     const dialog = await screen.findByRole('dialog');
     const textarea = screen.getByTestId('export-json-textarea') as HTMLTextAreaElement;
