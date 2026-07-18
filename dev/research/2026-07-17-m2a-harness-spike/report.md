@@ -128,3 +128,13 @@ the **spark-dashboard switch API** as its first live test (clean stop of
 vllm-q122, clean start + health of the original CN container). Dashboard:
 `https://inference.twin-bramble.ts.net:8443/` (operator-authorized deploy,
 separate from this repo, source at `gx10-65aa:~/serving/spark-dashboard`).
+
+## Post-hoc addendum (2026-07-18)
+
+Mandatory work item (1) was executed: see
+`addendum-responses-probe.md` (finding F5). Headline: the Responses route
+through OpenRouter+Pi fixed the envelope (5-minute clean completion, full
+report, honest gates) but NOT the diagnosis — reasoning still collapsed to
+~0 in the agentic loop and the mechanism grade was WRONG (n=1). F2's
+"route property" conclusion is refined, not overturned: route + per-turn
+reasoning persistence, not route alone.
