@@ -334,7 +334,11 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
 
   return (
     <div className="dashboard" data-testid="dashboard-ribbon" role="banner">
-      <div className="dash-item">
+      {/* tuxlink-t698l pass 4: the middle cells clip INSIDE this wrapper when
+          the row is genuinely too tight; the Elmer chip and Connect button are
+          siblings AFTER it and therefore always render (900px window min). */}
+      <div className="dash-cells">
+      <div className="dash-item dash-item--rigid">
         <div className="dash-label">Callsign</div>
         {/* Phase 7 (tuxlink-noa0): when the identity-switch handler is wired
             (production AppShell path), render the IdentitySwitcher AS the
@@ -364,7 +368,7 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
       </div>
       <div className="dash-divider" />
 
-      <div className="dash-item dash-item--grid">
+      <div className="dash-item dash-item--grid dash-item--rigid">
         <div className="dash-label">Grid</div>
         <GridEdit
           grid={grid}
@@ -396,17 +400,17 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
 
       {position && (
         <>
-          <div className="dash-item">
+          <div className="dash-item dash-item--rigid dash-item--position">
             <div className="dash-label">Position</div>
             <div className="dash-value good" data-testid="ribbon-position">
               {position}
             </div>
           </div>
-          <div className="dash-divider" />
+          <div className="dash-divider dash-divider--position" />
         </>
       )}
 
-      <div className="dash-item">
+      <div className="dash-item dash-item--rigid">
         <div className="dash-label">UTC / Local</div>
         <ClockCell grid={grid} />
       </div>
@@ -426,8 +430,8 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
 
       {onReviewInboundChange && (
         <>
-          <div className="dash-divider" />
-          <div className="dash-item">
+          <div className="dash-divider dash-divider--onconnect" />
+          <div className="dash-item dash-item--rigid dash-item--onconnect">
             <div className="dash-label">On connect</div>
             <div
               className="seg"
@@ -460,7 +464,7 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
 
       {aprs && (
         <>
-          <div className="dash-divider" />
+          <div className="dash-divider dash-divider--aprs" />
           <div className="dash-item dash-aprs">
             <div className="dash-label">APRS</div>
             {/* One control, mirroring the Connection item's dot+label pattern (not
@@ -544,9 +548,13 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
                 : 'idle';
         return (
           <>
-            <div className="dash-divider" />
+            <div className="dash-divider dash-divider--intel" />
             <div className="dash-item dash-ft8">
-              <div className="dash-label">FT-8</div>
+              {/* tuxlink-tg6ow: the chip is the Station Intelligence
+                  listener control — label the FUNCTION, not the transport
+                  mode (operator decision 2026-07-18). testids keep the
+                  historical dash-ft8-* names. */}
+              <div className="dash-label">Station Intel</div>
               <button
                 type="button"
                 className="dash-ft8-control"
@@ -569,6 +577,8 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
           </>
         );
       })()}
+
+      </div>
 
       {/* Merged Elmer × Agent-send control — ONE ribbon slot. Display-only:
           shows arm/taint state at a glance and opens the Elmer drawer on click.
