@@ -24,8 +24,8 @@
 //! `create_dir_all(parent)` first. Mirrors `user_folders.rs:182-192`.
 
 use super::reachability::{
-    AttemptCounts, Channel, ContactGrid, ContactTier, Direction, Endpoint, Origin, Provenance,
-    AUTO_CONTACT_CAP,
+    AttemptCounts, Channel, ChannelSource, ContactGrid, ContactTier, Direction, Endpoint, Origin,
+    Provenance, AUTO_CONTACT_CAP,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -505,9 +505,16 @@ impl ContactsStore {
                     bandwidth,
                 } => {
                     // Channel dedup key: (transport, target_callsign, via,
-                    // freq_hz exact, bandwidth) [R4-11].
+                    // freq_hz exact, bandwidth) [R4-11]. Provenance honesty
+                    // (tuxlink-6vn4x): an observation never mutates an
+                    // operator-authored (`Manual`) row — a matching attempt
+                    // accrues on its own `Observed` row instead, so counts /
+                    // recency stay attributable and a UI save of the manual
+                    // set can never clobber observed history. `Unknown`
+                    // (future-binary) rows are treated like observed ones.
                     let key_match = |ch: &Channel| {
-                        ch.transport == *transport
+                        ch.source != ChannelSource::Manual
+                            && ch.transport == *transport
                             && ch.target_callsign == presented
                             && ch.via == *via
                             && ch.freq_hz == *freq_hz
@@ -544,6 +551,9 @@ impl ContactsStore {
                             // successful first attempt, atomically.
                             last_ok: if ok { Some(now.clone()) } else { None },
                             last_ok_direction: if ok { Some(obs.direction) } else { None },
+                            // The recorder authors OBSERVED rows, explicitly
+                            // — never Manual (tuxlink-6vn4x).
+                            source: ChannelSource::Observed,
                         });
                     }
                 }
@@ -1099,6 +1109,52 @@ mod tests {
         }
         s.apply_observation(&o1, now()).unwrap(); // different via → distinct channel [R3-6]
         assert_eq!(s.contacts()[0].channels.len(), 2);
+    }
+
+    #[test]
+    fn observation_never_mutates_a_manual_channel() {
+        // Provenance honesty (tuxlink-6vn4x): an observation whose dedup key
+        // exactly matches an operator-authored (Manual) channel accrues on
+        // its OWN Observed row — the manual row's counts/recency are never
+        // recorder-mutated (a UI save of the manual set would clobber them).
+        let dir = tempdir().unwrap();
+        let mut s = ContactsStore::open(dir.path().join("contacts.json"));
+        let mut c = contact("c1"); // callsign W6ABC-7
+        c.channels = vec![Channel {
+            transport: ChannelTransport::VaraHf,
+            target_callsign: "W6ABC-7".into(),
+            via: vec![],
+            freq_hz: Some(7_101_000),
+            bandwidth: Some(ChannelBandwidth::Hz { hz: 2300 }),
+            direction: Direction::Unknown,
+            counts: AttemptCounts::default(),
+            last_seen: "2026-07-11T11:00:00-07:00".into(),
+            last_ok: None,
+            last_ok_direction: None,
+            source: ChannelSource::Manual,
+        }];
+        s.contact_upsert(c).unwrap();
+
+        // Same (transport, target, via, freq, bandwidth) key as the manual row.
+        s.apply_observation(&rf_obs("W6ABC-7", Direction::Outgoing, ObservationPhase::B2fOk), now())
+            .unwrap();
+
+        let c = &s.contacts()[0];
+        assert_eq!(c.channels.len(), 2, "the observation lands its own row");
+        let manual = c.channels.iter().find(|ch| ch.source == ChannelSource::Manual).unwrap();
+        assert_eq!(manual.counts, AttemptCounts::default(), "manual counts untouched");
+        assert_eq!(manual.last_seen, "2026-07-11T11:00:00-07:00", "manual recency untouched");
+        assert_eq!(manual.last_ok, None);
+        let observed = c.channels.iter().find(|ch| ch.source == ChannelSource::Observed).unwrap();
+        assert_eq!(observed.counts.ok, 1, "the success accrued on the observed row");
+
+        // A repeat of the same key attaches to the OBSERVED row (not a third).
+        s.apply_observation(&rf_obs("W6ABC-7", Direction::Outgoing, ObservationPhase::B2fOk), now())
+            .unwrap();
+        let c = &s.contacts()[0];
+        assert_eq!(c.channels.len(), 2);
+        let observed = c.channels.iter().find(|ch| ch.source == ChannelSource::Observed).unwrap();
+        assert_eq!(observed.counts.ok, 2);
     }
 
     #[test]

@@ -2529,6 +2529,14 @@ fn curate_peer(
                 ok: ch.counts.ok,
                 fail: ch.counts.fail,
                 last_seen: ch.last_seen.clone(),
+                // Provenance crosses so the agent can distinguish a real
+                // observation from an operator-entered row (tuxlink-f0th0).
+                source: match ch.source {
+                    crate::contacts::reachability::ChannelSource::Observed => "observed",
+                    crate::contacts::reachability::ChannelSource::Manual => "manual",
+                    crate::contacts::reachability::ChannelSource::Unknown => "unknown",
+                }
+                .to_string(),
             })
         })
         .collect();
@@ -4330,6 +4338,7 @@ mod tests {
                 last_seen: "2026-07-10T12:30:00-07:00".into(),
                 last_ok: Some("2026-07-10T12:30:00-07:00".into()),
                 last_ok_direction: Some(Direction::Outgoing),
+                source: ChannelSource::Observed,
             }],
             endpoints: vec![
                 Endpoint {
@@ -4397,6 +4406,24 @@ mod tests {
         assert!(!json.contains("\"port\""), "no port key in the DTO: {json}");
         assert!(!json.contains("\"endpoints\""), "no endpoints key in the DTO: {json}");
         assert!(!json.contains("provenance"), "no endpoint provenance in the DTO: {json}");
+    }
+
+    #[test]
+    fn curate_peer_carries_channel_source_provenance() {
+        // tuxlink-f0th0: the agent DTO distinguishes operator-authored rows
+        // from real observations. Pin the exact wire strings both ways.
+        let mut contact = hostile_test_contact();
+        assert_eq!(
+            curate_peer(&contact, 4).unwrap().channels[0].source,
+            "observed",
+            "recorder-written row crosses as \"observed\""
+        );
+        contact.channels[0].source = crate::contacts::reachability::ChannelSource::Manual;
+        assert_eq!(
+            curate_peer(&contact, 4).unwrap().channels[0].source,
+            "manual",
+            "operator-entered row crosses as \"manual\""
+        );
     }
 
     #[test]
