@@ -1,0 +1,18 @@
+# tuxlink-vara-ini — pure, order/round-trip-preserving reader+writer for VARA's
+# own `VARA.ini` config file (the operator-facing config VARA persists in its
+# install dir under the WINE prefix). NO app/Tauri deps, so it builds+tests
+# locally on the contended Pi (unlike the monolith). The app-crate glue that
+# owns VARA's stop-edit-start lifecycle lives in `src/winlink/modem/vara/` and
+# depends on this crate for the pure INI logic.
+#
+# CLEAN-ROOM: this parses/edits VARA's documented operator config keys
+# (`[Soundcard] Output Device Name`, etc.) — NOT VARA's protocol internals.
+[package]
+name = "tuxlink-vara-ini"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.75"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[dependencies]
