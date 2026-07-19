@@ -251,8 +251,19 @@ export function StepInspector({ step, actions, onChange, onRemove }: StepInspect
               {info?.needsRadio && <span className="flag rig">RIG</span>}
               {info?.transmits && <span className="flag tx">TX</span>}
               {info?.needsInternet && <span className="flag net">NET</span>}
+              {/* D5/E3: the config-write consent class, keyed on writesConfig. */}
+              {info?.writesConfig && <span className="flag writes">WRITES</span>}
             </span>
           </div>
+
+          {/* E3: the action's one-line human description (tuxlink-5lfxk),
+              surfaced beneath the action row. Hidden when the registry copy
+              is empty. */}
+          {info?.description && (
+            <div className="insp-desc" data-testid="inspector-description">
+              {info.description}
+            </div>
+          )}
 
           <div className="insp-field">
             <span className="insp-label">

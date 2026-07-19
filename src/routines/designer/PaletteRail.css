@@ -138,6 +138,13 @@
   border-color: color-mix(in srgb, var(--info) 40%, transparent);
 }
 
+/* D5/E3: the config-write consent class — caution-toned, disambiguates a
+ * config.* action sharing the LOCAL group with non-writing local actions. */
+.pal-item .flag.writes {
+  color: var(--warn, #f0c24a);
+  border-color: color-mix(in srgb, var(--warn, #f0c24a) 45%, transparent);
+}
+
 .pal-item.lib {
   color: var(--accent-2);
 }
