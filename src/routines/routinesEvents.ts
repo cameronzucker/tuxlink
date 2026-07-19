@@ -19,7 +19,7 @@
  * payload as a value to render directly.
  */
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { IfMissed, RunState } from './routinesApi';
+import type { IfMissed, ParkKind, RunState } from './routinesApi';
 
 /** The single Tauri channel every routine-run lifecycle event is emitted on. */
 export const ROUTINES_EVENT = 'routines:event';
@@ -42,9 +42,14 @@ export type RoutinesEvent =
   | { kind: 'stateChanged'; runId: string; state: RunState }
   /** A single step finished. NOT emitted in v1 (events.rs:91-99). */
   | { kind: 'stepCompleted'; runId: string; stepId: string; ok: boolean }
-  /** A transmitting step in attended mode is parked awaiting operator
-   *  consent. Emitted by the slice-5b consent wrapper, not Task 6. */
-  | { kind: 'awaitingConsent'; runId: string; stepId: string }
+  /** A transmitting OR config-writing step in attended mode is parked
+   *  awaiting operator consent. Emitted by the consent wrapper, not Task 6.
+   *  `parkKind` names the consent class (Global Constraints tri-surface naming:
+   *  the app-event field is camelCase `parkKind` — the union's own discriminant
+   *  is already `kind` — while the JOURNALED `state_changed` field is snake_case
+   *  `park_kind`). Always present on the event; a `write` park must never render
+   *  transmit copy in the consent dialog. */
+  | { kind: 'awaitingConsent'; runId: string; stepId: string; parkKind: ParkKind }
   /** The routines LIBRARY changed — a definition, preset, or station-set was
    *  created, updated, deleted, enabled, or disabled. Carries only *what*
    *  changed, never the new value (events.rs:108-113). */

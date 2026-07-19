@@ -80,12 +80,35 @@ function buildControlStep(kind: ControlKind, id: string, wrapStepId: string | nu
   }
 }
 
-function flagsFor(info: ActionInfo): Array<'RIG' | 'TX' | 'NET'> {
-  const flags: Array<'RIG' | 'TX' | 'NET'> = [];
+type CapFlag = 'RIG' | 'TX' | 'NET' | 'WRITES';
+
+function flagsFor(info: ActionInfo): CapFlag[] {
+  const flags: CapFlag[] = [];
   if (info.needsRadio) flags.push('RIG');
   if (info.transmits) flags.push('TX');
   if (info.needsInternet) flags.push('NET');
+  // D5/E3: the config-write consent class. config.* actions are
+  // needs_radio/needs_internet false, so they land in the LOCAL group with
+  // every other local action — the WRITES badge is what disambiguates them.
+  if (info.writesConfig) flags.push('WRITES');
   return flags;
+}
+
+/** E3: seed a new action step's params from the descriptor's canonical
+ *  `example_params` JSON string (D6) when present, so authoring a
+ *  `data.read` source or `find_stations` starts from a populated,
+ *  shape-correct grid. Falls back to `{}` when the field is absent, null, or
+ *  unparseable / non-object. */
+function seedExampleParams(info: ActionInfo | undefined): Record<string, unknown> {
+  if (!info?.exampleParams) return {};
+  try {
+    const parsed: unknown = JSON.parse(info.exampleParams);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
 }
 
 function PaletteItem({
@@ -99,7 +122,7 @@ function PaletteItem({
 }: {
   label: string;
   testId: string;
-  flags?: Array<'RIG' | 'TX' | 'NET'>;
+  flags?: CapFlag[];
   lib?: boolean;
   /** Raw registry id, rendered as mono subtext under a human label
    *  (tuxlink-5lfxk). Omitted when the label IS the id. */
@@ -176,7 +199,8 @@ export function PaletteRail({ def, actions, armedInsert, onInsert }: PaletteRail
   // the canvas the step lands there; without one, the owner appends it to the
   // end of the track. This component still only builds the Step value.
   function insertAction(name: string) {
-    onInsert({ id: nextStepId(def), action: name, params: {} });
+    const info = actions.find((a) => a.name === name);
+    onInsert({ id: nextStepId(def), action: name, params: seedExampleParams(info) });
   }
 
   function insertControl(kind: ControlKind) {

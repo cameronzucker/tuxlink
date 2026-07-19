@@ -143,6 +143,21 @@
   border-color: color-mix(in srgb, var(--info) 40%, transparent);
 }
 
+/* D5/E3: the config-write consent class — a caution-toned tag, distinct from
+ * the transmit/rig/net capability flags. */
+.flag.writes {
+  color: var(--warn, #f0c24a);
+  border-color: color-mix(in srgb, var(--warn, #f0c24a) 45%, transparent);
+}
+
+/* E3: one-line action description under the action row. */
+.insp-desc {
+  font-size: 13px;
+  color: var(--text-faint);
+  padding: 2px 0 4px;
+  line-height: 1.35;
+}
+
 /* ---- key/value params grid (tuxlink-7ewvq item 9) ---- */
 .param-grid {
   display: flex;

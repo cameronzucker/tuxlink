@@ -53,7 +53,7 @@ describe('listenRoutinesEvents', () => {
       { kind: 'runFinished', runId: 'r2', state: 'interrupted', reason: 'process terminated' },
       { kind: 'stateChanged', runId: 'r1', state: 'awaiting_radio' },
       { kind: 'stepCompleted', runId: 'r1', stepId: 's1', ok: true },
-      { kind: 'awaitingConsent', runId: 'r1', stepId: 's2' },
+      { kind: 'awaitingConsent', runId: 'r1', stepId: 's2', parkKind: 'transmit' },
       { kind: 'libraryChanged', entity: 'stationSet', name: 'or-gateways' },
       { kind: 'scheduledFire', routine: 'morning-ics', runId: 'r3', at: 1_752_400_000 },
       { kind: 'scheduleSkipped', routine: 'morning-ics', at: 1_752_400_000, reason: 'previous run still active' },
