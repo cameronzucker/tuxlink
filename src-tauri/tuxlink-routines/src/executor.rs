@@ -8,7 +8,7 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use crate::action::ActionRegistry;
-use crate::compose::RoutineInvoker;
+use crate::compose::{CallCtx, RoutineInvoker};
 use crate::consent::ConsentPort;
 use crate::error::StepError;
 use crate::journal::{JournalWriter, RunEvent, RunState};
@@ -651,18 +651,66 @@ async fn run_track_steps(
                             parent_run_id: ctx.run_id.clone(),
                             parent_step: c.id.clone(),
                         };
+                        // Two-phase inline start (O3): `start` returns as soon
+                        // as the child run id is known, so the parent journals
+                        // the `call_child` edge in EVERY path (sync AND F&F).
+                        // A start failure is a verbatim step error with NO
+                        // `call_child` entry — the old silent `dispatched:true`
+                        // lie on a failed dispatch is gone.
                         if *sync {
-                            match ctx.invoker.invoke(routine, resolved_args, provenance).await {
-                                Ok(result) => {
+                            let call = CallCtx {
+                                provenance,
+                                child_depth: ctx.depth + 1,
+                                parent_attended: ctx.attended,
+                                // C3 threads the root consent context; B2 has none.
+                                root: None,
+                            };
+                            // Sync: the parent's own cancel token is the child's
+                            // parent, so cancelling the parent cancels the child.
+                            match ctx.invoker.start(routine, resolved_args, call, &ctx.cancel).await {
+                                Ok(handle) => {
                                     journal(
                                         ctx,
-                                        RunEvent::StepOk {
+                                        RunEvent::CallChild {
                                             step: c.id.clone(),
-                                            output: result.clone(),
+                                            child_run_id: handle.run_id.clone(),
                                         },
                                     );
-                                    let mut guard = vars.lock().await;
-                                    guard.set_step_output(&c.id, result);
+                                    // Clone the child's cancel BEFORE the select:
+                                    // `await_outcome` consumes the handle, so the
+                                    // cancel branch can only reach the token
+                                    // through this pre-select clone.
+                                    let child_cancel = handle.cancel.clone();
+                                    let result = tokio::select! {
+                                        r = ctx.invoker.await_outcome(handle) => r,
+                                        _ = ctx.cancel.cancelled() => {
+                                            child_cancel.cancel();
+                                            Err(StepError::Cancelled)
+                                        }
+                                    };
+                                    match result {
+                                        Ok(output) => {
+                                            journal(
+                                                ctx,
+                                                RunEvent::StepOk {
+                                                    step: c.id.clone(),
+                                                    output: output.clone(),
+                                                },
+                                            );
+                                            let mut guard = vars.lock().await;
+                                            guard.set_step_output(&c.id, output);
+                                        }
+                                        Err(err) => {
+                                            journal(
+                                                ctx,
+                                                RunEvent::StepErr {
+                                                    step: c.id.clone(),
+                                                    error: err.clone(),
+                                                },
+                                            );
+                                            return Err(err);
+                                        }
+                                    }
                                 }
                                 Err(err) => {
                                     journal(
@@ -676,23 +724,52 @@ async fn run_track_steps(
                                 }
                             }
                         } else {
-                            let invoker = ctx.invoker.clone();
-                            let routine = routine.clone();
-                            tokio::spawn(async move {
-                                // Child journals its own outcome; the parent does
-                                // not await it (fire-and-forget, spec §7).
-                                let _ = invoker.invoke(&routine, resolved_args, provenance).await;
-                            });
-                            let marker = serde_json::json!({"dispatched": true});
-                            journal(
-                                ctx,
-                                RunEvent::StepOk {
-                                    step: c.id.clone(),
-                                    output: marker.clone(),
-                                },
-                            );
-                            let mut guard = vars.lock().await;
-                            guard.set_step_output(&c.id, marker);
+                            let call = CallCtx {
+                                provenance,
+                                child_depth: ctx.depth + 1,
+                                parent_attended: ctx.attended,
+                                root: None,
+                            };
+                            // F&F children are deliberately detached from the
+                            // parent's cancellation: a fresh token is their
+                            // parent, so a parent cancel does not reach them.
+                            let detached = CancellationToken::new();
+                            match ctx.invoker.start(routine, resolved_args, call, &detached).await {
+                                Ok(handle) => {
+                                    journal(
+                                        ctx,
+                                        RunEvent::CallChild {
+                                            step: c.id.clone(),
+                                            child_run_id: handle.run_id.clone(),
+                                        },
+                                    );
+                                    let marker = serde_json::json!({"dispatched": true});
+                                    journal(
+                                        ctx,
+                                        RunEvent::StepOk {
+                                            step: c.id.clone(),
+                                            output: marker.clone(),
+                                        },
+                                    );
+                                    {
+                                        let mut guard = vars.lock().await;
+                                        guard.set_step_output(&c.id, marker);
+                                    }
+                                    // Drop the handle unawaited: the child journals
+                                    // its own outcome; the parent moves on.
+                                    drop(handle);
+                                }
+                                Err(err) => {
+                                    journal(
+                                        ctx,
+                                        RunEvent::StepErr {
+                                            step: c.id.clone(),
+                                            error: err.clone(),
+                                        },
+                                    );
+                                    return Err(err);
+                                }
+                            }
                         }
                         idx += 1;
                     }

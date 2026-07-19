@@ -56,7 +56,7 @@ use tokio_util::sync::CancellationToken;
 use tuxlink_routines::action::ActionRegistry;
 use tuxlink_routines::consent::ConsentPort;
 use tuxlink_routines::dryrun::DryRunScript;
-use tuxlink_routines::engine::{Engine, EngineConfig, RunHandle};
+use tuxlink_routines::engine::{Engine, EngineConfig, RunHandle, StartOpts};
 use tuxlink_routines::error::EngineError;
 use tuxlink_routines::journal::{read_journal, JournalEntry, RunEvent, RunState};
 use tuxlink_routines::snapshot::EntityResolver;
@@ -441,8 +441,21 @@ impl RoutinesState {
         } = match dry_run {
             Some(script) => self.engine.start_dry_run(def, args, script).await?,
             None => {
+                // B2 minimal mechanical fix: `start_run_ext` now takes the
+                // pinned `StartOpts` struct. CHUNK 2 replaces this with the
+                // `SessionChildInvoker` install + verified root threading (C3).
                 self.engine
-                    .start_run_ext(def, args, 0, false, false)
+                    .start_run_ext(
+                        def,
+                        args,
+                        StartOpts {
+                            depth: 0,
+                            parent_attended: false,
+                            dry_run: false,
+                            cancel: None,
+                            root: None,
+                        },
+                    )
                     .await?
             }
         };
