@@ -504,6 +504,22 @@ enum ReadSource {
     /// Rank 1: the send-authority + app-identity view mirroring the MCP
     /// `server_info` tool (`ServerInfoDto` shape).
     AppStatus,
+    /// Rank 3 (compat-tree): the curated, non-secret top-level config mirroring
+    /// the MCP `config_read` tool — 5-field projection with the grid clamped to
+    /// 4-char Maidenhead via the shared `curated_config_view` curation.
+    Config,
+    /// Rank 3: the non-secret ARDOP modem config mirroring the MCP
+    /// `config_get_ardop` tool (`ArdopConfigDto`, verbatim).
+    ArdopConfig,
+    /// Rank 3: the non-secret VARA modem config mirroring the MCP
+    /// `config_get_vara` tool (`VaraConfigDto`, verbatim).
+    VaraConfig,
+    /// Rank 3: the non-secret packet (AX.25/KISS) config mirroring the MCP
+    /// `packet_config_get` tool (`PacketConfigDto`, verbatim).
+    PacketConfig,
+    /// Rank 3: the non-secret radio-level rig (CAT) config mirroring the MCP
+    /// `config_get_rig` tool (`RigConfigDto`, verbatim).
+    RigConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -672,6 +688,81 @@ impl Action for DataRead {
                 .map_err(|cause| StepError::Action {
                     action: DATA_READ.to_string(),
                     cause,
+                })
+            }
+            ReadSource::Config => {
+                let dto = tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => return Err(StepError::Cancelled),
+                    res = self.data.read_config() => res,
+                }
+                .map_err(|cause| StepError::Action {
+                    action: DATA_READ.to_string(),
+                    cause,
+                })?;
+                serde_json::to_value(&dto).map_err(|e| StepError::Action {
+                    action: DATA_READ.to_string(),
+                    cause: format!("output serialize: {e}"),
+                })
+            }
+            ReadSource::ArdopConfig => {
+                let dto = tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => return Err(StepError::Cancelled),
+                    res = self.data.read_ardop_config() => res,
+                }
+                .map_err(|cause| StepError::Action {
+                    action: DATA_READ.to_string(),
+                    cause,
+                })?;
+                serde_json::to_value(&dto).map_err(|e| StepError::Action {
+                    action: DATA_READ.to_string(),
+                    cause: format!("output serialize: {e}"),
+                })
+            }
+            ReadSource::VaraConfig => {
+                let dto = tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => return Err(StepError::Cancelled),
+                    res = self.data.read_vara_config() => res,
+                }
+                .map_err(|cause| StepError::Action {
+                    action: DATA_READ.to_string(),
+                    cause,
+                })?;
+                serde_json::to_value(&dto).map_err(|e| StepError::Action {
+                    action: DATA_READ.to_string(),
+                    cause: format!("output serialize: {e}"),
+                })
+            }
+            ReadSource::PacketConfig => {
+                let dto = tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => return Err(StepError::Cancelled),
+                    res = self.data.read_packet_config() => res,
+                }
+                .map_err(|cause| StepError::Action {
+                    action: DATA_READ.to_string(),
+                    cause,
+                })?;
+                serde_json::to_value(&dto).map_err(|e| StepError::Action {
+                    action: DATA_READ.to_string(),
+                    cause: format!("output serialize: {e}"),
+                })
+            }
+            ReadSource::RigConfig => {
+                let dto = tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => return Err(StepError::Cancelled),
+                    res = self.data.read_rig_config() => res,
+                }
+                .map_err(|cause| StepError::Action {
+                    action: DATA_READ.to_string(),
+                    cause,
+                })?;
+                serde_json::to_value(&dto).map_err(|e| StepError::Action {
+                    action: DATA_READ.to_string(),
+                    cause: format!("output serialize: {e}"),
                 })
             }
         }
@@ -864,6 +955,59 @@ impl DataService for MonolithDataService {
         let dto = app_status_dto(&guard, env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
         serde_json::to_value(&dto).map_err(|e| format!("app_status serialize: {e}"))
     }
+
+    async fn read_config(&self) -> Result<tuxlink_mcp_core::ports::ConfigViewDto, String> {
+        // Delegate to the EXACT method the MCP `config_read` tool calls —
+        // byte-identity (and the 4-char grid clamp) is guaranteed by
+        // construction: both go through `curated_config_view`.
+        use tuxlink_mcp_core::ports::ConfigPort;
+        crate::mcp_ports::MonolithConfigPort::new(self.app.clone())
+            .read()
+            .await
+            .map_err(|e| format!("{e:?}"))
+    }
+
+    async fn read_ardop_config(
+        &self,
+    ) -> Result<tuxlink_mcp_core::ports::ArdopConfigDto, String> {
+        // Delegate to the EXACT method the MCP `config_get_ardop` tool calls.
+        use tuxlink_mcp_core::ports::ConfigPort;
+        crate::mcp_ports::MonolithConfigPort::new(self.app.clone())
+            .ardop()
+            .await
+            .map_err(|e| format!("{e:?}"))
+    }
+
+    async fn read_vara_config(
+        &self,
+    ) -> Result<tuxlink_mcp_core::ports::VaraConfigDto, String> {
+        // Delegate to the EXACT method the MCP `config_get_vara` tool calls.
+        use tuxlink_mcp_core::ports::ConfigPort;
+        crate::mcp_ports::MonolithConfigPort::new(self.app.clone())
+            .vara()
+            .await
+            .map_err(|e| format!("{e:?}"))
+    }
+
+    async fn read_packet_config(
+        &self,
+    ) -> Result<tuxlink_mcp_core::ports::PacketConfigDto, String> {
+        // Delegate to the EXACT method the MCP `packet_config_get` tool calls.
+        use tuxlink_mcp_core::ports::ConfigPort;
+        crate::mcp_ports::MonolithConfigPort::new(self.app.clone())
+            .packet()
+            .await
+            .map_err(|e| format!("{e:?}"))
+    }
+
+    async fn read_rig_config(&self) -> Result<tuxlink_mcp_core::ports::RigConfigDto, String> {
+        // Delegate to the EXACT method the MCP `config_get_rig` tool calls.
+        use tuxlink_mcp_core::ports::ConfigPort;
+        crate::mcp_ports::MonolithConfigPort::new(self.app.clone())
+            .rig()
+            .await
+            .map_err(|e| format!("{e:?}"))
+    }
 }
 
 // ============================================================================
@@ -913,6 +1057,16 @@ mod tests {
     type BackendStatusFn =
         dyn Fn() -> Result<tuxlink_mcp_core::ports::BackendStatusDto, String> + Send + Sync;
     type AppStatusFn = dyn Fn() -> Result<Value, String> + Send + Sync;
+    type ConfigFn =
+        dyn Fn() -> Result<tuxlink_mcp_core::ports::ConfigViewDto, String> + Send + Sync;
+    type ArdopConfigFn =
+        dyn Fn() -> Result<tuxlink_mcp_core::ports::ArdopConfigDto, String> + Send + Sync;
+    type VaraConfigFn =
+        dyn Fn() -> Result<tuxlink_mcp_core::ports::VaraConfigDto, String> + Send + Sync;
+    type PacketConfigFn =
+        dyn Fn() -> Result<tuxlink_mcp_core::ports::PacketConfigDto, String> + Send + Sync;
+    type RigConfigFn =
+        dyn Fn() -> Result<tuxlink_mcp_core::ports::RigConfigDto, String> + Send + Sync;
 
     struct FakeDataService {
         wwv: Box<WwvFn>,
@@ -931,6 +1085,11 @@ mod tests {
         modem_status: Box<ModemStatusFn>,
         backend_status: Box<BackendStatusFn>,
         app_status: Box<AppStatusFn>,
+        config: Box<ConfigFn>,
+        ardop_config: Box<ArdopConfigFn>,
+        vara_config: Box<VaraConfigFn>,
+        packet_config: Box<PacketConfigFn>,
+        rig_config: Box<RigConfigFn>,
     }
 
     impl Default for FakeDataService {
@@ -953,6 +1112,15 @@ mod tests {
                     panic!("read_backend_status not expected in this test")
                 }),
                 app_status: Box::new(|| panic!("read_app_status not expected in this test")),
+                config: Box::new(|| panic!("read_config not expected in this test")),
+                ardop_config: Box::new(|| {
+                    panic!("read_ardop_config not expected in this test")
+                }),
+                vara_config: Box::new(|| panic!("read_vara_config not expected in this test")),
+                packet_config: Box::new(|| {
+                    panic!("read_packet_config not expected in this test")
+                }),
+                rig_config: Box::new(|| panic!("read_rig_config not expected in this test")),
             }
         }
     }
@@ -1044,6 +1212,56 @@ mod tests {
             self.app_status = Box::new(f);
             self
         }
+        fn with_config(
+            mut self,
+            f: impl Fn() -> Result<tuxlink_mcp_core::ports::ConfigViewDto, String>
+                + Send
+                + Sync
+                + 'static,
+        ) -> Self {
+            self.config = Box::new(f);
+            self
+        }
+        fn with_ardop_config(
+            mut self,
+            f: impl Fn() -> Result<tuxlink_mcp_core::ports::ArdopConfigDto, String>
+                + Send
+                + Sync
+                + 'static,
+        ) -> Self {
+            self.ardop_config = Box::new(f);
+            self
+        }
+        fn with_vara_config(
+            mut self,
+            f: impl Fn() -> Result<tuxlink_mcp_core::ports::VaraConfigDto, String>
+                + Send
+                + Sync
+                + 'static,
+        ) -> Self {
+            self.vara_config = Box::new(f);
+            self
+        }
+        fn with_packet_config(
+            mut self,
+            f: impl Fn() -> Result<tuxlink_mcp_core::ports::PacketConfigDto, String>
+                + Send
+                + Sync
+                + 'static,
+        ) -> Self {
+            self.packet_config = Box::new(f);
+            self
+        }
+        fn with_rig_config(
+            mut self,
+            f: impl Fn() -> Result<tuxlink_mcp_core::ports::RigConfigDto, String>
+                + Send
+                + Sync
+                + 'static,
+        ) -> Self {
+            self.rig_config = Box::new(f);
+            self
+        }
     }
 
     #[async_trait]
@@ -1090,6 +1308,27 @@ mod tests {
         }
         async fn read_app_status(&self) -> Result<Value, String> {
             (self.app_status)()
+        }
+        async fn read_config(&self) -> Result<tuxlink_mcp_core::ports::ConfigViewDto, String> {
+            (self.config)()
+        }
+        async fn read_ardop_config(
+            &self,
+        ) -> Result<tuxlink_mcp_core::ports::ArdopConfigDto, String> {
+            (self.ardop_config)()
+        }
+        async fn read_vara_config(
+            &self,
+        ) -> Result<tuxlink_mcp_core::ports::VaraConfigDto, String> {
+            (self.vara_config)()
+        }
+        async fn read_packet_config(
+            &self,
+        ) -> Result<tuxlink_mcp_core::ports::PacketConfigDto, String> {
+            (self.packet_config)()
+        }
+        async fn read_rig_config(&self) -> Result<tuxlink_mcp_core::ports::RigConfigDto, String> {
+            (self.rig_config)()
         }
     }
 
@@ -1862,6 +2101,192 @@ mod tests {
             routines_output, mcp_output,
             "routines data.read app_status must be byte-identical to the MCP server_info tool"
         );
+    }
+
+    // ======================================================================
+    // Rank 3 config sources — curation-equality pins (round-2 / spec §9).
+    // Each pin proves the routines `data.read` config source is byte-identical
+    // to the MCP config tool it mirrors: the MCP tool serializes the port DTO
+    // via `ContentBlock::json` (== `to_value`), and the routines action must
+    // serialize the SAME DTO the SAME way — no wrapping, no field rename. The
+    // `config` pin additionally drives the SHARED `curated_config_view`
+    // curation with a 6-CHARACTER-grid fixture, proving the 4-char clamp the
+    // MCP `config_read` tool applies holds identically on the routines path.
+    // ======================================================================
+
+    #[tokio::test]
+    async fn config_source_equals_mcp_config_read_output_with_four_char_grid_clamp() {
+        // A raw config view carrying a 6-char grid AND SixCharGrid broadcast
+        // precision — the exact shape `redact_config_view`'s own test uses to
+        // prove the MCP sink forces 4-char regardless of the operator's own
+        // precision. Run it through the SHARED `curated_config_view` the MCP
+        // `config_read` tool uses (`MonolithConfigPort::read` delegates to it).
+        let mut cfg = crate::test_helpers::native_test_config();
+        cfg.identity.grid = Some("CN87ux".to_string());
+        cfg.privacy.position_precision =
+            crate::config::PositionPrecision::SixCharGrid;
+        let raw = crate::ui_commands::ConfigViewDto::from(&cfg);
+        // Sanity: unredacted before curation.
+        assert_eq!(raw.grid.as_deref(), Some("CN87ux"));
+
+        let dto = crate::mcp_ports::curated_config_view(raw);
+        // The load-bearing curation: the grid is clamped to 4 chars.
+        assert_eq!(
+            dto.grid, "CN87",
+            "the MCP config curation must clamp a 6-char grid to 4-char Maidenhead"
+        );
+        // The MCP tool output for this config (ContentBlock::json == to_value).
+        let mcp_output = serde_json::to_value(&dto).unwrap();
+        assert_eq!(mcp_output["grid"], json!("CN87"));
+
+        // The routines source hands the SAME DTO through `DataRead`.
+        let dto_for_fake = dto.clone();
+        let data = FakeDataService::default().with_config(move || Ok(dto_for_fake.clone()));
+        let action = DataRead::new(Arc::new(data));
+        let routines_output = action
+            .execute(json!({"source": "config"}), CancellationToken::new())
+            .await
+            .expect("config source must succeed");
+
+        assert_eq!(
+            routines_output, mcp_output,
+            "routines data.read config must be byte-identical to the MCP config_read tool \
+             (including the 4-char grid clamp)"
+        );
+        // Belt-and-suspenders: the 6-char precision never leaks on the routines path.
+        assert!(
+            !routines_output.to_string().contains("CN87ux"),
+            "the routines config path must carry the SAME 4-char clamp (no 6-char leak)"
+        );
+    }
+
+    #[tokio::test]
+    async fn ardop_config_source_equals_mcp_config_get_ardop_output() {
+        let dto = tuxlink_mcp_core::ports::ArdopConfigDto {
+            host: "127.0.0.1".to_string(),
+            port: 8515,
+            drive_level: 80,
+            bandwidth: 500,
+        };
+        let mcp_output = serde_json::to_value(&dto).unwrap();
+        let dto_for_fake = dto.clone();
+        let data = FakeDataService::default().with_ardop_config(move || Ok(dto_for_fake.clone()));
+        let action = DataRead::new(Arc::new(data));
+        let routines_output = action
+            .execute(json!({"source": "ardop_config"}), CancellationToken::new())
+            .await
+            .expect("ardop_config source must succeed");
+        assert_eq!(
+            routines_output, mcp_output,
+            "routines data.read ardop_config must be byte-identical to the MCP config_get_ardop tool"
+        );
+    }
+
+    #[tokio::test]
+    async fn vara_config_source_equals_mcp_config_get_vara_output() {
+        let dto = tuxlink_mcp_core::ports::VaraConfigDto {
+            host: "127.0.0.1".to_string(),
+            port: 8300,
+            bandwidth: 2300,
+            drive_level: 0,
+        };
+        let mcp_output = serde_json::to_value(&dto).unwrap();
+        let dto_for_fake = dto.clone();
+        let data = FakeDataService::default().with_vara_config(move || Ok(dto_for_fake.clone()));
+        let action = DataRead::new(Arc::new(data));
+        let routines_output = action
+            .execute(json!({"source": "vara_config"}), CancellationToken::new())
+            .await
+            .expect("vara_config source must succeed");
+        assert_eq!(
+            routines_output, mcp_output,
+            "routines data.read vara_config must be byte-identical to the MCP config_get_vara tool"
+        );
+    }
+
+    #[tokio::test]
+    async fn packet_config_source_equals_mcp_packet_config_get_output() {
+        let dto = tuxlink_mcp_core::ports::PacketConfigDto {
+            kiss_host: "127.0.0.1".to_string(),
+            kiss_port: 8001,
+            baud: 9600,
+            tx_delay: 300,
+        };
+        let mcp_output = serde_json::to_value(&dto).unwrap();
+        let dto_for_fake = dto.clone();
+        let data = FakeDataService::default().with_packet_config(move || Ok(dto_for_fake.clone()));
+        let action = DataRead::new(Arc::new(data));
+        let routines_output = action
+            .execute(json!({"source": "packet_config"}), CancellationToken::new())
+            .await
+            .expect("packet_config source must succeed");
+        assert_eq!(
+            routines_output, mcp_output,
+            "routines data.read packet_config must be byte-identical to the MCP packet_config_get tool"
+        );
+    }
+
+    #[tokio::test]
+    async fn rig_config_source_equals_mcp_config_get_rig_output() {
+        let dto = tuxlink_mcp_core::ports::RigConfigDto {
+            rig_hamlib_model: None,
+            rigctld_host: "127.0.0.1".to_string(),
+            rigctld_port: 4532,
+            rigctld_binary: "rigctld".to_string(),
+            close_serial_sequencing: false,
+            live_vfo_poll: false,
+            qsy_on_fail: false,
+            cat_serial_path: None,
+            cat_baud: 19200,
+        };
+        let mcp_output = serde_json::to_value(&dto).unwrap();
+        let dto_for_fake = dto.clone();
+        let data = FakeDataService::default().with_rig_config(move || Ok(dto_for_fake.clone()));
+        let action = DataRead::new(Arc::new(data));
+        let routines_output = action
+            .execute(json!({"source": "rig_config"}), CancellationToken::new())
+            .await
+            .expect("rig_config source must succeed");
+        assert_eq!(
+            routines_output, mcp_output,
+            "routines data.read rig_config must be byte-identical to the MCP config_get_rig tool"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_config_sources_verbatim_error_passthrough() {
+        // A hard failure from any of the five config seams surfaces verbatim
+        // as a StepError::Action, same posture as every other data.read source.
+        for source in [
+            "config",
+            "ardop_config",
+            "vara_config",
+            "packet_config",
+            "rig_config",
+        ] {
+            let data = match source {
+                "config" => {
+                    FakeDataService::default().with_config(|| Err("config unreadable".to_string()))
+                }
+                "ardop_config" => FakeDataService::default()
+                    .with_ardop_config(|| Err("ardop config unreadable".to_string())),
+                "vara_config" => FakeDataService::default()
+                    .with_vara_config(|| Err("vara config unreadable".to_string())),
+                "packet_config" => FakeDataService::default()
+                    .with_packet_config(|| Err("packet config unreadable".to_string())),
+                _ => FakeDataService::default()
+                    .with_rig_config(|| Err("rig config unreadable".to_string())),
+            };
+            let action = DataRead::new(Arc::new(data));
+            let err = action
+                .execute(json!({ "source": source }), CancellationToken::new())
+                .await
+                .expect_err("hard failure must surface");
+            match err {
+                StepError::Action { action, .. } => assert_eq!(action, "data.read"),
+                other => panic!("expected StepError::Action, got {other:?}"),
+            }
+        }
     }
 
     #[tokio::test]

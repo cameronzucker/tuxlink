@@ -729,6 +729,42 @@ impl SearchPort for MonolithSearchPort {
 // Config port.
 // ---------------------------------------------------------------------------
 
+/// Curate the raw top-level config view into the MCP `config_read` DTO: apply
+/// the 4-char grid clamp (`redact_config_view`) then the 5-field projection.
+///
+/// Shared by [`MonolithConfigPort::read`] AND the routines `data.read`
+/// `config` source (`crate::routines::actions::data`) so the two are
+/// byte-identical BY CONSTRUCTION — the routines curation-equality pin drives
+/// this fn with a 6-char-grid fixture and asserts the clamp holds. If the
+/// projection or the redaction ever changes, both consumers move together and
+/// the pin re-verifies the clamp.
+pub(crate) fn curated_config_view(
+    raw: crate::ui_commands::ConfigViewDto,
+) -> ConfigViewDto {
+    // `redact_config_view` reduces the grid to a 4-char locator via
+    // `broadcast_grid(.., FourCharGrid)` — the redaction boundary. Redact
+    // BEFORE projecting.
+    let view = crate::ui_core::config::redact_config_view(raw);
+    // Snapshot each field into a local BEFORE the struct literal (D1 finding:
+    // the R2 toolchain intermittently miscompiled inline reads inside a struct
+    // literal). These are plain field moves, not guard reads, but heed the
+    // guidance regardless.
+    let connect_to_cms = view.connect_to_cms;
+    // CmsTransport → its string form (Debug is the stable label the frontend's
+    // normalizeTransportLabel consumes).
+    let transport = format!("{:?}", view.transport);
+    let host = view.host;
+    let callsign = view.callsign.unwrap_or_default();
+    let grid = view.grid.unwrap_or_default();
+    ConfigViewDto {
+        connect_to_cms,
+        transport,
+        host,
+        callsign,
+        grid,
+    }
+}
+
 /// [`ConfigPort`] adapter over the config-view + per-modem config readers.
 pub struct MonolithConfigPort {
     #[allow(dead_code)]
@@ -744,21 +780,12 @@ impl MonolithConfigPort {
 #[async_trait]
 impl ConfigPort for MonolithConfigPort {
     async fn read(&self) -> Result<ConfigViewDto, PortError> {
-        // `redact_config_view` reduces the grid to a 4-char locator via
-        // `broadcast_grid(.., FourCharGrid)` — the redaction boundary. Read the
-        // raw view, then redact BEFORE crossing the port.
+        // Read the raw view, then delegate curation (redact + 5-field
+        // projection) to the shared `curated_config_view` — the SAME curation
+        // the routines `data.read` config source reuses.
         let raw = crate::ui_core::config::read_config_view()
             .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
-        let view = crate::ui_core::config::redact_config_view(raw);
-        Ok(ConfigViewDto {
-            connect_to_cms: view.connect_to_cms,
-            // CmsTransport → its string form (Debug is the stable label the
-            // frontend's normalizeTransportLabel consumes).
-            transport: format!("{:?}", view.transport),
-            host: view.host,
-            callsign: view.callsign.unwrap_or_default(),
-            grid: view.grid.unwrap_or_default(),
-        })
+        Ok(curated_config_view(raw))
     }
 
     async fn ardop(&self) -> Result<ArdopConfigDto, PortError> {

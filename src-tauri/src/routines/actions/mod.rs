@@ -293,6 +293,41 @@ pub trait DataService: Send + Sync {
     /// `server_info`); the routines/server_info equality is pinned by test.
     /// Inert: reads only, never arms, taints, or gates.
     async fn read_app_status(&self) -> Result<serde_json::Value, String>;
+
+    /// `data.read` with `source: "config"` — the SAME curated, non-secret
+    /// top-level config the MCP `config_read` tool returns (rank 3): the
+    /// 5-field projection (connect_to_cms/transport/host/callsign/grid) with
+    /// the grid already clamped to a 4-char Maidenhead locator. The monolith
+    /// impl delegates to `crate::mcp_ports::MonolithConfigPort::read` (which
+    /// shares `curated_config_view` with this source), so the routine output
+    /// is byte-identical to the tool's and the 4-char clamp holds identically
+    /// (pinned with a 6-char-grid fixture). Inert: reads only, never writes.
+    async fn read_config(&self) -> Result<tuxlink_mcp_core::ports::ConfigViewDto, String>;
+
+    /// `data.read` with `source: "ardop_config"` — the SAME non-secret ARDOP
+    /// modem config the MCP `config_get_ardop` tool returns (rank 3). Delegates
+    /// to `crate::mcp_ports::MonolithConfigPort::ardop`; DTO returned verbatim.
+    async fn read_ardop_config(
+        &self,
+    ) -> Result<tuxlink_mcp_core::ports::ArdopConfigDto, String>;
+
+    /// `data.read` with `source: "vara_config"` — the SAME non-secret VARA
+    /// modem config the MCP `config_get_vara` tool returns (rank 3). Delegates
+    /// to `crate::mcp_ports::MonolithConfigPort::vara`; DTO returned verbatim.
+    async fn read_vara_config(&self)
+        -> Result<tuxlink_mcp_core::ports::VaraConfigDto, String>;
+
+    /// `data.read` with `source: "packet_config"` — the SAME non-secret packet
+    /// (AX.25/KISS) config the MCP `packet_config_get` tool returns (rank 3).
+    /// Delegates to `crate::mcp_ports::MonolithConfigPort::packet`; DTO verbatim.
+    async fn read_packet_config(
+        &self,
+    ) -> Result<tuxlink_mcp_core::ports::PacketConfigDto, String>;
+
+    /// `data.read` with `source: "rig_config"` — the SAME non-secret radio-level
+    /// rig (CAT) config the MCP `config_get_rig` tool returns (rank 3).
+    /// Delegates to `crate::mcp_ports::MonolithConfigPort::rig`; DTO verbatim.
+    async fn read_rig_config(&self) -> Result<tuxlink_mcp_core::ports::RigConfigDto, String>;
 }
 
 /// The `local.*` action family's delegation seam (spec §6 "Local actions";
