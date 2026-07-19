@@ -114,9 +114,6 @@ Tuxlink ships the following on Linux for x86_64 and arm64:
 
 ### Winlink engine
 
-<img src="docs/readme/images/tuxlink-ardop-hf.png" width="340" align="right"
-     alt="ARDOP HF radio panel: Find a Gateway, Favorites/Recent/Manual connect tabs, ALSA capture and playback selectors with friendly device names, CAT-command PTT with key and unkey commands, and the bundled ardopcf sidecar settings" />
-
 - **Native B2F engine.** The Winlink B2F protocol is implemented directly in
   Rust: CMS over telnet (TLS or plaintext), the full propose / accept message
   exchange, and on-disk mailbox persistence. No external modem daemon or
@@ -142,12 +139,14 @@ Tuxlink ships the following on Linux for x86_64 and arm64:
   link, verified against a production VARA gateway at 500 Hz on real HF
   (see [Maturity](#maturity-what-is-and-is-not-proven)).
 
-<br clear="right" />
+<p align="center">
+  <img src="docs/readme/images/tuxlink-ardop-hf.png" width="360"
+       alt="ARDOP HF radio panel: Find a Gateway, Favorites/Recent/Manual connect tabs, ALSA capture and playback selectors with friendly device names, CAT-command PTT with key and unkey commands, and the bundled ardopcf sidecar settings" />
+</p>
+
+<p align="center"><sub>The ARDOP HF panel: Find a Gateway, the connect tabs, inline ALSA and PTT selectors, ARQ bandwidth, and the live quality meter.</sub></p>
 
 ### VARA and Wine
-
-<img src="docs/readme/images/tuxlink-vara-setup.png" width="340" align="right"
-     alt="Set up VARA HF surface offering the guided installer hand-off, with the VARA host settings and FT-710 rig control below" />
 
 VARA is Windows software, not a Linux-native modem, so Tuxlink resolves that
 with a guided installer rather than asking the operator to sort it out. A
@@ -169,12 +168,14 @@ outside the product (matching the VARA sound-card device to the right ALSA
 endpoints, confirming the CAT serial port, and similar one-time setup);
 automating that provisioning is tracked as open work.
 
-<br clear="right" />
+<p align="center">
+  <img src="docs/readme/images/tuxlink-vara-setup.png" width="360"
+       alt="Set up VARA HF surface offering the guided installer hand-off, with the VARA host settings and FT-710 rig control below" />
+</p>
+
+<p align="center"><sub>The Set up VARA HF surface, with the guided installer hand-off above the VARA host and rig-control settings.</sub></p>
 
 ### Routines
-
-<img src="docs/readme/images/tuxlink-routines-designer.png" width="340" align="right"
-     alt="Routines designer canvas with a space-weather capture track, the action palette, a step inspector, and schedule and enable settings" />
 
 Routines automate repeatable radio tasks (a scheduled propagation check, a
 standing gateway connect and mail pull, a multi-step compose-and-send) as a
@@ -192,12 +193,14 @@ operator records an explicit, one-time acknowledgment at design time; a
 routine that would transmit automatically without that acknowledgment fails
 validation and cannot be enabled.
 
-<br clear="right" />
+<p align="center">
+  <img src="docs/readme/images/tuxlink-routines-designer.png" width="820"
+       alt="Routines designer canvas with a space-weather capture track, the action palette, a step inspector, and schedule and enable settings" />
+</p>
+
+<p align="center"><sub>The Routines designer: a space-weather capture track on the canvas, the action palette, a step inspector, and the schedule and enable settings.</sub></p>
 
 ### Elmer
-
-<img src="docs/readme/images/tuxlink-elmer.png" width="340" align="right"
-     alt="Elmer assistant pane mid-conversation with a visible tool call to the station" />
 
 Elmer is the assistant docked in the Tuxlink shell. It is not a chat overlay
 answering questions from the sidelines; it operates the station through the
@@ -212,7 +215,12 @@ documentation corpus rather than guessing.
 architecture, the security model, what the agent can and cannot do, and its
 plainly stated limits.
 
-<br clear="right" />
+<p align="center">
+  <img src="docs/readme/images/tuxlink-elmer.png" width="380"
+       alt="Elmer answering a station question by operating its tool surface: three docs_search calls, a vara_engine_available check, a vara_status read, and a config_get_vara read before it replies" />
+</p>
+
+<p align="center"><sub>Elmer answering a station question through its tool surface: it searches the built-in docs and reads VARA status before replying.</sub></p>
 
 ### Tactical and local operations
 
@@ -314,9 +322,6 @@ not have.
 
 ### FT8 listener
 
-<img src="docs/readme/images/tuxlink-ft8-waterfall.png" width="340" align="right"
-     alt="Station Intelligence panel: the propagation-colored gateway map beside a live decoded-call list, above the CAT-confirmed FT8 band strip with a live waterfall and raw decode feed" />
-
 A receive-only FT8 listener renders a live waterfall, a decoded-call list, and
 a CAT-driven band strip for sweeping across the FT8 sub-bands. It exists as a
 propagation and band-openness instrument, not a message transport: nothing in
@@ -324,7 +329,12 @@ the FT8 panel transmits, and no message ever routes through it. Watching
 which grids are decoding on a given band is a fast, receive-only read on
 whether HF is open before committing to a Winlink connect attempt.
 
-<br clear="right" />
+<p align="center">
+  <img src="docs/readme/images/tuxlink-ft8-waterfall.png" width="760"
+       alt="Station Intelligence panel: the propagation-colored gateway map beside a live decoded-call list, above the CAT-confirmed FT8 band strip with a live waterfall and raw decode feed" />
+</p>
+
+<p align="center"><sub>The Station Intelligence panel: the propagation-colored gateway map beside a live decoded-call list, above the CAT-confirmed FT8 waterfall and raw decode feed.</sub></p>
 
 ### Interface and operations
 
