@@ -24,9 +24,22 @@
 2. **Flags, never names.** All new consent/capability behavior derives from
    `ActionDescriptor` flags, matching the existing invariant (capability.rs
    checks read flags; the one WWV name-special-case stays the only one).
-3. **Untyped params stay untyped.** No param-schema machinery is introduced;
-   params are validated at execute time via serde, matching every existing
-   action. The palette needs zero changes (registry-driven).
+3. **Untyped params stay untyped, with two narrow registry-driven authoring
+   affordances (R4 P2-3).** No param-schema machinery is introduced; params
+   are validated at execute time via serde, matching every existing action.
+   Two deliberate, narrow deviations ship because thirteen `data.read`
+   sources authored blind into an empty key/value grid is a
+   memorize-the-schema UX: (a) an optional `example_params` string on the
+   descriptor, seeded into the params grid at palette-insert time (the
+   operator edits a populated, shape-correct grid; `data.read` inserts as
+   `{"source":"modem_status"}`, `data.find_stations` as
+   `{"modes":["vara-hf"],"limit":3}`); (b) an optional `allowed_values`
+   descriptor hint consumed by a contracts-pass lexical check,
+   `UNKNOWN_READ_SOURCE` (Error), for a LITERAL (non-`$`) `source` string
+   outside the known set — a vocabulary lint in the valbar's existing
+   every-edit loop, not a schema. StepInspector also renders the action's
+   `description` line (today it renders none of it, and the palette shows
+   it only as a hover tooltip).
 4. **Journal events are additive, and the reader becomes variant-tolerant
    (R2 P2-1).** New `RunEvent` variants use the established additive-serde
    pattern on optional fields, so old journals replay in new readers. The
@@ -287,9 +300,11 @@ transmit closure semantics) on a step that never keys the radio. Design:
     privileged path" violation §10 bans). Blocks enable and run, never
     save. The existing `AUTO_TX_UNACKED` predicate gains the same third
     clause when `transmit_ack` gains its digest.
-  - `MIXED_MODE_STALL` extends its predicate: an automatic routine calling an
-    attended routine whose closure transmits **or writes** gets the same
-    "will stall on a click nobody gives" warning.
+  - `MIXED_MODE_STALL_WRITE` (Warning): an automatic routine calling an
+    attended routine whose closure writes gets the same "will stall on a
+    click nobody gives" semantics as the existing transmit code, as a
+    DISTINCT write-worded code (R4 P2-1; see the UI-honesty bullet below
+    for why the code is not shared).
   - `ATTENDED_WRITE_UNDER_SCHEDULE` (Warning): scheduled attended routine
     with a write closure, sibling of `ATTENDED_UNDER_SCHEDULE`.
 - **Start gate:** the monolith start gate extends `closure_transmits` /
@@ -302,8 +317,45 @@ transmit closure semantics) on a step that never keys the radio. Design:
   click through (attended). The consent envelope doctrine (§4: after
   acknowledgment all invokers are equivalent) is preserved verbatim, applied
   to a second authority class.
-- **Dry-run:** unchanged machinery; the fake mirrors `writes_config`, dry-runs
-  never park and never write (fake world).
+- **Dry-run gets shape-true fakes (R4 P1-1** — without this, every routine
+  this arc unblocks is un-dry-runnable in composition): the optimistic fake
+  returns `{"dry_run":true}` with no fields, and resolving an unset field is
+  a hard `UnsetVariable` error, so `stations: "$s1.callsigns"` or a branch
+  on `$s1.grid` fails a dry-run of a CORRECT routine with what reads as an
+  authoring mistake. The monolith merges shape-true canned outputs for its
+  own registry's actions before the optimistic default (registry-driven:
+  keyed by the same action names, e.g. `data.find_stations` ->
+  `{"gateways":[],"callsigns":["DRYRUN-1"],"fetched_at_ms":null,
+  "operator_grid":null,"dry_run":true}`; each read source returns its DTO
+  shape with obviously-fake values; `config.set_ardop` ->
+  `{"field":"drive_level","old":0,"new":0,"dry_run":true}`). Dry-runs still
+  touch NOTHING real, never park, never write; the fake shapes are pinned
+  by test.
+- **Consent findings stay class-honest in the UI (R4 P2-1):** the write
+  analog of the mixed-mode warning is a DISTINCT code
+  `MIXED_MODE_STALL_WRITE` (write-worded message), not an extended
+  predicate on the transmit code: the settings surface gates its transmit
+  section on transmit-class codes, and reusing the code would render Part
+  97 transmit copy on a write-only routine. SettingsTab gating is explicit:
+  transmit section keys on transmit-class codes + a direct-step `transmits`
+  scan; the write ack row keys on write-class codes + a direct-step
+  `writes_config` scan.
+- **The ack is a visible signature, and validity is what renders (R4 P1-2,
+  P1-3):** the settings ack panels branch on VALIDITY (ack present AND no
+  `AUTO_TX_UNACKED` / `AUTO_WRITE_UNACKED` finding), never on mere
+  presence; a present-but-invalid ack renders a third explicit state
+  ("Acknowledgment no longer valid: the routine, or a routine it calls,
+  changed after <by> acknowledged on <at>. Re-acknowledge to run
+  automatically.") — the only place the callee-edit invalidation becomes
+  explicable, and the state every pre-digest ack lands in on upgrade day.
+  And the operator sees WHAT they sign: the shared closure walk is exposed
+  as a UI-only command (`routines_consent_closure(name)` returning the
+  same transmit/write step tuples the digest hashes), and both ack rows
+  plus the acknowledged panels enumerate the covered steps verbatim
+  ("This acknowledgment covers: checklist-b · s3 · config.set_ardop ·
+  {...}"), with `WRITE_VALUE_RUNTIME` attached inline to runtime-valued
+  rows. Attended parks already show resolved params; the higher-authority
+  automatic grant must not show less.
 
 ## 6. O3: child run ids in the parent journal
 
@@ -402,7 +454,16 @@ transmit closure semantics) on a step that never keys the radio. Design:
    variants), and add `kind` to the `state_changed` awaiting-consent shape.
 2. `RunsTab.tsx`: two new `stepListModel` cases + `StepListRow.kind` union
    members (`'call'`, `'end'`) + `ROW_ICON` entries + two JSX row branches +
-   the child-run navigation click handler.
+   the child-run navigation click handler. Three presentation rules ride
+   along (R4 P2-4, P3-1, P3-2): navigating to a run outside the current
+   routine's rail renders a context strip above the header ("Viewing a run
+   of <routine> (called by this routine) - back to run <parent short id>",
+   one-deep stack captured at call-row click time) instead of today's
+   unlabeled dead-end; the finished row suppresses its reason when it
+   string-equals the winning end row's reason (state badge stays;
+   divergent multi-track reasons stay visible); and park rows render the
+   journaled kind ("awaiting consent (config write)") so History matches
+   the write-branded dialog.
 3. `PaletteRail.tsx` / `canvasModel.ts` `flagsFor`/category mapping: surface
    the `writes_config` badge (category stays LOCAL-group for `config.*` since
    `needs_radio`/`needs_internet` are false; badge disambiguates).
@@ -420,14 +481,25 @@ transmit closure semantics) on a step that never keys the radio. Design:
 5. `ActionInfo` TS type + Rust `ActionInfo` DTO gain `writes_config`.
 6. **The consent-park surface itself (R3 P2-2** — the dialog IS the
    write-consent surface, so it ships in this arc, not as a follow-up):
-   `ConsentGate.tsx` copy branches on the park `kind` ("Confirm transmit"
-   stays for transmit parks; write parks render "Confirm config write" with
-   write-specific body copy), `routinesEvents.ts` carries `kind` on the
-   awaiting-consent app event, AND `kind` lands on the journaled
-   `state_changed {state: awaiting_consent}` event so ConsentGate's
-   launch-recovery path (which rebuilds parked dialogs from the JOURNAL,
-   not the live event) renders write copy for a write park recovered after
-   an app restart.
+   `ConsentGate.tsx` copy branches on the park kind, covering the header,
+   the Part 97 sub-line, the body, AND the confirm-button label (R4 P2-2:
+   a write park must not render under a "Part 97 §97.109 · you are the
+   control operator" headline; "Confirm transmit" stays for transmit
+   parks, write parks render "Confirm config write" with write-specific
+   copy throughout). The app-event payload field is named **`parkKind`**
+   (the event union's discriminant is already literally `kind`, so the
+   spec's earlier field name collides); `ParkedRun` carries it through
+   `useParkedRuns`; and `parkKind` ALSO lands on the journaled
+   `state_changed {state: awaiting_consent}` event, with the launch
+   recovery scan (`recoverParkedStepId`) reading it from there, so a write
+   park recovered after an app restart renders write copy.
+7. `StepInspector.tsx`: the WRITES badge joins its hardcoded RIG/TX/NET
+   flags row (R4 P3-3 — palette-only badging would vanish for the
+   selected step), and the action `description` line renders (see §0.3).
+8. `WRITE_VALUE_RUNTIME` finding message, per the findings-style rule that
+   messages name the offending entity verbatim (R4 P3-4):
+   `step "s3" write param "drive_level" is "$args.level" - the value is
+   chosen at run time by whoever starts the run`.
 
 ## 8b. Definition format, migration, and propagation
 
@@ -453,6 +525,12 @@ transmit closure semantics) on a step that never keys the radio. Design:
   targets resolve live in shipped code; bd follow-up tracks pinning). ADR
   0024 needs no new exception entries, and no CLAUDE.md rule changes, so
   no AGENTS.md parity action is required.
+- **User-guide reference (R4 P3-5).** `docs/user-guide/` has no routines
+  chapter, so the operator who searches Help for "find stations" or "read
+  source" gets zero hits and the only in-app reference for action params is
+  a hover tooltip. This arc adds a routines-actions reference page (action
+  catalog: names, params, sources, consent classes) — which rank 4's
+  `data.docs_search` then also makes searchable BY a routine.
 
 ## 9. Testing strategy
 
@@ -485,8 +563,16 @@ transmit closure semantics) on a step that never keys the radio. Design:
   `radio.connect` `stations`, asserting the resolved param is the sorted
   callsign array.
 - **Frontend (Pi vitest):** stepListModel cases for `call_child`/`end_reached`
-  (row kinds, child-run click), palette badge, ack-row gating. Full
-  `pnpm vitest run src/routines` + typecheck.
+  (row kinds, child-run click, foreign-run context strip, finished-row
+  reason suppression, park-row kind), palette + StepInspector WRITES badge,
+  description render, example-params seeding, ack-panel VALIDITY branching
+  (present-but-invalid third state), closure-enumeration render, ConsentGate
+  parkKind copy branching incl. launch recovery from the journaled kind.
+  Full `pnpm vitest run src/routines` + typecheck.
+- **Dry-run shapes:** pinned tests that every new action's canned dry-run
+  output contains the fields the spec's own authoring patterns reference
+  (`callsigns`, `grid`, `state`, `drive_level`, `old`/`new`), so the
+  marquee composition dry-runs green end-to-end.
 - **Acceptance (post-merge, live app):** converge rebuild, then a fresh
   wire-walk: a probe exercising branch + skip + call (child) + end +
   a config write in attended mode, captured via `routines_journal_get` and
