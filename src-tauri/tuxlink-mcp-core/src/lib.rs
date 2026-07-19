@@ -171,7 +171,8 @@ pub mod test_support {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use crate::ports::{
-        AbortPort, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto, AudioDevicesDto,
+        AbortPort, ActionInfoDto, ActionsCatalogDto, ArdopConfigDto, ArdopWriteDto,
+        AttachmentMetaDto, AudioDevicesDto, TriggerKindDto,
         BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto, ChannelReliabilityDto,
         ComposeDraftDto, ComposePort, ConfigPort, ConfigViewDto, DevicePort, DocBodyDto,
         DocsHitDto, DryRunStartedDto, EgressPort, EgressPortError, EnableResultDto, FindingDto,
@@ -993,6 +994,28 @@ pub mod test_support {
 
     #[async_trait]
     impl RoutinesPort for MockRoutines {
+        async fn actions_catalog(&self) -> Result<ActionsCatalogDto, PortError> {
+            Ok(ActionsCatalogDto {
+                actions: vec![ActionInfoDto {
+                    name: "radio.connect".into(),
+                    label: "Connect".into(),
+                    description: "Connect to a Winlink gateway".into(),
+                    needs_radio: true,
+                    transmits: true,
+                    writes_config: false,
+                    needs_internet: false,
+                    example_params: Some("{\"stations\":[\"N0DAJ\"]}".into()),
+                    allowed_values: None,
+                }],
+                trigger_kinds: vec![TriggerKindDto {
+                    r#type: "manual".into(),
+                    description: "operator-initiated only".into(),
+                    fields: serde_json::json!({}),
+                    example: serde_json::json!({"type": "manual"}),
+                }],
+            })
+        }
+
         async fn list(&self) -> Result<Vec<RoutineSummaryDto>, PortError> {
             Ok(vec![RoutineSummaryDto {
                 routine: SEED_ROUTINE.into(),

@@ -250,7 +250,10 @@ model as everything else:
 ### 4.3 Routines: authoring, validating, running
 
 Elmer can author, validate, and run Routines, Tuxlink's flowchart-based
-automation, through a ten-tool family: `routines_list`, `routines_get`,
+automation, through an eleven-tool family: `routines_list`,
+`routines_actions_list` (the authoring catalog — every valid step action with
+its example params and consent class, plus the trigger kinds; action names are
+a closed set, so call this before writing a definition), `routines_get`,
 `routines_validate`, `routines_save`, `routines_enable`, `routines_disable`,
 `routines_run`, `routines_dry_run`, `routines_run_status`, and
 `routines_journal_get`

@@ -42,13 +42,26 @@ pub fn check(def: &RoutineDef, ctx: &dyn ValidationContext, findings: &mut Vec<F
                     );
 
                     if ctx.action_descriptor(&action_step.action).is_none() {
+                        // Enumerate the valid set IN the finding (tuxlink-dngvs):
+                        // an author iterating on save findings has no other
+                        // in-band path from a wrong guess to a right name —
+                        // both live models invented plausible names
+                        // ("modem.vara.connect") and were rejected one guess
+                        // at a time (2026-07-19 transcript evidence).
+                        let mut known = ctx.action_names();
+                        known.sort();
+                        let known_clause = if known.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" Known actions: {}.", known.join(", "))
+                        };
                         findings.push(
                             Finding::error(
                                 UNKNOWN_ACTION,
                                 def.routine.clone(),
                                 format!(
-                                    "step \"{}\" uses action \"{}\", which is not a known action",
-                                    action_step.id.0, action_step.action
+                                    "step \"{}\" uses action \"{}\", which is not a known action.{}",
+                                    action_step.id.0, action_step.action, known_clause
                                 ),
                             )
                             .with_track(track.name.clone())
@@ -216,6 +229,35 @@ mod tests {
         let mut findings = Vec::new();
         check(&def, &ctx, &mut findings);
         assert!(findings.is_empty());
+    }
+
+    /// tuxlink-dngvs: the UNKNOWN_ACTION message enumerates the valid action
+    /// set, sorted — the agent author's only in-band path from a wrong guess
+    /// to a right name.
+    /// A descriptor with only the name varied (capabilities irrelevant here).
+    fn named(name: &'static str) -> ActionDescriptor {
+        ActionDescriptor {
+            name,
+            ..RADIO_CONNECT
+        }
+    }
+
+    #[test]
+    fn unknown_action_message_enumerates_known_actions_sorted() {
+        let def = routine_with_action_step("modem.vara.connect", json!({}));
+        let ctx = StaticContext::new()
+            .with_action(RADIO_CONNECT)
+            .with_action(named("data.read"))
+            .with_action(named("aprs.beacon"));
+        let mut findings = Vec::new();
+        check(&def, &ctx, &mut findings);
+
+        assert_eq!(findings.len(), 1);
+        let msg = &findings[0].message;
+        assert!(
+            msg.contains("Known actions: aprs.beacon, data.read, radio.connect"),
+            "sorted enumeration must be in the message: {msg}"
+        );
     }
 
     #[test]
