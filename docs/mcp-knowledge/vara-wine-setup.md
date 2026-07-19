@@ -105,6 +105,11 @@ deterministically — no GUI automation.
    TCP Command Port` in the same call — the primary's 8300 default is never
    assumed for a second instance).
 
+If your edits move `[Setup] TCP Command Port` on the primary instance,
+Tuxlink's own session config follows automatically, so `vara_open_session` /
+`vara_probe` keep working. A `vara2` port never touches the app session
+config.
+
 Soundcard names in the INI live in VARA's OWN (WINE audio) namespace, which
 may differ from raw ALSA names — when setting `Input/Output Device Name`,
 prefer names you read back from this file or that the operator confirmed

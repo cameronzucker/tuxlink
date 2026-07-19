@@ -1715,14 +1715,19 @@ impl WritePort for MonolithWritePort {
                 // Blocking work (process stop, settle wait, WINE launch +
                 // port wait) runs off the async runtime.
                 let report = tokio::task::spawn_blocking(move || {
-                    ini_config::run_vara_ini_apply(
+                    let report = ini_config::run_vara_ini_apply(
                         &slot,
                         Some(&session),
                         &prefix,
                         instance,
                         &edits,
                         relaunch,
-                    )
+                    )?;
+                    // Wire-walk seam: if the edit moved the primary's cmd
+                    // port, the app session config must follow, or
+                    // vara_open_session keeps dialing the old port.
+                    ini_config::sync_app_session_port(instance, &report);
+                    Ok::<_, String>(report)
                 })
                 .await
                 .map_err(|e| WritePortError::Failed(format!("join: {e}")))?

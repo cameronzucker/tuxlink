@@ -472,6 +472,41 @@ fn spawn_vara(dir: &Path, prefix: &Path) -> Result<ManagedModem, String> {
         .map_err(|e| format!("failed to launch VARA under WINE: {e}"))
 }
 
+/// After a successful PRIMARY-instance apply, keep the app's own session
+/// config pointing at the modem: if the INI's cmd port moved away from
+/// `VaraUiConfig.cmd_port`, follow it (data port = cmd+1 by VARA convention).
+/// Without this, `vara_open_session` / `vara_probe` keep dialing the OLD
+/// port after an agent re-ports VARA — the INI and the app config are two
+/// sources of truth and this is the seam between them (wire-walk finding,
+/// 2026-07-18). `Vara2` never syncs: the app session models the primary
+/// engine. Failure only logs — the apply itself already succeeded, and the
+/// next apply (or the operator's settings panel) can re-sync.
+pub fn sync_app_session_port(instance: VaraInstance, report: &VaraIniApplyReport) {
+    if instance != VaraInstance::Primary {
+        return;
+    }
+    let Some(port) = report.cmd_port else { return };
+    let mut cfg = super::commands::config_get_vara();
+    if cfg.cmd_port == port {
+        return;
+    }
+    tracing::info!(
+        target: LOG_TARGET,
+        from = cfg.cmd_port,
+        to = port,
+        "VARA.ini moved the cmd port — syncing the app session config to follow",
+    );
+    cfg.cmd_port = port;
+    cfg.data_port = port.saturating_add(1);
+    if let Err(e) = super::commands::config_set_vara(cfg) {
+        tracing::warn!(
+            target: LOG_TARGET,
+            error = %e,
+            "failed to sync app VARA session config; vara_open_session may dial the old port",
+        );
+    }
+}
+
 /// Line-integrity hygiene for one edit, applied on EVERY apply path (Tauri
 /// command and MCP tool alike). The INI layer writes values verbatim, so an
 /// embedded newline would inject extra lines and an `=` in a key would split
@@ -837,7 +872,9 @@ pub async fn vara_ini_apply(
     let instance = instance.unwrap_or_default();
     let relaunch = relaunch.unwrap_or(true);
     tauri::async_runtime::spawn_blocking(move || {
-        run_vara_ini_apply(&slot, Some(&session), &prefix, instance, &edits, relaunch)
+        let report = run_vara_ini_apply(&slot, Some(&session), &prefix, instance, &edits, relaunch)?;
+        sync_app_session_port(instance, &report);
+        Ok(report)
     })
     .await
     .map_err(|e| format!("join: {e}"))?
