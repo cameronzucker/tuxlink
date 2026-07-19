@@ -216,7 +216,10 @@ export function updateStep(def: RoutineDef, stepId: string, patch: StepPatch): R
  * its own dedicated ops). `schema_version` is deliberately excluded — it is
  * a storage-format version this module doesn't renegotiate. */
 export type SettingsPatch = Partial<
-  Pick<RoutineDef, 'routine' | 'transmit_mode' | 'transmit_ack' | 'on_interrupted' | 'inputs' | 'triggers'>
+  Pick<
+    RoutineDef,
+    'routine' | 'transmit_mode' | 'transmit_ack' | 'write_ack' | 'on_interrupted' | 'inputs' | 'triggers'
+  >
 >;
 
 export function updateSettings(def: RoutineDef, patch: SettingsPatch): RoutineDef {

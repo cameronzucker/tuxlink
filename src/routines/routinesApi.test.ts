@@ -24,7 +24,7 @@ beforeEach(() => {
 });
 
 describe('ROUTINES_UI_COMMANDS manifest', () => {
-  it('manifest names all 18 pre-existing commands plus the 9 UI-only additions', () => {
+  it('manifest names all 18 pre-existing commands plus the 11 UI-only additions', () => {
     const required = [
       'routines_list','routines_get','routines_save','routines_delete','routines_set_enabled',
       'routines_run','routines_dry_run','routines_cancel','routines_run_status','routines_journal',
@@ -34,8 +34,26 @@ describe('ROUTINES_UI_COMMANDS manifest', () => {
       'routines_acknowledge_automatic','routines_validate','routines_validate_draft',
       'routines_actions_list','routines_next_fires','routines_runs_list','routines_fleet_check',
       'routines_export_run_bundle','routines_take_radio',
+      'routines_acknowledge_write','routines_consent_closure',
     ];
     expect([...api.ROUTINES_UI_COMMANDS].sort()).toEqual([...required].sort());
+  });
+
+  it('acknowledgeWrite passes the routine name as { name }', async () => {
+    await api.acknowledgeWrite('morning-sweep');
+    expect(mockInvoke.mock.calls.find((c) => c[0] === 'routines_acknowledge_write')?.[1])
+      .toEqual({ name: 'morning-sweep' });
+  });
+
+  it('consentClosure passes { name } and returns the view through', async () => {
+    mockInvoke.mockImplementation((cmd?: string) =>
+      cmd === undefined
+        ? Promise.resolve()
+        : Promise.resolve({ transmitSteps: [], writeSteps: [], callEdges: [] }));
+    const view = await api.consentClosure('morning-sweep');
+    expect(mockInvoke.mock.calls.find((c) => c[0] === 'routines_consent_closure')?.[1])
+      .toEqual({ name: 'morning-sweep' });
+    expect(view).toEqual({ transmitSteps: [], writeSteps: [], callEdges: [] });
   });
 });
 
