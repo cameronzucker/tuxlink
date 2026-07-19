@@ -566,7 +566,7 @@ function NonLiveBody({
       // re-entry to a full-panel takeover (superseded; see Task 3, which
       // deletes that full-panel surface entirely).
       return (
-        <div className="si-strip__notice--setup" data-testid="ft8-strip-body-needs-setup">
+        <div className="si-strip__notice si-strip__notice--setup" data-testid="ft8-strip-body-needs-setup">
           {snapshot && (
             <Ft8StripSetup snapshot={snapshot} onStarted={onRehydrate} onRetry={onRehydrate} />
           )}
