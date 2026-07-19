@@ -315,7 +315,7 @@ not have.
 ### FT8 listener
 
 <img src="docs/readme/images/tuxlink-ft8-waterfall.png" width="340" align="right"
-     alt="Station Intelligence panel: the propagation-colored gateway map and per-band reachability card above the FT8 live-band strip with its waterfall and decode list" />
+     alt="Station Intelligence panel: the propagation-colored gateway map beside a live decoded-call list, above the CAT-confirmed FT8 band strip with a live waterfall and raw decode feed" />
 
 A receive-only FT8 listener renders a live waterfall, a decoded-call list, and
 a CAT-driven band strip for sweeping across the FT8 sub-bands. It exists as a
