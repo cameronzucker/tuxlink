@@ -19,6 +19,7 @@ pub mod memory_estimate;
 pub mod model_config_state;
 pub mod provider;
 pub mod session;
+pub mod transcript_sink;
 
 #[cfg(test)]
 mod injection_tests;

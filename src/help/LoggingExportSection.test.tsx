@@ -184,6 +184,67 @@ describe('LoggingExportSection — Export button', () => {
   });
 });
 
+describe('LoggingExportSection — Export agent transcripts (tuxlink-gzbpo)', () => {
+  it('calls saveDialog then elmer_transcript_export on click', async () => {
+    mockSaveDialog.mockResolvedValue('/tmp/tuxlink-elmer-transcripts.tar.zst');
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'logging_status') return Promise.resolve(MOCK_STATUS);
+      if (cmd === 'elmer_transcript_export') {
+        return Promise.resolve({
+          output_path: '/tmp/tuxlink-elmer-transcripts.tar.zst',
+          archive_size_bytes: 4096,
+          sessions_in_archive: 2,
+        });
+      }
+      return Promise.resolve(null);
+    });
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      React.createElement(QueryClientProvider, { client },
+        React.createElement(LoggingExportSection),
+      ),
+    );
+
+    const btn = screen.getByRole('button', { name: /export agent transcripts/i });
+    fireEvent.click(btn);
+
+    await waitFor(() => {
+      expect(mockInvoke).toHaveBeenCalledWith('elmer_transcript_export', {
+        outputPath: '/tmp/tuxlink-elmer-transcripts.tar.zst',
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(/saved 2 transcript sessions.*4\.0 KB/i);
+    });
+  });
+
+  it('surfaces the no-transcripts error from the backend', async () => {
+    mockSaveDialog.mockResolvedValue('/tmp/tuxlink-elmer-transcripts.tar.zst');
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'logging_status') return Promise.resolve(MOCK_STATUS);
+      if (cmd === 'elmer_transcript_export') {
+        return Promise.reject('no Elmer transcripts captured yet — run an Elmer turn first');
+      }
+      return Promise.resolve(null);
+    });
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      React.createElement(QueryClientProvider, { client },
+        React.createElement(LoggingExportSection),
+      ),
+    );
+
+    const btn = screen.getByRole('button', { name: /export agent transcripts/i });
+    fireEvent.click(btn);
+
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(/no Elmer transcripts captured yet/i);
+    });
+  });
+});
+
 describe('LoggingExportSection — Open log directory', () => {
   it('invokes logging_open_directory on click', async () => {
     renderExport();
