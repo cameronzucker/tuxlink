@@ -936,6 +936,8 @@ impl RoutineInvoker for SessionChildInvoker {
                 // than wedge the registry entry at `Running` forever).
                 Err(_) => RunOutcome {
                     state: RunState::Failed,
+                    reason: None,
+                    end_step: None,
                 },
             };
             {

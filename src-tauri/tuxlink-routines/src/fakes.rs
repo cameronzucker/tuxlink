@@ -289,6 +289,8 @@ impl RoutineInvoker for FakeInvoker {
         // the real replayed value through `await_outcome`, not this state.
         let _ = tx.send(RunOutcome {
             state: RunState::Completed,
+            reason: None,
+            end_step: None,
         });
         Ok(ChildHandle::from_parts(run_id, child, rx))
     }

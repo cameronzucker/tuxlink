@@ -325,12 +325,21 @@ impl Engine {
         let journal_arc = ctx.journal.clone();
         tokio::spawn(async move {
             let result = run_tracks(&tracks, vars, &ctx).await;
-            let (state, reason) = match &result {
-                Ok(o) => (o.state, None),
-                Err(StepError::Cancelled) => (RunState::Cancelled, None),
-                Err(e) => (RunState::Failed, Some(e.to_string())),
+            // O4: an End-terminated run carries its authored reason + end step
+            // through `RunOutcome`; propagate it into `RunFinished` (the old
+            // code always wrote `None` here, dropping every End reason). A
+            // propagated `StepErr` still wins — `run_tracks` returns `Err` for
+            // it, so the error string is used ahead of any End reason.
+            let (state, reason, end_step) = match &result {
+                Ok(o) => (o.state, o.reason.clone(), o.end_step.clone()),
+                Err(StepError::Cancelled) => (RunState::Cancelled, None, None),
+                Err(e) => (RunState::Failed, Some(e.to_string()), None),
             };
-            let outcome = RunOutcome { state };
+            let outcome = RunOutcome {
+                state,
+                reason: reason.clone(),
+                end_step,
+            };
             // RunFinished is appended exactly once, on every path (success,
             // failure, cancel) — this is the single point that does it. Use
             // `unwrap_or_else` rather than `unwrap` on the lock: if a
@@ -1490,5 +1499,113 @@ mod tests {
             RunEvent::StepOk { output, .. } if output.get("from") == Some(&json!("fake")))));
         // The fake never spawned a real child run: only the parent journal exists.
         assert_eq!(jsonl_files(dir.path()).len(), 1);
+    }
+
+    // --- Task B3: End reason threads into run_finished; ordering; precedence
+    //     (O4) ---------------------------------------------------------------
+
+    /// A single-track routine that ends mid-track (a step after the End is
+    /// swept). Used to prove (a) `run_finished.reason` carries the End reason
+    /// (the old code always wrote `None`), and (b) the journal ordering
+    /// end_reached < step_skipped < run_finished.
+    const B3_ENDER_DEF: &str = r#"{
+      "routine": "ender", "schema_version": 1, "transmit_mode": "automatic",
+      "on_interrupted": "stay", "inputs": [], "triggers": [{"type": "manual"}],
+      "tracks": [{ "name": "t", "steps": [
+        { "id": "s1", "action": "local.log", "params": {} },
+        { "id": "e1", "control": "end", "failed": true, "reason": "why" },
+        { "id": "s2", "action": "local.log", "params": {} }
+      ]}]
+    }"#;
+
+    // (a, engine half) + (b): the End reason reaches run_finished, and the
+    // journal order is end_reached -> step_skipped -> run_finished.
+    #[tokio::test]
+    async fn b3_end_reason_threads_into_run_finished_in_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let eng = engine(dir.path());
+        let def = RoutineDef::parse(B3_ENDER_DEF).unwrap();
+        let handle = eng.start_run(&def, json!({})).await.unwrap();
+        let outcome = handle.done.await.unwrap();
+        assert_eq!(outcome.state, RunState::Failed);
+        assert_eq!(outcome.reason.as_deref(), Some("why"));
+
+        let jpath = dir.path().join(format!("{}.jsonl", handle.run_id));
+        let entries = read_journal(&jpath).unwrap();
+
+        // run_finished carries the End reason (the dropped-reason defect fix).
+        let finished = entries
+            .iter()
+            .find_map(|e| match &e.event {
+                RunEvent::RunFinished { state, reason } => Some((*state, reason.clone())),
+                _ => None,
+            })
+            .expect("a run_finished entry");
+        assert_eq!(finished, (RunState::Failed, Some("why".into())));
+
+        let s_end = seq_of(&entries, |e| matches!(e, RunEvent::EndReached { .. })).unwrap();
+        let s_skip = seq_of(&entries, |e| {
+            matches!(e, RunEvent::StepSkipped { step, .. } if step.0 == "s2")
+        })
+        .unwrap();
+        let s_fin = seq_of(&entries, |e| matches!(e, RunEvent::RunFinished { .. })).unwrap();
+        assert!(
+            s_end < s_skip && s_skip < s_fin,
+            "ordering end_reached({s_end}) < step_skipped({s_skip}) < run_finished({s_fin})"
+        );
+    }
+
+    /// (d) A propagated StepErr outranks a failed-End reason: the erroring
+    /// track finishes first (no await point) and cancels the End track (parked
+    /// on a delay), so `run_finished.reason` is the verbatim error string, not
+    /// the End's authored "end reason".
+    #[tokio::test(start_paused = true)]
+    async fn b3_propagated_step_err_wins_over_end_reason() {
+        const CLASH_DEF: &str = r#"{
+          "routine": "clash", "schema_version": 1, "transmit_mode": "automatic",
+          "on_interrupted": "stay", "inputs": [], "triggers": [{"type": "manual"}],
+          "tracks": [
+            { "name": "err", "steps": [ { "id": "b1", "action": "boom", "params": {} } ] },
+            { "name": "end", "steps": [
+                { "id": "d1", "control": "delay", "delay": "+1h" },
+                { "id": "e1", "control": "end", "failed": true, "reason": "end reason" }
+            ] }
+          ]
+        }"#;
+        let dir = tempfile::tempdir().unwrap();
+        let mut reg = ActionRegistry::default();
+        reg.register(Arc::new(FakeAction::new("boom").err("child boom: CAT stuck")));
+        let eng = Arc::new(Engine::new(EngineConfig {
+            journal_dir: dir.path().to_path_buf(),
+            registry: Arc::new(reg),
+            resolver: Arc::new(FakeResolver::new()),
+            now: fixed_now,
+            default_timeout_s: 3600,
+            lookup: None,
+            consent: None,
+        }));
+        let def = RoutineDef::parse(CLASH_DEF).unwrap();
+        let handle = eng.start_run(&def, json!({})).await.unwrap();
+        let outcome = handle.done.await.unwrap();
+        assert_eq!(outcome.state, RunState::Failed);
+
+        let jpath = dir.path().join(format!("{}.jsonl", handle.run_id));
+        let entries = read_journal(&jpath).unwrap();
+        let reason = entries
+            .iter()
+            .find_map(|e| match &e.event {
+                RunEvent::RunFinished { reason, .. } => Some(reason.clone()),
+                _ => None,
+            })
+            .flatten()
+            .expect("run_finished carries a reason");
+        assert!(
+            reason.contains("child boom: CAT stuck"),
+            "the StepErr string wins, got {reason:?}"
+        );
+        assert!(
+            !reason.contains("end reason"),
+            "the End reason must NOT win over a propagated StepErr, got {reason:?}"
+        );
     }
 }
