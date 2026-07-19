@@ -86,6 +86,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { Button } from '../controls';
 import { RigControlSection } from '../radio/modes/RigControlSection';
 import type { RigControlSectionHandle } from '../radio/modes/RigControlSection';
+import { useDeviceMeterPoll } from './useDeviceMeterPoll';
 import type {
   AudioDeviceChoice,
   BlockedReasonDto,
@@ -96,10 +97,6 @@ import type {
   StableAudioId,
 } from './ft8Types';
 import './Ft8SetupSurface.css';
-
-/** ~2 Hz per §FirstRun Step 1 ("live level meter … poll ~2 Hz while the
- *  picker is visible"). */
-const METER_POLL_MS = 500;
 
 export interface Ft8SetupSurfaceProps {
   /** The current listener snapshot. The caller only mounts this component
@@ -157,92 +154,12 @@ function formatDialMHz(dialHz: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// Per-row live meter — polls `ft8_device_meter` at ~2 Hz while `enabled`.
-// Exposes `stopAndAwait`, the race-safety handover primitive (§FirstRun
-// "Meter/start handover"): stops future polls immediately AND awaits any
-// poll already in flight, so the row's device handle is guaranteed released
-// before the caller proceeds to `ft8_set_device` (Task D2: select-only now —
-// see the file header — but the same handle-release race applies whether
-// the pick then starts capture or merely persists). The `enabled` prop
-// doubles as the RESUME signal (Task D2 "meter resumes"): `DeviceRow` passes
-// `!busy`, so once the parent's `selecting` flag drops back to false after
-// the persist settles, this effect's `enabled` dependency flips true again
-// and polling restarts on its own — no separate resume primitive needed.
+// Per-row live meter: `useDeviceMeterPoll` now lives in its own module
+// (src/ft8ui/useDeviceMeterPoll.ts, Task 1 of the Station Intelligence
+// usability series) so the compact in-strip setup form (Ft8StripSetup) can
+// share it without importing this whole panel. Logic unchanged; see that
+// module's doc comment for the race-safety / resume contract.
 // ---------------------------------------------------------------------------
-
-interface DeviceMeterState {
-  meter: MeterDto | null;
-  error: Ft8CmdError | null;
-  stopAndAwait: () => Promise<void>;
-}
-
-function useDeviceMeterPoll(stableId: StableAudioId, enabled: boolean): DeviceMeterState {
-  const [meter, setMeter] = useState<MeterDto | null>(null);
-  const [error, setError] = useState<Ft8CmdError | null>(null);
-
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const inFlightRef = useRef<Promise<void> | null>(null);
-  const stoppedRef = useRef(false);
-  const mountedRef = useRef(true);
-  const idRef = useRef(stableId);
-  idRef.current = stableId;
-
-  const poll = useCallback(() => {
-    if (stoppedRef.current) return;
-    const id = idRef.current;
-    const p = invoke<MeterDto>('ft8_device_meter', { stableId: id })
-      .then((m) => {
-        if (!mountedRef.current || stoppedRef.current) return;
-        setMeter(m);
-        setError(null);
-      })
-      .catch((e: unknown) => {
-        if (!mountedRef.current || stoppedRef.current) return;
-        // ft8_device_meter's real error kinds: device-not-found |
-        // device-reserved | internal-error (never device-in-use — a busy
-        // device is the Ok state:'in-use' value, handled by the caller).
-        setError(isFt8CmdError(e) ? e : { kind: 'internal-error', detail: cmdErrorMessage(e) });
-      })
-      .finally(() => {
-        inFlightRef.current = null;
-      });
-    inFlightRef.current = p;
-  }, []);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    stoppedRef.current = false;
-    if (!enabled) return undefined;
-
-    poll(); // immediate first read, then ~2 Hz
-    timerRef.current = setInterval(poll, METER_POLL_MS);
-
-    return () => {
-      mountedRef.current = false;
-      stoppedRef.current = true;
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-    };
-    // `stableId` changes are handled via the `key`-remounted DeviceRow, not
-    // an effect dependency here — idRef.current always tracks the latest.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, poll]);
-
-  const stopAndAwait = useCallback(async () => {
-    stoppedRef.current = true;
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-    if (inFlightRef.current) {
-      await inFlightRef.current;
-    }
-  }, []);
-
-  return { meter, error, stopAndAwait };
-}
 
 // ---------------------------------------------------------------------------
 // One device row: name · alsaHw · live meter · in-use badge · "use this
