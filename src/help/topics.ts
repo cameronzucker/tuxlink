@@ -93,6 +93,7 @@ export const SECTIONS: readonly HelpSection[] = [
       '22-user-folders',
       '23-catalog-requests',
       '35-agent-mcp',
+      '39-routines-actions',
       '38-pop-out-windows',
     ],
   },

@@ -12,7 +12,7 @@ use crate::compose::{CallCtx, ChildHandle, Provenance, RoutineInvoker};
 use crate::consent::ConsentPort;
 use crate::error::{SnapshotError, StepError};
 use crate::executor::RunOutcome;
-use crate::journal::RunState;
+use crate::journal::{ParkKind, RunState};
 use crate::refs::EntityRef;
 use crate::snapshot::EntityResolver;
 
@@ -29,6 +29,11 @@ pub struct FakeAction {
     descriptor: ActionDescriptor,
     outcomes: Mutex<Vec<Outcome>>,
     calls: Mutex<Vec<serde_json::Value>>,
+    /// Params-aware dry-run mode (D6): when set AND no scripted outcome is
+    /// queued, `execute` returns `shape(resolved_params)` — the mechanism the
+    /// dry-run registry uses to replay a descriptor's `dry_run_shape` against
+    /// the resolved params (so `data.read` can differ its output by `source`).
+    shape: Option<fn(&serde_json::Value) -> serde_json::Value>,
 }
 
 impl FakeAction {
@@ -41,10 +46,15 @@ impl FakeAction {
                 description: "",
                 needs_radio: false,
                 transmits: false,
+                writes_config: false,
                 needs_internet: false,
+                example_params: None,
+                allowed_values: None,
+                dry_run_shape: None,
             },
             outcomes: Mutex::new(Vec::new()),
             calls: Mutex::new(Vec::new()),
+            shape: None,
         }
     }
 
@@ -61,8 +71,44 @@ impl FakeAction {
             description: "",
             needs_radio,
             transmits,
+            writes_config: false,
             needs_internet,
+            example_params: None,
+            allowed_values: None,
+            dry_run_shape: None,
         };
+        self
+    }
+
+    /// Override the `writes_config` capability flag (D5 write actions + the
+    /// C2 park-kind tests). Mutates the flag in place so it composes after
+    /// [`with_capabilities`](Self::with_capabilities), which resets it to
+    /// `false`.
+    pub fn with_writes_config(mut self, writes_config: bool) -> Self {
+        self.descriptor.writes_config = writes_config;
+        self
+    }
+
+    /// Advertise a `dry_run_shape` on this fake's DESCRIPTOR (D6) — the
+    /// source-side of the mechanism: `build_dryrun_registry` reads
+    /// `descriptor.dry_run_shape` off the real registry and threads it into the
+    /// fake it builds. A leaf test that wants a shape-carrying "real" action
+    /// uses this to simulate what the monolith action descriptors declare.
+    /// Mutates in place so it composes after `with_capabilities`.
+    pub fn with_dry_run_shape(
+        mut self,
+        shape: fn(&serde_json::Value) -> serde_json::Value,
+    ) -> Self {
+        self.descriptor.dry_run_shape = Some(shape);
+        self
+    }
+
+    /// Put this fake into params-aware dry-run mode (D6) — the execute-side of
+    /// the mechanism: with no scripted outcome queued, `execute` returns
+    /// `shape(resolved_params)`. The dry-run registry sets this from a
+    /// descriptor's `dry_run_shape`; scripted outcomes still take precedence.
+    pub fn with_shape(mut self, shape: fn(&serde_json::Value) -> serde_json::Value) -> Self {
+        self.shape = Some(shape);
         self
     }
 
@@ -100,7 +146,7 @@ impl Action for FakeAction {
         params: serde_json::Value,
         cancel: CancellationToken,
     ) -> Result<serde_json::Value, StepError> {
-        self.calls.lock().unwrap().push(params);
+        self.calls.lock().unwrap().push(params.clone());
         let outcome = {
             let mut outcomes = self.outcomes.lock().unwrap();
             if outcomes.len() > 1 {
@@ -110,7 +156,12 @@ impl Action for FakeAction {
                     Some(Outcome::Ok(v)) => Outcome::Ok(v.clone()),
                     Some(Outcome::Err(s)) => Outcome::Err(s.clone()),
                     Some(Outcome::Hang) => Outcome::Hang,
-                    None => Outcome::Ok(serde_json::json!({})),
+                    // No scripted outcome: params-aware dry-run shape if one is
+                    // set (D6), else the empty-ok default.
+                    None => match self.shape {
+                        Some(shape) => Outcome::Ok(shape(&params)),
+                        None => Outcome::Ok(serde_json::json!({})),
+                    },
                 }
             }
         };
@@ -133,7 +184,7 @@ impl Action for FakeAction {
 /// (used to exercise the executor's cancel-while-parked path).
 pub struct FakeConsent {
     behavior: ConsentBehavior,
-    parked: Mutex<Vec<(String, String)>>,
+    parked: Mutex<Vec<(String, String, ParkKind)>>,
 }
 
 enum ConsentBehavior {
@@ -158,17 +209,28 @@ impl FakeConsent {
 
     /// Every `(run_id, step_id)` that parked on this port, in park order.
     pub fn parked(&self) -> Vec<(String, String)> {
-        self.parked.lock().unwrap().clone()
+        self.parked
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(r, s, _)| (r.clone(), s.clone()))
+            .collect()
+    }
+
+    /// The [`ParkKind`] each park was requested with, in park order — lets
+    /// C2 tests assert the executor handed the port the right consent class.
+    pub fn parked_kinds(&self) -> Vec<ParkKind> {
+        self.parked.lock().unwrap().iter().map(|(_, _, k)| *k).collect()
     }
 }
 
 #[async_trait]
 impl ConsentPort for FakeConsent {
-    async fn park(&self, run_id: &str, step_id: &str) -> Result<(), StepError> {
+    async fn park(&self, run_id: &str, step_id: &str, kind: ParkKind) -> Result<(), StepError> {
         self.parked
             .lock()
             .unwrap()
-            .push((run_id.to_string(), step_id.to_string()));
+            .push((run_id.to_string(), step_id.to_string(), kind));
         match self.behavior {
             ConsentBehavior::GrantAfter(d) => {
                 tokio::time::sleep(d).await;

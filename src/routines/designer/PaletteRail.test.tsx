@@ -181,3 +181,78 @@ describe('PaletteRail — click-with-armed-insert', () => {
     expect(onInsert).toHaveBeenCalledWith({ id: 's1', control: 'call', routine: '' });
   });
 });
+
+describe('PaletteRail — E3: example-params seeding on insert (D6 exampleParams)', () => {
+  it('seeds the parsed example_params object into the new step when the action carries one', () => {
+    const actions: ActionInfo[] = [
+      {
+        name: 'data.read',
+        label: 'Read a value',
+        description: 'Read a status/config source',
+        needsRadio: false,
+        needsInternet: false,
+        transmits: false,
+        exampleParams: '{"source":"modem_status"}',
+      },
+    ];
+    const { onInsert } = renderPalette({ actions, armedInsert: null, def: EMPTY_DEF });
+    fireEvent.click(screen.getByTestId('palette-item-data.read'));
+    expect(onInsert).toHaveBeenCalledWith({
+      id: 's1',
+      action: 'data.read',
+      params: { source: 'modem_status' },
+    });
+  });
+
+  it('still seeds {} for an action with no example_params (unchanged default)', () => {
+    // ACTIONS' local.notify has no exampleParams.
+    const { onInsert } = renderPalette({ armedInsert: null });
+    fireEvent.click(screen.getByTestId('palette-item-local.notify'));
+    expect(onInsert).toHaveBeenCalledWith({ id: 's1', action: 'local.notify', params: {} });
+  });
+
+  it('falls back to {} when example_params is explicit null', () => {
+    const actions: ActionInfo[] = [
+      { name: 'local.notify', label: '', description: '', needsRadio: false, needsInternet: false, transmits: false, exampleParams: null },
+    ];
+    const { onInsert } = renderPalette({ actions, armedInsert: null });
+    fireEvent.click(screen.getByTestId('palette-item-local.notify'));
+    expect(onInsert).toHaveBeenCalledWith({ id: 's1', action: 'local.notify', params: {} });
+  });
+});
+
+describe('PaletteRail — E3: WRITES badge + config.* stays LOCAL', () => {
+  const CONFIG_ACTIONS: ActionInfo[] = [
+    {
+      name: 'config.set_ardop',
+      label: 'Set ARDOP drive level',
+      description: 'Writes the ARDOP drive level',
+      needsRadio: false,
+      needsInternet: false,
+      transmits: false,
+      writesConfig: true,
+    },
+  ];
+
+  it('a config.* writes_config action lands in the LOCAL group (not RADIO/INTERNET)', () => {
+    renderPalette({ actions: CONFIG_ACTIONS });
+    expect(screen.getByText('LOCAL')).toBeInTheDocument();
+    expect(screen.queryByText('RADIO')).not.toBeInTheDocument();
+    expect(screen.queryByText('INTERNET')).not.toBeInTheDocument();
+    const localGroup = screen.getByText('LOCAL');
+    const localSection = localGroup.parentElement as HTMLElement;
+    expect(within(localSection).getByTestId('palette-item-config.set_ardop')).toBeInTheDocument();
+  });
+
+  it('renders a WRITES badge on the config.* item, keyed on writesConfig', () => {
+    renderPalette({ actions: CONFIG_ACTIONS });
+    const item = screen.getByTestId('palette-item-config.set_ardop');
+    expect(within(item).getByText('WRITES')).toBeInTheDocument();
+  });
+
+  it('does not render a WRITES badge on a non-writes action', () => {
+    renderPalette();
+    const item = screen.getByTestId('palette-item-local.notify');
+    expect(within(item).queryByText('WRITES')).not.toBeInTheDocument();
+  });
+});

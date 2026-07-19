@@ -137,6 +137,34 @@ fn eval_migration_topic_is_distinct_from_the_operational_doc() {
     );
 }
 
+/// Eval 6 — the routines actions reference (PR group F, Task F1). A routine's
+/// `data.find_stations` action outputs callsigns that feed `radio.connect`, so an
+/// operator (or an in-app assistant running `data.docs_search`) asking how to
+/// "find stations" from a routine must reach the new chapter. This is also the
+/// retrieval half of the F1 registration: the page is only findable by
+/// `data.docs_search` once `BUNDLED_TOPICS` carries it, which is exactly what the
+/// docs_registry_test guards on the write side.
+#[test]
+fn eval_routines_find_stations_reference_is_retrievable() {
+    let (_dir, idx) = corpus();
+    let hits = slugs_for(&idx, "find stations");
+    assert!(
+        hits.iter().any(|s| s == "39-routines-actions"),
+        "the routines actions reference is not reachable from \"find stations\"; got {hits:?}"
+    );
+
+    // Reaching the page is not enough — it must actually name the action an
+    // author keys, or the model answers a routines question with no action in it.
+    let doc = idx
+        .read_doc("39-routines-actions")
+        .unwrap()
+        .expect("39-routines-actions is indexed");
+    assert!(
+        doc.body.contains("data.find_stations"),
+        "39-routines-actions was retrieved but never names data.find_stations"
+    );
+}
+
 /// Every registered slug is readable. Guards the populate -> read round trip across
 /// the whole real corpus, so a topic can never be searchable-but-unreadable.
 #[test]

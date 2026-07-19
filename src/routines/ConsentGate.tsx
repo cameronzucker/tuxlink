@@ -31,6 +31,7 @@ import {
   grantConsent,
   cancelRun,
   type RunListEntry,
+  type ParkKind,
 } from './routinesApi';
 import { listenRoutinesEvents } from './routinesEvents';
 import { formatParkedDuration } from './format';
@@ -45,6 +46,15 @@ export interface ParkedRun {
    *  consent needs a real stepId) and Cancel run available. */
   stepId: string;
   routine: string;
+  /** The consent class this park is waiting on — `transmit` (keys the radio,
+   *  Part 97 §97.109) or `write` (changes station configuration). Drives the
+   *  dialog copy (header / sub-line / body / confirm button): a `write` park
+   *  MUST NOT render transmit language (Task E1). Carried from the
+   *  `awaitingConsent` event's `parkKind`, or — for launch-recovered parks —
+   *  the last `state_changed{awaiting_consent}` journal entry's `park_kind`.
+   *  Defaults to `transmit` (the Part 97-safe default) when a legacy journal
+   *  carries no `park_kind`. */
+  parkKind: ParkKind;
   /** `Date.now()` at the moment THIS UI instance learned of the park — used
    *  only for the live "parked HH:MM:SS" readout, not persisted anywhere. */
   parkedAtMs: number;
@@ -106,10 +116,26 @@ interface RecoveredPark {
    *  awaiting consent — or `null` when no `step_intent` is found (the park
    *  still surfaces; `parkedAtMs` falls back to learn-time). */
   parkedAtMs: number | null;
+  /** The park's consent class, read off the last `state_changed{awaiting_
+   *  consent}` journal entry's `park_kind`. Defaults to `transmit` (Part
+   *  97-safe) when absent (a legacy journal, or a pre-O3/O4 build). A `write`
+   *  park recovered post-restart MUST render write copy, never transmit. */
+  parkKind: ParkKind;
 }
 
 async function recoverParkedStepId(runId: string): Promise<RecoveredPark> {
   const entries = await runJournal(runId);
+  // The park kind rides the last `state_changed{awaiting_consent}` transition
+  // (O3/O4 journals). Scan from the end so the most-recent park decides.
+  // Absent `park_kind` (legacy journal) falls back to the Part 97-safe default.
+  let parkKind: ParkKind = 'transmit';
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const ev = entries[i].event;
+    if (ev.type === 'state_changed' && ev.state === 'awaiting_consent') {
+      parkKind = ev.park_kind ?? 'transmit';
+      break;
+    }
+  }
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i];
     if (entry.event.type === 'step_intent') {
@@ -118,10 +144,10 @@ async function recoverParkedStepId(runId: string): Promise<RecoveredPark> {
       // this UI instance happened to learn of it (adrev R2-F8) — so a Part 97
       // surface's asserted "parked HH:MM:SS" cannot silently reset on launch
       // or when the modal moves to a different host window.
-      return { stepId: entry.event.step, parkedAtMs: entry.ts_unix * 1000 };
+      return { stepId: entry.event.step, parkedAtMs: entry.ts_unix * 1000, parkKind };
     }
   }
-  return { stepId: UNKNOWN_STEP_ID, parkedAtMs: null };
+  return { stepId: UNKNOWN_STEP_ID, parkedAtMs: null, parkKind };
 }
 
 export function useParkedRuns(): UseParkedRunsResult {
@@ -146,7 +172,7 @@ export function useParkedRuns(): UseParkedRunsResult {
     setParked((cur) => cur.filter((p) => !(p.runId === runId && p.stepId === stepId)));
   }, []);
 
-  const addParked = useCallback((runId: string, stepId: string) => {
+  const addParked = useCallback((runId: string, stepId: string, parkKind: ParkKind) => {
     void (async () => {
       // Pair-keyed dedupe (Codex adrev P1): a second transmitting step of the
       // SAME run must insert even while the first step's entry still exists
@@ -161,14 +187,15 @@ export function useParkedRuns(): UseParkedRunsResult {
           // (launch recovery found no step_intent) UPGRADES the sentinel in
           // place — same underlying park, now with a grantable stepId, so
           // Confirm becomes available. parkedAtMs is kept: the park started
-          // when we first learned of it, not when the step got named.
+          // when we first learned of it, not when the step got named. The
+          // event's `parkKind` is authoritative — carry it onto the upgrade.
           const sentinel = cur.find((p) => p.runId === runId && p.stepId === UNKNOWN_STEP_ID);
           if (sentinel) {
-            return sortByParkedAt(cur.map((p) => (p === sentinel ? { ...p, stepId } : p)));
+            return sortByParkedAt(cur.map((p) => (p === sentinel ? { ...p, stepId, parkKind } : p)));
           }
           return sortByParkedAt([
             ...cur,
-            { runId, stepId, routine: status.routine, parkedAtMs: Date.now() },
+            { runId, stepId, routine: status.routine, parkKind, parkedAtMs: Date.now() },
           ]);
         });
       } catch {
@@ -191,7 +218,7 @@ export function useParkedRuns(): UseParkedRunsResult {
         for (const r of live) {
           if (disposed) return;
           try {
-            const { stepId, parkedAtMs } = await recoverParkedStepId(r.runId);
+            const { stepId, parkedAtMs, parkKind } = await recoverParkedStepId(r.runId);
             if (disposed || !mountedRef.current) continue;
             setParked((cur) => {
               if (cur.some((p) => p.runId === r.runId)) return cur;
@@ -199,7 +226,9 @@ export function useParkedRuns(): UseParkedRunsResult {
                 ...cur,
                 // Journal-seeded when the step_intent carried a timestamp;
                 // otherwise learn-time (Date.now()) as the honest fallback.
-                { runId: r.runId, stepId, routine: r.routine, parkedAtMs: parkedAtMs ?? Date.now() },
+                // `parkKind` recovered from the journal so a write park keeps
+                // write copy across a restart (Task E1).
+                { runId: r.runId, stepId, routine: r.routine, parkKind, parkedAtMs: parkedAtMs ?? Date.now() },
               ]);
             });
           } catch {
@@ -217,7 +246,7 @@ export function useParkedRuns(): UseParkedRunsResult {
       if (!mountedRef.current) return;
       switch (event.kind) {
         case 'awaitingConsent':
-          addParked(event.runId, event.stepId);
+          addParked(event.runId, event.stepId, event.parkKind);
           break;
         case 'runFinished':
           removeRun(event.runId);
@@ -428,6 +457,36 @@ export function ConsentGate({ onParkedChange, reopenSignal, renderModal = true }
   // explanation; Cancel run stays available.
   const stepUnknown = oldest.stepId === UNKNOWN_STEP_ID;
 
+  // Copy branches on the park KIND (Task E1). A `transmit` park keys the radio
+  // — Part 97 §97.109 control-operator language, unchanged. A `write` park
+  // changes station configuration and MUST NOT render any transmit / Part 97
+  // language: a config write does not key the radio. Header, sub-line, the
+  // parked-step row label, the body sentence, and the confirm button all switch.
+  const isWrite = oldest.parkKind === 'write';
+  const copy = isWrite
+    ? {
+        title: 'Confirm config write',
+        sub: 'You are changing station configuration',
+        stepLabel: 'Config write',
+        confirmLabel: 'Confirm config write',
+        confirmTitleUnknown:
+          'The parked step is unknown — consent cannot be granted; cancel the run instead',
+        body: stepUnknown
+          ? `The run journal names no config-write step for this park, so consent cannot be granted from here. Cancel ends run ${oldest.runId} as cancelled (journaled: cancelled by operator).`
+          : `Confirm applies the configuration change now. Cancel ends run ${oldest.runId} as cancelled (journaled: cancelled by operator).`,
+      }
+    : {
+        title: 'Transmit consent — attended routine',
+        sub: 'Part 97 §97.109 · you are the control operator',
+        stepLabel: 'Transmit step',
+        confirmLabel: 'Confirm transmit',
+        confirmTitleUnknown:
+          'The parked step is unknown — consent cannot be granted; cancel the run instead',
+        body: stepUnknown
+          ? `The run journal names no transmit step for this park, so consent cannot be granted from here. Cancel ends run ${oldest.runId} as cancelled (journaled: cancelled by operator).`
+          : `Confirm keys the radio now. Cancel ends run ${oldest.runId} as cancelled (journaled: cancelled by operator).`,
+      };
+
   // `.catch(() => {})` guards against an unhandled rejection if the backend
   // call itself throws (as opposed to `confirm`'s `false` return, which is
   // the modeled "park vanished" outcome, not an error) — a transient IPC
@@ -468,10 +527,12 @@ export function ConsentGate({ onParkedChange, reopenSignal, renderModal = true }
           <span className="tux-consent-warnicon" aria-hidden="true">
             ⚠
           </span>
-          <span className="tux-consent-title" id="tux-consent-title">
-            Transmit consent — attended routine
+          <span className="tux-consent-title" id="tux-consent-title" data-testid="consent-gate-title">
+            {copy.title}
           </span>
-          <span className="tux-consent-sub">Part 97 §97.109 · you are the control operator</span>
+          <span className="tux-consent-sub" data-testid="consent-gate-sub">
+            {copy.sub}
+          </span>
         </div>
         <div className="tux-consent-body">
           <div className="tux-consent-row">
@@ -489,7 +550,9 @@ export function ConsentGate({ onParkedChange, reopenSignal, renderModal = true }
             </span>
           </div>
           <div className="tux-consent-row">
-            <span className="tux-consent-k">Transmit step</span>
+            <span className="tux-consent-k" data-testid="consent-gate-steplabel">
+              {copy.stepLabel}
+            </span>
             <span className="tux-consent-v">
               <div className="tux-consent-txbox" data-testid="consent-gate-txbox">
                 <span className="tux-consent-txbox-h">RESOLVED PARAMS</span>
@@ -509,10 +572,8 @@ export function ConsentGate({ onParkedChange, reopenSignal, renderModal = true }
               1 of {total}
             </div>
           )}
-          <div className="tux-consent-p97">
-            {stepUnknown
-              ? `The run journal names no transmit step for this park, so consent cannot be granted from here. Cancel ends run ${oldest.runId} as cancelled (journaled: cancelled by operator).`
-              : `Confirm keys the radio now. Cancel ends run ${oldest.runId} as cancelled (journaled: cancelled by operator).`}
+          <div className="tux-consent-p97" data-testid="consent-gate-p97">
+            {copy.body}
           </div>
         </div>
         <div className="tux-consent-foot">
@@ -521,10 +582,10 @@ export function ConsentGate({ onParkedChange, reopenSignal, renderModal = true }
             className="tux-consent-btn-confirm"
             data-testid="consent-gate-confirm"
             disabled={busy || stepUnknown}
-            title={stepUnknown ? 'The parked step is unknown — consent cannot be granted; cancel the run instead' : undefined}
+            title={stepUnknown ? copy.confirmTitleUnknown : undefined}
             onClick={onConfirm}
           >
-            Confirm transmit
+            {copy.confirmLabel}
           </button>
           <button
             type="button"

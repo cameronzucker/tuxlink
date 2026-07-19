@@ -43,7 +43,7 @@
 
 use serde::Serialize;
 
-use tuxlink_routines::journal::RunState;
+use tuxlink_routines::journal::{ParkKind, RunState};
 use tuxlink_routines::types::IfMissed;
 
 /// The single Tauri channel every routine-run lifecycle event is emitted on.
@@ -97,13 +97,23 @@ pub enum RoutinesEvent {
         step_id: String,
         ok: bool,
     },
-    /// A transmitting step in attended mode is parked awaiting operator consent.
-    /// The variant exists now; slice 5b (the consent wrapper) is what emits it.
+    /// A transmitting-or-config-writing step in attended mode is parked awaiting
+    /// operator consent. `parkKind` names the consent class the run is waiting
+    /// on so the ConsentGate can branch its copy (transmit vs config-write).
+    ///
+    /// NAMING (deliberate, do not "fix"): the payload field is camelCase
+    /// `parkKind` because the event union's own discriminant is already `kind`
+    /// (`#[serde(tag = "kind")]`); the JOURNALED `state_changed` field is
+    /// snake_case `park_kind`. The two surfaces name the same concept
+    /// differently on purpose (spec O3/O4 round, Global Constraints). The value
+    /// tags (`"transmit"` / `"write"`) come from the reused engine [`ParkKind`].
     AwaitingConsent {
         #[serde(rename = "runId")]
         run_id: String,
         #[serde(rename = "stepId")]
         step_id: String,
+        #[serde(rename = "parkKind")]
+        park_kind: ParkKind,
     },
     /// The routines LIBRARY changed — a definition, preset, or station-set was
     /// created, updated, deleted, enabled, or disabled (Task 6's command layer
@@ -279,10 +289,29 @@ mod tests {
         let ac = RoutinesEvent::AwaitingConsent {
             run_id: "r".into(),
             step_id: "s2".into(),
+            park_kind: ParkKind::Transmit,
         };
         let j: serde_json::Value = serde_json::to_value(&ac).unwrap();
         assert_eq!(j["kind"], "awaitingConsent");
         assert_eq!(j["stepId"], "s2");
+    }
+
+    /// The consent event carries `parkKind` (camelCase — the union discriminant
+    /// `kind` is taken) with the engine's snake_case value tags, so the
+    /// ConsentGate can branch transmit vs config-write copy (C2 / E1).
+    #[test]
+    fn awaiting_consent_ships_camelcase_park_kind_with_engine_value_tags() {
+        for (kind, tag) in [(ParkKind::Transmit, "transmit"), (ParkKind::Write, "write")] {
+            let ac = RoutinesEvent::AwaitingConsent {
+                run_id: "r".into(),
+                step_id: "s2".into(),
+                park_kind: kind,
+            };
+            let j: serde_json::Value = serde_json::to_value(&ac).unwrap();
+            assert_eq!(j["parkKind"], tag, "frontend reads payload.parkKind");
+            // No snake_case leakage of the field name onto the wire.
+            assert!(j.get("park_kind").is_none(), "field is camelCase parkKind");
+        }
     }
 
     #[test]

@@ -938,6 +938,7 @@ mod quit_gate_tests {
             schema_version: SUPPORTED_SCHEMA_VERSION,
             transmit_mode: TransmitMode::Attended,
             transmit_ack: None,
+            write_ack: None,
             on_interrupted: OnInterrupted::Stay,
             inputs: vec![],
             triggers: vec![Trigger::Manual],
@@ -969,12 +970,16 @@ mod quit_gate_tests {
     impl Action for SlowCancelAction {
         fn descriptor(&self) -> ActionDescriptor {
             ActionDescriptor {
+                writes_config: false,
                 name: self.name,
                 label: "",
                 description: "",
                 needs_radio: false,
                 transmits: false,
                 needs_internet: false,
+                example_params: None,
+                allowed_values: None,
+                dry_run_shape: None,
             }
         }
 
@@ -1038,12 +1043,16 @@ mod quit_gate_tests {
     impl Action for WedgedBlockingAction {
         fn descriptor(&self) -> ActionDescriptor {
             ActionDescriptor {
+                writes_config: false,
                 name: self.name,
                 label: "",
                 description: "",
                 needs_radio: false,
                 transmits: false,
                 needs_internet: false,
+                example_params: None,
+                allowed_values: None,
+                dry_run_shape: None,
             }
         }
 
@@ -3571,6 +3580,8 @@ pub fn run() {
             crate::routines::commands::routines_journal,
             crate::routines::commands::routines_consent_grant,
             crate::routines::commands::routines_acknowledge_automatic,
+            crate::routines::commands::routines_acknowledge_write,
+            crate::routines::commands::routines_consent_closure,
             crate::routines::commands::routines_missed_fires,
             crate::routines::commands::routines_presets_list,
             crate::routines::commands::routines_presets_save,

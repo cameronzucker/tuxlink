@@ -219,28 +219,40 @@ mod tests {
     use serde_json::json;
 
     const RADIO_CONNECT: ActionDescriptor = ActionDescriptor {
+        writes_config: false,
         name: "radio.connect",
         label: "",
         description: "",
         needs_radio: true,
         transmits: true,
         needs_internet: false,
+        example_params: None,
+        allowed_values: None,
+        dry_run_shape: None,
     };
     const WEB_LOOKUP: ActionDescriptor = ActionDescriptor {
+        writes_config: false,
         name: "data.web_lookup",
         label: "",
         description: "",
         needs_radio: false,
         transmits: false,
         needs_internet: true,
+        example_params: None,
+        allowed_values: None,
+        dry_run_shape: None,
     };
     const LOCAL_NOTE: ActionDescriptor = ActionDescriptor {
+        writes_config: false,
         name: "local.note",
         label: "",
         description: "",
         needs_radio: false,
         transmits: false,
         needs_internet: false,
+        example_params: None,
+        allowed_values: None,
+        dry_run_shape: None,
     };
 
     fn action_step(id: &str, action: &str) -> Step {
@@ -259,6 +271,7 @@ mod tests {
             schema_version: crate::types::SUPPORTED_SCHEMA_VERSION,
             transmit_mode: TransmitMode::Attended,
             transmit_ack: None,
+            write_ack: None,
             on_interrupted: OnInterrupted::Stay,
             inputs: vec![],
             triggers: vec![Trigger::Manual],

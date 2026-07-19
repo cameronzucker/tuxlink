@@ -115,7 +115,7 @@ describe('ConsentGate — (a) awaitingConsent event parks + surfaces the modal',
 
     expect(screen.queryByTestId('consent-gate-modal')).not.toBeInTheDocument();
 
-    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID, parkKind: 'transmit' });
     await act(async () => {});
 
     expect(await screen.findByTestId('consent-gate-modal')).toBeInTheDocument();
@@ -137,7 +137,7 @@ describe('ConsentGate — (a) awaitingConsent event parks + surfaces the modal',
 
   it('has NO Skip button — the engine has no skip-this-step outcome to call', async () => {
     render(<ConsentGate />);
-    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID, parkKind: 'transmit' });
     await screen.findByTestId('consent-gate-modal');
 
     expect(screen.queryByRole('button', { name: /skip/i })).not.toBeInTheDocument();
@@ -150,7 +150,7 @@ describe('ConsentGate — (a) awaitingConsent event parks + surfaces the modal',
 describe('ConsentGate — (b) Confirm', () => {
   it('invokes routines_consent_grant with {runId, stepId} and closes on true', async () => {
     render(<ConsentGate />);
-    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID, parkKind: 'transmit' });
     await screen.findByTestId('consent-gate-modal');
 
     screen.getByTestId('consent-gate-confirm').click();
@@ -173,7 +173,7 @@ describe('ConsentGate — (b) Confirm', () => {
     });
 
     render(<ConsentGate />);
-    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID, parkKind: 'transmit' });
     await screen.findByTestId('consent-gate-modal');
 
     screen.getByTestId('consent-gate-confirm').click();
@@ -186,7 +186,7 @@ describe('ConsentGate — (b) Confirm', () => {
 describe('ConsentGate — (c) Cancel run', () => {
   it('invokes routines_cancel and closes the modal', async () => {
     render(<ConsentGate />);
-    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID, parkKind: 'transmit' });
     await screen.findByTestId('consent-gate-modal');
 
     screen.getByTestId('consent-gate-cancel').click();
@@ -203,7 +203,7 @@ describe('ConsentGate — (d) runFinished clears the park', () => {
   it('closes the modal and reports an empty parked list for the parked run', async () => {
     const onParkedChange = vi.fn();
     render(<ConsentGate onParkedChange={onParkedChange} />);
-    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID, parkKind: 'transmit' });
     await screen.findByTestId('consent-gate-modal');
 
     emit({ kind: 'runFinished', runId: RUN_ID, state: 'cancelled' });
@@ -215,7 +215,7 @@ describe('ConsentGate — (d) runFinished clears the park', () => {
 
   it('a runFinished for a DIFFERENT run does not clear the park', async () => {
     render(<ConsentGate />);
-    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID, parkKind: 'transmit' });
     await screen.findByTestId('consent-gate-modal');
 
     emit({ kind: 'runFinished', runId: 'some-other-run', state: 'completed' });
@@ -307,9 +307,9 @@ describe('ConsentGate — multiple parked runs', () => {
     });
 
     render(<ConsentGate />);
-    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID, parkKind: 'transmit' });
     await screen.findByTestId('consent-gate-modal');
-    emit({ kind: 'awaitingConsent', runId: 'run-99', stepId: 's1' });
+    emit({ kind: 'awaitingConsent', runId: 'run-99', stepId: 's1', parkKind: 'transmit' });
     await act(async () => {});
 
     // Still the FIRST (oldest) run's detail...
@@ -320,7 +320,7 @@ describe('ConsentGate — multiple parked runs', () => {
 
   it('shows no pip when only one run is parked', async () => {
     render(<ConsentGate />);
-    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID, parkKind: 'transmit' });
     await screen.findByTestId('consent-gate-modal');
     expect(screen.queryByTestId('consent-gate-pip')).not.toBeInTheDocument();
   });
@@ -345,7 +345,7 @@ describe('ConsentGate — live duration + reconciliation poll', () => {
   it('ticks the "Parked" duration display every second', async () => {
     vi.useFakeTimers();
     render(<ConsentGate />);
-    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID, parkKind: 'transmit' });
     await flushUntilModal();
     expect(screen.getByTestId('consent-gate-modal')).toBeInTheDocument();
 
@@ -358,7 +358,7 @@ describe('ConsentGate — live duration + reconciliation poll', () => {
   it('a poll that finds the run left awaiting_consent removes the park', async () => {
     vi.useFakeTimers();
     render(<ConsentGate />);
-    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID, parkKind: 'transmit' });
     await flushUntilModal();
     expect(screen.getByTestId('consent-gate-modal')).toBeInTheDocument();
 
@@ -386,7 +386,7 @@ describe('ConsentGate — live duration + reconciliation poll', () => {
   it('a poll tick resolving null keeps the park (unknown ≠ gone)', async () => {
     vi.useFakeTimers();
     render(<ConsentGate />);
-    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID, parkKind: 'transmit' });
     await flushUntilModal();
     expect(screen.getByTestId('consent-gate-modal')).toBeInTheDocument();
 
@@ -414,7 +414,7 @@ describe('ConsentGate — "Keep parked" defer affordance', () => {
   it('hides the modal without granting/cancelling; the parked list is unchanged', async () => {
     const onParkedChange = vi.fn();
     render(<ConsentGate onParkedChange={onParkedChange} />);
-    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID, parkKind: 'transmit' });
     await screen.findByTestId('consent-gate-modal');
 
     onParkedChange.mockClear();
@@ -450,14 +450,14 @@ describe('ConsentGate — "Keep parked" defer affordance', () => {
     });
 
     render(<ConsentGate />);
-    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID, parkKind: 'transmit' });
     await screen.findByTestId('consent-gate-modal');
     act(() => {
       screen.getByTestId('consent-gate-keepparked').click();
     });
     expect(screen.queryByTestId('consent-gate-modal')).not.toBeInTheDocument();
 
-    emit({ kind: 'awaitingConsent', runId: 'run-99', stepId: 's1' });
+    emit({ kind: 'awaitingConsent', runId: 'run-99', stepId: 's1', parkKind: 'transmit' });
     await waitFor(() => {
       expect(screen.getByTestId('consent-gate-modal')).toBeInTheDocument();
     });
@@ -465,7 +465,7 @@ describe('ConsentGate — "Keep parked" defer affordance', () => {
 
   it('a reopenSignal bump re-shows the modal after Keep parked dismissed it', async () => {
     const { rerender } = render(<ConsentGate reopenSignal={0} />);
-    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID, parkKind: 'transmit' });
     await screen.findByTestId('consent-gate-modal');
     act(() => {
       screen.getByTestId('consent-gate-keepparked').click();
@@ -478,7 +478,7 @@ describe('ConsentGate — "Keep parked" defer affordance', () => {
 
   it('Confirm/Cancel/no-Skip behavior is unchanged with Keep parked present', async () => {
     render(<ConsentGate />);
-    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID, parkKind: 'transmit' });
     await screen.findByTestId('consent-gate-modal');
 
     expect(screen.queryByRole('button', { name: /skip/i })).not.toBeInTheDocument();
@@ -522,7 +522,7 @@ describe('ConsentGate — pair-keyed parks (Codex adrev P1)', () => {
 
     const onParkedChange = vi.fn();
     render(<ConsentGate onParkedChange={onParkedChange} />);
-    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID, parkKind: 'transmit' });
     await screen.findByTestId('consent-gate-modal');
 
     // Operator confirms step 1 — the grant is now IN FLIGHT (unresolved).
@@ -531,7 +531,7 @@ describe('ConsentGate — pair-keyed parks (Codex adrev P1)', () => {
     // Backend resumes, reaches step 2, and emits its park BEFORE the grant
     // promise resolves (the Codex race). The pair-keyed add must insert it
     // even though (RUN_ID, s4) is still tracked.
-    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: 's7' });
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: 's7', parkKind: 'transmit' });
     await act(async () => {});
 
     // Now the grant settles true → removes ONLY (RUN_ID, s4).
@@ -552,9 +552,9 @@ describe('ConsentGate — pair-keyed parks (Codex adrev P1)', () => {
   it('runFinished removes BOTH pairs of the same run when two are parked', async () => {
     const onParkedChange = vi.fn();
     render(<ConsentGate onParkedChange={onParkedChange} />);
-    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID, parkKind: 'transmit' });
     await screen.findByTestId('consent-gate-modal');
-    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: 's7' });
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: 's7', parkKind: 'transmit' });
     await act(async () => {});
 
     // Two pair-keyed entries for the one run.
@@ -600,7 +600,7 @@ describe('ConsentGate — pair-keyed parks (Codex adrev P1)', () => {
 
     // The real event for the same run names the step → the sentinel entry is
     // REPLACED (single entry, not a second park), and Confirm enables.
-    emit({ kind: 'awaitingConsent', runId: NO_INTENT_RUN, stepId: 's4' });
+    emit({ kind: 'awaitingConsent', runId: NO_INTENT_RUN, stepId: 's4', parkKind: 'transmit' });
     await waitFor(() => {
       expect(screen.getByTestId('consent-gate-run-step')).toHaveTextContent('step s4');
     });
@@ -637,7 +637,7 @@ describe('ConsentGate — renderModal split (behavior 6)', () => {
   it('renderModal={false} renders no modal but still reports the parked list upward', async () => {
     const onParkedChange = vi.fn();
     render(<ConsentGate renderModal={false} onParkedChange={onParkedChange} />);
-    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID, parkKind: 'transmit' });
     await waitFor(() => {
       const last = onParkedChange.mock.calls.at(-1)?.[0] as ParkedRun[] | undefined;
       expect(last?.length).toBe(1);
@@ -651,13 +651,13 @@ describe('ConsentGate — renderModal split (behavior 6)', () => {
 
   it('renderModal defaults to true — the modal renders as before', async () => {
     render(<ConsentGate />);
-    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID, parkKind: 'transmit' });
     expect(await screen.findByTestId('consent-gate-modal')).toBeInTheDocument();
   });
 
   it('renderModal={true} renders the modal (the popped host case)', async () => {
     render(<ConsentGate renderModal={true} />);
-    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID, parkKind: 'transmit' });
     expect(await screen.findByTestId('consent-gate-modal')).toBeInTheDocument();
   });
 });
@@ -689,10 +689,136 @@ describe('ConsentGate — journal-seeded park duration (behavior 8)', () => {
     vi.useFakeTimers();
     vi.setSystemTime(2_000_000);
     render(<ConsentGate />);
-    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID });
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID, parkKind: 'transmit' });
     await flushUntilModal();
     expect(screen.getByTestId('consent-gate-modal')).toBeInTheDocument();
     // Just parked — near-zero elapsed, NOT the journal's 998s.
     expect(screen.getByTestId('consent-gate-parked')).toHaveTextContent('00:00:00');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task E1: the consent dialog branches its copy on the park KIND. A transmit
+// park keys the radio (Part 97 §97.109 control-operator act); a config write
+// changes station configuration and MUST NOT render transmit language. The
+// park kind rides the `awaitingConsent` event (`parkKind`, camelCase) and, for
+// launch-recovered parks, off the last `state_changed{awaiting_consent}`
+// journal entry's `park_kind` (snake_case).
+// ---------------------------------------------------------------------------
+
+const WRITE_RUN_ID = 'run-w';
+// A write-park journal: the last awaiting_consent transition carries
+// park_kind:'write', and the step_intent names a config-write action.
+const WRITE_JOURNAL_FIXTURE: JournalEntry[] = [
+  { ts_unix: 1000, run_id: WRITE_RUN_ID, seq: 1, event: { type: 'run_started', routine: 'Set drive level', snapshot: {}, dry_run: false } },
+  {
+    ts_unix: 1002,
+    run_id: WRITE_RUN_ID,
+    seq: 2,
+    event: { type: 'step_intent', step: 'w1', action: 'config.set_ardop', resolved_params: { drive_level: 80 } },
+  },
+  { ts_unix: 1003, run_id: WRITE_RUN_ID, seq: 3, event: { type: 'state_changed', state: 'awaiting_consent', park_kind: 'write' } },
+];
+
+function mockWriteRun() {
+  mockInvoke.mockImplementation((cmd?: string, args?: Record<string, unknown>) => {
+    if (cmd === undefined) return Promise.resolve();
+    if (cmd === 'routines_runs_list') return Promise.resolve(runsListResult);
+    if (cmd === 'routines_run_status') {
+      return Promise.resolve(
+        args?.runId === WRITE_RUN_ID
+          ? { runId: WRITE_RUN_ID, routine: 'Set drive level', dryRun: false, state: 'awaiting_consent' }
+          : null,
+      );
+    }
+    if (cmd === 'routines_journal') return Promise.resolve(args?.runId === WRITE_RUN_ID ? WRITE_JOURNAL_FIXTURE : []);
+    if (cmd === 'routines_cancel') return Promise.resolve(true);
+    return Promise.resolve([]);
+  });
+}
+
+describe('ConsentGate — park kind copy (Task E1)', () => {
+  it('a transmit park renders the Part 97 transmit copy (header, sub-line, body, button)', async () => {
+    render(<ConsentGate />);
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID, parkKind: 'transmit' });
+    await screen.findByTestId('consent-gate-modal');
+
+    expect(screen.getByTestId('consent-gate-title')).toHaveTextContent('Transmit consent — attended routine');
+    expect(screen.getByTestId('consent-gate-sub')).toHaveTextContent('Part 97 §97.109');
+    expect(screen.getByTestId('consent-gate-steplabel')).toHaveTextContent('Transmit step');
+    expect(screen.getByTestId('consent-gate-p97')).toHaveTextContent(/keys the radio now/);
+    expect(screen.getByTestId('consent-gate-confirm')).toHaveTextContent('Confirm transmit');
+  });
+
+  it('a write park renders config-write copy with NO transmit / Part 97 language', async () => {
+    mockWriteRun();
+    render(<ConsentGate />);
+    emit({ kind: 'awaitingConsent', runId: WRITE_RUN_ID, stepId: 'w1', parkKind: 'write' });
+    await screen.findByTestId('consent-gate-modal');
+
+    expect(screen.getByTestId('consent-gate-title')).toHaveTextContent('Confirm config write');
+    expect(screen.getByTestId('consent-gate-sub')).toHaveTextContent('You are changing station configuration');
+    expect(screen.getByTestId('consent-gate-confirm')).toHaveTextContent('Confirm config write');
+    // A config write does NOT key the radio: no Part 97 transmit language.
+    expect(screen.getByTestId('consent-gate-sub')).not.toHaveTextContent('Part 97');
+    expect(screen.getByTestId('consent-gate-p97')).not.toHaveTextContent(/keys the radio/);
+    expect(screen.getByTestId('consent-gate-title')).not.toHaveTextContent(/Transmit/);
+    expect(screen.getByTestId('consent-gate-confirm')).not.toHaveTextContent(/transmit/i);
+  });
+
+  it('a mixed transmit+write queue renders the OLDEST park kind (write here) with a pip', async () => {
+    mockInvoke.mockImplementation((cmd?: string, args?: Record<string, unknown>) => {
+      if (cmd === undefined) return Promise.resolve();
+      if (cmd === 'routines_runs_list') return Promise.resolve(runsListResult);
+      if (cmd === 'routines_run_status') {
+        if (args?.runId === WRITE_RUN_ID) return Promise.resolve({ runId: WRITE_RUN_ID, routine: 'Set drive level', dryRun: false, state: 'awaiting_consent' });
+        if (args?.runId === RUN_ID) return Promise.resolve(RUN_STATUS);
+        return Promise.resolve(null);
+      }
+      if (cmd === 'routines_journal') {
+        if (args?.runId === WRITE_RUN_ID) return Promise.resolve(WRITE_JOURNAL_FIXTURE);
+        if (args?.runId === RUN_ID) return Promise.resolve(JOURNAL_FIXTURE);
+        return Promise.resolve([]);
+      }
+      return Promise.resolve([]);
+    });
+
+    render(<ConsentGate />);
+    // Write parks FIRST (oldest), transmit second.
+    emit({ kind: 'awaitingConsent', runId: WRITE_RUN_ID, stepId: 'w1', parkKind: 'write' });
+    await screen.findByTestId('consent-gate-modal');
+    emit({ kind: 'awaitingConsent', runId: RUN_ID, stepId: STEP_ID, parkKind: 'transmit' });
+    await act(async () => {});
+
+    // Oldest is the write park → write copy + queue-depth pip.
+    expect(screen.getByTestId('consent-gate-title')).toHaveTextContent('Confirm config write');
+    expect(screen.getByTestId('consent-gate-confirm')).toHaveTextContent('Confirm config write');
+    expect(screen.getByTestId('consent-gate-pip')).toHaveTextContent('1 of 2');
+  });
+
+  it('launch recovery reads park_kind off the journal and renders write copy after restart', async () => {
+    runsListResult = [
+      { runId: WRITE_RUN_ID, routine: 'Set drive level', dryRun: false, startedUnix: 1000, state: 'awaiting_consent', finishedUnix: null },
+    ];
+    mockWriteRun();
+
+    render(<ConsentGate />);
+    // No event fired — recovery from the journaled park_kind must render WRITE
+    // copy, not the Part 97 transmit default.
+    expect(await screen.findByTestId('consent-gate-modal')).toBeInTheDocument();
+    expect(screen.getByTestId('consent-gate-title')).toHaveTextContent('Confirm config write');
+    expect(screen.getByTestId('consent-gate-confirm')).toHaveTextContent('Confirm config write');
+    expect(screen.getByTestId('consent-gate-p97')).not.toHaveTextContent(/keys the radio/);
+  });
+
+  it('launch recovery of a legacy journal with no park_kind defaults to transmit copy', async () => {
+    // JOURNAL_FIXTURE's awaiting_consent transition carries no park_kind.
+    runsListResult = [
+      { runId: RUN_ID, routine: ROUTINE, dryRun: false, startedUnix: 1000, state: 'awaiting_consent', finishedUnix: null },
+    ];
+    render(<ConsentGate />);
+    expect(await screen.findByTestId('consent-gate-modal')).toBeInTheDocument();
+    expect(screen.getByTestId('consent-gate-confirm')).toHaveTextContent('Confirm transmit');
+    expect(screen.getByTestId('consent-gate-sub')).toHaveTextContent('Part 97 §97.109');
   });
 });

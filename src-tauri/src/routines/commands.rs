@@ -160,6 +160,53 @@ pub struct ActionInfo {
     pub needs_radio: bool,
     pub transmits: bool,
     pub needs_internet: bool,
+    /// Declares the `config.*` write consent class (D5+). The palette/inspector
+    /// render a WRITES badge from this, and the ack UI gates on it.
+    pub writes_config: bool,
+    /// A canonical example `params` object (compact JSON string) the authoring
+    /// UI seeds when the action is dropped onto the canvas (D6). `None` for
+    /// actions whose params are self-evidently empty.
+    pub example_params: Option<String>,
+}
+
+/// One relevant step in a routine's consent closure (C3), projected for the
+/// Settings ack panels' enumeration (`<routine> · <step> · <action> · <params>`).
+/// `routine` names whichever routine actually OWNS the step — it may differ from
+/// the routine whose closure was requested, when the step lives behind one or
+/// more `Call` hops.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClosureStepView {
+    pub routine: String,
+    pub track: String,
+    pub step: String,
+    pub action: String,
+    pub params: serde_json::Value,
+}
+
+/// One `Call` edge on a path that reaches a relevant step (C3): `routine` calls
+/// `callee` at `step` with `args`. Both consent classes' edges are merged +
+/// deduped into [`ConsentClosureView::call_edges`] — the edge is a fact about
+/// the call graph, not about which class a downstream step belongs to.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallEdgeView {
+    pub routine: String,
+    pub step: String,
+    pub callee: String,
+    pub args: serde_json::Value,
+}
+
+/// The enumerated consent closure a Settings ack panel signs (C3): the transmit
+/// and config-write steps a routine's call-graph closure reaches, plus the call
+/// edges leading to them. Produced by [`routines_consent_closure`]; **UI-only**
+/// — never on the MCP surface (the routines tool list is pinned CLOSED).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsentClosureView {
+    pub transmit_steps: Vec<ClosureStepView>,
+    pub write_steps: Vec<ClosureStepView>,
+    pub call_edges: Vec<CallEdgeView>,
 }
 
 /// Caller-supplied dry-run script (all fields optional — the default is an
@@ -309,7 +356,8 @@ impl From<RoutineStartError> for UiError {
             // The consent refusal's message IS the operator-facing instruction
             // (spec §4: "acknowledge automatic-transmission responsibility…") —
             // pass it through verbatim rather than flattening it to "rejected".
-            RoutineStartError::UnacknowledgedAutomatic { .. } => UiError::Rejected(text),
+            RoutineStartError::UnacknowledgedAutomatic { .. }
+            | RoutineStartError::UnacknowledgedAutomaticWrite { .. } => UiError::Rejected(text),
             RoutineStartError::Engine(engine) => match engine {
                 // An unresolved `@ref` is the operator's to fix, not an internal
                 // fault — and the offending token is named verbatim.
@@ -400,6 +448,15 @@ pub fn save_routine(state: &RoutinesState, def_json: &str) -> Result<SaveResult,
         // must never silently re-arm a routine flipped back to automatic later.
         _ => None,
     };
+    // The config-write acknowledgment (C3) is normalized identically: neither
+    // consent envelope is writable through this agent-reachable path, and
+    // leaving automatic revokes BOTH via the `_ => None` arm.
+    def.write_ack = match def.transmit_mode {
+        tuxlink_routines::types::TransmitMode::Automatic => {
+            state.store.get(&def.routine).and_then(|on_disk| on_disk.write_ack)
+        }
+        _ => None,
+    };
     let findings = validate_def(state, &def);
     // Save even with errors (spec §10: errors block enable/run, never save).
     // `store.save` still rejects a name that would escape the store directory —
@@ -444,6 +501,12 @@ pub fn validate_draft(state: &RoutinesState, def_json: &str) -> Result<Vec<Findi
     def.transmit_ack = match def.transmit_mode {
         tuxlink_routines::types::TransmitMode::Automatic => {
             state.store.get(&def.routine).and_then(|d| d.transmit_ack)
+        }
+        _ => None,
+    };
+    def.write_ack = match def.transmit_mode {
+        tuxlink_routines::types::TransmitMode::Automatic => {
+            state.store.get(&def.routine).and_then(|d| d.write_ack)
         }
         _ => None,
     };
@@ -604,9 +667,50 @@ pub fn acknowledge_automatic(
              acknowledgment applies only to automatic routines"
         )));
     }
+    // C3: bind the acknowledgment to the EXACT transmit closure the operator is
+    // signing. Recomputed from the live store + registry, it equals the digest
+    // the validator recomputes, so the ack stays valid until the routine (or a
+    // routine it calls) changes — at which point `AUTO_TX_UNACKED` re-fires and
+    // the start gate refuses until re-acknowledged.
+    let digest = state.transmit_closure_digest(&def);
     def.transmit_ack = Some(tuxlink_routines::types::TransmitAck {
         by: callsign.to_string(),
         at: at_rfc3339.to_string(),
+        closure_digest: Some(digest),
+    });
+    state.store.save(&def)?;
+    state.emit(&RoutinesEvent::LibraryChanged {
+        entity: LibraryEntity::Routine,
+        name: name.to_string(),
+    });
+    Ok(())
+}
+
+/// Record the config-write acknowledgment (spec §4, C3) for `name` — the
+/// `writes_config` sibling of [`acknowledge_automatic`]. THE ONLY writer of
+/// `write_ack`: `save_routine`/`validate_draft` discard caller-supplied write
+/// acks, and this command is registered only as a Tauri command (UI-only; the
+/// MCP surface has no path to it — the routines tool list is closed). Binds the
+/// ack to the live WRITE closure digest so a later edit invalidates it exactly
+/// as the transmit ack invalidates.
+pub fn acknowledge_write(
+    state: &RoutinesState,
+    name: &str,
+    callsign: &str,
+    at_rfc3339: &str,
+) -> Result<(), UiError> {
+    let mut def = get_routine(state, name)?;
+    if def.transmit_mode != tuxlink_routines::types::TransmitMode::Automatic {
+        return Err(UiError::Rejected(format!(
+            "routine \"{name}\" is not in automatic transmit mode — the config-write \
+             acknowledgment applies only to automatic routines"
+        )));
+    }
+    let digest = state.write_closure_digest(&def);
+    def.write_ack = Some(tuxlink_routines::types::TransmitAck {
+        by: callsign.to_string(),
+        at: at_rfc3339.to_string(),
+        closure_digest: Some(digest),
     });
     state.store.save(&def)?;
     state.emit(&RoutinesEvent::LibraryChanged {
@@ -637,6 +741,8 @@ pub fn list_actions(state: &RoutinesState) -> Vec<ActionInfo> {
             needs_radio: d.needs_radio,
             transmits: d.transmits,
             needs_internet: d.needs_internet,
+            writes_config: d.writes_config,
+            example_params: d.example_params.map(|s| s.to_string()),
         })
         .collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -659,6 +765,49 @@ pub fn fleet_check(state: &RoutinesState, now_unix: i64, utc_offset_seconds: i32
     validate_fleet(&defs, &ctx, now_unix, utc_offset_seconds)
 }
 
+/// Enumerate `name`'s consent closure (C3) for the Settings ack panels: the
+/// transmit steps, the config-write steps, and the merged call edges leading to
+/// them — computed over the SAME shared walk (store lookup + registry
+/// descriptors) the validator and the start gate use, so the enumerated closure
+/// the operator signs is the exact one enforcement checks. **UI-only.**
+pub fn consent_closure_view(
+    state: &RoutinesState,
+    name: &str,
+) -> Result<ConsentClosureView, UiError> {
+    let def = get_routine(state, name)?;
+    let (tx, wr) = state.consent_closures(&def);
+
+    let map_step = |s: &tuxlink_routines::consent_closure::ClosureStep| ClosureStepView {
+        routine: s.routine.clone(),
+        track: s.track.clone(),
+        step: s.step.0.clone(),
+        action: s.action.clone(),
+        params: s.params.clone(),
+    };
+    let map_edge = |e: &tuxlink_routines::consent_closure::CallEdge| CallEdgeView {
+        routine: e.routine.clone(),
+        step: e.step.0.clone(),
+        callee: e.callee.clone(),
+        args: e.args.clone(),
+    };
+
+    // Merge both classes' call edges, deduped: an edge is a fact about the call
+    // graph, and a routine that calls a callee reaching BOTH a transmit and a
+    // write step should list that edge once, not twice.
+    let mut call_edges: Vec<CallEdgeView> = Vec::new();
+    for e in tx.call_edges.iter().chain(wr.call_edges.iter()).map(map_edge) {
+        if !call_edges.contains(&e) {
+            call_edges.push(e);
+        }
+    }
+
+    Ok(ConsentClosureView {
+        transmit_steps: tx.steps.iter().map(map_step).collect(),
+        write_steps: wr.steps.iter().map(map_step).collect(),
+        call_edges,
+    })
+}
+
 // ============================================================================
 // Service fns — runs
 // ============================================================================
@@ -677,7 +826,12 @@ pub async fn run_routine(
     if has_blocking(&findings) {
         return Err(refusal("run", name, &findings));
     }
-    Ok(state.start_routine(name, args).await?)
+    // Single-read start gate (C3): hand the engine the EXACT def we just
+    // validated, not a fresh by-name reload — a concurrent save between this
+    // validation and the start must not swap the snapshot out from under the
+    // consent gate. `start_routine_with_def` runs the same gate body over this
+    // def and starts it verbatim.
+    Ok(state.start_routine_with_def(&def, args).await?)
 }
 
 /// Start a DRY run — the fake world (spec §10 layer 3). Blocked by nothing:
@@ -1033,6 +1187,37 @@ pub async fn routines_acknowledge_automatic(
     acknowledge_automatic(&state, &name, &callsign, &at)
 }
 
+/// Record the config-write acknowledgment (C3, spec §4) for `name` as the
+/// station's active identity, at the current instant — the `writes_config`
+/// sibling of [`routines_acknowledge_automatic`]. **Operator-only**: a UI
+/// command with no MCP path (the routines tool list is pinned CLOSED in
+/// `tuxlink-mcp-core/src/router.rs`).
+#[tauri::command]
+pub async fn routines_acknowledge_write(
+    state: State<'_, Arc<RoutinesState>>,
+    backend: State<'_, crate::app_backend::BackendState>,
+    name: String,
+) -> Result<(), UiError> {
+    let b = backend
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".into()))?;
+    let callsign = b.active_identity()?.mycall().as_str().to_uppercase();
+    let at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    acknowledge_write(&state, &name, &callsign, &at)
+}
+
+/// Enumerate one routine's consent closure (C3) — the transmit + config-write
+/// steps its call-graph closure reaches, plus the call edges leading to them —
+/// for the Settings ack panels. **UI-only**; not on the MCP surface (the
+/// routines tool list is pinned CLOSED).
+#[tauri::command]
+pub async fn routines_consent_closure(
+    state: State<'_, Arc<RoutinesState>>,
+    name: String,
+) -> Result<ConsentClosureView, UiError> {
+    consent_closure_view(&state, &name)
+}
+
 /// The schedule-status read path. Keeps its historical `missed_fires` name — it
 /// is the registered command surface, and `lib.rs`'s `invoke_handler` names it —
 /// but it now answers for all three ways a fire fails to happen (missed while
@@ -1237,6 +1422,12 @@ mod tests {
         let mut reg = ActionRegistry::default();
         reg.register(Arc::new(FakeAction::new("local.log").ok(json!({}))));
         reg.register(connect.clone());
+        // A config-write action (C3): writes_config, does not transmit.
+        reg.register(Arc::new(
+            FakeAction::new("config.set")
+                .with_writes_config(true)
+                .ok(json!({"field": "drive_level", "old": 0, "new": 80})),
+        ));
 
         let sink = Arc::new(RecordingSink::default());
         let sink_dyn: Arc<dyn RoutinesEventSink> = sink.clone();
@@ -1490,6 +1681,273 @@ mod tests {
             acknowledge_automatic(&state, "ghost", "KK7ABC", "2026-07-14T00:00:00Z"),
             Err(UiError::NotFound(_))
         ));
+    }
+
+    // ── C3: closure-digest binding on both ack classes ───────────────────
+
+    /// An automatic routine whose call-graph writes station config
+    /// (`config.set`), enableable ONLY with a recorded write ack.
+    fn auto_write_json(name: &str, ack: Option<serde_json::Value>) -> String {
+        let mut body = json!({
+            "routine": name,
+            "schema_version": 1,
+            "transmit_mode": "automatic",
+            "triggers": [{"type": "manual"}],
+            "tracks": [{"name": "t", "steps": [
+                {"id": "s1", "action": "config.set", "params": {"drive_level": 80}},
+                {"id": "e1", "control": "end"}
+            ]}]
+        });
+        if let Some(ack) = ack {
+            body["write_ack"] = ack;
+        }
+        body.to_string()
+    }
+
+    /// C3: `acknowledge_automatic` binds the ack to the live TRANSMIT closure
+    /// digest — the ack the operator records is no longer digest-less. The
+    /// stamped digest equals what the validator recomputes, so the acknowledged
+    /// routine reports no `AUTO_TX_UNACKED`.
+    #[test]
+    fn acknowledge_automatic_records_the_live_transmit_digest() {
+        let (_dir, state, _sink, _c) = test_state();
+        save_routine(&state, &auto_tx_json("auto", None)).unwrap();
+        acknowledge_automatic(&state, "auto", "KK7ABC", "2026-07-14T00:00:00Z").unwrap();
+
+        let def = get_routine(&state, "auto").unwrap();
+        let stamped = def.transmit_ack.as_ref().unwrap().closure_digest.clone();
+        assert_eq!(
+            stamped,
+            Some(state.transmit_closure_digest(&def)),
+            "the ack must bind the live transmit closure digest"
+        );
+        assert!(
+            validate_routine(&state, "auto")
+                .unwrap()
+                .iter()
+                .all(|f| f.code != "AUTO_TX_UNACKED"),
+            "a digest-bound ack must clear AUTO_TX_UNACKED"
+        );
+    }
+
+    /// C3: `acknowledge_write` is the write-consent sibling — it binds the live
+    /// CONFIG-WRITE closure digest and clears `AUTO_WRITE_UNACKED`.
+    #[test]
+    fn acknowledge_write_records_the_live_write_digest_and_unblocks() {
+        let (_dir, state, _sink, _c) = test_state();
+        save_routine(&state, &auto_write_json("w", None)).unwrap();
+        // Before ack: AUTO_WRITE_UNACKED blocks.
+        assert!(validate_routine(&state, "w")
+            .unwrap()
+            .iter()
+            .any(|f| f.code == "AUTO_WRITE_UNACKED"));
+
+        acknowledge_write(&state, "w", "KK7ABC", "2026-07-14T00:00:00Z").unwrap();
+
+        let def = get_routine(&state, "w").unwrap();
+        let stamped = def.write_ack.as_ref().unwrap().closure_digest.clone();
+        assert_eq!(
+            stamped,
+            Some(state.write_closure_digest(&def)),
+            "the write ack must bind the live config-write closure digest"
+        );
+        assert!(
+            validate_routine(&state, "w")
+                .unwrap()
+                .iter()
+                .all(|f| f.code != "AUTO_WRITE_UNACKED"),
+            "a digest-bound write ack must clear AUTO_WRITE_UNACKED"
+        );
+    }
+
+    /// C3: `acknowledge_write` refuses a non-automatic routine and an unknown
+    /// name (mirror of `acknowledge_automatic`).
+    #[test]
+    fn acknowledge_write_refuses_non_automatic_and_unknown() {
+        let (_dir, state, _sink, _c) = test_state();
+        save_routine(&state, &def_json("attended", log_step())).unwrap();
+        assert!(matches!(
+            acknowledge_write(&state, "attended", "KK7ABC", "2026-07-14T00:00:00Z"),
+            Err(UiError::Rejected(_))
+        ));
+        assert!(matches!(
+            acknowledge_write(&state, "ghost", "KK7ABC", "2026-07-14T00:00:00Z"),
+            Err(UiError::NotFound(_))
+        ));
+    }
+
+    /// C3: `save_routine` discards a caller-supplied `write_ack` exactly as it
+    /// discards `transmit_ack` — neither consent envelope is agent-writable.
+    #[test]
+    fn save_discards_a_caller_supplied_write_ack() {
+        let (_dir, state, _sink, _c) = test_state();
+        let forged = json!({"by": "KK7ABC", "at": "2026-07-14T00:00:00Z", "closure_digest": "forged"});
+        let result = save_routine(&state, &auto_write_json("forged-w", Some(forged))).unwrap();
+        assert!(result.findings.iter().any(|f| f.code == "AUTO_WRITE_UNACKED"));
+        assert_eq!(
+            get_routine(&state, "forged-w").unwrap().write_ack,
+            None,
+            "the forged write ack must never reach the store"
+        );
+    }
+
+    /// C3: leaving automatic revokes `write_ack` (same `_ => None` strip arm
+    /// transmit_ack uses) — a stale write ack must never silently re-arm.
+    #[test]
+    fn save_clears_the_write_ack_when_leaving_automatic() {
+        let (_dir, state, _sink, _c) = test_state();
+        save_routine(&state, &auto_write_json("flip-w", None)).unwrap();
+        acknowledge_write(&state, "flip-w", "KK7ABC", "2026-07-14T00:00:00Z").unwrap();
+        assert!(get_routine(&state, "flip-w").unwrap().write_ack.is_some());
+
+        // Same routine saved as attended: the write ack must be gone from disk.
+        let attended = auto_write_json("flip-w", None).replace("\"automatic\"", "\"attended\"");
+        save_routine(&state, &attended).unwrap();
+        assert_eq!(get_routine(&state, "flip-w").unwrap().write_ack, None);
+
+        // Back to automatic: not acked, fresh acknowledgment required.
+        let result = save_routine(&state, &auto_write_json("flip-w", None)).unwrap();
+        assert!(result.findings.iter().any(|f| f.code == "AUTO_WRITE_UNACKED"));
+    }
+
+    /// C3: `validate_draft` strips a body-supplied `write_ack` before validating
+    /// (mirror of the transmit_ack strip), so the live panel agrees with save.
+    #[test]
+    fn validate_draft_strips_a_body_supplied_write_ack() {
+        let (_dir, state, _sink, _c) = test_state();
+        let forged = json!({"by": "KK7ABC", "at": "2026-07-14T00:00:00Z", "closure_digest": "forged"});
+        let findings = validate_draft(&state, &auto_write_json("draft-w", Some(forged))).unwrap();
+        assert!(
+            findings.iter().any(|f| f.code == "AUTO_WRITE_UNACKED"),
+            "a draft's forged write ack is stripped, so AUTO_WRITE_UNACKED still fires: {findings:?}"
+        );
+    }
+
+    /// C3: editing an acknowledged routine's transmit params flips the closure
+    /// digest, so the previously-valid ack no longer binds and `AUTO_TX_UNACKED`
+    /// re-fires (the digest-mismatch clause).
+    #[test]
+    fn routine_edit_after_ack_invalidates_the_transmit_ack() {
+        let (_dir, state, _sink, _c) = test_state();
+        save_routine(&state, &auto_tx_json("edited", None)).unwrap();
+        acknowledge_automatic(&state, "edited", "KK7ABC", "2026-07-14T00:00:00Z").unwrap();
+        assert!(validate_routine(&state, "edited")
+            .unwrap()
+            .iter()
+            .all(|f| f.code != "AUTO_TX_UNACKED"));
+
+        // Re-arg the transmit step; the recorded ack survives the save (C1) but
+        // its digest no longer matches the edited closure.
+        let edited = json!({
+            "routine": "edited", "schema_version": 1, "transmit_mode": "automatic",
+            "triggers": [{"type": "manual"}],
+            "tracks": [{"name": "t", "steps": [
+                {"id": "s1", "action": "radio.connect", "params": {"bands": ["40m"]}},
+                {"id": "e1", "control": "end"}
+            ]}]
+        })
+        .to_string();
+        save_routine(&state, &edited).unwrap();
+        assert!(
+            validate_routine(&state, "edited")
+                .unwrap()
+                .iter()
+                .any(|f| f.code == "AUTO_TX_UNACKED"),
+            "a re-edited transmit closure must invalidate the ack"
+        );
+    }
+
+    /// C3: editing a CALLEE reached by an acknowledged routine flips the parent's
+    /// closure digest (the callee's steps + the call args feed the hash), so the
+    /// parent's ack goes stale — proof the digest binds the WHOLE closure.
+    #[test]
+    fn callee_edit_after_ack_invalidates_the_parent_ack() {
+        let (_dir, state, _sink, _c) = test_state();
+        // child transmits; parent (automatic) only calls it.
+        save_routine(
+            &state,
+            &json!({
+                "routine": "child", "schema_version": 1, "transmit_mode": "attended",
+                "triggers": [{"type": "manual"}],
+                "tracks": [{"name": "t", "steps": [
+                    {"id": "s1", "action": "radio.connect", "params": {}},
+                    {"id": "e1", "control": "end"}
+                ]}]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        save_routine(
+            &state,
+            &json!({
+                "routine": "parent", "schema_version": 1, "transmit_mode": "automatic",
+                "triggers": [{"type": "manual"}],
+                "tracks": [{"name": "t", "steps": [
+                    {"id": "c1", "control": "call", "routine": "child", "args": {}, "sync": true},
+                    {"id": "e1", "control": "end"}
+                ]}]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        acknowledge_automatic(&state, "parent", "KK7ABC", "2026-07-14T00:00:00Z").unwrap();
+        assert!(validate_routine(&state, "parent")
+            .unwrap()
+            .iter()
+            .all(|f| f.code != "AUTO_TX_UNACKED"));
+
+        // Edit the child's transmit params; the parent's closure digest changes.
+        save_routine(
+            &state,
+            &json!({
+                "routine": "child", "schema_version": 1, "transmit_mode": "attended",
+                "triggers": [{"type": "manual"}],
+                "tracks": [{"name": "t", "steps": [
+                    {"id": "s1", "action": "radio.connect", "params": {"bands": ["80m"]}},
+                    {"id": "e1", "control": "end"}
+                ]}]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        assert!(
+            validate_routine(&state, "parent")
+                .unwrap()
+                .iter()
+                .any(|f| f.code == "AUTO_TX_UNACKED"),
+            "editing a callee must invalidate the parent's ack"
+        );
+    }
+
+    /// C3: the consent-closure command enumerates BOTH classes' steps for a
+    /// routine that transmits AND writes config.
+    #[test]
+    fn consent_closure_command_enumerates_transmit_and_write_steps() {
+        let (_dir, state, _sink, _c) = test_state();
+        save_routine(
+            &state,
+            &json!({
+                "routine": "both", "schema_version": 1, "transmit_mode": "automatic",
+                "triggers": [{"type": "manual"}],
+                "tracks": [{"name": "t", "steps": [
+                    {"id": "s1", "action": "radio.connect", "params": {}},
+                    {"id": "s2", "action": "config.set", "params": {"drive_level": 80}},
+                    {"id": "e1", "control": "end"}
+                ]}]
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let view = consent_closure_view(&state, "both").unwrap();
+        assert!(
+            view.transmit_steps.iter().any(|s| s.action == "radio.connect"),
+            "transmit step must be enumerated: {view:?}"
+        );
+        assert!(
+            view.write_steps.iter().any(|s| s.action == "config.set"),
+            "write step must be enumerated: {view:?}"
+        );
     }
 
     // ── enable: errors refuse; the fleet check runs ──────────────────────
@@ -2099,9 +2557,20 @@ mod tests {
         let (_dir, state, _sink, _c) = test_state();
         let actions = list_actions(&state);
         let names: Vec<&str> = actions.iter().map(|a| a.name.as_str()).collect();
-        assert_eq!(names, vec!["local.log", "radio.connect"], "sorted, registry-truth");
+        assert_eq!(
+            names,
+            vec!["config.set", "local.log", "radio.connect"],
+            "sorted, registry-truth"
+        );
         let connect = actions.iter().find(|a| a.name == "radio.connect").unwrap();
         assert!(connect.needs_radio && connect.transmits && !connect.needs_internet);
+        // D6: writes_config + example_params are projected off the descriptor.
+        let set = actions.iter().find(|a| a.name == "config.set").unwrap();
+        assert!(set.writes_config, "config.set carries the write consent class");
+        assert!(!connect.writes_config, "radio.connect does not write config");
+        // The test fakes declare no example_params (real actions set it; asserted
+        // in each action file's own unit tests).
+        assert_eq!(set.example_params, None);
     }
 
     // ── fleet_check: a read-only view of validate_fleet over enabled routines ──

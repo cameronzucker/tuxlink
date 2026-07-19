@@ -11,7 +11,16 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
-import type { Finding, RadioPreset, RoutineDef, RoutineSummary, SaveResult, StationSet } from '../routinesApi';
+import type {
+  ClosureStepView,
+  ConsentClosureView,
+  Finding,
+  RadioPreset,
+  RoutineDef,
+  RoutineSummary,
+  SaveResult,
+  StationSet,
+} from '../routinesApi';
 import { saveRoutine } from '../routinesApi';
 
 const { mockInvoke } = vi.hoisted(() => ({ mockInvoke: vi.fn() }));
@@ -36,6 +45,27 @@ const TRANSMITTING_ACTIONS = [
   { name: 'radio.connect', needsRadio: true, needsInternet: false, transmits: true },
 ];
 
+/** A closure step helper — most fields default to the BASE_DEF routine. */
+function step(overrides: Partial<ClosureStepView> = {}): ClosureStepView {
+  return {
+    routine: 'morning-sweep',
+    track: 'track-1',
+    step: 's1',
+    action: 'radio.connect',
+    params: {},
+    ...overrides,
+  };
+}
+
+/** BASE_DEF's default closure: the one direct transmit step, no writes. */
+const TRANSMIT_CLOSURE: ConsentClosureView = {
+  transmitSteps: [step()],
+  writeSteps: [],
+  callEdges: [],
+};
+
+const EMPTY_CLOSURE: ConsentClosureView = { transmitSteps: [], writeSteps: [], callEdges: [] };
+
 const PRESETS: RadioPreset[] = [{ name: 'hf-40m', frequencyHz: 7_100_000, mode: 'USB', powerW: 50 }];
 const STATION_SETS: StationSet[] = [{ name: 'or-gateways', callsigns: ['W7ABC', 'K7XYZ'] }];
 const ROUTINE_SUMMARIES: RoutineSummary[] = [
@@ -52,6 +82,8 @@ function installInvokeMock(overrides: InvokeOverrides = {}) {
     switch (cmd) {
       case 'routines_actions_list':
         return Promise.resolve(TRANSMITTING_ACTIONS);
+      case 'routines_consent_closure':
+        return Promise.resolve(TRANSMIT_CLOSURE);
       case 'routines_list':
         return Promise.resolve(ROUTINE_SUMMARIES);
       case 'routines_presets_list':
@@ -94,29 +126,224 @@ function renderTab(overrides: Partial<Parameters<typeof SettingsTab>[0]> = {}) {
   return { ...utils, onChange, onSaved };
 }
 
-describe('SettingsTab — transmit-mode section visibility', () => {
-  it('shows the section when a step action transmits per the registry', async () => {
+describe('SettingsTab — consent-section visibility is CLOSURE-based (R5 pin)', () => {
+  it('shows the section when the closure has a transmit step', async () => {
     renderTab();
     await screen.findByTestId('settings-transmit-section');
   });
 
-  it('shows the section when findings carry a consent-closure code, even with no transmitting step', async () => {
-    installInvokeMock({ routines_actions_list: () => [] });
-    renderTab({
-      draft: { ...BASE_DEF, tracks: [{ name: 't', steps: [] }] },
-      findings: [
-        { code: 'AUTO_TX_UNACKED', severity: 'error', routine: 'morning-sweep', message: 'no ack' } satisfies Finding,
-      ],
+  it('R5 pin: a CALL-ONLY closure (routine has no direct transmit/write step) with a VALID ack still shows the row — a direct step scan would hide it', async () => {
+    // The draft's own tracks carry ONLY a call step; the transmitting step
+    // lives in the called routine, surfaced by the closure walk. A stale
+    // direct-step scan (`draft.tracks.some(...)`) would find nothing and hide
+    // the ack row, dropping the operator's proof of what they signed.
+    installInvokeMock({
+      routines_consent_closure: () => ({
+        transmitSteps: [step({ routine: 'called-child', track: 'main', step: 'c1', action: 'radio.connect' })],
+        writeSteps: [],
+        callEdges: [{ routine: 'morning-sweep', step: 's1', callee: 'called-child', args: {} }],
+      } satisfies ConsentClosureView),
     });
-    await screen.findByTestId('settings-enable-section'); // wait for mount to settle
-    expect(screen.getByTestId('settings-transmit-section')).toBeInTheDocument();
+    renderTab({
+      draft: {
+        ...BASE_DEF,
+        transmit_ack: { by: 'N0CALL', at: '2026-07-08T19:41:22Z' },
+        tracks: [{ name: 't', steps: [{ id: 's1', control: 'call', routine: 'called-child' }] }],
+      },
+      findings: [],
+    });
+    await screen.findByTestId('settings-transmit-section');
+    // Valid: ack present + no AUTO_TX_UNACKED finding -> green acknowledged.
+    expect(await screen.findByTestId('settings-ack-acknowledged')).toBeInTheDocument();
   });
 
-  it('hides the section for a non-transmitting routine with no relevant findings', async () => {
-    installInvokeMock({ routines_actions_list: () => [] });
+  it('hides the section entirely when the closure is empty (no transmit AND no write steps)', async () => {
+    installInvokeMock({ routines_consent_closure: () => EMPTY_CLOSURE });
     renderTab({ draft: { ...BASE_DEF, tracks: [{ name: 't', steps: [] }] }, findings: [] });
     await screen.findByTestId('settings-enable-section');
     expect(screen.queryByTestId('settings-transmit-section')).not.toBeInTheDocument();
+  });
+});
+
+describe('SettingsTab — transmit ack VALIDITY (three states)', () => {
+  it('VALID: ack present + no AUTO_TX_UNACKED -> green acknowledged, no button', async () => {
+    renderTab({ draft: { ...BASE_DEF, transmit_ack: { by: 'N0CALL', at: '2026-07-08T19:41:22Z' } }, findings: [] });
+    await screen.findByTestId('settings-ack-acknowledged');
+    expect(screen.queryByTestId('settings-ack-invalid')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('settings-ack-pending')).not.toBeInTheDocument();
+  });
+
+  it('ABSENT: no ack -> pending panel with the Acknowledge button', async () => {
+    renderTab({ draft: { ...BASE_DEF, transmit_ack: null }, findings: [] });
+    await screen.findByTestId('settings-ack-pending');
+    expect(screen.getByTestId('settings-ack-button')).toBeInTheDocument();
+    expect(screen.queryByTestId('settings-ack-acknowledged')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('settings-ack-invalid')).not.toBeInTheDocument();
+  });
+
+  it('PRESENT-BUT-INVALID: ack present + AUTO_TX_UNACKED -> third state with the re-acknowledge copy', async () => {
+    renderTab({
+      draft: { ...BASE_DEF, transmit_ack: { by: 'N0CALL', at: '2026-07-08T19:41:22Z' } },
+      findings: [
+        { code: 'AUTO_TX_UNACKED', severity: 'error', routine: 'morning-sweep', message: 'digest mismatch' } satisfies Finding,
+      ],
+    });
+    await screen.findByTestId('settings-ack-invalid');
+    expect(
+      screen.getByText(
+        'Acknowledgment no longer valid: the routine, or a routine it calls, changed after N0CALL acknowledged on 2026-07-08T19:41:22Z. Re-acknowledge to run automatically.',
+      ),
+    ).toBeInTheDocument();
+    // Re-acknowledge affordance present; the green panel is not.
+    expect(screen.getByTestId('settings-ack-button')).toBeInTheDocument();
+    expect(screen.queryByTestId('settings-ack-acknowledged')).not.toBeInTheDocument();
+  });
+});
+
+describe('SettingsTab — closure enumeration', () => {
+  it('enumerates the transmit closure steps as "<routine> · <step> · <action> · <params>"', async () => {
+    installInvokeMock({
+      routines_consent_closure: () => ({
+        transmitSteps: [step({ routine: 'morning-sweep', step: 's1', action: 'radio.connect', params: { to: 'W7ABC' } })],
+        writeSteps: [],
+        callEdges: [],
+      } satisfies ConsentClosureView),
+    });
+    renderTab({ draft: { ...BASE_DEF, transmit_ack: { by: 'N0CALL', at: '2026-07-08T19:41:22Z' } }, findings: [] });
+    const list = await screen.findByTestId('settings-transmit-closure');
+    expect(
+      within(list).getByText('morning-sweep · s1 · radio.connect · {"to":"W7ABC"}'),
+    ).toBeInTheDocument();
+  });
+
+  it('renders a WRITE_VALUE_RUNTIME warning inline on the runtime-valued write row', async () => {
+    const runtimeMsg =
+      'step "s2" write param "drive_level" is "$in.level" - the value is chosen at run time by whoever starts the run';
+    installInvokeMock({
+      routines_consent_closure: () => ({
+        transmitSteps: [],
+        writeSteps: [step({ step: 's2', action: 'config.set_ardop', params: { drive_level: '$in.level' } })],
+        callEdges: [],
+      } satisfies ConsentClosureView),
+    });
+    renderTab({
+      draft: { ...BASE_DEF, write_ack: { by: 'N0CALL', at: '2026-07-08T19:41:22Z' } },
+      findings: [
+        { code: 'WRITE_VALUE_RUNTIME', severity: 'warning', routine: 'morning-sweep', step: 's2', message: runtimeMsg } satisfies Finding,
+      ],
+    });
+    const list = await screen.findByTestId('settings-write-closure');
+    expect(within(list).getByText(runtimeMsg)).toBeInTheDocument();
+  });
+});
+
+describe('SettingsTab — write ack row + mode gating + both-classes', () => {
+  it('a both-transmitting-and-writing closure renders BOTH ack rows', async () => {
+    installInvokeMock({
+      routines_consent_closure: () => ({
+        transmitSteps: [step({ step: 's1', action: 'radio.connect' })],
+        writeSteps: [step({ step: 's2', action: 'config.set_ardop', params: { drive_level: 80 } })],
+        callEdges: [],
+      } satisfies ConsentClosureView),
+    });
+    renderTab({ draft: { ...BASE_DEF, transmit_ack: null, write_ack: null }, findings: [] });
+    await screen.findByTestId('settings-transmit-section');
+    expect(screen.getByTestId('settings-ack-pending')).toBeInTheDocument();
+    expect(screen.getByTestId('settings-write-ack-row')).toBeInTheDocument();
+    expect(screen.getByTestId('settings-write-ack-button')).toBeInTheDocument();
+  });
+
+  it('write ack row is gated on AUTOMATIC mode — absent in attended even with write steps', async () => {
+    installInvokeMock({
+      routines_consent_closure: () => ({
+        transmitSteps: [],
+        writeSteps: [step({ step: 's2', action: 'config.set_ardop', params: { drive_level: 80 } })],
+        callEdges: [],
+      } satisfies ConsentClosureView),
+    });
+    renderTab({ draft: { ...BASE_DEF, transmit_mode: 'attended' }, findings: [] });
+    await screen.findByTestId('settings-transmit-section'); // section still shows (write steps present)
+    expect(screen.queryByTestId('settings-write-ack-row')).not.toBeInTheDocument();
+  });
+
+  it('write-only closure relabels the automatic toggle "Unattended (automatic)"', async () => {
+    installInvokeMock({
+      routines_consent_closure: () => ({
+        transmitSteps: [],
+        writeSteps: [step({ step: 's2', action: 'config.set_ardop', params: { drive_level: 80 } })],
+        callEdges: [],
+      } satisfies ConsentClosureView),
+    });
+    renderTab({ draft: { ...BASE_DEF, write_ack: null }, findings: [] });
+    await screen.findByTestId('settings-write-ack-row');
+    expect(screen.getByText('Unattended (automatic)')).toBeInTheDocument();
+    expect(screen.queryByText(/^Automatic$/)).not.toBeInTheDocument();
+  });
+
+  it('write ack VALID/ABSENT/INVALID mirror the transmit states', async () => {
+    const writeClosure = () =>
+      ({
+        transmitSteps: [],
+        writeSteps: [step({ step: 's2', action: 'config.set_ardop', params: { drive_level: 80 } })],
+        callEdges: [],
+      }) satisfies ConsentClosureView;
+
+    // VALID
+    installInvokeMock({ routines_consent_closure: writeClosure });
+    const valid = renderTab({
+      draft: { ...BASE_DEF, write_ack: { by: 'N0CALL', at: '2026-07-08T19:41:22Z' } },
+      findings: [],
+    });
+    await screen.findByTestId('settings-write-ack-acknowledged');
+    valid.unmount();
+
+    // INVALID
+    installInvokeMock({ routines_consent_closure: writeClosure });
+    const invalid = renderTab({
+      draft: { ...BASE_DEF, write_ack: { by: 'N0CALL', at: '2026-07-08T19:41:22Z' } },
+      findings: [
+        { code: 'AUTO_WRITE_UNACKED', severity: 'error', routine: 'morning-sweep', message: 'digest mismatch' } satisfies Finding,
+      ],
+    });
+    await screen.findByTestId('settings-write-ack-invalid');
+    expect(
+      within(screen.getByTestId('settings-write-ack-invalid')).getByText(
+        'Acknowledgment no longer valid: the routine, or a routine it calls, changed after N0CALL acknowledged on 2026-07-08T19:41:22Z. Re-acknowledge to run automatically.',
+      ),
+    ).toBeInTheDocument();
+    invalid.unmount();
+
+    // ABSENT
+    installInvokeMock({ routines_consent_closure: writeClosure });
+    renderTab({ draft: { ...BASE_DEF, write_ack: null }, findings: [] });
+    await screen.findByTestId('settings-write-ack-pending');
+  });
+
+  it('clicking the write Acknowledge saves, invokes routines_acknowledge_write, reloads write_ack via onChange', async () => {
+    const onChange = vi.fn();
+    installInvokeMock({
+      routines_consent_closure: () => ({
+        transmitSteps: [],
+        writeSteps: [step({ step: 's2', action: 'config.set_ardop', params: { drive_level: 80 } })],
+        callEdges: [],
+      } satisfies ConsentClosureView),
+      routines_get: () => ({ ...BASE_DEF, write_ack: { by: 'N0CALL', at: '2026-07-09T00:00:00Z' } }),
+    });
+    renderTab({ draft: { ...BASE_DEF, write_ack: null }, onChange });
+    await screen.findByTestId('settings-write-ack-button');
+    fireEvent.click(screen.getByTestId('settings-write-ack-button'));
+
+    await vi.waitFor(() => {
+      expect(callsFor('routines_acknowledge_write')).toHaveLength(1);
+    });
+    expect(callsFor('routines_save')).toHaveLength(1);
+    const saveIdx = mockInvoke.mock.calls.findIndex((c) => c[0] === 'routines_save');
+    const ackIdx = mockInvoke.mock.calls.findIndex((c) => c[0] === 'routines_acknowledge_write');
+    expect(saveIdx).toBeLessThan(ackIdx);
+    expect(callsFor('routines_acknowledge_write')[0]?.[1]).toEqual({ name: 'morning-sweep' });
+    await vi.waitFor(() => {
+      expect(onChange).toHaveBeenCalledWith({ write_ack: { by: 'N0CALL', at: '2026-07-09T00:00:00Z' } });
+    });
   });
 });
 
@@ -186,10 +413,11 @@ describe('SettingsTab — mode switch clears the ack panel (b)', () => {
     await screen.findByTestId('settings-ack-acknowledged');
 
     fireEvent.click(screen.getByTestId('settings-mode-attended'));
-    // The ack clear rides in the SAME patch as the mode change — a
-    // mode-only patch would leave the stale ack on the draft (see the
-    // switch-away-and-back regression test below).
-    expect(onChange).toHaveBeenCalledWith({ transmit_mode: 'attended', transmit_ack: null });
+    // Both acks clear in the SAME patch as the mode change — a mode-only patch
+    // would leave a stale ack on the draft (see the switch-away-and-back
+    // regression test below). A both-class routine holds two acks, so leaving
+    // automatic clears transmit_ack AND write_ack (E2).
+    expect(onChange).toHaveBeenCalledWith({ transmit_mode: 'attended', transmit_ack: null, write_ack: null });
 
     rerender(
       <SettingsTab

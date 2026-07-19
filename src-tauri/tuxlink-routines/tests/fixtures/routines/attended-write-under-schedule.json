@@ -1,8 +1,7 @@
 {
-  "routine": "fleet-schedule-collision-a",
+  "routine": "attended-write-under-schedule-demo",
   "schema_version": 1,
-  "transmit_mode": "automatic",
-  "transmit_ack": { "by": "KK7ABC", "at": "2026-07-13T20:00:00Z", "closure_digest": "d06283c4fd06a2ffa98331542c9faf8f0a96e89e245d22c897ade65fc78da029" },
+  "transmit_mode": "attended",
   "on_interrupted": "stay",
   "inputs": [],
   "triggers": [{ "type": "schedule", "every": "30m", "align": "hour", "if_missed": "skip" }],
@@ -10,7 +9,7 @@
     {
       "name": "t1",
       "steps": [
-        { "id": "s1", "action": "radio.connect", "params": {} },
+        { "id": "s1", "action": "config.set_ardop", "params": { "drive_level": 80 } },
         { "id": "e1", "control": "end", "failed": false }
       ]
     }

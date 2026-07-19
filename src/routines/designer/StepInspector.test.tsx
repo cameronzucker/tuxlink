@@ -100,6 +100,46 @@ describe('StepInspector — action step basics', () => {
   });
 });
 
+describe('StepInspector — E3: description line + WRITES badge', () => {
+  const CONFIG_ACTION: ActionInfo = {
+    name: 'config.set_ardop',
+    label: 'Set ARDOP drive level',
+    description: 'Writes the ARDOP drive level to the modem config',
+    needsRadio: false,
+    needsInternet: false,
+    transmits: false,
+    writesConfig: true,
+  };
+  const CONFIG_STEP: ActionStep = { id: 's1', action: 'config.set_ardop', params: { drive_level: 80 } };
+
+  it('renders the selected action description line', () => {
+    renderInspector({ step: CONFIG_STEP, actions: [CONFIG_ACTION] });
+    expect(screen.getByTestId('inspector-description')).toHaveTextContent(
+      'Writes the ARDOP drive level to the modem config',
+    );
+  });
+
+  it('does not render a description line when the action has none', () => {
+    // ACTIONS' radio.connect has an empty description.
+    renderInspector();
+    expect(screen.queryByTestId('inspector-description')).not.toBeInTheDocument();
+  });
+
+  it('renders a WRITES badge (and no RIG/TX) for a writes_config action', () => {
+    renderInspector({ step: CONFIG_STEP, actions: [CONFIG_ACTION] });
+    const row = screen.getByText('config.set_ardop').closest('.insp-row') as HTMLElement;
+    expect(row).toHaveTextContent('WRITES');
+    expect(row).not.toHaveTextContent('RIG');
+    expect(row).not.toHaveTextContent('TX');
+  });
+
+  it('does not render a WRITES badge for a non-writes action', () => {
+    renderInspector();
+    const row = screen.getByText('radio.connect').closest('.insp-row') as HTMLElement;
+    expect(row).not.toHaveTextContent('WRITES');
+  });
+});
+
 describe('StepInspector — params key/value grid (tuxlink-7ewvq item 9)', () => {
   it('editing a value commits on blur, JSON-parsing scalars and keeping @refs/plain text as strings', () => {
     const { onChange } = renderInspector();

@@ -46,10 +46,15 @@ export type OnInterrupted = 'stay' | 'resume';
 export type BusyPolicy = 'wait' | 'fail';
 export type IfMissed = 'skip' | 'run_once_on_launch';
 
-/** Recorded only by a UI act (spec §4); MCP cannot supply it. */
+/** Recorded only by a UI act (spec §4); MCP cannot supply it. Reused for BOTH
+ * the transmit ack (`transmit_ack`) and the config-write ack (`write_ack`)
+ * (C3). `closure_digest` is the consent-closure digest captured at ack time —
+ * present on acks stamped by the C3+ backend, absent on legacy acks (a
+ * digest-less ack reads as stale and fires the AUTO_*_UNACKED validator). */
 export interface TransmitAck {
   by: string;
   at: string;
+  closure_digest?: string | null;
 }
 
 export interface InputDecl {
@@ -109,6 +114,10 @@ export interface RoutineDef {
   schema_version: number;
   transmit_mode: TransmitMode;
   transmit_ack?: TransmitAck | null;
+  /** The config-write acknowledgment (C3) — the `writes_config` consent-class
+   *  sibling of `transmit_ack`, recorded only by a UI act. Absent until the
+   *  operator acknowledges an automatic config-writing routine. */
+  write_ack?: TransmitAck | null;
   on_interrupted?: OnInterrupted;
   inputs?: InputDecl[];
   triggers: Trigger[];
@@ -130,6 +139,45 @@ export interface Finding {
   track?: string | null;
   step?: string | null;
   message: string;
+}
+
+// ============================================================================
+// Wire types — consent closure (C3), src-tauri/src/routines/commands.rs
+// `ConsentClosureView` / `ClosureStepView` / `CallEdgeView`, all camelCase.
+// The Settings ack panels enumerate exactly the closure enforcement checks.
+// ============================================================================
+
+/** One relevant step in a routine's consent closure — the tuple the ack panels
+ * enumerate as `<routine> · <step> · <action> · <params>`. `routine` names
+ * whichever routine OWNS the step (it differs from the requested routine when
+ * the step lives behind one or more `Call` hops). `track` is carried for
+ * validator findings; the panels key runtime-value warnings by `step`. */
+export interface ClosureStepView {
+  routine: string;
+  track: string;
+  step: string;
+  action: string;
+  params: unknown;
+}
+
+/** One `Call` edge on a path reaching a relevant step: `routine` calls `callee`
+ * at `step` with `args`. Both consent classes' edges are merged + deduped. */
+export interface CallEdgeView {
+  routine: string;
+  step: string;
+  callee: string;
+  args: unknown;
+}
+
+/** The enumerated consent closure a Settings ack panel signs (C3). UI-only —
+ * never on the MCP surface. `transmitSteps` / `writeSteps` are the transmit and
+ * config-write steps the routine's call-graph closure reaches; visibility of
+ * the ack rows is CLOSURE-BASED off these (not a direct step scan), so a step
+ * reached only via `Call` still surfaces its ack row. */
+export interface ConsentClosureView {
+  transmitSteps: ClosureStepView[];
+  writeSteps: ClosureStepView[];
+  callEdges: CallEdgeView[];
 }
 
 // ============================================================================
@@ -237,6 +285,13 @@ export interface ActionInfo {
   needsRadio: boolean;
   transmits: boolean;
   needsInternet: boolean;
+  /** Declares the `config.*` write consent class (D5+). The palette/inspector
+   *  render a WRITES badge from this. Optional for older fixtures; the backend
+   *  always sends it. */
+  writesConfig?: boolean;
+  /** Canonical example `params` object as a compact JSON string (D6); the
+   *  authoring UI seeds it on insert. `null` when the action takes no params. */
+  exampleParams?: string | null;
 }
 
 /** One scripted dry-run outcome — `DryRunOutcomeDto` (commands.rs:184-194),
@@ -336,6 +391,8 @@ const CMD = {
   stationSetsSave: 'routines_station_sets_save',
   stationSetsDelete: 'routines_station_sets_delete',
   acknowledgeAutomatic: 'routines_acknowledge_automatic',
+  acknowledgeWrite: 'routines_acknowledge_write',
+  consentClosure: 'routines_consent_closure',
   validate: 'routines_validate',
   validateDraft: 'routines_validate_draft',
   actionsList: 'routines_actions_list',
@@ -346,13 +403,13 @@ const CMD = {
   takeRadio: 'routines_take_radio',
 } as const;
 
-/** Every routines Tauri command name, the 18 pre-existing plus the 9
- * UI-only plan-5 additions (`routines_runs_list`,
- * `routines_acknowledge_automatic`, `routines_validate`,
- * `routines_validate_draft`, `routines_actions_list`, `routines_next_fires`,
- * `routines_fleet_check`, `routines_export_run_bundle`,
- * `routines_take_radio`). Derived from `CMD` so this list and the bindings
- * below can never drift apart. */
+/** Every routines Tauri command name, the 18 pre-existing plus the 11
+ * UI-only additions (`routines_runs_list`, `routines_acknowledge_automatic`,
+ * `routines_validate`, `routines_validate_draft`, `routines_actions_list`,
+ * `routines_next_fires`, `routines_fleet_check`, `routines_export_run_bundle`,
+ * `routines_take_radio`, and the C3 consent pair `routines_acknowledge_write`
+ * + `routines_consent_closure`). Derived from `CMD` so this list and the
+ * bindings below can never drift apart. */
 export const ROUTINES_UI_COMMANDS: readonly string[] = Object.values(CMD);
 
 // ============================================================================
@@ -445,6 +502,20 @@ export async function nextFires(): Promise<NextFire[]> {
  * Operator-only; not on the MCP surface. */
 export async function acknowledgeAutomatic(name: string): Promise<void> {
   await invoke(CMD.acknowledgeAutomatic, { name });
+}
+
+/** Record the config-write acknowledgment (C3, spec §4) — the `writes_config`
+ * sibling of {@link acknowledgeAutomatic}. Operator-only; not on the MCP
+ * surface. The backend stamps `by`/`at` + the closure digest at ack time. */
+export async function acknowledgeWrite(name: string): Promise<void> {
+  await invoke(CMD.acknowledgeWrite, { name });
+}
+
+/** Enumerate one routine's consent closure (C3) — the transmit + config-write
+ * steps its call-graph closure reaches, plus the call edges leading to them —
+ * for the Settings ack panels. UI-only; not on the MCP surface. */
+export async function consentClosure(name: string): Promise<ConsentClosureView> {
+  return await invoke<ConsentClosureView>(CMD.consentClosure, { name });
 }
 
 export async function validateRoutine(name: string): Promise<Finding[]> {

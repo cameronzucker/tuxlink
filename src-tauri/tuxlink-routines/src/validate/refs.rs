@@ -103,12 +103,16 @@ mod tests {
     use serde_json::json;
 
     const RADIO_CONNECT: ActionDescriptor = ActionDescriptor {
+        writes_config: false,
         name: "radio.connect",
         label: "",
         description: "",
         needs_radio: true,
         transmits: true,
         needs_internet: false,
+        example_params: None,
+        allowed_values: None,
+        dry_run_shape: None,
     };
 
     fn routine_with_action_step(action: &str, params: serde_json::Value) -> RoutineDef {
@@ -117,6 +121,7 @@ mod tests {
             schema_version: crate::types::SUPPORTED_SCHEMA_VERSION,
             transmit_mode: TransmitMode::Attended,
             transmit_ack: None,
+            write_ack: None,
             on_interrupted: OnInterrupted::Stay,
             inputs: vec![],
             triggers: vec![Trigger::Manual],
@@ -220,6 +225,7 @@ mod tests {
             schema_version: crate::types::SUPPORTED_SCHEMA_VERSION,
             transmit_mode: TransmitMode::Attended,
             transmit_ack: None,
+            write_ack: None,
             on_interrupted: OnInterrupted::Stay,
             inputs: vec![],
             triggers: vec![Trigger::Manual],

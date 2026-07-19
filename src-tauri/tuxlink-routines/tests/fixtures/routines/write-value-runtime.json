@@ -1,0 +1,18 @@
+{
+  "routine": "write-value-runtime-demo",
+  "schema_version": 1,
+  "transmit_mode": "automatic",
+  "on_interrupted": "stay",
+  "inputs": [],
+  "triggers": [{ "type": "manual" }],
+  "tracks": [
+    {
+      "name": "t1",
+      "steps": [
+        { "id": "s0", "action": "data.read", "params": { "source": "ardop_config" } },
+        { "id": "s1", "action": "config.set_ardop", "params": { "drive_level": "$s0.drive_level" } },
+        { "id": "e1", "control": "end", "failed": false }
+      ]
+    }
+  ]
+}

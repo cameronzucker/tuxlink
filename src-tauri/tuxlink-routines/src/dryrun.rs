@@ -90,11 +90,13 @@ pub fn build_dryrun_registry(
 ) -> ActionRegistry {
     let mut registry = ActionRegistry::default();
     for descriptor in real_descriptors {
-        let mut fake = FakeAction::new(descriptor.name).with_capabilities(
-            descriptor.needs_radio,
-            descriptor.transmits,
-            descriptor.needs_internet,
-        );
+        let mut fake = FakeAction::new(descriptor.name)
+            .with_capabilities(
+                descriptor.needs_radio,
+                descriptor.transmits,
+                descriptor.needs_internet,
+            )
+            .with_writes_config(descriptor.writes_config);
         match script.outcomes.get(descriptor.name) {
             Some(queued) if !queued.is_empty() => {
                 for outcome in queued {
@@ -120,6 +122,16 @@ fn apply_default(
 ) -> FakeAction {
     match default {
         DryRunDefault::Optimistic => {
+            // Shape-true dry-run (D6, round-2 P1-5): if the descriptor declares a
+            // `dry_run_shape`, replay it against the RESOLVED params at execute
+            // time (params-aware mode) instead of a static optimistic payload —
+            // this is what lets `data.read`'s 13 sources each return a distinct
+            // shape from one unscripted default. Scripted outcomes already took
+            // precedence in `build_dryrun_registry` (this fn only runs when
+            // nothing was scripted for the action).
+            if let Some(shape) = descriptor.dry_run_shape {
+                return fake.with_shape(shape);
+            }
             let mut payload = json!({"dry_run": true});
             if descriptor.needs_radio {
                 payload["connected"] = json!(true);
@@ -137,28 +149,40 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     const RADIO_CONNECT: ActionDescriptor = ActionDescriptor {
+        writes_config: false,
         name: "radio.connect",
         label: "",
         description: "",
         needs_radio: true,
         transmits: true,
         needs_internet: false,
+        example_params: None,
+        allowed_values: None,
+        dry_run_shape: None,
     };
     const LOCAL_LOG: ActionDescriptor = ActionDescriptor {
+        writes_config: false,
         name: "local.log",
         label: "",
         description: "",
         needs_radio: false,
         transmits: false,
         needs_internet: false,
+        example_params: None,
+        allowed_values: None,
+        dry_run_shape: None,
     };
     const DATA_LOOKUP: ActionDescriptor = ActionDescriptor {
+        writes_config: false,
         name: "data.web_lookup",
         label: "",
         description: "",
         needs_radio: false,
         transmits: false,
         needs_internet: true,
+        example_params: None,
+        allowed_values: None,
+        dry_run_shape: None,
     };
 
     #[test]
@@ -182,7 +206,36 @@ mod tests {
             assert_eq!(d.needs_radio, original.needs_radio, "{}", d.name);
             assert_eq!(d.transmits, original.transmits, "{}", d.name);
             assert_eq!(d.needs_internet, original.needs_internet, "{}", d.name);
+            assert_eq!(d.writes_config, original.writes_config, "{}", d.name);
         }
+    }
+
+    /// The mirror carries `writes_config` verbatim (C2): a dry-run of a config
+    /// write sees the same declared consent class the real run would — even
+    /// though a dry-run never actually parks (the engine forces attended
+    /// `false`), the validator's capability checks still see the true shape.
+    #[test]
+    fn mirror_preserves_writes_config_flag() {
+        const CONFIG_WRITE: ActionDescriptor = ActionDescriptor {
+            name: "config.set_ardop",
+            label: "",
+            description: "",
+            needs_radio: false,
+            transmits: false,
+            writes_config: true,
+            needs_internet: false,
+            example_params: None,
+            allowed_values: None,
+            dry_run_shape: None,
+        };
+        let registry = build_dryrun_registry(&[CONFIG_WRITE], DryRunScript::new());
+        let d = registry
+            .descriptors()
+            .into_iter()
+            .find(|d| d.name == "config.set_ardop")
+            .unwrap();
+        assert!(d.writes_config, "the dry-run fake mirrors writes_config: true");
+        assert!(!d.transmits);
     }
 
     #[tokio::test]
@@ -264,5 +317,82 @@ mod tests {
         // Behavior verified via unscripted_radio_action_* above; this test
         // just proves the empty-vec branch didn't panic/skip registration.
         assert!(registry.get("radio.connect").is_some());
+    }
+
+    // --- D6: descriptor `dry_run_shape` (params-aware canned outputs) --------
+
+    /// A test stand-in for a monolith action's `dry_run_shape`: differs its
+    /// output by a `source` param, exactly as `data.read`'s real shape does.
+    fn source_shape(params: &Value) -> Value {
+        match params.get("source").and_then(|v| v.as_str()) {
+            Some("grid") => json!({"grid": "AA00aa", "dry_run": true}),
+            Some("modem_status") => json!({"state": "idle", "dry_run": true}),
+            _ => json!({"dry_run": true}),
+        }
+    }
+
+    const READ_WITH_SHAPE: ActionDescriptor = ActionDescriptor {
+        name: "data.read",
+        label: "",
+        description: "",
+        needs_radio: false,
+        transmits: false,
+        writes_config: false,
+        needs_internet: false,
+        example_params: None,
+        allowed_values: None,
+        dry_run_shape: Some(source_shape),
+    };
+
+    #[tokio::test]
+    async fn dry_run_shape_is_params_aware_across_sources() {
+        let registry = build_dryrun_registry(&[READ_WITH_SHAPE], DryRunScript::new());
+        let fake = registry.get("data.read").unwrap();
+        let cancel = CancellationToken::new();
+
+        let grid = fake
+            .execute(json!({"source": "grid"}), cancel.clone())
+            .await
+            .unwrap();
+        assert_eq!(grid, json!({"grid": "AA00aa", "dry_run": true}));
+
+        let modem = fake
+            .execute(json!({"source": "modem_status"}), cancel.clone())
+            .await
+            .unwrap();
+        assert_eq!(modem["state"], json!("idle"));
+
+        // Unknown / unresolved source falls through to the optimistic default.
+        let unknown = fake
+            .execute(json!({"source": "who_knows"}), cancel)
+            .await
+            .unwrap();
+        assert_eq!(unknown, json!({"dry_run": true}));
+    }
+
+    #[tokio::test]
+    async fn scripted_outcome_takes_precedence_over_dry_run_shape() {
+        // Even though the descriptor carries a shape, an explicit script wins.
+        let script = DryRunScript::new()
+            .with_outcomes("data.read", vec![DryRunOutcome::Ok(json!({"scripted": true}))]);
+        let registry = build_dryrun_registry(&[READ_WITH_SHAPE], script);
+        let fake = registry.get("data.read").unwrap();
+        let out = fake
+            .execute(json!({"source": "grid"}), CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(out, json!({"scripted": true}), "script beats dry_run_shape");
+    }
+
+    #[tokio::test]
+    async fn pessimistic_default_ignores_dry_run_shape() {
+        let script = DryRunScript::new().with_default(DryRunDefault::Pessimistic);
+        let registry = build_dryrun_registry(&[READ_WITH_SHAPE], script);
+        let fake = registry.get("data.read").unwrap();
+        let err = fake
+            .execute(json!({"source": "grid"}), CancellationToken::new())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, crate::error::StepError::Action { .. }));
     }
 }

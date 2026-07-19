@@ -27,11 +27,13 @@
 //! [`RoutinesState::start_routine_def`] is the single start chokepoint, and
 //! slice 5b installs consent enforcement THERE:
 //!
-//! * **Start gate.** [`closure_transmits`] walks the definition + the store's
-//!   routine lookup; a transmitting `automatic` routine with no recorded
-//!   [`ack_is_recorded`] acknowledgment is refused with the typed,
-//!   operator-facing [`RoutineStartError::UnacknowledgedAutomatic`]. Attended
-//!   and non-transmitting routines start.
+//! * **Start gate ([`consent_gate_error`]).** Walks the definition + the
+//!   store's routine lookup for BOTH consent classes (transmit + config-write,
+//!   C3); an `automatic` routine whose relevant closure is not covered by a
+//!   current, digest-binding acknowledgment is refused with the typed,
+//!   operator-facing [`RoutineStartError::UnacknowledgedAutomatic`] /
+//!   [`RoutineStartError::UnacknowledgedAutomaticWrite`]. Attended and
+//!   non-transmitting/non-writing routines start.
 //! * **Attended pause.** [`build_routines_state`] installs the
 //!   [`ConsentRegistry`] as the engine's [`tuxlink_routines::consent::ConsentPort`]
 //!   (via `EngineConfig.consent`). When an attended run reaches a `transmits`
@@ -55,7 +57,7 @@ use tokio::sync::{oneshot, Notify};
 use tokio_util::sync::CancellationToken;
 
 use tuxlink_routines::action::ActionRegistry;
-use tuxlink_routines::compose::{CallCtx, ChildHandle, RoutineInvoker};
+use tuxlink_routines::compose::{CallCtx, ChildHandle, RootConsent, RoutineInvoker};
 use tuxlink_routines::consent::ConsentPort;
 use tuxlink_routines::dryrun::DryRunScript;
 use tuxlink_routines::engine::{Engine, EngineConfig, RunHandle, StartOpts};
@@ -66,12 +68,18 @@ use tuxlink_routines::snapshot::EntityResolver;
 use tuxlink_routines::types::{OnInterrupted, RoutineDef, TransmitMode};
 
 use super::actions::cat::MonolithRigService;
+use super::actions::config_write::MonolithConfigWriteService;
 use super::actions::data::MonolithDataService;
+use super::actions::docs_search::MonolithDocsSearchService;
+use super::actions::find_stations::MonolithStationQueryService;
 use super::actions::local::MonolithLocalService;
 use super::actions::radio::{MonolithAprsService, MonolithConnectService, MonolithListenService};
 use super::actions::{build_registry, ActionDeps};
 use super::arbiter::RadioArbiter;
-use super::consent::{closure_transmits, transmit_action_names, ConsentRegistry};
+use super::consent::{
+    ack_binds, closure_digest_for, closure_transmits, closure_writes, transmit_action_names,
+    write_action_names, ConsentRegistry,
+};
 use super::events::{RoutinesEvent, RoutinesEventSink, TauriRoutinesEventSink};
 use super::presets::RadioPresetStore;
 use super::resolver::MonolithEntityResolver;
@@ -157,6 +165,17 @@ pub enum RoutineStartError {
          responsibility (Part 97 automatic-control rules) before running it"
     )]
     UnacknowledgedAutomatic { routine: String },
+    /// The write-consent sibling of [`Self::UnacknowledgedAutomatic`] (C3,
+    /// spec §4): a routine whose call-graph closure writes station config and
+    /// declares `transmit_mode: automatic` cannot start without a current
+    /// recorded config-write acknowledgment (`write_ack` binding the live
+    /// closure digest). Same operator-facing shape, config-write wording.
+    #[error(
+        "routine '{routine}' changes station configuration under automatic control but has no \
+         current recorded acknowledgment — open its Settings and acknowledge the config-write \
+         responsibility before running it"
+    )]
+    UnacknowledgedAutomaticWrite { routine: String },
     #[error(transparent)]
     Engine(#[from] EngineError),
 }
@@ -245,6 +264,10 @@ pub struct RoutinesState {
     /// Catalog action names that transmit (from the engine registry's
     /// descriptors), used by the start gate's [`closure_transmits`] predicate.
     transmit_names: HashSet<String>,
+    /// Catalog action names that write station config (`writes_config`, C3),
+    /// used by the start gate's [`closure_writes`] predicate and the write
+    /// closure digest the write-consent gate binds against.
+    write_names: HashSet<String>,
     /// The scheduler's wake-up channel (Task 6b). Every routine-library mutation
     /// pings it (see [`Self::emit`]) so [`super::scheduler::RoutinesScheduler`]
     /// recomputes its next fire instant IMMEDIATELY instead of sleeping through
@@ -274,6 +297,7 @@ impl RoutinesState {
         sink: Arc<dyn RoutinesEventSink>,
         consent: Arc<ConsentRegistry>,
         transmit_names: HashSet<String>,
+        write_names: HashSet<String>,
     ) -> Self {
         Self {
             engine,
@@ -290,8 +314,49 @@ impl RoutinesState {
             sink,
             consent,
             transmit_names,
+            write_names,
             schedule_notify: Arc::new(Notify::new()),
         }
+    }
+
+    /// The sha256 hex digest of `def`'s TRANSMIT consent closure (C3), computed
+    /// against the live store + registry — the exact value the leaf validator
+    /// recomputes, so an ack recorded with this digest binds until the closure
+    /// changes. The digest walks the RAW def (Call steps resolve by name at
+    /// runtime, mirroring the executor), never a snapshot.
+    pub fn transmit_closure_digest(&self, def: &RoutineDef) -> String {
+        let lookup = |name: &str| self.store.get(name);
+        let transmits = |name: &str| self.transmit_names.contains(name);
+        closure_digest_for(def, &lookup, &transmits)
+    }
+
+    /// The sha256 hex digest of `def`'s CONFIG-WRITE consent closure (C3), the
+    /// `writes_config` sibling of [`Self::transmit_closure_digest`].
+    pub fn write_closure_digest(&self, def: &RoutineDef) -> String {
+        let lookup = |name: &str| self.store.get(name);
+        let writes = |name: &str| self.write_names.contains(name);
+        closure_digest_for(def, &lookup, &writes)
+    }
+
+    /// `def`'s (transmit, config-write) consent closures (C3), each enumerated
+    /// over the SAME shared walk the digest + validator use. The command layer
+    /// maps these to the UI-facing `ConsentClosureView`; kept here because the
+    /// transmit/write action-name sets are private to this facade.
+    pub fn consent_closures(
+        &self,
+        def: &RoutineDef,
+    ) -> (
+        tuxlink_routines::consent_closure::ConsentClosure,
+        tuxlink_routines::consent_closure::ConsentClosure,
+    ) {
+        use tuxlink_routines::consent_closure::consent_closure;
+        let lookup = |name: &str| self.store.get(name);
+        let transmits = |name: &str| self.transmit_names.contains(name);
+        let writes = |name: &str| self.write_names.contains(name);
+        (
+            consent_closure(def, &lookup, &transmits),
+            consent_closure(def, &lookup, &writes),
+        )
     }
 
     /// Emit a routines event on the state's sink. The command layer (Task 6)
@@ -376,6 +441,20 @@ impl RoutinesState {
         self.start_routine_def(&def, args, None).await
     }
 
+    /// Start a real run of an ALREADY-RESOLVED definition (C3 single-read start
+    /// gate): the caller passes the exact def it validated, and THAT def is the
+    /// snapshot started — closing the TOCTOU window `start_routine` opens by
+    /// reloading the def by name after validation (a concurrent save could swap
+    /// it between validate and start). [`super::commands::run_routine`] uses
+    /// this; the same consent gate runs inside the shared body.
+    pub async fn start_routine_with_def(
+        self: &Arc<Self>,
+        def: &RoutineDef,
+        args: serde_json::Value,
+    ) -> Result<String, RoutineStartError> {
+        self.start_routine_def(def, args, None).await
+    }
+
     /// Start a DRY run of a routine by name (spec §10 layer 3). Routes through
     /// the engine's [`Engine::start_dry_run`] — the canonical fake-world entry
     /// point, which swaps EVERY real action for a capability-mirroring
@@ -425,18 +504,26 @@ impl RoutinesState {
         // an as-yet-unacknowledged routine. `Engine::start_dry_run` also forces
         // the engine's effective attended flag to false, so a dry-run never
         // parks either.
+        // C3: both consent classes (transmit + config-write) are checked here,
+        // each ack bound to the exact closure digest the operator signed.
         if !dry_run_flag {
             let lookup = |name: &str| self.store.get(name);
             let transmits = |name: &str| self.transmit_names.contains(name);
-            if closure_transmits(def, &lookup, &transmits)
-                && def.transmit_mode == TransmitMode::Automatic
-                && !ack_is_recorded(def)
-            {
-                return Err(RoutineStartError::UnacknowledgedAutomatic {
-                    routine: def.routine.clone(),
-                });
+            let writes = |name: &str| self.write_names.contains(name);
+            if let Some(err) = consent_gate_error(def, &lookup, &transmits, &writes) {
+                return Err(err);
             }
         }
+
+        // The root consent context (C3) threaded onto this run's ExecCtx (and,
+        // from there, unchanged down every Control::Call) so a child start can
+        // re-verify the root's digests against the live store and catch a callee
+        // edited after this automatic run started. `None` for attended roots.
+        let root = if dry_run_flag {
+            None
+        } else {
+            root_consent_for(self, def)
+        };
 
         // A dry run goes through the engine's OWN dry-run entry point, which is
         // what swaps the registry for capability-mirroring fakes. Passing
@@ -451,9 +538,6 @@ impl RoutinesState {
         } = match dry_run {
             Some(script) => self.engine.start_dry_run(def, args, script).await?,
             None => {
-                // B2 minimal mechanical fix: `start_run_ext` now takes the
-                // pinned `StartOpts` struct. CHUNK 2 replaces this with the
-                // `SessionChildInvoker` install + verified root threading (C3).
                 self.engine
                     .start_run_ext(
                         def,
@@ -463,7 +547,9 @@ impl RoutinesState {
                             parent_attended: false,
                             dry_run: false,
                             cancel: None,
-                            root: None,
+                            // C3: an automatic root threads its recomputed
+                            // digests so every child start re-verifies them.
+                            root,
                         },
                     )
                     .await?
@@ -752,15 +838,59 @@ fn prune_terminal_runs(runs: &mut HashMap<String, RunEntry>) {
     }
 }
 
-/// Is a routine's automatic-transmit acknowledgment recorded (spec §4)? True
-/// iff `transmit_ack` is present AND both its `by` (callsign) and `at`
-/// (timestamp) are non-empty after trimming — the exact rule plan 3's validator
-/// applies for "unacknowledged auto-TX cannot be enabled", kept identical here
-/// so enforcement and validation never disagree.
-fn ack_is_recorded(def: &RoutineDef) -> bool {
-    def.transmit_ack
-        .as_ref()
-        .is_some_and(|a| !a.by.trim().is_empty() && !a.at.trim().is_empty())
+/// The start-gate consent check (spec §4, C3): `Some(err)` iff `def` must be
+/// refused a run because it is `automatic` and a relevant closure (transmit or
+/// config-write) is not covered by a current, digest-binding acknowledgment.
+///
+/// Both classes run here — the gate is the single enforcement chokepoint every
+/// path (`run_routine`, scheduler, MCP, recovery, child-start) funnels through
+/// — and the digest bind is what upgrades the old "by/at present" check to
+/// "the ack still matches the exact closure the operator signed": a routine or
+/// callee edited after acknowledgment (or a digest-less legacy ack) no longer
+/// binds and is refused, exactly as the leaf validator's `AUTO_*_UNACKED`
+/// findings fire. A non-automatic routine, or one whose relevant closure is
+/// empty, is never gated.
+fn consent_gate_error(
+    def: &RoutineDef,
+    lookup: &dyn Fn(&str) -> Option<RoutineDef>,
+    transmits: &dyn Fn(&str) -> bool,
+    writes: &dyn Fn(&str) -> bool,
+) -> Option<RoutineStartError> {
+    if def.transmit_mode != TransmitMode::Automatic {
+        return None;
+    }
+    if closure_transmits(def, lookup, transmits)
+        && !ack_binds(&def.transmit_ack, &closure_digest_for(def, lookup, transmits))
+    {
+        return Some(RoutineStartError::UnacknowledgedAutomatic {
+            routine: def.routine.clone(),
+        });
+    }
+    if closure_writes(def, lookup, writes)
+        && !ack_binds(&def.write_ack, &closure_digest_for(def, lookup, writes))
+    {
+        return Some(RoutineStartError::UnacknowledgedAutomaticWrite {
+            routine: def.routine.clone(),
+        });
+    }
+    None
+}
+
+/// Build the [`RootConsent`] threaded onto an automatic run's `ExecCtx` so
+/// child-start re-verification (C3) can detect a callee edited mid-run. `None`
+/// for an attended root (its transmit/write steps park per step, so mid-run
+/// drift is visible to the operator live). The digests recorded here are the
+/// SAME the gate just bound the ack against; a child-start recompute that
+/// disagrees means the closure changed after this run started.
+fn root_consent_for(state: &RoutinesState, def: &RoutineDef) -> Option<RootConsent> {
+    if def.transmit_mode != TransmitMode::Automatic {
+        return None;
+    }
+    Some(RootConsent {
+        routine: def.routine.clone(),
+        transmit_digest: Some(state.transmit_closure_digest(def)),
+        write_digest: Some(state.write_closure_digest(def)),
+    })
 }
 
 /// Read a dead run's journal and deserialize its `RunStarted.snapshot` back
@@ -806,6 +936,9 @@ struct SessionChildInvoker {
     /// Catalog action names that transmit — the child start gate's
     /// [`closure_transmits`] predicate (same set the session start gate uses).
     transmit_names: HashSet<String>,
+    /// Catalog action names that write config (`writes_config`, C3) — the child
+    /// gate's `writes` predicate and the root-digest recompute's write class.
+    write_names: HashSet<String>,
 }
 
 #[async_trait]
@@ -832,29 +965,55 @@ impl RoutineInvoker for SessionChildInvoker {
             ),
         })?;
 
-        // ── CHILD START GATE (spec §4) ───────────────────────────────────
-        // The same consent gate `start_routine_def` runs, on THIS def: a
-        // transmitting `automatic` child with no recorded acknowledgment is
-        // refused, and the error propagates verbatim up the parent's Call step.
-        //
-        // C3 extends: recompute the ROOT's transmit/write digests here
-        // (`call.root`, currently always `None` in B2) against the live store
-        // and refuse a callee that changed after acknowledgment
-        // (`callee changed after acknowledgment`). Those digest/ack-binding
-        // checks land in C3; this seam is where they go.
+        // ── CHILD START GATE (spec §4, C3) ───────────────────────────────
+        // The same digest-binding consent gate `start_routine_def` runs, on
+        // THIS def: a transmitting/writing `automatic` child whose ack no longer
+        // binds its live closure is refused, and the error propagates verbatim
+        // up the parent's Call step.
         {
             let lookup = |name: &str| self.store.get(name);
             let transmits = |name: &str| self.transmit_names.contains(name);
-            if closure_transmits(&def, &lookup, &transmits)
-                && def.transmit_mode == TransmitMode::Automatic
-                && !ack_is_recorded(&def)
-            {
+            let writes = |name: &str| self.write_names.contains(name);
+            if let Some(err) = consent_gate_error(&def, &lookup, &transmits, &writes) {
                 return Err(StepError::Action {
                     action: format!("call:{routine}"),
-                    cause: RoutineStartError::UnacknowledgedAutomatic {
-                        routine: def.routine.clone(),
-                    }
-                    .to_string(),
+                    cause: err.to_string(),
+                });
+            }
+        }
+
+        // ── ROOT RE-VERIFICATION (C3) ────────────────────────────────────
+        // An automatic root threads its recorded closure digests down every
+        // Call hop (`call.root`). Recompute the ROOT's transmit + write digests
+        // against the LIVE store now: if the root routine — or ANY routine in
+        // its closure — was edited after the run started, the recomputed digest
+        // diverges from the acknowledged one and the Call fails verbatim. This
+        // is the runtime backstop for the start-gate ack bind: the ack matched
+        // at start, and this proves the closure has not drifted since. An
+        // attended root threads `None` -> no-op (attended steps park per step,
+        // so drift is visible to the operator live).
+        if let Some(root) = &call.root {
+            let live = self.store.get(&root.routine).map(|rd| {
+                let lookup = |name: &str| self.store.get(name);
+                let transmits = |name: &str| self.transmit_names.contains(name);
+                let writes = |name: &str| self.write_names.contains(name);
+                (
+                    closure_digest_for(&rd, &lookup, &transmits),
+                    closure_digest_for(&rd, &lookup, &writes),
+                )
+            });
+            let matches = match live {
+                Some((tx, wr)) => {
+                    root.transmit_digest.as_deref() == Some(tx.as_str())
+                        && root.write_digest.as_deref() == Some(wr.as_str())
+                }
+                // The root routine itself vanished mid-run: that is a change.
+                None => false,
+            };
+            if !matches {
+                return Err(StepError::Action {
+                    action: format!("call:{routine}"),
+                    cause: "callee changed after acknowledgment".into(),
                 });
             }
         }
@@ -875,8 +1034,9 @@ impl RoutineInvoker for SessionChildInvoker {
                     parent_attended: call.parent_attended,
                     dry_run: false,
                     cancel: Some(child_token.clone()),
-                    // C3 fills the root consent context; B2 has none.
-                    root: None,
+                    // C3: propagate the SAME root context unchanged so every
+                    // descendant re-verifies against the top-level ack.
+                    root: call.root.clone(),
                 },
             )
             .await
@@ -1009,6 +1169,9 @@ pub fn build_default_registry(app: &AppHandle, arbiter: Arc<RadioArbiter>) -> Ac
         listen: Arc::new(MonolithListenService::new()),
         rig: Arc::new(MonolithRigService::new()),
         data: Arc::new(MonolithDataService::new(app.clone())),
+        station_query: Arc::new(MonolithStationQueryService::new(app.clone())),
+        docs_search: Arc::new(MonolithDocsSearchService::new(app.clone())),
+        config_write: Arc::new(MonolithConfigWriteService::new()),
         local: Arc::new(MonolithLocalService::new(app.clone())),
     };
     build_registry(deps)
@@ -1050,6 +1213,7 @@ pub fn build_routines_state(
     // the engine's effective attended flag applied in `run_action_step_shared`.
     let consent = Arc::new(ConsentRegistry::new(sink.clone()));
     let transmit_names = transmit_action_names(&registry);
+    let write_names = write_action_names(&registry);
 
     // ONE registry `Arc`, shared by the engine (which resolves actions from it)
     // and the state (whose command layer builds the validation context's
@@ -1079,6 +1243,7 @@ pub fn build_routines_state(
         sink.clone(),
         consent,
         transmit_names.clone(),
+        write_names.clone(),
     );
 
     // Install the child-run invoker (O3) NOW — the engine + the shared `runs`
@@ -1095,6 +1260,7 @@ pub fn build_routines_state(
         run_seq: state.run_seq.clone(),
         sink,
         transmit_names,
+        write_names,
     }));
 
     state
@@ -1159,6 +1325,7 @@ mod tests {
             schema_version: SUPPORTED_SCHEMA_VERSION,
             transmit_mode: TransmitMode::Attended,
             transmit_ack: None,
+            write_ack: None,
             on_interrupted,
             inputs: vec![],
             triggers: vec![Trigger::Manual],
@@ -1643,7 +1810,24 @@ mod tests {
         TransmitAck {
             by: by.into(),
             at: at.into(),
+            closure_digest: None,
         }
+    }
+
+    /// Save an automatic transmitting routine with a VALID digest-bound transmit
+    /// ack (C3) — what the operator's UI acknowledgment records. The digest binds
+    /// the live transmit closure, so the start gate accepts it (a digest-less
+    /// [`ack`] would be refused as stale).
+    fn save_acked_auto_tx(state: &RoutinesState, name: &str) {
+        let base = tx_def(name, TransmitMode::Automatic, None);
+        let digest = state.transmit_closure_digest(&base);
+        let mut acked = base;
+        acked.transmit_ack = Some(TransmitAck {
+            by: "KK7ABC".into(),
+            at: "2026-07-13T20:00:00Z".into(),
+            closure_digest: Some(digest),
+        });
+        state.store.save(&acked).unwrap();
     }
 
     /// Build a state whose registry holds the given (already-built) actions.
@@ -1671,6 +1855,7 @@ mod tests {
             schema_version: SUPPORTED_SCHEMA_VERSION,
             transmit_mode: mode,
             transmit_ack: ack,
+            write_ack: None,
             on_interrupted: OnInterrupted::Stay,
             inputs: vec![],
             triggers: vec![Trigger::Manual],
@@ -1692,7 +1877,7 @@ mod tests {
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         loop {
             for e in sink.events() {
-                if let RoutinesEvent::AwaitingConsent { run_id, step_id } = e {
+                if let RoutinesEvent::AwaitingConsent { run_id, step_id, .. } = e {
                     return (run_id, step_id);
                 }
             }
@@ -1727,14 +1912,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let action = tx_action();
         let (state, _sink) = state_with(dir.path().to_path_buf(), std::slice::from_ref(&action));
-        state
-            .store
-            .save(&tx_def(
-                "auto",
-                TransmitMode::Automatic,
-                Some(ack("KK7ABC", "2026-07-13T20:00:00Z")),
-            ))
-            .unwrap();
+        save_acked_auto_tx(&state, "auto");
         let run_id = state.start_routine("auto", json!({})).await.unwrap();
         // Automatic + acked does NOT park: the transmit action runs unattended.
         wait_until(|| !action.calls().is_empty()).await;
@@ -1879,20 +2057,14 @@ mod tests {
 
         // Child transmits; child's OWN mode is automatic (acked) — but called by
         // an attended parent, its transmit step must still pause (spec §10).
-        state
-            .store
-            .save(&tx_def(
-                "tx-child",
-                TransmitMode::Automatic,
-                Some(ack("KK7ABC", "2026-07-13T20:00:00Z")),
-            ))
-            .unwrap();
+        save_acked_auto_tx(&state, "tx-child");
         // Parent is attended and only calls the child (no TX step of its own).
         let parent = RoutineDef {
             routine: "att-parent".into(),
             schema_version: SUPPORTED_SCHEMA_VERSION,
             transmit_mode: TransmitMode::Attended,
             transmit_ack: None,
+            write_ack: None,
             on_interrupted: OnInterrupted::Stay,
             inputs: vec![],
             triggers: vec![Trigger::Manual],
@@ -1983,6 +2155,7 @@ mod tests {
             schema_version: SUPPORTED_SCHEMA_VERSION,
             transmit_mode: TransmitMode::Attended,
             transmit_ack: None,
+            write_ack: None,
             on_interrupted: OnInterrupted::Stay,
             inputs: vec![],
             triggers: vec![Trigger::Manual],
@@ -2098,6 +2271,170 @@ mod tests {
         assert!(
             !state.is_routine_running("kid"),
             "the child's registry entry must be terminal, not wedged at Running"
+        );
+    }
+
+    // ========================================================================
+    // Task C3 — digest-binding start gate, single-read, child re-verification
+    // ========================================================================
+
+    /// C3 single-read start gate (TOCTOU): `start_routine_with_def` starts the
+    /// EXACT def the caller validated, never a fresh by-name reload — a
+    /// concurrent save that swaps the on-disk def between validation and start
+    /// must not change the snapshot that runs.
+    #[tokio::test]
+    async fn start_routine_with_def_uses_the_validated_snapshot_under_a_concurrent_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, _sink) = state_with(
+            dir.path().to_path_buf(),
+            &[Arc::new(FakeAction::new("local.log").ok(json!({})))],
+        );
+
+        // V: the def the caller validated (a distinctive marker param).
+        let mut validated = minimal_def("r", OnInterrupted::Stay);
+        validated.tracks[0].steps[0] = Step::Action(ActionStep {
+            id: StepId("s1".into()),
+            action: "local.log".into(),
+            params: json!({"marker": "validated"}),
+            timeout_s: None,
+            on_radio_busy: BusyPolicy::Wait,
+        });
+        state.store.save(&validated).unwrap();
+
+        // A concurrent save swaps the on-disk def under the SAME name.
+        let mut reloaded = validated.clone();
+        reloaded.tracks[0].steps[0] = Step::Action(ActionStep {
+            id: StepId("s1".into()),
+            action: "local.log".into(),
+            params: json!({"marker": "reloaded"}),
+            timeout_s: None,
+            on_radio_busy: BusyPolicy::Wait,
+        });
+        state.store.save(&reloaded).unwrap();
+
+        // Start with the VALIDATED def: the run's snapshot must be V, not V'.
+        let run_id = state
+            .start_routine_with_def(&validated, json!({}))
+            .await
+            .unwrap();
+        wait_until(|| state.run_status(&run_id).map(|s| s.state) == Some(RunState::Completed))
+            .await;
+
+        let entries = state.journal_entries(&run_id).unwrap();
+        let snapshot = entries
+            .iter()
+            .find_map(|e| match &e.event {
+                RunEvent::RunStarted { snapshot, .. } => Some(snapshot.clone()),
+                _ => None,
+            })
+            .expect("RunStarted snapshot");
+        let blob = serde_json::to_string(&snapshot).unwrap();
+        assert!(
+            blob.contains("validated") && !blob.contains("reloaded"),
+            "the started snapshot must be the validated def, not a by-name reload: {blob}"
+        );
+    }
+
+    /// C3 child-start re-verification: an automatic root threads its recorded
+    /// closure digests down every Call. When a CALLEE is edited on disk after
+    /// the run started, the child start recomputes the ROOT's digest, finds it
+    /// changed, and fails the Call verbatim — `callee changed after
+    /// acknowledgment`. A `Control::Delay` before the call opens a deterministic
+    /// window to edit the callee.
+    #[tokio::test]
+    async fn child_start_fails_verbatim_when_a_callee_changes_after_acknowledgment() {
+        let dir = tempfile::tempdir().unwrap();
+        let action = tx_action();
+        let (state, _sink) = state_with(dir.path().to_path_buf(), std::slice::from_ref(&action));
+
+        // Child v1: attended, one radio.tx step with a distinctive param.
+        let child_v1 = RoutineDef {
+            routine: "kid".into(),
+            schema_version: SUPPORTED_SCHEMA_VERSION,
+            transmit_mode: TransmitMode::Attended,
+            transmit_ack: None,
+            write_ack: None,
+            on_interrupted: OnInterrupted::Stay,
+            inputs: vec![],
+            triggers: vec![Trigger::Manual],
+            tracks: vec![Track {
+                name: "t".into(),
+                steps: vec![Step::Action(ActionStep {
+                    id: StepId("s1".into()),
+                    action: "radio.tx".into(),
+                    params: json!({"v": 1}),
+                    timeout_s: None,
+                    on_radio_busy: BusyPolicy::Wait,
+                })],
+            }],
+        };
+        state.store.save(&child_v1).unwrap();
+
+        // Parent: automatic; delays, then calls the child (sync). Acked with the
+        // digest of its closure (which includes child v1).
+        let mut parent = RoutineDef {
+            routine: "par".into(),
+            schema_version: SUPPORTED_SCHEMA_VERSION,
+            transmit_mode: TransmitMode::Automatic,
+            transmit_ack: None,
+            write_ack: None,
+            on_interrupted: OnInterrupted::Stay,
+            inputs: vec![],
+            triggers: vec![Trigger::Manual],
+            tracks: vec![Track {
+                name: "t".into(),
+                steps: vec![
+                    Step::Control(ControlStep {
+                        id: StepId("d1".into()),
+                        control: Control::Delay { delay: "+1s".into() },
+                    }),
+                    Step::Control(ControlStep {
+                        id: StepId("c1".into()),
+                        control: Control::Call {
+                            routine: "kid".into(),
+                            args: json!({}),
+                            sync: true,
+                        },
+                    }),
+                ],
+            }],
+        };
+        let digest = state.transmit_closure_digest(&parent);
+        parent.transmit_ack = Some(TransmitAck {
+            by: "KK7ABC".into(),
+            at: "2026-07-14T00:00:00Z".into(),
+            closure_digest: Some(digest),
+        });
+        state.store.save(&parent).unwrap();
+
+        // Start the parent: the root digest is captured over child v1 NOW.
+        let parent_id = state.start_routine("par", json!({})).await.unwrap();
+
+        // Edit the callee before the delayed Call executes: the root's live
+        // digest now diverges from the acknowledged one.
+        let mut child_v2 = child_v1.clone();
+        child_v2.tracks[0].steps[0] = Step::Action(ActionStep {
+            id: StepId("s1".into()),
+            action: "radio.tx".into(),
+            params: json!({"v": 2}),
+            timeout_s: None,
+            on_radio_busy: BusyPolicy::Wait,
+        });
+        state.store.save(&child_v2).unwrap();
+
+        // The parent run fails; its Call step carries the verbatim reason.
+        wait_until(|| state.run_status(&parent_id).map(|s| s.state) == Some(RunState::Failed)).await;
+        let entries = state.journal_entries(&parent_id).unwrap();
+        assert!(
+            entries.iter().any(|e| matches!(&e.event,
+                RunEvent::StepErr { error, .. }
+                    if error.to_string().contains("callee changed after acknowledgment"))),
+            "the Call must fail verbatim once the callee changed: {entries:?}"
+        );
+        // The changed callee never transmitted.
+        assert!(
+            action.calls().is_empty(),
+            "a callee that changed after ack must not run"
         );
     }
 }

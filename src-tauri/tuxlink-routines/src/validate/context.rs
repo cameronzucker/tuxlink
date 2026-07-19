@@ -137,6 +137,7 @@ mod tests {
             schema_version: crate::types::SUPPORTED_SCHEMA_VERSION,
             transmit_mode: crate::types::TransmitMode::Attended,
             transmit_ack: None,
+            write_ack: None,
             on_interrupted: crate::types::OnInterrupted::Stay,
             inputs: vec![],
             triggers: vec![crate::types::Trigger::Manual],
@@ -178,12 +179,16 @@ mod tests {
     #[test]
     fn seeded_action_descriptor_round_trips() {
         let descriptor = ActionDescriptor {
+            writes_config: false,
             name: "radio.connect",
             label: "",
             description: "",
             needs_radio: true,
             transmits: true,
             needs_internet: false,
+            example_params: None,
+            allowed_values: None,
+            dry_run_shape: None,
         };
         let ctx = StaticContext::new().with_action(descriptor);
         assert_eq!(ctx.action_descriptor("radio.connect"), Some(descriptor));

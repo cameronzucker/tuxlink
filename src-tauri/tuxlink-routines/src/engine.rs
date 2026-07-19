@@ -176,8 +176,9 @@ impl Engine {
     ) -> Result<RunHandle, EngineError> {
         let attended = !opts.dry_run
             && (def.transmit_mode == TransmitMode::Attended || opts.parent_attended);
-        // B2 does not consume `opts.root` yet (C3 threads it onto `ExecCtx`); it
-        // rides the pinned struct so the signature does not churn a second time.
+        // C3: the root consent context threads onto this run's `ExecCtx` and, from
+        // there, unchanged down every `Control::Call` so a registry invoker
+        // re-verifies the root's digests at each child start.
         self.run_internal(
             def,
             args,
@@ -186,6 +187,7 @@ impl Engine {
             self.cfg.registry.clone(),
             None,
             opts.cancel,
+            opts.root,
         )
         .await
     }
@@ -230,7 +232,9 @@ impl Engine {
         // the fake-world run has no real transmit, so `attended` is forced
         // `false` for the entire dry-run tree — `DryRunChildInvoker` recurses
         // back through here, so every descendant is likewise non-attended.
-        self.run_internal(def, args, depth, false, registry, Some(script), cancel)
+        // A dry run never binds a consent digest (it cannot key a transmitter or
+        // write config), so it threads no root context.
+        self.run_internal(def, args, depth, false, registry, Some(script), cancel, None)
             .await
     }
 
@@ -253,6 +257,7 @@ impl Engine {
         registry: Arc<ActionRegistry>,
         dry_run_script: Option<DryRunScript>,
         cancel: Option<CancellationToken>,
+        root: Option<RootConsent>,
     ) -> Result<RunHandle, EngineError> {
         let dry_run = dry_run_script.is_some();
         let run_id = self.next_run_id();
@@ -318,6 +323,7 @@ impl Engine {
             depth,
             attended,
             consent: self.cfg.consent.clone(),
+            root,
         };
         let (tx, rx) = tokio::sync::oneshot::channel();
         let tracks = resolved.tracks.clone();
@@ -453,7 +459,9 @@ impl RoutineInvoker for EngineChildInvoker {
                     // The child's cancellation derives from the parent's, so a
                     // parent cancel propagates down the call chain.
                     cancel: Some(parent_cancel.child_token()),
-                    root: None,
+                    // C3: propagate the SAME root context unchanged so every
+                    // descendant re-verifies against the top-level ack.
+                    root: call.root,
                 },
             )
             .await
@@ -991,6 +999,84 @@ mod tests {
         let entries = read_journal(&jpath).unwrap();
         assert_eq!(executed_step_ids(&entries), vec!["s1", "s3"]);
         assert!(connect.calls().is_empty());
+    }
+
+    /// D6 MARQUEE: a shape-true dry run of the flagship `find_stations →
+    /// branch on the callsigns → radio.connect` composition completes GREEN
+    /// with nothing scripted. `data.find_stations`'s descriptor `dry_run_shape`
+    /// yields `callsigns: ["DRYRUN-1"]`; the branch (`s1.callsigns != []`) takes
+    /// the then-arm; the optimistic default drives `radio.connect` to
+    /// `connected: true`; the run reaches the success End. Proves the mechanism
+    /// end to end: descriptor shape → resolved `$ref` → branch → optimistic
+    /// connect, without touching the real directory or keying a radio.
+    #[tokio::test]
+    async fn dry_run_marquee_find_stations_branch_then_connect_completes_green() {
+        const MARQUEE_DEF: &str = r#"{
+          "routine": "find-and-connect", "schema_version": 1, "transmit_mode": "attended",
+          "on_interrupted": "stay", "inputs": [], "triggers": [{"type": "manual"}],
+          "tracks": [{ "name": "t", "steps": [
+            { "id": "s1", "action": "data.find_stations", "params": {"modes": ["vara-hf"]} },
+            { "id": "s2", "control": "branch", "on": "s1.callsigns", "op": "ne", "value": [],
+              "then": ["s3"], "else": ["s4"] },
+            { "id": "s3", "action": "radio.connect", "params": {"stations": "$s1.callsigns"} },
+            { "id": "end1", "control": "end", "failed": false },
+            { "id": "s4", "action": "local.log_else", "params": {} }
+          ]}]
+        }"#;
+
+        // `data.find_stations`: the real descriptor carries a `dry_run_shape`;
+        // here a FakeAction advertises the same via `with_dry_run_shape` so the
+        // dry-run registry threads it exactly as it would the monolith action.
+        fn find_shape(_p: &serde_json::Value) -> serde_json::Value {
+            json!({
+                "gateways": [], "callsigns": ["DRYRUN-1"],
+                "fetched_at_ms": null, "operator_grid": null, "dry_run": true
+            })
+        }
+        let find = Arc::new(
+            FakeAction::new("data.find_stations")
+                .with_capabilities(false, false, true)
+                .with_dry_run_shape(find_shape),
+        );
+        // The real registry's `radio.connect` is a canary — a dry run must
+        // NEVER call it (it gets the optimistic-default fake instead).
+        let connect = Arc::new(
+            FakeAction::new("radio.connect")
+                .with_capabilities(true, false, false)
+                .ok(json!({"connected": false})),
+        );
+        let mut reg = ActionRegistry::default();
+        reg.register(find);
+        reg.register(connect.clone());
+        reg.register(Arc::new(FakeAction::new("local.log_else").ok(json!({}))));
+
+        let dir = tempfile::tempdir().unwrap();
+        let eng = Arc::new(Engine::new(EngineConfig {
+            journal_dir: dir.path().to_path_buf(),
+            registry: Arc::new(reg),
+            resolver: Arc::new(FakeResolver::new()),
+            now: fixed_now,
+            default_timeout_s: 30,
+            lookup: None,
+            consent: None,
+        }));
+        let def = RoutineDef::parse(MARQUEE_DEF).unwrap();
+
+        let handle = eng
+            .start_dry_run(&def, json!({}), crate::dryrun::DryRunScript::new())
+            .await
+            .unwrap();
+        let outcome = handle.done.await.unwrap();
+        assert_eq!(outcome.state, RunState::Completed, "marquee dry run is green");
+
+        let jpath = dir.path().join(format!("{}.jsonl", handle.run_id));
+        let entries = read_journal(&jpath).unwrap();
+        // s1 (find) → s2 branch takes then → s3 (connect); s4 else-arm skipped.
+        assert_eq!(executed_step_ids(&entries), vec!["s1", "s3"]);
+        assert!(
+            connect.calls().is_empty(),
+            "a dry run must never call the real radio.connect"
+        );
     }
 
     #[tokio::test]

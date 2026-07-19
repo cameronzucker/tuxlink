@@ -51,10 +51,11 @@ use async_trait::async_trait;
 use tokio::sync::oneshot;
 
 use tuxlink_routines::action::ActionRegistry;
-use tuxlink_routines::compose::MAX_CALL_DEPTH;
 use tuxlink_routines::consent::ConsentPort;
+use tuxlink_routines::consent_closure::{closure_digest, consent_closure};
 use tuxlink_routines::error::StepError;
-use tuxlink_routines::types::{Control, RoutineDef, Step};
+use tuxlink_routines::journal::ParkKind;
+use tuxlink_routines::types::{RoutineDef, TransmitAck};
 
 use super::events::{RoutinesEvent, RoutinesEventSink};
 
@@ -72,64 +73,66 @@ pub type TransmitsPredicate<'a> = dyn Fn(&str) -> bool + 'a;
 
 /// Does `def`'s call-graph closure contain a transmit step (spec §4, §10)?
 ///
-/// Walks every track's steps: an `Action` step transmits iff `transmits(name)`;
-/// a `Call` step recurses into the callee resolved via `lookup`. The recursion
-/// is cycle-guarded (a routine already on the current path is not re-walked) and
-/// depth-capped at [`MAX_CALL_DEPTH`] — the same runtime backstop the engine's
-/// executor applies to `Control::Call`, so the two agree on how deep a legal
-/// call chain goes. An unresolved callee (`lookup` returns `None`) contributes
-/// nothing: enforcement is conservative and does not invent transmission from a
-/// call it cannot resolve (plan 3's validator flags the unresolved reference).
+/// A thin boolean over the shared
+/// [`consent_closure`](tuxlink_routines::consent_closure::consent_closure)
+/// walk: the closure transmits iff enumerating it with the `transmits`
+/// relevance predicate yields at least one step. `lookup` resolves `Call`
+/// targets; an unresolved callee contributes nothing (conservative — the
+/// validator flags the unresolved reference). The shared walk is
+/// global-visited and depth-capped at
+/// [`MAX_CALL_DEPTH`](tuxlink_routines::compose::MAX_CALL_DEPTH), matching the
+/// runtime backstop the executor applies to `Control::Call`.
 pub fn closure_transmits(
     def: &RoutineDef,
     lookup: &DefLookup<'_>,
     transmits: &TransmitsPredicate<'_>,
 ) -> bool {
-    let mut on_path = HashSet::new();
-    closure_transmits_inner(def, lookup, transmits, &mut on_path, 0)
+    !consent_closure(def, lookup, transmits).steps.is_empty()
 }
 
-fn closure_transmits_inner(
+/// Does `def`'s call-graph closure contain a config-write step (C3, spec §4)?
+/// The `writes_config` sibling of [`closure_transmits`], over the same shared
+/// [`consent_closure`](tuxlink_routines::consent_closure::consent_closure) walk
+/// with the `writes` relevance predicate.
+pub fn closure_writes(
     def: &RoutineDef,
     lookup: &DefLookup<'_>,
-    transmits: &TransmitsPredicate<'_>,
-    on_path: &mut HashSet<String>,
-    depth: u32,
+    writes: &TransmitsPredicate<'_>,
 ) -> bool {
-    if depth > MAX_CALL_DEPTH {
-        return false;
-    }
-    // Cycle guard: a recursive call (A→B→A) does not add new transmit steps
-    // beyond those already walked on this path.
-    if !on_path.insert(def.routine.clone()) {
-        return false;
-    }
-    let mut found = false;
-    'walk: for track in &def.tracks {
-        for step in &track.steps {
-            match step {
-                Step::Action(a) => {
-                    if transmits(&a.action) {
-                        found = true;
-                        break 'walk;
-                    }
-                }
-                Step::Control(cs) => {
-                    if let Control::Call { routine, .. } = &cs.control {
-                        if let Some(child) = lookup(routine) {
-                            if closure_transmits_inner(&child, lookup, transmits, on_path, depth + 1)
-                            {
-                                found = true;
-                                break 'walk;
-                            }
-                        }
-                    }
-                }
-            }
+    !consent_closure(def, lookup, writes).steps.is_empty()
+}
+
+/// The sha256 hex digest of `def`'s consent closure for the given relevance
+/// predicate (C3), computed over the SAME shared walk + canonicalizing digest
+/// the validator uses — so a digest the monolith records at ack time and a
+/// digest the leaf validator recomputes at validation time are byte-identical
+/// (enforcement and validation can never disagree about "is this ack current").
+/// `is_relevant` selects the class: transmit (a `transmits` predicate) or
+/// config-write (a `writes_config` predicate).
+pub fn closure_digest_for(
+    def: &RoutineDef,
+    lookup: &DefLookup<'_>,
+    is_relevant: &TransmitsPredicate<'_>,
+) -> String {
+    closure_digest(&consent_closure(def, lookup, is_relevant))
+}
+
+/// Does `ack` bind the exact `live_digest` the closure currently hashes to
+/// (C3)? The monolith mirror of the leaf validator's `ack_binds_closure`,
+/// covering all three stale clauses at once: **missing** (`None`), **empty**
+/// (blank `by`/`at`), and **digest-mismatched** (a re-edited closure, OR a
+/// digest-less legacy ack whose `closure_digest` is `None` and thus never
+/// equals a live digest). The start gate uses this so enforcement refuses on
+/// the same grounds the validator flags.
+pub fn ack_binds(ack: &Option<TransmitAck>, live_digest: &str) -> bool {
+    match ack {
+        Some(a) => {
+            !a.by.trim().is_empty()
+                && !a.at.trim().is_empty()
+                && a.closure_digest.as_deref() == Some(live_digest)
         }
+        None => false,
     }
-    on_path.remove(&def.routine);
-    found
 }
 
 /// The map of parked transmit steps, keyed by `(run_id, step_id)` → the
@@ -185,7 +188,7 @@ impl ConsentRegistry {
 
 #[async_trait]
 impl ConsentPort for ConsentRegistry {
-    async fn park(&self, run_id: &str, step_id: &str) -> Result<(), StepError> {
+    async fn park(&self, run_id: &str, step_id: &str, kind: ParkKind) -> Result<(), StepError> {
         let key = (run_id.to_string(), step_id.to_string());
         // Register the grant channel BEFORE emitting the event, so a grant
         // racing in right after the UI receives `AwaitingConsent` finds the
@@ -198,6 +201,7 @@ impl ConsentPort for ConsentRegistry {
         self.sink.emit(&RoutinesEvent::AwaitingConsent {
             run_id: run_id.to_string(),
             step_id: step_id.to_string(),
+            park_kind: kind,
         });
         // RAII: if this future is dropped before a grant (the executor takes
         // its cancel branch while parked), release the parked slot so no stale
@@ -243,6 +247,19 @@ pub fn transmit_action_names(registry: &ActionRegistry) -> HashSet<String> {
         .descriptors()
         .into_iter()
         .filter(|d| d.transmits)
+        .map(|d| d.name.to_string())
+        .collect()
+}
+
+/// The set of catalog action names that write station config (`writes_config`,
+/// C3), captured from a registry's descriptors — the `writes_config` sibling of
+/// [`transmit_action_names`]. The write-consent start gate's `writes` predicate
+/// reads this the same way the transmit gate reads the transmit set.
+pub fn write_action_names(registry: &ActionRegistry) -> HashSet<String> {
+    registry
+        .descriptors()
+        .into_iter()
+        .filter(|d| d.writes_config)
         .map(|d| d.name.to_string())
         .collect()
 }
@@ -385,18 +402,38 @@ mod tests {
         let reg = registry_with(rec.clone());
 
         let r2 = reg.clone();
-        let task = tokio::spawn(async move { r2.park("run-1", "s1").await });
+        let task = tokio::spawn(async move { r2.park("run-1", "s1", ParkKind::Transmit).await });
         wait_parked(&reg).await;
 
-        // The park emitted AwaitingConsent for the right (run, step).
+        // The park emitted AwaitingConsent for the right (run, step, kind).
         assert!(rec.events.lock().unwrap().iter().any(|e| matches!(e,
-            RoutinesEvent::AwaitingConsent { run_id, step_id }
-                if run_id == "run-1" && step_id == "s1")));
+            RoutinesEvent::AwaitingConsent { run_id, step_id, park_kind }
+                if run_id == "run-1" && step_id == "s1" && *park_kind == ParkKind::Transmit)));
 
         assert!(reg.grant("run-1", "s1"));
         let res = task.await.unwrap();
         assert!(res.is_ok(), "park resolves Ok on grant");
         assert_eq!(reg.parked_count(), 0, "grant removes the parked entry");
+    }
+
+    /// The park kind threads through the registry into the emitted event: a
+    /// `ParkKind::Write` park surfaces `AwaitingConsent { park_kind: Write }`
+    /// so the ConsentGate renders config-write copy, not transmit copy (C2).
+    #[tokio::test]
+    async fn write_park_emits_awaiting_consent_with_write_kind() {
+        let rec = Arc::new(RecSink::default());
+        let reg = registry_with(rec.clone());
+
+        let r2 = reg.clone();
+        let task = tokio::spawn(async move { r2.park("run-w", "s1", ParkKind::Write).await });
+        wait_parked(&reg).await;
+
+        assert!(rec.events.lock().unwrap().iter().any(|e| matches!(e,
+            RoutinesEvent::AwaitingConsent { run_id, park_kind, .. }
+                if run_id == "run-w" && *park_kind == ParkKind::Write)));
+
+        assert!(reg.grant("run-w", "s1"));
+        assert!(task.await.unwrap().is_ok());
     }
 
     #[test]
@@ -414,7 +451,7 @@ mod tests {
 
         let r2 = reg.clone();
         // Never granted: parks and stays pending until the task is aborted.
-        let task = tokio::spawn(async move { r2.park("run-1", "s1").await });
+        let task = tokio::spawn(async move { r2.park("run-1", "s1", ParkKind::Transmit).await });
         wait_parked(&reg).await;
         assert_eq!(reg.parked_count(), 1);
 

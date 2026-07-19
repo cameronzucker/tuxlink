@@ -215,6 +215,64 @@ mod tests {
         assert_eq!(log.calls()[0]["message"], json!("W7DEF-10"));
     }
 
+    /// R4 — "Find-and-connect" (compat-tree rank 2, `data.find_stations`): a
+    /// station query whose DEDUPED, distance-sorted callsign ARRAY feeds
+    /// `radio.connect`'s `stations` list via a WHOLE-STRING `$s1.callsigns`
+    /// ref. Proves the marquee find_stations → connect composition: a
+    /// whole-string ref resolves to the underlying JSON ARRAY (not just a
+    /// scalar), and the SAME array flows into a second consumer (`local.log`)
+    /// unchanged.
+    const R4_FIND_STATIONS: &str = r#"{
+      "routine": "find-and-connect", "schema_version": 1,
+      "transmit_mode": "attended", "on_interrupted": "stay",
+      "inputs": [], "triggers": [{"type": "manual"}],
+      "tracks": [{ "name": "t", "steps": [
+        { "id": "s1", "action": "data.find_stations",
+          "params": {"modes": ["vara-hf"], "limit": 3} },
+        { "id": "s2", "action": "radio.connect",
+          "params": {"stations": "$s1.callsigns", "bands": ["40m"]} },
+        { "id": "s3", "action": "local.log",
+          "params": {"message": "$s1.callsigns"} }
+      ]}]
+    }"#;
+
+    #[tokio::test]
+    async fn r4_find_stations_callsigns_feed_connect_station_list() {
+        let dir = tempfile::tempdir().unwrap();
+        // The faked directory returns the exact `data.find_stations` output
+        // shape: a distance-sorted, deduped callsign array plus the curated
+        // gateway rows / provenance the real action emits.
+        let find = Arc::new(FakeAction::new("data.find_stations").ok(json!({
+            "gateways": [],
+            "fetched_at_ms": null,
+            "operator_grid": null,
+            "callsigns": ["W7AAA", "K7BBB", "N7CCC"]
+        })));
+        let connect = Arc::new(FakeAction::new("radio.connect").ok(json!({"connected": true})));
+        let log = Arc::new(FakeAction::new("local.log").ok(json!({})));
+
+        let eng = engine_with(vec![find.clone(), connect.clone(), log.clone()], dir.path());
+        let def = RoutineDef::parse(R4_FIND_STATIONS).unwrap();
+        let outcome = eng
+            .start_run(&def, json!({}))
+            .await
+            .unwrap()
+            .done
+            .await
+            .unwrap();
+        assert_eq!(outcome.state, RunState::Completed);
+
+        // THE composability claim: the whole-string `$s1.callsigns` resolved to
+        // the sorted callsign ARRAY inside connect's `stations` param — not the
+        // literal token, not a scalar.
+        assert_eq!(
+            connect.calls()[0]["stations"],
+            json!(["W7AAA", "K7BBB", "N7CCC"])
+        );
+        // The same array flows into a second consumer unchanged.
+        assert_eq!(log.calls()[0]["message"], json!(["W7AAA", "K7BBB", "N7CCC"]));
+    }
+
     /// R2 — "Propagation-gated band plan": fetch space weather, gate on the
     /// K-index, pick the band. Both halves were NEGATIVE proofs when this file
     /// landed (nested output paths unreachable, numeric branch a hard error);

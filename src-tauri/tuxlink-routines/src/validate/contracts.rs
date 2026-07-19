@@ -41,13 +41,20 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::refs::VarPath;
-use crate::types::{Control, RoutineDef, Step, StepId};
+use crate::types::{ActionStep, Control, RoutineDef, Step, StepId};
 
+use super::context::ValidationContext;
 use super::findings::Finding;
 
 pub const UNSATISFIABLE_VAR: &str = "UNSATISFIABLE_VAR";
 pub const BRANCH_ON_UNKNOWN: &str = "BRANCH_ON_UNKNOWN";
 pub const CROSS_TRACK_VAR: &str = "CROSS_TRACK_VAR";
+/// A LITERAL (non-`$ref`) value for a descriptor's closed-vocabulary param
+/// (today only `data.read`'s `source`) that is outside the allowed set — the
+/// author typed a source name that will never match at run time. Error, since
+/// the step is guaranteed to fail. A `$ref` value is chosen at run time and is
+/// NOT flagged (the validator cannot know its resolved value).
+pub const UNKNOWN_READ_SOURCE: &str = "UNKNOWN_READ_SOURCE";
 
 #[derive(Debug, Clone, Copy)]
 struct StepLocation {
@@ -110,9 +117,11 @@ fn classify(raw: &str, ctx: &TrackCtx, step_idx: usize) -> VarStatus {
 }
 
 /// Append every `UNSATISFIABLE_VAR` / `BRANCH_ON_UNKNOWN` / `CROSS_TRACK_VAR`
-/// finding for `def` into `findings`. Pure over `def` — no `ValidationContext`
-/// needed; the v1 rule never looks outside the routine being checked.
-pub fn check(def: &RoutineDef, findings: &mut Vec<Finding>) {
+/// finding for `def` into `findings`. The var/branch-order rules are pure over
+/// `def`; the `UNKNOWN_READ_SOURCE` lint (D6) additionally consults `vctx` for
+/// each action's descriptor `allowed_values`, so `check` now takes the
+/// `ValidationContext` the rest of the validator already threads.
+pub fn check(def: &RoutineDef, vctx: &dyn ValidationContext, findings: &mut Vec<Finding>) {
     let locations = locate_steps(def);
     let input_names: HashSet<&str> = def.inputs.iter().map(|i| i.name.as_str()).collect();
 
@@ -126,7 +135,10 @@ pub fn check(def: &RoutineDef, findings: &mut Vec<Finding>) {
         };
         for (step_idx, step) in track.steps.iter().enumerate() {
             match step {
-                Step::Action(a) => check_dollar_refs(&a.params, &ctx, step_idx, &a.id.0, findings),
+                Step::Action(a) => {
+                    check_dollar_refs(&a.params, &ctx, step_idx, &a.id.0, findings);
+                    check_allowed_values(a, vctx, &ctx, findings);
+                }
                 Step::Control(c) => match &c.control {
                     Control::Branch { on, .. } => {
                         check_branch_on(on, &ctx, step_idx, &c.id.0, findings)
@@ -192,6 +204,49 @@ fn check_dollar_refs(
     }
 }
 
+/// D6 `UNKNOWN_READ_SOURCE`: if this action's descriptor declares a closed
+/// vocabulary (`allowed_values`) for one param, and the step supplies a LITERAL
+/// string for that param outside the set, it can never match at run time. A
+/// `$ref` value is resolved at run time (unknowable statically) and is skipped;
+/// an unknown action (no descriptor) is another check's finding, not ours.
+fn check_allowed_values(
+    action: &ActionStep,
+    vctx: &dyn ValidationContext,
+    ctx: &TrackCtx,
+    findings: &mut Vec<Finding>,
+) {
+    let Some(desc) = vctx.action_descriptor(&action.action) else {
+        return;
+    };
+    let Some((key, allowed)) = desc.allowed_values else {
+        return;
+    };
+    let Some(value) = action.params.get(key) else {
+        return;
+    };
+    let Some(literal) = value.as_str() else {
+        return; // non-string (e.g. object/number) — not this lint's concern
+    };
+    if literal.starts_with('$') {
+        return; // runtime ref: value chosen when the run starts
+    }
+    if !allowed.contains(&literal) {
+        findings.push(
+            Finding::error(
+                UNKNOWN_READ_SOURCE,
+                ctx.def.routine.clone(),
+                format!(
+                    "step \"{}\" sets \"{key}\" to \"{literal}\", which is not a valid {key} for \
+                     action \"{}\"",
+                    action.id.0, action.action
+                ),
+            )
+            .with_track(ctx.track_name.to_string())
+            .with_step(action.id.clone()),
+        );
+    }
+}
+
 fn check_branch_on(
     on: &str,
     ctx: &TrackCtx,
@@ -244,6 +299,8 @@ fn check_branch_on(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::action::ActionDescriptor;
+    use crate::validate::context::StaticContext;
     use crate::types::{
         ActionStep, BusyPolicy, ControlStep, InputDecl, OnInterrupted, RoutineDef, Track,
         TransmitMode, Trigger,
@@ -290,6 +347,7 @@ mod tests {
             schema_version: crate::types::SUPPORTED_SCHEMA_VERSION,
             transmit_mode: TransmitMode::Attended,
             transmit_ack: None,
+            write_ack: None,
             on_interrupted: OnInterrupted::Stay,
             inputs,
             triggers: vec![Trigger::Manual],
@@ -312,7 +370,7 @@ mod tests {
             }],
         );
         let mut findings = Vec::new();
-        check(&def, &mut findings);
+        check(&def, &StaticContext::new(), &mut findings);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].code, UNSATISFIABLE_VAR);
         assert_eq!(findings[0].step, Some(StepId("s1".into())));
@@ -329,7 +387,7 @@ mod tests {
             }],
         );
         let mut findings = Vec::new();
-        check(&def, &mut findings);
+        check(&def, &StaticContext::new(), &mut findings);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].code, UNSATISFIABLE_VAR);
     }
@@ -347,7 +405,7 @@ mod tests {
             }],
         );
         let mut findings = Vec::new();
-        check(&def, &mut findings);
+        check(&def, &StaticContext::new(), &mut findings);
         assert!(findings.is_empty(), "{:?}", findings);
     }
 
@@ -364,7 +422,7 @@ mod tests {
             }],
         );
         let mut findings = Vec::new();
-        check(&def, &mut findings);
+        check(&def, &StaticContext::new(), &mut findings);
         assert!(findings.is_empty(), "{:?}", findings);
     }
 
@@ -378,7 +436,7 @@ mod tests {
             }],
         );
         let mut findings = Vec::new();
-        check(&def, &mut findings);
+        check(&def, &StaticContext::new(), &mut findings);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].code, UNSATISFIABLE_VAR);
     }
@@ -393,7 +451,7 @@ mod tests {
             }],
         );
         let mut findings = Vec::new();
-        check(&def, &mut findings);
+        check(&def, &StaticContext::new(), &mut findings);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].code, UNSATISFIABLE_VAR);
         assert_eq!(findings[0].step, Some(StepId("c1".into())));
@@ -411,7 +469,7 @@ mod tests {
             }],
         );
         let mut findings = Vec::new();
-        check(&def, &mut findings);
+        check(&def, &StaticContext::new(), &mut findings);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].code, BRANCH_ON_UNKNOWN);
         assert_eq!(findings[0].step, Some(StepId("b1".into())));
@@ -431,7 +489,7 @@ mod tests {
             }],
         );
         let mut findings = Vec::new();
-        check(&def, &mut findings);
+        check(&def, &StaticContext::new(), &mut findings);
         assert!(findings.is_empty(), "{:?}", findings);
     }
 
@@ -445,7 +503,7 @@ mod tests {
             }],
         );
         let mut findings = Vec::new();
-        check(&def, &mut findings);
+        check(&def, &StaticContext::new(), &mut findings);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].code, UNSATISFIABLE_VAR);
         assert_eq!(findings[0].step, Some(StepId("b1".into())));
@@ -461,7 +519,7 @@ mod tests {
             }],
         );
         let mut findings = Vec::new();
-        check(&def, &mut findings);
+        check(&def, &StaticContext::new(), &mut findings);
         assert!(findings.is_empty(), "{:?}", findings);
     }
 
@@ -483,7 +541,7 @@ mod tests {
             ],
         );
         let mut findings = Vec::new();
-        check(&def, &mut findings);
+        check(&def, &StaticContext::new(), &mut findings);
         assert_eq!(findings.len(), 1);
         let f = &findings[0];
         assert_eq!(f.code, CROSS_TRACK_VAR);
@@ -508,7 +566,7 @@ mod tests {
             ],
         );
         let mut findings = Vec::new();
-        check(&def, &mut findings);
+        check(&def, &StaticContext::new(), &mut findings);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].code, CROSS_TRACK_VAR);
         assert_eq!(findings[0].severity, super::super::Severity::Warning);
@@ -524,7 +582,124 @@ mod tests {
             }],
         );
         let mut findings = Vec::new();
-        check(&def, &mut findings);
+        check(&def, &StaticContext::new(), &mut findings);
         assert!(findings.is_empty());
+    }
+
+    // --- UNKNOWN_READ_SOURCE (D6) --------------------------------------
+
+    const READ_SOURCES: &[&str] = &["grid", "modem_status", "config"];
+    const DATA_READ_DESC: ActionDescriptor = ActionDescriptor {
+        name: "data.read",
+        label: "",
+        description: "",
+        needs_radio: false,
+        transmits: false,
+        writes_config: false,
+        needs_internet: false,
+        example_params: None,
+        allowed_values: Some(("source", READ_SOURCES)),
+        dry_run_shape: None,
+    };
+
+    fn read_step(id: &str, source: serde_json::Value) -> Step {
+        Step::Action(ActionStep {
+            id: StepId(id.into()),
+            action: "data.read".into(),
+            params: json!({ "source": source }),
+            timeout_s: None,
+            on_radio_busy: BusyPolicy::Wait,
+        })
+    }
+
+    fn read_ctx() -> StaticContext {
+        StaticContext::new().with_action(DATA_READ_DESC)
+    }
+
+    #[test]
+    fn literal_unknown_read_source_fires_unknown_read_source() {
+        let def = routine_with(
+            vec![],
+            vec![Track {
+                name: "t1".into(),
+                steps: vec![read_step("s1", json!("sorce"))],
+            }],
+        );
+        let mut findings = Vec::new();
+        check(&def, &read_ctx(), &mut findings);
+        assert_eq!(findings.len(), 1, "{:?}", findings);
+        assert_eq!(findings[0].code, UNKNOWN_READ_SOURCE);
+        assert_eq!(findings[0].step, Some(StepId("s1".into())));
+        assert!(findings[0].message.contains("sorce"), "{:?}", findings);
+    }
+
+    #[test]
+    fn kebab_read_source_variant_is_unknown() {
+        // The real vocabulary is snake_case; a kebab `modem-status` never matches.
+        let def = routine_with(
+            vec![],
+            vec![Track {
+                name: "t1".into(),
+                steps: vec![read_step("s1", json!("modem-status"))],
+            }],
+        );
+        let mut findings = Vec::new();
+        check(&def, &read_ctx(), &mut findings);
+        assert_eq!(findings.len(), 1, "{:?}", findings);
+        assert_eq!(findings[0].code, UNKNOWN_READ_SOURCE);
+    }
+
+    #[test]
+    fn known_read_source_is_silent() {
+        let def = routine_with(
+            vec![],
+            vec![Track {
+                name: "t1".into(),
+                steps: vec![read_step("s1", json!("modem_status"))],
+            }],
+        );
+        let mut findings = Vec::new();
+        check(&def, &read_ctx(), &mut findings);
+        assert!(findings.is_empty(), "{:?}", findings);
+    }
+
+    #[test]
+    fn ref_read_source_is_not_flagged() {
+        // A `$ref` source is chosen at run time — the validator cannot know its
+        // value, so it MUST NOT fire UNKNOWN_READ_SOURCE. `$src` names a
+        // declared input, so it is also var-satisfiable (no other finding).
+        let def = routine_with(
+            vec![InputDecl {
+                name: "src".into(),
+                required: true,
+            }],
+            vec![Track {
+                name: "t1".into(),
+                steps: vec![read_step("s1", json!("$src"))],
+            }],
+        );
+        let mut findings = Vec::new();
+        check(&def, &read_ctx(), &mut findings);
+        assert!(
+            !findings.iter().any(|f| f.code == UNKNOWN_READ_SOURCE),
+            "a $ref source must not fire UNKNOWN_READ_SOURCE: {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn read_source_without_a_descriptor_is_silent() {
+        // No descriptor seeded → no allowed_values → the lint cannot run (an
+        // unknown action is UNKNOWN_ACTION's job, not this one's).
+        let def = routine_with(
+            vec![],
+            vec![Track {
+                name: "t1".into(),
+                steps: vec![read_step("s1", json!("sorce"))],
+            }],
+        );
+        let mut findings = Vec::new();
+        check(&def, &StaticContext::new(), &mut findings);
+        assert!(findings.is_empty(), "{:?}", findings);
     }
 }

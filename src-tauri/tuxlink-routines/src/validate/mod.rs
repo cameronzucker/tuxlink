@@ -47,7 +47,7 @@ pub fn validate(def: &RoutineDef, ctx: &dyn ValidationContext) -> Vec<Finding> {
 
     refs::check(def, ctx, &mut findings);
     capability::check(def, ctx, &mut findings);
-    contracts::check(def, &mut findings);
+    contracts::check(def, ctx, &mut findings);
     structure::check(def, ctx, &mut findings);
     consent::check(def, ctx, &mut findings);
     triggers::check(def, &mut findings);
@@ -112,6 +112,7 @@ mod tests {
             schema_version: crate::types::SUPPORTED_SCHEMA_VERSION,
             transmit_mode: TransmitMode::Attended,
             transmit_ack: None,
+            write_ack: None,
             on_interrupted: OnInterrupted::Stay,
             inputs: vec![],
             triggers: vec![Trigger::Manual],
@@ -172,12 +173,16 @@ mod tests {
         use crate::types::{ActionStep, BusyPolicy, Control, ControlStep, Step, StepId};
 
         const RADIO_CONNECT: ActionDescriptor = ActionDescriptor {
+            writes_config: false,
             name: "radio.connect",
             label: "",
             description: "",
             needs_radio: true,
             transmits: true,
             needs_internet: false,
+            example_params: None,
+            allowed_values: None,
+            dry_run_shape: None,
         };
 
         // s1: known action, unresolved @ref (UNRESOLVED_REF) + no rig (NO_RIG_CONFIGURED).
@@ -190,6 +195,7 @@ mod tests {
             schema_version: crate::types::SUPPORTED_SCHEMA_VERSION,
             transmit_mode: TransmitMode::Attended,
             transmit_ack: None,
+            write_ack: None,
             on_interrupted: OnInterrupted::Stay,
             inputs: vec![],
             triggers: vec![Trigger::Manual],

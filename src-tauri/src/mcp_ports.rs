@@ -259,67 +259,80 @@ pub(crate) fn gather_modem_status(
     )
 }
 
+/// Curate the tagged [`StatusDto`](crate::ui_commands::StatusDto) enum into the
+/// flat `{connected, transport, state}` agent shape. `None` (NotConfigured) →
+/// disconnected/idle. This is the SINGLE curation seam both the MCP
+/// `backend_status` tool ([`MonolithStatusPort::backend_status`]) and the
+/// `data.read` `backend_status` source (routines `MonolithDataService`) call, so
+/// the two surfaces are byte-identical BY CONSTRUCTION — including the
+/// secure-login (`;PQ`/`;PR`) redaction on the `Error` arm (FINDING 3, pinned by
+/// the routines curation-equality test). Extracted from the inline match so the
+/// redaction is unit-testable without an `AppHandle`.
+pub(crate) fn curate_backend_status(
+    dto: Option<crate::ui_commands::StatusDto>,
+) -> BackendStatusDto {
+    use crate::ui_commands::StatusDto;
+    match dto {
+        None => BackendStatusDto {
+            connected: false,
+            transport: String::new(),
+            state: "not_configured".to_string(),
+        },
+        Some(StatusDto::Disconnected) => BackendStatusDto {
+            connected: false,
+            transport: String::new(),
+            state: "disconnected".to_string(),
+        },
+        Some(StatusDto::Connecting { transport }) => BackendStatusDto {
+            connected: false,
+            transport,
+            state: "connecting".to_string(),
+        },
+        Some(StatusDto::Listening { transport }) => BackendStatusDto {
+            connected: false,
+            transport,
+            state: "listening".to_string(),
+        },
+        Some(StatusDto::Connected { transport, .. }) => BackendStatusDto {
+            connected: true,
+            transport,
+            state: "connected".to_string(),
+        },
+        Some(StatusDto::Disconnecting) => BackendStatusDto {
+            connected: false,
+            transport: String::new(),
+            state: "disconnecting".to_string(),
+        },
+        Some(StatusDto::Error { reason }) => {
+            // FINDING 3: `reason` can carry a raw, remote-controlled protocol
+            // line (e.g. UnexpectedResponse/UnknownCommand preserve the
+            // verbatim CMS line), which may echo a `;PQ`/`;PR` secure-login
+            // token. REDACT it — do NOT taint: tainting backend_status would
+            // break the Flow-1 "diagnose stays untainted" property, whereas
+            // scrubbing the reason closes the credential leak while keeping
+            // backend_status non-tainting. redact_freeform is the free-form
+            // secure-login scrubber (no-op Cow::Borrowed on clean text).
+            let reason = crate::winlink::redaction::redact_freeform(&reason);
+            BackendStatusDto {
+                connected: false,
+                transport: String::new(),
+                state: format!("error: {reason}"),
+            }
+        }
+    }
+}
+
 #[async_trait]
 impl StatusPort for MonolithStatusPort {
     async fn backend_status(&self) -> Result<BackendStatusDto, PortError> {
-        use crate::ui_commands::StatusDto;
         let state = self.app.state::<crate::app_backend::BackendState>();
         // `snapshot()` clones (phase, backend) under one read guard and drops
         // it; `derive_status_dto` is pure (mirrors the `backend_status`
-        // command).
+        // command). `curate_backend_status` is the shared curation seam (also
+        // called by the routines `data.read` backend_status source).
         let (phase, backend) = state.snapshot();
         let dto = crate::ui_commands::derive_status_dto(phase, backend);
-        // Curate the tagged StatusDto enum into the flat {connected, transport,
-        // state} agent shape. `None` (NotConfigured) → disconnected/idle.
-        let curated = match dto {
-            None => BackendStatusDto {
-                connected: false,
-                transport: String::new(),
-                state: "not_configured".to_string(),
-            },
-            Some(StatusDto::Disconnected) => BackendStatusDto {
-                connected: false,
-                transport: String::new(),
-                state: "disconnected".to_string(),
-            },
-            Some(StatusDto::Connecting { transport }) => BackendStatusDto {
-                connected: false,
-                transport,
-                state: "connecting".to_string(),
-            },
-            Some(StatusDto::Listening { transport }) => BackendStatusDto {
-                connected: false,
-                transport,
-                state: "listening".to_string(),
-            },
-            Some(StatusDto::Connected { transport, .. }) => BackendStatusDto {
-                connected: true,
-                transport,
-                state: "connected".to_string(),
-            },
-            Some(StatusDto::Disconnecting) => BackendStatusDto {
-                connected: false,
-                transport: String::new(),
-                state: "disconnecting".to_string(),
-            },
-            Some(StatusDto::Error { reason }) => {
-                // FINDING 3: `reason` can carry a raw, remote-controlled protocol
-                // line (e.g. UnexpectedResponse/UnknownCommand preserve the
-                // verbatim CMS line), which may echo a `;PQ`/`;PR` secure-login
-                // token. REDACT it — do NOT taint: tainting backend_status would
-                // break the Flow-1 "diagnose stays untainted" property, whereas
-                // scrubbing the reason closes the credential leak while keeping
-                // backend_status non-tainting. redact_freeform is the free-form
-                // secure-login scrubber (no-op Cow::Borrowed on clean text).
-                let reason = crate::winlink::redaction::redact_freeform(&reason);
-                BackendStatusDto {
-                    connected: false,
-                    transport: String::new(),
-                    state: format!("error: {reason}"),
-                }
-            }
-        };
-        Ok(curated)
+        Ok(curate_backend_status(dto))
     }
 
     async fn modem_status(&self) -> Result<ModemStatusDto, PortError> {
@@ -716,6 +729,42 @@ impl SearchPort for MonolithSearchPort {
 // Config port.
 // ---------------------------------------------------------------------------
 
+/// Curate the raw top-level config view into the MCP `config_read` DTO: apply
+/// the 4-char grid clamp (`redact_config_view`) then the 5-field projection.
+///
+/// Shared by [`MonolithConfigPort::read`] AND the routines `data.read`
+/// `config` source (`crate::routines::actions::data`) so the two are
+/// byte-identical BY CONSTRUCTION — the routines curation-equality pin drives
+/// this fn with a 6-char-grid fixture and asserts the clamp holds. If the
+/// projection or the redaction ever changes, both consumers move together and
+/// the pin re-verifies the clamp.
+pub(crate) fn curated_config_view(
+    raw: crate::ui_commands::ConfigViewDto,
+) -> ConfigViewDto {
+    // `redact_config_view` reduces the grid to a 4-char locator via
+    // `broadcast_grid(.., FourCharGrid)` — the redaction boundary. Redact
+    // BEFORE projecting.
+    let view = crate::ui_core::config::redact_config_view(raw);
+    // Snapshot each field into a local BEFORE the struct literal (D1 finding:
+    // the R2 toolchain intermittently miscompiled inline reads inside a struct
+    // literal). These are plain field moves, not guard reads, but heed the
+    // guidance regardless.
+    let connect_to_cms = view.connect_to_cms;
+    // CmsTransport → its string form (Debug is the stable label the frontend's
+    // normalizeTransportLabel consumes).
+    let transport = format!("{:?}", view.transport);
+    let host = view.host;
+    let callsign = view.callsign.unwrap_or_default();
+    let grid = view.grid.unwrap_or_default();
+    ConfigViewDto {
+        connect_to_cms,
+        transport,
+        host,
+        callsign,
+        grid,
+    }
+}
+
 /// [`ConfigPort`] adapter over the config-view + per-modem config readers.
 pub struct MonolithConfigPort {
     #[allow(dead_code)]
@@ -731,21 +780,12 @@ impl MonolithConfigPort {
 #[async_trait]
 impl ConfigPort for MonolithConfigPort {
     async fn read(&self) -> Result<ConfigViewDto, PortError> {
-        // `redact_config_view` reduces the grid to a 4-char locator via
-        // `broadcast_grid(.., FourCharGrid)` — the redaction boundary. Read the
-        // raw view, then redact BEFORE crossing the port.
+        // Read the raw view, then delegate curation (redact + 5-field
+        // projection) to the shared `curated_config_view` — the SAME curation
+        // the routines `data.read` config source reuses.
         let raw = crate::ui_core::config::read_config_view()
             .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
-        let view = crate::ui_core::config::redact_config_view(raw);
-        Ok(ConfigViewDto {
-            connect_to_cms: view.connect_to_cms,
-            // CmsTransport → its string form (Debug is the stable label the
-            // frontend's normalizeTransportLabel consumes).
-            transport: format!("{:?}", view.transport),
-            host: view.host,
-            callsign: view.callsign.unwrap_or_default(),
-            grid: view.grid.unwrap_or_default(),
-        })
+        Ok(curated_config_view(raw))
     }
 
     async fn ardop(&self) -> Result<ArdopConfigDto, PortError> {
@@ -1625,13 +1665,16 @@ impl WritePort for MonolithWritePort {
             "set_ardop",
             &audit,
             || async move {
-                // Read the current ArdopUiConfig, mutate ONLY drive_level, persist.
-                // (modem_commands.rs:107 config_get_ardop / :117 config_set_ardop —
-                // the latter read-modify-writes the whole config atomically.) The
-                // agent may not touch any other ARDOP field.
-                let mut cfg = crate::modem_commands::config_get_ardop();
-                cfg.drive_level = Some(drive_level);
-                crate::modem_commands::config_set_ardop(cfg)
+                // Set ONLY drive_level through the SHARED, locked setter
+                // (`set_ardop_drive_level` computes old/new INSIDE the config
+                // writer lock — one critical section, no lost update). This is
+                // the SAME setter the `config.set_ardop` routine action uses
+                // (ADR 0024 P3: one locked implementation, two front-ends), so
+                // the agent write path is never left racy while the routine
+                // path is locked. The agent may not touch any other ARDOP
+                // field — the setter mutates drive_level alone.
+                crate::modem_commands::set_ardop_drive_level(drive_level)
+                    .map(|_| ())
                     .map_err(|e| WritePortError::Failed(redact_err(e)))
             },
         )
@@ -2532,6 +2575,67 @@ fn sort_gateways_by_distance(gateways: &mut [GatewayDto]) {
     });
 }
 
+/// Flatten every listing's gateways into curated, STRUCTURED-ONLY
+/// [`GatewayDto`]s, apply the client-side BAND filter, and sort nearest-first.
+///
+/// The three stages, in order:
+/// 1. **Band filter** (when `bands` is non-empty): keep only gateways with ≥1
+///    dial in a requested band ([`any_freq_in_bands`]).
+/// 2. **Curation** ([`curate_gateway`]): PII (`sysop_name`/`email`/`homepage`)
+///    and untrusted free-text (`location`/`last_update`) are dropped; a bogus
+///    callsign DROPS the whole listing; an invalid grid is NULLED; the channel
+///    is control-stripped + length-capped.
+/// 3. **Distance sort** ([`sort_gateways_by_distance`]): nearest-first from
+///    `operator_grid`, unknown-distance sinking to the end (stable).
+///
+/// SHARED by [`MonolithStationPort::find_stations`] (the MCP `find_stations`
+/// tool) AND the routines `data.find_stations` action's `StationQueryService`
+/// path, so the two surfaces are curated BYTE-IDENTICALLY by construction — the
+/// routines PII-omission pin drives this exact fn.
+pub(crate) fn curate_and_rank_gateways(
+    listings: &[crate::catalog::stations::StationListing],
+    bands: &[String],
+    operator_grid: Option<&str>,
+) -> Vec<GatewayDto> {
+    let mut gateways: Vec<GatewayDto> = Vec::new();
+    for listing in listings {
+        let mode = map_listing_mode(listing.mode);
+        for g in &listing.gateways {
+            if !bands.is_empty() && !any_freq_in_bands(&g.frequencies_khz, bands) {
+                continue;
+            }
+            if let Some(dto) = curate_gateway(mode, g, operator_grid) {
+                gateways.push(dto);
+            }
+        }
+    }
+    // Nearest-first; unknown-distance gateways sink to the end (stable sort).
+    sort_gateways_by_distance(&mut gateways);
+    gateways
+}
+
+/// Resolve the operator's own 4-char broadcast grid for local distance ranking
+/// — the SAME resolution [`MonolithStationPort::find_stations`] and the routines
+/// `data.find_stations` action's `MonolithStationQueryService` use. NEVER errors:
+/// a config-read failure and an empty/unresolved grid both degrade to `None` so
+/// a station query still returns gateways (with null distances). The 4-char
+/// clamp matches predict_path / position_status: the agent/routine surface is a
+/// privacy boundary, so distances are square-center based.
+pub(crate) fn resolve_operator_broadcast_grid(app: &AppHandle) -> Option<String> {
+    use crate::config::PositionPrecision;
+    let arbiter_state = app.state::<Arc<crate::position::PositionArbiter>>();
+    let arbiter: &crate::position::PositionArbiter = &arbiter_state;
+    let cfg = crate::config::read_config().ok()?;
+    let raw = crate::position::effective_broadcast_locator(&cfg, Some(arbiter));
+    let grid = crate::config::broadcast_grid(&raw, PositionPrecision::FourCharGrid);
+    if grid.is_empty() {
+        tracing::debug!("find_stations: operator grid unresolved; distances will be null");
+        None
+    } else {
+        Some(grid)
+    }
+}
+
 /// Curate ONE [`Contact`](crate::contacts::store::Contact) into the
 /// agent-facing [`PeerDto`], or `None` to DROP the whole record.
 ///
@@ -2674,18 +2778,7 @@ impl MonolithStationPort {
     /// clamp matches predict_path / position_status: the agent surface is a privacy
     /// boundary, so distances are square-center based, not fine-grained.
     fn resolve_operator_grid(&self) -> Option<String> {
-        use crate::config::PositionPrecision;
-        let arbiter_state = self.app.state::<Arc<crate::position::PositionArbiter>>();
-        let arbiter: &crate::position::PositionArbiter = &arbiter_state;
-        let cfg = crate::config::read_config().ok()?;
-        let raw = crate::position::effective_broadcast_locator(&cfg, Some(arbiter));
-        let grid = crate::config::broadcast_grid(&raw, PositionPrecision::FourCharGrid);
-        if grid.is_empty() {
-            tracing::debug!("find_stations: operator grid unresolved; distances will be null");
-            None
-        } else {
-            Some(grid)
-        }
+        resolve_operator_broadcast_grid(&self.app)
     }
 }
 
@@ -2739,22 +2832,13 @@ impl StationPort for MonolithStationPort {
         // GatewayDto can carry distance/bearing from it.
         let operator_grid = self.resolve_operator_grid();
 
-        let mut gateways: Vec<GatewayDto> = Vec::new();
-        for listing in &listings {
-            let mode = map_listing_mode(listing.mode);
-            for g in &listing.gateways {
-                if !filter.bands.is_empty() && !any_freq_in_bands(&g.frequencies_khz, &filter.bands)
-                {
-                    continue;
-                }
-                if let Some(dto) = curate_gateway(mode, g, operator_grid.as_deref()) {
-                    gateways.push(dto);
-                }
-            }
-        }
-
-        // Nearest-first; unknown-distance gateways sink to the end (stable sort).
-        sort_gateways_by_distance(&mut gateways);
+        // Curate (PII + free-text dropped; bogus callsigns dropped; grid
+        // validated) + client-side band filter + nearest-first distance sort,
+        // via the SHARED `curate_and_rank_gateways` — the SAME fn the routines
+        // `data.find_stations` action calls, so the two surfaces are curated
+        // byte-identically by construction.
+        let gateways =
+            curate_and_rank_gateways(&listings, &filter.bands, operator_grid.as_deref());
 
         Ok(StationListDto {
             gateways,

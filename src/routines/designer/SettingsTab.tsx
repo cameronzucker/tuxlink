@@ -63,17 +63,19 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   acknowledgeAutomatic,
+  acknowledgeWrite,
+  consentClosure,
   deletePreset,
   deleteStationSet,
   getRoutine,
-  listActions,
   listPresets,
   listRoutines,
   listStationSets,
   savePreset,
   saveStationSet,
   setEnabled,
-  type ActionInfo,
+  type ClosureStepView,
+  type ConsentClosureView,
   type Finding,
   type IfMissed,
   type OnInterrupted,
@@ -105,12 +107,26 @@ export interface SettingsTabProps {
   onEnabledChange?: (enabled: boolean) => void;
 }
 
-/** consent.rs's whole module of consent-closure finding codes (task brief
- *  §1: "AUTO_TX_UNACKED/consent-closure findings") — any of these means the
- *  call-graph transmits under a mode the validator has an opinion about. */
-const CONSENT_CLOSURE_CODES = new Set(['AUTO_TX_UNACKED', 'MIXED_MODE_STALL', 'ATTENDED_UNDER_SCHEDULE']);
-
 type ScheduleTrigger = Extract<Trigger, { type: 'schedule' }>;
+
+/** A consent ack's validity, from ack-presence crossed with the matching
+ *  validator finding (E2): `valid` (present AND no AUTO_*_UNACKED finding) ->
+ *  the green acknowledged panel; `absent` (no ack) -> the pending panel;
+ *  `invalid` (present BUT an AUTO_*_UNACKED finding fires — a digest mismatch,
+ *  i.e. the routine or one it calls changed after the ack) -> the third
+ *  re-acknowledge state. Presence alone is NOT validity: an ack can be
+ *  present-but-stale once the closure it signed no longer matches. */
+type AckState = 'valid' | 'absent' | 'invalid';
+
+function ackState(present: boolean, unacked: boolean): AckState {
+  if (!present) return 'absent';
+  return unacked ? 'invalid' : 'valid';
+}
+
+/** The re-acknowledge copy shared by both classes' `invalid` state. */
+function invalidAckCopy(by: string, at: string): string {
+  return `Acknowledgment no longer valid: the routine, or a routine it calls, changed after ${by} acknowledged on ${at}. Re-acknowledge to run automatically.`;
+}
 
 type AlignChoice = 'hour' | 'day' | 'none';
 
@@ -133,29 +149,75 @@ const EMPTY_STATION_SET_FORM: StationSetFormState = { name: '', callsigns: '' };
 
 export function SettingsTab({ draft, findings, onChange, onSaved, onEnabledChange }: SettingsTabProps) {
   // ------------------------------------------------------------------------
-  // Transmit-mode section visibility: the action registry, self-fetched
-  // (mirrors StepInspector/PaletteRail) — never a hardcoded action-name list.
+  // Consent-section visibility is CLOSURE-based (E2 / R5 pin), NOT a direct
+  // step scan: `routines_consent_closure` walks the call graph, so a transmit
+  // or config-write step reached only through a `Call` still surfaces its ack
+  // row (a `draft.tracks.some(...)` scan would miss it and silently drop the
+  // operator's proof of what they signed). The command reads the STORED def,
+  // so it re-fetches on a routine switch (RoutineDesigner keys this component
+  // by `draft.routine`, remounting on switch; the [draft.routine] dep is the
+  // belt-and-suspenders).
   // ------------------------------------------------------------------------
-  const [actions, setActions] = useState<ActionInfo[]>([]);
+  const [closure, setClosure] = useState<ConsentClosureView | null>(null);
   useEffect(() => {
     let cancelled = false;
-    listActions()
-      .then((l) => {
-        if (!cancelled) setActions(Array.isArray(l) ? l : []);
+    consentClosure(draft.routine)
+      .then((c) => {
+        if (!cancelled) setClosure(c);
       })
       .catch(() => {
-        if (!cancelled) setActions([]);
+        if (!cancelled) setClosure(null);
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [draft.routine]);
 
-  const stepTransmits = draft.tracks.some((t) =>
-    t.steps.some((s) => 'action' in s && actions.find((a) => a.name === s.action)?.transmits === true),
-  );
-  const findingIndicatesTransmit = findings.some((f) => CONSENT_CLOSURE_CODES.has(f.code));
-  const showTransmitSection = stepTransmits || findingIndicatesTransmit;
+  const transmitSteps = closure?.transmitSteps ?? [];
+  const writeSteps = closure?.writeSteps ?? [];
+  const showConsentSection = transmitSteps.length > 0 || writeSteps.length > 0;
+  const isAutomatic = draft.transmit_mode === 'automatic';
+  // Write-only closures never key a transmitter — the mode toggle must not be
+  // transmit-worded (E2). `Both` classes keep the transmit wording.
+  const writeOnly = writeSteps.length > 0 && transmitSteps.length === 0;
+
+  // Validity crosses ack-presence with the matching validator finding. The
+  // findings already flow in as a prop (RoutineDesigner's always-on
+  // validation); an AUTO_*_UNACKED here is a digest mismatch — a present ack
+  // that no longer matches the closure it signed.
+  const txUnacked = findings.some((f) => f.code === 'AUTO_TX_UNACKED');
+  const writeUnacked = findings.some((f) => f.code === 'AUTO_WRITE_UNACKED');
+  const txAckState = ackState(!!draft.transmit_ack, txUnacked);
+  const writeAckState = ackState(!!draft.write_ack, writeUnacked);
+
+  // WRITE_VALUE_RUNTIME findings key by step id; rendered inline on the
+  // matching enumerated row so the operator sees which written values are
+  // chosen at run time by whoever starts the run.
+  const runtimeStepMsgs = new Map<string, string[]>();
+  for (const f of findings) {
+    if (f.code === 'WRITE_VALUE_RUNTIME' && f.step) {
+      const arr = runtimeStepMsgs.get(f.step) ?? [];
+      arr.push(f.message);
+      runtimeStepMsgs.set(f.step, arr);
+    }
+  }
+
+  function renderClosureSteps(steps: ClosureStepView[], testid: string) {
+    return (
+      <ul className="closure-steps" data-testid={testid}>
+        {steps.map((s, i) => (
+          <li className="closure-step" key={`${s.routine}-${s.step}-${i}`}>
+            <span className="mono">{`${s.routine} · ${s.step} · ${s.action} · ${JSON.stringify(s.params)}`}</span>
+            {(runtimeStepMsgs.get(s.step) ?? []).map((m, j) => (
+              <span className="closure-runtime" data-testid={`closure-runtime-${s.step}`} key={j}>
+                {m}
+              </span>
+            ))}
+          </li>
+        ))}
+      </ul>
+    );
+  }
 
   const { callsign } = useStatusData();
 
@@ -175,6 +237,25 @@ export function SettingsTab({ draft, findings, onChange, onSaved, onEnabledChang
       setAckError(formatUiError(e));
     } finally {
       setAckBusy(false);
+    }
+  }
+
+  const [writeAckBusy, setWriteAckBusy] = useState(false);
+  const [writeAckError, setWriteAckError] = useState<string | null>(null);
+
+  async function handleAcknowledgeWrite() {
+    setWriteAckBusy(true);
+    setWriteAckError(null);
+    try {
+      const saved = await onSaved();
+      if (!saved) return; // save itself failed — already surfaced via the valbar
+      await acknowledgeWrite(draft.routine);
+      const fresh = await getRoutine(draft.routine);
+      onChange({ write_ack: fresh.write_ack ?? null });
+    } catch (e) {
+      setWriteAckError(formatUiError(e));
+    } finally {
+      setWriteAckBusy(false);
     }
   }
 
@@ -397,11 +478,17 @@ export function SettingsTab({ draft, findings, onChange, onSaved, onEnabledChang
   return (
     <div className="settings-scroll" data-testid="settings-tab">
       <div className="settings-col">
-        {showTransmitSection && (
+        {showConsentSection && (
           <section className="sect" data-testid="settings-transmit-section">
             <div className="sect-head">
-              <span className="sect-title">Transmit mode</span>
-              <span className="sect-sub">routine transmits — mode required</span>
+              <span className="sect-title">{writeOnly ? 'Unattended-run mode' : 'Transmit mode'}</span>
+              <span className="sect-sub">
+                {writeOnly
+                  ? 'routine writes config — mode required'
+                  : transmitSteps.length > 0 && writeSteps.length > 0
+                    ? 'routine transmits + writes config — mode required'
+                    : 'routine transmits — mode required'}
+              </span>
             </div>
             <div className="sect-body">
               <div className="optrow">
@@ -409,22 +496,26 @@ export function SettingsTab({ draft, findings, onChange, onSaved, onEnabledChang
                   type="button"
                   className={`opt${draft.transmit_mode === 'attended' ? ' sel' : ''}`}
                   data-testid="settings-mode-attended"
-                  // The paired `transmit_ack: null` clear mirrors the
-                  // backend's clear-on-save rule (see the header comment's
-                  // mode-switch-away paragraph) — leaving the stale ack on
-                  // the draft would resurrect a green ACKNOWLEDGED box on a
+                  // The paired `transmit_ack: null` + `write_ack: null` clear
+                  // mirrors the backend's clear-on-save rule (see the header
+                  // comment's mode-switch-away paragraph) — leaving a stale ack
+                  // on the draft would resurrect a green ACKNOWLEDGED box on a
                   // later switch back to Automatic. `null` (not `undefined`)
-                  // matches the wire type (`transmit_ack?: TransmitAck |
-                  // null`, a Rust `Option` that serializes `null` cleanly).
-                  onClick={() => onChange({ transmit_mode: 'attended' as TransmitMode, transmit_ack: null })}
+                  // matches the wire type (a Rust `Option` that serializes
+                  // `null` cleanly). Both acks are cleared: a both-class
+                  // routine holds two acks, and either left stale mis-displays.
+                  onClick={() =>
+                    onChange({ transmit_mode: 'attended' as TransmitMode, transmit_ack: null, write_ack: null })
+                  }
                 >
                   <div className="r">
                     <span className="radio" />
                     Attended
                   </div>
                   <div className="desc">
-                    Every transmit step pauses the run (awaiting consent) until you confirm in the GUI.
-                    The routine becomes a guided sequence.
+                    {writeOnly
+                      ? 'Every config-write step pauses the run (awaiting consent) until you confirm in the GUI. The routine becomes a guided sequence.'
+                      : 'Every transmit step pauses the run (awaiting consent) until you confirm in the GUI. The routine becomes a guided sequence.'}
                   </div>
                 </button>
                 <button
@@ -435,52 +526,139 @@ export function SettingsTab({ draft, findings, onChange, onSaved, onEnabledChang
                 >
                   <div className="r">
                     <span className="radio" />
-                    Automatic
+                    {writeOnly ? 'Unattended (automatic)' : 'Automatic'}
                   </div>
                   <div className="desc">
-                    Transmit steps fire unattended — on schedule, from an agent, or from a calling
-                    routine. All invokers are equivalent after acknowledgment.
+                    {writeOnly
+                      ? 'Config-write steps fire unattended — on schedule, from an agent, or from a calling routine. All invokers are equivalent after acknowledgment.'
+                      : 'Transmit steps fire unattended — on schedule, from an agent, or from a calling routine. All invokers are equivalent after acknowledgment.'}
                   </div>
                 </button>
               </div>
 
-              {draft.transmit_mode === 'automatic' &&
-                (draft.transmit_ack ? (
-                  <div className="ack" data-testid="settings-ack-acknowledged">
-                    <div className="h">
-                      ✓ ACKNOWLEDGED — {draft.transmit_ack.by} · {draft.transmit_ack.at}
-                    </div>
-                    <div className="words">
-                      Automatic transmission under Part 97 is the licensee&apos;s responsibility
-                      (§97.109(d) automatic control, §97.221 sub-band limits). This routine may key the
-                      radio with nobody at the station. Recorded in the routine definition; only
-                      grantable here — never by an agent.
-                    </div>
-                  </div>
-                ) : (
-                  <div className="ack ack-pending" data-testid="settings-ack-pending">
-                    <div className="words">
-                      Automatic transmission under Part 97 is the licensee&apos;s responsibility
-                      (§97.109(d) automatic control, §97.221 sub-band limits). This routine may key the
-                      radio with nobody at the station. Recorded in the routine definition; only
-                      grantable here — never by an agent.
-                    </div>
-                    <button
-                      type="button"
-                      className="btn btn-accent"
-                      data-testid="settings-ack-button"
-                      disabled={ackBusy}
-                      onClick={() => void handleAcknowledge()}
-                    >
-                      Acknowledge{callsign ? ` as ${callsign}` : ''}
-                    </button>
-                    {ackError && (
-                      <div className="insp-error" data-testid="settings-ack-error">
-                        {ackError}
+              {isAutomatic && transmitSteps.length > 0 && (
+                <div className="ack-block" data-testid="settings-transmit-ack">
+                  {txAckState === 'valid' && (
+                    <div className="ack" data-testid="settings-ack-acknowledged">
+                      <div className="h">
+                        ✓ ACKNOWLEDGED — {draft.transmit_ack!.by} · {draft.transmit_ack!.at}
                       </div>
-                    )}
-                  </div>
-                ))}
+                      <div className="words">
+                        Automatic transmission under Part 97 is the licensee&apos;s responsibility
+                        (§97.109(d) automatic control, §97.221 sub-band limits). This routine may key
+                        the radio with nobody at the station. Recorded in the routine definition; only
+                        grantable here — never by an agent.
+                      </div>
+                      {renderClosureSteps(transmitSteps, 'settings-transmit-closure')}
+                    </div>
+                  )}
+                  {txAckState === 'invalid' && (
+                    <div className="ack ack-invalid" data-testid="settings-ack-invalid">
+                      <div className="h">{invalidAckCopy(draft.transmit_ack!.by, draft.transmit_ack!.at)}</div>
+                      {renderClosureSteps(transmitSteps, 'settings-transmit-closure')}
+                      <button
+                        type="button"
+                        className="btn btn-accent"
+                        data-testid="settings-ack-button"
+                        disabled={ackBusy}
+                        onClick={() => void handleAcknowledge()}
+                      >
+                        Acknowledge{callsign ? ` as ${callsign}` : ''}
+                      </button>
+                      {ackError && (
+                        <div className="insp-error" data-testid="settings-ack-error">
+                          {ackError}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {txAckState === 'absent' && (
+                    <div className="ack ack-pending" data-testid="settings-ack-pending">
+                      <div className="words">
+                        Automatic transmission under Part 97 is the licensee&apos;s responsibility
+                        (§97.109(d) automatic control, §97.221 sub-band limits). This routine may key
+                        the radio with nobody at the station. Recorded in the routine definition; only
+                        grantable here — never by an agent.
+                      </div>
+                      {renderClosureSteps(transmitSteps, 'settings-transmit-closure')}
+                      <button
+                        type="button"
+                        className="btn btn-accent"
+                        data-testid="settings-ack-button"
+                        disabled={ackBusy}
+                        onClick={() => void handleAcknowledge()}
+                      >
+                        Acknowledge{callsign ? ` as ${callsign}` : ''}
+                      </button>
+                      {ackError && (
+                        <div className="insp-error" data-testid="settings-ack-error">
+                          {ackError}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {isAutomatic && writeSteps.length > 0 && (
+                <div className="ack-block" data-testid="settings-write-ack-row">
+                  {writeAckState === 'valid' && (
+                    <div className="ack" data-testid="settings-write-ack-acknowledged">
+                      <div className="h">
+                        ✓ CONFIG-WRITE ACKNOWLEDGED — {draft.write_ack!.by} · {draft.write_ack!.at}
+                      </div>
+                      <div className="words">
+                        This routine changes station configuration with nobody at the station. Recorded
+                        in the routine definition; only grantable here — never by an agent.
+                      </div>
+                      {renderClosureSteps(writeSteps, 'settings-write-closure')}
+                    </div>
+                  )}
+                  {writeAckState === 'invalid' && (
+                    <div className="ack ack-invalid" data-testid="settings-write-ack-invalid">
+                      <div className="h">{invalidAckCopy(draft.write_ack!.by, draft.write_ack!.at)}</div>
+                      {renderClosureSteps(writeSteps, 'settings-write-closure')}
+                      <button
+                        type="button"
+                        className="btn btn-accent"
+                        data-testid="settings-write-ack-button"
+                        disabled={writeAckBusy}
+                        onClick={() => void handleAcknowledgeWrite()}
+                      >
+                        Acknowledge config write{callsign ? ` as ${callsign}` : ''}
+                      </button>
+                      {writeAckError && (
+                        <div className="insp-error" data-testid="settings-write-ack-error">
+                          {writeAckError}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {writeAckState === 'absent' && (
+                    <div className="ack ack-pending" data-testid="settings-write-ack-pending">
+                      <div className="words">
+                        This routine changes station configuration with nobody at the station. Recorded
+                        in the routine definition; only grantable here — never by an agent.
+                      </div>
+                      {renderClosureSteps(writeSteps, 'settings-write-closure')}
+                      <button
+                        type="button"
+                        className="btn btn-accent"
+                        data-testid="settings-write-ack-button"
+                        disabled={writeAckBusy}
+                        onClick={() => void handleAcknowledgeWrite()}
+                      >
+                        Acknowledge config write{callsign ? ` as ${callsign}` : ''}
+                      </button>
+                      {writeAckError && (
+                        <div className="insp-error" data-testid="settings-write-ack-error">
+                          {writeAckError}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </section>
         )}
