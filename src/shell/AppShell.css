@@ -326,6 +326,16 @@
   .layout-b .dashboard,
   .layout-b .dashboard .dash-cells { gap: 10px; }
 }
+/* tuxlink-7tsik: place the ribbon's slack at the cluster seam. .dash-cells
+ * grows to fill the row (its grow is what lets the clipping middle work), so
+ * on wide windows the leftover width used to render as a void after the last
+ * cell, right of Station Intel. An auto margin on the APRS divider collects
+ * that slack BETWEEN the facts cluster (identity, grid, clock, connection,
+ * on-connect) and the live-controls cluster (APRS, Station Intel, then the
+ * Elmer chip and Connect outside the wrapper), the standard app-bar seam.
+ * Flex auto margins absorb only positive free space: under squeeze the margin
+ * collapses to zero first, so the width-tier ladder above is untouched. */
+.layout-b .dashboard .dash-divider--aprs { margin-left: auto; }
 /* tuxlink-a8x6: keep the whole Connection cell stable as the label changes
  * between Idle/Connected/Error and Telnet/Packet/ARDOP/VARA. Only the text
  * inside the slot may ellipsize; neighboring ribbon controls must not shift. */
