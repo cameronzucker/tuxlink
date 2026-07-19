@@ -14,10 +14,10 @@
 // no-op unlisten so Waterfall's subscribe effect never crashes in jsdom.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { LiveBandStrip, dotToneFor, formatDialMHz, type LiveBandStripProps } from './LiveBandStrip';
 import { stripStats } from './deriveBandActivity';
-import type { DecodeDto, Ft8Snapshot, Ft8UiState, Ft8Flags, SlotRecord } from './ft8Types';
+import type { AudioDeviceChoice, DecodeDto, Ft8Snapshot, Ft8UiState, Ft8Flags, SlotRecord } from './ft8Types';
 
 const invokeMock = vi.fn();
 
@@ -31,6 +31,14 @@ vi.mock('@tauri-apps/api/event', () => ({
 
 const NOW = 1_000_000_000; // arbitrary epoch ms anchor — matches DecodeFeed.test.tsx's convention.
 const STORAGE_KEY = 'tuxlink:ft8:strip';
+
+// Task 2: needs-setup/device-lost now mount the real Ft8StripSetup form
+// (Task 1), which fetches `ft8_list_devices` on mount; mirrors
+// Ft8StripSetup.test.tsx's own DEVICES fixture so its main-form arm (not the
+// zero-devices notice) is what renders.
+const DEVICES: AudioDeviceChoice[] = [
+  { humanName: 'Digirig Mobile', stableId: { kind: 'usbVidPidSerial', value: 'a' }, alsaHw: 'hw:1,0' },
+];
 
 function makeSnapshot(over: Partial<Ft8Snapshot> = {}): Ft8Snapshot {
   return {
@@ -405,31 +413,46 @@ describe('LiveBandStrip — non-live-body states', () => {
     expect(screen.getByTestId('ft8-strip-start-cta')).toHaveTextContent('Start listening on 20m →');
   });
 
-  it('needs-setup renders the notice + an Open-setup re-entry to the full-body surface', () => {
-    // QA round-3 finding 2: the full setup surface is the PANEL's body now
-    // (firstrun-v2 mock) — the strip's arm is a one-line re-entry, never a
-    // nested surface.
-    const onOpen = vi.fn();
+  // Task 2: setup lives IN the strip now: needs-setup mounts the real
+  // Ft8StripSetup form (Task 1) instead of the old one-line "Open setup →"
+  // re-entry to a (now-deleted) full-panel surface.
+  it('needs-setup renders the compact Ft8StripSetup form inside the strip body, not the old Open-setup notice', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'ft8_cat_probe') return new Promise(() => {});
+      if (cmd === 'ft8_list_devices') return Promise.resolve(DEVICES);
+      return Promise.resolve();
+    });
     renderStrip({
       uiState: makeUiState('needs-setup'),
-      snapshot: makeSnapshot({ service: { axis: 'blocked', reason: 'needs-device-selection' } }),
-      onOpenFullSetup: onOpen,
+      snapshot: makeSnapshot({
+        service: { axis: 'blocked', reason: 'needs-device-selection' },
+        availableDevices: DEVICES,
+        configuredDeviceName: null,
+      }),
     });
-    expect(screen.getByTestId('ft8-strip-body-needs-setup')).toHaveTextContent(/setup required/i);
-    fireEvent.click(screen.getByTestId('ft8-strip-open-setup'));
-    expect(onOpen).toHaveBeenCalledTimes(1);
+    expect(await screen.findByTestId('ft8-strip-setup')).toBeInTheDocument();
+    expect(screen.queryByTestId('ft8-strip-open-setup')).not.toBeInTheDocument();
   });
 
-  it('device-lost renders the compact reconnecting message and link', () => {
-    const onOpen = vi.fn();
+  // Task 2: the device-lost arm's dead-end "pick another input" link
+  // (which opened the now-deleted full-panel surface) is replaced by the
+  // same in-strip Ft8StripSetup form.
+  it('device-lost renders the compact reconnecting message and the same in-strip setup form', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'ft8_cat_probe') return new Promise(() => {});
+      if (cmd === 'ft8_list_devices') return Promise.resolve(DEVICES);
+      return Promise.resolve();
+    });
     renderStrip({
       uiState: makeUiState('device-lost'),
-      snapshot: makeSnapshot({ service: { axis: 'blocked', reason: 'device-absent' } }),
-      onOpenFullSetup: onOpen,
+      snapshot: makeSnapshot({
+        service: { axis: 'blocked', reason: 'device-absent' },
+        availableDevices: DEVICES,
+      }),
     });
     expect(screen.getByTestId('ft8-strip-body-device-lost')).toHaveTextContent('reconnecting');
-    fireEvent.click(screen.getByTestId('ft8-strip-device-lost-link'));
-    expect(onOpen).toHaveBeenCalledTimes(1);
+    expect(await screen.findByTestId('ft8-strip-setup')).toBeInTheDocument();
+    expect(screen.queryByTestId('ft8-strip-device-lost-link')).not.toBeInTheDocument();
   });
 });
 
@@ -457,29 +480,34 @@ describe('LiveBandStrip — provenance chip', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Finding 4b: header "setup" affordance — the only way back to the setup
-// surface once the strip has moved past needs-setup into a live body state
-// (decoding / waiting-first-slot / band-dead / yielded).
+// Task 2: header start/stop control, replaces the old "setup" affordance.
+// Reachable next to the collapse control regardless of collapse state.
 // ---------------------------------------------------------------------------
 
-describe('LiveBandStrip — header setup button', () => {
-  it('renders in a live-body state and fires onOpenFullSetup on click', () => {
-    const onOpen = vi.fn();
-    renderStrip({ uiState: makeUiState('decoding'), onOpenFullSetup: onOpen });
-    const btn = screen.getByTestId('ft8-strip-setup-btn');
-    expect(btn).toHaveTextContent('setup');
+describe('LiveBandStrip — header start/stop button', () => {
+  it('reads "■ Stop" while decoding (a live-body state) and invokes ft8_listener_stop on click', async () => {
+    renderStrip({ uiState: makeUiState('decoding') });
+    const btn = screen.getByTestId('ft8-strip-startstop');
+    expect(btn).toHaveTextContent('■ Stop');
     fireEvent.click(btn);
-    expect(onOpen).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('ft8_listener_stop', undefined));
   });
 
-  it('renders in the off (non-live-body) state too', () => {
-    renderStrip({ uiState: makeUiState('off'), snapshot: makeSnapshot({ service: { axis: 'stopped' } }) });
-    expect(screen.getByTestId('ft8-strip-setup-btn')).toBeInTheDocument();
+  it('reads "▶ Start" in off state with a configured device and invokes ft8_listener_start on click', async () => {
+    renderStrip({
+      uiState: makeUiState('off'),
+      snapshot: makeSnapshot({ service: { axis: 'stopped' }, configuredDeviceName: 'Digirig Mobile' }),
+    });
+    const btn = screen.getByTestId('ft8-strip-startstop');
+    expect(btn).toHaveTextContent('▶ Start');
+    fireEvent.click(btn);
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('ft8_listener_start', undefined));
   });
 
-  it('does NOT render while the strip is collapsed', () => {
+  it('renders even while the strip is collapsed (unlike the removed setup trigger)', () => {
     renderStrip({ uiState: makeUiState('decoding') });
     fireEvent.click(screen.getByTestId('ft8-strip-collapse')); // collapse it
-    expect(screen.queryByTestId('ft8-strip-setup-btn')).toBeNull();
+    expect(screen.getByTestId('ft8-strip')).toHaveAttribute('data-collapsed', 'true');
+    expect(screen.getByTestId('ft8-strip-startstop')).toBeInTheDocument();
   });
 });

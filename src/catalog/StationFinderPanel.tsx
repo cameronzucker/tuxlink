@@ -577,20 +577,18 @@ export function StationFinderPanel({
             beneath it, Waterfall + DecodeFeed + BandSubsetPopover) with zero call
             sites, so none of it existed for the operator. The strip hosts the
             live band: waterfall, decode feed, stats, provenance chips, and the
-            band-subset popover. Since QA round-3 finding 2 the full setup
-            surface is the PANEL BODY above (never nested in the strip) — the
-            strip's needs-setup arm is a one-line notice + "Open setup →" that
-            re-promotes it (visible only after an explicit back-out). */}
+            band-subset popover. Task 2: setup now lives IN the strip (the
+            compact Ft8StripSetup form), so there is no more full-setup surface
+            to re-open from here: onRehydrate wires the strip's in-place
+            Start/Retry actions to the same forced re-read `ft8.rehydrate`
+            already gives the panel body above. */}
         <LiveBandStrip
           snapshot={ft8.snapshot}
           uiState={ft8.uiState}
           decodesRing={ft8.decodesRing}
           operatorGrid={operatorGrid}
           blockingSessionMode={blockingSessionMode}
-          onOpenFullSetup={() => {
-            setForceSetup(true);
-            setSetupDismissed(false);
-          }}
+          onRehydrate={ft8.rehydrate}
         />
         </>
         )}

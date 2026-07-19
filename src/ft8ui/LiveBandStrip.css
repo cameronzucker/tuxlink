@@ -120,9 +120,9 @@
   font-size: 11px;
 }
 
-/* Finding 4b: header "setup" affordance — same sizing as the collapse
- * trigger it sits beside. */
-.si-strip__setup-trigger {
+/* Task 2: header start/stop control, same sizing as the collapse trigger
+ * it sits beside. */
+.si-strip__startstop {
   font-size: 11px;
 }
 
@@ -164,14 +164,15 @@
   color: var(--text-dim);
 }
 
-/* Operator QA finding (2026-07-12): the needs-setup body hosts
- * Ft8SetupSurface (Step 1 device picker + Step 2 rig control), which can
- * grow taller than the Station Intelligence dialog has room for — the
- * dialog itself clips overflow (`.station-finder { overflow: hidden }`),
- * so an unscrollable setup body pushed the CTA off the bottom with no way
- * to reach it. Scope the scroll to this container instead of the whole
- * dialog so the strip header/collapse control stay put. `52vh`/`480px`
- * tuned so the D2 harness's 1024x700 case still shows the CTA. */
+/* Operator QA finding (2026-07-12), still applicable under Task 2's
+ * in-strip `Ft8StripSetup` form: the CAT section it can expand to show
+ * (rig control fields) can grow taller than the Station Intelligence
+ * dialog has room for, and the dialog itself clips overflow
+ * (`.station-finder { overflow: hidden }`), so an unscrollable setup body
+ * pushed the CTA off the bottom with no way to reach it. Scope the scroll
+ * to this container instead of the whole dialog so the strip
+ * header/collapse control stay put. `52vh`/`480px` tuned so the D2
+ * harness's 1024x700 case still shows the CTA. */
 .si-strip__notice--setup {
   overflow-y: auto;
   max-height: min(52vh, 480px);
