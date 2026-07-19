@@ -265,10 +265,10 @@ function installInvokeMock(overrides: InvokeOverrides = {}) {
   });
 }
 
+/* tuxlink-iizmk round 2: the dashboard renders row CARDS (.rrow), not <tr>s. */
 function rowFor(routine: string): HTMLElement {
-  const cell = screen.getByText(routine);
-  const row = cell.closest('tr');
-  if (!row) throw new Error(`no <tr> ancestor for routine "${routine}"`);
+  const row = screen.getByTestId(`routine-row-${routine}`);
+  if (!row) throw new Error(`no row card for routine "${routine}"`);
   return row;
 }
 
@@ -383,25 +383,42 @@ describe('RoutinesDashboard — fleet bar (e)', () => {
   });
 });
 
-describe('RoutinesDashboard — double-click opens the designer (f)', () => {
-  it('calls onOpenDesigner(routine) with no tab on row double-click when the last result is NOT failed', async () => {
+describe('RoutinesDashboard — row click opens the designer (f)', () => {
+  // tuxlink-iizmk round 2: a SINGLE click anywhere on the row card (outside
+  // its buttons) opens the designer; the old double-click affordance was
+  // undiscoverable.
+  it('calls onOpenDesigner(routine) with no tab on row click when the last result is NOT failed', async () => {
     const { onOpenDesigner } = renderDashboard();
     await screen.findByText('morning-sweep');
     // morning-sweep's newest terminal run is COMPLETED (RUNS fixture) —
     // default designer landing, no tab argument.
-    fireEvent.doubleClick(rowFor('morning-sweep'));
+    fireEvent.click(rowFor('morning-sweep'));
     expect(onOpenDesigner).toHaveBeenCalledWith('morning-sweep', undefined);
   });
 
-  // Final whole-branch review, Fix 3: `onOpenDesigner(routine, tab?)` was
-  // threaded through RoutinesSurface but never called with a `tab` — flow 3
-  // "investigate a failed run" now lands directly on the Runs tab.
-  it('calls onOpenDesigner(routine, "runs") on row double-click when the last result is FAILED', async () => {
+  // Final whole-branch review, Fix 3: flow 3 "investigate a failed run"
+  // lands directly on the History tab (wire value 'runs').
+  it('calls onOpenDesigner(routine, "runs") on row click when the last result is FAILED', async () => {
     const { onOpenDesigner } = renderDashboard();
     await screen.findByText('deployment-poll');
     // deployment-poll's newest terminal run is FAILED (run-poll-fail, RUNS fixture).
-    fireEvent.doubleClick(rowFor('deployment-poll'));
+    fireEvent.click(rowFor('deployment-poll'));
     expect(onOpenDesigner).toHaveBeenCalledWith('deployment-poll', 'runs');
+  });
+
+  it('the row History link-button opens the designer History tab without triggering the row click', async () => {
+    const { onOpenDesigner } = renderDashboard();
+    await screen.findByText('morning-sweep');
+    fireEvent.click(within(rowFor('morning-sweep')).getByRole('button', { name: 'History for morning-sweep' }));
+    expect(onOpenDesigner).toHaveBeenCalledTimes(1);
+    expect(onOpenDesigner).toHaveBeenCalledWith('morning-sweep', 'runs');
+  });
+
+  it('the Run button does NOT also fire the row click (stopPropagation)', async () => {
+    const { onOpenDesigner } = renderDashboard();
+    await screen.findByText('morning-sweep');
+    fireEvent.click(within(rowFor('morning-sweep')).getByRole('button', { name: 'Run morning-sweep' }));
+    expect(onOpenDesigner).not.toHaveBeenCalled();
   });
 });
 
@@ -449,16 +466,16 @@ describe('RoutinesDashboard — Last result column', () => {
   });
 });
 
-describe('RoutinesDashboard — TX mode column', () => {
-  it('renders "—" for a routine whose action never transmits', async () => {
+describe('RoutinesDashboard — TX mode chip', () => {
+  // tuxlink-iizmk round 2: the TX mode column became a name-row chip that
+  // only renders for routines that actually transmit (no more dash filler).
+  it('renders NO mode chip for a routine whose action never transmits', async () => {
     renderDashboard();
     await screen.findByText('wwv-capture');
-    expect(
-      within(rowFor('wwv-capture')).getByText('—', { selector: '.txmode' }),
-    ).toBeInTheDocument();
+    expect(rowFor('wwv-capture').querySelector('.chip.mode')).toBeNull();
   });
 
-  it('renders "automatic" and "attended" for transmitting routines', async () => {
+  it('renders "automatic" and "attended" chips for transmitting routines', async () => {
     renderDashboard();
     await screen.findByText('morning-sweep');
     expect(within(rowFor('morning-sweep')).getByText('automatic')).toBeInTheDocument();
@@ -473,10 +490,10 @@ describe('RoutinesDashboard — TX mode column', () => {
 });
 
 describe('RoutinesDashboard — routine meta line', () => {
-  it('shows «N tracks · M steps» from the fetched RoutineDef', async () => {
+  it('shows «M steps · N tracks» (mock order) from the fetched RoutineDef', async () => {
     renderDashboard();
     await screen.findByText('morning-sweep');
-    expect(within(rowFor('morning-sweep')).getByText('2 tracks · 3 steps')).toBeInTheDocument();
+    expect(within(rowFor('morning-sweep')).getByText('3 steps · 2 tracks')).toBeInTheDocument();
   });
 });
 
@@ -499,14 +516,12 @@ describe('RoutinesDashboard — header actions', () => {
 });
 
 describe('RoutinesDashboard — row menu: enable/disable, delete', () => {
-  // bd tuxlink-iizmk item 8: the ⋯ menu rendered "behind the main window" —
-  // `.rowmenu` (position:absolute) sat as a td-level SIBLING of `.rowact`,
-  // so it resolved its containing block against the app window and painted
-  // at the window's top-right corner under the chrome. The fix anchors it
-  // INSIDE `.rowact` (the row's position:relative box) and lifts the cell's
-  // overflow:hidden via `.actcell`. jsdom does no layout, so the test pins
-  // the structural invariants the fix depends on.
-  it('the ⋯ menu renders visible, anchored inside the positioned .rowact box, in an unclipped cell', async () => {
+  // bd tuxlink-iizmk item 8 (round 2 form): the ⋯ menu must anchor INSIDE the
+  // row's position:relative actions box (.ractions); as a sibling its
+  // position:absolute once resolved against the app window and painted under
+  // the chrome. jsdom does no layout, so the test pins the structural
+  // invariant the fix depends on.
+  it('the ⋯ menu renders visible, anchored inside the positioned .ractions box', async () => {
     renderDashboard();
     await screen.findByText('morning-sweep');
     fireEvent.click(within(rowFor('morning-sweep')).getByRole('button', { name: 'Actions for morning-sweep' }));
@@ -514,10 +529,16 @@ describe('RoutinesDashboard — row menu: enable/disable, delete', () => {
     const menu = screen.getByRole('menu');
     expect(menu).toBeVisible();
     expect(within(menu).getByRole('menuitem', { name: 'Edit' })).toBeVisible();
-    // Anchor: the menu's PARENT is the position:relative .rowact box.
-    expect(menu.parentElement?.classList.contains('rowact')).toBe(true);
-    // No clipping: the owning cell opts out of `.ops td`'s overflow:hidden.
-    expect(menu.closest('td')?.classList.contains('actcell')).toBe(true);
+    // Anchor: the menu's PARENT is the position:relative .ractions box.
+    expect(menu.parentElement?.classList.contains('ractions')).toBe(true);
+  });
+
+  it('a menu-item click never bubbles into the row click (a Delete tap must not navigate)', async () => {
+    const { onOpenDesigner } = renderDashboard();
+    await screen.findByText('morning-sweep');
+    fireEvent.click(within(rowFor('morning-sweep')).getByRole('button', { name: 'Actions for morning-sweep' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    expect(onOpenDesigner).not.toHaveBeenCalled();
   });
 
   it('Enable/Disable invokes setEnabled with the flipped enabled value', async () => {
@@ -614,7 +635,7 @@ describe('RoutinesDashboard — ImportJsonDialog', () => {
 // ---------------------------------------------------------------------------
 
 describe('RoutinesDashboard — empty library', () => {
-  it('renders the empty-state copy instead of the ops table when routines_list is empty', async () => {
+  it('renders the empty-state copy instead of the row list when routines_list is empty', async () => {
     installInvokeMock({
       routines_list: () => [],
       routines_runs_list: () => [],
@@ -624,18 +645,19 @@ describe('RoutinesDashboard — empty library', () => {
     });
     renderDashboard();
     expect(await screen.findByTestId('routines-dashboard-empty')).toHaveTextContent(/No routines yet/);
-    expect(screen.queryByText('Routine', { selector: 'th' })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('routines-rlist')).not.toBeInTheDocument();
   });
 
   it('does NOT claim an empty library while the first refresh is still in flight (Codex P2)', async () => {
     // Every routines read hangs: summaries stays its initial [] but loaded
-    // stays false — the table shell renders, never the "No routines yet" copy.
+    // stays false — the (empty) row list renders, never the "No routines
+    // yet" copy.
     mockInvoke.mockImplementation((cmd?: string) => {
       if (cmd === undefined) return Promise.resolve();
       return new Promise(() => undefined);
     });
     renderDashboard();
-    expect(await screen.findByText('Routine', { selector: 'th' })).toBeInTheDocument();
+    expect(await screen.findByTestId('routines-rlist')).toBeInTheDocument();
     expect(screen.queryByTestId('routines-dashboard-empty')).not.toBeInTheDocument();
   });
 });

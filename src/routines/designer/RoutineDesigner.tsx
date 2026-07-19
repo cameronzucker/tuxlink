@@ -53,6 +53,7 @@ import {
   validateDraft,
   dryRunRoutine,
   listActions,
+  listRoutines,
   type RoutineDef,
   type Finding,
   type ActionInfo,
@@ -142,12 +143,21 @@ const VISIBLE_TABS: ReadonlyArray<{ tab: DesignerTab; label: string }> = [
 /** Plain-language explanation for the header's transmit-mode chip. */
 function transmitModeTooltip(mode: string): string {
   if (mode === 'attended') {
-    return 'Transmit mode: attended — this routine only transmits while you are at the radio as control operator. Change it under Routine settings, below the canvas.';
+    return 'Transmit mode: attended. This routine only transmits while you are at the radio as control operator. Click to jump to the Transmit mode setting.';
   }
   if (mode === 'automatic') {
-    return 'Transmit mode: automatic — this routine may transmit unattended (scheduled runs). Change it under Routine settings, below the canvas.';
+    return 'Transmit mode: automatic. This routine may transmit unattended (scheduled runs). Click to jump to the Transmit mode setting.';
   }
-  return `Transmit mode: ${mode}. Change it under Routine settings, below the canvas.`;
+  return `Transmit mode: ${mode}. Click to jump to the Transmit mode setting.`;
+}
+
+/** The header's schedule fact-chip text (mock: "every 30m · 07:00-09:00" or
+ *  "manual"): compact on purpose; the full trigger detail lives in the
+ *  Schedule section the chip jumps to. */
+function scheduleChipText(draft: RoutineDef): string {
+  const schedule = draft.triggers.find((t) => t.type === 'schedule');
+  if (!schedule || schedule.every.trim() === '') return 'manual';
+  return `every ${schedule.every}${schedule.window ? ` · ${schedule.window}` : ''}`;
 }
 
 function stepCountOf(def: RoutineDef): number {
@@ -315,6 +325,49 @@ export function RoutineDesigner({
       cancelled = true;
     };
   }, []);
+
+  // The header's always-visible ENABLED fact-chip (tuxlink-iizmk round 2).
+  // Fetched here (not only via SettingsTab's report-up) so a designer opened
+  // straight onto the History tab (where SettingsTab isn't mounted) still
+  // shows the real state; SettingsTab's `onEnabledChange` keeps it live when
+  // the operator toggles the Enable section. A fresh draft is never enabled.
+  const [enabledChip, setEnabledChip] = useState(false);
+  useEffect(() => {
+    if (routine === '') return;
+    let cancelled = false;
+    listRoutines()
+      .then((list) => {
+        if (cancelled) return;
+        const mine = Array.isArray(list) ? list.find((r) => r.routine === routine) : undefined;
+        if (mine) setEnabledChip(mine.enabled);
+      })
+      .catch(() => {
+        // No Tauri runtime (test/dev harness): the chip keeps its default.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [routine]);
+
+  /** Header fact-chip click: land on the Design tab (where the settings
+   *  sections live inline) and scroll the named section into view. The
+   *  scroll waits a beat so a tab switch has re-rendered the Design view
+   *  first; the transmit section can be absent (non-transmitting routine),
+   *  in which case the settings block itself is the target. */
+  const jumpToSettings = useCallback(
+    (sectionTestId: string) => {
+      if (tab === 'runs') onTabChange('design');
+      window.setTimeout(() => {
+        const el =
+          document.querySelector(`[data-testid="${sectionTestId}"]`) ??
+          document.querySelector('[data-testid="inline-settings"]');
+        if (el && typeof (el as HTMLElement).scrollIntoView === 'function') {
+          (el as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }, 60);
+    },
+    [tab, onTabChange],
+  );
 
   // Canvas selection + armed-insert-point state (task-10 brief binding
   // constraint 4): RoutineDesigner is the single owner so PaletteRail can
@@ -581,13 +634,37 @@ export function RoutineDesigner({
         ) : (
           <span className="dname">{draft.routine}</span>
         )}
-        <span
-          className="dstate"
+        {/* tuxlink-iizmk round 2 (mock .txchip): the three settings facts
+            (transmit mode, cadence, enabled) ride the header at all times;
+            each chip is a button that jumps to its settings section below
+            the canvas. */}
+        <button
+          type="button"
+          className="fact-chip"
           data-testid="transmit-mode-chip"
           title={transmitModeTooltip(draft.transmit_mode)}
+          onClick={() => jumpToSettings('settings-transmit-section')}
         >
           TX: {draft.transmit_mode}
-        </span>
+        </button>
+        <button
+          type="button"
+          className="fact-chip"
+          data-testid="schedule-chip"
+          title="Click to jump to the Schedule setting"
+          onClick={() => jumpToSettings('settings-schedule-section')}
+        >
+          {scheduleChipText(draft)}
+        </button>
+        <button
+          type="button"
+          className={`fact-chip ${enabledChip ? 'on' : 'off'}`}
+          data-testid="enabled-chip"
+          title="Click to jump to the Enable setting"
+          onClick={() => jumpToSettings('settings-enable-section')}
+        >
+          {enabledChip ? 'enabled' : 'disabled'}
+        </button>
         {dirty && <span className="unsaved" data-testid="unsaved-dot" title="unsaved changes" />}
         <span className="tabs">
           {VISIBLE_TABS.map(({ tab: t, label }) => (
@@ -647,13 +724,14 @@ export function RoutineDesigner({
               {/* tuxlink-7ewvq item 8: settings live HERE, in the canvas
                   column's otherwise-empty space, not behind a third tab. */}
               <div className="inline-settings" data-testid="inline-settings">
-                <div className="inline-settings-head">ROUTINE SETTINGS</div>
+                <div className="inline-settings-head">Routine settings</div>
                 <SettingsTab
                   key={draft.routine}
                   draft={draft}
                   findings={findings}
                   onChange={(patch) => updateDraft((d) => updateSettings(d, patch))}
                   onSaved={handleSave}
+                  onEnabledChange={setEnabledChip}
                 />
               </div>
             </div>

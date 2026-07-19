@@ -74,6 +74,12 @@ function NodeView({
   if (node.unknown) classes.push('node-unknown');
   if (node.unplaced) classes.push('node-unplaced');
 
+  // tuxlink-iizmk round 2 (mock node-head): the human label leads, the step
+  // id rides as a mono badge. canvasModel titles step nodes "<id> <label>";
+  // split that prefix off for display rather than reshaping the model.
+  const hasIdPrefix = node.title.startsWith(`${node.id} `);
+  const headLabel = hasIdPrefix ? node.title.slice(node.id.length + 1) : node.title;
+
   return (
     <div
       className={classes.join(' ')}
@@ -82,7 +88,8 @@ function NodeView({
     >
       <div className="node-head">
         {node.transmits && <span className="tx-dot" data-testid={`tx-dot-${node.id}`} />}
-        <span>{node.title}</span>
+        <span>{headLabel}</span>
+        {hasIdPrefix && <span className="node-id">{node.id}</span>}
         {node.unknown && <span className="unknown-badge">⚠ unknown</span>}
         {node.unplaced && <span className="unknown-badge">⚠ unplaced</span>}
         {selected && node.kind !== 'trigger' && (
