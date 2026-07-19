@@ -87,3 +87,34 @@ R2's X11 `:1`.
 - `dev/scratch/hc-theme-mock/` — the "signal lamp" high-contrast theme
   (verified WCAG table in the HTML header); operator may want it as a real
   scheme block post-quality-wave.
+
+## NEXT SESSION STARTS HERE (operator-directed handoff mid-resume)
+
+The operator redirected screenshot capture to the R2 (his call, recorded in
+memory: the R2 is the agent's full-freedom bench, higher resolution; the Pi
+is his daily driver — do not compile or install there).
+
+State at handoff:
+1. A RELEASE build of this branch (d8f3l merged with main @da0cb390) was
+   launched on the R2 (`pnpm tauri build --no-bundle`, nohup, log at
+   `/tmp/fidelity/readme-build.log` on the R2) and will likely be FINISHED
+   when you read this: `~/Code/tuxlink/src-tauri/target/release/tuxlink`
+   (x86, embedded assets — verify provenance by checking the ribbon says
+   STATION INTEL, which only exists post-#1150).
+2. Capture plan (plan task 4, rules in
+   docs/superpowers/plans/2026-07-17-readme-repositioning-plan.md): five
+   missing shots (multiwindow hero, elmer, routines-designer, ft8-waterfall,
+   vara-setup) + staleness pass on six existing images. Use the R2's REAL
+   HOME (operator blessed the box; his real R2 config incl. VARA), display
+   :1 (VNC 2160x1440; consider a 1920x1080 window for image weight).
+   RECEIVE-ONLY: never Connect, never arm, never beacon. Routines-designer
+   shot: build an UNSAVED draft via the palette (zero persistence against
+   his real config). Privacy pass on every frame; pngquant; <=500KB each.
+3. Capture tooling on the R2 at /tmp/fidelity/: drive2.py (PID-targeted
+   XTest clicks/typing + GDK shots) and resize-ewmh.py (EWMH window
+   sizing). If /tmp was cleaned, both patterns are reproducible from this
+   session's scratchpad or rewritten in ~50 lines each (python-xlib is
+   installed userland at ~/.local/pylibs on BOTH machines).
+4. Then plan task 6: gates (lint:docs, zero em-dashes, badge row, image
+   weights), PR, CI, ship, close tuxlink-d8f3l, dispose the worktree
+   (archive dev/scratch/d8f3l-facts.md + adrev transcripts per plan).
