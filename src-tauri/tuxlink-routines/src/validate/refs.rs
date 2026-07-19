@@ -103,6 +103,7 @@ mod tests {
     use serde_json::json;
 
     const RADIO_CONNECT: ActionDescriptor = ActionDescriptor {
+        writes_config: false,
         name: "radio.connect",
         label: "",
         description: "",

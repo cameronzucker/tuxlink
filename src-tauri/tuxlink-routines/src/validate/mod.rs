@@ -172,6 +172,7 @@ mod tests {
         use crate::types::{ActionStep, BusyPolicy, Control, ControlStep, Step, StepId};
 
         const RADIO_CONNECT: ActionDescriptor = ActionDescriptor {
+            writes_config: false,
             name: "radio.connect",
             label: "",
             description: "",

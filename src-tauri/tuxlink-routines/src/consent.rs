@@ -17,6 +17,7 @@
 use async_trait::async_trait;
 
 use crate::error::StepError;
+use crate::journal::ParkKind;
 
 /// The attended-consent parking desk (spec §4). The executor awaits [`park`]
 /// for a transmit step whose run is attended, racing it against the run's
@@ -25,10 +26,13 @@ use crate::error::StepError;
 /// [`park`]: ConsentPort::park
 #[async_trait]
 pub trait ConsentPort: Send + Sync {
-    /// Park `(run_id, step_id)` awaiting the operator's per-transmission
-    /// consent. Resolves `Ok(())` when consent is granted — the executor then
-    /// proceeds into the timed `execute`. Resolves `Err(StepError::Cancelled)`
-    /// if the grant channel is torn down without a grant.
+    /// Park `(run_id, step_id)` awaiting the operator's per-transmission (or
+    /// per-config-write) consent. `kind` names the consent class the run is
+    /// waiting on ([`ParkKind::Transmit`] for the RF gate, [`ParkKind::Write`]
+    /// for the `writes_config` gate) so the surfacing UI can branch its copy.
+    /// Resolves `Ok(())` when consent is granted — the executor then proceeds
+    /// into the timed `execute`. Resolves `Err(StepError::Cancelled)` if the
+    /// grant channel is torn down without a grant.
     ///
     /// **Drop contract (no stale-sender leak).** The returned future MUST
     /// release its parked entry if it is dropped before resolving — the
@@ -36,5 +40,5 @@ pub trait ConsentPort: Send + Sync {
     /// future against the cancel token and takes the cancel branch). An
     /// implementation backed by a registry map therefore uses an RAII guard so
     /// a cancelled park leaves no orphaned grant sender behind.
-    async fn park(&self, run_id: &str, step_id: &str) -> Result<(), StepError>;
+    async fn park(&self, run_id: &str, step_id: &str, kind: ParkKind) -> Result<(), StepError>;
 }

@@ -96,6 +96,7 @@ struct ProfileSpec {
 fn known_action(name: &str) -> ActionDescriptor {
     match name {
         "radio.connect" => ActionDescriptor {
+            writes_config: false,
             name: "radio.connect",
             label: "",
             description: "",
@@ -104,6 +105,7 @@ fn known_action(name: &str) -> ActionDescriptor {
             needs_internet: false,
         },
         "data.web_lookup" => ActionDescriptor {
+            writes_config: false,
             name: "data.web_lookup",
             label: "",
             description: "",
@@ -112,6 +114,7 @@ fn known_action(name: &str) -> ActionDescriptor {
             needs_internet: true,
         },
         "local.note" => ActionDescriptor {
+            writes_config: false,
             name: "local.note",
             label: "",
             description: "",
@@ -120,6 +123,7 @@ fn known_action(name: &str) -> ActionDescriptor {
             needs_internet: false,
         },
         "compose.message" => ActionDescriptor {
+            writes_config: false,
             name: "compose.message",
             label: "",
             description: "",
@@ -128,6 +132,7 @@ fn known_action(name: &str) -> ActionDescriptor {
             needs_internet: false,
         },
         "log.entry" => ActionDescriptor {
+            writes_config: false,
             name: "log.entry",
             label: "",
             description: "",
@@ -136,6 +141,7 @@ fn known_action(name: &str) -> ActionDescriptor {
             needs_internet: false,
         },
         "data.read" => ActionDescriptor {
+            writes_config: false,
             name: "data.read",
             label: "",
             description: "",
@@ -144,6 +150,7 @@ fn known_action(name: &str) -> ActionDescriptor {
             needs_internet: false,
         },
         "data.spacewx_wwv" => ActionDescriptor {
+            writes_config: false,
             name: "data.spacewx_wwv",
             label: "",
             description: "",

@@ -11,7 +11,7 @@ use crate::action::ActionRegistry;
 use crate::compose::{CallCtx, RoutineInvoker};
 use crate::consent::ConsentPort;
 use crate::error::StepError;
-use crate::journal::{JournalWriter, RunEvent, RunState};
+use crate::journal::{JournalWriter, ParkKind, RunEvent, RunState};
 use crate::types::{ActionStep, Control, Step, StepId, Track};
 use crate::vars::RunVars;
 
@@ -304,8 +304,22 @@ async fn run_action_step_shared(
     // future is dropped if the run is cancelled while parked — its RAII guard
     // releases the parked slot (no stale grant sender leaks) and the transmit
     // action is NEVER reached, so no carrier is ever keyed without consent.
-    if ctx.attended && action.descriptor().transmits {
+    // A step that `writes_config` parks the same way (O3/O4 round): `kind`
+    // distinguishes the classes — a step that both transmits and writes config
+    // parks as a Transmit (the RF gate's Part 97 copy dominates); a pure
+    // `writes_config` step parks as a Write.
+    let descriptor = action.descriptor();
+    if ctx.attended && (descriptor.transmits || descriptor.writes_config) {
+        // Only a present consent port actually parks (a `None` port with an
+        // attended run does not park — the start gate is the enforcement in
+        // that configuration), so `park_kind` is computed inside the block to
+        // stay used.
         if let Some(consent) = &ctx.consent {
+            let park_kind = if descriptor.writes_config && !descriptor.transmits {
+                ParkKind::Write
+            } else {
+                ParkKind::Transmit
+            };
             // Verbatim context for the monitor (tuxlink-xvd1i): the step that
             // is parking, and its literal "rig" param when it has one. No
             // defaulting here — the engine has no rig semantics (app layer's
@@ -321,11 +335,11 @@ async fn run_action_step_shared(
                     state: RunState::AwaitingConsent,
                     step: Some(step.id.clone()),
                     rig,
-                    park_kind: None,
+                    park_kind: Some(park_kind),
                 },
             );
             let parked = tokio::select! {
-                r = consent.park(&ctx.run_id, &step.id.0) => r,
+                r = consent.park(&ctx.run_id, &step.id.0, park_kind) => r,
                 _ = ctx.cancel.cancelled() => Err(StepError::Cancelled),
             };
             match parked {
@@ -1464,6 +1478,7 @@ mod tests {
     impl crate::action::Action for PanicAction {
         fn descriptor(&self) -> crate::action::ActionDescriptor {
             crate::action::ActionDescriptor {
+                writes_config: false,
                 name: "test.panic",
                 label: "",
                 description: "",
@@ -1842,6 +1857,173 @@ mod tests {
         let res = handle.await.unwrap();
         assert!(matches!(res, Err(StepError::Cancelled)));
         assert!(tx.calls().is_empty(), "transmit action NEVER ran");
+    }
+
+    // ── C2: writes_config consent class + park kinds ─────────────────────────
+
+    /// An attended run parks a `writes_config` (non-transmitting) step exactly
+    /// like a transmit step, and journals `park_kind: "write"` — the executor
+    /// hands the port `ParkKind::Write` so the ConsentGate renders config-write
+    /// copy, not transmit copy.
+    #[tokio::test(start_paused = true)]
+    async fn attended_writes_config_step_parks_with_write_kind() {
+        let setter = Arc::new(
+            FakeAction::new("config.set_ardop")
+                .with_writes_config(true)
+                .ok(json!({"field": "drive_level", "old": 0, "new": 80})),
+        );
+        let mut reg = ActionRegistry::default();
+        reg.register(setter.clone());
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ctx, jpath) = ctx(reg, dir.path());
+        ctx.attended = true;
+        let consent = Arc::new(crate::fakes::FakeConsent::granting_after(Duration::ZERO));
+        ctx.consent = Some(consent.clone());
+        let track = Track {
+            name: "t".into(),
+            steps: vec![action("s1", "config.set_ardop", json!({"drive_level": 80}))],
+        };
+        let mut vars = RunVars::default();
+        run_track(&track, &mut vars, &ctx).await.unwrap();
+
+        // The write step actually parked, and the port received Write kind.
+        assert_eq!(consent.parked(), vec![("run-t".to_string(), "s1".to_string())]);
+        assert_eq!(consent.parked_kinds(), vec![ParkKind::Write]);
+        assert_eq!(setter.calls().len(), 1, "the write ran after the grant");
+
+        // The journal records the park as a Write consent class.
+        let entries = read_journal(&jpath).unwrap();
+        let parked = entries
+            .iter()
+            .find_map(|e| match &e.event {
+                RunEvent::StateChanged {
+                    state: RunState::AwaitingConsent,
+                    park_kind,
+                    ..
+                } => Some(*park_kind),
+                _ => None,
+            })
+            .expect("an AwaitingConsent entry must exist");
+        assert_eq!(parked, Some(ParkKind::Write));
+        // And it serializes to the snake_case wire tag "write".
+        let j = serde_json::to_value(
+            entries
+                .iter()
+                .find(|e| matches!(&e.event,
+                    RunEvent::StateChanged { state: RunState::AwaitingConsent, .. }))
+                .map(|e| &e.event)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(j["park_kind"], "write");
+    }
+
+    /// A step that BOTH transmits and writes config parks as a Transmit — the
+    /// stricter RF gate dominates so the operator always sees Part 97 copy on a
+    /// step that keys a carrier, even if it also mutates config.
+    #[tokio::test(start_paused = true)]
+    async fn transmit_and_write_step_parks_as_transmit() {
+        let both = Arc::new(
+            FakeAction::new("radio.tx_and_write")
+                .with_capabilities(true, true, false)
+                .with_writes_config(true)
+                .ok(json!({"sent": true})),
+        );
+        let mut reg = ActionRegistry::default();
+        reg.register(both);
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ctx, _jpath) = ctx(reg, dir.path());
+        ctx.attended = true;
+        let consent = Arc::new(crate::fakes::FakeConsent::granting_after(Duration::ZERO));
+        ctx.consent = Some(consent.clone());
+        let track = Track {
+            name: "t".into(),
+            steps: vec![action("s1", "radio.tx_and_write", json!({}))],
+        };
+        let mut vars = RunVars::default();
+        run_track(&track, &mut vars, &ctx).await.unwrap();
+        assert_eq!(consent.parked_kinds(), vec![ParkKind::Transmit]);
+    }
+
+    /// A retry-wrapped `writes_config` step parks PER ATTEMPT — each attempt is
+    /// a fresh action invocation, and each one must get its own operator
+    /// confirmation before it runs (no "consent once, then auto-retry").
+    #[tokio::test(start_paused = true)]
+    async fn retry_wrapped_write_parks_every_attempt() {
+        let setter = Arc::new(
+            FakeAction::new("config.set_ardop")
+                .with_writes_config(true)
+                .err("config: busy")
+                .err("config: busy")
+                .ok(json!({"new": 80})),
+        );
+        let mut reg = ActionRegistry::default();
+        reg.register(setter.clone());
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ctx, jpath) = ctx(reg, dir.path());
+        ctx.attended = true;
+        let consent = Arc::new(crate::fakes::FakeConsent::granting_after(Duration::ZERO));
+        ctx.consent = Some(consent.clone());
+        let track = Track {
+            name: "t".into(),
+            steps: vec![
+                Step::Control(ControlStep {
+                    id: StepId("r1".into()),
+                    control: Control::Retry {
+                        step: StepId("s1".into()),
+                        attempts: 3,
+                        backoff_s: 0,
+                    },
+                }),
+                action("s1", "config.set_ardop", json!({"drive_level": 80})),
+            ],
+        };
+        let mut vars = RunVars::default();
+        run_track(&track, &mut vars, &ctx).await.unwrap();
+
+        // Three attempts (err, err, ok) => three parks, each a Write.
+        assert_eq!(setter.calls().len(), 3, "the write was attempted 3 times");
+        assert_eq!(consent.parked_kinds(), vec![ParkKind::Write; 3]);
+        let awaiting = read_journal(&jpath)
+            .unwrap()
+            .iter()
+            .filter(|e| matches!(&e.event,
+                RunEvent::StateChanged { state: RunState::AwaitingConsent, .. }))
+            .count();
+        assert_eq!(awaiting, 3, "one park journal entry per attempt");
+    }
+
+    /// A `writes_config` step in a NON-attended run never parks — this is the
+    /// path both automatic-mode runs and dry-runs rely on (the engine forces
+    /// `attended = false` for a fake-world run). The consent port is present
+    /// but never touched.
+    #[tokio::test]
+    async fn writes_config_step_does_not_park_when_not_attended() {
+        let setter = Arc::new(
+            FakeAction::new("config.set_ardop")
+                .with_writes_config(true)
+                .ok(json!({"new": 80})),
+        );
+        let mut reg = ActionRegistry::default();
+        reg.register(setter.clone());
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ctx, jpath) = ctx(reg, dir.path());
+        // attended defaults to false (automatic / dry-run posture).
+        let consent = Arc::new(crate::fakes::FakeConsent::granting_after(Duration::ZERO));
+        ctx.consent = Some(consent.clone());
+        let track = Track {
+            name: "t".into(),
+            steps: vec![action("s1", "config.set_ardop", json!({}))],
+        };
+        let mut vars = RunVars::default();
+        run_track(&track, &mut vars, &ctx).await.unwrap();
+        assert!(consent.parked().is_empty(), "an automatic write must not park");
+        assert_eq!(setter.calls().len(), 1, "the write still ran, just unparked");
+        let entries = read_journal(&jpath).unwrap();
+        assert!(!entries.iter().any(|e| matches!(
+            &e.event,
+            RunEvent::StateChanged { state: RunState::AwaitingConsent, .. }
+        )));
     }
 
     /// FINDING 2 + 6: a branch variable that resolves to a non-boolean is a

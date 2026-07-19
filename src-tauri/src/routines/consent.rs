@@ -54,6 +54,7 @@ use tuxlink_routines::action::ActionRegistry;
 use tuxlink_routines::consent::ConsentPort;
 use tuxlink_routines::consent_closure::consent_closure;
 use tuxlink_routines::error::StepError;
+use tuxlink_routines::journal::ParkKind;
 use tuxlink_routines::types::RoutineDef;
 
 use super::events::{RoutinesEvent, RoutinesEventSink};
@@ -142,7 +143,7 @@ impl ConsentRegistry {
 
 #[async_trait]
 impl ConsentPort for ConsentRegistry {
-    async fn park(&self, run_id: &str, step_id: &str) -> Result<(), StepError> {
+    async fn park(&self, run_id: &str, step_id: &str, kind: ParkKind) -> Result<(), StepError> {
         let key = (run_id.to_string(), step_id.to_string());
         // Register the grant channel BEFORE emitting the event, so a grant
         // racing in right after the UI receives `AwaitingConsent` finds the
@@ -155,6 +156,7 @@ impl ConsentPort for ConsentRegistry {
         self.sink.emit(&RoutinesEvent::AwaitingConsent {
             run_id: run_id.to_string(),
             step_id: step_id.to_string(),
+            park_kind: kind,
         });
         // RAII: if this future is dropped before a grant (the executor takes
         // its cancel branch while parked), release the parked slot so no stale
@@ -342,18 +344,38 @@ mod tests {
         let reg = registry_with(rec.clone());
 
         let r2 = reg.clone();
-        let task = tokio::spawn(async move { r2.park("run-1", "s1").await });
+        let task = tokio::spawn(async move { r2.park("run-1", "s1", ParkKind::Transmit).await });
         wait_parked(&reg).await;
 
-        // The park emitted AwaitingConsent for the right (run, step).
+        // The park emitted AwaitingConsent for the right (run, step, kind).
         assert!(rec.events.lock().unwrap().iter().any(|e| matches!(e,
-            RoutinesEvent::AwaitingConsent { run_id, step_id }
-                if run_id == "run-1" && step_id == "s1")));
+            RoutinesEvent::AwaitingConsent { run_id, step_id, park_kind }
+                if run_id == "run-1" && step_id == "s1" && *park_kind == ParkKind::Transmit)));
 
         assert!(reg.grant("run-1", "s1"));
         let res = task.await.unwrap();
         assert!(res.is_ok(), "park resolves Ok on grant");
         assert_eq!(reg.parked_count(), 0, "grant removes the parked entry");
+    }
+
+    /// The park kind threads through the registry into the emitted event: a
+    /// `ParkKind::Write` park surfaces `AwaitingConsent { park_kind: Write }`
+    /// so the ConsentGate renders config-write copy, not transmit copy (C2).
+    #[tokio::test]
+    async fn write_park_emits_awaiting_consent_with_write_kind() {
+        let rec = Arc::new(RecSink::default());
+        let reg = registry_with(rec.clone());
+
+        let r2 = reg.clone();
+        let task = tokio::spawn(async move { r2.park("run-w", "s1", ParkKind::Write).await });
+        wait_parked(&reg).await;
+
+        assert!(rec.events.lock().unwrap().iter().any(|e| matches!(e,
+            RoutinesEvent::AwaitingConsent { run_id, park_kind, .. }
+                if run_id == "run-w" && *park_kind == ParkKind::Write)));
+
+        assert!(reg.grant("run-w", "s1"));
+        assert!(task.await.unwrap().is_ok());
     }
 
     #[test]
@@ -371,7 +393,7 @@ mod tests {
 
         let r2 = reg.clone();
         // Never granted: parks and stays pending until the task is aborted.
-        let task = tokio::spawn(async move { r2.park("run-1", "s1").await });
+        let task = tokio::spawn(async move { r2.park("run-1", "s1", ParkKind::Transmit).await });
         wait_parked(&reg).await;
         assert_eq!(reg.parked_count(), 1);
 

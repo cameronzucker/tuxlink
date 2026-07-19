@@ -1692,7 +1692,7 @@ mod tests {
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         loop {
             for e in sink.events() {
-                if let RoutinesEvent::AwaitingConsent { run_id, step_id } = e {
+                if let RoutinesEvent::AwaitingConsent { run_id, step_id, .. } = e {
                     return (run_id, step_id);
                 }
             }

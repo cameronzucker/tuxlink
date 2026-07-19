@@ -333,6 +333,7 @@ mod tests {
     use serde_json::json;
 
     const RADIO_TX: ActionDescriptor = ActionDescriptor {
+        writes_config: false,
         name: "radio.tx",
         label: "",
         description: "",
@@ -341,6 +342,7 @@ mod tests {
         needs_internet: false,
     };
     const LOCAL_NOTE: ActionDescriptor = ActionDescriptor {
+        writes_config: false,
         name: "local.note",
         label: "",
         description: "",

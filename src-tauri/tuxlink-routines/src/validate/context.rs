@@ -178,6 +178,7 @@ mod tests {
     #[test]
     fn seeded_action_descriptor_round_trips() {
         let descriptor = ActionDescriptor {
+            writes_config: false,
             name: "radio.connect",
             label: "",
             description: "",

@@ -969,6 +969,7 @@ mod quit_gate_tests {
     impl Action for SlowCancelAction {
         fn descriptor(&self) -> ActionDescriptor {
             ActionDescriptor {
+                writes_config: false,
                 name: self.name,
                 label: "",
                 description: "",
@@ -1038,6 +1039,7 @@ mod quit_gate_tests {
     impl Action for WedgedBlockingAction {
         fn descriptor(&self) -> ActionDescriptor {
             ActionDescriptor {
+                writes_config: false,
                 name: self.name,
                 label: "",
                 description: "",

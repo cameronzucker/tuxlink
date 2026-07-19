@@ -219,6 +219,7 @@ mod tests {
     use serde_json::json;
 
     const RADIO_CONNECT: ActionDescriptor = ActionDescriptor {
+        writes_config: false,
         name: "radio.connect",
         label: "",
         description: "",
@@ -227,6 +228,7 @@ mod tests {
         needs_internet: false,
     };
     const WEB_LOOKUP: ActionDescriptor = ActionDescriptor {
+        writes_config: false,
         name: "data.web_lookup",
         label: "",
         description: "",
@@ -235,6 +237,7 @@ mod tests {
         needs_internet: true,
     };
     const LOCAL_NOTE: ActionDescriptor = ActionDescriptor {
+        writes_config: false,
         name: "local.note",
         label: "",
         description: "",
