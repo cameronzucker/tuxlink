@@ -324,4 +324,10 @@ pub static BUNDLED_TOPICS: &[DocTopic<'static>] = &[
         markdown: include_str!("../../../docs/user-guide/38-pop-out-windows.md"),
         source: DocSource::UserGuide,
     },
+    DocTopic {
+        slug: "39-routines-actions",
+        title: "Routines actions reference",
+        markdown: include_str!("../../../docs/user-guide/39-routines-actions.md"),
+        source: DocSource::UserGuide,
+    },
 ];
