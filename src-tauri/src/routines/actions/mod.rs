@@ -266,6 +266,33 @@ pub trait DataService: Send + Sync {
     /// surfaces that as an honest-gap-style error (not a silent `null`),
     /// same posture as the pre-Task-5c placeholder this method replaces.
     async fn read_last_connected_gateway(&self) -> Result<Option<LastConnectedGatewayDto>, String>;
+
+    /// `data.read` with `source: "modem_status"` — the SAME curated modem
+    /// status the MCP `modem_get_status` tool returns (rank 1). The monolith
+    /// impl delegates to `crate::mcp_ports::MonolithStatusPort::modem_status`,
+    /// so the routine output is byte-identical to the tool's by construction
+    /// (pinned by the curation-equality test). Inert: reads only, never
+    /// taints, never gates.
+    async fn read_modem_status(&self) -> Result<tuxlink_mcp_core::ports::ModemStatusDto, String>;
+
+    /// `data.read` with `source: "backend_status"` — the SAME curated Winlink
+    /// backend (CMS engine) status the MCP `backend_status` tool returns
+    /// (rank 1), including the secure-login (`;PQ`/`;PR`) redaction on the
+    /// error arm. The monolith impl delegates to
+    /// `crate::mcp_ports::MonolithStatusPort::backend_status`, so the routine
+    /// output is byte-identical to the tool's (redaction pinned identical).
+    async fn read_backend_status(&self)
+        -> Result<tuxlink_mcp_core::ports::BackendStatusDto, String>;
+
+    /// `data.read` with `source: "app_status"` — the SAME send-authority +
+    /// app-identity view the MCP `server_info` tool returns (rank 1;
+    /// `ServerInfoDto` shape). Reads the live `EgressGuard`
+    /// (armed/armed_remaining_secs/tainted/taint_reason) plus the app
+    /// name/version, mirroring `tuxlink_mcp_core::server_info_view`. Returns a
+    /// `serde_json::Value` (the typed shape is mcp-core-internal to
+    /// `server_info`); the routines/server_info equality is pinned by test.
+    /// Inert: reads only, never arms, taints, or gates.
+    async fn read_app_status(&self) -> Result<serde_json::Value, String>;
 }
 
 /// The `local.*` action family's delegation seam (spec §6 "Local actions";

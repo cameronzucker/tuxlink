@@ -259,67 +259,80 @@ pub(crate) fn gather_modem_status(
     )
 }
 
+/// Curate the tagged [`StatusDto`](crate::ui_commands::StatusDto) enum into the
+/// flat `{connected, transport, state}` agent shape. `None` (NotConfigured) →
+/// disconnected/idle. This is the SINGLE curation seam both the MCP
+/// `backend_status` tool ([`MonolithStatusPort::backend_status`]) and the
+/// `data.read` `backend_status` source (routines `MonolithDataService`) call, so
+/// the two surfaces are byte-identical BY CONSTRUCTION — including the
+/// secure-login (`;PQ`/`;PR`) redaction on the `Error` arm (FINDING 3, pinned by
+/// the routines curation-equality test). Extracted from the inline match so the
+/// redaction is unit-testable without an `AppHandle`.
+pub(crate) fn curate_backend_status(
+    dto: Option<crate::ui_commands::StatusDto>,
+) -> BackendStatusDto {
+    use crate::ui_commands::StatusDto;
+    match dto {
+        None => BackendStatusDto {
+            connected: false,
+            transport: String::new(),
+            state: "not_configured".to_string(),
+        },
+        Some(StatusDto::Disconnected) => BackendStatusDto {
+            connected: false,
+            transport: String::new(),
+            state: "disconnected".to_string(),
+        },
+        Some(StatusDto::Connecting { transport }) => BackendStatusDto {
+            connected: false,
+            transport,
+            state: "connecting".to_string(),
+        },
+        Some(StatusDto::Listening { transport }) => BackendStatusDto {
+            connected: false,
+            transport,
+            state: "listening".to_string(),
+        },
+        Some(StatusDto::Connected { transport, .. }) => BackendStatusDto {
+            connected: true,
+            transport,
+            state: "connected".to_string(),
+        },
+        Some(StatusDto::Disconnecting) => BackendStatusDto {
+            connected: false,
+            transport: String::new(),
+            state: "disconnecting".to_string(),
+        },
+        Some(StatusDto::Error { reason }) => {
+            // FINDING 3: `reason` can carry a raw, remote-controlled protocol
+            // line (e.g. UnexpectedResponse/UnknownCommand preserve the
+            // verbatim CMS line), which may echo a `;PQ`/`;PR` secure-login
+            // token. REDACT it — do NOT taint: tainting backend_status would
+            // break the Flow-1 "diagnose stays untainted" property, whereas
+            // scrubbing the reason closes the credential leak while keeping
+            // backend_status non-tainting. redact_freeform is the free-form
+            // secure-login scrubber (no-op Cow::Borrowed on clean text).
+            let reason = crate::winlink::redaction::redact_freeform(&reason);
+            BackendStatusDto {
+                connected: false,
+                transport: String::new(),
+                state: format!("error: {reason}"),
+            }
+        }
+    }
+}
+
 #[async_trait]
 impl StatusPort for MonolithStatusPort {
     async fn backend_status(&self) -> Result<BackendStatusDto, PortError> {
-        use crate::ui_commands::StatusDto;
         let state = self.app.state::<crate::app_backend::BackendState>();
         // `snapshot()` clones (phase, backend) under one read guard and drops
         // it; `derive_status_dto` is pure (mirrors the `backend_status`
-        // command).
+        // command). `curate_backend_status` is the shared curation seam (also
+        // called by the routines `data.read` backend_status source).
         let (phase, backend) = state.snapshot();
         let dto = crate::ui_commands::derive_status_dto(phase, backend);
-        // Curate the tagged StatusDto enum into the flat {connected, transport,
-        // state} agent shape. `None` (NotConfigured) → disconnected/idle.
-        let curated = match dto {
-            None => BackendStatusDto {
-                connected: false,
-                transport: String::new(),
-                state: "not_configured".to_string(),
-            },
-            Some(StatusDto::Disconnected) => BackendStatusDto {
-                connected: false,
-                transport: String::new(),
-                state: "disconnected".to_string(),
-            },
-            Some(StatusDto::Connecting { transport }) => BackendStatusDto {
-                connected: false,
-                transport,
-                state: "connecting".to_string(),
-            },
-            Some(StatusDto::Listening { transport }) => BackendStatusDto {
-                connected: false,
-                transport,
-                state: "listening".to_string(),
-            },
-            Some(StatusDto::Connected { transport, .. }) => BackendStatusDto {
-                connected: true,
-                transport,
-                state: "connected".to_string(),
-            },
-            Some(StatusDto::Disconnecting) => BackendStatusDto {
-                connected: false,
-                transport: String::new(),
-                state: "disconnecting".to_string(),
-            },
-            Some(StatusDto::Error { reason }) => {
-                // FINDING 3: `reason` can carry a raw, remote-controlled protocol
-                // line (e.g. UnexpectedResponse/UnknownCommand preserve the
-                // verbatim CMS line), which may echo a `;PQ`/`;PR` secure-login
-                // token. REDACT it — do NOT taint: tainting backend_status would
-                // break the Flow-1 "diagnose stays untainted" property, whereas
-                // scrubbing the reason closes the credential leak while keeping
-                // backend_status non-tainting. redact_freeform is the free-form
-                // secure-login scrubber (no-op Cow::Borrowed on clean text).
-                let reason = crate::winlink::redaction::redact_freeform(&reason);
-                BackendStatusDto {
-                    connected: false,
-                    transport: String::new(),
-                    state: format!("error: {reason}"),
-                }
-            }
-        };
-        Ok(curated)
+        Ok(curate_backend_status(dto))
     }
 
     async fn modem_status(&self) -> Result<ModemStatusDto, PortError> {

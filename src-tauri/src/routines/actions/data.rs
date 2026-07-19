@@ -495,6 +495,15 @@ enum ReadSource {
     HeardStations,
     Grid,
     LastConnectedGateway,
+    /// Rank 1 (compat-tree): the curated modem status mirroring the MCP
+    /// `modem_get_status` tool, byte-identical via the shared gatherer.
+    ModemStatus,
+    /// Rank 1: the curated backend (CMS engine) status mirroring the MCP
+    /// `backend_status` tool, secure-login redaction included.
+    BackendStatus,
+    /// Rank 1: the send-authority + app-identity view mirroring the MCP
+    /// `server_info` tool (`ServerInfoDto` shape).
+    AppStatus,
 }
 
 #[derive(Debug, Deserialize)]
@@ -621,7 +630,84 @@ impl Action for DataRead {
                     }),
                 }
             }
+            ReadSource::ModemStatus => {
+                let dto = tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => return Err(StepError::Cancelled),
+                    res = self.data.read_modem_status() => res,
+                }
+                .map_err(|cause| StepError::Action {
+                    action: DATA_READ.to_string(),
+                    cause,
+                })?;
+                serde_json::to_value(&dto).map_err(|e| StepError::Action {
+                    action: DATA_READ.to_string(),
+                    cause: format!("output serialize: {e}"),
+                })
+            }
+            ReadSource::BackendStatus => {
+                let dto = tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => return Err(StepError::Cancelled),
+                    res = self.data.read_backend_status() => res,
+                }
+                .map_err(|cause| StepError::Action {
+                    action: DATA_READ.to_string(),
+                    cause,
+                })?;
+                serde_json::to_value(&dto).map_err(|e| StepError::Action {
+                    action: DATA_READ.to_string(),
+                    cause: format!("output serialize: {e}"),
+                })
+            }
+            ReadSource::AppStatus => {
+                // `read_app_status` already returns the `ServerInfoDto`-shaped
+                // `Value` (mirrors the MCP `server_info` tool output); pass it
+                // through verbatim.
+                tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => return Err(StepError::Cancelled),
+                    res = self.data.read_app_status() => res,
+                }
+                .map_err(|cause| StepError::Action {
+                    action: DATA_READ.to_string(),
+                    cause,
+                })
+            }
         }
+    }
+}
+
+/// Pure builder for the `data.read` `app_status` source — a byte-for-byte
+/// replica of `tuxlink_mcp_core::server_info_view`'s body over the live
+/// [`EgressGuard`](tuxlink_security::EgressGuard) plus the embedder-injected
+/// app identity. Kept as a standalone fn (not inlined into
+/// `MonolithDataService::read_app_status`) so the routines/`server_info`
+/// equality is unit-testable without an `AppHandle` — the curation-equality
+/// pin drives this fn and `server_info_view` over the SAME guard and asserts
+/// identical serialization. If `server_info_view` ever gains a field or changes
+/// derivation, the pin fails and points here to re-sync.
+pub(crate) fn app_status_dto(
+    guard: &tuxlink_security::EgressGuard,
+    name: &str,
+    version: &str,
+) -> tuxlink_mcp_core::ServerInfoDto {
+    // Read every guard field into a local FIRST, then build the struct. Each
+    // read is its own `Mutex` lock; snapshotting into locals keeps the three
+    // reads sequenced and side-effecting (an inline read inside the struct
+    // literal miscompiled to `None` on the R2 toolchain — perturbed by any
+    // intervening statement). This also mirrors `server_info_view`'s own
+    // remaining-first shape.
+    let remaining = guard.armed_remaining();
+    let tainted = guard.is_tainted();
+    let taint_reason = guard.taint_reason().map(|r| r.as_str().to_owned());
+    tuxlink_mcp_core::ServerInfoDto {
+        name: name.to_string(),
+        version: version.to_string(),
+        armed: remaining > 0,
+        armed_remaining_secs: remaining,
+        tainted,
+        taint_reason,
     }
 }
 
@@ -741,6 +827,43 @@ impl DataService for MonolithDataService {
             at_unix: r.at_unix,
         }))
     }
+
+    async fn read_modem_status(&self) -> Result<tuxlink_mcp_core::ports::ModemStatusDto, String> {
+        // Delegate to the EXACT method the MCP `modem_get_status` tool calls —
+        // byte-identity is guaranteed by construction (same gatherer, same
+        // curation), pinned by the curation-equality test.
+        use tuxlink_mcp_core::ports::StatusPort;
+        crate::mcp_ports::MonolithStatusPort::new(self.app.clone())
+            .modem_status()
+            .await
+            .map_err(|e| format!("{e:?}"))
+    }
+
+    async fn read_backend_status(
+        &self,
+    ) -> Result<tuxlink_mcp_core::ports::BackendStatusDto, String> {
+        // Delegate to the EXACT method the MCP `backend_status` tool calls —
+        // same `curate_backend_status` seam, so the secure-login redaction is
+        // identical (pinned).
+        use tuxlink_mcp_core::ports::StatusPort;
+        crate::mcp_ports::MonolithStatusPort::new(self.app.clone())
+            .backend_status()
+            .await
+            .map_err(|e| format!("{e:?}"))
+    }
+
+    async fn read_app_status(&self) -> Result<Value, String> {
+        // Mirror `tuxlink_mcp_core::server_info_view`: read the SAME managed
+        // `Arc<EgressGuard>` the MCP `server_info` tool reads, and echo the
+        // app's own package identity (never mcp-core's). `app_status_dto` is
+        // the shared replica; the pin asserts it stays in lock-step with
+        // `server_info_view`.
+        let guard = self
+            .app
+            .state::<Arc<tuxlink_security::EgressGuard>>();
+        let dto = app_status_dto(&guard, env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+        serde_json::to_value(&dto).map_err(|e| format!("app_status serialize: {e}"))
+    }
 }
 
 // ============================================================================
@@ -785,6 +908,11 @@ mod tests {
     type GridFn = dyn Fn() -> Result<Option<String>, String> + Send + Sync;
     type LastConnectedGatewayFn =
         dyn Fn() -> Result<Option<LastConnectedGatewayDto>, String> + Send + Sync;
+    type ModemStatusFn =
+        dyn Fn() -> Result<tuxlink_mcp_core::ports::ModemStatusDto, String> + Send + Sync;
+    type BackendStatusFn =
+        dyn Fn() -> Result<tuxlink_mcp_core::ports::BackendStatusDto, String> + Send + Sync;
+    type AppStatusFn = dyn Fn() -> Result<Value, String> + Send + Sync;
 
     struct FakeDataService {
         wwv: Box<WwvFn>,
@@ -800,6 +928,9 @@ mod tests {
         space_weather: Box<SpaceWeatherFn>,
         grid: Box<GridFn>,
         last_connected_gateway: Box<LastConnectedGatewayFn>,
+        modem_status: Box<ModemStatusFn>,
+        backend_status: Box<BackendStatusFn>,
+        app_status: Box<AppStatusFn>,
     }
 
     impl Default for FakeDataService {
@@ -817,6 +948,11 @@ mod tests {
                 last_connected_gateway: Box::new(|| {
                     panic!("read_last_connected_gateway not expected in this test")
                 }),
+                modem_status: Box::new(|| panic!("read_modem_status not expected in this test")),
+                backend_status: Box::new(|| {
+                    panic!("read_backend_status not expected in this test")
+                }),
+                app_status: Box::new(|| panic!("read_app_status not expected in this test")),
             }
         }
     }
@@ -881,6 +1017,33 @@ mod tests {
             self.last_connected_gateway = Box::new(f);
             self
         }
+        fn with_modem_status(
+            mut self,
+            f: impl Fn() -> Result<tuxlink_mcp_core::ports::ModemStatusDto, String>
+                + Send
+                + Sync
+                + 'static,
+        ) -> Self {
+            self.modem_status = Box::new(f);
+            self
+        }
+        fn with_backend_status(
+            mut self,
+            f: impl Fn() -> Result<tuxlink_mcp_core::ports::BackendStatusDto, String>
+                + Send
+                + Sync
+                + 'static,
+        ) -> Self {
+            self.backend_status = Box::new(f);
+            self
+        }
+        fn with_app_status(
+            mut self,
+            f: impl Fn() -> Result<Value, String> + Send + Sync + 'static,
+        ) -> Self {
+            self.app_status = Box::new(f);
+            self
+        }
     }
 
     #[async_trait]
@@ -914,6 +1077,19 @@ mod tests {
             &self,
         ) -> Result<Option<LastConnectedGatewayDto>, String> {
             (self.last_connected_gateway)()
+        }
+        async fn read_modem_status(
+            &self,
+        ) -> Result<tuxlink_mcp_core::ports::ModemStatusDto, String> {
+            (self.modem_status)()
+        }
+        async fn read_backend_status(
+            &self,
+        ) -> Result<tuxlink_mcp_core::ports::BackendStatusDto, String> {
+            (self.backend_status)()
+        }
+        async fn read_app_status(&self) -> Result<Value, String> {
+            (self.app_status)()
         }
     }
 
@@ -1553,6 +1729,163 @@ mod tests {
                 assert_eq!(cause, "disk read failed");
             }
             other => panic!("expected StepError::Action, got {other:?}"),
+        }
+    }
+
+    // ======================================================================
+    // Rank 1 status sources — curation-equality pins (round-2 / spec §9).
+    // Each pin proves the routines `data.read` source is byte-identical to the
+    // MCP tool it mirrors: the shared gatherer/curation produces one DTO, the
+    // MCP tool serializes it via `ContentBlock::json` (== `to_value`), and the
+    // routines action must serialize the SAME DTO the SAME way — no wrapping,
+    // no field rename, no lost redaction.
+    // ======================================================================
+
+    #[tokio::test]
+    async fn modem_status_source_equals_mcp_modem_get_status_output() {
+        use crate::modem_status::ModemState;
+        use crate::winlink::modem::vara::commands::VaraState;
+        use tuxlink_mcp_core::ports::SelectedConnectionDto;
+
+        // Live state: a connected ARDOP session, VARA idle, operator target set.
+        // Run it through the SHARED gatherer the MCP `modem_get_status` tool
+        // uses (`crate::mcp_ports::derive_modem_status`).
+        let selected = Some(SelectedConnectionDto {
+            session_type: "radio".to_string(),
+            protocol: "ardop".to_string(),
+        });
+        let dto = crate::mcp_ports::derive_modem_status(
+            &ModemState::ConnectedIrs,
+            true,
+            &VaraState::Closed,
+            selected,
+        );
+        // The MCP tool output for this state (ContentBlock::json == to_value).
+        let mcp_output = serde_json::to_value(&dto).unwrap();
+        // Sanity: the gatherer really did report the connected ARDOP session.
+        assert_eq!(mcp_output["kind"], json!("ardop"));
+        assert_eq!(mcp_output["connected"], json!(true));
+
+        // The routines source hands the SAME DTO through `DataRead`.
+        let dto_for_fake = dto.clone();
+        let data = FakeDataService::default().with_modem_status(move || Ok(dto_for_fake.clone()));
+        let action = DataRead::new(Arc::new(data));
+        let routines_output = action
+            .execute(json!({"source": "modem_status"}), CancellationToken::new())
+            .await
+            .expect("modem_status source must succeed");
+
+        assert_eq!(
+            routines_output, mcp_output,
+            "routines data.read modem_status must be byte-identical to the MCP modem_get_status tool"
+        );
+    }
+
+    #[tokio::test]
+    async fn backend_status_source_equals_mcp_backend_status_output_with_pq_redaction() {
+        use crate::ui_commands::StatusDto;
+
+        // An Error backend state whose reason echoes a `;PQ:` secure-login
+        // token — the redaction is the load-bearing curation. Run it through
+        // the SHARED curation the MCP `backend_status` tool uses.
+        let dto = crate::mcp_ports::curate_backend_status(Some(StatusDto::Error {
+            reason: "CMS UnexpectedResponse: ;PQ: 72768415 from gateway".to_string(),
+        }));
+        let mcp_output = serde_json::to_value(&dto).unwrap();
+        // The curation MUST have scrubbed the secret value (the `;PQ:` marker
+        // may remain, but never the token itself).
+        assert!(
+            !mcp_output.to_string().contains("72768415"),
+            "MCP curation must redact the secure-login token value"
+        );
+        assert_eq!(mcp_output["connected"], json!(false));
+
+        let dto_for_fake = dto.clone();
+        let data = FakeDataService::default().with_backend_status(move || Ok(dto_for_fake.clone()));
+        let action = DataRead::new(Arc::new(data));
+        let routines_output = action
+            .execute(json!({"source": "backend_status"}), CancellationToken::new())
+            .await
+            .expect("backend_status source must succeed");
+
+        assert_eq!(
+            routines_output, mcp_output,
+            "routines data.read backend_status must be byte-identical to the MCP backend_status tool"
+        );
+        assert!(
+            !routines_output.to_string().contains("72768415"),
+            "the routines path must carry the SAME redaction (no secure-login token leak)"
+        );
+    }
+
+    #[tokio::test]
+    async fn app_status_source_equals_mcp_server_info_output_for_same_state() {
+        use tuxlink_security::{EgressGuard, TaintReason};
+
+        // Deterministic clock so the armed window has a known, un-expired
+        // remaining count (mirrors the mcp-core server_info_view tests).
+        fn fixed_1000() -> u64 {
+            1000
+        }
+        let guard = EgressGuard::with_clock(fixed_1000);
+        guard.arm(30); // 30s remaining
+        guard.taint(TaintReason::MessageRead); // armed AND tainted (independent)
+
+        // Build the MCP `server_info` output over this exact guard.
+        let state = tuxlink_mcp_core::test_support::state_with_guard(guard);
+        let mcp_dto = tuxlink_mcp_core::server_info_view(&state);
+        let mcp_output = serde_json::to_value(&mcp_dto).unwrap();
+        // Sanity: this state exercises armed + remaining + taint reason.
+        assert_eq!(mcp_output["armed"], json!(true));
+        assert_eq!(mcp_output["armed_remaining_secs"], json!(30));
+        assert_eq!(mcp_output["tainted"], json!(true));
+        assert_eq!(mcp_output["taint_reason"], json!("message_read"));
+
+        // The routines `app_status` source builds its DTO from the SAME guard
+        // via the shared replica `app_status_dto`, using the SAME injected
+        // name/version so the comparison isolates the guard-derived curation.
+        let routines_dto = app_status_dto(&state.guard, &state.name, &state.version);
+        let routines_value = serde_json::to_value(&routines_dto).unwrap();
+        assert_eq!(
+            routines_value, mcp_output,
+            "app_status_dto must stay byte-identical to server_info_view for the same state"
+        );
+
+        // And through the action end-to-end.
+        let data = FakeDataService::default().with_app_status(move || Ok(routines_value.clone()));
+        let action = DataRead::new(Arc::new(data));
+        let routines_output = action
+            .execute(json!({"source": "app_status"}), CancellationToken::new())
+            .await
+            .expect("app_status source must succeed");
+        assert_eq!(
+            routines_output, mcp_output,
+            "routines data.read app_status must be byte-identical to the MCP server_info tool"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_status_sources_verbatim_error_passthrough() {
+        // A hard failure from any of the three status seams surfaces verbatim
+        // as a StepError::Action, same posture as every other data.read source.
+        for source in ["modem_status", "backend_status", "app_status"] {
+            let data = match source {
+                "modem_status" => FakeDataService::default()
+                    .with_modem_status(|| Err("modem state poisoned".to_string())),
+                "backend_status" => FakeDataService::default()
+                    .with_backend_status(|| Err("backend state poisoned".to_string())),
+                _ => FakeDataService::default()
+                    .with_app_status(|| Err("guard unavailable".to_string())),
+            };
+            let action = DataRead::new(Arc::new(data));
+            let err = action
+                .execute(json!({ "source": source }), CancellationToken::new())
+                .await
+                .expect_err("hard failure must surface");
+            match err {
+                StepError::Action { action, .. } => assert_eq!(action, "data.read"),
+                other => panic!("expected StepError::Action, got {other:?}"),
+            }
         }
     }
 
