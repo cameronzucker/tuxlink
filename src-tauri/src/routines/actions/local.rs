@@ -257,6 +257,9 @@ impl Action for ComposeMessage {
             needs_radio: false,
             transmits: false,
             needs_internet: false,
+            example_params: None,
+            allowed_values: None,
+            dry_run_shape: None,
         }
     }
 
@@ -401,6 +404,9 @@ impl Action for ComposeCatalogRequest {
             needs_radio: false,
             transmits: false,
             needs_internet: false,
+            example_params: None,
+            allowed_values: None,
+            dry_run_shape: None,
         }
     }
 
@@ -493,6 +499,9 @@ impl Action for SetIdentity {
             needs_radio: false,
             transmits: false,
             needs_internet: false,
+            example_params: None,
+            allowed_values: None,
+            dry_run_shape: None,
         }
     }
 
@@ -561,6 +570,9 @@ impl Action for LogEntry {
             needs_radio: false,
             transmits: false,
             needs_internet: false,
+            example_params: None,
+            allowed_values: None,
+            dry_run_shape: None,
         }
     }
 
@@ -620,6 +632,9 @@ impl Action for Notify {
             needs_radio: false,
             transmits: false,
             needs_internet: false,
+            example_params: None,
+            allowed_values: None,
+            dry_run_shape: None,
         }
     }
 

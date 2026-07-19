@@ -237,6 +237,13 @@ export interface ActionInfo {
   needsRadio: boolean;
   transmits: boolean;
   needsInternet: boolean;
+  /** Declares the `config.*` write consent class (D5+). The palette/inspector
+   *  render a WRITES badge from this. Optional for older fixtures; the backend
+   *  always sends it. */
+  writesConfig?: boolean;
+  /** Canonical example `params` object as a compact JSON string (D6); the
+   *  authoring UI seeds it on insert. `null` when the action takes no params. */
+  exampleParams?: string | null;
 }
 
 /** One scripted dry-run outcome — `DryRunOutcomeDto` (commands.rs:184-194),

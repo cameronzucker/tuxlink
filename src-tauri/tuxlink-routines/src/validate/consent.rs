@@ -561,6 +561,9 @@ mod tests {
         needs_radio: true,
         transmits: true,
         needs_internet: false,
+        example_params: None,
+        allowed_values: None,
+        dry_run_shape: None,
     };
     const LOCAL_NOTE: ActionDescriptor = ActionDescriptor {
         writes_config: false,
@@ -570,6 +573,9 @@ mod tests {
         needs_radio: false,
         transmits: false,
         needs_internet: false,
+        example_params: None,
+        allowed_values: None,
+        dry_run_shape: None,
     };
 
     fn tx_action(id: &str) -> Step {
@@ -644,6 +650,9 @@ mod tests {
         needs_radio: false,
         transmits: false,
         needs_internet: false,
+        example_params: None,
+        allowed_values: None,
+        dry_run_shape: None,
     };
 
     fn write_action(id: &str) -> Step {

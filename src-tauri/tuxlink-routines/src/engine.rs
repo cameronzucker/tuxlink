@@ -1001,6 +1001,84 @@ mod tests {
         assert!(connect.calls().is_empty());
     }
 
+    /// D6 MARQUEE: a shape-true dry run of the flagship `find_stations →
+    /// branch on the callsigns → radio.connect` composition completes GREEN
+    /// with nothing scripted. `data.find_stations`'s descriptor `dry_run_shape`
+    /// yields `callsigns: ["DRYRUN-1"]`; the branch (`s1.callsigns != []`) takes
+    /// the then-arm; the optimistic default drives `radio.connect` to
+    /// `connected: true`; the run reaches the success End. Proves the mechanism
+    /// end to end: descriptor shape → resolved `$ref` → branch → optimistic
+    /// connect, without touching the real directory or keying a radio.
+    #[tokio::test]
+    async fn dry_run_marquee_find_stations_branch_then_connect_completes_green() {
+        const MARQUEE_DEF: &str = r#"{
+          "routine": "find-and-connect", "schema_version": 1, "transmit_mode": "attended",
+          "on_interrupted": "stay", "inputs": [], "triggers": [{"type": "manual"}],
+          "tracks": [{ "name": "t", "steps": [
+            { "id": "s1", "action": "data.find_stations", "params": {"modes": ["vara-hf"]} },
+            { "id": "s2", "control": "branch", "on": "s1.callsigns", "op": "ne", "value": [],
+              "then": ["s3"], "else": ["s4"] },
+            { "id": "s3", "action": "radio.connect", "params": {"stations": "$s1.callsigns"} },
+            { "id": "end1", "control": "end", "failed": false },
+            { "id": "s4", "action": "local.log_else", "params": {} }
+          ]}]
+        }"#;
+
+        // `data.find_stations`: the real descriptor carries a `dry_run_shape`;
+        // here a FakeAction advertises the same via `with_dry_run_shape` so the
+        // dry-run registry threads it exactly as it would the monolith action.
+        fn find_shape(_p: &serde_json::Value) -> serde_json::Value {
+            json!({
+                "gateways": [], "callsigns": ["DRYRUN-1"],
+                "fetched_at_ms": null, "operator_grid": null, "dry_run": true
+            })
+        }
+        let find = Arc::new(
+            FakeAction::new("data.find_stations")
+                .with_capabilities(false, false, true)
+                .with_dry_run_shape(find_shape),
+        );
+        // The real registry's `radio.connect` is a canary — a dry run must
+        // NEVER call it (it gets the optimistic-default fake instead).
+        let connect = Arc::new(
+            FakeAction::new("radio.connect")
+                .with_capabilities(true, false, false)
+                .ok(json!({"connected": false})),
+        );
+        let mut reg = ActionRegistry::default();
+        reg.register(find);
+        reg.register(connect.clone());
+        reg.register(Arc::new(FakeAction::new("local.log_else").ok(json!({}))));
+
+        let dir = tempfile::tempdir().unwrap();
+        let eng = Arc::new(Engine::new(EngineConfig {
+            journal_dir: dir.path().to_path_buf(),
+            registry: Arc::new(reg),
+            resolver: Arc::new(FakeResolver::new()),
+            now: fixed_now,
+            default_timeout_s: 30,
+            lookup: None,
+            consent: None,
+        }));
+        let def = RoutineDef::parse(MARQUEE_DEF).unwrap();
+
+        let handle = eng
+            .start_dry_run(&def, json!({}), crate::dryrun::DryRunScript::new())
+            .await
+            .unwrap();
+        let outcome = handle.done.await.unwrap();
+        assert_eq!(outcome.state, RunState::Completed, "marquee dry run is green");
+
+        let jpath = dir.path().join(format!("{}.jsonl", handle.run_id));
+        let entries = read_journal(&jpath).unwrap();
+        // s1 (find) → s2 branch takes then → s3 (connect); s4 else-arm skipped.
+        assert_eq!(executed_step_ids(&entries), vec!["s1", "s3"]);
+        assert!(
+            connect.calls().is_empty(),
+            "a dry run must never call the real radio.connect"
+        );
+    }
+
     #[tokio::test]
     async fn start_run_is_unaffected_by_dry_run_support_and_stamps_dry_run_false() {
         // Regression guard for the task-5 refactor that threaded `run_internal`

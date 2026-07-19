@@ -47,7 +47,7 @@ pub fn validate(def: &RoutineDef, ctx: &dyn ValidationContext) -> Vec<Finding> {
 
     refs::check(def, ctx, &mut findings);
     capability::check(def, ctx, &mut findings);
-    contracts::check(def, &mut findings);
+    contracts::check(def, ctx, &mut findings);
     structure::check(def, ctx, &mut findings);
     consent::check(def, ctx, &mut findings);
     triggers::check(def, &mut findings);
@@ -180,6 +180,9 @@ mod tests {
             needs_radio: true,
             transmits: true,
             needs_internet: false,
+            example_params: None,
+            allowed_values: None,
+            dry_run_shape: None,
         };
 
         // s1: known action, unresolved @ref (UNRESOLVED_REF) + no rig (NO_RIG_CONFIGURED).

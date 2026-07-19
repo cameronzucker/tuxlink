@@ -103,6 +103,9 @@ fn known_action(name: &str) -> ActionDescriptor {
             needs_radio: true,
             transmits: true,
             needs_internet: false,
+            example_params: None,
+            allowed_values: None,
+            dry_run_shape: None,
         },
         "data.web_lookup" => ActionDescriptor {
             writes_config: false,
@@ -112,6 +115,9 @@ fn known_action(name: &str) -> ActionDescriptor {
             needs_radio: false,
             transmits: false,
             needs_internet: true,
+            example_params: None,
+            allowed_values: None,
+            dry_run_shape: None,
         },
         "local.note" => ActionDescriptor {
             writes_config: false,
@@ -121,6 +127,9 @@ fn known_action(name: &str) -> ActionDescriptor {
             needs_radio: false,
             transmits: false,
             needs_internet: false,
+            example_params: None,
+            allowed_values: None,
+            dry_run_shape: None,
         },
         "compose.message" => ActionDescriptor {
             writes_config: false,
@@ -130,6 +139,9 @@ fn known_action(name: &str) -> ActionDescriptor {
             needs_radio: false,
             transmits: false,
             needs_internet: false,
+            example_params: None,
+            allowed_values: None,
+            dry_run_shape: None,
         },
         "log.entry" => ActionDescriptor {
             writes_config: false,
@@ -139,6 +151,9 @@ fn known_action(name: &str) -> ActionDescriptor {
             needs_radio: false,
             transmits: false,
             needs_internet: false,
+            example_params: None,
+            allowed_values: None,
+            dry_run_shape: None,
         },
         "data.read" => ActionDescriptor {
             writes_config: false,
@@ -148,6 +163,9 @@ fn known_action(name: &str) -> ActionDescriptor {
             needs_radio: false,
             transmits: false,
             needs_internet: false,
+            example_params: None,
+            allowed_values: None,
+            dry_run_shape: None,
         },
         "data.spacewx_wwv" => ActionDescriptor {
             writes_config: false,
@@ -157,6 +175,9 @@ fn known_action(name: &str) -> ActionDescriptor {
             needs_radio: true,
             transmits: false,
             needs_internet: false,
+            example_params: None,
+            allowed_values: None,
+            dry_run_shape: None,
         },
         "config.set_ardop" => ActionDescriptor {
             writes_config: true,
@@ -166,6 +187,9 @@ fn known_action(name: &str) -> ActionDescriptor {
             needs_radio: false,
             transmits: false,
             needs_internet: false,
+            example_params: None,
+            allowed_values: None,
+            dry_run_shape: None,
         },
         other => panic!(
             "fixture context references unknown action \"{other}\" — add it to \

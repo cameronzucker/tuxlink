@@ -110,6 +110,9 @@ mod tests {
         needs_radio: true,
         transmits: true,
         needs_internet: false,
+        example_params: None,
+        allowed_values: None,
+        dry_run_shape: None,
     };
 
     fn routine_with_action_step(action: &str, params: serde_json::Value) -> RoutineDef {

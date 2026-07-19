@@ -164,6 +164,44 @@ pub fn config_set_ardop(value: ArdopUiConfig) -> Result<(), String> {
     config::write_config_atomic(&cfg).map_err(|e| format!("save failed: {e}"))
 }
 
+/// Set ONLY the ARDOP `drive_level`, computing the pre-mutation value and the
+/// new value INSIDE `config::update_config`'s writer lock (one critical
+/// section). This closes the documented lost-update path that the naive
+/// `config_get_ardop()` → mutate → `config_set_ardop()` pair opens: that pair
+/// reads and writes the whole config in two UNSYNCHRONIZED steps, so two racing
+/// writers each observe the same stale `drive_level` and the second silently
+/// reverts the first (`config::update_config`'s doc + testing-pitfalls §7).
+///
+/// Returns `(old, new)`: `old` is the drive_level BEFORE this write (`None` when
+/// previously unset, or when no `[modem_ardop]` section existed at all — a
+/// fresh default section is created, matching the prior get/set behavior);
+/// `new` is `level`.
+///
+/// `level` is NOT range-checked here — both front-ends (the `config.set_ardop`
+/// routine action and the MCP `set_ardop` write port) reject `> 100` up front
+/// via `validate_drive_level` BEFORE reaching this setter.
+///
+/// Shared by BOTH front-ends (ADR 0024 P3: one locked implementation, two
+/// front-ends) so the agent write path is never left racy while the routine
+/// path is fixed.
+pub fn set_ardop_drive_level(level: u8) -> Result<(Option<u8>, u8), String> {
+    // The read (capturing `old`) and the mutation happen INSIDE
+    // `config::update_config`'s writer lock — one critical section — so a
+    // concurrent writer can never observe a stale `old` (no lost update). Only
+    // `drive_level` is touched; `get_or_insert_with(default)` creates a fresh
+    // `[modem_ardop]` section only when none existed (matching the prior
+    // get/set behavior), leaving every other field of an existing section
+    // untouched.
+    let mut old: Option<u8> = None;
+    config::update_config(|cfg| {
+        let ardop = cfg.modem_ardop.get_or_insert_with(ArdopUiConfig::default);
+        old = ardop.drive_level;
+        ardop.drive_level = Some(level);
+        Ok(())
+    })?;
+    Ok((old, level))
+}
+
 /// Return the persisted radio-level rig configuration (tuxlink-8fkkk), or the
 /// struct default if nothing has been written yet (first run) or the config
 /// file is absent. Shared by the ARDOP and VARA rig-control sections.
@@ -2803,6 +2841,124 @@ mod tests {
         config_set_ardop(initial.clone()).expect("config_set_ardop must succeed");
         let read = config_get_ardop();
         assert_eq!(read, initial);
+    }
+
+    /// Seed a minimal valid config whose `[modem_ardop]` section carries
+    /// DISTINCTIVE non-default values (so an accidental full-section overwrite
+    /// is observable) plus an explicit `drive_level`.
+    fn seed_config_with_ardop(dir: &std::path::Path, drive_level: Option<u8>) {
+        let dl = match drive_level {
+            Some(v) => format!(r#", "drive_level": {v}"#),
+            None => String::new(),
+        };
+        let seed = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": null }},
+                "privacy": {{ "gps_state": "Off", "position_precision": "FourCharGrid" }},
+                "modem_ardop": {{
+                    "binary": "/opt/custom/ardopcf",
+                    "capture_device": "plughw:2,0",
+                    "playback_device": "plughw:3,0",
+                    "cmd_port": 9001,
+                    "bandwidth_hz": 1000{dl}
+                }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION,
+        );
+        std::fs::write(dir.join("config.json"), seed).expect("seed config.json");
+    }
+
+    /// (c) ABSENT-FIELD-ERASES GUARD (testing-pitfalls §7): writing ONLY
+    /// drive_level must not wipe the other `[modem_ardop]` fields, and an unset
+    /// drive_level must read back as `old == None`.
+    #[test]
+    fn set_ardop_drive_level_preserves_other_ardop_fields_and_reports_none_old_when_unset() {
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let _env_guard = lock_config_dir(tmp.path());
+        // Seed with the distinctive fields but NO drive_level (previously unset).
+        seed_config_with_ardop(tmp.path(), None);
+
+        let (old, new) = set_ardop_drive_level(42).expect("set must succeed");
+        assert_eq!(old, None, "drive_level was unset → old must be None (serializes to null)");
+        assert_eq!(new, 42);
+
+        // Re-read from DISK: only drive_level changed; every other field survives.
+        let after = config_get_ardop();
+        assert_eq!(after.drive_level, Some(42), "the new drive_level must persist");
+        assert_eq!(after.binary, "/opt/custom/ardopcf", "binary must survive the write");
+        assert_eq!(after.capture_device, "plughw:2,0", "capture_device must survive");
+        assert_eq!(after.playback_device, "plughw:3,0", "playback_device must survive");
+        assert_eq!(after.cmd_port, 9001, "cmd_port must survive");
+        assert_eq!(after.bandwidth_hz, Some(1000), "bandwidth_hz must survive");
+    }
+
+    /// (b) old/new computed UNDER THE LOCK: two concurrent writers synchronized
+    /// with a BARRIER (not a bare join) must serialize through the config
+    /// writer lock — exactly one observes the seed `old`, the other observes
+    /// the first writer's committed value. If both observe the stale seed, the
+    /// writes were NOT serialized (lost update).
+    #[test]
+    fn set_ardop_drive_level_no_lost_update_under_concurrent_writers() {
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let _env_guard = lock_config_dir(tmp.path());
+        // Seed drive_level = 10; the two racing writers set 40 and 50.
+        seed_config_with_ardop(tmp.path(), Some(10));
+
+        let barrier = std::sync::Barrier::new(2);
+        let (r1, r2) = std::thread::scope(|s| {
+            let h1 = s.spawn(|| {
+                barrier.wait();
+                set_ardop_drive_level(40).expect("writer 1 must succeed")
+            });
+            let h2 = s.spawn(|| {
+                barrier.wait();
+                set_ardop_drive_level(50).expect("writer 2 must succeed")
+            });
+            (h1.join().unwrap(), h2.join().unwrap())
+        });
+        let (old1, new1) = r1;
+        let (old2, new2) = r2;
+        assert_eq!(new1, 40);
+        assert_eq!(new2, 50);
+
+        // The lost-update signature: BOTH writers observed the same stale seed.
+        assert!(
+            !(old1 == Some(10) && old2 == Some(10)),
+            "both writers observed the stale seed old=Some(10) → writes not serialized (lost update): old1={old1:?} old2={old2:?}"
+        );
+        // Serialized: exactly one saw the seed, the other saw the first's write.
+        let olds = [old1, old2];
+        assert!(
+            olds.contains(&Some(10)),
+            "one writer must observe the seed old=Some(10), got {olds:?}"
+        );
+        let other = if old1 == Some(10) { old2 } else { old1 };
+        assert!(
+            other == Some(40) || other == Some(50),
+            "the second (serialized) writer must observe the first's committed value, got {other:?}"
+        );
+        // Final persisted value is whichever writer committed last.
+        let persisted = config_get_ardop().drive_level;
+        assert!(
+            persisted == Some(40) || persisted == Some(50),
+            "final drive_level must be one of the two writes (no torn write), got {persisted:?}"
+        );
+    }
+
+    /// A previously-set drive_level reads back as the pre-mutation value.
+    #[test]
+    fn set_ardop_drive_level_reports_prior_value_as_old() {
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let _env_guard = lock_config_dir(tmp.path());
+        seed_config_with_ardop(tmp.path(), Some(33));
+
+        let (old, new) = set_ardop_drive_level(77).expect("set must succeed");
+        assert_eq!(old, Some(33), "old must be the pre-mutation drive_level");
+        assert_eq!(new, 77);
+        assert_eq!(config_get_ardop().drive_level, Some(77));
     }
 
     #[test]

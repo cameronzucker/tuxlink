@@ -14,7 +14,10 @@
 //! Task 4. Spec: `docs/superpowers/specs/2026-07-13-routines-design.md` §6.
 
 pub mod cat;
+pub mod config_write;
 pub mod data;
+pub mod docs_search;
+pub mod find_stations;
 pub mod local;
 pub mod radio;
 
@@ -266,6 +269,151 @@ pub trait DataService: Send + Sync {
     /// surfaces that as an honest-gap-style error (not a silent `null`),
     /// same posture as the pre-Task-5c placeholder this method replaces.
     async fn read_last_connected_gateway(&self) -> Result<Option<LastConnectedGatewayDto>, String>;
+
+    /// `data.read` with `source: "modem_status"` — the SAME curated modem
+    /// status the MCP `modem_get_status` tool returns (rank 1). The monolith
+    /// impl delegates to `crate::mcp_ports::MonolithStatusPort::modem_status`,
+    /// so the routine output is byte-identical to the tool's by construction
+    /// (pinned by the curation-equality test). Inert: reads only, never
+    /// taints, never gates.
+    async fn read_modem_status(&self) -> Result<tuxlink_mcp_core::ports::ModemStatusDto, String>;
+
+    /// `data.read` with `source: "backend_status"` — the SAME curated Winlink
+    /// backend (CMS engine) status the MCP `backend_status` tool returns
+    /// (rank 1), including the secure-login (`;PQ`/`;PR`) redaction on the
+    /// error arm. The monolith impl delegates to
+    /// `crate::mcp_ports::MonolithStatusPort::backend_status`, so the routine
+    /// output is byte-identical to the tool's (redaction pinned identical).
+    async fn read_backend_status(&self)
+        -> Result<tuxlink_mcp_core::ports::BackendStatusDto, String>;
+
+    /// `data.read` with `source: "app_status"` — the SAME send-authority +
+    /// app-identity view the MCP `server_info` tool returns (rank 1;
+    /// `ServerInfoDto` shape). Reads the live `EgressGuard`
+    /// (armed/armed_remaining_secs/tainted/taint_reason) plus the app
+    /// name/version, mirroring `tuxlink_mcp_core::server_info_view`. Returns a
+    /// `serde_json::Value` (the typed shape is mcp-core-internal to
+    /// `server_info`); the routines/server_info equality is pinned by test.
+    /// Inert: reads only, never arms, taints, or gates.
+    async fn read_app_status(&self) -> Result<serde_json::Value, String>;
+
+    /// `data.read` with `source: "config"` — the SAME curated, non-secret
+    /// top-level config the MCP `config_read` tool returns (rank 3): the
+    /// 5-field projection (connect_to_cms/transport/host/callsign/grid) with
+    /// the grid already clamped to a 4-char Maidenhead locator. The monolith
+    /// impl delegates to `crate::mcp_ports::MonolithConfigPort::read` (which
+    /// shares `curated_config_view` with this source), so the routine output
+    /// is byte-identical to the tool's and the 4-char clamp holds identically
+    /// (pinned with a 6-char-grid fixture). Inert: reads only, never writes.
+    async fn read_config(&self) -> Result<tuxlink_mcp_core::ports::ConfigViewDto, String>;
+
+    /// `data.read` with `source: "ardop_config"` — the SAME non-secret ARDOP
+    /// modem config the MCP `config_get_ardop` tool returns (rank 3). Delegates
+    /// to `crate::mcp_ports::MonolithConfigPort::ardop`; DTO returned verbatim.
+    async fn read_ardop_config(
+        &self,
+    ) -> Result<tuxlink_mcp_core::ports::ArdopConfigDto, String>;
+
+    /// `data.read` with `source: "vara_config"` — the SAME non-secret VARA
+    /// modem config the MCP `config_get_vara` tool returns (rank 3). Delegates
+    /// to `crate::mcp_ports::MonolithConfigPort::vara`; DTO returned verbatim.
+    async fn read_vara_config(&self)
+        -> Result<tuxlink_mcp_core::ports::VaraConfigDto, String>;
+
+    /// `data.read` with `source: "packet_config"` — the SAME non-secret packet
+    /// (AX.25/KISS) config the MCP `packet_config_get` tool returns (rank 3).
+    /// Delegates to `crate::mcp_ports::MonolithConfigPort::packet`; DTO verbatim.
+    async fn read_packet_config(
+        &self,
+    ) -> Result<tuxlink_mcp_core::ports::PacketConfigDto, String>;
+
+    /// `data.read` with `source: "rig_config"` — the SAME non-secret radio-level
+    /// rig (CAT) config the MCP `config_get_rig` tool returns (rank 3).
+    /// Delegates to `crate::mcp_ports::MonolithConfigPort::rig`; DTO verbatim.
+    async fn read_rig_config(&self) -> Result<tuxlink_mcp_core::ports::RigConfigDto, String>;
+}
+
+/// The raw Winlink gateway-directory fetch result the `data.find_stations`
+/// action (find_stations.rs, rank 2) curates + ranks + dedups + truncates.
+///
+/// The seam is deliberately split at the FETCH boundary (raw `listings` + the
+/// resolved `operator_grid` + a `fetched_at_ms` stamp), NOT at the curated
+/// [`tuxlink_mcp_core::ports::StationListDto`] the MCP `find_stations` tool
+/// returns: the action then runs the SHARED
+/// [`crate::mcp_ports::curate_and_rank_gateways`] (so curation is byte-identical
+/// to the tool) followed by the find_stations-specific dedup + `limit` over
+/// DISTINCT callsigns. Curating in the action — not the seam — keeps that
+/// curate → dedup → limit ordering (the contract: `callsigns` are derived ONLY
+/// from POST-curation gateways) unit-testable with hand-built raw listings and
+/// no `AppHandle`.
+pub struct StationDirectory {
+    /// Every fetched mode's raw listing (un-curated, PII still present).
+    pub listings: Vec<crate::catalog::stations::StationListing>,
+    /// The operator's own 4-char broadcast grid for distance ranking; `None`
+    /// when unresolved (all distances then null).
+    pub operator_grid: Option<String>,
+    /// Most-recent fetch stamp (unix ms) across the fetched modes; `None` on a
+    /// fresh in-memory parse.
+    pub fetched_at_ms: Option<u64>,
+}
+
+/// The `data.find_stations` delegation seam (rank 2). ONE method: fetch the raw
+/// gateway directory. Mirrors [`DataService`]'s narrow-port shape.
+#[async_trait]
+pub trait StationQueryService: Send + Sync {
+    /// Fetch the raw Winlink gateway directory for `modes` (empty ⇒ every
+    /// confirmed mode, `ListingMode::ALL`) bounded by `history_hours`, via the
+    /// SAME polite cache-backed poll (`catalog_fetch_stations`) the MCP
+    /// `find_stations` tool and Find-a-Station use — plus the operator's
+    /// resolved broadcast grid for distance ranking. Band filtering, curation,
+    /// ranking, dedup, and `limit` are the ACTION's job (over the shared
+    /// curation fn), not this fetch seam's.
+    async fn fetch_directory(
+        &self,
+        modes: Vec<crate::catalog::stations::ListingMode>,
+        history_hours: Option<u32>,
+    ) -> Result<StationDirectory, String>;
+}
+
+/// The `data.docs_search` delegation seam (rank 4). ONE method: run the docs
+/// FTS query. Mirrors the MCP `docs_search` tool's index path
+/// ([`crate::mcp_ports::MonolithSearchPort::docs`]): the SAME
+/// [`Index::search_docs`](crate::search::index::Index::search_docs)
+/// (raw-then-OR fallback, `<mark>…</mark>` snippet format, 30-hit cap). Split at
+/// the "give me docs hits" boundary so the action's output-shaping is
+/// unit-testable against a real, populated in-memory `Index` with no
+/// `AppHandle`. Like the MCP port, the adapter does NOT apply the Help-window
+/// `retain_user_guide` filter — a routine sees every indexed corpus.
+#[async_trait]
+pub trait DocsSearchService: Send + Sync {
+    /// Run `query` against the docs FTS index, returning BM25-ranked hits
+    /// (raw-then-OR fallback, `<mark>` snippet, 30-cap). Empty/absent query is
+    /// the ACTION's concern (rejected as invalid params before this is called);
+    /// this seam is a thin mirror of the one real backend call.
+    async fn search_docs(
+        &self,
+        query: &str,
+    ) -> Result<Vec<crate::search::docs_index::DocsHit>, String>;
+}
+
+/// The `config.set_ardop` delegation seam (rank 5 — the FIRST config-write
+/// action, exemplar of the `writes_config` consent class). ONE method: set the
+/// ARDOP `drive_level` under the config writer lock, returning `(old, new)`.
+/// Split at the "set drive_level" boundary so the action's param validation +
+/// output shaping are unit-testable with a fake, while the real locked
+/// read-modify-write (old/new under the lock, absent-field-erases) is tested
+/// directly against a temp config dir in `modem_commands.rs`. The monolith
+/// adapter ([`config_write::MonolithConfigWriteService`]) delegates to the
+/// SHARED [`crate::modem_commands::set_ardop_drive_level`] — the SAME locked
+/// setter the MCP `set_ardop` write port uses (ADR 0024 P3: one locked
+/// implementation, two front-ends). `level` is pre-validated (`<= 100`) by the
+/// action before this is called.
+#[async_trait]
+pub trait ConfigWriteService: Send + Sync {
+    /// Set ONLY the ARDOP `drive_level` under the config writer lock, returning
+    /// `(old, new)`. `old` is the pre-mutation value (`None` when previously
+    /// unset). `level` is already range-checked by the caller.
+    async fn set_ardop_drive_level(&self, level: u8) -> Result<(Option<u8>, u8), String>;
 }
 
 /// The `local.*` action family's delegation seam (spec §6 "Local actions";
@@ -319,6 +467,9 @@ pub struct ActionDeps {
     pub listen: Arc<dyn ListenService>,
     pub rig: Arc<dyn RigService>,
     pub data: Arc<dyn DataService>,
+    pub station_query: Arc<dyn StationQueryService>,
+    pub docs_search: Arc<dyn DocsSearchService>,
+    pub config_write: Arc<dyn ConfigWriteService>,
     pub local: Arc<dyn LocalService>,
 }
 
@@ -367,6 +518,15 @@ pub fn build_registry(deps: ActionDeps) -> ActionRegistry {
     registry.register(Arc::new(data::SpaceWxSwpc::new(deps.data.clone())));
     registry.register(Arc::new(data::StationlistUpdate::new(deps.data.clone())));
     registry.register(Arc::new(data::DataRead::new(deps.data.clone())));
+    registry.register(Arc::new(find_stations::FindStations::new(
+        deps.station_query.clone(),
+    )));
+    registry.register(Arc::new(docs_search::DocsSearch::new(
+        deps.docs_search.clone(),
+    )));
+    registry.register(Arc::new(config_write::ConfigSetArdop::new(
+        deps.config_write.clone(),
+    )));
 
     registry.register(Arc::new(local::ComposeMessage::new(deps.local.clone())));
     registry.register(Arc::new(local::ComposeCatalogRequest::new(
