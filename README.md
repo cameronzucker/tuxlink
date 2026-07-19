@@ -115,7 +115,7 @@ Tuxlink ships the following on Linux for x86_64 and arm64:
 ### Winlink engine
 
 <img src="docs/readme/images/tuxlink-ardop-hf.png" width="340" align="right"
-     alt="ARDOP HF radio panel: Find-a-Gateway, Favorites/Recent station tabs, ALSA capture/playback and PTT selectors, ARQ bandwidth, a live quality meter, and an ARDOP frame ribbon" />
+     alt="ARDOP HF radio panel: Find a Gateway, Favorites/Recent/Manual connect tabs, ALSA capture and playback selectors with friendly device names, CAT-command PTT with key and unkey commands, and the bundled ardopcf sidecar settings" />
 
 - **Native B2F engine.** The Winlink B2F protocol is implemented directly in
   Rust: CMS over telnet (TLS or plaintext), the full propose / accept message
@@ -147,7 +147,7 @@ Tuxlink ships the following on Linux for x86_64 and arm64:
 ### VARA and Wine
 
 <img src="docs/readme/images/tuxlink-vara-setup.png" width="340" align="right"
-     alt="Set up VARA HF guided installer surface with a live checklist of Wine-prefix and download steps" />
+     alt="Set up VARA HF surface offering the guided installer hand-off, with the VARA host settings and FT-710 rig control below" />
 
 VARA is Windows software, not a Linux-native modem, so Tuxlink resolves that
 with a guided installer rather than asking the operator to sort it out. A
@@ -174,7 +174,7 @@ automating that provisioning is tracked as open work.
 ### Routines
 
 <img src="docs/readme/images/tuxlink-routines-designer.png" width="340" align="right"
-     alt="Routines designer canvas showing a flowchart of connect, compose, and send steps with a schedule trigger" />
+     alt="Routines designer canvas with a space-weather capture track, the action palette, a step inspector, and schedule and enable settings" />
 
 Routines automate repeatable radio tasks (a scheduled propagation check, a
 standing gateway connect and mail pull, a multi-step compose-and-send) as a
@@ -254,7 +254,7 @@ reclaimed the moment it docks back.
 
 <p align="center">
   <img src="docs/readme/images/tuxlink-multiwindow-workspace.png" width="100%"
-       alt="Tuxlink main window showing an HF Winlink message in the reading pane alongside a popped-out Tac Map window and a popped-out APRS Chat window carrying live VHF tactical traffic">
+       alt="Tuxlink main window showing an HF Winlink weather inquiry in the reading pane and the VARA HF modem panel, alongside a popped-out Tac Map window and a popped-out APRS Chat window with the open tactical channel">
 </p>
 <p align="center"><sub>The main window, a popped-out Tac Map, and a popped-out APRS Chat window running at once: HF Winlink and VHF tactical operation in one workspace.</sub></p>
 
@@ -315,7 +315,7 @@ not have.
 ### FT8 listener
 
 <img src="docs/readme/images/tuxlink-ft8-waterfall.png" width="340" align="right"
-     alt="FT8 listener panel showing a live waterfall, decoded call list, and CAT-driven band strip" />
+     alt="Station Intelligence panel: the propagation-colored gateway map and per-band reachability card above the FT8 live-band strip with its waterfall and decode list" />
 
 A receive-only FT8 listener renders a live waterfall, a decoded-call list, and
 a CAT-driven band strip for sweeping across the FT8 sub-bands. It exists as a
