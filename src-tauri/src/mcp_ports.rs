@@ -2572,6 +2572,67 @@ fn sort_gateways_by_distance(gateways: &mut [GatewayDto]) {
     });
 }
 
+/// Flatten every listing's gateways into curated, STRUCTURED-ONLY
+/// [`GatewayDto`]s, apply the client-side BAND filter, and sort nearest-first.
+///
+/// The three stages, in order:
+/// 1. **Band filter** (when `bands` is non-empty): keep only gateways with ≥1
+///    dial in a requested band ([`any_freq_in_bands`]).
+/// 2. **Curation** ([`curate_gateway`]): PII (`sysop_name`/`email`/`homepage`)
+///    and untrusted free-text (`location`/`last_update`) are dropped; a bogus
+///    callsign DROPS the whole listing; an invalid grid is NULLED; the channel
+///    is control-stripped + length-capped.
+/// 3. **Distance sort** ([`sort_gateways_by_distance`]): nearest-first from
+///    `operator_grid`, unknown-distance sinking to the end (stable).
+///
+/// SHARED by [`MonolithStationPort::find_stations`] (the MCP `find_stations`
+/// tool) AND the routines `data.find_stations` action's `StationQueryService`
+/// path, so the two surfaces are curated BYTE-IDENTICALLY by construction — the
+/// routines PII-omission pin drives this exact fn.
+pub(crate) fn curate_and_rank_gateways(
+    listings: &[crate::catalog::stations::StationListing],
+    bands: &[String],
+    operator_grid: Option<&str>,
+) -> Vec<GatewayDto> {
+    let mut gateways: Vec<GatewayDto> = Vec::new();
+    for listing in listings {
+        let mode = map_listing_mode(listing.mode);
+        for g in &listing.gateways {
+            if !bands.is_empty() && !any_freq_in_bands(&g.frequencies_khz, bands) {
+                continue;
+            }
+            if let Some(dto) = curate_gateway(mode, g, operator_grid) {
+                gateways.push(dto);
+            }
+        }
+    }
+    // Nearest-first; unknown-distance gateways sink to the end (stable sort).
+    sort_gateways_by_distance(&mut gateways);
+    gateways
+}
+
+/// Resolve the operator's own 4-char broadcast grid for local distance ranking
+/// — the SAME resolution [`MonolithStationPort::find_stations`] and the routines
+/// `data.find_stations` action's `MonolithStationQueryService` use. NEVER errors:
+/// a config-read failure and an empty/unresolved grid both degrade to `None` so
+/// a station query still returns gateways (with null distances). The 4-char
+/// clamp matches predict_path / position_status: the agent/routine surface is a
+/// privacy boundary, so distances are square-center based.
+pub(crate) fn resolve_operator_broadcast_grid(app: &AppHandle) -> Option<String> {
+    use crate::config::PositionPrecision;
+    let arbiter_state = app.state::<Arc<crate::position::PositionArbiter>>();
+    let arbiter: &crate::position::PositionArbiter = &arbiter_state;
+    let cfg = crate::config::read_config().ok()?;
+    let raw = crate::position::effective_broadcast_locator(&cfg, Some(arbiter));
+    let grid = crate::config::broadcast_grid(&raw, PositionPrecision::FourCharGrid);
+    if grid.is_empty() {
+        tracing::debug!("find_stations: operator grid unresolved; distances will be null");
+        None
+    } else {
+        Some(grid)
+    }
+}
+
 /// Curate ONE [`Contact`](crate::contacts::store::Contact) into the
 /// agent-facing [`PeerDto`], or `None` to DROP the whole record.
 ///
@@ -2714,18 +2775,7 @@ impl MonolithStationPort {
     /// clamp matches predict_path / position_status: the agent surface is a privacy
     /// boundary, so distances are square-center based, not fine-grained.
     fn resolve_operator_grid(&self) -> Option<String> {
-        use crate::config::PositionPrecision;
-        let arbiter_state = self.app.state::<Arc<crate::position::PositionArbiter>>();
-        let arbiter: &crate::position::PositionArbiter = &arbiter_state;
-        let cfg = crate::config::read_config().ok()?;
-        let raw = crate::position::effective_broadcast_locator(&cfg, Some(arbiter));
-        let grid = crate::config::broadcast_grid(&raw, PositionPrecision::FourCharGrid);
-        if grid.is_empty() {
-            tracing::debug!("find_stations: operator grid unresolved; distances will be null");
-            None
-        } else {
-            Some(grid)
-        }
+        resolve_operator_broadcast_grid(&self.app)
     }
 }
 
@@ -2779,22 +2829,13 @@ impl StationPort for MonolithStationPort {
         // GatewayDto can carry distance/bearing from it.
         let operator_grid = self.resolve_operator_grid();
 
-        let mut gateways: Vec<GatewayDto> = Vec::new();
-        for listing in &listings {
-            let mode = map_listing_mode(listing.mode);
-            for g in &listing.gateways {
-                if !filter.bands.is_empty() && !any_freq_in_bands(&g.frequencies_khz, &filter.bands)
-                {
-                    continue;
-                }
-                if let Some(dto) = curate_gateway(mode, g, operator_grid.as_deref()) {
-                    gateways.push(dto);
-                }
-            }
-        }
-
-        // Nearest-first; unknown-distance gateways sink to the end (stable sort).
-        sort_gateways_by_distance(&mut gateways);
+        // Curate (PII + free-text dropped; bogus callsigns dropped; grid
+        // validated) + client-side band filter + nearest-first distance sort,
+        // via the SHARED `curate_and_rank_gateways` — the SAME fn the routines
+        // `data.find_stations` action calls, so the two surfaces are curated
+        // byte-identically by construction.
+        let gateways =
+            curate_and_rank_gateways(&listings, &filter.bands, operator_grid.as_deref());
 
         Ok(StationListDto {
             gateways,

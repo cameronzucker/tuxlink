@@ -15,6 +15,7 @@
 
 pub mod cat;
 pub mod data;
+pub mod find_stations;
 pub mod local;
 pub mod radio;
 
@@ -330,6 +331,48 @@ pub trait DataService: Send + Sync {
     async fn read_rig_config(&self) -> Result<tuxlink_mcp_core::ports::RigConfigDto, String>;
 }
 
+/// The raw Winlink gateway-directory fetch result the `data.find_stations`
+/// action (find_stations.rs, rank 2) curates + ranks + dedups + truncates.
+///
+/// The seam is deliberately split at the FETCH boundary (raw `listings` + the
+/// resolved `operator_grid` + a `fetched_at_ms` stamp), NOT at the curated
+/// [`tuxlink_mcp_core::ports::StationListDto`] the MCP `find_stations` tool
+/// returns: the action then runs the SHARED
+/// [`crate::mcp_ports::curate_and_rank_gateways`] (so curation is byte-identical
+/// to the tool) followed by the find_stations-specific dedup + `limit` over
+/// DISTINCT callsigns. Curating in the action — not the seam — keeps that
+/// curate → dedup → limit ordering (the contract: `callsigns` are derived ONLY
+/// from POST-curation gateways) unit-testable with hand-built raw listings and
+/// no `AppHandle`.
+pub struct StationDirectory {
+    /// Every fetched mode's raw listing (un-curated, PII still present).
+    pub listings: Vec<crate::catalog::stations::StationListing>,
+    /// The operator's own 4-char broadcast grid for distance ranking; `None`
+    /// when unresolved (all distances then null).
+    pub operator_grid: Option<String>,
+    /// Most-recent fetch stamp (unix ms) across the fetched modes; `None` on a
+    /// fresh in-memory parse.
+    pub fetched_at_ms: Option<u64>,
+}
+
+/// The `data.find_stations` delegation seam (rank 2). ONE method: fetch the raw
+/// gateway directory. Mirrors [`DataService`]'s narrow-port shape.
+#[async_trait]
+pub trait StationQueryService: Send + Sync {
+    /// Fetch the raw Winlink gateway directory for `modes` (empty ⇒ every
+    /// confirmed mode, `ListingMode::ALL`) bounded by `history_hours`, via the
+    /// SAME polite cache-backed poll (`catalog_fetch_stations`) the MCP
+    /// `find_stations` tool and Find-a-Station use — plus the operator's
+    /// resolved broadcast grid for distance ranking. Band filtering, curation,
+    /// ranking, dedup, and `limit` are the ACTION's job (over the shared
+    /// curation fn), not this fetch seam's.
+    async fn fetch_directory(
+        &self,
+        modes: Vec<crate::catalog::stations::ListingMode>,
+        history_hours: Option<u32>,
+    ) -> Result<StationDirectory, String>;
+}
+
 /// The `local.*` action family's delegation seam (spec §6 "Local actions";
 /// plan Task 4d). One trait, not three — mirrors [`DataService`]'s shape:
 /// `local.compose` and `local.compose_catalog_request` (local.rs) share the
@@ -381,6 +424,7 @@ pub struct ActionDeps {
     pub listen: Arc<dyn ListenService>,
     pub rig: Arc<dyn RigService>,
     pub data: Arc<dyn DataService>,
+    pub station_query: Arc<dyn StationQueryService>,
     pub local: Arc<dyn LocalService>,
 }
 
@@ -429,6 +473,9 @@ pub fn build_registry(deps: ActionDeps) -> ActionRegistry {
     registry.register(Arc::new(data::SpaceWxSwpc::new(deps.data.clone())));
     registry.register(Arc::new(data::StationlistUpdate::new(deps.data.clone())));
     registry.register(Arc::new(data::DataRead::new(deps.data.clone())));
+    registry.register(Arc::new(find_stations::FindStations::new(
+        deps.station_query.clone(),
+    )));
 
     registry.register(Arc::new(local::ComposeMessage::new(deps.local.clone())));
     registry.register(Arc::new(local::ComposeCatalogRequest::new(

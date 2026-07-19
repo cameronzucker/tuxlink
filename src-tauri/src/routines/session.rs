@@ -69,6 +69,7 @@ use tuxlink_routines::types::{OnInterrupted, RoutineDef, TransmitMode};
 
 use super::actions::cat::MonolithRigService;
 use super::actions::data::MonolithDataService;
+use super::actions::find_stations::MonolithStationQueryService;
 use super::actions::local::MonolithLocalService;
 use super::actions::radio::{MonolithAprsService, MonolithConnectService, MonolithListenService};
 use super::actions::{build_registry, ActionDeps};
@@ -1166,6 +1167,7 @@ pub fn build_default_registry(app: &AppHandle, arbiter: Arc<RadioArbiter>) -> Ac
         listen: Arc::new(MonolithListenService::new()),
         rig: Arc::new(MonolithRigService::new()),
         data: Arc::new(MonolithDataService::new(app.clone())),
+        station_query: Arc::new(MonolithStationQueryService::new(app.clone())),
         local: Arc::new(MonolithLocalService::new(app.clone())),
     };
     build_registry(deps)
