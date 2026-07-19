@@ -42,21 +42,31 @@ out of 24.
 | `server_info` | 2 | none (version + live egress-authority state) | **MISSING** |
 | `ardop_connect` | 1 | `radio.connect` (station x band walk is a superset of single-target connect) | COVERED |
 
-## 3. Cell-level result: 0 of 24
+## 3. Cell-level result: 24 of 24 (as of 2026-07-19; was 0 of 24 at analysis time)
 
 A cell is human-actionable via Routines only if every required step maps to an
-action. Today that is **zero cells**:
+action. At analysis time that was **zero cells**:
 
-- All 6 `radio_debug` cells block on `modem_get_status` + `config_get_ardop` at depth 2.
-- All 6 `emcomm` cells block on `find_stations` at depth 2.
-- All 6 `helpdesk` cells block on `docs_search` at depth 2.
-- All 6 `blended` cells block on `modem_get_status` at depth 2.
+- All 6 `radio_debug` cells blocked on `modem_get_status` + `config_get_ardop` at depth 2.
+- All 6 `emcomm` cells blocked on `find_stations` at depth 2.
+- All 6 `helpdesk` cells blocked on `docs_search` at depth 2.
+- All 6 `blended` cells blocked on `modem_get_status` at depth 2.
 
 **Minimum unblock set:** four read actions (modem/app status, gateway-directory
 query, config read, docs search) unblock **21 of 24 cells**. The remaining 3
 (the clean depth>=4 `radio_debug` and depth-6 `blended` cells) additionally need
 the first config **write** action (`config_set_ardop` equivalent), which brings
-tier-2 consent semantics with it.
+the write consent class with it.
+
+**UPDATE 2026-07-19 (ranks 1-5 built, bd tuxlink-iizmk):** all four read
+families shipped as `data.read` sources + `data.find_stations` + `data.docs_search`
+(ranks 1-4, groups D1-D4), and `config.set_ardop` shipped as the first config
+write with the `writes_config` consent class (rank 5, group D5). Every required
+step now maps to an action, so **24 of 24 cells are human-actionable via
+Routines**. The read sources are pinned byte-identical to their MCP tools; the
+write carries the operator-acknowledgment/attended-park consent parity the
+agent side has. ADR 0024's dual-actionability objective is met for the corpus
+as it stands at this revision.
 
 ## 4. Ranked missing-action list (the round-2 requirements)
 
