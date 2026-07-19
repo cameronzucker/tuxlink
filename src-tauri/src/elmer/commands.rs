@@ -315,6 +315,15 @@ pub async fn elmer_connect(
 /// export are on disk (the same flush-before-archive barrier the logging
 /// pipeline uses). The transcript files are ALREADY redacted at write time —
 /// this command adds no redaction pass and must never need one.
+///
+/// **Snapshot semantics (Codex adrev 2026-07-19 P2 #3, accepted as designed):**
+/// exporting DURING a live run is deliberately allowed — capturing a
+/// currently-flailing agent is the motivating use case, so refusing mid-run
+/// exports would break the instrument's purpose. The archive is a
+/// consistent-prefix snapshot: lines recorded after the flush barrier are
+/// simply not in it (export again for a later prefix), and in the worst case
+/// the final line of a still-growing file is truncated mid-line — JSONL
+/// consumers skip a trailing partial line.
 #[tauri::command]
 pub fn elmer_transcript_export(
     app: AppHandle,

@@ -44,6 +44,7 @@
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -64,6 +65,25 @@ struct TranscriptLine<'a> {
     message: &'a Message,
 }
 
+/// Upper bound on lines queued to the writer thread. Normal queue depth is
+/// ~0-1 (the writer keeps up between model turns); the bound only matters
+/// when the disk wedges (Codex adrev 2026-07-19 P2 #2).
+const QUEUE_MAX_LINES: usize = 4096;
+
+/// Byte budget for queued-but-unwritten lines. Individual tool results are
+/// uncapped by design, so the line bound alone cannot bound memory; past this
+/// budget `record` drops the line (counted + warned) instead of growing until
+/// the app OOMs (Codex adrev 2026-07-19 P2 #2).
+const QUEUE_BYTE_BUDGET: u64 = 32 * 1024 * 1024;
+
+/// On-disk budget for INACTIVE transcript session files. The retention sweep
+/// (run at construction and on every rotation, in the writer thread) deletes
+/// the OLDEST inactive session files until they fit this cap; the active
+/// session's file is never deleted or counted — recent evidence outranks old
+/// evidence, and the sweep must never eat the run being debugged (Codex adrev
+/// 2026-07-19 P2 #4).
+const DIR_MAX_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
+
 /// Jobs handed to the writer thread. Lines are pre-serialized so the thread
 /// does file I/O only.
 enum Job {
@@ -71,6 +91,9 @@ enum Job {
     /// Ack once every previously-queued line has been written — the export
     /// barrier (mirrors the logging pipeline's flush-before-archive).
     Flush(mpsc::Sender<()>),
+    /// Retention sweep: delete oldest `.jsonl` files (never `keep`) until the
+    /// directory total is within the sink's byte cap.
+    Sweep { keep: String },
 }
 
 /// Mutable identity state. `seq` lives under the same lock as `session_id` so
@@ -89,7 +112,17 @@ struct SinkState {
 pub struct ElmerTranscriptSink {
     dir: PathBuf,
     state: Mutex<SinkState>,
-    tx: mpsc::Sender<Job>,
+    tx: mpsc::SyncSender<Job>,
+    /// Bytes of serialized lines queued but not yet written. Incremented by
+    /// `record` on enqueue, decremented by the writer after each write —
+    /// together with the line bound this caps sink memory when the disk
+    /// wedges.
+    queued_bytes: Arc<AtomicU64>,
+    /// Lines dropped because the queue was full or over its byte budget.
+    dropped: AtomicU64,
+    /// Queue byte budget (constant in production; tests shrink it). The
+    /// on-disk cap lives with the writer thread, which runs the sweeps.
+    queue_byte_budget: u64,
 }
 
 impl ElmerTranscriptSink {
@@ -99,31 +132,52 @@ impl ElmerTranscriptSink {
     /// each file open, so a directory deleted at runtime degrades to warns,
     /// not a wedged sink.
     pub fn new(dir: PathBuf) -> Arc<Self> {
+        Self::with_limits(dir, QUEUE_BYTE_BUDGET, DIR_MAX_TOTAL_BYTES)
+    }
+
+    /// `new` with explicit queue/disk budgets — production uses the module
+    /// constants; tests shrink them to make drop/sweep behavior observable.
+    pub(crate) fn with_limits(
+        dir: PathBuf,
+        queue_byte_budget: u64,
+        dir_max_total_bytes: u64,
+    ) -> Arc<Self> {
         if let Err(e) = fs::create_dir_all(&dir) {
             tracing::warn!(target: "elmer", dir = %dir.display(), error = %e,
                 "transcript dir create failed; transcripts will be dropped until it becomes writable");
         }
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(QUEUE_MAX_LINES);
         let writer_dir = dir.clone();
+        let queued_bytes = Arc::new(AtomicU64::new(0));
+        let writer_queued = Arc::clone(&queued_bytes);
+        let writer_cap = dir_max_total_bytes;
         // A plain OS thread (not a tokio task): the whole point is to keep
         // blocking file I/O off the async runtime. Exits when the sink (and
         // with it `tx`) is dropped.
         std::thread::Builder::new()
             .name("elmer-transcript-writer".into())
-            .spawn(move || writer_loop(&writer_dir, &rx))
+            .spawn(move || writer_loop(&writer_dir, &rx, &writer_queued, writer_cap))
             .map_err(|e| {
                 tracing::warn!(target: "elmer", error = %e,
                     "transcript writer thread spawn failed; transcripts will be dropped");
             })
             .ok();
+        let initial_session = mint_session_id(0);
+        // Startup retention sweep: bound accumulation across app boots.
+        let _ = tx.try_send(Job::Sweep {
+            keep: format!("{initial_session}.jsonl"),
+        });
         Arc::new(Self {
             dir,
             state: Mutex::new(SinkState {
-                session_id: mint_session_id(0),
+                session_id: initial_session,
                 seq: 0,
                 rotations: 0,
             }),
             tx,
+            queued_bytes,
+            dropped: AtomicU64::new(0),
+            queue_byte_budget,
         })
     }
 
@@ -134,12 +188,25 @@ impl ElmerTranscriptSink {
 
     /// Start a new transcript session: mint a fresh `session_id`, reset `seq`.
     /// Called on the conversation-reset paths (`new_conversation`, `rearm`).
-    /// The next recorded line lazily creates the new file.
+    /// The next recorded line lazily creates the new file. Also queues a
+    /// retention sweep — the session boundary is the natural moment to bound
+    /// the directory, and the fresh (active) session file is exempt.
     pub fn rotate(&self) {
-        let mut s = self.lock_state();
-        s.rotations += 1;
-        s.session_id = mint_session_id(s.rotations);
-        s.seq = 0;
+        let keep = {
+            let mut s = self.lock_state();
+            s.rotations += 1;
+            s.session_id = mint_session_id(s.rotations);
+            s.seq = 0;
+            format!("{}.jsonl", s.session_id)
+        };
+        let _ = self.tx.try_send(Job::Sweep { keep });
+    }
+
+    /// Lines dropped under queue pressure so far (observability for the
+    /// wedged-disk degradation path).
+    #[cfg(test)]
+    pub(crate) fn dropped(&self) -> u64 {
+        self.dropped.load(Ordering::Relaxed)
     }
 
     /// Block (bounded by `timeout`) until every line queued before this call
@@ -147,10 +214,22 @@ impl ElmerTranscriptSink {
     /// For the export path and tests — never called from the agent loop.
     pub fn flush(&self, timeout: Duration) -> bool {
         let (ack_tx, ack_rx) = mpsc::channel();
-        if self.tx.send(Job::Flush(ack_tx)).is_err() {
+        // try_send: on a full queue (wedged writer) flush must fail fast, not
+        // park the caller behind a disk that will never drain.
+        if self.tx.try_send(Job::Flush(ack_tx)).is_err() {
             return false;
         }
         ack_rx.recv_timeout(timeout).is_ok()
+    }
+
+    /// Count a dropped line; warn on the first drop and every 1000th after,
+    /// so a wedged disk is loud in the logs without a warn-per-line flood.
+    fn count_drop(&self, reason: &str) {
+        let n = self.dropped.fetch_add(1, Ordering::Relaxed);
+        if n == 0 || (n + 1) % 1000 == 0 {
+            tracing::warn!(target: "elmer", dropped_total = n + 1, reason,
+                "transcript line(s) dropped under queue pressure");
+        }
     }
 
     /// Lock the identity state, recovering from a poisoned lock (a panicking
@@ -188,13 +267,31 @@ impl TranscriptSink for ElmerTranscriptSink {
                 // (operator `tail -f` / `grep`) from observing torn lines in
                 // the common case.
                 json.push('\n');
-                // A send error means the writer thread is gone; the run must
-                // not care (fire-and-forget), so drop the line silently — the
-                // thread's death already warned once.
-                let _ = self.tx.send(Job::Line {
-                    file_name: format!("{session_id}.jsonl"),
-                    line: json,
-                });
+                let len = json.len() as u64;
+                // Byte budget: when the writer is wedged (dead SD card), the
+                // queue must not grow until the app OOMs. Over budget → drop
+                // and count; the run itself is never affected.
+                if self.queued_bytes.load(Ordering::Relaxed).saturating_add(len)
+                    > self.queue_byte_budget
+                {
+                    self.count_drop("queue byte budget exceeded");
+                    return;
+                }
+                self.queued_bytes.fetch_add(len, Ordering::Relaxed);
+                // try_send, never send: a full queue (line bound) must not
+                // block the agent loop. Disconnected means the writer thread
+                // is gone (already warned once at spawn/death).
+                if self
+                    .tx
+                    .try_send(Job::Line {
+                        file_name: format!("{session_id}.jsonl"),
+                        line: json,
+                    })
+                    .is_err()
+                {
+                    self.queued_bytes.fetch_sub(len, Ordering::Relaxed);
+                    self.count_drop("queue full or writer gone");
+                }
             }
             Err(e) => {
                 tracing::warn!(target: "elmer", error = %e, "transcript line serialize failed; dropped");
@@ -203,13 +300,17 @@ impl TranscriptSink for ElmerTranscriptSink {
     }
 }
 
-/// Writer-thread body: append each line to its session file, ack flushes.
-/// Owns at most one open file handle; reopens when the session file changes.
-fn writer_loop(dir: &Path, rx: &mpsc::Receiver<Job>) {
+/// Writer-thread body: append each line to its session file, ack flushes,
+/// run retention sweeps. Owns at most one open file handle; reopens when the
+/// session file changes.
+fn writer_loop(dir: &Path, rx: &mpsc::Receiver<Job>, queued_bytes: &AtomicU64, dir_cap: u64) {
     let mut current: Option<(String, fs::File)> = None;
     while let Ok(job) = rx.recv() {
         match job {
             Job::Line { file_name, line } => {
+                // The line leaves the queue whether or not the write below
+                // succeeds — the budget tracks queued memory, not disk fate.
+                queued_bytes.fetch_sub(line.len() as u64, Ordering::Relaxed);
                 let stale = match &current {
                     Some((name, _)) => name != &file_name,
                     None => true,
@@ -250,6 +351,54 @@ fn writer_loop(dir: &Path, rx: &mpsc::Receiver<Job>) {
             // grep use case).
             Job::Flush(ack) => {
                 let _ = ack.send(());
+            }
+            Job::Sweep { keep } => sweep_dir(dir, &keep, dir_cap),
+        }
+    }
+}
+
+/// Retention sweep: while the directory's `.jsonl` total exceeds `cap`,
+/// delete the OLDEST session files. `keep` (the active session's file) is
+/// never deleted — the sweep must not eat the run currently being debugged.
+/// Session filenames start with a unix-ms timestamp, so lexicographic order
+/// is chronological order.
+fn sweep_dir(dir: &Path, keep: &str, cap: u64) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    let mut files: Vec<(PathBuf, u64)> = entries
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let path = e.path();
+            let is_jsonl = path.extension().map(|x| x == "jsonl").unwrap_or(false);
+            let name_ok = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n != keep)
+                .unwrap_or(false);
+            if is_jsonl && name_ok {
+                let len = e.metadata().ok()?.len();
+                Some((path, len))
+            } else {
+                None
+            }
+        })
+        .collect();
+    files.sort();
+    let mut total: u64 = files.iter().map(|(_, len)| len).sum();
+    for (path, len) in files {
+        if total <= cap {
+            break;
+        }
+        match fs::remove_file(&path) {
+            Ok(()) => {
+                total -= len;
+                tracing::info!(target: "elmer", file = %path.display(),
+                    "transcript retention sweep deleted oldest session file");
+            }
+            Err(e) => {
+                tracing::warn!(target: "elmer", file = %path.display(), error = %e,
+                    "transcript retention sweep could not delete file");
             }
         }
     }
@@ -479,6 +628,55 @@ mod tests {
         assert!(line["seq"].is_u64());
         assert!(line["ts_unix_ms"].as_u64().unwrap() > 1_700_000_000_000);
         assert_eq!(line["message"]["User"], "hello");
+    }
+
+    /// Over the queue byte budget, `record` drops the line (counted) instead
+    /// of queueing unbounded memory — the wedged-disk degradation path
+    /// (Codex adrev 2026-07-19 P2 #2). Budget of 0 forces every line down the
+    /// drop path without needing to actually wedge a disk.
+    #[test]
+    fn record_over_byte_budget_drops_and_counts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sink = ElmerTranscriptSink::with_limits(
+            tmp.path().to_path_buf(),
+            0,
+            DIR_MAX_TOTAL_BYTES,
+        );
+        sink.record(&Message::User("never lands".into()));
+        sink.record(&Message::User("never lands either".into()));
+        assert_eq!(sink.dropped(), 2, "both lines counted as dropped");
+        assert!(sink.flush(FLUSH), "flush still works (queue is empty)");
+        let files: Vec<_> = fs::read_dir(tmp.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().map(|x| x == "jsonl").unwrap_or(false))
+            .collect();
+        assert!(files.is_empty(), "no line reached disk under a zero budget");
+    }
+
+    /// The rotation-time retention sweep deletes the oldest INACTIVE session
+    /// files past the disk cap, and never the active session's file
+    /// (Codex adrev 2026-07-19 P2 #4).
+    #[test]
+    fn rotation_sweep_deletes_oldest_inactive_sessions_past_cap() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Cap of 1 byte: any inactive session file is over budget.
+        let sink =
+            ElmerTranscriptSink::with_limits(tmp.path().to_path_buf(), QUEUE_BYTE_BUDGET, 1);
+        sink.record(&Message::User("old session evidence".into()));
+        assert!(sink.flush(FLUSH));
+        assert_eq!(read_session_lines(tmp.path()).len(), 1, "session 1 on disk");
+
+        sink.rotate(); // queues the sweep; session 1 is now inactive
+        sink.record(&Message::User("new session evidence".into()));
+        assert!(sink.flush(FLUSH), "flush drains sweep + new line");
+
+        let files = read_session_lines(tmp.path());
+        assert_eq!(files.len(), 1, "old session swept, active session kept");
+        assert_eq!(
+            files[0].1[0]["message"]["User"], "new session evidence",
+            "the surviving file is the ACTIVE session"
+        );
     }
 
     /// Export archives every session file and reports the count; an empty dir
