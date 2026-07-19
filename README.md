@@ -2,16 +2,21 @@
   <img src="assets/tuxlink_icon.png" alt="Tuxlink logo" width="120" height="120">
 </p>
 
-# Tuxlink — native Linux Winlink client for amateur radio emergency communications
+# Tuxlink: native Linux Winlink client for amateur radio emergency communications
 
 Tuxlink is a native Linux desktop [Winlink](https://winlink.org/) client for
 amateur radio (ham radio) emergency communications. It implements the Winlink
-B2F protocol directly in Rust and presents the mailbox, compose pane, and live
-session log inside one self-contained desktop window.
+B2F protocol directly in Rust and drives real radios over HF, VHF packet,
+APRS, and the internet. A live HF Winlink session and a VHF APRS
+tactical-chat channel run at the same time in one workspace, and the same
+station is operable by an AI agent under an operator-armed consent gate.
 
-Beyond Winlink, Tuxlink fuses strategic and tactical emergency communications in
-one workspace: long-haul Winlink email over HF, and tactical APRS messaging over
-VHF and UHF with native control of the Benshi UV-Pro handheld.
+Tuxlink fuses strategic and tactical emergency communications in one
+workspace: long-haul Winlink email over HF, and tactical APRS messaging over
+VHF and UHF with native control of the Benshi UV-Pro handheld. Routines
+automate repeatable radio tasks under the same Part 97 consent model, and
+Elmer, the docked in-app assistant, or any external MCP-capable agent can
+operate the station directly, gated by the operator's arm/disarm control.
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL%20v3-blue.svg" alt="License: AGPL v3"></a>
@@ -42,7 +47,7 @@ by emergency-communications (emcomm) teams, ARES and CERT organizations, the
 Red Cross, and offshore cruisers. It moves email-style messages over radio when
 the internet is down.
 
-Two clients reach the Winlink network on Linux today.
+Two clients already reach the Winlink network on Linux.
 [Winlink Express](https://winlink.org/WinlinkExpress), the proprietary Windows
 reference client, runs under WINE. [Pat](https://getpat.io/) is an open-source Go
 client with broad transport support, pairing a command-line tool with an optional
@@ -56,6 +61,11 @@ browser-served web UI.
 | Winlink forms | Yes | Yes (fetched) | Yes (bundled + native composers) |
 | Native UV-Pro Bluetooth control | No | No | Yes |
 | AI-agent control (MCP server) | No | No | Yes |
+| Automation routines (flowchart designer, schedule triggers) | Not documented | Scriptable (CRON-like scheduled connect / QSY commands); no visual designer | Yes (designer, dashboard, run journal, consent gating) |
+| In-app AI assistant (Elmer) | Not documented | Not documented | Yes |
+| Multi-window operation (pop surfaces into separate OS windows) | Not documented | No ([single web UI / CLI surface](docs/knowledge/pat-winlink.md)) | Yes |
+| FT8 band monitoring | Not documented | Not documented | Yes (receive-only) |
+| Off-air space weather (WWV/WWVH decode) | Not documented | Not documented | Yes |
 
 Tuxlink takes a third path: it implements the Winlink B2F protocol itself,
 natively in Rust. The mailbox, the CMS connection, and the wire-protocol exchange
@@ -87,10 +97,10 @@ APRS.
 > repro and the exported logs (Help → Logging → Export logs).
 >
 > Specifically, Tuxlink needs validation with a wide variety of radios. It's
-> currently tested against a Digirig, a DRA-series soundcard interface with
-> CAT-keyed HF rigs (through the bundled `rigctld`), Bluetooth KISS, and the
-> Benshi UV Pro protocol. Please report hardware successes/failures with
-> specific radios and interfaces using the Help menu in Tuxlink.
+> tested against a Digirig, a DRA-series soundcard interface with CAT-keyed HF
+> rigs (through the bundled `rigctld`), Bluetooth KISS, and the Benshi UV Pro
+> protocol. Please report hardware successes/failures with specific radios and
+> interfaces using the Help menu in Tuxlink.
 >
 > Version tags are generated automatically from conventional-commit activity by
 > [release-please](https://github.com/googleapis/release-please) and track
@@ -105,7 +115,7 @@ Tuxlink ships the following on Linux for x86_64 and arm64:
 ### Winlink engine
 
 <img src="docs/readme/images/tuxlink-ardop-hf.png" width="340" align="right"
-     alt="ARDOP HF radio panel: Find-a-Gateway, Favorites/Recent station tabs, ALSA capture/playback and PTT selectors, ARQ bandwidth, a live quality meter, and an ARDOP frame ribbon" />
+     alt="ARDOP HF radio panel: Find a Gateway, Favorites/Recent/Manual connect tabs, ALSA capture and playback selectors with friendly device names, CAT-command PTT with key and unkey commands, and the bundled ardopcf sidecar settings" />
 
 - **Native B2F engine.** The Winlink B2F protocol is implemented directly in
   Rust: CMS over telnet (TLS or plaintext), the full propose / accept message
@@ -122,20 +132,85 @@ Tuxlink ships the following on Linux for x86_64 and arm64:
   RMS stations by distance from your grid; favorites and recent stations are
   saved per transport; ALSA capture/playback and the PTT serial line are picked
   inline; ARQ bandwidth is selectable; and a live quality meter, an ARDOP frame
-  ribbon, and the session log track the link as it runs — freeze-free, with a
+  ribbon, and the session log track the link as it runs, freeze-free, with a
   working abort.
-- **VARA HF / VARA FM — on-air validated.** The VARA panel dials Winlink
+- **VARA HF, on-air validated; VARA FM supported.** The VARA panel dials Winlink
   gateways end to end: it selects the ARQ bandwidth (500 / 2300 / 2750 Hz) to
   match the gateway channel's advertised width, takes the channel's published
   center frequency and dials the rig to the correct sideband spot over CAT,
   keys PTT on VARA's keying events, and runs the B2F exchange over the ARQ
-  link — verified against a production VARA gateway at 500 Hz on real HF
-  (see [Maturity](#maturity-what-is-and-is-not-proven)). A guided
-  **Set up VARA HF…** flow installs VARA under WINE with a live checklist —
-  offered during the first-run wizard and any time from the panel — for
-  operators who do not already run their own VARA instance. Agents can drive
-  the same setup, configuration, and dialing surface through the MCP server,
-  behind the operator-armed gate.
+  link, verified against a production VARA gateway at 500 Hz on real HF
+  (see [Maturity](#maturity-what-is-and-is-not-proven)).
+
+<br clear="right" />
+
+### VARA and Wine
+
+<img src="docs/readme/images/tuxlink-vara-setup.png" width="340" align="right"
+     alt="Set up VARA HF surface offering the guided installer hand-off, with the VARA host settings and FT-710 rig control below" />
+
+VARA is Windows software, not a Linux-native modem, so Tuxlink resolves that
+with a guided installer rather than asking the operator to sort it out. A
+**Set up VARA HF…** flow, offered during the first-run wizard and any time
+from the panel, installs VARA under Wine on x86-64 Linux with a live
+checklist. The installer is built on
+[wine-vara-setup](https://github.com/cameronzucker/wine-vara-setup), a
+vendored companion project that scripts the Wine prefix, the VARA download,
+and the registration steps end to end. Agents can drive the same setup,
+configuration, and dialing surface through the MCP server, behind the
+operator-armed gate.
+
+ARM builds have no Wine target for VARA to run under, so ARM operators
+(Raspberry Pi and similar boards) run **ARDOP** natively instead, a modem
+Tuxlink drives directly with no Windows compatibility layer in the way. One
+first-run caveat applies to VARA regardless of architecture: the current
+release still requires a handful of manual audio and CAT provisioning steps
+outside the product (matching the VARA sound-card device to the right ALSA
+endpoints, confirming the CAT serial port, and similar one-time setup);
+automating that provisioning is tracked as open work.
+
+<br clear="right" />
+
+### Routines
+
+<img src="docs/readme/images/tuxlink-routines-designer.png" width="340" align="right"
+     alt="Routines designer canvas with a space-weather capture track, the action palette, a step inspector, and schedule and enable settings" />
+
+Routines automate repeatable radio tasks (a scheduled propagation check, a
+standing gateway connect and mail pull, a multi-step compose-and-send) as a
+flowchart the operator builds rather than a script the operator writes. A
+designer canvas assembles the steps, a dashboard shows what is scheduled and
+what last ran, and a run journal keeps the history. Schedule triggers are
+configured inside the same designer, as one of a routine's trigger kinds
+rather than a separate tab.
+
+Part 97 consent is modeled directly into a routine, not bolted on
+afterward. An **attended** routine still pauses at each transmit step for a
+per-transmit confirmation, exactly like operating the radio panel by hand. An
+**automatic** routine may run a transmit step unattended, but only after the
+operator records an explicit, one-time acknowledgment at design time; a
+routine that would transmit automatically without that acknowledgment fails
+validation and cannot be enabled.
+
+<br clear="right" />
+
+### Elmer
+
+<img src="docs/readme/images/tuxlink-elmer.png" width="340" align="right"
+     alt="Elmer assistant pane mid-conversation with a visible tool call to the station" />
+
+Elmer is the assistant docked in the Tuxlink shell. It is not a chat overlay
+answering questions from the sidelines; it operates the station through the
+same tool surface an external AI agent reaches over MCP, gated by the same
+operator-armed authorization the rest of this README describes. Ask it to
+work a multi-station connect loop under one arm window and it will dial,
+retry, and work through a list of QSY candidates in sequence; ask it a
+station-operation question and it searches and reads the built-in
+documentation corpus rather than guessing.
+
+[docs/ELMER.md](docs/ELMER.md) is the full engineering-level writeup:
+architecture, the security model, what the agent can and cannot do, and its
+plainly stated limits.
 
 <br clear="right" />
 
@@ -154,17 +229,34 @@ Tuxlink ships the following on Linux for x86_64 and arm64:
 - **FULL and tactical identities.** A licensed FULL identity for Winlink and
   tactical identities for local operation, managed under Settings → Identities.
 
-**Simultaneous HF/VHF workspace.** Strategic and tactical layers run at the same
-time in one window: an HF Winlink session — launched from the status-bar Connect
-control with saved session details — alongside a live VHF APRS tactical-chat
-channel over sustained Bluetooth KISS. One operator works store-and-forward email
-on HF and real-time tactical chat on VHF without the two contending.
+### Multi-window operation
+
+Routines, the Tac Map, and APRS Chat can each pop out of the main window into
+their own OS window: the Tac Map on a side monitor while the mailbox stays in
+front, or a Routines dashboard left running in its own window during a net.
+Layouts persist across a full quit and relaunch, and closing a popped window's
+own close button never disturbs the mailbox; it puts the surface away quietly
+rather than discarding anything.
+
+This is where the strategic and tactical layers show up together: an HF
+Winlink session runs in the main window, launched from the status-bar
+Connect control with saved session details, while a popped-out APRS Chat
+window carries live VHF tactical traffic on a second monitor. One operator
+works store-and-forward email on HF and real-time tactical chat on VHF at the
+same time, in windows arranged however the station is laid out.
+
+Popping a window out costs memory (each is a separate WebKitGTK process); a
+dashboard-grade popped window runs in the ~30 MiB class on the reference
+hardware (Raspberry Pi 5, 16 GB, software GL), and a content-heavier surface
+such as the Tac Map, which carries its own tile cache, costs more on top of
+that base. A window's process exists only while it is popped out and is
+reclaimed the moment it docks back.
 
 <p align="center">
-  <img src="docs/readme/images/tuxlink-workspace.png" width="100%"
-       alt="Tuxlink showing an HF Winlink ICS-213 in the reading pane while the APRS tactical-chat dock on the right carries live VHF traffic from K4ARC, WX4MTL, and N4SAR">
+  <img src="docs/readme/images/tuxlink-multiwindow-workspace.png" width="100%"
+       alt="Tuxlink main window showing an HF Winlink weather inquiry in the reading pane and the VARA HF modem panel, alongside a popped-out Tac Map window and a popped-out APRS Chat window with the open tactical channel">
 </p>
-<p align="center"><sub>HF Winlink and VHF APRS tactical chat in one workspace: an ICS-213 in the reading pane while the APRS channel carries live tactical traffic.</sub></p>
+<p align="center"><sub>The main window, a popped-out Tac Map, and a popped-out APRS Chat window running at once: HF Winlink and VHF tactical operation in one workspace.</sub></p>
 
 ### Mailbox and messaging
 
@@ -208,6 +300,32 @@ on HF and real-time tactical chat on VHF without the two contending.
   reduces a broadcast position to a 4-character Maidenhead grid (about one
   degree). Higher precision is opt-in.
 
+### Off-air space weather
+
+Tuxlink decodes NOAA/SWPC solar-terrestrial indices (the A-index, K-index,
+and solar flux) directly from the WWV/WWVH voice broadcast, with no internet
+path involved: the receiving radio's own audio is the only input. Because the
+bulletin only airs at :18 and :45 past the hour, the control arms a one-shot
+capture for the nearest window rather than listening continuously. A one-time
+speech-to-text model fetch (`scripts/fetch-stt-model.sh`) is required before
+the first decode; a genuinely air-gapped installation can copy the model file
+across instead of fetching it live. This is a capability Winlink Express does
+not have.
+
+### FT8 listener
+
+<img src="docs/readme/images/tuxlink-ft8-waterfall.png" width="340" align="right"
+     alt="Station Intelligence panel: the propagation-colored gateway map and per-band reachability card above the FT8 live-band strip with its waterfall and decode list" />
+
+A receive-only FT8 listener renders a live waterfall, a decoded-call list, and
+a CAT-driven band strip for sweeping across the FT8 sub-bands. It exists as a
+propagation and band-openness instrument, not a message transport: nothing in
+the FT8 panel transmits, and no message ever routes through it. Watching
+which grids are decoding on a given band is a fast, receive-only read on
+whether HF is open before committing to a Winlink connect attempt.
+
+<br clear="right" />
+
 ### Interface and operations
 
 - **Native desktop GUI.** [Tauri](https://tauri.app/) 2.x with a
@@ -231,8 +349,8 @@ on HF and real-time tactical chat on VHF without the two contending.
   the Winlink CMS password. Tuxlink never persists it to a config file on disk.
 
 Emergency operating happens in a tent at noon and an EOC at 3 a.m. Every color
-scheme re-skins the whole interface — ribbon, folders, message list, reading
-pane — not just an accent. **Night / tactical (red)** preserves night vision in
+scheme re-skins the whole interface: ribbon, folders, message list, reading
+pane, not just an accent. **Night / tactical (red)** preserves night vision in
 a darkened shelter; **Daylight** is a light, high-contrast palette for reading
 an LCD in direct sun. The same mailbox, two lighting modes:
 
@@ -246,26 +364,29 @@ an LCD in direct sun. The same mailbox, two lighting modes:
 ### Agent integration (MCP server)
 
 Tuxlink embeds a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP)
-server that exposes the running client to an AI agent — Claude or any MCP-capable
-assistant — over a local Unix-domain socket. The agent reads live station state
-and operates the client under an authorization gate the operator holds.
+server that exposes the running client to an AI agent (Claude, Codex, Gemini
+CLI, or any MCP-capable client) over a local Unix-domain socket. Elmer, the
+in-app assistant described above, reaches the identical tool surface
+in-process; an external agent and Elmer are two entry paths into one router,
+under one authorization model (see [docs/ELMER.md](docs/ELMER.md) for the
+architecture).
 
 - **Tiered tool surface.** Diagnostic tools report backend, modem, position,
   configuration, and device state. Station-intelligence tools query the RMS
   gateway directory, predict HF path reliability by hour from the operator's grid
   square, and report space-weather indices. Further tools drive rig and modem
-  control, compose and queue messages, and — only when authorized — connect to
+  control, compose and queue messages, and, only when authorized, connect to
   the CMS and transmit.
 - **Operator-armed egress.** An agent cannot transmit, connect, or change
   configuration on its own. The operator arms send-authority in the GUI; egress
   and write tools are denied until armed, and the grant auto-expires. On-air
   transmission remains a per-invocation operator act under Part 97.
 - **Prompt-injection containment.** Reading untrusted message or wire content
-  taints the session and re-locks send-authority until the operator re-arms. An
-  instruction embedded in a received message cannot become a transmission within
-  the same armed window.
+  taints the session and re-locks send-authority until the operator explicitly
+  clears it. An instruction embedded in a received message cannot become a
+  transmission within the same armed window.
 - **Curated knowledge and prompts.** The server serves operator knowledge as MCP
-  resources — a glossary, transport and device guides, and diagnostic playbooks —
+  resources: a glossary, transport and device guides, and diagnostic playbooks,
   with guided prompts for common workflows and a read-first guide to the tool
   surface and the authorization model.
 - **Local-only transport.** The server binds a Unix-domain socket in the user's
@@ -280,7 +401,7 @@ architecture (`x86_64` or `arm64`, with `SHA256SUMS`) from the
 
 **EmComm Tools Community (ECT)** and Debian 12 Bookworm run an older system base
 than the mainline packages target, so every release also publishes a dedicated
-low-floor `tuxlink_<version>_<arch>_ect.deb` for them — identical to the mainline
+low-floor `tuxlink_<version>_<arch>_ect.deb` for them, identical to the mainline
 build except that Apple HEIC image decoding is compiled out. Install it with
 `apt install ./tuxlink_*_ect.deb`; details in
 [docs/install.md](docs/install.md#emcomm-tools-community-and-debian-12-bookworm).
@@ -292,7 +413,10 @@ secret-service keyring daemon.
 ## Interface
 
 The first-run wizard guides a new operator from install to first message, on a
-CMS-connected path or an offline / radio-only path:
+CMS-connected path or an offline / radio-only path. A guided tour with UI
+spotlighting follows the wizard for a new operator's first look at the running
+mailbox, and Elmer can re-trigger the same spotlight against any control on
+request:
 
 <p align="center">
   <img src="docs/readme/images/tuxlink-first-run-wizard.png" width="820"
@@ -313,10 +437,10 @@ Winlink catalog, and collects selected items in a unified send basket:
 
 Where each path stands:
 
-- **On-air validated (RF path end-to-end):** four modes are vetted on the air —
+- **On-air validated (RF path end-to-end):** four modes are vetted on the air:
   AX.25 1200-baud packet, ARDOP HF, VARA HF, and APRS tactical chat over
   Bluetooth KISS. Packet, ARDOP, and VARA all connect over a real radio, and
-  the transmit path to the Winlink network is proven end-to-end — a production
+  the transmit path to the Winlink network is proven end-to-end: a production
   Winlink CMS protocol response was received over the air, on both the packet
   and the VARA HF paths. That response was a rejection pending the client
   registration noted below, which is precisely what confirms the chain
@@ -324,8 +448,8 @@ Where each path stands:
   path. VARA HF's validation includes the hardest case: a 500 Hz-bandwidth ARQ
   link to a production gateway, with the full B2F handshake completed across
   the RF channel. Peer-to-peer sessions work on packet and ARDOP. APRS tactical chat has run continuously over a
-  sustained Bluetooth KISS link **at the same time as** an HF Winlink session — the
-  simultaneous HF/VHF workspace is functional today. Transmission always requires
+  sustained Bluetooth KISS link **at the same time as** an HF Winlink session:
+  the simultaneous HF/VHF workspace is functional. Transmission always requires
   explicit, per-invocation operator consent (see
   [Amateur radio and Part 97](#amateur-radio-and-part-97)).
 - **Validated (internet):** native CMS connection over telnet and real Winlink
@@ -341,13 +465,20 @@ Where each path stands:
   CMS; message exchange begins once registration completes. Until then, CMS
   message exchange targets the test server.
 
+**FT8 is receive-only by design.** The listener has no transmit path, so there
+is nothing on that surface for on-air validation to prove; band-openness
+reading is the entire feature.
+
 ### Pending
 
+- **Dockable surfaces and Routines.** Multi-window pop-out and the Routines
+  automation engine are built and covered by CI, including the consent-gating
+  paths; field validation is pending at the next release cut.
 - **VARA peer-to-peer on the air.** The VARA gateway-session path is on-air
   validated (above); direct station-to-station VARA sessions are built and
   awaiting on-air verification.
-- **USB rig autodetect.** Rig control itself — CAT tune and PTT through the
-  bundled Hamlib `rigctld` — is shipped and on-air proven; picking the radio
+- **USB rig autodetect.** Rig control itself (CAT tune and PTT through the
+  bundled Hamlib `rigctld`) is shipped and on-air proven; picking the radio
   automatically from the attached USB devices is not.
 - **Native HF modem.** VARA is x86 Windows software that runs under WINE on x86
   Linux but not on ARM. Tuxlink targets a clean-room native HF modem (Sonde,
@@ -370,9 +501,13 @@ the desktop app's Winlink session lifecycle.
 
 An embedded MCP server (Rust crates `tuxlink-mcp-core` for the tool surface and
 `tuxlink-security` for the egress-authorization core) exposes the running client
-to AI agents over a local Unix-domain socket. Agent transmit, connect, and
+to AI agents over a local Unix-domain socket. The same router serves Elmer,
+the in-app assistant, over an in-process duplex connection, so the in-app and
+external agent paths share one tool surface and one authorization gate rather
+than two separate implementations. Agent transmit, connect, and
 configuration-write actions pass through an operator-armed authorization gate;
-the transport opens no network port.
+neither path opens a network port. [docs/ELMER.md](docs/ELMER.md) documents
+this architecture, the security model, and Elmer's capabilities in full.
 
 [CLAUDE.md](CLAUDE.md) documents the agent workflow, commit discipline, ethos,
 and safety rails this project operates under.
@@ -386,7 +521,10 @@ with Part 97 of the FCC rules, or the equivalent regulations in the operator's
 jurisdiction.
 
 Tuxlink prohibits automated or agent-initiated transmissions absent explicit,
-per-invocation operator consent. See
+per-invocation operator consent. Routines carry the same model forward: an
+attended routine pauses for that per-transmit consent at run time, and an
+automatic routine may only transmit unattended after the operator has recorded
+an explicit acknowledgment at design time. See
 [docs/live-cms-testing-policy.md](docs/live-cms-testing-policy.md).
 
 ## Documentation
