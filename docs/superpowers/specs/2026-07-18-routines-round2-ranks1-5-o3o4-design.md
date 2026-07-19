@@ -22,10 +22,20 @@
 3. **Untyped params stay untyped.** No param-schema machinery is introduced;
    params are validated at execute time via serde, matching every existing
    action. The palette needs zero changes (registry-driven).
-4. **Journal events are additive.** New `RunEvent` variants use the
-   established additive-serde pattern (`#[serde(default, skip_serializing_if)]`
-   on optional fields, no `deny_unknown_fields`), so old journals replay and
-   old readers tolerate new events.
+4. **Journal events are additive, and the reader becomes variant-tolerant
+   (R2 P2-1).** New `RunEvent` variants use the established additive-serde
+   pattern on optional fields, so old journals replay in new readers. The
+   REVERSE is false today: an internally-tagged enum errors on an unknown
+   `type` tag, `read_journal` fails the whole file on the first bad line,
+   `list_runs` then hides the run and `scan_interrupted` mis-classifies it
+   (appending a spurious second `run_finished` at recovery). The converge
+   build runs origin/main, so a branch build writing `call_child` /
+   `end_reached` would corrupt History for the operator's next converged
+   run. Fix shipped WITH this arc, before the new variants: `read_journal`
+   decodes per-line tolerantly (a line whose event fails to parse becomes an
+   opaque `unknown` entry preserving `ts_unix`/`seq`; terminal-state scans
+   treat it as a non-terminal entry), closing the class for all future
+   variants.
 
 ## 1. Rank 1: status read sources (unblocks 14 cells)
 
@@ -72,11 +82,16 @@ New action (not a read source: it takes real params).
     "bands":["40m",...], "history_hours":u32<=720, "limit":usize}`.
   `modes`/`bands`/`history_hours` are byte-identical to the MCP
   `find_stations` params. `limit` is routines-only shape (ADR 0024 P4 allows
-  shape divergence): it truncates the *sorted* gateway list so a routine can
-  feed "nearest N" into `radio.connect` without dialing the whole directory.
-  Absent = no truncation. `limit:0` is rejected as invalid params (a routine
-  asking for zero stations is authored wrong, and an empty `stations` list
-  would fail `radio.connect` anyway).
+  shape divergence) and is defined over **distinct callsigns** (R2 P2-5):
+  dedup the distance-sorted callsign sequence first, truncate THAT to
+  `limit`, and `gateways[]` contains every gateway row whose callsign
+  survived (so per-band frequency rows for a kept station are never lost;
+  "nearest 3 stations" means 3 dial targets, not 3 directory rows). Absent =
+  no truncation. `limit:0` is rejected as invalid params. When the operator
+  grid is unresolved, distances are null and the stable sort preserves
+  directory order: `limit` then truncates in directory order, and the
+  callsigns remain valid dial targets (`operator_grid: null` in the output
+  is the honest marker).
 - **Output:** the MCP `StationListDto` shape verbatim, plus one routines-only
   convenience field:
   ```json
@@ -179,7 +194,13 @@ transmit closure semantics) on a step that never keys the radio. Design:
   parks a transmit step (`ctx.attended && (d.transmits || d.writes_config)`),
   same `ConsentPort`, same `AwaitingConsent` state, same UI consent surface.
   Per-invocation operator click = consent parity with the agent side's
-  operator-armed window.
+  operator-armed window. Two refinements (R2 P3-2, P3-3): the
+  `AwaitingConsent` event gains a `kind: "transmit" | "write"` so the park
+  dialog says "write station config" in write terms, never transmit
+  language (the same honesty the ack layer insists on); and a
+  `writes_config` step under a Retry wrapper parks per attempt, which is
+  intended (each write attempt is separately consented, matching
+  per-transmission consent).
 - **Automatic mode:** a routine whose call-graph closure contains a
   `writes_config` step requires a **`write_ack`** recorded in the definition,
   a sibling of `transmit_ack` with identical protection: `routines_save` /
@@ -194,16 +215,50 @@ transmit closure semantics) on a step that never keys the radio. Design:
   step, and the preserved on-disk ack would keep authorizing a closure the
   operator never saw. Both `write_ack` and the existing `transmit_ack`
   therefore carry a **`closure_digest`**: a canonical hash over the routine's
-  transitive consent-relevant closure (sorted `(routine_name, step_id,
-  action_name, params_json)` tuples for every write step, respectively every
-  transmit step, across the resolved call graph). The digest is computed and
-  recorded by the UI ack command after validation; it is recomputed at save,
-  enable, and start. A mismatch invalidates the ack (the routine drops back
-  to `AUTO_WRITE_UNACKED` / `AUTO_TX_UNACKED`), including the callee-edit
-  case where the acked routine's own file never changed. Existing
-  `transmit_ack` values without a digest are treated as stale and require
-  re-acknowledgment (serde-default migration; honest at current alpha scale,
-  and the alternative silently grandfathers unverifiable acks).
+  transitive consent-relevant closure, computed from sorted
+  `(routine_name, step_id, action_name, params_json)` tuples for every write
+  step, respectively every transmit step, across the resolved call graph,
+  **plus every Call step's `(routine_name, step_id, callee_name, args_json)`
+  edge on paths reaching a consent-relevant step** (R2 P2-3: otherwise
+  editing a Call's args changes what a callee writes while the digest still
+  matches). Canonicalization is explicit (R2 P3-4): recursive JSON key sort
+  before hashing, never relying on serde_json's default map ordering (a
+  future `preserve_order` feature-unification flip must not invalidate
+  acks); tuples sort by `(routine_name, step_id)`. The digest function lives
+  in `tuxlink-routines` beside ONE parameterized closure walk (predicate
+  over descriptor flags) that the start gate, the validator, and the digest
+  all consume (R2 P3-5: the transmit walk already exists twice; a third
+  copy would drift). The digest is computed and recorded by the UI ack
+  command after validation; it is recomputed at save, enable, and start. A
+  mismatch invalidates the ack (the routine drops back to
+  `AUTO_WRITE_UNACKED` / `AUTO_TX_UNACKED`), including the callee-edit case
+  where the acked routine's own file never changed. Existing `transmit_ack`
+  values without a digest are treated as stale and require
+  re-acknowledgment (serde-default migration; honest at current alpha
+  scale, and the alternative silently grandfathers unverifiable acks).
+- **What the digest does and does not pin (R2 P2-3, stated honestly).** The
+  digest pins the closure's *shape*: which steps write, with which authored
+  params, reached through which calls with which authored args. It does NOT
+  pin run-time values: a write param of `"$args.level"` digests as that
+  literal, and the invoker (human, schedule, or agent via `routines_run`)
+  chooses the value, bounded only by the action's own validation. The
+  consent-envelope doctrine carries this deliberately (acking a
+  parameterized write is acking run-time-chosen values), and it is surfaced,
+  not silent: a new validator Warning `WRITE_VALUE_RUNTIME` flags
+  `$`-referenced params on `writes_config` steps inside automatic routines,
+  and the ack UI renders it beside the acknowledgment ("this routine's
+  write value is chosen at run time").
+- **Mid-run callee-edit window (R2 P2-2).** Call targets resolve by name at
+  invoke time (the run snapshot never inlines callees, a shipped divergence
+  from the design spec's §7 snapshot doctrine that predates this arc). The
+  save/enable/start digest checks therefore do not cover a callee edited
+  while the parent is already running (parked, delayed, retrying). This arc
+  closes the consent-relevant half surgically: the child invoker re-verifies
+  the parent's ack digest against the live callee at child-start and fails
+  the Call step verbatim on mismatch ("callee changed after
+  acknowledgment"). The general callee-pinning gap (non-consent edits also
+  swap mid-run, contra §7 doctrine) is pre-existing shipped behavior,
+  recorded as a bd follow-up rather than smuggled into this arc.
 - **Validate-and-start are one read (Codex R1 P2).** The current run path
   validates one loaded definition and then reloads by name before
   snapshotting, so a concurrent `routines_save` could swap the definition
@@ -235,9 +290,33 @@ transmit closure semantics) on a step that never keys the radio. Design:
 ## 6. O3: child run ids in the parent journal
 
 - **Invoker split.** The `RoutineInvoker` port gains a two-phase shape:
-  `start(routine, args, provenance) -> RunHandle` (run_id known immediately,
-  from the engine's existing `start_run_ext`) and awaiting the outcome via
-  the handle. The existing single-shot `invoke` is reimplemented on top.
+  `start(routine, args, provenance, parent_cancel) -> RunHandle` (run_id
+  known immediately, from the engine's existing `start_run_ext`) and
+  awaiting the outcome via the handle. The existing single-shot `invoke` is
+  reimplemented on top. Two contract obligations ride the split:
+  - **Inline start in BOTH arms (R2 P1-1).** The fire-and-forget arm awaits
+    `start()` inline in the Call step (child run id known, `call_child`
+    journaled, then `step_ok {"dispatched": true}`); only the *outcome* is
+    unawaited (handle dropped; the engine tolerates a dropped receiver). A
+    detached-task start could otherwise journal `call_child` after the
+    parent's `run_finished`, and a journal not ending in `run_finished` is
+    classified interrupted at next launch (recovery would stamp a
+    truthfully-completed run as interrupted). Behavior change made honest:
+    a fire-and-forget start failure (unknown routine, unacked callee) is now
+    observable and journals `step_err` instead of today's silent
+    `dispatched: true` lie.
+  - **Cancellation propagates (R2 P1-2).** Today a child run's cancel token
+    is created fresh and never linked to the parent: cancelling a parent
+    lets a child (including its transmit steps) run to completion, and
+    child runs are absent from the session registry so the UI cannot cancel
+    them directly either. O3 makes children operator-visible, so this ships
+    with it: the child's token derives from the parent's
+    (`ctx.cancel.child_token()`, threaded through `start_run_ext`), and the
+    sync await races `ctx.cancel` (on cancel: forward to the child handle,
+    journal `step_err` Cancelled). Fire-and-forget children stay detached
+    from parent cancellation DELIBERATELY (dispatch means dispatch); that
+    choice is now written down. Direct UI cancel of a child run id stays
+    out of scope because parent-cancel now propagates.
 - **New event:** `RunEvent::CallChild { step: StepId, child_run_id: String }`
   journaled by the parent the moment the child run id exists, in **all three
   paths**: sync-success, sync-failure (today the id is buried in an error
@@ -245,7 +324,12 @@ transmit closure semantics) on a step that never keys the radio. Design:
   is discarded). Ordering: `step_intent` -> `call_child` -> (`step_ok` |
   `step_err`).
 - A call that fails **before** a child run exists (unknown routine, depth cap)
-  journals no `call_child`, and that absence is the honest record.
+  journals no `call_child`, and that absence is the honest record. One edge
+  closed (R2 P3-1): the child engine currently journals `run_started` BEFORE
+  parsing its snapshot, so a snapshot-shape failure leaves an orphan child
+  journal (no `call_child` in the parent, later stamped interrupted).
+  Journal creation moves after the parse so a start that never ran leaves
+  no journal.
 - **Trust domain (Codex R1 P3):** all routine run journals form ONE trust
   domain. `routines_journal_get` already returns any journal by run id with
   no per-routine ACL (and taints the agent session); `call_child` adds
@@ -269,11 +353,24 @@ transmit closure semantics) on a step that never keys the radio. Design:
   `end_reached` -> skip sweep -> `run_finished` (the sweep runs after the
   track returns), which is the correct narrative order.
 - **Latent defect fixed as part of O4:** `TrackEnd::Ended`'s `failed`/`reason`
-  are currently dropped by `run_tracks` and never reach `run_finished`. The
-  End step's reason is threaded through (`TrackEnd::Ended` gains the step id;
-  `run_tracks` carries it into the outcome) so `run_finished.reason` on an
-  End-terminated run names the End step's declared reason verbatim instead
-  of losing it.
+  are currently dropped by `run_tracks` and never reach `run_finished`
+  (verified: an End-terminated run's `run_finished.reason` is always null
+  today). The End step's reason is threaded through (`TrackEnd::Ended` gains
+  the step id; `run_tracks` carries it into the outcome; `RunOutcome` loses
+  `Copy` and gains `reason` + end step id, a small verified ripple).
+- **Multi-track precedence (R2 P2-4), stated so it cannot be implemented by
+  accident:** `run_finished.reason` is the reason of the TrackEnd that
+  determined the final state. A failed-End reason wins over a success-End
+  reason regardless of join arrival order (matching the existing state
+  precedence); a propagated `StepErr` wins over both (the run failed on an
+  error, not an End); between two same-class Ends on parallel tracks,
+  first-arrival wins and is nondeterministic (both `end_reached` events are
+  in the journal either way; only the summary line picks one).
+- **Cross-track narrative (R2 P3-3):** when one track's End terminates the
+  run, sibling tracks' unvisited steps sweep as skipped with the existing
+  cancellation reason; the step list will show an End row alongside
+  cancelled-sibling skips, which is the truthful record (no attempt to
+  rewrite sibling reasons as "ended by track A").
 - **History UI:** the End event renders as its own step-list row ("ended at
   s7: complete|failed, <reason>") ahead of the existing finished row.
 
@@ -297,11 +394,20 @@ transmit closure semantics) on a step that never keys the radio. Design:
 ## 9. Testing strategy
 
 - **Engine (tuxlink-routines, R2 cargo):** unit tests per new event variant
-  (serde round-trip + additive-tolerance), executor tests for CallChild in
-  all three paths, EndReached ordering vs skip sweep, reason threading,
-  attended-park on `writes_config`, `AUTO_WRITE_UNACKED` /
-  `ATTENDED_WRITE_UNDER_SCHEDULE` / extended `MIXED_MODE_STALL` validator
-  tests, dry-run fake flag mirroring.
+  (serde round-trip + additive-tolerance), the tolerant reader (unknown
+  event type -> opaque entry, file survives, terminal-scan unaffected),
+  executor tests for CallChild in all three paths including inline-F&F
+  ordering (call_child strictly before the parent's run_finished) and the
+  now-observable F&F start failure, cancellation propagation (parent cancel
+  reaches a sync child; F&F child deliberately survives), EndReached
+  ordering vs skip sweep, reason threading + multi-track precedence
+  (failed-End beats success-End beats neither when a StepErr propagated),
+  attended-park on `writes_config` incl. per-attempt retry parks,
+  `AUTO_WRITE_UNACKED` / `ATTENDED_WRITE_UNDER_SCHEDULE` / extended
+  `MIXED_MODE_STALL` / `WRITE_VALUE_RUNTIME` validator tests, digest
+  canonicalization (key-order independence, param mutation, Call-args
+  mutation, callee mutation each flip the digest), the child-start digest
+  re-verification failure, and dry-run fake flag mirroring.
 - **Monolith (R2 cargo):** seam impl tests with fakes for each new
   source/action; curation-equality pins for **every** read source, not just
   `config` (Codex R1 P3): `backend_status` error-arm redaction,
@@ -336,3 +442,8 @@ transmit closure semantics) on a step that never keys the radio. Design:
 - `heard_stations` backend record: stays an honest gap.
 - Agent-side tool additions for the reverse diff (ADR 0024 §6): separate
   tool-surface revision.
+- General callee pinning at snapshot time (the §7-doctrine divergence R2
+  P2-2 surfaced: Call targets resolve live, so NON-consent callee edits
+  swap behavior mid-run): pre-existing shipped behavior, filed as a bd
+  follow-up. This arc closes only the consent-relevant half (child-start
+  digest re-verification).
