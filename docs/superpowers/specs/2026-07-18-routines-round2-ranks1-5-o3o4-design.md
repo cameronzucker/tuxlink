@@ -213,7 +213,8 @@ transmit closure semantics) on a step that never keys the radio. Design:
   same `ConsentPort`, same `AwaitingConsent` state, same UI consent surface.
   Per-invocation operator click = consent parity with the agent side's
   operator-armed window. Two refinements (R2 P3-2, P3-3): the
-  `AwaitingConsent` event gains a `kind: "transmit" | "write"` so the park
+  `AwaitingConsent` event gains a `parkKind: "transmit" | "write"` (named
+  to avoid the app-event union's `kind` discriminant; R5) so the park
   dialog says "write station config" in write terms, never transmit
   language (the same honesty the ack layer insists on); and a
   `writes_config` step under a Retry wrapper parks per attempt, which is
@@ -336,10 +337,15 @@ transmit closure semantics) on a step that never keys the radio. Design:
   `MIXED_MODE_STALL_WRITE` (write-worded message), not an extended
   predicate on the transmit code: the settings surface gates its transmit
   section on transmit-class codes, and reusing the code would render Part
-  97 transmit copy on a write-only routine. SettingsTab gating is explicit:
-  transmit section keys on transmit-class codes + a direct-step `transmits`
-  scan; the write ack row keys on write-class codes + a direct-step
-  `writes_config` scan.
+  97 transmit copy on a write-only routine. SettingsTab section visibility
+  is CLOSURE-based, not direct-step-scan-based (R5 P2: a call-only closure
+  with a VALID ack produces no finding and has no direct step, and a
+  direct-step scan would hide the valid signature row): both the transmit
+  section and the write ack row key on the `routines_consent_closure(name)`
+  enumeration (transmit steps non-empty -> transmit section; write steps
+  non-empty -> write ack row), with class-specific findings layered on top.
+  A frontend test pins "automatic root that only CALLS a write callee, ack
+  valid: the ack row still renders."
 - **The ack is a visible signature, and validity is what renders (R4 P1-2,
   P1-3):** the settings ack panels branch on VALIDITY (ack present AND no
   `AUTO_TX_UNACKED` / `AUTO_WRITE_UNACKED` finding), never on mere
@@ -390,6 +396,14 @@ transmit closure semantics) on a step that never keys the radio. Design:
     registry**, so `cancel_run(child_id)` works from the UI for sync and
     F&F children alike. A transmit-capable F&F child with no cancel
     affordance anywhere would fail the working-abort correctness bar.
+    **The registry bridge is pinned (R5 P2):** child starts currently
+    happen inside the engine's `EngineChildInvoker`, but registry insertion
+    and the run watcher live only in the monolith session — so the monolith
+    owns the real `RoutineInvoker::start` implementation (the engine calls
+    out through the port; the monolith registers the child exactly as it
+    registers session-started runs, then delegates to `start_run_ext`). A
+    monolith test reads `child_run_id` from `call_child`, calls the cancel
+    command with it, and asserts true + child termination.
 - **New event:** `RunEvent::CallChild { step: StepId, child_run_id: String }`
   journaled by the parent the moment the child run id exists, in **all three
   paths**: sync-success, sync-failure (today the id is buried in an error
@@ -451,7 +465,8 @@ transmit closure semantics) on a step that never keys the radio. Design:
 
 1. `routinesApi.ts`: extend the TS `RunEvent` union with `call_child` and
    `end_reached` (snake_case fields, no recasing layer, matching #1159's
-   variants), and add `kind` to the `state_changed` awaiting-consent shape.
+   variants), and add `parkKind` to the `state_changed` awaiting-consent
+   shape.
 2. `RunsTab.tsx`: two new `stepListModel` cases + `StepListRow.kind` union
    members (`'call'`, `'end'`) + `ROW_ICON` entries + two JSX row branches +
    the child-run navigation click handler. Three presentation rules ride
@@ -545,7 +560,7 @@ transmit closure semantics) on a step that never keys the radio. Design:
   (failed-End beats success-End beats neither when a StepErr propagated),
   attended-park on `writes_config` incl. per-attempt retry parks,
   `AUTO_WRITE_UNACKED` / `ATTENDED_WRITE_UNDER_SCHEDULE` / extended
-  `MIXED_MODE_STALL` / `WRITE_VALUE_RUNTIME` validator tests, digest
+  `MIXED_MODE_STALL_WRITE` / `WRITE_VALUE_RUNTIME` validator tests, digest
   canonicalization (key-order independence, param mutation, Call-args
   mutation, callee mutation each flip the digest), the child-start digest
   re-verification failure, and dry-run fake flag mirroring.
@@ -570,9 +585,11 @@ transmit closure semantics) on a step that never keys the radio. Design:
   parkKind copy branching incl. launch recovery from the journaled kind.
   Full `pnpm vitest run src/routines` + typecheck.
 - **Dry-run shapes:** pinned tests that every new action's canned dry-run
-  output contains the fields the spec's own authoring patterns reference
-  (`callsigns`, `grid`, `state`, `drive_level`, `old`/`new`), so the
-  marquee composition dry-runs green end-to-end.
+  output contains the fields the spec's own authoring patterns reference,
+  split per action/source (R5 P3): `data.find_stations` pins `callsigns`;
+  `data.read grid` pins `grid`; the status sources pin `state`;
+  `data.read ardop_config` pins `drive_level`; `config.set_ardop` pins
+  `field`/`old`/`new`. The marquee composition dry-runs green end-to-end.
 - **Acceptance (post-merge, live app):** converge rebuild, then a fresh
   wire-walk: a probe exercising branch + skip + call (child) + end +
   a config write in attended mode, captured via `routines_journal_get` and
