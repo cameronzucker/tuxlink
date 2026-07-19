@@ -106,6 +106,12 @@ pub enum RunEvent {
         state: RunState,
         reason: Option<String>,
     },
+    /// An event whose `type` this build does not know (written by a NEWER
+    /// build). The engine NEVER writes this variant; only the tolerant
+    /// reader (`read_journal`) constructs it, preserving the raw event
+    /// value so History can still show *something* and the rest of the
+    /// journal stays readable. Serialize round-trip is not required.
+    Opaque { raw: serde_json::Value },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -174,7 +180,24 @@ impl JournalWriter {
     }
 }
 
+/// Tolerant per-line reader. Each line is decoded in two steps:
+///
+/// 1. The ENVELOPE (`ts_unix`/`run_id`/`seq` + raw `event` value). A line
+///    failing THIS — torn tail, non-JSON — errors the whole file (current
+///    behavior, deliberately in-spec: §0.4 scopes the tolerance to unknown
+///    event TYPES, not torn tails).
+/// 2. The EVENT. An event a NEWER build wrote with a `type` this build does
+///    not know becomes `RunEvent::Opaque { raw }` instead of corrupting the
+///    whole journal.
 pub fn read_journal(path: &Path) -> std::io::Result<Vec<JournalEntry>> {
+    #[derive(Deserialize)]
+    struct RawEntry {
+        ts_unix: i64,
+        run_id: String,
+        seq: u64,
+        event: serde_json::Value,
+    }
+
     let file = File::open(path)?;
     let mut out = Vec::new();
     for line in BufReader::new(file).lines() {
@@ -182,8 +205,17 @@ pub fn read_journal(path: &Path) -> std::io::Result<Vec<JournalEntry>> {
         if line.trim().is_empty() {
             continue;
         }
-        let entry: JournalEntry = serde_json::from_str(&line)?;
-        out.push(entry);
+        let raw: RawEntry = serde_json::from_str(&line)?;
+        let event = match serde_json::from_value::<RunEvent>(raw.event.clone()) {
+            Ok(event) => event,
+            Err(_) => RunEvent::Opaque { raw: raw.event },
+        };
+        out.push(JournalEntry {
+            ts_unix: raw.ts_unix,
+            run_id: raw.run_id,
+            seq: raw.seq,
+            event,
+        });
     }
     Ok(out)
 }
@@ -215,8 +247,16 @@ pub fn scan_interrupted(dir: &Path) -> std::io::Result<Vec<(String, PathBuf)>> {
             }
         };
 
+        // The last PARSEABLE entry decides terminal state: trailing Opaque
+        // entries (unknown future event types) must not reclassify a
+        // finished run as interrupted. A journal containing ONLY Opaque
+        // entries has no parseable terminal entry and classifies
+        // interrupted, matching the unreadable-file arm above.
         let finished = matches!(
-            entries.last(),
+            entries
+                .iter()
+                .rev()
+                .find(|e| !matches!(e.event, RunEvent::Opaque { .. })),
             Some(JournalEntry {
                 event: RunEvent::RunFinished { .. },
                 ..
@@ -519,6 +559,137 @@ mod tests {
         );
         let back: RunEvent = serde_json::from_value(json).unwrap();
         assert_eq!(back, event);
+    }
+
+    // ---- Task A1: per-line tolerant read_journal (unknown event TYPES) ----
+
+    /// Valid envelope line whose EVENT type this build does not know.
+    const FUTURE_LINE: &str =
+        r#"{"ts_unix":1,"run_id":"r","seq":1,"event":{"type":"from_the_future","x":1}}"#;
+
+    fn write_lines(dir: &Path, name: &str, lines: &[&str]) -> PathBuf {
+        let path = dir.join(format!("{name}.jsonl"));
+        std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+        path
+    }
+
+    #[test]
+    fn unknown_event_type_becomes_opaque_entry() {
+        // (a) valid run_started + unknown-type line + valid run_finished:
+        // all three entries come back; the unknown one is Opaque with the
+        // raw event value preserved verbatim.
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_lines(
+            dir.path(),
+            "run-future",
+            &[
+                r#"{"ts_unix":0,"run_id":"r","seq":0,"event":{"type":"run_started","routine":"t","snapshot":{}}}"#,
+                FUTURE_LINE,
+                r#"{"ts_unix":2,"run_id":"r","seq":2,"event":{"type":"run_finished","state":"completed","reason":null}}"#,
+            ],
+        );
+
+        let entries = read_journal(&path).unwrap();
+        assert_eq!(entries.len(), 3);
+        assert!(matches!(entries[0].event, RunEvent::RunStarted { .. }));
+        match &entries[1].event {
+            RunEvent::Opaque { raw } => {
+                assert_eq!(raw.get("type"), Some(&json!("from_the_future")));
+                assert_eq!(raw.get("x"), Some(&json!(1)));
+            }
+            other => panic!("expected Opaque, got {other:?}"),
+        }
+        // Envelope fields of the opaque line survive too.
+        assert_eq!(entries[1].run_id, "r");
+        assert_eq!(entries[1].seq, 1);
+        assert_eq!(entries[1].ts_unix, 1);
+        assert!(matches!(entries[2].event, RunEvent::RunFinished { .. }));
+    }
+
+    #[test]
+    fn unknown_event_type_does_not_mark_finished_run_interrupted() {
+        // (b) same file via scan_interrupted: the run finished; an unknown
+        // mid-run event must not reclassify it as interrupted.
+        let dir = tempfile::tempdir().unwrap();
+        write_lines(
+            dir.path(),
+            "run-future",
+            &[
+                r#"{"ts_unix":0,"run_id":"r","seq":0,"event":{"type":"run_started","routine":"t","snapshot":{}}}"#,
+                FUTURE_LINE,
+                r#"{"ts_unix":2,"run_id":"r","seq":2,"event":{"type":"run_finished","state":"completed","reason":null}}"#,
+            ],
+        );
+        let found = scan_interrupted(dir.path()).unwrap();
+        assert!(found.is_empty(), "finished run misreported: {found:?}");
+    }
+
+    #[test]
+    fn unknown_event_after_run_finished_still_not_interrupted() {
+        // (c) the unknown line is the LAST line, after run_finished: the
+        // last PARSEABLE entry decides, so the run is still finished.
+        let dir = tempfile::tempdir().unwrap();
+        write_lines(
+            dir.path(),
+            "run-trailer",
+            &[
+                r#"{"ts_unix":0,"run_id":"r","seq":0,"event":{"type":"run_started","routine":"t","snapshot":{}}}"#,
+                r#"{"ts_unix":1,"run_id":"r","seq":1,"event":{"type":"run_finished","state":"completed","reason":null}}"#,
+                r#"{"ts_unix":2,"run_id":"r","seq":2,"event":{"type":"from_the_future","x":1}}"#,
+            ],
+        );
+        let found = scan_interrupted(dir.path()).unwrap();
+        assert!(found.is_empty(), "finished run misreported: {found:?}");
+    }
+
+    #[test]
+    fn non_json_envelope_line_errors_whole_file() {
+        // (d) pins CURRENT behavior deliberately (spec §0.4 scopes the fix
+        // to unknown event TYPES): a torn tail / non-JSON envelope still
+        // errors the whole file.
+        let dir = tempfile::tempdir().unwrap();
+        let torn = write_lines(
+            dir.path(),
+            "run-torn",
+            &[
+                r#"{"ts_unix":0,"run_id":"r","seq":0,"event":{"type":"run_started","routine":"t","snapshot":{}}}"#,
+                r#"{"garbage": tru"#,
+            ],
+        );
+        // Truncated tail: serde_json reports EOF, surfaced as UnexpectedEof.
+        let err = read_journal(&torn).expect_err("torn envelope must error the whole file");
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+
+        let garbage = write_lines(
+            dir.path(),
+            "run-garbage",
+            &[
+                r#"{"ts_unix":0,"run_id":"r","seq":0,"event":{"type":"run_started","routine":"t","snapshot":{}}}"#,
+                r#"not json at all"#,
+            ],
+        );
+        // Syntactically invalid (non-EOF): surfaced as InvalidData.
+        let err = read_journal(&garbage).expect_err("non-JSON envelope must error the whole file");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn only_opaque_journal_classifies_interrupted() {
+        // (e) a journal containing ONLY unknown-type events has no parseable
+        // terminal entry: classify interrupted (matches the existing
+        // unreadable-file arm).
+        let dir = tempfile::tempdir().unwrap();
+        write_lines(
+            dir.path(),
+            "run-all-opaque",
+            &[
+                r#"{"ts_unix":0,"run_id":"run-all-opaque","seq":0,"event":{"type":"from_the_future","x":1}}"#,
+                r#"{"ts_unix":1,"run_id":"run-all-opaque","seq":1,"event":{"type":"even_further_future"}}"#,
+            ],
+        );
+        let found = scan_interrupted(dir.path()).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].0, "run-all-opaque");
     }
 
     #[test]
