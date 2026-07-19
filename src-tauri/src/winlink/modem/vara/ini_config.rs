@@ -447,19 +447,23 @@ fn run_vara_ini_apply_with(
     })
 }
 
-/// Spawn `wine VARA.exe` for the install at `dir` under `prefix`, mirroring
-/// the engine's `wv_wineenv` + `wv_start_vara`: `WINEPREFIX` to the prefix,
-/// `WINEDEBUG=-all` (VB6 under WINE is chatty), `WINEARCH=win64` (the wow64
-/// prefix that carries syswow64, where VARA's VB6 runtime + OCX live), and
+/// Spawn `wine VARA.exe` for the install at `dir` under `prefix`:
+/// `WINEPREFIX` to the prefix, `WINEDEBUG=-all` (VB6 under WINE is chatty),
 /// cwd = the install dir (VB6 resolves its `.dat` tables relative to cwd).
+///
+/// Deliberately does NOT set `WINEARCH` (unlike the engine's `wv_wineenv`):
+/// that variable governs prefix CREATION, which this module never does — an
+/// existing prefix carries its own arch, and forcing `win64` makes wine
+/// refuse a 32-bit prefix outright ("WINEARCH set to win64 but … is a
+/// 32-bit installation", hit live against the win32 reference install on
+/// R2). Launching inherits whatever the prefix actually is.
 fn spawn_vara(dir: &Path, prefix: &Path) -> Result<ManagedModem, String> {
     let exe = dir.join("VARA.exe");
     let exe_str = exe.display().to_string();
     let prefix_str = prefix.display().to_string();
-    let envs: [(&str, &str); 3] = [
+    let envs: [(&str, &str); 2] = [
         ("WINEPREFIX", prefix_str.as_str()),
         ("WINEDEBUG", "-all"),
-        ("WINEARCH", "win64"),
     ];
     ManagedModem::spawn_configured("wine", &[exe_str.as_str()], &envs, Some(dir))
         .map_err(|e| format!("failed to launch VARA under WINE: {e}"))
@@ -1296,6 +1300,78 @@ mod tests {
         assert!(modem.is_running());
         modem.stop(Duration::from_secs(2)).expect("stop stub");
         *guard = None;
+    }
+
+    /// LIVE bounce validation against a real VARA-under-WINE install (the
+    /// gap CI cannot cover). Ignored by default; run where the install lives
+    /// (R2):
+    ///
+    /// ```text
+    /// TUXLINK_LIVE_VARA_PREFIX=$HOME/.wine-vara xvfb-run -a \
+    ///   cargo test --manifest-path src-tauri/Cargo.toml \
+    ///   live_vara_ini_bounce -- --ignored --nocapture
+    /// ```
+    ///
+    /// RADIO-1: launch-only. Opening VARA's host TCP ports (and, per its own
+    /// saved config, its CAT port) is not a transmission; no CONNECT/TUNE is
+    /// ever issued. The edit is value-identical (current ALC Drive Level
+    /// written back), so the operator's config is untouched; the test removes
+    /// its backup files on the way out.
+    #[test]
+    #[ignore = "live WINE/VARA bounce — needs TUXLINK_LIVE_VARA_PREFIX pointing at a real install"]
+    fn live_vara_ini_bounce() {
+        let Ok(prefix) = std::env::var("TUXLINK_LIVE_VARA_PREFIX") else {
+            eprintln!("TUXLINK_LIVE_VARA_PREFIX unset — nothing to validate against");
+            return;
+        };
+        let prefix = PathBuf::from(prefix);
+        let dir = resolve_vara_dir(&prefix, VaraInstance::Primary).expect("resolve live install");
+        let ini_path = dir.join("VARA.ini");
+        let before = fs::read_to_string(&ini_path).expect("read live VARA.ini");
+        let alc = VaraIni::parse(&before)
+            .get("Soundcard", "ALC Drive Level")
+            .unwrap_or("-15")
+            .to_string();
+
+        let slot = VaraProcessSlot::default();
+        let edits = [VaraIniEdit {
+            section: "Soundcard".into(),
+            key: "ALC Drive Level".into(),
+            value: alc.clone(),
+        }];
+
+        // Bounce 1: cold start — nothing running, engine-parity WINE spawn,
+        // cmd port must come up within the launch budget.
+        let report = run_vara_ini_apply(&slot, None, &prefix, VaraInstance::Primary, &edits, true)
+            .expect("live stop-edit-start apply (cold)");
+        eprintln!("live bounce 1 report: {report:?}");
+        assert!(report.relaunched, "VARA must open its cmd port after relaunch");
+        assert_eq!(report.applied, 1);
+
+        // Value-identical edit: the semantic config must be unchanged.
+        let after = fs::read_to_string(&ini_path).expect("re-read live VARA.ini");
+        assert_eq!(
+            VaraIni::parse(&after).get("Soundcard", "ALC Drive Level"),
+            Some(alc.as_str()),
+            "value-identical edit must not change the setting"
+        );
+
+        // Bounce 2 while OUR child runs: exercises the slot-managed stop
+        // (SIGINT→grace→SIGKILL against a real wine process), the port-down
+        // verify, and the mtime settle absorbing VARA's exit-time rewrite.
+        let report2 = run_vara_ini_apply(&slot, None, &prefix, VaraInstance::Primary, &edits, true)
+            .expect("live stop-edit-start apply (slot-managed restart)");
+        eprintln!("live bounce 2 report: {report2:?}");
+        assert!(report2.relaunched);
+
+        // Teardown: stop the child; remove this test's backup litter.
+        let mut guard = slot.inner.lock().unwrap();
+        if let Some(mut modem) = guard.take() {
+            modem.stop(Duration::from_secs(5)).expect("stop live VARA");
+        }
+        for backup in [report.backup_path, report2.backup_path].into_iter().flatten() {
+            let _ = fs::remove_file(backup);
+        }
     }
 
     #[test]
