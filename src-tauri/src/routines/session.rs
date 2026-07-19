@@ -47,17 +47,20 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
+use async_trait::async_trait;
 use tauri::AppHandle;
-use tokio::sync::Notify;
+use tokio::sync::{oneshot, Notify};
 use tokio_util::sync::CancellationToken;
 
 use tuxlink_routines::action::ActionRegistry;
+use tuxlink_routines::compose::{CallCtx, ChildHandle, RoutineInvoker};
 use tuxlink_routines::consent::ConsentPort;
 use tuxlink_routines::dryrun::DryRunScript;
-use tuxlink_routines::engine::{Engine, EngineConfig, RunHandle};
-use tuxlink_routines::error::EngineError;
+use tuxlink_routines::engine::{Engine, EngineConfig, RunHandle, StartOpts};
+use tuxlink_routines::error::{EngineError, StepError};
+use tuxlink_routines::executor::RunOutcome;
 use tuxlink_routines::journal::{read_journal, JournalEntry, RunEvent, RunState};
 use tuxlink_routines::snapshot::EntityResolver;
 use tuxlink_routines::types::{OnInterrupted, RoutineDef, TransmitMode};
@@ -225,9 +228,16 @@ pub struct RoutinesState {
     /// Live + recently-finished runs, keyed by run_id. Bounded: at most
     /// [`MAX_TERMINAL_RUNS`] terminal entries are retained (plus every live
     /// run). See [`prune_terminal_runs`].
-    runs: Mutex<HashMap<String, RunEntry>>,
-    /// Monotonic insertion counter for `runs` (see [`RunEntry::seq`]).
-    run_seq: AtomicU64,
+    ///
+    /// `Arc`-wrapped (O3): the same map is shared with the engine-installed
+    /// [`SessionChildInvoker`], so an engine-invoked child run lands in the
+    /// SAME registry a session run does — `cancel_run` + `is_routine_running`
+    /// see children too, and no child can wedge at `Running`.
+    runs: Arc<Mutex<HashMap<String, RunEntry>>>,
+    /// Monotonic insertion counter for `runs` (see [`RunEntry::seq`]). Shared
+    /// with [`SessionChildInvoker`] so child + session run sequence numbers come
+    /// from one source and evict in a single total order.
+    run_seq: Arc<AtomicU64>,
     sink: Arc<dyn RoutinesEventSink>,
     /// The attended-mode parking desk (spec §4). Transmit steps in attended
     /// runs park here; [`RoutinesState::grant_consent`] releases them.
@@ -275,8 +285,8 @@ impl RoutinesState {
             registry,
             journal_dir,
             identity_store_path,
-            runs: Mutex::new(HashMap::new()),
-            run_seq: AtomicU64::new(0),
+            runs: Arc::new(Mutex::new(HashMap::new())),
+            run_seq: Arc::new(AtomicU64::new(0)),
             sink,
             consent,
             transmit_names,
@@ -441,8 +451,21 @@ impl RoutinesState {
         } = match dry_run {
             Some(script) => self.engine.start_dry_run(def, args, script).await?,
             None => {
+                // B2 minimal mechanical fix: `start_run_ext` now takes the
+                // pinned `StartOpts` struct. CHUNK 2 replaces this with the
+                // `SessionChildInvoker` install + verified root threading (C3).
                 self.engine
-                    .start_run_ext(def, args, 0, false, false)
+                    .start_run_ext(
+                        def,
+                        args,
+                        StartOpts {
+                            depth: 0,
+                            parent_attended: false,
+                            dry_run: false,
+                            cancel: None,
+                            root: None,
+                        },
+                    )
                     .await?
             }
         };
@@ -755,6 +778,222 @@ fn snapshot_def_from_journal(path: &Path) -> Option<RoutineDef> {
 }
 
 // ============================================================================
+// Engine-invoked child runs — the registry bridge (O3)
+// ============================================================================
+
+/// The engine's post-construction child-run invoker (O3), installed on the
+/// [`Engine`] at the end of [`build_routines_state`] via
+/// [`Engine::install_child_invoker`]. A `Control::Call` step reached inside a
+/// real (non-dry) run flows through here instead of the leaf crate's internal
+/// `EngineChildInvoker`, so the CHILD run is registered in the SAME in-memory
+/// `runs` registry the session runs use — which is what makes `cancel_run`,
+/// `is_routine_running`, and the graceful-quit count see engine-invoked
+/// children, and what stops a fire-and-forget child from wedging the registry
+/// at `Running` forever (spec §8, round-2 P1-3).
+///
+/// It holds the shared leaf `Arc`s directly (the store, the runs map, the run
+/// sequence counter, the event sink) rather than an `Arc<RoutinesState>`: the
+/// engine is built BEFORE `RoutinesState` exists (construction cycle), so there
+/// is no state object to point at when this is assembled. The back-reference to
+/// the engine is a [`Weak`] to avoid an `engine → invoker → engine` strong
+/// cycle (the engine's `OnceLock` owns this invoker for the process lifetime).
+struct SessionChildInvoker {
+    engine: Weak<Engine>,
+    store: Arc<DefinitionStore>,
+    runs: Arc<Mutex<HashMap<String, RunEntry>>>,
+    run_seq: Arc<AtomicU64>,
+    sink: Arc<dyn RoutinesEventSink>,
+    /// Catalog action names that transmit — the child start gate's
+    /// [`closure_transmits`] predicate (same set the session start gate uses).
+    transmit_names: HashSet<String>,
+}
+
+#[async_trait]
+impl RoutineInvoker for SessionChildInvoker {
+    async fn start(
+        &self,
+        routine: &str,
+        args: serde_json::Value,
+        call: CallCtx,
+        parent_cancel: &CancellationToken,
+    ) -> Result<ChildHandle, StepError> {
+        let engine = self.engine.upgrade().ok_or_else(|| StepError::Action {
+            action: format!("call:{routine}"),
+            cause: "the routines engine has been dropped".into(),
+        })?;
+
+        // ONE read of the child definition: the def the gate runs against IS
+        // the def handed to `start_run_ext` (the snapshot the run starts).
+        let def = self.store.get(routine).ok_or_else(|| StepError::Action {
+            action: format!("call:{routine}"),
+            cause: format!(
+                "routine '{routine}' not found (invoked by {} step {})",
+                call.provenance.parent_run_id, call.provenance.parent_step.0
+            ),
+        })?;
+
+        // ── CHILD START GATE (spec §4) ───────────────────────────────────
+        // The same consent gate `start_routine_def` runs, on THIS def: a
+        // transmitting `automatic` child with no recorded acknowledgment is
+        // refused, and the error propagates verbatim up the parent's Call step.
+        //
+        // C3 extends: recompute the ROOT's transmit/write digests here
+        // (`call.root`, currently always `None` in B2) against the live store
+        // and refuse a callee that changed after acknowledgment
+        // (`callee changed after acknowledgment`). Those digest/ack-binding
+        // checks land in C3; this seam is where they go.
+        {
+            let lookup = |name: &str| self.store.get(name);
+            let transmits = |name: &str| self.transmit_names.contains(name);
+            if closure_transmits(&def, &lookup, &transmits)
+                && def.transmit_mode == TransmitMode::Automatic
+                && !ack_is_recorded(&def)
+            {
+                return Err(StepError::Action {
+                    action: format!("call:{routine}"),
+                    cause: RoutineStartError::UnacknowledgedAutomatic {
+                        routine: def.routine.clone(),
+                    }
+                    .to_string(),
+                });
+            }
+        }
+
+        // The CHILD's own cancellation token, derived from the caller's parent
+        // token (the parent run's token for a sync call, a fresh detached token
+        // for fire-and-forget). Registered below so `cancel_run(child_id)` works
+        // for BOTH — cancellability must not depend on the `ChildHandle`, which
+        // fire-and-forget drops.
+        let child_token = parent_cancel.child_token();
+
+        let handle = engine
+            .start_run_ext(
+                &def,
+                args,
+                StartOpts {
+                    depth: call.child_depth,
+                    parent_attended: call.parent_attended,
+                    dry_run: false,
+                    cancel: Some(child_token.clone()),
+                    // C3 fills the root consent context; B2 has none.
+                    root: None,
+                },
+            )
+            .await
+            .map_err(|e| StepError::Action {
+                action: format!("call:{routine}"),
+                cause: e.to_string(),
+            })?;
+        let RunHandle {
+            run_id,
+            cancel: _run_cancel, // == `child_token` we passed as `StartOpts.cancel`
+            done,
+        } = handle;
+
+        // Register the child in the SAME `runs` registry `start_routine_def`
+        // uses, keyed by its run id, with the CHILD's own token — BEFORE
+        // returning, so a cancel racing the return still finds it.
+        {
+            let mut runs = lock(&self.runs);
+            let seq = self.run_seq.fetch_add(1, Ordering::Relaxed);
+            runs.insert(
+                run_id.clone(),
+                RunEntry {
+                    routine: def.routine.clone(),
+                    dry_run: false,
+                    cancel: child_token.clone(),
+                    state: RunState::Running,
+                    seq,
+                },
+            );
+            prune_terminal_runs(&mut runs);
+        }
+
+        // Children are sink-visible like session runs.
+        self.sink.emit(&RoutinesEvent::RunStarted {
+            run_id: run_id.clone(),
+            routine: def.routine.clone(),
+            dry_run: false,
+        });
+
+        // The engine's `RunHandle.done` oneshot has exactly ONE consumer: this
+        // relay watcher. It flips the registry entry terminal, emits
+        // `RunFinished`, AND relays the outcome into a fresh oneshot that
+        // becomes the `ChildHandle`'s private receiver. A sync caller awaits the
+        // relay (through `await_outcome`); fire-and-forget drops the relay
+        // receiver harmlessly; the registry entry goes terminal in EVERY case (a
+        // wedged `Running` entry would block `is_routine_running` + the
+        // scheduler forever — round-2 P1-3).
+        let (relay_tx, relay_rx) = oneshot::channel::<RunOutcome>();
+        let runs = self.runs.clone();
+        let sink = self.sink.clone();
+        let watch_id = run_id.clone();
+        tokio::spawn(async move {
+            let outcome = match done.await {
+                Ok(o) => o,
+                // The child task was dropped without an outcome (should not
+                // happen — the engine sends on every path — but be honest rather
+                // than wedge the registry entry at `Running` forever).
+                Err(_) => RunOutcome {
+                    state: RunState::Failed,
+                    reason: None,
+                    end_step: None,
+                },
+            };
+            {
+                let mut guard = lock(&runs);
+                if let Some(entry) = guard.get_mut(&watch_id) {
+                    entry.state = outcome.state;
+                }
+                prune_terminal_runs(&mut guard);
+            }
+            sink.emit(&RoutinesEvent::RunFinished {
+                run_id: watch_id,
+                state: outcome.state,
+                reason: None,
+            });
+            // Relay to the (sync) caller; a fire-and-forget parent dropped the
+            // receiver, so this send fails harmlessly.
+            let _ = relay_tx.send(outcome);
+        });
+
+        Ok(ChildHandle::from_parts(run_id, child_token, relay_rx))
+    }
+
+    async fn await_outcome(
+        &self,
+        handle: ChildHandle,
+    ) -> Result<serde_json::Value, StepError> {
+        let (run_id, _cancel, done) = handle.into_parts();
+        // We KNOW the child's routine — it is registered in the shared `runs`
+        // map by run id — so error strings carry `call:<routine>` rather than
+        // the bare `call` the engine's ChildHandle-only invokers fall back to
+        // (a `ChildHandle` carries only the run id). Captured BEFORE the await
+        // so an eviction after the child goes terminal cannot lose the name.
+        let action = {
+            let runs = lock(&self.runs);
+            match runs.get(&run_id) {
+                Some(e) => format!("call:{}", e.routine),
+                None => "call".to_string(),
+            }
+        };
+        let outcome = done.await.map_err(|_| StepError::Action {
+            action: action.clone(),
+            cause: format!("child run {run_id} task dropped without an outcome"),
+        })?;
+        match outcome.state {
+            RunState::Completed => {
+                Ok(serde_json::json!({"completed": true, "run_id": run_id}))
+            }
+            other => Err(StepError::Action {
+                action,
+                cause: format!("child run {run_id} ended {other:?}"),
+            }),
+        }
+    }
+}
+
+// ============================================================================
 // Production construction (lib.rs .setup())
 // ============================================================================
 
@@ -827,20 +1066,38 @@ pub fn build_routines_state(
         consent: Some(consent.clone() as Arc<dyn ConsentPort>),
     }));
 
-    RoutinesState::new(
-        engine,
+    let state = RoutinesState::new(
+        engine.clone(),
         config_dir,
-        store,
+        store.clone(),
         presets,
         station_sets,
         arbiter,
         registry,
         journal_dir,
         identity_store_path,
-        sink,
+        sink.clone(),
         consent,
+        transmit_names.clone(),
+    );
+
+    // Install the child-run invoker (O3) NOW — the engine + the shared `runs`
+    // Arcs both exist. This is the resolution of the construction cycle: the
+    // engine is built before `RoutinesState`, so the invoker cannot hold the
+    // state; it holds the state's shared leaf `Arc`s (store, runs map, seq,
+    // sink) directly, and a `Weak` engine back-reference. Every engine-invoked
+    // child now registers in the SAME `runs` map the session runs use. Dry runs
+    // never consult this (they recurse into `DryRunChildInvoker`).
+    engine.install_child_invoker(Arc::new(SessionChildInvoker {
+        engine: Arc::downgrade(&engine),
+        store,
+        runs: state.runs.clone(),
+        run_seq: state.run_seq.clone(),
+        sink,
         transmit_names,
-    )
+    }));
+
+    state
 }
 
 /// The `lib.rs` `.setup()` entry point: resolve the config dir, build the real
@@ -1702,6 +1959,145 @@ mod tests {
         assert!(
             action.calls().is_empty(),
             "a resumed attended-TX run must park, never auto-transmit"
+        );
+    }
+
+    // ========================================================================
+    // Task B2 — engine-invoked children register in the monolith runs registry
+    // (SessionChildInvoker, O3): cancel_run reaches them, and no child wedges
+    // the registry at Running.
+    // ========================================================================
+
+    /// The child run id carried by the parent journal's `call_child` edge.
+    fn call_child_id_from(entries: &[JournalEntry]) -> Option<String> {
+        entries.iter().find_map(|e| match &e.event {
+            RunEvent::CallChild { child_run_id, .. } => Some(child_run_id.clone()),
+            _ => None,
+        })
+    }
+
+    /// A parent routine whose single step is a `Control::Call` to `child`.
+    fn parent_calling(name: &str, child: &str, sync: bool) -> RoutineDef {
+        RoutineDef {
+            routine: name.into(),
+            schema_version: SUPPORTED_SCHEMA_VERSION,
+            transmit_mode: TransmitMode::Attended,
+            transmit_ack: None,
+            on_interrupted: OnInterrupted::Stay,
+            inputs: vec![],
+            triggers: vec![Trigger::Manual],
+            tracks: vec![Track {
+                name: "t".into(),
+                steps: vec![Step::Control(ControlStep {
+                    id: StepId("c1".into()),
+                    control: Control::Call {
+                        routine: child.into(),
+                        args: json!({}),
+                        sync,
+                    },
+                })],
+            }],
+        }
+    }
+
+    /// Poll `state.journal_entries(parent_id)` until its `call_child` edge
+    /// appears; return the child run id (panics after 5 s).
+    async fn wait_child_id(state: &Arc<RoutinesState>, parent_id: &str) -> String {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(entries) = state.journal_entries(parent_id) {
+                if let Some(id) = call_child_id_from(&entries) {
+                    return id;
+                }
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the child was never started (no call_child edge)"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn session_child_invoker_registers_sync_child_and_cancel_run_cancels_it() {
+        let dir = tempfile::tempdir().unwrap();
+        // The child's action hangs, so the (sync) child stays live until
+        // cancelled through the registry.
+        let (state, _sink) = test_state(
+            dir.path().to_path_buf(),
+            FakeAction::new("child.hang").hang(),
+        );
+        state.store.save(&def_calling("kid", "child.hang")).unwrap();
+        state.store.save(&parent_calling("par", "kid", true)).unwrap();
+
+        let parent_id = state.start_routine("par", json!({})).await.unwrap();
+        let child_id = wait_child_id(&state, &parent_id).await;
+
+        // The engine-invoked child landed in the SAME registry the session runs
+        // use, so cancel_run finds it — this is FALSE if the child never
+        // registered (the internal EngineChildInvoker has no access to the
+        // monolith registry).
+        assert!(
+            state.cancel_run(&child_id),
+            "the engine-invoked child must be registry-cancellable"
+        );
+
+        // Its own token derives from the parent's, and cancelling it terminates
+        // the child journal Cancelled.
+        wait_until(|| {
+            state
+                .journal_entries(&child_id)
+                .and_then(|e| e.last().cloned())
+                .map(|e| {
+                    matches!(
+                        e.event,
+                        RunEvent::RunFinished {
+                            state: RunState::Cancelled,
+                            ..
+                        }
+                    )
+                })
+                .unwrap_or(false)
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn session_child_invoker_fire_and_forget_child_reaches_terminal_not_wedged() {
+        let dir = tempfile::tempdir().unwrap();
+        // A fast-completing child action; the parent fires-and-forgets it.
+        let (state, _sink) = test_state(
+            dir.path().to_path_buf(),
+            FakeAction::new("child.ok").ok(json!({})),
+        );
+        state.store.save(&def_calling("kid", "child.ok")).unwrap();
+        state.store.save(&parent_calling("par", "kid", false)).unwrap();
+
+        let parent_id = state.start_routine("par", json!({})).await.unwrap();
+        let child_id = wait_child_id(&state, &parent_id).await;
+
+        // The fire-and-forget child (whose ChildHandle the parent drops
+        // unawaited) is still registered in the runs registry.
+        assert!(
+            state.cancel_run(&child_id),
+            "a fire-and-forget child must still be registry-registered"
+        );
+
+        // Its registry entry reaches a TERMINAL state — the relay watcher (the
+        // sole consumer of the engine's done oneshot) flips it, so it does NOT
+        // wedge at Running. run_status reads the in-memory registry first, so a
+        // wedged Running entry would fail this wait; is_routine_running would
+        // likewise stay true forever.
+        wait_until(|| {
+            matches!(
+                state.run_status(&child_id).map(|s| s.state),
+                Some(RunState::Completed) | Some(RunState::Cancelled)
+            )
+        })
+        .await;
+        assert!(
+            !state.is_routine_running("kid"),
+            "the child's registry entry must be terminal, not wedged at Running"
         );
     }
 }

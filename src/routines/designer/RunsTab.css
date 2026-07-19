@@ -171,6 +171,27 @@
   font-weight: 600;
 }
 
+/* Child-run navigation context strip (O3): shown when the selected run is a
+ * child reached via a `call` edge, absent from the routine-scoped rail. */
+.run-context-strip {
+  margin: 10px 16px 0;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--text-dim);
+  font-size: var(--type-control);
+}
+.run-context-strip .link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent-2);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
 /* Gantt */
 .gantt {
   padding: 14px 16px 6px;
@@ -373,7 +394,15 @@
 .sl-icon.fail { color: var(--error); }
 .sl-icon.branch { color: var(--accent); }
 .sl-icon.skipped,
-.sl-icon.park { color: var(--text-dim); }
+.sl-icon.park,
+.sl-icon.end { color: var(--text-dim); }
+.sl-icon.call { color: var(--accent); }
+/* Call row (O3): the child-run navigation edge is clickable. */
+.sl-call {
+  color: var(--accent-2);
+  cursor: pointer;
+}
+.sl-call:hover { text-decoration: underline; }
 .sl-when {
   font-size: var(--type-control);
   color: var(--text-dim);

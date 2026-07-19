@@ -55,6 +55,7 @@ import {
   takeRadio,
   exportRunBundle,
   type JournalEntry,
+  type ParkKind,
   type RunEvent,
   type RunListEntry,
   type RunState,
@@ -283,7 +284,7 @@ export function ganttModel(entries: JournalEntry[], now: number = Math.floor(Dat
 // ============================================================================
 
 export interface StepListRow {
-  kind: 'ok' | 'fail' | 'branch' | 'skipped' | 'park' | 'finished' | 'running' | 'interrupted';
+  kind: 'ok' | 'fail' | 'branch' | 'skipped' | 'park' | 'finished' | 'running' | 'interrupted' | 'call' | 'end';
   /** Sort/render key: the seq of the row's PRIMARY entry (a step's intent, so
    *  a step appears where it STARTED in the narrative). */
   seq: number;
@@ -297,9 +298,19 @@ export interface StepListRow {
   /** Verbatim failure cause (never paraphrased). */
   cause?: string;
   branch?: { on: string; value: unknown; tookThen: boolean; target?: string };
-  /** step_skipped's reason, or run_finished's reason. */
+  /** step_skipped's reason, run_finished's reason, or end_reached's reason. */
   reason?: string;
   state?: RunState;
+  /** `'call'` row (O3): the child run this `call` step started — the durable
+   *  navigation edge — and the routine name parsed from the paired intent's
+   *  `call:<routine>` action. */
+  childRunId?: string;
+  childRoutine?: string;
+  /** `'end'` row (O4): which `end` kind the track hit. */
+  failed?: boolean;
+  /** `'park'` row (O4): the consent class of the park, when the enriched
+   *  journal carries it. Legacy journals leave it undefined. */
+  parkKind?: ParkKind;
 }
 
 export function stepListModel(entries: JournalEntry[]): StepListRow[] {
@@ -349,15 +360,54 @@ export function stepListModel(entries: JournalEntry[]): StepListRow[] {
           reason: ev.reason,
         });
         break;
+      case 'call_child': {
+        // O3: a `call` step started a child run. The paired step_intent (kept
+        // open — its own step_ok/step_err still lists the call's outcome)
+        // carries the `call:<routine>` action; parse the routine off it so the
+        // row reads `call:<routine>`. Sit the row at the intent's seq so it
+        // appears where the call STARTED, just before its outcome row.
+        const intent = open.get(ev.step);
+        const fields = intent ? stepIntentFields(intent.event) : null;
+        const action = fields?.action;
+        const childRoutine =
+          action && action.startsWith('call:') ? action.slice('call:'.length) : action;
+        rows.push({
+          kind: 'call',
+          seq: intent?.seq ?? entry.seq,
+          ts: intent?.ts_unix ?? entry.ts_unix,
+          stepId: ev.step,
+          childRunId: ev.child_run_id,
+          childRoutine,
+        });
+        break;
+      }
+      case 'end_reached':
+        rows.push({
+          kind: 'end',
+          seq: entry.seq,
+          ts: entry.ts_unix,
+          stepId: ev.step,
+          failed: ev.failed,
+          reason: ev.reason,
+        });
+        break;
       case 'state_changed':
         if (ev.state === 'waiting' || ev.state === 'awaiting_consent' || ev.state === 'awaiting_radio') {
-          rows.push({ kind: 'park', seq: entry.seq, ts: entry.ts_unix, stepId: ev.step, state: ev.state });
+          rows.push({
+            kind: 'park',
+            seq: entry.seq,
+            ts: entry.ts_unix,
+            stepId: ev.step,
+            state: ev.state,
+            parkKind: ev.park_kind,
+          });
         }
         break;
       case 'run_finished':
         rows.push({ kind: 'finished', seq: entry.seq, ts: entry.ts_unix, state: ev.state, reason: ev.reason ?? undefined });
         break;
       case 'run_started':
+      case 'opaque':
         break;
     }
   }
@@ -377,6 +427,16 @@ export function stepListModel(entries: JournalEntry[]): StepListRow[] {
     });
   }
 
+  // O4: the run_finished.reason is threaded from the winning End (engine
+  // precedence), so the terminal row would echo the very reason the `end` row
+  // above it already shows. Suppress the duplicate on the finished row when it
+  // is string-equal to any end row's reason (the winning one matches).
+  const finishedRow = rows.find((r) => r.kind === 'finished');
+  if (finishedRow && finishedRow.reason !== undefined) {
+    const endReasonMatch = rows.some((r) => r.kind === 'end' && r.reason === finishedRow.reason);
+    if (endReasonMatch) finishedRow.reason = undefined;
+  }
+
   rows.sort((a, b) => a.seq - b.seq);
   return rows;
 }
@@ -390,6 +450,8 @@ const ROW_ICON: Record<StepListRow['kind'], string> = {
   finished: '■',
   running: '▶',
   interrupted: '⚡',
+  call: '↳',
+  end: '⏹',
 };
 
 /** The rig a currently-parked `awaiting_radio` state pertains to. An enriched
@@ -493,6 +555,12 @@ export function RunsTab({ routine, highlightRunId }: RunsTabProps) {
   const [selectedBar, setSelectedBar] = useState<GanttBar | null>(null);
   const [exportFeedback, setExportFeedback] = useState<string | null>(null);
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
+  // One-deep child-run navigation (O3): a `call` row jumps to the child run
+  // (which — being a run of the called routine, not this pane's `routine` —
+  // is absent from the routine-scoped rail), remembering the parent so a back
+  // link returns. Journals are ONE trust domain (spec §6); this is pure
+  // navigability, not an authorization edge.
+  const [navContext, setNavContext] = useState<{ parentRunId: string; parentShortId: string } | null>(null);
 
   const runsSorted = useMemo(() => [...runs].sort((a, b) => b.startedUnix - a.startedUnix), [runs]);
 
@@ -648,6 +716,9 @@ export function RunsTab({ routine, highlightRunId }: RunsTabProps) {
   }, [model]);
 
   const selectedEntry = runsSorted.find((r) => r.runId === selectedRunId);
+  // A selected run absent from the routine-scoped rail is a child run reached
+  // via a `call` edge (O3) — the context strip names it and offers the way back.
+  const isForeignRun = selectedRunId !== null && selectedEntry === undefined;
   const dryRun = status?.dryRun ?? selectedEntry?.dryRun ?? false;
   const isLive = status ? NON_TERMINAL.has(status.state) : false;
   const canTakeRadio = status ? status.state === 'running' || status.state === 'awaiting_radio' : false;
@@ -692,6 +763,29 @@ export function RunsTab({ routine, highlightRunId }: RunsTabProps) {
     }
   }, []);
 
+  // O3: follow a `call` row to its child run. Capture the current run as the
+  // parent so the context strip's back link can return; one-deep only.
+  const handleCallNavigate = useCallback(
+    (childRunId: string) => {
+      setSelectedRunId((current) => {
+        if (current) setNavContext({ parentRunId: current, parentShortId: shortRunId(current) });
+        return childRunId;
+      });
+      setSelectedBar(null);
+    },
+    [],
+  );
+
+  const handleContextBack = useCallback(() => {
+    setNavContext((ctx) => {
+      if (ctx) {
+        setSelectedRunId(ctx.parentRunId);
+        setSelectedBar(null);
+      }
+      return null;
+    });
+  }, []);
+
   return (
     <div className="runs-body" data-testid="runs-tab">
       <div className="runlist" data-testid="runlist">
@@ -729,6 +823,19 @@ export function RunsTab({ routine, highlightRunId }: RunsTabProps) {
         {!selectedRunId && <div className="runmain-empty">Select a run to inspect.</div>}
         {selectedRunId && (
           <>
+            {isForeignRun && navContext && (
+              <div className="run-context-strip" data-testid="run-context-strip" role="status">
+                Viewing a run of {status?.routine ?? '…'} (called by this routine) —{' '}
+                <button
+                  type="button"
+                  className="link-btn"
+                  data-testid="run-context-back"
+                  onClick={handleContextBack}
+                >
+                  back to run {navContext.parentShortId}
+                </button>
+              </div>
+            )}
             <div className="runhead" data-testid="run-header">
               <span className="runtitle">
                 Run {shortRunId(selectedRunId)} — {status ? formatRunState(status.state) : '…'}
@@ -838,7 +945,7 @@ export function RunsTab({ routine, highlightRunId }: RunsTabProps) {
                     <div className="sl-line">
                       <span className={`sl-icon ${row.kind}`}>{ROW_ICON[row.kind]}</span>
                       <span className="sl-when mono">{formatUtc(row.ts)}</span>
-                      {row.stepId && <span className="sl-step mono">{row.stepId}</span>}
+                      {row.stepId && row.kind !== 'end' && <span className="sl-step mono">{row.stepId}</span>}
                       {row.action && <span className="sl-action mono">{row.action}</span>}
                       {row.kind === 'branch' && row.branch && (
                         <span className="sl-branch">
@@ -848,8 +955,28 @@ export function RunsTab({ routine, highlightRunId }: RunsTabProps) {
                         </span>
                       )}
                       {row.kind === 'skipped' && <span className="sl-reason dim">{row.reason}</span>}
+                      {row.kind === 'call' && (
+                        <span
+                          className="sl-call"
+                          role="button"
+                          tabIndex={0}
+                          data-testid={`slrow-call-link-${row.childRunId}`}
+                          onClick={() => row.childRunId && handleCallNavigate(row.childRunId)}
+                        >
+                          call:{row.childRoutine ?? '?'} → <span className="mono">{shortRunId(row.childRunId ?? '')}</span>
+                        </span>
+                      )}
+                      {row.kind === 'end' && (
+                        <span className="sl-reason">
+                          ended at {row.stepId}: {row.failed ? 'failed' : 'complete'}
+                          {row.reason ? `, ${row.reason}` : ''}
+                        </span>
+                      )}
                       {row.kind === 'park' && (
-                        <span className="sl-reason dim">{formatRunState(row.state ?? 'waiting').toLowerCase()}</span>
+                        <span className="sl-reason dim">
+                          {formatRunState(row.state ?? 'waiting').toLowerCase()}
+                          {row.parkKind === 'write' ? ' (config write)' : ''}
+                        </span>
                       )}
                       {row.kind === 'finished' && (
                         <span className="sl-reason">

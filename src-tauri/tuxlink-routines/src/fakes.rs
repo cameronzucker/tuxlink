@@ -1,14 +1,18 @@
 //! Test doubles, public so later plans' tests and the dry-run layer reuse them.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use async_trait::async_trait;
+use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
 use crate::action::{Action, ActionDescriptor};
-use crate::compose::{Provenance, RoutineInvoker};
+use crate::compose::{CallCtx, ChildHandle, Provenance, RoutineInvoker};
 use crate::consent::ConsentPort;
 use crate::error::{SnapshotError, StepError};
+use crate::executor::RunOutcome;
+use crate::journal::RunState;
 use crate::refs::EntityRef;
 use crate::snapshot::EntityResolver;
 
@@ -199,6 +203,14 @@ enum InvokeOutcome {
 pub struct FakeInvoker {
     outcomes: Mutex<std::collections::HashMap<String, InvokeOutcome>>,
     invocations: Mutex<Vec<RecordedInvocation>>,
+    /// Two-phase relay (O3): `start` stashes the outcome to replay keyed by the
+    /// minted child run id + the routine name; `await_outcome` pops and
+    /// replays it. This is what lets `start` return the run id immediately
+    /// (for the `call_child` edge) while the real result is delivered only
+    /// when a sync caller awaits.
+    pending: Mutex<std::collections::HashMap<String, (String, InvokeOutcome)>>,
+    /// Monotonic counter for deterministic-yet-unique fake child run ids.
+    next: AtomicU64,
 }
 
 impl FakeInvoker {
@@ -237,42 +249,71 @@ impl FakeInvoker {
 
 #[async_trait]
 impl RoutineInvoker for FakeInvoker {
-    async fn invoke(
+    async fn start(
         &self,
         routine: &str,
         args: serde_json::Value,
-        provenance: Provenance,
-    ) -> Result<serde_json::Value, StepError> {
+        call: CallCtx,
+        parent_cancel: &CancellationToken,
+    ) -> Result<ChildHandle, StepError> {
         self.invocations.lock().unwrap().push(RecordedInvocation {
             routine: routine.to_string(),
             args,
-            provenance,
+            provenance: call.provenance.clone(),
         });
-        // Match, clone what's needed, and drop the std::sync::MutexGuard
-        // before any `.await` — held across the Hang branch's pending await
-        // it would make this future !Send (the trait requires Send futures).
-        enum Decision {
-            Ready(Result<serde_json::Value, StepError>),
-            Hang,
-        }
-        let decision = {
+        let n = self.next.fetch_add(1, Ordering::Relaxed);
+        let run_id = format!("fake-run-{routine}-{n:04}");
+        // Snapshot the scripted outcome (cloned) to replay at await time; an
+        // unscripted routine fails verbatim, same as before.
+        let replay = {
             let outcomes = self.outcomes.lock().unwrap();
             match outcomes.get(routine) {
-                Some(InvokeOutcome::Result(v)) => Decision::Ready(Ok(v.clone())),
-                Some(InvokeOutcome::Error(cause)) => Decision::Ready(Err(StepError::Action {
-                    action: format!("call:{routine}"),
-                    cause: cause.clone(),
-                })),
-                Some(InvokeOutcome::Hang) => Decision::Hang,
-                None => Decision::Ready(Err(StepError::Action {
-                    action: format!("call:{routine}"),
-                    cause: format!("routine '{routine}' not scripted in FakeInvoker"),
-                })),
+                Some(InvokeOutcome::Result(v)) => InvokeOutcome::Result(v.clone()),
+                Some(InvokeOutcome::Error(cause)) => InvokeOutcome::Error(cause.clone()),
+                Some(InvokeOutcome::Hang) => InvokeOutcome::Hang,
+                None => InvokeOutcome::Error(format!(
+                    "routine '{routine}' not scripted in FakeInvoker"
+                )),
             }
-        }; // lock dropped here
-        match decision {
-            Decision::Ready(result) => result,
-            Decision::Hang => {
+        };
+        self.pending
+            .lock()
+            .unwrap()
+            .insert(run_id.clone(), (routine.to_string(), replay));
+        // The child token derives from the caller's `parent_cancel` (a fresh
+        // detached token for F&F; the parent run's token for sync), so a sync
+        // caller cancelling the parent cancels this child too.
+        let child = parent_cancel.child_token();
+        let (tx, rx) = oneshot::channel();
+        // The oneshot satisfies the ChildHandle contract; a sync caller reaches
+        // the real replayed value through `await_outcome`, not this state.
+        let _ = tx.send(RunOutcome {
+            state: RunState::Completed,
+            reason: None,
+            end_step: None,
+        });
+        Ok(ChildHandle::from_parts(run_id, child, rx))
+    }
+
+    async fn await_outcome(
+        &self,
+        handle: ChildHandle,
+    ) -> Result<serde_json::Value, StepError> {
+        let (run_id, _cancel, _done) = handle.into_parts();
+        let entry = self.pending.lock().unwrap().remove(&run_id);
+        let (routine, replay) = entry.unwrap_or_else(|| {
+            (
+                "?".to_string(),
+                InvokeOutcome::Error(format!("no pending outcome for {run_id}")),
+            )
+        });
+        match replay {
+            InvokeOutcome::Result(v) => Ok(v),
+            InvokeOutcome::Error(cause) => Err(StepError::Action {
+                action: format!("call:{routine}"),
+                cause,
+            }),
+            InvokeOutcome::Hang => {
                 std::future::pending::<()>().await;
                 unreachable!()
             }

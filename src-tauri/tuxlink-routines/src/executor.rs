@@ -8,7 +8,7 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use crate::action::ActionRegistry;
-use crate::compose::RoutineInvoker;
+use crate::compose::{CallCtx, RoutineInvoker};
 use crate::consent::ConsentPort;
 use crate::error::StepError;
 use crate::journal::{JournalWriter, RunEvent, RunState};
@@ -145,16 +145,29 @@ pub const MAX_STEPS_PER_TRACK: usize = 10_000;
 pub enum TrackEnd {
     /// Ran off the end of the step list.
     Completed,
-    /// Hit an explicit End step (terminates the RUN, spec §6).
+    /// Hit an explicit End step (terminates the RUN, spec §6). `step` is the
+    /// End control step's own id — carried so the outcome (and, through it,
+    /// `run_finished`) can name WHICH end terminated the run (O4).
     Ended {
+        step: StepId,
         failed: bool,
         reason: Option<String>,
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+/// A run's terminal outcome. `reason` + `end_step` carry the winning End's
+/// authored message and step id (O4) so the engine's `RunFinished` no longer
+/// drops an End-terminated run's reason. No longer `Copy` — `reason` is an
+/// owned `String` — so callers that need the value twice must `.clone()` it
+/// (all live call sites read `state` only, a `Copy` field, so this is a
+/// mechanical, no-behavior change for them).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct RunOutcome {
     pub state: RunState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_step: Option<StepId>,
 }
 
 fn journal(ctx: &ExecCtx, event: RunEvent) {
@@ -308,6 +321,7 @@ async fn run_action_step_shared(
                     state: RunState::AwaitingConsent,
                     step: Some(step.id.clone()),
                     rig,
+                    park_kind: None,
                 },
             );
             let parked = tokio::select! {
@@ -321,6 +335,7 @@ async fn run_action_step_shared(
                         state: RunState::Running,
                         step: Some(step.id.clone()),
                         rig: None,
+                        park_kind: None,
                     },
                 ),
                 Err(err) => {
@@ -563,7 +578,19 @@ async fn run_track_steps(
                         idx += 1;
                     }
                     Control::End { failed, reason } => {
+                        // O4: the end is durable BEFORE the track returns, so
+                        // the journal ordering is end_reached -> skip sweep
+                        // (run_track_shared, on return) -> run_finished (engine).
+                        journal(
+                            ctx,
+                            RunEvent::EndReached {
+                                step: c.id.clone(),
+                                failed: *failed,
+                                reason: reason.clone(),
+                            },
+                        );
                         return Ok(TrackEnd::Ended {
+                            step: c.id.clone(),
                             failed: *failed,
                             reason: reason.clone(),
                         });
@@ -588,6 +615,7 @@ async fn run_track_steps(
                                 // (tuxlink-xvd1i).
                                 step: Some(c.id.clone()),
                                 rig: None,
+                                park_kind: None,
                             },
                         );
                         tokio::select! {
@@ -600,6 +628,7 @@ async fn run_track_steps(
                                 state: RunState::Running,
                                 step: Some(c.id.clone()),
                                 rig: None,
+                                park_kind: None,
                             },
                         );
                         idx += 1;
@@ -647,18 +676,66 @@ async fn run_track_steps(
                             parent_run_id: ctx.run_id.clone(),
                             parent_step: c.id.clone(),
                         };
+                        // Two-phase inline start (O3): `start` returns as soon
+                        // as the child run id is known, so the parent journals
+                        // the `call_child` edge in EVERY path (sync AND F&F).
+                        // A start failure is a verbatim step error with NO
+                        // `call_child` entry — the old silent `dispatched:true`
+                        // lie on a failed dispatch is gone.
                         if *sync {
-                            match ctx.invoker.invoke(routine, resolved_args, provenance).await {
-                                Ok(result) => {
+                            let call = CallCtx {
+                                provenance,
+                                child_depth: ctx.depth + 1,
+                                parent_attended: ctx.attended,
+                                // C3 threads the root consent context; B2 has none.
+                                root: None,
+                            };
+                            // Sync: the parent's own cancel token is the child's
+                            // parent, so cancelling the parent cancels the child.
+                            match ctx.invoker.start(routine, resolved_args, call, &ctx.cancel).await {
+                                Ok(handle) => {
                                     journal(
                                         ctx,
-                                        RunEvent::StepOk {
+                                        RunEvent::CallChild {
                                             step: c.id.clone(),
-                                            output: result.clone(),
+                                            child_run_id: handle.run_id.clone(),
                                         },
                                     );
-                                    let mut guard = vars.lock().await;
-                                    guard.set_step_output(&c.id, result);
+                                    // Clone the child's cancel BEFORE the select:
+                                    // `await_outcome` consumes the handle, so the
+                                    // cancel branch can only reach the token
+                                    // through this pre-select clone.
+                                    let child_cancel = handle.cancel.clone();
+                                    let result = tokio::select! {
+                                        r = ctx.invoker.await_outcome(handle) => r,
+                                        _ = ctx.cancel.cancelled() => {
+                                            child_cancel.cancel();
+                                            Err(StepError::Cancelled)
+                                        }
+                                    };
+                                    match result {
+                                        Ok(output) => {
+                                            journal(
+                                                ctx,
+                                                RunEvent::StepOk {
+                                                    step: c.id.clone(),
+                                                    output: output.clone(),
+                                                },
+                                            );
+                                            let mut guard = vars.lock().await;
+                                            guard.set_step_output(&c.id, output);
+                                        }
+                                        Err(err) => {
+                                            journal(
+                                                ctx,
+                                                RunEvent::StepErr {
+                                                    step: c.id.clone(),
+                                                    error: err.clone(),
+                                                },
+                                            );
+                                            return Err(err);
+                                        }
+                                    }
                                 }
                                 Err(err) => {
                                     journal(
@@ -672,23 +749,52 @@ async fn run_track_steps(
                                 }
                             }
                         } else {
-                            let invoker = ctx.invoker.clone();
-                            let routine = routine.clone();
-                            tokio::spawn(async move {
-                                // Child journals its own outcome; the parent does
-                                // not await it (fire-and-forget, spec §7).
-                                let _ = invoker.invoke(&routine, resolved_args, provenance).await;
-                            });
-                            let marker = serde_json::json!({"dispatched": true});
-                            journal(
-                                ctx,
-                                RunEvent::StepOk {
-                                    step: c.id.clone(),
-                                    output: marker.clone(),
-                                },
-                            );
-                            let mut guard = vars.lock().await;
-                            guard.set_step_output(&c.id, marker);
+                            let call = CallCtx {
+                                provenance,
+                                child_depth: ctx.depth + 1,
+                                parent_attended: ctx.attended,
+                                root: None,
+                            };
+                            // F&F children are deliberately detached from the
+                            // parent's cancellation: a fresh token is their
+                            // parent, so a parent cancel does not reach them.
+                            let detached = CancellationToken::new();
+                            match ctx.invoker.start(routine, resolved_args, call, &detached).await {
+                                Ok(handle) => {
+                                    journal(
+                                        ctx,
+                                        RunEvent::CallChild {
+                                            step: c.id.clone(),
+                                            child_run_id: handle.run_id.clone(),
+                                        },
+                                    );
+                                    let marker = serde_json::json!({"dispatched": true});
+                                    journal(
+                                        ctx,
+                                        RunEvent::StepOk {
+                                            step: c.id.clone(),
+                                            output: marker.clone(),
+                                        },
+                                    );
+                                    {
+                                        let mut guard = vars.lock().await;
+                                        guard.set_step_output(&c.id, marker);
+                                    }
+                                    // Drop the handle unawaited: the child journals
+                                    // its own outcome; the parent moves on.
+                                    drop(handle);
+                                }
+                                Err(err) => {
+                                    journal(
+                                        ctx,
+                                        RunEvent::StepErr {
+                                            step: c.id.clone(),
+                                            error: err.clone(),
+                                        },
+                                    );
+                                    return Err(err);
+                                }
+                            }
                         }
                         idx += 1;
                     }
@@ -761,9 +867,18 @@ pub async fn run_tracks(
 
     let mut outcome = RunOutcome {
         state: RunState::Completed,
+        reason: None,
+        end_step: None,
     };
     let mut first_err: Option<StepError> = None;
     let mut intentional_cancel = false;
+    // O4 precedence for `run_finished.reason` on the non-error (Ok) path:
+    // failed-End reason wins over success-End reason; within a class the first
+    // ARRIVING End wins (the `is_none` guards). A propagated StepErr outranks
+    // both — handled structurally by returning `Err(first_err)` below BEFORE
+    // this outcome is ever read, so the engine maps it to the error string.
+    let mut failed_end: Option<(Option<String>, StepId)> = None;
+    let mut success_end: Option<(Option<String>, StepId)> = None;
 
     while let Some(joined) = set.join_next().await {
         // A panicking track must NOT become an in-process zombie run: a
@@ -784,17 +899,31 @@ pub async fn run_tracks(
         };
         match joined {
             Ok(TrackEnd::Completed) => {}
-            Ok(TrackEnd::Ended { failed: false, .. }) => {
+            Ok(TrackEnd::Ended {
+                failed: false,
+                step,
+                reason,
+            }) => {
                 ctx.cancel.cancel();
                 intentional_cancel = true;
                 if outcome.state != RunState::Failed {
                     outcome.state = RunState::Completed;
                 }
+                if success_end.is_none() {
+                    success_end = Some((reason, step));
+                }
             }
-            Ok(TrackEnd::Ended { failed: true, .. }) => {
+            Ok(TrackEnd::Ended {
+                failed: true,
+                step,
+                reason,
+            }) => {
                 ctx.cancel.cancel();
                 intentional_cancel = true;
                 outcome.state = RunState::Failed;
+                if failed_end.is_none() {
+                    failed_end = Some((reason, step));
+                }
             }
             // Collateral of a cancel THIS function already triggered — never
             // conclusive, regardless of arrival order relative to the
@@ -810,6 +939,15 @@ pub async fn run_tracks(
 
     if let Some(e) = first_err {
         return Err(e);
+    }
+    // Non-error path: fold in the winning End's reason + step (failed beats
+    // success; first arrival within a class already resolved above).
+    if let Some((reason, step)) = failed_end {
+        outcome.reason = reason;
+        outcome.end_step = Some(step);
+    } else if let Some((reason, step)) = success_end {
+        outcome.reason = reason;
+        outcome.end_step = Some(step);
     }
     Ok(outcome)
 }
@@ -960,7 +1098,12 @@ mod tests {
         };
         let mut vars = RunVars::default();
         match run_track(&track, &mut vars, &ctx).await.unwrap() {
-            TrackEnd::Ended { failed, reason } => {
+            TrackEnd::Ended {
+                step,
+                failed,
+                reason,
+            } => {
+                assert_eq!(step, StepId("e".into()));
                 assert!(failed);
                 assert_eq!(reason.as_deref(), Some("no contact after all bands"));
             }
@@ -1209,6 +1352,7 @@ mod tests {
                 state: RunState::Waiting,
                 step: Some(StepId("d1".into())),
                 rig: None,
+                park_kind: None,
             },
             "the Waiting entry must name the delay control step"
         );
@@ -1218,6 +1362,7 @@ mod tests {
                 state: RunState::Running,
                 step: Some(StepId("d1".into())),
                 rig: None,
+                park_kind: None,
             },
             "the Running resume must name the same step, closing the window exactly"
         );
@@ -1554,9 +1699,9 @@ mod tests {
         let states: Vec<(RunState, Option<StepId>, Option<String>)> = entries
             .iter()
             .filter_map(|e| match &e.event {
-                RunEvent::StateChanged { state, step, rig } => {
-                    Some((*state, step.clone(), rig.clone()))
-                }
+                RunEvent::StateChanged {
+                    state, step, rig, ..
+                } => Some((*state, step.clone(), rig.clone())),
                 _ => None,
             })
             .collect();
@@ -1621,6 +1766,7 @@ mod tests {
                     state: RunState::AwaitingConsent,
                     step,
                     rig,
+                    ..
                 } => Some((step.clone(), rig.clone())),
                 _ => None,
             })
@@ -1736,5 +1882,163 @@ mod tests {
             }
             other => panic!("expected StepError::Action for non-bool branch, got {other:?}"),
         }
+    }
+
+    // --- Task B3: End threading + EndReached + precedence (O4) --------------
+
+    /// (a, executor half) A failed End with a reason journals `end_reached`
+    /// carrying the End step's id + reason, and `run_tracks` surfaces that
+    /// reason + end_step on the outcome (the value the engine threads into
+    /// `run_finished` — the engine half is asserted in engine.rs).
+    #[tokio::test]
+    async fn b3_end_reached_journaled_and_outcome_carries_reason_and_step() {
+        let dir = tempfile::tempdir().unwrap();
+        let (ctx, jpath) = ctx(ActionRegistry::default(), dir.path());
+        let track = Track {
+            name: "t1".into(),
+            steps: vec![Step::Control(ControlStep {
+                id: StepId("e".into()),
+                control: Control::End {
+                    failed: true,
+                    reason: Some("why".into()),
+                },
+            })],
+        };
+        let vars = Arc::new(tokio::sync::Mutex::new(RunVars::default()));
+        let outcome = run_tracks(std::slice::from_ref(&track), vars, &ctx)
+            .await
+            .unwrap();
+        assert_eq!(outcome.state, RunState::Failed);
+        assert_eq!(outcome.reason.as_deref(), Some("why"));
+        assert_eq!(outcome.end_step, Some(StepId("e".into())));
+
+        let entries = read_journal(&jpath).unwrap();
+        let end_reached = entries
+            .iter()
+            .find_map(|e| match &e.event {
+                RunEvent::EndReached {
+                    step,
+                    failed,
+                    reason,
+                } => Some((step.clone(), *failed, reason.clone())),
+                _ => None,
+            })
+            .expect("an end_reached entry must exist");
+        assert_eq!(
+            end_reached,
+            (StepId("e".into()), true, Some("why".into())),
+            "end_reached carries the End step id, failed flag, and verbatim reason"
+        );
+    }
+
+    /// (c) A failed-End reason wins over a simultaneous success-End reason no
+    /// matter which track's result `join_next` hands back first — exercised in
+    /// both slice orders (spawn order does not fix completion order).
+    #[tokio::test]
+    async fn b3_failed_end_reason_wins_over_success_end_both_orders() {
+        let ok_track = Track {
+            name: "ok".into(),
+            steps: vec![Step::Control(ControlStep {
+                id: StepId("ea".into()),
+                control: Control::End {
+                    failed: false,
+                    reason: Some("a".into()),
+                },
+            })],
+        };
+        let fail_track = Track {
+            name: "fail".into(),
+            steps: vec![Step::Control(ControlStep {
+                id: StepId("eb".into()),
+                control: Control::End {
+                    failed: true,
+                    reason: Some("b".into()),
+                },
+            })],
+        };
+
+        for (label, tracks) in [
+            ("order A (ok, fail)", vec![ok_track.clone(), fail_track.clone()]),
+            ("order B (fail, ok)", vec![fail_track.clone(), ok_track.clone()]),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let (ctx, _) = ctx(ActionRegistry::default(), dir.path());
+            let vars = Arc::new(tokio::sync::Mutex::new(RunVars::default()));
+            let outcome = run_tracks(&tracks, vars, &ctx).await.unwrap();
+            assert_eq!(outcome.state, RunState::Failed, "{label}: state");
+            assert_eq!(
+                outcome.reason.as_deref(),
+                Some("b"),
+                "{label}: the failed-End reason wins"
+            );
+            assert_eq!(
+                outcome.end_step,
+                Some(StepId("eb".into())),
+                "{label}: end_step names the failed End"
+            );
+        }
+    }
+
+    /// (e) Cross-track: when one track's End cancels its siblings, the ended
+    /// track's own unreached steps keep the "end step terminated" skip reason
+    /// while the cancelled sibling's unreached steps keep the EXISTING
+    /// cancellation skip reason verbatim — B3 rewrites neither.
+    #[tokio::test(start_paused = true)]
+    async fn b3_sibling_skips_retain_cancellation_reason_verbatim() {
+        let mut reg = ActionRegistry::default();
+        reg.register(Arc::new(FakeAction::new("local.log").ok(json!({}))));
+        let dir = tempfile::tempdir().unwrap();
+        let (ctx, jpath) = ctx(reg, dir.path());
+        let tracks = vec![
+            // Ends immediately (a1 is a fast action, then End) -> cancels sib.
+            Track {
+                name: "ender".into(),
+                steps: vec![
+                    action("a1", "local.log", json!({})),
+                    Step::Control(ControlStep {
+                        id: StepId("e1".into()),
+                        control: Control::End {
+                            failed: false,
+                            reason: None,
+                        },
+                    }),
+                    action("a2", "local.log", json!({})),
+                ],
+            },
+            // Parks on the delay, is cancelled before reaching `sb`.
+            Track {
+                name: "sib".into(),
+                steps: vec![
+                    Step::Control(ControlStep {
+                        id: StepId("d1".into()),
+                        control: Control::Delay {
+                            delay: "+1h".into(),
+                        },
+                    }),
+                    action("sb", "local.log", json!({})),
+                ],
+            },
+        ];
+        let vars = Arc::new(tokio::sync::Mutex::new(RunVars::default()));
+        let outcome = run_tracks(&tracks, vars, &ctx).await.unwrap();
+        assert_eq!(outcome.state, RunState::Completed);
+
+        let entries = read_journal(&jpath).unwrap();
+        let skip_reason = |id: &str| -> Option<String> {
+            entries.iter().find_map(|e| match &e.event {
+                RunEvent::StepSkipped { step, reason } if step.0 == id => Some(reason.clone()),
+                _ => None,
+            })
+        };
+        assert_eq!(
+            skip_reason("a2").as_deref(),
+            Some("not run: end step 'e1' terminated the run"),
+            "the ended track's own unreached step keeps the end-terminated reason"
+        );
+        assert_eq!(
+            skip_reason("sb").as_deref(),
+            Some("not run: the run was cancelled"),
+            "the cancelled sibling's unreached step keeps the verbatim cancellation reason"
+        );
     }
 }
