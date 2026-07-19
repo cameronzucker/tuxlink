@@ -166,6 +166,17 @@ impl SearchService {
         let mut locked = self.index.lock().unwrap();
         *locked = Index::open(db).map_err(CommandError::from)?;
 
+        // tuxlink-mbh5z P0: the file deletion above wiped docs_fts along with
+        // the message index, and the only other docs populate site is
+        // build_service at app startup. Without this, every "Rebuild Index"
+        // leaves docs_search returning ok-EMPTY until the next full restart —
+        // and an agent reads `ok:true []` as "no documentation exists" and
+        // silently downgrades operator requirements (2026-07-19 transcript
+        // evidence: two models, 30+ queries, all []).
+        locked
+            .populate_docs(crate::search::docs_bundle::BUNDLED_TOPICS)
+            .map_err(CommandError::from)?;
+
         // Re-walk every folder. With a default FULL, Inbox/Archive resolve under
         // `mailbox/<FULL>/` (Sent/Outbox stay shared) so the per-FULL inbox is
         // indexed.
@@ -519,6 +530,40 @@ mod rebuild_tests {
             .unwrap();
         assert_eq!(stats.messages_indexed, 3);
         assert_eq!(svc.index.lock().unwrap().count().unwrap(), 3);
+    }
+
+    /// tuxlink-mbh5z P0 regression: `rebuild_index` deletes search.db WHOLE —
+    /// docs_fts included — and re-walks only the mailbox, so after any
+    /// "Rebuild Index" every docs query returned ok-empty until the next app
+    /// restart. Both live models read `ok:true []` as "no docs exist" and
+    /// silently downgraded operator requirements (transcript evidence,
+    /// 2026-07-19). Rebuild must leave docs searchable.
+    #[test]
+    fn rebuild_repopulates_docs_fts() {
+        let dir = tempdir().unwrap();
+        let svc = build_service_for_rebuild(dir.path());
+
+        // Startup populate (mod.rs fingerprint gate) fills docs.
+        {
+            let idx = svc.index.lock().unwrap();
+            assert!(!idx.docs_is_empty().unwrap(), "startup populates docs");
+            assert!(
+                !idx.search_docs("routines").unwrap().is_empty(),
+                "the routines chapter is findable before rebuild"
+            );
+        }
+
+        svc.rebuild_index(dir.path().to_path_buf(), None).unwrap();
+
+        let idx = svc.index.lock().unwrap();
+        assert!(
+            !idx.docs_is_empty().unwrap(),
+            "rebuild_index must repopulate docs_fts, not leave docs_search ok-empty until restart"
+        );
+        assert!(
+            !idx.search_docs("routines").unwrap().is_empty(),
+            "the routines chapter is findable after rebuild"
+        );
     }
 }
 
