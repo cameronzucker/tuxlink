@@ -7,14 +7,19 @@
 [observability wire-walk](2026-07-18-routines-observability-wirewalk.md) O3/O4.
 **Governing decisions:** [ADR 0024](../../adr/0024-dual-actionability-one-capability-tree.md)
 (dual actionability, one authority model), [routines design spec](2026-07-13-routines-design.md)
-§4 (consent model), §10 (one validator, no privileged path), ADR 0018 (built whole, no deferrals).
+§4 (consent model), §10 (one validator, no privileged path),
+[ADR 0022](../../adr/0022-ban-autonomous-agent-issue-splitting-and-deferrals.md)
+(completeness invariant; renumbered from a colliding 0018).
 
 ## 0. Design rules applied throughout
 
-1. **Mirror the MCP DTO exactly.** Every new read surface reuses the agent
-   tool's curation, redaction, and output shape verbatim (ADR 0024 P4: one
-   implementation, two registrations). Field names, casing, and null semantics
-   are the MCP tool's. Where the routines seam cannot literally call the MCP
+1. **Mirror the MCP DTO exactly, modulo recorded divergences.** Every new
+   read surface reuses the agent tool's curation, redaction, and output
+   shape verbatim (ADR 0024 P4: one implementation, two registrations),
+   except where a divergence is explicitly recorded in this spec as ADR
+   0024 P4 shape divergence (rank 2's `limit` + `callsigns`, rank 4's
+   `{"hits":[...]}` wrapper). Field names, casing, and null semantics are
+   the MCP tool's. Where the routines seam cannot literally call the MCP
    port (layering), it calls the same underlying command the port wraps.
 2. **Flags, never names.** All new consent/capability behavior derives from
    `ActionDescriptor` flags, matching the existing invariant (capability.rs
@@ -96,7 +101,7 @@ New action (not a read source: it takes real params).
   convenience field:
   ```json
   {"gateways":[{...GatewayDto verbatim...}],
-   "fetched_at_ms":<i64|null>, "operator_grid":"FN31"|null,
+   "fetched_at_ms":<u64|null>, "operator_grid":"FN31"|null,
    "callsigns":["W1ABC","K7XYZ",...]}
   ```
   `callsigns` is the distance-sorted, post-filter, post-limit callsign list,
@@ -253,12 +258,20 @@ transmit closure semantics) on a step that never keys the radio. Design:
   from the design spec's §7 snapshot doctrine that predates this arc). The
   save/enable/start digest checks therefore do not cover a callee edited
   while the parent is already running (parked, delayed, retrying). This arc
-  closes the consent-relevant half surgically: the child invoker re-verifies
-  the parent's ack digest against the live callee at child-start and fails
-  the Call step verbatim on mismatch ("callee changed after
-  acknowledgment"). The general callee-pinning gap (non-consent edits also
-  swap mid-run, contra §7 doctrine) is pre-existing shipped behavior,
-  recorded as a bd follow-up rather than smuggled into this arc.
+  closes the consent-relevant half surgically: at every child-start the
+  invoker re-verifies the **run root's** ack digests against the live store
+  and fails the Call step verbatim on mismatch ("callee changed after
+  acknowledgment"). The anchor is the run root, NOT the immediate parent
+  (R3 P1-1): at call depth >= 2 the immediate parent is a library callee
+  with no ack of its own, so "verify the parent's ack" either no-ops (the
+  replay attack one level deeper) or fails every legitimate deep call. The
+  root's digests (BOTH classes, transmit and write) thread through
+  `ExecCtx` / the invoker chain from the start gate. An attended root
+  threads no digests and child-start verification is a no-op, which is
+  correct: attended runs consent per step, not per envelope. The general
+  callee-pinning gap (non-consent edits also swap mid-run, contra §7
+  doctrine) is pre-existing shipped behavior, recorded as a bd follow-up
+  rather than smuggled into this arc.
 - **Validate-and-start are one read (Codex R1 P2).** The current run path
   validates one loaded definition and then reloads by name before
   snapshotting, so a concurrent `routines_save` could swap the definition
@@ -268,7 +281,12 @@ transmit closure semantics) on a step that never keys the radio. Design:
 - **Validator closure** (mirrors the transmit walk, one validator, no
   privileged path):
   - `AUTO_WRITE_UNACKED` (Error): automatic + non-empty write closure +
-    missing/empty `write_ack`. Blocks enable and run, never save.
+    a `write_ack` that is missing, empty, **or digest-mismatched** (R3
+    P2-1: without the third clause the validator and the start gate
+    diverge on a present-but-stale ack, the exact "one validator, no
+    privileged path" violation §10 bans). Blocks enable and run, never
+    save. The existing `AUTO_TX_UNACKED` predicate gains the same third
+    clause when `transmit_ack` gains its digest.
   - `MIXED_MODE_STALL` extends its predicate: an automatic routine calling an
     attended routine whose closure transmits **or writes** gets the same
     "will stall on a click nobody gives" warning.
@@ -305,18 +323,21 @@ transmit closure semantics) on a step that never keys the radio. Design:
     a fire-and-forget start failure (unknown routine, unacked callee) is now
     observable and journals `step_err` instead of today's silent
     `dispatched: true` lie.
-  - **Cancellation propagates (R2 P1-2).** Today a child run's cancel token
-    is created fresh and never linked to the parent: cancelling a parent
-    lets a child (including its transmit steps) run to completion, and
-    child runs are absent from the session registry so the UI cannot cancel
-    them directly either. O3 makes children operator-visible, so this ships
-    with it: the child's token derives from the parent's
-    (`ctx.cancel.child_token()`, threaded through `start_run_ext`), and the
-    sync await races `ctx.cancel` (on cancel: forward to the child handle,
-    journal `step_err` Cancelled). Fire-and-forget children stay detached
-    from parent cancellation DELIBERATELY (dispatch means dispatch); that
-    choice is now written down. Direct UI cancel of a child run id stays
-    out of scope because parent-cancel now propagates.
+  - **Cancellation propagates, and every child is cancellable (R2 P1-2 +
+    R3 P2-5).** Today a child run's cancel token is created fresh and never
+    linked to the parent: cancelling a parent lets a child (including its
+    transmit steps) run to completion, and child runs are absent from the
+    session registry so the UI cannot cancel them directly either. O3 makes
+    children operator-visible, so this ships with it: the child's token
+    derives from the parent's (`ctx.cancel.child_token()`, threaded through
+    `start_run_ext`), and the sync await races `ctx.cancel` (on cancel:
+    forward to the child handle, journal `step_err` Cancelled).
+    Fire-and-forget children stay detached from parent cancellation
+    DELIBERATELY (dispatch means dispatch), but detachment must not mean
+    uncancellable: **all engine-invoked child runs register in the session
+    registry**, so `cancel_run(child_id)` works from the UI for sync and
+    F&F children alike. A transmit-capable F&F child with no cancel
+    affordance anywhere would fail the working-abort correctness bar.
 - **New event:** `RunEvent::CallChild { step: StepId, child_run_id: String }`
   journaled by the parent the moment the child run id exists, in **all three
   paths**: sync-success, sync-failure (today the id is buried in an error
@@ -378,7 +399,7 @@ transmit closure semantics) on a step that never keys the radio. Design:
 
 1. `routinesApi.ts`: extend the TS `RunEvent` union with `call_child` and
    `end_reached` (snake_case fields, no recasing layer, matching #1159's
-   variants).
+   variants), and add `kind` to the `state_changed` awaiting-consent shape.
 2. `RunsTab.tsx`: two new `stepListModel` cases + `StepListRow.kind` union
    members (`'call'`, `'end'`) + `ROW_ICON` entries + two JSX row branches +
    the child-run navigation click handler.
@@ -388,8 +409,50 @@ transmit closure semantics) on a step that never keys the radio. Design:
 4. Designer settings grid: the `write_ack` acknowledgment row, rendered when
    the routine's write closure is non-empty and mode is automatic, mirroring
    the transmit-ack row's UI act (records callsign + timestamp via a
-   dedicated UI-only command).
+   dedicated UI-only command). A routine whose closure both transmits and
+   writes shows BOTH ack rows and needs both acks (two findings, two rows,
+   stated explicitly per R3 P3-4). The mode field stays named
+   `transmit_mode` on the wire (definition-format stability), but the
+   settings-grid label for the toggle reads mode-generic ("Unattended
+   (automatic)") when the closure writes, so a write-only routine's
+   operator is not flipping a transmit-labeled switch to authorize writes.
+   The `WRITE_VALUE_RUNTIME` warning renders beside the ack row.
 5. `ActionInfo` TS type + Rust `ActionInfo` DTO gain `writes_config`.
+6. **The consent-park surface itself (R3 P2-2** — the dialog IS the
+   write-consent surface, so it ships in this arc, not as a follow-up):
+   `ConsentGate.tsx` copy branches on the park `kind` ("Confirm transmit"
+   stays for transmit parks; write parks render "Confirm config write" with
+   write-specific body copy), `routinesEvents.ts` carries `kind` on the
+   awaiting-consent app event, AND `kind` lands on the journaled
+   `state_changed {state: awaiting_consent}` event so ConsentGate's
+   launch-recovery path (which rebuilds parked dialogs from the JOURNAL,
+   not the live event) renders write copy for a write park recovered after
+   an app restart.
+
+## 8b. Definition format, migration, and propagation
+
+- **`schema_version` stays 1 (R3 P2-6).** `RoutineDef::parse` rejects on
+  strict version inequality with no migration path, so a naive bump would
+  orphan every saved routine. `write_ack` and both `closure_digest` fields
+  are `#[serde(default)]` optional fields on the v1 shape. Old builds load
+  new-format defs fine (no `deny_unknown_fields`); an old build RE-SAVING
+  such a def silently drops `write_ack` and both digests because its struct
+  lacks them (R3 P3-5) — this fails safe (the new build then requires
+  re-acknowledgment) and is recorded here as the accepted consequence.
+- **Merge ordering (R3 P3-3):** the tolerant journal reader lands as the
+  arc's FIRST merged PR, and the operator's converge build is rebuilt
+  before any branch-build probe writes new-variant events into the shared
+  journal dir; a pre-arc converged binary reading `call_child` /
+  `end_reached` would otherwise hide those runs and stamp them interrupted
+  (recoverable History mis-classification only).
+- **Propagation contract (R3 P2-4).** This arc amends the canonical consent
+  model, so the canonical docs move in the same arc: the 2026-07-13
+  routines design spec §4 gains the write-consent class + the digest
+  binding on both acks (and §14's definition format gains `write_ack` +
+  `closure_digest`); §7's snapshot doctrine gains a divergence note (Call
+  targets resolve live in shipped code; bd follow-up tracks pinning). ADR
+  0024 needs no new exception entries, and no CLAUDE.md rule changes, so
+  no AGENTS.md parity action is required.
 
 ## 9. Testing strategy
 
