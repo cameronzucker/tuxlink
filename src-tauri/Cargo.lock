@@ -6566,6 +6566,7 @@ dependencies = [
  "tuxlink-routines",
  "tuxlink-security",
  "tuxlink-stt",
+ "tuxlink-vara-ini",
  "urlencoding",
  "uuid",
  "walkdir",

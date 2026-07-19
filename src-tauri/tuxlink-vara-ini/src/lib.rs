@@ -200,7 +200,12 @@ impl VaraIni {
 
 /// Keys whose values must never be logged: the paid VARA registration/license
 /// key and the stored encryption password. (Callsigns are public and not masked.)
-fn is_sensitive_key(key: &str) -> bool {
+///
+/// Public so the app-crate glue can apply the SAME predicate to inbound edit
+/// requests (an agent may legitimately SET the registration code through the
+/// stop-edit-start path; the value must be redacted in the glue's logs/Debug
+/// exactly as it is in [`VaraIni::redacted`]).
+pub fn is_sensitive_key(key: &str) -> bool {
     let k = key.trim();
     k.starts_with("Registration Code") || k == "Password encryption"
 }
