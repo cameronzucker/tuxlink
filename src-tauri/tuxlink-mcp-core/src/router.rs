@@ -24,7 +24,8 @@ use crate::content;
 use crate::ports::{
     ArdopWriteDto, ComposeDraftDto, EgressPortError, GribRequestDto, PacketWriteDto, PortError,
     PredictRequestDto, QsyCandidateDto, RoutinesRunError, SearchQueryDto, SendFormDto,
-    SessionIntentDto, StationFilterDto, VaraEngineDto, VaraWriteDto, WritePortError,
+    SessionIntentDto, StationFilterDto, VaraEngineDto, VaraIniApplyDto, VaraWriteDto,
+    WritePortError,
 };
 use crate::{server_info_view, McpState};
 
@@ -693,6 +694,24 @@ impl TuxlinkMcp {
     }
 
     #[tool(
+        name = "vara_ini_read",
+        description = "Read VARA's own VARA.ini (the file VARA itself persists ALL of its config to: [Soundcard] Input/Output Device Name + ALC Drive Level, [PTT] Rig/PTTPort/CATPort/Baud, [Setup] TCP Command Port, [Position], ...). Returns the raw INI text REDACTED: the paid Registration Code and Password encryption values are masked and cannot be read through this tool. Args: prefix (WINE prefix path; absent = the engine default ~/.local/share/wine-vara/prefix), instance (\"primary\" = drive_c/'VARA HF' or drive_c/VARA, \"vara2\" = drive_c/VARA2; absent = primary). Read-only local config — does not launch VARA, does not transmit, does not taint. Use vara_ini_apply to change values."
+    )]
+    pub async fn vara_ini_read(
+        &self,
+        params: Parameters<VaraIniReadParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(VaraIniReadParams { prefix, instance }) = params;
+        let content = self
+            .state
+            .provision
+            .vara_ini_read(prefix, instance)
+            .await
+            .map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(content)?]))
+    }
+
+    #[tool(
         name = "vara_install_start",
         description = "Install VARA HF under WINE from a user-supplied installer .exe path (x86_64 Linux only). This runs a PRIVILEGED install: pkexec prompts the OPERATOR for their OS password at the machine — you cannot supply it. NON-TRANSMIT: it provisions software (apt/winetricks/wine) and never keys a radio, so it does NOT require armed send authority. The operator must FIRST download the proprietary VARA .exe themselves (rosmodem / winlink.org) — Tuxlink cannot bundle it. Read tuxlink://playbook/vara-wine-setup FIRST, then call vara_engine_available + vara_install_status to check state before invoking this. Runs for several minutes and returns the final install summary."
     )]
@@ -933,6 +952,24 @@ impl TuxlinkMcp {
             .await
             .map_err(write_err)?;
         Ok(CallToolResult::success(vec![ContentBlock::json("ok")?]))
+    }
+
+    #[tool(
+        name = "vara_ini_apply",
+        description = "Apply [section] key = value assignments to VARA's own VARA.ini via the stop-edit-start lifecycle (tuxlink-iww9r): stops any VARA this app manages (never one it cannot attribute), backs the file up (timestamped), writes atomically, then relaunches VARA and verifies its TCP command port. WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise. NOT a transmission, but it BOUNCES the modem: refused while a VARA session is open, refused if an unmanaged VARA holds the port, and refused (pre-mutation) for a vara2 instance whose command port is unknown. Args: prefix / instance (as in vara_ini_read), edits (list of {section, key, value}; values are single-line), relaunch (default true; false = edit only). Returns {ini_path, backup_path, created, applied, relaunched, cmd_port}. This is how you set the Soundcard Input/Output Device Name, ALC Drive Level, PTT/CAT config, or ports — read vara_ini_read FIRST to see current values."
+    )]
+    pub async fn vara_ini_apply(
+        &self,
+        params: Parameters<VaraIniApplyDto>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(dto) = params;
+        let report = self
+            .state
+            .write
+            .vara_ini_apply(dto)
+            .await
+            .map_err(write_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(report)?]))
     }
 
     #[tool(
@@ -1682,6 +1719,16 @@ pub struct ArdopWriteParams {
     pub drive_level: u8,
 }
 
+/// Input for `vara_ini_read`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct VaraIniReadParams {
+    /// WINE prefix path; absent → the engine default
+    /// (`~/.local/share/wine-vara/prefix`). A leading `~/` is expanded.
+    pub prefix: Option<String>,
+    /// `"primary"` or `"vara2"`; absent → primary.
+    pub instance: Option<String>,
+}
+
 /// `{ "bandwidth_hz": 2300 }` — input for `config_set_vara`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct VaraWriteParams {
@@ -2274,6 +2321,93 @@ mod tests {
     }
 
     // --- TAINT tools flip the guard ---
+
+    #[tokio::test]
+    async fn vara_ini_read_does_not_taint() {
+        let h = handler();
+        h.vara_ini_read(Parameters(VaraIniReadParams {
+            prefix: None,
+            instance: None,
+        }))
+        .await
+        .unwrap();
+        assert!(
+            !h.state.guard.is_tainted(),
+            "vara_ini_read is a redacted local-config read — it must not taint"
+        );
+    }
+
+    /// tuxlink-iww9r: malformed vara_ini_apply payloads are Invalid BEFORE the
+    /// gate — a disarmed session sees the shape error (invalid_request without
+    /// the not-authorized preamble), and the guard state is never consumed.
+    #[tokio::test]
+    async fn vara_ini_apply_invalid_shapes_reject_before_the_gate() {
+        let h = handler();
+        // Unknown instance selector.
+        let err = h
+            .vara_ini_apply(Parameters(VaraIniApplyDto {
+                prefix: None,
+                instance: Some("vara3".into()),
+                edits: vec![],
+                relaunch: Some(true),
+            }))
+            .await
+            .unwrap_err();
+        assert!(
+            err.message.contains("unknown VARA instance"),
+            "unknown instance must be a shape error, got: {}",
+            err.message
+        );
+        // Newline injection through a value must be refused.
+        let err = h
+            .vara_ini_apply(Parameters(VaraIniApplyDto {
+                prefix: None,
+                instance: None,
+                edits: vec![crate::ports::VaraIniEditDto {
+                    section: "Setup".into(),
+                    key: "TCP Command Port".into(),
+                    value: "8300\r\n[Injected]".into(),
+                }],
+                relaunch: None,
+            }))
+            .await
+            .unwrap_err();
+        assert!(
+            err.message.contains("corrupt the INI"),
+            "embedded newlines must be a shape error, got: {}",
+            err.message
+        );
+        // Neither shape error consumed or touched the gate.
+        assert!(
+            !err.message.contains("not authorized"),
+            "shape errors must not read as gate denials"
+        );
+    }
+
+    /// A well-formed vara_ini_apply on a DISARMED session is denied by the
+    /// gate and nothing is written (the mock only reports after `gated`).
+    #[tokio::test]
+    async fn vara_ini_apply_denied_when_disarmed() {
+        let h = handler();
+        let err = h
+            .vara_ini_apply(Parameters(VaraIniApplyDto {
+                prefix: None,
+                instance: None,
+                edits: vec![crate::ports::VaraIniEditDto {
+                    section: "Soundcard".into(),
+                    key: "ALC Drive Level".into(),
+                    value: "-12".into(),
+                }],
+                relaunch: Some(false),
+            }))
+            .await
+            .unwrap_err();
+        assert!(
+            err.message.contains("not authorized"),
+            "a disarmed session must be denied, got: {}",
+            err.message
+        );
+    }
 
     #[tokio::test]
     async fn mailbox_list_taints() {

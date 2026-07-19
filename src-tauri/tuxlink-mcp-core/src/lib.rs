@@ -633,6 +633,24 @@ pub mod test_support {
             validate_vara_bandwidth(dto.bandwidth_hz)?;
             self.gated("set_vara").await
         }
+        async fn vara_ini_apply(
+            &self,
+            dto: crate::ports::VaraIniApplyDto,
+        ) -> Result<crate::ports::VaraIniApplyReportDto, WritePortError> {
+            // VALIDATE BEFORE GATE, like every write.
+            crate::ports::validate_vara_ini_apply(&dto)?;
+            self.gated("vara_ini_apply").await?;
+            Ok(crate::ports::VaraIniApplyReportDto {
+                ini_path: "/mock/prefix/drive_c/VARA HF/VARA.ini".into(),
+                backup_path: Some(
+                    "/mock/prefix/drive_c/VARA HF/VARA.ini.bak-20260101T000000Z".into(),
+                ),
+                created: false,
+                applied: dto.edits.len(),
+                relaunched: dto.relaunch.unwrap_or(true),
+                cmd_port: Some(8300),
+            })
+        }
         async fn set_packet(&self, _dto: PacketWriteDto) -> Result<(), WritePortError> {
             self.gated("set_packet").await
         }
@@ -812,6 +830,13 @@ pub mod test_support {
     impl ProvisionPort for MockProvision {
         async fn vara_engine_available(&self) -> Result<bool, PortError> {
             Ok(true)
+        }
+        async fn vara_ini_read(
+            &self,
+            _prefix: Option<String>,
+            _instance: Option<String>,
+        ) -> Result<String, PortError> {
+            Ok("[Soundcard]\r\nOutput Device Name=Mock Device\r\n[Setup]\r\nRegistration Code=<redacted>\r\nTCP Command Port=8300\r\n".into())
         }
         async fn vara_install_status(&self) -> Result<VaraInstallStatusDto, PortError> {
             Ok(VaraInstallStatusDto {

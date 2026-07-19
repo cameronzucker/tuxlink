@@ -407,6 +407,97 @@ pub struct VaraInstallStatusDto {
     pub checkpoints: Vec<VaraCheckpointDto>,
 }
 
+/// One `[section] key = value` assignment for `vara_ini_apply`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+pub struct VaraIniEditDto {
+    /// INI section name without brackets, e.g. `Soundcard`.
+    pub section: String,
+    /// Key exactly as VARA writes it, e.g. `Output Device Name`.
+    pub key: String,
+    /// New value, verbatim. Single-line only; control characters are rejected.
+    pub value: String,
+}
+
+/// Input for `vara_ini_apply` — the stop-edit-start VARA.ini configuration
+/// bounce (tuxlink-iww9r).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+pub struct VaraIniApplyDto {
+    /// WINE prefix path; absent → the engine default
+    /// (`~/.local/share/wine-vara/prefix`). A leading `~/` is expanded.
+    pub prefix: Option<String>,
+    /// `"primary"` (drive_c/"VARA HF" or drive_c/VARA) or `"vara2"`
+    /// (drive_c/VARA2); absent → primary.
+    pub instance: Option<String>,
+    /// The assignments to write. May be empty only when `relaunch` is true
+    /// (a pure bounce).
+    pub edits: Vec<VaraIniEditDto>,
+    /// Relaunch VARA after the edit and verify its cmd port. Default true.
+    pub relaunch: Option<bool>,
+}
+
+/// Outcome of one `vara_ini_apply` call. Mirrors the app-crate report.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+pub struct VaraIniApplyReportDto {
+    /// Absolute path of the edited `VARA.ini`.
+    pub ini_path: String,
+    /// Path of the timestamped pre-edit backup; `None` when the INI was
+    /// created fresh.
+    pub backup_path: Option<String>,
+    /// True when the INI did not exist and was created.
+    pub created: bool,
+    /// Number of edits applied.
+    pub applied: usize,
+    /// True when VARA was relaunched and its cmd port came up.
+    pub relaunched: bool,
+    /// The cmd port the post-edit config declares (`None` = unknowable for a
+    /// portless second instance).
+    pub cmd_port: Option<u16>,
+}
+
+/// Shared shape validation for `vara_ini_apply`, run BEFORE the egress gate
+/// (an invalid payload is `Invalid` even when disarmed and never consumes the
+/// armed grant). Checks: known instance selector; edits non-empty unless a
+/// relaunch was requested; every edit single-line with a bracket-free section
+/// and an `=`-free key (the INI layer writes verbatim, so an embedded newline
+/// would inject lines and an `=` in a key would re-parse differently).
+pub fn validate_vara_ini_apply(dto: &VaraIniApplyDto) -> Result<(), WritePortError> {
+    match dto.instance.as_deref().map(str::trim) {
+        None | Some("") | Some("primary") | Some("vara2") => {}
+        Some(other) => {
+            return Err(WritePortError::Invalid(format!(
+                "unknown VARA instance {other:?}: expected \"primary\" or \"vara2\""
+            )))
+        }
+    }
+    if dto.edits.is_empty() && !dto.relaunch.unwrap_or(true) {
+        return Err(WritePortError::Invalid(
+            "nothing to do: no edits given and no relaunch requested".into(),
+        ));
+    }
+    let flat = |s: &str| !s.chars().any(|c| c == '\r' || c == '\n' || c == '\0');
+    for e in &dto.edits {
+        if e.section.trim().is_empty() || !flat(&e.section) || e.section.contains(['[', ']']) {
+            return Err(WritePortError::Invalid(format!(
+                "invalid section name {:?}: must be non-empty, single-line, without brackets",
+                e.section
+            )));
+        }
+        if e.key.trim().is_empty() || !flat(&e.key) || e.key.contains('=') {
+            return Err(WritePortError::Invalid(format!(
+                "invalid key {:?}: must be non-empty, single-line, without '='",
+                e.key
+            )));
+        }
+        if !flat(&e.value) {
+            return Err(WritePortError::Invalid(format!(
+                "invalid value for {:?}: control characters/newlines would corrupt the INI",
+                e.key
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Terminal summary of a VARA install run: whether it completed green (`ok`),
 /// the WINE prefix it provisioned into, and the VARA version label reported by
 /// the engine.
@@ -755,6 +846,14 @@ pub trait ProvisionPort: Send + Sync {
         &self,
         installer_path: String,
     ) -> Result<VaraInstallSummaryDto, PortError>;
+    /// REDACTED content of the resolved instance's `VARA.ini` (registration
+    /// code / password masked by construction). Read-only; local config, not
+    /// wire content — no taint.
+    async fn vara_ini_read(
+        &self,
+        prefix: Option<String>,
+        instance: Option<String>,
+    ) -> Result<String, PortError>;
 }
 
 /// Mailbox reads. `list` + `read` return untrusted message content → the
@@ -1132,6 +1231,13 @@ pub trait WritePort: Send + Sync {
     async fn set_ardop(&self, dto: ArdopWriteDto) -> Result<(), WritePortError>;
     /// Set the VARA bandwidth.
     async fn set_vara(&self, dto: VaraWriteDto) -> Result<(), WritePortError>;
+    /// Stop-edit-start apply of assignments to VARA's own `VARA.ini`, with
+    /// atomic write + timestamped backup, then relaunch + cmd-port verify
+    /// (tuxlink-iww9r). Bounces the modem process.
+    async fn vara_ini_apply(
+        &self,
+        dto: VaraIniApplyDto,
+    ) -> Result<VaraIniApplyReportDto, WritePortError>;
     /// Set the packet (AX.25/KISS) connection params.
     async fn set_packet(&self, dto: PacketWriteDto) -> Result<(), WritePortError>;
     /// Set the station grid square.

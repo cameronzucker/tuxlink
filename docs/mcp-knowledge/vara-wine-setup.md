@@ -82,3 +82,30 @@ reports each one's state so you can tell the operator where a run stopped:
 - **`verify` failed** — VARA installed but does not launch cleanly under this
   WINE prefix. Report the `detail` verbatim; this usually needs the operator to
   inspect the VARA window manually.
+
+## Configuring an installed VARA (`vara_ini_read` / `vara_ini_apply`)
+
+VARA persists ALL of its configuration to a plaintext `VARA.ini` beside
+`VARA.exe`: `[Soundcard] Input Device Name / Output Device Name / ALC Drive
+Level`, `[PTT] Rig / PTTPort / CATPort / Baud`, `[Setup] TCP Command Port`,
+and more. Editing that file and relaunching VARA configures it
+deterministically — no GUI automation.
+
+1. Call `vara_ini_read` first (optionally with `prefix` and `instance` —
+   `"primary"` or `"vara2"` for a second install). The content comes back
+   REDACTED: the registration code and password can never be read.
+2. Call `vara_ini_apply` with the `edits` (each `{section, key, value}`).
+   This is a GATED WRITE (armed send-authority + un-tainted session) because
+   it bounces the modem: Tuxlink stops the VARA it manages, backs up the
+   file, writes atomically, relaunches VARA, and verifies its TCP command
+   port. The report includes the `backup_path` for rollback.
+3. Refusals to expect: an OPEN VARA session (close it first), a VARA that
+   Tuxlink does not manage still listening (the operator must close it), and
+   a `vara2` instance with no known command port (set `[Setup]
+   TCP Command Port` in the same call — the primary's 8300 default is never
+   assumed for a second instance).
+
+Soundcard names in the INI live in VARA's OWN (WINE audio) namespace, which
+may differ from raw ALSA names — when setting `Input/Output Device Name`,
+prefer names you read back from this file or that the operator confirmed
+from VARA's dropdowns, not `list_audio_devices` output.

@@ -291,6 +291,9 @@ fn run_vara_ini_apply_with(
     if edits.is_empty() && !relaunch {
         return Err("nothing to do: no edits given and no relaunch requested".to_string());
     }
+    for edit in edits {
+        validate_edit(edit)?;
+    }
 
     let dir = resolve_vara_dir(prefix, instance)?;
     let ini_path = dir.join("VARA.ini");
@@ -467,6 +470,49 @@ fn spawn_vara(dir: &Path, prefix: &Path) -> Result<ManagedModem, String> {
     ];
     ManagedModem::spawn_configured("wine", &[exe_str.as_str()], &envs, Some(dir))
         .map_err(|e| format!("failed to launch VARA under WINE: {e}"))
+}
+
+/// Line-integrity hygiene for one edit, applied on EVERY apply path (Tauri
+/// command and MCP tool alike). The INI layer writes values verbatim, so an
+/// embedded newline would inject extra lines and an `=` in a key would split
+/// differently on re-parse — either breaks the round-trip integrity the
+/// backup/restore story depends on. This is not a privilege boundary (the
+/// edits API already writes arbitrary keys); it is corruption prevention.
+pub fn validate_edit(edit: &VaraIniEdit) -> Result<(), String> {
+    let flat = |s: &str| !s.chars().any(|c| c == '\r' || c == '\n' || c == '\0');
+    if edit.section.trim().is_empty() || !flat(&edit.section) || edit.section.contains(['[', ']'])
+    {
+        return Err(format!(
+            "invalid section name {:?}: must be non-empty, single-line, without brackets",
+            edit.section
+        ));
+    }
+    if edit.key.trim().is_empty() || !flat(&edit.key) || edit.key.contains('=') {
+        return Err(format!(
+            "invalid key {:?}: must be non-empty, single-line, without '='",
+            edit.key
+        ));
+    }
+    if !flat(&edit.value) {
+        return Err(format!(
+            "invalid value for {:?}: control characters/newlines would corrupt the INI",
+            edit.key
+        ));
+    }
+    Ok(())
+}
+
+/// Parse the agent-facing instance selector: absent/blank → `Primary`,
+/// `"primary"` / `"vara2"` otherwise (matching [`VaraInstance`]'s serde tags).
+pub fn parse_instance_arg(instance: Option<&str>) -> Result<VaraInstance, String> {
+    match instance.map(str::trim).filter(|s| !s.is_empty()) {
+        None => Ok(VaraInstance::Primary),
+        Some("primary") => Ok(VaraInstance::Primary),
+        Some("vara2") => Ok(VaraInstance::Vara2),
+        Some(other) => Err(format!(
+            "unknown VARA instance {other:?}: expected \"primary\" or \"vara2\""
+        )),
+    }
 }
 
 // ─── Internals ──────────────────────────────────────────────────────────────
@@ -740,8 +786,9 @@ fn wait_port_down(port: u16, timeout: Duration) -> bool {
 // ─── Tauri commands ─────────────────────────────────────────────────────────
 
 /// Resolve the optional prefix argument: expand a leading `~/`, fall back to
-/// [`default_wine_prefix`] when absent/blank.
-fn resolve_prefix_arg(prefix: Option<String>) -> Result<PathBuf, String> {
+/// [`default_wine_prefix`] when absent/blank. Shared by the Tauri commands
+/// and the MCP port adapter.
+pub fn resolve_prefix_arg(prefix: Option<String>) -> Result<PathBuf, String> {
     match prefix.map(|p| p.trim().to_string()).filter(|p| !p.is_empty()) {
         Some(p) => {
             if let Some(rest) = p.strip_prefix("~/") {
