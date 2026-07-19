@@ -39,6 +39,34 @@ in any capacity:
   the "malformed interface / removes the stations and map but keeps the
   rest" the operator described.
 
+## Full defect inventory (operator live-test continued, same night)
+
+The setup-takeover above is only the entry symptom. Continued testing found
+the feature is **fundamentally non-functional as shipped**, multiple axes:
+
+1. **No "intelligence" output the operator can discern.** FT-8 Station
+   Intelligence "doesn't create any usable data" — it functions only
+   superficially. The operator cannot tell what the feature DOES from an
+   intelligence standpoint. THIS IS THE HEADLINE: the core value of the
+   feature appears absent, not just mis-laid-out. Fixing layout without
+   first establishing what intelligence it should produce is deck-chairs.
+2. **Heard-station decode list is defectively implemented** — NOT
+   height-bounded to the window, NOT scrollable, and it is allowed to
+   MUTATE the main Station Intelligence window aberrantly as decodes
+   arrive, producing dead negative space below the waterfall. Layout /
+   overflow-containment defect (likely `LiveBandStrip` / `DecodeFeed` in
+   `src/ft8ui/`; not yet code-confirmed).
+3. **No FT-8 listener start/stop control in the main SI UI.** Once the
+   listener is started you can only STOP it from the dashboard ribbon, not
+   from within the panel where you're looking at it. Missing/one-way
+   controls — reachability defect.
+4. The **waterfall works** — the one functional piece.
+
+Meta: this is the wire-walk failure mode the project's own gate exists to
+catch (CI-green components, never validated as a reachable coherent feature
+from the ribbon entry point). It reached a promoted release. Worth a
+retro-flavored look at how it passed.
+
 ## Secondary defects
 
 - **Window/panel not sized for the real content** (map + rail + strip).
@@ -90,8 +118,19 @@ operator's call — that is what the morning brainstorm decides.
 ## Next session
 
 1. Read this handoff + `bd show tuxlink-6i0ie`.
-2. **Brainstorm the setup-presentation redesign WITH the operator** (they
-   are supervising) — launch the visual companion. Do not start coding
-   before that.
-3. Then implement the agreed design in a worktree; pin the window-sizing
-   cause with evidence before changing geometry.
+2. **Start with the fundamental question, WITH the operator (supervising):
+   what is Station Intelligence FT-8 SUPPOSED to produce?** The layout bugs
+   are secondary to "the intelligence output appears not to exist." Pull the
+   original spec/design for the feature (search `dev/`, `docs/design`, ADRs,
+   the tuxlink-xscum / FT-8 / station-finder handoffs) and reconcile
+   intended-vs-shipped before touching code. Launch the visual companion.
+3. Only after the value question is settled: brainstorm the
+   setup-presentation redesign (map/stations always mounted; setup as
+   overlay/section, no auto-takeover), the decode-list overflow containment
+   (bounded + scrollable, must not resize the window), and in-panel
+   start/stop controls. Pin the window-sizing cause with evidence before
+   changing geometry.
+4. Consider whether this warrants a proper `bug-hunt-cycle` or a
+   design-review pass rather than a point fix — the operator's read is that
+   the feature "does not fundamentally function as shipped," which is a
+   build-quality problem, not a one-liner.
