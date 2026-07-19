@@ -7,23 +7,26 @@
 **Spec (read FIRST, canonical for every contract):**
 `docs/superpowers/specs/2026-07-18-routines-round2-ranks1-5-o3o4-design.md`
 
-**Architecture:** The engine leaf crate (`src-tauri/tuxlink-routines`) gains journal variants, the invoker split, the shared closure walk + digest, and the `writes_config` flag; the monolith (`src-tauri/src`) gains the action/seam implementations mirroring the MCP DTOs and owns the child-start registry bridge; the frontend gains History rows, consent-surface branching, and ack validity/enumeration UI. Six PR groups, merged in order; the tolerant journal reader merges FIRST.
+**Architecture:** The engine leaf crate (`src-tauri/tuxlink-routines`) gains journal variants, the invoker split, the shared closure walk + digest, and the `writes_config` flag; the monolith (`src-tauri/src`) gains the action/seam implementations mirroring the MCP DTOs and owns the child-start registry bridge; the frontend gains History rows, consent-surface branching, and ack validity/enumeration UI. Six PR groups, merged serially and in order; the tolerant journal reader merges FIRST.
 
 **Tech Stack:** Rust (tokio, serde, sha2 for the digest), React 18 + TS, vitest.
 
 ## Global Constraints
 
-- **Rust compiles/tests run on R2 ONLY** (`ssh r2-poe`; rustup toolchain, NOT distro 1.75; MSRV 1.75 — no post-1.75 APIs, clippy denies `incompatible_msrv`). This Pi never runs cargo. Use `cargo test --manifest-path src-tauri/Cargo.toml --locked -p tuxlink-routines` (leaf) or full-workspace as each task states, and workspace clippy `--all-targets --locked -- -D warnings` before any PR.
-- The R2 build tree for this branch: sync the worktree to R2 via
-  `rsync -a --delete --exclude node_modules --exclude target /home/administrator/Code/tuxlink/worktrees/bd-tuxlink-iizmk-round2-ranks-o3o4/ r2-poe:~/build/ranks1-5/` then run cargo over ssh in `~/build/ranks1-5`. Commits happen on the Pi worktree only (subagents write code + report; the PARENT commits — subagents must NOT commit in worktrees).
-- Frontend tests on the Pi: `pnpm vitest run src/routines` + `pnpm typecheck` (CI runs the FULL vitest + clippy `--all-targets`; scoped local green is not CI green).
+- **Rust compiles/tests run on R2 ONLY** (`ssh r2-poe`; rustup toolchain, NOT distro 1.75; MSRV 1.75 — no post-1.75 APIs; clippy denies `incompatible_msrv`). This Pi never runs cargo. Sync first: `rsync -a --delete --exclude node_modules --exclude target <pi-worktree>/ r2-poe:~/build/ranks1-5/`, then run cargo over ssh in `~/build/ranks1-5`. Leaf tests: `cargo test --manifest-path src-tauri/Cargo.toml --locked -p tuxlink-routines`; workspace tests/clippy where a task says so; workspace clippy `--all-targets --locked -- -D warnings` before every PR.
+- **Subagents write code and report; the PARENT commits.** Subagents must NOT run git commit in the worktree.
+- **Branch/PR mechanics (ADR 0017 branch-death):** groups merge SERIALLY. The arc branch `bd-tuxlink-iizmk/round2-ranks-o3o4` carries only the spec + this plan; it gets its own docs PR, merged before group A. Each group's branch is cut fresh from origin/main AFTER the previous group's PR merges (never stack on a merged branch — its hooks deny commits; never open a group PR before the predecessor merges — the base-filtered ci.yml fires nothing on retarget and needs an empty commit to arm).
+- **Tasks within a group execute STRICTLY SEQUENTIALLY in numbered order.** Do not parallel-dispatch tasks; several share files by design.
+- Frontend tests on the Pi: `pnpm vitest run src/routines` + `pnpm typecheck` (CI runs FULL vitest + clippy `--all-targets`; scoped local green is not CI green).
 - `schema_version` stays **1**. All new `RoutineDef` fields are `#[serde(default)]` optional. No `deny_unknown_fields` anywhere.
 - New journal fields/variants: additive serde, snake_case tags, `#[serde(default, skip_serializing_if = "Option::is_none")]` on optional fields.
-- Kill test fixtures with SIGKILL, never SIGSEGV (no core-dump signals — apport popups).
-- vitest invoke-mocks: mocks are called with NO args at teardown; follow the existing `mockClear` patterns in `src/routines` tests.
-- Every task: BEFORE starting, read `docs/pitfalls/testing-pitfalls.md` and follow TDD (failing test -> implement -> green). BEFORE marking complete: re-check tests against testing-pitfalls, confirm error paths covered, run the task's named test commands and paste output. After every PR group: minimum three review rounds; keep going past three if the third still finds substantive issues.
+- **ParkKind naming, all three surfaces (do not "fix" the difference):** Rust journal field `park_kind` (snake_case, passes to TS unrecased); the Tauri APP EVENT payload field is camelCase `parkKind` (the event union's discriminant is already `kind`); TS journal type uses `park_kind`.
+- **No branch-built binary runs against the real journal/config dirs mid-arc.** Only the converge build (origin/main) touches the operator's live dirs; the acceptance task rebuilds converge AFTER all merges.
+- Journals are ONE trust domain (spec §6): `call_child` is navigability, not authorization. Do not add per-routine ACLs to `routines_journal_get` as an "improvement."
+- Kill test fixtures with SIGKILL, never SIGSEGV. vitest invoke-mocks are called with NO args at teardown; follow existing `src/routines` test patterns.
+- Every task: BEFORE starting, read `docs/pitfalls/testing-pitfalls.md` and follow TDD (write failing test -> run it, verify FAIL -> implement -> run green). BEFORE marking complete: re-check against testing-pitfalls, confirm error paths covered, run the task's named test commands and paste output. After every PR group: minimum three review rounds; continue past three while substantive findings remain.
 - Conventional commits with scope, `Agent: alder-oriole-cedar` trailer + `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
-- Do NOT touch `.local/converge-build-worktree`. Do NOT run any transmit-capable binary. Do NOT add safeguards beyond spec (no extra caps/timers).
+- Do NOT touch `.local/converge-build-worktree`. Do NOT run any transmit-capable binary. Do NOT add safeguards beyond spec.
 
 ---
 
@@ -32,59 +35,36 @@
 ### Task A1: per-line tolerant `read_journal`
 
 **Files:**
-- Modify: `src-tauri/tuxlink-routines/src/journal.rs` (read_journal ~181-193, scan_interrupted ~196-224; add `RawJournalEntry`)
+- Modify: `src-tauri/tuxlink-routines/src/journal.rs` (read_journal ~177-193, scan_interrupted ~196-224, RunEvent enum)
 - Test: same file `#[cfg(test)]`
 
-**Interfaces:**
-- Produces: `read_journal` returns entries where an unparseable `event` becomes `RunEvent::Unknown` (new unit-like catch variant is NOT possible with internal tagging — use the envelope approach below). Exact contract: add
-  ```rust
-  /// Envelope-level decode: parse the line as
-  /// `{ts_unix, run_id, seq, event: serde_json::Value}` first; then try
-  /// `RunEvent::deserialize(event)`. On failure the entry is kept with
-  /// `event: RunEvent::Opaque { raw: Value }`.
-  ```
-  Add variant to `RunEvent`:
-  ```rust
-  /// Forward-compat catch-all (design §0.4): a journal line written by a
-  /// NEWER build whose event type this build does not know. Never written
-  /// by this build; constructed only by the tolerant reader.
-  #[serde(skip)]
-  Opaque { raw: serde_json::Value },
-  ```
-  Note `#[serde(skip)]` on a variant is not valid for deserialize-into; implement instead via a two-step reader (do NOT put Opaque in serde at all):
-  ```rust
-  #[derive(Deserialize)]
-  struct RawEntry { ts_unix: i64, run_id: String, seq: u64, event: serde_json::Value }
+**Contract (final, complete):**
+1. Add a normal variant to `RunEvent`: `Opaque { raw: serde_json::Value }` with tag `opaque`. The engine NEVER writes it; only the tolerant reader constructs it. Serialize round-trip of Opaque is not required.
+2. `read_journal` keeps its current signature (`std::io::Result<Vec<JournalEntry>>` — do NOT introduce a new error type). Per line: first deserialize the envelope
+   ```rust
+   #[derive(Deserialize)]
+   struct RawEntry { ts_unix: i64, run_id: String, seq: u64, event: serde_json::Value }
+   ```
+   (a line failing THIS — torn tail, non-JSON — errors the whole file, current behavior, deliberately in-spec: §0.4 scopes the fix to unknown event TYPES; do not "fix" torn tails). Then try `RunEvent::deserialize(entry.event.clone())`; on Err substitute `RunEvent::Opaque { raw: entry.event }`.
+3. `scan_interrupted`: the last PARSEABLE entry decides terminal state — `entries.iter().rev().find(|e| !matches!(e.event, RunEvent::Opaque{..}))`. A journal containing ONLY Opaque entries classifies interrupted (matches the existing unreadable-file arm).
 
-  pub fn read_journal(path: &Path) -> Result<Vec<JournalEntry>, JournalError> {
-      // per line: parse RawEntry (a line failing THIS is still an error);
-      // then RunEvent::deserialize(entry.event.clone()) — on Err, substitute
-      // RunEvent::Opaque { raw: entry.event }.
-  }
-  ```
-  and add `Opaque { raw: serde_json::Value }` as a plain variant with `#[serde(other)]`? — `serde(other)` only works on unit variants for internally-tagged enums. FINAL contract (the one to implement): `Opaque` variant declared normally with tag `opaque` for Serialize (it will simply never be written by the engine), constructed manually by the reader on decode failure. Serialization round-trip of Opaque is NOT required; a test pins that the reader yields it.
-- `scan_interrupted`: an `Opaque` entry counts as non-terminal (only a parsed `RunFinished` is terminal), and a file whose LAST entry is Opaque classifies interrupted=false ONLY if a parsed RunFinished exists anywhere later — keep the existing "last entry is RunFinished" rule but skip trailing Opaque entries when finding the last meaningful entry? NO — simpler per spec: treat Opaque as a non-terminal entry exactly like a step event; the existing last-entry rule then classifies a journal ending in Opaque as interrupted, which is wrong for a new-build-written completed run… The spec's requirement is only that the FILE SURVIVES and the run stays listed. Implement: `scan_interrupted` checks `entries.iter().rev().find(|e| !matches!(e.event, RunEvent::Opaque{..}))` — the last PARSEABLE entry decides terminal state. `list_runs` (monolith, commands.rs ~785-822) needs no change once read_journal stops erroring.
-
-- [ ] **Step 1: failing tests** (in `journal.rs` tests): (a) write a journal file with a valid `run_started` line + a line `{"ts_unix":1,"run_id":"r","seq":1,"event":{"type":"from_the_future","x":1}}` + a valid `run_finished` line; assert `read_journal` returns 3 entries with entry[1] matching `RunEvent::Opaque` and raw preserving `"type":"from_the_future"`. (b) same file through `scan_interrupted`: NOT interrupted (last parseable = RunFinished). (c) a file ending in the unknown line after run_finished: still NOT interrupted. (d) truly corrupted envelope line (not JSON): current behavior (error) preserved.
-- [ ] **Step 2: run on R2, verify FAIL** — `ssh r2-poe 'cd ~/build/ranks1-5 && cargo test --manifest-path src-tauri/Cargo.toml --locked -p tuxlink-routines journal'` (rsync first).
-- [ ] **Step 3: implement** per the FINAL contract above.
-- [ ] **Step 4: run tests green on R2**; also full `-p tuxlink-routines` suite.
+- [ ] **Step 1: failing tests**: (a) valid `run_started` + line `{"ts_unix":1,"run_id":"r","seq":1,"event":{"type":"from_the_future","x":1}}` + valid `run_finished`: `read_journal` returns 3 entries, entry[1] is Opaque with raw preserving `"type":"from_the_future"`; (b) that file via `scan_interrupted`: NOT interrupted; (c) unknown line AFTER run_finished: still NOT interrupted; (d) non-JSON envelope line: whole-file error (current behavior pinned); (e) only-Opaque journal: interrupted.
+- [ ] **Step 2: run on R2, verify FAIL** (rsync first): `-p tuxlink-routines journal`.
+- [ ] **Step 3: implement.** **Step 4: green on R2 (full `-p tuxlink-routines`).**
 - [ ] **Step 5: PARENT commits** `fix(routines): tolerant per-line journal decode — unknown future event types become opaque entries instead of corrupting History`
 
 ### Task A2: PR A — open, CI, merge
 
-- [ ] Push branch `bd-tuxlink-iizmk/tolerant-journal-reader` (branch off current arc branch is NOT needed; this task's commit goes on its own branch cut from origin/main so it merges first — cherry-pick A1's commit onto `bd-tuxlink-iizmk/tolerant-journal-reader` cut from origin/main).
-- [ ] `gh pr create` (title `[alder-oriole-cedar] fix(routines): tolerant journal reader`), verify CI green BY COMMIT SHA (`gh run list --commit <sha>`; match headSha + conclusion), then merge with the bare command `gh pr merge <n> --merge` (never chained). Then rebase the arc branch onto the new origin/main (non-interactive `git rebase origin/main` — local unpushed commits only) — if the arc branch was already pushed, MERGE origin/main into it instead of rebasing.
+- [ ] Cut `bd-tuxlink-iizmk/tolerant-journal-reader` from origin/main; cherry-pick A1's commit onto it; push.
+- [ ] `gh pr create` (title `[alder-oriole-cedar] fix(routines): tolerant journal reader`); verify CI green BY COMMIT SHA (`gh run list --commit <sha>`, match headSha + conclusion); merge with the bare command `gh pr merge <n> --merge` (never chained).
 
 ---
 
-## PR group B — O3/O4 engine + History
+## PR group B — O3/O4 engine + History (branch cut from origin/main after A merges)
 
-### Task B1: journal variants `call_child`, `end_reached`, `parkKind` on state_changed
+### Task B1: journal variants `call_child`, `end_reached`, `park_kind`
 
-**Files:**
-- Modify: `src-tauri/tuxlink-routines/src/journal.rs` (RunEvent enum ~31-114)
-- Test: same file
+**Files:** Modify `src-tauri/tuxlink-routines/src/journal.rs`; test same file.
 
 **Interfaces (produced, exact):**
 ```rust
@@ -93,266 +73,261 @@ EndReached { step: StepId, failed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")] reason: Option<String> },
 // StateChanged gains:
 #[serde(default, skip_serializing_if = "Option::is_none")] park_kind: Option<ParkKind>,
-// with:
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ParkKind { Transmit, Write }
 ```
-Wire tags: `call_child`, `end_reached`; field `park_kind` (JSON snake_case; the FRONTEND TS name is `park_kind` too — journal passes through unrecased; the `parkKind` name in the spec applies to the camelCase APP EVENT payload only).
+Wire tags `call_child` / `end_reached`; field `park_kind` (see Global Constraints for the three-surface naming rule).
 
-- [ ] **Step 1: failing serde round-trip tests** for both variants + `state_changed` with and without `park_kind` (old journals: absence tolerated; new: value survives).
-- [ ] **Step 2: FAIL on R2.** **Step 3: implement.** **Step 4: green on R2.**
+- [ ] **Step 1: failing serde round-trip tests** (both variants; state_changed with/without park_kind).
+- [ ] **Steps 2-4: FAIL on R2 -> implement -> green on R2.**
 - [ ] **Step 5: PARENT commits** `feat(routines): call_child + end_reached journal events, park_kind on state_changed (O3/O4 decree)`
 
 ### Task B2: invoker split, cancellation, registry bridge, CallChild emission, orphan-journal fix
 
 **Files:**
 - Modify: `src-tauri/tuxlink-routines/src/engine.rs` (RoutineInvoker trait, EngineChildInvoker ~354-431, run_internal ~204-283, DryRunChildInvoker ~379-411, NoInvoker ~310-326), `src-tauri/tuxlink-routines/src/executor.rs` (Call arm ~607-694), `src-tauri/tuxlink-routines/src/fakes.rs` (FakeInvoker ~199)
-- Modify: `src-tauri/src/routines/session.rs` (registry insertion ~437-464; new `SessionChildInvoker` owning start)
+- Modify: `src-tauri/src/routines/session.rs` (registry insertion ~437-464; new `SessionChildInvoker`)
 - Test: engine.rs + executor.rs tests; monolith session tests
 
-**Interfaces (produced, exact):**
+**Interfaces (produced, exact — this is the single canonical shape):**
 ```rust
-// tuxlink-routines/src/engine.rs
-pub struct ChildHandle {
-    pub run_id: String,
-    pub cancel: CancellationToken,
-    outcome: /* oneshot receiver or JoinHandle — awaited via ChildHandle::outcome() */,
-}
+pub struct ChildHandle { pub run_id: String, pub cancel: CancellationToken,
+    /* private outcome receiver */ }
 #[async_trait]
 pub trait RoutineInvoker: Send + Sync {
-    /// Start a child run: run_id known on return. `parent_cancel` is the
-    /// caller's token; impls derive the child token from it
-    /// (parent_cancel.child_token()). Registry-registering impls (the
-    /// monolith session) register the child BEFORE returning.
+    /// run_id known on return. Impls derive the child token from
+    /// `parent_cancel.child_token()`. Registry-registering impls (the
+    /// monolith session) register the child (id + the CHILD's own token —
+    /// registry cancellability must not depend on the ChildHandle, which
+    /// F&F drops) BEFORE returning.
     async fn start(&self, routine: &str, args: serde_json::Value,
         provenance: Provenance, parent_cancel: &CancellationToken)
         -> Result<ChildHandle, InvokeError>;
-    /// Await terminal outcome (existing invoke() semantics minus startup).
+    /// Await terminal outcome; consumes the handle. (There is NO
+    /// ChildHandle::outcome() method — this trait fn is the only await path.)
     async fn await_outcome(&self, handle: ChildHandle)
         -> Result<serde_json::Value, InvokeError>;
 }
 ```
-Executor Call arm (both sync + F&F): journal `StepIntent` -> `invoker.start(...)` INLINE -> on Ok(handle): journal `CallChild { step, child_run_id: handle.run_id.clone() }`; sync: race `await_outcome` against `ctx.cancel` (on cancel: `handle.cancel.cancel()` then `StepErr(Cancelled)`); F&F: journal `StepOk {"dispatched": true}` and DROP the handle (do NOT await; do NOT link parent token — child token derives from a FRESH root token the invoker creates when the F&F flag is set... NO: per spec F&F children stay detached, so for F&F pass a detached token: the executor passes `&CancellationToken::new()` as parent_cancel for F&F calls). On start Err: `StepErr` (the honest behavior change; the old silent-dispatched lie dies).
-Root-digest re-verification hook: `start()` on the monolith impl re-verifies root ack digests (Task C3 wires it; B2 leaves a `// C3:` seam comment).
-Orphan-journal fix in `run_internal`: parse the snapshot BEFORE `JournalWriter::create` + `RunStarted` append; a SnapshotShape failure returns Err with NO journal file created.
-Monolith `SessionChildInvoker` (in session.rs): implements `start` by loading the def (ONE read), running the start gate on THAT def (Task C3 extends it), registering the run in the same registry map + watcher used by `start_routine_def` (~450), then calling `start_run_ext` with the loaded def and derived token; child runs therefore `cancel_run(child_id)` == true.
+Executor Call arm, both modes: `StepIntent` -> `invoker.start(...)` INLINE -> on Ok(handle): journal `CallChild { step, child_run_id }`. Sync: race `await_outcome` against `ctx.cancel`; on cancel forward `handle.cancel.cancel()` then `StepErr(Cancelled)`. F&F: journal `StepOk {"dispatched": true}` and DROP the handle unawaited; pass `&CancellationToken::new()` as `parent_cancel` (F&F children are deliberately detached from parent cancellation). Start Err in EITHER mode: `StepErr` with the verbatim cause (the old silent `dispatched:true` lie dies), and NO `call_child` entry.
+Orphan-journal fix in `run_internal`: parse the snapshot BEFORE `JournalWriter::create` + `RunStarted`; SnapshotShape failure -> Err with no journal file.
+`SessionChildInvoker` (monolith): `start` loads the def (ONE read), runs the start gate on THAT def (Task C3 extends the gate; leave a `// C3 extends:` seam comment), registers the run id + child token in the same registry map + watcher `start_routine_def` uses (~450), then `start_run_ext` with the loaded def + derived token. `cancel_run(child_id)` == true for sync AND F&F children.
 
-- [ ] **Step 1: failing engine tests**: (a) sync call success journals intent -> call_child -> step_ok, and step_ok output still carries `{"completed":true,"run_id":...}`; (b) sync call FAILURE journals call_child BEFORE step_err and the child run id in call_child matches the child journal file; (c) F&F journals call_child + step_ok{dispatched:true} strictly before parent run_finished (assert seq ordering in the parent journal); (d) F&F start failure (unknown routine) journals step_err, NOT dispatched:true; (e) cancelling the parent mid-sync-child cancels the child (child journal terminal = cancelled) and parent step_err = Cancelled; (f) F&F child SURVIVES parent cancel; (g) snapshot-shape failure leaves no child journal file on disk.
-- [ ] **Step 2: FAIL on R2.** **Step 3: implement** (engine + executor + fakes + DryRunChildInvoker/NoInvoker get the new trait shape; single-shot `invoke` reimplemented as start+await_outcome).
-- [ ] **Step 4: green on R2** (`-p tuxlink-routines` full).
-- [ ] **Step 5: failing MONOLITH test** (session.rs tests): start a parent whose child is engine-invoked; read `call_child` from the parent journal; `cancel_run(&child_id)` returns true and the child journal terminates cancelled.
-- [ ] **Step 6: implement SessionChildInvoker; green on R2 (workspace test).**
+- [ ] **Step 1: failing engine tests**: (a) sync success: intent -> call_child -> step_ok, output carries `{"completed":true,"run_id":...}`; (b) sync failure: call_child BEFORE step_err, id matches the child journal; (c) F&F: call_child + step_ok{dispatched:true} strictly before parent run_finished (assert seq); (d) F&F start failure: step_err, NOT dispatched:true, AND no call_child entry; (e) parent cancel mid-sync-child: child journal terminal cancelled + parent step_err Cancelled; (f) F&F child survives parent cancel; (g) snapshot-shape failure leaves no child journal file.
+- [ ] **Step 2: FAIL on R2.** **Step 3: implement** (single-shot `invoke` reimplemented as start + await_outcome; DryRunChildInvoker/NoInvoker/FakeInvoker updated). **Step 4: green on R2 (`-p tuxlink-routines`).**
+- [ ] **Step 5: failing monolith test**: engine-invoked child; read call_child; `cancel_run(&child_id)` true; child journal terminates cancelled. **Step 6: implement SessionChildInvoker; workspace green on R2.**
 - [ ] **Step 7: PARENT commits** `feat(routines): two-phase invoker — child run ids journaled in all call paths, parent cancellation propagates, children registry-cancellable (O3)`
 
 ### Task B3: End threading + EndReached + precedence
 
-**Files:**
-- Modify: `src-tauri/tuxlink-routines/src/executor.rs` (End site ~565-570, TrackEnd ~144-153, run_track_shared ~391-424, run_tracks ~733-815, RunOutcome ~155-158), `src-tauri/tuxlink-routines/src/engine.rs` (run_finished emission ~259-283)
-- Test: executor.rs tests
+**Files:** Modify `src-tauri/tuxlink-routines/src/executor.rs` (End site ~565-570, TrackEnd ~144-153, run_track_shared ~391-424, run_tracks ~733-815, RunOutcome ~155-158), `src-tauri/tuxlink-routines/src/engine.rs` (~259-283); test executor.rs.
 
 **Interfaces (produced, exact):**
 ```rust
-pub enum TrackEnd { Completed, Ended { step: StepId, failed: bool, reason: Option<String> }, /* existing Cancelled if present stays */ }
+pub enum TrackEnd { Completed, Ended { step: StepId, failed: bool, reason: Option<String> } }
 pub struct RunOutcome { pub state: RunState, pub reason: Option<String>, pub end_step: Option<StepId> } // loses Copy
 ```
-End site journals `EndReached { step: c.id.clone(), failed: *failed, reason: reason.clone() }` BEFORE returning `TrackEnd::Ended` (ordering: end_reached -> skip sweep -> run_finished). `run_tracks` precedence for `run_finished.reason`: propagated StepErr wins over any End reason; failed-End reason wins over success-End reason regardless of arrival order; same-class: first arrival. Engine emits `RunFinished { state, reason: outcome.reason }`.
+End site journals `EndReached` BEFORE returning (ordering: end_reached -> skip sweep -> run_finished). Precedence for `run_finished.reason`: propagated StepErr > failed-End reason > success-End reason; same-class ties: first arrival. Sibling tracks' unvisited steps keep the EXISTING cancellation skip reason (no rewriting).
 
-- [ ] **Step 1: failing tests**: (a) single-track End{failed:true, reason:"why"} -> journal has end_reached with step id + run_finished.reason == "why" (pins the dropped-reason fix); (b) end_reached seq < each step_skipped seq < run_finished seq; (c) parallel tracks success-End("a") + failed-End("b") in both arrival orders -> reason "b"; (d) StepErr + End -> StepErr string wins; (e) callers compile (session.rs ~479-489 touches .state only).
+- [ ] **Step 1: failing tests**: (a) End{failed:true,"why"} -> end_reached carries step id AND run_finished.reason=="why"; (b) seq ordering end_reached < step_skipped < run_finished; (c) parallel success-End("a")+failed-End("b"), both arrival orders -> "b"; (d) StepErr + End -> error string wins; (e) cross-track: sibling skips retain the existing cancellation reason verbatim; (f) callers (session.rs ~479-489) compile: state-only access.
 - [ ] **Steps 2-4: FAIL -> implement -> green on R2.**
 - [ ] **Step 5: PARENT commits** `feat(routines): end_reached events + End reason threads into run_finished with deterministic precedence (O4)`
 
 ### Task B4: History UI — call/end/park rows, navigation, TS types
 
-**Files:**
-- Modify: `src/routines/routinesApi.ts` (RunEvent union ~159-170), `src/routines/designer/RunsTab.tsx` (stepListModel ~305-380, kind union ~286, ROW_ICON ~384-393, JSX ~829-895, header ~650-657)
-- Test: `src/routines/designer/RunsTab.test.tsx` (existing patterns)
+**Files:** Modify `src/routines/routinesApi.ts` (~159-170), `src/routines/designer/RunsTab.tsx` (stepListModel ~305-380, kind union ~286, ROW_ICON ~384-393, JSX ~829-895, header ~650-657); test `src/routines/designer/RunsTab.test.tsx`.
 
-**Interfaces:** TS additions (snake_case, journal passes through unrecased):
+TS additions (snake_case; journal is unrecased):
 ```ts
 | { type: 'call_child'; step: string; child_run_id: string }
 | { type: 'end_reached'; step: string; failed: boolean; reason?: string }
 // state_changed gains: park_kind?: 'transmit' | 'write'
 ```
-Rows: `kind:'call'` renders `call:<routine-from-intent>` + short child id, clickable -> `setSelectedRunId(child_run_id)` capturing `{parentRunId, parentShortId}` in a one-deep `navContext` state; `kind:'end'` renders `ended at <step>: complete|failed[, <reason>]`; park rows append `(config write)` when `park_kind==='write'`; finished row suppresses its reason when string-equal to the winning end row's reason; when `selectedRunId` is not in `runsSorted`, render the context strip `Viewing a run of <status.routine> (called by this routine) — back to run <parentShortId>` whose back link restores the parent selection.
+Rows: `'call'` renders `call:<routine-from-intent>` + short child id, click -> `setSelectedRunId(child_run_id)` capturing `{parentRunId, parentShortId}` in one-deep `navContext`; `'end'` renders `ended at <step>: complete|failed[, <reason>]`; park rows append `(config write)` when `park_kind==='write'`; finished row suppresses its reason when string-equal to the winning end row's; foreign `selectedRunId` (not in `runsSorted`) renders the context strip `Viewing a run of <status.routine> (called by this routine) — back to run <parentShortId>` with a working back link.
 
-- [ ] **Step 1: failing vitest** for each row mapping + click navigation + context strip + reason suppression + park kind text (feed synthetic journals through stepListModel; follow the existing RunsTab test fixtures).
-- [ ] **Step 2: FAIL (`pnpm vitest run src/routines/designer/RunsTab.test.tsx`).** **Step 3: implement.** **Step 4: green + `pnpm typecheck` + full `pnpm vitest run src/routines`.**
+- [ ] **Step 1: failing vitest** for each mapping + navigation + strip + suppression + park kind.
+- [ ] **Step 2: run, verify FAIL.** **Step 3: implement.** **Step 4: green + `pnpm typecheck` + full `pnpm vitest run src/routines`.**
 - [ ] **Step 5: PARENT commits** `feat(routines): History renders call/end/park-kind rows with child-run navigation (O3/O4 UI)`
 
-### Task B5: PR B — open, CI by SHA, merge (bare command). WebKitGTK render check of RunsTab via the harness (`&real=1` fixture still renders; visual-only, no fixture update yet).
+### Task B5: PR B — cut branch per Global Constraints, open PR, CI by SHA, merge (bare). Harness render of RunsTab with the existing `&real=1` fixture (visual check only).
 
 ---
 
-## PR group C — consent: closure walk, digest, acks, writes_config, park kind
+## PR group C — consent: closure walk, digest, acks, writes_config (branch cut after B merges)
 
-### Task C1: parameterized closure walk + canonical digest (leaf crate)
+### Task C1: parameterized closure walk + canonical digest
 
 **Files:**
-- Create: `src-tauri/tuxlink-routines/src/consent_closure.rs` (declare in lib.rs)
-- Test: same file
+- Create: `src-tauri/tuxlink-routines/src/consent_closure.rs` (+ lib.rs declaration)
+- Modify: `src-tauri/src/routines/consent.rs` (`closure_transmits` ~83-133 REIMPLEMENTED on the new walk) and `src-tauri/tuxlink-routines/src/validate/consent.rs` (its mirror walk REIMPLEMENTED likewise) — public signatures unchanged, duplicated traversals deleted
+- Modify: `src-tauri/tuxlink-routines/Cargo.toml` (+`sha2`) AND regenerate `Cargo.lock` (a stale lock under `--locked` masks everything)
+- Test: consent_closure.rs + both consumers' existing suites
 
 **Interfaces (produced, exact):**
 ```rust
 pub struct ClosureStep { pub routine: String, pub step: StepId, pub action: String, pub params_json: String }
 pub struct CallEdge { pub routine: String, pub step: StepId, pub callee: String, pub args_json: String }
 pub struct ConsentClosure { pub steps: Vec<ClosureStep>, pub call_edges: Vec<CallEdge> }
-/// ONE walk, parameterized by a descriptor predicate; cycle-guarded and
-/// depth-capped identically to the existing walks it replaces.
-pub fn consent_closure(
-    root: &RoutineDef,
-    lookup: &dyn Fn(&str) -> Option<RoutineDef>,
-    is_relevant: &dyn Fn(&str) -> bool,   // action-name -> descriptor flag
-) -> ConsentClosure;
-/// Canonical digest: recursive JSON key-sort of every params/args value,
-/// tuples sorted by (routine, step), sha256 over the canonical byte string,
-/// hex-encoded. Call edges included only on paths reaching a relevant step.
-pub fn closure_digest(c: &ConsentClosure) -> String;
+pub fn consent_closure(root: &RoutineDef, lookup: &dyn Fn(&str) -> Option<RoutineDef>,
+    is_relevant: &dyn Fn(&str) -> bool) -> ConsentClosure;
+pub fn closure_digest(c: &ConsentClosure) -> String; // recursive key-sort, tuples by (routine, step), sha256 hex
 ```
-The existing transmit walks (monolith `src/routines/consent.rs` `closure_transmits` and the validator's mirror in `validate/consent.rs`) are REIMPLEMENTED on top of `consent_closure` (non-empty steps == transmits) — delete the duplicated traversals, keep their public signatures.
+Call edges included only on paths reaching a relevant step. Cycle-guard + depth-cap semantics identical to the walks replaced (port their tests).
 
-- [ ] **Step 1: failing tests**: key-order independence (`{"a":1,"b":2}` vs reversed -> same digest); param mutation, Call-args mutation, callee-step mutation each flip the digest; unrelated-step edit does NOT flip it; cycle + depth-cap parity with the old walks (port their existing tests); transmit walks still pass their existing test suites after reimplementation.
-- [ ] **Steps 2-4: FAIL -> implement -> green on R2** (add `sha2` to tuxlink-routines Cargo.toml + REGENERATE Cargo.lock — `--locked` masks a stale lock).
+- [ ] **Step 1: failing tests**: key-order independence; param/Call-args/callee mutations each flip the digest; unrelated edit does not; cycle + depth-cap parity; both existing transmit-walk suites green post-reimplementation.
+- [ ] **Steps 2-4: FAIL -> implement -> WORKSPACE green on R2** (the monolith consumer changed).
 - [ ] **Step 5: PARENT commits** `refactor(routines): one parameterized consent-closure walk + canonical closure digest (replaces duplicated transmit walks)`
 
-### Task C2: `writes_config` flag + executor park + parkKind + dry-run mirror
+### Task C2: `writes_config` flag + executor park + park kinds
 
-**Files:**
-- Modify: `src-tauri/tuxlink-routines/src/action.rs` (ActionDescriptor + all existing descriptor literals gain `writes_config: false`), `executor.rs` (~283-317 park predicate), `dryrun.rs` (flag mirror ~93-97, forced attended false unchanged), `consent.rs` leaf (ConsentPort park signature gains `kind: ParkKind`), `src-tauri/src/routines/consent.rs` (ConsentRegistry emits kind), `src-tauri/src/routines/events.rs` (AwaitingConsent event + serde), journal StateChanged park_kind emission at the park site
-- Test: executor tests
+**Files:** Modify `src-tauri/tuxlink-routines/src/action.rs` (ActionDescriptor gains `writes_config: bool`; every existing descriptor literal gains `writes_config: false`), `executor.rs` (~283-317), `dryrun.rs` (~93-97 mirror; forced-attended-false unchanged), leaf `consent.rs` (ConsentPort::park gains `kind: ParkKind`), `src-tauri/src/routines/consent.rs` (ConsentRegistry), `src-tauri/src/routines/events.rs` (AwaitingConsent event — **the app-event payload field is camelCase `parkKind`**; the JOURNALED state_changed field is snake_case `park_kind`; see Global Constraints), the park-site journal emission; test executor.rs.
 
-Park predicate: `ctx.attended && (d.transmits || d.writes_config)`; kind = Write when `writes_config && !transmits`, else Transmit. Retry-wrapped writes park per attempt (existing structure; pin with a test).
+Park predicate `ctx.attended && (d.transmits || d.writes_config)`; kind = Write iff `writes_config && !transmits`, else Transmit. Retry-wrapped writes park per attempt.
 
-- [ ] **Step 1: failing tests**: attended park fires for a writes_config fake (kind Write in the journaled state_changed), per-attempt retry parks, dry-run never parks, automatic never parks.
-- [ ] **Steps 2-4: FAIL -> implement -> green on R2 (workspace: monolith consent registry compiles).**
+- [ ] **Step 1: failing tests**: attended park for a writes_config fake with journaled `park_kind:"write"`; per-attempt retry parks; dry-run never parks; automatic never parks; app event carries `parkKind`.
+- [ ] **Steps 2-4: FAIL -> implement -> workspace green on R2.**
 - [ ] **Step 5: PARENT commits** `feat(routines): writes_config consent class — attended park with park kind end to end`
 
-### Task C3: write_ack + digests on RoutineDef, validator codes, gates, child re-verification
+### Task C3: write_ack + digests, validator codes, gates, child re-verification
 
-**Files:**
-- Modify: `src-tauri/tuxlink-routines/src/types.rs` (RoutineDef: `write_ack: Option<Ack>` serde-default; `Ack`/TransmitAck gains `#[serde(default)] closure_digest: Option<String>`), `validate/consent.rs` (codes), `src-tauri/src/routines/commands.rs` (ack stripping ~382-402 + validate_draft ~442-450 mirror for write_ack; run_routine ~670-681 passes the VALIDATED def through), `src-tauri/src/routines/session.rs` (start gate on the one read; digest recompute; threads root digests into ExecCtx; SessionChildInvoker.start re-verifies), `executor.rs`/`engine.rs` (ExecCtx carries `root_digests: Option<RootDigests{transmit: Option<String>, write: Option<String>}>`)
-- Modify: UI ack command site (the existing `acknowledge_automatic` command in commands.rs): records digest at ack time; new sibling `acknowledge_write` (UI-only, NOT on the MCP router); new UI-only `routines_consent_closure(name)` command returning `{transmit_steps, write_steps, call_edges}` from Task C1's walk.
-- Test: leaf validator tests + monolith commands/session tests
+**Files:** Modify `src-tauri/tuxlink-routines/src/types.rs`, `validate/consent.rs`, `src-tauri/src/routines/commands.rs` (~382-402 strip, ~442-450 validate_draft, ~670-681 run path, ack commands), `src-tauri/src/routines/session.rs` (start gate + ExecCtx threading + SessionChildInvoker verification), `executor.rs`/`engine.rs` (ExecCtx `root_digests`); tests in each.
 
-Validator codes (Finding messages name the offending entity verbatim, matching existing style):
-- `AUTO_WRITE_UNACKED` (Error): automatic + non-empty write closure + write_ack missing/empty/digest-mismatched.
-- `AUTO_TX_UNACKED` gains the digest-mismatch clause (digest-less legacy ack == stale == fires).
-- `MIXED_MODE_STALL_WRITE` (Warning), `ATTENDED_WRITE_UNDER_SCHEDULE` (Warning).
-- `WRITE_VALUE_RUNTIME` (Warning): message exactly `step "<id>" write param "<key>" is "<$ref>" - the value is chosen at run time by whoever starts the run`.
-Start gate: single-read (validate the def you snapshot), both digest checks; child-start (SessionChildInvoker) recomputes the ROOT digests against the live store and fails the call verbatim `callee changed after acknowledgment` on mismatch; attended root -> no digests threaded -> no-op.
+**Ack type (exact, load-bearing for E2 and the §14 amendment):** REUSE the existing `TransmitAck` struct for both acks — it gains `#[serde(default)] pub closure_digest: Option<String>`; `RoutineDef` gains `#[serde(default)] pub write_ack: Option<TransmitAck>`. Serialized fields: `by`, `at`, `closure_digest`.
+Validator codes: `AUTO_WRITE_UNACKED` (Error; missing/empty/digest-mismatched), `AUTO_TX_UNACKED` gains the digest-mismatch clause (digest-less legacy == stale == fires), `MIXED_MODE_STALL_WRITE` (Warning), `ATTENDED_WRITE_UNDER_SCHEDULE` (Warning), `WRITE_VALUE_RUNTIME` (Warning; message exactly `step "<id>" write param "<key>" is "<$ref>" - the value is chosen at run time by whoever starts the run`).
+Behavior sentences a faithful implementation must include:
+- **Leaving automatic mode revokes `write_ack`** exactly as it revokes transmit_ack (the `_ => None` arm of the strip match, commands.rs ~394-401); test mirrors the existing flip test at ~1451.
+- Start gate: single read (the validated def IS the snapshot started); both digest checks.
+- ExecCtx threads `root_digests: Option<RootDigests { transmit: Option<String>, write: Option<String> }>` from the start gate; `SessionChildInvoker.start` recomputes the ROOT digests against the live store, failing the Call verbatim `callee changed after acknowledgment` on mismatch; attended root -> None -> no-op.
+- New UI-ONLY commands: `acknowledge_write` (sibling of `acknowledge_automatic`; BOTH record the digest at ack time) and `routines_consent_closure(name)` returning `{transmit_steps, write_steps, call_edges}`. **Neither appears on the MCP router** — add a router-surface test asserting their absence (the routines tool list is pinned CLOSED in router.rs ~2482; extend that pin).
 
-- [ ] **Step 1: failing leaf tests** (validator codes incl. all three UNACKED clauses on both classes; the stall/schedule/runtime warnings).
-- [ ] **Step 2: failing monolith tests**: body-supplied write_ack stripped on save + validate_draft; ack command records digest; routine edit, callee edit, and digest-less legacy ack each invalidate (finding fires + start gate refuses); TOCTOU (concurrent save between validate and start cannot swap the def — the started snapshot IS the validated def); child-start mismatch fails the Call step with the verbatim message; `routines_consent_closure` returns the enumeration.
-- [ ] **Steps 3-5: FAIL -> implement -> green on R2 (workspace).**
+- [ ] **Step 1: failing leaf tests** (all codes; all three UNACKED clauses on both classes).
+- [ ] **Step 2: failing monolith tests**: write_ack stripped on save + validate_draft; mode-flip revokes write_ack; BOTH ack commands record digests; routine edit / callee edit / digest-less legacy each invalidate (finding + gate refusal); TOCTOU (started snapshot == validated def under concurrent save); child-start mismatch verbatim failure; consent-closure command output; MCP router excludes both new commands.
+- [ ] **Steps 3-5: FAIL -> implement -> workspace green on R2.**
 - [ ] **Step 6: PARENT commits** `feat(routines): write_ack + closure-digest binding on both ack classes — save/enable/start/child-start verification, one validator`
 
-### Task C4: PR C — open, CI by SHA, merge (bare). Includes the AGENTS-of-record docs touch: design-spec §4/§14 amendment + §7 divergence note (small `docs:` commit in the same PR), and bd follow-up issue for general callee pinning (`bd create` + note id in PR body).
+### Task C4: PR C — docs amendments + follow-up filing + merge
+
+- [ ] Same-PR `docs:` commit: 2026-07-13 routines design spec §4 (write-consent class + digest binding on both acks), §14 (definition format: `write_ack`, `closure_digest`), §7 divergence note (Call targets resolve live; bd follow-up). ALSO record the acceptance divergence: the attended-write park is validated by vitest + harness render, not a live-capture click (the click is an operator act; named in the handoff).
+- [ ] `bd create` the callee-pinning follow-up; note its id in the PR body.
+- [ ] Cut branch per Global Constraints; PR; CI by SHA; merge (bare).
 
 ---
 
-## PR group D — actions
+## PR group D — actions (branch cut after C merges)
 
 ### Task D1: rank 1 status read sources
 
-**Files:**
-- Modify: `src-tauri/src/routines/actions/mod.rs` (DataService trait + 3 methods), `src-tauri/src/routines/actions/data.rs` (ReadSource variants `ModemStatus`, `BackendStatus`, `AppStatus`; match arms; MonolithDataService impls calling the same gatherers the MCP ports call: `gather_modem_status`/`derive_modem_status`, `derive_status_dto` + curation map + `redact_freeform` on the error arm, guard `armed_remaining`/`is_tainted`/`taint_reason` + name/version)
-- Test: data.rs fakes + monolith curation-equality pins
+**Files:** Modify `src-tauri/src/routines/actions/mod.rs` (DataService + 3 methods), `src-tauri/src/routines/actions/data.rs` (ReadSource variants `ModemStatus`, `BackendStatus`, `AppStatus` + match arms + MonolithDataService impls calling the same gatherers the MCP ports call); tests in data.rs + curation pins.
 
 Seam signatures:
 ```rust
 async fn read_modem_status(&self) -> Result<tuxlink_mcp_core::ports::ModemStatusDto, String>;
 async fn read_backend_status(&self) -> Result<tuxlink_mcp_core::ports::BackendStatusDto, String>;
-async fn read_app_status(&self) -> Result<serde_json::Value, String>; // ServerInfoDto shape
+async fn read_app_status(&self) -> Result<serde_json::Value, String>; // ServerInfoDto shape; use the typed mcp-core ServerInfoDto if importable from lib.rs, else Value pinned by test
 ```
-- [ ] **Step 1: failing tests** incl. the PIN: routines `backend_status` output for an Error{reason with ";PQ..."} backend state serializes byte-identical to the MCP `backend_status` tool output for the same state (redaction included).
-- [ ] **Steps 2-4 on R2. Step 5: PARENT commits** `feat(routines): data.read sources modem_status/backend_status/app_status (rank 1)`
+- [ ] **Step 1: failing tests** incl. curation-equality pins for ALL THREE: `modem_status` == `modem_get_status` tool output; `app_status` == `server_info` output; `backend_status` == tool output for an Error state containing `;PQ...` (redaction pinned).
+- [ ] **Steps 2-4: FAIL -> implement -> workspace green on R2.**
+- [ ] **Step 5: PARENT commits** `feat(routines): data.read sources modem_status/backend_status/app_status (rank 1)`
 
 ### Task D2: rank 3 config read sources
 
-**Files:** same seam/action files; ReadSource variants `Config`, `ArdopConfig`, `VaraConfig`, `PacketConfig`, `RigConfig`; impls call the SAME curation the MCP ports use (`config_read`'s 5-field projection + 4-char grid clamp via the same `redact_config_view`; per-modem DTOs verbatim).
-- [ ] TDD steps on R2; pins: routines `config` == MCP `config_read` byte-identical for same underlying config (grid clamp pinned with a 6-char grid fixture); each per-modem source == its MCP tool output.
-- [ ] **PARENT commits** `feat(routines): data.read config sources with MCP-identical curation (rank 3)`
+**Files:** same seam/action files; ReadSource `Config`, `ArdopConfig`, `VaraConfig`, `PacketConfig`, `RigConfig`; impls reuse the MCP curation (5-field projection + 4-char clamp via `redact_config_view`; per-modem DTOs verbatim).
+- [ ] **Step 1: failing tests**: per-source pins (each == its MCP tool output; `config` pinned with a 6-char-grid fixture proving the clamp). **Steps 2-4: FAIL -> implement -> workspace green on R2.**
+- [ ] **Step 5: PARENT commits** `feat(routines): data.read config sources with MCP-identical curation (rank 3)`
 
 ### Task D3: `data.find_stations`
 
-**Files:**
-- Modify: `src-tauri/src/routines/actions/mod.rs` (new seam `StationQueryService`), Create: `src-tauri/src/routines/actions/find_stations.rs` (registered in build_registry), Test: composability proof extension in `src-tauri/tuxlink-routines/src/composability_proof.rs`
+**Files:** Modify `src-tauri/src/routines/actions/mod.rs` (new seam), Create `src-tauri/src/routines/actions/find_stations.rs` (+ build_registry registration), Modify `src-tauri/tuxlink-routines/src/composability_proof.rs`; tests in both.
 
-Descriptor: `data.find_stations`, "Find gateway stations", needs_internet only. Params struct:
+Descriptor: `data.find_stations`, "Find gateway stations", `needs_internet:true` only. Params:
 ```rust
 #[derive(Deserialize)] struct FindStationsParams {
-  #[serde(default)] modes: Vec<String>, #[serde(default)] bands: Vec<String>,
-  #[serde(default)] history_hours: Option<u32>, #[serde(default)] limit: Option<usize> }
+  #[serde(default)] modes: Vec<crate::catalog::ListingMode>, // kebab-case enum, same as data.stationlist_update (data.rs ~418) — Vec<String> would accept garbage
+  #[serde(default)] bands: Vec<String>,
+  #[serde(default)] history_hours: Option<u32>, // validate <= 720 via the same helper the MCP port uses (validate_history_hours, importable) — reject verbatim
+  #[serde(default)] limit: Option<usize> }     // Some(0) -> invalid params
 ```
-`limit == Some(0)` -> invalid params. Impl: same path as the MCP tool (`catalog_fetch_stations` + `curate_gateway` + band filter + distance sort with 4-char own grid); THEN dedup callsigns preserving order; THEN truncate the deduped callsign list to `limit`; `gateways` = rows whose callsign survived. Output: `{"gateways":[...], "fetched_at_ms":u64|null, "operator_grid":str|null, "callsigns":[...]}`.
-- [ ] Tests: limit-over-distinct-callsigns (nearest gateway occupying 3 rows + limit 3 -> 3 DISTINCT callsigns), null-grid directory-order truncation, empty result `{"gateways":[],"callsigns":[]}` (not an error), PII omission pin vs MCP output. Composability proof: faked directory -> `$s1.callsigns` -> `radio.connect` `stations` resolves to the sorted callsign array.
-- [ ] **PARENT commits** `feat(routines): data.find_stations — distance-sorted gateway query feeding radio.connect (rank 2)`
+Impl: same path as the MCP tool (`catalog_fetch_stations` + `curate_gateway` + band filter + distance sort with 4-char own grid); dedup callsigns preserving order; truncate the DEDUPED callsign list to `limit`; `gateways` = rows whose callsign survived. Output `{"gateways":[...],"fetched_at_ms":u64|null,"operator_grid":str|null,"callsigns":[...]}`.
+- [ ] **Step 1: failing tests**: limit-over-distinct-callsigns (nearest station occupying 3 rows + limit 3 -> 3 distinct); null-grid directory-order truncation; empty result not-an-error; history_hours 721 rejected verbatim; PII omission pin vs MCP output; **`callsigns` derived only from post-curation gateways** (a gateway dropped by curation contributes no callsign). Composability proof: faked directory -> `$s1.callsigns` -> `radio.connect.stations` resolves to the sorted array.
+- [ ] **Steps 2-4: FAIL -> implement -> workspace green on R2.**
+- [ ] **Step 5: PARENT commits** `feat(routines): data.find_stations — distance-sorted gateway query feeding radio.connect (rank 2)`
 
 ### Task D4: `data.docs_search`
 
-**Files:** Create `src-tauri/src/routines/actions/docs_search.rs` (+ seam method on a `DocsService` or reuse SearchService lock as the MCP port does). Descriptor: all flags false. Params `{query: non-empty}`; output `{"hits":[{title,slug,snippet}...]}` via the same `search_docs` (raw-then-OR fallback, 30-cap). Zero hits -> `{"hits":[]}`.
-- [ ] TDD on R2 + pin vs MCP docs_search output. **PARENT commits** `feat(routines): data.docs_search (rank 4)`
+**Files:** Create `src-tauri/src/routines/actions/docs_search.rs` (+ seam + registration). Descriptor all-flags-false; params `{query: non-empty}`; same `search_docs` (raw-then-OR, 30-cap); output `{"hits":[{title,slug,snippet}...]}`; zero hits -> `{"hits":[]}`.
+- [ ] **Step 1: failing tests** incl. pin vs MCP docs_search output + empty-query invalid params. **Steps 2-4: FAIL -> implement -> workspace green on R2.**
+- [ ] **Step 5: PARENT commits** `feat(routines): data.docs_search (rank 4)`
 
 ### Task D5: `config.set_ardop` + locked RMW (both front-ends)
 
-**Files:** Create `src-tauri/src/routines/actions/config_write.rs` (namespace `config.`, descriptor `writes_config: true`, others false); Modify `src-tauri/src/config.rs` consumers: implement `set_ardop_drive_level(level: u8) -> Result<(old: Option<u8>, new: u8), String>` INSIDE `config::update_config`'s writer lock; Modify `src-tauri/src/mcp_ports.rs` (~1616-1640): the MCP `set_ardop` closure calls the SAME locked setter (upgrading the racy get-then-set).
-Params `{drive_level: u8}`; `>100` -> invalid params BEFORE any read. Output `{"field":"drive_level","old":<u8|null>,"new":<u8>}`.
-- [ ] Tests: validation-before-effect, old/new computed under the lock (concurrent-update test via two tasks), MCP path uses the locked setter (its existing tests stay green), output shape pin.
-- [ ] **PARENT commits** `feat(routines): config.set_ardop write action + locked drive-level RMW shared with the MCP write path (rank 5)`
+**Files:** Create `src-tauri/src/routines/actions/config_write.rs` (descriptor `writes_config:true`, others false); Modify `src-tauri/src/modem_commands.rs` or `config.rs` consumers: new `set_ardop_drive_level(level: u8) -> Result<(Option<u8>, u8), String>` computing (old, new) INSIDE `config::update_config`'s writer lock; Modify `src-tauri/src/mcp_ports.rs` (~1616-1640): MCP `set_ardop` calls the SAME locked setter.
+Params `{drive_level: u8}`; `>100` invalid params BEFORE any read. Output `{"field":"drive_level","old":<u8|null>,"new":<u8>}`.
+- [ ] **Step 1: failing tests**: validation-before-effect; old/new under the lock (two writers synchronized with a barrier — not bare join!); **absent-field-erases guard**: seed non-default ardop host/port/bandwidth, write drive_level only, assert the others survive on disk (testing-pitfalls §7 class); MCP path uses the locked setter with its existing tests green; output shape pin.
+- [ ] **Steps 2-4: FAIL -> implement -> workspace green on R2.**
+- [ ] **Step 5: PARENT commits** `feat(routines): config.set_ardop write action + locked drive-level RMW shared with the MCP write path (rank 5)`
 
 ### Task D6: dry-run canned shapes + authoring affordances
 
-**Files:** Modify `src-tauri/src/routines/commands.rs` (~169-207 dry-run script assembly: merge shape-true canned outputs keyed by action name before the optimistic default), `src-tauri/tuxlink-routines/src/action.rs` (descriptor gains `example_params: Option<&'static str>`, `allowed_values: Option<(&'static str, &'static [&'static str])>`; all existing literals gain `None`), `validate/contracts.rs` (UNKNOWN_READ_SOURCE Error for literal source outside allowed_values), `commands.rs` ActionInfo DTO + `src/routines/routinesApi.ts` ActionInfo (gains `writes_config`, `example_params`).
-Canned outputs (exact): `data.find_stations` -> `{"gateways":[],"callsigns":["DRYRUN-1"],"fetched_at_ms":null,"operator_grid":null,"dry_run":true}`; `data.read` per source -> its DTO shape with fake values (`grid` -> `{"grid":"AA00aa"}`, `modem_status` -> full shape kind "idle", `ardop_config` -> `{"host":"127.0.0.1","port":8515,"drive_level":80,"bandwidth":500}`, etc.); `config.set_ardop` -> `{"field":"drive_level","old":0,"new":0,"dry_run":true}`; `data.docs_search` -> `{"hits":[],"dry_run":true}`.
-- [ ] Tests: per-action/source shape pins as split by the spec (find_stations pins `callsigns`; grid pins `grid`; statuses pin `state`; ardop_config pins `drive_level`; set_ardop pins `field/old/new`); marquee dry-run e2e (find_stations -> branch on callsigns -> connect) completes; UNKNOWN_READ_SOURCE fires on `sorce`/`modem-status` literals, not on `$ref` values.
-- [ ] **PARENT commits** `feat(routines): shape-true dry-run outputs + example params + read-source vocabulary lint`
+**Files:** Modify `src-tauri/src/routines/commands.rs` (~169-207: merge canned outputs before the optimistic default), `src-tauri/tuxlink-routines/src/action.rs` (descriptor gains `example_params: Option<&'static str>`, `allowed_values: Option<(&'static str, &'static [&'static str])>`; ALL descriptor literals incl. D3/D4/D5's new ones gain the fields — this task runs LAST in group D for that reason), `validate/contracts.rs` (`UNKNOWN_READ_SOURCE` Error: literal non-`$` `source` value outside allowed_values), ActionInfo DTO (commands.rs) + `src/routines/routinesApi.ts` ActionInfo (gain `writes_config`, `example_params`).
 
-### Task D7: PR D — open, CI by SHA, merge (bare).
+Canned outputs (exact, all of them): `data.find_stations` -> `{"gateways":[],"callsigns":["DRYRUN-1"],"fetched_at_ms":null,"operator_grid":null,"dry_run":true}`; `data.read` per source: `grid` -> `{"grid":"AA00aa"}`, `modem_status` -> `{"kind":"idle","connected":false,"state":"idle","running":[],"selected":null,"conflict":false}`, `backend_status` -> `{"connected":false,"transport":"","state":"not_configured"}`, `app_status` -> `{"name":"tuxlink","version":"0.0.0-dryrun","armed":false,"armed_remaining_secs":0,"tainted":false,"taint_reason":null}`, `config` -> `{"connect_to_cms":false,"transport":"CmsSsl","host":"","callsign":"N0CALL","grid":"AA00"}`, `ardop_config` -> `{"host":"127.0.0.1","port":8515,"drive_level":80,"bandwidth":500}`, `vara_config` -> `{"host":"127.0.0.1","port":8300,"bandwidth":2300,"drive_level":0}`, `packet_config` -> `{"kiss_host":"127.0.0.1","kiss_port":8001,"baud":9600,"tx_delay":300}`, `rig_config` -> `{"rig_hamlib_model":null,"rigctld_host":"127.0.0.1","rigctld_port":4532,"rigctld_binary":"rigctld","close_serial_sequencing":false,"live_vfo_poll":false,"qsy_on_fail":false,"cat_serial_path":null,"cat_baud":19200}`, existing sources (`inbox_summary` -> `{"total":0,"unread":0}`, `space_weather` -> `null`, `last_connected_gateway` -> honest-gap error unchanged, `heard_stations` unchanged); `config.set_ardop` -> `{"field":"drive_level","old":0,"new":0,"dry_run":true}`; `data.docs_search` -> `{"hits":[],"dry_run":true}`. All carry `"dry_run":true` where the object shape permits an extra field (objects yes; bare `null` for space_weather stays bare).
+`example_params`: `data.read` -> `{"source":"modem_status"}`, `data.find_stations` -> `{"modes":["vara-hf"],"limit":3}`, `data.docs_search` -> `{"query":"find stations"}`, `config.set_ardop` -> `{"drive_level":80}`; existing actions -> None.
+- [ ] **Step 1: failing tests**: per-action/source shape pins as the spec splits them (find_stations pins `callsigns`; `grid` pins `grid`; statuses pin `state`; `ardop_config` pins `drive_level`; `set_ardop` pins `field/old/new`); marquee dry-run e2e (find_stations -> branch on `$s1.callsigns` -> connect) completes; `UNKNOWN_READ_SOURCE` fires on `"sorce"`/`"modem-status"` literals, silent on `$ref` values and on known sources.
+- [ ] **Steps 2-4: FAIL -> implement -> workspace green on R2 + `pnpm typecheck` (ActionInfo TS).**
+- [ ] **Step 5: PARENT commits** `feat(routines): shape-true dry-run outputs + example params + read-source vocabulary lint`
+
+### Task D7: PR D — cut branch, PR, CI by SHA, merge (bare).
 
 ---
 
-## PR group E — frontend consent + authoring surfaces
+## PR group E — frontend consent + authoring surfaces (branch cut after D merges)
 
 ### Task E1: ConsentGate parkKind branching
 
-**Files:** `src/routines/routinesEvents.ts` (payload field `parkKind`), `src/routines/ConsentGate.tsx` (ParkedRun carries parkKind; copy branches header/sub-line/body/button: transmit copy unchanged; write -> header "Confirm config write", sub-line drops Part 97 wording for "You are changing station configuration", button "Confirm config write"; `recoverParkedStepId` also reads `park_kind` off the last `state_changed{awaiting_consent}`), backend `events.rs` emits parkKind (done in C2 — consume here).
-- [ ] vitest: both copy sets, mixed queue, launch-recovery from journaled park_kind. **PARENT commits** `feat(routines): consent dialog branches on park kind — write parks never render transmit language`
+**Files:** Modify `src/routines/routinesEvents.ts` (payload field `parkKind` — the union discriminant `kind` is taken), `src/routines/ConsentGate.tsx` (ParkedRun carries parkKind; copy branches header, Part 97 sub-line, body, AND button: transmit copy unchanged; write -> header "Confirm config write", sub-line "You are changing station configuration", button "Confirm config write"; `recoverParkedStepId` additionally reads `park_kind` from the last `state_changed{awaiting_consent}` journal entry); tests in ConsentGate.test.
+- [ ] **Step 1: failing vitest** (both copy sets incl. button + sub-line; mixed queue; launch recovery from journaled park_kind). **Steps 2-4: FAIL -> implement -> green + typecheck.**
+- [ ] **Step 5: PARENT commits** `feat(routines): consent dialog branches on park kind — write parks never render transmit language`
 
 ### Task E2: SettingsTab ack validity + closure enumeration + write ack row
 
-**Files:** `src/routines/designer/SettingsTab.tsx` (+ its test), `src/routines/routinesApi.ts` (`consentClosure(name)` wrapper for `routines_consent_closure`, `acknowledgeWrite`)
-Visibility: transmit section renders iff closure.transmit_steps non-empty; write ack row iff closure.write_steps non-empty (closure-based, NOT direct-step scan). Ack panels branch on VALIDITY (present AND no AUTO_*_UNACKED finding): valid -> green; absent -> pending; present-but-invalid -> the third state with copy `Acknowledgment no longer valid: the routine, or a routine it calls, changed after <by> acknowledged on <at>. Re-acknowledge to run automatically.` Both panels enumerate covered steps (`<routine> · <step> · <action> · <params>` rows) with WRITE_VALUE_RUNTIME warnings inline; write-only closures relabel the mode toggle "Unattended (automatic)".
-- [ ] vitest: call-only-closure-with-valid-ack still shows the row (the R5 pin), all three panel states, enumeration render, both-classes routine shows both rows. **PARENT commits** `feat(routines): ack panels render validity + the enumerated closure being signed`
+**Files:** Modify `src/routines/designer/SettingsTab.tsx` + test, `src/routines/routinesApi.ts` (`consentClosure(name)` -> cmd `routines_consent_closure`; `acknowledgeWrite`).
+Visibility (closure-based, NOT direct-step scan): transmit section iff `closure.transmit_steps` non-empty; write ack row iff `closure.write_steps` non-empty **AND mode is automatic** (mirror the transmit section's mode gating). Ack panels branch on VALIDITY (present AND no AUTO_*_UNACKED finding): valid green / absent pending / present-but-invalid third state with copy `Acknowledgment no longer valid: the routine, or a routine it calls, changed after <by> acknowledged on <at>. Re-acknowledge to run automatically.` Both panels enumerate covered steps (`<routine> · <step> · <action> · <params>`) with WRITE_VALUE_RUNTIME warnings inline; write-only closures relabel the mode toggle "Unattended (automatic)".
+- [ ] **Step 1: failing vitest**: call-only-closure-with-valid-ack still shows the row (R5 pin); all three panel states; enumeration; both-classes routine renders both rows; mode gating. **Steps 2-4: FAIL -> implement -> green + typecheck.**
+- [ ] **Step 5: PARENT commits** `feat(routines): ack panels render validity + the enumerated closure being signed`
 
 ### Task E3: StepInspector + palette
 
-**Files:** `src/routines/designer/StepInspector.tsx` (description line; WRITES badge in flags row), `src/routines/designer/PaletteRail.tsx` (WRITES badge via flagsFor; insertAction seeds `example_params` when present instead of `{}`), `src/routines/designer/canvasModel.ts` if flagsFor lives there.
-- [ ] vitest: seeded params grid on insert, badges, description render. **PARENT commits** `feat(routines): palette + inspector surface writes badge, descriptions, seeded example params`
+**Files:** Modify `src/routines/designer/StepInspector.tsx` (description line; WRITES badge in its hardcoded flags row), `src/routines/designer/PaletteRail.tsx` (WRITES badge via flagsFor; `insertAction` seeds parsed `example_params` when present, else `{}`), `src/routines/designer/canvasModel.ts` if flagsFor/category lives there.
+- [ ] **Step 1: failing vitest**: seeded grid on insert; WRITES badge in BOTH palette and inspector; description renders; `config.*` stays in the LOCAL palette group. **Steps 2-4: FAIL -> implement -> green + typecheck.**
+- [ ] **Step 5: PARENT commits** `feat(routines): palette + inspector surface writes badge, descriptions, seeded example params`
 
-### Task E4: PR E — open, CI by SHA, merge (bare). WebKitGTK harness renders: designer palette + settings ack rows + ConsentGate write park (visual inspection, PNGs to scratch).
+### Task E4: PR E — cut branch, PR, CI by SHA, merge (bare). Harness renders: palette, settings ack rows (all three states), ConsentGate write park (PNGs to scratch, visual inspection).
 
 ---
 
-## PR group F — docs + acceptance
+## PR group F — docs + acceptance (branch cut after E merges)
 
 ### Task F1: user-guide routines-actions reference page
 
-**Files:** Create `docs/user-guide/<next-number>-routines-actions.md` following the existing chapter format (check `docs/user-guide/` numbering + front-matter conventions): the action catalog (names, labels, params with examples, all `data.read` sources, consent classes incl. writes/acks in plain words). Verify it lands in the docs FTS index (the search index build path in `search/docs_index.rs`) so `data.docs_search` finds it.
-- [ ] Test: docs_search integration test finds "find stations". **PARENT commits** `docs(user-guide): routines actions reference (searchable by data.docs_search)`
+**Files:** Create `docs/user-guide/<next-number>-routines-actions.md` (follow existing chapter numbering + front-matter): action catalog (names, labels, params with examples, all 13 `data.read` sources, consent classes incl. writes/acks in plain words). Verify it lands in the docs FTS index (`search/docs_index.rs` build path).
+- [ ] **Step 1: failing integration test**: docs_search("find stations") returns the new page. **Steps 2-4: FAIL -> implement -> green on R2.** **Step 5: PARENT commits** `docs(user-guide): routines actions reference (searchable by data.docs_search)`. PR; CI by SHA; merge (bare).
 
-### Task F2: acceptance (SESSION-LEVEL, parent runs it, not a subagent)
+### Task F2: acceptance (SESSION-LEVEL — the parent runs it, never a subagent)
 
-- [ ] All PR groups merged; converge rebuild on R2 (operator's `pnpm dev:converged` path — coordinate: this restarts the app, so run it when the operator is not mid-session, or note it in the handoff).
-- [ ] Fresh wire-walk against the rebuilt app via the MCP shim: author a probe exercising branch + skip + a sync call (child) + End-with-reason + an ATTENDED config.set_ardop park (grant via UI is operator-only — for the capture, use a dry-run for the write step OR leave the park step out and validate the park via a dry... NO: dry-runs never park. Capture two runs: (1) real run with branch/skip/call/end — no write; (2) the write park validated in vitest + harness render only, with the operator's live click left as an explicitly-named operator step in the handoff).
-- [ ] Capture journal -> `dev/render-harness/real-run-<date>.json` + `&real=2` overlay in harness.tsx; WebKitGTK render of History incl. call-child navigation + end row; commit fixture.
-- [ ] Wire-walk skill (hard gate): trace the operator flows (author each new action in the designer -> dry-run -> run -> History) to file:line.
-- [ ] Coverage recount vs compat-tree §3 (expect 24/24) — update the compat-tree spec's §3 table + bd iizmk notes.
+- [ ] All groups merged. Converge rebuild on R2 (restarts the operator's app — run when the operator is not mid-session, or name it in the handoff).
+- [ ] Fresh wire-walk via the MCP shim against the rebuilt app: one real run exercising branch + skip + a sync call (child) + End-with-reason (NO write step — the attended write park needs the operator's click, which is an operator act; the park is validated by vitest + the E4 harness render, and the divergence is recorded in C4's docs commit). Capture journal -> `dev/render-harness/real-run-<date>.json` + `&real=2` additive overlay in harness.tsx; WebKitGTK render of History incl. child navigation + end row; commit fixture.
+- [ ] **Wire-walk skill (hard gate):** trace the operator flows (author each new action in the designer -> dry-run -> run -> History; ack a write routine; consent a write park) to file:line.
+- [ ] Coverage recount vs compat-tree §3 (expect 24/24): update the compat-tree spec §3 note + bd iizmk.
 
 ---
 
-## Self-review notes (run after drafting, fixed inline)
+## Self-review notes (fixed inline, round-1 findings folded)
 
-- Spec §5.2 root-digest threading appears in B2 (seam comment) + C3 (implementation) — intentional split, C3 states it completes B2's seam.
-- ParkKind naming: Rust journal field `park_kind`, app-event payload `parkKind` (camelCase Tauri event), TS journal type `park_kind` — three names stated explicitly here so no task "fixes" the mismatch.
-- Tolerant reader merges first (A) and is not depended on by B-E except operationally (converge skew); no code dependency.
-- Every new finding code has a test in C3; UNKNOWN_READ_SOURCE's test lives in D6 with its carrier.
+- A1 states only the final contract; error type pinned to the existing `std::io::Result`.
+- Branch mechanics + serial merges + stacked-PR CI gotcha live in Global Constraints; every PR task says "cut branch per Global Constraints."
+- ParkKind tri-surface naming is a Global Constraint (C2/E1 both restate their side).
+- write_ack revocation-on-mode-flip named + tested in C3; router-exclusion pinned via the CLOSED tool-list test.
+- C1's Files list names both reimplemented walk sites; workspace tests.
+- D6 runs last in group D (new descriptors from D3/D4/D5 need the new fields); groups are serial; tasks are serial.
+- F2's write-park acceptance divergence is recorded in C4's docs commit, not silent.
