@@ -19,55 +19,64 @@
   padding: 6px 0 10px;
 }
 
+/* tuxlink-iizmk round 2 (mock .sgrid): the sections are a two-column grid
+ * filling the canvas column's width: no centered 720px strip, no dead
+ * region beside the cards. `auto-fit` collapses to one column below ~700px
+ * (the pop window's floor) instead of crushing the option pairs. */
 .settings-col {
-  max-width: 720px;
-  margin: 0 auto;
-  padding: 0 24px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 16px;
 }
 
 .sect {
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 12px;
   background: var(--surface);
-  margin-bottom: 7px;
   overflow: hidden;
+}
+
+.sect.wide {
+  grid-column: 1 / -1;
 }
 
 .sect-head {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 5px 16px;
+  align-items: baseline;
+  gap: 12px;
+  padding: 12px 18px;
   border-bottom: 1px solid var(--border);
   background: var(--surface-2);
 }
 
 .sect-title {
-  font-size: var(--type-body);
-  font-weight: 600;
+  font-size: var(--rt-control);
+  font-weight: 640;
 }
 
+/* Sub text is copy, not data: sans at the fine size (mock .sect-sub). */
 .sect-sub {
-  font-size: var(--type-meta);
+  font-size: var(--rt-fine);
   color: var(--text-faint);
   margin-left: auto;
-  font-family: var(--mono);
+  text-align: right;
 }
 
 .sect-body {
-  padding: 8px 16px 8px;
+  padding: 16px 18px;
+  font-size: var(--rt-body);
 }
 
 .optrow {
   display: flex;
-  gap: 12px;
+  gap: 14px;
 }
 
 .opt {
   flex: 1;
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  padding: 8px 12px;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 13px 16px;
   position: relative;
   background: transparent;
   color: var(--text);
@@ -84,17 +93,18 @@
 .opt .r {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: var(--type-body);
-  font-weight: 600;
+  gap: 10px;
+  font-size: var(--rt-control);
+  font-weight: 620;
+  margin-bottom: 5px;
 }
 
 /* Scoped under .opt — a bare `.radio` selector here leaked onto
  * PaletteRail's `.pal-group.radio` category header and rendered as a stray
  * oval in the Design tab's palette (tuxlink-7ewvq item 1). */
 .opt .radio {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   border: 2px solid var(--border-strong);
   flex: 0 0 auto;
@@ -103,15 +113,14 @@
 
 .opt.sel .radio {
   border-color: var(--accent);
-  box-shadow: inset 0 0 0 3px var(--bg);
+  box-shadow: inset 0 0 0 3.5px var(--bg);
   background: var(--accent);
 }
 
 .opt .desc {
-  font-size: var(--type-meta);
+  font-size: var(--rt-body);
   color: var(--text-dim);
-  margin-top: 3px;
-  line-height: 1.4;
+  line-height: 1.5;
 }
 
 .ack {
@@ -132,16 +141,16 @@
   align-items: center;
   gap: 8px;
   font-family: var(--mono);
-  font-size: var(--type-meta);
+  font-size: var(--rt-fine);
   color: var(--success);
   font-weight: 600;
 }
 
 .ack .words {
-  font-size: var(--type-meta);
+  font-size: var(--rt-fine);
   color: var(--text-dim);
   margin-top: 4px;
-  line-height: 1.45;
+  line-height: 1.5;
 }
 
 .ack .btn {
@@ -151,8 +160,8 @@
 .frow {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 8px;
+  gap: 16px;
+  margin-bottom: 14px;
   flex-wrap: wrap;
 }
 
@@ -160,25 +169,24 @@
   margin-bottom: 0;
 }
 
+/* Mock .flabel: a plain sans body-size label, not uppercase micro caps. */
 .flabel {
-  width: 150px;
-  flex: 0 0 150px;
-  font-size: var(--type-micro);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-faint);
+  width: 120px;
+  flex: 0 0 120px;
+  font-size: var(--rt-body);
+  color: var(--text-dim);
 }
 
 .pill-input {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   background: var(--surface-2);
   border: 1px solid var(--border-strong);
-  border-radius: 5px;
-  padding: 2px 8px;
+  border-radius: 7px;
+  padding: 6px 12px;
   font-family: var(--mono);
-  font-size: var(--type-control);
+  font-size: var(--rt-body);
   color: var(--text);
 }
 
@@ -187,7 +195,7 @@
   border: none;
   color: var(--text);
   font-family: var(--mono);
-  font-size: var(--type-control);
+  font-size: var(--rt-body);
   /* 15ch, measured, not tight: the window input's "06:00-22:00" pattern is
    * 11 mono chars, and the shipped 90px clipped its last character in the
    * production engine (tuxlink-3awm9 WebKitGTK smoke). ch alone is NOT safe
@@ -205,31 +213,43 @@
 .seg {
   display: inline-flex;
   border: 1px solid var(--border-strong);
-  border-radius: 5px;
+  border-radius: 7px;
   overflow: hidden;
 }
 
+/* Segmented options are labels: sans at body size (mock .seg). */
 .seg button {
-  padding: 4px 12px;
-  font-family: var(--mono);
-  font-size: var(--type-meta);
+  padding: 7px 16px;
+  font-size: var(--rt-body);
   color: var(--text-dim);
   background: var(--surface-2);
   border: none;
+  border-right: 1px solid var(--border);
   cursor: pointer;
+}
+
+.seg button:last-child {
+  border-right: none;
 }
 
 .seg button.on {
   background: var(--accent-soft);
   color: var(--accent-2);
-  font-weight: 600;
+  font-weight: 620;
 }
 
 .note {
-  font-size: var(--type-meta);
+  font-size: var(--rt-fine);
   color: var(--text-faint);
-  line-height: 1.45;
-  margin-top: 6px;
+  line-height: 1.55;
+  margin-top: 10px;
+}
+
+/* The mock's inline schedule note ("misses are recorded visibly either
+ * way"): same fine print as .note, riding inside an frow. */
+.note-inline {
+  font-size: var(--rt-fine);
+  color: var(--text-faint);
 }
 
 .note .code {
@@ -242,8 +262,8 @@
 }
 
 .toggle-btn {
-  width: 34px;
-  height: 18px;
+  width: 42px;
+  height: 23px;
   border-radius: 999px;
   background: var(--border-strong);
   position: relative;
@@ -256,10 +276,10 @@
 .toggle-btn::after {
   content: '';
   position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 14px;
-  height: 14px;
+  top: 3px;
+  left: 3px;
+  width: 17px;
+  height: 17px;
   border-radius: 50%;
   background: var(--text-dim);
   transition: left 0.1s ease;
@@ -270,19 +290,19 @@
 }
 
 .toggle-btn.on::after {
-  left: 18px;
+  left: 22px;
   background: var(--modem-accent-fg);
 }
 
 .enrow {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .enrow .st {
-  font-size: var(--type-body);
-  font-weight: 600;
+  font-size: var(--rt-control);
+  font-weight: 620;
   color: var(--modem-accent-2);
 }
 
@@ -296,14 +316,14 @@
 
 .fleetres .h {
   font-family: var(--mono);
-  font-size: var(--type-micro);
+  font-size: var(--rt-fine);
   letter-spacing: 0.08em;
   color: var(--accent-2);
   font-weight: 700;
 }
 
 .fleetres .m {
-  font-size: var(--type-meta);
+  font-size: var(--rt-fine);
   color: var(--text-dim);
   margin-top: 3px;
   line-height: 1.5;
@@ -326,14 +346,14 @@
 
 .enable-blocked .h {
   font-family: var(--mono);
-  font-size: var(--type-micro);
+  font-size: var(--rt-fine);
   letter-spacing: 0.08em;
   color: var(--error);
   font-weight: 700;
 }
 
 .enable-blocked .m {
-  font-size: var(--type-meta);
+  font-size: var(--rt-fine);
   color: var(--text-dim);
   margin-top: 3px;
   line-height: 1.5;
@@ -345,7 +365,7 @@
 }
 
 .insp-error {
-  font-size: var(--type-meta);
+  font-size: var(--rt-fine);
   color: var(--error);
   margin-top: 6px;
 }
@@ -359,7 +379,7 @@
 }
 
 .entity-head {
-  font-size: var(--type-meta);
+  font-size: var(--rt-fine);
   font-weight: 600;
   color: var(--text-dim);
   margin-bottom: 6px;
@@ -370,13 +390,13 @@
 .entity-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: var(--type-control);
+  font-size: var(--rt-body);
   margin-bottom: 8px;
 }
 
 .entity-table th {
   text-align: left;
-  font-size: var(--type-micro);
+  font-size: var(--rt-fine);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-faint);
@@ -391,11 +411,11 @@
 
 .entity-table td.mono {
   font-family: var(--mono);
-  font-size: var(--type-meta);
+  font-size: var(--rt-fine);
 }
 
 .entity-table button {
-  font-size: var(--type-control);
+  font-size: var(--rt-fine);
   color: var(--text-dim);
   background: transparent;
   border: 1px solid var(--border-strong);
@@ -419,6 +439,6 @@
   border-radius: 5px;
   padding: 4px 8px;
   color: var(--text);
-  font-size: var(--type-control);
-  width: 110px;
+  font-size: var(--rt-body);
+  width: 130px;
 }

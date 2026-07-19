@@ -240,7 +240,12 @@ export function PaletteRail({ def, actions, armedInsert, onInsert }: PaletteRail
 
   return (
     <div className="palette" data-testid="palette-rail">
-      <div className="pal-head">INSERT STEP</div>
+      {/* tuxlink-iizmk round 2 (mock .rail-head): a sentence-case sans title,
+          not a mono micro tag; hint above the filter, mock order. */}
+      <div className="pal-head">Add a step</div>
+      <div className="pal-hint" data-testid="palette-hint">
+        {hintText()}
+      </div>
       <input
         className="pal-search"
         data-testid="palette-filter"
@@ -248,9 +253,6 @@ export function PaletteRail({ def, actions, armedInsert, onInsert }: PaletteRail
         value={filter}
         onChange={(e) => setFilter(e.target.value)}
       />
-      <div className="pal-hint" data-testid="palette-hint">
-        {hintText()}
-      </div>
       <div className="pal-scroll">
         {radioActions.length > 0 && (
           <>
