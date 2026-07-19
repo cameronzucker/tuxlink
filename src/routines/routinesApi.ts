@@ -155,10 +155,16 @@ export type StepError =
   | { kind: 'action'; detail: { action: string; cause: string } }
   | { kind: 'cancelled' };
 
+/** `ParkKind` (journal.rs) — `#[serde(rename_all = "snake_case")]`. The
+ * JOURNALED field is snake_case `park_kind` (unrecased into TS); the Tauri
+ * app-event payload uses camelCase `parkKind` (see Global Constraints tri-
+ * surface naming rule). Absent on pre-O3/O4 (legacy) journals. */
+export type ParkKind = 'transmit' | 'write';
+
 /** `RunEvent` (journal.rs:32-71) — `#[serde(tag = "type", rename_all = "snake_case")]`. */
 export type RunEvent =
   | { type: 'run_started'; routine: string; snapshot: unknown; dry_run: boolean }
-  | { type: 'state_changed'; state: RunState; step?: string; rig?: string }
+  | { type: 'state_changed'; state: RunState; step?: string; rig?: string; park_kind?: ParkKind }
   | { type: 'step_intent'; step: string; action: string; resolved_params: unknown }
   | { type: 'step_ok'; step: string; output: unknown }
   | { type: 'step_err'; step: string; error: StepError }
@@ -166,6 +172,13 @@ export type RunEvent =
   // variants): journals written before the enrichment simply never carry them.
   | { type: 'branch_taken'; step: string; on: string; value: unknown; took_then: boolean; target?: string }
   | { type: 'step_skipped'; step: string; reason: string }
+  // O3/O4 (Task B1): a `call` control step's parent-to-child edge that History
+  // navigates, and an `end` control step's termination with the authored
+  // reason. `opaque` is A1's tolerant-reader placeholder for an event type a
+  // newer build wrote and this build does not know — stepListModel skips it.
+  | { type: 'call_child'; step: string; child_run_id: string }
+  | { type: 'end_reached'; step: string; failed: boolean; reason?: string }
+  | { type: 'opaque'; raw: unknown }
   | { type: 'run_finished'; state: RunState; reason?: string | null };
 
 /** `JournalEntry` (journal.rs:73-79) — as-written. */

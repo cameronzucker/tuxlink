@@ -786,3 +786,255 @@ describe('stepListModel (decree O5/O6/O7)', () => {
     expect(screen.getByTestId('slrow-output-s1')).toHaveTextContent('DM33wp');
   });
 });
+
+// ---------------------------------------------------------------------------
+// stepListModel — B4 O3/O4: call rows (child-run navigation edges), end rows,
+// park-kind, finished-reason suppression. Pure-model tests over synthetic
+// journals feeding stepListModel directly (same harness as the O5/O6/O7 block).
+// ---------------------------------------------------------------------------
+
+describe('stepListModel (B4 O3/O4 — call/end/park-kind)', () => {
+  const j = (seq: number, ts: number, event: JournalEntry['event']): JournalEntry => ({
+    ts_unix: ts,
+    run_id: 'run-b4',
+    seq,
+    event,
+  });
+
+  it('emits a call row from call_child, routine parsed from the paired step_intent action', () => {
+    const journal: JournalEntry[] = [
+      j(0, T, { type: 'run_started', routine: 'parent', snapshot: SNAPSHOT, dry_run: false }),
+      j(1, T + 1, { type: 'step_intent', step: 'c1', action: 'call:sub-routine', resolved_params: { x: 1 } }),
+      j(2, T + 1, { type: 'call_child', step: 'c1', child_run_id: 'run-1768456705-0042' }),
+      j(3, T + 3, { type: 'step_ok', step: 'c1', output: { completed: true, run_id: 'run-1768456705-0042' } }),
+      j(4, T + 3, { type: 'run_finished', state: 'completed', reason: null }),
+    ];
+    const rows = stepListModel(journal);
+    const call = rows.find((r) => r.kind === 'call');
+    expect(call).toBeDefined();
+    expect(call?.stepId).toBe('c1');
+    expect(call?.childRoutine).toBe('sub-routine');
+    expect(call?.childRunId).toBe('run-1768456705-0042');
+    // The call's own step_ok still renders (every executed step is listed).
+    expect(rows.find((r) => r.kind === 'ok' && r.stepId === 'c1')).toBeDefined();
+    // The call row sorts at the call's start (before its own outcome row).
+    const kinds = rows.map((r) => r.kind);
+    expect(kinds.indexOf('call')).toBeLessThan(kinds.indexOf('ok'));
+  });
+
+  it('falls back to the raw intent action when it is not the call:<routine> shape', () => {
+    const journal: JournalEntry[] = [
+      j(0, T, { type: 'run_started', routine: 'parent', snapshot: SNAPSHOT, dry_run: false }),
+      j(1, T + 1, { type: 'step_intent', step: 'c1', action: 'weird', resolved_params: {} }),
+      j(2, T + 1, { type: 'call_child', step: 'c1', child_run_id: 'run-x' }),
+    ];
+    const rows = stepListModel(journal);
+    expect(rows.find((r) => r.kind === 'call')?.childRoutine).toBe('weird');
+  });
+
+  it('emits an end row from a failed end_reached carrying failed + reason', () => {
+    const journal: JournalEntry[] = [
+      j(0, T, { type: 'run_started', routine: 'r', snapshot: SNAPSHOT, dry_run: false }),
+      j(1, T + 1, { type: 'end_reached', step: 'e1', failed: true, reason: 'no gateway answered' }),
+      j(2, T + 1, { type: 'run_finished', state: 'failed', reason: 'no gateway answered' }),
+    ];
+    const rows = stepListModel(journal);
+    expect(rows.find((r) => r.kind === 'end')).toMatchObject({
+      stepId: 'e1',
+      failed: true,
+      reason: 'no gateway answered',
+    });
+  });
+
+  it('emits an end row from a success end_reached with failed:false and no reason', () => {
+    const journal: JournalEntry[] = [
+      j(0, T, { type: 'run_started', routine: 'r', snapshot: SNAPSHOT, dry_run: false }),
+      j(1, T + 1, { type: 'end_reached', step: 'e1', failed: false }),
+      j(2, T + 1, { type: 'run_finished', state: 'completed', reason: null }),
+    ];
+    const rows = stepListModel(journal);
+    const end = rows.find((r) => r.kind === 'end');
+    expect(end).toMatchObject({ stepId: 'e1', failed: false });
+    expect(end?.reason).toBeUndefined();
+  });
+
+  it('carries park_kind:"write" onto the park row', () => {
+    const journal: JournalEntry[] = [
+      j(0, T, { type: 'run_started', routine: 'r', snapshot: SNAPSHOT, dry_run: false }),
+      j(1, T + 1, { type: 'step_intent', step: 'w1', action: 'config.set_ardop', resolved_params: {} }),
+      j(2, T + 2, { type: 'state_changed', state: 'awaiting_consent', step: 'w1', park_kind: 'write' }),
+      j(3, T + 3, { type: 'state_changed', state: 'running', step: 'w1' }),
+      j(4, T + 4, { type: 'step_ok', step: 'w1', output: {} }),
+      j(5, T + 5, { type: 'run_finished', state: 'completed', reason: null }),
+    ];
+    const rows = stepListModel(journal);
+    expect(rows.find((r) => r.kind === 'park')?.parkKind).toBe('write');
+  });
+
+  it('carries park_kind:"transmit" onto a transmit park row', () => {
+    const journal: JournalEntry[] = [
+      j(0, T, { type: 'run_started', routine: 'r', snapshot: SNAPSHOT, dry_run: false }),
+      j(1, T + 1, { type: 'state_changed', state: 'awaiting_consent', step: 't1', park_kind: 'transmit' }),
+    ];
+    const rows = stepListModel(journal);
+    expect(rows.find((r) => r.kind === 'park')?.parkKind).toBe('transmit');
+  });
+
+  it('leaves park_kind undefined for a legacy park row (no park_kind on the wire)', () => {
+    const journal: JournalEntry[] = [
+      j(0, T, { type: 'run_started', routine: 'r', snapshot: SNAPSHOT, dry_run: false }),
+      j(1, T + 1, { type: 'state_changed', state: 'awaiting_consent', step: 't1' }),
+    ];
+    const rows = stepListModel(journal);
+    const park = rows.find((r) => r.kind === 'park');
+    expect(park).toBeDefined();
+    expect(park?.parkKind).toBeUndefined();
+  });
+
+  it('suppresses the finished-row reason when it equals the winning end-row reason', () => {
+    const journal: JournalEntry[] = [
+      j(0, T, { type: 'run_started', routine: 'r', snapshot: SNAPSHOT, dry_run: false }),
+      j(1, T + 1, { type: 'end_reached', step: 'e1', failed: true, reason: 'link timeout' }),
+      j(2, T + 1, { type: 'run_finished', state: 'failed', reason: 'link timeout' }),
+    ];
+    const rows = stepListModel(journal);
+    // The end row still carries it; the finished row does not repeat it.
+    expect(rows.find((r) => r.kind === 'end')?.reason).toBe('link timeout');
+    expect(rows.find((r) => r.kind === 'finished')?.reason).toBeUndefined();
+  });
+
+  it('keeps the finished-row reason when no end row shares it', () => {
+    const journal: JournalEntry[] = [
+      j(0, T, { type: 'run_started', routine: 'r', snapshot: SNAPSHOT, dry_run: false }),
+      j(1, T + 1, { type: 'run_finished', state: 'failed', reason: 'some other reason' }),
+    ];
+    const rows = stepListModel(journal);
+    expect(rows.find((r) => r.kind === 'finished')?.reason).toBe('some other reason');
+  });
+
+  it('skips an opaque (unknown future) event without producing a row', () => {
+    const journal: JournalEntry[] = [
+      j(0, T, { type: 'run_started', routine: 'r', snapshot: SNAPSHOT, dry_run: false }),
+      j(1, T + 1, { type: 'opaque', raw: { type: 'from_the_future', x: 1 } }),
+      j(2, T + 2, { type: 'run_finished', state: 'completed', reason: null }),
+    ];
+    const rows = stepListModel(journal);
+    expect(rows.map((r) => r.kind)).toEqual(['finished']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RunsTab — B4 rendered rows + child-run navigation (O3/O4). A parent run
+// whose journal carries a call_child edge, a write park, and an end row; the
+// child run is a DIFFERENT routine so it is absent from the (routine-scoped)
+// run list, driving the "foreign run" context strip.
+// ---------------------------------------------------------------------------
+
+describe('RunsTab — B4 History rows + child navigation (O3/O4)', () => {
+  const PARENT_SNAPSHOT = {
+    tracks: [
+      {
+        name: 'main',
+        steps: [
+          { id: 'c1', control: 'call', routine: 'sub-routine' },
+          { id: 'w1', action: 'config.set_ardop' },
+          { id: 'e1', control: 'end' },
+        ],
+      },
+    ],
+  };
+
+  const PARENT_JOURNAL: JournalEntry[] = [
+    { ts_unix: T, run_id: 'run-parent', seq: 0, event: { type: 'run_started', routine: 'net-opening-checklist', snapshot: PARENT_SNAPSHOT, dry_run: false } },
+    { ts_unix: T + 1, run_id: 'run-parent', seq: 1, event: { type: 'step_intent', step: 'c1', action: 'call:sub-routine', resolved_params: {} } },
+    { ts_unix: T + 1, run_id: 'run-parent', seq: 2, event: { type: 'call_child', step: 'c1', child_run_id: 'run-1768456705-0099' } },
+    { ts_unix: T + 2, run_id: 'run-parent', seq: 3, event: { type: 'step_ok', step: 'c1', output: { completed: true, run_id: 'run-1768456705-0099' } } },
+    { ts_unix: T + 3, run_id: 'run-parent', seq: 4, event: { type: 'step_intent', step: 'w1', action: 'config.set_ardop', resolved_params: { drive_level: 80 } } },
+    { ts_unix: T + 4, run_id: 'run-parent', seq: 5, event: { type: 'state_changed', state: 'awaiting_consent', step: 'w1', park_kind: 'write' } },
+    { ts_unix: T + 5, run_id: 'run-parent', seq: 6, event: { type: 'state_changed', state: 'running', step: 'w1' } },
+    { ts_unix: T + 6, run_id: 'run-parent', seq: 7, event: { type: 'step_ok', step: 'w1', output: { field: 'drive_level', old: 0, new: 80 } } },
+    { ts_unix: T + 7, run_id: 'run-parent', seq: 8, event: { type: 'end_reached', step: 'e1', failed: false, reason: 'net complete' } },
+    { ts_unix: T + 8, run_id: 'run-parent', seq: 9, event: { type: 'run_finished', state: 'completed', reason: 'net complete' } },
+  ];
+
+  const CHILD_JOURNAL: JournalEntry[] = [
+    { ts_unix: T + 1, run_id: 'run-1768456705-0099', seq: 0, event: { type: 'run_started', routine: 'sub-routine', snapshot: { tracks: [{ name: 's', steps: [{ id: 'x1', action: 'data.read' }] }] }, dry_run: false } },
+    { ts_unix: T + 1, run_id: 'run-1768456705-0099', seq: 1, event: { type: 'step_intent', step: 'x1', action: 'data.read', resolved_params: { source: 'grid' } } },
+    { ts_unix: T + 2, run_id: 'run-1768456705-0099', seq: 2, event: { type: 'step_ok', step: 'x1', output: { grid: 'DM33wp' } } },
+    { ts_unix: T + 2, run_id: 'run-1768456705-0099', seq: 3, event: { type: 'run_finished', state: 'completed', reason: null } },
+  ];
+
+  const PARENT_ENTRY: RunListEntry = {
+    runId: 'run-parent',
+    routine: 'net-opening-checklist',
+    dryRun: false,
+    startedUnix: T,
+    state: 'completed',
+    finishedUnix: T + 8,
+  };
+
+  function installNavMock() {
+    installInvokeMock({
+      routines_runs_list: () => [PARENT_ENTRY],
+      routines_run_status: (args) => {
+        const id = (args as { runId: string }).runId;
+        return id === 'run-1768456705-0099'
+          ? { runId: id, routine: 'sub-routine', dryRun: false, state: 'completed' }
+          : { runId: 'run-parent', routine: 'net-opening-checklist', dryRun: false, state: 'completed' };
+      },
+      routines_journal: (args) => {
+        const id = (args as { runId: string }).runId;
+        return id === 'run-1768456705-0099' ? CHILD_JOURNAL : PARENT_JOURNAL;
+      },
+    });
+  }
+
+  it('renders the call row, the write-park annotation, and the end row; the finished row does not repeat the end reason', async () => {
+    installNavMock();
+    renderRunsTab();
+    await screen.findByTestId('steplist');
+
+    // Call row: call:<routine> + short child id, and it is clickable.
+    const callRow = screen.getByTestId('slrow-c1-call');
+    expect(callRow.textContent).toContain('call:sub-routine');
+    expect(within(callRow).getByTestId('slrow-call-link-run-1768456705-0099')).toBeInTheDocument();
+
+    // Write park annotation.
+    expect(screen.getByTestId('slrow-w1-park')).toHaveTextContent('awaiting consent (config write)');
+
+    // End row.
+    expect(screen.getByTestId('slrow-e1-end')).toHaveTextContent('ended at e1: complete, net complete');
+
+    // Finished row shows the state but not the (duplicated) end reason.
+    const finishedRow = screen.getByTestId('slrow-finished-finished');
+    expect(finishedRow).toHaveTextContent('Completed');
+    expect(finishedRow.textContent).not.toContain('net complete');
+  });
+
+  it('clicking the call link navigates to the child run and shows the context strip, and the back link returns', async () => {
+    installNavMock();
+    renderRunsTab();
+    await screen.findByTestId('steplist');
+
+    // No strip while viewing the parent (it is in the run list).
+    expect(screen.queryByTestId('run-context-strip')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('slrow-call-link-run-1768456705-0099'));
+
+    // The child run is foreign (a different routine, absent from the rail) —
+    // the context strip names the child routine and offers a back link.
+    const strip = await screen.findByTestId('run-context-strip');
+    await waitFor(() => expect(strip.textContent).toContain('Viewing a run of sub-routine'));
+    expect(strip.textContent).toContain('back to run');
+
+    // The header now reflects the child run.
+    await waitFor(() =>
+      expect(screen.getByTestId('run-header').textContent).toContain('…6705-0099'),
+    );
+
+    // Back link returns to the parent; strip disappears, parent re-selected.
+    fireEvent.click(screen.getByTestId('run-context-back'));
+    await waitFor(() => expect(screen.queryByTestId('run-context-strip')).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('runrow-run-parent')).toHaveClass('sel'));
+  });
+});
