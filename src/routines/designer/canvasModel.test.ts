@@ -465,3 +465,32 @@ describe('layoutCanvas — steps no branch arm references', () => {
     expect(lane.rows[2]!.every((n) => !n.unplaced)).toBe(true);
   });
 });
+
+// tuxlink-7ewvq item 3: the trigger node leaked the raw trigger.type
+// ('manual') into the canvas with no explanation of what it IS. It reads as
+// the routine's start condition now.
+describe('trigger node human language (tuxlink-7ewvq)', () => {
+  it('a manual trigger titles "Start · manual" with a plain-language body', () => {
+    const model = layoutCanvas(
+      { routine: 'r', schema_version: 1, transmit_mode: 'attended', triggers: [{ type: 'manual' }], tracks: [{ name: 'track-1', steps: [] }] },
+      [],
+    );
+    const trigger = model.lanes[0]!.rows[0]!.find((n) => n.kind === 'trigger')!;
+    expect(trigger.title).toBe('Start · manual');
+    expect(trigger.bodyLines.join(' ')).toMatch(/runs only when you start it/i);
+  });
+
+  it('a schedule trigger titles "Start · schedule" and keeps the cadence body', () => {
+    const model = layoutCanvas(
+      {
+        routine: 'r', schema_version: 1, transmit_mode: 'attended',
+        triggers: [{ type: 'schedule', every: '30m' }],
+        tracks: [{ name: 'track-1', steps: [] }],
+      },
+      [],
+    );
+    const trigger = model.lanes[0]!.rows[0]!.find((n) => n.kind === 'trigger')!;
+    expect(trigger.title).toBe('Start · schedule');
+    expect(trigger.bodyLines.length).toBeGreaterThan(0);
+  });
+});

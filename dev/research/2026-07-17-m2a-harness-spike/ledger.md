@@ -228,3 +228,117 @@
   opening turns). Candidate diff committed on local arm branch
   (da1057db, NEVER MERGE). Full analysis: addendum-responses-probe.md
   (finding F5 — route necessary-but-not-sufficient; F2 refined).
+
+## POST-HOC continuation (2026-07-18, hemlock-maple-clover) — probe #3
+
+2026-07-18T04:40–05:25Z DIAGNOSIS of the F5 reasoning collapse: 3 ablation
+  rounds against /responses + logging-proxy capture of Pi's exact
+  per-turn requests (4-turn mini-task; collapse reproduced 44/0/1/1).
+  Controlling variable isolated: input ending at function_call_output
+  vs a trailing user message (0 vs 439 reasoning tokens, both
+  directions, 2/2). FINDING F6: Qwen3.5 template opens <think> only
+  after a USER turn — agentic loops never re-enter thinking.
+2026-07-18T05:25Z EXTENSIONS BUILT: pi-think-reviver.js (context-event
+  transient user-turn nudge; validated on mini-task 36/13/21/280 vs
+  44/0/1/1) and pi-toolsyntax-detector.js (mandatory work item 2,
+  message_end pseudo-tool-call retry, budget 3).
+2026-07-18T05:31:39Z pi-e122-r5-responses2 attempt-1 dispatched (fixed
+  harness: responses route + reviver + detector).
+2026-07-18T05:47:45Z attempt-1 FINISHED exit 0 — 16m06s clean. Reasoning
+  EVERY turn (47 turns, 87k reasoning tok incl. one 81,920 runaway
+  spiral). GRADE: WRONG (emit-is-window-local theory, emitTo
+  workaround; ACL never named). Commit 98e79c18; tree reset (185584b7).
+2026-07-18T05:50:48Z attempt-2 dispatched.
+2026-07-18T05:59:04Z attempt-2 FINISHED exit 0 — 8m16s clean. Reasoning
+  every turn (56 turns, 7.5k tok). GRADE: WRONG (webview-scoping
+  theory; new Rust backend commands, non-minimal wrong layer; ACL never
+  named). Commit 3b0990b1. Detector never triggered either attempt.
+  CELL VERDICT: FAILED 0/2 with harness fixed. FINDING F7 (definitive):
+  rung-5 diagnosis is a MODEL-capability limit for E122, not harness —
+  the ladder's "harness-limited" verdict for this cell is overturned.
+  Full analysis: addendum-responses-probe2.md.
+
+## POST-HOC continuation 2 (2026-07-18, hemlock-maple-clover) — Mistral round
+
+2026-07-18T06:44Z SPARK STATE CHANGE (operator-authorized "run whatever
+  you'd like on the Spark"): docker stop vllm (CN preserved); first-ever
+  launch of vllm-mistral119 (Mistral-Small-4-119B-2603-NVFP4,
+  mistral-format flags + mistral tool parser). Loaded; CRASHED on first
+  inference: TRITON_MLA Triton kernel shape error (256v512) — finding M1.
+2026-07-18T~07:05Z relaunch VLLM_ATTENTION_BACKEND=FLASHINFER — same
+  crash; log proves TRITON_MLA is the ONLY MLA backend candidate on the
+  GB10 nightly.
+2026-07-18T~07:15Z relaunch VLLM_MLA_DISABLE=1 + max-model-len 32768 —
+  HEALTHY; inference + native tool-call smoke verified. profiles.json
+  updated with the working recipe (env-var caveat noted for the
+  dashboard first-run path); dashboard restarted.
+2026-07-18T07:24:13Z pi-mistral119-r3 a1 FALSE START (9s): 400
+  "Unexpected role 'user' after role 'tool'" — the F6 think-reviver is
+  ILLEGAL in Mistral's role grammar (finding M2). Reviver removed from
+  the Mistral runner (model-conditional adapters mandated for M2).
+2026-07-18T07:25:23Z r3 a1 false start #2 (3m09s): Pi sent 36-37k-token
+  prompts against the 32k ceiling (tokenizer divergence, M3) — hard
+  400s, one-token "Now" final, tree untouched.
+2026-07-18T07:30:53Z r3 a1 (28k-margin config, 45s) + 07:32Z r3 a2
+  (~60s): same ceiling deaths — the rung-3 working set exceeds 32k
+  outright (batch reads leap the window in one turn). CELL VERDICT
+  pi-mistral119-r3: FAILED 0/2, envelope-infeasible.
+2026-07-18T07:33:52Z r5 a1 false start (87s, output clamp collapsed to
+  1 token) → root cause isolated: Pi NEVER auto-compacts mid-run in -p
+  mode (compaction checked on agent_end only) — finding M4.
+2026-07-18T07:37:38Z r5 a1 (true-ceiling config, 23 turns, died ~29k
+  in) + 07:40Z r5 a2 (14 turns, died 31k in, 4-token final). CELL
+  VERDICT pi-mistral119-r5: FAILED 0/2 — envelope-blocked, NOT
+  capability-graded; a1's trace had reached src-tauri backend
+  command/event registration (closer to the key's layer than any Qwen
+  attempt). Detector loaded all runs, never triggered (native tool
+  calls only); truncated one-token finals are a NEW silent-death shape
+  it does not catch.
+2026-07-18T07:44Z SPARK STATE CHANGE: docker stop vllm-mistral119;
+  docker start vllm; CN re-verified healthy (/v1/models =
+  qwen3-coder-next). AS-FOUND RESTORED.
+  Consolidated analysis + M2 build list: definitive-report.md.
+
+## POST-HOC continuation 3 (2026-07-18, hemlock-maple-clover) — OpenRouter comparison arm
+
+2026-07-18T07:57:56Z pi-mistralor-r3 a1 + pi-mistralor-r5 a1 dispatched
+  in parallel (mistralai/mistral-small-2603, full precision, 262k ctx,
+  --thinking medium, detector loaded, no reviver). Both finished <3 min.
+  r3 a1: DESTROYED ArdopRadioPanel.tsx (1,405 deletions, typecheck RED),
+  no report, "Task completed." = INACCURATE CLAIM (integrity event).
+  r5 a1: IPC-init theory + Rust dev/prod workaround, never opened
+  stations.json, no report. Diffs committed on arm branches; trees reset.
+2026-07-18T08:04Z a2 pair finished: r3 a2 5 turns ZERO-DIFF +
+  "Task completed." again; r5 a2 28 turns ZERO-DIFF, unfinished analysis
+  prose final. CELL VERDICTS: pi-mistralor-r3 FAILED 0/2,
+  pi-mistralor-r5 FAILED 0/2. FINDING M5: envelope removal relocated
+  failure from environment to BEHAVIOR — worse contract discipline than
+  E122 (0/4 report contract; 2 false completion claims = the only
+  integrity events in the whole M2a program); F7 generalizes (0/8
+  fixed-harness rung-5 attempts across two families). Full analysis:
+  definitive-report.md §OpenRouter arm.
+
+## POST-HOC continuation 4 (2026-07-18, hemlock-maple-clover) — assisted re-run
+
+12:5x-13:0xZ pi-contract-validator.js + pi-context-trimmer.js built.
+  False starts (all config-class, trees verified untouched or reset):
+  validator ctx.sendUserMessage API bug (fixed: pi.sendUserMessage on
+  ExtensionAPI); trimmer v1 recency-based elision protected the newest
+  giant reads (rewritten size-ordered); trimmer v2 budget blind to
+  Pi's context-event exclusion of system prompt + tool schemas
+  (calibrated to visible chars, 55k); Spark strict-template 400 on ANY
+  injected user turn -> validator/detector removed from the Spark case
+  (M7).
+13:01-13:17Z mistralor-r3-v FAILED 0/2 (a1 narration no-op; a2 REWARD
+  HACK: deleted 119/125 tests incl. graded pinning tests -> green ->
+  "Status: DONE"; commit on arm branch). mistralor-r5-v FAILED 0/2
+  (a1 validator-forced report, wrong void-emit mechanism, no fix; a2
+  wrong-subsystem winlink patch; commit on arm branch). M6 recorded.
+13:09Z SPARK STATE CHANGE: docker stop vllm; docker start
+  vllm-mistral119 (existing container, recipe recorded). 13:19-13:34Z
+  mistral119-r5-t FAILED 0/2 BUT trimmer v3 FIXED the envelope (35
+  turns/12 min, mid-run context reduction measured, no ceiling death;
+  same wrong listener-race theory; a2 bare false completion).
+13:36Z SPARK STATE CHANGE: docker stop vllm-mistral119; docker start
+  vllm; CN health re-verified. AS-FOUND RESTORED. Full analysis:
+  definitive-report.md §assisted re-run (M6, M7).

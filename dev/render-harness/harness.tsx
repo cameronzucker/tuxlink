@@ -25,6 +25,12 @@ import '../../src/styles/controls.css';
 import '../../src/shell/AppShell.css';
 import { RequestCenter } from '../../src/request/RequestCenter';
 import { DashboardRibbon } from '../../src/shell/DashboardRibbon';
+// `&real=1` (observability wire-walk, bd tuxlink-iizmk): a REAL run captured
+// 2026-07-18 from the R2 converge build (7d801187) via the MCP shim —
+// heron-observability-probe, run-1784416315-0000, verbatim journal from
+// routines_journal_get. Real engine data through the real UI components; only
+// the IPC transport is shimmed.
+import REAL_RUN_20260718 from './real-run-20260718.json';
 // Radio panes (tuxlink-zj9se): mount each pane standalone in the dock layout so
 // its CSS (RadioPanel.css + per-mode + section CSS, imported by the components
 // themselves) renders in the real WebKitGTK engine for the token-migration
@@ -33,6 +39,11 @@ import { DashboardRibbon } from '../../src/shell/DashboardRibbon';
 import { ArdopRadioPanel } from '../../src/radio/modes/ArdopRadioPanel';
 import { VaraRadioPanel } from '../../src/radio/modes/VaraRadioPanel';
 import { TelnetRadioPanel } from '../../src/radio/modes/TelnetRadioPanel';
+// tuxlink-fh53x (?state=stop4dock): the real drawer->panel chain, so the tour's
+// relocated 'radio-dock' anchor is layout-verified in WebKitGTK — the drawer is
+// display:contents on desktop (zero rect), the panel root is the boxed anchor.
+import { RadioDrawer } from '../../src/shell/RadioDrawer';
+import { RadioPanel } from '../../src/radio/RadioPanel';
 // Elmer model-access picker (tuxlink-wpqwy): mount ElmerPane with an
 // onboarded=false config shim so the ModelTilePicker renders as the first-run
 // surface (tier headers, tiles, GetKeyCard) for the WebKitGTK layout smoke.
@@ -72,7 +83,6 @@ import { ContactsPanel } from '../../src/contacts/ContactsPanel';
 // anchor layout built from the REAL DashboardRibbon/FolderSidebar/MessageList
 // (each already carries the production `data-tour-anchor` the tour targets).
 import { HintProvider, useHints } from '../../src/onboarding/HintProvider';
-import type { HintContextValue } from '../../src/onboarding/HintProvider';
 import { HintOverlay } from '../../src/onboarding/HintOverlay';
 import { OfferCard } from '../../src/onboarding/OfferCard';
 import { FolderSidebar } from '../../src/mailbox/FolderSidebar';
@@ -928,7 +938,13 @@ function FavoritesFixtureView() {
 //   ?view=onboarding&state=offer     first-run offer card, bottom-right
 //   ?view=onboarding&state=stop1     tour step 1 — ribbon-connect spotlight
 //   ?view=onboarding&state=stop4     tour step 4 — radio-dock NOT mounted →
-//                                    the designed 'center' fallback card
+//                                    fallback:'skip' auto-advances to stop 5
+//                                    (Elmer, centered); tuxlink-fh53x replaced
+//                                    the old 'center' fallback that rendered a
+//                                    contentless card about an absent surface
+//   ?view=onboarding&state=stop4dock tour step 4 with the dock MOUNTED (real
+//                                    RadioDrawer->RadioPanel chain) → real
+//                                    spotlight on the panel's boxed root
 //   ?view=onboarding&state=tip       discretionary tip on find-a-station
 //   ?view=onboarding&state=pointat   backend point-at, single-hint mode, on
 //                                    ribbon-connect
@@ -939,11 +955,12 @@ function FavoritesFixtureView() {
 // requestFirstOpenTip) and — for point-at — replaying the REAL
 // 'onboarding:point-at' Tauri event through the captured `listen()` handler
 // (see capturedEventHandlers above), rather than reaching into HintProvider's
-// internals. Each driving call is separated by a macrotask (setTimeout) so
-// HintProvider's "latest ref" (stateRef, mutated once per render) has
-// actually observed the PRIOR dispatch before the next call reads it —
-// calling e.g. `advance()` three times synchronously would read the same
-// stale stepIndex three times instead of incrementing.
+// internals. Tour advances are EVENT-DRIVEN: each `advance()` waits for the
+// effect to observe the reducer's new stepIndex before issuing the next
+// (see OnboardingFixtureController). Fixed-interval chains are load-fragile:
+// HintProvider's "latest ref" (stateRef, mutated once per render) must have
+// observed the PRIOR dispatch before the next call reads it, and a busy
+// machine can delay a render past any fixed spacing (tuxlink-fh53x).
 // ---------------------------------------------------------------------------
 
 const ONBOARDING_MESSAGES: MessageMeta[] = [
@@ -982,59 +999,65 @@ const ONBOARDING_MESSAGES: MessageMeta[] = [
   },
 ];
 
-/** Drives the real tour from stop 0 to `targetStepIndex`, one `advance()`
- *  per macrotask (see file-header timing note). `targetStepIndex === 0`
- *  (state=stop1) issues no advances — `startTour()` alone lands there. */
-function driveTourTo(hints: HintContextValue, targetStepIndex: number): void {
-  hints.startTour();
-  let remaining = targetStepIndex;
-  function step() {
-    if (remaining <= 0) return;
-    setTimeout(() => {
-      hints.advance();
-      remaining -= 1;
-      step();
-    }, 40);
-  }
-  step();
-}
-
 /** Imperatively drives HintProvider's real state machine to the fixture's
  *  requested `?state=`, then renders nothing itself — HintOverlay/OfferCard
- *  (siblings under the same HintProvider) render the result. */
+ *  (siblings under the same HintProvider) render the result.
+ *
+ *  Tour states (stop1/stop4/stop4dock) drive EVENT-DRIVEN, not on a fixed
+ *  timer: each `advance()` is issued only after the effect observes the
+ *  reducer's new `active.stepIndex` (tuxlink-fh53x). The old fixed-40ms chain
+ *  assumed a render commits between calls; on a loaded machine renders lag,
+ *  the "latest ref" reads a stale stepIndex, and the tour lands anywhere
+ *  (observed: stuck at stop 1, or driven past Finish to completion). Note
+ *  this driver relies on every stop BELOW the target having a mounted
+ *  anchor — a skip-fallback stop before the target would race the overlay's
+ *  own auto-advance and can overshoot; our fixtures mount all of them. */
 function OnboardingFixtureController({ state }: { state: string }) {
   const hints = useHints();
   const startedRef = useRef(false);
+  const tourDoneRef = useRef(false);
+  const tourTarget =
+    state === 'stop1' ? 0 : state === 'stop4' || state === 'stop4dock' ? 3 : null; // TOUR_STOPS[3] === 'radio-dock' (1-indexed stop 4)
   useEffect(() => {
-    if (startedRef.current) return;
     // Waits for config_read to resolve — HintProvider's config-loaded action
     // sets `active: {kind:'offer'}` (the canned onboarding_tour_completed is
     // false, reproducing a fresh install). Before that resolves, active is
     // the reducer's safe initial `null` and there is nothing to drive yet.
-    if (hints.active === null) return;
-    startedRef.current = true;
-    switch (state) {
-      case 'stop1':
-        driveTourTo(hints, 0);
-        break;
-      case 'stop4':
-        driveTourTo(hints, 3); // TOUR_STOPS[3] === 'radio-dock' (1-indexed stop 4)
-        break;
-      case 'tip':
-        hints.declineOffer(); // clears the offer so requestFirstOpenTip sees active===null
-        setTimeout(() => hints.requestFirstOpenTip('find-a-station'), 40);
-        break;
-      case 'pointat':
-        hints.declineOffer();
-        setTimeout(() => {
-          deliverEvent('onboarding:point-at', { request_id: 1, anchor_id: 'ribbon-connect' });
-        }, 40);
-        break;
-      default:
-        // 'offer' (or an unrecognized state): the offer card is already the
-        // config-loaded default — nothing further to drive.
-        break;
+    if (!startedRef.current) {
+      if (hints.active === null) return;
+      startedRef.current = true;
+      if (tourTarget !== null) {
+        hints.startTour();
+        return;
+      }
+      switch (state) {
+        case 'tip':
+          hints.declineOffer(); // clears the offer so requestFirstOpenTip sees active===null
+          setTimeout(() => hints.requestFirstOpenTip('find-a-station'), 40);
+          break;
+        case 'pointat':
+          hints.declineOffer();
+          setTimeout(() => {
+            deliverEvent('onboarding:point-at', { request_id: 1, anchor_id: 'ribbon-connect' });
+          }, 40);
+          break;
+        default:
+          // 'offer' (or an unrecognized state): the offer card is already the
+          // config-loaded default — nothing further to drive.
+          break;
+      }
+      return;
     }
+    // Tour states, post-start: one advance per OBSERVED step change until the
+    // target stop is reached.
+    if (tourTarget === null || tourDoneRef.current) return;
+    if (hints.active?.kind !== 'tour') return;
+    if (hints.active.stepIndex >= tourTarget) {
+      tourDoneRef.current = true;
+      return;
+    }
+    const t = setTimeout(() => hints.advance(), 40);
+    return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hints.active, state]);
   return null;
@@ -1049,6 +1072,13 @@ function OnboardingFixtureController({ state }: { state: string }) {
  *  same as every other harness view). */
 function OnboardingShell({ state }: { state: string }) {
   const { isCompact } = useViewport();
+  // tuxlink-fh53x: stop4dock mounts the dock exactly as AppShell does — the
+  // `.panes--with-dock` 4-column grid, then RadioDrawer (display:contents on
+  // desktop) wrapping a RadioPanel whose boxed root hosts the relocated
+  // 'radio-dock' tour anchor. This is the layout jsdom cannot verify (no
+  // layout engine): the spotlight only works if the anchor's rect is nonzero
+  // through the display:contents chain in the real WebKitGTK engine.
+  const dockMounted = state === 'stop4dock';
   return (
     <div className="layout-b" style={{ height: '100vh' }}>
       {/* `.layout-b`'s CSS is a fixed 5-row grid (titlebar/menubar/
@@ -1082,7 +1112,7 @@ function OnboardingShell({ state }: { state: string }) {
           elmerOpen={false}
         />
       </div>
-      <div className="panes" style={{ gridRow: 4 }}>
+      <div className={`panes${dockMounted ? ' panes--with-dock' : ''}`} style={{ gridRow: 4 }}>
         <FolderSidebar
           compact={isCompact}
           selectedFolder="inbox"
@@ -1099,6 +1129,15 @@ function OnboardingShell({ state }: { state: string }) {
           onCompose={() => undefined}
         />
         <MessageViewEmpty />
+        {dockMounted && (
+          <RadioDrawer open onToggle={() => undefined} sessionState="disconnected">
+            <RadioPanel mode={{ kind: 'telnet', intent: 'cms' }} onClose={() => undefined}>
+              <div style={{ padding: 12, color: 'var(--text-dim)' }}>
+                Canned panel body — the tour spotlights the panel chrome, not this content.
+              </div>
+            </RadioPanel>
+          </RadioDrawer>
+        )}
       </div>
       {/* Harness-only stand-in (?state=tip only): the real 'find-a-station'
           anchor is the whole StationFinderPanel, opened via a message-menu
@@ -1394,6 +1433,18 @@ if (ROUTINES_FAMILY) {
     { name: '20m-ardop', frequencyHz: 14105000, mode: 'ARDOP', powerW: 50, atu: false },
   ];
   RESPONSES.routines_station_sets_list = [{ name: 'ares-net', callsigns: ['N0DAJ', 'KD7SSB', 'W7RMS'] }];
+
+  // Overlay the captured REAL run (`&real=1`). Mutates the arrays/maps the
+  // RESPONSES closures already capture by reference, so order here is safe.
+  if (params.get('real') === '1') {
+    const rr = REAL_RUN_20260718 as { def: Record<string, unknown>; run: Record<string, unknown>; journal: unknown[] };
+    const name = String(rr.def.routine);
+    DEFS[name] = rr.def;
+    FINDINGS_BY_ROUTINE[name] = [];
+    SUMMARIES.push({ routine: name, transmitMode: String(rr.def.transmit_mode), enabled: false, triggers: rr.def.triggers as never });
+    RUNS.unshift(rr.run as never);
+    JOURNALS[String(rr.run.runId)] = rr.journal;
+  }
 }
 
 function RoutinesFixtureView() {

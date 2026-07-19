@@ -89,16 +89,67 @@ describe('StepInspector — action step basics', () => {
     expect(onRemove).toHaveBeenCalledTimes(1);
   });
 
-  it('seeds the params textarea with JSON.stringify(step.params, null, 2)', () => {
+  // tuxlink-7ewvq item 9: params default to a key/value grid — no operator
+  // should have to hand-type JSON to configure read_rig_state. The raw JSON
+  // textarea survives behind an "edit as JSON" toggle for nested shapes.
+  it('renders one key/value row per param (strings raw, non-scalars as JSON)', () => {
     renderInspector();
-    const textarea = screen.getByTestId('inspector-params') as HTMLTextAreaElement;
-    expect(textarea.value).toBe(JSON.stringify(ACTION_STEP.params, null, 2));
+    expect(screen.queryByTestId('inspector-params')).not.toBeInTheDocument(); // no default JSON textarea
+    expect((screen.getByTestId('param-value-stations') as HTMLInputElement).value).toBe('or-gateways');
+    expect((screen.getByTestId('param-value-bands') as HTMLInputElement).value).toBe('["40m","80m"]');
   });
 });
 
-describe('StepInspector — params JSON edit (Step 1 requirement)', () => {
+describe('StepInspector — params key/value grid (tuxlink-7ewvq item 9)', () => {
+  it('editing a value commits on blur, JSON-parsing scalars and keeping @refs/plain text as strings', () => {
+    const { onChange } = renderInspector();
+    const value = screen.getByTestId('param-value-stations');
+    fireEvent.change(value, { target: { value: '@station-set:or-gateways' } });
+    fireEvent.blur(value);
+    expect(onChange).toHaveBeenCalledWith({
+      params: { stations: '@station-set:or-gateways', bands: ['40m', '80m'] },
+    });
+
+    const num = screen.getByTestId('param-value-bands');
+    fireEvent.change(num, { target: { value: '45' } });
+    fireEvent.blur(num);
+    expect(onChange).toHaveBeenLastCalledWith({
+      params: { stations: 'or-gateways', bands: 45 },
+    });
+  });
+
+  it('adding a parameter creates an editable row that commits once key+value blur', () => {
+    const { onChange } = renderInspector();
+    fireEvent.click(screen.getByTestId('param-add'));
+    const key = screen.getByTestId('param-key-new-0');
+    fireEvent.change(key, { target: { value: 'freq_hz' } });
+    fireEvent.blur(key);
+    const value = screen.getByTestId('param-value-freq_hz');
+    fireEvent.change(value, { target: { value: '7103500' } });
+    fireEvent.blur(value);
+    expect(onChange).toHaveBeenLastCalledWith({
+      params: { stations: 'or-gateways', bands: ['40m', '80m'], freq_hz: 7103500 },
+    });
+  });
+
+  it('removing a row commits params without that key', () => {
+    const { onChange } = renderInspector();
+    fireEvent.click(screen.getByTestId('param-remove-bands'));
+    expect(onChange).toHaveBeenCalledWith({ params: { stations: 'or-gateways' } });
+  });
+});
+
+describe('StepInspector — params JSON edit (behind the toggle)', () => {
+  it('the toggle reveals the JSON textarea seeded from the current params', () => {
+    renderInspector();
+    fireEvent.click(screen.getByTestId('params-json-toggle'));
+    const textarea = screen.getByTestId('inspector-params') as HTMLTextAreaElement;
+    expect(textarea.value).toBe(JSON.stringify(ACTION_STEP.params, null, 2));
+  });
+
   it('round-trips a valid edit through onChange on blur', () => {
     const { onChange } = renderInspector();
+    fireEvent.click(screen.getByTestId('params-json-toggle'));
     const textarea = screen.getByTestId('inspector-params');
     fireEvent.change(textarea, { target: { value: '{"stations": "new-set"}' } });
     fireEvent.blur(textarea);
@@ -108,6 +159,7 @@ describe('StepInspector — params JSON edit (Step 1 requirement)', () => {
 
   it('an invalid JSON edit shows the error inline, leaves the field editable, and does NOT call onChange', () => {
     const { onChange } = renderInspector();
+    fireEvent.click(screen.getByTestId('params-json-toggle'));
     const textarea = screen.getByTestId('inspector-params') as HTMLTextAreaElement;
     fireEvent.change(textarea, { target: { value: '{not valid json' } });
     fireEvent.blur(textarea);
@@ -128,7 +180,7 @@ describe('StepInspector — params JSON edit (Step 1 requirement)', () => {
 });
 
 describe('StepInspector — @-reference helper (assistance only)', () => {
-  it('shows preset/station-set completions once the params text contains an @-prefixed string, and inserting one does not itself call onChange', async () => {
+  it('KV mode: shows completions when a row value starts with @, and clicking one fills that row without committing', async () => {
     const step: ActionStep = { id: 's1', action: 'radio.connect', params: { stations: '@or-ga' } };
     const { onChange } = renderInspector({ step });
     const helper = await screen.findByTestId('inspector-ref-helper');
@@ -136,9 +188,20 @@ describe('StepInspector — @-reference helper (assistance only)', () => {
     expect(helper).toHaveTextContent('@station-set:or-gateways');
 
     fireEvent.click(screen.getByTestId('ref-chip-station-set-or-gateways'));
-    // Assistance only — inserting a completion edits the textarea, it does
-    // NOT itself commit a patch (the operator still blurs to apply, same as
-    // any other params edit); correctness stays with the validator.
+    // Assistance only — the chip fills the row's value; the operator still
+    // blurs to commit, same as any other edit.
+    expect(onChange).not.toHaveBeenCalled();
+    expect((screen.getByTestId('param-value-stations') as HTMLInputElement).value).toBe(
+      '@station-set:or-gateways',
+    );
+  });
+
+  it('JSON mode: inserting a completion edits the textarea without committing', async () => {
+    const step: ActionStep = { id: 's1', action: 'radio.connect', params: { stations: '@or-ga' } };
+    const { onChange } = renderInspector({ step });
+    fireEvent.click(screen.getByTestId('params-json-toggle'));
+    await screen.findByTestId('inspector-ref-helper');
+    fireEvent.click(screen.getByTestId('ref-chip-station-set-or-gateways'));
     expect(onChange).not.toHaveBeenCalled();
     const textarea = screen.getByTestId('inspector-params') as HTMLTextAreaElement;
     expect(textarea.value).toContain('@station-set:or-gateways');

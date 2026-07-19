@@ -74,6 +74,12 @@ function NodeView({
   if (node.unknown) classes.push('node-unknown');
   if (node.unplaced) classes.push('node-unplaced');
 
+  // tuxlink-iizmk round 2 (mock node-head): the human label leads, the step
+  // id rides as a mono badge. canvasModel titles step nodes "<id> <label>";
+  // split that prefix off for display rather than reshaping the model.
+  const hasIdPrefix = node.title.startsWith(`${node.id} `);
+  const headLabel = hasIdPrefix ? node.title.slice(node.id.length + 1) : node.title;
+
   return (
     <div
       className={classes.join(' ')}
@@ -82,7 +88,8 @@ function NodeView({
     >
       <div className="node-head">
         {node.transmits && <span className="tx-dot" data-testid={`tx-dot-${node.id}`} />}
-        <span>{node.title}</span>
+        <span>{headLabel}</span>
+        {hasIdPrefix && <span className="node-id">{node.id}</span>}
         {node.unknown && <span className="unknown-badge">⚠ unknown</span>}
         {node.unplaced && <span className="unknown-badge">⚠ unplaced</span>}
         {selected && node.kind !== 'trigger' && (
@@ -96,7 +103,10 @@ function NodeView({
               onRemoveStep(node.id);
             }}
           >
-            ⌫
+            {/* item 5 (bd tuxlink-iizmk): × replaces ⌫ — the erase-left glyph
+                fell back to a substituted font on WebKitGTK and rendered as a
+                few clipped pixels at the node-head's meta font size. */}
+            ×
           </button>
         )}
       </div>
@@ -249,8 +259,16 @@ function Lane({
 
   return (
     <div className="lane" data-testid={`lane-${trackIdx}`}>
-      <span className="lane-tag">
-        TRACK {trackIdx + 1} · {lane.track.toUpperCase()}
+      {/* tuxlink-7ewvq: a generic auto-name (track-1, track-2, …) is display
+          noise — 'TRACK 1 · TRACK-1' explained nothing. Only a name the
+          operator actually chose earns a spot next to the number. */}
+      <span
+        className="lane-tag"
+        title="Tracks run in parallel when the routine starts; steps inside a track run in order."
+      >
+        {/^track-?\d+$/i.test(lane.track)
+          ? `TRACK ${trackIdx + 1}`
+          : `TRACK ${trackIdx + 1} · ${lane.track.toUpperCase()}`}
       </span>
       {deps.map((dep, i) => (
         <span key={i} className="dep-lbl" data-testid={`dep-${trackIdx}-${i}`}>
@@ -402,8 +420,14 @@ export function CanvasTab({
           onRemoveStep={onRemoveStep}
         />
       ))}
-      <button type="button" className="btn add-track-btn" data-testid="add-track-btn" onClick={onAddTrack}>
-        ＋ Add track
+      <button
+        type="button"
+        className="btn add-track-btn"
+        data-testid="add-track-btn"
+        title="Adds a second track that runs in parallel with this one when the routine starts."
+        onClick={onAddTrack}
+      >
+        ＋ Add parallel track
       </button>
     </div>
   );

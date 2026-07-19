@@ -74,6 +74,18 @@ describe('CanvasTab — rendering', () => {
     expect(screen.getByTestId('tx-dot-s1')).toBeInTheDocument(); // radio.connect: transmits:true
     expect(screen.queryByTestId('tx-dot-s2')).not.toBeInTheDocument(); // local.notify: transmits:false
   });
+
+  // tuxlink-iizmk round 2 (mock node-head): the step id renders as a mono
+  // BADGE beside the human label, split off canvasModel's "<id> <label>"
+  // title; the head no longer leads with the raw id.
+  it('splits the step id out of the node head into a .node-id badge', () => {
+    renderTab();
+    const badge = screen.getByTestId('node-s1').querySelector('.node-id');
+    expect(badge).not.toBeNull();
+    expect(badge!.textContent).toBe('s1');
+    // The trigger node has no id prefix and gets no badge.
+    expect(screen.getByTestId('node-trigger-0').querySelector('.node-id')).toBeNull();
+  });
 });
 
 describe('CanvasTab — selection', () => {
@@ -98,10 +110,20 @@ describe('CanvasTab — selection', () => {
     expect(screen.getByTestId('node-s2').className).not.toContain('selected');
   });
 
-  it('clicking the ⌫ affordance on a selected node calls onRemoveStep', () => {
+  it('clicking the delete affordance on a selected node calls onRemoveStep', () => {
     const { onRemoveStep } = renderTab({ selectedStepId: 's1' });
     fireEvent.click(screen.getByTestId('delete-s1'));
     expect(onRemoveStep).toHaveBeenCalledWith('s1');
+  });
+
+  // bd tuxlink-iizmk item 5: the old ⌫ glyph fell back to a substituted font
+  // on WebKitGTK and rendered as a few clipped pixels. The affordance now
+  // shows a plain × (universally available) inside a real hit target.
+  it('the delete affordance renders the × glyph (not the fragile ⌫)', () => {
+    renderTab({ selectedStepId: 's1' });
+    const btn = screen.getByTestId('delete-s1');
+    expect(btn.textContent).toBe('×');
+    expect(btn.className).toContain('node-delete');
   });
 
   it('pressing Backspace with a node selected calls onRemoveStep', () => {
@@ -370,5 +392,38 @@ describe('CanvasTab — add track', () => {
     const { onAddTrack } = renderTab();
     fireEvent.click(screen.getByTestId('add-track-btn'));
     expect(onAddTrack).toHaveBeenCalledTimes(1);
+  });
+});
+
+// tuxlink-7ewvq items 4+5: 'TRACK 1 · TRACK-1' (a generic auto-name echoed
+// back at itself) meant nothing to the operator, and 'Add track' gave no clue
+// what a track IS. Generic names collapse to the number; both surfaces carry
+// a plain-language tooltip.
+describe('CanvasTab — lane tags + Add track language (tuxlink-7ewvq)', () => {
+  it('a generic track name (track-1) renders as just TRACK 1, with a tooltip explaining tracks', () => {
+    renderTab(); // FIXTURE_DEF's first track is named 'track-1'
+    const tag = screen.getByTestId('lane-0').querySelector('.lane-tag')!;
+    expect(tag.textContent).toBe('TRACK 1');
+    expect(tag.getAttribute('title')).toMatch(/parallel/i);
+  });
+
+  it('a custom track name still shows alongside the number', () => {
+    renderTab({
+      draft: {
+        routine: 'r', schema_version: 1, transmit_mode: 'attended',
+        triggers: [{ type: 'manual' }],
+        tracks: [{ name: 'aprs-watch', steps: [] }],
+      },
+    });
+    const tag = screen.getByTestId('lane-0').querySelector('.lane-tag')!;
+    expect(tag.textContent).toContain('TRACK 1');
+    expect(tag.textContent).toContain('APRS-WATCH');
+  });
+
+  it('the add-track button reads "Add parallel track" and explains itself', () => {
+    renderTab();
+    const btn = screen.getByTestId('add-track-btn');
+    expect(btn.textContent).toContain('Add parallel track');
+    expect(btn.getAttribute('title')).toMatch(/parallel/i);
   });
 });

@@ -14,6 +14,20 @@
  * this file stops at the shell + valbar.
  */
 .surface {
+  /* tuxlink-iizmk round 2: the routines-scoped type ramp (approved mock
+   * dev/scratch/routines-ui-mocks/humanscale-routines.html). Declared HERE,
+   * on the routines root container, never on the app-global --type-* tokens:
+   * fine 13px / body 14px / control 15px / title 17px / screen-title 20px.
+   * Nothing on a routines surface renders under 13px except the 12px
+   * uppercase capability/state tags the mock itself sets in raw px. Mono is
+   * for DATA only (ids, frequencies, cadences, params); labels, headers, and
+   * copy are sans. */
+  --rt-fine: 13px;
+  --rt-body: 14px;
+  --rt-control: 15px;
+  --rt-title: 17px;
+  --rt-screen: 20px;
+
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -25,13 +39,13 @@
 
 .btn {
   font-family: var(--sans, inherit);
-  font-size: var(--type-control);
+  font-size: var(--rt-control);
   font-weight: 600;
   color: var(--text);
   background: var(--surface-2);
   border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  padding: 5px 12px;
+  border-radius: 7px;
+  padding: 7px 16px;
   line-height: 1.2;
   display: inline-flex;
   align-items: center;
@@ -59,7 +73,7 @@
   background: none;
   border: none;
   color: inherit;
-  font-size: var(--type-body);
+  font-size: var(--rt-body);
   line-height: 1;
   cursor: pointer;
   padding: 0 2px;
@@ -68,22 +82,22 @@
 .load-error {
   padding: 18px;
   color: var(--error);
-  font-size: var(--type-body);
+  font-size: var(--rt-body);
 }
 
 /* ---- designer header ---- */
 .designer-head {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 16px 0;
+  gap: 14px;
+  padding: 10px 20px 0;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
 }
 
 .back {
-  font-size: var(--type-control);
+  font-size: var(--rt-control);
   color: var(--text-dim);
   background: none;
   border: none;
@@ -92,28 +106,60 @@
 }
 
 .dname {
-  font-size: var(--type-heading);
-  font-weight: 600;
+  font-size: var(--rt-screen);
+  font-weight: 650;
+}
+
+/* item 7 (bd tuxlink-iizmk): the name input + its derived-wire-id fine print
+ * stack vertically in the header slot the bare input used to occupy. */
+.dname-wrap {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 1px;
 }
 
 .dname-input {
-  font-size: var(--type-heading);
-  font-weight: 600;
+  font-size: var(--rt-screen);
+  font-weight: 650;
   background: var(--surface-2);
   color: var(--text);
   border: 1px solid var(--border-strong);
-  border-radius: 4px;
-  padding: 2px 8px;
-  min-width: 220px;
+  border-radius: 6px;
+  padding: 4px 12px;
+  min-width: 300px;
 }
 
-.dstate {
+/* Subtle mono fine print showing the wire id the typed name will save as —
+ * only rendered when the derivation differs from the typed text. */
+.dname-derived {
   font-family: var(--mono);
-  font-size: var(--type-micro);
+  font-size: var(--rt-fine);
   color: var(--text-faint);
+}
+
+/* Header fact chips (mock .txchip): transmit mode, schedule summary, enabled
+ * state, always visible. Each is a BUTTON that jumps to its settings section
+ * below the canvas. Sans, never mono: the chip texts are labels. */
+.fact-chip {
+  font-family: var(--sans, inherit);
+  font-size: var(--rt-fine);
+  color: var(--text-dim);
+  background: none;
   border: 1px solid var(--border-strong);
   border-radius: 999px;
-  padding: 1px 8px;
+  padding: 3px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.fact-chip.off {
+  color: var(--text-faint);
+  border-style: dashed;
+}
+
+.fact-chip.on {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 40%, transparent);
 }
 
 .unsaved {
@@ -126,18 +172,18 @@
 
 .tabs {
   display: flex;
-  gap: 2px;
-  margin-left: 26px;
+  gap: 4px;
+  margin-left: 22px;
   align-self: flex-end;
 }
 
 .tab {
-  padding: 7px 16px 8px;
-  font-size: var(--type-control);
+  padding: 9px 20px 11px;
+  font-size: var(--rt-control);
   color: var(--text-dim);
   border: 1px solid transparent;
   border-bottom: none;
-  border-radius: 6px 6px 0 0;
+  border-radius: 8px 8px 0 0;
   background: none;
   cursor: pointer;
 }
@@ -152,9 +198,9 @@
 .dactions {
   margin-left: auto;
   display: flex;
-  gap: 8px;
+  gap: 10px;
   align-items: center;
-  padding-bottom: 6px;
+  padding-bottom: 8px;
 }
 
 /* ---- tab body ---- */
@@ -171,7 +217,54 @@
   overflow: auto;
   padding: 20px;
   color: var(--text-dim);
-  font-size: var(--type-body);
+  font-size: var(--rt-body);
+}
+
+/* ---- Design tab main column — canvas + inline settings (tuxlink-7ewvq) ----
+ * One scroll context: the canvas sizes to its content and the settings
+ * sections follow in the same column, filling the space the tracks don't
+ * use. Both children's own scroll/flex behavior is neutralized here so the
+ * column scrolls as a whole. */
+.design-main {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.design-main .canvas {
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+.inline-settings {
+  padding: 6px 24px 26px;
+}
+
+/* Mock .settings-head: a sans TITLE, not a mono micro tag; the settings are
+ * a first-class half of the Design view, headed at title size. */
+.inline-settings-head {
+  font-size: var(--rt-title);
+  font-weight: 640;
+  color: var(--text);
+  padding: 14px 2px 12px;
+  border-top: 1px solid var(--border);
+  margin-top: 6px;
+}
+
+.inline-settings .settings-scroll {
+  flex: none;
+  overflow: visible;
+  padding: 0;
+}
+
+/* In the canvas column the settings sit left-aligned in the empty space,
+ * not centered like the old standalone tab. */
+.inline-settings .settings-col {
+  margin: 0;
+  padding: 0;
 }
 
 /* ---- Design tab right rail — PaletteRail + StepInspector (Task 11) ----
@@ -180,8 +273,10 @@
  * `.inspector`) each fill their share of this column instead of also
  * claiming their own width/border, so they can stack vertically here. */
 .design-rail {
-  width: 232px;
-  flex: 0 0 232px;
+  /* Mock: 340px. The old 232px rail forced vertical stacking inside every
+   * palette item (label / id / flags on separate lines). */
+  width: 340px;
+  flex: 0 0 340px;
   border-left: 1px solid var(--border);
   background: var(--surface);
   display: flex;
@@ -195,11 +290,11 @@
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 6px 16px;
+  padding: 7px 20px;
   border-top: 1px solid var(--border);
   background: var(--surface);
-  font-size: var(--type-control);
-  height: 30px;
+  font-size: var(--rt-body);
+  height: 34px;
   white-space: nowrap;
   overflow: hidden;
   flex: 0 0 auto;
@@ -234,7 +329,7 @@
 .valbar .right {
   margin-left: auto;
   font-family: var(--mono);
-  font-size: var(--type-micro);
+  font-size: var(--rt-fine);
   color: var(--text-faint);
 }
 
@@ -267,7 +362,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: var(--type-body);
+  font-size: var(--rt-control);
   font-weight: 600;
 }
 
@@ -276,7 +371,7 @@
   min-height: 320px;
   resize: vertical;
   font-family: var(--mono);
-  font-size: var(--type-control);
+  font-size: var(--rt-fine);
   background: var(--surface-2);
   color: var(--text);
   border: 1px solid var(--border-strong);

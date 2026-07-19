@@ -325,3 +325,90 @@
 .sd-body .dim {
   color: var(--text-faint);
 }
+
+/* ---- step list (observability decree O5/O6/O7, wire-walk 2026-07-18) ----
+ * The scale-independent record beside the Gantt: every executed step with
+ * post-resolution params + output, every verbatim failure, branch decisions,
+ * and never-run steps with reasons. Content sits at --type-body (the
+ * human-scale 13px floor from the approved mock-v2 direction); mono is data
+ * only (ids, actions, params, outputs), per the same direction. */
+.steplist {
+  margin: var(--space-5) var(--space-6);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  overflow-y: auto;
+  min-height: 0;
+}
+.sl-head {
+  padding: var(--space-4) var(--space-5);
+  font-size: var(--type-control);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+}
+.slrow {
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--type-body);
+}
+.slrow:last-child {
+  border-bottom: none;
+}
+.slrow.skipped {
+  opacity: 0.75;
+}
+.sl-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+.sl-icon {
+  width: 1.2em;
+  text-align: center;
+}
+.sl-icon.ok { color: var(--success); }
+.sl-icon.fail { color: var(--error); }
+.sl-icon.branch { color: var(--accent); }
+.sl-icon.skipped,
+.sl-icon.park { color: var(--text-dim); }
+.sl-when {
+  font-size: var(--type-control);
+  color: var(--text-dim);
+}
+.sl-step {
+  font-weight: 600;
+}
+.sl-action {
+  color: var(--text-dim);
+}
+.sl-dur {
+  margin-left: auto;
+  font-size: var(--type-control);
+}
+.sl-branch { color: var(--text); }
+.sl-reason.dim,
+.sl-io-line.dim,
+.sl-dur.dim { color: var(--text-dim); }
+.sl-cause {
+  margin: var(--space-2) 0 0 calc(1.2em + var(--space-4));
+  font-size: var(--type-body);
+  color: var(--error);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.sl-io {
+  margin: var(--space-2) 0 0 calc(1.2em + var(--space-4));
+  font-size: var(--type-control);
+}
+.sl-io summary {
+  cursor: pointer;
+  color: var(--text-dim);
+}
+.sl-io-line {
+  padding: var(--space-2) 0 0 var(--space-5);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

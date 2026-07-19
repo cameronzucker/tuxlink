@@ -92,13 +92,36 @@ pub struct ActionStep {
     pub on_radio_busy: BusyPolicy,
 }
 
+/// Comparison operator for `Control::Branch`'s comparison form (round-2
+/// missing link #2, bd tuxlink-iizmk): `{"on": "s1.k_index", "op": "gte",
+/// "value": 4}`. Absent `op` keeps the original strict-boolean branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CmpOp {
+    Eq,
+    Ne,
+    Lt,
+    Lte,
+    Gt,
+    Gte,
+}
+
 /// Control-flow step payloads (spec §6 "Control flow").
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "control", rename_all = "lowercase")]
 pub enum Control {
     Branch {
-        /// Variable path, e.g. "s1.connected".
+        /// Variable path, e.g. "s1.connected" (nested paths reach deep
+        /// output fields: "s1.indices.k_index").
         on: String,
+        /// Comparison operator; `None` = strict-boolean branch. `op` and
+        /// `value` are supplied together or not at all (the executor rejects
+        /// a lone half verbatim).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        op: Option<CmpOp>,
+        /// Right-hand side for `op`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        value: Option<serde_json::Value>,
         then: Vec<StepId>,
         #[serde(rename = "else", default)]
         r#else: Vec<StepId>,
@@ -247,8 +270,15 @@ mod tests {
         }
         match &def.tracks[0].steps[1] {
             Step::Control(c) => match &c.control {
-                Control::Branch { on, then, r#else } => {
+                Control::Branch {
+                    on,
+                    op,
+                    value,
+                    then,
+                    r#else,
+                } => {
                     assert_eq!(on, "s1.connected");
+                    assert_eq!((*op, value.as_ref()), (None, None));
                     assert_eq!(then, &vec![StepId("s3".into())]);
                     assert_eq!(r#else, &vec![StepId("s4".into())]);
                 }

@@ -6606,7 +6606,16 @@ mod native_read_state_tests {
         cfg
     }
 
+    // #[serial] (tuxlink-8vt7b deflake): this test drives the REAL packet
+    // answer path, whose observation drop-guard captures the process-global
+    // sink AT ARM TIME (winlink_backend.rs answer site). Running it in
+    // parallel with the #[serial] observation tests let its Incoming/Accepted
+    // observation land in whichever Vec sink THOSE tests had just installed —
+    // the load-dependent "exactly one Incoming; got 2" flake (~2/3 on loaded
+    // runners, seen on docs-only commits, PR #1151, and the 0.94.0 release
+    // PR). Every test that can arm an observation guard must be #[serial].
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial_test::serial]
     async fn packet_two_real_peers_complete_a_connect_and_b2f_over_tcp_kiss() {
         let wire = spawn_kiss_wire();
 

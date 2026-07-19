@@ -93,24 +93,54 @@ pub fn contacts_read(
 }
 
 /// Merge an operator upsert with the stored record (tier + reachability
-/// preservation, spec §AMENDMENT pt. 1). Pure + deterministic.
+/// preservation, spec §AMENDMENT pt. 1; manual channels tuxlink-6vn4x).
+/// Pure + deterministic.
 ///
 /// - NEW record (no stored match): `tier = Confirmed` and `origin = Manual` —
 ///   the operator-created ("added") path; auto-creation is the observation
-///   recorder's job and NEVER lands confirmed, this path ALWAYS does.
-/// - UPDATE: `tier` / `origin` / `grid` / `channels` / `endpoints` are taken
-///   FROM THE STORED record. The editor owns identity fields only; an upsert
-///   must not silently flip an existing record's tier ([`contact_confirm`] is
-///   the only tier writer) nor wipe observed reachability with the editor's
-///   snapshot.
+///   recorder's job and NEVER lands confirmed, this path ALWAYS does. Only
+///   the incoming MANUAL channels are accepted (an incoming row claiming
+///   `Observed` is a forgery and is dropped).
+/// - UPDATE: `tier` / `origin` / `grid` / `endpoints` are taken FROM THE
+///   STORED record. The editor owns identity fields; an upsert must not
+///   silently flip an existing record's tier ([`contact_confirm`] is the only
+///   tier writer) nor wipe observed reachability with the editor's snapshot.
+/// - CHANNELS split by provenance: the recorder owns observed rows, the UI
+///   owns manual rows. `final.channels` is the stored channels with
+///   `source == Observed` (preserved verbatim — the UI can neither edit nor
+///   forge an observation, so incoming rows claiming `Observed` are IGNORED)
+///   plus the incoming channels with `source == Manual` taken as-is
+///   (additions, edits, and removals of manual rows all flow through by
+///   replacement — a stored manual row absent from the incoming manual set
+///   is gone). An incoming manual row that matches a stored observed row on
+///   `(transport, freq_hz)` is kept ALONGSIDE it: the UI may fuse the pair
+///   for display, but the store stays honest about provenance. Stored
+///   `Unknown`-source rows (written by a future binary) are preserved like
+///   observed ones — never silently dropped, never UI-forgeable.
 pub fn merge_for_upsert(stored: Option<&Contact>, mut incoming: Contact) -> Contact {
+    use super::reachability::{Channel, ChannelSource};
+    // The UI owns ONLY the manual set — everything else it sends is dropped.
+    incoming
+        .channels
+        .retain(|ch| ch.source == ChannelSource::Manual);
     match stored {
         Some(s) => {
             incoming.tier = s.tier;
             incoming.origin = s.origin;
             incoming.grid = s.grid.clone();
-            incoming.channels = s.channels.clone();
             incoming.endpoints = s.endpoints.clone();
+            // Stored observed (and future-Unknown) rows survive verbatim,
+            // then the incoming manual set is adopted whole.
+            let mut channels: Vec<Channel> = s
+                .channels
+                .iter()
+                .filter(|ch| {
+                    matches!(ch.source, ChannelSource::Observed | ChannelSource::Unknown)
+                })
+                .cloned()
+                .collect();
+            channels.append(&mut incoming.channels);
+            incoming.channels = channels;
         }
         None => {
             incoming.tier = ContactTier::Confirmed;
@@ -847,6 +877,7 @@ mod tests {
             last_seen: "2026-07-11T12:00:00-07:00".into(),
             last_ok: Some("2026-07-11T12:00:00-07:00".into()),
             last_ok_direction: Some(Direction::Incoming),
+            source: ChannelSource::Observed,
         }];
         stored.endpoints = vec![Endpoint {
             id: "e1".into(),
@@ -870,6 +901,166 @@ mod tests {
         assert_eq!(merged.origin, Origin::Incoming, "origin preserved");
         assert_eq!(merged.channels.len(), 1, "observed channels preserved");
         assert_eq!(merged.endpoints.len(), 1, "observed endpoints preserved");
+    }
+
+    // ------------------------------------------------------------------
+    // merge_for_upsert — manual-channel adoption (tuxlink-6vn4x): the
+    // recorder owns observed rows, the UI owns manual rows.
+    // ------------------------------------------------------------------
+
+    /// A channel row for merge tests. `freq_hz` is the discriminator the
+    /// dedup narrative cares about; everything else is fixed.
+    fn merge_channel(
+        source: crate::contacts::reachability::ChannelSource,
+        freq_hz: u64,
+    ) -> crate::contacts::reachability::Channel {
+        use crate::contacts::reachability::*;
+        Channel {
+            transport: ChannelTransport::VaraHf,
+            target_callsign: "W6ABC-7".into(),
+            via: vec![],
+            freq_hz: Some(freq_hz),
+            bandwidth: None,
+            direction: Direction::Unknown,
+            counts: AttemptCounts::default(),
+            last_seen: "2026-07-11T12:00:00-07:00".into(),
+            last_ok: None,
+            last_ok_direction: None,
+            source,
+        }
+    }
+
+    #[test]
+    fn upsert_adopts_incoming_manual_channels_and_preserves_observed() {
+        use crate::contacts::reachability::ChannelSource;
+        let mut stored = blank_contact();
+        stored.id = "c1".into();
+        // The stored record: one observed row + one manual row the UI will
+        // both edit (freq change on 7_105_000 → 7_110_000) and NOT resend
+        // (the 3_585_000 row → removed).
+        stored.channels = vec![
+            merge_channel(ChannelSource::Observed, 7_101_000),
+            merge_channel(ChannelSource::Manual, 7_105_000),
+            merge_channel(ChannelSource::Manual, 3_585_000),
+        ];
+        // The editor's snapshot: the edited manual row, a brand-new manual
+        // row, and NO copy of the observed row (the UI need not echo it).
+        let mut incoming = blank_contact();
+        incoming.id = "c1".into();
+        incoming.channels = vec![
+            merge_channel(ChannelSource::Manual, 7_110_000), // edited (was 7_105_000)
+            merge_channel(ChannelSource::Manual, 14_109_000), // added
+        ];
+
+        let merged = merge_for_upsert(Some(&stored), incoming);
+        let observed: Vec<u64> = merged
+            .channels
+            .iter()
+            .filter(|ch| ch.source == ChannelSource::Observed)
+            .filter_map(|ch| ch.freq_hz)
+            .collect();
+        let mut manual: Vec<u64> = merged
+            .channels
+            .iter()
+            .filter(|ch| ch.source == ChannelSource::Manual)
+            .filter_map(|ch| ch.freq_hz)
+            .collect();
+        manual.sort_unstable();
+        assert_eq!(observed, vec![7_101_000], "observed rows survive verbatim");
+        assert_eq!(
+            manual,
+            vec![7_110_000, 14_109_000],
+            "manual set replaced whole: edit landed, addition landed, the un-resent 3_585_000 row is gone"
+        );
+    }
+
+    #[test]
+    fn upsert_ignores_incoming_rows_claiming_observed() {
+        // The UI cannot forge an observation: an incoming row with
+        // source == Observed is dropped; the STORED observed set is what
+        // survives. Applies on update AND on create.
+        use crate::contacts::reachability::ChannelSource;
+        let mut stored = blank_contact();
+        stored.id = "c1".into();
+        stored.channels = vec![merge_channel(ChannelSource::Observed, 7_101_000)];
+
+        let mut incoming = blank_contact();
+        incoming.id = "c1".into();
+        incoming.channels = vec![
+            // Forged: claims an observation on a frequency never observed.
+            merge_channel(ChannelSource::Observed, 21_101_000),
+            merge_channel(ChannelSource::Manual, 7_110_000),
+        ];
+        let merged = merge_for_upsert(Some(&stored), incoming);
+        assert_eq!(merged.channels.len(), 2);
+        assert!(
+            !merged.channels.iter().any(|ch| ch.freq_hz == Some(21_101_000)),
+            "forged observed row must be ignored"
+        );
+        assert!(merged
+            .channels
+            .iter()
+            .any(|ch| ch.source == ChannelSource::Observed && ch.freq_hz == Some(7_101_000)));
+        assert!(merged
+            .channels
+            .iter()
+            .any(|ch| ch.source == ChannelSource::Manual && ch.freq_hz == Some(7_110_000)));
+    }
+
+    #[test]
+    fn upsert_new_contact_accepts_manual_channels_only() {
+        use crate::contacts::reachability::ChannelSource;
+        let mut incoming = blank_contact();
+        incoming.channels = vec![
+            merge_channel(ChannelSource::Manual, 7_110_000),
+            merge_channel(ChannelSource::Observed, 21_101_000), // forged → dropped
+        ];
+        let merged = merge_for_upsert(None, incoming);
+        assert_eq!(merged.tier, ContactTier::Confirmed, "new record stays Confirmed/added");
+        assert_eq!(merged.origin, Origin::Manual);
+        assert_eq!(merged.channels.len(), 1, "only the manual row is accepted");
+        assert_eq!(merged.channels[0].source, ChannelSource::Manual);
+        assert_eq!(merged.channels[0].freq_hz, Some(7_110_000));
+    }
+
+    #[test]
+    fn upsert_keeps_both_when_manual_matches_observed_on_transport_and_freq() {
+        // Dedup rule (tuxlink-6vn4x): an incoming manual row matching a stored
+        // observed row on (transport, freq_hz) keeps BOTH — the UI fuses them
+        // for display; the store stays honest about provenance.
+        use crate::contacts::reachability::ChannelSource;
+        let mut stored = blank_contact();
+        stored.id = "c1".into();
+        stored.channels = vec![merge_channel(ChannelSource::Observed, 7_101_000)];
+        let mut incoming = blank_contact();
+        incoming.id = "c1".into();
+        incoming.channels = vec![merge_channel(ChannelSource::Manual, 7_101_000)];
+
+        let merged = merge_for_upsert(Some(&stored), incoming);
+        assert_eq!(merged.channels.len(), 2, "same (transport, freq) → both rows kept");
+        let sources: Vec<ChannelSource> = merged.channels.iter().map(|ch| ch.source).collect();
+        assert!(sources.contains(&ChannelSource::Observed));
+        assert!(sources.contains(&ChannelSource::Manual));
+    }
+
+    #[test]
+    fn upsert_preserves_stored_unknown_source_rows() {
+        // [R4-5] forward-compat: a row whose source was written by a future
+        // binary (quarantined to Unknown on load) is preserved like an
+        // observed row — never silently dropped by a UI save, and an incoming
+        // row claiming Unknown is not adoptable either.
+        use crate::contacts::reachability::ChannelSource;
+        let mut stored = blank_contact();
+        stored.id = "c1".into();
+        stored.channels = vec![merge_channel(ChannelSource::Unknown, 7_101_000)];
+        let mut incoming = blank_contact();
+        incoming.id = "c1".into();
+        incoming.channels = vec![merge_channel(ChannelSource::Unknown, 21_101_000)];
+
+        let merged = merge_for_upsert(Some(&stored), incoming);
+        assert_eq!(merged.channels.len(), 1, "stored Unknown kept; incoming Unknown dropped");
+        assert_eq!(merged.channels[0].source, ChannelSource::Unknown);
+        assert_eq!(merged.channels[0].freq_hz, Some(7_101_000));
     }
 
     // ------------------------------------------------------------------

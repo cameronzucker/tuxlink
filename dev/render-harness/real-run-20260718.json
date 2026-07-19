@@ -1,0 +1,338 @@
+{
+ "def": {
+  "inputs": [],
+  "on_interrupted": "stay",
+  "routine": "heron-observability-probe",
+  "schema_version": 1,
+  "tracks": [
+   {
+    "name": "track-1",
+    "steps": [
+     {
+      "action": "data.read",
+      "id": "s1",
+      "on_radio_busy": "wait",
+      "params": {
+       "source": "grid"
+      }
+     },
+     {
+      "action": "local.compose",
+      "id": "s2",
+      "on_radio_busy": "wait",
+      "params": {
+       "body": "Probe message staged by the routines observability wire-walk.",
+       "subject": "Observability probe",
+       "to": [
+        "N0RNG"
+       ]
+      }
+     },
+     {
+      "control": "branch",
+      "else": [
+       "s5"
+      ],
+      "id": "s3",
+      "on": "s2.staged",
+      "then": [
+       "s4"
+      ]
+     },
+     {
+      "action": "local.log",
+      "id": "s4",
+      "on_radio_busy": "wait",
+      "params": {
+       "message": "$s2.mid"
+      }
+     },
+     {
+      "action": "local.log",
+      "id": "s5",
+      "on_radio_busy": "wait",
+      "params": {
+       "message": "probe: else arm, compose did not stage"
+      }
+     },
+     {
+      "action": "data.read",
+      "id": "s6",
+      "on_radio_busy": "wait",
+      "params": {
+       "source": "heard_stations"
+      }
+     },
+     {
+      "action": "local.notify",
+      "id": "s7",
+      "on_radio_busy": "wait",
+      "params": {
+       "message": "should never run: s6 fails first",
+       "title": "probe"
+      }
+     },
+     {
+      "control": "end",
+      "failed": false,
+      "id": "s8"
+     }
+    ]
+   }
+  ],
+  "transmit_mode": "attended",
+  "triggers": [
+   {
+    "type": "manual"
+   }
+  ]
+ },
+ "run": {
+  "runId": "run-1784416315-0000",
+  "routine": "heron-observability-probe",
+  "dryRun": false,
+  "startedUnix": 1784416315,
+  "state": "failed",
+  "finishedUnix": 1784416315
+ },
+ "journal": [
+  {
+   "event": {
+    "dry_run": false,
+    "routine": "heron-observability-probe",
+    "snapshot": {
+     "inputs": [],
+     "on_interrupted": "stay",
+     "routine": "heron-observability-probe",
+     "schema_version": 1,
+     "tracks": [
+      {
+       "name": "track-1",
+       "steps": [
+        {
+         "action": "data.read",
+         "id": "s1",
+         "on_radio_busy": "wait",
+         "params": {
+          "source": "grid"
+         }
+        },
+        {
+         "action": "local.compose",
+         "id": "s2",
+         "on_radio_busy": "wait",
+         "params": {
+          "body": "Probe message staged by the routines observability wire-walk.",
+          "subject": "Observability probe",
+          "to": [
+           "N0RNG"
+          ]
+         }
+        },
+        {
+         "control": "branch",
+         "else": [
+          "s5"
+         ],
+         "id": "s3",
+         "on": "s2.staged",
+         "then": [
+          "s4"
+         ]
+        },
+        {
+         "action": "local.log",
+         "id": "s4",
+         "on_radio_busy": "wait",
+         "params": {
+          "message": "$s2.mid"
+         }
+        },
+        {
+         "action": "local.log",
+         "id": "s5",
+         "on_radio_busy": "wait",
+         "params": {
+          "message": "probe: else arm, compose did not stage"
+         }
+        },
+        {
+         "action": "data.read",
+         "id": "s6",
+         "on_radio_busy": "wait",
+         "params": {
+          "source": "heard_stations"
+         }
+        },
+        {
+         "action": "local.notify",
+         "id": "s7",
+         "on_radio_busy": "wait",
+         "params": {
+          "message": "should never run: s6 fails first",
+          "title": "probe"
+         }
+        },
+        {
+         "control": "end",
+         "failed": false,
+         "id": "s8"
+        }
+       ]
+      }
+     ],
+     "transmit_mode": "attended",
+     "triggers": [
+      {
+       "type": "manual"
+      }
+     ]
+    },
+    "type": "run_started"
+   },
+   "run_id": "run-1784416315-0000",
+   "seq": 0,
+   "ts_unix": 1784416315
+  },
+  {
+   "event": {
+    "action": "data.read",
+    "resolved_params": {
+     "source": "grid"
+    },
+    "step": "s1",
+    "type": "step_intent"
+   },
+   "run_id": "run-1784416315-0000",
+   "seq": 1,
+   "ts_unix": 1784416315
+  },
+  {
+   "event": {
+    "output": {
+     "grid": "DM33wp"
+    },
+    "step": "s1",
+    "type": "step_ok"
+   },
+   "run_id": "run-1784416315-0000",
+   "seq": 2,
+   "ts_unix": 1784416315
+  },
+  {
+   "event": {
+    "action": "local.compose",
+    "resolved_params": {
+     "body": "Probe message staged by the routines observability wire-walk.",
+     "subject": "Observability probe",
+     "to": [
+      "N0RNG"
+     ]
+    },
+    "step": "s2",
+    "type": "step_intent"
+   },
+   "run_id": "run-1784416315-0000",
+   "seq": 3,
+   "ts_unix": 1784416315
+  },
+  {
+   "event": {
+    "output": {
+     "mid": "AKQHQ5KF7FR7",
+     "staged": true
+    },
+    "step": "s2",
+    "type": "step_ok"
+   },
+   "run_id": "run-1784416315-0000",
+   "seq": 4,
+   "ts_unix": 1784416315
+  },
+  {
+   "event": {
+    "action": "local.log",
+    "resolved_params": {
+     "message": "AKQHQ5KF7FR7"
+    },
+    "step": "s4",
+    "type": "step_intent"
+   },
+   "run_id": "run-1784416315-0000",
+   "seq": 5,
+   "ts_unix": 1784416315
+  },
+  {
+   "event": {
+    "output": {},
+    "step": "s4",
+    "type": "step_ok"
+   },
+   "run_id": "run-1784416315-0000",
+   "seq": 6,
+   "ts_unix": 1784416315
+  },
+  {
+   "event": {
+    "action": "local.log",
+    "resolved_params": {
+     "message": "probe: else arm, compose did not stage"
+    },
+    "step": "s5",
+    "type": "step_intent"
+   },
+   "run_id": "run-1784416315-0000",
+   "seq": 7,
+   "ts_unix": 1784416315
+  },
+  {
+   "event": {
+    "output": {},
+    "step": "s5",
+    "type": "step_ok"
+   },
+   "run_id": "run-1784416315-0000",
+   "seq": 8,
+   "ts_unix": 1784416315
+  },
+  {
+   "event": {
+    "action": "data.read",
+    "resolved_params": {
+     "source": "heard_stations"
+    },
+    "step": "s6",
+    "type": "step_intent"
+   },
+   "run_id": "run-1784416315-0000",
+   "seq": 9,
+   "ts_unix": 1784416315
+  },
+  {
+   "event": {
+    "error": {
+     "detail": {
+      "action": "data.read",
+      "cause": "data.read source=heard_stations: tuxlink does not keep a queryable record of currently-heard APRS stations. Heard-station positions show live in the APRS Tac Chat view, but nothing persists them anywhere a routine step can read them from \u2014 this source stays unavailable until a backend-side heard-stations record exists."
+     },
+     "kind": "action"
+    },
+    "step": "s6",
+    "type": "step_err"
+   },
+   "run_id": "run-1784416315-0000",
+   "seq": 10,
+   "ts_unix": 1784416315
+  },
+  {
+   "event": {
+    "reason": "action 'data.read' failed: data.read source=heard_stations: tuxlink does not keep a queryable record of currently-heard APRS stations. Heard-station positions show live in the APRS Tac Chat view, but nothing persists them anywhere a routine step can read them from \u2014 this source stays unavailable until a backend-side heard-stations record exists.",
+    "state": "failed",
+    "type": "run_finished"
+   },
+   "run_id": "run-1784416315-0000",
+   "seq": 11,
+   "ts_unix": 1784416315
+  }
+ ]
+}

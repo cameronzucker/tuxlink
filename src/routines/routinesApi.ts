@@ -162,6 +162,10 @@ export type RunEvent =
   | { type: 'step_intent'; step: string; action: string; resolved_params: unknown }
   | { type: 'step_ok'; step: string; output: unknown }
   | { type: 'step_err'; step: string; error: StepError }
+  // Observability-decree events (wire-walk 2026-07-18, journal.rs additive
+  // variants): journals written before the enrichment simply never carry them.
+  | { type: 'branch_taken'; step: string; on: string; value: unknown; took_then: boolean; target?: string }
+  | { type: 'step_skipped'; step: string; reason: string }
   | { type: 'run_finished'; state: RunState; reason?: string | null };
 
 /** `JournalEntry` (journal.rs:73-79) — as-written. */

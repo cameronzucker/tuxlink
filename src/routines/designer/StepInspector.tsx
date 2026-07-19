@@ -63,11 +63,34 @@ function splitIds(text: string): string[] {
     .filter((s) => s.length > 0);
 }
 
+/** tuxlink-7ewvq item 9: display text for a param value — strings raw,
+ *  anything else as compact JSON. */
+function valueToText(v: unknown): string {
+  return typeof v === 'string' ? v : JSON.stringify(v);
+}
+
+/** Inverse of `valueToText` at commit time: text that parses as JSON becomes
+ *  the parsed value (numbers, booleans, arrays, nested objects); anything
+ *  else — callsigns, @refs, plain words — stays a string. */
+function textToValue(text: string): unknown {
+  const t = text.trim();
+  if (t === '') return '';
+  try {
+    return JSON.parse(t) as unknown;
+  } catch {
+    return text;
+  }
+}
+
 export function StepInspector({ step, actions, onChange, onRemove }: StepInspectorProps) {
   const isAction = 'action' in step;
   const info = isAction ? actions.find((a) => a.name === step.action) : undefined;
 
   // ---- params editor (action steps only) ----
+  // Default surface is the key/value grid (tuxlink-7ewvq item 9) — no
+  // operator hand-types JSON to configure an action. The raw JSON textarea
+  // survives behind the "edit as JSON" toggle for nested shapes.
+  const [paramsMode, setParamsMode] = useState<'kv' | 'json'>('kv');
   const [paramsText, setParamsText] = useState(() =>
     isAction ? JSON.stringify(step.params ?? {}, null, 2) : '',
   );
@@ -82,6 +105,43 @@ export function StepInspector({ step, actions, onChange, onRemove }: StepInspect
     } catch (e) {
       setParamsError(e instanceof Error ? e.message : String(e));
     }
+  }
+
+  // ---- key/value grid state ----
+  // Committed rows derive from `step.params` every render; only the field
+  // being edited holds local text (`fieldEdits`), so a parent update never
+  // fights a stale local copy. Rows added via ＋ live in `newRows` until the
+  // parent's params actually contain their key.
+  const committedParams: Record<string, unknown> =
+    isAction && step.params && typeof step.params === 'object' && !Array.isArray(step.params)
+      ? (step.params as Record<string, unknown>)
+      : {};
+  const [fieldEdits, setFieldEdits] = useState<Record<string, string>>({});
+  const [newRows, setNewRows] = useState<Array<{ uid: number; key: string; value: string }>>([]);
+  const newRowUid = useRef(0);
+  const lastFocusedRef = useRef<string | null>(null);
+
+  const visibleNewRows = newRows.filter((r) => !(r.key in committedParams));
+
+  function displayValue(key: string): string {
+    return fieldEdits[`v:${key}`] ?? valueToText(committedParams[key]);
+  }
+
+  /** Rebuild the full params object from committed keys (with any in-flight
+   *  field edit applied) plus the keyed new rows, and commit it. */
+  function commitGrid(overrides?: { renamedFrom?: string; renamedTo?: string; removeKey?: string }) {
+    const next: Record<string, unknown> = {};
+    for (const key of Object.keys(committedParams)) {
+      if (overrides?.removeKey === key) continue;
+      const outKey = overrides?.renamedFrom === key ? (overrides.renamedTo ?? key) : key;
+      if (outKey === '') continue;
+      next[outKey] = textToValue(displayValue(key));
+    }
+    for (const row of visibleNewRows) {
+      if (row.key.trim() === '') continue;
+      next[row.key.trim()] = textToValue(row.value);
+    }
+    onChange({ params: next });
   }
 
   // ---- @-reference helper data ----
@@ -112,9 +172,26 @@ export function StepInspector({ step, actions, onChange, onRemove }: StepInspect
     // re-fetched on every keystroke in the params textarea.
   }, []);
 
-  const showRefHelper = isAction && AT_REF_RE.test(paramsText);
+  /** KV mode: the row a completion chip should fill — the last-focused value
+   *  field if its text starts with '@', else the first '@'-prefixed row. */
+  function atRefTargetKey(): string | null {
+    const focused = lastFocusedRef.current;
+    if (focused && displayValue(focused).startsWith('@')) return focused;
+    for (const key of Object.keys(committedParams)) {
+      if (displayValue(key).startsWith('@')) return key;
+    }
+    return null;
+  }
+
+  const showRefHelper =
+    isAction && (paramsMode === 'json' ? AT_REF_RE.test(paramsText) : atRefTargetKey() !== null);
 
   function insertRef(ref: string) {
+    if (paramsMode === 'kv') {
+      const target = atRefTargetKey();
+      if (target) setFieldEdits((e) => ({ ...e, [`v:${target}`]: ref }));
+      return;
+    }
     const el = textareaRef.current;
     if (!el) {
       setParamsText((t) => t + ref);
@@ -177,18 +254,128 @@ export function StepInspector({ step, actions, onChange, onRemove }: StepInspect
             </span>
           </div>
 
-          <label className="insp-field">
-            <span className="insp-label">params (JSON)</span>
-            <textarea
-              ref={textareaRef}
-              data-testid="inspector-params"
-              className="insp-textarea mono"
-              rows={8}
-              value={paramsText}
-              onChange={(e) => setParamsText(e.target.value)}
-              onBlur={commitParams}
-            />
-          </label>
+          <div className="insp-field">
+            <span className="insp-label">
+              parameters
+              <button
+                type="button"
+                className="insp-json-toggle"
+                data-testid="params-json-toggle"
+                onClick={() => {
+                  setParamsMode((m) => (m === 'kv' ? 'json' : 'kv'));
+                  // Entering JSON mode always shows the CURRENT params; leaving
+                  // it drops any uncommitted text (blur already committed the
+                  // valid edits).
+                  setParamsText(JSON.stringify(step.params ?? {}, null, 2));
+                  setParamsError(null);
+                  setFieldEdits({});
+                }}
+              >
+                {paramsMode === 'kv' ? 'edit as JSON' : 'edit as fields'}
+              </button>
+            </span>
+            {paramsMode === 'kv' ? (
+              <div className="param-grid" data-testid="param-grid">
+                {Object.keys(committedParams).map((key) => (
+                  <div className="param-row" data-testid={`param-row-${key}`} key={key}>
+                    <input
+                      className="param-key mono"
+                      data-testid={`param-key-${key}`}
+                      aria-label={`Parameter name ${key}`}
+                      value={fieldEdits[`k:${key}`] ?? key}
+                      onChange={(e) => setFieldEdits((ed) => ({ ...ed, [`k:${key}`]: e.target.value }))}
+                      onBlur={(e) => {
+                        const renamed = e.target.value.trim();
+                        setFieldEdits(({ [`k:${key}`]: _drop, ...rest }) => rest);
+                        if (renamed !== key) commitGrid({ renamedFrom: key, renamedTo: renamed });
+                      }}
+                    />
+                    <input
+                      className="param-value mono"
+                      data-testid={`param-value-${key}`}
+                      aria-label={`Value for ${key}`}
+                      value={displayValue(key)}
+                      onFocus={() => {
+                        lastFocusedRef.current = key;
+                      }}
+                      onChange={(e) => setFieldEdits((ed) => ({ ...ed, [`v:${key}`]: e.target.value }))}
+                      onBlur={() => {
+                        commitGrid();
+                        setFieldEdits(({ [`v:${key}`]: _drop, ...rest }) => rest);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="param-remove"
+                      data-testid={`param-remove-${key}`}
+                      aria-label={`Remove parameter ${key}`}
+                      onClick={() => commitGrid({ removeKey: key })}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+                {visibleNewRows.map((row, i) => (
+                  <div className="param-row" key={row.uid}>
+                    <input
+                      className="param-key mono"
+                      data-testid={row.key.trim() === '' ? `param-key-new-${i}` : `param-key-${row.key.trim()}`}
+                      aria-label="New parameter name"
+                      placeholder="name"
+                      value={row.key}
+                      onChange={(e) =>
+                        setNewRows((rs) => rs.map((r) => (r.uid === row.uid ? { ...r, key: e.target.value } : r)))
+                      }
+                      onBlur={() => {
+                        if (row.key.trim() !== '') commitGrid();
+                      }}
+                    />
+                    <input
+                      className="param-value mono"
+                      data-testid={row.key.trim() === '' ? `param-value-new-${i}` : `param-value-${row.key.trim()}`}
+                      aria-label={`Value for ${row.key.trim() || 'new parameter'}`}
+                      placeholder="value"
+                      value={row.value}
+                      onChange={(e) =>
+                        setNewRows((rs) => rs.map((r) => (r.uid === row.uid ? { ...r, value: e.target.value } : r)))
+                      }
+                      onBlur={() => {
+                        if (row.key.trim() !== '') commitGrid();
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="param-remove"
+                      aria-label="Remove new parameter"
+                      onClick={() => setNewRows((rs) => rs.filter((r) => r.uid !== row.uid))}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className="param-add"
+                  data-testid="param-add"
+                  onClick={() =>
+                    setNewRows((rs) => [...rs, { uid: newRowUid.current++, key: '', value: '' }])
+                  }
+                >
+                  ＋ add parameter
+                </button>
+              </div>
+            ) : (
+              <textarea
+                ref={textareaRef}
+                data-testid="inspector-params"
+                className="insp-textarea mono"
+                rows={8}
+                value={paramsText}
+                onChange={(e) => setParamsText(e.target.value)}
+                onBlur={commitParams}
+              />
+            )}
+          </div>
           {paramsError && (
             <div className="insp-error" data-testid="inspector-params-error">
               {paramsError}

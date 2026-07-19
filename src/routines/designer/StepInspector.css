@@ -26,13 +26,13 @@
 }
 
 .insp-id {
-  font-size: var(--type-meta);
+  font-size: var(--rt-fine);
   color: var(--text-faint);
   flex: 1;
 }
 
 .insp-remove {
-  font-size: var(--type-control);
+  font-size: var(--rt-fine);
   color: var(--error);
   background: none;
   border: 1px solid var(--border-strong);
@@ -45,11 +45,11 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: var(--type-control);
+  font-size: var(--rt-body);
 }
 
 .insp-label {
-  font-size: var(--type-micro);
+  font-size: var(--rt-fine);
   letter-spacing: 0.05em;
   color: var(--text-faint);
 }
@@ -61,8 +61,8 @@
 .insp-field {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  font-size: var(--type-control);
+  gap: 4px;
+  font-size: var(--rt-body);
 }
 
 .insp-field input,
@@ -71,9 +71,9 @@
   background: var(--surface-2);
   color: var(--text);
   border: 1px solid var(--border-strong);
-  border-radius: 4px;
-  padding: 4px 6px;
-  font-size: var(--type-control);
+  border-radius: 5px;
+  padding: 6px 8px;
+  font-size: var(--rt-body);
 }
 
 .insp-textarea {
@@ -88,7 +88,7 @@
 }
 
 .insp-error {
-  font-size: var(--type-meta);
+  font-size: var(--rt-fine);
   color: var(--error);
   white-space: pre-wrap;
 }
@@ -101,7 +101,7 @@
 
 .ref-chip {
   font-family: var(--mono);
-  font-size: var(--type-micro);
+  font-size: var(--rt-fine);
   color: var(--accent-2);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
@@ -116,13 +116,16 @@
   gap: 3px;
 }
 
+/* 12px raw, matching PaletteRail's capability tags (the mock's deliberate
+ * exception under the 13px floor). */
 .flag {
-  font-size: var(--type-micro);
-  letter-spacing: 0.05em;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
   border: 1px solid var(--border-strong);
   color: var(--text-faint);
-  border-radius: 2px;
-  padding: 0 3px;
+  border-radius: 4px;
+  padding: 1px 6px;
 }
 
 .flag.tx {
@@ -138,4 +141,72 @@
 .flag.net {
   color: var(--info);
   border-color: color-mix(in srgb, var(--info) 40%, transparent);
+}
+
+/* ---- key/value params grid (tuxlink-7ewvq item 9) ---- */
+.param-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.param-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.param-row .param-key {
+  flex: 0 0 40%;
+  min-width: 0;
+}
+
+.param-row .param-value {
+  flex: 1;
+  min-width: 0;
+}
+
+.param-remove {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  font-size: var(--rt-body);
+  cursor: pointer;
+  padding: 0 3px;
+}
+
+.param-remove:hover {
+  color: var(--error);
+}
+
+.param-add {
+  align-self: flex-start;
+  background: none;
+  border: 1px dashed var(--border-strong);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-size: var(--rt-fine);
+  padding: 2px 8px;
+  cursor: pointer;
+  margin-top: 2px;
+}
+
+.insp-json-toggle {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--info);
+  font-size: var(--rt-fine);
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* The params header row: label left, JSON toggle pinned right. */
+.insp-field > .insp-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }

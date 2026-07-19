@@ -11,6 +11,7 @@
 
 pub mod action;
 pub mod compose;
+mod composability_proof;
 pub mod consent;
 pub mod dryrun;
 pub mod engine;

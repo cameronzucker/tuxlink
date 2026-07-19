@@ -41,6 +41,20 @@ describe('<RadioPanel>', () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  // tuxlink-fh53x: the tour's 'radio-dock' anchor lives on the panel chrome
+  // root — a real layout box whenever any mode panel is showing. It must NOT
+  // live on RadioDrawer's display:contents wrapper (zero rect on desktop, so
+  // findMountedAnchor treats it as unmounted and the tour stop can never
+  // spotlight the dock).
+  it('carries the radio-dock tour anchor on its boxed root', () => {
+    render(
+      <RadioPanel mode={{ kind: 'telnet', intent: 'cms' }} onClose={() => {}}>
+        <div />
+      </RadioPanel>,
+    );
+    expect(screen.getByTestId('radio-panel-root')).toHaveAttribute('data-tour-anchor', 'radio-dock');
+  });
+
   // tuxlink-6jpf: RF dial modes get a "Find a Station"/"Find a Gateway"
   // affordance in the panel chrome (opens the station finder). Telnet/P2P
   // do not pass onFindGateway. The label is sourced by the caller from the

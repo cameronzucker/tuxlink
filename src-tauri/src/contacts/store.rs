@@ -24,8 +24,8 @@
 //! `create_dir_all(parent)` first. Mirrors `user_folders.rs:182-192`.
 
 use super::reachability::{
-    AttemptCounts, Channel, ContactGrid, ContactTier, Direction, Endpoint, Origin, Provenance,
-    AUTO_CONTACT_CAP,
+    AttemptCounts, Channel, ChannelSource, ContactGrid, ContactTier, Direction, Endpoint, Origin,
+    Provenance, AUTO_CONTACT_CAP,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -505,9 +505,16 @@ impl ContactsStore {
                     bandwidth,
                 } => {
                     // Channel dedup key: (transport, target_callsign, via,
-                    // freq_hz exact, bandwidth) [R4-11].
+                    // freq_hz exact, bandwidth) [R4-11]. Provenance honesty
+                    // (tuxlink-6vn4x): an observation never mutates an
+                    // operator-authored (`Manual`) row — a matching attempt
+                    // accrues on its own `Observed` row instead, so counts /
+                    // recency stay attributable and a UI save of the manual
+                    // set can never clobber observed history. `Unknown`
+                    // (future-binary) rows are treated like observed ones.
                     let key_match = |ch: &Channel| {
-                        ch.transport == *transport
+                        ch.source != ChannelSource::Manual
+                            && ch.transport == *transport
                             && ch.target_callsign == presented
                             && ch.via == *via
                             && ch.freq_hz == *freq_hz
@@ -544,6 +551,9 @@ impl ContactsStore {
                             // successful first attempt, atomically.
                             last_ok: if ok { Some(now.clone()) } else { None },
                             last_ok_direction: if ok { Some(obs.direction) } else { None },
+                            // The recorder authors OBSERVED rows, explicitly
+                            // — never Manual (tuxlink-6vn4x).
+                            source: ChannelSource::Observed,
                         });
                     }
                 }
@@ -670,13 +680,17 @@ impl ContactsStore {
 
     /// Per-contact channel bounding (R3-F4): rotated observations (via/freq
     /// churn) on one contact cannot grow it without bound; oldest-`last_seen`
-    /// is evicted.
+    /// is evicted. Manual dials are NEVER eviction candidates (Codex adrev
+    /// 2026-07-18 P2: their empty `last_seen` sorted them oldest, so
+    /// observation churn silently deleted operator-entered dials) — the cap
+    /// governs the recorder's own rows only.
     fn enforce_channel_cap(c: &mut Contact) {
         while c.channels.len() > PER_CONTACT_CHANNEL_CAP {
             let victim = c
                 .channels
                 .iter()
                 .enumerate()
+                .filter(|(_, ch)| ch.source != ChannelSource::Manual)
                 .min_by(|(_, a), (_, b)| a.last_seen.cmp(&b.last_seen))
                 .map(|(i, _)| i);
             match victim {
@@ -1102,6 +1116,52 @@ mod tests {
     }
 
     #[test]
+    fn observation_never_mutates_a_manual_channel() {
+        // Provenance honesty (tuxlink-6vn4x): an observation whose dedup key
+        // exactly matches an operator-authored (Manual) channel accrues on
+        // its OWN Observed row — the manual row's counts/recency are never
+        // recorder-mutated (a UI save of the manual set would clobber them).
+        let dir = tempdir().unwrap();
+        let mut s = ContactsStore::open(dir.path().join("contacts.json"));
+        let mut c = contact("c1"); // callsign W6ABC-7
+        c.channels = vec![Channel {
+            transport: ChannelTransport::VaraHf,
+            target_callsign: "W6ABC-7".into(),
+            via: vec![],
+            freq_hz: Some(7_101_000),
+            bandwidth: Some(ChannelBandwidth::Hz { hz: 2300 }),
+            direction: Direction::Unknown,
+            counts: AttemptCounts::default(),
+            last_seen: "2026-07-11T11:00:00-07:00".into(),
+            last_ok: None,
+            last_ok_direction: None,
+            source: ChannelSource::Manual,
+        }];
+        s.contact_upsert(c).unwrap();
+
+        // Same (transport, target, via, freq, bandwidth) key as the manual row.
+        s.apply_observation(&rf_obs("W6ABC-7", Direction::Outgoing, ObservationPhase::B2fOk), now())
+            .unwrap();
+
+        let c = &s.contacts()[0];
+        assert_eq!(c.channels.len(), 2, "the observation lands its own row");
+        let manual = c.channels.iter().find(|ch| ch.source == ChannelSource::Manual).unwrap();
+        assert_eq!(manual.counts, AttemptCounts::default(), "manual counts untouched");
+        assert_eq!(manual.last_seen, "2026-07-11T11:00:00-07:00", "manual recency untouched");
+        assert_eq!(manual.last_ok, None);
+        let observed = c.channels.iter().find(|ch| ch.source == ChannelSource::Observed).unwrap();
+        assert_eq!(observed.counts.ok, 1, "the success accrued on the observed row");
+
+        // A repeat of the same key attaches to the OBSERVED row (not a third).
+        s.apply_observation(&rf_obs("W6ABC-7", Direction::Outgoing, ObservationPhase::B2fOk), now())
+            .unwrap();
+        let c = &s.contacts()[0];
+        assert_eq!(c.channels.len(), 2);
+        let observed = c.channels.iter().find(|ch| ch.source == ChannelSource::Observed).unwrap();
+        assert_eq!(observed.counts.ok, 2);
+    }
+
+    #[test]
     fn rejected_inbound_never_populates_the_roster() {
         let dir = tempdir().unwrap();
         let mut s = ContactsStore::open(dir.path().join("contacts.json"));
@@ -1354,6 +1414,49 @@ mod tests {
         }
         assert_eq!(s.contacts().len(), 1, "all observations on one contact");
         assert_eq!(s.contacts()[0].channels.len(), PER_CONTACT_CHANNEL_CAP);
+    }
+
+    #[test]
+    fn channel_cap_never_evicts_a_manual_dial() {
+        // Codex adrev 2026-07-18 P2: a manual dial's empty `last_seen` sorted
+        // it as the OLDEST row, so observation churn past the cap silently
+        // deleted operator-entered dials. Manual rows are never eviction
+        // candidates — the cap governs the recorder's own rows only.
+        let dir = tempdir().unwrap();
+        let mut s = ContactsStore::open(dir.path().join("contacts.json"));
+        let mut c = contact("c1"); // callsign W6ABC-7
+        c.channels = vec![Channel {
+            transport: ChannelTransport::VaraHf,
+            target_callsign: "W6ABC-7".into(),
+            via: vec![],
+            freq_hz: Some(7_101_000),
+            bandwidth: None,
+            direction: Direction::Unknown,
+            counts: AttemptCounts::default(),
+            last_seen: String::new(), // editor-minted virgin dial
+            last_ok: None,
+            last_ok_direction: None,
+            source: ChannelSource::Manual,
+        }];
+        s.contact_upsert(c).unwrap();
+
+        for i in 0..80u32 {
+            let mut o = rf_obs("W6ABC-7", Direction::Outgoing, ObservationPhase::B2fOk);
+            if let ObservedPath::Rf { ref mut via, .. } = o.path {
+                *via = vec![format!("DIGI{i}")];
+            }
+            let ts = format!("2026-07-11T12:{:02}:{:02}-07:00", i / 60, i % 60);
+            s.apply_observation(&o, ts).unwrap();
+        }
+
+        let c = &s.contacts()[0];
+        assert!(
+            c.channels
+                .iter()
+                .any(|ch| ch.source == ChannelSource::Manual && ch.last_seen.is_empty()),
+            "the virgin manual dial survives cap churn"
+        );
+        assert!(c.channels.len() <= PER_CONTACT_CHANNEL_CAP + 1);
     }
 
     #[test]

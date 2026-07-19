@@ -461,9 +461,9 @@ describe('HintProvider', () => {
   });
 
   // Fixwave finding #1: an anchor that IS in the DOM but lays out with a
-  // zero-size rect (the live case is RadioDrawer's `display:contents` root at
-  // desktop widths, anchor "radio-dock") must be treated as anchor-missing —
-  // point-at acks anchor-unmounted, not shown.
+  // zero-size rect (the live case was RadioDrawer's `display:contents` root at
+  // desktop widths, anchor "radio-dock", relocated by tuxlink-fh53x) must be
+  // treated as anchor-missing — point-at acks anchor-unmounted, not shown.
   it('fixwave #1: a zero-rect anchor acks anchor-unmounted, not shown', async () => {
     const listener = captureListener();
     routeInvoke({ onboarding_tour_completed: true, onboarding_tips_seen: [] });

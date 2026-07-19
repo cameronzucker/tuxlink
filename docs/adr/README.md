@@ -77,6 +77,8 @@ Deciders: <names or session monikers of people involved>
 - [0022 — Features are built whole: no arbitrary splitting, deferral, or delay](0022-ban-autonomous-agent-issue-splitting-and-deferrals.md) — *a feature ships whole and wire-walked, or stays in progress; no shippable inert slice + deferred remainder, no authorization escape hatch (renumbered from a colliding 0018)*
 - [0023 — Ban GPT-5.6 for adrev and all tasks; GPT-5.5 is the ceiling](0023-ban-gpt-5-6-until-deception-assessed.md) — *trust-critical adrev role; precautionary until GPT-5.6's cheating/deception is honestly assessed as-deployed in a Tuxlink context*
 
+- [0024, Dual actionability: one capability tree, two front-ends](0024-dual-actionability-one-capability-tree.md) (*Proposed: every operator-meaningful capability is actionable by both the agent (MCP tool) and the human (Routines action/UI); requirements flow from the distillation scenario corpus*)
+
 ## References
 
 - [ADR Tools (Nygard)](https://github.com/npryce/adr-tools) — `adr-tools` CLI; not used in Tuxlink, but the format inspires this directory's structure.

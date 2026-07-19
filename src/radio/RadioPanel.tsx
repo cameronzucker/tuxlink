@@ -48,7 +48,7 @@ export function RadioPanel({
   mode, state = 'disconnected', sub, onClose, onFindGateway, findGatewayLabel, children,
 }: RadioPanelProps) {
   return (
-    <aside className="radio-panel" data-testid="radio-panel-root">
+    <aside className="radio-panel" data-testid="radio-panel-root" data-tour-anchor="radio-dock">
       <header className="radio-panel-h">
         <span
           className="radio-panel-dot"

@@ -42,6 +42,12 @@ export type ChannelTransport = 'packet' | 'ardop' | 'vara-hf' | 'vara-fm' | 'unk
 /// Mirrors `reachability.rs::Direction`.
 export type Direction = 'incoming' | 'outgoing' | 'unknown';
 
+/// Mirrors `reachability.rs::ChannelSource` (tuxlink-6vn4x). `'manual'` = an
+/// operator-entered radio dial (the ContactEditor "Radio dials" rows);
+/// `'observed'` = a row minted by an actual on-air observation. Absent on a
+/// pre-migration record ⇒ treat as observed (the historical population).
+export type ChannelSource = 'observed' | 'manual';
+
 /// Mirrors `reachability.rs::Provenance`. `'operator'` is the ONLY
 /// agent-dialable provenance — never derive dialability from any other value.
 export type Provenance = 'operator' | 'observed-incoming' | 'unknown';
@@ -71,6 +77,12 @@ export interface AttemptCounts {
 export interface Channel {
   transport: ChannelTransport;
   target_callsign: string;
+  /// `'manual'` (operator-entered dial) vs `'observed'` (on-air observation).
+  /// `#[serde(default)]` on the Rust side → optional here per this file's
+  /// convention; absent means observed. Only `'manual'` rows are editable in
+  /// the ContactEditor "Radio dials" section; observed rows pass through
+  /// untouched on save.
+  source?: ChannelSource;
   via: string[];
   freq_hz: number | null;
   bandwidth: ChannelBandwidth | null;

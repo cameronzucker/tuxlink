@@ -119,6 +119,11 @@ describe('PoppedSurfaceHost — title bar (behavior 1)', () => {
     expect(screen.getByText('Tac Map — Tuxlink')).toBeInTheDocument();
   });
 
+  it('mounts the 8 edge/corner resize handles — borderless pop windows have no native grips (tuxlink-dwcqx)', () => {
+    const { container } = renderHost(<PoppedSurfaceHost surface="tac_map" />);
+    expect(container.querySelectorAll('.tux-resize').length).toBe(8);
+  });
+
   it('minimize/maximize call the window API directly, never through dockBack', () => {
     renderHost(<PoppedSurfaceHost surface="aprs_chat" />);
     fireEvent.click(screen.getByRole('button', { name: /^minimize$/i }));

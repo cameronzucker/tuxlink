@@ -175,6 +175,10 @@ export function ContactsPanel({ initialScope = 'all', onConnectFavorite }: Conta
   const [scope, setScope] = useState<RosterScope>(initialScope);
   const [selection, setSelection] = useState<Selection>({ kind: 'none' });
   const [editor, setEditor] = useState<EditorState>({ kind: 'closed' });
+  // One-shot border pulse on the in-pane editor (tuxlink-pw5nk): a roster
+  // interaction while the editor is open is a NO-OP that pulses the editor —
+  // only explicit Save/Cancel leaves it. `onAnimationEnd` re-arms the pulse.
+  const [editorPulse, setEditorPulse] = useState(false);
   // Manual collapse state — group ids the operator has explicitly collapsed.
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   // Multi-select set of contact ids (raw/suggestion rows are not multi-selectable).
@@ -305,9 +309,26 @@ export function ContactsPanel({ initialScope = 'all', onConnectFavorite }: Conta
   const selectedRawCallsign = selection.kind === 'raw' ? selection.callsign : null;
   const selectedSuggestion = selection.kind === 'suggestion' ? selection : null;
 
+  // While the editor is open, every roster selection / scope switch is a
+  // no-op that pulses the editor border (tuxlink-pw5nk) — an in-progress edit
+  // is never silently discarded; Save/Cancel are the only exits.
+  const guardEditor = (): boolean => {
+    if (editor.kind !== 'closed') {
+      setEditorPulse(true);
+      return true;
+    }
+    return false;
+  };
+
   const saveContact = async (c: Contact) => {
     await upsertContact(c);
     setEditor({ kind: 'closed' });
+    setEditorPulse(false);
+  };
+
+  const closeEditor = () => {
+    setEditor({ kind: 'closed' });
+    setEditorPulse(false);
   };
 
   const addSuggestion = async (callsign: string) => {
@@ -336,9 +357,9 @@ export function ContactsPanel({ initialScope = 'all', onConnectFavorite }: Conta
   // pane exactly like a curated row. `selectedContact` resolves it from the
   // full contacts list, so its ContactDetail (reachability + promote) shows.
   const selectRecent = (id: string) => {
+    if (guardEditor()) return;
     setSelected(new Set());
     setSelection({ kind: 'contact', id });
-    setEditor({ kind: 'closed' });
   };
 
   // A suggestion row (mailbox correspondent, not yet saved) is selectable into
@@ -346,9 +367,9 @@ export function ContactsPanel({ initialScope = 'all', onConnectFavorite }: Conta
   // lone "Save" button, so clicking a suggestion did nothing. The detail offers
   // New message + Save (add), carrying the message count for context.
   const selectSuggestion = (callsign: string, messageCount: number) => {
+    if (guardEditor()) return;
     setSelected(new Set());
     setSelection({ kind: 'suggestion', callsign, messageCount });
-    setEditor({ kind: 'closed' });
   };
 
   // ---- per-dial star (tuxlink-sbf03) ----
@@ -396,26 +417,27 @@ export function ContactsPanel({ initialScope = 'all', onConnectFavorite }: Conta
 
   const clearMultiSelect = () => setSelected(new Set());
 
-  // A scope switch drops selection, multi-select, and any open editor (Codex
-  // adrev P2): the detail pane and bulk bar must never act on rows the
-  // current scope doesn't show.
+  // A scope switch drops selection + multi-select (Codex adrev P2): the
+  // detail pane and bulk bar must never act on rows the current scope doesn't
+  // show. While the editor is open the switch is a pulse-no-op instead
+  // (tuxlink-pw5nk) — closing here would silently discard an in-progress edit.
   const switchScope = (next: RosterScope) => {
+    if (guardEditor()) return;
     setScope(next);
     setSelection({ kind: 'none' });
     setSelected(new Set());
-    setEditor({ kind: 'closed' });
   };
 
   // A plain click on a contact row selects it for the detail pane AND, if a
   // modifier is held, toggles its membership in the multi-select set instead.
   const onContactRowClick = (contactId: string, e: React.MouseEvent) => {
+    if (guardEditor()) return;
     if (e.ctrlKey || e.metaKey || e.shiftKey) {
       toggleMultiSelect(contactId, e);
       return;
     }
     setSelected(new Set());
     setSelection({ kind: 'contact', id: contactId });
-    setEditor({ kind: 'closed' });
   };
 
   const addSelectedToGroup = async (group: Group, selectedIds: string[]) => {
@@ -439,6 +461,35 @@ export function ContactsPanel({ initialScope = 'all', onConnectFavorite }: Conta
     clearMultiSelect();
   };
 
+  // ---- detail-pane group membership (tuxlink-6vn4x, mock panel 1) ----
+  // The GROUPS chips on the contact detail route through the SAME group_upsert
+  // wiring as bulk add-to-group / GroupManagement — no new backend.
+  const addContactToGroup = async (contactId: string, group: Group) => {
+    const already = group.members.some((m) => m.type === 'contact' && m.contact_id === contactId);
+    if (already) return;
+    await upsertGroup({
+      ...group,
+      members: [...group.members, { type: 'contact', contact_id: contactId }],
+    });
+  };
+
+  const removeContactFromGroup = async (contactId: string, group: Group) => {
+    await upsertGroup({
+      ...group,
+      members: group.members.filter((m) => !(m.type === 'contact' && m.contact_id === contactId)),
+    });
+  };
+
+  const addContactToNewGroup = async (contactId: string, name: string) => {
+    await upsertGroup({
+      id: '',
+      name,
+      members: [{ type: 'contact', contact_id: contactId }],
+      created_at: '',
+      updated_at: '',
+    });
+  };
+
   const removeSelectedContacts = async (selectedIds: string[]) => {
     for (const id of selectedIds) {
       // eslint-disable-next-line no-await-in-loop -- sequential delete keeps the
@@ -450,21 +501,6 @@ export function ContactsPanel({ initialScope = 'all', onConnectFavorite }: Conta
     }
     clearMultiSelect();
   };
-
-  // The contact editor takes over the whole panel body when open (inline; no
-  // popup). Mirrors the prior surface so the editor flow is unchanged.
-  if (editor.kind === 'new' || editor.kind === 'edit') {
-    const target = editor.kind === 'new' ? editor.seed : editor.contact;
-    return (
-      <div className="contacts-panel contacts-panel--editing" data-testid="contacts-panel">
-        <ContactEditor
-          contact={target}
-          onSave={saveContact}
-          onCancel={() => setEditor({ kind: 'closed' })}
-        />
-      </div>
-    );
-  }
 
   return (
     <div className="contacts-panel" data-testid="contacts-panel">
@@ -485,7 +521,10 @@ export function ContactsPanel({ initialScope = 'all', onConnectFavorite }: Conta
             type="button"
             className="contacts-new-btn"
             data-testid="contacts-new"
-            onClick={() => setEditor({ kind: 'new', seed: emptyContact() })}
+            onClick={() => {
+              if (guardEditor()) return;
+              setEditor({ kind: 'new', seed: emptyContact() });
+            }}
           >
             + New
           </button>
@@ -548,12 +587,12 @@ export function ContactsPanel({ initialScope = 'all', onConnectFavorite }: Conta
                       contact !== null && selection.kind === 'contact' && selection.id === contact.id
                     }
                     onSelect={() => {
+                      if (guardEditor()) return;
                       if (contact) {
                         setSelection({ kind: 'contact', id: contact.id });
                       } else {
                         setSelection({ kind: 'raw', callsign: favorite.gateway });
                       }
-                      setEditor({ kind: 'closed' });
                     }}
                     onConnect={onConnectFavorite}
                   />
@@ -585,16 +624,16 @@ export function ContactsPanel({ initialScope = 'all', onConnectFavorite }: Conta
               expanded={isExpanded(section.group.id)}
               onToggleCollapse={() => toggleCollapse(section.group.id)}
               onSelectGroup={() => {
+                if (guardEditor()) return;
                 setSelection({ kind: 'group', id: section.group.id });
-                setEditor({ kind: 'closed' });
               }}
               selection={selection}
               multiSelected={selected}
               onContactRowClick={onContactRowClick}
               onSelectRaw={(callsign) => {
+                if (guardEditor()) return;
                 setSelected(new Set());
                 setSelection({ kind: 'raw', callsign });
-                setEditor({ kind: 'closed' });
               }}
             />
           ))}
@@ -619,9 +658,9 @@ export function ContactsPanel({ initialScope = 'all', onConnectFavorite }: Conta
                     favorites={starredFavorites}
                     onContactRowClick={onContactRowClick}
                     onSelectRaw={(callsign) => {
+                      if (guardEditor()) return;
                       setSelected(new Set());
                       setSelection({ kind: 'raw', callsign });
-                      setEditor({ kind: 'closed' });
                     }}
                     onSelectSuggestion={selectSuggestion}
                     onSaveSuggestion={addSuggestion}
@@ -660,9 +699,23 @@ export function ContactsPanel({ initialScope = 'all', onConnectFavorite }: Conta
         )}
       </div>
 
-      {/* DETAIL — polymorphic reading pane. */}
+      {/* DETAIL — polymorphic reading pane. The editor renders HERE when open
+          (tuxlink-pw5nk): the roster stays mounted + scrollable; roster clicks
+          while editing pulse the editor border instead of navigating. */}
       <div className="contacts-detail" data-testid="contacts-detail-pane">
-        {selectedContact ? (
+        {editor.kind === 'new' || editor.kind === 'edit' ? (
+          <div
+            className={`contact-editor-host${editorPulse ? ' contact-editor-host--pulse' : ''}`}
+            data-testid="contact-editor-host"
+            onAnimationEnd={() => setEditorPulse(false)}
+          >
+            <ContactEditor
+              contact={editor.kind === 'new' ? editor.seed : editor.contact}
+              onSave={saveContact}
+              onCancel={closeEditor}
+            />
+          </div>
+        ) : selectedContact ? (
           <ContactDetail
             contact={selectedContact}
             groups={groups}
@@ -671,6 +724,9 @@ export function ContactsPanel({ initialScope = 'all', onConnectFavorite }: Conta
             onToggleStar={(dial) => void toggleDialStar(dial)}
             onNewMessage={() => void openComposeTo(selectedContact.callsign)}
             onEdit={() => setEditor({ kind: 'edit', contact: selectedContact })}
+            onAddToGroup={(g) => void addContactToGroup(selectedContact.id, g)}
+            onRemoveFromGroup={(g) => void removeContactFromGroup(selectedContact.id, g)}
+            onAddToNewGroup={(name) => void addContactToNewGroup(selectedContact.id, name)}
             onPromote={
               (selectedContact.tier ?? 'confirmed') === 'unconfirmed'
                 ? () => void promoteContact(selectedContact.id)
@@ -1276,16 +1332,27 @@ function bandwidthText(bw: ReachChannel['bandwidth']): string {
 
 /** One RF channel row: transport · freq · target callsign, via/bandwidth/honest
  *  status, and a Connect that dispatches the Task-23a p2p seam (never a
- *  reimplemented dial, never a CMS fallback). */
+ *  reimplemented dial, never a CMS fallback).
+ *
+ *  tuxlink-6vn4x fusion: a MANUAL dial row (`isDial`) fuses its matching
+ *  observed channel's stats (`observed`, joined on transport+freq_hz) onto
+ *  itself — the honest verbs come from the observation; a dial with no
+ *  observations reads "no attempts yet" and never claims anything. */
 function ReachChannelRow({
   contact,
   channel,
+  observed = null,
+  isDial = false,
   index,
   favorites,
   onToggleStar,
 }: {
   contact: Contact;
   channel: ReachChannel;
+  /** The observed channel fused onto a manual dial (same transport+freq_hz). */
+  observed?: ReachChannel | null;
+  /** True when `channel` is an operator-entered manual dial. */
+  isDial?: boolean;
   index: number;
   favorites: Favorite[];
   onToggleStar: (dial: FavoriteDial) => void;
@@ -1307,10 +1374,14 @@ function ReachChannelRow({
     : null;
   const starred =
     dial !== null && favorites.some((f) => f.starred && favoriteKey(f) === favoriteKey(dial));
+  // The stats-bearing channel: the fused observation for a dial that has one,
+  // the channel itself for a plain observed row, none for a virgin dial.
+  const statsCh = observed ?? (isDial ? null : channel);
   const sub = [
-    channel.via.length > 0 ? `via ${channel.via.join(', ')}` : '',
-    bandwidthText(channel.bandwidth),
-    channelStatusLine(channel),
+    isDial ? 'dial' : '',
+    statsCh && statsCh.via.length > 0 ? `via ${statsCh.via.join(', ')}` : '',
+    statsCh ? bandwidthText(statsCh.bandwidth) : '',
+    statsCh ? channelStatusLine(statsCh) : 'no attempts yet',
   ]
     .filter(Boolean)
     .join(' · ');
@@ -1344,7 +1415,7 @@ function ReachChannelRow({
         title={
           !protocol ? 'No tuxlink modem for this transport' : `Connect to ${channel.target_callsign}`
         }
-        onClick={() => protocol && connectPeerChannel(channel)}
+        onClick={() => protocol && connectPeerChannel(statsCh ?? channel)}
       >
         Connect →
       </button>
@@ -1405,15 +1476,43 @@ function ReachabilityBlock({
 }) {
   const channels = contact.channels ?? [];
   const endpoints = contact.endpoints ?? [];
-  if (channels.length === 0 && endpoints.length === 0) return null;
+  // tuxlink-6vn4x: the union of manual dials + observed channels, keyed by
+  // (transport, freq_hz). A dial fuses ONE matching observed row's stats onto
+  // itself (the most recently seen — it carries the freshest via/status); a
+  // dial with no observations shows "no attempts yet". Observed rows the
+  // fusion did NOT consume still render — the backend deliberately keeps
+  // distinct observations at the same frequency when via/bandwidth differ
+  // (direct vs digipeater), and hiding those hid a real connect option
+  // (Codex adrev 2026-07-18 P2).
+  const manual = channels.filter((ch) => ch.source === 'manual');
+  const observed = channels.filter((ch) => ch.source !== 'manual');
+  const keyOf = (ch: ReachChannel) => `${ch.transport}|${ch.freq_hz ?? ''}`;
+  const consumed = new Set<ReachChannel>();
+  const fuseFor = (d: ReachChannel): ReachChannel | null => {
+    const candidates = observed
+      .filter((o) => keyOf(o) === keyOf(d) && !consumed.has(o))
+      .sort((a, b) => b.last_seen.localeCompare(a.last_seen));
+    const best = candidates[0] ?? null;
+    if (best) consumed.add(best);
+    return best;
+  };
+  const rows: Array<{ channel: ReachChannel; observed: ReachChannel | null; isDial: boolean }> = [
+    ...manual.map((d) => ({ channel: d, observed: fuseFor(d), isDial: true })),
+    ...observed
+      .filter((o) => !consumed.has(o))
+      .map((o) => ({ channel: o, observed: null, isDial: false })),
+  ];
+  if (rows.length === 0 && endpoints.length === 0) return null;
   return (
     <section className="contact-reach-card" data-testid="contact-reachability">
       <h3 className="contact-card-label">Reachability &amp; connect</h3>
-      {channels.map((ch, i) => (
+      {rows.map((r, i) => (
         <ReachChannelRow
           key={`ch-${i}`}
           contact={contact}
-          channel={ch}
+          channel={r.channel}
+          observed={r.observed}
+          isDial={r.isDial}
           index={i}
           favorites={favorites}
           onToggleStar={onToggleStar}
@@ -1423,6 +1522,70 @@ function ReachabilityBlock({
         <ReachEndpointRow key={ep.id} contact={contact} endpoint={ep} operatorGrid={operatorGrid} />
       ))}
     </section>
+  );
+}
+
+/** The add-to-group picker (tuxlink-6vn4x extraction): existing-group list +
+ *  "New group name" create form. ONE pattern for the bulk bar AND the detail
+ *  pane's "+ add to group" — never duplicated. `idPrefix` parameterizes the
+ *  data-testids (`contacts-bulk` preserves the bulk bar's historical ids). */
+function GroupPicker({
+  groups,
+  idPrefix,
+  onPick,
+  onCreate,
+}: {
+  groups: Group[];
+  idPrefix: string;
+  onPick: (group: Group) => void;
+  onCreate: (name: string) => void;
+}) {
+  const [newName, setNewName] = useState('');
+  return (
+    <div className="contacts-bulk-picker" data-testid={`${idPrefix}-picker`}>
+      <ul className="contacts-bulk-group-list">
+        {groups.map((g) => (
+          <li key={g.id}>
+            <button
+              type="button"
+              className="contacts-bulk-group"
+              data-testid={`${idPrefix}-group-${g.id}`}
+              onClick={() => onPick(g)}
+            >
+              {g.name}
+            </button>
+          </li>
+        ))}
+      </ul>
+      <form
+        className="contacts-bulk-newgroup"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const name = newName.trim();
+          if (name.length === 0) return;
+          onCreate(name);
+          setNewName('');
+        }}
+      >
+        <input
+          className="contacts-bulk-newgroup-input"
+          data-testid={`${idPrefix}-newgroup-input`}
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          placeholder="New group name"
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <button
+          type="submit"
+          className="contacts-bulk-btn"
+          data-testid={`${idPrefix}-newgroup-add`}
+          disabled={newName.trim().length === 0}
+        >
+          + Create
+        </button>
+      </form>
+    </div>
   );
 }
 
@@ -1442,7 +1605,6 @@ function BulkBar({
   onClear: () => void;
 }) {
   const [picking, setPicking] = useState(false);
-  const [newName, setNewName] = useState('');
   const [confirmingRemove, setConfirmingRemove] = useState(false);
 
   return (
@@ -1495,54 +1657,18 @@ function BulkBar({
       </div>
 
       {picking && (
-        <div className="contacts-bulk-picker" data-testid="contacts-bulk-picker">
-          <ul className="contacts-bulk-group-list">
-            {groups.map((g) => (
-              <li key={g.id}>
-                <button
-                  type="button"
-                  className="contacts-bulk-group"
-                  data-testid={`contacts-bulk-group-${g.id}`}
-                  onClick={() => {
-                    onAddToGroup(g);
-                    setPicking(false);
-                  }}
-                >
-                  {g.name}
-                </button>
-              </li>
-            ))}
-          </ul>
-          <form
-            className="contacts-bulk-newgroup"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const name = newName.trim();
-              if (name.length === 0) return;
-              onAddToNewGroup(name);
-              setNewName('');
-              setPicking(false);
-            }}
-          >
-            <input
-              className="contacts-bulk-newgroup-input"
-              data-testid="contacts-bulk-newgroup-input"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              placeholder="New group name"
-              autoComplete="off"
-              spellCheck={false}
-            />
-            <button
-              type="submit"
-              className="contacts-bulk-btn"
-              data-testid="contacts-bulk-newgroup-add"
-              disabled={newName.trim().length === 0}
-            >
-              + Create
-            </button>
-          </form>
-        </div>
+        <GroupPicker
+          groups={groups}
+          idPrefix="contacts-bulk"
+          onPick={(g) => {
+            onAddToGroup(g);
+            setPicking(false);
+          }}
+          onCreate={(name) => {
+            onAddToNewGroup(name);
+            setPicking(false);
+          }}
+        />
       )}
     </div>
   );
@@ -1561,6 +1687,9 @@ function ContactDetail({
   onNewMessage,
   onEdit,
   onPromote,
+  onAddToGroup,
+  onRemoveFromGroup,
+  onAddToNewGroup,
 }: {
   contact: Contact;
   groups: Group[];
@@ -1572,13 +1701,28 @@ function ContactDetail({
   /// Present ONLY for an Unconfirmed contact — the one-click promote ("+ Add
   /// to contacts"). Absent ⇒ the contact is already curated.
   onPromote?: () => void;
+  /// GROUPS chips wiring (tuxlink-6vn4x, mock panel 1) — all three route
+  /// through the existing group_upsert seam.
+  onAddToGroup: (group: Group) => void;
+  onRemoveFromGroup: (group: Group) => void;
+  onAddToNewGroup: (name: string) => void;
 }) {
   const named = hasDisplayName(contact);
   const { attempts, hint } = useContactConnectionRecord(contact.callsign);
+  const [groupPicking, setGroupPicking] = useState(false);
+
+  // Close the picker when the selected contact changes (id is the identity).
+  const [seenId, setSeenId] = useState(contact.id);
+  if (seenId !== contact.id) {
+    setSeenId(contact.id);
+    setGroupPicking(false);
+  }
+
   // The groups this contact belongs to (by contact_id membership).
   const memberOf = groups.filter((g) =>
     g.members.some((m) => m.type === 'contact' && m.contact_id === contact.id),
   );
+  const notMemberOf = groups.filter((g) => !memberOf.includes(g));
 
   return (
     <div className="contact-detail" data-testid="contact-detail">
@@ -1628,6 +1772,53 @@ function ContactDetail({
         onToggleStar={onToggleStar}
       />
 
+      {/* GROUPS — membership chips (each removable) + the SAME add-to-group
+          picker pattern the bulk bar uses (mock panel 1). Always rendered so
+          "+ add to group" is reachable on a group-less contact. */}
+      <section className="contact-groups" data-testid="contact-groups">
+        <h3 className="contact-card-label">Groups</h3>
+        <div className="contact-groups-chips">
+          {memberOf.map((g) => (
+            <span className="contact-group-chip" data-testid={`contact-group-chip-${g.id}`} key={g.id}>
+              {g.name}
+              <button
+                type="button"
+                className="contact-group-chip-remove"
+                data-testid={`contact-group-remove-${g.id}`}
+                aria-label={`Remove from ${g.name}`}
+                title={`Remove from ${g.name}`}
+                onClick={() => onRemoveFromGroup(g)}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+          <button
+            type="button"
+            className="contact-group-add"
+            data-testid="contact-group-add"
+            aria-expanded={groupPicking}
+            onClick={() => setGroupPicking((v) => !v)}
+          >
+            + add to group
+          </button>
+        </div>
+        {groupPicking && (
+          <GroupPicker
+            groups={notMemberOf}
+            idPrefix="contact-groups"
+            onPick={(g) => {
+              onAddToGroup(g);
+              setGroupPicking(false);
+            }}
+            onCreate={(name) => {
+              onAddToNewGroup(name);
+              setGroupPicking(false);
+            }}
+          />
+        )}
+      </section>
+
       <dl className="contact-detail-fields">
         {contact.tactical && (
           <>
@@ -1639,12 +1830,6 @@ function ContactDetail({
           <>
             <dt>Email</dt>
             <dd data-testid="contact-detail-email">{contact.email}</dd>
-          </>
-        )}
-        {memberOf.length > 0 && (
-          <>
-            <dt>Groups</dt>
-            <dd data-testid="contact-detail-groups">{memberOf.map((g) => g.name).join(', ')}</dd>
           </>
         )}
         {contact.notes && (

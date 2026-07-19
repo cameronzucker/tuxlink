@@ -122,12 +122,19 @@ fn timeout_with_no_output_is_timeout_failure() {
 
 #[test]
 fn signal_death_is_classified_with_stderr_tail() {
-    // Reproduces jt9's real mode: stderr diagnostics then SIGSEGV.
-    let (runner, wav, tmp) = setup("segv",
-        "#!/bin/sh\necho 'Fortran runtime error: End of file simulation' 1>&2\nkill -SEGV $$\n");
+    // Reproduces jt9's real mode: stderr diagnostics then death by signal.
+    // The shim uses SIGKILL, not SIGSEGV, on purpose: the runner's
+    // classification only needs WIFSIGNALED, and a core-dumping signal makes
+    // every suite run trip apport on desktop hosts (the R2 "Ubuntu has
+    // experienced an internal error" popup, 2026-07-18) and routes each death
+    // through the kernel core-dump pipeline, a plausible source of the
+    // deadline flakes in tuxlink-860t9/b5qfw. Same rationale at every kill
+    // site below.
+    let (runner, wav, tmp) = setup("sig",
+        "#!/bin/sh\necho 'Fortran runtime error: End of file simulation' 1>&2\nkill -KILL $$\n");
     match runner.decode_slot(&wav, &tmp, 0) {
         SlotOutcome::Failed(SlotFailure::Signal { signal, stderr_tail }) => {
-            assert!(signal.contains("11") || signal.to_uppercase().contains("SEGV"), "{signal}");
+            assert!(signal.contains("9") || signal.to_uppercase().contains("KILL"), "{signal}");
             assert!(stderr_tail.contains("Fortran runtime error"));
         }
         other => panic!("want Signal, got {other:?}"),
@@ -221,7 +228,7 @@ fn non_utf8_stderr_is_captured_lossily() {
     // \\xff is invalid UTF-8; the drain must not discard the whole stream.
     // The fake jt9 emits a valid message prefix, then 0xFF garbage, then dies by signal.
     let (runner, wav, tmp) = setup("badutf8",
-        "#!/bin/sh\nprintf 'Fortran runtime error: \\377 garbage\\n' 1>&2\nkill -SEGV $$\n");
+        "#!/bin/sh\nprintf 'Fortran runtime error: \\377 garbage\\n' 1>&2\nkill -KILL $$\n");
     match runner.decode_slot(&wav, &tmp, 0) {
         SlotOutcome::Failed(SlotFailure::Signal { stderr_tail, .. }) => {
             assert!(stderr_tail.contains("Fortran runtime error"), "lossy capture must keep valid bytes, got: {stderr_tail:?}");
@@ -250,13 +257,13 @@ fn nonzero_exit_without_signal_is_exit_code_signal() {
 #[test]
 fn signal_death_salvages_parsed_decodes() {
     // Salvage-on-signal (tuxlink-gujnz; L2 spec §gujnz): jt9's dominant
-    // real failure mode IS decode-stream-then-SIGSEGV, and decode lines
+    // real failure mode IS decode-stream-then-signal-death, and decode lines
     // print only after jt9's internal CRC-14 accepts a candidate — parsed
     // lines from a signal death are trustworthy. ≥ 1 parsed line →
     // Decoded with partial = !saw_sentinel, identical to the timeout arm;
     // zero lines keeps Failed(Signal).
-    let (runner, wav, tmp) = setup("segv-with-decodes", &format!(
-        "#!/bin/sh\necho '{DECODE_LINE}'\necho 'dying now' 1>&2\nkill -SEGV $$\n"));
+    let (runner, wav, tmp) = setup("sig-with-decodes", &format!(
+        "#!/bin/sh\necho '{DECODE_LINE}'\necho 'dying now' 1>&2\nkill -KILL $$\n"));
     match runner.decode_slot(&wav, &tmp, 0) {
         SlotOutcome::Decoded(recs) => {
             assert_eq!(recs.len(), 1);
@@ -310,7 +317,7 @@ fn zero_line_signal_death_is_still_failed_signal() {
     // The salvage arm requires ≥ 1 PARSED decode line; a bare signal death
     // stays Failed(Signal) (spec §gujnz: "zero parsed lines keeps
     // Failed(Signal)").
-    let (runner, wav, tmp) = setup("segv-zero-lines", "#!/bin/sh\nkill -SEGV $$\n");
+    let (runner, wav, tmp) = setup("sig-zero-lines", "#!/bin/sh\nkill -KILL $$\n");
     assert!(matches!(
         runner.decode_slot(&wav, &tmp, 0),
         SlotOutcome::Failed(SlotFailure::Signal { .. })
@@ -323,8 +330,8 @@ fn signal_death_after_sentinel_salvages_complete_records() {
     // A crash AFTER <DecodeFinished> yields complete records:
     // partial = !saw_sentinel = false (spec §gujnz — identical semantics
     // to the timeout-after-sentinel arm).
-    let (runner, wav, tmp) = setup("segv-post-sentinel", &format!(
-        "#!/bin/sh\necho '{DECODE_LINE}'\necho '{SENTINEL}'\nkill -SEGV $$\n"));
+    let (runner, wav, tmp) = setup("sig-post-sentinel", &format!(
+        "#!/bin/sh\necho '{DECODE_LINE}'\necho '{SENTINEL}'\nkill -KILL $$\n"));
     match runner.decode_slot(&wav, &tmp, 0) {
         SlotOutcome::Decoded(recs) => {
             assert_eq!(recs.len(), 1);
@@ -341,8 +348,8 @@ fn stderr_eof_beats_salvage_on_the_signal_path() {
     // salvage — signal death + "EOF on input file" + parsed lines is
     // still Failed(StderrEof). A capture bug must never masquerade as
     // decodes (theoretical on the signal path, pinned not assumed).
-    let (runner, wav, tmp) = setup("segv-eof-with-decodes", &format!(
-        "#!/bin/sh\necho '{DECODE_LINE}'\necho 'EOF on input file' 1>&2\nkill -SEGV $$\n"));
+    let (runner, wav, tmp) = setup("sig-eof-with-decodes", &format!(
+        "#!/bin/sh\necho '{DECODE_LINE}'\necho 'EOF on input file' 1>&2\nkill -KILL $$\n"));
     assert_eq!(
         runner.decode_slot(&wav, &tmp, 0),
         SlotOutcome::Failed(SlotFailure::StderrEof)

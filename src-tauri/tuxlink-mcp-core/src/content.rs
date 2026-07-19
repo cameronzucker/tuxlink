@@ -172,7 +172,7 @@ pub static CATALOG: &[KnowledgeResource] = &[
         uri: "tuxlink://playbook/audio-setup",
         name: "playbook-audio-setup",
         title: "Playbook: picking the right audio device for a digital modem",
-        description: "How to read ardop_list_audio_devices and apply the disambiguation METHOD (VID:PID + bus path + in-use) to pick the operator's radio interface — without a code-side ranking. Guides a new user to find THEIR card; never assumes a specific bench's identity.",
+        description: "How to read list_audio_devices (station-level; ardop_list_audio_devices is a deprecated alias) and apply the disambiguation METHOD (VID:PID + bus path + in-use) to pick the operator's radio interface — without a code-side ranking. Guides a new user to find THEIR card; never assumes a specific bench's identity.",
         markdown: include_str!("../../../docs/mcp-knowledge/audio-setup.md"),
     },
     KnowledgeResource {

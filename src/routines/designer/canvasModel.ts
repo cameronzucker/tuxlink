@@ -117,13 +117,20 @@ export interface CanvasModel {
 // ============================================================================
 
 /** `idx` is the trigger's index in `def.triggers` (routine-level — triggers
- *  fire the whole routine, they are NOT per-track). */
+ *  fire the whole routine, they are NOT per-track).
+ *
+ *  tuxlink-7ewvq item 3: the node is titled as the routine's START condition
+ *  in plain language — the raw `trigger.type` ('manual') on the canvas read
+ *  as an unexplained mystery step. */
 function triggerNode(trigger: Trigger, idx: number): CanvasNode {
   return {
     id: `trigger-${idx}`,
     kind: 'trigger',
-    title: trigger.type,
-    bodyLines: trigger.type === 'schedule' ? [formatTrigger(trigger)] : [],
+    title: `Start · ${trigger.type}`,
+    bodyLines:
+      trigger.type === 'schedule'
+        ? [formatTrigger(trigger)]
+        : ['runs only when you start it'],
     category: 'ctl',
     transmits: false,
     unknown: false,

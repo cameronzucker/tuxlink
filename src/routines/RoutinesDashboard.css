@@ -12,6 +12,18 @@
  * followed literally rather than assuming the shared shell wraps this file.
  */
 .surface {
+  /* tuxlink-iizmk round 2: the routines-scoped type ramp (approved mock
+   * dev/scratch/routines-ui-mocks/humanscale-routines.html), declared on
+   * the routines root container, never on the app-global --type-* tokens.
+   * fine 13 / body 14 / control 15 / title 17 / screen-title 20; mono is
+   * for data only. RoutineDesigner.css carries the same block (established
+   * convention: each routines surface file owns its own copy). */
+  --rt-fine: 13px;
+  --rt-body: 14px;
+  --rt-control: 15px;
+  --rt-title: 17px;
+  --rt-screen: 20px;
+
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -25,19 +37,19 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 9px 18px;
+  padding: 12px 24px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   flex: 0 0 auto;
 }
 
 .surface-title {
-  font-size: var(--type-heading);
-  font-weight: 600;
+  font-size: var(--rt-screen);
+  font-weight: 650;
 }
 
 .surface-sub {
-  font-size: var(--type-control);
+  font-size: var(--rt-body);
   color: var(--text-faint);
 }
 
@@ -50,13 +62,13 @@
 
 .btn {
   font-family: var(--sans, inherit);
-  font-size: var(--type-control);
+  font-size: var(--rt-control);
   font-weight: 600;
   color: var(--text);
   background: var(--surface-2);
   border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  padding: 6px 12px;
+  border-radius: 7px;
+  padding: 7px 16px;
   line-height: 1.2;
   display: inline-flex;
   align-items: center;
@@ -83,7 +95,7 @@
   padding: 8px 18px;
   background: var(--tux-danger-surface, rgb(238 107 107 / 12%));
   border-bottom: 1px solid var(--border);
-  font-size: var(--type-control);
+  font-size: var(--rt-body);
   color: var(--error);
   flex: 0 0 auto;
 }
@@ -96,13 +108,13 @@
   background: none;
   border: none;
   color: inherit;
-  font-size: var(--type-body);
+  font-size: var(--rt-body);
   line-height: 1;
   cursor: pointer;
   padding: 0 2px;
 }
 
-/* ---- ops table ---- */
+/* ---- routine row cards (mock .rrow, tuxlink-iizmk round 2) ---- */
 .ops-empty {
   flex: 1;
   display: flex;
@@ -110,91 +122,64 @@
   justify-content: center;
   padding: 24px;
   text-align: center;
-  font-size: var(--type-body);
+  font-size: var(--rt-body);
   color: var(--text-faint);
 }
 
-.ops-wrap {
+.rlist {
   flex: 1;
-  /* Horizontal scroll added for the pop-out surface (tuxlink-dmwte task 11):
-     the dashboard now renders in a Routines pop window whose 420px floor is far
-     below the six fixed columns' needs. Without a horizontal axis the
-     `table-layout: fixed` columns collapse and their headers/cells OVERLAP
-     ("LAST RESULT"/"NEXT FIRE"/"TX MODE" ran together) on real WebKitGTK. With
-     the table's `min-width` below, narrow widths scroll cleanly instead. The
-     docked mailbox pane is always wider than that floor, so it never scrolls —
-     `width: 100%` wins there and this is invisible. */
   overflow: auto;
   min-height: 0;
+  padding: 18px 24px 24px;
 }
 
-table.ops {
-  width: 100%;
-  /* Keep the six columns legible down to the pop window's 420px floor: below
-     this the container scrolls (see `.ops-wrap`) rather than crushing columns
-     into overlap. Above it, `width: 100%` governs and there is no scroll. */
-  min-width: 680px;
-  table-layout: fixed;
-  border-collapse: collapse;
-  font-size: var(--type-control);
-}
-
-.ops th {
-  text-align: left;
-  font-size: var(--type-micro);
-  font-weight: 600;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--text-faint);
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--border-strong);
+/* Grid columns: [name+chips | schedule/next-fire | last-run/steps | actions].
+ * Below the min column sum (a popped window near its 420px floor) the list
+ * scrolls horizontally via .rrow's min-width instead of crushing columns. */
+.rrow {
+  display: grid;
+  grid-template-columns: minmax(240px, 1.2fr) minmax(190px, 1fr) minmax(210px, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
   background: var(--surface);
-  white-space: nowrap;
+  padding: 15px 20px;
+  margin-bottom: 12px;
+  min-width: 640px;
+  cursor: pointer;
 }
 
-.ops td {
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
-  vertical-align: top;
-  overflow: hidden;
+.rrow:hover {
+  border-color: var(--border-strong);
 }
 
-.ops tr:hover td {
-  background: var(--surface-2);
+.rcell {
+  min-width: 0;
 }
 
 .rname {
-  font-weight: 600;
-  font-size: var(--type-body);
+  font-size: var(--rt-title);
+  font-weight: 630;
   color: var(--text);
-  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
-.rmeta {
-  font-size: var(--type-meta);
-  color: var(--text-faint);
-  margin-top: 1px;
-}
-
+/* 12px raw per the mock's .chip: uppercase-free but still a tag; the mock's
+ * deliberate exception under the 13px floor. */
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-family: var(--mono);
-  font-size: var(--type-meta);
-  padding: 2px 9px;
+  font-size: 12px;
+  font-weight: 650;
+  padding: 2px 10px;
   border-radius: 999px;
   border: 1px solid var(--border-strong);
   color: var(--text-dim);
   white-space: nowrap;
-}
-
-.chip .d {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--text-faint);
-  flex: 0 0 auto;
 }
 
 .chip.running {
@@ -203,18 +188,10 @@ table.ops {
   background: color-mix(in srgb, var(--info) 8%, transparent);
 }
 
-.chip.running .d {
-  background: var(--info);
-}
-
 .chip.enabled {
   color: var(--success);
-  border-color: color-mix(in srgb, var(--success) 40%, transparent);
-  background: color-mix(in srgb, var(--success) 7%, transparent);
-}
-
-.chip.enabled .d {
-  background: var(--success);
+  border-color: transparent;
+  background: color-mix(in srgb, var(--success) 13%, transparent);
 }
 
 .chip.consent {
@@ -223,22 +200,36 @@ table.ops {
   background: var(--accent-soft);
 }
 
-.chip.consent .d {
-  background: var(--accent);
-}
-
 .chip.draft {
   color: var(--error);
   border-color: color-mix(in srgb, var(--error) 50%, transparent);
   background: var(--tux-danger-surface, rgb(238 107 107 / 12%));
 }
 
-.chip.draft .d {
-  background: var(--error);
-}
-
 .chip.disabled {
   color: var(--text-faint);
+  background: var(--surface-2);
+}
+
+/* Transmit-mode chip variants (rendered only for transmitting routines). */
+.chip.mode {
+  color: var(--text-dim);
+}
+
+.chip.mode.auto {
+  color: var(--accent-2);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.chip.mode.attended {
+  color: var(--info);
+  border-color: color-mix(in srgb, var(--info) 40%, transparent);
+}
+
+.chip.mode.noack {
+  color: var(--error);
+  border-color: color-mix(in srgb, var(--error) 45%, transparent);
+  background: var(--tux-danger-surface, rgb(238 107 107 / 12%));
 }
 
 .badge-miss {
@@ -246,55 +237,55 @@ table.ops {
   align-items: center;
   gap: 5px;
   font-family: var(--mono);
-  font-size: var(--type-micro);
+  font-size: var(--rt-fine);
   color: var(--accent-2);
   background: var(--accent-soft);
   border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
-  border-radius: 3px;
-  padding: 1px 6px;
-  margin-top: 4px;
+  border-radius: 4px;
+  padding: 1px 8px;
+  margin-top: 6px;
   white-space: nowrap;
 }
 
-.statuscell {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-}
-
 .refusal-note {
-  font-size: var(--type-micro);
+  font-size: var(--rt-fine);
   color: var(--error);
-  margin-top: 3px;
+  margin-top: 4px;
 }
 
 .skip-note {
-  font-size: var(--type-micro);
+  font-size: var(--rt-fine);
   color: var(--text-faint);
-  margin-top: 3px;
+  margin-top: 4px;
+}
+
+.rmeta {
+  font-size: var(--rt-body);
+  color: var(--text-dim);
+  line-height: 1.5;
 }
 
 .trig {
-  font-family: var(--mono);
-  font-size: var(--type-meta);
+  /* The schedule line reads as copy at body size; the cadence/window tokens
+   * inside it are short enough that a full mono treatment adds nothing. */
   color: var(--text-dim);
-  /* No nowrap: `.ops td` is overflow:hidden in a fixed-layout table, so a
-   * nowrap trigger line hard-clips at the column edge with no ellipsis — at
-   * 1366px that silently dropped exactly the ` · window HH:MM-HH:MM` tail of
-   * "every 30m · align hour · window 07:00-09:00" (tuxlink-3awm9 WebKitGTK
-   * smoke). Wrapping keeps the whole schedule visible; the `·` separators
-   * give it natural break points. */
 }
 
 .trig .win {
   color: var(--text-faint);
 }
 
-.res {
-  font-family: var(--mono);
-  font-size: var(--type-meta);
-  white-space: nowrap;
+.nextfire {
+  color: var(--text-dim);
+}
+
+.nextfire b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.nextfire .none {
+  color: var(--text-faint);
 }
 
 .res .ok {
@@ -309,69 +300,54 @@ table.ops {
   color: var(--text-faint);
 }
 
+/* Verbatim failure cause, clamped to two lines; the title tooltip carries
+ * the full text so verbatim stays reachable. */
 .res .detail {
   color: var(--text-dim);
-  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
-.nextfire {
+/* Step/track count is data: mono fine. */
+.rsteps {
   font-family: var(--mono);
-  font-size: var(--type-control);
-  color: var(--text);
-  white-space: nowrap;
-}
-
-.nextfire .none {
+  font-size: var(--rt-fine);
   color: var(--text-faint);
+  margin-top: 2px;
 }
 
-.txmode {
-  font-family: var(--mono);
-  font-size: var(--type-micro);
-  padding: 2px 7px;
-  border-radius: 3px;
-  border: 1px solid var(--border-strong);
-  color: var(--text-dim);
-  white-space: nowrap;
-}
-
-.txmode.auto {
-  color: var(--accent-2);
-  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
-  background: var(--accent-soft);
-}
-
-.txmode.attended {
-  color: var(--info);
-  border-color: color-mix(in srgb, var(--info) 40%, transparent);
-  background: color-mix(in srgb, var(--info) 7%, transparent);
-}
-
-.txmode.noack {
-  color: var(--error);
-  border-color: color-mix(in srgb, var(--error) 45%, transparent);
-  background: var(--tux-danger-surface, rgb(238 107 107 / 12%));
-}
-
-.rowact {
+.ractions {
   display: flex;
-  gap: 4px;
+  align-items: center;
   justify-content: flex-end;
+  gap: 8px;
   position: relative;
 }
 
+/* 38px raw: interactive-target floor, untokenized (mock .iconbtn). */
 .ibtn {
-  width: 24px;
-  height: 24px;
+  width: 38px;
+  height: 38px;
   border: 1px solid var(--border-strong);
-  border-radius: 4px;
+  border-radius: 8px;
   background: var(--surface-2);
-  color: var(--text-dim);
-  font-size: var(--type-meta);
+  color: var(--text);
+  font-size: 16px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   line-height: 1;
+  cursor: pointer;
+}
+
+.linkbtn {
+  font-size: var(--rt-body);
+  color: var(--info);
+  background: none;
+  border: none;
+  padding: 6px 10px;
   cursor: pointer;
 }
 
@@ -391,10 +367,14 @@ table.ops {
 }
 
 .rowmenu {
+  /* Anchored to `.rowact` (position:relative), its PARENT — item 8: as a
+   * td-level sibling this absolute box resolved against the app window and
+   * painted under the window chrome. z-index 30 matches the app's other
+   * in-flow dropdowns (SearchDropdown) so it clears the table rows below. */
   position: absolute;
-  top: 28px;
+  top: 42px;
   right: 0;
-  z-index: 5;
+  z-index: 30;
   display: flex;
   flex-direction: column;
   min-width: 140px;
@@ -407,11 +387,11 @@ table.ops {
 
 .rowmenu button {
   text-align: left;
-  padding: 7px 12px;
+  padding: 9px 14px;
   background: none;
   border: none;
   color: var(--text);
-  font-size: var(--type-control);
+  font-size: var(--rt-body);
   cursor: pointer;
 }
 
@@ -431,7 +411,7 @@ table.ops {
   padding: 6px 18px;
   background: var(--accent-soft);
   border-top: 1px solid var(--border);
-  font-size: var(--type-control);
+  font-size: var(--rt-body);
   color: var(--accent-2);
   line-height: 1.45;
   flex: 0 0 auto;
@@ -439,7 +419,7 @@ table.ops {
 
 .fleet-bar .tag {
   font-family: var(--mono);
-  font-size: var(--type-micro);
+  font-size: var(--rt-fine);
   letter-spacing: 0.06em;
   border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
   border-radius: 3px;
@@ -505,7 +485,7 @@ table.ops {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: var(--type-body);
+  font-size: var(--rt-control);
   font-weight: 600;
 }
 
@@ -514,7 +494,7 @@ table.ops {
   min-height: 220px;
   resize: vertical;
   font-family: var(--mono);
-  font-size: var(--type-control);
+  font-size: var(--rt-fine);
   background: var(--surface-2);
   color: var(--text);
   border: 1px solid var(--border-strong);
@@ -523,7 +503,7 @@ table.ops {
 }
 
 .import-error {
-  font-size: var(--type-control);
+  font-size: var(--rt-body);
   color: var(--error);
   background: var(--tux-danger-surface, rgb(238 107 107 / 12%));
   border-radius: 6px;
@@ -536,7 +516,7 @@ table.ops {
   gap: 4px;
   max-height: 160px;
   overflow-y: auto;
-  font-size: var(--type-control);
+  font-size: var(--rt-body);
 }
 
 .import-ok {
@@ -565,7 +545,7 @@ table.ops {
 /* tuxlink-9se1x: "← Mailbox" in the dashboard header — same idiom as the
  * designer's "← Routines" (RoutineDesigner.css .back). */
 .surface-head .back {
-  font-size: var(--type-control);
+  font-size: var(--rt-control);
   color: var(--text-dim);
   background: none;
   border: none;
