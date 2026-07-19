@@ -8,7 +8,7 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use crate::action::ActionRegistry;
-use crate::compose::{CallCtx, RoutineInvoker};
+use crate::compose::{CallCtx, RootConsent, RoutineInvoker};
 use crate::consent::ConsentPort;
 use crate::error::StepError;
 use crate::journal::{JournalWriter, ParkKind, RunEvent, RunState};
@@ -52,6 +52,15 @@ pub struct ExecCtx {
     /// with an attended transmitting run does not park (there is nothing to
     /// park on); the start gate remains the enforcement in that configuration.
     pub consent: Option<Arc<dyn ConsentPort>>,
+    /// The root run's consent context (C3): the top-level acknowledged routine
+    /// name plus the transmit/write closure digests recorded when its run
+    /// started. Threaded UNCHANGED down every `Control::Call` (each child
+    /// inherits the SAME root, not a per-child recompute) so a registry-backed
+    /// invoker can, at each child start, recompute the ROOT's digests against
+    /// the live store and refuse a callee that changed after acknowledgment.
+    /// `None` for attended roots and their subtrees and everywhere in the
+    /// leaf's own tests.
+    pub root: Option<RootConsent>,
 }
 
 /// Injects the engine→action params envelope onto a step's resolved params,
@@ -701,8 +710,10 @@ async fn run_track_steps(
                                 provenance,
                                 child_depth: ctx.depth + 1,
                                 parent_attended: ctx.attended,
-                                // C3 threads the root consent context; B2 has none.
-                                root: None,
+                                // C3: the SAME root threads down every hop, so a
+                                // registry invoker re-verifies the root's digests
+                                // at each child start.
+                                root: ctx.root.clone(),
                             };
                             // Sync: the parent's own cancel token is the child's
                             // parent, so cancelling the parent cancels the child.
@@ -767,7 +778,7 @@ async fn run_track_steps(
                                 provenance,
                                 child_depth: ctx.depth + 1,
                                 parent_attended: ctx.attended,
-                                root: None,
+                                root: ctx.root.clone(),
                             };
                             // F&F children are deliberately detached from the
                             // parent's cancellation: a fresh token is their
@@ -875,6 +886,7 @@ pub async fn run_tracks(
             depth: ctx.depth,
             attended: ctx.attended,
             consent: ctx.consent.clone(),
+            root: ctx.root.clone(),
         };
         set.spawn(async move { run_track_shared(&track, &vars, &task_ctx).await });
     }
@@ -1006,6 +1018,7 @@ mod tests {
             depth: 0,
             attended: false,
             consent: None,
+            root: None,
         };
         (ctx, path)
     }

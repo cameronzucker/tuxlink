@@ -29,7 +29,7 @@
 //! before hashing, so a re-ordered-but-equal JSON object yields the same
 //! digest; tuples are sorted by `(routine, step)`; the output is sha256 hex.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
 use serde_json::Value;
@@ -84,18 +84,37 @@ pub fn consent_closure(
 ) -> ConsentClosure {
     let mut acc = ConsentClosure::default();
     let mut visited = HashSet::new();
-    walk(root, lookup, is_relevant, &mut visited, 0, &mut acc);
+    let mut reaches = HashMap::new();
+    walk(root, lookup, is_relevant, &mut visited, &mut reaches, 0, &mut acc);
     acc
 }
 
 /// Recurse `def`'s tracks. Returns whether this routine (or anything it calls)
 /// reached a relevant step — the caller uses that to decide whether to record
 /// the `Call` edge that led here.
+///
+/// **All-edges recording (C3 hardening, closes the C1 "only first edge" gap):**
+/// the routine BODY is walked at most once (the `visited` guard is the
+/// termination invariant — a callee's relevant steps are enumerated exactly
+/// once, keeping deterministic enumeration). But every `Call` edge on a path
+/// that reaches a relevant step is recorded, INCLUDING edges to an
+/// already-walked callee. When a callee is `visited`-deduped, the walk does not
+/// re-enumerate its steps; it consults the `reaches` cache (a routine's
+/// finalized "does my closure reach a relevant step?" answer) and records the
+/// edge iff that answer is `true`. So routine A calling callee B at two steps
+/// with different args records BOTH edges — and each edge's `args` feed the
+/// digest, so re-arging the second call invalidates a prior acknowledgment.
+///
+/// A cycle member still on the recursion stack has no finalized `reaches`
+/// answer yet; the cache lookup misses and is treated as `false` (conservative,
+/// preserving the old cycle behavior — an in-progress node contributes no edge
+/// back to itself).
 fn walk(
     def: &RoutineDef,
     lookup: &dyn Fn(&str) -> Option<RoutineDef>,
     is_relevant: &dyn Fn(&str) -> bool,
     visited: &mut HashSet<String>,
+    reaches: &mut HashMap<String, bool>,
     depth: u32,
     acc: &mut ConsentClosure,
 ) -> bool {
@@ -106,7 +125,11 @@ fn walk(
         return false;
     }
     if !visited.insert(def.routine.clone()) {
-        return false;
+        // Already walked (or in progress on a cycle): do NOT re-enumerate its
+        // body, but return the cached "reaches a relevant step" answer so the
+        // caller can still record THIS call edge. In-progress cycle members
+        // are not yet cached -> conservative `false` (old cycle behavior).
+        return reaches.get(&def.routine).copied().unwrap_or(false);
     }
 
     let mut reached = false;
@@ -128,7 +151,15 @@ fn walk(
                 Step::Control(cs) => {
                     if let Control::Call { routine, args, .. } = &cs.control {
                         if let Some(child) = lookup(routine) {
-                            if walk(&child, lookup, is_relevant, visited, depth + 1, acc) {
+                            if walk(
+                                &child,
+                                lookup,
+                                is_relevant,
+                                visited,
+                                reaches,
+                                depth + 1,
+                                acc,
+                            ) {
                                 acc.call_edges.push(CallEdge {
                                     routine: def.routine.clone(),
                                     step: cs.id.clone(),
@@ -143,6 +174,8 @@ fn walk(
             }
         }
     }
+    // Finalize this routine's cached answer now that its body is fully walked.
+    reaches.insert(def.routine.clone(), reached);
     reached
 }
 
@@ -524,6 +557,48 @@ mod tests {
             closure_digest(&closure)
         };
         assert_ne!(build("tx1"), build("tx2"));
+    }
+
+    #[test]
+    fn every_call_edge_to_a_relevant_callee_is_recorded_not_just_the_first() {
+        // Routine A calls the SAME relevant callee B at two steps with
+        // DIFFERENT args. Under the old first-edge-only walk (global-visited
+        // returned false on the second visit), only the first edge was
+        // recorded and re-arging the second call was invisible to the digest.
+        // Both edges must now appear, and each edge's args must feed the hash.
+        let build = |args1: &str, args2: &str| {
+            let parent = def(&format!(
+                r#"{{
+                  "routine": "a", "schema_version": 1, "transmit_mode": "attended",
+                  "on_interrupted": "stay", "inputs": [], "triggers": [{{"type": "manual"}}],
+                  "tracks": [{{ "name": "t", "steps": [
+                    {{ "id": "c1", "control": "call", "routine": "b", "args": {args1}, "sync": true }},
+                    {{ "id": "c2", "control": "call", "routine": "b", "args": {args2}, "sync": true }}
+                  ]}}]
+                }}"#
+            ));
+            let mut lib: HashMap<String, RoutineDef> = HashMap::new();
+            lib.insert("b".into(), tx_routine("b", "{}"));
+            let lookup = |name: &str| lib.get(name).cloned();
+            consent_closure(&parent, &lookup, &transmits_radio_connect)
+        };
+
+        let base = build(r#"{"gain":1}"#, r#"{"gain":2}"#);
+        // Both call edges to b are recorded, distinguished by their step ids.
+        assert_eq!(base.call_edges.len(), 2, "both edges to b must be recorded");
+        let steps: Vec<&str> = base.call_edges.iter().map(|e| e.step.0.as_str()).collect();
+        assert!(steps.contains(&"c1") && steps.contains(&"c2"), "{steps:?}");
+        // b's relevant step is enumerated exactly once (body walk is dedup'd).
+        assert_eq!(base.steps.len(), 1, "b's step enumerated once");
+
+        // Editing ONLY the second call's args flips the digest — proof the
+        // second edge is in the hash, not silently dropped.
+        let edited = build(r#"{"gain":1}"#, r#"{"gain":99}"#);
+        assert_ne!(
+            closure_digest(&base),
+            closure_digest(&edited),
+            "re-arging the second call edge must invalidate the digest"
+        );
     }
 
     #[test]

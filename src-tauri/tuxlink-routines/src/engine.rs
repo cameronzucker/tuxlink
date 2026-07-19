@@ -176,8 +176,9 @@ impl Engine {
     ) -> Result<RunHandle, EngineError> {
         let attended = !opts.dry_run
             && (def.transmit_mode == TransmitMode::Attended || opts.parent_attended);
-        // B2 does not consume `opts.root` yet (C3 threads it onto `ExecCtx`); it
-        // rides the pinned struct so the signature does not churn a second time.
+        // C3: the root consent context threads onto this run's `ExecCtx` and, from
+        // there, unchanged down every `Control::Call` so a registry invoker
+        // re-verifies the root's digests at each child start.
         self.run_internal(
             def,
             args,
@@ -186,6 +187,7 @@ impl Engine {
             self.cfg.registry.clone(),
             None,
             opts.cancel,
+            opts.root,
         )
         .await
     }
@@ -230,7 +232,9 @@ impl Engine {
         // the fake-world run has no real transmit, so `attended` is forced
         // `false` for the entire dry-run tree — `DryRunChildInvoker` recurses
         // back through here, so every descendant is likewise non-attended.
-        self.run_internal(def, args, depth, false, registry, Some(script), cancel)
+        // A dry run never binds a consent digest (it cannot key a transmitter or
+        // write config), so it threads no root context.
+        self.run_internal(def, args, depth, false, registry, Some(script), cancel, None)
             .await
     }
 
@@ -253,6 +257,7 @@ impl Engine {
         registry: Arc<ActionRegistry>,
         dry_run_script: Option<DryRunScript>,
         cancel: Option<CancellationToken>,
+        root: Option<RootConsent>,
     ) -> Result<RunHandle, EngineError> {
         let dry_run = dry_run_script.is_some();
         let run_id = self.next_run_id();
@@ -318,6 +323,7 @@ impl Engine {
             depth,
             attended,
             consent: self.cfg.consent.clone(),
+            root,
         };
         let (tx, rx) = tokio::sync::oneshot::channel();
         let tracks = resolved.tracks.clone();
@@ -453,7 +459,9 @@ impl RoutineInvoker for EngineChildInvoker {
                     // The child's cancellation derives from the parent's, so a
                     // parent cancel propagates down the call chain.
                     cancel: Some(parent_cancel.child_token()),
-                    root: None,
+                    // C3: propagate the SAME root context unchanged so every
+                    // descendant re-verifies against the top-level ack.
+                    root: call.root,
                 },
             )
             .await

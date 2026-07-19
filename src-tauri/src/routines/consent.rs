@@ -52,10 +52,10 @@ use tokio::sync::oneshot;
 
 use tuxlink_routines::action::ActionRegistry;
 use tuxlink_routines::consent::ConsentPort;
-use tuxlink_routines::consent_closure::consent_closure;
+use tuxlink_routines::consent_closure::{closure_digest, consent_closure};
 use tuxlink_routines::error::StepError;
 use tuxlink_routines::journal::ParkKind;
-use tuxlink_routines::types::RoutineDef;
+use tuxlink_routines::types::{RoutineDef, TransmitAck};
 
 use super::events::{RoutinesEvent, RoutinesEventSink};
 
@@ -88,6 +88,51 @@ pub fn closure_transmits(
     transmits: &TransmitsPredicate<'_>,
 ) -> bool {
     !consent_closure(def, lookup, transmits).steps.is_empty()
+}
+
+/// Does `def`'s call-graph closure contain a config-write step (C3, spec §4)?
+/// The `writes_config` sibling of [`closure_transmits`], over the same shared
+/// [`consent_closure`](tuxlink_routines::consent_closure::consent_closure) walk
+/// with the `writes` relevance predicate.
+pub fn closure_writes(
+    def: &RoutineDef,
+    lookup: &DefLookup<'_>,
+    writes: &TransmitsPredicate<'_>,
+) -> bool {
+    !consent_closure(def, lookup, writes).steps.is_empty()
+}
+
+/// The sha256 hex digest of `def`'s consent closure for the given relevance
+/// predicate (C3), computed over the SAME shared walk + canonicalizing digest
+/// the validator uses — so a digest the monolith records at ack time and a
+/// digest the leaf validator recomputes at validation time are byte-identical
+/// (enforcement and validation can never disagree about "is this ack current").
+/// `is_relevant` selects the class: transmit (a `transmits` predicate) or
+/// config-write (a `writes_config` predicate).
+pub fn closure_digest_for(
+    def: &RoutineDef,
+    lookup: &DefLookup<'_>,
+    is_relevant: &TransmitsPredicate<'_>,
+) -> String {
+    closure_digest(&consent_closure(def, lookup, is_relevant))
+}
+
+/// Does `ack` bind the exact `live_digest` the closure currently hashes to
+/// (C3)? The monolith mirror of the leaf validator's `ack_binds_closure`,
+/// covering all three stale clauses at once: **missing** (`None`), **empty**
+/// (blank `by`/`at`), and **digest-mismatched** (a re-edited closure, OR a
+/// digest-less legacy ack whose `closure_digest` is `None` and thus never
+/// equals a live digest). The start gate uses this so enforcement refuses on
+/// the same grounds the validator flags.
+pub fn ack_binds(ack: &Option<TransmitAck>, live_digest: &str) -> bool {
+    match ack {
+        Some(a) => {
+            !a.by.trim().is_empty()
+                && !a.at.trim().is_empty()
+                && a.closure_digest.as_deref() == Some(live_digest)
+        }
+        None => false,
+    }
 }
 
 /// The map of parked transmit steps, keyed by `(run_id, step_id)` → the
@@ -202,6 +247,19 @@ pub fn transmit_action_names(registry: &ActionRegistry) -> HashSet<String> {
         .descriptors()
         .into_iter()
         .filter(|d| d.transmits)
+        .map(|d| d.name.to_string())
+        .collect()
+}
+
+/// The set of catalog action names that write station config (`writes_config`,
+/// C3), captured from a registry's descriptors — the `writes_config` sibling of
+/// [`transmit_action_names`]. The write-consent start gate's `writes` predicate
+/// reads this the same way the transmit gate reads the transmit set.
+pub fn write_action_names(registry: &ActionRegistry) -> HashSet<String> {
+    registry
+        .descriptors()
+        .into_iter()
+        .filter(|d| d.writes_config)
         .map(|d| d.name.to_string())
         .collect()
 }

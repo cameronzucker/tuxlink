@@ -2,7 +2,7 @@
   "routine": "mixed-mode-stall-demo",
   "schema_version": 1,
   "transmit_mode": "automatic",
-  "transmit_ack": { "by": "KK7ABC", "at": "2026-07-13T20:00:00Z" },
+  "transmit_ack": { "by": "KK7ABC", "at": "2026-07-13T20:00:00Z", "closure_digest": "6cbae3d5bbc41da5cc96e28ec6ffddfd21e4374667ffeaa0979b7b64b59530d6" },
   "on_interrupted": "stay",
   "inputs": [],
   "triggers": [{ "type": "manual" }],

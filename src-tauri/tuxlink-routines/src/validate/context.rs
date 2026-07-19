@@ -137,6 +137,7 @@ mod tests {
             schema_version: crate::types::SUPPORTED_SCHEMA_VERSION,
             transmit_mode: crate::types::TransmitMode::Attended,
             transmit_ack: None,
+            write_ack: None,
             on_interrupted: crate::types::OnInterrupted::Stay,
             inputs: vec![],
             triggers: vec![crate::types::Trigger::Manual],

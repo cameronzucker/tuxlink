@@ -283,6 +283,72 @@
       }
     },
     {
+      "kind": "single",
+      "name": "AUTO_WRITE_UNACKED",
+      "file": "auto-write-unacked.json",
+      "expected_codes": ["AUTO_WRITE_UNACKED"],
+      "context": {
+        "actions": ["config.set_ardop"],
+        "entities": [],
+        "profile": { "has_internet": false, "rigs": [] },
+        "sibling_routines": []
+      }
+    },
+    {
+      "kind": "single",
+      "name": "MIXED_MODE_STALL_WRITE",
+      "file": "mixed-mode-stall-write.json",
+      "expected_codes": ["AUTO_WRITE_UNACKED", "MIXED_MODE_STALL_WRITE"],
+      "context": {
+        "actions": ["config.set_ardop"],
+        "entities": [],
+        "profile": { "has_internet": false, "rigs": [] },
+        "sibling_routines": [
+          {
+            "routine": "mixed-mode-stall-write-callee",
+            "schema_version": 1,
+            "transmit_mode": "attended",
+            "on_interrupted": "stay",
+            "inputs": [],
+            "triggers": [{ "type": "manual" }],
+            "tracks": [
+              {
+                "name": "t1",
+                "steps": [
+                  { "id": "w1", "action": "config.set_ardop", "params": { "drive_level": 80 } },
+                  { "id": "e1", "control": "end", "failed": false }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "kind": "single",
+      "name": "ATTENDED_WRITE_UNDER_SCHEDULE",
+      "file": "attended-write-under-schedule.json",
+      "expected_codes": ["ATTENDED_WRITE_UNDER_SCHEDULE"],
+      "context": {
+        "actions": ["config.set_ardop"],
+        "entities": [],
+        "profile": { "has_internet": false, "rigs": [] },
+        "sibling_routines": []
+      }
+    },
+    {
+      "kind": "single",
+      "name": "WRITE_VALUE_RUNTIME",
+      "file": "write-value-runtime.json",
+      "expected_codes": ["AUTO_WRITE_UNACKED", "WRITE_VALUE_RUNTIME"],
+      "context": {
+        "actions": ["config.set_ardop", "data.read"],
+        "entities": [],
+        "profile": { "has_internet": false, "rigs": [] },
+        "sibling_routines": []
+      }
+    },
+    {
       "kind": "fleet",
       "name": "SCHEDULE_COLLISION",
       "files": ["schedule-collision.a.json", "schedule-collision.b.json"],

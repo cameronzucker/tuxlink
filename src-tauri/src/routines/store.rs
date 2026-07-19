@@ -282,6 +282,7 @@ mod tests {
             schema_version: SUPPORTED_SCHEMA_VERSION,
             transmit_mode: TransmitMode::Automatic,
             transmit_ack: None,
+            write_ack: None,
             on_interrupted: OnInterrupted::Stay,
             inputs: vec![],
             triggers: vec![Trigger::Manual],

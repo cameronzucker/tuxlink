@@ -158,6 +158,15 @@ fn known_action(name: &str) -> ActionDescriptor {
             transmits: false,
             needs_internet: false,
         },
+        "config.set_ardop" => ActionDescriptor {
+            writes_config: true,
+            name: "config.set_ardop",
+            label: "",
+            description: "",
+            needs_radio: false,
+            transmits: false,
+            needs_internet: false,
+        },
         other => panic!(
             "fixture context references unknown action \"{other}\" — add it to \
              known_action() in tests/validator_corpus.rs"
@@ -281,8 +290,12 @@ const ALL_FINDING_CODES: &[&str] = &[
     "CALL_TARGET_MISSING",
     // consent.rs
     "AUTO_TX_UNACKED",
+    "AUTO_WRITE_UNACKED",
     "MIXED_MODE_STALL",
+    "MIXED_MODE_STALL_WRITE",
     "ATTENDED_UNDER_SCHEDULE",
+    "ATTENDED_WRITE_UNDER_SCHEDULE",
+    "WRITE_VALUE_RUNTIME",
     // fleet.rs
     "SCHEDULE_COLLISION",
     "SAME_EFFECT_OVERLAP",

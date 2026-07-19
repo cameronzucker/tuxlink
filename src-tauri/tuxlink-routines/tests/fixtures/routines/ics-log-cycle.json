@@ -2,7 +2,7 @@
   "routine": "ics-log-cycle",
   "schema_version": 1,
   "transmit_mode": "automatic",
-  "transmit_ack": { "by": "KK7ABC", "at": "2026-07-13T20:00:00Z" },
+  "transmit_ack": { "by": "KK7ABC", "at": "2026-07-13T20:00:00Z", "closure_digest": "db738fa762c3d7df8d69b4d68f1e72fc48e0b6c3819b58ac5203a97323eea6a1" },
   "on_interrupted": "stay",
   "inputs": [],
   "triggers": [{ "type": "schedule", "every": "2h", "align": "hour", "if_missed": "skip" }],
