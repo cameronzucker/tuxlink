@@ -51,10 +51,10 @@ use async_trait::async_trait;
 use tokio::sync::oneshot;
 
 use tuxlink_routines::action::ActionRegistry;
-use tuxlink_routines::compose::MAX_CALL_DEPTH;
 use tuxlink_routines::consent::ConsentPort;
+use tuxlink_routines::consent_closure::consent_closure;
 use tuxlink_routines::error::StepError;
-use tuxlink_routines::types::{Control, RoutineDef, Step};
+use tuxlink_routines::types::RoutineDef;
 
 use super::events::{RoutinesEvent, RoutinesEventSink};
 
@@ -72,64 +72,21 @@ pub type TransmitsPredicate<'a> = dyn Fn(&str) -> bool + 'a;
 
 /// Does `def`'s call-graph closure contain a transmit step (spec §4, §10)?
 ///
-/// Walks every track's steps: an `Action` step transmits iff `transmits(name)`;
-/// a `Call` step recurses into the callee resolved via `lookup`. The recursion
-/// is cycle-guarded (a routine already on the current path is not re-walked) and
-/// depth-capped at [`MAX_CALL_DEPTH`] — the same runtime backstop the engine's
-/// executor applies to `Control::Call`, so the two agree on how deep a legal
-/// call chain goes. An unresolved callee (`lookup` returns `None`) contributes
-/// nothing: enforcement is conservative and does not invent transmission from a
-/// call it cannot resolve (plan 3's validator flags the unresolved reference).
+/// A thin boolean over the shared
+/// [`consent_closure`](tuxlink_routines::consent_closure::consent_closure)
+/// walk: the closure transmits iff enumerating it with the `transmits`
+/// relevance predicate yields at least one step. `lookup` resolves `Call`
+/// targets; an unresolved callee contributes nothing (conservative — the
+/// validator flags the unresolved reference). The shared walk is
+/// global-visited and depth-capped at
+/// [`MAX_CALL_DEPTH`](tuxlink_routines::compose::MAX_CALL_DEPTH), matching the
+/// runtime backstop the executor applies to `Control::Call`.
 pub fn closure_transmits(
     def: &RoutineDef,
     lookup: &DefLookup<'_>,
     transmits: &TransmitsPredicate<'_>,
 ) -> bool {
-    let mut on_path = HashSet::new();
-    closure_transmits_inner(def, lookup, transmits, &mut on_path, 0)
-}
-
-fn closure_transmits_inner(
-    def: &RoutineDef,
-    lookup: &DefLookup<'_>,
-    transmits: &TransmitsPredicate<'_>,
-    on_path: &mut HashSet<String>,
-    depth: u32,
-) -> bool {
-    if depth > MAX_CALL_DEPTH {
-        return false;
-    }
-    // Cycle guard: a recursive call (A→B→A) does not add new transmit steps
-    // beyond those already walked on this path.
-    if !on_path.insert(def.routine.clone()) {
-        return false;
-    }
-    let mut found = false;
-    'walk: for track in &def.tracks {
-        for step in &track.steps {
-            match step {
-                Step::Action(a) => {
-                    if transmits(&a.action) {
-                        found = true;
-                        break 'walk;
-                    }
-                }
-                Step::Control(cs) => {
-                    if let Control::Call { routine, .. } = &cs.control {
-                        if let Some(child) = lookup(routine) {
-                            if closure_transmits_inner(&child, lookup, transmits, on_path, depth + 1)
-                            {
-                                found = true;
-                                break 'walk;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    on_path.remove(&def.routine);
-    found
+    !consent_closure(def, lookup, transmits).steps.is_empty()
 }
 
 /// The map of parked transmit steps, keyed by `(run_id, step_id)` → the

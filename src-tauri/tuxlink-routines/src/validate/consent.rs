@@ -45,6 +45,7 @@
 
 use std::collections::HashSet;
 
+use crate::consent_closure::consent_closure;
 use crate::types::{Control, RoutineDef, Step, StepId, TransmitMode, Trigger};
 
 use super::context::ValidationContext;
@@ -72,54 +73,41 @@ struct TransmitHit {
     action: String,
 }
 
-/// Depth-first search for the first transmitting step in `rd`'s transmit
-/// closure (see module doc): `rd`'s own steps first, then each `Call`
-/// target's closure, recursively. `visited` guards against looping forever
-/// on a call cycle — a routine name already in `visited` is not re-entered.
+/// The first transmitting step in `rd`'s transmit closure (see module doc),
+/// or `None` if the closure carries no transmit step.
+///
+/// Delegates to the shared
+/// [`consent_closure`](crate::consent_closure::consent_closure) walk with a
+/// `transmits` relevance predicate and returns its first enumerated step in
+/// DFS pre-order — the same "first hit" the old bespoke walk returned. The
+/// `_visited` parameter is retained only so the untouched
+/// [`find_attended_transmitting_in_closure`] call site keeps compiling; the
+/// shared walk owns its own visited-set, and every caller passes a fresh set,
+/// so ignoring it is behavior-preserving. One intended change: the shared
+/// walk is depth-capped at `MAX_CALL_DEPTH`, a cap this validator previously
+/// lacked — a transmit step buried deeper than the runtime gate would ever
+/// reach is now treated the same by validation and enforcement.
 fn scan_routine_for_transmit(
     rd: &RoutineDef,
     ctx: &dyn ValidationContext,
-    visited: &mut HashSet<String>,
+    _visited: &mut HashSet<String>,
 ) -> Option<TransmitHit> {
-    if !visited.insert(rd.routine.clone()) {
-        return None;
-    }
-
-    for track in &rd.tracks {
-        for step in &track.steps {
-            match step {
-                Step::Action(a) => {
-                    if let Some(descriptor) = ctx.action_descriptor(&a.action) {
-                        if descriptor.transmits {
-                            return Some(TransmitHit {
-                                routine: rd.routine.clone(),
-                                track: track.name.clone(),
-                                step: a.id.clone(),
-                                action: a.action.clone(),
-                            });
-                        }
-                    }
-                    // No descriptor: UNKNOWN_ACTION's problem, not ours.
-                }
-                Step::Control(c) => {
-                    let Control::Call {
-                        routine: callee, ..
-                    } = &c.control
-                    else {
-                        continue;
-                    };
-                    // Missing callee: CALL_TARGET_MISSING's problem, skip silently.
-                    if let Some(callee_def) = ctx.routine_def(callee) {
-                        if let Some(hit) = scan_routine_for_transmit(&callee_def, ctx, visited) {
-                            return Some(hit);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    None
+    let lookup = |name: &str| ctx.routine_def(name);
+    let is_relevant = |action: &str| {
+        ctx.action_descriptor(action)
+            .map(|d| d.transmits)
+            .unwrap_or(false)
+    };
+    consent_closure(rd, &lookup, &is_relevant)
+        .steps
+        .into_iter()
+        .next()
+        .map(|s| TransmitHit {
+            routine: s.routine,
+            track: s.track,
+            step: s.step,
+            action: s.action,
+        })
 }
 
 fn transmit_ack_is_valid(def: &RoutineDef) -> bool {
