@@ -151,6 +151,57 @@ describe('RoutineDesigner — load + header (a)', () => {
     expect((JSON.parse(textarea.value) as RoutineDef).routine).toBe('');
   });
 
+  // tuxlink-iizmk round 2: the header carries three always-visible fact
+  // chips (transmit mode, schedule summary, enabled state), each a button
+  // that jumps to its settings section under the canvas.
+  it('renders the schedule fact-chip with a compact cadence summary, or "manual" without a schedule', async () => {
+    installInvokeMock({
+      routines_get: () => ({
+        ...EXISTING_DEF,
+        triggers: [{ type: 'schedule', every: '30m', window: '07:00-09:00', if_missed: 'skip' }],
+      }),
+    });
+    renderDesigner({ routine: 'deployment-poll' });
+    await screen.findByText('deployment-poll');
+    expect(screen.getByTestId('schedule-chip')).toHaveTextContent('every 30m · 07:00-09:00');
+  });
+
+  it('renders "manual" on the schedule chip for a manual-only routine', async () => {
+    renderDesigner({ routine: 'deployment-poll' });
+    await screen.findByText('deployment-poll');
+    expect(screen.getByTestId('schedule-chip')).toHaveTextContent('manual');
+  });
+
+  it('renders the enabled fact-chip from routines_list and clicking it from History lands on Design', async () => {
+    installInvokeMock({
+      routines_list: () => [
+        { routine: 'deployment-poll', transmitMode: 'attended', enabled: true, triggers: [{ type: 'manual' }] },
+      ],
+      routines_runs_list: () => [],
+    });
+    const onTabChange = vi.fn();
+    renderDesigner({ routine: 'deployment-poll', tab: 'runs', onTabChange });
+    await screen.findByText('deployment-poll');
+    const chip = await screen.findByTestId('enabled-chip');
+    await vi.waitFor(() => expect(chip).toHaveTextContent('enabled'));
+
+    fireEvent.click(chip);
+    expect(onTabChange).toHaveBeenCalledWith('design');
+  });
+
+  it('clicking the schedule chip on the Design view scrolls its settings section into view', async () => {
+    const scrollSpy = vi.fn();
+    (window.Element.prototype as unknown as { scrollIntoView: () => void }).scrollIntoView = scrollSpy;
+    const onTabChange = vi.fn();
+    renderDesigner({ routine: 'deployment-poll', tab: 'design', onTabChange });
+    await screen.findByTestId('settings-schedule-section');
+
+    fireEvent.click(screen.getByTestId('schedule-chip'));
+    // Already on Design: no tab flip, just the deferred scroll.
+    expect(onTabChange).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(scrollSpy).toHaveBeenCalled());
+  });
+
   it('clicking ← Routines calls onBack', async () => {
     const { onBack } = renderDesigner();
     await screen.findByText('deployment-poll');
@@ -242,19 +293,22 @@ describe('RoutineDesigner — always-on validation bar (b, flow 2)', () => {
 
 describe('RoutineDesigner — Save never blocks (c)', () => {
   it('invokes routines_save with the draft body and clears the unsaved dot even when blocked:true, with no modal/exception', async () => {
+    const finding = {
+      code: 'AUTO_TX_UNACKED',
+      severity: 'error',
+      routine: 'deployment-poll',
+      message: 'transmits under automatic control but has no recorded acknowledgment',
+    } satisfies Finding;
     installInvokeMock({
       routines_save: () => ({
         routine: 'deployment-poll',
         blocked: true,
-        findings: [
-          {
-            code: 'AUTO_TX_UNACKED',
-            severity: 'error',
-            routine: 'deployment-poll',
-            message: 'transmits under automatic control but has no recorded acknowledgment',
-          } satisfies Finding,
-        ],
+        findings: [finding],
       }),
+      // The 400ms debounced revalidate fires after the save on a slow runner;
+      // returning the same finding keeps the valbar stable for the
+      // assertions below instead of racing them against an empty [] refresh.
+      routines_validate_draft: () => [finding],
     });
     renderDesigner();
     await screen.findByText('deployment-poll');

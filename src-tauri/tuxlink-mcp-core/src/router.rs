@@ -472,12 +472,23 @@ impl TuxlinkMcp {
     }
 
     #[tool(
-        name = "ardop_list_audio_devices",
-        description = "Enumerate audio devices for modem audio selection. Read-only. Returns `capture`/`playback` ALSA names AND a richer `cards` list — per USB card: name, ALSA name, card index, `vid_pid` (e.g. 0d8c:013a), `bus_path` (distinguishes two identical-name cards on different ports), and `in_use`. To disambiguate, read tuxlink://playbook/audio-setup — the method (VID:PID + bus path + in-use), never a code-side ranking."
+        name = "list_audio_devices",
+        description = "Enumerate the STATION'S audio devices. Station/OS-level and mode-agnostic: the same physical device list serves ARDOP, VARA, FT-8, and packet — use this for ANY mode's audio troubleshooting (the number-one VARA failure is transmit-audio routing: wrong device, or a device another app holds). Read-only. Returns `capture`/`playback` ALSA names AND a richer `cards` list — per USB card: name, ALSA name, card index, `vid_pid` (e.g. 0d8c:013a), `bus_path` (distinguishes two identical-name cards on different ports), and `in_use`. To disambiguate, read tuxlink://playbook/audio-setup — the method (VID:PID + bus path + in-use), never a code-side ranking."
     )]
-    pub async fn ardop_list_audio_devices(&self) -> Result<CallToolResult, ErrorData> {
+    pub async fn list_audio_devices(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.devices.audio().await.map_err(port_err)?;
         Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
+        name = "ardop_list_audio_devices",
+        description = "DEPRECATED alias of list_audio_devices — the audio-device list is station-level, not ARDOP-specific (tuxlink-hq9g0). Identical output; prefer list_audio_devices."
+    )]
+    pub async fn ardop_list_audio_devices(&self) -> Result<CallToolResult, ErrorData> {
+        // Delegates to the same port call as list_audio_devices — one
+        // enumerator, two registrations, per the dual-actionability rule
+        // (ADR 0024): a capability may not be implemented twice.
+        self.list_audio_devices().await
     }
 
     #[tool(
@@ -2099,7 +2110,7 @@ impl TuxlinkMcp {
                      2. Read the current configuration with config_read (and \
                      config_get_ardop / config_get_vara / packet_config_get as relevant) and \
                      enumerate hardware with packet_list_serial_devices, \
-                     packet_list_bluetooth_devices, and ardop_list_audio_devices.\n\
+                     packet_list_bluetooth_devices, and list_audio_devices.\n\
                      3. Walk the operator through the configuration step by step, in plain \
                      language, matching the guide to what the diagnostics show.\n\n\
                      Configuration writes require the operator's armed send authority; \
@@ -2404,12 +2415,31 @@ mod tests {
         h.ft8_status().await.unwrap();
         h.ft8_heard_stations().await.unwrap();
         h.ft8_list_audio_devices().await.unwrap();
+        // Station-level audio enumeration + its deprecated per-mode alias
+        // (tuxlink-hq9g0): both read-only, neither taints.
+        h.list_audio_devices().await.unwrap();
+        h.ardop_list_audio_devices().await.unwrap();
         // Routines authoring/control has nothing to do with the EgressGuard
         // (spec §13): none of its reads taint.
         h.routines_list().await.unwrap();
         assert!(
             !h.state.guard.is_tainted(),
             "read-only status/config/docs/devices/ft8/routines tools must NOT taint a fresh guard"
+        );
+    }
+
+    /// tuxlink-hq9g0: the deprecated ARDOP-named alias and the station-level
+    /// tool are ONE capability — identical payload, byte for byte. A drift
+    /// here would mean the enumerator got duplicated, which the issue (and
+    /// ADR 0024's one-implementation rule) forbids.
+    #[tokio::test]
+    async fn ardop_audio_alias_returns_identical_payload_to_unified_tool() {
+        let h = handler();
+        let unified = h.list_audio_devices().await.unwrap();
+        let alias = h.ardop_list_audio_devices().await.unwrap();
+        assert_eq!(
+            serde_json::to_value(&unified).unwrap(),
+            serde_json::to_value(&alias).unwrap()
         );
     }
 

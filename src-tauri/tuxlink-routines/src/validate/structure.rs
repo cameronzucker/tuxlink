@@ -460,6 +460,8 @@ mod tests {
             id: StepId(id.into()),
             control: Control::Branch {
                 on: on.into(),
+                op: None,
+                value: None,
                 then: then.into_iter().map(|s| StepId(s.into())).collect(),
                 r#else: r#else.into_iter().map(|s| StepId(s.into())).collect(),
             },

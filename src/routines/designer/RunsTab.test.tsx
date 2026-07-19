@@ -27,7 +27,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({ save: mockSaveDialog }));
 const { mockListen } = vi.hoisted(() => ({ mockListen: vi.fn() }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: mockListen }));
 
-import { RunsTab, ganttModel, radioAwaitRig } from './RunsTab';
+import { RunsTab, ganttModel, radioAwaitRig, stepListModel } from './RunsTab';
 
 // ---------------------------------------------------------------------------
 // Fixture journal (task-13 brief Step 1): run_started with snapshot,
@@ -695,5 +695,94 @@ describe('RunsTab — rail labels for realistic backend run ids', () => {
     const labelsB = await screen.findAllByText('…6705-0008');
     expect(labelsA.length).toBeGreaterThan(0);
     expect(labelsB.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// stepListModel — the chronological step list (observability decree O5/O6/O7,
+// wire-walk 2026-07-18). Pure-model tests over a journal carrying the two
+// decree events (branch_taken, step_skipped) plus the pre-existing kinds.
+// ---------------------------------------------------------------------------
+
+describe('stepListModel (decree O5/O6/O7)', () => {
+  const j = (seq: number, ts: number, event: JournalEntry['event']): JournalEntry => ({
+    ts_unix: ts,
+    run_id: 'run-sl',
+    seq,
+    event,
+  });
+
+  const DECREE_JOURNAL: JournalEntry[] = [
+    j(0, T, { type: 'run_started', routine: 'probe', snapshot: SNAPSHOT, dry_run: false }),
+    j(1, T, { type: 'step_intent', step: 's1', action: 'data.read', resolved_params: { source: 'grid' } }),
+    j(2, T + 1, { type: 'step_ok', step: 's1', output: { grid: 'DM33wp' } }),
+    j(3, T + 1, { type: 'branch_taken', step: 's2', on: 's1.grid', value: 'DM33wp', took_then: true, target: 's3' }),
+    j(4, T + 1, { type: 'step_intent', step: 's3', action: 'local.log', resolved_params: { message: 'DM33wp' } }),
+    j(5, T + 2, { type: 'step_err', step: 's3', error: { kind: 'action', detail: { action: 'local.log', cause: CAUSE } } }),
+    j(6, T + 2, { type: 'step_skipped', step: 's4', reason: "not run: the run failed at step 's3'" }),
+    j(7, T + 2, { type: 'run_finished', state: 'failed', reason: `action 'local.log' failed: ${CAUSE}` }),
+  ];
+
+  it('lists every executed step with post-resolution params and output', () => {
+    const rows = stepListModel(DECREE_JOURNAL);
+    const ok = rows.find((r) => r.kind === 'ok');
+    expect(ok?.stepId).toBe('s1');
+    expect(ok?.params).toEqual({ source: 'grid' });
+    expect(ok?.output).toEqual({ grid: 'DM33wp' });
+    expect(ok?.durationS).toBe(1);
+  });
+
+  it('carries the branch decision: resolved value, arm, target', () => {
+    const rows = stepListModel(DECREE_JOURNAL);
+    const branch = rows.find((r) => r.kind === 'branch');
+    expect(branch?.stepId).toBe('s2');
+    expect(branch?.branch).toEqual({ on: 's1.grid', value: 'DM33wp', tookThen: true, target: 's3' });
+  });
+
+  it('carries the verbatim failure cause and the skipped step with its reason', () => {
+    const rows = stepListModel(DECREE_JOURNAL);
+    const fail = rows.find((r) => r.kind === 'fail');
+    expect(fail?.stepId).toBe('s3');
+    expect(fail?.cause).toContain(CAUSE);
+    const skipped = rows.find((r) => r.kind === 'skipped');
+    expect(skipped?.stepId).toBe('s4');
+    expect(skipped?.reason).toBe("not run: the run failed at step 's3'");
+  });
+
+  it('orders rows by the primary entry (a step appears where it started) and ends with the terminal row', () => {
+    const rows = stepListModel(DECREE_JOURNAL);
+    expect(rows.map((r) => r.kind)).toEqual(['ok', 'branch', 'fail', 'skipped', 'finished']);
+    const finished = rows[rows.length - 1]!;
+    expect(finished.state).toBe('failed');
+    expect(finished.reason).toContain(CAUSE);
+  });
+
+  it('flushes an unclosed intent as running on a live journal', () => {
+    const live = DECREE_JOURNAL.slice(0, 5); // ends after s3's intent, no result, no run_finished
+    const rows = stepListModel(live);
+    const running = rows.find((r) => r.kind === 'running');
+    expect(running?.stepId).toBe('s3');
+    expect(running?.params).toEqual({ message: 'DM33wp' });
+  });
+
+  it('renders the step list rows in the component', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'routines_runs_list')
+        return Promise.resolve([
+          { runId: 'run-sl', routine: 'probe', dryRun: false, startedUnix: T, state: 'failed', finishedUnix: T + 2 },
+        ] satisfies RunListEntry[]);
+      if (cmd === 'routines_run_status')
+        return Promise.resolve({ runId: 'run-sl', routine: 'probe', dryRun: false, state: 'failed' } satisfies RunStatus);
+      if (cmd === 'routines_journal') return Promise.resolve(DECREE_JOURNAL);
+      return Promise.resolve(null);
+    });
+    mockListen.mockResolvedValue(() => {});
+    render(<RunsTab routine="probe" />);
+    await waitFor(() => expect(screen.getByTestId('steplist')).toBeInTheDocument());
+    expect(screen.getByTestId('slrow-s4-skipped')).toHaveTextContent("not run: the run failed at step 's3'");
+    expect(screen.getByTestId('slrow-s2-branch')).toHaveTextContent('then arm (s3)');
+    expect(screen.getByTestId('slrow-cause-s3')).toHaveTextContent(CAUSE);
+    expect(screen.getByTestId('slrow-params-s1')).toHaveTextContent('{"source":"grid"}');
+    expect(screen.getByTestId('slrow-output-s1')).toHaveTextContent('DM33wp');
   });
 });

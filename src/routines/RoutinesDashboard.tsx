@@ -2,11 +2,12 @@
  * RoutinesDashboard — the fleet-ops table (routines plan-5 Task 8, spec §12,
  * flows 1/3/6/7).
  *
- * Replaces the Task 7 compile stub. Layout is the approved mock verbatim
- * (dev/scratch/routines-ui-mocks/dashboard.html): a 7-column ops table
- * (Routine / Status / Trigger / Last result / Next fire / TX mode / row
- * actions) plus a fleet-check strip above the app statusbar. "↗ Pop out" is
- * omitted outright (Global Constraint 6) — never a disabled stub.
+ * Replaces the Task 7 compile stub. Layout is the round-2 approved mock
+ * (dev/scratch/routines-ui-mocks/humanscale-routines.html, tuxlink-iizmk):
+ * one row CARD per routine: [name + state chips | schedule / next fire |
+ * last run / step count | Run / History / ⋯ actions], plus a fleet-check
+ * strip above the app statusbar. Row click opens the designer; the History
+ * link-button opens the designer's History tab directly.
  *
  * ONE read path (`useRoutines`): every registry/scheduler value the table
  * needs — summaries, schedule status, next fires, per-routine findings,
@@ -365,228 +366,218 @@ export function RoutinesDashboard({ onOpenDesigner, onNewRoutine, onPopOut, onCl
           load a shared definition.
         </div>
       ) : (
-      <div className="ops-wrap">
-        <table className="ops">
-          <thead>
-            <tr>
-              <th style={{ width: '20%' }}>Routine</th>
-              <th style={{ width: '18%' }}>Status</th>
-              <th style={{ width: '17%' }}>Trigger</th>
-              <th style={{ width: '19%' }}>Last result</th>
-              <th style={{ width: '8%' }}>Next fire</th>
-              <th style={{ width: '8%' }}>TX mode</th>
-              {/* Controls column is FIXED-px: at 1024px wide, its former 5%
-                  (51px) flex-crushed the run/stop button to a sliver beside
-                  the ⋯ menu (tuxlink-3awm9 WebKitGTK smoke) — controls don't
-                  scale with viewport. Slack taken from Last result (24→19%). */}
-              <th style={{ width: 72 }} />
-            </tr>
-          </thead>
-          <tbody>
-            {summaries.map((s) => {
-              const findings = findingsByRoutine[s.routine] ?? [];
-              const status = scheduleStatus.find((ss) => ss.routine === s.routine);
-              const def = defsByRoutine[s.routine];
-              const routineRuns = runs.filter((r) => r.routine === s.routine);
-              const liveRun = newestOf(routineRuns.filter((r) => LIVE_STATES.has(r.state)));
-              const newestTerminal = newestOf(routineRuns.filter((r) => !LIVE_STATES.has(r.state)));
-              const chip = statusChipFor(s, findings, liveRun);
-              const tx = txModeFor(s, def, actionsByName, findings);
-              const trigger = s.triggers[0];
-              const nextFireAt = nextFires[s.routine];
-              const trackCount = def?.tracks.length ?? 0;
-              const stepCount = def ? def.tracks.reduce((n, t) => n + t.steps.length, 0) : 0;
-              const menuOpen = openMenuFor === s.routine;
+      // tuxlink-iizmk round 2 (mock .rrow): the 7-column ops table is now a
+      // list of row CARDS: [name+chips | schedule/next fire | last run/steps
+      // | actions], with every routine runnable and auditable from its row.
+      <div className="rlist" data-testid="routines-rlist">
+        {summaries.map((s) => {
+          const findings = findingsByRoutine[s.routine] ?? [];
+          const status = scheduleStatus.find((ss) => ss.routine === s.routine);
+          const def = defsByRoutine[s.routine];
+          const routineRuns = runs.filter((r) => r.routine === s.routine);
+          const liveRun = newestOf(routineRuns.filter((r) => LIVE_STATES.has(r.state)));
+          const newestTerminal = newestOf(routineRuns.filter((r) => !LIVE_STATES.has(r.state)));
+          const chip = statusChipFor(s, findings, liveRun);
+          const tx = txModeFor(s, def, actionsByName, findings);
+          const trigger = s.triggers[0];
+          const nextFireAt = nextFires[s.routine];
+          const trackCount = def?.tracks.length ?? 0;
+          const stepCount = def ? def.tracks.reduce((n, t) => n + t.steps.length, 0) : 0;
+          const menuOpen = openMenuFor === s.routine;
+          const failureCause =
+            newestTerminal?.state === 'failed' ? failureCauseByRunId[newestTerminal.runId] : undefined;
 
-              return (
-                <tr
-                  key={s.routine}
-                  onDoubleClick={() =>
-                    // Final whole-branch review, Fix 3: flow 3 "investigate a
-                    // failed run" lands directly on the Runs tab when the
-                    // row's own last-result column already reads FAILED — no
-                    // reason to make the operator re-navigate from Design.
-                    // Every other row keeps the prior default (no tab arg —
-                    // RoutinesSurface's own default).
-                    onOpenDesigner(s.routine, newestTerminal?.state === 'failed' ? 'runs' : undefined)
-                  }
+          return (
+            <div
+              key={s.routine}
+              className="rrow"
+              data-testid={`routine-row-${s.routine}`}
+              onClick={() =>
+                // Row click (outside the buttons) opens the designer. Flow 3
+                // "investigate a failed run" still lands directly on History
+                // when the row's own last-run summary already reads failed;
+                // every other row takes the designer's default landing.
+                onOpenDesigner(s.routine, newestTerminal?.state === 'failed' ? 'runs' : undefined)
+              }
+            >
+              <div className="rcell">
+                <div className="rname">
+                  <span className="rtitle">{s.routine}</span>
+                  <span className={`chip ${chip.cls}`}>{chip.text}</span>
+                  {tx.text !== '—' && <span className={`chip mode ${tx.cls}`}>{tx.text}</span>}
+                </div>
+                {status && status.missed > 0 && (
+                  <span className="badge-miss">⚠ missed {formatMissedCount(status.missed)} fire(s)</span>
+                )}
+                {status?.lastRefusal && (
+                  <div className="refusal-note">last fire refused: {status.lastRefusal.reason}</div>
+                )}
+                {status?.lastSkip && (
+                  <div className="skip-note">last fire skipped: {status.lastSkip.reason}</div>
+                )}
+              </div>
+              <div className="rcell rmeta">
+                <div className="trig">
+                  {trigger ? formatTrigger(trigger) : '—'}
+                  {trigger?.type === 'schedule' && trigger.if_missed && (
+                    <div className="win">{formatIfMissed(trigger.if_missed)}</div>
+                  )}
+                </div>
+                <div className="nextfire">
+                  {nextFireAt !== undefined ? (
+                    <>
+                      next fire <b>{formatUtc(nextFireAt)}</b>
+                    </>
+                  ) : (
+                    <span className="none">no fire scheduled</span>
+                  )}
+                </div>
+              </div>
+              <div className="rcell rmeta">
+                {!newestTerminal ? (
+                  <div className="res">
+                    <span className="t">never run</span>
+                  </div>
+                ) : newestTerminal.state === 'completed' ? (
+                  <div className="res">
+                    <span className="ok">✓ ok</span>{' '}
+                    <span className="t">
+                      {formatUtc(newestTerminal.finishedUnix ?? newestTerminal.startedUnix)}
+                    </span>
+                  </div>
+                ) : newestTerminal.state === 'failed' ? (
+                  <div className="res">
+                    <span className="fail">✕ failed</span>{' '}
+                    <span className="t">
+                      {formatUtc(newestTerminal.finishedUnix ?? newestTerminal.startedUnix)}
+                    </span>
+                    {/* Verbatim cause, clamped: the full text stays reachable
+                        through the title tooltip. */}
+                    {failureCause && (
+                      <div className="detail" title={failureCause}>
+                        {failureCause}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="res">
+                    <span className="t">{formatRunState(newestTerminal.state)}</span>
+                  </div>
+                )}
+                {def && (
+                  <div className="rsteps">
+                    {stepCount} step{stepCount === 1 ? '' : 's'} · {trackCount} track
+                    {trackCount === 1 ? '' : 's'}
+                  </div>
+                )}
+              </div>
+              <div className="ractions">
+                {liveRun ? (
+                  <button
+                    type="button"
+                    className="ibtn stop"
+                    aria-label={`Stop ${s.routine}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void handleStop(liveRun.runId);
+                    }}
+                  >
+                    ■
+                  </button>
+                ) : chip.cls === 'draft' ? (
+                  <button
+                    type="button"
+                    className="ibtn"
+                    aria-label={`Edit ${s.routine}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenDesigner(s.routine);
+                    }}
+                  >
+                    ✎
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="ibtn run"
+                    aria-label={`Run ${s.routine}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void handleRun(s.routine);
+                    }}
+                  >
+                    ▶
+                  </button>
+                )}
+                {/* Direct per-routine History link (mock): opens the
+                    designer's History tab without the Design detour. */}
+                <button
+                  type="button"
+                  className="linkbtn"
+                  aria-label={`History for ${s.routine}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenDesigner(s.routine, 'runs');
+                  }}
                 >
-                  <td>
-                    <div className="rname">{s.routine}</div>
-                    {def && (
-                      <div className="rmeta">
-                        {trackCount} track{trackCount === 1 ? '' : 's'} · {stepCount} step
-                        {stepCount === 1 ? '' : 's'}
-                      </div>
-                    )}
-                  </td>
-                  <td>
-                    <div className="statuscell">
-                      <span className={`chip ${chip.cls}`}>
-                        <span className="d" />
-                        {chip.text}
-                      </span>
-                      {status && status.missed > 0 && (
-                        <span className="badge-miss">
-                          ⚠ missed {formatMissedCount(status.missed)} fire(s)
-                        </span>
-                      )}
-                      {status?.lastRefusal && (
-                        <div className="refusal-note">
-                          last fire refused: {status.lastRefusal.reason}
-                        </div>
-                      )}
-                      {status?.lastSkip && (
-                        <div className="skip-note">last fire skipped: {status.lastSkip.reason}</div>
-                      )}
-                    </div>
-                  </td>
-                  <td>
-                    <div className="trig">
-                      {trigger ? formatTrigger(trigger) : '—'}
-                      {trigger?.type === 'schedule' && trigger.if_missed && (
-                        <div className="win">{formatIfMissed(trigger.if_missed)}</div>
-                      )}
-                    </div>
-                  </td>
-                  <td>
-                    {!newestTerminal ? (
-                      <div className="res">
-                        <span className="t">never run</span>
-                      </div>
-                    ) : newestTerminal.state === 'completed' ? (
-                      <div className="res">
-                        <span className="ok">✓ ok</span>{' '}
-                        <span className="t">
-                          {formatUtc(newestTerminal.finishedUnix ?? newestTerminal.startedUnix)}
-                        </span>
-                      </div>
-                    ) : newestTerminal.state === 'failed' ? (
-                      <div className="res">
-                        <span className="fail">✕ failed</span>{' '}
-                        <span className="t">
-                          {formatUtc(newestTerminal.finishedUnix ?? newestTerminal.startedUnix)}
-                        </span>
-                        {failureCauseByRunId[newestTerminal.runId] && (
-                          <div className="detail">{failureCauseByRunId[newestTerminal.runId]}</div>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="res">
-                        <span className="t">{formatRunState(newestTerminal.state)}</span>
-                      </div>
-                    )}
-                  </td>
-                  <td>
-                    <div className="nextfire">
-                      {nextFireAt !== undefined ? formatUtc(nextFireAt) : <span className="none">—</span>}
-                    </div>
-                  </td>
-                  <td>
-                    <span className={`txmode ${tx.cls}`}>{tx.text}</span>
-                  </td>
-                  {/* item 8 (bd tuxlink-iizmk): `actcell` lifts `.ops td`'s
-                      overflow:hidden so the row menu (absolutely positioned
-                      inside `.rowact` below) isn't clipped by its own cell. */}
-                  <td className="actcell">
-                    <div className="rowact">
-                      {liveRun ? (
-                        <button
-                          type="button"
-                          className="ibtn stop"
-                          aria-label={`Stop ${s.routine}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void handleStop(liveRun.runId);
-                          }}
-                        >
-                          ■
-                        </button>
-                      ) : chip.cls === 'draft' ? (
-                        <button
-                          type="button"
-                          className="ibtn"
-                          aria-label={`Edit ${s.routine}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onOpenDesigner(s.routine);
-                          }}
-                        >
-                          ✎
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          className="ibtn run"
-                          aria-label={`Run ${s.routine}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void handleRun(s.routine);
-                          }}
-                        >
-                          ▶
-                        </button>
-                      )}
+                  History
+                </button>
+                <button
+                  type="button"
+                  className="ibtn"
+                  aria-label={`Actions for ${s.routine}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setPendingDelete(null);
+                    setOpenMenuFor(menuOpen ? null : s.routine);
+                  }}
+                >
+                  ⋯
+                </button>
+                {/* item 8 (bd tuxlink-iizmk): the menu lives inside the row's
+                    position:relative actions box; as a sibling its
+                    position:absolute resolved against the app window and
+                    painted under the chrome. stopPropagation keeps a menu
+                    click from also firing the row's open-designer click. */}
+                {menuOpen && (
+                  <div className="rowmenu" role="menu" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setOpenMenuFor(null);
+                        onOpenDesigner(s.routine);
+                      }}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => void handleToggleEnabled(s.routine, s.enabled)}
+                    >
+                      {s.enabled ? 'Disable' : 'Enable'}
+                    </button>
+                    {pendingDelete === s.routine ? (
                       <button
                         type="button"
-                        className="ibtn"
-                        aria-label={`Actions for ${s.routine}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setPendingDelete(null);
-                          setOpenMenuFor(menuOpen ? null : s.routine);
-                        }}
+                        role="menuitem"
+                        className="danger"
+                        onClick={() => void handleDeleteConfirmed(s.routine)}
                       >
-                        ⋯
+                        Confirm delete
                       </button>
-                      {/* item 8 (bd tuxlink-iizmk): the menu MUST live inside
-                          `.rowact` — the row's only position:relative anchor.
-                          As a td-level sibling its position:absolute resolved
-                          against the app window itself, painting the menu at
-                          the window's top-right corner underneath the chrome
-                          ("opens behind the main window"). */}
-                      {menuOpen && (
-                        <div className="rowmenu" role="menu">
-                          <button
-                            type="button"
-                            role="menuitem"
-                            onClick={() => {
-                              setOpenMenuFor(null);
-                              onOpenDesigner(s.routine);
-                            }}
-                          >
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            role="menuitem"
-                            onClick={() => void handleToggleEnabled(s.routine, s.enabled)}
-                          >
-                            {s.enabled ? 'Disable' : 'Enable'}
-                          </button>
-                          {pendingDelete === s.routine ? (
-                            <button
-                              type="button"
-                              role="menuitem"
-                              className="danger"
-                              onClick={() => void handleDeleteConfirmed(s.routine)}
-                            >
-                              Confirm delete
-                            </button>
-                          ) : (
-                            <button type="button" role="menuitem" onClick={() => setPendingDelete(s.routine)}>
-                              Delete
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                    ) : (
+                      <button type="button" role="menuitem" onClick={() => setPendingDelete(s.routine)}>
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
       </div>
       )}
 

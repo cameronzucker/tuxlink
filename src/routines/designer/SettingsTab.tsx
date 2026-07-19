@@ -60,7 +60,7 @@
  * schedules is the validator's `MULTIPLE_SCHEDULES` finding to catch, not
  * this component's).
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   acknowledgeAutomatic,
   deletePreset,
@@ -97,6 +97,12 @@ export interface SettingsTabProps {
    *  blocks; returns the `SaveResult` on success, `null` on a genuine
    *  backend/parse error (already surfaced via the valbar by the caller). */
   onSaved: () => Promise<SaveResult | null>;
+  /** Reports the routine's enabled state upward whenever this component
+   *  learns it (the mount fetch, and every successful toggle) so the
+   *  designer header's always-visible enabled fact-chip (tuxlink-iizmk
+   *  round 2) tracks the same value this section displays. Optional: the
+   *  section's own fetch/toggle behavior is unchanged without it. */
+  onEnabledChange?: (enabled: boolean) => void;
 }
 
 /** consent.rs's whole module of consent-closure finding codes (task brief
@@ -125,7 +131,7 @@ interface StationSetFormState {
 
 const EMPTY_STATION_SET_FORM: StationSetFormState = { name: '', callsigns: '' };
 
-export function SettingsTab({ draft, findings, onChange, onSaved }: SettingsTabProps) {
+export function SettingsTab({ draft, findings, onChange, onSaved, onEnabledChange }: SettingsTabProps) {
   // ------------------------------------------------------------------------
   // Transmit-mode section visibility: the action registry, self-fetched
   // (mirrors StepInspector/PaletteRail) — never a hardcoded action-name list.
@@ -234,6 +240,10 @@ export function SettingsTab({ draft, findings, onChange, onSaved }: SettingsTabP
   // listing's shape, does).
   // ------------------------------------------------------------------------
   const [enabled, setEnabledState] = useState(false);
+  // Ref'd so a changing `onEnabledChange` identity never re-fires the fetch
+  // (RoutineDesigner's onDraftChangeRef convention).
+  const onEnabledChangeRef = useRef(onEnabledChange);
+  onEnabledChangeRef.current = onEnabledChange;
   useEffect(() => {
     let cancelled = false;
     listRoutines()
@@ -241,6 +251,7 @@ export function SettingsTab({ draft, findings, onChange, onSaved }: SettingsTabP
         if (cancelled) return;
         const mine = Array.isArray(list) ? list.find((r) => r.routine === draft.routine) : undefined;
         setEnabledState(mine?.enabled ?? false);
+        if (mine) onEnabledChangeRef.current?.(mine.enabled);
       })
       .catch(() => {
         if (!cancelled) setEnabledState(false);
@@ -260,7 +271,10 @@ export function SettingsTab({ draft, findings, onChange, onSaved }: SettingsTabP
       const result = await setEnabled(draft.routine, !enabled);
       setEnableFindings(result.findings);
       setEnableBlockedFlag(result.blocked);
-      if (!result.blocked) setEnabledState(result.enabled);
+      if (!result.blocked) {
+        setEnabledState(result.enabled);
+        onEnabledChangeRef.current?.(result.enabled);
+      }
     } catch (e) {
       setEnableFindings([
         { code: 'ERROR', severity: 'error', routine: draft.routine, message: formatUiError(e) },
@@ -587,9 +601,7 @@ export function SettingsTab({ draft, findings, onChange, onSaved }: SettingsTabP
                   run once on launch
                 </button>
               </span>
-              <span className="fval" style={{ color: 'var(--text-faint)', fontSize: '11px' }}>
-                misses are recorded visibly either way
-              </span>
+              <span className="fval note-inline">misses are recorded visibly either way</span>
             </div>
             {existingSchedule && (
               <button
@@ -653,7 +665,7 @@ export function SettingsTab({ draft, findings, onChange, onSaved }: SettingsTabP
           </div>
         </section>
 
-        <section className="sect" data-testid="settings-entities-section">
+        <section className="sect wide" data-testid="settings-entities-section">
           <div className="sect-head">
             <span className="sect-title">Referenced entities</span>
             <span className="sect-sub">@preset / @station-set — used by step params</span>

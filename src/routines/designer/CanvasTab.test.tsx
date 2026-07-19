@@ -74,6 +74,18 @@ describe('CanvasTab — rendering', () => {
     expect(screen.getByTestId('tx-dot-s1')).toBeInTheDocument(); // radio.connect: transmits:true
     expect(screen.queryByTestId('tx-dot-s2')).not.toBeInTheDocument(); // local.notify: transmits:false
   });
+
+  // tuxlink-iizmk round 2 (mock node-head): the step id renders as a mono
+  // BADGE beside the human label, split off canvasModel's "<id> <label>"
+  // title; the head no longer leads with the raw id.
+  it('splits the step id out of the node head into a .node-id badge', () => {
+    renderTab();
+    const badge = screen.getByTestId('node-s1').querySelector('.node-id');
+    expect(badge).not.toBeNull();
+    expect(badge!.textContent).toBe('s1');
+    // The trigger node has no id prefix and gets no badge.
+    expect(screen.getByTestId('node-trigger-0').querySelector('.node-id')).toBeNull();
+  });
 });
 
 describe('CanvasTab — selection', () => {

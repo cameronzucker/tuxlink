@@ -494,6 +494,35 @@ body {
   font-family: inherit;
 }
 
+/* Classic (in-layout) scrollbars, app-wide (operator decree 2026-07-18).
+ * WebKitGTK's native scrollbars are OVERLAY bars composited on top of the
+ * page, so any surface layered over a scrollable region (the Elmer pane over
+ * a scrollable routine, menus, popovers) gets a floating scrollbar painted
+ * across it, regardless of z-index. Styling ::-webkit-scrollbar opts every
+ * scroller into classic bars that occupy layout space inside their own box,
+ * which makes paint-over structurally impossible. Colors ride the theme
+ * tokens, so light presets (color-scheme block below) stay correct. */
+*::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-dim) 40%, transparent);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-dim) 65%, transparent);
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 a {
   color: var(--accent);
   text-decoration: none;

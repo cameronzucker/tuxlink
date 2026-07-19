@@ -12,6 +12,7 @@ import { listen } from '@tauri-apps/api/event';
 import type { SurfaceId, DockSnapshot } from './dockState';
 import { dockBack } from './dockState';
 import { PopTitleBar } from './PopTitleBar';
+import { ResizeHandles } from '../shell/chrome/ResizeHandles';
 import { SURFACE_REGISTRY } from './surfaceRegistry';
 import { ConsentGate } from '../routines/ConsentGate';
 import {
@@ -159,6 +160,11 @@ export function PoppedSurfaceHost({ surface }: { surface: SurfaceId }) {
 
   return (
     <div className="pop-surface-host" data-testid={`pop-surface-host-${surface}`}>
+      {/* Borderless (decorations:false) GTK windows have no native resize
+       *  grips; the pop-* capabilities already grant allow-start-resize-
+       *  dragging, but this host never mounted the handles the main window
+       *  and Compose use (tuxlink-dwcqx — operator live-test 2026-07-18). */}
+      <ResizeHandles />
       <PopTitleBar title={entry.title} onDockBack={runDockBack} onClose={runClose} />
       <div className="pop-surface-body">
         {/* Consent modal mounts here for Routines only (spec §6). Whenever this

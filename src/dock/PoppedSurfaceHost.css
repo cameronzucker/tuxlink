@@ -13,6 +13,7 @@
   flex-direction: column;
   height: 100vh;
   background: var(--bg);
+  position: relative; /* anchor the absolute ResizeHandles to the window */
 }
 
 .pop-surface-body {
