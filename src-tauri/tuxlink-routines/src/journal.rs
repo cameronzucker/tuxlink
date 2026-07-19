@@ -29,6 +29,18 @@ pub enum RunState {
     Interrupted,
 }
 
+/// Which consent class a parked run is waiting on (spec, O3/O4 round):
+/// `Transmit` = the RF consent gate; `Write` = the `writes_config` gate.
+/// Snake_case on the wire (`"transmit"` / `"write"`), matching every other
+/// journal tag. The camelCase `parkKind` on the Tauri APP EVENT payload is a
+/// different surface — do not "fix" the difference.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParkKind {
+    Transmit,
+    Write,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RunEvent {
@@ -65,6 +77,12 @@ pub enum RunEvent {
         /// app layer's `rig_id_from_params`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rig: Option<String>,
+        /// Which consent class this parked-state entry is waiting on,
+        /// populated only on park entries once the emitters land. Additive
+        /// (same pattern as `step`/`rig`): journals written before this field
+        /// parse as `None`, and `None` serializes to the legacy shape.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        park_kind: Option<ParkKind>,
     },
     /// A branch decision, durable (observability decree O1, wire-walk
     /// 2026-07-18): the resolved condition value, which arm was chosen, and
@@ -100,6 +118,19 @@ pub enum RunEvent {
     StepErr {
         step: StepId,
         error: StepError,
+    },
+    /// A `call` control step started a child run (observability decree O3):
+    /// the durable parent-to-child edge History navigates. Navigability, not
+    /// authorization — journals are ONE trust domain (spec §6).
+    CallChild { step: StepId, child_run_id: String },
+    /// An `end` control step terminated the track (observability decree O4):
+    /// `failed` says which end kind it was, `reason` carries the authored
+    /// message when the definition has one.
+    EndReached {
+        step: StepId,
+        failed: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
     },
     /// Terminal entry. A journal without one is an interrupted run.
     RunFinished {
@@ -405,6 +436,7 @@ mod tests {
             state: RunState::AwaitingRadio,
             step: None,
             rig: None,
+            park_kind: None,
         })
         .unwrap();
         let raw = std::fs::read_to_string(w.path()).unwrap();
@@ -512,10 +544,16 @@ mod tests {
         let legacy = r#"{"ts_unix":1752400000,"run_id":"run-1","seq":0,"event":{"type":"state_changed","state":"waiting"}}"#;
         let entry: JournalEntry = serde_json::from_str(legacy).unwrap();
         match &entry.event {
-            RunEvent::StateChanged { state, step, rig } => {
+            RunEvent::StateChanged {
+                state,
+                step,
+                rig,
+                park_kind,
+            } => {
                 assert_eq!(*state, RunState::Waiting);
                 assert!(step.is_none());
                 assert!(rig.is_none());
+                assert!(park_kind.is_none());
             }
             other => panic!("expected StateChanged, got {other:?}"),
         }
@@ -530,6 +568,7 @@ mod tests {
             state: RunState::Waiting,
             step: None,
             rig: None,
+            park_kind: None,
         };
         let json = serde_json::to_value(&event).unwrap();
         assert_eq!(
@@ -544,6 +583,7 @@ mod tests {
             state: RunState::AwaitingConsent,
             step: Some(StepId("s2".into())),
             rig: Some("g90".into()),
+            park_kind: None,
         };
         let json = serde_json::to_value(&event).unwrap();
         // StepId is a serde newtype: it rides the wire as a bare string,
@@ -690,6 +730,114 @@ mod tests {
         let found = scan_interrupted(dir.path()).unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].0, "run-all-opaque");
+    }
+
+    // ---- Task B1: call_child / end_reached variants + park_kind (O3/O4) ----
+
+    #[test]
+    fn call_child_round_trips() {
+        let event = RunEvent::CallChild {
+            step: StepId("c1".into()),
+            child_run_id: "run-child-42".into(),
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "type": "call_child",
+                "step": "c1",
+                "child_run_id": "run-child-42"
+            })
+        );
+        let back: RunEvent = serde_json::from_value(json).unwrap();
+        assert_eq!(back, event);
+    }
+
+    #[test]
+    fn end_reached_round_trips_with_reason() {
+        let event = RunEvent::EndReached {
+            step: StepId("e1".into()),
+            failed: true,
+            reason: Some("battery below floor".into()),
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "type": "end_reached",
+                "step": "e1",
+                "failed": true,
+                "reason": "battery below floor"
+            })
+        );
+        let back: RunEvent = serde_json::from_value(json).unwrap();
+        assert_eq!(back, event);
+    }
+
+    #[test]
+    fn end_reached_none_reason_omits_key_and_round_trips() {
+        // skip_serializing_if keeps the None-shape free of a "reason" key,
+        // and a line without the key parses back as None.
+        let event = RunEvent::EndReached {
+            step: StepId("e1".into()),
+            failed: false,
+            reason: None,
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({"type": "end_reached", "step": "e1", "failed": false})
+        );
+        let back: RunEvent = serde_json::from_value(json).unwrap();
+        assert_eq!(back, event);
+    }
+
+    #[test]
+    fn state_changed_park_kind_round_trips() {
+        // Both kinds ride the wire snake_case and survive the round trip.
+        for (kind, wire) in [(ParkKind::Transmit, "transmit"), (ParkKind::Write, "write")] {
+            let event = RunEvent::StateChanged {
+                state: RunState::AwaitingConsent,
+                step: Some(StepId("s2".into())),
+                rig: None,
+                park_kind: Some(kind),
+            };
+            let json = serde_json::to_value(&event).unwrap();
+            assert_eq!(
+                json,
+                serde_json::json!({
+                    "type": "state_changed",
+                    "state": "awaiting_consent",
+                    "step": "s2",
+                    "park_kind": wire
+                })
+            );
+            let back: RunEvent = serde_json::from_value(json).unwrap();
+            assert_eq!(back, event);
+        }
+    }
+
+    #[test]
+    fn state_changed_without_park_kind_parses_as_none_and_none_omits_key() {
+        // Absence tolerated: every journal written before this field parses
+        // with park_kind = None...
+        let legacy = r#"{"type":"state_changed","state":"awaiting_consent","step":"s2"}"#;
+        let event: RunEvent = serde_json::from_str(legacy).unwrap();
+        match &event {
+            RunEvent::StateChanged { park_kind, .. } => assert!(park_kind.is_none()),
+            other => panic!("expected StateChanged, got {other:?}"),
+        }
+        // ...and a None park_kind serializes back to that same legacy shape
+        // (no "park_kind" key), keeping un-parked entries byte-identical.
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "type": "state_changed",
+                "state": "awaiting_consent",
+                "step": "s2"
+            })
+        );
     }
 
     #[test]

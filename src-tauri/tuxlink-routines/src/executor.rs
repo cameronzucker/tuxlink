@@ -308,6 +308,7 @@ async fn run_action_step_shared(
                     state: RunState::AwaitingConsent,
                     step: Some(step.id.clone()),
                     rig,
+                    park_kind: None,
                 },
             );
             let parked = tokio::select! {
@@ -321,6 +322,7 @@ async fn run_action_step_shared(
                         state: RunState::Running,
                         step: Some(step.id.clone()),
                         rig: None,
+                        park_kind: None,
                     },
                 ),
                 Err(err) => {
@@ -588,6 +590,7 @@ async fn run_track_steps(
                                 // (tuxlink-xvd1i).
                                 step: Some(c.id.clone()),
                                 rig: None,
+                                park_kind: None,
                             },
                         );
                         tokio::select! {
@@ -600,6 +603,7 @@ async fn run_track_steps(
                                 state: RunState::Running,
                                 step: Some(c.id.clone()),
                                 rig: None,
+                                park_kind: None,
                             },
                         );
                         idx += 1;
@@ -1209,6 +1213,7 @@ mod tests {
                 state: RunState::Waiting,
                 step: Some(StepId("d1".into())),
                 rig: None,
+                park_kind: None,
             },
             "the Waiting entry must name the delay control step"
         );
@@ -1218,6 +1223,7 @@ mod tests {
                 state: RunState::Running,
                 step: Some(StepId("d1".into())),
                 rig: None,
+                park_kind: None,
             },
             "the Running resume must name the same step, closing the window exactly"
         );
@@ -1554,9 +1560,9 @@ mod tests {
         let states: Vec<(RunState, Option<StepId>, Option<String>)> = entries
             .iter()
             .filter_map(|e| match &e.event {
-                RunEvent::StateChanged { state, step, rig } => {
-                    Some((*state, step.clone(), rig.clone()))
-                }
+                RunEvent::StateChanged {
+                    state, step, rig, ..
+                } => Some((*state, step.clone(), rig.clone())),
                 _ => None,
             })
             .collect();
@@ -1621,6 +1627,7 @@ mod tests {
                     state: RunState::AwaitingConsent,
                     step,
                     rig,
+                    ..
                 } => Some((step.clone(), rig.clone())),
                 _ => None,
             })
