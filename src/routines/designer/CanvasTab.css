@@ -265,13 +265,25 @@
   justify-content: center;
 }
 
+/* Arm label ("ok" / "err") sits INLINE to the left of the connector,
+ * vertically centered on the line, per the approved mock's own arm rows.
+ * The prior placement (stacked 22px above the edge's center) collided with
+ * the 28px insert circle, whose opaque fill painted over the bottom half of
+ * the glyphs (operator-reported layering defect, 2026-07-18). The
+ * .branch-out 60px indent is what reserves the horizontal room. */
 .edge .lbl {
   position: absolute;
-  top: -22px;
-  left: 50%;
-  transform: translateX(-50%);
+  right: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  margin-right: 6px;
   font-family: var(--mono);
   font-size: var(--rt-fine);
+  white-space: nowrap;
+}
+
+.edge .lbl::after {
+  content: ' →';
 }
 
 .lbl.ok {
