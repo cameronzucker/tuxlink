@@ -310,7 +310,9 @@ fn run_vara_ini_apply_with(
     // starts take tens of seconds and `snapshot()` (the UI status poll)
     // must not block for that long.
     let slot_ref = &mut *slot_guard;
-    let stop_edit = || -> Result<(Option<PathBuf>, bool, Option<u16>), String> {
+    // `mut`: the closure mutates through its captured `&mut` slot (take()),
+    // so it is FnMut and the direct-call arm below needs the binding mutable.
+    let mut stop_edit = || -> Result<(Option<PathBuf>, bool, Option<u16>), String> {
         // Pre-read only to learn the currently-configured cmd port (the
         // stop chain needs it to verify VARA actually went dark). The
         // authoritative content read happens AFTER the stop + settle.
