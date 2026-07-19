@@ -24,6 +24,8 @@
 - **No branch-built binary runs against the real journal/config dirs mid-arc.** Only the converge build (origin/main) touches the operator's live dirs; the acceptance task rebuilds converge AFTER all merges.
 - Journals are ONE trust domain (spec §6): `call_child` is navigability, not authorization. Do not add per-routine ACLs to `routines_journal_get` as an "improvement."
 - Kill test fixtures with SIGKILL, never SIGSEGV. vitest invoke-mocks are called with NO args at teardown; follow existing `src/routines` test patterns.
+- **Oversized tasks:** B2 and C3 are each dispatched as TWO sequential subagent chunks along their built-in seam (B2: steps 1-4 leaf, then 5-6 monolith; C3: step 1 leaf, then steps 2+ monolith) so no single context carries the whole task.
+- **ORCH-1:** any parallel analysis/review dispatch persists its findings to a file (dev/adversarial/ or the PR body) before returning; findings that exist only in a subagent's final message are lost context.
 - Every task: BEFORE starting, read `docs/pitfalls/testing-pitfalls.md` and follow TDD (write failing test -> run it, verify FAIL -> implement -> run green). BEFORE marking complete: re-check against testing-pitfalls, confirm error paths covered, run the task's named test commands and paste output. After every PR group: minimum three review rounds; continue past three while substantive findings remain.
 - Conventional commits with scope, `Agent: alder-oriole-cedar` trailer + `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
 - Do NOT touch `.local/converge-build-worktree`. Do NOT run any transmit-capable binary. Do NOT add safeguards beyond spec.
@@ -86,7 +88,7 @@ Wire tags `call_child` / `end_reached`; field `park_kind` (see Global Constraint
 ### Task B2: invoker split, cancellation, registry bridge, CallChild emission, orphan-journal fix
 
 **Files:**
-- Modify: `src-tauri/tuxlink-routines/src/engine.rs` (RoutineInvoker trait, EngineChildInvoker ~354-431, run_internal ~204-283, DryRunChildInvoker ~379-411, NoInvoker ~310-326), `src-tauri/tuxlink-routines/src/executor.rs` (Call arm ~607-694), `src-tauri/tuxlink-routines/src/fakes.rs` (FakeInvoker ~199)
+- Modify: `src-tauri/tuxlink-routines/src/compose.rs` (RoutineInvoker trait + Provenance + MAX_CALL_DEPTH + its F&F tests), `src-tauri/tuxlink-routines/src/engine.rs` (impls: NoInvoker ~310, EngineChildInvoker ~333, DryRunChildInvoker; run_internal ~204-283; RunHandle), `src-tauri/tuxlink-routines/src/executor.rs` (Call arm ~607-694), `src-tauri/tuxlink-routines/src/fakes.rs` (FakeInvoker ~199)
 - Modify: `src-tauri/src/routines/session.rs` (registry insertion ~437-464; new `SessionChildInvoker`)
 - Test: engine.rs + executor.rs tests; monolith session tests
 
@@ -107,9 +109,9 @@ impl ChildHandle {
     /// the receiver in their await_outcome. CALLERS (the executor) await
     /// only through the trait fn.
     pub fn from_parts(run_id: String, cancel: CancellationToken,
-        done: tokio::sync::oneshot::Receiver<RunOutcomeMsg>) -> Self;
+        done: tokio::sync::oneshot::Receiver<RunOutcome>) -> Self;
     pub fn into_parts(self) -> (String, CancellationToken,
-        tokio::sync::oneshot::Receiver<RunOutcomeMsg>);
+        tokio::sync::oneshot::Receiver<RunOutcome>);
 }
 /// Call-site context the executor already holds (ExecCtx); carried so the
 /// impl can gate + register without global state.
@@ -270,7 +272,7 @@ pub fn closure_digest(c: &ConsentClosure) -> String;
 
 ### Task C2: `writes_config` flag + executor park + park kinds
 
-**Files:** Modify `src-tauri/tuxlink-routines/src/action.rs` (ActionDescriptor gains `writes_config: bool`; every existing descriptor literal gains `writes_config: false`), `executor.rs` (~283-317), `dryrun.rs` (~93-97 mirror; forced-attended-false unchanged), leaf `consent.rs` (ConsentPort::park gains `kind: ParkKind`), `src-tauri/tuxlink-routines/src/fakes.rs` (`FakeConsent::park` gains the `kind` param or the leaf won't compile), `src-tauri/src/routines/consent.rs` (ConsentRegistry), `src-tauri/src/routines/events.rs` (AwaitingConsent event — **the app-event payload field is camelCase `parkKind`**; the JOURNALED state_changed field is snake_case `park_kind`; see Global Constraints), the park-site journal emission; test executor.rs.
+**Files:** Modify `src-tauri/tuxlink-routines/src/action.rs` (ActionDescriptor gains `writes_config: bool`), the descriptor LITERAL sites (they are NOT in action.rs): `src-tauri/src/routines/actions/{cat,local,data,radio}.rs` + leaf `dryrun.rs`, `fakes.rs`, `executor.rs` test literals, `validate/fleet.rs` (every literal gains `writes_config: false`), `executor.rs` (~283-317), `dryrun.rs` (~93-97 mirror; forced-attended-false unchanged), leaf `consent.rs` (ConsentPort::park gains `kind: ParkKind`), `src-tauri/tuxlink-routines/src/fakes.rs` (`FakeConsent::park` gains the `kind` param or the leaf won't compile), `src-tauri/src/routines/consent.rs` (ConsentRegistry), `src-tauri/src/routines/events.rs` (AwaitingConsent event — **the app-event payload field is camelCase `parkKind`**; the JOURNALED state_changed field is snake_case `park_kind`; see Global Constraints), the park-site journal emission; test executor.rs.
 
 Park predicate `ctx.attended && (d.transmits || d.writes_config)`; kind = Write iff `writes_config && !transmits`, else Transmit. Retry-wrapped writes park per attempt.
 
@@ -280,7 +282,7 @@ Park predicate `ctx.attended && (d.transmits || d.writes_config)`; kind = Write 
 
 ### Task C3: write_ack + digests, validator codes, gates, child re-verification
 
-**Files:** Modify `src-tauri/tuxlink-routines/src/types.rs`, `validate/consent.rs`, `src-tauri/src/routines/commands.rs` (~382-402 strip, ~442-450 validate_draft, ~670-681 run path, ack commands), `src-tauri/src/routines/session.rs` (start gate + ExecCtx threading + SessionChildInvoker verification), `executor.rs`/`engine.rs` (ExecCtx `root_digests`); tests in each.
+**Files:** Modify `src-tauri/tuxlink-routines/src/types.rs`, `validate/consent.rs`, `src-tauri/tuxlink-mcp-core/src/router.rs` (the CLOSED routines tool-list pin ~2482: clarify its coverage comment; the sorted-equality pin auto-asserts the new commands' absence when the expected list is NOT extended, plus add the explicit acknowledge_write absence assertion), `src-tauri/src/routines/commands.rs` (~382-402 strip, ~442-450 validate_draft, ~670-681 run path, ack commands), `src-tauri/src/routines/session.rs` (start gate + ExecCtx threading + SessionChildInvoker verification), `executor.rs`/`engine.rs` (ExecCtx `root: Option<RootConsent>`); tests in each.
 
 **Ack type (exact, load-bearing for E2 and the §14 amendment):** REUSE the existing `TransmitAck` struct for both acks — it gains `#[serde(default)] pub closure_digest: Option<String>`; `RoutineDef` gains `#[serde(default)] pub write_ack: Option<TransmitAck>`. Serialized fields: `by`, `at`, `closure_digest`.
 Validator codes: `AUTO_WRITE_UNACKED` (Error; missing/empty/digest-mismatched), `AUTO_TX_UNACKED` gains the digest-mismatch clause (digest-less legacy == stale == fires), `MIXED_MODE_STALL_WRITE` (Warning), `ATTENDED_WRITE_UNDER_SCHEDULE` (Warning), `WRITE_VALUE_RUNTIME` (Warning; message exactly `step "<id>" write param "<key>" is "<$ref>" - the value is chosen at run time by whoever starts the run`).
@@ -344,7 +346,7 @@ async fn read_app_status(&self) -> Result<serde_json::Value, String>; // ServerI
 Descriptor: `data.find_stations`, "Find gateway stations", `needs_internet:true` only. Params:
 ```rust
 #[derive(Deserialize)] struct FindStationsParams {
-  #[serde(default)] modes: Vec<crate::catalog::ListingMode>, // kebab-case enum, same as data.stationlist_update (data.rs ~418) — Vec<String> would accept garbage
+  #[serde(default)] modes: Vec<crate::catalog::stations::ListingMode>, // kebab-case enum, same as data.stationlist_update (data.rs ~418) — Vec<String> would accept garbage
   #[serde(default)] bands: Vec<String>,
   #[serde(default)] history_hours: Option<u32>, // validate <= 720 via the same helper the MCP port uses (validate_history_hours, importable) — reject verbatim
   #[serde(default)] limit: Option<usize> }     // Some(0) -> invalid params
@@ -370,7 +372,7 @@ Params `{drive_level: u8}`; `>100` invalid params BEFORE any read. Output `{"fie
 
 ### Task D6: dry-run canned shapes + authoring affordances
 
-**Files:** Modify `src-tauri/tuxlink-routines/src/action.rs` (descriptor gains `example_params: Option<&'static str>`, `allowed_values: Option<(&'static str, &'static [&'static str])>`, AND `dry_run_shape: Option<fn(&serde_json::Value) -> serde_json::Value>` — fn pointer keeps the descriptor `Copy` + `'static`, MSRV-safe; ALL descriptor literals incl. D3/D4/D5's new ones gain the fields — this task runs LAST in group D for that reason), `src-tauri/tuxlink-routines/src/dryrun.rs` + `fakes.rs` (**the dry-run mechanism lives HERE, not in a monolith merge** — round-2 P1-5: `DryRunScript.outcomes` is a per-action-NAME queue replayed order-blind by a params-blind fake, so 13 `data.read` sources cannot ride it; instead `build_dryrun_registry`/`apply_default` consult the descriptor's `dry_run_shape` with the RESOLVED params when nothing was scripted for that action — `data.read` matches on `source`, unknown/`$ref` source falls through to the optimistic default; FakeAction gains the params-aware outcome mode), `validate/contracts.rs` (`UNKNOWN_READ_SOURCE` Error: literal non-`$` `source` outside allowed_values; **`contracts::check` gains a `ctx: &dyn ValidationContext` param** — it is deliberately pure today, so the `validate/mod.rs` call site and the module-doc "pure over def" claim both update; `ValidationContext::action_descriptor` already returns the full descriptor), ActionInfo DTO (commands.rs) + `src/routines/routinesApi.ts` ActionInfo (gain `writes_config`, `example_params`). Scripted outcomes (explicit `DryRunScriptDto`) still take precedence over `dry_run_shape`.
+**Files:** Modify `src-tauri/tuxlink-routines/src/action.rs` (descriptor gains `example_params: Option<&'static str>`, `allowed_values: Option<(&'static str, &'static [&'static str])>`, AND `dry_run_shape: Option<fn(&serde_json::Value) -> serde_json::Value>` — fn pointer keeps the descriptor `Copy` + `'static`, MSRV-safe; ALL descriptor literals gain the fields — literal sites: `src-tauri/src/routines/actions/{cat,local,data,radio,find_stations,docs_search,config_write}.rs` + leaf `dryrun.rs`/`fakes.rs`/`executor.rs`-tests/`validate/fleet.rs`; this task runs LAST in group D for that reason), `src-tauri/tuxlink-routines/src/dryrun.rs` + `fakes.rs` (**the dry-run mechanism lives HERE, not in a monolith merge** — round-2 P1-5: `DryRunScript.outcomes` is a per-action-NAME queue replayed order-blind by a params-blind fake, so 13 `data.read` sources cannot ride it; instead `build_dryrun_registry`/`apply_default` consult the descriptor's `dry_run_shape` with the RESOLVED params when nothing was scripted for that action — `data.read` matches on `source`, unknown/`$ref` source falls through to the optimistic default; FakeAction gains the params-aware outcome mode), `validate/contracts.rs` (`UNKNOWN_READ_SOURCE` Error: literal non-`$` `source` outside allowed_values; **`contracts::check` gains a `ctx: &dyn ValidationContext` param** — it is deliberately pure today, so the `validate/mod.rs` call site and the module-doc "pure over def" claim both update; `ValidationContext::action_descriptor` already returns the full descriptor), ActionInfo DTO (commands.rs) + `src/routines/routinesApi.ts` ActionInfo (gain `writes_config`, `example_params`). Scripted outcomes (explicit `DryRunScriptDto`) still take precedence over `dry_run_shape`.
 
 Canned outputs (exact, all of them): `data.find_stations` -> `{"gateways":[],"callsigns":["DRYRUN-1"],"fetched_at_ms":null,"operator_grid":null,"dry_run":true}`; `data.read` per source: `grid` -> `{"grid":"AA00aa"}`, `modem_status` -> `{"kind":"idle","connected":false,"state":"idle","running":[],"selected":null,"conflict":false}`, `backend_status` -> `{"connected":false,"transport":"","state":"not_configured"}`, `app_status` -> `{"name":"tuxlink","version":"0.0.0-dryrun","armed":false,"armed_remaining_secs":0,"tainted":false,"taint_reason":null}`, `config` -> `{"connect_to_cms":false,"transport":"CmsSsl","host":"","callsign":"N0CALL","grid":"AA00"}`, `ardop_config` -> `{"host":"127.0.0.1","port":8515,"drive_level":80,"bandwidth":500}`, `vara_config` -> `{"host":"127.0.0.1","port":8300,"bandwidth":2300,"drive_level":0}`, `packet_config` -> `{"kiss_host":"127.0.0.1","kiss_port":8001,"baud":9600,"tx_delay":300}`, `rig_config` -> `{"rig_hamlib_model":null,"rigctld_host":"127.0.0.1","rigctld_port":4532,"rigctld_binary":"rigctld","close_serial_sequencing":false,"live_vfo_poll":false,"qsy_on_fail":false,"cat_serial_path":null,"cat_baud":19200}`, existing sources (`inbox_summary` -> `{"total":0,"unread":0}`, `space_weather` -> `null`, `last_connected_gateway` -> honest-gap error unchanged, `heard_stations` unchanged); `config.set_ardop` -> `{"field":"drive_level","old":0,"new":0,"dry_run":true}`; `data.docs_search` -> `{"hits":[],"dry_run":true}`. All carry `"dry_run":true` where the object shape permits an extra field (objects yes; bare `null` for space_weather stays bare).
 `example_params`: `data.read` -> `{"source":"modem_status"}`, `data.find_stations` -> `{"modes":["vara-hf"],"limit":3}`, `data.docs_search` -> `{"query":"find stations"}`, `config.set_ardop` -> `{"drive_level":80}`; existing actions -> None.
@@ -411,7 +413,7 @@ Visibility (closure-based, NOT direct-step scan): transmit section iff `closure.
 
 ### Task F1: user-guide routines-actions reference page
 
-**Files:** Create `docs/user-guide/<next-number>-routines-actions.md` (follow existing chapter numbering + front-matter): action catalog (names, labels, params with examples, all 13 `data.read` sources, consent classes incl. writes/acks in plain words). Verify it lands in the docs FTS index (`search/docs_index.rs` build path).
+**Files:** Create `docs/user-guide/<next-number>-routines-actions.md` (follow existing chapter numbering + front-matter): action catalog (names, labels, params with examples, all 13 `data.read` sources, consent classes incl. writes/acks in plain words). ALSO Modify `src-tauri/src/search/docs_bundle.rs`: `include_str!` the new chapter + extend `BUNDLED_TOPICS` (docs_registry_test FAILS the workspace if a .md exists unregistered — this makes PR F a Rust-compiling PR, not docs-only). The FTS index re-derives via content fingerprint; no SCHEMA_VERSION action.
 - [ ] **Step 1: failing integration test**: docs_search("find stations") returns the new page. **Steps 2-4: FAIL -> implement -> green on R2.** **Step 5: PARENT commits** `docs(user-guide): routines actions reference (searchable by data.docs_search)`. PR; CI by SHA; merge (bare).
 
 ### Task F2: acceptance (SESSION-LEVEL — the parent runs it, never a subagent)
