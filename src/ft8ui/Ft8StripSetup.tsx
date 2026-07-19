@@ -141,6 +141,7 @@ export function Ft8StripSetup({ snapshot, onStarted, onRetry }: Ft8StripSetupPro
       const device = (devices ?? []).find((d) => d.humanName === humanName);
       if (!device) return;
       setBusy(true);
+      setStartError(null);
       try {
         await stopAndAwait(); // release the meter handle first
         await invoke('ft8_set_device', { stableId: device.stableId });

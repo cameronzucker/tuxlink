@@ -88,4 +88,31 @@ describe('Ft8StripSetup', () => {
     fireEvent.click(await screen.findByTestId('ft8-setup-retry'));
     expect(onRetry).toHaveBeenCalled();
   });
+
+  it('stale start-error clears when picking a different device', async () => {
+    render(<Ft8StripSetup snapshot={snap({ configuredDeviceName: 'Digirig Mobile' })} />);
+
+    // Cause Start to fail so the error banner renders
+    vi.mocked(invoke).mockRejectedValueOnce(new Error('Device not ready'));
+    fireEvent.click(await screen.findByTestId('ft8-setup-start'));
+
+    // Wait for error banner to appear
+    await waitFor(() => expect(screen.getByTestId('ft8-setup-start-error')).toBeTruthy());
+
+    // Reset mock to succeed on ft8_set_device
+    vi.mocked(invoke).mockImplementation(async (cmd?: string) => {
+      if (!cmd) return undefined;
+      if (cmd === 'ft8_set_device') return undefined;
+      if (cmd === 'ft8_list_devices') return DEVICES;
+      if (cmd === 'ft8_device_meter') return { rmsDbfs: -32, state: 'live' };
+      return undefined;
+    });
+
+    // Pick a different device
+    const select = await screen.findByTestId('ft8-setup-device-select');
+    fireEvent.change(select, { target: { value: 'Loopback: Analog' } });
+
+    // Error banner should be cleared
+    await waitFor(() => expect(screen.queryByTestId('ft8-setup-start-error')).toBeNull());
+  });
 });
