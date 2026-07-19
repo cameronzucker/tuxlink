@@ -31,6 +31,51 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.95.0](https://github.com/cameronzucker/tuxlink/compare/v0.94.0...v0.95.0) (2026-07-19)
+
+
+### Features
+
+* **mcp:** station-level list_audio_devices; ardop_list_audio_devices becomes a deprecated alias ([b93df32](https://github.com/cameronzucker/tuxlink/commit/b93df3219bb765ba4da930dad174ba2eb6578819))
+* **mcp:** vara_ini_read + vara_ini_apply — Elmer can now configure VARA via its own INI (tuxlink-iww9r step 3) ([f05d938](https://github.com/cameronzucker/tuxlink/commit/f05d9384d9c94c4d543e0caf584ff01de5939ff2))
+* **routines:** call_child + end_reached journal events, park_kind on state_changed (O3/O4 decree) ([f0a5896](https://github.com/cameronzucker/tuxlink/commit/f0a589669e00d943f5599801590d0da26280ac30))
+* **routines:** close the two round-2 engine links — nested $-paths + branch comparisons — and journal branch/skip decree events ([b6834ee](https://github.com/cameronzucker/tuxlink/commit/b6834eef73a22fa2171f5e22cd162232db0869c2))
+* **routines:** config.set_ardop write action + locked drive-level RMW shared with the MCP write path (rank 5) ([3512114](https://github.com/cameronzucker/tuxlink/commit/3512114f32925a5f6bb7610a4021bf5261f6510f))
+* **routines:** data.docs_search (rank 4) ([cf7b194](https://github.com/cameronzucker/tuxlink/commit/cf7b194f77bc83172f106f93c7030c6d91a2dca9))
+* **routines:** data.find_stations — distance-sorted gateway query feeding radio.connect (rank 2) ([a46d2b2](https://github.com/cameronzucker/tuxlink/commit/a46d2b2af5db4758639948ddf279d2d70fd8f2a8))
+* **routines:** data.read config sources with MCP-identical curation (rank 3) ([cb3666b](https://github.com/cameronzucker/tuxlink/commit/cb3666b25252a9bfc1553c0256b806acbc315226))
+* **routines:** data.read sources modem_status/backend_status/app_status (rank 1) ([6a3b96b](https://github.com/cameronzucker/tuxlink/commit/6a3b96ba544a1bf6d959b825e67f94ef573b02a0))
+* **routines:** end_reached events + End reason threads into run_finished with deterministic precedence (O4) ([00e764f](https://github.com/cameronzucker/tuxlink/commit/00e764fbec96acb7834f3ec61a34b640441a546c))
+* **routines:** History renders call/end/park-kind rows with child-run navigation (O3/O4 UI) ([27f0a51](https://github.com/cameronzucker/tuxlink/commit/27f0a51ec108c9d8cc83b74758d38261bc2f2311))
+* **routines:** History step list — every step's params/outputs, branch decisions, skipped steps (decree O5/O6/O7) ([4bf2cfe](https://github.com/cameronzucker/tuxlink/commit/4bf2cfeadfa387d1a35a26c34f4ffef8a80770be))
+* **routines:** mock-v2 human-scale redesign — 13px-floor ramp, settings grid under canvas, fact-chip header, 340px palette, dashboard row cards ([07836f5](https://github.com/cameronzucker/tuxlink/commit/07836f5b3dd396691121f020a398e7f7ed7e4dfd))
+* **routines:** SessionChildInvoker registry bridge — children are UI-cancellable (O3, B2 chunk 2/2) ([acecda8](https://github.com/cameronzucker/tuxlink/commit/acecda8c200d36110ca581bd92e1ccaeb22e2350))
+* **routines:** shape-true dry-run outputs + example params + read-source vocabulary lint (D6) ([5f095e4](https://github.com/cameronzucker/tuxlink/commit/5f095e4b8f889a926b45138d730dbbabda1b374d))
+* **routines:** two-phase invoker split — leaf crate (O3, B2 chunk 1/2) ([f9f108a](https://github.com/cameronzucker/tuxlink/commit/f9f108a1c2ba91c0b798f9e0b0284672c91bb34f))
+* **routines:** write_ack + closure-digest binding on both ack classes — save/enable/start/child-start verification, one validator (C3) ([e2edd1c](https://github.com/cameronzucker/tuxlink/commit/e2edd1c28ebaf41ca213509327329edfdb135fb1))
+* **routines:** writes_config consent class — attended park with park kind end to end ([37b7a2f](https://github.com/cameronzucker/tuxlink/commit/37b7a2ff6d0fcec6975ce8f60004e7f17bbe73f4))
+* **vara:** tuxlink-vara-ini core — round-trip-preserving VARA.ini reader/writer ([f419a84](https://github.com/cameronzucker/tuxlink/commit/f419a848b8f385a3c62b32264bc8cda9df4d1e96))
+* **vara:** VARA.ini stop-edit-start glue — prefix/instance resolution, managed bounce, atomic write + backup (tuxlink-iww9r) ([3057247](https://github.com/cameronzucker/tuxlink/commit/3057247d5f2e026c991b3a781b617761f78d5fda))
+
+
+### Bug Fixes
+
+* **dock:** mount ResizeHandles in popped windows — borderless chrome had no resize grips ([28b3a5e](https://github.com/cameronzucker/tuxlink/commit/28b3a5ea24713e0511704b3356c3774232e34da2))
+* **ft8:** resolve the listener device against the capture enumeration, not the packet one (tuxlink-caxy6) ([2921c7a](https://github.com/cameronzucker/tuxlink/commit/2921c7a5fc9ea5b1ec6b5d0e0d5a08ec0ec249be))
+* **routines:** arm labels sit inline-left of the connector — no longer buried under the insert button ([46a6924](https://github.com/cameronzucker/tuxlink/commit/46a6924e33c840d8d4b8217e69d0c167983a2508))
+* **routines:** tolerant per-line journal decode — unknown future event types become opaque entries instead of corrupting History ([64e1bc9](https://github.com/cameronzucker/tuxlink/commit/64e1bc952d9734e3dc82b5c275220d068b4aad92))
+* **ui:** classic in-layout scrollbars app-wide — overlay bars can no longer paint over layered surfaces ([3b6f466](https://github.com/cameronzucker/tuxlink/commit/3b6f4666eb24c5c051203d1b41a06697814dc53c))
+* **vara:** app session config follows a moved primary cmd port — wire-walk seam closure (tuxlink-iww9r) ([02e285e](https://github.com/cameronzucker/tuxlink/commit/02e285e347f021fa3f6afa4d8b33fa14e09cad06))
+* **vara:** declare the stop-edit closure mut — FnMut via the captured slot borrow ([5df5a39](https://github.com/cameronzucker/tuxlink/commit/5df5a39494acdbbe06d39b633587ffffed93daf6))
+* **vara:** harden VARA.ini apply per Codex adrev — pid attribution, open-serialization, port + backup safety (tuxlink-iww9r) ([276da18](https://github.com/cameronzucker/tuxlink/commit/276da18c41f33309de9621c6f588d1df8727278c))
+* **vara:** never set WINEARCH on launch — it breaks 32-bit prefixes; add live bounce harness ([64911a0](https://github.com/cameronzucker/tuxlink/commit/64911a0a444453892e04039f335bc0d0eb92f4f8))
+* **wwv:** rotate 10 MHz in for dawn/dusk + log the reason on a NoCopy decode (tuxlink-76y11) ([a878c07](https://github.com/cameronzucker/tuxlink/commit/a878c07783dd3191bcc596373dfb4a220b0b54d3))
+
+
+### Refactors
+
+* **routines:** one parameterized consent-closure walk + canonical closure digest (replaces duplicated transmit walks) ([552f217](https://github.com/cameronzucker/tuxlink/commit/552f21783cbc1c9ece5b25c51b83c8687845fe38))
+
 ## [0.94.0](https://github.com/cameronzucker/tuxlink/compare/v0.93.0...v0.94.0) (2026-07-18)
 
 
