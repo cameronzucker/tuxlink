@@ -827,6 +827,24 @@ mod tests {
         l.local_addr().expect("addr").port()
     }
 
+    /// Wait until `/proc/<pid>/cmdline` (lowercased) contains `needle` — i.e.
+    /// the child has finished its fork→exec transition and shows its own
+    /// argv, not the forked copy of the test binary's.
+    fn wait_for_cmdline_contains(pid: u32, needle: &str) {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let cmdline = fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+            if String::from_utf8_lossy(&cmdline).to_lowercase().contains(needle) {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "child {pid} never showed {needle:?} in its cmdline"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
     // ── Resolution ────────────────────────────────────────────────────────
 
     #[test]
@@ -975,6 +993,11 @@ mod tests {
             .args(["-c", "exec -a '/elsewhere/drive_c/VARA2/VARA.exe' sleep 30"])
             .spawn()
             .expect("spawn masquerading child");
+        // In the fork→exec window /proc/<pid>/cmdline still shows the PARENT
+        // argv (the test binary) and attribution would misclassify the record
+        // as stale (this exact flake failed CI on 5df5a394). Wait until the
+        // child has exec'd its masquerading argv0.
+        wait_for_cmdline_contains(child.id(), "vara.exe");
         fs::write(prefix.join(".vara.pid"), child.id().to_string()).unwrap();
 
         assert_eq!(stop_engine_daemon(&prefix, &install_dir), Ok(false));
@@ -1008,6 +1031,11 @@ mod tests {
             .arg("30")
             .spawn()
             .expect("spawn sleep child");
+        // Same fork→exec window as the masquerading test, mirrored: before
+        // exec the cmdline is the test binary's, whose path can contain
+        // "vara" (this worktree does), flipping the classification. Wait
+        // until the child really is `sleep`.
+        wait_for_cmdline_contains(child.id(), "sleep");
         fs::write(prefix.join(".vara.pid"), child.id().to_string()).unwrap();
         assert_eq!(stop_engine_daemon(&prefix, &install_dir), Ok(false));
         assert!(!prefix.join(".vara.pid").exists(), "non-VARA pidfile removed");
