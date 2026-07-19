@@ -78,8 +78,9 @@ use tokio_util::sync::CancellationToken;
 
 use tuxlink_agent_frontend::endpoint::AgentEndpoint;
 use tuxlink_agent_runner::{
-    run_with_conversation, CallAuthority, Conversation, EgressStatus, Limits, Provider, RunEvent,
-    RunOutcome, ToolCall, ToolInvoker, ToolOutcome, ToolSpec,
+    run_with_conversation_with_transcript, CallAuthority, Conversation, EgressStatus, Limits,
+    Message, Provider, RunEvent, RunOutcome, ToolCall, ToolInvoker, ToolOutcome, ToolSpec,
+    TranscriptSink,
 };
 use tuxlink_mcp_core::ports::{AbortPort, OutboxReadPort};
 use tuxlink_security::EgressGuard;
@@ -89,6 +90,7 @@ use crate::elmer::executor::InProcessMcpInvoker;
 use crate::elmer::keyring::ElmerKeyring;
 use crate::elmer::model_config_state::ElmerModelConfigState;
 use crate::elmer::provider::ElmerProvider;
+use crate::elmer::transcript_sink::ElmerTranscriptSink;
 use crate::mcp_ports::{approval_gated_flush, FlushError};
 
 // ---------------------------------------------------------------------------
@@ -252,6 +254,12 @@ pub struct ElmerSession {
     flush_outbox: Arc<crate::mcp_ports::MonolithOutboxReadPort>,
     /// Monolith egress port (concrete type required by `approval_gated_flush`).
     flush_egress: Arc<crate::mcp_ports::MonolithEgressPort>,
+    /// Durable on-disk transcript (tuxlink-gzbpo).  The runner records every
+    /// loop-appended message through it; `send` records the user turn (the
+    /// runner never does); the conversation-reset paths (`new_conversation`,
+    /// `rearm`) rotate it.  Fire-and-forget — NEVER called under `inner`
+    /// (no-sink-under-`inner` invariant).
+    transcript: Arc<ElmerTranscriptSink>,
 }
 
 impl ElmerSession {
@@ -266,6 +274,7 @@ impl ElmerSession {
     /// * `abort` — ungated abort port.
     /// * `outbox` — non-tainting outbox read port.
     /// * `flush_outbox` / `flush_egress` — concrete ports for the approval flush.
+    /// * `transcript` — durable on-disk transcript sink (tuxlink-gzbpo).
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         invoker: InProcessMcpInvoker,
@@ -277,6 +286,7 @@ impl ElmerSession {
         outbox: Arc<dyn OutboxReadPort>,
         flush_outbox: Arc<crate::mcp_ports::MonolithOutboxReadPort>,
         flush_egress: Arc<crate::mcp_ports::MonolithEgressPort>,
+        transcript: Arc<ElmerTranscriptSink>,
     ) -> Self {
         let (invoker, frozen_flag) = FreezableInvoker::new(invoker);
         Self {
@@ -297,7 +307,14 @@ impl ElmerSession {
             outbox,
             flush_outbox,
             flush_egress,
+            transcript,
         }
+    }
+
+    /// The durable transcript sink (for the `elmer_transcript_export` command:
+    /// flush-before-archive + directory resolution live on the sink).
+    pub fn transcript(&self) -> &Arc<ElmerTranscriptSink> {
+        &self.transcript
     }
 
     // -----------------------------------------------------------------------
@@ -417,6 +434,13 @@ impl ElmerSession {
         };
         // inner lock RELEASED ──────────────────────────────────────────────
 
+        // Durable transcript: record the operator's turn (tuxlink-gzbpo). The
+        // runner records only the messages IT appends, so the caller records
+        // the user turn — here, OUTSIDE the `inner` lock (no-sink-under-`inner`
+        // invariant) and BEFORE the spawn, so the on-disk order matches the
+        // conversation's append order.
+        self.transcript.record(&Message::User(user_msg));
+
         // Snapshot egress status (read-only; never used to gate).
         let status = EgressStatus {
             armed: self.guard.armed_remaining() > 0,
@@ -451,6 +475,9 @@ impl ElmerSession {
         // channel as the run unfolds.  `EventSink` is `Arc<dyn Fn(..)+Send+Sync>`,
         // so this clone is a cheap refcount bump and is `Send` for the spawn.
         let emit_for_task = Arc::clone(&emit);
+        // Transcript sink `Arc` built PRE-spawn and moved into the run task
+        // (tuxlink-gzbpo).  Same fire-and-forget contract as `emit_for_task`.
+        let transcript_for_task = Arc::clone(&self.transcript);
 
         let handle = tokio::spawn(async move {
             // Bridge runner RunEvent → ElmerEvent → sink.  Fire-and-forget: this
@@ -494,8 +521,8 @@ impl ElmerSession {
                 emit_for_task(elmer_event);
             };
 
-            // LOCK-INVARIANT: no `inner` lock is held during `run_with_conversation`.
-            let outcome = run_with_conversation(
+            // LOCK-INVARIANT: no `inner` lock is held during the run.
+            let outcome = run_with_conversation_with_transcript(
                 &mut convo,
                 &*turn_provider,
                 &session_arc.invoker,
@@ -503,6 +530,7 @@ impl ElmerSession {
                 limits,
                 cancel_for_task,
                 &on_event,
+                &*transcript_for_task,
             )
             .await;
 
@@ -635,6 +663,10 @@ impl ElmerSession {
         };
         // inner lock RELEASED.  `_op` (op_lock) drops at function end. ────
 
+        // The conversation was reset, so the durable transcript starts a new
+        // session file too (outside `inner` — no-sink-under-`inner` invariant).
+        self.transcript.rotate();
+
         deadline
     }
 
@@ -678,6 +710,10 @@ impl ElmerSession {
                 .store(false, std::sync::atomic::Ordering::Release);
         }
         // inner lock RELEASED.  `_op` (op_lock) drops at function end. ────
+
+        // The conversation was reset, so the durable transcript starts a new
+        // session file too (outside `inner` — no-sink-under-`inner` invariant).
+        self.transcript.rotate();
     }
 
     /// Snapshot the staged outbox and compute a one-shot [`OutboxApproval`]
@@ -1081,6 +1117,12 @@ mod tests {
         /// Records every [`ElmerEvent`] the bridge pushes through the sink during
         /// a `send`, so a test can assert the conversational stream (Turn/Chip).
         emitted: Arc<StdMutex<Vec<ElmerEvent>>>,
+        /// Real durable transcript sink over a temp dir — the mirror wires it
+        /// exactly like production `send` (user turn + runner messages), so the
+        /// integration path is provable in-crate (tuxlink-gzbpo).
+        transcript: Arc<ElmerTranscriptSink>,
+        /// Keeps the transcript temp dir alive for the session's lifetime.
+        _transcript_dir: tempfile::TempDir,
     }
 
     impl TestSession {
@@ -1089,6 +1131,7 @@ mod tests {
             invoker: Box<dyn ToolInvoker>,
             abort: Arc<dyn AbortPort>,
         ) -> Arc<Self> {
+            let transcript_dir = tempfile::tempdir().expect("transcript tempdir");
             Arc::new(Self {
                 op_lock: TokioMutex::new(()),
                 inner: StdMutex::new(SessionInner {
@@ -1103,6 +1146,8 @@ mod tests {
                 abort,
                 frozen_flag: Arc::new(AtomicBool::new(false)),
                 emitted: Arc::new(StdMutex::new(Vec::new())),
+                transcript: ElmerTranscriptSink::new(transcript_dir.path().to_path_buf()),
+                _transcript_dir: transcript_dir,
             })
         }
 
@@ -1130,6 +1175,9 @@ mod tests {
                 (convo, cancel_child)
             };
 
+            // Mirror production: caller records the user turn, outside `inner`.
+            self.transcript.record(&Message::User(user_msg));
+
             let status = EgressStatus::default();
             let limits = Limits {
                 per_turn_timeout: Duration::from_secs(2),
@@ -1140,6 +1188,8 @@ mod tests {
             let cancel_for_task = cancel_child.clone();
             // Mirror the real bridge: record every ElmerEvent the sink receives.
             let emitted_for_task = Arc::clone(&self.emitted);
+            // Mirror production: transcript Arc built pre-spawn, moved into task.
+            let transcript_for_task = Arc::clone(&self.transcript);
 
             // Spawn run task — owns `convo` by value; NEVER acquires `inner`
             // during the run.
@@ -1172,7 +1222,7 @@ mod tests {
                     };
                     emitted_for_task.lock().unwrap().push(elmer_event);
                 };
-                let outcome = run_with_conversation(
+                let outcome = run_with_conversation_with_transcript(
                     &mut convo,
                     &*session_arc.provider,
                     &*session_arc.invoker,
@@ -1180,6 +1230,7 @@ mod tests {
                     limits,
                     cancel_for_task,
                     &on_event,
+                    &*transcript_for_task,
                 )
                 .await;
                 // Brief inner lock (task): write back + clear current.
@@ -1251,6 +1302,8 @@ mod tests {
                 self.frozen_flag.store(false, Ordering::Release);
                 deadline
             };
+            // Mirror production: conversation reset rotates the transcript.
+            self.transcript.rotate();
             deadline
         }
 
@@ -1267,6 +1320,34 @@ mod tests {
                 g.staging_frozen = false;
                 self.frozen_flag.store(false, Ordering::Release);
             }
+            // Mirror production: conversation reset rotates the transcript.
+            self.transcript.rotate();
+        }
+
+        /// Read every transcript line written so far, ordered by (file, line):
+        /// flushes the writer, then parses each session file's JSONL.
+        fn transcript_lines(&self) -> Vec<(String, serde_json::Value)> {
+            assert!(
+                self.transcript.flush(Duration::from_secs(5)),
+                "transcript writer must ack flush"
+            );
+            let mut files: Vec<std::path::PathBuf> =
+                std::fs::read_dir(self._transcript_dir.path())
+                    .unwrap()
+                    .filter_map(|e| e.ok().map(|e| e.path()))
+                    .collect();
+            files.sort();
+            files
+                .into_iter()
+                .flat_map(|p| {
+                    let name = p.file_name().unwrap().to_string_lossy().to_string();
+                    std::fs::read_to_string(&p)
+                        .unwrap()
+                        .lines()
+                        .map(|l| (name.clone(), serde_json::from_str(l).unwrap()))
+                        .collect::<Vec<_>>()
+                })
+                .collect()
         }
 
         fn is_running(&self) -> bool {
@@ -1359,6 +1440,66 @@ mod tests {
             }
             other => panic!("expected ElmerEvent::Turn(assistant), got {other:?}"),
         }
+    }
+
+    /// tuxlink-gzbpo: the full send path lands a durable transcript — the USER
+    /// turn (recorded by the caller; the runner never records it) followed by
+    /// the runner-recorded messages, in append order with monotonic seq; a
+    /// second send appends to the SAME session file; `new_conversation`
+    /// rotates to a fresh file with seq reset.
+    #[tokio::test]
+    async fn send_lands_user_turn_and_run_messages_in_transcript() {
+        // Three sends total, so the script carries three text turns.
+        let provider = Arc::new(ScriptedProvider::new(vec![
+            ModelTurn::Text("done".into()),
+            ModelTurn::Text("done".into()),
+            ModelTurn::Text("done".into()),
+        ]));
+        let invoker = Box::new(RecordingInvoker::always_ok(vec![]));
+        let session = TestSession::new(provider, invoker, Arc::new(NoopAbort));
+
+        // Two sends in one conversation → one session file, seq 0..=3.
+        let out = session.send("first question".into()).await;
+        assert_eq!(out, RunOutcome::Completed("done".into()));
+        let out = session.send("second question".into()).await;
+        assert_eq!(out, RunOutcome::Completed("done".into()));
+
+        let lines = session.transcript_lines();
+        assert!(
+            lines.len() >= 2,
+            "user turn + assistant turn at minimum, got {lines:?}"
+        );
+        let files: std::collections::BTreeSet<&str> =
+            lines.iter().map(|(f, _)| f.as_str()).collect();
+        assert_eq!(files.len(), 1, "no rotation → one session file: {files:?}");
+        assert_eq!(
+            lines[0].1["message"]["User"], "first question",
+            "user turn is line 0 (caller-recorded, before the run's messages)"
+        );
+        assert_eq!(
+            lines[1].1["message"]["Assistant"], "done",
+            "runner-recorded assistant turn follows"
+        );
+        let seqs: Vec<u64> = lines.iter().map(|(_, l)| l["seq"].as_u64().unwrap()).collect();
+        assert!(
+            seqs.windows(2).all(|w| w[1] == w[0] + 1) && seqs[0] == 0,
+            "monotonic seq from 0: {seqs:?}"
+        );
+
+        // New conversation → rotated file, seq restarts at 0.
+        session.new_conversation().await;
+        let out = session.send("fresh start".into()).await;
+        assert_eq!(out, RunOutcome::Completed("done".into()));
+        let lines = session.transcript_lines();
+        let files: std::collections::BTreeSet<&str> =
+            lines.iter().map(|(f, _)| f.as_str()).collect();
+        assert_eq!(files.len(), 2, "rotation → second session file: {files:?}");
+        let fresh: Vec<&(String, serde_json::Value)> = lines
+            .iter()
+            .filter(|(_, l)| l["message"]["User"] == "fresh start")
+            .collect();
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(fresh[0].1["seq"], 0, "seq resets in the rotated session");
     }
 
     /// A run that calls a tool then answers bridges a `Chip` (tool call) BEFORE

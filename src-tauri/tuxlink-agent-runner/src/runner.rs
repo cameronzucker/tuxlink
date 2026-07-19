@@ -15,6 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::conversation::Conversation;
 use crate::traits::{EgressStatus, Provider, ProviderError, ToolInvoker};
+use crate::transcript::{NullTranscript, TranscriptSink};
 use crate::types::{
     CallAuthority, Limits, ModelTurn, RunEvent, RunOutcome, ToolCall, ToolOutcome, ToolSpec,
 };
@@ -50,6 +51,18 @@ fn denial_kind(reason: &str) -> DenialKind {
     }
 }
 
+/// Record the message just appended to `conversation` into the durable
+/// transcript (fire-and-forget, tuxlink-gzbpo). Called immediately after each
+/// `conversation.push_*` in the loop so the transcript is written incrementally
+/// in append order. A no-op if the conversation is somehow empty (it never is
+/// right after a push, but this keeps the helper total). MUST stay non-blocking
+/// / non-panicking per the [`TranscriptSink`] contract.
+fn record_last(transcript: &dyn TranscriptSink, conversation: &Conversation) {
+    if let Some(message) = conversation.messages().last() {
+        transcript.record(message);
+    }
+}
+
 /// Run the bounded agent loop to completion, using a pre-built conversation.
 ///
 /// **Contract:** the caller MUST append the initiating `Message::User` via
@@ -69,7 +82,20 @@ fn denial_kind(reason: &str) -> DenialKind {
 ///   return value is ignored. Pass `&|_| {}` to opt out (this is what [`run`]
 ///   does). Keep the callback trivial: it is called inline on the loop's task,
 ///   so a panic in it would unwind through the run.
-pub async fn run_with_conversation(
+/// * `transcript` is a **fire-and-forget** [`TranscriptSink`] the loop calls
+///   once per message it appends (tool calls WITH args, tool results WITH
+///   content, assistant turns, fed-back validation errors), incrementally, so a
+///   durable transcript survives the session-layer trim and a non-completing run
+///   still leaves a complete-up-to-that-point record. Same non-gating contract
+///   as `on_event`. Pass `&NullTranscript` to opt out (this is what the
+///   [`run_with_conversation`] shim and [`run`] do).
+// Eight orthogonal loop inputs (conversation, provider, invoker, status, limits,
+// cancel, and the two fire-and-forget sinks). The back-compat shim keeps the
+// 7-arg surface; bundling these into a `RunCtx` struct is a reasonable future
+// refactor but would churn every caller for no behavioral gain, so the flat
+// signature is kept and the lint allowed at this one call site.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_with_conversation_with_transcript(
     conversation: &mut Conversation,
     provider: &dyn Provider,
     invoker: &dyn ToolInvoker,
@@ -81,6 +107,7 @@ pub async fn run_with_conversation(
     // `&F: Send` requires `F: Sync`. The no-op `&|_| {}` and the real sink
     // (which captures only an `Arc<dyn Fn + Send + Sync>`) both satisfy it.
     on_event: &(dyn Fn(RunEvent) + Sync),
+    transcript: &dyn TranscriptSink,
 ) -> RunOutcome {
     // `status` is observed but never used to gate (gating lives below the MCP
     // boundary). Bind it so the read-only contract is explicit and the param is
@@ -163,6 +190,7 @@ pub async fn run_with_conversation(
         match turn {
             ModelTurn::Text(text) => {
                 conversation.push_assistant(&text);
+                record_last(transcript, conversation);
                 // Fire-and-forget: surface the assistant answer as a chat turn
                 // BEFORE returning. Does not affect the outcome.
                 on_event(RunEvent::AssistantText { text: text.clone() });
@@ -193,8 +221,10 @@ pub async fn run_with_conversation(
                     // model can correct itself on the re-prompt.
                     for call in &calls {
                         conversation.push_tool_call(call.clone());
+                        record_last(transcript, conversation);
                     }
                     conversation.push_tool_error("validation", detail);
+                    record_last(transcript, conversation);
                     continue;
                 }
 
@@ -211,6 +241,7 @@ pub async fn run_with_conversation(
                         return RunOutcome::Cancelled;
                     }
                     conversation.push_tool_call(call.clone());
+                    record_last(transcript, conversation);
                     // Fire-and-forget: surface the tool call as a chat chip.
                     // Does not affect the outcome or cancellation.
                     on_event(RunEvent::ToolCall { tool: call.name.clone() });
@@ -238,6 +269,7 @@ pub async fn run_with_conversation(
                     // dispatched (the `denial_final` check above).
                     if let ToolOutcome::Denied(reason) = &outcome {
                         conversation.push_outcome(&call.name, &outcome);
+                        record_last(transcript, conversation);
                         on_event(RunEvent::ToolDenied {
                             tool: call.name.clone(),
                             reason: reason.clone(),
@@ -247,10 +279,37 @@ pub async fn run_with_conversation(
                     }
 
                     conversation.push_outcome(&call.name, &outcome);
+                    record_last(transcript, conversation);
                 }
             }
         }
     }
+}
+
+/// Back-compat shim: drive the loop with progress events but WITHOUT a durable
+/// transcript. Delegates to [`run_with_conversation_with_transcript`] with a
+/// [`NullTranscript`]. Callers that do not (yet) persist a transcript keep their
+/// existing signature unchanged.
+pub async fn run_with_conversation(
+    conversation: &mut Conversation,
+    provider: &dyn Provider,
+    invoker: &dyn ToolInvoker,
+    status: EgressStatus,
+    limits: Limits,
+    cancel: CancellationToken,
+    on_event: &(dyn Fn(RunEvent) + Sync),
+) -> RunOutcome {
+    run_with_conversation_with_transcript(
+        conversation,
+        provider,
+        invoker,
+        status,
+        limits,
+        cancel,
+        on_event,
+        &NullTranscript,
+    )
+    .await
 }
 
 /// Run the bounded agent loop to completion.
@@ -372,6 +431,87 @@ mod provider_error_outcome_tests {
         assert!(
             matches!(outcome, RunOutcome::ProviderError(_)),
             "Unparseable must map to ProviderError, got: {outcome:?}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Durable-transcript recording (tuxlink-gzbpo)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod transcript_recording_tests {
+    use super::*;
+    use crate::conversation::{Conversation, Message};
+    use crate::fakes::{RecordingInvoker, ScriptedProvider};
+    use crate::transcript::TranscriptSink;
+    use crate::types::{ModelTurn, ToolCall, ToolOutcome, ToolSpec};
+    use serde_json::json;
+    use std::sync::Mutex;
+
+    /// A [`TranscriptSink`] that captures every recorded message for assertion.
+    struct CapturingSink(Mutex<Vec<Message>>);
+
+    impl TranscriptSink for CapturingSink {
+        fn record(&self, message: &Message) {
+            self.0.lock().unwrap().push(message.clone());
+        }
+    }
+
+    fn echo_tool() -> ToolSpec {
+        ToolSpec::new(
+            "echo",
+            json!({ "type": "object", "properties": { "msg": { "type": "string" } } }),
+        )
+    }
+
+    /// The runner records every message IT appends — a tool call WITH its args
+    /// and a tool result WITH its content — incrementally, in append order. This
+    /// is the exact evidence the webview progress stream cannot provide (a tool
+    /// chip carries the tool name only; tool results are never emitted), and it
+    /// is what a durable transcript needs to explain why a model mis-authored a
+    /// call. The initiating user turn is the caller's to record, so it is not
+    /// asserted here.
+    #[tokio::test]
+    async fn records_appended_messages_with_tool_args_and_result_content() {
+        let provider = ScriptedProvider::new(vec![
+            ModelTurn::ToolCalls(vec![ToolCall::new("echo", json!({ "msg": "hi" }))]),
+            ModelTurn::Text("done".into()),
+        ]);
+        let invoker = RecordingInvoker::new(
+            vec![echo_tool()],
+            vec![ToolOutcome::Ok(json!({ "echoed": "hi" }))],
+        );
+        let sink = CapturingSink(Mutex::new(Vec::new()));
+        let mut convo = Conversation::new("please echo hi");
+
+        let outcome = run_with_conversation_with_transcript(
+            &mut convo,
+            &provider,
+            &invoker,
+            EgressStatus::default(),
+            Limits::default(),
+            CancellationToken::new(),
+            &|_| {},
+            &sink,
+        )
+        .await;
+
+        assert_eq!(outcome, RunOutcome::Completed("done".into()));
+        let recorded = sink.0.into_inner().unwrap();
+        assert_eq!(
+            recorded,
+            vec![
+                Message::ToolCall(ToolCall::new("echo", json!({ "msg": "hi" }))),
+                Message::ToolResult {
+                    name: "echo".into(),
+                    ok: true,
+                    content: json!({ "echoed": "hi" }).to_string(),
+                },
+                Message::Assistant("done".into()),
+            ],
+            "runner must record each appended message — tool-call args, tool-result \
+             content, and assistant text — in append order"
         );
     }
 }
