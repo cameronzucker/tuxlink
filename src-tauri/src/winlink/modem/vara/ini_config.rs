@@ -16,12 +16,17 @@
 //!   callers pass it; [`default_wine_prefix`] matches the engine's default.
 //! - **The stop → edit → start lifecycle.** VARA rewrites `VARA.ini` on exit
 //!   (it saves `[Position]` at minimum), so an edit made while VARA runs is
-//!   clobbered. [`run_vara_ini_apply`] therefore stops any VARA it knows about
-//!   (the [`VaraProcessSlot`] child, then the engine's `.vara.pid` daemon),
+//!   clobbered. [`run_vara_ini_apply`] therefore stops any VARA it can
+//!   ATTRIBUTE to this prefix + instance (the [`VaraProcessSlot`] child, then
+//!   the engine's `.vara.pid` daemon — validated against the resolved
+//!   `VARA.exe` path / `WINEPREFIX`, never a bare "looks like wine" grep),
 //!   verifies the cmd port actually went dark, waits for the INI's mtime to
 //!   settle (absorbing the exit-time rewrite), and only then reads + edits.
 //!   A listening cmd port that survives the stop chain means a VARA this app
 //!   does not manage — the apply refuses rather than `pkill`ing anything.
+//!   The stop+edit window runs under the session inner mutex
+//!   ([`VaraSession::with_session_excluded`]) so a concurrent
+//!   `vara_open_session` serializes against the bounce instead of racing it.
 //! - **Atomic write + timestamped backup.** The pre-edit file is copied to
 //!   `VARA.ini.bak-<UTC>`; the new content lands via tmp-file + fsync +
 //!   rename so a crash can never leave a half-written config.
@@ -55,7 +60,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tuxlink_vara_ini::{is_sensitive_key, VaraIni};
 
-use super::commands::{VaraSession, VaraState};
+use super::commands::VaraSession;
 use super::transport::cmd_port_reachable;
 use crate::winlink::modem::process::ManagedModem;
 
@@ -124,6 +129,18 @@ impl VaraInstance {
         match self {
             VaraInstance::Primary => &["VARA HF", "VARA"],
             VaraInstance::Vara2 => &["VARA2"],
+        }
+    }
+
+    /// Factory-default cmd port when the INI does not declare one. Only the
+    /// primary install has a safe default (8300). A second instance MUST run
+    /// on a different port to coexist, and there is no trustworthy universal
+    /// second-instance default — so `Vara2` has none and callers must get the
+    /// port from the INI or the edits (Codex 2026-07-18 P2 #4).
+    fn default_cmd_port(self) -> Option<u16> {
+        match self {
+            VaraInstance::Primary => Some(DEFAULT_CMD_PORT),
+            VaraInstance::Vara2 => None,
         }
     }
 }
@@ -200,8 +217,11 @@ pub struct VaraIniApplyReport {
     /// True when the apply relaunched VARA and its cmd port came up.
     pub relaunched: bool,
     /// The cmd port the (post-edit) config declares — the port a relaunch
-    /// was verified against.
-    pub cmd_port: u16,
+    /// was verified against. `None` when it is unknowable: a second-instance
+    /// (`vara2`) install whose INI carries no `[Setup] TCP Command Port` and
+    /// whose edits did not set one (the primary's 8300 factory default is
+    /// deliberately NOT assumed for VARA2; a relaunch refuses in that case).
+    pub cmd_port: Option<u16>,
 }
 
 // ─── Process slot ───────────────────────────────────────────────────────────
@@ -272,26 +292,8 @@ fn run_vara_ini_apply_with(
         return Err("nothing to do: no edits given and no relaunch requested".to_string());
     }
 
-    // A bounce would tear down a live ARQ link mid-exchange — refuse.
-    if let Some(s) = session {
-        let state = s.snapshot().state;
-        if matches!(state, VaraState::Open | VaraState::Connecting) {
-            return Err(format!(
-                "a VARA session is {state:?} — close the VARA session before applying VARA.ini config (the apply bounces the modem)"
-            ));
-        }
-    }
-
     let dir = resolve_vara_dir(prefix, instance)?;
     let ini_path = dir.join("VARA.ini");
-
-    // Pre-read only to learn the currently-configured cmd port (the stop
-    // chain needs it to verify VARA actually went dark). The authoritative
-    // content read happens AFTER the stop + settle.
-    let pre_port = read_ini_strict(&ini_path)?
-        .as_ref()
-        .and_then(configured_cmd_port)
-        .unwrap_or(DEFAULT_CMD_PORT);
 
     // Serialize the whole apply on the slot lock: stop, edit, and relaunch
     // must not interleave with a concurrent apply.
@@ -300,72 +302,121 @@ fn run_vara_ini_apply_with(
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-    // Stop chain, in attribution order: our own child first, then the
-    // engine's daemonized pid. Anything still listening after both is a VARA
-    // this app does not manage — refuse rather than guess at kills.
-    if let Some(mut modem) = slot_guard.take() {
-        tracing::info!(target: LOG_TARGET, "stopping slot-managed VARA for config apply");
-        // Taken out of the slot first: even on a stop error the child is
-        // dropped (ManagedModem's Drop escalates + reaps), never re-parked.
-        modem
-            .stop(STOP_GRACE)
-            .map_err(|e| format!("failed to stop the managed VARA process: {e}"))?;
-    }
-    stop_engine_daemon(prefix)?;
-    if !wait_port_down(pre_port, PORT_DOWN_WAIT) {
-        return Err(format!(
-            "a VARA instance is still listening on 127.0.0.1:{pre_port} but is not managed by \
-             Tuxlink (no managed child, no {} pidfile) — close it manually, then retry",
-            prefix.join(".vara.pid").display()
-        ));
-    }
+    // The stop+edit window. When a session handle is present it runs under
+    // the session's inner mutex ([`VaraSession::with_session_excluded`]) —
+    // `vara_open_session` holds that same mutex across its connect, so an
+    // open can never interleave with the bounce (Codex 2026-07-18 P1 #2).
+    // The relaunch port-wait stays OUTSIDE the session mutex: WINE cold
+    // starts take tens of seconds and `snapshot()` (the UI status poll)
+    // must not block for that long.
+    let slot_ref = &mut *slot_guard;
+    let stop_edit = || -> Result<(Option<PathBuf>, bool, Option<u16>), String> {
+        // Pre-read only to learn the currently-configured cmd port (the
+        // stop chain needs it to verify VARA actually went dark). The
+        // authoritative content read happens AFTER the stop + settle.
+        let pre_port = read_ini_strict(&ini_path)?
+            .as_ref()
+            .and_then(configured_cmd_port)
+            .or_else(|| instance.default_cmd_port());
 
-    // VARA rewrites the INI on exit; wait for that write to land before
-    // reading, or the edit would be based on (and back up) a stale snapshot.
-    wait_for_stable_mtime(&ini_path, INI_SETTLE_STABLE, INI_SETTLE_CAP);
+        // Stop chain, in attribution order: our own child first, then the
+        // engine's daemonized pid (only when attributable to THIS prefix +
+        // instance). Anything still listening after both is a VARA this app
+        // does not manage — refuse rather than guess at kills.
+        if let Some(mut modem) = slot_ref.take() {
+            tracing::info!(target: LOG_TARGET, "stopping slot-managed VARA for config apply");
+            // Taken out of the slot first: even on a stop error the child is
+            // dropped (ManagedModem's Drop escalates + reaps), never re-parked.
+            modem
+                .stop(STOP_GRACE)
+                .map_err(|e| format!("failed to stop the managed VARA process: {e}"))?;
+        }
+        stop_engine_daemon(prefix, &dir)?;
+        if let Some(port) = pre_port {
+            if !wait_port_down(port, PORT_DOWN_WAIT) {
+                return Err(format!(
+                    "a VARA instance is still listening on 127.0.0.1:{port} but is not managed \
+                     by Tuxlink (no managed child, no attributable {} pidfile) — close it \
+                     manually, then retry",
+                    prefix.join(".vara.pid").display()
+                ));
+            }
+        }
 
-    let existing = read_ini_strict(&ini_path)?;
-    let created = existing.is_none();
-    let mut ini = existing.unwrap_or_else(|| VaraIni::parse(""));
+        // VARA rewrites the INI on exit; wait for that write to land before
+        // reading, or the edit would be based on (and back up) a stale snapshot.
+        wait_for_stable_mtime(&ini_path, INI_SETTLE_STABLE, INI_SETTLE_CAP);
 
-    let backup_path = if created {
-        None
-    } else {
-        let backup = ini_path.with_file_name(backup_file_name(&chrono::Utc::now()));
-        fs::copy(&ini_path, &backup)
-            .map_err(|e| format!("failed to back up {} to {}: {e}", ini_path.display(), backup.display()))?;
-        Some(backup)
+        let existing = read_ini_strict(&ini_path)?;
+        let created = existing.is_none();
+        let mut ini = existing.unwrap_or_else(|| VaraIni::parse(""));
+
+        // The edits may move the cmd port; the LAST port edit wins, exactly
+        // like the post-edit INI state. Resolved BEFORE any mutation so every
+        // refusal below leaves the file untouched.
+        let edited_port = edits
+            .iter()
+            .rev()
+            .find(|e| e.section == "Setup" && e.key == "TCP Command Port")
+            .and_then(|e| e.value.trim().parse::<u16>().ok());
+        let cmd_port = edited_port.or_else(|| configured_cmd_port(&ini)).or(pre_port);
+
+        if relaunch {
+            let Some(port) = cmd_port else {
+                return Err(
+                    "cannot relaunch the second VARA instance without a known cmd port — set \
+                     [Setup] TCP Command Port in the edits (the primary's 8300 factory default \
+                     is not assumed for VARA2)"
+                        .to_string(),
+                );
+            };
+            // The stop chain only verified the PRE-edit port went dark. If
+            // the target port differs, an unrelated listener there (e.g. the
+            // other VARA instance) would fake the launch verification —
+            // refuse before touching the file (Codex 2026-07-18 P2 #3).
+            if cmd_port_reachable("127.0.0.1", port, PORT_PROBE_TIMEOUT) {
+                return Err(format!(
+                    "cmd port {port} is already in use by another process — VARA could not bind \
+                     it; pick a free port or stop whatever holds it"
+                ));
+            }
+        }
+
+        let backup_path = if created { None } else { Some(create_backup(&ini_path)?) };
+
+        for edit in edits {
+            tracing::info!(target: LOG_TARGET, edit = ?edit, "applying VARA.ini edit");
+            ini.set(&edit.section, &edit.key, &edit.value);
+        }
+
+        write_atomic(&ini_path, &ini.render())?;
+        tracing::info!(
+            target: LOG_TARGET,
+            ini_path = %ini_path.display(),
+            applied = edits.len(),
+            created,
+            "VARA.ini written",
+        );
+        Ok((backup_path, created, cmd_port))
     };
-
-    for edit in edits {
-        tracing::info!(target: LOG_TARGET, edit = ?edit, "applying VARA.ini edit");
-        ini.set(&edit.section, &edit.key, &edit.value);
-    }
-
-    // The edit itself may move the cmd port — the relaunch must be verified
-    // against the port the NEW config declares.
-    let cmd_port = configured_cmd_port(&ini).unwrap_or(pre_port);
-
-    write_atomic(&ini_path, &ini.render())?;
-    tracing::info!(
-        target: LOG_TARGET,
-        ini_path = %ini_path.display(),
-        applied = edits.len(),
-        created,
-        "VARA.ini written",
-    );
+    let (backup_path, created, cmd_port) = match session {
+        Some(s) => s.with_session_excluded(stop_edit)?,
+        None => stop_edit()?,
+    };
 
     let mut relaunched = false;
     if relaunch {
+        let port = cmd_port.expect("relaunch requires a known cmd port (validated in stop_edit)");
         let mut modem = launcher(&dir, prefix)?;
         let deadline = Instant::now() + LAUNCH_PORT_WAIT;
         loop {
-            if cmd_port_reachable("127.0.0.1", cmd_port, PORT_PROBE_TIMEOUT) {
+            if cmd_port_reachable("127.0.0.1", port, PORT_PROBE_TIMEOUT) {
                 break;
             }
             if !modem.is_running() {
                 return Err(format!(
-                    "VARA exited during startup (status: {:?}) — check the WINE prefix at {}",
+                    "VARA exited during startup (status: {:?}) — the INI edit itself was applied \
+                     and backed up; check the WINE prefix at {}",
                     modem.exit_status(),
                     prefix.display()
                 ));
@@ -373,7 +424,8 @@ fn run_vara_ini_apply_with(
             if Instant::now() >= deadline {
                 let _ = modem.stop(Duration::from_secs(1));
                 return Err(format!(
-                    "VARA did not open cmd port {cmd_port} within {}s after relaunch",
+                    "VARA did not open cmd port {port} within {}s after relaunch — the INI edit \
+                     itself was applied and backed up",
                     LAUNCH_PORT_WAIT.as_secs()
                 ));
             }
@@ -443,6 +495,39 @@ fn backup_file_name(now: &chrono::DateTime<chrono::Utc>) -> String {
     format!("VARA.ini.bak-{}", now.format("%Y%m%dT%H%M%SZ"))
 }
 
+/// Copy the pre-edit `VARA.ini` to a timestamped sibling, collision-safe:
+/// the timestamp has second resolution, so a same-second sibling gets a
+/// `-1`/`-2`/… suffix via `create_new` (which can never overwrite an earlier
+/// backup — Codex 2026-07-18 P2 #5). Returns the backup path.
+fn create_backup(ini_path: &Path) -> Result<PathBuf, String> {
+    let original = fs::read(ini_path)
+        .map_err(|e| format!("failed to read {} for backup: {e}", ini_path.display()))?;
+    let base = backup_file_name(&chrono::Utc::now());
+    for attempt in 0..100u32 {
+        let name = if attempt == 0 {
+            base.clone()
+        } else {
+            format!("{base}-{attempt}")
+        };
+        let dest = ini_path.with_file_name(name);
+        match fs::OpenOptions::new().write(true).create_new(true).open(&dest) {
+            Ok(mut f) => {
+                f.write_all(&original)
+                    .map_err(|e| format!("failed to write backup {}: {e}", dest.display()))?;
+                f.sync_all()
+                    .map_err(|e| format!("failed to sync backup {}: {e}", dest.display()))?;
+                return Ok(dest);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("failed to create backup {}: {e}", dest.display())),
+        }
+    }
+    Err(format!(
+        "could not find a free backup filename beside {} after 100 attempts",
+        ini_path.display()
+    ))
+}
+
 /// Write `content` to `path` atomically: sibling tmp file, fsync, rename over
 /// the target, best-effort fsync of the parent dir. A crash at any point
 /// leaves either the old file or the new file — never a torn mix.
@@ -495,13 +580,70 @@ fn wait_for_stable_mtime(path: &Path, stable_for: Duration, cap: Duration) {
     }
 }
 
+/// How a process cmdline relates to a specific VARA install. See
+/// [`cmdline_matches_install`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InstallMatch {
+    /// argv carries the full unix exe path — prefix AND instance attributed.
+    Full,
+    /// argv carries only the instance-dir form (`…\VARA HF\VARA.exe` or a
+    /// foreign-prefix unix path) — instance attributed, prefix NOT; the
+    /// caller must confirm the prefix via the process environment.
+    InstanceOnly,
+    /// No relation to this install.
+    No,
+}
+
+/// Classify a (lowercased, NUL→space) `/proc/<pid>/cmdline` against the VARA
+/// install at `install_dir`. The engine spawns `wine <unix exe path>`, so a
+/// fresh spawn matches `Full`; wine may rewrite argv to the windows form
+/// (`C:\<dir>\VARA.exe`), which loses the prefix and only matches
+/// `InstanceOnly`. The dir-name patterns require a leading separator so
+/// `…\myvara\vara.exe` can never false-match `\vara\vara.exe`, and the
+/// primary/`VARA2` dir names cannot cross-match each other.
+fn cmdline_matches_install(cmdline_lower: &str, install_dir: &Path) -> InstallMatch {
+    let exe_unix = install_dir.join("VARA.exe").display().to_string().to_lowercase();
+    if cmdline_lower.contains(&exe_unix) {
+        return InstallMatch::Full;
+    }
+    let dir_name = install_dir
+        .file_name()
+        .map(|n| n.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    if dir_name.is_empty() {
+        return InstallMatch::No;
+    }
+    let win_form = format!("\\{dir_name}\\vara.exe");
+    let unix_form = format!("/{dir_name}/vara.exe");
+    if cmdline_lower.contains(&win_form) || cmdline_lower.contains(&unix_form) {
+        InstallMatch::InstanceOnly
+    } else {
+        InstallMatch::No
+    }
+}
+
+/// True iff `/proc/<pid>/environ` records `WINEPREFIX=<prefix>`. Unreadable
+/// environ (process died, or not ours to read) → false: attribution fails
+/// closed and the caller leaves the process alone.
+fn environ_has_wineprefix(pid: i32, prefix: &Path) -> bool {
+    let environ = fs::read(format!("/proc/{pid}/environ")).unwrap_or_default();
+    let needle = format!("WINEPREFIX={}", prefix.display());
+    environ
+        .split(|b| *b == 0)
+        .any(|entry| String::from_utf8_lossy(entry) == needle.as_str())
+}
+
 /// Stop the engine-daemonized VARA recorded in `<prefix>/.vara.pid`, if any.
-/// Mirrors the engine's `wv_stop`: the pid is validated against its
-/// `/proc/<pid>/cmdline` (must mention wine or VARA) before any signal, so a
-/// stale or reused pid can never make us kill an unrelated process. Returns
-/// `Ok(true)` when a daemon was stopped, `Ok(false)` when there was nothing
-/// (or only a stale pidfile, which is removed).
-fn stop_engine_daemon(prefix: &Path) -> Result<bool, String> {
+/// Stricter than the engine's `wv_stop` grep: before any signal the pid must
+/// be ATTRIBUTED to the install at `install_dir` under `prefix` — the full
+/// unix exe path in argv, or the instance-dir form plus `WINEPREFIX` in the
+/// process environment (Codex 2026-07-18 P1 #1). A wine/VARA-ish process
+/// that fails attribution (another instance, another prefix) is left alone
+/// AND its pidfile is left alone — it may be that other install's live
+/// daemon. A pid that is dead, malformed, or reused by something that is
+/// neither wine nor VARA is a stale record: pidfile removed, nothing
+/// signalled. Returns `Ok(true)` iff a daemon was stopped.
+fn stop_engine_daemon(prefix: &Path, install_dir: &Path) -> Result<bool, String> {
     let pidfile = prefix.join(".vara.pid");
     let raw = match fs::read_to_string(&pidfile) {
         Ok(s) => s,
@@ -517,14 +659,31 @@ fn stop_engine_daemon(prefix: &Path) -> Result<bool, String> {
         }
     };
     let cmdline = fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
-    let cmdline = String::from_utf8_lossy(&cmdline).to_lowercase();
-    if !(cmdline.contains("wine") || cmdline.contains("vara")) {
+    let cmdline = String::from_utf8_lossy(&cmdline)
+        .replace('\0', " ")
+        .to_lowercase();
+    if cmdline.trim().is_empty() || !(cmdline.contains("wine") || cmdline.contains("vara")) {
         tracing::warn!(
             target: LOG_TARGET,
             pid,
-            "VARA pidfile is stale (pid gone or not a wine/VARA process); removing it, not killing",
+            "VARA pidfile is stale (pid gone or reused by a non-wine/VARA process); removing it, not killing",
         );
         let _ = fs::remove_file(&pidfile);
+        return Ok(false);
+    }
+    let ours = match cmdline_matches_install(&cmdline, install_dir) {
+        InstallMatch::Full => true,
+        InstallMatch::InstanceOnly => environ_has_wineprefix(pid, prefix),
+        InstallMatch::No => false,
+    };
+    if !ours {
+        tracing::warn!(
+            target: LOG_TARGET,
+            pid,
+            install_dir = %install_dir.display(),
+            "pidfile records a wine/VARA process not attributable to this prefix+instance; \
+             leaving process and pidfile alone",
+        );
         return Ok(false);
     }
 
@@ -636,6 +795,7 @@ pub async fn vara_ini_apply(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::winlink::modem::vara::commands::VaraState;
     use std::net::TcpListener;
 
     /// A structurally-real CRLF VARA.ini with a caller-chosen cmd port.
@@ -767,13 +927,76 @@ mod tests {
 
     // ── Stop chain ────────────────────────────────────────────────────────
 
+    /// Codex P1 #1: the attribution matcher. Full unix path → Full; wine's
+    /// argv-rewritten windows form → InstanceOnly; other instances / lookalike
+    /// dirs never match.
+    #[test]
+    fn cmdline_attribution_matches_exact_install_only() {
+        let hf = Path::new("/home/op/.wine-vara/drive_c/VARA HF");
+        let vara = Path::new("/home/op/.wine-vara/drive_c/VARA");
+        let vara2 = Path::new("/home/op/.wine-vara/drive_c/VARA2");
+
+        // Engine spawn form: full unix path in argv.
+        let engine_argv = "wine /home/op/.wine-vara/drive_c/vara hf/vara.exe";
+        assert_eq!(cmdline_matches_install(engine_argv, hf), InstallMatch::Full);
+        assert_eq!(cmdline_matches_install(engine_argv, vara2), InstallMatch::No);
+
+        // Wine-rewritten windows form: instance only.
+        assert_eq!(
+            cmdline_matches_install(r"c:\vara hf\vara.exe", hf),
+            InstallMatch::InstanceOnly
+        );
+        assert_eq!(
+            cmdline_matches_install(r"c:\vara2\vara.exe", vara2),
+            InstallMatch::InstanceOnly
+        );
+        // VARA vs VARA2 can never cross-match, in either slash form.
+        assert_eq!(cmdline_matches_install(r"c:\vara2\vara.exe", vara), InstallMatch::No);
+        assert_eq!(cmdline_matches_install("/x/vara2/vara.exe", vara), InstallMatch::No);
+        assert_eq!(cmdline_matches_install(r"c:\vara\vara.exe", vara2), InstallMatch::No);
+        // Lookalike dir needs the leading separator to be rejected.
+        assert_eq!(cmdline_matches_install(r"c:\myvara\vara.exe", vara), InstallMatch::No);
+    }
+
+    /// Codex P1 #1: a live wine/VARA-ish process that is NOT attributable to
+    /// this prefix+instance is left alone — process untouched AND pidfile
+    /// kept (it may be the other install's live daemon).
+    #[test]
+    fn unattributable_vara_process_is_left_alone() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let prefix = tmp.path().to_path_buf();
+        let install_dir = prefix.join("drive_c").join("VARA HF");
+        fs::create_dir_all(&install_dir).unwrap();
+        // argv0 claims to be a VARA2 exe (instance mismatch) — and even the
+        // instance-dir form would fail the WINEPREFIX environ check.
+        let mut child = std::process::Command::new("bash")
+            .args(["-c", "exec -a '/elsewhere/drive_c/VARA2/VARA.exe' sleep 30"])
+            .spawn()
+            .expect("spawn masquerading child");
+        fs::write(prefix.join(".vara.pid"), child.id().to_string()).unwrap();
+
+        assert_eq!(stop_engine_daemon(&prefix, &install_dir), Ok(false));
+        assert!(
+            prefix.join(".vara.pid").exists(),
+            "an unattributable wine/VARA pidfile must be left in place"
+        );
+        assert!(
+            child.try_wait().expect("try_wait").is_none(),
+            "the unattributable process must not be signalled"
+        );
+        child.kill().expect("cleanup kill");
+        let _ = child.wait();
+    }
+
     #[test]
     fn stale_pidfile_is_removed_not_killed() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let prefix = tmp.path().to_path_buf();
+        let install_dir = prefix.join("drive_c").join("VARA HF");
+        fs::create_dir_all(&install_dir).unwrap();
         // Malformed content.
         fs::write(prefix.join(".vara.pid"), "not-a-pid").unwrap();
-        assert_eq!(stop_engine_daemon(&prefix), Ok(false));
+        assert_eq!(stop_engine_daemon(&prefix, &install_dir), Ok(false));
         assert!(!prefix.join(".vara.pid").exists(), "malformed pidfile removed");
         // A live pid whose cmdline mentions neither wine nor VARA (a `sleep`
         // child we own — NOT this test process, whose binary path may contain
@@ -784,7 +1007,7 @@ mod tests {
             .spawn()
             .expect("spawn sleep child");
         fs::write(prefix.join(".vara.pid"), child.id().to_string()).unwrap();
-        assert_eq!(stop_engine_daemon(&prefix), Ok(false));
+        assert_eq!(stop_engine_daemon(&prefix, &install_dir), Ok(false));
         assert!(!prefix.join(".vara.pid").exists(), "non-VARA pidfile removed");
         assert!(
             child.try_wait().expect("try_wait").is_none(),
@@ -813,7 +1036,7 @@ mod tests {
         assert_eq!(report.applied, 1);
         assert!(!report.created);
         assert!(!report.relaunched);
-        assert_eq!(report.cmd_port, port);
+        assert_eq!(report.cmd_port, Some(port));
 
         let written = fs::read_to_string(install.join("VARA.ini")).unwrap();
         assert!(written.contains("Output Device Name=USB Audio CODEC Analog Stereo"));
@@ -842,7 +1065,7 @@ mod tests {
                 .expect("apply");
         assert!(report.created);
         assert!(report.backup_path.is_none());
-        assert_eq!(report.cmd_port, DEFAULT_CMD_PORT);
+        assert_eq!(report.cmd_port, Some(DEFAULT_CMD_PORT));
         let written = fs::read_to_string(install.join("VARA.ini")).unwrap();
         assert!(written.contains("[Soundcard]"));
         assert!(written.contains("Output Device Name=USB Audio CODEC"));
@@ -920,6 +1143,85 @@ mod tests {
         assert!(err.contains("non-UTF-8"), "{err}");
     }
 
+    /// Codex P2 #5: two backups of the same INI in the same second must land
+    /// in distinct files — the second may never overwrite the first.
+    #[test]
+    fn backups_in_the_same_second_do_not_collide() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ini = tmp.path().join("VARA.ini");
+        fs::write(&ini, "original").unwrap();
+        let first = create_backup(&ini).expect("first backup");
+        let second = create_backup(&ini).expect("second backup");
+        assert_ne!(first, second, "same-second backups must get distinct names");
+        assert_eq!(fs::read_to_string(&first).unwrap(), "original");
+        assert_eq!(fs::read_to_string(&second).unwrap(), "original");
+    }
+
+    /// Codex P2 #4: a second-instance apply with no known cmd port must
+    /// refuse a relaunch BEFORE touching anything — no INI created, no
+    /// launcher call, no assumed 8300.
+    #[test]
+    fn vara2_relaunch_without_a_known_port_refuses_pre_mutation() {
+        let (_g, prefix, install) = fake_install("VARA2", None);
+        let slot = VaraProcessSlot::default();
+        let err = run_vara_ini_apply_with(
+            &slot,
+            None,
+            &prefix,
+            VaraInstance::Vara2,
+            &[VaraIniEdit {
+                section: "Soundcard".into(),
+                key: "Output Device Name".into(),
+                value: "USB Audio CODEC".into(),
+            }],
+            true,
+            |_dir, _prefix| -> Result<ManagedModem, String> {
+                panic!("launcher must not be called when the port is unknown")
+            },
+        )
+        .expect_err("must refuse");
+        assert!(err.contains("TCP Command Port"), "{err}");
+        assert!(
+            !install.join("VARA.ini").exists(),
+            "refusal must precede any file mutation"
+        );
+    }
+
+    /// Codex P2 #3: when the edits move the cmd port onto one an unrelated
+    /// process already holds, the apply refuses BEFORE mutation — otherwise
+    /// that listener would fake the relaunch verification.
+    #[test]
+    fn relaunch_refuses_when_target_port_is_already_held() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind");
+        let held_port = listener.local_addr().unwrap().port();
+        let old_port = free_port();
+        let (_g, prefix, install) = fake_install("VARA HF", Some(&sample_ini(old_port)));
+        let slot = VaraProcessSlot::default();
+        let err = run_vara_ini_apply_with(
+            &slot,
+            None,
+            &prefix,
+            VaraInstance::Primary,
+            &[VaraIniEdit {
+                section: "Setup".into(),
+                key: "TCP Command Port".into(),
+                value: held_port.to_string(),
+            }],
+            true,
+            |_dir, _prefix| -> Result<ManagedModem, String> {
+                panic!("launcher must not be called when the target port is held")
+            },
+        )
+        .expect_err("must refuse");
+        assert!(err.contains("already in use"), "{err}");
+        assert_eq!(
+            fs::read_to_string(install.join("VARA.ini")).unwrap(),
+            sample_ini(old_port),
+            "refusal must leave the INI untouched"
+        );
+        drop(listener);
+    }
+
     // ── Relaunch (stub launcher) ──────────────────────────────────────────
 
     /// Stub launcher: a python3 child that binds the given port and idles,
@@ -956,7 +1258,7 @@ mod tests {
         )
         .expect("apply with relaunch");
         assert!(report.relaunched);
-        assert_eq!(report.cmd_port, port);
+        assert_eq!(report.cmd_port, Some(port));
 
         // The child is parked in the slot and still running; stop it cleanly.
         let mut guard = slot.inner.lock().unwrap();
