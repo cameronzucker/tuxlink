@@ -15,6 +15,7 @@
 
 pub mod cat;
 pub mod data;
+pub mod docs_search;
 pub mod find_stations;
 pub mod local;
 pub mod radio;
@@ -373,6 +374,27 @@ pub trait StationQueryService: Send + Sync {
     ) -> Result<StationDirectory, String>;
 }
 
+/// The `data.docs_search` delegation seam (rank 4). ONE method: run the docs
+/// FTS query. Mirrors the MCP `docs_search` tool's index path
+/// ([`crate::mcp_ports::MonolithSearchPort::docs`]): the SAME
+/// [`Index::search_docs`](crate::search::index::Index::search_docs)
+/// (raw-then-OR fallback, `<mark>…</mark>` snippet format, 30-hit cap). Split at
+/// the "give me docs hits" boundary so the action's output-shaping is
+/// unit-testable against a real, populated in-memory `Index` with no
+/// `AppHandle`. Like the MCP port, the adapter does NOT apply the Help-window
+/// `retain_user_guide` filter — a routine sees every indexed corpus.
+#[async_trait]
+pub trait DocsSearchService: Send + Sync {
+    /// Run `query` against the docs FTS index, returning BM25-ranked hits
+    /// (raw-then-OR fallback, `<mark>` snippet, 30-cap). Empty/absent query is
+    /// the ACTION's concern (rejected as invalid params before this is called);
+    /// this seam is a thin mirror of the one real backend call.
+    async fn search_docs(
+        &self,
+        query: &str,
+    ) -> Result<Vec<crate::search::docs_index::DocsHit>, String>;
+}
+
 /// The `local.*` action family's delegation seam (spec §6 "Local actions";
 /// plan Task 4d). One trait, not three — mirrors [`DataService`]'s shape:
 /// `local.compose` and `local.compose_catalog_request` (local.rs) share the
@@ -425,6 +447,7 @@ pub struct ActionDeps {
     pub rig: Arc<dyn RigService>,
     pub data: Arc<dyn DataService>,
     pub station_query: Arc<dyn StationQueryService>,
+    pub docs_search: Arc<dyn DocsSearchService>,
     pub local: Arc<dyn LocalService>,
 }
 
@@ -475,6 +498,9 @@ pub fn build_registry(deps: ActionDeps) -> ActionRegistry {
     registry.register(Arc::new(data::DataRead::new(deps.data.clone())));
     registry.register(Arc::new(find_stations::FindStations::new(
         deps.station_query.clone(),
+    )));
+    registry.register(Arc::new(docs_search::DocsSearch::new(
+        deps.docs_search.clone(),
     )));
 
     registry.register(Arc::new(local::ComposeMessage::new(deps.local.clone())));
