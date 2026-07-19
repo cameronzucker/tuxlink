@@ -1672,6 +1672,80 @@ impl WritePort for MonolithWritePort {
         .map_err(|d| WritePortError::Denied(d.to_string()))?
     }
 
+    async fn vara_ini_apply(
+        &self,
+        dto: tuxlink_mcp_core::ports::VaraIniApplyDto,
+    ) -> Result<tuxlink_mcp_core::ports::VaraIniApplyReportDto, WritePortError> {
+        use crate::winlink::modem::vara::ini_config;
+
+        // VALIDATE BEFORE GATE: shared shape check (instance selector, edit
+        // line-integrity), then prefix/instance resolution — all `Invalid`
+        // without consuming the armed grant. The core apply re-validates
+        // (defense in depth; it also fronts the Tauri command path).
+        tuxlink_mcp_core::ports::validate_vara_ini_apply(&dto)?;
+        let prefix = ini_config::resolve_prefix_arg(dto.prefix.clone())
+            .map_err(WritePortError::Invalid)?;
+        let instance = ini_config::parse_instance_arg(dto.instance.as_deref())
+            .map_err(WritePortError::Invalid)?;
+        let edits: Vec<ini_config::VaraIniEdit> = dto
+            .edits
+            .iter()
+            .map(|e| ini_config::VaraIniEdit {
+                section: e.section.clone(),
+                key: e.key.clone(),
+                value: e.value.clone(),
+            })
+            .collect();
+        let relaunch = dto.relaunch.unwrap_or(true);
+
+        let audit = write_audit_sink(self.app.clone());
+        let app = self.app.clone();
+        guarded_egress(
+            &self.guard,
+            EgressAuthority::Agent,
+            "vara_ini_apply",
+            &audit,
+            || async move {
+                let slot = std::sync::Arc::clone(
+                    &app.state::<std::sync::Arc<crate::winlink::modem::vara::VaraProcessSlot>>(),
+                );
+                let session = std::sync::Arc::clone(
+                    &app.state::<std::sync::Arc<crate::winlink::modem::vara::VaraSession>>(),
+                );
+                // Blocking work (process stop, settle wait, WINE launch +
+                // port wait) runs off the async runtime.
+                let report = tokio::task::spawn_blocking(move || {
+                    let report = ini_config::run_vara_ini_apply(
+                        &slot,
+                        Some(&session),
+                        &prefix,
+                        instance,
+                        &edits,
+                        relaunch,
+                    )?;
+                    // Wire-walk seam: if the edit moved the primary's cmd
+                    // port, the app session config must follow, or
+                    // vara_open_session keeps dialing the old port.
+                    ini_config::sync_app_session_port(instance, &report);
+                    Ok::<_, String>(report)
+                })
+                .await
+                .map_err(|e| WritePortError::Failed(format!("join: {e}")))?
+                .map_err(|e| WritePortError::Failed(redact_err(e)))?;
+                Ok(tuxlink_mcp_core::ports::VaraIniApplyReportDto {
+                    ini_path: report.ini_path,
+                    backup_path: report.backup_path,
+                    created: report.created,
+                    applied: report.applied,
+                    relaunched: report.relaunched,
+                    cmd_port: report.cmd_port,
+                })
+            },
+        )
+        .await
+        .map_err(|d| WritePortError::Denied(d.to_string()))?
+    }
+
     async fn set_packet(&self, dto: PacketWriteDto) -> Result<(), WritePortError> {
         // VALIDATE BEFORE GATE (FIX 4): a malformed payload is `Invalid`
         // regardless of arm state, so an unarmed caller gets `Invalid` (not
@@ -3068,6 +3142,24 @@ impl ProvisionPort for MonolithProvisionPort {
             prefix: summary.prefix,
             vara_version: summary.vara_version,
         })
+    }
+
+    async fn vara_ini_read(
+        &self,
+        prefix: Option<String>,
+        instance: Option<String>,
+    ) -> Result<String, PortError> {
+        use crate::winlink::modem::vara::ini_config;
+        let prefix = ini_config::resolve_prefix_arg(prefix)
+            .map_err(PortError::InvalidInput)?;
+        let instance = ini_config::parse_instance_arg(instance.as_deref())
+            .map_err(PortError::InvalidInput)?;
+        // Filesystem read off the async runtime; content is redacted by
+        // construction (run_vara_ini_read only ever returns `redacted()`).
+        tokio::task::spawn_blocking(move || ini_config::run_vara_ini_read(&prefix, instance))
+            .await
+            .map_err(|e| PortError::Internal(format!("join: {e}")))?
+            .map_err(|e| PortError::Internal(redact_err(e)))
     }
 }
 

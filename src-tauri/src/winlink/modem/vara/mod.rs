@@ -32,6 +32,7 @@
 
 pub mod command;
 pub mod commands;
+pub mod ini_config;
 pub mod install;
 pub mod listener;
 pub mod ptt;
@@ -42,6 +43,7 @@ pub use command::{
     Bandwidth, CommandParseError, Compression, InboundCommand, OutboundCommand,
 };
 pub use commands::{PlatformInfo, VaraSession, VaraState, VaraStatus};
+pub use ini_config::{VaraInstance, VaraIniApplyReport, VaraIniEdit, VaraProcessSlot};
 pub use listener::{
     allowed_stations_path, serve_inbound_one, set_listen, InboundOutcome, VaraListenerError,
 };

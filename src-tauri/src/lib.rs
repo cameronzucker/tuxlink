@@ -1710,6 +1710,12 @@ pub fn run() {
         // (start/stop/status) serialize on the transport handle. Phase 2
         // minimal surface; full session state machine arrives in Phase 3.
         .manage(std::sync::Arc::new(crate::winlink::modem::vara::VaraSession::new()))
+        // tuxlink-iww9r: holder for the VARA child spawned by the VARA.ini
+        // stop-edit-start apply. The whole apply serializes on its lock; Drop
+        // reaps the child at app exit.
+        .manage(std::sync::Arc::new(
+            crate::winlink::modem::vara::VaraProcessSlot::default(),
+        ))
         // tuxlink-nx95: native UV-Pro Benshi control session (APRS-chat Phase 2).
         // Holds the RFCOMM/GAIA driver + cached radio state + the single-
         // Bluetooth-host owner-lock. Shared by the uvpro_* commands and the
@@ -3342,6 +3348,11 @@ pub fn run() {
             crate::winlink::modem::vara::install::vara_engine_available,
             crate::winlink::modem::vara::install::vara_install_status,
             crate::winlink::modem::vara::install::vara_install_start,
+            // tuxlink-iww9r: agent-drivable VARA setup via VARA.ini edit + relaunch
+            // (stop-edit-start). Reads are redacted; the apply refuses to bounce a
+            // live session and never kills a VARA it cannot attribute.
+            crate::winlink::modem::vara::ini_config::vara_ini_read,
+            crate::winlink::modem::vara::ini_config::vara_ini_apply,
             // tuxlink-0ye6 Task 3.4: VARA dial-path B2F exchange — CONNECT to peer
             // + B2F handshake + intent-filtered mailbox drain + DISCONNECT, all
             // in one Tauri call. Mirror of `modem_ardop_b2f_exchange`'s shape.

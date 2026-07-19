@@ -393,6 +393,36 @@ impl VaraSession {
         Some(val)
     }
 
+    /// tuxlink-iww9r: run `f` while HOLDING the session inner mutex, iff no
+    /// session is `Open`/`Connecting`. The VARA.ini config apply wraps its
+    /// stop+edit window in this so a concurrent `vara_open_session` (which
+    /// holds the same mutex across its connect) can never interleave with
+    /// the modem bounce — the open either completes first (and this refuses)
+    /// or queues until the bounce's mutation window is over.
+    ///
+    /// Scope discipline: callers keep the guarded window to the stop+edit
+    /// phase only (seconds), NOT a relaunch port-wait (up to ~45 s) —
+    /// `snapshot()` (the UI status poll) blocks on this mutex.
+    pub fn with_session_excluded<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        let guard = match self.inner.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let state = guard.status.state;
+        if matches!(state, VaraState::Open | VaraState::Connecting) {
+            return Err(format!(
+                "a VARA session is {state:?} — close the VARA session before applying VARA.ini \
+                 config (the apply bounces the modem)"
+            ));
+        }
+        let out = f();
+        drop(guard);
+        out
+    }
+
     /// Read-only snapshot of the current status. Cheap; safe to poll.
     ///
     /// Overlays the live `transport_owner` from the session inner-mutex

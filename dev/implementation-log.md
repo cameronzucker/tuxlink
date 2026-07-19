@@ -5,6 +5,46 @@ shipped, bug-hunt cycles, adversarial reviews). Keyed by date + topic.
 
 ---
 
+## 2026-07-18 — VARA.ini agent-config shipped whole: app glue + live R2 bounce validation + MCP tools (tuxlink-iww9r, PR #1156)
+
+Session isthmus-sage-owl, continuing fir-towhee-maple's increment 1 (the
+tuxlink-vara-ini leaf crate). Shipped the remaining increments:
+
+- **App glue** `winlink::modem::vara::ini_config`: WINE-prefix + instance
+  resolution (drive_c/"VARA HF" | VARA | VARA2 — layout grounded on R2, where
+  VARA2 runs cmd port 8400), the stop→settle→edit→atomic-write→relaunch
+  lifecycle with pid ATTRIBUTION (exe-path/WINEPREFIX validation; never a
+  bare "wine|vara" grep, never a pkill), session-mutex exclusion vs
+  vara_open_session, collision-safe timestamped backups, redaction on every
+  surface, Tauri commands + managed VaraProcessSlot,
+  ManagedModem::spawn_configured (env+cwd for the WINE launch).
+- **Codex adrev** (gpt-5.5 xhigh): 5 findings — 2 P1 (pid attribution,
+  open-session TOCTOU) + 3 P2 (relaunch port spoofing, VARA2 8300 default,
+  backup collisions) — all fixed + regression-tested. Plus a CI-only
+  fork→exec cmdline race in the pidfile tests, fixed by waiting for the
+  child's own argv.
+- **Live validation on R2** (the "code exists ≠ functional" gate): an
+  #[ignore]d harness (live_vara_ini_bounce) ran two full bounces against the
+  real VARA under WINE at ~/.wine-vara — cold start and slot-managed restart
+  — both green in 3.5 s. Found + fixed a real launch bug: WINEARCH=win64
+  (engine parity) hard-fails 32-bit prefixes; launch now omits WINEARCH
+  (it governs prefix creation only). NOTE: upstream wine-vara-setup's
+  wv_wineenv has the same latent issue for operator-supplied win32 prefixes.
+- **MCP tools** (built after grounding the Routines-collision gate: hq9g0's
+  unified audio list + Routines round 2 merged, no open router.rs PRs, no
+  live Routines session): vara_ini_read (redacted, no taint) +
+  vara_ini_apply (gated write via guarded_egress, validate-before-gate incl.
+  newline/'='-injection rejection shared through
+  ports::validate_vara_ini_apply); monolith adapters reuse the same slot +
+  session safety as the Tauri path; playbook vara-wine-setup.md documents
+  the read-then-apply workflow.
+
+CI green at every step (final head f05d9384 pending at log time; c63669de
+fully green). Remaining, tracked separately: the VARA/WINE audio
+device-namespace bridge (tuxlink-hq9g0 set-side).
+
+---
+
 ## 2026-07-17 — Routines demo polish: navigation home, human action labels, design-system retokenize (tuxlink-9se1x / 5lfxk / h82wg, PR #1138)
 
 Overnight operator-authorized pass (session fox-cypress-pika) fixing the three

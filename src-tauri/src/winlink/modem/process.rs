@@ -117,18 +117,39 @@ impl ManagedModem {
     /// The caller must obtain per-invocation operator consent before calling
     /// this function when `program` is a radio-keying binary (e.g., `ardopcf`).
     pub fn spawn(program: &str, args: &[&str]) -> Result<ManagedModem, ProcessError> {
+        Self::spawn_configured(program, args, &[], None)
+    }
+
+    /// [`ManagedModem::spawn`] with extra environment variables and an optional
+    /// working directory. Needed for modems that only run under a configured
+    /// environment — VARA under WINE requires `WINEPREFIX`/`WINEARCH` and a cwd
+    /// of its install dir (VB6 resolves its data files relative to cwd). The
+    /// child still inherits the parent environment; `envs` overlays it.
+    pub fn spawn_configured(
+        program: &str,
+        args: &[&str],
+        envs: &[(&str, &str)],
+        cwd: Option<&Path>,
+    ) -> Result<ManagedModem, ProcessError> {
         tracing::info!(
             target: "tuxlink::winlink::modem::process",
             program,
             args = ?args,
             arg_count = args.len(),
+            env_overlays = ?envs.iter().map(|(k, _)| *k).collect::<Vec<_>>(),
+            cwd = ?cwd,
             "modem process spawning",
         );
-        let mut child = Command::new(program)
-            .args(args)
+        let mut cmd = Command::new(program);
+        cmd.args(args)
+            .envs(envs.iter().copied())
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+        if let Some(dir) = cwd {
+            cmd.current_dir(dir);
+        }
+        let mut child = cmd
             .spawn()
             .map_err(|e| {
                 tracing::error!(
@@ -586,6 +607,39 @@ mod tests {
             Some(0),
             "flood stub should run to completion and exit 0"
         );
+    }
+
+    /// tuxlink-iww9r: `spawn_configured` must deliver the env overlay and the
+    /// working directory to the child — the WINE spawn depends on both. The
+    /// stub writes `$TUXLINK_TEST_ENV` and `pwd` into a result file we poll.
+    #[test]
+    fn spawn_configured_applies_env_and_cwd() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let out = dir.path().join("probe.txt");
+        let script = format!(
+            "printf '%s\\n%s\\n' \"$TUXLINK_TEST_ENV\" \"$(pwd)\" > {}",
+            out.display()
+        );
+        let mut modem = ManagedModem::spawn_configured(
+            "/bin/sh",
+            &["-c", &script],
+            &[("TUXLINK_TEST_ENV", "wine-overlay-works")],
+            Some(dir.path()),
+        )
+        .expect("stub must spawn");
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while modem.is_running() {
+            assert!(Instant::now() < deadline, "stub did not exit in time");
+            thread::sleep(Duration::from_millis(20));
+        }
+        let probe = std::fs::read_to_string(&out).expect("stub must write the probe file");
+        let mut lines = probe.lines();
+        assert_eq!(lines.next(), Some("wine-overlay-works"), "env overlay must reach the child");
+        // Compare canonicalized paths: on macOS/CI, tempdirs live behind symlinks.
+        let reported = std::fs::canonicalize(lines.next().expect("pwd line")).expect("canon pwd");
+        let expected = std::fs::canonicalize(dir.path()).expect("canon tempdir");
+        assert_eq!(reported, expected, "cwd must be the requested directory");
     }
 
     /// tuxlink-c119: the noise filter drops Jack/PipeWire probe spam but keeps

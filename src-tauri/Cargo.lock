@@ -6566,6 +6566,7 @@ dependencies = [
  "tuxlink-routines",
  "tuxlink-security",
  "tuxlink-stt",
+ "tuxlink-vara-ini",
  "urlencoding",
  "uuid",
  "walkdir",
@@ -6690,6 +6691,10 @@ dependencies = [
  "thiserror 2.0.18",
  "whisper-rs",
 ]
+
+[[package]]
+name = "tuxlink-vara-ini"
+version = "0.0.0"
 
 [[package]]
 name = "typeid"
