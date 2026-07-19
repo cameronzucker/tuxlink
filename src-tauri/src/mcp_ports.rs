@@ -1665,13 +1665,16 @@ impl WritePort for MonolithWritePort {
             "set_ardop",
             &audit,
             || async move {
-                // Read the current ArdopUiConfig, mutate ONLY drive_level, persist.
-                // (modem_commands.rs:107 config_get_ardop / :117 config_set_ardop —
-                // the latter read-modify-writes the whole config atomically.) The
-                // agent may not touch any other ARDOP field.
-                let mut cfg = crate::modem_commands::config_get_ardop();
-                cfg.drive_level = Some(drive_level);
-                crate::modem_commands::config_set_ardop(cfg)
+                // Set ONLY drive_level through the SHARED, locked setter
+                // (`set_ardop_drive_level` computes old/new INSIDE the config
+                // writer lock — one critical section, no lost update). This is
+                // the SAME setter the `config.set_ardop` routine action uses
+                // (ADR 0024 P3: one locked implementation, two front-ends), so
+                // the agent write path is never left racy while the routine
+                // path is locked. The agent may not touch any other ARDOP
+                // field — the setter mutates drive_level alone.
+                crate::modem_commands::set_ardop_drive_level(drive_level)
+                    .map(|_| ())
                     .map_err(|e| WritePortError::Failed(redact_err(e)))
             },
         )

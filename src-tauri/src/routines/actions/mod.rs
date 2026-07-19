@@ -14,6 +14,7 @@
 //! Task 4. Spec: `docs/superpowers/specs/2026-07-13-routines-design.md` §6.
 
 pub mod cat;
+pub mod config_write;
 pub mod data;
 pub mod docs_search;
 pub mod find_stations;
@@ -395,6 +396,26 @@ pub trait DocsSearchService: Send + Sync {
     ) -> Result<Vec<crate::search::docs_index::DocsHit>, String>;
 }
 
+/// The `config.set_ardop` delegation seam (rank 5 — the FIRST config-write
+/// action, exemplar of the `writes_config` consent class). ONE method: set the
+/// ARDOP `drive_level` under the config writer lock, returning `(old, new)`.
+/// Split at the "set drive_level" boundary so the action's param validation +
+/// output shaping are unit-testable with a fake, while the real locked
+/// read-modify-write (old/new under the lock, absent-field-erases) is tested
+/// directly against a temp config dir in `modem_commands.rs`. The monolith
+/// adapter ([`config_write::MonolithConfigWriteService`]) delegates to the
+/// SHARED [`crate::modem_commands::set_ardop_drive_level`] — the SAME locked
+/// setter the MCP `set_ardop` write port uses (ADR 0024 P3: one locked
+/// implementation, two front-ends). `level` is pre-validated (`<= 100`) by the
+/// action before this is called.
+#[async_trait]
+pub trait ConfigWriteService: Send + Sync {
+    /// Set ONLY the ARDOP `drive_level` under the config writer lock, returning
+    /// `(old, new)`. `old` is the pre-mutation value (`None` when previously
+    /// unset). `level` is already range-checked by the caller.
+    async fn set_ardop_drive_level(&self, level: u8) -> Result<(Option<u8>, u8), String>;
+}
+
 /// The `local.*` action family's delegation seam (spec §6 "Local actions";
 /// plan Task 4d). One trait, not three — mirrors [`DataService`]'s shape:
 /// `local.compose` and `local.compose_catalog_request` (local.rs) share the
@@ -448,6 +469,7 @@ pub struct ActionDeps {
     pub data: Arc<dyn DataService>,
     pub station_query: Arc<dyn StationQueryService>,
     pub docs_search: Arc<dyn DocsSearchService>,
+    pub config_write: Arc<dyn ConfigWriteService>,
     pub local: Arc<dyn LocalService>,
 }
 
@@ -501,6 +523,9 @@ pub fn build_registry(deps: ActionDeps) -> ActionRegistry {
     )));
     registry.register(Arc::new(docs_search::DocsSearch::new(
         deps.docs_search.clone(),
+    )));
+    registry.register(Arc::new(config_write::ConfigSetArdop::new(
+        deps.config_write.clone(),
     )));
 
     registry.register(Arc::new(local::ComposeMessage::new(deps.local.clone())));
