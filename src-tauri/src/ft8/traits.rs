@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::ft8::records::AudioDeviceChoice;
 use crate::modem_status::{ModemSession, ModemState};
 use crate::winlink::ax25::devices::{
-    alsa_hw_name, enumerate_capture_devices, read_sys_snapshot, resolve_managed_device,
+    alsa_hw_name, enumerate_capture_devices, read_sys_snapshot, resolve_capture_device,
     ResolvedManagedDevice, StableAudioId,
 };
 use tuxlink_capture::slot::GapReport;
@@ -156,7 +156,11 @@ impl Ft8Platform for ProdPlatform {
         tuxlink_jt9::discover::discover_jt9(None).map_err(|e| format!("{e:?}"))
     }
     fn resolve_device(&self, id: &StableAudioId) -> Option<ResolvedManagedDevice> {
-        resolve_managed_device(id, &read_sys_snapshot())
+        // tuxlink-caxy6: resolve against the SAME enumeration the FT8 picker
+        // offers (capture-capable, including non-USB loopback/line-in cards) —
+        // resolve_managed_device's packet USB-only filter made every non-USB
+        // pick land in blocked(DeviceAbsent).
+        resolve_capture_device(id, &read_sys_snapshot())
     }
     fn enumerate_capture(&self) -> Vec<AudioDeviceChoice> {
         enumerate_capture_devices(&read_sys_snapshot())
