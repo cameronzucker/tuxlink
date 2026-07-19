@@ -171,7 +171,7 @@ describe('useRoutines — re-reads on library/schedule events', () => {
     emit({ kind: 'runStarted', runId: 'run-1', routine: 'morning-ics', dryRun: false });
     emit({ kind: 'stateChanged', runId: 'run-1', state: 'running' });
     emit({ kind: 'stepCompleted', runId: 'run-1', stepId: 's1', ok: true });
-    emit({ kind: 'awaitingConsent', runId: 'run-1', stepId: 's2' });
+    emit({ kind: 'awaitingConsent', runId: 'run-1', stepId: 's2', parkKind: 'transmit' });
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(150);
