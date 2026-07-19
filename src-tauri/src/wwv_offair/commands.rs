@@ -63,7 +63,24 @@ pub(crate) fn decode_and_ingest(
     let r = stt
         .transcribe(wav, DecodeMode::WwvBiased)
         .map_err(|e| WwvError::Capture(e.to_string()))?;
-    ingest_transcript(&r.text, &r.confidence, year, month, now_ms, config_dir)
+    let outcome = ingest_transcript(&r.text, &r.confidence, year, month, now_ms, config_dir)?;
+    if matches!(outcome, DecodeOutcome::NoCopy) {
+        // tuxlink-76y11: a rejected decode must say WHY, in the log, without
+        // requiring the operator to rebuild a whisper harness in the field.
+        // The transcript snippet distinguishes "gate rejected a plausible
+        // read" from "model heard nothing", and the confidence numbers show
+        // how far from the is_confident bar the attempt landed.
+        let snippet: String = r.text.chars().take(300).collect();
+        tracing::warn!(
+            target: "tuxlink::wwv",
+            avg_logprob = r.confidence.avg_logprob,
+            no_speech_prob = r.confidence.no_speech_prob,
+            transcript = %snippet,
+            wav = %wav.display(),
+            "WWV decode rejected (NoCopy): low-confidence or unparseable transcript; wav retained for playback and manual entry"
+        );
+    }
+    Ok(outcome)
 }
 
 #[derive(Debug, Serialize)]
