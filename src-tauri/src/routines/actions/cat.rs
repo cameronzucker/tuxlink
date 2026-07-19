@@ -184,6 +184,9 @@ impl Action for RigReadState {
             needs_radio: true,
             transmits: false,
             needs_internet: false,
+            example_params: None,
+            allowed_values: None,
+            dry_run_shape: None,
         }
     }
 
@@ -329,6 +332,9 @@ impl Action for RigValidatePreset {
             needs_radio: true,
             transmits: false,
             needs_internet: false,
+            example_params: None,
+            allowed_values: None,
+            dry_run_shape: None,
         }
     }
 
@@ -437,6 +443,9 @@ impl Action for RigApplyPreset {
             needs_radio: true,
             transmits: false,
             needs_internet: false,
+            example_params: None,
+            allowed_values: None,
+            dry_run_shape: None,
         }
     }
 
@@ -549,6 +558,9 @@ impl Action for RigSwitchVfo {
             needs_radio: true,
             transmits: false,
             needs_internet: false,
+            example_params: None,
+            allowed_values: None,
+            dry_run_shape: None,
         }
     }
 
@@ -617,6 +629,9 @@ impl Action for RigTuneAtu {
             needs_radio: true,
             transmits: true,
             needs_internet: false,
+            example_params: None,
+            allowed_values: None,
+            dry_run_shape: None,
         }
     }
 

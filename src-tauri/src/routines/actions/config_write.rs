@@ -37,6 +37,14 @@ use super::ConfigWriteService;
 
 const CONFIG_SET_ARDOP: &str = "config.set_ardop";
 
+/// Shape-true dry-run output for `config.set_ardop` (D6): a dry run never
+/// mutates config, so both `old` and `new` are the harmless `0` stand-in, plus
+/// the `dry_run` marker — the output SHAPE (`field`/`old`/`new`) matches the
+/// real write so a downstream branch on `<step>.new` still parses.
+fn config_set_ardop_dry_run_shape(_params: &Value) -> Value {
+    json!({"field": "drive_level", "old": 0, "new": 0, "dry_run": true})
+}
+
 /// `config.set_ardop` params. `drive_level` is REQUIRED. A value `> 100` is
 /// invalid params (rejected up front, mirroring the MCP write path); a value
 /// `> 255` fails deserialization (u8 overflow) — both surface as invalid
@@ -70,6 +78,9 @@ impl Action for ConfigSetArdop {
             needs_radio: false,
             transmits: false,
             needs_internet: false,
+            example_params: Some(r#"{"drive_level":80}"#),
+            allowed_values: None,
+            dry_run_shape: Some(config_set_ardop_dry_run_shape),
         }
     }
 
@@ -312,5 +323,24 @@ mod tests {
         assert!(!d.needs_radio);
         assert!(!d.transmits);
         assert!(!d.needs_internet);
+    }
+
+    // ---- D6: authoring affordances + dry-run shape -------------------------
+
+    #[test]
+    fn descriptor_advertises_example_params_and_dry_run_shape() {
+        let d = action(FakeConfigWriteService::default()).descriptor();
+        assert_eq!(d.example_params, Some(r#"{"drive_level":80}"#));
+        assert!(d.dry_run_shape.is_some());
+        assert!(d.allowed_values.is_none(), "no closed vocabulary for a numeric write");
+    }
+
+    #[test]
+    fn dry_run_shape_pins_field_old_new_and_marks_dry_run() {
+        let out = config_set_ardop_dry_run_shape(&json!({"drive_level": 80}));
+        assert_eq!(out["field"], json!("drive_level"));
+        assert_eq!(out["old"], json!(0));
+        assert_eq!(out["new"], json!(0));
+        assert_eq!(out["dry_run"], json!(true));
     }
 }

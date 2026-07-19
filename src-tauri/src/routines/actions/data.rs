@@ -250,6 +250,9 @@ impl Action for SpaceWxWwv {
             needs_radio: true,
             transmits: false,
             needs_internet: false,
+            example_params: None,
+            allowed_values: None,
+            dry_run_shape: None,
         }
     }
 
@@ -381,6 +384,9 @@ impl Action for SpaceWxSwpc {
             needs_radio: false,
             transmits: false,
             needs_internet: true,
+            example_params: None,
+            allowed_values: None,
+            dry_run_shape: None,
         }
     }
 
@@ -448,6 +454,9 @@ impl Action for StationlistUpdate {
             needs_radio: false,
             transmits: false,
             needs_internet: true,
+            example_params: None,
+            allowed_values: None,
+            dry_run_shape: None,
         }
     }
 
@@ -486,6 +495,76 @@ impl Action for StationlistUpdate {
 // ============================================================================
 
 const DATA_READ: &str = "data.read";
+
+/// The closed `source` vocabulary — the descriptor's `allowed_values` and the
+/// validator's `UNKNOWN_READ_SOURCE` lint (D6) read this. MUST stay in lock-step
+/// with [`ReadSource`]'s snake_case variants (a drift-guard test pins it).
+const DATA_READ_SOURCES: &[&str] = &[
+    "inbox_summary",
+    "space_weather",
+    "heard_stations",
+    "grid",
+    "last_connected_gateway",
+    "modem_status",
+    "backend_status",
+    "app_status",
+    "config",
+    "ardop_config",
+    "vara_config",
+    "packet_config",
+    "rig_config",
+];
+
+/// Shape-true dry-run output for `data.read` (D6, round-2 P1-5): matches on the
+/// RESOLVED `source` and returns a canonical, shape-accurate stand-in so a dry
+/// run of a routine that branches on a read's output takes realistic arms
+/// without touching real state. `space_weather` stays bare `null`; every object
+/// shape carries an extra `"dry_run": true`. `heard_stations` /
+/// `last_connected_gateway` (which error on a real run) and any unknown or
+/// still-`$ref` source fall through to the optimistic default `{"dry_run":true}`.
+fn data_read_dry_run_shape(params: &Value) -> Value {
+    let source = params.get("source").and_then(|v| v.as_str()).unwrap_or("");
+    let mut out = match source {
+        "grid" => json!({"grid": "AA00aa"}),
+        "modem_status" => json!({
+            "kind": "idle", "connected": false, "state": "idle",
+            "running": [], "selected": null, "conflict": false
+        }),
+        "backend_status" => json!({
+            "connected": false, "transport": "", "state": "not_configured"
+        }),
+        "app_status" => json!({
+            "name": "tuxlink", "version": "0.0.0-dryrun", "armed": false,
+            "armed_remaining_secs": 0, "tainted": false, "taint_reason": null
+        }),
+        "config" => json!({
+            "connect_to_cms": false, "transport": "CmsSsl", "host": "",
+            "callsign": "N0CALL", "grid": "AA00"
+        }),
+        "ardop_config" => json!({
+            "host": "127.0.0.1", "port": 8515, "drive_level": 80, "bandwidth": 500
+        }),
+        "vara_config" => json!({
+            "host": "127.0.0.1", "port": 8300, "bandwidth": 2300, "drive_level": 0
+        }),
+        "packet_config" => json!({
+            "kiss_host": "127.0.0.1", "kiss_port": 8001, "baud": 9600, "tx_delay": 300
+        }),
+        "rig_config" => json!({
+            "rig_hamlib_model": null, "rigctld_host": "127.0.0.1",
+            "rigctld_port": 4532, "rigctld_binary": "rigctld",
+            "close_serial_sequencing": false, "live_vfo_poll": false,
+            "qsy_on_fail": false, "cat_serial_path": null, "cat_baud": 19200
+        }),
+        "inbox_summary" => json!({"total": 0, "unread": 0}),
+        "space_weather" => return Value::Null,
+        _ => json!({}),
+    };
+    if let Value::Object(map) = &mut out {
+        map.insert("dry_run".into(), json!(true));
+    }
+    out
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -569,6 +648,9 @@ impl Action for DataRead {
             needs_radio: false,
             transmits: false,
             needs_internet: false,
+            example_params: Some(r#"{"source":"modem_status"}"#),
+            allowed_values: Some(("source", DATA_READ_SOURCES)),
+            dry_run_shape: Some(data_read_dry_run_shape),
         }
     }
 
@@ -2336,5 +2418,75 @@ mod tests {
         assert!(!d.needs_radio);
         assert!(!d.transmits);
         assert!(!d.needs_internet);
+    }
+
+    // ---- D6: descriptor authoring affordances + dry-run shapes -------------
+
+    #[test]
+    fn read_descriptor_advertises_example_and_source_vocabulary() {
+        let d = DataRead::new(Arc::new(FakeDataService::default())).descriptor();
+        assert_eq!(d.example_params, Some(r#"{"source":"modem_status"}"#));
+        let (key, allowed) = d.allowed_values.expect("data.read has a source vocab");
+        assert_eq!(key, "source");
+        assert_eq!(allowed, DATA_READ_SOURCES);
+        assert!(d.dry_run_shape.is_some());
+    }
+
+    /// The `allowed_values` vocabulary MUST list every real `ReadSource`
+    /// variant — a drift guard so a new source can't ship un-lintable.
+    #[test]
+    fn source_vocabulary_covers_every_read_source() {
+        for s in DATA_READ_SOURCES {
+            let parsed: Result<ReadSource, _> = serde_json::from_value(json!(s));
+            assert!(parsed.is_ok(), "vocabulary token {s:?} is not a real ReadSource");
+        }
+        assert_eq!(DATA_READ_SOURCES.len(), 13, "13 sources today");
+    }
+
+    #[test]
+    fn dry_run_shape_grid_pins_grid() {
+        let out = data_read_dry_run_shape(&json!({"source": "grid"}));
+        assert_eq!(out["grid"], json!("AA00aa"));
+        assert_eq!(out["dry_run"], json!(true));
+    }
+
+    #[test]
+    fn dry_run_shape_statuses_pin_state() {
+        assert_eq!(
+            data_read_dry_run_shape(&json!({"source": "modem_status"}))["state"],
+            json!("idle")
+        );
+        assert_eq!(
+            data_read_dry_run_shape(&json!({"source": "backend_status"}))["state"],
+            json!("not_configured")
+        );
+    }
+
+    #[test]
+    fn dry_run_shape_ardop_config_pins_drive_level() {
+        let out = data_read_dry_run_shape(&json!({"source": "ardop_config"}));
+        assert_eq!(out["drive_level"], json!(80));
+        assert_eq!(out["dry_run"], json!(true));
+    }
+
+    #[test]
+    fn dry_run_shape_space_weather_stays_bare_null() {
+        assert_eq!(
+            data_read_dry_run_shape(&json!({"source": "space_weather"})),
+            Value::Null
+        );
+    }
+
+    #[test]
+    fn dry_run_shape_unknown_or_gap_source_falls_through_to_optimistic_default() {
+        // heard_stations / last_connected_gateway error on a real run; a dry run
+        // has no record to invent, so it returns the optimistic default.
+        for s in ["heard_stations", "last_connected_gateway", "who_knows"] {
+            assert_eq!(
+                data_read_dry_run_shape(&json!({ "source": s })),
+                json!({"dry_run": true}),
+                "source {s}"
+            );
+        }
     }
 }

@@ -1498,6 +1498,9 @@ mod tests {
                 needs_radio: false,
                 transmits: false,
                 needs_internet: false,
+                example_params: None,
+                allowed_values: None,
+                dry_run_shape: None,
             }
         }
 

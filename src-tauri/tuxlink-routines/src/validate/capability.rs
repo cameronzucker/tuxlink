@@ -226,6 +226,9 @@ mod tests {
         needs_radio: true,
         transmits: true,
         needs_internet: false,
+        example_params: None,
+        allowed_values: None,
+        dry_run_shape: None,
     };
     const WEB_LOOKUP: ActionDescriptor = ActionDescriptor {
         writes_config: false,
@@ -235,6 +238,9 @@ mod tests {
         needs_radio: false,
         transmits: false,
         needs_internet: true,
+        example_params: None,
+        allowed_values: None,
+        dry_run_shape: None,
     };
     const LOCAL_NOTE: ActionDescriptor = ActionDescriptor {
         writes_config: false,
@@ -244,6 +250,9 @@ mod tests {
         needs_radio: false,
         transmits: false,
         needs_internet: false,
+        example_params: None,
+        allowed_values: None,
+        dry_run_shape: None,
     };
 
     fn action_step(id: &str, action: &str) -> Step {

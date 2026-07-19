@@ -39,6 +39,20 @@ use super::{StationDirectory, StationQueryService};
 
 const DATA_FIND_STATIONS: &str = "data.find_stations";
 
+/// Shape-true dry-run output for `data.find_stations` (D6): a params-blind,
+/// empty-but-well-shaped directory result whose single `DRYRUN-1` callsign lets
+/// a routine's `$s.callsigns` → `radio.connect` composition take its "found a
+/// station" arm in a dry run without hitting the Winlink status API.
+fn find_stations_dry_run_shape(_params: &Value) -> Value {
+    json!({
+        "gateways": [],
+        "callsigns": ["DRYRUN-1"],
+        "fetched_at_ms": null,
+        "operator_grid": null,
+        "dry_run": true
+    })
+}
+
 /// `data.find_stations` params. All optional. `modes` uses the same kebab-case
 /// [`ListingMode`](crate::catalog::stations::ListingMode) enum as
 /// `data.stationlist_update` (a `Vec<String>` would silently accept garbage
@@ -86,6 +100,9 @@ impl Action for FindStations {
             needs_radio: false,
             transmits: false,
             needs_internet: true,
+            example_params: Some(r#"{"modes":["vara-hf"],"limit":3}"#),
+            allowed_values: None,
+            dry_run_shape: Some(find_stations_dry_run_shape),
         }
     }
 
@@ -599,5 +616,24 @@ mod tests {
         assert!(!d.needs_radio);
         assert!(!d.transmits);
         assert!(!d.writes_config);
+    }
+
+    // ---- D6: authoring affordances + dry-run shape -------------------------
+
+    #[test]
+    fn descriptor_advertises_example_params_and_dry_run_shape() {
+        let d = action(FakeStationQueryService::default()).descriptor();
+        assert_eq!(d.example_params, Some(r#"{"modes":["vara-hf"],"limit":3}"#));
+        assert!(d.dry_run_shape.is_some());
+    }
+
+    #[test]
+    fn dry_run_shape_pins_callsigns_and_marks_dry_run() {
+        let out = find_stations_dry_run_shape(&json!({}));
+        assert_eq!(out["callsigns"], json!(["DRYRUN-1"]));
+        assert_eq!(out["gateways"], json!([]));
+        assert_eq!(out["fetched_at_ms"], Value::Null);
+        assert_eq!(out["operator_grid"], Value::Null);
+        assert_eq!(out["dry_run"], json!(true));
     }
 }

@@ -160,6 +160,13 @@ pub struct ActionInfo {
     pub needs_radio: bool,
     pub transmits: bool,
     pub needs_internet: bool,
+    /// Declares the `config.*` write consent class (D5+). The palette/inspector
+    /// render a WRITES badge from this, and the ack UI gates on it.
+    pub writes_config: bool,
+    /// A canonical example `params` object (compact JSON string) the authoring
+    /// UI seeds when the action is dropped onto the canvas (D6). `None` for
+    /// actions whose params are self-evidently empty.
+    pub example_params: Option<String>,
 }
 
 /// One relevant step in a routine's consent closure (C3), projected for the
@@ -734,6 +741,8 @@ pub fn list_actions(state: &RoutinesState) -> Vec<ActionInfo> {
             needs_radio: d.needs_radio,
             transmits: d.transmits,
             needs_internet: d.needs_internet,
+            writes_config: d.writes_config,
+            example_params: d.example_params.map(|s| s.to_string()),
         })
         .collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -2555,6 +2564,13 @@ mod tests {
         );
         let connect = actions.iter().find(|a| a.name == "radio.connect").unwrap();
         assert!(connect.needs_radio && connect.transmits && !connect.needs_internet);
+        // D6: writes_config + example_params are projected off the descriptor.
+        let set = actions.iter().find(|a| a.name == "config.set").unwrap();
+        assert!(set.writes_config, "config.set carries the write consent class");
+        assert!(!connect.writes_config, "radio.connect does not write config");
+        // The test fakes declare no example_params (real actions set it; asserted
+        // in each action file's own unit tests).
+        assert_eq!(set.example_params, None);
     }
 
     // ── fleet_check: a read-only view of validate_fleet over enabled routines ──

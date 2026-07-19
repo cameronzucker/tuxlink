@@ -35,6 +35,13 @@ use super::DocsSearchService;
 
 const DATA_DOCS_SEARCH: &str = "data.docs_search";
 
+/// Shape-true dry-run output for `data.docs_search` (D6): a well-shaped
+/// zero-hit result — a dry run never touches the FTS index, and empty hits is a
+/// valid, non-error search outcome.
+fn docs_search_dry_run_shape(_params: &Value) -> Value {
+    json!({"hits": [], "dry_run": true})
+}
+
 /// `data.docs_search` params. `query` is REQUIRED and must be non-empty: an
 /// absent field is a serde error (invalid params) and an empty/whitespace-only
 /// string is rejected explicitly (a blank query is an author mistake, not a
@@ -69,6 +76,9 @@ impl Action for DocsSearch {
             needs_radio: false,
             transmits: false,
             needs_internet: false,
+            example_params: Some(r#"{"query":"find stations"}"#),
+            allowed_values: None,
+            dry_run_shape: Some(docs_search_dry_run_shape),
         }
     }
 
@@ -361,5 +371,20 @@ mod tests {
         assert!(!d.transmits);
         assert!(!d.needs_internet);
         assert!(!d.writes_config);
+    }
+
+    // ---- D6: authoring affordances + dry-run shape -------------------------
+
+    #[test]
+    fn descriptor_advertises_example_params_and_dry_run_shape() {
+        let d = action(FakeDocsSearchService::default()).descriptor();
+        assert_eq!(d.example_params, Some(r#"{"query":"find stations"}"#));
+        assert!(d.dry_run_shape.is_some());
+    }
+
+    #[test]
+    fn dry_run_shape_is_empty_hits_marked_dry_run() {
+        let out = docs_search_dry_run_shape(&json!({"query": "anything"}));
+        assert_eq!(out, json!({"hits": [], "dry_run": true}));
     }
 }

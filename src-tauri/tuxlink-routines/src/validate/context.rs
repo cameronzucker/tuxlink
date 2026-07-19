@@ -186,6 +186,9 @@ mod tests {
             needs_radio: true,
             transmits: true,
             needs_internet: false,
+            example_params: None,
+            allowed_values: None,
+            dry_run_shape: None,
         };
         let ctx = StaticContext::new().with_action(descriptor);
         assert_eq!(ctx.action_descriptor("radio.connect"), Some(descriptor));
