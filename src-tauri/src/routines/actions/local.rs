@@ -250,6 +250,7 @@ impl ComposeMessage {
 impl Action for ComposeMessage {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
+            writes_config: false,
             name: LOCAL_COMPOSE,
             label: "Compose message",
             description: "Stage a Winlink message in the outbox for the next connection.",
@@ -393,6 +394,7 @@ impl ComposeCatalogRequest {
 impl Action for ComposeCatalogRequest {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
+            writes_config: false,
             name: LOCAL_COMPOSE_CATALOG_REQUEST,
             label: "Compose catalog request",
             description: "Stage a WL2K catalog request message in the outbox.",
@@ -484,6 +486,7 @@ impl SetIdentity {
 impl Action for SetIdentity {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
+            writes_config: false,
             name: LOCAL_SET_IDENTITY,
             label: "Set station identity",
             description: "Switch the active callsign for the rest of this run only.",
@@ -551,6 +554,7 @@ impl LogEntry {
 impl Action for LogEntry {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
+            writes_config: false,
             name: LOCAL_LOG,
             label: "Write log entry",
             description: "Write a line to the station log.",
@@ -609,6 +613,7 @@ impl Notify {
 impl Action for Notify {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
+            writes_config: false,
             name: LOCAL_NOTIFY,
             label: "Show notification",
             description: "Show a desktop notification.",

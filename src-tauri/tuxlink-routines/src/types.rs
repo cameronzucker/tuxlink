@@ -38,10 +38,21 @@ pub enum BusyPolicy {
 
 /// Operator acknowledgment recorded when `transmit_mode` is set to automatic
 /// (spec §4). Recorded only by a UI act; MCP cannot supply it.
+///
+/// REUSED for both consent classes (spec §4, C3): the transmit ack
+/// (`RoutineDef.transmit_ack`) and the config-write ack
+/// (`RoutineDef.write_ack`). `closure_digest` binds the acknowledgment to the
+/// exact closure the operator signed (the sha256 hex from
+/// [`consent_closure::closure_digest`](crate::consent_closure::closure_digest));
+/// a digest-less legacy ack is treated as stale by the validator. Additive on
+/// the v1 shape: absent -> `None`, and `skip_serializing_if` keeps a legacy ack
+/// round-tripping without a `closure_digest` key.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TransmitAck {
     pub by: String,
     pub at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closure_digest: Option<String>,
 }
 
 /// Declared routine input parameter (bound at invocation).
@@ -198,6 +209,11 @@ pub struct RoutineDef {
     pub transmit_mode: TransmitMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transmit_ack: Option<TransmitAck>,
+    /// Config-write acknowledgment (C3, spec §4) — the `writes_config` sibling
+    /// of `transmit_ack`, recorded when `transmit_mode` is automatic and the
+    /// routine's write closure is non-empty. Additive on v1: absent -> `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write_ack: Option<TransmitAck>,
     #[serde(default = "default_on_interrupted")]
     pub on_interrupted: OnInterrupted,
     #[serde(default)]
@@ -291,6 +307,51 @@ mod tests {
     #[test]
     fn serializes_back_to_equivalent_json() {
         let def = RoutineDef::parse(SPEC_EXAMPLE).unwrap();
+        let round = RoutineDef::parse(&serde_json::to_string(&def).unwrap()).unwrap();
+        assert_eq!(def, round);
+    }
+
+    #[test]
+    fn old_def_without_write_ack_or_closure_digest_parses_and_reserializes_without_them() {
+        // A v1 def predating C3: no write_ack, and a transmit_ack with no
+        // closure_digest. Must parse (additive #[serde(default)]) and, thanks
+        // to skip_serializing_if, re-serialize without injecting the new keys.
+        let def = RoutineDef::parse(SPEC_EXAMPLE).unwrap();
+        assert!(def.write_ack.is_none());
+        assert!(def.transmit_ack.as_ref().unwrap().closure_digest.is_none());
+
+        let reserialized = serde_json::to_value(&def).unwrap();
+        let obj = reserialized.as_object().unwrap();
+        assert!(
+            !obj.contains_key("write_ack"),
+            "absent write_ack must not serialize"
+        );
+        let ack = obj["transmit_ack"].as_object().unwrap();
+        assert!(
+            !ack.contains_key("closure_digest"),
+            "absent closure_digest must not serialize"
+        );
+    }
+
+    #[test]
+    fn write_ack_and_closure_digest_round_trip_when_present() {
+        let with_new_fields = SPEC_EXAMPLE
+            .replace(
+                "\"transmit_ack\": { \"by\": \"KK7ABC\", \"at\": \"2026-07-13T20:00:00Z\" },",
+                "\"transmit_ack\": { \"by\": \"KK7ABC\", \"at\": \"2026-07-13T20:00:00Z\", \
+                 \"closure_digest\": \"abc123\" }, \
+                 \"write_ack\": { \"by\": \"KK7ABC\", \"at\": \"2026-07-13T20:05:00Z\", \
+                 \"closure_digest\": \"def456\" },",
+            );
+        let def = RoutineDef::parse(&with_new_fields).unwrap();
+        assert_eq!(
+            def.transmit_ack.as_ref().unwrap().closure_digest.as_deref(),
+            Some("abc123")
+        );
+        let wa = def.write_ack.as_ref().unwrap();
+        assert_eq!(wa.by, "KK7ABC");
+        assert_eq!(wa.closure_digest.as_deref(), Some("def456"));
+
         let round = RoutineDef::parse(&serde_json::to_string(&def).unwrap()).unwrap();
         assert_eq!(def, round);
     }

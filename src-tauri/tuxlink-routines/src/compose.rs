@@ -146,6 +146,7 @@ mod tests {
                 depth: 0,
                 attended: false,
                 consent: None,
+                root: None,
             },
             path,
         )

@@ -2,7 +2,7 @@
   "routine": "fleet-schedule-collision-b",
   "schema_version": 1,
   "transmit_mode": "automatic",
-  "transmit_ack": { "by": "KK7ABC", "at": "2026-07-13T20:00:00Z" },
+  "transmit_ack": { "by": "KK7ABC", "at": "2026-07-13T20:00:00Z", "closure_digest": "c78dd49a1951dedd18fbdd1d9f483d46e7babffd2b64ac5ccb890eff1b8b5b51" },
   "on_interrupted": "stay",
   "inputs": [],
   "triggers": [{ "type": "schedule", "every": "6h", "align": "hour", "if_missed": "skip" }],

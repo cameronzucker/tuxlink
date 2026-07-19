@@ -58,6 +58,10 @@ Consent is a per-routine, design-time property, mirroring Part 97's own attended
 
 Any routine whose call-graph closure (§10) contains a transmit step is a transmitting routine and must declare a mode; an unacknowledged automatic routine is not an enableable state.
 
+**Config writes are a second consent class (2026-07-18, compat-tree rank 5).** Actions that mutate station configuration declare `writes_config` (the sibling of `transmits`). A routine whose closure contains a write step is a *writing* routine: in attended mode each write step pauses the run for a per-write operator confirmation (the park dialog uses write-specific copy, never Part 97 transmit language — a config write does not key the radio); in automatic mode the routine requires a **`write_ack`** (the sibling of `transmit_ack`, recorded by a UI act, absent from the MCP surface exactly as the transmit ack is). A routine whose closure both transmits and writes needs both acks. The write-consent envelope is the same doctrine as the transmit one: after acknowledgment, all invokers are equivalent.
+
+**Acknowledgments bind to the acknowledged closure via a digest (2026-07-18).** Both `transmit_ack` and `write_ack` carry a `closure_digest` — a canonical hash over the routine's transitive consent-relevant closure (each write/transmit step's `(routine, step, action, params)` plus every Call edge's `(routine, step, callee, args)` on paths reaching a relevant step; recursive key-sort canonicalization, SHA-256). An ack binds *iff* its callsign/timestamp are set **and** its digest equals the live closure digest, recomputed at save, enable, start, and (for called routines) at each child-start. So editing the acked routine, editing a callee it resolves live, or presenting a digest-less legacy ack all invalidate the acknowledgment — closing the replay hole where an unarmed agent edits an acked routine (or its callee) to add a write/transmit the operator never saw. The digest pins the closure's *shape*, not run-time values: a write param that is a `$`-reference is acked as run-time-chosen and surfaced by the `WRITE_VALUE_RUNTIME` validator warning.
+
 ## 5. Canvas — structured flowchart with parallel lanes
 
 The designer is a **structured, auto-laid-out flowchart** (paradigm decision: operator-selected over vertical-list and free-form-canvas alternatives). The operator inserts steps; the engine owns the geometry. Parallel tracks render as lanes. The definition contains only logic — blocks, edges, lanes — never coordinates, so:
@@ -135,6 +139,8 @@ Two library concepts, both built on existing machinery:
 - **Composite steps:** a routine with declared inputs and outputs, flagged as a library step. Placing it on a canvas is a Call-routine step with its own name and icon — one execution mechanism (composition), two presentations. Engine, validator, and journal treat a composite step exactly as a sub-routine call.
 
 **Runs execute a snapshot.** At run start the engine snapshots the fully resolved definition — routine + every referenced library step, preset, station set, template, and called routine, transitively — into the run journal. Editing a library entity mid-run cannot mutate an in-flight run, and an exported run bundle is self-contained: it shows what executed, not what the library says today.
+
+> **Shipped divergence (2026-07-18, recorded per the propagation contract).** The snapshot inlines `@`-references but NOT `Control::Call` targets: called routines resolve live from the store at the moment the Call step executes, so a callee edited mid-run affects an in-flight parent. The consent-relevant half of this gap is closed (the child-start ack-digest re-verification in §4 fails the Call verbatim when a callee's consent closure changed after acknowledgment); the general callee-pinning gap (non-consent callee edits still swap behavior mid-run) is tracked as a follow-up (bd) and is not part of the rank-1..5 arc.
 
 ## 8. Execution engine
 
@@ -240,7 +246,8 @@ One JSON schema; the export format is the storage format. Individual files under
   "routine": "morning-ics-cycle",
   "schema_version": 1,
   "transmit_mode": "automatic",
-  "transmit_ack": { "by": "<callsign>", "at": "<timestamp>" },
+  "transmit_ack": { "by": "<callsign>", "at": "<timestamp>", "closure_digest": "<sha256-hex>" },
+  "write_ack": { "by": "<callsign>", "at": "<timestamp>", "closure_digest": "<sha256-hex>" },
   "on_interrupted": "stay",
   "inputs": [],
   "triggers": [
@@ -260,7 +267,7 @@ One JSON schema; the export format is the storage format. Individual files under
 }
 ```
 
-Load-bearing conventions: **`@`-references** name every external entity (what reference validation resolves); **`stepId.output`** paths are the variable system the type-checker walks; `schema_version` gates evolution. `triggers` is manual plus **at most one** schedule (§5's one-cadence rule) — the parser accepts the array as written and the validator warns (`MULTIPLE_SCHEDULES`, the same design-time enforcement §5 names) on a second `{ "type": "schedule", … }` entry; a task that needs more than one cadence is multiple routine files, not multiple schedule entries in one. Default failure semantics: a step without a failure branch fails the run (verbatim cause, journaled); a failure branch makes failure a handled path.
+Load-bearing conventions: **`@`-references** name every external entity (what reference validation resolves); **`stepId.output`** paths are the variable system the type-checker walks; `schema_version` gates evolution. `transmit_ack` / `write_ack` (both optional, additive on `schema_version` 1) each carry `by` / `at` / `closure_digest` (§4); a def with neither ack, or with a digest-less legacy ack, parses and round-trips unchanged. `triggers` is manual plus **at most one** schedule (§5's one-cadence rule) — the parser accepts the array as written and the validator warns (`MULTIPLE_SCHEDULES`, the same design-time enforcement §5 names) on a second `{ "type": "schedule", … }` entry; a task that needs more than one cadence is multiple routine files, not multiple schedule entries in one. Default failure semantics: a step without a failure branch fails the run (verbatim cause, journaled); a failure branch makes failure a handled path.
 
 ## 15. Testing
 

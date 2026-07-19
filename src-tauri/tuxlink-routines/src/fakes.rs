@@ -12,7 +12,7 @@ use crate::compose::{CallCtx, ChildHandle, Provenance, RoutineInvoker};
 use crate::consent::ConsentPort;
 use crate::error::{SnapshotError, StepError};
 use crate::executor::RunOutcome;
-use crate::journal::RunState;
+use crate::journal::{ParkKind, RunState};
 use crate::refs::EntityRef;
 use crate::snapshot::EntityResolver;
 
@@ -41,6 +41,7 @@ impl FakeAction {
                 description: "",
                 needs_radio: false,
                 transmits: false,
+                writes_config: false,
                 needs_internet: false,
             },
             outcomes: Mutex::new(Vec::new()),
@@ -61,8 +62,18 @@ impl FakeAction {
             description: "",
             needs_radio,
             transmits,
+            writes_config: false,
             needs_internet,
         };
+        self
+    }
+
+    /// Override the `writes_config` capability flag (D5 write actions + the
+    /// C2 park-kind tests). Mutates the flag in place so it composes after
+    /// [`with_capabilities`](Self::with_capabilities), which resets it to
+    /// `false`.
+    pub fn with_writes_config(mut self, writes_config: bool) -> Self {
+        self.descriptor.writes_config = writes_config;
         self
     }
 
@@ -133,7 +144,7 @@ impl Action for FakeAction {
 /// (used to exercise the executor's cancel-while-parked path).
 pub struct FakeConsent {
     behavior: ConsentBehavior,
-    parked: Mutex<Vec<(String, String)>>,
+    parked: Mutex<Vec<(String, String, ParkKind)>>,
 }
 
 enum ConsentBehavior {
@@ -158,17 +169,28 @@ impl FakeConsent {
 
     /// Every `(run_id, step_id)` that parked on this port, in park order.
     pub fn parked(&self) -> Vec<(String, String)> {
-        self.parked.lock().unwrap().clone()
+        self.parked
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(r, s, _)| (r.clone(), s.clone()))
+            .collect()
+    }
+
+    /// The [`ParkKind`] each park was requested with, in park order — lets
+    /// C2 tests assert the executor handed the port the right consent class.
+    pub fn parked_kinds(&self) -> Vec<ParkKind> {
+        self.parked.lock().unwrap().iter().map(|(_, _, k)| *k).collect()
     }
 }
 
 #[async_trait]
 impl ConsentPort for FakeConsent {
-    async fn park(&self, run_id: &str, step_id: &str) -> Result<(), StepError> {
+    async fn park(&self, run_id: &str, step_id: &str, kind: ParkKind) -> Result<(), StepError> {
         self.parked
             .lock()
             .unwrap()
-            .push((run_id.to_string(), step_id.to_string()));
+            .push((run_id.to_string(), step_id.to_string(), kind));
         match self.behavior {
             ConsentBehavior::GrantAfter(d) => {
                 tokio::time::sleep(d).await;

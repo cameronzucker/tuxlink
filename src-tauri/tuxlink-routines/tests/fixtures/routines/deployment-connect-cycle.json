@@ -2,7 +2,7 @@
   "routine": "deployment-connect-cycle",
   "schema_version": 1,
   "transmit_mode": "automatic",
-  "transmit_ack": { "by": "KK7ABC", "at": "2026-07-13T20:00:00Z" },
+  "transmit_ack": { "by": "KK7ABC", "at": "2026-07-13T20:00:00Z", "closure_digest": "4e767285c1900f660ff38345ef7008976c19165e5fdad3eb07df8a5b918ea2f8" },
   "on_interrupted": "stay",
   "inputs": [],
   "triggers": [

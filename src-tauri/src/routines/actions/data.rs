@@ -243,6 +243,7 @@ impl SpaceWxWwv {
 impl Action for SpaceWxWwv {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
+            writes_config: false,
             name: DATA_SPACEWX_WWV,
             label: "Capture WWV space weather",
             description: "Wait for the :18/:45 WWV broadcast window, then capture and decode space weather off-air.",
@@ -373,6 +374,7 @@ impl SpaceWxSwpc {
 impl Action for SpaceWxSwpc {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
+            writes_config: false,
             name: DATA_SPACEWX_SWPC,
             label: "Fetch SWPC space weather",
             description: "Fetch current space weather from NOAA SWPC online.",
@@ -439,6 +441,7 @@ impl StationlistUpdate {
 impl Action for StationlistUpdate {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
+            writes_config: false,
             name: DATA_STATIONLIST_UPDATE,
             label: "Update gateway list",
             description: "Refresh gateway info from the Winlink status API.",
@@ -534,6 +537,7 @@ impl DataRead {
 impl Action for DataRead {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
+            writes_config: false,
             name: DATA_READ,
             label: "Read app data",
             description: "Read tuxlink state (inbox, catalog, prior captures) into the run.",

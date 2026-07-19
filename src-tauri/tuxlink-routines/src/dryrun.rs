@@ -90,11 +90,13 @@ pub fn build_dryrun_registry(
 ) -> ActionRegistry {
     let mut registry = ActionRegistry::default();
     for descriptor in real_descriptors {
-        let mut fake = FakeAction::new(descriptor.name).with_capabilities(
-            descriptor.needs_radio,
-            descriptor.transmits,
-            descriptor.needs_internet,
-        );
+        let mut fake = FakeAction::new(descriptor.name)
+            .with_capabilities(
+                descriptor.needs_radio,
+                descriptor.transmits,
+                descriptor.needs_internet,
+            )
+            .with_writes_config(descriptor.writes_config);
         match script.outcomes.get(descriptor.name) {
             Some(queued) if !queued.is_empty() => {
                 for outcome in queued {
@@ -137,6 +139,7 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     const RADIO_CONNECT: ActionDescriptor = ActionDescriptor {
+        writes_config: false,
         name: "radio.connect",
         label: "",
         description: "",
@@ -145,6 +148,7 @@ mod tests {
         needs_internet: false,
     };
     const LOCAL_LOG: ActionDescriptor = ActionDescriptor {
+        writes_config: false,
         name: "local.log",
         label: "",
         description: "",
@@ -153,6 +157,7 @@ mod tests {
         needs_internet: false,
     };
     const DATA_LOOKUP: ActionDescriptor = ActionDescriptor {
+        writes_config: false,
         name: "data.web_lookup",
         label: "",
         description: "",
@@ -182,7 +187,33 @@ mod tests {
             assert_eq!(d.needs_radio, original.needs_radio, "{}", d.name);
             assert_eq!(d.transmits, original.transmits, "{}", d.name);
             assert_eq!(d.needs_internet, original.needs_internet, "{}", d.name);
+            assert_eq!(d.writes_config, original.writes_config, "{}", d.name);
         }
+    }
+
+    /// The mirror carries `writes_config` verbatim (C2): a dry-run of a config
+    /// write sees the same declared consent class the real run would — even
+    /// though a dry-run never actually parks (the engine forces attended
+    /// `false`), the validator's capability checks still see the true shape.
+    #[test]
+    fn mirror_preserves_writes_config_flag() {
+        const CONFIG_WRITE: ActionDescriptor = ActionDescriptor {
+            name: "config.set_ardop",
+            label: "",
+            description: "",
+            needs_radio: false,
+            transmits: false,
+            writes_config: true,
+            needs_internet: false,
+        };
+        let registry = build_dryrun_registry(&[CONFIG_WRITE], DryRunScript::new());
+        let d = registry
+            .descriptors()
+            .into_iter()
+            .find(|d| d.name == "config.set_ardop")
+            .unwrap();
+        assert!(d.writes_config, "the dry-run fake mirrors writes_config: true");
+        assert!(!d.transmits);
     }
 
     #[tokio::test]

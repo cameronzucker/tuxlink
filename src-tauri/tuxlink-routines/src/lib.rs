@@ -13,6 +13,7 @@ pub mod action;
 pub mod compose;
 mod composability_proof;
 pub mod consent;
+pub mod consent_closure;
 pub mod dryrun;
 pub mod engine;
 pub mod error;

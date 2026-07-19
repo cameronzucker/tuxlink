@@ -96,6 +96,7 @@ struct ProfileSpec {
 fn known_action(name: &str) -> ActionDescriptor {
     match name {
         "radio.connect" => ActionDescriptor {
+            writes_config: false,
             name: "radio.connect",
             label: "",
             description: "",
@@ -104,6 +105,7 @@ fn known_action(name: &str) -> ActionDescriptor {
             needs_internet: false,
         },
         "data.web_lookup" => ActionDescriptor {
+            writes_config: false,
             name: "data.web_lookup",
             label: "",
             description: "",
@@ -112,6 +114,7 @@ fn known_action(name: &str) -> ActionDescriptor {
             needs_internet: true,
         },
         "local.note" => ActionDescriptor {
+            writes_config: false,
             name: "local.note",
             label: "",
             description: "",
@@ -120,6 +123,7 @@ fn known_action(name: &str) -> ActionDescriptor {
             needs_internet: false,
         },
         "compose.message" => ActionDescriptor {
+            writes_config: false,
             name: "compose.message",
             label: "",
             description: "",
@@ -128,6 +132,7 @@ fn known_action(name: &str) -> ActionDescriptor {
             needs_internet: false,
         },
         "log.entry" => ActionDescriptor {
+            writes_config: false,
             name: "log.entry",
             label: "",
             description: "",
@@ -136,6 +141,7 @@ fn known_action(name: &str) -> ActionDescriptor {
             needs_internet: false,
         },
         "data.read" => ActionDescriptor {
+            writes_config: false,
             name: "data.read",
             label: "",
             description: "",
@@ -144,10 +150,20 @@ fn known_action(name: &str) -> ActionDescriptor {
             needs_internet: false,
         },
         "data.spacewx_wwv" => ActionDescriptor {
+            writes_config: false,
             name: "data.spacewx_wwv",
             label: "",
             description: "",
             needs_radio: true,
+            transmits: false,
+            needs_internet: false,
+        },
+        "config.set_ardop" => ActionDescriptor {
+            writes_config: true,
+            name: "config.set_ardop",
+            label: "",
+            description: "",
+            needs_radio: false,
             transmits: false,
             needs_internet: false,
         },
@@ -274,8 +290,12 @@ const ALL_FINDING_CODES: &[&str] = &[
     "CALL_TARGET_MISSING",
     // consent.rs
     "AUTO_TX_UNACKED",
+    "AUTO_WRITE_UNACKED",
     "MIXED_MODE_STALL",
+    "MIXED_MODE_STALL_WRITE",
     "ATTENDED_UNDER_SCHEDULE",
+    "ATTENDED_WRITE_UNDER_SCHEDULE",
+    "WRITE_VALUE_RUNTIME",
     // fleet.rs
     "SCHEDULE_COLLISION",
     "SAME_EFFECT_OVERLAP",

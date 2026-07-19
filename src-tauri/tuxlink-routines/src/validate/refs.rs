@@ -103,6 +103,7 @@ mod tests {
     use serde_json::json;
 
     const RADIO_CONNECT: ActionDescriptor = ActionDescriptor {
+        writes_config: false,
         name: "radio.connect",
         label: "",
         description: "",
@@ -117,6 +118,7 @@ mod tests {
             schema_version: crate::types::SUPPORTED_SCHEMA_VERSION,
             transmit_mode: TransmitMode::Attended,
             transmit_ack: None,
+            write_ack: None,
             on_interrupted: OnInterrupted::Stay,
             inputs: vec![],
             triggers: vec![Trigger::Manual],
@@ -220,6 +222,7 @@ mod tests {
             schema_version: crate::types::SUPPORTED_SCHEMA_VERSION,
             transmit_mode: TransmitMode::Attended,
             transmit_ack: None,
+            write_ack: None,
             on_interrupted: OnInterrupted::Stay,
             inputs: vec![],
             triggers: vec![Trigger::Manual],

@@ -177,6 +177,7 @@ impl RigReadState {
 impl Action for RigReadState {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
+            writes_config: false,
             name: RIG_READ_STATE,
             label: "Read rig state",
             description: "Read live frequency, mode, and PTT from the radio over CAT.",
@@ -321,6 +322,7 @@ impl RigValidatePreset {
 impl Action for RigValidatePreset {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
+            writes_config: false,
             name: RIG_VALIDATE_PRESET,
             label: "Validate radio preset",
             description: "Compare the radio's live state against a saved preset.",
@@ -428,6 +430,7 @@ impl RigApplyPreset {
 impl Action for RigApplyPreset {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
+            writes_config: false,
             name: RIG_APPLY_PRESET,
             label: "Apply radio preset",
             description: "Set the radio's frequency and mode from a saved preset.",
@@ -539,6 +542,7 @@ impl RigSwitchVfo {
 impl Action for RigSwitchVfo {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
+            writes_config: false,
             name: RIG_SWITCH_VFO,
             label: "Switch VFO",
             description: "Switch the radio's active VFO.",
@@ -606,6 +610,7 @@ impl RigTuneAtu {
 impl Action for RigTuneAtu {
     fn descriptor(&self) -> ActionDescriptor {
         ActionDescriptor {
+            writes_config: false,
             name: RIG_TUNE_ATU,
             label: "Tune antenna (ATU)",
             description: "Run the antenna tuner's tune cycle (keys the transmitter briefly).",

@@ -219,6 +219,7 @@ mod tests {
     use serde_json::json;
 
     const RADIO_CONNECT: ActionDescriptor = ActionDescriptor {
+        writes_config: false,
         name: "radio.connect",
         label: "",
         description: "",
@@ -227,6 +228,7 @@ mod tests {
         needs_internet: false,
     };
     const WEB_LOOKUP: ActionDescriptor = ActionDescriptor {
+        writes_config: false,
         name: "data.web_lookup",
         label: "",
         description: "",
@@ -235,6 +237,7 @@ mod tests {
         needs_internet: true,
     };
     const LOCAL_NOTE: ActionDescriptor = ActionDescriptor {
+        writes_config: false,
         name: "local.note",
         label: "",
         description: "",
@@ -259,6 +262,7 @@ mod tests {
             schema_version: crate::types::SUPPORTED_SCHEMA_VERSION,
             transmit_mode: TransmitMode::Attended,
             transmit_ack: None,
+            write_ack: None,
             on_interrupted: OnInterrupted::Stay,
             inputs: vec![],
             triggers: vec![Trigger::Manual],

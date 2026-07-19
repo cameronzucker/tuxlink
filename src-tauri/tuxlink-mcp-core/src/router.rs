@@ -2613,11 +2613,13 @@ mod tests {
             );
         }
 
-        // Regression guard (plan-5 Task 1): the routines-prefixed tool list
-        // is pinned CLOSED at EXACTLY these 10 names — sorted equality, not
-        // mere containment, so a new UI-only tool (the automatic-transmit
-        // acknowledgment, a future take-radio/export-bundle) added to the
-        // router by mistake fails this test immediately rather than only
+        // Regression guard (plan-5 Task 1, extended C3): the routines-prefixed
+        // tool list is pinned CLOSED at EXACTLY these 10 names — sorted
+        // equality, not mere containment, so a new UI-only tool (the
+        // automatic-transmit acknowledgment, the C3 config-write acknowledgment
+        // `routines_acknowledge_write`, the C3 closure-enumeration
+        // `routines_consent_closure`, a future take-radio/export-bundle) added
+        // to the router by mistake fails this test immediately rather than only
         // being caught by the (weaker) "no consent-shaped name" check above.
         let mut routines_names: Vec<&str> = names
             .iter()
@@ -2646,6 +2648,9 @@ mod tests {
 
         for forbidden in [
             "routines_acknowledge_automatic",
+            // C3 UI-only consent commands — never on the MCP surface.
+            "routines_acknowledge_write",
+            "routines_consent_closure",
             "routines_consent_grant",
             "routines_take_radio",
             "routines_export_run_bundle",

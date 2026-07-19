@@ -23,6 +23,13 @@ pub struct ActionDescriptor {
     pub description: &'static str,
     pub needs_radio: bool,
     pub transmits: bool,
+    /// Declares that the action MUTATES persisted station configuration (the
+    /// `config.*` write family, D5+). Like `transmits`, it is a consent class:
+    /// an attended run parks a `writes_config` step for operator confirmation
+    /// BEFORE it runs (spec §4, O3/O4 round). `transmits && writes_config` is a
+    /// transmit park (transmit copy dominates); `writes_config && !transmits`
+    /// is a `ParkKind::Write` park.
+    pub writes_config: bool,
     pub needs_internet: bool,
 }
 
