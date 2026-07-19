@@ -90,29 +90,99 @@ Wire tags `call_child` / `end_reached`; field `park_kind` (see Global Constraint
 - Modify: `src-tauri/src/routines/session.rs` (registry insertion ~437-464; new `SessionChildInvoker`)
 - Test: engine.rs + executor.rs tests; monolith session tests
 
-**Interfaces (produced, exact — this is the single canonical shape):**
+**Interfaces (produced, exact — this is the single canonical shape).** The
+trait + `Provenance` + `MAX_CALL_DEPTH` live in **`compose.rs`** (NOT
+engine.rs — add `src-tauri/tuxlink-routines/src/compose.rs` to the files;
+its tests ~104-119 pin the OLD F&F dispatched-marker behavior and are
+updated to the inline-start contract). Errors are the EXISTING `StepError`
+(no new error type; current impls already produce
+`StepError::Action { action: "call:<routine>", cause }` and the executor
+journals it unmapped).
 ```rust
 pub struct ChildHandle { pub run_id: String, pub cancel: CancellationToken,
-    /* private outcome receiver */ }
+    /* private: outcome oneshot receiver */ }
+impl ChildHandle {
+    /// Public constructor + consuming extractor: cross-crate impls (the
+    /// monolith SessionChildInvoker) construct via from_parts and extract
+    /// the receiver in their await_outcome. CALLERS (the executor) await
+    /// only through the trait fn.
+    pub fn from_parts(run_id: String, cancel: CancellationToken,
+        done: tokio::sync::oneshot::Receiver<RunOutcomeMsg>) -> Self;
+    pub fn into_parts(self) -> (String, CancellationToken,
+        tokio::sync::oneshot::Receiver<RunOutcomeMsg>);
+}
+/// Call-site context the executor already holds (ExecCtx); carried so the
+/// impl can gate + register without global state.
+pub struct CallCtx { pub provenance: Provenance, pub child_depth: u32,
+    pub parent_attended: bool, pub root: Option<RootConsent> }
+pub struct RootConsent { pub routine: String,
+    pub transmit_digest: Option<String>, pub write_digest: Option<String> }
 #[async_trait]
 pub trait RoutineInvoker: Send + Sync {
     /// run_id known on return. Impls derive the child token from
-    /// `parent_cancel.child_token()`. Registry-registering impls (the
-    /// monolith session) register the child (id + the CHILD's own token —
-    /// registry cancellability must not depend on the ChildHandle, which
-    /// F&F drops) BEFORE returning.
+    /// `parent_cancel.child_token()`. Registry-registering impls register
+    /// the child (id + the CHILD's own token — cancellability must not
+    /// depend on the ChildHandle, which F&F drops) BEFORE returning.
     async fn start(&self, routine: &str, args: serde_json::Value,
-        provenance: Provenance, parent_cancel: &CancellationToken)
-        -> Result<ChildHandle, InvokeError>;
-    /// Await terminal outcome; consumes the handle. (There is NO
-    /// ChildHandle::outcome() method — this trait fn is the only await path.)
+        call: CallCtx, parent_cancel: &CancellationToken)
+        -> Result<ChildHandle, StepError>;
+    /// Await terminal outcome; consumes the handle.
     async fn await_outcome(&self, handle: ChildHandle)
-        -> Result<serde_json::Value, InvokeError>;
+        -> Result<serde_json::Value, StepError>;
+    // The old single-shot invoke() is DELETED; call sites move to
+    // start + await_outcome (grep for invoke( in executor/engine/tests).
 }
 ```
-Executor Call arm, both modes: `StepIntent` -> `invoker.start(...)` INLINE -> on Ok(handle): journal `CallChild { step, child_run_id }`. Sync: race `await_outcome` against `ctx.cancel`; on cancel forward `handle.cancel.cancel()` then `StepErr(Cancelled)`. F&F: journal `StepOk {"dispatched": true}` and DROP the handle unawaited; pass `&CancellationToken::new()` as `parent_cancel` (F&F children are deliberately detached from parent cancellation). Start Err in EITHER mode: `StepErr` with the verbatim cause (the old silent `dispatched:true` lie dies), and NO `call_child` entry.
-Orphan-journal fix in `run_internal`: parse the snapshot BEFORE `JournalWriter::create` + `RunStarted`; SnapshotShape failure -> Err with no journal file.
-`SessionChildInvoker` (monolith): `start` loads the def (ONE read), runs the start gate on THAT def (Task C3 extends the gate; leave a `// C3 extends:` seam comment), registers the run id + child token in the same registry map + watcher `start_routine_def` uses (~450), then `start_run_ext` with the loaded def + derived token. `cancel_run(child_id)` == true for sync AND F&F children.
+**Engine mounting (the mechanism, resolved here so no subagent re-derives
+it):** `EngineConfig` gains nothing; `Engine` gains
+`child_invoker: OnceLock<Arc<dyn RoutineInvoker>>`, preferred over the
+internally-constructed `EngineChildInvoker` in `run_internal`'s non-dry
+arm when set. The monolith installs `SessionChildInvoker` at the END of
+`build_routines_state` (session.rs ~820-828) — the engine is built before
+`RoutinesState` exists (construction cycle), so post-construction install
+via the OnceLock is the resolution; `SessionChildInvoker` holds the store
+Arc, runs-map Arc, and event-sink Arc directly (not RoutinesState).
+Dry runs keep `DryRunChildInvoker` (never the session invoker).
+**Oneshot relay (F&F registry wedge fix):** the engine's `RunHandle.done`
+oneshot has ONE consumer — `SessionChildInvoker.start` spawns the SAME
+registry watcher body `start_routine_def` uses (~476-500) on it (flips the
+registry entry terminal, emits `RoutinesEvent::RunFinished` on the sink —
+children ARE sink-visible like session runs, and the relay watcher also
+emits `RunStarted`), and the watcher RELAYS the outcome into a fresh
+oneshot that becomes the ChildHandle's private receiver. Sync callers
+await the relay; F&F drops the relay receiver harmlessly; the registry
+entry goes terminal in every case (a wedged `Running` entry would block
+`is_routine_running` + the scheduler forever).
+Executor Call arm, both modes: `StepIntent` -> `invoker.start(...)` INLINE
+-> on Ok(handle): journal `CallChild { step, child_run_id }`. Sync: clone
+`handle.cancel` BEFORE the select (the select's other branch owns the
+handle); race `await_outcome` against `ctx.cancel`; on the cancel branch
+cancel the clone, then `StepErr(Cancelled)`. F&F: journal
+`StepOk {"dispatched": true}` and DROP the handle unawaited; pass
+`&CancellationToken::new()` as `parent_cancel` (F&F children deliberately
+detached from parent cancellation). Start Err in EITHER mode: `StepErr`
+verbatim (the silent `dispatched:true` lie dies) and NO `call_child`.
+`FakeInvoker` (fakes.rs:199) goes two-phase: `start` mints a deterministic
+fake run id; `Hang` behavior moves to `await_outcome`.
+**`start_run_ext` final signature, pinned ONCE for both groups** (B2 adds
+`cancel`, C3 adds `root` — same options struct, no second churn):
+```rust
+pub struct StartOpts { pub depth: u32, pub parent_attended: bool,
+    pub dry_run: bool, pub cancel: Option<CancellationToken>,
+    pub root: Option<RootConsent> }  // B2 passes root: None; C3 fills it
+pub fn start_run_ext(&self, def: &RoutineDef, args: Value, opts: StartOpts) -> RunHandle
+```
+(existing call sites + test constructors at compose.rs ~61-74 and
+executor.rs ~846-857 update mechanically).
+Orphan-journal fix in `run_internal`: parse the snapshot BEFORE
+`JournalWriter::create` + `RunStarted`; SnapshotShape failure -> Err with
+no journal file.
+`SessionChildInvoker` (monolith): `start` loads the def (ONE read), runs
+the start gate on THAT def (C3 extends the gate; leave a `// C3 extends:`
+seam comment), registers id + child token, spawns the relay watcher, then
+`start_run_ext` with the loaded def + `StartOpts { cancel:
+Some(parent_cancel.child_token()), .. }`. `cancel_run(child_id)` == true
+for sync AND F&F children.
 
 - [ ] **Step 1: failing engine tests**: (a) sync success: intent -> call_child -> step_ok, output carries `{"completed":true,"run_id":...}`; (b) sync failure: call_child BEFORE step_err, id matches the child journal; (c) F&F: call_child + step_ok{dispatched:true} strictly before parent run_finished (assert seq); (d) F&F start failure: step_err, NOT dispatched:true, AND no call_child entry; (e) parent cancel mid-sync-child: child journal terminal cancelled + parent step_err Cancelled; (f) F&F child survives parent cancel; (g) snapshot-shape failure leaves no child journal file.
 - [ ] **Step 2: FAIL on R2.** **Step 3: implement** (single-shot `invoke` reimplemented as start + await_outcome; DryRunChildInvoker/NoInvoker/FakeInvoker updated). **Step 4: green on R2 (`-p tuxlink-routines`).**
@@ -142,6 +212,7 @@ TS additions (snake_case; journal is unrecased):
 ```ts
 | { type: 'call_child'; step: string; child_run_id: string }
 | { type: 'end_reached'; step: string; failed: boolean; reason?: string }
+| { type: 'opaque'; raw: unknown }   // typing hygiene for A1's reader; stepListModel skips unknown types already
 // state_changed gains: park_kind?: 'transmit' | 'write'
 ```
 Rows: `'call'` renders `call:<routine-from-intent>` + short child id, click -> `setSelectedRunId(child_run_id)` capturing `{parentRunId, parentShortId}` in one-deep `navContext`; `'end'` renders `ended at <step>: complete|failed[, <reason>]`; park rows append `(config write)` when `park_kind==='write'`; finished row suppresses its reason when string-equal to the winning end row's; foreign `selectedRunId` (not in `runsSorted`) renders the context strip `Viewing a run of <status.routine> (called by this routine) — back to run <parentShortId>` with a working back link.
@@ -166,14 +237,32 @@ Rows: `'call'` renders `call:<routine-from-intent>` + short child id, click -> `
 
 **Interfaces (produced, exact):**
 ```rust
-pub struct ClosureStep { pub routine: String, pub step: StepId, pub action: String, pub params_json: String }
-pub struct CallEdge { pub routine: String, pub step: StepId, pub callee: String, pub args_json: String }
+pub struct ClosureStep { pub routine: String, pub track: String, pub step: StepId,
+    pub action: String, pub params: serde_json::Value }
+pub struct CallEdge { pub routine: String, pub step: StepId, pub callee: String,
+    pub args: serde_json::Value }
 pub struct ConsentClosure { pub steps: Vec<ClosureStep>, pub call_edges: Vec<CallEdge> }
 pub fn consent_closure(root: &RoutineDef, lookup: &dyn Fn(&str) -> Option<RoutineDef>,
     is_relevant: &dyn Fn(&str) -> bool) -> ConsentClosure;
-pub fn closure_digest(c: &ConsentClosure) -> String; // recursive key-sort, tuples by (routine, step), sha256 hex
+pub fn closure_digest(c: &ConsentClosure) -> String;
 ```
-Call edges included only on paths reaching a relevant step. Cycle-guard + depth-cap semantics identical to the walks replaced (port their tests).
+- `track` is carried for validator findings (`.with_track`) and EXCLUDED
+  from the hash; the digest hashes exactly the spec'd tuple
+  `(routine, step, action, params)` + call edges `(routine, step, callee, args)`.
+- `closure_digest` canonicalizes each `params`/`args` `Value` by recursive
+  key-sort and canonical re-serialization before hashing (never relies on
+  serde_json map ordering); tuples sort by `(routine, step)`; sha256 hex.
+- Call edges included only on paths reaching a relevant step.
+- **Traversal decree (the two old walks disagree; one shared walk cannot
+  match both):** global visited-set (needed for deterministic enumeration)
+  + `MAX_CALL_DEPTH` cap. The monolith gate keeps boolean-equivalent
+  behavior; the leaf VALIDATOR GAINS a depth cap it lacks today (aligning
+  it with the runtime gate — an intended small behavior change, noted in
+  the commit body).
+- **Scope:** `closure_transmits` (monolith) and `scan_routine_for_transmit`
+  (leaf validator) sit on the new walk. `find_attended_transmitting_in_closure`
+  (MIXED_MODE_STALL) is mode-aware over ROUTINES and does NOT fit the
+  step/edge shape — it stays a separate walk, untouched by this task.
 
 - [ ] **Step 1: failing tests**: key-order independence; param/Call-args/callee mutations each flip the digest; unrelated edit does not; cycle + depth-cap parity; both existing transmit-walk suites green post-reimplementation.
 - [ ] **Steps 2-4: FAIL -> implement -> WORKSPACE green on R2** (the monolith consumer changed).
@@ -181,7 +270,7 @@ Call edges included only on paths reaching a relevant step. Cycle-guard + depth-
 
 ### Task C2: `writes_config` flag + executor park + park kinds
 
-**Files:** Modify `src-tauri/tuxlink-routines/src/action.rs` (ActionDescriptor gains `writes_config: bool`; every existing descriptor literal gains `writes_config: false`), `executor.rs` (~283-317), `dryrun.rs` (~93-97 mirror; forced-attended-false unchanged), leaf `consent.rs` (ConsentPort::park gains `kind: ParkKind`), `src-tauri/src/routines/consent.rs` (ConsentRegistry), `src-tauri/src/routines/events.rs` (AwaitingConsent event — **the app-event payload field is camelCase `parkKind`**; the JOURNALED state_changed field is snake_case `park_kind`; see Global Constraints), the park-site journal emission; test executor.rs.
+**Files:** Modify `src-tauri/tuxlink-routines/src/action.rs` (ActionDescriptor gains `writes_config: bool`; every existing descriptor literal gains `writes_config: false`), `executor.rs` (~283-317), `dryrun.rs` (~93-97 mirror; forced-attended-false unchanged), leaf `consent.rs` (ConsentPort::park gains `kind: ParkKind`), `src-tauri/tuxlink-routines/src/fakes.rs` (`FakeConsent::park` gains the `kind` param or the leaf won't compile), `src-tauri/src/routines/consent.rs` (ConsentRegistry), `src-tauri/src/routines/events.rs` (AwaitingConsent event — **the app-event payload field is camelCase `parkKind`**; the JOURNALED state_changed field is snake_case `park_kind`; see Global Constraints), the park-site journal emission; test executor.rs.
 
 Park predicate `ctx.attended && (d.transmits || d.writes_config)`; kind = Write iff `writes_config && !transmits`, else Transmit. Retry-wrapped writes park per attempt.
 
@@ -197,8 +286,20 @@ Park predicate `ctx.attended && (d.transmits || d.writes_config)`; kind = Write 
 Validator codes: `AUTO_WRITE_UNACKED` (Error; missing/empty/digest-mismatched), `AUTO_TX_UNACKED` gains the digest-mismatch clause (digest-less legacy == stale == fires), `MIXED_MODE_STALL_WRITE` (Warning), `ATTENDED_WRITE_UNDER_SCHEDULE` (Warning), `WRITE_VALUE_RUNTIME` (Warning; message exactly `step "<id>" write param "<key>" is "<$ref>" - the value is chosen at run time by whoever starts the run`).
 Behavior sentences a faithful implementation must include:
 - **Leaving automatic mode revokes `write_ack`** exactly as it revokes transmit_ack (the `_ => None` arm of the strip match, commands.rs ~394-401); test mirrors the existing flip test at ~1451.
-- Start gate: single read (the validated def IS the snapshot started); both digest checks.
-- ExecCtx threads `root_digests: Option<RootDigests { transmit: Option<String>, write: Option<String> }>` from the start gate; `SessionChildInvoker.start` recomputes the ROOT digests against the live store, failing the Call verbatim `callee changed after acknowledgment` on mismatch; attended root -> None -> no-op.
+- Start gate: single read — the validated def IS the snapshot started.
+  Named plumbing (round-2 verified): expose
+  `pub async fn start_routine_with_def(&self, def: &RoutineDef, args) -> ...`
+  on `RoutinesState` (the current private `start_routine_def` body);
+  `run_routine` (commands.rs ~670-681) passes its validated def instead of
+  calling `start_routine` (which reloads by name). Scheduler / MCP / recovery
+  paths keep flowing through the gate inside the same body. Both digest
+  checks run there.
+- ExecCtx threads `root: Option<RootConsent>` (the B2-pinned struct — it
+  CARRIES the root routine's name, which the child-start recompute needs to
+  look the root up) via `StartOpts.root`; `SessionChildInvoker.start`
+  recomputes the ROOT's digests against the live store, failing the Call
+  verbatim `callee changed after acknowledgment` on mismatch; attended
+  root -> None -> no-op.
 - New UI-ONLY commands: `acknowledge_write` (sibling of `acknowledge_automatic`; BOTH record the digest at ack time) and `routines_consent_closure(name)` returning `{transmit_steps, write_steps, call_edges}`. **Neither appears on the MCP router** — add a router-surface test asserting their absence (the routines tool list is pinned CLOSED in router.rs ~2482; extend that pin).
 
 - [ ] **Step 1: failing leaf tests** (all codes; all three UNACKED clauses on both classes).
@@ -269,7 +370,7 @@ Params `{drive_level: u8}`; `>100` invalid params BEFORE any read. Output `{"fie
 
 ### Task D6: dry-run canned shapes + authoring affordances
 
-**Files:** Modify `src-tauri/src/routines/commands.rs` (~169-207: merge canned outputs before the optimistic default), `src-tauri/tuxlink-routines/src/action.rs` (descriptor gains `example_params: Option<&'static str>`, `allowed_values: Option<(&'static str, &'static [&'static str])>`; ALL descriptor literals incl. D3/D4/D5's new ones gain the fields — this task runs LAST in group D for that reason), `validate/contracts.rs` (`UNKNOWN_READ_SOURCE` Error: literal non-`$` `source` value outside allowed_values), ActionInfo DTO (commands.rs) + `src/routines/routinesApi.ts` ActionInfo (gain `writes_config`, `example_params`).
+**Files:** Modify `src-tauri/tuxlink-routines/src/action.rs` (descriptor gains `example_params: Option<&'static str>`, `allowed_values: Option<(&'static str, &'static [&'static str])>`, AND `dry_run_shape: Option<fn(&serde_json::Value) -> serde_json::Value>` — fn pointer keeps the descriptor `Copy` + `'static`, MSRV-safe; ALL descriptor literals incl. D3/D4/D5's new ones gain the fields — this task runs LAST in group D for that reason), `src-tauri/tuxlink-routines/src/dryrun.rs` + `fakes.rs` (**the dry-run mechanism lives HERE, not in a monolith merge** — round-2 P1-5: `DryRunScript.outcomes` is a per-action-NAME queue replayed order-blind by a params-blind fake, so 13 `data.read` sources cannot ride it; instead `build_dryrun_registry`/`apply_default` consult the descriptor's `dry_run_shape` with the RESOLVED params when nothing was scripted for that action — `data.read` matches on `source`, unknown/`$ref` source falls through to the optimistic default; FakeAction gains the params-aware outcome mode), `validate/contracts.rs` (`UNKNOWN_READ_SOURCE` Error: literal non-`$` `source` outside allowed_values; **`contracts::check` gains a `ctx: &dyn ValidationContext` param** — it is deliberately pure today, so the `validate/mod.rs` call site and the module-doc "pure over def" claim both update; `ValidationContext::action_descriptor` already returns the full descriptor), ActionInfo DTO (commands.rs) + `src/routines/routinesApi.ts` ActionInfo (gain `writes_config`, `example_params`). Scripted outcomes (explicit `DryRunScriptDto`) still take precedence over `dry_run_shape`.
 
 Canned outputs (exact, all of them): `data.find_stations` -> `{"gateways":[],"callsigns":["DRYRUN-1"],"fetched_at_ms":null,"operator_grid":null,"dry_run":true}`; `data.read` per source: `grid` -> `{"grid":"AA00aa"}`, `modem_status` -> `{"kind":"idle","connected":false,"state":"idle","running":[],"selected":null,"conflict":false}`, `backend_status` -> `{"connected":false,"transport":"","state":"not_configured"}`, `app_status` -> `{"name":"tuxlink","version":"0.0.0-dryrun","armed":false,"armed_remaining_secs":0,"tainted":false,"taint_reason":null}`, `config` -> `{"connect_to_cms":false,"transport":"CmsSsl","host":"","callsign":"N0CALL","grid":"AA00"}`, `ardop_config` -> `{"host":"127.0.0.1","port":8515,"drive_level":80,"bandwidth":500}`, `vara_config` -> `{"host":"127.0.0.1","port":8300,"bandwidth":2300,"drive_level":0}`, `packet_config` -> `{"kiss_host":"127.0.0.1","kiss_port":8001,"baud":9600,"tx_delay":300}`, `rig_config` -> `{"rig_hamlib_model":null,"rigctld_host":"127.0.0.1","rigctld_port":4532,"rigctld_binary":"rigctld","close_serial_sequencing":false,"live_vfo_poll":false,"qsy_on_fail":false,"cat_serial_path":null,"cat_baud":19200}`, existing sources (`inbox_summary` -> `{"total":0,"unread":0}`, `space_weather` -> `null`, `last_connected_gateway` -> honest-gap error unchanged, `heard_stations` unchanged); `config.set_ardop` -> `{"field":"drive_level","old":0,"new":0,"dry_run":true}`; `data.docs_search` -> `{"hits":[],"dry_run":true}`. All carry `"dry_run":true` where the object shape permits an extra field (objects yes; bare `null` for space_weather stays bare).
 `example_params`: `data.read` -> `{"source":"modem_status"}`, `data.find_stations` -> `{"modes":["vara-hf"],"limit":3}`, `data.docs_search` -> `{"query":"find stations"}`, `config.set_ardop` -> `{"drive_level":80}`; existing actions -> None.
