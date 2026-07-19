@@ -42,10 +42,12 @@ methods + monolith impls). No new action.
   underlying gatherers the MCP port impls call (`gather_modem_status`/
   `derive_modem_status`, `derive_status_dto` + curation, and the guard's
   `armed_remaining`/`is_tainted`/`taint_reason` + app name/version). To avoid
-  drift, the DTO structs are shared: the routines seam returns the mcp-core
-  DTO types (`ModemStatusDto`, `BackendStatusDto`) where crate layering
-  allows, else an identically-serialized struct with a serialization-equality
-  test pinning the two shapes together.
+  drift, the DTO structs are shared: the monolith already depends on
+  `tuxlink-mcp-core` and imports its ports DTOs (`mcp_ports.rs:38`), so the
+  routines seam returns the mcp-core DTO types (`ModemStatusDto`,
+  `BackendStatusDto`) directly. Curation-equality pin tests still apply
+  (the shared struct pins shape; the pins guard the curation logic around
+  it).
 - `app_status` exposes egress-authority state to routine authors deliberately:
   a pre-flight branch "is the agent armed / is the session tainted" is a
   legitimate guided-routine step, and the values are content-free tokens.
@@ -145,9 +147,15 @@ here is a security defect, and the test makes it a compile-time/CI fact).
   read or written. This is the compat-tree's named smallest honest slice (the
   corpus step is ARDOP drive level); siblings (`config.set_vara` bandwidth
   etc.) follow the same plumbing later as additive registry entries.
-- **Effect:** the same read-modify-write the MCP port performs
-  (`config_get_ardop` -> set `drive_level` -> `config_set_ardop`, atomic
-  whole-config write).
+- **Effect (Codex R1 P2):** NOT the MCP port's current get-then-set pair
+  (a documented lost-update path: `write_config_atomic` only makes the file
+  replacement atomic, not the read-modify-write). The routine action performs
+  the whole mutation inside the config writer lock via `config::update_config`
+  (or a serialized ARDOP setter), computing `old` and `new` inside the same
+  critical section it writes in. The MCP port's own get-then-set is
+  upgraded to the same locked path as part of this arc (one implementation,
+  two registrations; leaving the agent path racy while fixing the routine
+  path would be exactly the divergence ADR 0024 P3 bans).
 - **Output (this is the journaled old->new requirement, satisfied
   structurally):**
   ```json
@@ -180,6 +188,28 @@ transmit closure semantics) on a step that never keys the radio. Design:
   it is recorded only by a dedicated UI act. Acknowledgment copy is
   write-specific plain words ("this routine changes station configuration
   unattended"), not Part 97 language.
+- **Acks bind to the acknowledged closure (Codex R1 P1).** An ack that merely
+  exists is replayable: an unarmed agent could edit the acked routine (or a
+  library callee resolved live through the store) to add or change a write
+  step, and the preserved on-disk ack would keep authorizing a closure the
+  operator never saw. Both `write_ack` and the existing `transmit_ack`
+  therefore carry a **`closure_digest`**: a canonical hash over the routine's
+  transitive consent-relevant closure (sorted `(routine_name, step_id,
+  action_name, params_json)` tuples for every write step, respectively every
+  transmit step, across the resolved call graph). The digest is computed and
+  recorded by the UI ack command after validation; it is recomputed at save,
+  enable, and start. A mismatch invalidates the ack (the routine drops back
+  to `AUTO_WRITE_UNACKED` / `AUTO_TX_UNACKED`), including the callee-edit
+  case where the acked routine's own file never changed. Existing
+  `transmit_ack` values without a digest are treated as stale and require
+  re-acknowledgment (serde-default migration; honest at current alpha scale,
+  and the alternative silently grandfathers unverifiable acks).
+- **Validate-and-start are one read (Codex R1 P2).** The current run path
+  validates one loaded definition and then reloads by name before
+  snapshotting, so a concurrent `routines_save` could swap the definition
+  between the gate and the snapshot. The start gate (including both ack
+  digest checks) moves onto the same read that produces the executed
+  snapshot, under the session's store access, eliminating the TOCTOU.
 - **Validator closure** (mirrors the transmit walk, one validator, no
   privileged path):
   - `AUTO_WRITE_UNACKED` (Error): automatic + non-empty write closure +
@@ -216,6 +246,13 @@ transmit closure semantics) on a step that never keys the radio. Design:
   `step_err`).
 - A call that fails **before** a child run exists (unknown routine, depth cap)
   journals no `call_child`, and that absence is the honest record.
+- **Trust domain (Codex R1 P3):** all routine run journals form ONE trust
+  domain. `routines_journal_get` already returns any journal by run id with
+  no per-routine ACL (and taints the agent session); `call_child` adds
+  navigability, not reachability, and is NOT an authorization boundary.
+  Anything that must not appear in an agent-readable or export-bundle
+  journal must not be journaled at all; the existing redaction-sink rule for
+  exports is unchanged.
 - **History UI:** new `'call'` row kind: renders "call:<routine>" with the
   short child run id as a clickable element that navigates the journal view
   to the child run (`setSelectedRunId(childRunId)`). Works for children of
@@ -266,10 +303,14 @@ transmit closure semantics) on a step that never keys the radio. Design:
   `ATTENDED_WRITE_UNDER_SCHEDULE` / extended `MIXED_MODE_STALL` validator
   tests, dry-run fake flag mirroring.
 - **Monolith (R2 cargo):** seam impl tests with fakes for each new
-  source/action; the config-curation serialization-equality pin
-  (routines `config` == MCP `config_read` byte-identical); write action
-  old->new output; ack-stripping on save/validate_draft for `write_ack`
-  (mirroring the existing transmit_ack tests).
+  source/action; curation-equality pins for **every** read source, not just
+  `config` (Codex R1 P3): `backend_status` error-arm redaction,
+  `config` grid clamp, `find_stations` PII omission and `callsigns` derived
+  only from post-curation gateways, each pinned routines-output ==
+  MCP-tool-output for the same underlying state; write action old->new
+  output computed under the config lock; ack-stripping on
+  save/validate_draft for `write_ack`; closure-digest invalidation tests
+  (routine edit, callee edit, digest-less legacy ack) for both ack classes.
 - **Composability proof:** extend `composability_proof.rs` with the rank-2
   wire: `data.find_stations` (faked directory) -> `$s1.callsigns` ->
   `radio.connect` `stations`, asserting the resolved param is the sorted
