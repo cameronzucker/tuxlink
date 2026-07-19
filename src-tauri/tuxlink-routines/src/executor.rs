@@ -168,6 +168,60 @@ fn journal(ctx: &ExecCtx, event: RunEvent) {
         .expect("run journal must be writable");
 }
 
+/// Evaluate a branch condition (round-2 missing link #2, bd tuxlink-iizmk).
+///
+/// No `op`: the original strict-boolean rule, unchanged. With `op` + `value`:
+/// a comparison against the resolved variable. Numbers compare as f64 for
+/// every operator (an operator authoring `k_index >= 4` must not care whether
+/// the action emitted `4` or `4.0`); non-numbers support `eq`/`ne` only, and
+/// an ordering operator on them is a hard, verbatim error, never a guess.
+fn eval_branch_condition(
+    on: &str,
+    v: &serde_json::Value,
+    op: Option<crate::types::CmpOp>,
+    rhs: Option<&serde_json::Value>,
+) -> Result<bool, StepError> {
+    use crate::types::CmpOp;
+    match (op, rhs) {
+        (None, None) => match v {
+            serde_json::Value::Bool(b) => Ok(*b),
+            other => Err(StepError::Action {
+                action: "branch".into(),
+                cause: format!(
+                    "branch variable '{on}' resolved to {other}, which is not a boolean; \
+                     add a comparison (op + value) to branch on it"
+                ),
+            }),
+        },
+        (Some(op), Some(rhs)) => {
+            if let (Some(a), Some(b)) = (v.as_f64(), rhs.as_f64()) {
+                return Ok(match op {
+                    CmpOp::Eq => a == b,
+                    CmpOp::Ne => a != b,
+                    CmpOp::Lt => a < b,
+                    CmpOp::Lte => a <= b,
+                    CmpOp::Gt => a > b,
+                    CmpOp::Gte => a >= b,
+                });
+            }
+            match op {
+                CmpOp::Eq => Ok(v == rhs),
+                CmpOp::Ne => Ok(v != rhs),
+                _ => Err(StepError::Action {
+                    action: "branch".into(),
+                    cause: format!(
+                        "branch on '{on}': ordering comparison needs two numbers; got {v} vs {rhs}"
+                    ),
+                }),
+            }
+        }
+        _ => Err(StepError::Action {
+            action: "branch".into(),
+            cause: format!("branch on '{on}': op and value must be supplied together"),
+        }),
+    }
+}
+
 /// Resolve `$var` string params through RunVars (spec §14 convention).
 fn resolve_params(
     params: &serde_json::Value,
@@ -339,6 +393,43 @@ pub async fn run_track_shared(
     vars: &tokio::sync::Mutex<RunVars>,
     ctx: &ExecCtx,
 ) -> Result<TrackEnd, StepError> {
+    // Observability decree O2 (wire-walk 2026-07-18): every step the run never
+    // reached gets a durable `step_skipped` record with the reason, at the
+    // moment the track concludes. Without this, a failed run's remainder and
+    // the steps a branch jumped past simply vanish from History.
+    let mut visited: std::collections::HashSet<StepId> = std::collections::HashSet::new();
+    let mut last_step: Option<StepId> = None;
+    let result = run_track_steps(track, vars, ctx, &mut visited, &mut last_step).await;
+    let last = last_step.map(|s| s.0).unwrap_or_else(|| "?".to_string());
+    let reason = match &result {
+        Ok(TrackEnd::Completed) => "not run: never reached on the executed path".to_string(),
+        Ok(TrackEnd::Ended { .. }) => {
+            format!("not run: end step '{last}' terminated the run")
+        }
+        Err(StepError::Cancelled) => "not run: the run was cancelled".to_string(),
+        Err(_) => format!("not run: the run failed at step '{last}'"),
+    };
+    for step in &track.steps {
+        if !visited.contains(step.id()) {
+            journal(
+                ctx,
+                RunEvent::StepSkipped {
+                    step: step.id().clone(),
+                    reason: reason.clone(),
+                },
+            );
+        }
+    }
+    result
+}
+
+async fn run_track_steps(
+    track: &Track,
+    vars: &tokio::sync::Mutex<RunVars>,
+    ctx: &ExecCtx,
+    visited: &mut std::collections::HashSet<StepId>,
+    last_step: &mut Option<StepId>,
+) -> Result<TrackEnd, StepError> {
     let mut idx = 0usize;
     // Steps that only exist as a Retry wrapper's target are skipped when
     // reached sequentially (the wrapper executed them).
@@ -364,6 +455,8 @@ pub async fn run_track_shared(
             });
         }
         let step = &track.steps[idx];
+        visited.insert(step.id().clone());
+        *last_step = Some(step.id().clone());
         if consumed.contains(step.id()) {
             idx += 1;
             continue;
@@ -375,21 +468,32 @@ pub async fn run_track_shared(
             }
             Step::Control(c) => {
                 match &c.control {
-                    Control::Branch { on, then, r#else } => {
+                    Control::Branch {
+                        on,
+                        op,
+                        value,
+                        then,
+                        r#else,
+                    } => {
                         let v = {
                             let guard = vars.lock().await;
                             guard.resolve(on)?
                         };
-                        let arm = match &v {
-                            serde_json::Value::Bool(true) => then,
-                            serde_json::Value::Bool(false) => r#else,
-                            other => {
-                                return Err(StepError::Action {
-                                action: "branch".into(),
-                                cause: format!("branch variable '{on}' resolved to {other} — not a boolean"),
-                            });
-                            }
-                        };
+                        let cond = eval_branch_condition(on, &v, *op, value.as_ref())?;
+                        let arm = if cond { then } else { r#else };
+                        // Observability decree O1 (wire-walk 2026-07-18): the
+                        // decision is durable — resolved value, chosen arm,
+                        // jump target — or History cannot explain the path.
+                        journal(
+                            ctx,
+                            RunEvent::BranchTaken {
+                                step: c.id.clone(),
+                                on: on.clone(),
+                                value: v,
+                                took_then: cond,
+                                target: arm.first().cloned(),
+                            },
+                        );
                         match arm.first() {
                             Some(target) => {
                                 idx = index_of(track, target).ok_or_else(|| StepError::Action {
@@ -452,6 +556,10 @@ pub async fn run_track_shared(
                             return Err(e);
                         }
                         consumed.insert(target.clone());
+                        // The wrapper executed the target: it RAN, and must
+                        // never be swept into `step_skipped` even if the track
+                        // errors before the sequential walk reaches it.
+                        visited.insert(target.clone());
                         idx += 1;
                     }
                     Control::End { failed, reason } => {
@@ -803,6 +911,8 @@ mod tests {
                     id: StepId("s2".into()),
                     control: Control::Branch {
                         on: "s1.connected".into(),
+                        op: None,
+                        value: None,
                         then: vec![StepId("s3".into())],
                         r#else: vec![StepId("s4".into())],
                     },
@@ -1334,6 +1444,8 @@ mod tests {
                     id: StepId("b1".into()),
                     control: Control::Branch {
                         on: "a1.go".into(),
+                        op: None,
+                        value: None,
                         then: vec![StepId("a1".into())],
                         r#else: vec![],
                     },
@@ -1605,6 +1717,8 @@ mod tests {
                     id: StepId("b1".into()),
                     control: Control::Branch {
                         on: "s1.x".into(),
+                        op: None,
+                        value: None,
                         then: vec![],
                         r#else: vec![],
                     },

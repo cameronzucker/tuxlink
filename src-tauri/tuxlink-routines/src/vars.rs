@@ -21,13 +21,20 @@ impl RunVars {
         self.step_outputs.insert(id.clone(), value);
     }
 
-    /// Resolve `s1.connected` (step output) or `band_plan` (routine input).
-    /// An unset path is a hard error (spec §10): it never falls back to the
-    /// path's own text or an empty value.
+    /// Resolve `s1.connected` (step output), `s1.indices.k_index` (nested
+    /// output field, round-2 missing link #1, bd tuxlink-iizmk), or
+    /// `band_plan` (routine input). An unset path is a hard error (spec §10):
+    /// it never falls back to the path's own text or an empty value.
+    ///
+    /// An output key that literally contains a dot wins over the nested walk
+    /// (exact-key-first), so every pre-round-2 resolution is unchanged.
     pub fn resolve(&self, path: &str) -> Result<serde_json::Value, StepError> {
         if let Some(vp) = VarPath::parse(path) {
             if let Some(out) = self.step_outputs.get(&vp.step) {
                 if let Some(v) = out.get(&vp.output) {
+                    return Ok(v.clone());
+                }
+                if let Some(v) = walk_nested(out, &vp.output) {
                     return Ok(v.clone());
                 }
             }
@@ -36,6 +43,22 @@ impl RunVars {
         }
         Err(StepError::UnsetVariable(path.to_string()))
     }
+}
+
+/// Walk a dotted path through nested objects (and arrays by numeric index):
+/// `"indices.k_index"` into `{"indices": {"k_index": 5.0}}`. `None` at the
+/// first segment that does not exist; the caller turns that into the same
+/// verbatim `UnsetVariable` error a flat miss produces.
+fn walk_nested<'a>(root: &'a serde_json::Value, dotted: &str) -> Option<&'a serde_json::Value> {
+    let mut cur = root;
+    for seg in dotted.split('.') {
+        cur = match cur {
+            serde_json::Value::Object(map) => map.get(seg)?,
+            serde_json::Value::Array(items) => items.get(seg.parse::<usize>().ok()?)?,
+            _ => return None,
+        };
+    }
+    Some(cur)
 }
 
 #[cfg(test)]
@@ -73,6 +96,31 @@ mod tests {
             StepError::UnsetVariable(path) => assert_eq!(path, "s9.connected"),
             other => panic!("expected UnsetVariable, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn resolves_nested_output_paths() {
+        let mut vars = RunVars::default();
+        vars.set_step_output(
+            &StepId("s1".into()),
+            json!({"indices": {"sfi": 145.0, "k_index": 5.0}, "list": [{"gw": "W7GW"}]}),
+        );
+        assert_eq!(vars.resolve("s1.indices.k_index").unwrap(), json!(5.0));
+        assert_eq!(vars.resolve("s1.list.0.gw").unwrap(), json!("W7GW"));
+        assert!(matches!(
+            vars.resolve("s1.indices.no_such"),
+            Err(StepError::UnsetVariable(p)) if p == "s1.indices.no_such"
+        ));
+    }
+
+    #[test]
+    fn literal_dotted_output_key_wins_over_nested_walk() {
+        let mut vars = RunVars::default();
+        vars.set_step_output(
+            &StepId("s1".into()),
+            json!({"a.b": "flat", "a": {"b": "nested"}}),
+        );
+        assert_eq!(vars.resolve("s1.a.b").unwrap(), json!("flat"));
     }
 
     #[test]
