@@ -470,6 +470,30 @@ pub fn resolve_managed_device(
         })
 }
 
+/// Resolve a persisted stable id against the CAPTURE enumeration — the FT8
+/// listener's resolver. [`resolve_managed_device`] matches through the packet
+/// picker's USB-only enumeration, which silently un-resolves the non-USB
+/// capture cards (snd-aloop loopbacks, onboard line-in) that
+/// [`enumerate_capture_devices`] deliberately offers (operator live-test
+/// 2026-07-12). A picker that offers a device its resolver cannot find lands
+/// the listener in blocked(DeviceAbsent) on every start — the tuxlink-caxy6
+/// field failure. Same pure-over-`snapshot` contract and unplugged-`None`
+/// semantics as `resolve_managed_device`; the packet resolver is deliberately
+/// untouched (its USB-only rule is released behavior).
+pub fn resolve_capture_device(
+    stable_id: &StableAudioId,
+    snapshot: &SysSnapshot,
+) -> Option<ResolvedManagedDevice> {
+    enumerate_capture_devices(snapshot)
+        .into_iter()
+        .find(|d| d.stable_id == *stable_id)
+        .map(|d| ResolvedManagedDevice {
+            alsa_plughw: d.alsa_plughw,
+            alsa_hw: alsa_hw_name(d.card_index),
+            card_index: d.card_index,
+        })
+}
+
 // ============================================================================
 // Impure shim — reads the real system into a SysSnapshot. UNTESTED by design.
 // ============================================================================
@@ -1312,6 +1336,71 @@ mod tests {
             ..Default::default()
         };
         assert!(resolve_managed_device(&persisted, &snap).is_none());
+    }
+
+    // ---- tuxlink-caxy6: resolve_capture_device (pure) -----------------------
+
+    /// A non-USB capture card the FT8 picker offers (snd-aloop Loopback,
+    /// `cardid:<hash>` stable id) resolves through the CAPTURE resolver — and
+    /// deliberately does NOT resolve through the packet resolver, whose
+    /// USB-only rule is released behavior. This picker/resolver asymmetry was
+    /// the tuxlink-caxy6 field failure: pick a loopback, land in
+    /// blocked(DeviceAbsent) on every listener start.
+    #[test]
+    fn capture_resolver_resolves_non_usb_capture_card() {
+        let loopback = SnapshotCard {
+            card_index: 0,
+            card_id: "Loopback".into(),
+            card_name: "Loopback".into(),
+            by_id_basename: None,
+            usb: None,
+            usb_parent: None,
+            has_capture: true,
+        };
+        let persisted = derive_stable_id(&loopback);
+        let snap = SysSnapshot {
+            cards: vec![loopback, digirig_card(1, "/sys/p/a")],
+            ..Default::default()
+        };
+        let resolved = resolve_capture_device(&persisted, &snap)
+            .expect("a picker-offered loopback must resolve through the capture resolver");
+        assert_eq!(resolved.alsa_plughw, "plughw:CARD=Loopback,DEV=0");
+        assert_eq!(resolved.card_index, 0);
+        // The packet resolver still refuses it — its USB-only rule is intact.
+        assert!(resolve_managed_device(&persisted, &snap).is_none());
+    }
+
+    /// Unplugged semantics match `resolve_managed_device`: an id absent from
+    /// the live snapshot resolves to `None` (blocked(DeviceAbsent) upstream),
+    /// and a playback-only card never resolves as a capture device.
+    #[test]
+    fn capture_resolver_absent_or_playback_only_is_none() {
+        let loopback = SnapshotCard {
+            card_index: 0,
+            card_id: "Loopback".into(),
+            card_name: "Loopback".into(),
+            by_id_basename: None,
+            usb: None,
+            usb_parent: None,
+            has_capture: true,
+        };
+        let persisted = derive_stable_id(&loopback);
+        // Snapshot without the loopback: unplugged/module-not-loaded.
+        let snap = SysSnapshot {
+            cards: vec![digirig_card(1, "/sys/p/a")],
+            ..Default::default()
+        };
+        assert!(resolve_capture_device(&persisted, &snap).is_none());
+        // Same card id but playback-only: filtered by the has_capture gate.
+        let playback_only = SnapshotCard {
+            has_capture: false,
+            ..loopback
+        };
+        let snap = SysSnapshot {
+            cards: vec![playback_only],
+            ..Default::default()
+        };
+        assert!(resolve_capture_device(&persisted, &snap).is_none());
     }
 
     // ---- P6.A: pure parse helpers (fixtures) --------------------------------
