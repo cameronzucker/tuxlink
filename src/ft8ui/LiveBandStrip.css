@@ -156,6 +156,17 @@
   display: flex;
   border-top: 1px solid var(--border);
   min-height: 0;
+  /* Task 11 (tuxlink-6i0ie) containment fix. EVIDENCE (dev/scratch/
+     si-containment, ?view=finder&ring=0|240 @1366x1200): this row measured
+     198px at ring=0 (empty feed) and 323px at ring=240 (+125px), matched
+     exactly by `.si-wf` growing 197px -> 322px even though its CANVAS stays a
+     fixed 168px the whole time, i.e. +125px of dead space opening up below
+     the waterfall (the operator's literal bug report). The row had no fixed
+     height, so `.si-feed`'s unbounded decode-feed table grew the row instead
+     of scrolling inside it. 200px is the evidence-measured floor that fits
+     the waterfall's natural ~197px content (canvas + padding + axis labels)
+     without clipping it, while giving the feed a real bounded scroll area. */
+  height: 200px;
 }
 
 .si-strip__notice {
@@ -181,6 +192,11 @@
 .si-wf {
   flex: 1 1 55%;
   min-width: 0;
+  /* Task 11: min-height:0 alongside the now-fixed-height `.si-strip__body`
+     row. A flex-row child's default min-height is `auto` (its content
+     size), which would otherwise fight the parent's fixed height instead of
+     just filling it. */
+  min-height: 0;
   padding: 8px 0 4px 14px;
   position: relative;
 }
@@ -219,6 +235,14 @@
 .si-feed {
   flex: 1 1 45%;
   min-width: 360px;
+  /* Task 11: min-height:0 for the same reason as `.si-wf` above. This wrapper
+     also becomes the flex context DecodeFeed.css's `.decode-feed` fills
+     (`flex: 1; min-height: 0`). `.decode-feed` is a plain block child of
+     this div, not a sibling, so without establishing flex here its own
+     `overflow: auto` had nothing bounded to scroll inside. */
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   border-left: 1px solid var(--border);
   margin-left: 14px;
   overflow: hidden;

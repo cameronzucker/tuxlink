@@ -53,7 +53,18 @@
   --dim: var(--text-dim);
   --faint: var(--text-faint);
   width: min(1180px, 96vw);
-  max-height: 92vh;
+  /* Task 11 (tuxlink-6i0ie) containment fix. This was `max-height: 92vh` with
+     no `height`, so a bare max-height let the panel's OWN height float with
+     its content up to the clamp. EVIDENCE (dev/scratch/si-containment,
+     ?view=finder&ring=0|240 @1366x1200): `.station-finder` measured 1028px at
+     ring=0 and 1104px (exactly 92vh of a 1200px window) at ring=240, so it
+     WAS growing content-driven and only stopped at the clamp, which reads to
+     the operator as "the window resizing." A fixed height removes that
+     degree of freedom: the panel is the same size regardless of how many
+     decodes are in the strip below. `.station-finder__body` and
+     `.si-strip__body` (the strip's live-body row) now absorb the fixed
+     budget instead. */
+  height: min(760px, 92vh);
   display: flex;
   flex-direction: column;
   background: var(--surface);
@@ -333,10 +344,15 @@
 .station-finder__offair b {
   color: var(--text, #e8f1fa);
 }
-/* The no-copy affordance is a deliberate full-width second line (play the
-   clip + manual SFI/A/K entry can't fit beside the buttons). */
+/* tuxlink-1w0d0: this was `flex-basis: 100%`, a forced full-width second
+   line even though its actual content (a play-clip button + 3 compact
+   SFI/A/K fields) is far narrower, which read as a blank band under the
+   actions row on most windows. Wrap it WITHIN the actions row instead, like
+   its `.station-finder__offair-note`/`__offair` siblings, bounded by a
+   max-width so it never re-claims a full row of its own either. */
 .station-finder__offair-nocopy {
-  flex-basis: 100%;
+  flex: 1 1 260px;
+  max-width: 420px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -366,15 +382,25 @@
 /* ── body: map + rail ─────────────────────────────────────────────────── */
 .station-finder__body {
   display: flex;
-  min-height: 540px;
+  /* Task 11 (tuxlink-6i0ie): was `min-height: 540px`. With `.station-finder`
+     now a FIXED height (min(760px, 92vh)) this floor was actively harmful:
+     540px alone, plus the header/controls/antenna rows above it, already
+     exceeded a canonical ~700-800px window's budget, so the strip below was
+     clipped to zero height and permanently invisible regardless of decode
+     volume. `flex: 1; min-height: 0` lets body take whatever the fixed panel
+     height has left over after its siblings (including the strip) claim
+     their space, and shrink below its own content minimum when the window is
+     short, which is exactly what a fixed-height parent needs from a flex
+     child. */
+  min-height: 0;
   flex: 1;
   overflow: hidden;
 }
-/* LAYOUT-1 (Phase D1): on a short window (~700px canonical main window) the
-   540px floor + the FORCE-EXPANDED strip (needs-setup / wedged / device-lost
-   override collapse) would push the setup surface's CTA below the fold. Relax
-   the floor so the strip's setup arms always fit — the map/rail flex-shrink
-   instead of the CTA clipping. */
+/* LAYOUT-1 (Phase D1), retained under the Task 11 fixed-height panel: on a
+   short WINDOW (not panel; the panel itself is now capped) the map/rail
+   would otherwise shrink to near nothing while the strip and other siblings
+   keep their natural size. This floor guarantees map/rail a minimum even on
+   a squeezed window, at the strip's expense rather than the setup CTA's. */
 @media (max-height: 760px) {
   .station-finder__body {
     min-height: 300px;
