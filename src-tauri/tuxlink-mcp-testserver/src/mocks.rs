@@ -902,10 +902,18 @@ impl RoutinesPort for MockRoutines {
                     "give def: the routine definition as a JSON OBJECT".into(),
                 ))
             }
-            (Some(serde_json::Value::String(_)), None) => {
-                return Err(PortError::InvalidInput(
-                    "def must be a JSON OBJECT, not a string of JSON".into(),
-                ))
+            // Mirror the monolith (tuxlink-8fcbh): a stringified OBJECT is
+            // tolerated and parsed; a string that isn't one still errors.
+            (Some(serde_json::Value::String(s)), None) => {
+                match serde_json::from_str::<serde_json::Value>(s) {
+                    Ok(serde_json::Value::Object(_)) => {}
+                    _ => {
+                        return Err(PortError::InvalidInput(
+                            "def must be a JSON OBJECT (a stringified object is tolerated \
+                             and parsed) — fix the JSON, or send it via def_json".into(),
+                        ))
+                    }
+                }
             }
             _ => {}
         }

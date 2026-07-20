@@ -4237,6 +4237,47 @@ fn build_placement(
     )))
 }
 
+/// Resolve `routines_save`'s def inputs to the definition JSON string.
+/// Exactly-one rule: both/neither is invalid input. A STRING inside `def`
+/// that parses as a JSON object is accepted as the definition
+/// (tuxlink-8fcbh, amending adrev A7's never-auto-parse rule). Evidence:
+/// exam transcript 1784569467900-0 — a 122b model emitted `def` stringified
+/// and resent the IDENTICAL payload nine times against the strict
+/// rejection, through a teaching error AND an operator nudge; it cannot
+/// perceive the object/string-of-object difference in its own emission.
+/// Parsing a well-formed stringified object is deterministic and
+/// semantically identical to `def_json`, so no ambiguity returns; a string
+/// that does NOT parse to an object still errors, steering to `def_json`.
+fn resolve_save_def(
+    def: Option<serde_json::Value>,
+    def_json: Option<String>,
+) -> Result<String, PortError> {
+    match (def, def_json) {
+        (Some(_), Some(_)) => Err(PortError::InvalidInput(
+            "give exactly one of def (object) or def_json (deprecated string), not both".into(),
+        )),
+        (None, None) => Err(PortError::InvalidInput(
+            "give def: the routine definition as a JSON OBJECT (def_json, its \
+             deprecated string form, is also still accepted)"
+                .into(),
+        )),
+        (Some(serde_json::Value::String(s)), None) => {
+            match serde_json::from_str::<serde_json::Value>(&s) {
+                Ok(serde_json::Value::Object(_)) => Ok(s),
+                _ => Err(PortError::InvalidInput(
+                    "def must be a JSON OBJECT (a stringified object is tolerated and \
+                     parsed). This string does not parse as a JSON object — fix the \
+                     JSON, or send it via def_json instead"
+                        .into(),
+                )),
+            }
+        }
+        (Some(obj), None) => serde_json::to_string(&obj)
+            .map_err(|e| PortError::Internal(format!("serialize def: {e}"))),
+        (None, Some(s)) => Ok(s),
+    }
+}
+
 /// Curate the wire op DTO into the command layer's typed [`EditOp`].
 fn map_edit_op(
     op: RoutineEditOpDto,
@@ -4527,33 +4568,7 @@ impl RoutinesPort for MonolithRoutinesPort {
 
     async fn save(&self, req: SaveRoutineRequestDto) -> Result<SaveResultDto, PortError> {
         let state = self.state();
-        // Exactly-one rule (adrev A7): both/neither is invalid input, and a
-        // string inside `def` is invalid input — never parsed as JSON.
-        let def_json = match (req.def, req.def_json) {
-            (Some(_), Some(_)) => {
-                return Err(PortError::InvalidInput(
-                    "give exactly one of def (object) or def_json (deprecated string), not both"
-                        .into(),
-                ))
-            }
-            (None, None) => {
-                return Err(PortError::InvalidInput(
-                    "give def: the routine definition as a JSON OBJECT (def_json, its \
-                     deprecated string form, is also still accepted)"
-                        .into(),
-                ))
-            }
-            (Some(serde_json::Value::String(_)), None) => {
-                return Err(PortError::InvalidInput(
-                    "def must be a JSON OBJECT, not a string of JSON — pass the definition \
-                     directly, do not stringify it"
-                        .into(),
-                ))
-            }
-            (Some(obj), None) => serde_json::to_string(&obj)
-                .map_err(|e| PortError::Internal(format!("serialize def: {e}")))?,
-            (None, Some(s)) => s,
-        };
+        let def_json = resolve_save_def(req.def, req.def_json)?;
         let result = crate::routines::commands::save_routine_checked(
             &state,
             &def_json,
@@ -4692,8 +4707,47 @@ mod tests {
     use super::minimize_bt_mac;
     use super::{
         any_freq_in_bands, curate_gateway, curate_peer, is_plausible_callsign, khz_to_band,
-        sanitize_channel, sort_gateways_by_distance,
+        resolve_save_def, sanitize_channel, sort_gateways_by_distance,
     };
+
+    /// tuxlink-8fcbh: the routines_save def-resolution matrix, including the
+    /// A7 amendment — a stringified JSON OBJECT in `def` is accepted (the
+    /// 122b exam's nine-retry loop class), everything the rule ever rejected
+    /// stays rejected.
+    #[test]
+    fn resolve_save_def_matrix() {
+        use tuxlink_mcp_core::ports::PortError;
+        let obj = serde_json::json!({"routine": "r", "schema_version": 1});
+        let obj_str = serde_json::to_string(&obj).unwrap();
+
+        // Object form: serialized through.
+        let got = resolve_save_def(Some(obj.clone()), None).unwrap();
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&got).unwrap(), obj);
+        // def_json form: passed through verbatim.
+        assert_eq!(resolve_save_def(None, Some(obj_str.clone())).unwrap(), obj_str);
+        // A7 amendment: stringified OBJECT inside def is parsed-accepted.
+        assert_eq!(
+            resolve_save_def(Some(serde_json::Value::String(obj_str.clone())), None).unwrap(),
+            obj_str
+        );
+        // Still rejected: both, neither, non-object string, garbage string.
+        for (def, def_json) in [
+            (Some(obj.clone()), Some(obj_str.clone())),
+            (None, None),
+            (Some(serde_json::Value::String("[1,2]".into())), None),
+            (Some(serde_json::Value::String("not json {".into())), None),
+        ] {
+            assert!(
+                matches!(resolve_save_def(def, def_json), Err(PortError::InvalidInput(_))),
+                "expected InvalidInput"
+            );
+        }
+        // The non-object-string error steers to def_json.
+        match resolve_save_def(Some(serde_json::Value::String("nope".into())), None) {
+            Err(PortError::InvalidInput(m)) => assert!(m.contains("def_json"), "{m}"),
+            other => panic!("expected InvalidInput, got {other:?}"),
+        }
+    }
 
     // ── tuxlink-dngvs: trigger docs locked to the real serde shape ──
     // ── tuxlink-rt4ey: the catalog's envelope teacher ──

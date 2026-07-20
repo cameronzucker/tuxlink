@@ -78,10 +78,18 @@ pollution for a hazard the scrub already closes.
 `routines_save` remains for bootstrap (the `definition_template` path),
 import/export, and the designer's save. It gains `def` (JSON object) as the
 preferred parameter. **Exactly one** of `def` / `def_json` must be present:
-both or neither is a tool error, and a string supplied as `def` is a tool
-error — it is never parsed as JSON, which would resurrect the
-double-encoding trap under a new name [A7]. `def_json` carries a deprecation
-note for one release, then goes. New-surface docs and the system-prompt
+both or neither is a tool error. A string supplied as `def` that parses as a
+JSON OBJECT is accepted as the definition; a string that does not still
+errors, steering to `def_json`. *(Amends A7's original never-auto-parse
+rule, 2026-07-20: exam transcript 1784569467900-0 showed a 122b model
+emitting `def` stringified and resending the identical payload nine times
+against the strict rejection — it cannot perceive the object-vs-string
+difference in its own emission, so the theoretical double-encoding
+ambiguity A7 guarded was outweighed by an observed hard loop. Parsing a
+well-formed stringified object is deterministic and semantically identical
+to `def_json`; the trap A7 actually feared — both params present, or silent
+misparse of malformed JSON — remains rejected.)* `def_json` carries a
+deprecation note for one release, then goes. New-surface docs and the system-prompt
 carve-out teach ONLY the object form and the verbs.
 
 ### D3. Bootstrap flow the catalog teaches
