@@ -3,7 +3,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
+// Mock the meter-poll primitive so `stopAndAwait` (the device-handle release the
+// Start flow must await before ft8_listener_start) is directly observable /
+// controllable in tests. The real hook's live polling is exercised in its own
+// unit test; here we only care about the start/stop handover contract.
+vi.mock('./useDeviceMeterPoll', () => ({ useDeviceMeterPoll: vi.fn() }));
 import { invoke } from '@tauri-apps/api/core';
+import { useDeviceMeterPoll } from './useDeviceMeterPoll';
 import { Ft8StripSetup } from './Ft8StripSetup';
 import type { Ft8Snapshot } from './ft8Types';
 
@@ -36,6 +42,14 @@ beforeEach(() => {
     if (cmd === 'ft8_device_meter') return { rmsDbfs: -32, state: 'live' };
     return undefined;
   });
+  // Default meter-poll stub: an immediately-resolving stopAndAwait so the
+  // handover awaits complete synchronously in tests that don't care about it.
+  vi.mocked(useDeviceMeterPoll).mockReset();
+  vi.mocked(useDeviceMeterPoll).mockReturnValue({
+    meter: null,
+    error: null,
+    stopAndAwait: vi.fn(async () => {}),
+  });
 });
 
 describe('Ft8StripSetup', () => {
@@ -66,6 +80,31 @@ describe('Ft8StripSetup', () => {
     fireEvent.click(await screen.findByTestId('ft8-setup-start'));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith('ft8_listener_start'));
     await waitFor(() => expect(onStarted).toHaveBeenCalled());
+  });
+
+  // Codex P2: start() must release the meter's device handle (await
+  // stopAndAwait) BEFORE invoking ft8_listener_start, or ALSA can reject the
+  // start while the meter probe still holds the capture device.
+  it('does not invoke ft8_listener_start until the meter stop promise resolves', async () => {
+    let resolveStop!: () => void;
+    const stopAndAwait = vi.fn(
+      () =>
+        new Promise<void>((r) => {
+          resolveStop = () => r();
+        }),
+    );
+    vi.mocked(useDeviceMeterPoll).mockReturnValue({ meter: null, error: null, stopAndAwait });
+
+    render(<Ft8StripSetup snapshot={snap({ configuredDeviceName: 'Digirig Mobile' })} />);
+    fireEvent.click(await screen.findByTestId('ft8-setup-start'));
+
+    // The meter release is awaited first: the listener start must NOT fire yet.
+    await waitFor(() => expect(stopAndAwait).toHaveBeenCalled());
+    expect(invoke).not.toHaveBeenCalledWith('ft8_listener_start');
+
+    // Once the meter handle is released, the listener start proceeds.
+    resolveStop();
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('ft8_listener_start'));
   });
 
   it('zero devices renders the plug-in notice with a Refresh button', async () => {

@@ -51,6 +51,39 @@ impl ListingMode {
         ListingMode::RobustPacket,
     ];
 
+    /// EVERY transport, VARA FM included: [`ListingMode::ALL`] (the confirmed
+    /// text-endpoint set) plus [`ListingMode::VaraFm`] (API-only, synthesized
+    /// from the channels JSON feed). This is the "empty mode selector = all
+    /// transports" set the AGENT surfaces (the MCP `find_stations` tool and the
+    /// routines `data.find_stations` action) expand to via
+    /// [`ListingMode::expand_selector`]; both advertise `vara-fm`, so their
+    /// empty expansion must include it. `ALL` keeps its narrower text-endpoint
+    /// meaning (every member has `listing_file() == Some(..)`); callers that
+    /// mean "fetch every text listing" (e.g. `data.stationlist_update`) keep
+    /// using `ALL`.
+    pub const ALL_TRANSPORTS: [ListingMode; 6] = [
+        ListingMode::VaraHf,
+        ListingMode::Packet,
+        ListingMode::ArdopHf,
+        ListingMode::Pactor,
+        ListingMode::RobustPacket,
+        ListingMode::VaraFm,
+    ];
+
+    /// Expand an agent-supplied mode selector: an EMPTY selector means "all
+    /// transports" ([`ListingMode::ALL_TRANSPORTS`], VARA FM included); a
+    /// non-empty selector passes through verbatim. The ONE shared expansion
+    /// both agent surfaces (the MCP `find_stations` port and the routines
+    /// `data.find_stations` action) route through, so the two can never
+    /// diverge on what an empty selector fetches.
+    pub fn expand_selector(modes: Vec<ListingMode>) -> Vec<ListingMode> {
+        if modes.is_empty() {
+            ListingMode::ALL_TRANSPORTS.to_vec()
+        } else {
+            modes
+        }
+    }
+
     /// The text-listing endpoint filename for this mode, or `None` for an
     /// API-only mode (VARA FM has no `/listings/` page). Callers skip the text
     /// fetch when this is `None` and rely on the channels JSON API instead.
@@ -430,6 +463,31 @@ mod tests {
         assert_eq!(ListingMode::VaraFm.listing_url("PUBLIC", 168), None);
         // ...and it must NOT be in the confirmed text-endpoint set.
         assert!(!ListingMode::ALL.contains(&ListingMode::VaraFm));
+    }
+
+    #[test]
+    fn all_transports_is_all_plus_vara_fm() {
+        // The agent-surface "empty selector = all transports" set: every
+        // confirmed text-endpoint mode PLUS the API-only VARA FM.
+        assert!(ListingMode::ALL_TRANSPORTS.contains(&ListingMode::VaraFm));
+        for m in ListingMode::ALL {
+            assert!(ListingMode::ALL_TRANSPORTS.contains(&m));
+        }
+        assert_eq!(ListingMode::ALL_TRANSPORTS.len(), ListingMode::ALL.len() + 1);
+    }
+
+    #[test]
+    fn expand_selector_empty_yields_all_transports_nonempty_passes_through() {
+        // Empty selector: the shared agent-surface expansion, VARA FM included.
+        assert_eq!(
+            ListingMode::expand_selector(Vec::new()),
+            ListingMode::ALL_TRANSPORTS.to_vec()
+        );
+        // Non-empty selector: verbatim passthrough, no injection.
+        assert_eq!(
+            ListingMode::expand_selector(vec![ListingMode::Packet]),
+            vec![ListingMode::Packet]
+        );
     }
 
     #[test]

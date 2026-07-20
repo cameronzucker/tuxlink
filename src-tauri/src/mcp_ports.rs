@@ -2420,6 +2420,26 @@ fn map_station_mode(mode: StationModeDto) -> crate::catalog::stations::ListingMo
     }
 }
 
+/// Expand an agent-supplied `find_stations` mode selector into the monolith
+/// [`ListingMode`] set to fetch. Maps the DTO tokens 1:1 (an empty selector maps
+/// to an empty vec) and delegates the "empty = all transports, VARA FM included"
+/// rule to the SHARED [`ListingMode::expand_selector`] seam (the same expansion
+/// the routines `data.find_stations` action uses), so the two agent surfaces
+/// can never diverge on what an empty selector fetches. `ListingMode::ALL`
+/// (the confirmed text-endpoint set, which deliberately excludes VaraFm) is
+/// untouched; text-listing-default callers keep their meaning.
+///
+/// [`ListingMode::expand_selector`]: crate::catalog::stations::ListingMode::expand_selector
+/// [`ListingMode`]: crate::catalog::stations::ListingMode
+/// [`ListingMode::ALL`]: crate::catalog::stations::ListingMode::ALL
+fn expand_find_stations_modes(
+    modes: &[StationModeDto],
+) -> Vec<crate::catalog::stations::ListingMode> {
+    crate::catalog::stations::ListingMode::expand_selector(
+        modes.iter().copied().map(map_station_mode).collect(),
+    )
+}
+
 /// Map a monolith [`ListingMode`] onto the agent-facing [`StationModeDto`]
 /// (the listing's mode becomes each gateway's `mode` in the flattened output).
 ///
@@ -2541,20 +2561,39 @@ fn channel_passes_bandwidth(bandwidth_hz: Option<u32>, wanted: &[u32]) -> bool {
     }
 }
 
-/// True when a gateway survives the bandwidth filter: any of its channels
-/// passes [`channel_passes_bandwidth`]. Mirrors the frontend "keep if ANY channel
-/// passes" rule. A gateway with no channel-detail rows falls back to its bare
-/// dial list, which carries no bandwidth and therefore passes (as the frontend's
-/// `stationModel` synthesizes null-bandwidth channels from `frequenciesKhz`).
-fn gateway_dto_passes_bandwidth(gw: &GatewayDto, wanted: &[u32]) -> bool {
+/// True when a gateway survives the CONJUNCTIVE band + bandwidth filter: SOME
+/// single channel satisfies BOTH the band filter AND the bandwidth filter at
+/// once. This mirrors the frontend `stationMatchesFilters`
+/// (`src/catalog/stationModel.ts`), which is channel-conjunctive: a station
+/// passes iff one channel is in a wanted band AND passes the bandwidth filter,
+/// NOT (some channel in band) AND (some other channel at bandwidth). Empty
+/// `bands` = no band constraint; empty `bandwidths` = no bandwidth constraint
+/// (a null/unclassified channel bandwidth passes every bandwidth filter, per
+/// [`channel_passes_bandwidth`]). A gateway with no channel-detail rows falls
+/// back to its bare dial list, whose synthesized channels carry no bandwidth
+/// (so they pass every bandwidth filter) and are placed by dial band, matching
+/// the frontend's `frequenciesKhz` fallback in `stationModel`.
+fn gateway_dto_passes_band_and_bandwidth(
+    gw: &GatewayDto,
+    bands: &[String],
+    bandwidths: &[u32],
+) -> bool {
+    let band_ok = |freq_khz: f64| -> bool {
+        bands.is_empty()
+            || match khz_to_band(freq_khz) {
+                Some(b) => bands.iter().any(|w| w.eq_ignore_ascii_case(b)),
+                None => false,
+            }
+    };
     if gw.channels.is_empty() {
-        // Synthesized null-bandwidth channels pass every filter; a gateway with
-        // neither channels nor dials has nothing to match.
-        return !gw.frequencies_khz.is_empty();
+        // Synthesized null-bandwidth channels pass every bandwidth filter, so the
+        // gateway survives iff SOME bare dial is in a wanted band (band-only when
+        // `bands` is empty degrades to "has any dial").
+        return gw.frequencies_khz.iter().any(|f| band_ok(*f));
     }
     gw.channels
         .iter()
-        .any(|c| channel_passes_bandwidth(c.bandwidth_hz, wanted))
+        .any(|c| band_ok(c.frequency_khz) && channel_passes_bandwidth(c.bandwidth_hz, bandwidths))
 }
 
 /// The amateur-band labels (e.g. `"20m"`) a gateway operates on, for FT-8
@@ -2977,7 +3016,6 @@ impl MonolithStationPort {
 #[async_trait]
 impl StationPort for MonolithStationPort {
     async fn find_stations(&self, filter: StationFilterDto) -> Result<StationListDto, PortError> {
-        use crate::catalog::stations::ListingMode;
         // VALIDATE the optional history bound up front (cap 720 h): a bad bound is
         // a malformed request, rejected before any fetch. (No armed-grant concept
         // here — this is a read — so a validation miss is simply Internal.)
@@ -2985,12 +3023,9 @@ impl StationPort for MonolithStationPort {
             .map_err(|e| PortError::Internal(e.to_string()))?;
 
         // Map the agent-supplied modes onto the monolith ListingModes; an empty
-        // selector means "all confirmed modes" (ListingMode::ALL).
-        let modes: Vec<ListingMode> = if filter.modes.is_empty() {
-            ListingMode::ALL.to_vec()
-        } else {
-            filter.modes.iter().copied().map(map_station_mode).collect()
-        };
+        // selector means "all transports", INCLUDING VARA FM (the tool doc
+        // advertises `vara-fm`), a superset of `ListingMode::ALL`.
+        let modes = expand_find_stations_modes(&filter.modes);
 
         // Resolve the managed StationsCache (the same Arc the
         // `catalog_fetch_stations` command's State extractor would yield) and call
@@ -3039,11 +3074,19 @@ impl StationPort for MonolithStationPort {
         let mut gateways =
             curate_and_rank_gateways(&listings, &filter.bands, operator_grid.as_deref());
 
-        // Channel-bandwidth filter (Task 12): applied AFTER the channels join, a
-        // gateway stays if any of its channels passes (null/unclassified passes
-        // every filter). Empty/absent = no filter. Mirrors the frontend rule.
+        // Channel-bandwidth filter (Task 12): applied AFTER the channels join.
+        // CONJUNCTIVE with the band filter (Codex P2 fix): a gateway stays iff
+        // SOME single channel is in a requested band AND passes the bandwidth
+        // filter together, exactly as the frontend `stationMatchesFilters` does.
+        // The coarse band pre-filter already ran inside `curate_and_rank_gateways`
+        // (it only DROPS gateways with no channel in any wanted band, never
+        // wrongly keeps), so re-checking band here per-channel is what closes the
+        // "20m/2300 + 80m/500 wrongly passes {bands:[20m], bandwidths:[500]}" gap.
+        // Empty/absent bandwidths = no bandwidth filter (this branch is skipped);
+        // null/unclassified channel bandwidth passes every filter.
         if let Some(bandwidths) = filter.bandwidths.as_deref().filter(|b| !b.is_empty()) {
-            gateways.retain(|gw| gateway_dto_passes_bandwidth(gw, bandwidths));
+            gateways
+                .retain(|gw| gateway_dto_passes_band_and_bandwidth(gw, &filter.bands, bandwidths));
         }
 
         // FT-8 evidence corroboration (Task 12): when requested, read the decode
@@ -4503,7 +4546,7 @@ mod tests {
     use crate::catalog::stations::{Gateway, GatewayAntenna};
     use tuxlink_mcp_core::ports::PortError;
     use tuxlink_mcp_core::ports::{
-        GatewayAntennaDto, GatewayDto, OutboxReadPort, StagedRecordDto, StationModeDto,
+        ChannelDto, GatewayAntennaDto, GatewayDto, OutboxReadPort, StagedRecordDto, StationModeDto,
     };
 
     /// A monolith `Gateway` fixture carrying a full free-text + PII payload so a
@@ -4582,6 +4625,91 @@ mod tests {
         assert!(!any_freq_in_bands(&freqs, &["40m".to_string()]));
         // The VHF dial alone never matches an HF band selector.
         assert!(!any_freq_in_bands(&[144925.0], &["20m".to_string()]));
+    }
+
+    // --- Finding 2: agent empty-modes expansion includes VARA FM --------------
+
+    #[test]
+    fn expand_find_stations_modes_empty_includes_vara_fm() {
+        use crate::catalog::stations::ListingMode;
+        // find_stations({}) advertises "all transports", vara-fm included. The
+        // empty expansion must therefore carry VaraFm even though
+        // `ListingMode::ALL` (the confirmed text-endpoint set) excludes it.
+        let modes = super::expand_find_stations_modes(&[]);
+        assert!(
+            modes.contains(&ListingMode::VaraFm),
+            "empty selector must include VARA FM (the tool doc advertises it)"
+        );
+        // Still a superset of the confirmed text-endpoint set.
+        for m in ListingMode::ALL {
+            assert!(
+                modes.contains(&m),
+                "empty expansion must retain every ListingMode::ALL mode"
+            );
+        }
+    }
+
+    #[test]
+    fn expand_find_stations_modes_explicit_selector_maps_one_to_one() {
+        use crate::catalog::stations::ListingMode;
+        // A non-empty selector is a direct 1:1 map, no ALL/VaraFm injection.
+        let modes =
+            super::expand_find_stations_modes(&[StationModeDto::VaraHf, StationModeDto::Packet]);
+        assert_eq!(modes, vec![ListingMode::VaraHf, ListingMode::Packet]);
+    }
+
+    // --- Finding 3: per-channel conjunctive band + bandwidth filter -----------
+
+    fn chan_dto(freq_khz: f64, bandwidth_hz: Option<u32>) -> ChannelDto {
+        ChannelDto {
+            frequency_khz: freq_khz,
+            bandwidth_hz,
+            mode: "vara-hf".into(),
+            operating_hours: None,
+        }
+    }
+
+    fn gw_with_channels(channels: Vec<ChannelDto>, dials: Vec<f64>) -> GatewayDto {
+        GatewayDto {
+            mode: StationModeDto::VaraHf,
+            channel: "test".into(),
+            callsign: "W1AW".into(),
+            grid: Some("FN31".into()),
+            frequencies_khz: dials,
+            channels,
+            antenna: None,
+            distance_km: None,
+            distance_mi: None,
+            bearing_deg: None,
+            ft8_corroborated: None,
+        }
+    }
+
+    #[test]
+    fn band_and_bandwidth_excludes_split_channel_gateway() {
+        // Codex counter-example: a gateway whose 20m channel is 2300 Hz and whose
+        // 80m channel is 500 Hz must NOT pass {bands:[20m], bandwidths:[500]}:
+        // no SINGLE channel is BOTH 20m AND 500 Hz (14100 kHz → 20m, 3600 → 80m).
+        let gw = gw_with_channels(
+            vec![chan_dto(14100.0, Some(2300)), chan_dto(3600.0, Some(500))],
+            vec![14100.0, 3600.0],
+        );
+        assert!(!super::gateway_dto_passes_band_and_bandwidth(
+            &gw,
+            &["20m".to_string()],
+            &[500],
+        ));
+    }
+
+    #[test]
+    fn band_and_bandwidth_keeps_single_channel_satisfying_both() {
+        // Positive case: a 20m/500 channel satisfies band AND bandwidth together.
+        let gw = gw_with_channels(vec![chan_dto(14100.0, Some(500))], vec![14100.0]);
+        assert!(super::gateway_dto_passes_band_and_bandwidth(
+            &gw,
+            &["20m".to_string()],
+            &[500],
+        ));
     }
 
     // --- station-intelligence input validation (pure; CI-runnable) ------------

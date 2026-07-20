@@ -2117,6 +2117,19 @@ pub fn run() {
                             std::sync::Arc::new(crate::catalog::stations_cache::SystemClock),
                         ),
                     ));
+                    // tuxlink-nkzng: mirror the StationsCache degrade above with an
+                    // in-memory-only ChannelsCache, so `catalog_fetch_stations` and the
+                    // MCP / routines station paths (which extract State<Arc<ChannelsCache>>)
+                    // always resolve their extractor here too. Without this the fallback
+                    // path (app_data_dir unavailable) would panic those calls. Same
+                    // TTL / min-refetch as the persistent registration; no disk seed.
+                    app.manage(std::sync::Arc::new(
+                        crate::catalog::channels_cache::ChannelsCache::new(
+                            60 * 60 * 1000, // TTL: 60 min
+                            15 * 60 * 1000, // min-refetch floor: 15 min
+                            std::sync::Arc::new(crate::catalog::stations_cache::SystemClock),
+                        ),
+                    ));
                     // tuxlink-2tom: `send_webview_form` requires the seq-counter
                     // State to resolve, so manage a fallback here too (temp path —
                     // degraded persistence) rather than break ALL webview form

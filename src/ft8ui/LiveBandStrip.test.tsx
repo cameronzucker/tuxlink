@@ -511,3 +511,46 @@ describe('LiveBandStrip — header start/stop button', () => {
     expect(screen.getByTestId('ft8-strip-startstop')).toBeInTheDocument();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Codex P2: the body Start CTA and the header start/stop toggle share ONE
+// in-flight guard, and the header toggle is disabled while the state is
+// transitional.
+// ---------------------------------------------------------------------------
+
+describe('LiveBandStrip shared start/stop in-flight guard', () => {
+  it('clicking the body Start CTA disables the header start/stop until the invoke resolves', async () => {
+    let resolveStart!: () => void;
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'ft8_cat_probe') return new Promise(() => {}); // never resolves
+      if (cmd === 'ft8_listener_start') {
+        return new Promise<void>((r) => {
+          resolveStart = () => r();
+        });
+      }
+      return Promise.resolve();
+    });
+    renderStrip({
+      uiState: makeUiState('off'),
+      snapshot: makeSnapshot({ service: { axis: 'stopped' }, configuredDeviceName: 'Digirig Mobile' }),
+    });
+    const header = screen.getByTestId('ft8-strip-startstop');
+    expect(header).not.toBeDisabled();
+
+    // Click the BODY Start CTA; the shared guard must disable the HEADER toggle.
+    fireEvent.click(screen.getByTestId('ft8-strip-start-cta'));
+    await waitFor(() => expect(header).toBeDisabled());
+
+    // Resolving the in-flight start re-enables the header toggle.
+    resolveStart();
+    await waitFor(() => expect(header).not.toBeDisabled());
+  });
+
+  it('disables the header start/stop toggle while the state is transitional', () => {
+    renderStrip({
+      uiState: makeUiState('transitional'),
+      snapshot: makeSnapshot({ service: { axis: 'starting' } }),
+    });
+    expect(screen.getByTestId('ft8-strip-startstop')).toBeDisabled();
+  });
+});

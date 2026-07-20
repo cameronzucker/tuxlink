@@ -157,6 +157,7 @@ export function Ft8StripSetup({ snapshot, onStarted, onRetry }: Ft8StripSetupPro
     setBusy(true);
     setStartError(null);
     try {
+      await stopAndAwait(); // release the meter handle before the listener grabs the device
       await invoke('ft8_listener_start');
       onStarted?.();
     } catch (e) {
@@ -164,7 +165,7 @@ export function Ft8StripSetup({ snapshot, onStarted, onRetry }: Ft8StripSetupPro
     } finally {
       setBusy(false);
     }
-  }, [onStarted]);
+  }, [onStarted, stopAndAwait]);
 
   // ---- Rig control (CAT) · Test CAT, mirrors the old full-panel surface's
   // Step 2 edit-flush contract exactly: commitNow() (forwarded ref) flushes any

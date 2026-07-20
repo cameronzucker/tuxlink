@@ -245,37 +245,47 @@ export function LiveBandStrip({
     };
   }, [popoverOpen]);
 
-  // ---- Off-state CTA -------------------------------------------------------
-  const [starting, setStarting] = useState(false);
+  // ---- Shared start/stop in-flight guard (Codex P2 · UI coherence) ----------
+  // ONE guard shared by BOTH the body Start CTA (off-arm) and the header
+  // start/stop toggle (Task 2), so a body Start and a header toggle can't race
+  // two in-flight `ft8_listener_start` invokes; clicking either disables the
+  // other until the invoke resolves. This is a UI-coherence fix, not a safety
+  // gate: the backend double-start is idempotent (ft8/commands.rs); the guard
+  // just keeps the two affordances mutually consistent. Backend truth still
+  // drives `state` on the next snapshot/change event.
+  const running = LIVE_BODY_STATES.has(state) || state === 'waiting-first-slot';
+  const [inFlight, setInFlight] = useState(false);
+
+  // The header toggle is ADDITIONALLY disabled while the snapshot state is
+  // `transitional` (a start/stop is already settling): toggling mid-transition
+  // has no coherent target until the backend reaches a stable state. The body
+  // Start CTA never renders in `transitional` (NonLiveBody shows "Starting…"),
+  // so it needs no separate transitional guard.
+  const toggleDisabled = inFlight || state === 'transitional';
+
   const handleStart = useCallback(() => {
-    setStarting(true);
+    if (inFlight) return;
+    setInFlight(true);
     invoke('ft8_listener_start')
       .catch(() => {
         // Backend truth: a failed start leaves `state` as-is; the next
         // snapshot/change event reflects whatever actually happened.
       })
-      .finally(() => setStarting(false));
-  }, []);
+      .finally(() => setInFlight(false));
+  }, [inFlight]);
 
-  // ---- Header start/stop toggle (Task 2) ------------------------------------
-  // A separate control from the off-arm's own `starting`/`handleStart` above:
-  // this one lives in the header (next to collapse, always reachable, even
-  // collapsed) and toggles both directions. Mirrors AppShell's ribbon toggle
-  // guard (`onToggleFt8Listening`, AppShell.tsx ~1087-1108): a local
-  // `toggling` flag prevents a double-click racing two in-flight invokes;
-  // backend truth still drives `state` on the next snapshot/change event.
-  const running = LIVE_BODY_STATES.has(state) || state === 'waiting-first-slot';
-  const [toggling, setToggling] = useState(false);
+  // Mirrors AppShell's ribbon toggle guard (`onToggleFt8Listening`,
+  // AppShell.tsx ~1087-1108) but shares the guard above with the body CTA.
   const handleToggleRunning = useCallback(() => {
-    if (toggling) return;
-    setToggling(true);
+    if (inFlight) return;
+    setInFlight(true);
     invoke(running ? 'ft8_listener_stop' : 'ft8_listener_start')
       .catch(() => {
         // Backend truth: a failed toggle leaves `state` as-is; the next
         // snapshot/change event reflects whatever actually happened.
       })
-      .finally(() => setToggling(false));
-  }, [toggling, running]);
+      .finally(() => setInFlight(false));
+  }, [inFlight, running]);
 
   // ---- Derived display values ----------------------------------------------
   const band = snapshot?.band ?? '—';
@@ -389,7 +399,7 @@ export function LiveBandStrip({
           size="sm"
           className="si-strip__startstop"
           data-testid="ft8-strip-startstop"
-          disabled={toggling}
+          disabled={toggleDisabled}
           onClick={handleToggleRunning}
         >
           {running ? '■ Stop' : '▶ Start'}
@@ -458,7 +468,7 @@ export function LiveBandStrip({
               <NonLiveBody
                 state={state}
                 snapshot={snapshot}
-                starting={starting}
+                starting={inFlight}
                 onStart={handleStart}
                 onRehydrate={onRehydrate}
               />
