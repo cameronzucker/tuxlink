@@ -4266,8 +4266,9 @@ fn resolve_save_def(
                 Ok(serde_json::Value::Object(_)) => Ok(s),
                 _ => Err(PortError::InvalidInput(
                     "def must be a JSON OBJECT (a stringified object is tolerated and \
-                     parsed). This string does not parse as a JSON object — fix the \
-                     JSON, or send it via def_json instead"
+                     parsed). This string does not parse as one JSON object — rebuild \
+                     the definition as a single valid object and resend; changing the \
+                     parameter name will not fix the JSON"
                         .into(),
                 )),
             }
@@ -4742,9 +4743,14 @@ mod tests {
                 "expected InvalidInput"
             );
         }
-        // The non-object-string error steers to def_json.
+        // The non-object-string error must NOT steer to def_json (adrev
+        // round 3, 5.6: the same malformed string fails there too) — it
+        // steers to fixing the JSON.
         match resolve_save_def(Some(serde_json::Value::String("nope".into())), None) {
-            Err(PortError::InvalidInput(m)) => assert!(m.contains("def_json"), "{m}"),
+            Err(PortError::InvalidInput(m)) => {
+                assert!(!m.contains("def_json"), "{m}");
+                assert!(m.contains("rebuild"), "{m}");
+            }
             other => panic!("expected InvalidInput, got {other:?}"),
         }
     }

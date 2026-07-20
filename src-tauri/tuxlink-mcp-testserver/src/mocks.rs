@@ -902,17 +902,26 @@ impl RoutinesPort for MockRoutines {
                     "give def: the routine definition as a JSON OBJECT".into(),
                 ))
             }
-            // Mirror the monolith (tuxlink-8fcbh): a stringified OBJECT is
-            // tolerated and parsed; a string that isn't one still errors.
+            // Mirror the monolith (tuxlink-8fcbh + adrev round 3): a
+            // stringified OBJECT is tolerated and parsed, but the monolith
+            // then rejects a non-RoutineDef object at RoutineDef::parse —
+            // this crate has no tuxlink-routines dep, so approximate that
+            // with the envelope keys every valid definition carries, keeping
+            // tier-2 from reporting success on payloads production refuses.
             (Some(serde_json::Value::String(s)), None) => {
-                match serde_json::from_str::<serde_json::Value>(s) {
-                    Ok(serde_json::Value::Object(_)) => {}
-                    _ => {
-                        return Err(PortError::InvalidInput(
-                            "def must be a JSON OBJECT (a stringified object is tolerated \
-                             and parsed) — fix the JSON, or send it via def_json".into(),
-                        ))
-                    }
+                let parsed = serde_json::from_str::<serde_json::Value>(s).ok();
+                let ok = parsed.as_ref().is_some_and(|v| {
+                    v.is_object()
+                        && v.get("routine").is_some()
+                        && v.get("schema_version").is_some()
+                        && v.get("tracks").is_some()
+                });
+                if !ok {
+                    return Err(PortError::InvalidInput(
+                        "def must be one JSON OBJECT in the routine definition shape \
+                         (routine, schema_version, triggers, tracks) — rebuild the \
+                         definition and resend".into(),
+                    ));
                 }
             }
             _ => {}

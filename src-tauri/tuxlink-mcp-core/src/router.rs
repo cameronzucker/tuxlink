@@ -1426,7 +1426,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "routines_step_add",
-        description = "Insert ONE step into a saved routine (the fragment-edit path — no whole-document rewrite). step is a JSON OBJECT ({\"action\": ..., \"params\": {...}} or {\"control\": ...}); omit its id to have one assigned and returned as step_id. Place with exactly one of: track (append), after_step_id (splice after), or branch_step_id+branch_arm (into a branch's then/else arm — arm membership and position land atomically). The routine must be DISABLED (ROUTINE_ENABLED otherwise — disable, edit, re-enable). The result is SAVED even with error findings (errors block enable/run, never save); step_findings carries the validator's verdict on YOUR step — fix those before reporting done."
+        description = "Insert ONE step into a saved routine (the fragment-edit path — no whole-document rewrite). step is a JSON OBJECT ({\"action\": ..., \"params\": {...}} or {\"control\": ...}); omit its id to have one assigned and returned as step_id. Place with exactly one of: track (append — lands BEFORE the track's trailing end step when one exists, so appended steps always run), after_step_id (splice after), or branch_step_id+branch_arm (into a branch's then/else arm — arm membership and position land atomically). The routine must be DISABLED (ROUTINE_ENABLED otherwise — disable, edit, re-enable). The result is SAVED even with error findings (errors block enable/run, never save); step_findings carries the validator's verdict on YOUR step — fix those before reporting done."
     )]
     pub async fn routines_step_add(
         &self,

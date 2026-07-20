@@ -907,11 +907,16 @@ from the docs — the docs describe what actions do, not their JSON shapes. \
 BUILD ROUTINES IN SMALL PIECES, never as one big document: (1) save the \
 catalog's definition_template under your routine's name with routines_save \
 (def is a JSON object — pass the definition itself, not a quoted string of \
-it); (2) add each step with its own routines_step_add call (omit the step id \
-to have one assigned); (3) set the schedule with routines_trigger_set. Each \
-call is validated on its own, so a mistake costs one small retry and the \
-error names the exact step and field. To CHANGE an existing routine, edit the \
-one piece: routines_step_update / routines_step_remove / routines_step_move / \
+it); (2) the template's first step is a SAMPLE local.log — change it to your \
+first real action with routines_step_update (its params replace wholesale); \
+(3) add each further step with its own routines_step_add call (omit the step \
+id to have one assigned; appending to the track lands new steps before the \
+template's final end step, where they run); (4) the template starts with a \
+manual trigger — call routines_trigger_set ONLY when the operator asked for \
+a schedule or other trigger, and set exactly what was asked. Each call is \
+validated on its own, so a mistake costs one small retry and the error names \
+the exact step and field. To CHANGE an existing routine, edit the one piece: \
+routines_step_update / routines_step_remove / routines_step_move / \
 routines_meta_set / routines_rename — never re-send the whole definition to \
 change one step. Findings from these tools name what is wrong verbatim; fix \
 the named fragment and retry THAT call — re-sending an unchanged payload \
@@ -942,6 +947,13 @@ mod prompt_carveout_tests {
             "routines_step_update",
             "not a quoted string",
             "never re-send the whole definition",
+            // adrev round 3: the template's sample step must be REPLACED (a
+            // literal append-only bootstrap would leave it in the routine),
+            // and triggers are set only when asked (an unconditional "set
+            // the schedule" step biased small models toward unrequested
+            // periodic triggers on a transmit-capable system).
+            "SAMPLE local.log",
+            "ONLY when the operator asked",
         ] {
             assert!(
                 ELMER_SYSTEM_PROMPT.contains(needle),
