@@ -170,6 +170,40 @@ describe('StationFinderPanel', () => {
     expect(writes.length).toBe(1);
   });
 
+  // Task 7 (spec evidence filter): the evidence toggle + SNR threshold join the
+  // existing persisted finder view (search/bands/modes/radius/selection) so a
+  // close/reopen restores the operator's evidence posture too.
+  it('persists evidenceOn to localStorage on toggle', async () => {
+    renderPanel(<StationFinderPanel onClose={() => {}} />);
+    await screen.findByRole('dialog', { name: /station intelligence/i });
+    const toggle = await screen.findByTestId('map-evidence-toggle');
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      const raw = window.localStorage.getItem('tuxlink:station-finder:view');
+      expect(raw).toBeTruthy();
+      const parsed = JSON.parse(raw!) as Record<string, unknown>;
+      expect(parsed.evidenceOn).toBe(true);
+    });
+  });
+
+  it('persists evidenceSnrMinDb on threshold change while the toggle is on', async () => {
+    renderPanel(<StationFinderPanel onClose={() => {}} />);
+    await screen.findByRole('dialog', { name: /station intelligence/i });
+    fireEvent.click(await screen.findByTestId('map-evidence-toggle'));
+    const snr = await screen.findByTestId('map-evidence-snr');
+
+    fireEvent.change(snr, { target: { value: '-15' } });
+
+    await waitFor(() => {
+      const raw = window.localStorage.getItem('tuxlink:station-finder:view');
+      const parsed = JSON.parse(raw!) as Record<string, unknown>;
+      expect(parsed.evidenceSnrMinDb).toBe(-15);
+    });
+  });
+
   it('shows the "set your location" hint only when neither GPS nor a manual grid is available', async () => {
     vi.mocked(invoke).mockImplementation(async (cmd: string) => {
       if (cmd === 'position_current_fix') return { grid: null } as unknown as never;

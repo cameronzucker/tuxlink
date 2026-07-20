@@ -455,6 +455,178 @@ describe('StationFinderMap FT-8 heat layer (Task 5, spec L5 traffic map)', () =>
   });
 });
 
+describe('StationFinderMap evidence filter (Task 7)', () => {
+  const key0 = stationKey(stations[0]); // DM34oa
+
+  function noop(): void {
+    /* unused handler slot for tests that don't assert on it */
+  }
+
+  it('ghosts a station in ghostedKeys (fillOpacity + opacity 0.2) and leaves the other pin unchanged', async () => {
+    await renderMap(
+      <StationFinderMap
+        stations={stations}
+        operatorGrid=""
+        tiers={new Map()}
+        selectedKey={null}
+        onSelect={() => {}}
+        evidence={{
+          enabled: true,
+          onToggle: noop,
+          snrMinDb: -24,
+          onSnrMinChange: noop,
+          ghostedKeys: new Set([key0]),
+          note: null,
+        }}
+      />,
+    );
+    const ghosted = markerAtGrid('DM34oa')!;
+    expect(ghosted.options.fillOpacity).toBe(0.2);
+    expect(ghosted.options.opacity).toBe(0.2);
+
+    const untouched = markerAtGrid('EN34')!;
+    expect(untouched.options.fillOpacity).toBe(1); // untiered default, not ghosted
+    expect(untouched.options.opacity).not.toBe(0.2);
+  });
+
+  it('keeps a ghosted pin clickable', async () => {
+    const onSelect = vi.fn();
+    await renderMap(
+      <StationFinderMap
+        stations={stations}
+        operatorGrid=""
+        tiers={new Map()}
+        selectedKey={null}
+        onSelect={onSelect}
+        evidence={{
+          enabled: true,
+          onToggle: noop,
+          snrMinDb: -24,
+          onSnrMinChange: noop,
+          ghostedKeys: new Set([key0]),
+          note: null,
+        }}
+      />,
+    );
+    act(() => {
+      markerAtGrid('DM34oa')!.fire('click');
+    });
+    expect(onSelect).toHaveBeenCalledWith(stations[0]);
+  });
+
+  it('renders the evidence toggle and, once enabled, an SNR threshold input in the layer box', async () => {
+    const onToggle = vi.fn();
+    const onSnrMinChange = vi.fn();
+    const { rerender } = await renderMap(
+      <StationFinderMap
+        stations={stations}
+        operatorGrid=""
+        tiers={new Map()}
+        selectedKey={null}
+        onSelect={() => {}}
+        evidence={{
+          enabled: false,
+          onToggle,
+          snrMinDb: -24,
+          onSnrMinChange,
+          ghostedKeys: new Set(),
+          note: null,
+        }}
+      />,
+    );
+    const toggle = screen.getByTestId('map-evidence-toggle');
+    expect(toggle).toBeInTheDocument();
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    // Threshold slider only visible when the toggle is on.
+    expect(screen.queryByTestId('map-evidence-snr')).toBeNull();
+
+    fireEvent.click(toggle);
+    expect(onToggle).toHaveBeenCalled();
+
+    await act(async () => {
+      rerender(
+        <StationFinderMap
+          stations={stations}
+          operatorGrid=""
+          tiers={new Map()}
+          selectedKey={null}
+          onSelect={() => {}}
+          evidence={{
+            enabled: true,
+            onToggle,
+            snrMinDb: -18,
+            onSnrMinChange,
+            ghostedKeys: new Set(),
+            note: null,
+          }}
+        />,
+      );
+      await Promise.resolve();
+    });
+    const snr = screen.getByTestId('map-evidence-snr');
+    expect(snr).toBeInTheDocument();
+    expect(snr).toHaveAttribute('min', '-24');
+    expect(snr).toHaveAttribute('max', '0');
+    expect(snr).toHaveAttribute('step', '3');
+    fireEvent.change(snr, { target: { value: '-15' } });
+    expect(onSnrMinChange).toHaveBeenCalledWith(-15);
+  });
+
+  it('renders the note chip verbatim from evidence.note', async () => {
+    const note = 'evidence: 2 of 5 gateways corroborated (20m) · SNR ≥ -18 · last 30 min';
+    await renderMap(
+      <StationFinderMap
+        stations={stations}
+        operatorGrid=""
+        tiers={new Map()}
+        selectedKey={null}
+        onSelect={() => {}}
+        evidence={{
+          enabled: true,
+          onToggle: noop,
+          snrMinDb: -18,
+          onSnrMinChange: noop,
+          ghostedKeys: new Set(),
+          note,
+        }}
+      />,
+    );
+    expect(screen.getByTestId('map-evidence-note')).toHaveTextContent(note);
+  });
+
+  it('renders no note chip when evidence.note is null', async () => {
+    await renderMap(
+      <StationFinderMap
+        stations={stations}
+        operatorGrid=""
+        tiers={new Map()}
+        selectedKey={null}
+        onSelect={() => {}}
+        evidence={{
+          enabled: false,
+          onToggle: noop,
+          snrMinDb: -24,
+          onSnrMinChange: noop,
+          ghostedKeys: new Set(),
+          note: null,
+        }}
+      />,
+    );
+    expect(screen.queryByTestId('map-evidence-note')).toBeNull();
+  });
+
+  it('omitting the evidence prop entirely renders no evidence controls (backward compatible)', async () => {
+    await renderMap(
+      <StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
+    );
+    expect(screen.queryByTestId('map-evidence-toggle')).toBeNull();
+    expect(screen.queryByTestId('map-evidence-snr')).toBeNull();
+    expect(screen.queryByTestId('map-evidence-note')).toBeNull();
+    // No ghosting either: the default pin style applies.
+    expect(markerAtGrid('DM34oa')!.options.fillOpacity).toBe(1);
+  });
+});
+
 describe('StationFinderMap viewport persistence (tuxlink-dwzu)', () => {
   const KEY = 'tuxlink:map-viewport:station-finder';
 

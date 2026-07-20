@@ -15,6 +15,11 @@ import type { Favorite, StationsFile } from '../favorites/types';
 import { useStations } from './useStations';
 import { aggregateStations, stationMatchesBandMode, type Station } from './stationModel';
 import { useReachabilityMap, stationKey } from './useReachabilityMap';
+import {
+  corroborateStations,
+  EVIDENCE_RECENCY_MS,
+  EVIDENCE_SNR_MIN_DB_DEFAULT,
+} from './ft8Evidence';
 import { useDebouncedCommit } from './useDebouncedCommit';
 import { useStationPrediction } from './useStationPrediction';
 import { distanceFromGrids, kmToMi } from './distance';
@@ -85,6 +90,11 @@ export interface StationFinderPanelProps {
 
 const FILTER_MODES: FilterMode[] = ['vara-hf', 'ardop-hf', 'packet'];
 
+// Stable empty-set identity (Task 7, spec §2 evidence filter): reused whenever
+// there is nothing to ghost, so callers doing reference equality (or just
+// avoiding a fresh Set() per render) get one shared instance.
+const EMPTY_GHOSTED_KEYS: ReadonlySet<string> = new Set();
+
 // Coalesce an antenna-control gesture (a height-slider drag, SNR/power typing)
 // into ONE persist + ONE reachability re-sweep once the operator settles, rather
 // than one full N-station voacapl sweep per onChange event (tuxlink-ziyu). 300 ms
@@ -118,6 +128,10 @@ interface PersistedFinderView {
   modes: FilterMode[];
   radiusMi: number | null;
   selectedKey: string | null;
+  /** Task 7 (spec §2 evidence filter): the FT-8 corroboration toggle + its
+   *  SNR floor, persisted like every other finder-view field. */
+  evidenceOn: boolean;
+  evidenceSnrMinDb: number;
 }
 
 /** Resolve localStorage defensively — the getter itself can throw. */
@@ -149,6 +163,8 @@ function readFinderView(): Partial<PersistedFinderView> {
     if (typeof v.selectedKey === 'string' || v.selectedKey === null) {
       out.selectedKey = v.selectedKey as string | null;
     }
+    if (typeof v.evidenceOn === 'boolean') out.evidenceOn = v.evidenceOn;
+    if (typeof v.evidenceSnrMinDb === 'number') out.evidenceSnrMinDb = v.evidenceSnrMinDb;
     return out;
   } catch {
     return {};
@@ -224,6 +240,13 @@ export function StationFinderPanel({
     persisted0.radiusMi !== undefined ? persisted0.radiusMi : 500,
   );
   const [search, setSearch] = useState(persisted0.search ?? '');
+  // Task 7 (spec §2 evidence filter): off by default, like the FT-8 heat
+  // layer: an opt-in filter the operator turns on, not a default posture
+  // that could silently ghost stations nobody asked to have ghosted.
+  const [evidenceOn, setEvidenceOn] = useState(persisted0.evidenceOn ?? false);
+  const [evidenceSnrMinDb, setEvidenceSnrMinDb] = useState(
+    persisted0.evidenceSnrMinDb ?? EVIDENCE_SNR_MIN_DB_DEFAULT,
+  );
   // Operator propagation prefs (own antenna / SNR / power). Loaded once on open;
   // `predictReload` is bumped AFTER a save persists so the forecast re-runs with
   // the new TX model (the backend reads these prefs fresh each prediction).
@@ -241,8 +264,10 @@ export function StationFinderPanel({
       modes: [...enabledModes],
       radiusMi,
       selectedKey,
+      evidenceOn,
+      evidenceSnrMinDb,
     });
-  }, [search, enabledBands, enabledModes, radiusMi, selectedKey]);
+  }, [search, enabledBands, enabledModes, radiusMi, selectedKey, evidenceOn, evidenceSnrMinDb]);
   const stations = useStations();
 
   // Resolve the operator's EFFECTIVE location the way the rest of the app does
@@ -318,6 +343,49 @@ export function StationFinderPanel({
       return true;
     });
   }, [bandModeVisible, search, radiusMi, grid]);
+
+  // Task 7 (spec §2 evidence filter): FT-8 corroboration over the CURRENTLY
+  // visible station set (the same filter/radius/search-narrowed list the map
+  // and rail already show), using the same operatorGrid every other consumer
+  // in this panel resolves (GPS-preferred, manual fallback), not a second
+  // read of config. `null` while the toggle is off: no evidence math to do,
+  // and the map treats a `null` result the same as "no ghosting."
+  const evidenceResult = useMemo(
+    () =>
+      evidenceOn
+        ? corroborateStations(visible, ft8.decodesRing, {
+            nowMs: Date.now(),
+            snrMinDb: evidenceSnrMinDb,
+            operatorGrid,
+          })
+        : null,
+    [evidenceOn, visible, ft8.decodesRing, evidenceSnrMinDb, operatorGrid],
+  );
+  const evidenceGhostedKeys = useMemo(() => {
+    if (!evidenceResult) return EMPTY_GHOSTED_KEYS;
+    const ghosted = new Set<string>();
+    for (const s of visible) {
+      const key = stationKey(s);
+      if (!evidenceResult.corroborated.has(key)) ghosted.add(key);
+    }
+    return ghosted;
+  }, [evidenceResult, visible]);
+  // Honest-count note (spec §2 format): "evidence: N of M gateways
+  // corroborated (bands) · SNR >= X · last 30 min". The parenthetical band
+  // list is omitted when nothing qualified (no bands to report) rather than
+  // rendering an empty "()": the brief's example only covers the has-bands
+  // case, so this is a deliberate, documented completion of that gap.
+  const evidenceNote: string | null = useMemo(() => {
+    if (!evidenceResult) return null;
+    const recencyMin = EVIDENCE_RECENCY_MS / 60_000;
+    const bandsPart = evidenceResult.sampledBands.length
+      ? ` (${evidenceResult.sampledBands.join('/')})`
+      : '';
+    return (
+      `evidence: ${evidenceResult.corroborated.size} of ${visible.length} gateways corroborated` +
+      `${bandsPart} · SNR ≥ ${evidenceSnrMinDb} · last ${recencyMin} min`
+    );
+  }, [evidenceResult, visible.length, evidenceSnrMinDb]);
 
   // `predictReload` (bumped after a prefs save persists) also re-runs the map
   // tiers, so changing power / antenna / height / ground / noise / SNR refreshes
@@ -495,6 +563,16 @@ export function StationFinderPanel({
             // already consume, aggregated in-place by the map for its own
             // heard-station layer.
             decodesRing={ft8.decodesRing}
+            // Task 7 (spec §2 evidence filter): the FT-8 corroboration toggle
+            // + SNR threshold, computed above from Task 6's corroborateStations.
+            evidence={{
+              enabled: evidenceOn,
+              onToggle: () => setEvidenceOn((v) => !v),
+              snrMinDb: evidenceSnrMinDb,
+              onSnrMinChange: setEvidenceSnrMinDb,
+              ghostedKeys: evidenceGhostedKeys,
+              note: evidenceNote,
+            }}
           />
           <StationRail
             station={selected}

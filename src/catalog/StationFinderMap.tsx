@@ -64,7 +64,32 @@ export interface StationFinderMapProps {
   /** Injectable "now" for deterministic tests; defaults to `Date.now()`
    *  (mirrors `StationRail`'s/`LiveBandStrip`'s `nowMs` convention). */
   nowMs?: number;
+  /** Task 7 (spec §2 evidence filter): FT-8 corroboration filter, computed by
+   *  the panel from Task 6's `corroborateStations`. Omitted entirely means no
+   *  evidence controls render and no station is ghosted (backward compatible
+   *  with callers that predate this feature, e.g. earlier unit tests). */
+  evidence?: {
+    /** Whether the evidence filter is currently on. */
+    enabled: boolean;
+    onToggle: () => void;
+    /** The SNR floor (dB) a decode must meet to corroborate a station. */
+    snrMinDb: number;
+    onSnrMinChange: (db: number) => void;
+    /** `stationKey`s of stations NOT corroborated while the filter is on;
+     *  empty when the filter is off. */
+    ghostedKeys: ReadonlySet<string>;
+    /** Honest-count note, e.g. "evidence: 2 of 5 gateways corroborated (20m)
+     *  · SNR ≥ -18 · last 30 min"; `null` when the filter is off. */
+    note: string | null;
+  };
 }
+
+/** Ghosted-pin opacity (spec §2 evidence filter): dim, not hide. A
+ *  non-corroborated station stays on the map (distance/reachability are still
+ *  real) and stays clickable, but reads as unconfirmed. */
+const GHOST_OPACITY = 0.2;
+
+const EMPTY_GHOSTED_KEYS: ReadonlySet<string> = new Set();
 
 // Recenter zoom on the operator, on the z0–14 scale (matches the MapLibre edition).
 const OPERATOR_ZOOM = 6;
@@ -110,15 +135,22 @@ const selectedRadiusFor = (tier: string): number => SELECTED_RADIUS[tier] ?? UNT
 /** The circleMarker style for a station at a given tier + selection state. The
  * grey "not reachable" bottom tier sits back (dimmer) so the live red/orange/green
  * stations read first; selected pins get a bright-white rim, others a thin white
- * rim for basemap contrast. */
-function pinStyle(tier: string, selected: boolean): L.CircleMarkerOptions {
-  return {
+ * rim for basemap contrast. `ghosted` (Task 7 evidence filter) overrides both
+ * opacity channels to GHOST_OPACITY: the station stays visible + clickable,
+ * just dimmed to read as "not corroborated." */
+function pinStyle(tier: string, selected: boolean, ghosted: boolean): L.CircleMarkerOptions {
+  const style: L.CircleMarkerOptions = {
     radius: selected ? selectedRadiusFor(tier) : baseRadiusFor(tier),
     fillColor: colorFor(tier),
     fillOpacity: tier === 'skip' ? 0.7 : 1,
     color: '#ffffff',
     weight: selected ? 2 : 0.6,
   };
+  if (ghosted) {
+    style.fillOpacity = GHOST_OPACITY;
+    style.opacity = GHOST_OPACITY;
+  }
+  return style;
 }
 
 /** One station's owned circleMarker + the tier it was last styled for. */
@@ -133,7 +165,8 @@ function StationLayers({
   selectedKey,
   onSelect,
   visible,
-}: Omit<StationFinderMapProps, 'operatorGrid'> & { visible: boolean }) {
+  ghostedKeys,
+}: Omit<StationFinderMapProps, 'operatorGrid'> & { visible: boolean; ghostedKeys: ReadonlySet<string> }) {
   const map = useLeafletMap();
   const group = useLeafletLayerGroup(map);
 
@@ -221,12 +254,13 @@ function StationLayers({
       live.add(key);
       const tier = tiers.get(key) ?? 'untiered';
       const selected = selectedKeyRef.current === key;
+      const ghosted = ghostedKeys.has(key);
       safe(`reconcile ${key}`, () => {
         let pin = pins.get(key);
         if (!pin) {
           const marker = L.circleMarker([ll.lat, ll.lon], {
             renderer: rendererRef.current ?? undefined,
-            ...pinStyle(tier, selected),
+            ...pinStyle(tier, selected, ghosted),
           });
           marker.on('click', () => {
             const station = byKeyRef.current.get(key);
@@ -238,7 +272,7 @@ function StationLayers({
         } else {
           // A re-fetch can move a station (grid edit) or change its tier.
           pin.marker.setLatLng([ll.lat, ll.lon]);
-          pin.marker.setStyle(pinStyle(tier, selected));
+          pin.marker.setStyle(pinStyle(tier, selected, ghosted));
           pin.tier = tier;
         }
       });
@@ -254,7 +288,7 @@ function StationLayers({
 
     syncGlow();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- selection handled via refs + the dedicated effect below; depending on it would churn markers
-  }, [map, group, stations, tiers]);
+  }, [map, group, stations, tiers, ghostedKeys]);
 
   // Layer-control visibility (Task C11, §Scope map layer-control): the
   // Gateways toggle add/removes the WHOLE group from the map rather than
@@ -280,11 +314,15 @@ function StationLayers({
     const prev = prevSelectedRef.current;
     if (prev != null && prev !== selectedKey) {
       const p = pins.get(prev);
-      if (p) safe(`deselect ${prev}`, () => p.marker.setStyle(pinStyle(p.tier, false)));
+      if (p) safe(`deselect ${prev}`, () => p.marker.setStyle(pinStyle(p.tier, false, ghostedKeys.has(prev))));
     }
     if (selectedKey != null) {
       const p = pins.get(selectedKey);
-      if (p) safe(`select ${selectedKey}`, () => p.marker.setStyle(pinStyle(p.tier, true)));
+      if (p) {
+        safe(`select ${selectedKey}`, () =>
+          p.marker.setStyle(pinStyle(p.tier, true, ghostedKeys.has(selectedKey))),
+        );
+      }
     }
     prevSelectedRef.current = selectedKey;
     syncGlow();
@@ -367,6 +405,14 @@ export function StationFinderMap(props: StationFinderMapProps) {
     [props.decodesRing, props.nowMs],
   );
 
+  // Task 7 (spec §2 evidence filter): a local const (not `props.evidence`
+  // inline) so JSX below narrows cleanly instead of needing `!` assertions.
+  // ghostedKeys is empty (no ghosting) when the caller omits `evidence`
+  // entirely: the pre-Task-7 unit tests and any future consumer that
+  // doesn't wire the filter render exactly as before.
+  const evidence = props.evidence;
+  const ghostedKeys = evidence?.ghostedKeys ?? EMPTY_GHOSTED_KEYS;
+
   // Task delta2 (spec §6 reconciliation): the peer DIAMOND layer, gated
   // end-to-end on `map_peers` [R5-8] — false (or still loading) HIDES every
   // peer pin, not merely dims it. Reads its own peers/capabilities (like
@@ -405,6 +451,7 @@ export function StationFinderMap(props: StationFinderMapProps) {
           selectedKey={props.selectedKey}
           onSelect={props.onSelect}
           visible={gatewaysVisible}
+          ghostedKeys={ghostedKeys}
         />
         <OperatorPin location={me} />
         <Ft8HeardLayer rows={ft8Rows} enabled={ft8Visible} />
@@ -465,7 +512,45 @@ export function StationFinderMap(props: StationFinderMapProps) {
             Peers
           </button>
         )}
+        {/* Task 7 (spec §2 evidence filter): FT-8 corroboration toggle + SNR
+            threshold. The threshold slider is only shown while the filter is
+            on: it has nothing to control otherwise. */}
+        {evidence && (
+          <button
+            type="button"
+            className={`station-finder__layer-btn${evidence.enabled ? ' on' : ''}`}
+            data-testid="map-evidence-toggle"
+            aria-pressed={evidence.enabled}
+            onClick={evidence.onToggle}
+          >
+            <span
+              className="station-finder__layer-swatch station-finder__layer-swatch--evidence"
+              aria-hidden="true"
+            />
+            Evidence
+          </button>
+        )}
+        {evidence && evidence.enabled && (
+          <label className="station-finder__evidence-snr">
+            SNR ≥
+            <input
+              type="range"
+              min="-24"
+              max="0"
+              step="3"
+              value={evidence.snrMinDb}
+              data-testid="map-evidence-snr"
+              onChange={(e) => evidence.onSnrMinChange(Number(e.target.value))}
+            />
+            <span>{evidence.snrMinDb} dB</span>
+          </label>
+        )}
       </div>
+      {evidence && evidence.note && (
+        <div className="station-finder__evidence-note" data-testid="map-evidence-note">
+          {evidence.note}
+        </div>
+      )}
       <div className="station-finder__reachkey" aria-hidden>
         <span className="k good" /> good
         <span className="k fair" /> fair
