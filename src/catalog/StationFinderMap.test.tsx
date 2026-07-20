@@ -241,7 +241,13 @@ describe('StationFinderMap layer control (tuxlink-b026z.4 Task C11, §Scope map 
     // Task 4: the FT-8 heard entry the housing anticipated.
     expect(screen.getByTestId('map-layer-ft8')).toBeInTheDocument();
     expect(control.textContent).toMatch(/ft-8 heard/i);
-    expect(control.querySelectorAll('button')).toHaveLength(2);
+    // Task 5: the FT-8 heat entry, default OFF.
+    const heatBtn = screen.getByTestId('map-layer-ft8heat');
+    expect(heatBtn).toBeInTheDocument();
+    expect(control.textContent).toMatch(/ft-8 heat/i);
+    expect(heatBtn).toHaveAttribute('aria-pressed', 'false');
+    expect(heatBtn.classList.contains('on')).toBe(false);
+    expect(control.querySelectorAll('button')).toHaveLength(3);
   });
 
   it('Gateways entry defaults on and is a real, non-transparent toggle (aria-pressed truthy, opaque background)', async () => {
@@ -362,6 +368,90 @@ describe('StationFinderMap FT-8 heard layer (Task 4, spec L3 traffic map)', () =
       <StationFinderMap stations={[]} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
     );
     expect(heardMarkers()).toHaveLength(0);
+  });
+});
+
+describe('StationFinderMap FT-8 heat layer (Task 5, spec L5 traffic map)', () => {
+  const NOW = 1_700_000_000_000;
+
+  function mkDecode(over: Partial<DecodeDto> = {}): DecodeDto {
+    return {
+      slotUtcMs: NOW,
+      snrDb: -10,
+      dtS: 0,
+      freqHz: 1500,
+      message: 'CQ W7GTE DN26',
+      fromCall: 'W7GTE',
+      toCall: null,
+      grid: 'DN26',
+      partial: false,
+      ...over,
+    };
+  }
+
+  function mkSlot(slotUtcMs: number, decodes: DecodeDto[]): SlotRecord {
+    return {
+      slotUtcMs,
+      band: '20m',
+      dialHz: 14074000,
+      bandSource: 'cat-confirmed',
+      bandLabelConfirmedUtcMs: null,
+      outcome: decodes.length ? { kind: 'decoded' } : { kind: 'band-dead' },
+      decodes,
+      partialSalvage: false,
+      lostFrames: 0,
+      boundarySkewFrames: 0,
+      clipFraction: 0,
+      rmsDbfs: -20,
+      dwellSlotIndex: null,
+    };
+  }
+
+  const decodesRing: SlotRecord[] = [mkSlot(NOW, [mkDecode()])];
+
+  function heatRects(): L.Rectangle[] {
+    const out: L.Rectangle[] = [];
+    captured!.eachLayer((l) => {
+      if (l instanceof L.Rectangle) out.push(l);
+    });
+    return out;
+  }
+
+  it('is off by default: no rectangles even with a populated decodesRing', async () => {
+    await renderMap(
+      <StationFinderMap
+        stations={[]}
+        operatorGrid=""
+        tiers={new Map()}
+        selectedKey={null}
+        onSelect={() => {}}
+        decodesRing={decodesRing}
+        nowMs={NOW}
+      />,
+    );
+    expect(screen.getByTestId('map-layer-ft8heat')).toHaveAttribute('aria-pressed', 'false');
+    expect(heatRects()).toHaveLength(0);
+  });
+
+  it('clicking the FT-8 heat toggle draws the choropleth from the SAME aggregated rows the heard layer uses', async () => {
+    await renderMap(
+      <StationFinderMap
+        stations={[]}
+        operatorGrid=""
+        tiers={new Map()}
+        selectedKey={null}
+        onSelect={() => {}}
+        decodesRing={decodesRing}
+        nowMs={NOW}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('map-layer-ft8heat'));
+    expect(screen.getByTestId('map-layer-ft8heat')).toHaveAttribute('aria-pressed', 'true');
+    expect(heatRects()).toHaveLength(1);
+
+    fireEvent.click(screen.getByTestId('map-layer-ft8heat'));
+    expect(screen.getByTestId('map-layer-ft8heat')).toHaveAttribute('aria-pressed', 'false');
+    expect(heatRects()).toHaveLength(0);
   });
 });
 

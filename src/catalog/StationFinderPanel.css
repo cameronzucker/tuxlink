@@ -568,10 +568,10 @@
   box-shadow: 0 0 0 3px rgba(47, 134, 240, 0.3);
 }
 /* ── map layer-control housing (tuxlink-b026z.4 Task C11, §Scope map
-   layer-control) — Gateways entry ONLY; the FT-8 heat entry is L5-owned and
-   is not present here (no dead toggle). Non-transparent pill button (D3
-   gate): `.station-finder__layer-btn` carries an opaque background, never
-   bare/transparent chrome. ────────────────────────────────────────────── */
+   layer-control): Gateways, FT-8 heard, and FT-8 heat entries (the last two
+   landed in Tasks 4 and 5, spec L3/L5 traffic map). Non-transparent pill
+   button (D3 gate): `.station-finder__layer-btn` carries an opaque
+   background, never bare/transparent chrome. ─────────────────────────── */
 .station-finder__layers {
   position: absolute;
   /* Above Leaflet panes (200-700) AND its control container (1000) — same fix
@@ -623,6 +623,16 @@
    swatch reads as "the evidence layer" at a glance. */
 .station-finder__layer-swatch--ft8 {
   background: var(--open-hot, #ff5470);
+}
+
+/* FT-8 heat-layer toggle swatch (Task 5, spec L5 traffic map): a filled
+   square (not the heard-dot's circle) so the two FT-8 entries stay visually
+   distinct at a glance; a softer fill reads as "density overview" next to
+   the heard layer's full-strength evidence dot. */
+.station-finder__layer-swatch--ft8heat {
+  border-radius: 2px;
+  background: var(--open-hot, #ff5470);
+  opacity: 0.55;
 }
 
 /* Peers layer toggle swatch + legend keys (peers↔L3 reconciliation, approved

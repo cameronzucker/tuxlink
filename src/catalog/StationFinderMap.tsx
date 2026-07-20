@@ -27,6 +27,7 @@ import { usePersistedViewport } from '../map/usePersistedViewport';
 import { LeafletRecenterControl } from '../map/LeafletRecenterControl';
 import { PeerLayer, type PeerVisual } from '../map/PeerLayer';
 import { Ft8HeardLayer } from '../map/Ft8HeardLayer';
+import { Ft8HeatLayer } from '../map/Ft8HeatLayer';
 import { gridToLatLon, type LatLon } from '../forms/position/maidenhead';
 import { reportFrontendError } from '../frontendErrorLog';
 import { type ReachTier } from './reachability';
@@ -356,6 +357,11 @@ export function StationFinderMap(props: StationFinderMapProps) {
   // Gateways. Evidence of who was actually heard is on by default, same as
   // the predicted-reachability pins.
   const [ft8Visible, setFt8Visible] = useState(true);
+  // FT-8 heat layer toggle (Task 5, spec L5 traffic map): default OFF. This
+  // is a density OVERVIEW an operator opts into, not evidence on par with
+  // the per-station heard dots, so it does not inherit the heard layer's
+  // default-on posture.
+  const [ft8HeatVisible, setFt8HeatVisible] = useState(false);
   const ft8Rows = useMemo(
     () => aggregateLiveDecodes(props.decodesRing ?? [], props.nowMs ?? Date.now()),
     [props.decodesRing, props.nowMs],
@@ -390,6 +396,9 @@ export function StationFinderMap(props: StationFinderMapProps) {
   return (
     <div className="station-finder__map" data-testid="station-map">
       <LeafletMap initialCenter={initialCenter} initialZoom={initialZoom} onViewportChange={onViewportChange}>
+        {/* Painted first so the choropleth sits BENEATH every pin layer below it
+            (SVG paints in DOM/add order; later-added layers render on top). */}
+        <Ft8HeatLayer rows={ft8Rows} enabled={ft8HeatVisible} />
         <StationLayers
           stations={props.stations}
           tiers={props.tiers}
@@ -430,6 +439,16 @@ export function StationFinderMap(props: StationFinderMapProps) {
         >
           <span className="station-finder__layer-swatch station-finder__layer-swatch--ft8" aria-hidden="true" />
           FT-8 heard
+        </button>
+        <button
+          type="button"
+          className={`station-finder__layer-btn${ft8HeatVisible ? ' on' : ''}`}
+          data-testid="map-layer-ft8heat"
+          aria-pressed={ft8HeatVisible}
+          onClick={() => setFt8HeatVisible((v) => !v)}
+        >
+          <span className="station-finder__layer-swatch station-finder__layer-swatch--ft8heat" aria-hidden="true" />
+          FT-8 heat
         </button>
         {mapPeersEnabled && (
           <button
