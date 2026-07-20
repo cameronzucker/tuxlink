@@ -2971,6 +2971,9 @@ mod tests {
                 modes: vec![],
                 history_hours: None,
                 bands: vec![],
+                bandwidths: None,
+                ft8_evidence: None,
+                ft8_snr_min_db: None,
             }))
             .await
             .unwrap();
