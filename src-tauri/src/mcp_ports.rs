@@ -3734,8 +3734,36 @@ impl Ft8Port for MonolithFt8Port {
 // is local file + engine state, not egress, so nothing here taints or gates.
 // ---------------------------------------------------------------------------
 
-/// Map one [`tuxlink_routines::validate::Finding`] onto the agent-facing DTO.
+/// Append the authoring-catalog pointer to a `routines_save` REJECTION
+/// (tuxlink-591dw): a def_json parse failure ("routine JSON is malformed:
+/// missing field `routine`", "unknown variant `cron`") is where a model
+/// authoring blind first learns the schema exists — both live models walked
+/// this exact ladder field-by-field. The pointer turns each rejection into a
+/// route to the whole answer instead of one missing field at a time. Only
+/// `InvalidInput` (the agent's own payload) gets the suffix; operational
+/// failures pass through untouched.
+fn save_err_with_catalog_pointer(e: PortError) -> PortError {
+    match e {
+        PortError::InvalidInput(m) => PortError::InvalidInput(format!(
+            "{m} — call routines_actions_list for the valid step actions, their params, and \
+             the trigger JSON shapes, then resend the corrected def_json"
+        )),
+        other => other,
+    }
+}
+
+/// Map one [`tuxlink_routines::validate::Finding`] onto the agent-facing DTO,
+/// appending an agent-appropriate REMEDY to the codes live models are known to
+/// misread (tuxlink-591dw). This is the AGENT boundary — the designer UI
+/// renders the engine's message with its own panels/affordances, so the
+/// remedy text lives here, not in the leaf validator. Each remedy states the
+/// MECHANISM, because both live models filled that vacuum with the same
+/// invented theory ("run the routine to establish the acknowledgment"):
+/// consent acknowledgments are DESIGN-TIME operator acts in the designer UI,
+/// with no MCP path and no run-time path, invalidated by any edit to the
+/// acknowledged closure.
 fn map_finding(f: tuxlink_routines::validate::Finding) -> FindingDto {
+    let message = format!("{}{}", f.message, finding_remedy(f.code));
     FindingDto {
         code: f.code.to_string(),
         severity: match f.severity {
@@ -3745,7 +3773,40 @@ fn map_finding(f: tuxlink_routines::validate::Finding) -> FindingDto {
         routine: f.routine,
         track: f.track,
         step: f.step.map(|s| s.0),
-        message: f.message,
+        message,
+    }
+}
+
+/// The agent-boundary remedy suffix for a finding code; empty for codes that
+/// need none. Kept as one match so the covered set is greppable.
+fn finding_remedy(code: &'static str) -> &'static str {
+    use tuxlink_routines::validate::consent::{
+        ATTENDED_UNDER_SCHEDULE, ATTENDED_WRITE_UNDER_SCHEDULE, AUTO_TX_UNACKED,
+        AUTO_WRITE_UNACKED,
+    };
+    use tuxlink_routines::validate::refs::UNKNOWN_ACTION;
+    match code {
+        UNKNOWN_ACTION => {
+            " Call routines_actions_list for each action's params, consent flags, and the \
+             trigger JSON shapes."
+        }
+        AUTO_TX_UNACKED | AUTO_WRITE_UNACKED => {
+            " The acknowledgment is recorded by the operator in the routine designer's \
+             acknowledgment panel — it cannot be granted over MCP and is NOT created by \
+             running the routine. It stays valid until an edit changes the acknowledged \
+             consent closure (the transmitting/config-writing steps, or those of a \
+             routine it calls); such an edit requires the operator to re-record it. \
+             Save the definition as-is and ask the operator to acknowledge it in the \
+             designer."
+        }
+        ATTENDED_UNDER_SCHEDULE | ATTENDED_WRITE_UNDER_SCHEDULE => {
+            " This is a WARNING, not a block: the routine saves, enables, and fires on \
+             schedule, parking at the consent step until the operator confirms — if \
+             nobody is present the run stalls there. For unattended operation use \
+             transmit_mode \"automatic\" with the operator's design-time acknowledgment \
+             (recorded in the designer, not over MCP)."
+        }
+        _ => "",
     }
 }
 
@@ -4008,7 +4069,7 @@ impl RoutinesPort for MonolithRoutinesPort {
     async fn save(&self, def_json: String) -> Result<SaveResultDto, PortError> {
         let state = self.state();
         let result = crate::routines::commands::save_routine(&state, &def_json)
-            .map_err(routines_port_err)?;
+            .map_err(|e| save_err_with_catalog_pointer(routines_port_err(e)))?;
         Ok(SaveResultDto {
             routine: result.routine,
             findings: result.findings.into_iter().map(map_finding).collect(),
@@ -4088,6 +4149,87 @@ mod tests {
     };
 
     // ── tuxlink-dngvs: trigger docs locked to the real serde shape ──
+    // ── tuxlink-591dw: agent-boundary remedy suffixes ──
+    mod finding_remedies {
+        use super::super::{map_finding, save_err_with_catalog_pointer};
+        use tuxlink_mcp_core::ports::PortError;
+        use tuxlink_routines::validate::Finding;
+
+        /// The codes both live models misread carry a mechanism-stating remedy;
+        /// an uncovered code passes through untouched.
+        #[test]
+        fn remedy_suffixes_land_on_the_misread_codes_only() {
+            let unknown = map_finding(Finding::error(
+                tuxlink_routines::validate::refs::UNKNOWN_ACTION,
+                "r".to_string(),
+                "step \"s1\" uses action \"rig.tune\", which is not a known action.".to_string(),
+            ));
+            assert!(
+                unknown.message.contains("routines_actions_list"),
+                "UNKNOWN_ACTION routes to the catalog: {}",
+                unknown.message
+            );
+
+            let unacked = map_finding(Finding::error(
+                tuxlink_routines::validate::consent::AUTO_TX_UNACKED,
+                "r".to_string(),
+                "transmit_ack is missing".to_string(),
+            ));
+            assert!(
+                unacked.message.contains("designer's")
+                    && unacked.message.contains("NOT created by running"),
+                "AUTO_TX_UNACKED states the real mechanism (both models invented \
+                 'run it first'): {}",
+                unacked.message
+            );
+
+            let parked = map_finding(Finding::warning(
+                tuxlink_routines::validate::consent::ATTENDED_UNDER_SCHEDULE,
+                "r".to_string(),
+                "attended routine with a schedule".to_string(),
+            ));
+            assert!(
+                parked.message.contains("WARNING, not a block"),
+                "ATTENDED_UNDER_SCHEDULE says it is not a prohibition (run-4 \
+                 downgrade evidence): {}",
+                parked.message
+            );
+
+            let untouched = map_finding(Finding::warning(
+                tuxlink_routines::validate::fleet::SCHEDULE_COLLISION,
+                "r".to_string(),
+                "two routines collide".to_string(),
+            ));
+            assert_eq!(
+                untouched.message, "two routines collide",
+                "codes without a remedy pass through verbatim"
+            );
+        }
+
+        /// A save REJECTION (the agent's own bad payload) gains the catalog
+        /// pointer; operational errors do not.
+        #[test]
+        fn save_rejection_points_at_the_catalog() {
+            let rejected = save_err_with_catalog_pointer(PortError::InvalidInput(
+                "routine JSON is malformed: unknown variant `cron`".to_string(),
+            ));
+            match rejected {
+                PortError::InvalidInput(m) => {
+                    assert!(m.contains("routines_actions_list"), "{m}");
+                    assert!(m.starts_with("routine JSON is malformed"), "original kept: {m}");
+                }
+                other => panic!("expected InvalidInput, got {other:?}"),
+            }
+
+            let passthrough =
+                save_err_with_catalog_pointer(PortError::Internal("disk on fire".to_string()));
+            assert!(
+                matches!(&passthrough, PortError::Internal(m) if m == "disk on fire"),
+                "operational errors untouched"
+            );
+        }
+    }
+
     mod trigger_docs {
         use super::super::trigger_kind_docs;
         use std::collections::BTreeSet;
