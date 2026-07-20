@@ -489,7 +489,12 @@ impl Provider for ElmerProvider {
 /// **Exhaustive over all four variants** — the `match` ensures no variant
 /// is silently passed through. Any new variant added to the enum will cause
 /// a compile error here, forcing a conscious redaction decision.
-fn redact_message(msg: &Message) -> Message {
+///
+/// `pub(crate)`: this is the authoritative Elmer redactor. The durable
+/// transcript sink (tuxlink-gzbpo) MUST run every message through it before a
+/// line reaches disk, because the in-memory `Conversation` it observes is
+/// UNREDACTED — redaction otherwise happens only on the provider egress path.
+pub(crate) fn redact_message(msg: &Message) -> Message {
     match msg {
         Message::User(text) => {
             Message::User(redact_text(text))
@@ -526,7 +531,7 @@ fn redact_message(msg: &Message) -> Message {
 ///
 /// Returns a fresh `String` even when nothing is redacted (cheap on clean
 /// strings — `Cow::Borrowed` is cloned to owned).
-fn redact_text(text: &str) -> String {
+pub(crate) fn redact_text(text: &str) -> String {
     crate::winlink::redaction::redact_freeform(text).into_owned()
 }
 

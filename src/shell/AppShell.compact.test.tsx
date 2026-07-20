@@ -47,6 +47,15 @@ describe('AppShell desktop regression guard (tuxlink-h7q7)', () => {
     expect(desktopCss).toMatch(/\.dashboard \.dash-connection\s*\{[^}]*inline-size:\s*100%;/);
     expect(desktopCss).toMatch(/\.dashboard \.dash-connection-text\s*\{[^}]*text-overflow:\s*ellipsis;/);
   });
+
+  it('collects the ribbon slack at the cluster seam, not after Station Intel (tuxlink-7tsik)', () => {
+    // .dash-cells grows to fill the row, so on wide windows the leftover width
+    // rendered as a void after its LAST cell (Station Intel). The auto margin
+    // on the APRS divider moves that slack to the facts/controls cluster seam.
+    // Auto margins absorb only positive free space, so the squeeze/tier ladder
+    // is unaffected; do not remove this without re-checking wide-width layout.
+    expect(desktopCss).toMatch(/\.dashboard \.dash-divider--aprs\s*\{\s*margin-left:\s*auto;\s*\}/);
+  });
 });
 
 describe('AppShell compact CSS contract (tuxlink-h7q7)', () => {

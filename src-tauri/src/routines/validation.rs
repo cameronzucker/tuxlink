@@ -144,6 +144,14 @@ impl ValidationContext for MonolithValidationContext {
         self.registry.get(name).map(|a| a.descriptor())
     }
 
+    fn action_names(&self) -> Vec<String> {
+        self.registry
+            .descriptors()
+            .into_iter()
+            .map(|d| d.name.to_string())
+            .collect()
+    }
+
     fn routine_def(&self, name: &str) -> Option<RoutineDef> {
         self.store.get(name)
     }

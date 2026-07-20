@@ -1632,15 +1632,84 @@ pub enum RoutinesRunError {
     Internal(String),
 }
 
-/// Routines: the 10-tool MCP surface for the operator-automation feature
+/// One authorable routine action, curated for an AGENT author (tuxlink-dngvs).
+/// The fields mirror the engine's `ActionDescriptor` (the same registry the
+/// designer palette renders — ADR 0024: one capability tree), minus the
+/// UI/engine-only bits (`dry_run_shape`). `example_params` is the exact
+/// compact-JSON string the palette seeds — the canonical "what do this
+/// action's params look like" answer.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActionInfoDto {
+    pub name: String,
+    pub label: String,
+    pub description: String,
+    pub needs_radio: bool,
+    /// Consent class: an attended run parks a transmitting step for operator
+    /// confirmation before it runs.
+    pub transmits: bool,
+    /// Consent class: mutates persisted station configuration; parks like a
+    /// transmit for operator confirmation in attended runs.
+    pub writes_config: bool,
+    pub needs_internet: bool,
+    /// Canonical example `params` as a JSON OBJECT — paste-ready into an
+    /// `ActionStep.params` field. Deliberately NOT the registry's compact
+    /// string form: a string-in-JSON example invites the author to paste a
+    /// string where an object belongs, recreating the def_json
+    /// double-encoding trap this catalog exists to end (Codex adrev
+    /// 2026-07-19 P2 #1). `None` when the action takes no params.
+    pub example_params: Option<serde_json::Value>,
+    /// A closed vocabulary for ONE string param: `(param_key, allowed…)` —
+    /// a literal value outside the set fails validation.
+    pub allowed_values: Option<(String, Vec<String>)>,
+}
+
+/// One trigger kind a routine's `triggers` array accepts (tuxlink-dngvs).
+/// `fields` documents the kind's parameters field-by-field; `example` is a
+/// paste-ready triggers entry.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TriggerKindDto {
+    pub r#type: String,
+    pub description: String,
+    pub fields: serde_json::Value,
+    pub example: serde_json::Value,
+}
+
+/// [`RoutinesPort::actions_catalog`]'s result: everything an author needs to
+/// write a valid routine WITHOUT guessing — the action set with params and
+/// consent classes, the trigger kinds, and one complete example definition.
+/// Built for the agent path (the human path is the designer palette over the
+/// same registry).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActionsCatalogDto {
+    pub actions: Vec<ActionInfoDto>,
+    pub trigger_kinds: Vec<TriggerKindDto>,
+    /// One COMPLETE, minimal, valid routine definition — the exact JSON shape
+    /// `routines_save` accepts (tuxlink-rt4ey). This teaches the ENVELOPE
+    /// (`routine` is the routine's NAME string; `schema_version`;
+    /// `transmit_mode`; `triggers` is a LIST; steps live under
+    /// `tracks[].steps` with an `end` control), which the action/trigger
+    /// entries alone cannot: a live model mirrored this DTO's own response
+    /// shape as the definition schema and looped 14 saves on envelope parse
+    /// errors. Copy it, then substitute actions/params/triggers from the
+    /// entries above.
+    pub definition_template: serde_json::Value,
+}
+
+/// Routines: the 11-tool MCP surface for the operator-automation feature
 /// (spec §13) — `list` / `get` / `validate` / `save` / `enable` / `disable` /
-/// `run` / `run_status` / `journal_get` / `dry_run`. See the module note
-/// above for the shared error/blocking conventions. Object-safe so
+/// `run` / `run_status` / `journal_get` / `dry_run` / `actions_list`. See the
+/// module note above for the shared error/blocking conventions. Object-safe so
 /// [`crate::McpState`] can hold it as `Arc<dyn RoutinesPort>`.
 #[async_trait]
 pub trait RoutinesPort: Send + Sync {
     /// List every routine in the library. Read-only.
     async fn list(&self) -> Result<Vec<RoutineSummaryDto>, PortError>;
+    /// The authoring catalog: every registered action (name, description,
+    /// params example, consent class) + every trigger kind, so an agent can
+    /// author a routine without inventing names (tuxlink-dngvs — two live
+    /// models guessed `modem.vara.*` names and were rejected one
+    /// `UNKNOWN_ACTION` at a time). Read-only.
+    async fn actions_catalog(&self) -> Result<ActionsCatalogDto, PortError>;
     /// Read one routine's full definition, exactly as stored (spec §14 JSON
     /// shape — the same shape [`RoutinesPort::save`] accepts). `Err`
     /// ([`PortError::NotFound`]) when the name is unknown. Read-only.

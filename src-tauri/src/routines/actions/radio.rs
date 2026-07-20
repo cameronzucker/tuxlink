@@ -339,11 +339,22 @@ impl Action for RadioConnect {
             writes_config: false,
             name: RADIO_CONNECT,
             label: "Connect to gateway",
-            description: "Try a Winlink connection across the station set and band set, exchanging mail on success.",
+            // Contract facts models kept asking the operator for (tuxlink-591dw
+            // run-3/run-4 evidence): owns the whole connect (no pre-tune or
+            // session step exists), takes step refs, bands-omission semantics,
+            // and there is no `intent` param (that vocabulary belongs to the
+            // live-session MCP tools, which models kept importing).
+            description: "Try a Winlink connection across the station set and band set, \
+                          exchanging mail on success. Self-contained: tunes the rig and runs \
+                          the modem per station-and-band attempt — no separate tune or \
+                          open-session step exists, and there is no intent param. stations \
+                          accepts a prior step's output (e.g. \"$s2.callsigns\"). Omitting \
+                          bands is the band-less packet-dial shape, NOT \"use current \
+                          tuning\" — HF modes should list bands.",
             needs_radio: true,
             transmits: true,
             needs_internet: false,
-            example_params: None,
+            example_params: Some(r#"{"stations":["N0DAJ"],"bands":["20m"]}"#),
             allowed_values: None,
             dry_run_shape: None,
         }
@@ -532,7 +543,7 @@ impl Action for RadioListen {
             needs_radio: true,
             transmits: false,
             needs_internet: false,
-            example_params: None,
+            example_params: Some(r#"{"seconds":30}"#),
             allowed_values: None,
             dry_run_shape: None,
         }
@@ -633,7 +644,7 @@ impl Action for RadioAprsSend {
             needs_radio: true,
             transmits: true,
             needs_internet: false,
-            example_params: None,
+            example_params: Some(r#"{"text":"Overwatch checkpoint"}"#),
             allowed_values: None,
             dry_run_shape: None,
         }

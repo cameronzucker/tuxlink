@@ -2872,6 +2872,25 @@ pub fn run() {
                                 }
                             };
 
+                        // Durable agent transcript sink (tuxlink-gzbpo):
+                        // <app_data_dir>/elmer-transcripts/<session_id>.jsonl.
+                        // A path-resolution failure degrades to a temp-dir sink
+                        // (warned) rather than blocking Elmer startup — the
+                        // transcript is an instrument, not a gate.
+                        let transcript_dir = match app.path().app_data_dir() {
+                            Ok(dir) => dir.join("elmer-transcripts"),
+                            Err(e) => {
+                                tracing::warn!(
+                                    target: "elmer",
+                                    error = %e,
+                                    "app_data_dir unresolved; elmer transcripts fall back to temp dir"
+                                );
+                                std::env::temp_dir().join("tuxlink-elmer-transcripts")
+                            }
+                        };
+                        let transcript =
+                            crate::elmer::transcript_sink::ElmerTranscriptSink::new(transcript_dir);
+
                         let session = crate::elmer::session::ElmerSession::new(
                             invoker,
                             provider,
@@ -2882,6 +2901,7 @@ pub fn run() {
                             outbox_trait.clone(),
                             flush_outbox,
                             flush_egress,
+                            transcript,
                         );
 
                         app.manage(std::sync::Arc::new(session));
@@ -3523,6 +3543,7 @@ pub fn run() {
             crate::elmer::commands::outbox_staged_list,
             crate::elmer::commands::elmer_prepare_outbox_approval,
             crate::elmer::commands::elmer_connect,
+            crate::elmer::commands::elmer_transcript_export,
             // R2.4: Tauri-only UI commands, never MCP tools (a model-reachable config-mutation tool = exfil sink); see elmer/injection_tests.rs (F1) for the boundary regression test.
             crate::elmer::config_commands::elmer_config_read,
             crate::elmer::config_commands::elmer_config_set,

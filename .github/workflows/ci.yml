@@ -119,7 +119,15 @@ jobs:
         run: pnpm typecheck
 
       - name: Frontend tests (vitest)
-        run: pnpm vitest run
+        # --retry=2 (tuxlink-2h16p): a small set of load/timing-dependent tests
+        # (ConsentGate pair-keyed parks, StepInspector routine dropdown,
+        # Ft8SetupSurface select error) pass in isolation but flake under the
+        # full-suite run on loaded runners, arch- and Node-independent. Bounded
+        # retry stops a single load flake from reddening the pipeline; a REAL
+        # failure still fails all three attempts. Local runs stay no-retry so
+        # the flakes remain visible to whoever picks up the deterministic fix
+        # (the open half of tuxlink-2h16p).
+        run: pnpm vitest run --retry=2
 
       - name: Frontend production build (tsc + vite build)
         # Catches Vite production-build failures that tsc + vitest miss.

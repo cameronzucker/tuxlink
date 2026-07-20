@@ -36,6 +36,12 @@ pub trait ValidationContext: Send + Sync {
     /// The catalog descriptor for an action name, if it exists in the
     /// registry (spec §6). `None` means `ActionStep.action` is unknown.
     fn action_descriptor(&self, name: &str) -> Option<ActionDescriptor>;
+    /// Every registered action name, for findings that must ENUMERATE the
+    /// valid set (tuxlink-dngvs): an `UNKNOWN_ACTION` that only names the
+    /// wrong guess gives an agent author no path to the right one — it
+    /// rejected two live models one invented name at a time (2026-07-19
+    /// transcript evidence). Order is not significant; callers sort.
+    fn action_names(&self) -> Vec<String>;
     /// A sibling routine's definition by name, for `Call` closure walks
     /// (consent + recursion checks, tasks 3-4).
     fn routine_def(&self, name: &str) -> Option<RoutineDef>;
@@ -109,6 +115,10 @@ impl ValidationContext for StaticContext {
 
     fn action_descriptor(&self, name: &str) -> Option<ActionDescriptor> {
         self.actions.get(name).copied()
+    }
+
+    fn action_names(&self) -> Vec<String> {
+        self.actions.keys().cloned().collect()
     }
 
     fn routine_def(&self, name: &str) -> Option<RoutineDef> {

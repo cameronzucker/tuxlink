@@ -10,6 +10,7 @@
 //! | `outbox_staged_list` | AC-3 | Non-tainting outbox read |
 //! | `elmer_prepare_outbox_approval` | AC-3 | Freeze staging + issue approval DTO |
 //! | `elmer_connect` | AC-3 | Digest-gated flush |
+//! | `elmer_transcript_export` | tuxlink-gzbpo | Archive the durable agent transcripts |
 //!
 //! ## Security invariants
 //!
@@ -136,18 +137,24 @@ fn make_event_sink(app: AppHandle) -> crate::elmer::session::EventSink {
 // ---------------------------------------------------------------------------
 
 fn outcome_to_event(outcome: &RunOutcome) -> ElmerEvent {
-    let (outcome_kind, detail) = match outcome {
-        RunOutcome::Completed(text) => ("done".into(), text.clone()),
-        RunOutcome::Cancelled => ("cancelled".into(), String::new()),
-        RunOutcome::NeedsOperator(msg) => ("needsOperator".into(), msg.clone()),
-        RunOutcome::InvalidAction(msg) => ("invalidAction".into(), msg.clone()),
-        RunOutcome::ToolDenied(msg) => ("toolDenied".into(), msg.clone()),
-        RunOutcome::RateLimited(msg) => ("rateLimited".into(), msg.clone()),
-        // A genuine provider failure — the "error" kind is persisted to the chat
-        // transcript (tuxlink-a1xwx) so the operator can capture it verbatim.
-        RunOutcome::ProviderError(msg) => ("error".into(), msg.clone()),
+    // Kind strings come from the shared vocabulary in `events` (also used by
+    // the transcript's terminal outcome line, tuxlink-93lzx). The detail
+    // policy differs by consumer: the pane wants the final text for "done"
+    // (persisted to the chat transcript, tuxlink-a1xwx); the durable
+    // transcript's outcome line does not (the text is already a message line).
+    let detail = match outcome {
+        RunOutcome::Completed(text) => text.clone(),
+        RunOutcome::Cancelled => String::new(),
+        RunOutcome::NeedsOperator(msg)
+        | RunOutcome::InvalidAction(msg)
+        | RunOutcome::ToolDenied(msg)
+        | RunOutcome::RateLimited(msg)
+        | RunOutcome::ProviderError(msg) => msg.clone(),
     };
-    ElmerEvent::Outcome { outcome_kind, detail }
+    ElmerEvent::Outcome {
+        outcome_kind: crate::elmer::events::outcome_kind(outcome).to_string(),
+        detail,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -307,6 +314,46 @@ pub async fn elmer_connect(
     })
 }
 
+/// Export every Elmer transcript session file as a `.tar.zst` archive at
+/// `output_path` (tuxlink-gzbpo — mirrors `logging_export` at the UI boundary).
+///
+/// Flushes the sink's writer thread first so lines recorded moments before the
+/// export are on disk (the same flush-before-archive barrier the logging
+/// pipeline uses). The transcript files are ALREADY redacted at write time —
+/// this command adds no redaction pass and must never need one.
+///
+/// **Snapshot semantics (Codex adrev 2026-07-19 P2 #3, accepted as designed):**
+/// exporting DURING a live run is deliberately allowed — capturing a
+/// currently-flailing agent is the motivating use case, so refusing mid-run
+/// exports would break the instrument's purpose. The archive is a
+/// consistent-prefix snapshot: lines recorded after the flush barrier are
+/// simply not in it (export again for a later prefix), and in the worst case
+/// the final line of a still-growing file is truncated mid-line — JSONL
+/// consumers skip a trailing partial line.
+#[tauri::command]
+pub fn elmer_transcript_export(
+    app: AppHandle,
+    output_path: String,
+) -> Result<crate::elmer::transcript_sink::TranscriptExportResult, String> {
+    use tauri::Manager as _;
+    // try_state, not State extraction: if the Elmer session failed to start
+    // (degraded setup path), the button must surface an error, not panic the
+    // command handler — same pattern as `logging_export`.
+    let session = app
+        .try_state::<Arc<ElmerSession>>()
+        .ok_or_else(|| "Elmer is not available (agent session failed to start)".to_string())?;
+    let sink = session.transcript();
+    if !sink.flush(std::time::Duration::from_secs(5)) {
+        // A dead/wedged writer is worth surfacing at export time: the operator
+        // is here precisely because they want the evidence.
+        return Err("transcript writer did not flush — see app logs".to_string());
+    }
+    crate::elmer::transcript_sink::export_archive(
+        sink.dir(),
+        std::path::Path::new(&output_path),
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Security grep-gate tests (AC-8, AC-9, AC-5)
 // ---------------------------------------------------------------------------
@@ -345,6 +392,7 @@ mod security_gate_tests {
             include_str!("approval.rs"),
             include_str!("executor.rs"),
             include_str!("mod.rs"),
+            include_str!("transcript_sink.rs"),
         ];
         for (i, src) in elmer_src.iter().enumerate() {
             assert!(
@@ -393,6 +441,7 @@ mod security_gate_tests {
             include_str!("approval.rs"),
             include_str!("executor.rs"),
             include_str!("mod.rs"),
+            include_str!("transcript_sink.rs"),
             // session.rs IS the single caller — exclude it from the grep-gate.
         ];
         for (i, src) in elmer_src.iter().enumerate() {

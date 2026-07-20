@@ -14,7 +14,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use tuxlink_mcp_core::ports::{
-    AbortPort, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto, AudioDevicesDto, BackendStatusDto,
+    AbortPort, ActionInfoDto, ActionsCatalogDto, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto,
+    AudioDevicesDto, BackendStatusDto, TriggerKindDto,
     BluetoothDeviceDto, CatalogEntryDto, ChannelDto, ChannelReliabilityDto, ComposeDraftDto,
     ComposePort,
     ConfigPort, ConfigViewDto, DevicePort, DocBodyDto, DocsHitDto, DryRunStartedDto, EgressPort,
@@ -800,6 +801,51 @@ pub struct MockRoutines;
 
 #[async_trait]
 impl RoutinesPort for MockRoutines {
+    async fn actions_catalog(&self) -> Result<ActionsCatalogDto, PortError> {
+        Ok(ActionsCatalogDto {
+            actions: vec![
+                ActionInfoDto {
+                    name: "local.log".into(),
+                    label: "Log entry".into(),
+                    description: "Write a line to the station log".into(),
+                    needs_radio: false,
+                    transmits: false,
+                    writes_config: false,
+                    needs_internet: false,
+                    example_params: Some(serde_json::json!({"message": "hello"})),
+                    allowed_values: None,
+                },
+                ActionInfoDto {
+                    name: "radio.connect".into(),
+                label: "Connect".into(),
+                description: "Connect to a Winlink gateway".into(),
+                needs_radio: true,
+                transmits: true,
+                writes_config: false,
+                needs_internet: false,
+                example_params: Some(serde_json::json!({"stations": ["N0DAJ"]})),
+                allowed_values: None,
+            }],
+            trigger_kinds: vec![TriggerKindDto {
+                r#type: "manual".into(),
+                description: "operator-initiated only".into(),
+                fields: serde_json::json!({}),
+                example: serde_json::json!({"type": "manual"}),
+            }],
+            definition_template: serde_json::json!({
+                "routine": "my-routine-name",
+                "schema_version": 1,
+                "transmit_mode": "attended",
+                "triggers": [{"type": "manual"}],
+                "tracks": [{"name": "track-1", "steps": [
+                    {"id": "s1", "action": "local.log", "on_radio_busy": "wait",
+                     "params": {"message": "hello"}},
+                    {"id": "s2", "control": "end"}
+                ]}]
+            }),
+        })
+    }
+
     async fn list(&self) -> Result<Vec<RoutineSummaryDto>, PortError> {
         Ok(vec![RoutineSummaryDto {
             routine: SEED_ROUTINE.into(),

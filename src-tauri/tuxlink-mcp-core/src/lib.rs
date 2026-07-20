@@ -106,10 +106,11 @@ pub struct McpState {
     pub ui_hint: Arc<dyn UiHintPort>,
     /// FT-8 listener. Receive-only; none taint, none egress-gated.
     pub ft8: Arc<dyn Ft8Port>,
-    /// Routines (spec §13): the 10-tool operator-automation surface —
-    /// list/get/validate/save/enable/disable/run/run_status/journal_get/
-    /// dry_run. Deliberately EXCLUDES consent-grant (a UI-only act, spec §4).
-    /// None of these methods taint or pass through the `EgressGuard`.
+    /// Routines (spec §13): the 11-tool operator-automation surface —
+    /// list/actions_list/get/validate/save/enable/disable/run/run_status/
+    /// journal_get/dry_run. Deliberately EXCLUDES consent-grant (a UI-only
+    /// act, spec §4). None of these methods taint or pass through the
+    /// `EgressGuard`.
     pub routines: Arc<dyn RoutinesPort>,
 }
 
@@ -171,7 +172,8 @@ pub mod test_support {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use crate::ports::{
-        AbortPort, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto, AudioDevicesDto,
+        AbortPort, ActionInfoDto, ActionsCatalogDto, ArdopConfigDto, ArdopWriteDto,
+        AttachmentMetaDto, AudioDevicesDto, TriggerKindDto,
         BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto, ChannelDto, ChannelReliabilityDto,
         ComposeDraftDto, ComposePort, ConfigPort, ConfigViewDto, DevicePort, DocBodyDto,
         DocsHitDto, DryRunStartedDto, EgressPort, EgressPortError, EnableResultDto, FindingDto,
@@ -1001,6 +1003,51 @@ pub mod test_support {
 
     #[async_trait]
     impl RoutinesPort for MockRoutines {
+        async fn actions_catalog(&self) -> Result<ActionsCatalogDto, PortError> {
+            Ok(ActionsCatalogDto {
+                actions: vec![
+                    ActionInfoDto {
+                        name: "local.log".into(),
+                        label: "Log entry".into(),
+                        description: "Write a line to the station log".into(),
+                        needs_radio: false,
+                        transmits: false,
+                        writes_config: false,
+                        needs_internet: false,
+                        example_params: Some(serde_json::json!({"message": "hello"})),
+                        allowed_values: None,
+                    },
+                    ActionInfoDto {
+                        name: "radio.connect".into(),
+                    label: "Connect".into(),
+                    description: "Connect to a Winlink gateway".into(),
+                    needs_radio: true,
+                    transmits: true,
+                    writes_config: false,
+                    needs_internet: false,
+                    example_params: Some(serde_json::json!({"stations": ["N0DAJ"]})),
+                    allowed_values: None,
+                }],
+                trigger_kinds: vec![TriggerKindDto {
+                    r#type: "manual".into(),
+                    description: "operator-initiated only".into(),
+                    fields: serde_json::json!({}),
+                    example: serde_json::json!({"type": "manual"}),
+                }],
+                definition_template: serde_json::json!({
+                    "routine": "my-routine-name",
+                    "schema_version": 1,
+                    "transmit_mode": "attended",
+                    "triggers": [{"type": "manual"}],
+                    "tracks": [{"name": "track-1", "steps": [
+                        {"id": "s1", "action": "local.log", "on_radio_busy": "wait",
+                         "params": {"message": "hello"}},
+                        {"id": "s2", "control": "end"}
+                    ]}]
+                }),
+            })
+        }
+
         async fn list(&self) -> Result<Vec<RoutineSummaryDto>, PortError> {
             Ok(vec![RoutineSummaryDto {
                 routine: SEED_ROUTINE.into(),

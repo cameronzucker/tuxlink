@@ -43,13 +43,15 @@ mod conversation;
 mod fakes;
 mod runner;
 mod traits;
+mod transcript;
 mod types;
 mod validate;
 
 pub use conversation::{Conversation, Message};
 pub use fakes::{RecordedCall, RecordingInvoker, ScriptedProvider, ScriptedTurn};
-pub use runner::{run, run_with_conversation};
+pub use runner::{run, run_with_conversation, run_with_conversation_with_transcript};
 pub use traits::{EgressStatus, Provider, ProviderError, ToolInvoker};
+pub use transcript::{NullTranscript, TranscriptSink};
 pub use types::{
     CallAuthority, Limits, ModelTurn, RunEvent, RunOutcome, ToolCall, ToolOutcome, ToolSpec,
 };

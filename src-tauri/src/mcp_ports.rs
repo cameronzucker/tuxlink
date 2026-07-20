@@ -36,7 +36,8 @@ use tauri::{AppHandle, Emitter, Manager};
 // returned by `BackendState::current()`.
 
 use tuxlink_mcp_core::ports::{
-    AbortPort, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto, AudioCardDto, AudioDevicesDto,
+    AbortPort, ActionInfoDto, ActionsCatalogDto, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto,
+    AudioCardDto, AudioDevicesDto, TriggerKindDto,
     BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto, ChannelDto, ChannelReliabilityDto,
     ComposeDraftDto, ComposePort, ConfigPort, ConfigViewDto, DevicePort, DocBodyDto, DocsHitDto,
     DryRunStartedDto, EgressPort, EgressPortError, EnableResultDto, EvidenceParamsDto, FindingDto,
@@ -4010,8 +4011,38 @@ impl Ft8Port for MonolithFt8Port {
 // is local file + engine state, not egress, so nothing here taints or gates.
 // ---------------------------------------------------------------------------
 
-/// Map one [`tuxlink_routines::validate::Finding`] onto the agent-facing DTO.
+/// Append the authoring-catalog pointer to a `routines_save` REJECTION
+/// (tuxlink-591dw): a def_json parse failure ("routine JSON is malformed:
+/// missing field `routine`", "unknown variant `cron`") is where a model
+/// authoring blind first learns the schema exists — both live models walked
+/// this exact ladder field-by-field. The pointer turns each rejection into a
+/// route to the whole answer instead of one missing field at a time. Only
+/// `InvalidInput` (the agent's own payload) gets the suffix; operational
+/// failures pass through untouched.
+fn save_err_with_catalog_pointer(e: PortError) -> PortError {
+    match e {
+        PortError::InvalidInput(m) => PortError::InvalidInput(format!(
+            "{m} — copy routines_actions_list's definition_template (the COMPLETE valid \
+             envelope) and substitute your steps into it. Note: `routine` is the routine's \
+             NAME string, not the definition body; `triggers` is a list; steps live under \
+             tracks[].steps. Then resend the corrected def_json"
+        )),
+        other => other,
+    }
+}
+
+/// Map one [`tuxlink_routines::validate::Finding`] onto the agent-facing DTO,
+/// appending an agent-appropriate REMEDY to the codes live models are known to
+/// misread (tuxlink-591dw). This is the AGENT boundary — the designer UI
+/// renders the engine's message with its own panels/affordances, so the
+/// remedy text lives here, not in the leaf validator. Each remedy states the
+/// MECHANISM, because both live models filled that vacuum with the same
+/// invented theory ("run the routine to establish the acknowledgment"):
+/// consent acknowledgments are DESIGN-TIME operator acts in the designer UI,
+/// with no MCP path and no run-time path, invalidated by any edit to the
+/// acknowledged closure.
 fn map_finding(f: tuxlink_routines::validate::Finding) -> FindingDto {
+    let message = format!("{}{}", f.message, finding_remedy(f.code));
     FindingDto {
         code: f.code.to_string(),
         severity: match f.severity {
@@ -4021,7 +4052,40 @@ fn map_finding(f: tuxlink_routines::validate::Finding) -> FindingDto {
         routine: f.routine,
         track: f.track,
         step: f.step.map(|s| s.0),
-        message: f.message,
+        message,
+    }
+}
+
+/// The agent-boundary remedy suffix for a finding code; empty for codes that
+/// need none. Kept as one match so the covered set is greppable.
+fn finding_remedy(code: &'static str) -> &'static str {
+    use tuxlink_routines::validate::consent::{
+        ATTENDED_UNDER_SCHEDULE, ATTENDED_WRITE_UNDER_SCHEDULE, AUTO_TX_UNACKED,
+        AUTO_WRITE_UNACKED,
+    };
+    use tuxlink_routines::validate::refs::UNKNOWN_ACTION;
+    match code {
+        UNKNOWN_ACTION => {
+            " Call routines_actions_list for each action's params, consent flags, and the \
+             trigger JSON shapes."
+        }
+        AUTO_TX_UNACKED | AUTO_WRITE_UNACKED => {
+            " The acknowledgment is recorded by the operator in the routine designer's \
+             acknowledgment panel — it cannot be granted over MCP and is NOT created by \
+             running the routine. It stays valid until an edit changes the acknowledged \
+             consent closure (the transmitting/config-writing steps, or those of a \
+             routine it calls); such an edit requires the operator to re-record it. \
+             Save the definition as-is and ask the operator to acknowledge it in the \
+             designer."
+        }
+        ATTENDED_UNDER_SCHEDULE | ATTENDED_WRITE_UNDER_SCHEDULE => {
+            " This is a WARNING, not a block: the routine saves, enables, and fires on \
+             schedule, parking at the consent step until the operator confirms — if \
+             nobody is present the run stalls there. For unattended operation use \
+             transmit_mode \"automatic\" with the operator's design-time acknowledgment \
+             (recorded in the designer, not over MCP)."
+        }
+        _ => "",
     }
 }
 
@@ -4177,6 +4241,71 @@ impl MonolithRoutinesPort {
     }
 }
 
+/// The trigger kinds a routine's `triggers` array accepts, documented for an
+/// agent author (tuxlink-dngvs). Field names and enum spellings are LOCKED to
+/// `tuxlink_routines::types::Trigger`'s real serde shape by
+/// `trigger_kind_docs_match_trigger_serde_shape` below — a drifted doc would
+/// teach the model a schema the parser rejects, which is exactly the failure
+/// this catalog exists to end.
+/// One complete, minimal, VALID routine definition — the catalog's envelope
+/// teacher (tuxlink-rt4ey). A live model mirrored the catalog's own response
+/// shape as the definition schema (actions:[{name,params}], singular trigger)
+/// and looped 14 saves on envelope parse errors; run 4 and run 5 both
+/// recovered only by reading a real definition (routines_get on an existing
+/// routine). This puts that example in the tool the model reaches FIRST.
+/// Locked to the real parser by `definition_template_parses_as_routine_def`
+/// below — a template the parser rejects would teach the exact failure it
+/// exists to end. Deliberately non-transmitting (local.log) so the example
+/// carries no consent baggage.
+const DEFINITION_TEMPLATE_JSON: &str = r#"{
+  "routine": "my-routine-name",
+  "schema_version": 1,
+  "transmit_mode": "attended",
+  "triggers": [
+    { "type": "manual" }
+  ],
+  "tracks": [
+    {
+      "name": "track-1",
+      "steps": [
+        { "id": "s1", "action": "local.log", "on_radio_busy": "wait", "params": { "message": "hello from my-routine-name" } },
+        { "id": "s2", "control": "end" }
+      ]
+    }
+  ]
+}"#;
+
+fn definition_template() -> serde_json::Value {
+    serde_json::from_str(DEFINITION_TEMPLATE_JSON)
+        .expect("DEFINITION_TEMPLATE_JSON is valid JSON (serde-locked by test)")
+}
+
+fn trigger_kind_docs() -> Vec<TriggerKindDto> {
+    vec![
+        TriggerKindDto {
+            r#type: "manual".to_string(),
+            description: "Fires only when the operator (or an agent run request) starts the \
+                          routine explicitly. No parameters."
+                .to_string(),
+            fields: serde_json::json!({}),
+            example: serde_json::json!({ "type": "manual" }),
+        },
+        TriggerKindDto {
+            r#type: "schedule".to_string(),
+            description: "Fires on an interval. \"top of every hour\" = every \"1h\" with \
+                          align \"hour\"."
+                .to_string(),
+            fields: serde_json::json!({
+                "every": "interval string like \"30m\", \"2h\", \"45s\" (required)",
+                "align": "optional \"hour\" | \"day\" — align fires to the top of the hour/day",
+                "window": "optional local-time window \"HH:MM-HH:MM\"",
+                "if_missed": "optional \"skip\" (default) | \"run_once_on_launch\""
+            }),
+            example: serde_json::json!({ "type": "schedule", "every": "1h", "align": "hour" }),
+        },
+    ]
+}
+
 #[async_trait]
 impl RoutinesPort for MonolithRoutinesPort {
     async fn list(&self) -> Result<Vec<RoutineSummaryDto>, PortError> {
@@ -4185,6 +4314,54 @@ impl RoutinesPort for MonolithRoutinesPort {
             .into_iter()
             .map(map_routine_summary)
             .collect())
+    }
+
+    async fn actions_catalog(&self) -> Result<ActionsCatalogDto, PortError> {
+        // Same registry the designer palette renders (ADR 0024: one capability
+        // tree) — the agent sees exactly the actions a human sees, curated to
+        // the authoring-relevant fields (tuxlink-dngvs).
+        let state = self.state();
+        let mut actions: Vec<ActionInfoDto> = state
+            .registry
+            .descriptors()
+            .into_iter()
+            .map(|d| ActionInfoDto {
+                name: d.name.to_string(),
+                label: d.label.to_string(),
+                description: d.description.to_string(),
+                needs_radio: d.needs_radio,
+                transmits: d.transmits,
+                writes_config: d.writes_config,
+                needs_internet: d.needs_internet,
+                // Parse the registry's compact-string example into a real
+                // JSON object so the catalog is paste-ready (Codex adrev
+                // 2026-07-19 P2 #1). A malformed example is a descriptor bug:
+                // omit it (warn) rather than hand the model a string where an
+                // object belongs.
+                example_params: d.example_params.and_then(|s| {
+                    match serde_json::from_str(s) {
+                        Ok(v) => Some(v),
+                        Err(e) => {
+                            tracing::warn!(target: "routines", action = d.name, error = %e,
+                                "descriptor example_params is not valid JSON; omitted from catalog");
+                            None
+                        }
+                    }
+                }),
+                allowed_values: d.allowed_values.map(|(key, values)| {
+                    (
+                        key.to_string(),
+                        values.iter().map(|v| v.to_string()).collect(),
+                    )
+                }),
+            })
+            .collect();
+        actions.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(ActionsCatalogDto {
+            actions,
+            trigger_kinds: trigger_kind_docs(),
+            definition_template: definition_template(),
+        })
     }
 
     async fn get(&self, name: &str) -> Result<serde_json::Value, PortError> {
@@ -4205,7 +4382,7 @@ impl RoutinesPort for MonolithRoutinesPort {
     async fn save(&self, def_json: String) -> Result<SaveResultDto, PortError> {
         let state = self.state();
         let result = crate::routines::commands::save_routine(&state, &def_json)
-            .map_err(routines_port_err)?;
+            .map_err(|e| save_err_with_catalog_pointer(routines_port_err(e)))?;
         Ok(SaveResultDto {
             routine: result.routine,
             findings: result.findings.into_iter().map(map_finding).collect(),
@@ -4283,6 +4460,174 @@ mod tests {
         any_freq_in_bands, curate_gateway, curate_peer, is_plausible_callsign, khz_to_band,
         sanitize_channel, sort_gateways_by_distance,
     };
+
+    // ── tuxlink-dngvs: trigger docs locked to the real serde shape ──
+    // ── tuxlink-rt4ey: the catalog's envelope teacher ──
+    mod definition_template_lock {
+        use super::super::definition_template;
+
+        /// The template must parse through the REAL RoutineDef deserializer —
+        /// a template the parser rejects would teach the exact envelope
+        /// failure it exists to end. Also pins the envelope facts the remedy
+        /// text states (routine is a name string, triggers is a list, steps
+        /// under tracks).
+        #[test]
+        fn definition_template_parses_as_routine_def() {
+            let value = definition_template();
+            let def: tuxlink_routines::types::RoutineDef =
+                serde_json::from_value(value.clone())
+                    .expect("definition_template must parse as a RoutineDef");
+            assert_eq!(def.routine, "my-routine-name");
+            assert_eq!(def.schema_version, 1);
+            assert_eq!(def.triggers.len(), 1, "triggers is a list");
+            assert_eq!(def.tracks.len(), 1);
+            assert!(
+                value["routine"].is_string(),
+                "the `routine` field is the NAME string — the exact trap run 5 looped on"
+            );
+        }
+    }
+
+    // ── tuxlink-591dw: agent-boundary remedy suffixes ──
+    mod finding_remedies {
+        use super::super::{map_finding, save_err_with_catalog_pointer};
+        use tuxlink_mcp_core::ports::PortError;
+        use tuxlink_routines::validate::Finding;
+
+        /// The codes both live models misread carry a mechanism-stating remedy;
+        /// an uncovered code passes through untouched.
+        #[test]
+        fn remedy_suffixes_land_on_the_misread_codes_only() {
+            let unknown = map_finding(Finding::error(
+                tuxlink_routines::validate::refs::UNKNOWN_ACTION,
+                "r".to_string(),
+                "step \"s1\" uses action \"rig.tune\", which is not a known action.".to_string(),
+            ));
+            assert!(
+                unknown.message.contains("routines_actions_list"),
+                "UNKNOWN_ACTION routes to the catalog: {}",
+                unknown.message
+            );
+
+            let unacked = map_finding(Finding::error(
+                tuxlink_routines::validate::consent::AUTO_TX_UNACKED,
+                "r".to_string(),
+                "transmit_ack is missing".to_string(),
+            ));
+            assert!(
+                unacked.message.contains("designer's")
+                    && unacked.message.contains("NOT created by running"),
+                "AUTO_TX_UNACKED states the real mechanism (both models invented \
+                 'run it first'): {}",
+                unacked.message
+            );
+
+            let parked = map_finding(Finding::warning(
+                tuxlink_routines::validate::consent::ATTENDED_UNDER_SCHEDULE,
+                "r".to_string(),
+                "attended routine with a schedule".to_string(),
+            ));
+            assert!(
+                parked.message.contains("WARNING, not a block"),
+                "ATTENDED_UNDER_SCHEDULE says it is not a prohibition (run-4 \
+                 downgrade evidence): {}",
+                parked.message
+            );
+
+            let untouched = map_finding(Finding::warning(
+                tuxlink_routines::validate::fleet::SCHEDULE_COLLISION,
+                "r".to_string(),
+                "two routines collide".to_string(),
+            ));
+            assert_eq!(
+                untouched.message, "two routines collide",
+                "codes without a remedy pass through verbatim"
+            );
+        }
+
+        /// A save REJECTION (the agent's own bad payload) gains the catalog
+        /// pointer; operational errors do not.
+        #[test]
+        fn save_rejection_points_at_the_catalog() {
+            let rejected = save_err_with_catalog_pointer(PortError::InvalidInput(
+                "routine JSON is malformed: unknown variant `cron`".to_string(),
+            ));
+            match rejected {
+                PortError::InvalidInput(m) => {
+                    assert!(m.contains("routines_actions_list"), "{m}");
+                    assert!(m.starts_with("routine JSON is malformed"), "original kept: {m}");
+                }
+                other => panic!("expected InvalidInput, got {other:?}"),
+            }
+
+            let passthrough =
+                save_err_with_catalog_pointer(PortError::Internal("disk on fire".to_string()));
+            assert!(
+                matches!(&passthrough, PortError::Internal(m) if m == "disk on fire"),
+                "operational errors untouched"
+            );
+        }
+    }
+
+    mod trigger_docs {
+        use super::super::trigger_kind_docs;
+        use std::collections::BTreeSet;
+        use tuxlink_routines::types::{IfMissed, Trigger};
+
+        /// Every documented example must parse through the REAL Trigger
+        /// deserializer — the docs teach the agent a schema; a drifted doc
+        /// teaches a schema the parser rejects, recreating the exact failure
+        /// this catalog exists to end (serde memory rule: explicit shape
+        /// test on rename_all'd enums).
+        #[test]
+        fn trigger_kind_docs_match_trigger_serde_shape() {
+            let docs = trigger_kind_docs();
+            assert_eq!(docs.len(), 2, "manual + schedule");
+
+            for kind in &docs {
+                let parsed: Trigger = serde_json::from_value(kind.example.clone())
+                    .unwrap_or_else(|e| {
+                        panic!("example for {:?} must parse: {e}", kind.r#type)
+                    });
+                let tag = serde_json::to_value(&parsed).unwrap()["type"]
+                    .as_str()
+                    .unwrap()
+                    .to_string();
+                assert_eq!(tag, kind.r#type, "doc type matches serde tag");
+            }
+
+            // The schedule doc's field list equals the real serialized field
+            // set (with every optional field populated so none are skipped).
+            let schedule = Trigger::Schedule {
+                every: "1h".into(),
+                align: Some("hour".into()),
+                window: Some("08:00-20:00".into()),
+                if_missed: IfMissed::RunOnceOnLaunch,
+            };
+            let ser = serde_json::to_value(&schedule).unwrap();
+            let real_fields: BTreeSet<String> = ser
+                .as_object()
+                .unwrap()
+                .keys()
+                .filter(|k| k.as_str() != "type")
+                .cloned()
+                .collect();
+            let doc_fields: BTreeSet<String> = docs
+                .iter()
+                .find(|d| d.r#type == "schedule")
+                .unwrap()
+                .fields
+                .as_object()
+                .unwrap()
+                .keys()
+                .cloned()
+                .collect();
+            assert_eq!(
+                doc_fields, real_fields,
+                "documented schedule fields must equal Trigger::Schedule's serde field set"
+            );
+        }
+    }
 
     // ── tuxlink-z2nwx Contract 3: print + report export ──
     mod z2nwx {

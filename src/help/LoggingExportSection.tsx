@@ -2,8 +2,11 @@
  * LoggingExportSection — Overview / Export panel of the Logging window.
  *
  * Displays current disk usage, retained window, event rate, and last export
- * metadata from logging_status. Provides three actions:
+ * metadata from logging_status. Provides four actions:
  *   • Export logs… — Save As dialog → logging_export Tauri command
+ *   • Export agent transcripts… — Save As dialog → elmer_transcript_export
+ *     (tuxlink-gzbpo: the durable Elmer agent transcript — tool calls with
+ *     args + results — is a separate sink from the diagnostic log bus)
  *   • Open log directory — logging_open_directory Tauri command
  *   • Clear history… — confirmation + logging_clear_history Tauri command
  *
@@ -43,6 +46,34 @@ export function LoggingExportSection() {
       await refetch();
     } catch (e) {
       setFeedback(`Export failed: ${e}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onExportTranscripts = async () => {
+    setBusy('exporting-transcripts');
+    setFeedback(null);
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const filePath = await saveDialog({
+      defaultPath: `tuxlink-elmer-transcripts-${ts}.tar.zst`,
+      filters: [{ name: 'Tuxlink Transcript Archive', extensions: ['tar.zst'] }],
+    });
+    if (!filePath) {
+      setBusy(null);
+      setFeedback('Export canceled.');
+      return;
+    }
+    try {
+      const result = await invoke<{ archive_size_bytes: number; sessions_in_archive: number }>(
+        'elmer_transcript_export',
+        { outputPath: filePath },
+      );
+      setFeedback(
+        `Saved ${result.sessions_in_archive} transcript session${result.sessions_in_archive === 1 ? '' : 's'} (${formatBytes(result.archive_size_bytes)}) to ${filePath}`,
+      );
+    } catch (e) {
+      setFeedback(`Transcript export failed: ${e}`);
     } finally {
       setBusy(null);
     }
@@ -112,6 +143,9 @@ export function LoggingExportSection() {
       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
         <button onClick={onExport} disabled={!!busy}>
           {busy === 'exporting' ? 'Exporting…' : 'Export logs…'}
+        </button>
+        <button onClick={onExportTranscripts} disabled={!!busy}>
+          {busy === 'exporting-transcripts' ? 'Exporting…' : 'Export agent transcripts…'}
         </button>
         <button onClick={onOpenDir} disabled={!!busy}>Open log directory</button>
         <button

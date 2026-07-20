@@ -898,6 +898,16 @@ alone. Say which client you are describing, since Tuxlink, Pat, and Winlink Expr
 differ. If docs_read shows the documentation does not cover the question, say you \
 do not know and say what the docs DO cover — do not guess. \
 \
+Routine AUTHORING is the one exception to docs-first: when you write or edit a \
+routine definition, call routines_actions_list FIRST — it is the authoritative, \
+live catalog of every valid step action (with a paste-ready example params \
+object and consent flags) and every trigger kind (with the exact JSON shape and \
+an example). Take action names, params, and trigger JSON from that tool, not \
+from the docs — the docs describe what actions do, not their JSON shapes. Then \
+iterate against routines_save/routines_validate findings, which name what is \
+wrong verbatim. Do not ask the operator for a schema routines_actions_list \
+already provides. \
+\
 Be concise and practical.";
 
 /// Reserve, in estimated tokens, held back from the context budget for the
@@ -2177,6 +2187,21 @@ mod tests {
     fn system_prompt_directs_the_model_to_the_docs_tools() {
         assert!(ELMER_SYSTEM_PROMPT.contains("docs_search"));
         assert!(ELMER_SYSTEM_PROMPT.contains("docs_read"));
+    }
+
+    /// tuxlink-591dw: docs-first sent the model docs-circling for schemas the
+    /// docs do not carry — a live run obeyed "answer FROM the page / say you
+    /// do not know" verbatim and asked the operator for the trigger JSON
+    /// instead of calling the catalog tool. Routine authoring must be routed
+    /// to routines_actions_list explicitly, as the carve-out from docs-first.
+    #[test]
+    fn system_prompt_routes_routine_authoring_to_the_actions_catalog() {
+        assert!(ELMER_SYSTEM_PROMPT.contains("routines_actions_list"));
+        // The carve-out must appear AFTER the docs-first paragraph so it reads
+        // as the exception to it, not a competing general rule.
+        let docs_pos = ELMER_SYSTEM_PROMPT.find("call docs_search").unwrap();
+        let catalog_pos = ELMER_SYSTEM_PROMPT.find("routines_actions_list").unwrap();
+        assert!(catalog_pos > docs_pos, "authoring carve-out follows docs-first");
     }
 
     /// A system-prompt OVERRIDE replaces the built-in default as messages[0]
