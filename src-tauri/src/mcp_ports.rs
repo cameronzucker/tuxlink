@@ -3793,9 +3793,11 @@ fn finding_remedy(code: &'static str) -> &'static str {
         AUTO_TX_UNACKED | AUTO_WRITE_UNACKED => {
             " The acknowledgment is recorded by the operator in the routine designer's \
              acknowledgment panel — it cannot be granted over MCP and is NOT created by \
-             running the routine; any edit to the routine (or a routine it calls) \
-             invalidates it until the operator re-records it. Save the definition as-is \
-             and ask the operator to acknowledge it in the designer."
+             running the routine. It stays valid until an edit changes the acknowledged \
+             consent closure (the transmitting/config-writing steps, or those of a \
+             routine it calls); such an edit requires the operator to re-record it. \
+             Save the definition as-is and ask the operator to acknowledge it in the \
+             designer."
         }
         ATTENDED_UNDER_SCHEDULE | ATTENDED_WRITE_UNDER_SCHEDULE => {
             " This is a WARNING, not a block: the routine saves, enables, and fires on \
