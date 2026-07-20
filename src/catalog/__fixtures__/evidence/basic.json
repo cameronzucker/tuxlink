@@ -1,0 +1,18 @@
+{
+  "operatorGrid": "DN17",
+  "nowMs": 1000000000,
+  "snrMinDb": -24,
+  "stations": [
+    { "key": "corroborated-near", "grid": "DN36", "bands": ["20m"] },
+    { "key": "wrong-band", "grid": "DN36", "bands": ["40m"] },
+    { "key": "too-far", "grid": "EM48", "bands": ["20m"] },
+    { "key": "stale-only", "grid": "CN85", "bands": ["20m"] }
+  ],
+  "decodes": [
+    { "grid": "DN36", "band": "20m", "snrDb": -8, "slotUtcMs": 999940000 },
+    { "grid": "EM10", "band": "20m", "snrDb": -18, "slotUtcMs": 999940000 },
+    { "grid": "CN85", "band": "20m", "snrDb": -12, "slotUtcMs": 997800000 }
+  ],
+  "expectCorroborated": ["corroborated-near"],
+  "expectSampledBands": ["20m"]
+}

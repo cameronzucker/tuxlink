@@ -38,9 +38,10 @@ use tauri::{AppHandle, Emitter, Manager};
 use tuxlink_mcp_core::ports::{
     AbortPort, ActionInfoDto, ActionsCatalogDto, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto,
     AudioCardDto, AudioDevicesDto, TriggerKindDto,
-    BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto, ChannelReliabilityDto, ComposeDraftDto,
-    ComposePort, ConfigPort, ConfigViewDto, DevicePort, DocBodyDto, DocsHitDto, DryRunStartedDto,
-    EgressPort, EgressPortError, EnableResultDto, FindingDto, FindingSeverityDto, FolderDto,
+    BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto, ChannelDto, ChannelReliabilityDto,
+    ComposeDraftDto, ComposePort, ConfigPort, ConfigViewDto, DevicePort, DocBodyDto, DocsHitDto,
+    DryRunStartedDto, EgressPort, EgressPortError, EnableResultDto, EvidenceParamsDto, FindingDto,
+    FindingSeverityDto, FolderDto,
     Ft8AudioDeviceDto, Ft8HeardStationDto, Ft8Port, Ft8StatusDto, GatewayAntennaDto, GatewayDto,
     GribRequestDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto, ModemStatusDto,
     OutboxReadPort, OutputSpecDto, PacketConfigDto, PacketWriteDto, ParamSpecDto, ParsedMessageDto, PathPredictionDto,
@@ -2412,6 +2413,7 @@ fn map_station_mode(mode: StationModeDto) -> crate::catalog::stations::ListingMo
     use crate::catalog::stations::ListingMode;
     match mode {
         StationModeDto::VaraHf => ListingMode::VaraHf,
+        StationModeDto::VaraFm => ListingMode::VaraFm,
         StationModeDto::Packet => ListingMode::Packet,
         StationModeDto::ArdopHf => ListingMode::ArdopHf,
         StationModeDto::Pactor => ListingMode::Pactor,
@@ -2419,16 +2421,55 @@ fn map_station_mode(mode: StationModeDto) -> crate::catalog::stations::ListingMo
     }
 }
 
-/// Map a monolith [`ListingMode`] back onto the agent-facing [`StationModeDto`]
+/// Expand an agent-supplied `find_stations` mode selector into the monolith
+/// [`ListingMode`] set to fetch. Maps the DTO tokens 1:1 (an empty selector maps
+/// to an empty vec) and delegates the "empty = all transports, VARA FM included"
+/// rule to the SHARED [`ListingMode::expand_selector`] seam (the same expansion
+/// the routines `data.find_stations` action uses), so the two agent surfaces
+/// can never diverge on what an empty selector fetches. `ListingMode::ALL`
+/// (the confirmed text-endpoint set, which deliberately excludes VaraFm) is
+/// untouched; text-listing-default callers keep their meaning.
+///
+/// [`ListingMode::expand_selector`]: crate::catalog::stations::ListingMode::expand_selector
+/// [`ListingMode`]: crate::catalog::stations::ListingMode
+/// [`ListingMode::ALL`]: crate::catalog::stations::ListingMode::ALL
+fn expand_find_stations_modes(
+    modes: &[StationModeDto],
+) -> Vec<crate::catalog::stations::ListingMode> {
+    crate::catalog::stations::ListingMode::expand_selector(
+        modes.iter().copied().map(map_station_mode).collect(),
+    )
+}
+
+/// Map a monolith [`ListingMode`] onto the agent-facing [`StationModeDto`]
 /// (the listing's mode becomes each gateway's `mode` in the flattened output).
+///
+/// Total mapping: every `ListingMode`, including `VaraFm`, has a
+/// `StationModeDto` token now (`vara-fm`), so VARA FM stations reach the curated
+/// agent/routines surface with the same fidelity the frontend gets.
 fn map_listing_mode(mode: crate::catalog::stations::ListingMode) -> StationModeDto {
     use crate::catalog::stations::ListingMode;
     match mode {
         ListingMode::VaraHf => StationModeDto::VaraHf,
+        ListingMode::VaraFm => StationModeDto::VaraFm,
         ListingMode::Packet => StationModeDto::Packet,
         ListingMode::ArdopHf => StationModeDto::ArdopHf,
         ListingMode::Pactor => StationModeDto::Pactor,
         ListingMode::RobustPacket => StationModeDto::RobustPacket,
+    }
+}
+
+/// Kebab-case transport token for a monolith [`ListingMode`], for the
+/// [`ChannelDto::mode`] wire field. Matches the [`StationModeDto`] serialization.
+fn listing_mode_token(mode: crate::catalog::stations::ListingMode) -> &'static str {
+    use crate::catalog::stations::ListingMode;
+    match mode {
+        ListingMode::VaraHf => "vara-hf",
+        ListingMode::VaraFm => "vara-fm",
+        ListingMode::Packet => "packet",
+        ListingMode::ArdopHf => "ardop-hf",
+        ListingMode::Pactor => "pactor",
+        ListingMode::RobustPacket => "robust-packet",
     }
 }
 
@@ -2496,6 +2537,158 @@ fn any_freq_in_bands(freqs_khz: &[f64], wanted: &[String]) -> bool {
     })
 }
 
+/// Classify an occupied bandwidth (Hz) into one of the three fixed filter
+/// classes, or `None` when it is absent OR is not one of them. Mirrors the
+/// frontend `bandwidthClass` (`src/catalog/stationTypes.ts`): only 500/2300/2750
+/// classify; every other value (including ARDOP 1000/2000) is unclassified.
+fn bandwidth_class(hz: Option<u32>) -> Option<u32> {
+    match hz {
+        Some(500) => Some(500),
+        Some(2300) => Some(2300),
+        Some(2750) => Some(2750),
+        _ => None,
+    }
+}
+
+/// True when a channel's bandwidth passes the bandwidth filter. Load-bearing
+/// "unknown passes every filter" rule (mirror of the frontend
+/// `channelPassesBandwidth`): a channel whose bandwidth is absent OR does not
+/// classify passes EVERY filter; a classified channel passes only when its class
+/// is in `wanted`.
+fn channel_passes_bandwidth(bandwidth_hz: Option<u32>, wanted: &[u32]) -> bool {
+    match bandwidth_class(bandwidth_hz) {
+        None => true,
+        Some(cls) => wanted.contains(&cls),
+    }
+}
+
+/// True when a gateway survives the CONJUNCTIVE band + bandwidth filter: SOME
+/// single channel satisfies BOTH the band filter AND the bandwidth filter at
+/// once. This mirrors the frontend `stationMatchesFilters`
+/// (`src/catalog/stationModel.ts`), which is channel-conjunctive: a station
+/// passes iff one channel is in a wanted band AND passes the bandwidth filter,
+/// NOT (some channel in band) AND (some other channel at bandwidth). Empty
+/// `bands` = no band constraint; empty `bandwidths` = no bandwidth constraint
+/// (a null/unclassified channel bandwidth passes every bandwidth filter, per
+/// [`channel_passes_bandwidth`]). A gateway with no channel-detail rows falls
+/// back to its bare dial list, whose synthesized channels carry no bandwidth
+/// (so they pass every bandwidth filter) and are placed by dial band, matching
+/// the frontend's `frequenciesKhz` fallback in `stationModel`.
+fn gateway_dto_passes_band_and_bandwidth(
+    gw: &GatewayDto,
+    bands: &[String],
+    bandwidths: &[u32],
+) -> bool {
+    let band_ok = |freq_khz: f64| -> bool {
+        bands.is_empty()
+            || match khz_to_band(freq_khz) {
+                Some(b) => bands.iter().any(|w| w.eq_ignore_ascii_case(b)),
+                None => false,
+            }
+    };
+    if gw.channels.is_empty() {
+        // Synthesized null-bandwidth channels pass every bandwidth filter, so the
+        // gateway survives iff SOME bare dial is in a wanted band (band-only when
+        // `bands` is empty degrades to "has any dial").
+        return gw.frequencies_khz.iter().any(|f| band_ok(*f));
+    }
+    gw.channels
+        .iter()
+        .any(|c| band_ok(c.frequency_khz) && channel_passes_bandwidth(c.bandwidth_hz, bandwidths))
+}
+
+/// The amateur-band labels (e.g. `"20m"`) a gateway operates on, for FT-8
+/// corroboration. Derived from the channel-detail dials when present (their own
+/// per-channel frequencies), else the bare listing dials (the same
+/// effective-channel set the frontend `stationModel` builds). First-occurrence
+/// order; unmapped dials are dropped.
+fn gateway_bands(gw: &GatewayDto) -> Vec<String> {
+    let freqs: Vec<f64> = if gw.channels.is_empty() {
+        gw.frequencies_khz.clone()
+    } else {
+        gw.channels.iter().map(|c| c.frequency_khz).collect()
+    };
+    let mut bands: Vec<String> = Vec::new();
+    for f in freqs {
+        if let Some(b) = khz_to_band(f) {
+            if !bands.iter().any(|x| x.as_str() == b) {
+                bands.push(b.to_string());
+            }
+        }
+    }
+    bands
+}
+
+/// Wall-clock now in unix ms (the reference point for the FT-8 recency window).
+fn now_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Corroborate the curated `gateways` against the FT-8 decode `ring`, stamping
+/// `ft8_corroborated` on each and returning the evidence params (with the
+/// sampled bands) for the list DTO. Delegates the pure math to
+/// [`crate::catalog::evidence::corroborate`] so the agent surface reproduces the
+/// exact same corroboration the frontend panel shows.
+///
+/// A gateway with no grid is never corroborated (it cannot anchor a distance),
+/// so it is stamped `Some(false)`: evidence was evaluated, it just does not
+/// corroborate. Gateways are keyed by their index in `gateways`, unique by
+/// construction, so the corroborated-key set maps back 1:1.
+fn apply_ft8_evidence(
+    gateways: &mut [GatewayDto],
+    ring: &[SlotRecord],
+    operator_grid: Option<&str>,
+    snr_min_db: i32,
+    now_ms: u64,
+) -> EvidenceParamsDto {
+    use crate::catalog::evidence::{self, EvidenceInput};
+
+    // Ring decodes -> (grid, band, snr, slot_ms). The decode's band IS the slot's
+    // band (the decode itself carries only an audio offset).
+    let decodes: Vec<(Option<String>, String, i32, u64)> = ring
+        .iter()
+        .flat_map(|slot| {
+            slot.decodes
+                .iter()
+                .map(move |d| (d.grid.clone(), slot.band.clone(), d.snr_db, d.slot_utc_ms))
+        })
+        .collect();
+
+    // Curated gateways with a grid -> (index-key, grid, bands). Gridless gateways
+    // are excluded (they cannot be corroborated).
+    let gw_tuples: Vec<(String, String, Vec<String>)> = gateways
+        .iter()
+        .enumerate()
+        .filter_map(|(i, gw)| {
+            let grid = gw.grid.clone()?;
+            Some((i.to_string(), grid, gateway_bands(gw)))
+        })
+        .collect();
+
+    let input = EvidenceInput {
+        operator_grid: operator_grid.unwrap_or(""),
+        now_ms,
+        snr_min_db,
+    };
+    let out = evidence::corroborate(&gw_tuples, &decodes, &input);
+
+    for (i, gw) in gateways.iter_mut().enumerate() {
+        gw.ft8_corroborated = Some(out.corroborated.contains(&i.to_string()));
+    }
+
+    EvidenceParamsDto {
+        snr_min_db,
+        recency_ms: evidence::EVIDENCE_RECENCY_MS,
+        radius_factor: evidence::EVIDENCE_RADIUS_FACTOR,
+        radius_min_mi: evidence::EVIDENCE_RADIUS_MIN_MI,
+        radius_max_mi: evidence::EVIDENCE_RADIUS_MAX_MI,
+        sampled_bands: out.sampled_bands,
+    }
+}
+
 /// True when `s` is a plausible amateur callsign / channel callsign token:
 /// non-empty, at most 12 chars, every char ASCII alphanumeric or `-` or `/`.
 /// A failing token marks a bogus/suspicious directory listing the finder drops
@@ -2548,16 +2741,34 @@ fn curate_gateway(
             Some((km, brg)) => (Some(km), Some(crate::position::geo::km_to_mi(km)), brg),
             None => (None, None, None),
         };
+    // Per-channel detail from the channels JSON API join (Task 8). Structured,
+    // numeric/enum-only: dial frequency, occupied bandwidth, transport token, and
+    // the advertised operating hours. The channel-detail `grid` is deliberately
+    // not re-surfaced here: the gateway's validated `grid` above is the anchor.
+    let channels: Vec<ChannelDto> = g
+        .channel_details
+        .iter()
+        .map(|cd| ChannelDto {
+            frequency_khz: cd.frequency_khz,
+            bandwidth_hz: cd.bandwidth_hz,
+            mode: listing_mode_token(cd.mode).to_string(),
+            operating_hours: cd.operating_hours.clone(),
+        })
+        .collect();
     Some(GatewayDto {
         mode,
         channel: sanitize_channel(&g.channel),
         callsign: g.callsign.clone(),
         grid,
         frequencies_khz: g.frequencies_khz.clone(),
+        channels,
         antenna: g.antenna.map(map_gateway_antenna_out),
         distance_km,
         distance_mi,
         bearing_deg,
+        // `None` = FT-8 evidence not evaluated. `find_stations` stamps this
+        // Some(true/false) after the fact when `ft8_evidence` is requested.
+        ft8_corroborated: None,
         // DROPPED on purpose: sysop_name, email, homepage, location, last_update.
     })
 }
@@ -2600,6 +2811,8 @@ pub(crate) fn curate_and_rank_gateways(
 ) -> Vec<GatewayDto> {
     let mut gateways: Vec<GatewayDto> = Vec::new();
     for listing in listings {
+        // Every ListingMode maps to a StationModeDto token now, VARA FM included,
+        // so VARA FM gateways reach the curated surface with full fidelity.
         let mode = map_listing_mode(listing.mode);
         for g in &listing.gateways {
             if !bands.is_empty() && !any_freq_in_bands(&g.frequencies_khz, bands) {
@@ -2781,12 +2994,29 @@ impl MonolithStationPort {
     fn resolve_operator_grid(&self) -> Option<String> {
         resolve_operator_broadcast_grid(&self.app)
     }
+
+    /// Clone the managed FT-8 listener handle out of Tauri state for evidence
+    /// corroboration. The FT-8 service is OPTIONALLY managed (its setup block is
+    /// skipped when the listener is not stood up), so this uses `try_state` and
+    /// degrades to [`PortError::Unavailable`], the SAME accessor pattern
+    /// `MonolithFt8Port::listener` uses. `find_stations` only calls this when the
+    /// caller requested evidence, so an unavailable listener refuses ONLY the
+    /// evidence-augmented request, never a plain gateway lookup.
+    fn ft8_listener(&self) -> Result<Arc<Ft8ListenerState>, PortError> {
+        self.app
+            .try_state::<Arc<Ft8ListenerState>>()
+            .map(|state| (*state).clone())
+            .ok_or_else(|| {
+                PortError::Unavailable(
+                    "FT-8 evidence needs the FT-8 listener, which is not available".to_string(),
+                )
+            })
+    }
 }
 
 #[async_trait]
 impl StationPort for MonolithStationPort {
     async fn find_stations(&self, filter: StationFilterDto) -> Result<StationListDto, PortError> {
-        use crate::catalog::stations::ListingMode;
         // VALIDATE the optional history bound up front (cap 720 h): a bad bound is
         // a malformed request, rejected before any fetch. (No armed-grant concept
         // here — this is a read — so a validation miss is simply Internal.)
@@ -2794,12 +3024,9 @@ impl StationPort for MonolithStationPort {
             .map_err(|e| PortError::Internal(e.to_string()))?;
 
         // Map the agent-supplied modes onto the monolith ListingModes; an empty
-        // selector means "all confirmed modes" (ListingMode::ALL).
-        let modes: Vec<ListingMode> = if filter.modes.is_empty() {
-            ListingMode::ALL.to_vec()
-        } else {
-            filter.modes.iter().copied().map(map_station_mode).collect()
-        };
+        // selector means "all transports", INCLUDING VARA FM (the tool doc
+        // advertises `vara-fm`), a superset of `ListingMode::ALL`.
+        let modes = expand_find_stations_modes(&filter.modes);
 
         // Resolve the managed StationsCache (the same Arc the
         // `catalog_fetch_stations` command's State extractor would yield) and call
@@ -2809,10 +3036,17 @@ impl StationPort for MonolithStationPort {
         let cache = self
             .app
             .state::<Arc<crate::catalog::stations_cache::StationsCache>>();
-        let listings =
-            crate::catalog::commands::catalog_fetch_stations(modes, filter.history_hours, cache)
-                .await
-                .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
+        let channels_cache = self
+            .app
+            .state::<Arc<crate::catalog::channels_cache::ChannelsCache>>();
+        let listings = crate::catalog::commands::catalog_fetch_stations(
+            modes,
+            filter.history_hours,
+            cache,
+            channels_cache,
+        )
+        .await
+        .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
 
         // Provenance: the cache stamps `fetched_at_ms` on every entry it stores or
         // stale-returns (a fresh in-memory parse leaves it `None`). Surface the
@@ -2838,13 +3072,56 @@ impl StationPort for MonolithStationPort {
         // via the SHARED `curate_and_rank_gateways` — the SAME fn the routines
         // `data.find_stations` action calls, so the two surfaces are curated
         // byte-identically by construction.
-        let gateways =
+        let mut gateways =
             curate_and_rank_gateways(&listings, &filter.bands, operator_grid.as_deref());
+
+        // Channel-bandwidth filter (Task 12): applied AFTER the channels join.
+        // CONJUNCTIVE with the band filter (Codex P2 fix): a gateway stays iff
+        // SOME single channel is in a requested band AND passes the bandwidth
+        // filter together, exactly as the frontend `stationMatchesFilters` does.
+        // The coarse band pre-filter already ran inside `curate_and_rank_gateways`
+        // (it only DROPS gateways with no channel in any wanted band, never
+        // wrongly keeps), so re-checking band here per-channel is what closes the
+        // "20m/2300 + 80m/500 wrongly passes {bands:[20m], bandwidths:[500]}" gap.
+        // Empty/absent bandwidths = no bandwidth filter (this branch is skipped);
+        // null/unclassified channel bandwidth passes every filter.
+        if let Some(bandwidths) = filter.bandwidths.as_deref().filter(|b| !b.is_empty()) {
+            gateways
+                .retain(|gw| gateway_dto_passes_band_and_bandwidth(gw, &filter.bands, bandwidths));
+        }
+
+        // FT-8 evidence corroboration (Task 12): when requested, read the decode
+        // ring and stamp `ft8_corroborated` per gateway + `evidence` params on the
+        // list. The listener is REQUIRED only for this augmented request: an
+        // unavailable listener refuses here, but a plain lookup (no evidence) is
+        // never blocked by it.
+        let evidence = if filter.ft8_evidence == Some(true) {
+            let listener = self.ft8_listener()?;
+            let snap = tauri::async_runtime::spawn_blocking(move || listener.snapshot())
+                .await
+                .map_err(|e| {
+                    PortError::Internal(format!("ft8 evidence snapshot task failed: {e}"))
+                })?;
+            let snr_min_db = filter
+                .ft8_snr_min_db
+                .unwrap_or(crate::catalog::evidence::EVIDENCE_SNR_MIN_DB_DEFAULT);
+            let params = apply_ft8_evidence(
+                &mut gateways,
+                &snap.ring_tail,
+                operator_grid.as_deref(),
+                snr_min_db,
+                now_unix_ms(),
+            );
+            Some(params)
+        } else {
+            None
+        };
 
         Ok(StationListDto {
             gateways,
             fetched_at_ms,
             operator_grid,
+            evidence,
         })
     }
 
@@ -4642,7 +4919,7 @@ mod tests {
     use crate::catalog::stations::{Gateway, GatewayAntenna};
     use tuxlink_mcp_core::ports::PortError;
     use tuxlink_mcp_core::ports::{
-        GatewayAntennaDto, GatewayDto, OutboxReadPort, StagedRecordDto, StationModeDto,
+        ChannelDto, GatewayAntennaDto, GatewayDto, OutboxReadPort, StagedRecordDto, StationModeDto,
     };
 
     /// A monolith `Gateway` fixture carrying a full free-text + PII payload so a
@@ -4659,6 +4936,7 @@ mod tests {
             email: Some("w1aw@example.org".into()),
             homepage: Some("https://example.org".into()),
             antenna: Some(GatewayAntenna::Dipole),
+            channel_details: Vec::new(),
         }
     }
 
@@ -4720,6 +4998,91 @@ mod tests {
         assert!(!any_freq_in_bands(&freqs, &["40m".to_string()]));
         // The VHF dial alone never matches an HF band selector.
         assert!(!any_freq_in_bands(&[144925.0], &["20m".to_string()]));
+    }
+
+    // --- Finding 2: agent empty-modes expansion includes VARA FM --------------
+
+    #[test]
+    fn expand_find_stations_modes_empty_includes_vara_fm() {
+        use crate::catalog::stations::ListingMode;
+        // find_stations({}) advertises "all transports", vara-fm included. The
+        // empty expansion must therefore carry VaraFm even though
+        // `ListingMode::ALL` (the confirmed text-endpoint set) excludes it.
+        let modes = super::expand_find_stations_modes(&[]);
+        assert!(
+            modes.contains(&ListingMode::VaraFm),
+            "empty selector must include VARA FM (the tool doc advertises it)"
+        );
+        // Still a superset of the confirmed text-endpoint set.
+        for m in ListingMode::ALL {
+            assert!(
+                modes.contains(&m),
+                "empty expansion must retain every ListingMode::ALL mode"
+            );
+        }
+    }
+
+    #[test]
+    fn expand_find_stations_modes_explicit_selector_maps_one_to_one() {
+        use crate::catalog::stations::ListingMode;
+        // A non-empty selector is a direct 1:1 map, no ALL/VaraFm injection.
+        let modes =
+            super::expand_find_stations_modes(&[StationModeDto::VaraHf, StationModeDto::Packet]);
+        assert_eq!(modes, vec![ListingMode::VaraHf, ListingMode::Packet]);
+    }
+
+    // --- Finding 3: per-channel conjunctive band + bandwidth filter -----------
+
+    fn chan_dto(freq_khz: f64, bandwidth_hz: Option<u32>) -> ChannelDto {
+        ChannelDto {
+            frequency_khz: freq_khz,
+            bandwidth_hz,
+            mode: "vara-hf".into(),
+            operating_hours: None,
+        }
+    }
+
+    fn gw_with_channels(channels: Vec<ChannelDto>, dials: Vec<f64>) -> GatewayDto {
+        GatewayDto {
+            mode: StationModeDto::VaraHf,
+            channel: "test".into(),
+            callsign: "W1AW".into(),
+            grid: Some("FN31".into()),
+            frequencies_khz: dials,
+            channels,
+            antenna: None,
+            distance_km: None,
+            distance_mi: None,
+            bearing_deg: None,
+            ft8_corroborated: None,
+        }
+    }
+
+    #[test]
+    fn band_and_bandwidth_excludes_split_channel_gateway() {
+        // Codex counter-example: a gateway whose 20m channel is 2300 Hz and whose
+        // 80m channel is 500 Hz must NOT pass {bands:[20m], bandwidths:[500]}:
+        // no SINGLE channel is BOTH 20m AND 500 Hz (14100 kHz → 20m, 3600 → 80m).
+        let gw = gw_with_channels(
+            vec![chan_dto(14100.0, Some(2300)), chan_dto(3600.0, Some(500))],
+            vec![14100.0, 3600.0],
+        );
+        assert!(!super::gateway_dto_passes_band_and_bandwidth(
+            &gw,
+            &["20m".to_string()],
+            &[500],
+        ));
+    }
+
+    #[test]
+    fn band_and_bandwidth_keeps_single_channel_satisfying_both() {
+        // Positive case: a 20m/500 channel satisfies band AND bandwidth together.
+        let gw = gw_with_channels(vec![chan_dto(14100.0, Some(500))], vec![14100.0]);
+        assert!(super::gateway_dto_passes_band_and_bandwidth(
+            &gw,
+            &["20m".to_string()],
+            &[500],
+        ));
     }
 
     // --- station-intelligence input validation (pure; CI-runnable) ------------
@@ -4837,10 +5200,12 @@ mod tests {
             callsign: cs.into(),
             grid: None,
             frequencies_khz: vec![],
+            channels: vec![],
             antenna: None,
             distance_km: d,
             distance_mi: d.map(|k| k * 0.621371),
             bearing_deg: None,
+            ft8_corroborated: None,
         };
         let mut v = vec![
             mk("FAR", Some(500.0)),

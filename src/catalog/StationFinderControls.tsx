@@ -8,14 +8,24 @@ import { HF_BANDS, bandLabel, type Band } from './bandPlan';
 import type { BandDot } from '../ft8ui/ft8Types';
 import { SolarUpdateControl } from '../wwv/SolarUpdateControl';
 import { WwvOffairControl } from '../wwv/WwvOffairControl';
+import { BANDWIDTH_CLASSES, type BandwidthClass } from './stationTypes';
 
-export type FilterMode = 'vara-hf' | 'ardop-hf' | 'packet';
+export type FilterMode = 'vara-hf' | 'ardop-hf' | 'packet' | 'vara-fm';
 
 const FILTER_MODES: { mode: FilterMode; label: string }[] = [
   { mode: 'vara-hf', label: 'VARA HF' },
   { mode: 'ardop-hf', label: 'ARDOP HF' },
   { mode: 'packet', label: 'Packet' },
+  { mode: 'vara-fm', label: 'VARA FM' },
 ];
+
+/** Bandwidth chip labels (Task 9): Hz values shown verbatim; the three fixed
+ *  VARA HF occupied bandwidths the chips classify (see `bandwidthClass`). */
+const BANDWIDTH_LABEL: Record<BandwidthClass, string> = {
+  '500': '500 Hz',
+  '2300': '2300 Hz',
+  '2750': '2750 Hz',
+};
 
 export interface StationFinderControlsProps {
   /** Selected bands — a multi-select FILTER: a station shows only if it has a
@@ -25,6 +35,12 @@ export interface StationFinderControlsProps {
   onToggleBand: (band: Band) => void;
   enabledModes: Set<FilterMode>;
   onToggleMode: (mode: FilterMode) => void;
+  /** Bandwidth filter chips (Task 9): a station shows only if it has a channel
+   *  whose classified bandwidth is one of these, unless the channel's
+   *  bandwidth is unknown/unclassified, which always passes (see
+   *  `stationMatchesFilters` in stationModel.ts for the load-bearing rule). */
+  enabledBandwidths: Set<BandwidthClass>;
+  onToggleBandwidth: (bw: BandwidthClass) => void;
   utcHour: number;
   localTime: string;
   ssn: number | null;
@@ -220,6 +236,27 @@ export function StationFinderControls(props: StationFinderControlsProps) {
             >
               <span className={`station-finder__sw station-finder__sw--${mode}`} />
               {label}
+            </button>
+          ))}
+        </span>
+
+        {/* Bandwidth filter chips (Task 9): a second, independent filter axis
+            from mode: a station can offer VARA HF on multiple bandwidths, and
+            these chips narrow WHICH occupied bandwidth counts. Sits between the
+            mode chips and the search group, mirrored in the map's layer box
+            (StationFinderMap `bandwidthMirror`) via the SAME onToggleBandwidth
+            handler the panel passes to both. */}
+        <span className="station-finder__bwchips" data-testid="bw-chip-group">
+          {BANDWIDTH_CLASSES.map((bw) => (
+            <button
+              key={bw}
+              type="button"
+              className={`station-finder__chip${props.enabledBandwidths.has(bw) ? ' on' : ' off'}`}
+              aria-pressed={props.enabledBandwidths.has(bw)}
+              data-testid={`bw-chip-${bw}`}
+              onClick={() => props.onToggleBandwidth(bw)}
+            >
+              {BANDWIDTH_LABEL[bw]}
             </button>
           ))}
         </span>

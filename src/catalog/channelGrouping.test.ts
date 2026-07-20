@@ -38,6 +38,24 @@ describe('channelToDial', () => {
     const pactor: Channel = { mode: 'pactor', frequencyKhz: 7103, band: '40m' };
     expect(channelToDial(station, pactor)).toBeNull();
   });
+  it('builds a VARA FM dial (Task 9, tuxlink-nkzng: VARA FM end-to-end)', () => {
+    const varaFm: Channel = { mode: 'vara-fm', frequencyKhz: 145710, ssid: '4F1PUZ-10', band: 'vhf-uhf', bandwidthHz: null };
+    expect(channelToDial(station, varaFm)).toEqual({ mode: 'vara-fm', gateway: '4F1PUZ-10', freq: '145.710', grid: 'DM34oa' });
+  });
+});
+
+describe('groupChannelsByMode: includes vara-fm (Task 9)', () => {
+  it('surfaces a vara-fm channel group so it is reachable in the rail, not just channelToDial-able', () => {
+    const withFm: Station = {
+      ...station,
+      modes: [...station.modes, 'vara-fm'],
+      channels: [...channels, { mode: 'vara-fm', frequencyKhz: 145710, ssid: '4F1PUZ-10', band: 'vhf-uhf', bandwidthHz: null }],
+    };
+    const groups = groupChannelsByMode(withFm);
+    const fm = groups.find((g: ChannelGroup) => g.mode === 'vara-fm');
+    expect(fm).toBeDefined();
+    expect(fm!.channels.map((c) => c.frequencyKhz)).toEqual([145710]);
+  });
 });
 
 describe('channelReliability', () => {

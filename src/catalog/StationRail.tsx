@@ -22,7 +22,10 @@ import { gridToLatLon, type LatLon } from '../forms/position/maidenhead';
 import { LiveDecodesTab } from './LiveDecodesTab';
 import { useStatusData } from '../shell/useStatus';
 import { stripStats } from '../ft8ui/deriveBandActivity';
-import type { Station } from './stationModel';
+import { groupChannelsByMode, channelToDial, channelReliability } from './channelGrouping';
+import { rankedDialsFor } from './ranking';
+import { bandwidthClass } from './stationTypes';
+import { formatDialKhz, type Station, type Channel } from './stationModel';
 import type { PathPrediction } from './propagationApi';
 import type { PredictionStatus } from './useStationPrediction';
 import type { RadioMode, FavoriteDial } from '../favorites/types';
@@ -117,6 +120,10 @@ const MODE_LABEL: Record<string, string> = {
   packet: 'Packet',
   pactor: 'Pactor',
   'robust-packet': 'Robust Packet',
+  // Task 9 (tuxlink-nkzng): without this, a vara-fm mode group (now reachable
+  // via channelGrouping's MODE_ORDER) falls through to the `?? m` raw-enum
+  // fallback below and renders the literal string "vara-fm" in the rail.
+  'vara-fm': 'VARA FM',
 };
 
 /** Great-circle bearing from two grids (deg), for the distance-only fallback.
@@ -156,6 +163,66 @@ function declProvenance(decl: DeclDto, grid: string): string {
   const validMs = Date.parse(decl.validUntil);
   const expired = Number.isFinite(validMs) && validMs < Date.now();
   return expired ? `${base} · model expired — declination may drift ~0.1°/yr` : base;
+}
+
+/** The four ListingModes a modem can actually dial (`channelToDial`'s
+ *  `radioModeFor`, mirrored here as a type guard so `rankedDialsFor`, typed
+ *  to take a `RadioMode` rather than a bare `ListingMode`, can be called
+ *  safely below). Pactor/robust-packet have no modem, so the hero never
+ *  picks one: a dial the operator cannot actually use is not "the"
+ *  frequency to lead the rail with. Narrows to this literal union, not
+ *  `RadioMode` itself: `RadioMode` also carries `'telnet'`, which is not a
+ *  `ListingMode` value, so a `mode is RadioMode` predicate on a
+ *  `ListingMode` input fails TS2677. The four values are shared between
+ *  both types, so passing one through to `rankedDialsFor` (which wants
+ *  `RadioMode`) is still sound. */
+function isDialableHeroMode(
+  mode: Channel['mode'],
+): mode is 'vara-hf' | 'vara-fm' | 'ardop-hf' | 'packet' {
+  return mode === 'vara-hf' || mode === 'vara-fm' || mode === 'ardop-hf' || mode === 'packet';
+}
+
+/** USB audio-center offset (kHz) between a Winlink DIAL frequency and the
+ *  audio-center frequency for the SSB-carried HF modes: center = dial + 1.5.
+ *  Per the operator-approved mock, the hero labels the big number as the
+ *  DIAL and shows this computed center value in the note line. */
+const SSB_AUDIO_CENTER_OFFSET_KHZ = 1.5;
+
+/** True for modes carried in an SSB (USB) audio passband, where the center
+ *  frequency differs from the dial by {@link SSB_AUDIO_CENTER_OFFSET_KHZ}.
+ *  FM channels (vara-fm, packet) have no such offset: the dial IS the
+ *  carrier, so the hero omits the center segment for them entirely. */
+function isSsbCarriedMode(mode: Channel['mode']): boolean {
+  return mode === 'vara-hf' || mode === 'ardop-hf' || mode === 'pactor' || mode === 'robust-packet';
+}
+
+/** Task 10 (tuxlink-hcmfb): the frequency hero's top-ranked channel across
+ *  ALL of the station's dialable modes for the current hour. Reuses
+ *  `rankedDialsFor` per mode group (the SAME reliability-desc/freq-asc
+ *  ranking BandMatrix's dial chips use), takes each mode's #1, then picks
+ *  the overall best by reliability. Ties, including the no-prediction case
+ *  where every candidate's `rel` is null, resolve to the first mode in
+ *  `groupChannelsByMode`'s MODE_ORDER, so the hero is deterministic even
+ *  when the path forecast has nothing to say. Returns null only when the
+ *  station has no dialable channel at all (e.g. packet/telnet-only text
+ *  listing, or an empty `channels` array). */
+function pickHeroChannel(station: Station, prediction: PathPrediction | null, utcHour: number): Channel | null {
+  let best: { channel: Channel; rel: number | null } | null = null;
+  for (const group of groupChannelsByMode(station)) {
+    const mode = group.mode;
+    if (!isDialableHeroMode(mode)) continue;
+    const ranked = rankedDialsFor(station, mode, prediction, utcHour);
+    if (ranked.length === 0) continue;
+    const topDial = ranked[0];
+    const topChannel = group.channels.find((ch) => {
+      const dial = channelToDial(station, ch);
+      return dial != null && dial.freq === topDial.freq && dial.gateway === topDial.gateway;
+    });
+    if (!topChannel) continue;
+    const rel = prediction ? (channelReliability(topChannel, prediction, utcHour)?.rel ?? null) : null;
+    if (best == null || (rel ?? -1) > (best.rel ?? -1)) best = { channel: topChannel, rel };
+  }
+  return best?.channel ?? null;
 }
 
 type RailTab = 'station' | 'live';
@@ -352,6 +419,11 @@ function StationTabPane(props: StationRailProps) {
   const distKm = prediction?.distanceKm ?? (operatorGrid ? distanceFromGrids(operatorGrid, station.grid) : null);
   const distMi = distKm != null ? Math.round(kmToMi(distKm)) : null;
 
+  // Task 10 (tuxlink-hcmfb, design §3 "Frequency hero"): the top-ranked
+  // dialable channel across all modes, for the frequency hero below.
+  const heroChannel = pickHeroChannel(station, prediction, utcHour);
+  const heroBwCls = heroChannel ? bandwidthClass(heroChannel.bandwidthHz) : null;
+
   return (
     <div className="station-finder__railpane" data-testid="rail-pane-station">
       <header className="station-finder__sta">
@@ -410,6 +482,41 @@ function StationTabPane(props: StationRailProps) {
           <div className="station-finder__aim-decl" data-testid="aim-declination">
             {declProvenance(decl, liveGrid)}
           </div>
+        )}
+      </div>
+
+      {/* Task 10 (tuxlink-hcmfb, design §3 "Frequency hero"): the rail leads
+          with the station's top-ranked dial as its largest datum: mode
+          swatch, formatted kHz, bandwidth badge, and a one-line note. A
+          station with no dialable channel (empty/text-listing-only) still
+          renders the block, degrading to a plain message rather than
+          disappearing, the same "never blanks" precedent as the aim hero above. */}
+      <div className="station-finder__freq-hero" data-testid="rail-freq-hero">
+        {heroChannel ? (
+          <>
+            <div className="station-finder__freq-hero-main">
+              <span className={`station-finder__sw station-finder__sw--${heroChannel.mode}`} />
+              <span className="station-finder__freq-hero-khz">{formatDialKhz(heroChannel.frequencyKhz)}</span>
+              {heroBwCls && (
+                <span
+                  className={`station-finder__bw-badge station-finder__bw-badge--${heroBwCls === '500' ? 'narrow' : 'wide'}`}
+                >
+                  {heroBwCls}
+                </span>
+              )}
+            </div>
+            <div className="station-finder__freq-hero-note">
+              {/* Fix round 1 (controller mock check): the big number is the
+                  DIAL; for SSB-carried HF modes the note also shows the
+                  computed audio-center value (dial + 1.5 kHz, USB
+                  convention). FM channels get no center segment. */}
+              {MODE_LABEL[heroChannel.mode] ?? heroChannel.mode} dial
+              {isSsbCarriedMode(heroChannel.mode) &&
+                ` · center ${formatDialKhz(heroChannel.frequencyKhz + SSB_AUDIO_CENTER_OFFSET_KHZ)}`}
+            </div>
+          </>
+        ) : (
+          <div className="station-finder__freq-hero-note">No channel data for this station yet.</div>
         )}
       </div>
 

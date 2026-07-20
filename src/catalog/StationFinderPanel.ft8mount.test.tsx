@@ -1,8 +1,9 @@
 // Phase D1 — the REACHABILITY test.
 //
-// Phase C built LiveBandStrip, Ft8SetupSurface, Waterfall, DecodeFeed and
-// BandSubsetPopover, every one of them CI-green and unit-tested, and mounted NONE
-// of them: `<LiveBandStrip` had zero call sites in production code, so the entire
+// Phase C built LiveBandStrip, the full-panel setup surface it has since
+// superseded (Task 3), Waterfall, DecodeFeed and BandSubsetPopover, every one
+// of them CI-green and unit-tested, and mounted NONE of them: `<LiveBandStrip`
+// had zero call sites in production code, so the entire
 // Station Intelligence FT-8 feature was invisible to the operator while every
 // component test passed. A component test cannot catch that — it renders the
 // component directly, which is exactly the thing production wasn't doing.
@@ -98,5 +99,36 @@ describe('StationFinderPanel — FT-8 surfaces are actually mounted (Phase D1)',
     await waitFor(() =>
       expect(vi.mocked(invoke).mock.calls.some((c) => c[0] === 'ft8_listener_snapshot')).toBe(true),
     );
+  });
+
+  it('keeps map + rail + strip all mounted simultaneously in needs-setup (no panel takeover)', async () => {
+    // Task 3: the panel used to swap its ENTIRE body for a full-panel takeover while
+    // needs-setup held, unmounting the map + rail underneath. That takeover is
+    // deleted: needs-setup now renders its (compact, in-strip) setup form
+    // inside LiveBandStrip while the map + rail stay mounted the whole time.
+    vi.mocked(invoke).mockImplementation(async (cmd?: string) => {
+      if (cmd === 'ft8_listener_snapshot') {
+        return {
+          ...DECODING_SNAPSHOT,
+          service: { axis: 'blocked', reason: 'needs-device-selection' },
+          configuredDeviceName: null,
+        };
+      }
+      if (cmd === 'catalog_fetch_stations' || cmd === 'catalog_list') return [];
+      if (cmd === 'p2p_capabilities') return { finder_peers: false, map_peers: false };
+      if (cmd === 'contacts_read') return { contacts: [] };
+      if (cmd === 'position_current_fix') return { grid: 'DM43bp' };
+      if (cmd === 'basemap_list_packs') return { packs: [] };
+      return undefined;
+    });
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('map-layer-control')).toBeTruthy();
+      expect(screen.getByTestId('rail-tab-station')).toBeTruthy();
+      expect(screen.getByTestId('ft8-strip')).toBeTruthy();
+    });
+    expect(screen.queryByTestId('station-finder-setup-body')).toBeNull();
   });
 });

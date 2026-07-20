@@ -157,6 +157,7 @@ mod tests {
                 email: Some("test@example.com".to_string()),
                 homepage: None,
                 antenna: None,
+                channel_details: Vec::new(),
             }],
             raw: "raw body text".to_string(),
             parsed_ok: true,

@@ -55,6 +55,7 @@ import { Button } from '../controls';
 import { Waterfall } from './Waterfall';
 import { DecodeFeed } from './DecodeFeed';
 import { BandSubsetPopover } from './BandSubsetPopover';
+import { Ft8StripSetup } from './Ft8StripSetup';
 import { stripStats } from './deriveBandActivity';
 import { usePersistedState } from '../util/usePersistedState';
 import type { Ft8Flags, Ft8Snapshot, Ft8UiState, SlotRecord } from './ft8Types';
@@ -170,11 +171,14 @@ export interface LiveBandStripProps {
    *  app's active-modem state. Optional; degrades to BandSubsetPopover's own
    *  "another session" fallback when omitted. */
   blockingSessionMode?: string;
-  /** `device-lost`'s compact body carries a "pick another input" link that
-   *  opens the full setup surface (spec §States row 6b) — the parent decides
-   *  what that means (e.g. force-render Ft8SetupSurface). Optional; the link
-   *  simply has nothing to do when omitted. */
-  onOpenFullSetup?: () => void;
+  /** Task 2: mounted straight to the in-strip `Ft8StripSetup` form's
+   *  `onStarted`/`onRetry` in every non-live arm that hosts it (`off`
+   *  no-device, `needs-setup`, `device-lost`); the parent passes
+   *  `ft8.rehydrate` (`useFt8Listener().rehydrate`) so a Start/Retry that
+   *  changes listener state through a path with no emitted event still
+   *  forces an immediate re-read. Optional; those actions simply have
+   *  nothing to do when omitted. */
+  onRehydrate?: () => void;
   /** Injectable "now" for deterministic stats tests; defaults to
    *  `Date.now()` (mirrors `LiveDecodesTab`'s `nowMs` convention). */
   nowMs?: number;
@@ -186,7 +190,7 @@ export function LiveBandStrip({
   decodesRing,
   operatorGrid,
   blockingSessionMode,
-  onOpenFullSetup,
+  onRehydrate,
   nowMs,
 }: LiveBandStripProps) {
   const { state, flags } = uiState;
@@ -241,17 +245,47 @@ export function LiveBandStrip({
     };
   }, [popoverOpen]);
 
-  // ---- Off-state CTA -------------------------------------------------------
-  const [starting, setStarting] = useState(false);
+  // ---- Shared start/stop in-flight guard (Codex P2 · UI coherence) ----------
+  // ONE guard shared by BOTH the body Start CTA (off-arm) and the header
+  // start/stop toggle (Task 2), so a body Start and a header toggle can't race
+  // two in-flight `ft8_listener_start` invokes; clicking either disables the
+  // other until the invoke resolves. This is a UI-coherence fix, not a safety
+  // gate: the backend double-start is idempotent (ft8/commands.rs); the guard
+  // just keeps the two affordances mutually consistent. Backend truth still
+  // drives `state` on the next snapshot/change event.
+  const running = LIVE_BODY_STATES.has(state) || state === 'waiting-first-slot';
+  const [inFlight, setInFlight] = useState(false);
+
+  // The header toggle is ADDITIONALLY disabled while the snapshot state is
+  // `transitional` (a start/stop is already settling): toggling mid-transition
+  // has no coherent target until the backend reaches a stable state. The body
+  // Start CTA never renders in `transitional` (NonLiveBody shows "Starting…"),
+  // so it needs no separate transitional guard.
+  const toggleDisabled = inFlight || state === 'transitional';
+
   const handleStart = useCallback(() => {
-    setStarting(true);
+    if (inFlight) return;
+    setInFlight(true);
     invoke('ft8_listener_start')
       .catch(() => {
         // Backend truth: a failed start leaves `state` as-is; the next
         // snapshot/change event reflects whatever actually happened.
       })
-      .finally(() => setStarting(false));
-  }, []);
+      .finally(() => setInFlight(false));
+  }, [inFlight]);
+
+  // Mirrors AppShell's ribbon toggle guard (`onToggleFt8Listening`,
+  // AppShell.tsx ~1087-1108) but shares the guard above with the body CTA.
+  const handleToggleRunning = useCallback(() => {
+    if (inFlight) return;
+    setInFlight(true);
+    invoke(running ? 'ft8_listener_stop' : 'ft8_listener_start')
+      .catch(() => {
+        // Backend truth: a failed toggle leaves `state` as-is; the next
+        // snapshot/change event reflects whatever actually happened.
+      })
+      .finally(() => setInFlight(false));
+  }, [inFlight, running]);
 
   // ---- Derived display values ----------------------------------------------
   const band = snapshot?.band ?? '—';
@@ -354,25 +388,22 @@ export function LiveBandStrip({
           )}
         </div>
 
-        {!collapsed && (
-          // Finding 4b ("no way back to setup once capture runs"): a small,
-          // always-present header affordance to reopen the full setup
-          // surface — the strip's own needs-setup body is the ONLY other
-          // route in, and it doesn't exist once the strip has moved past
-          // needs-setup into a live body state. Rendered in every
-          // non-collapsed state (not gated on `state`) so it's reachable
-          // regardless of which arm the strip is currently in.
-          <Button
-            tone="neutral"
-            emphasis="outline"
-            size="sm"
-            className="si-strip__setup-trigger"
-            data-testid="ft8-strip-setup-btn"
-            onClick={() => onOpenFullSetup?.()}
-          >
-            setup
-          </Button>
-        )}
+        {/* Task 2: the header's own start/stop control, reachable next to
+            collapse regardless of collapse state (unlike the removed
+            "setup" trigger, this needs to work even while the strip is
+            collapsed, since collapsing it is exactly when an operator most
+            wants a one-click way to stop listening). */}
+        <Button
+          tone="neutral"
+          emphasis="outline"
+          size="sm"
+          className="si-strip__startstop"
+          data-testid="ft8-strip-startstop"
+          disabled={toggleDisabled}
+          onClick={handleToggleRunning}
+        >
+          {running ? '■ Stop' : '▶ Start'}
+        </Button>
 
         <Button
           tone="neutral"
@@ -404,7 +435,15 @@ export function LiveBandStrip({
             </div>
           )}
 
-          <div className="si-strip__body" data-testid="ft8-strip-body">
+          {/* Task 11 (tuxlink-6i0ie): the --live modifier carries the fixed
+              200px containment height (see LiveBandStrip.css). It applies
+              ONLY on the waterfall+feed branch; the NonLiveBody arms keep
+              the unmodified body so the setup form's own min(52vh, 480px)
+              growth budget (si-strip__notice--setup) still works. */}
+          <div
+            className={`si-strip__body${showLiveBody ? ' si-strip__body--live' : ''}`}
+            data-testid="ft8-strip-body"
+          >
             {showLiveBody ? (
               <>
                 <div className="si-wf">
@@ -429,9 +468,9 @@ export function LiveBandStrip({
               <NonLiveBody
                 state={state}
                 snapshot={snapshot}
-                starting={starting}
+                starting={inFlight}
                 onStart={handleStart}
-                onOpenFullSetup={onOpenFullSetup}
+                onRehydrate={onRehydrate}
               />
             )}
           </div>
@@ -490,34 +529,30 @@ function NonLiveBody({
   snapshot,
   starting,
   onStart,
-  onOpenFullSetup,
+  onRehydrate,
 }: {
   state: Ft8UiState;
   snapshot: Ft8Snapshot | null;
   starting: boolean;
   onStart: () => void;
-  onOpenFullSetup?: () => void;
+  onRehydrate?: () => void;
 }) {
   switch (state) {
     case 'off': {
       // Configuration-aware CTA (operator live-test 2026-07-12): with NO audio
       // device ever configured, "Start listening on 20m" is a lie — the start
       // would just bounce into blocked(needs-device-selection). Route straight
-      // to setup instead, and only offer Start once a device is configured.
+      // to the in-strip setup form instead (Task 2: the compact
+      // `Ft8StripSetup` form, not a full-panel takeover), and only offer
+      // Start once a device is configured.
       const deviceConfigured = snapshot?.configuredDeviceName != null;
       if (!deviceConfigured) {
         return (
-          <div className="si-strip__notice" data-testid="ft8-strip-body-off">
+          <div className="si-strip__notice si-strip__notice--setup" data-testid="ft8-strip-body-off">
             <p>Not listening — no audio input configured yet.</p>
-            <Button
-              tone="primary"
-              emphasis="solid"
-              size="sm"
-              data-testid="ft8-strip-setup-cta"
-              onClick={() => onOpenFullSetup?.()}
-            >
-              Set up FT-8 listening →
-            </Button>
+            {snapshot && (
+              <Ft8StripSetup snapshot={snapshot} onStarted={onRehydrate} onRetry={onRehydrate} />
+            )}
           </div>
         );
       }
@@ -544,42 +579,28 @@ function NonLiveBody({
         </div>
       );
     case 'needs-setup':
-      // Since QA round-3 finding 2 the full setup surface is the PANEL's own
-      // body (firstrun-v2 mock) — the strip never nests it. This arm is only
-      // visible after an explicit back-out of that surface, so it stays a
-      // one-line re-entry point, not a dead notice.
+      // Task 2: setup now lives IN the strip: the compact `Ft8StripSetup`
+      // form mounts directly here instead of the old one-line "Open setup →"
+      // re-entry to a full-panel takeover (superseded; see Task 3, which
+      // deletes that full-panel surface entirely).
       return (
-        <div
-          className="si-strip__notice si-strip__notice--setup"
-          data-testid="ft8-strip-body-needs-setup"
-        >
-          <p>Setup required — select an audio input (and, optionally, configure CAT) to start listening.</p>
-          <Button
-            tone="primary"
-            emphasis="solid"
-            size="sm"
-            data-testid="ft8-strip-open-setup"
-            onClick={() => onOpenFullSetup?.()}
-          >
-            Open setup →
-          </Button>
+        <div className="si-strip__notice si-strip__notice--setup" data-testid="ft8-strip-body-needs-setup">
+          {snapshot && (
+            <Ft8StripSetup snapshot={snapshot} onStarted={onRehydrate} onRetry={onRehydrate} />
+          )}
         </div>
       );
     case 'device-lost':
+      // Task 2: the dead-end "pick another input" link (which pointed at the
+      // now-deleted full-panel surface) is replaced by the same in-strip
+      // `Ft8StripSetup` form used by `needs-setup`: picking a different
+      // device here is a live action, not a navigation.
       return (
-        <div className="si-strip__notice" data-testid="ft8-strip-body-device-lost">
-          <p>
-            Device disconnected — reconnecting…{' '}
-            <Button
-              tone="neutral"
-              emphasis="outline"
-              size="xs"
-              data-testid="ft8-strip-device-lost-link"
-              onClick={() => onOpenFullSetup?.()}
-            >
-              pick another input
-            </Button>
-          </p>
+        <div className="si-strip__notice si-strip__notice--setup" data-testid="ft8-strip-body-device-lost">
+          <p>Device disconnected, reconnecting…</p>
+          {snapshot && (
+            <Ft8StripSetup snapshot={snapshot} onStarted={onRehydrate} onRetry={onRehydrate} />
+          )}
         </div>
       );
     case 'wedged':

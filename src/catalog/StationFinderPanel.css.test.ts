@@ -39,3 +39,36 @@ describe.each(['.station-finder__layers', '.station-finder__reachkey'])(
     });
   },
 );
+
+// Task 11 (tuxlink-6i0ie) containment guard. EVIDENCE (dev/scratch/si-containment,
+// harness ?view=finder&ring=0|240, 1366x1200 @8000ms settle): `.station-finder`
+// grew from a 1028px content-driven height (ring=0) to 1104px (ring=240), EXACTLY
+// 92vh of the 1200px window, i.e. the panel WAS growing content-driven and got
+// stopped only by the max-height clamp, which the operator perceives as "the
+// window resizing." A bare `max-height` with no `height` lets the panel's OWN
+// height float with content up to the clamp; a fixed `height` removes that
+// degree of freedom entirely: the panel is the same size regardless of how
+// much the strip below wants to grow.
+describe('.station-finder fixed-height containment (tuxlink-6i0ie)', () => {
+  it('declares exactly one height, and no bare max-height-only sizing', () => {
+    const block = ruleBlock('.station-finder');
+    const heightDecls = [...block.matchAll(/(?<!max-|min-)height:\s*[^;]+;/g)];
+    expect(heightDecls, 'exactly one `height` declaration').toHaveLength(1);
+    expect(heightDecls[0][0]).toContain('min(760px, 92vh)');
+    expect(block, 'no bare max-height-only sizing left in the rule').not.toMatch(/(?<!min-)max-height:/);
+  });
+});
+
+// Task 11 / tuxlink-1w0d0: the WWV no-copy manual-entry row previously forced
+// `flex-basis: 100%`, a full-width second line even when the row's actual
+// content (play-clip button + 3 small SFI/A/K fields) is far narrower, which
+// read as a blank band under the actions row. It should wrap WITHIN the
+// actions row like its sibling `.station-finder__offair-note`/`__offair`
+// classes, bounded by a max-width so it never re-claims the full row either.
+describe('.station-finder__offair-nocopy contained width (tuxlink-1w0d0)', () => {
+  it('drops the full-width flex-basis and declares a max-width', () => {
+    const block = ruleBlock('.station-finder__offair-nocopy');
+    expect(block, 'no more flex-basis: 100% (the old full-width forcing rule)').not.toMatch(/flex-basis:\s*100%/);
+    expect(block).toMatch(/max-width:\s*[\d.]+(px|ch|rem)/);
+  });
+});

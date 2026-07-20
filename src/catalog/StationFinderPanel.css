@@ -19,6 +19,10 @@
   --m-vara: #4aa3ff;
   --m-ardop: #b07cf0;
   --m-packet: #34d0d0;
+  /* VARA FM (Task 9, tuxlink-nkzng): same ▲ triangle shape as VARA HF (same
+     VARA family) but a lighter hue so the two stay distinguishable at a
+     glance; VARA FM is a different transport/band, not the same channel. */
+  --m-vara-fm: #79b8ff;
   /* OPENNESS (§Openness) — "how much FT-8 activity was heard recently on this
      band," a third axis distinct from SIGNAL (path reliability) and MODES
      (protocol). A dedicated warm-red→amber ramp so it never reads as either. */
@@ -49,7 +53,18 @@
   --dim: var(--text-dim);
   --faint: var(--text-faint);
   width: min(1180px, 96vw);
-  max-height: 92vh;
+  /* Task 11 (tuxlink-6i0ie) containment fix. This was `max-height: 92vh` with
+     no `height`, so a bare max-height let the panel's OWN height float with
+     its content up to the clamp. EVIDENCE (dev/scratch/si-containment,
+     ?view=finder&ring=0|240 @1366x1200): `.station-finder` measured 1028px at
+     ring=0 and 1104px (exactly 92vh of a 1200px window) at ring=240, so it
+     WAS growing content-driven and only stopped at the clamp, which reads to
+     the operator as "the window resizing." A fixed height removes that
+     degree of freedom: the panel is the same size regardless of how many
+     decodes are in the strip below. `.station-finder__body` and
+     `.si-strip__body` (the strip's live-body row) now absorb the fixed
+     budget instead. */
+  height: min(760px, 92vh);
   display: flex;
   flex-direction: column;
   background: var(--surface);
@@ -246,6 +261,17 @@
   background: var(--m-packet);
   clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); /* ◆ diamond */
 }
+.station-finder__sw--vara-fm {
+  background: var(--m-vara-fm);
+  clip-path: polygon(50% 0, 100% 100%, 0 100%); /* ▲ triangle, VARA family */
+}
+/* Bandwidth filter chips (Task 9): reuse the same pill (`.station-finder__chip`)
+   as the mode chips, no swatch, since bandwidth is a numeric axis, not a
+   shape-coded category. Sits between the mode chips and the search group. */
+.station-finder__bwchips {
+  display: flex;
+  gap: 6px;
+}
 .station-finder__listage {
   font-size: 11px;
   color: var(--faint, #6f8aa3);
@@ -318,10 +344,15 @@
 .station-finder__offair b {
   color: var(--text, #e8f1fa);
 }
-/* The no-copy affordance is a deliberate full-width second line (play the
-   clip + manual SFI/A/K entry can't fit beside the buttons). */
+/* tuxlink-1w0d0: this was `flex-basis: 100%`, a forced full-width second
+   line even though its actual content (a play-clip button + 3 compact
+   SFI/A/K fields) is far narrower, which read as a blank band under the
+   actions row on most windows. Wrap it WITHIN the actions row instead, like
+   its `.station-finder__offair-note`/`__offair` siblings, bounded by a
+   max-width so it never re-claims a full row of its own either. */
 .station-finder__offair-nocopy {
-  flex-basis: 100%;
+  flex: 1 1 260px;
+  max-width: 420px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -351,15 +382,25 @@
 /* ── body: map + rail ─────────────────────────────────────────────────── */
 .station-finder__body {
   display: flex;
-  min-height: 540px;
+  /* Task 11 (tuxlink-6i0ie): was `min-height: 540px`. With `.station-finder`
+     now a FIXED height (min(760px, 92vh)) this floor was actively harmful:
+     540px alone, plus the header/controls/antenna rows above it, already
+     exceeded a canonical ~700-800px window's budget, so the strip below was
+     clipped to zero height and permanently invisible regardless of decode
+     volume. `flex: 1; min-height: 0` lets body take whatever the fixed panel
+     height has left over after its siblings (including the strip) claim
+     their space, and shrink below its own content minimum when the window is
+     short, which is exactly what a fixed-height parent needs from a flex
+     child. */
+  min-height: 0;
   flex: 1;
   overflow: hidden;
 }
-/* LAYOUT-1 (Phase D1): on a short window (~700px canonical main window) the
-   540px floor + the FORCE-EXPANDED strip (needs-setup / wedged / device-lost
-   override collapse) would push the setup surface's CTA below the fold. Relax
-   the floor so the strip's setup arms always fit — the map/rail flex-shrink
-   instead of the CTA clipping. */
+/* LAYOUT-1 (Phase D1), retained under the Task 11 fixed-height panel: on a
+   short WINDOW (not panel; the panel itself is now capped) the map/rail
+   would otherwise shrink to near nothing while the strip and other siblings
+   keep their natural size. This floor guarantees map/rail a minimum even on
+   a squeezed window, at the strip's expense rather than the setup CTA's. */
 @media (max-height: 760px) {
   .station-finder__body {
     min-height: 300px;
@@ -568,10 +609,10 @@
   box-shadow: 0 0 0 3px rgba(47, 134, 240, 0.3);
 }
 /* ── map layer-control housing (tuxlink-b026z.4 Task C11, §Scope map
-   layer-control) — Gateways entry ONLY; the FT-8 heat entry is L5-owned and
-   is not present here (no dead toggle). Non-transparent pill button (D3
-   gate): `.station-finder__layer-btn` carries an opaque background, never
-   bare/transparent chrome. ────────────────────────────────────────────── */
+   layer-control): Gateways, FT-8 heard, and FT-8 heat entries (the last two
+   landed in Tasks 4 and 5, spec L3/L5 traffic map). Non-transparent pill
+   button (D3 gate): `.station-finder__layer-btn` carries an opaque
+   background, never bare/transparent chrome. ─────────────────────────── */
 .station-finder__layers {
   position: absolute;
   /* Above Leaflet panes (200-700) AND its control container (1000) — same fix
@@ -618,6 +659,23 @@
   border-radius: 50%;
   background: var(--m-vara, #4aa3ff);
 }
+/* FT-8 heard-layer toggle swatch (Task 4, spec L3 traffic map): the same
+   HOT ramp colour the heard-station markers use at their brightest, so the
+   swatch reads as "the evidence layer" at a glance. */
+.station-finder__layer-swatch--ft8 {
+  background: var(--open-hot, #ff5470);
+}
+
+/* FT-8 heat-layer toggle swatch (Task 5, spec L5 traffic map): a filled
+   square (not the heard-dot's circle) so the two FT-8 entries stay visually
+   distinct at a glance; a softer fill reads as "density overview" next to
+   the heard layer's full-strength evidence dot. */
+.station-finder__layer-swatch--ft8heat {
+  border-radius: 2px;
+  background: var(--open-hot, #ff5470);
+  opacity: 0.55;
+}
+
 /* Peers layer toggle swatch + legend keys (peers↔L3 reconciliation, approved
    mock: [Gateways][Peers] toggles + a PEERS legend row). Diamond = the peer
    glyph (rotated hollow square — border carries the tier color, mirroring
@@ -645,6 +703,67 @@
 .station-finder__reachkey .pk.never {
   border-color: var(--text-faint, #5d6975);
   border-style: dashed;
+}
+
+/* Bandwidth filter chips' mirror in the map layer box (Task 9): plain
+   checkboxes (not the pill-button style the other layer entries use) so this
+   reads as a settings group for the axis, not a visibility toggle. `onToggle`
+   is the SAME handler `StationFinderControls`' chip row uses (one shared
+   state, two locations). */
+.station-finder__bw-mirror {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim, #94a0ad);
+}
+.station-finder__bw-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.station-finder__bw-check input[type='checkbox'] {
+  accent-color: var(--m-vara, #4aa3ff);
+}
+
+/* Evidence-filter toggle swatch (Task 7, spec §2 evidence filter): the
+   reachability-good green reads as "confirmed" next to Gateways/FT-8's other
+   swatches, distinct from the FT-8 heard/heat layers' hot-red family. */
+.station-finder__layer-swatch--evidence {
+  background: var(--reach-good, #41ba6c);
+}
+/* SNR threshold slider (Task 7): inline in the layer box, only rendered
+   while the evidence toggle is on. Compact to match the layer-btn pills. */
+.station-finder__evidence-snr {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-dim, #94a0ad);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+.station-finder__evidence-snr input[type='range'] {
+  width: 64px;
+  accent-color: var(--reach-good, #41ba6c);
+}
+
+/* Evidence honest-count note chip (Task 7, spec §2 evidence filter): sits
+   below the layer box, same overlay treatment (semi-transparent pill above
+   Leaflet's panes AND control container). Exactly ONE z-index in this rule:
+   see the finding-5 explanation on `.station-finder__layers` above. */
+.station-finder__evidence-note {
+  position: absolute;
+  z-index: 1100;
+  right: 56px;
+  top: 46px;
+  max-width: 260px;
+  font-size: 10px;
+  color: var(--faint, #6f8aa3);
+  background: rgba(8, 16, 24, 0.74);
+  border: 1px solid var(--border, #243a52);
+  border-radius: 6px;
+  padding: 5px 8px;
 }
 
 .station-finder__reachkey {
@@ -795,6 +914,30 @@
 }
 .station-finder__aim-decl {
   font-size: 10.5px;
+  color: var(--faint, #6f8aa3);
+}
+
+/* Task 10 (tuxlink-hcmfb, design §3 "Frequency hero"): the rail's largest
+   datum, the station's top-ranked dial frequency, leading the Station tab
+   right after the aim hero. */
+.station-finder__freq-hero {
+  padding: 10px 13px;
+  border-bottom: 1px solid var(--border, #243a52);
+}
+.station-finder__freq-hero-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.station-finder__freq-hero-khz {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--text, #e8f1fa);
+}
+.station-finder__freq-hero-note {
+  margin-top: 3px;
+  font-size: 11px;
   color: var(--faint, #6f8aa3);
 }
 
@@ -1044,6 +1187,33 @@
   color: var(--faint, #6f8aa3);
 }
 
+/* Task 10 (tuxlink-hcmfb): per-row dial-frequency label (kHz) + bandwidth
+   badge, siblings of the Use-chip/☆ inside .station-finder__bmchip. */
+.station-finder__bmfreq {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  color: var(--faint, #6f8aa3);
+}
+.station-finder__bw-badge {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 4px;
+  letter-spacing: 0.01em;
+}
+/* narrow (500 Hz): amber, per design §3 "amber for 500/narrow". */
+.station-finder__bw-badge--narrow {
+  color: #3a2c05;
+  background: var(--reach-marginal, #d9b13a);
+}
+/* wide (2300/2750 Hz): blue, per design §3 "blue for 2300/2750". */
+.station-finder__bw-badge--wide {
+  color: #05203a;
+  background: var(--m-vara, #4aa3ff);
+}
+
 /* ── FZ-M1 compact: stack map over rail on the rugged screen ───────────── */
 @media (max-width: 1365px) and (any-pointer: coarse) {
   .station-finder__body {
@@ -1219,31 +1389,3 @@
   white-space: nowrap;
 }
 
-/* QA round-3 finding 2: the setup surface is the panel's FULL BODY (approved
-   firstrun-v2 mock) — it replaces map+rail+strip outright, so it gets the
-   body's whole height budget instead of the old cramped
-   `max-height: min(52vh, 480px)` scroll box under the strip. The inner
-   scroll wrapper still guards genuinely-short windows (~700px contract):
-   the CTA row must never be clipped out of reach. */
-.station-finder__setupbody {
-  display: flex;
-  flex-direction: column;
-  /* Same height budget as the map+rail body it replaces (incl. LAYOUT-1's
-     short-window relaxation below) so the dialog doesn't jump size when
-     setup swaps in. */
-  min-height: 540px;
-  flex: 1;
-}
-@media (max-height: 760px) {
-  .station-finder__setupbody {
-    min-height: 300px;
-  }
-}
-.station-finder__setupbody-scroll {
-  overflow-y: auto;
-  min-height: 0;
-  flex: 1;
-}
-.station-finder__setup-back {
-  margin-left: auto;
-}

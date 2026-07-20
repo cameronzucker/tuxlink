@@ -6,6 +6,8 @@ import { gridToLatLon } from '../forms/position/maidenhead';
 import { stationKey } from './useReachabilityMap';
 import type { ReachTier } from './reachability';
 import type { Station } from './stationModel';
+import type { DecodeDto, SlotRecord } from '../ft8ui/ft8Types';
+import type { BandwidthClass } from './stationTypes';
 
 // Leaflet re-expression: each station is an L.circleMarker rendered on an explicit
 // SVG renderer. These tests run the REAL Leaflet map in jsdom (no engine mock) and
@@ -229,7 +231,7 @@ describe('StationFinderMap (Leaflet)', () => {
 });
 
 describe('StationFinderMap layer control (tuxlink-b026z.4 Task C11, §Scope map layer-control)', () => {
-  it('renders a layer control housing a Gateways entry ONLY — no FT-8/heat entry (L5 owns that)', async () => {
+  it('renders a layer control housing Gateways + FT-8 heard entries', async () => {
     await renderMap(
       <StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
     );
@@ -237,10 +239,16 @@ describe('StationFinderMap layer control (tuxlink-b026z.4 Task C11, §Scope map 
     expect(control).toBeInTheDocument();
     expect(screen.getByTestId('map-layer-gateways')).toBeInTheDocument();
     expect(control.textContent).toMatch(/gateways/i);
-    // No dead/disabled heat-layer control ships at L3 — the housing carries
-    // exactly one entry until L5 adds its own.
-    expect(control.textContent).not.toMatch(/heat|ft-?8/i);
-    expect(control.querySelectorAll('button')).toHaveLength(1);
+    // Task 4: the FT-8 heard entry the housing anticipated.
+    expect(screen.getByTestId('map-layer-ft8')).toBeInTheDocument();
+    expect(control.textContent).toMatch(/ft-8 heard/i);
+    // Task 5: the FT-8 heat entry, default OFF.
+    const heatBtn = screen.getByTestId('map-layer-ft8heat');
+    expect(heatBtn).toBeInTheDocument();
+    expect(control.textContent).toMatch(/ft-8 heat/i);
+    expect(heatBtn).toHaveAttribute('aria-pressed', 'false');
+    expect(heatBtn.classList.contains('on')).toBe(false);
+    expect(control.querySelectorAll('button')).toHaveLength(3);
   });
 
   it('Gateways entry defaults on and is a real, non-transparent toggle (aria-pressed truthy, opaque background)', async () => {
@@ -265,6 +273,431 @@ describe('StationFinderMap layer control (tuxlink-b026z.4 Task C11, §Scope map 
     fireEvent.click(screen.getByTestId('map-layer-gateways'));
     expect(screen.getByTestId('map-layer-gateways')).toHaveAttribute('aria-pressed', 'true');
     expect(stationPins()).toHaveLength(2); // restored, same station set
+  });
+});
+
+describe('StationFinderMap FT-8 heard layer (Task 4, spec L3 traffic map)', () => {
+  const NOW = 1_700_000_000_000;
+
+  function mkDecode(over: Partial<DecodeDto> = {}): DecodeDto {
+    return {
+      slotUtcMs: NOW,
+      snrDb: -10,
+      dtS: 0,
+      freqHz: 1500,
+      message: 'CQ W7GTE DN26',
+      fromCall: 'W7GTE',
+      toCall: null,
+      grid: 'DN26',
+      partial: false,
+      ...over,
+    };
+  }
+
+  function mkSlot(slotUtcMs: number, decodes: DecodeDto[]): SlotRecord {
+    return {
+      slotUtcMs,
+      band: '20m',
+      dialHz: 14074000,
+      bandSource: 'cat-confirmed',
+      bandLabelConfirmedUtcMs: null,
+      outcome: decodes.length ? { kind: 'decoded' } : { kind: 'band-dead' },
+      decodes,
+      partialSalvage: false,
+      lostFrames: 0,
+      boundarySkewFrames: 0,
+      clipFraction: 0,
+      rmsDbfs: -20,
+      dwellSlotIndex: null,
+    };
+  }
+
+  const decodesRing: SlotRecord[] = [mkSlot(NOW, [mkDecode()])];
+
+  /** Heard-station markers, identified by the layer's distinctive style
+   *  (radius 4, no stroke), which distinguishes them from the
+   *  gateway/operator/glow circle markers sharing the same map. */
+  function heardMarkers(): L.CircleMarker[] {
+    const out: L.CircleMarker[] = [];
+    captured!.eachLayer((l) => {
+      if (l instanceof L.CircleMarker && l.options.radius === 4 && l.options.stroke === false) out.push(l);
+    });
+    return out;
+  }
+
+  it('plots heard-station markers from decodesRing, on by default', async () => {
+    await renderMap(
+      <StationFinderMap
+        stations={[]}
+        operatorGrid=""
+        tiers={new Map()}
+        selectedKey={null}
+        onSelect={() => {}}
+        decodesRing={decodesRing}
+        nowMs={NOW}
+      />,
+    );
+    expect(screen.getByTestId('map-layer-ft8')).toHaveAttribute('aria-pressed', 'true');
+    expect(heardMarkers()).toHaveLength(1);
+  });
+
+  it('clicking the FT-8 toggle removes the heard markers; clicking again restores them', async () => {
+    await renderMap(
+      <StationFinderMap
+        stations={[]}
+        operatorGrid=""
+        tiers={new Map()}
+        selectedKey={null}
+        onSelect={() => {}}
+        decodesRing={decodesRing}
+        nowMs={NOW}
+      />,
+    );
+    expect(heardMarkers()).toHaveLength(1);
+
+    fireEvent.click(screen.getByTestId('map-layer-ft8'));
+    expect(screen.getByTestId('map-layer-ft8')).toHaveAttribute('aria-pressed', 'false');
+    expect(heardMarkers()).toHaveLength(0);
+
+    fireEvent.click(screen.getByTestId('map-layer-ft8'));
+    expect(screen.getByTestId('map-layer-ft8')).toHaveAttribute('aria-pressed', 'true');
+    expect(heardMarkers()).toHaveLength(1);
+  });
+
+  it('omits decodesRing entirely without crashing and plots nothing', async () => {
+    await renderMap(
+      <StationFinderMap stations={[]} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
+    );
+    expect(heardMarkers()).toHaveLength(0);
+  });
+});
+
+describe('StationFinderMap FT-8 heat layer (Task 5, spec L5 traffic map)', () => {
+  const NOW = 1_700_000_000_000;
+
+  function mkDecode(over: Partial<DecodeDto> = {}): DecodeDto {
+    return {
+      slotUtcMs: NOW,
+      snrDb: -10,
+      dtS: 0,
+      freqHz: 1500,
+      message: 'CQ W7GTE DN26',
+      fromCall: 'W7GTE',
+      toCall: null,
+      grid: 'DN26',
+      partial: false,
+      ...over,
+    };
+  }
+
+  function mkSlot(slotUtcMs: number, decodes: DecodeDto[]): SlotRecord {
+    return {
+      slotUtcMs,
+      band: '20m',
+      dialHz: 14074000,
+      bandSource: 'cat-confirmed',
+      bandLabelConfirmedUtcMs: null,
+      outcome: decodes.length ? { kind: 'decoded' } : { kind: 'band-dead' },
+      decodes,
+      partialSalvage: false,
+      lostFrames: 0,
+      boundarySkewFrames: 0,
+      clipFraction: 0,
+      rmsDbfs: -20,
+      dwellSlotIndex: null,
+    };
+  }
+
+  const decodesRing: SlotRecord[] = [mkSlot(NOW, [mkDecode()])];
+
+  function heatRects(): L.Rectangle[] {
+    const out: L.Rectangle[] = [];
+    captured!.eachLayer((l) => {
+      if (l instanceof L.Rectangle) out.push(l);
+    });
+    return out;
+  }
+
+  it('is off by default: no rectangles even with a populated decodesRing', async () => {
+    await renderMap(
+      <StationFinderMap
+        stations={[]}
+        operatorGrid=""
+        tiers={new Map()}
+        selectedKey={null}
+        onSelect={() => {}}
+        decodesRing={decodesRing}
+        nowMs={NOW}
+      />,
+    );
+    expect(screen.getByTestId('map-layer-ft8heat')).toHaveAttribute('aria-pressed', 'false');
+    expect(heatRects()).toHaveLength(0);
+  });
+
+  it('clicking the FT-8 heat toggle draws the choropleth from the SAME aggregated rows the heard layer uses', async () => {
+    await renderMap(
+      <StationFinderMap
+        stations={[]}
+        operatorGrid=""
+        tiers={new Map()}
+        selectedKey={null}
+        onSelect={() => {}}
+        decodesRing={decodesRing}
+        nowMs={NOW}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('map-layer-ft8heat'));
+    expect(screen.getByTestId('map-layer-ft8heat')).toHaveAttribute('aria-pressed', 'true');
+    expect(heatRects()).toHaveLength(1);
+
+    fireEvent.click(screen.getByTestId('map-layer-ft8heat'));
+    expect(screen.getByTestId('map-layer-ft8heat')).toHaveAttribute('aria-pressed', 'false');
+    expect(heatRects()).toHaveLength(0);
+  });
+});
+
+describe('StationFinderMap evidence filter (Task 7)', () => {
+  const key0 = stationKey(stations[0]); // DM34oa
+
+  function noop(): void {
+    /* unused handler slot for tests that don't assert on it */
+  }
+
+  it('ghosts a station in ghostedKeys (fillOpacity + opacity 0.2) and leaves the other pin unchanged', async () => {
+    await renderMap(
+      <StationFinderMap
+        stations={stations}
+        operatorGrid=""
+        tiers={new Map()}
+        selectedKey={null}
+        onSelect={() => {}}
+        evidence={{
+          enabled: true,
+          onToggle: noop,
+          snrMinDb: -24,
+          onSnrMinChange: noop,
+          ghostedKeys: new Set([key0]),
+          note: null,
+        }}
+      />,
+    );
+    const ghosted = markerAtGrid('DM34oa')!;
+    expect(ghosted.options.fillOpacity).toBe(0.2);
+    expect(ghosted.options.opacity).toBe(0.2);
+
+    const untouched = markerAtGrid('EN34')!;
+    expect(untouched.options.fillOpacity).toBe(1); // untiered default, not ghosted
+    expect(untouched.options.opacity).not.toBe(0.2);
+  });
+
+  it('keeps a ghosted pin clickable', async () => {
+    const onSelect = vi.fn();
+    await renderMap(
+      <StationFinderMap
+        stations={stations}
+        operatorGrid=""
+        tiers={new Map()}
+        selectedKey={null}
+        onSelect={onSelect}
+        evidence={{
+          enabled: true,
+          onToggle: noop,
+          snrMinDb: -24,
+          onSnrMinChange: noop,
+          ghostedKeys: new Set([key0]),
+          note: null,
+        }}
+      />,
+    );
+    act(() => {
+      markerAtGrid('DM34oa')!.fire('click');
+    });
+    expect(onSelect).toHaveBeenCalledWith(stations[0]);
+  });
+
+  it('renders the evidence toggle and, once enabled, an SNR threshold input in the layer box', async () => {
+    const onToggle = vi.fn();
+    const onSnrMinChange = vi.fn();
+    const { rerender } = await renderMap(
+      <StationFinderMap
+        stations={stations}
+        operatorGrid=""
+        tiers={new Map()}
+        selectedKey={null}
+        onSelect={() => {}}
+        evidence={{
+          enabled: false,
+          onToggle,
+          snrMinDb: -24,
+          onSnrMinChange,
+          ghostedKeys: new Set(),
+          note: null,
+        }}
+      />,
+    );
+    const toggle = screen.getByTestId('map-evidence-toggle');
+    expect(toggle).toBeInTheDocument();
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    // Threshold slider only visible when the toggle is on.
+    expect(screen.queryByTestId('map-evidence-snr')).toBeNull();
+
+    fireEvent.click(toggle);
+    expect(onToggle).toHaveBeenCalled();
+
+    await act(async () => {
+      rerender(
+        <StationFinderMap
+          stations={stations}
+          operatorGrid=""
+          tiers={new Map()}
+          selectedKey={null}
+          onSelect={() => {}}
+          evidence={{
+            enabled: true,
+            onToggle,
+            snrMinDb: -18,
+            onSnrMinChange,
+            ghostedKeys: new Set(),
+            note: null,
+          }}
+        />,
+      );
+      await Promise.resolve();
+    });
+    const snr = screen.getByTestId('map-evidence-snr');
+    expect(snr).toBeInTheDocument();
+    expect(snr).toHaveAttribute('min', '-24');
+    expect(snr).toHaveAttribute('max', '0');
+    expect(snr).toHaveAttribute('step', '3');
+    fireEvent.change(snr, { target: { value: '-15' } });
+    expect(onSnrMinChange).toHaveBeenCalledWith(-15);
+  });
+
+  it('renders the note chip verbatim from evidence.note', async () => {
+    const note = 'evidence: 2 of 5 gateways corroborated (20m) · SNR ≥ -18 · last 30 min';
+    await renderMap(
+      <StationFinderMap
+        stations={stations}
+        operatorGrid=""
+        tiers={new Map()}
+        selectedKey={null}
+        onSelect={() => {}}
+        evidence={{
+          enabled: true,
+          onToggle: noop,
+          snrMinDb: -18,
+          onSnrMinChange: noop,
+          ghostedKeys: new Set(),
+          note,
+        }}
+      />,
+    );
+    expect(screen.getByTestId('map-evidence-note')).toHaveTextContent(note);
+  });
+
+  it('renders no note chip when evidence.note is null', async () => {
+    await renderMap(
+      <StationFinderMap
+        stations={stations}
+        operatorGrid=""
+        tiers={new Map()}
+        selectedKey={null}
+        onSelect={() => {}}
+        evidence={{
+          enabled: false,
+          onToggle: noop,
+          snrMinDb: -24,
+          onSnrMinChange: noop,
+          ghostedKeys: new Set(),
+          note: null,
+        }}
+      />,
+    );
+    expect(screen.queryByTestId('map-evidence-note')).toBeNull();
+  });
+
+  it('omitting the evidence prop entirely renders no evidence controls (backward compatible)', async () => {
+    await renderMap(
+      <StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
+    );
+    expect(screen.queryByTestId('map-evidence-toggle')).toBeNull();
+    expect(screen.queryByTestId('map-evidence-snr')).toBeNull();
+    expect(screen.queryByTestId('map-evidence-note')).toBeNull();
+    // No ghosting either: the default pin style applies.
+    expect(markerAtGrid('DM34oa')!.options.fillOpacity).toBe(1);
+  });
+});
+
+describe('StationFinderMap bandwidth filter mirror (Task 9, one shared state)', () => {
+  it('renders three bandwidth checkboxes in the layer box when bandwidthMirror is supplied', async () => {
+    await renderMap(
+      <StationFinderMap
+        stations={stations}
+        operatorGrid=""
+        tiers={new Map()}
+        selectedKey={null}
+        onSelect={() => {}}
+        bandwidthMirror={{ enabled: new Set<BandwidthClass>(['500', '2300', '2750']), onToggle: vi.fn() }}
+      />,
+    );
+    const control = screen.getByTestId('map-layer-control');
+    const cb500 = screen.getByTestId('map-bw-500');
+    const cb2300 = screen.getByTestId('map-bw-2300');
+    const cb2750 = screen.getByTestId('map-bw-2750');
+    expect(control).toContainElement(cb500);
+    expect(control).toContainElement(cb2300);
+    expect(control).toContainElement(cb2750);
+    expect(cb500).toHaveAttribute('type', 'checkbox');
+    expect((cb500 as HTMLInputElement).checked).toBe(true);
+    expect((cb2300 as HTMLInputElement).checked).toBe(true);
+    expect((cb2750 as HTMLInputElement).checked).toBe(true);
+  });
+
+  it('reflects a partial enabled set as unchecked for the disabled classes', async () => {
+    await renderMap(
+      <StationFinderMap
+        stations={stations}
+        operatorGrid=""
+        tiers={new Map()}
+        selectedKey={null}
+        onSelect={() => {}}
+        bandwidthMirror={{ enabled: new Set<BandwidthClass>(['2300']), onToggle: vi.fn() }}
+      />,
+    );
+    expect((screen.getByTestId('map-bw-500') as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByTestId('map-bw-2300') as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByTestId('map-bw-2750') as HTMLInputElement).checked).toBe(false);
+  });
+
+  it('toggling a mirrored checkbox fires the SAME shared handler passed via bandwidthMirror.onToggle', async () => {
+    const onToggle = vi.fn();
+    await renderMap(
+      <StationFinderMap
+        stations={stations}
+        operatorGrid=""
+        tiers={new Map()}
+        selectedKey={null}
+        onSelect={() => {}}
+        bandwidthMirror={{ enabled: new Set<BandwidthClass>(['500', '2300', '2750']), onToggle }}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('map-bw-500'));
+    expect(onToggle).toHaveBeenCalledWith('500');
+    fireEvent.click(screen.getByTestId('map-bw-2300'));
+    expect(onToggle).toHaveBeenCalledWith('2300');
+    fireEvent.click(screen.getByTestId('map-bw-2750'));
+    expect(onToggle).toHaveBeenCalledWith('2750');
+    // ONE handler backs all three checkboxes, not one callback per checkbox.
+    expect(onToggle).toHaveBeenCalledTimes(3);
+  });
+
+  it('omitting bandwidthMirror renders no bandwidth checkboxes (backward compatible)', async () => {
+    await renderMap(
+      <StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
+    );
+    expect(screen.queryByTestId('map-bw-500')).toBeNull();
+    expect(screen.queryByTestId('map-bw-2300')).toBeNull();
+    expect(screen.queryByTestId('map-bw-2750')).toBeNull();
   });
 });
 

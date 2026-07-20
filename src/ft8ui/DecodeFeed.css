@@ -4,6 +4,11 @@
  * families (App.css palette). */
 
 .decode-feed {
+  /* Task 11 (tuxlink-6i0ie): `flex: 1` so this fills its host's (`.si-feed`,
+     LiveBandStrip.css) flex-column height instead of sizing to its own table
+     content. That bounded height is what lets `overflow: auto` actually
+     engage as an internal scroll instead of growing the strip. */
+  flex: 1;
   overflow: auto;
   min-height: 0;
 }

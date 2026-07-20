@@ -25,9 +25,12 @@ const station: Station = {
   fetchedAtMs: 1,
   gatewayAntenna: null,
   channels: [
-    { mode: 'vara-hf', frequencyKhz: 3590, band: '80m' },
+    // Task 10 (tuxlink-hcmfb): 80m carries a classified 500 Hz (narrow) dial;
+    // 40m's vara-hf channel has no bandwidthHz at all (undefined, the
+    // absent-badge case, same as a text-listing-only channel).
+    { mode: 'vara-hf', frequencyKhz: 3590, band: '80m', bandwidthHz: 500 },
     { mode: 'vara-hf', frequencyKhz: 7103, band: '40m' },
-    { mode: 'ardop-hf', frequencyKhz: 7103, band: '40m' },
+    { mode: 'ardop-hf', frequencyKhz: 7103, band: '40m', bandwidthHz: 2300 },
     { mode: 'packet', frequencyKhz: 145710, ssid: 'N0DAJ-10', band: 'vhf-uhf' },
     // 20m carries THREE channels — the +N overflow row.
     { mode: 'vara-hf', frequencyKhz: 14107, band: '20m' },
@@ -297,6 +300,37 @@ describe('BandMatrix', () => {
     it('shows a no-location prompt when predictionStatus is no-location', () => {
       render(<BandMatrix station={station} prediction={null} predictionStatus="no-location" utcHour={21} />);
       expect(screen.getByTestId('bandmatrix-header').textContent).toMatch(/set your location/i);
+    });
+  });
+
+  // Task 10 (tuxlink-hcmfb): every channel row shows its formatted dial
+  // frequency + a bandwidth badge (narrow for 500 Hz, wide for 2300/2750 Hz,
+  // absent when bandwidthHz is null/undefined).
+  describe('per-row frequency + bandwidth badge (Task 10)', () => {
+    it('shows the formatted dial frequency on every channel row', () => {
+      render(<BandMatrix station={station} prediction={prediction} predictionStatus="ok" utcHour={21} />);
+      expect(screen.getByTestId('freq-vara-hf-3590').textContent).toBe('3,590.0 kHz');
+      expect(screen.getByTestId('freq-vara-hf-7103').textContent).toBe('7,103.0 kHz');
+      expect(screen.getByTestId('freq-ardop-hf-7103').textContent).toBe('7,103.0 kHz');
+    });
+
+    it('gives a 500 Hz channel the --narrow badge class', () => {
+      render(<BandMatrix station={station} prediction={prediction} predictionStatus="ok" utcHour={21} />);
+      const badge = screen.getByTestId('bw-vara-hf-3590');
+      expect(badge.className).toMatch(/station-finder__bw-badge--narrow/);
+      expect(badge.className).not.toMatch(/station-finder__bw-badge--wide/);
+    });
+
+    it('gives a 2300 Hz channel the --wide badge class', () => {
+      render(<BandMatrix station={station} prediction={prediction} predictionStatus="ok" utcHour={21} />);
+      const badge = screen.getByTestId('bw-ardop-hf-7103');
+      expect(badge.className).toMatch(/station-finder__bw-badge--wide/);
+      expect(badge.className).not.toMatch(/station-finder__bw-badge--narrow/);
+    });
+
+    it('renders no badge at all for a channel with no classified bandwidth', () => {
+      render(<BandMatrix station={station} prediction={prediction} predictionStatus="ok" utcHour={21} />);
+      expect(screen.queryByTestId('bw-vara-hf-7103')).toBeNull();
     });
   });
 });
