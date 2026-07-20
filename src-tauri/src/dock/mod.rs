@@ -15,16 +15,23 @@ pub enum SurfaceId {
     Routines,
     TacMap,
     AprsChat,
+    Elmer,
 }
 
 impl SurfaceId {
-    pub const ALL: [SurfaceId; 3] = [SurfaceId::Routines, SurfaceId::TacMap, SurfaceId::AprsChat];
+    pub const ALL: [SurfaceId; 4] = [
+        SurfaceId::Routines,
+        SurfaceId::TacMap,
+        SurfaceId::AprsChat,
+        SurfaceId::Elmer,
+    ];
 
     pub fn window_label(self) -> &'static str {
         match self {
             SurfaceId::Routines => "pop-routines",
             SurfaceId::TacMap => "pop-tacmap",
             SurfaceId::AprsChat => "pop-aprschat",
+            SurfaceId::Elmer => "pop-elmer",
         }
     }
 
@@ -33,6 +40,7 @@ impl SurfaceId {
             SurfaceId::Routines => "/pop/routines",
             SurfaceId::TacMap => "/pop/tacmap",
             SurfaceId::AprsChat => "/pop/aprschat",
+            SurfaceId::Elmer => "/pop/elmer",
         }
     }
 
@@ -41,6 +49,7 @@ impl SurfaceId {
             SurfaceId::Routines => "Routines — Tuxlink",
             SurfaceId::TacMap => "Tac Map — Tuxlink",
             SurfaceId::AprsChat => "APRS Chat — Tuxlink",
+            SurfaceId::Elmer => "Elmer — Tuxlink",
         }
     }
 
@@ -48,8 +57,8 @@ impl SurfaceId {
         SurfaceId::ALL.into_iter().find(|s| s.window_label() == label)
     }
 
-    /// Dense `0..3` index for this surface, matching [`SurfaceId::ALL`]'s order
-    /// (`Routines`=0, `TacMap`=1, `AprsChat`=2). Used to index the registry's
+    /// Dense `0..4` index for this surface, matching [`SurfaceId::ALL`]'s order
+    /// (`Routines`=0, `TacMap`=1, `AprsChat`=2, `Elmer`=3). Used to index the registry's
     /// per-surface pop-generation array the same way [`DockSurfaces`] maps a
     /// surface to its field.
     pub(crate) fn index(self) -> usize {
@@ -57,6 +66,7 @@ impl SurfaceId {
             SurfaceId::Routines => 0,
             SurfaceId::TacMap => 1,
             SurfaceId::AprsChat => 2,
+            SurfaceId::Elmer => 3,
         }
     }
 }
@@ -80,6 +90,10 @@ pub struct DockSurfaces {
     pub tac_map: DockMode,
     #[serde(default)]
     pub aprs_chat: DockMode,
+    /// tuxlink-mfssz. `#[serde(default)]` keeps every pre-existing config's
+    /// `dock` section parsing (absent key = docked).
+    #[serde(default)]
+    pub elmer: DockMode,
 }
 
 impl DockSurfaces {
@@ -88,6 +102,7 @@ impl DockSurfaces {
             SurfaceId::Routines => self.routines,
             SurfaceId::TacMap => self.tac_map,
             SurfaceId::AprsChat => self.aprs_chat,
+            SurfaceId::Elmer => self.elmer,
         }
     }
     pub fn set(&mut self, s: SurfaceId, m: DockMode) {
@@ -95,6 +110,7 @@ impl DockSurfaces {
             SurfaceId::Routines => self.routines = m,
             SurfaceId::TacMap => self.tac_map = m,
             SurfaceId::AprsChat => self.aprs_chat = m,
+            SurfaceId::Elmer => self.elmer = m,
         }
     }
 }
@@ -105,6 +121,8 @@ pub struct DockContext {
     pub routines: Option<serde_json::Value>,
     pub tac_map: Option<serde_json::Value>,
     pub aprs_chat: Option<serde_json::Value>,
+    #[serde(default)]
+    pub elmer: Option<serde_json::Value>,
 }
 
 impl DockContext {
@@ -113,6 +131,7 @@ impl DockContext {
             SurfaceId::Routines => self.routines = v,
             SurfaceId::TacMap => self.tac_map = v,
             SurfaceId::AprsChat => self.aprs_chat = v,
+            SurfaceId::Elmer => self.elmer = v,
         }
     }
 }
@@ -159,6 +178,10 @@ mod tests {
         assert_eq!(SurfaceId::TacMap.window_label(), "pop-tacmap");
         assert_eq!(SurfaceId::TacMap.route(), "/pop/tacmap");
         assert_eq!(SurfaceId::AprsChat.window_label(), "pop-aprschat");
+        assert_eq!(serde_json::to_string(&SurfaceId::Elmer).unwrap(), "\"elmer\"");
+        assert_eq!(SurfaceId::Elmer.window_label(), "pop-elmer");
+        assert_eq!(SurfaceId::Elmer.route(), "/pop/elmer");
+        assert_eq!(SurfaceId::Elmer.title(), "Elmer — Tuxlink");
         assert_eq!(SurfaceId::Routines.title(), "Routines — Tuxlink");
         for s in SurfaceId::ALL {
             assert_eq!(SurfaceId::from_window_label(s.window_label()), Some(s));
@@ -180,6 +203,7 @@ mod tests {
         assert_eq!(v["surfaces"]["routines"], "popped");
         assert_eq!(v["surfaces"]["tac_map"], "docked");
         assert_eq!(v["surfaces"]["aprs_chat"], "docked");
+        assert_eq!(v["surfaces"]["elmer"], "docked");
         assert_eq!(v["context"]["routines"]["view"], "designer");
         assert!(v["context"]["tac_map"].is_null());
     }
@@ -226,6 +250,9 @@ mod tests {
         for (key, want_mode, want_host) in [
             ("routinesDocked", DockMode::Docked, "main"),
             ("routinesPopped", DockMode::Popped, "pop-routines"),
+            // tuxlink-mfssz: elmer popped does NOT move the routines consent
+            // host — the Elmer approval UX renders inside the pane itself.
+            ("elmerPopped", DockMode::Docked, "main"),
         ] {
             let variant = fixture
                 .get(key)

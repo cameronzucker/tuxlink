@@ -12,13 +12,14 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useEffect, useState } from 'react';
 
-export type SurfaceId = 'routines' | 'tac_map' | 'aprs_chat';
+export type SurfaceId = 'routines' | 'tac_map' | 'aprs_chat' | 'elmer';
 export type DockMode = 'docked' | 'popped';
 
 export interface DockSurfaces {
   routines: DockMode;
   tac_map: DockMode;
   aprs_chat: DockMode;
+  elmer: DockMode;
 }
 
 /** The `dock:changed` payload and `dock_state_get` return (spec §3) — a full
@@ -58,6 +59,7 @@ export const SURFACE_WINDOW_LABEL: Record<SurfaceId, string> = {
   routines: 'pop-routines',
   tac_map: 'pop-tacmap',
   aprs_chat: 'pop-aprschat',
+  elmer: 'pop-elmer',
 };
 
 /**

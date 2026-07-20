@@ -39,4 +39,17 @@ describe('dock wire fixture parity (spec §10)', () => {
     expect(snap.context.tac_map).toBeNull();
     expect(snap.context.aprs_chat).toBeNull();
   });
+
+  it('elmerPopped parses, carries the conversation token, and does NOT move the routines consent host (tuxlink-mfssz)', () => {
+    const snap = fixture.elmerPopped as DockSnapshot;
+    expect(snap.surfaces.elmer).toBe('popped');
+    expect(snap.surfaces.routines).toBe('docked');
+    // Elmer's approval UX renders inside the pane itself, so the routines
+    // consent host is untouched by an Elmer pop-out.
+    expect(consentHostWindow(snap.surfaces)).toBe('main');
+    expect(snap.context.elmer).toEqual({
+      foreground: true,
+      state: { items: [{ kind: 'turn', role: 'user', text: 'hello' }] },
+    });
+  });
 });

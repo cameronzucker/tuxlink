@@ -90,7 +90,8 @@ pub fn caller_is_authorized(caller_label: &str) -> bool {
 }
 
 /// Build the [`SecondaryWindowSpec`] for a dockable surface's pop-out window
-/// (spec §3 sizes: TacMap 1100×750, Routines 960×680, AprsChat 440×640; all
+/// (spec §3 sizes: TacMap 1100×750, Routines 960×680, AprsChat 440×640,
+/// Elmer 520×720 (tuxlink-mfssz); all
 /// three share the 420×360 floor, custom chrome (`decorations: false`), and
 /// [`ClosePolicy::DockBack`] since popping a surface out is a dock-state
 /// transition, not window destruction). Labels/routes/titles come from
@@ -100,6 +101,9 @@ pub fn pop_window_spec(surface: crate::dock::SurfaceId) -> SecondaryWindowSpec {
         crate::dock::SurfaceId::TacMap => (1100.0, 750.0),
         crate::dock::SurfaceId::Routines => (960.0, 680.0),
         crate::dock::SurfaceId::AprsChat => (440.0, 640.0),
+        // tuxlink-mfssz: chat-column proportions, a shade wider than APRS
+        // Chat for the tool chips + model form.
+        crate::dock::SurfaceId::Elmer => (520.0, 720.0),
     };
     SecondaryWindowSpec {
         label: surface.window_label().to_string(),
