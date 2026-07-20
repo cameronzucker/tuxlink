@@ -794,8 +794,20 @@ pub struct MockRoutines;
 impl RoutinesPort for MockRoutines {
     async fn actions_catalog(&self) -> Result<ActionsCatalogDto, PortError> {
         Ok(ActionsCatalogDto {
-            actions: vec![ActionInfoDto {
-                name: "radio.connect".into(),
+            actions: vec![
+                ActionInfoDto {
+                    name: "local.log".into(),
+                    label: "Log entry".into(),
+                    description: "Write a line to the station log".into(),
+                    needs_radio: false,
+                    transmits: false,
+                    writes_config: false,
+                    needs_internet: false,
+                    example_params: Some(serde_json::json!({"message": "hello"})),
+                    allowed_values: None,
+                },
+                ActionInfoDto {
+                    name: "radio.connect".into(),
                 label: "Connect".into(),
                 description: "Connect to a Winlink gateway".into(),
                 needs_radio: true,

@@ -2836,7 +2836,9 @@ mod tests {
         assert!(!h.state.guard.is_tainted());
         let result = h.routines_actions_list().await.unwrap();
         let json: serde_json::Value = json_of(&result);
-        let action = &json["actions"][0];
+        // Mock lists local.log (the template's step action — closed-set
+        // consistent, Codex rt4ey P2) then radio.connect; assert on the latter.
+        let action = &json["actions"][1];
         assert_eq!(action["name"], "radio.connect");
         assert_eq!(action["transmits"], true);
         assert_eq!(action["writes_config"], false);
