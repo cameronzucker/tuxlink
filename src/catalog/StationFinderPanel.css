@@ -52,19 +52,26 @@
   --border2: var(--border-strong);
   --dim: var(--text-dim);
   --faint: var(--text-faint);
-  width: min(1180px, 96vw);
-  /* Task 11 (tuxlink-6i0ie) containment fix. This was `max-height: 92vh` with
-     no `height`, so a bare max-height let the panel's OWN height float with
-     its content up to the clamp. EVIDENCE (dev/scratch/si-containment,
-     ?view=finder&ring=0|240 @1366x1200): `.station-finder` measured 1028px at
-     ring=0 and 1104px (exactly 92vh of a 1200px window) at ring=240, so it
-     WAS growing content-driven and only stopped at the clamp, which reads to
-     the operator as "the window resizing." A fixed height removes that
-     degree of freedom: the panel is the same size regardless of how many
-     decodes are in the strip below. `.station-finder__body` and
-     `.si-strip__body` (the strip's live-body row) now absorb the fixed
-     budget instead. */
-  height: min(760px, 92vh);
+  width: 96vw;
+  /* Task 11 (tuxlink-6i0ie) containment fix, amended by tuxlink-qldzn. This
+     was `max-height: 92vh` with no `height`, so a bare max-height let the
+     panel's OWN height float with its content up to the clamp. EVIDENCE
+     (dev/scratch/si-containment, ?view=finder&ring=0|240 @1366x1200):
+     `.station-finder` measured 1028px at ring=0 and 1104px (exactly 92vh of a
+     1200px window) at ring=240, so it WAS growing content-driven and only
+     stopped at the clamp, which reads to the operator as "the window
+     resizing." A fixed height removes that degree of freedom: the panel is
+     the same size regardless of how many decodes are in the strip below.
+     `.station-finder__body` and `.si-strip__body` (the strip's live-body row)
+     absorb the fixed budget instead.
+     tuxlink-qldzn: the containment invariant is CONTENT-independence, not
+     viewport-independence. The former min(1180px, 96vw) x min(760px, 92vh)
+     pinned the panel to a laptop-sized island on large displays (R2
+     2160x1440: map got ~590x330 of a 2160-wide screen). Viewport units keep
+     the size deterministic per display while letting the situational map use
+     the screen it is given; surplus width flows to the map because the rail
+     is max-width-capped below. */
+  height: 92vh;
   display: flex;
   flex-direction: column;
   background: var(--surface);
@@ -415,6 +422,11 @@
 .station-finder__rail {
   flex: 1 1 45%;
   min-width: 360px;
+  /* tuxlink-qldzn: cap the rail so surplus panel width flows to the MAP, not
+     a half-screen detail column. 560px comfortably fits the widest rail
+     content (aim hero + freq hero + BandMatrix rows at their natural size,
+     which measured ~531px at the mock's 45%-of-1180 allocation). */
+  max-width: 560px;
   display: flex;
   flex-direction: column;
   overflow: hidden;

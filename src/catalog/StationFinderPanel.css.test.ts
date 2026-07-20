@@ -54,8 +54,27 @@ describe('.station-finder fixed-height containment (tuxlink-6i0ie)', () => {
     const block = ruleBlock('.station-finder');
     const heightDecls = [...block.matchAll(/(?<!max-|min-)height:\s*[^;]+;/g)];
     expect(heightDecls, 'exactly one `height` declaration').toHaveLength(1);
-    expect(heightDecls[0][0]).toContain('min(760px, 92vh)');
+    // tuxlink-qldzn amendment: the containment invariant is that height is
+    // CONTENT-independent, not viewport-independent. The former min(760px, 92vh)
+    // pinned the panel to a 760px island on large displays (R2 2160x1440
+    // operator report); viewport units keep it deterministic per display while
+    // letting the feature use the screen it is given.
+    expect(heightDecls[0][0]).toContain('92vh');
+    expect(heightDecls[0][0], 'no px cap: the panel scales with the viewport').not.toMatch(/\d+px/);
     expect(block, 'no bare max-height-only sizing left in the rule').not.toMatch(/(?<!min-)max-height:/);
+  });
+
+  it('width scales with the viewport (tuxlink-qldzn: no px island cap)', () => {
+    const block = ruleBlock('.station-finder');
+    const widthDecls = [...block.matchAll(/(?<!max-|min-)width:\s*[^;]+;/g)];
+    expect(widthDecls, 'exactly one `width` declaration').toHaveLength(1);
+    expect(widthDecls[0][0]).toContain('96vw');
+    expect(widthDecls[0][0], 'no px cap on width').not.toMatch(/\d+px/);
+  });
+
+  it('rail is width-capped so surplus panel width flows to the map (tuxlink-qldzn)', () => {
+    const block = ruleBlock('.station-finder__rail');
+    expect(block, 'rail declares a max-width').toMatch(/max-width:\s*\d+px;/);
   });
 });
 
