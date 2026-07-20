@@ -11,6 +11,8 @@
 // two live instances in one window is the same pattern the app already uses
 // (e.g. useEnvStations({snapshotRole}) hosts + clients).
 import { useEffect, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { useAprsPositions } from '../aprs/useAprsPositions';
 import { useAprsChat } from '../aprs/useAprsChat';
 import { countUnread } from '../aprs/aprsUnread';
@@ -19,6 +21,9 @@ import { useParkedRuns } from '../routines/ConsentGate';
 import { listRuns, type RunState } from '../routines/routinesApi';
 import { listenRoutinesEvents } from '../routines/routinesEvents';
 import { formatUtc } from '../routines/format';
+import { useEgressArm } from '../security/useEgressArm';
+import { EV_OUTCOME } from '../elmer/elmerEvents';
+import type { ConfigReadDto } from '../elmer/elmerModelConfig';
 import './PoppedSurfaceHost.css';
 
 /** Non-terminal `RunState`s — mirrors RoutinesDashboard.tsx's LIVE_STATES. */
@@ -152,6 +157,57 @@ export function ChatStrip() {
       </span>
       <span className="pop-strip-divider" aria-hidden="true">·</span>
       <span className="pop-strip-item" data-testid="pop-strip-chat-unread">{unread} unread</span>
+    </div>
+  );
+}
+
+/** bd tuxlink-mfssz: the popped Elmer window's vitals — the configured
+ *  model @ endpoint origin, and the send-authority (egress-arm) state. Both
+ *  are vitals the pane does NOT render as standing chrome in the same
+ *  window (adrev R4-F8 rule): the model shows in-pane only transiently (an
+ *  attribution chip on change), and the arm chip's countdown detail lives
+ *  in a popover. Config re-reads on every EV_OUTCOME so a mid-conversation
+ *  model save (which lands before the next turn) is reflected by the time
+ *  that turn completes. */
+export function ElmerStrip() {
+  const { status } = useEgressArm();
+  const [config, setConfig] = useState<ConfigReadDto | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    const read = () => {
+      invoke<ConfigReadDto>('elmer_config_read')
+        .then((dto) => {
+          if (mounted) setConfig(dto);
+        })
+        .catch(() => {});
+    };
+    read();
+    let unlisten: (() => void) | null = null;
+    listen(EV_OUTCOME, read)
+      .then((u) => { if (mounted) unlisten = u; else u(); })
+      .catch(() => {});
+    return () => { mounted = false; unlisten?.(); };
+  }, []);
+
+  const origin = (() => {
+    if (!config?.agentEndpoint) return null;
+    try { return new URL(config.agentEndpoint).host; } catch { return config.agentEndpoint; }
+  })();
+
+  return (
+    <div className="pop-strip" data-testid="pop-strip-elmer">
+      <span className="pop-strip-item">
+        {config?.agentModel ? `${config.agentModel}${origin ? ` @ ${origin}` : ''}` : 'no model configured'}
+      </span>
+      <span className="pop-strip-divider" aria-hidden="true">·</span>
+      <span className="pop-strip-item" data-testid="pop-strip-elmer-arm">
+        {status?.tainted
+          ? 'send authority tainted'
+          : status?.armed
+            ? `send authority armed ${status.armedRemainingSecs}s`
+            : 'send authority off'}
+      </span>
     </div>
   );
 }

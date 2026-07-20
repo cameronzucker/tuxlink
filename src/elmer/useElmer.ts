@@ -285,12 +285,31 @@ function nextId(): string {
   return `elmer-item-${_nextId++}`;
 }
 
-export function useElmer(): UseElmer {
-  const [items, setItems] = useState<ElmerItem[]>([]);
-  const [phase, setPhase] = useState<ElmerPhase>('idle');
+/** Continuity seed for a window-move (bd tuxlink-mfssz) — the token's `state`
+ *  half, adopted once at hook mount. See elmerToken.ts for why the
+ *  conversation must travel by token (user turns never transit the backend). */
+export interface UseElmerSeed {
+  items: ElmerItem[];
+  running?: boolean;
+  context?: { promptTokens: number; numCtx: number | null } | null;
+}
+
+export function useElmer(seed?: UseElmerSeed | null): UseElmer {
+  // Seeded items are RE-IDed at adoption: ids are per-window counter values
+  // (`elmer-item-N`), so a seeded id from the origin window would collide with
+  // this window's own counter — duplicate React keys corrupt the list render.
+  // Ids are render keys only; nothing references them across items.
+  const [items, setItems] = useState<ElmerItem[]>(() =>
+    (seed?.items ?? []).map((it) => ({ ...it, id: nextId() })),
+  );
+  // A run in flight at token-flush time streams its events to THIS window too
+  // (app.emit broadcasts) — start in 'running' so the UI shows the wait state
+  // and the single-flight guard below blocks a duplicate send. EV_OUTCOME
+  // (also broadcast) releases both, exactly as if the run had started here.
+  const [phase, setPhase] = useState<ElmerPhase>(seed?.running ? 'running' : 'idle');
   const [lastOutcome, setLastOutcome] = useState<ElmerOutcome | null>(null);
   // Guard against launching a second send while one is running.
-  const running = useRef(false);
+  const running = useRef(seed?.running === true);
 
   // Phase 2b — transient streaming buffers for the in-flight turn. Held in
   // state (so the streaming bubble re-renders on each chunk) AND mirrored in
@@ -314,7 +333,7 @@ export function useElmer(): UseElmer {
   // the OpenAI-compat path. Null until the first EV_CONTEXT event arrives;
   // persists across turns so the meter stays visible.
   const [context, setContext] = useState<{ promptTokens: number; numCtx: number | null } | null>(
-    null,
+    seed?.context ?? null,
   );
 
   // Subscribe to all three Elmer event channels for the lifetime of the hook.

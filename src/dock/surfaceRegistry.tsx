@@ -21,7 +21,11 @@ import { UvproControlStrip } from '../uvpro/UvproControlStrip';
 import { RoutinesSurface, type RoutinesView } from '../routines/RoutinesSurface';
 import { isRoutinesView, type RoutinesTokenState } from '../routines/routinesToken';
 import type { RoutineDef } from '../routines/routinesApi';
-import { RoutinesStrip, TacMapStrip, ChatStrip } from './strips';
+import { ElmerPane } from '../elmer/ElmerPane';
+import { isElmerTokenState, type ElmerTokenState } from '../elmer/elmerToken';
+import { useEgressArm } from '../security/useEgressArm';
+import { dockBack } from './dockState';
+import { RoutinesStrip, TacMapStrip, ChatStrip, ElmerStrip } from './strips';
 
 /** Task 8–10 extend this shape (task-7 brief's normative interface block —
  *  binding for the whole dockable-surfaces plan). */
@@ -235,6 +239,93 @@ function RoutinesPopped({ context, registerGetContext }: SurfaceComponentProps) 
   );
 }
 
+// ---- Elmer --------------------------------------------------------------
+//
+// bd tuxlink-mfssz. Renders ElmerPane (popped layout) seeded from the
+// continuity token's `state` half. The conversation is frontend useState and
+// user turns never transit the backend (session.rs emits assistant turns
+// only), so the token is the ONLY way scrollback crosses a window boundary —
+// see elmerToken.ts. An in-flight run needs no migration: app.emit
+// broadcasts EV_DELTA/EV_TURN/EV_OUTCOME to every window, so this window's
+// fresh useElmer instance re-attaches live, and the token's `running` bit
+// seeds the single-flight guard meanwhile.
+//
+// getContext uses the ref-supplied-value pattern (see RoutinesPopped's
+// draftRef note above): registered once, reads the always-current token from
+// the ref — a keystroke-frequency re-registration is unnecessary because the
+// closure captures the REF, not a value.
+function ElmerPopped({ context, registerGetContext }: SurfaceComponentProps) {
+  const seed = isElmerTokenState(context) ? context : null;
+  const tokenRef = useRef<ElmerTokenState | null>(seed);
+  const egressArm = useEgressArm();
+
+  useEffect(() => {
+    registerGetContext(() => tokenRef.current);
+  }, [registerGetContext]);
+
+  // Cross-window menu-verb forwarding (the routines dock:intent pattern):
+  //  - 'open_model' (Tools → Set up Elmer's model… while popped): remount the
+  //    pane with expandModel — the prop is mount-time-only by design
+  //    (tuxlink-1wi5w), so a keyed remount is the faithful way to re-trigger
+  //    it; the conversation survives via tokenRef (the live token re-seeds
+  //    the fresh mount). A mid-stream remount only resets the transient live
+  //    bubble — the finalizing EV_TURN carries the full text regardless.
+  //  - 'dock_back' (Tools → Dock Elmer back on MAIN): main cannot supply this
+  //    window's conversation, and a main-side `state: null` dock-back would
+  //    DROP it (unlike routines' accepted dashboard fallback, this is data
+  //    loss). So main forwards the verb here and THIS window flushes its own
+  //    live token — same foreground semantics as the title-bar ⇤.
+  const [modelMounts, setModelMounts] = useState(0);
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    listen<{ surface: SurfaceId; intent: string }>('dock:intent', (event) => {
+      if (event.payload.surface !== 'elmer') return;
+      if (event.payload.intent === 'open_model') setModelMounts((n) => n + 1);
+      if (event.payload.intent === 'dock_back') {
+        void dockBack('elmer', { foreground: true, state: tokenRef.current }).catch((err) => {
+          console.error('[dock] Elmer dock-back (menu intent) failed:', err);
+        });
+      }
+    })
+      .then((u) => {
+        if (disposed) u();
+        else unlisten = u;
+      })
+      .catch(() => {
+        // No Tauri runtime (test/dev harness).
+      });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  return (
+    <ElmerPane
+      key={modelMounts}
+      popped
+      expandModel={modelMounts > 0}
+      initialConversation={tokenRef.current}
+      onConversationChange={(s) => {
+        tokenRef.current = s;
+      }}
+      egressStatus={egressArm.status}
+      onArm={(durationSecs) => {
+        void egressArm.arm(durationSecs);
+      }}
+      onDisarm={() => {
+        void egressArm.disarm();
+      }}
+      onRearm={(durationSecs) => {
+        void egressArm.rearm(durationSecs);
+      }}
+      egressBusy={egressArm.busy}
+      egressError={egressArm.error}
+    />
+  );
+}
+
 export const SURFACE_REGISTRY: Record<SurfaceId, SurfaceRegistryEntry> = {
   routines: {
     id: 'routines',
@@ -253,5 +344,11 @@ export const SURFACE_REGISTRY: Record<SurfaceId, SurfaceRegistryEntry> = {
     title: 'APRS Chat — Tuxlink',
     Component: AprsChatSurface,
     StatusStrip: ChatStrip,
+  },
+  elmer: {
+    id: 'elmer',
+    title: 'Elmer — Tuxlink',
+    Component: ElmerPopped,
+    StatusStrip: ElmerStrip,
   },
 };

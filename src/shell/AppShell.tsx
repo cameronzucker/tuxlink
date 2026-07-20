@@ -185,6 +185,9 @@ import {
   type DockContextEnvelope,
 } from '../dock/dockState';
 import { isRoutinesView } from '../routines/routinesToken';
+// bd tuxlink-mfssz: the Elmer continuity token — dependency-light guard +
+// type, safe to import eagerly (same rationale as routinesToken above).
+import { isElmerTokenState, type ElmerTokenState } from '../elmer/elmerToken';
 import type { RoutineDef } from '../routines/routinesApi';
 
 // routines plan-5 Task 7 (post-review narrowing): the menu actions that CLOSE
@@ -594,6 +597,17 @@ function AppShellInner() {
   // pane mount. Reset to false after opening so a second plain "Elmer" open
   // does not re-expand (the state flag belongs to the open action, not the pane).
   const [elmerExpandModel, setElmerExpandModel] = useState(false);
+  // bd tuxlink-mfssz: Elmer continuity-token plumbing (the routines-draft
+  // pattern, upgraded to carry the whole conversation — see elmerToken.ts).
+  // `elmerTokenRef` always holds the inline pane's latest reported token
+  // state (read at pop-out time); `elmerSeed` + `elmerSeedNonce` re-seed the
+  // inline pane by KEYED REMOUNT at dock-back — the pane's mounted-hidden
+  // copy diverges while popped (user turns sent from the popped window never
+  // transit the backend), so adoption must REPLACE it, and initialConversation
+  // is mount-time-only by design.
+  const elmerTokenRef = useRef<ElmerTokenState | null>(null);
+  const [elmerSeed, setElmerSeed] = useState<ElmerTokenState | null>(null);
+  const [elmerSeedNonce, setElmerSeedNonce] = useState(0);
   // tuxlink-a2gd: inline Catalog Builder ("Find a Gateway"), opened from Message → Find a Gateway.
   const [catalogBuilderOpen, setCatalogBuilderOpen] = useState(false);
   // tuxlink-eymu: Request Center overlay. Carries the initial inner view;
@@ -617,6 +631,9 @@ function AppShellInner() {
   // affordances become pathway/focus-routing forms.
   const dock = useDockState();
   const routinesPopped = dock?.surfaces.routines === 'popped';
+  // bd tuxlink-mfssz: Elmer's popped state — drives inline suppression, menu
+  // routing (focus-not-reopen), and the ribbon chip's focus pathway.
+  const elmerPopped = dock?.surfaces.elmer === 'popped';
   // tuxlink-dmwte task 9 (spec §5): the Tac Map is the other dockable surface
   // AppShell hosts inline (in the reading-pane slot, spec §5's map pathways).
   // `null` dock (no snapshot yet) reads as docked, same convention as
@@ -669,6 +686,18 @@ function AppShellInner() {
     if (routinesPopped) setRoutinesView(null);
   }, [routinesPopped]);
 
+  // bd tuxlink-mfssz (mirrors the routines suppression above): while Elmer is
+  // popped the inline drawer closes — the popped window IS the surface. The
+  // pane stays MOUNTED-hidden (elmerEverOpened is untouched); its copy of the
+  // conversation diverges while popped and is replaced wholesale at dock-back
+  // by the keyed-remount adoption below.
+  useEffect(() => {
+    if (elmerPopped) {
+      setElmerOpen(false);
+      setElmerExpandModel(false);
+    }
+  }, [elmerPopped]);
+
   // tuxlink-dmwte task 8, behavior 5 (spec §5): a ⇤ foreground dock-back
   // (popped→docked with `context.routines.foreground === true`) opens the
   // inline surface on the token's view (fallback dashboard) and restores its
@@ -692,6 +721,36 @@ function AppShellInner() {
     setRoutinesView(isRoutinesView(state?.view) ? state!.view : { view: 'dashboard' });
     setRoutinesInitialDraft(state?.draft);
     setRoutinesInitialRevision(state?.revision);
+  }, [dock]);
+
+  // bd tuxlink-mfssz: Elmer dock-back adoption. DELIBERATE asymmetry with the
+  // routines arrival above: the token's STATE is adopted on EVERY
+  // popped→docked transition, foreground or not — the inline pane's
+  // mounted-hidden copy diverged while popped (user turns sent from the
+  // popped window never transit the backend, elmerToken.ts), so skipping
+  // adoption on a ✕-close would strand the wrong conversation inline.
+  // Only the pane-OPENING is foreground-gated (⇤ steals the drawer open;
+  // ✕/Ctrl+W/WM-close restore availability without opening anything).
+  const prevElmerModeRef = useRef<'docked' | 'popped' | null>(null);
+  useEffect(() => {
+    if (!dock) return;
+    const prev = prevElmerModeRef.current;
+    const cur = dock.surfaces.elmer;
+    prevElmerModeRef.current = cur;
+    if (prev !== 'popped' || cur !== 'docked') return;
+    const envelope = dock.context.elmer as DockContextEnvelope;
+    const state = envelope?.state ?? null;
+    const adopted = isElmerTokenState(state) ? state : null;
+    // A run that was in flight at flush time keeps streaming into this
+    // window's listeners (broadcast events); the seed's `running` bit keeps
+    // the single-flight guard honest across the move.
+    elmerTokenRef.current = adopted;
+    setElmerSeed(adopted);
+    setElmerSeedNonce((n) => n + 1);
+    if (envelope?.foreground) {
+      setElmerEverOpened(true);
+      setElmerOpen(true);
+    }
   }, [dock]);
 
   // tuxlink-dmwte task 9 (spec §5): a ⇤ foreground dock-back for the Tac Map
@@ -780,6 +839,20 @@ function AppShellInner() {
       console.error('[dock] Routines pop-out failed:', err);
     });
   }, [routinesView]);
+
+  // bd tuxlink-mfssz: ↗ Pop Elmer out to its own window, carrying the live
+  // conversation as the continuity token's `state` (elmerTokenRef is kept
+  // current by the inline pane's onConversationChange). The backend's
+  // `dock:changed` emit flips `elmerPopped`, and the suppression effect above
+  // closes the inline drawer.
+  const onElmerPopOut = useCallback(() => {
+    void popOut('elmer', {
+      foreground: true,
+      state: elmerTokenRef.current ?? { items: [] },
+    }).catch((err) => {
+      console.error('[dock] Elmer pop-out failed:', err);
+    });
+  }, []);
   // tuxlink-qjgx Task 8: Report Issue modal state. The controller drives the
   // Save As → export → GitHub URL flow; AppShell owns the state so the modal
   // can be positioned in the global overlay layer.
@@ -1800,10 +1873,35 @@ function AppShellInner() {
     // tuxlink-l9sq4: Tools → Connect an AI agent opens the modal.
     openConnectAgent: () => setConnectAgentOpen(true),
     // tuxlink-13v2l: Tools → Elmer opens the Elmer agent pane.
-    openElmer: () => { setElmerEverOpened(true); setElmerOpen(true); },
+    // bd tuxlink-mfssz: while popped, the menu never reopens the inline
+    // drawer — it focuses the popped window (the visual pathway back), the
+    // same behavior-2 rule as openRoutines.
+    openElmer: () => {
+      if (elmerPopped) { void focusSurface('elmer'); return; }
+      setElmerEverOpened(true); setElmerOpen(true);
+    },
     // tuxlink-1wi5w: Tools → Set up Elmer's model… opens the pane with the
     // Model section expanded. Does NOT touch ConnectAgentModal.
-    openElmerModel: () => { setElmerEverOpened(true); setElmerExpandModel(true); setElmerOpen(true); },
+    // bd tuxlink-mfssz: while popped, focus the window AND forward the verb
+    // as a surface-scoped `dock:intent` (the R4-F6 rule: never a silent
+    // no-op, never a second inline copy) — the popped host remounts its pane
+    // with the Model section expanded.
+    openElmerModel: () => {
+      if (elmerPopped) {
+        void focusSurface('elmer');
+        void emit('dock:intent', { surface: 'elmer', intent: 'open_model' });
+        return;
+      }
+      setElmerEverOpened(true); setElmerExpandModel(true); setElmerOpen(true);
+    },
+    // bd tuxlink-mfssz: Tools → Dock Elmer back. Main CANNOT supply the
+    // popped window's conversation, and a `state: null` dock-back would drop
+    // it (data loss, unlike routines' accepted dashboard fallback) — so the
+    // verb is forwarded to the popped window, which flushes its OWN live
+    // token with foreground semantics (see ElmerPopped's intent listener).
+    dockBackElmer: () => {
+      void emit('dock:intent', { surface: 'elmer', intent: 'dock_back' });
+    },
     // tuxlink-lqw2: Tools → Verify CMS Connection opens the inline probe overlay.
     verifyCms: () => setVerifyCmsOpen(true),
     reportIssue: () => {
@@ -1855,7 +1953,7 @@ function AppShellInner() {
     // — the same action the first-run offer card's "Start tour" fires.
     replayTour: () => hints.startTour(),
     quit: () => { void invoke('app_quit'); },
-  }), [openMessage, archiveOpen, selectedMessage, deleteByIdAndFolder, reportIssueController, aprsOpen, dockTab, hints, routinesPopped, onRoutinesNavigate]);
+  }), [openMessage, archiveOpen, selectedMessage, deleteByIdAndFolder, reportIssueController, aprsOpen, dockTab, hints, routinesPopped, elmerPopped, onRoutinesNavigate]);
 
   const editDraft = useCallback((draftId: string) => {
     void invoke('compose_window_open', { draftId });
@@ -2125,7 +2223,7 @@ function AppShellInner() {
   return (
     <div className={`layout-b${isCompact ? ' compact' : ''}`} data-testid="app-shell-root">
       <TitleBar folderLabel={routinesView && !routinesPopped ? routinesChromeLabel(routinesView) : folderLabel(selectedFolder, userFolders)} />
-      <MenuBar onAction={onMenuAction} badges={{ routines: parkedRuns.length }} dockPopped={routinesPopped} routinesInlineOpen={routinesView !== null && !routinesPopped} />
+      <MenuBar onAction={onMenuAction} badges={{ routines: parkedRuns.length }} dockPopped={routinesPopped} routinesInlineOpen={routinesView !== null && !routinesPopped} elmerPopped={elmerPopped} />
       <ResizeHandles />
       <div className="ribbon-with-search">
         <div className="search-zone" data-testid="search-zone" ref={searchZoneRef}>
@@ -2201,7 +2299,12 @@ function AppShellInner() {
             busy: egressArm.busy,
             error: egressArm.error,
           }}
-          onOpenElmer={() => { setElmerEverOpened(true); setElmerOpen((o) => !o); }}
+          onOpenElmer={() => {
+            // bd tuxlink-mfssz: while popped, the ribbon chip is a pathway to
+            // the window, not an inline toggle (same rule as the menu).
+            if (elmerPopped) { void focusSurface('elmer'); return; }
+            setElmerEverOpened(true); setElmerOpen((o) => !o);
+          }}
           elmerOpen={elmerOpen}
         />
       </div>
@@ -2689,7 +2792,13 @@ function AppShellInner() {
       {elmerEverOpened && (
         <div hidden={!elmerOpen}>
           <Suspense fallback={null}>
+            {/* bd tuxlink-mfssz: the key remounts the pane at dock-back so it
+                adopts the popped window's conversation (initialConversation is
+                mount-time-only; the mounted-hidden copy diverged while popped).
+                onConversationChange keeps elmerTokenRef current for the next
+                pop-out flush. */}
             <ElmerPane
+              key={elmerSeedNonce}
               egressStatus={egressArm.status}
               onArm={(durationSecs) => { void egressArm.arm(durationSecs); }}
               onDisarm={() => { void egressArm.disarm(); }}
@@ -2698,6 +2807,9 @@ function AppShellInner() {
               egressError={egressArm.error}
               onClose={() => { setElmerOpen(false); setElmerExpandModel(false); }}
               expandModel={elmerExpandModel}
+              initialConversation={elmerSeed}
+              onConversationChange={(s) => { elmerTokenRef.current = s; }}
+              onPopOut={onElmerPopOut}
             />
           </Suspense>
         </div>

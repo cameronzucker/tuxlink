@@ -3583,3 +3583,84 @@ describe('<ElmerPane> tuxlink-65qhn -- ModelForm Advanced disclosure', () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// bd tuxlink-mfssz: pop-out affordance + popped layout + token reporting
+// ---------------------------------------------------------------------------
+
+describe('<ElmerPane> -- pop-out affordance (bd tuxlink-mfssz)', () => {
+  it('renders the ↗ button only when onPopOut is provided, and clicking fires it', async () => {
+    const onPopOut = vi.fn();
+    render(<ElmerPane onPopOut={onPopOut} />);
+    const btn = await screen.findByTestId('elmer-pop-out');
+    fireEvent.click(btn);
+    expect(onPopOut).toHaveBeenCalledTimes(1);
+  });
+
+  it('omits the ↗ button when onPopOut is absent (the popped host omits it)', async () => {
+    render(<ElmerPane />);
+    await screen.findByTestId('elmer-pane');
+    expect(screen.queryByTestId('elmer-pop-out')).not.toBeInTheDocument();
+  });
+
+  it('popped layout: root carries the --popped modifier and the ✕ close is hidden', async () => {
+    render(<ElmerPane popped />);
+    const pane = await screen.findByTestId('elmer-pane');
+    expect(pane.className).toContain('elmer-pane--popped');
+    expect(screen.queryByTestId('elmer-close')).not.toBeInTheDocument();
+  });
+
+  it('docked layout: no --popped modifier, ✕ close present', async () => {
+    render(<ElmerPane />);
+    const pane = await screen.findByTestId('elmer-pane');
+    expect(pane.className).not.toContain('elmer-pane--popped');
+    expect(screen.getByTestId('elmer-close')).toBeInTheDocument();
+  });
+});
+
+describe('<ElmerPane> -- conversation token plumbing (bd tuxlink-mfssz)', () => {
+  it('seeds the scrollback from initialConversation', async () => {
+    render(
+      <ElmerPane
+        initialConversation={{
+          items: [
+            { kind: 'turn', id: 'seed-0', role: 'user', text: 'carried question' },
+            { kind: 'turn', id: 'seed-1', role: 'assistant', text: 'carried answer' },
+          ],
+        }}
+      />,
+    );
+    expect(await screen.findByText('carried question')).toBeInTheDocument();
+    expect(screen.getByText('carried answer')).toBeInTheDocument();
+  });
+
+  it('reports the live token state via onConversationChange as items/phase change', async () => {
+    const reports: Array<{ items: unknown[]; running?: boolean }> = [];
+    render(<ElmerPane onConversationChange={(s) => reports.push(s)} />);
+    await screen.findByTestId('elmer-pane');
+
+    // A send appends the user turn and enters the running phase — the report
+    // must carry both (running seeds the receiving window's guard).
+    const input = screen.getByPlaceholderText(/ask/i);
+    fireEvent.change(input, { target: { value: 'report me' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => {
+      const last = reports[reports.length - 1];
+      expect(last.running).toBe(true);
+      expect(
+        last.items.some((i) => (i as { text?: string }).text === 'report me'),
+      ).toBe(true);
+    });
+
+    // Terminal outcome flips running off in the next report.
+    await fireElmerEvent<ElmerOutcomePayload>(EV_OUTCOME, {
+      kind: 'outcome',
+      outcomeKind: 'done',
+      detail: '',
+    });
+    await waitFor(() => {
+      expect(reports[reports.length - 1].running).toBe(false);
+    });
+  });
+});

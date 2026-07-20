@@ -30,6 +30,7 @@ const EXPECTED_IDS = [
   'menu:tools:find_gateway', 'menu:tools:verify_cms', 'menu:tools:connect_agent',
   'menu:tools:elmer',
   'menu:tools:elmer_model',
+  'menu:tools:elmer_dockback',
   'menu:tools:settings',
   'menu:help:about', 'menu:help:docs', 'menu:help:replay_tour', 'menu:help:logging', 'menu:help:report_issue', 'menu:help:uninstall_cleanup',
 ];

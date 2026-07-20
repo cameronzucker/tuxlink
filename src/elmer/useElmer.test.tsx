@@ -343,3 +343,71 @@ describe('useElmer EV_CONTEXT (T7)', () => {
     for (const u of h.unlistens) expect(u).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('useElmer continuity seed (bd tuxlink-mfssz)', () => {
+  beforeEach(() => {
+    h.unlistens.length = 0;
+    h.resolvers.length = 0;
+    h.handlers.clear();
+  });
+
+  const dispatch = async <T,>(channel: string, payload: T) => {
+    await act(async () => {
+      const handler = h.handlers.get(channel);
+      if (handler) handler({ payload });
+      await Promise.resolve();
+    });
+  };
+
+  const seedItems = [
+    { kind: 'turn' as const, id: 'elmer-item-0', role: 'user', text: 'hello' },
+    { kind: 'turn' as const, id: 'elmer-item-1', role: 'assistant', text: 'hi there' },
+  ];
+
+  it('adopts seeded items with RE-GENERATED ids (no cross-window key collisions)', async () => {
+    const { result } = renderHook(() =>
+      useElmer({ items: seedItems }),
+    );
+    await resolveAllListens();
+
+    expect(result.current.items).toHaveLength(2);
+    expect(result.current.items.map((i) => (i as { text?: string }).text)).toEqual([
+      'hello',
+      'hi there',
+    ]);
+    // Ids are per-window counter values; adopting the origin window's ids
+    // verbatim would collide with this window's own counter (duplicate React
+    // keys). All ids must be unique — and a locally-appended item must not
+    // collide with any adopted one.
+    const ids = result.current.items.map((i) => i.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    await dispatch(EV_TURN, { kind: 'turn', role: 'assistant', text: 'fresh' });
+    const allIds = result.current.items.map((i) => i.id);
+    expect(new Set(allIds).size).toBe(allIds.length);
+  });
+
+  it('seeded running=true starts in the running phase and blocks a duplicate send until EV_OUTCOME', async () => {
+    const { result } = renderHook(() => useElmer({ items: seedItems, running: true }));
+    await resolveAllListens();
+
+    expect(result.current.phase).toBe('running');
+    // Single-flight guard seeded: the in-flight run started in the ORIGIN
+    // window; a send here must be a no-op.
+    act(() => result.current.send('double'));
+    expect(invoke).not.toHaveBeenCalledWith('elmer_send', { msg: 'double' });
+
+    // The broadcast EV_OUTCOME releases the guard exactly as a local run's would.
+    await dispatch<ElmerOutcomePayload>(EV_OUTCOME, { kind: 'outcome', outcomeKind: 'done', detail: '' });
+    expect(result.current.phase).toBe('done');
+    act(() => result.current.send('now works'));
+    expect(invoke).toHaveBeenCalledWith('elmer_send', { msg: 'now works' });
+  });
+
+  it('adopts the seeded context-meter snapshot', async () => {
+    const { result } = renderHook(() =>
+      useElmer({ items: [], context: { promptTokens: 123, numCtx: 4096 } }),
+    );
+    await resolveAllListens();
+    expect(result.current.context).toEqual({ promptTokens: 123, numCtx: 4096 });
+  });
+});

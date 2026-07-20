@@ -72,6 +72,38 @@
   color: var(--text);
 }
 
+/* bd tuxlink-mfssz: ↗ pop-out — same quiet header-button treatment as ✕. */
+.elmer-popout-button {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim, #94a0ad);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.elmer-popout-button:hover {
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  color: var(--text);
+}
+
+/* bd tuxlink-mfssz: popped-window layout — the pane IS the window content
+   (inside PoppedSurfaceHost's flex column), not a fixed overlay drawer. */
+.elmer-pane--popped {
+  position: static;
+  width: auto;
+  flex: 1 1 auto;
+  border-left: none;
+  box-shadow: none;
+  z-index: auto;
+}
+
 /* tuxlink-vbv2k: "New conversation" icon button (speech bubble + plus). Same
  * quiet weight as the close button; sits just left of it in the header. */
 .elmer-newconv-button {
