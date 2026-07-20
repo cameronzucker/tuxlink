@@ -13,7 +13,7 @@ import { FAVORITES_QUERY_KEY } from '../favorites/useFavorites';
 import { dialToNewFavorite, favoriteKey } from '../favorites/dialToFavorite';
 import type { Favorite, StationsFile } from '../favorites/types';
 import { useStations } from './useStations';
-import { aggregateStations, stationMatchesBandMode, type Station } from './stationModel';
+import { aggregateStations, stationMatchesFilters, type Station } from './stationModel';
 import { useReachabilityMap, stationKey } from './useReachabilityMap';
 import {
   corroborateStations,
@@ -42,7 +42,7 @@ import {
   type PropagationPrefs,
 } from './propagationPrefs';
 import { HF_BANDS, type Band } from './bandPlan';
-import type { ListingMode } from './stationTypes';
+import { BANDWIDTH_CLASSES, type BandwidthClass, type ListingMode } from './stationTypes';
 import type { RadioMode, FavoriteDial } from '../favorites/types';
 import type { AggregatedPeer } from '../peers/peerModel';
 import type { LatLon } from '../forms/position/maidenhead';
@@ -88,7 +88,13 @@ export interface StationFinderPanelProps {
   blockingSessionMode?: string;
 }
 
-const FILTER_MODES: FilterMode[] = ['vara-hf', 'ardop-hf', 'packet'];
+// Task 9 (tuxlink-nkzng): 'vara-fm' joins the fetched + default-enabled mode
+// set: VARA FM end-to-end. Unlike the other three, VARA FM has no text
+// `/listings/` page; requesting it in `stations.fetch` below is what makes the
+// backend synthesize a VaraFm StationListing from the channels JSON API
+// (`catalog_fetch_stations`'s `want_vara_fm` branch), so this one addition is
+// what actually turns VARA FM channels on anywhere in this panel.
+const FILTER_MODES: FilterMode[] = ['vara-hf', 'ardop-hf', 'packet', 'vara-fm'];
 
 // Stable empty-set identity (Task 7, spec §2 evidence filter): reused whenever
 // there is nothing to ghost, so callers doing reference equality (or just
@@ -141,6 +147,8 @@ interface PersistedFinderView {
    *  SNR floor, persisted like every other finder-view field. */
   evidenceOn: boolean;
   evidenceSnrMinDb: number;
+  /** Task 9: bandwidth filter chips, persisted like `modes`/`bands`. */
+  bandwidths: BandwidthClass[];
 }
 
 /** Resolve localStorage defensively — the getter itself can throw. */
@@ -174,6 +182,9 @@ function readFinderView(): Partial<PersistedFinderView> {
     }
     if (typeof v.evidenceOn === 'boolean') out.evidenceOn = v.evidenceOn;
     if (typeof v.evidenceSnrMinDb === 'number') out.evidenceSnrMinDb = v.evidenceSnrMinDb;
+    if (Array.isArray(v.bandwidths)) {
+      out.bandwidths = v.bandwidths.filter((b) => typeof b === 'string') as BandwidthClass[];
+    }
     return out;
   } catch {
     return {};
@@ -233,6 +244,11 @@ export function StationFinderPanel({
   const [enabledModes, setEnabledModes] = useState<Set<FilterMode>>(
     () => new Set(persisted0.modes ?? FILTER_MODES),
   );
+  // Task 9: bandwidth filter chips, default all three ON (matches the
+  // bands/modes default-everything-visible posture), seeded from persistence.
+  const [enabledBandwidths, setEnabledBandwidths] = useState<Set<BandwidthClass>>(
+    () => new Set(persisted0.bandwidths ?? BANDWIDTH_CLASSES),
+  );
   // Task delta2 (spec §6 reconciliation): the rail selection is now a
   // gateway-or-peer union (see `FinderSelection` above). Only the gateway
   // case is persisted across a close/reopen (`writeFinderView` below writes
@@ -288,8 +304,18 @@ export function StationFinderPanel({
       selectedKey,
       evidenceOn,
       evidenceSnrMinDb,
+      bandwidths: [...enabledBandwidths],
     });
-  }, [search, enabledBands, enabledModes, radiusMi, selectedKey, evidenceOn, evidenceSnrMinDb]);
+  }, [
+    search,
+    enabledBands,
+    enabledModes,
+    radiusMi,
+    selectedKey,
+    evidenceOn,
+    evidenceSnrMinDb,
+    enabledBandwidths,
+  ]);
   const stations = useStations();
 
   // Resolve the operator's EFFECTIVE location the way the rest of the app does
@@ -342,13 +368,18 @@ export function StationFinderPanel({
   }, [onClose]);
 
   const allStations = useMemo(() => aggregateStations(stations.listings), [stations.listings]);
-  // Band + mode FILTER (tuxlink-hlas), evaluated at the CHANNEL level: a station
-  // shows only if it has a channel whose band is selected AND whose mode is
-  // enabled. This is why 145 MHz packet (band='vhf-uhf') disappears when only HF
-  // bands are selected — that channel matches no selected band.
+  // Band + mode + bandwidth FILTER (tuxlink-hlas, extended Task 9), evaluated
+  // at the CHANNEL level: a station shows only if it has a channel whose band
+  // is selected, whose mode is enabled, AND whose bandwidth passes the
+  // bandwidth chips (a channel with no known classified bandwidth, the
+  // text-listing-only case, passes every bandwidth filter; see
+  // `stationMatchesFilters`). This is why 145 MHz packet (band='vhf-uhf')
+  // disappears when only HF bands are selected: that channel matches no
+  // selected band.
   const bandModeVisible = useMemo(
-    () => allStations.filter((s) => stationMatchesBandMode(s, enabledBands, enabledModes)),
-    [allStations, enabledBands, enabledModes],
+    () =>
+      allStations.filter((s) => stationMatchesFilters(s, enabledBands, enabledModes, enabledBandwidths)),
+    [allStations, enabledBands, enabledModes, enabledBandwidths],
   );
 
   // Callsign search + radius filter (design §7). Radius needs a home grid;
@@ -531,6 +562,18 @@ export function StationFinderPanel({
       return next;
     });
 
+  // Task 9: ONE handler for the bandwidth chips, passed to BOTH
+  // StationFinderControls (the chip row) and StationFinderMap's
+  // `bandwidthMirror` below: one shared state, two locations, never a
+  // second copy of `enabledBandwidths` owned by the map.
+  const toggleBandwidth = (bw: BandwidthClass) =>
+    setEnabledBandwidths((prev) => {
+      const next = new Set(prev);
+      if (next.has(bw)) next.delete(bw);
+      else next.add(bw);
+      return next;
+    });
+
   return (
     <div
       className="station-finder-overlay"
@@ -552,6 +595,8 @@ export function StationFinderPanel({
           onToggleBand={toggleBand}
           enabledModes={enabledModes}
           onToggleMode={toggleMode}
+          enabledBandwidths={enabledBandwidths}
+          onToggleBandwidth={toggleBandwidth}
           utcHour={utcHour}
           localTime={localTimeLabel()}
           ssn={pred.prediction?.ssn ?? null}
@@ -599,6 +644,10 @@ export function StationFinderPanel({
               ghostedKeys: evidenceGhostedKeys,
               note: evidenceNote,
             }}
+            // Task 9: the bandwidth chips' mirror in the map's layer box, the
+            // SAME `enabledBandwidths` state + `toggleBandwidth` handler
+            // StationFinderControls' chip row uses above (one shared state).
+            bandwidthMirror={{ enabled: enabledBandwidths, onToggle: toggleBandwidth }}
           />
           <StationRail
             station={selected}

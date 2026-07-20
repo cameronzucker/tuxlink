@@ -13,7 +13,12 @@ export interface ChannelGroup {
   channels: Channel[];
 }
 
-const MODE_ORDER: ListingMode[] = ['vara-hf', 'ardop-hf', 'packet', 'pactor', 'robust-packet'];
+// Task 9 (tuxlink-nkzng): 'vara-fm' added so a station's VARA FM channels are
+// reachable here at all: without this, a vara-fm Channel (real, aggregated
+// from the synthesized VaraFm listing) would silently never surface in the
+// rail's mode groups, and `channelToDial`'s new vara-fm arm below would be
+// unreachable dead code from the rail's channel-picker flow.
+const MODE_ORDER: ListingMode[] = ['vara-hf', 'ardop-hf', 'packet', 'vara-fm', 'pactor', 'robust-packet'];
 
 export function groupChannelsByMode(station: Station): ChannelGroup[] {
   const byMode = new Map<ListingMode, Channel[]>();
@@ -28,9 +33,13 @@ export function groupChannelsByMode(station: Station): ChannelGroup[] {
   }));
 }
 
-/** ListingMode → modem RadioMode; null for modes with no prefillable modem. */
+/** ListingMode → modem RadioMode; null for modes with no prefillable modem.
+ *  'vara-fm' (Task 9, tuxlink-nkzng): RadioMode already carries it
+ *  (src/favorites/types.ts) and AppShell's prefill routing already handles a
+ *  vara-fm pane (AppShell.tsx), so mapping it straight through here is what
+ *  makes a VARA FM channel's "Use →" reachable end to end. */
 function radioModeFor(mode: ListingMode): RadioMode | null {
-  if (mode === 'vara-hf' || mode === 'ardop-hf' || mode === 'packet') return mode;
+  if (mode === 'vara-hf' || mode === 'ardop-hf' || mode === 'packet' || mode === 'vara-fm') return mode;
   return null;
 }
 

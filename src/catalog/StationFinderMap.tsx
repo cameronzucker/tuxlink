@@ -37,6 +37,7 @@ import { usePeers, useP2pCapabilities } from '../peers/usePeers';
 import { aggregatePeers, type AggregatedPeer } from '../peers/peerModel';
 import { aggregateLiveDecodes } from './LiveDecodesTab';
 import type { SlotRecord } from '../ft8ui/ft8Types';
+import { BANDWIDTH_CLASSES, type BandwidthClass } from './stationTypes';
 
 export interface StationFinderMapProps {
   stations: Station[];
@@ -81,6 +82,15 @@ export interface StationFinderMapProps {
     /** Honest-count note, e.g. "evidence: 2 of 5 gateways corroborated (20m)
      *  · SNR ≥ -18 · last 30 min"; `null` when the filter is off. */
     note: string | null;
+  };
+  /** Task 9: the bandwidth filter chips' mirror in the map's layer box:
+   *  `enabled` + `onToggle` are the SAME state + handler the panel passes to
+   *  `StationFinderControls` (one shared state, two locations); this map
+   *  never owns a second copy. Omitted entirely renders no bandwidth
+   *  checkboxes (backward compatible with callers that predate this feature). */
+  bandwidthMirror?: {
+    enabled: Set<BandwidthClass>;
+    onToggle: (bw: BandwidthClass) => void;
   };
 }
 
@@ -412,6 +422,10 @@ export function StationFinderMap(props: StationFinderMapProps) {
   // doesn't wire the filter render exactly as before.
   const evidence = props.evidence;
   const ghostedKeys = evidence?.ghostedKeys ?? EMPTY_GHOSTED_KEYS;
+  // Task 9: same narrowing-const pattern as `evidence` above; the mirror is
+  // entirely optional (backward compatible), and this local const lets the
+  // JSX below check presence once instead of `props.bandwidthMirror!` everywhere.
+  const bandwidthMirror = props.bandwidthMirror;
 
   // Task delta2 (spec §6 reconciliation): the peer DIAMOND layer, gated
   // end-to-end on `map_peers` [R5-8] — false (or still loading) HIDES every
@@ -511,6 +525,27 @@ export function StationFinderMap(props: StationFinderMapProps) {
             />
             Peers
           </button>
+        )}
+        {/* Task 9: bandwidth filter chips' mirror: checkboxes (not the
+            pill-button style the other layer entries use) so the layer box
+            reads as a settings panel for this axis, distinct from the
+            visibility TOGGLES around it. `onToggle` is the SAME handler the
+            panel wires to StationFinderControls' chip row: one shared state,
+            two locations, never a second copy owned by this map. */}
+        {bandwidthMirror && (
+          <span className="station-finder__bw-mirror" data-testid="map-bw-mirror">
+            {BANDWIDTH_CLASSES.map((bw) => (
+              <label key={bw} className="station-finder__bw-check">
+                <input
+                  type="checkbox"
+                  data-testid={`map-bw-${bw}`}
+                  checked={bandwidthMirror.enabled.has(bw)}
+                  onChange={() => bandwidthMirror.onToggle(bw)}
+                />
+                {bw} Hz
+              </label>
+            ))}
+          </span>
         )}
         {/* Task 7 (spec §2 evidence filter): FT-8 corroboration toggle + SNR
             threshold. The threshold slider is only shown while the filter is

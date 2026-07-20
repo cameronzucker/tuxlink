@@ -6,7 +6,13 @@
 // share the base call.
 
 import { bandForKhz, type Band } from './bandPlan';
-import type { GatewayAntenna, ListingMode, StationListing } from './stationTypes';
+import {
+  bandwidthClass,
+  type BandwidthClass,
+  type GatewayAntenna,
+  type ListingMode,
+  type StationListing,
+} from './stationTypes';
 
 export interface Channel {
   mode: ListingMode;
@@ -14,6 +20,12 @@ export interface Channel {
   /** Packet connect target (e.g. N0DAJ-10); undefined for HF (base call dials). */
   ssid?: string;
   band: Band | null;
+  /** Occupied bandwidth in Hz, sourced from the channels JSON API's
+   *  `ChannelDetail.bandwidthHz` (Task 9); `null`/`undefined` for a channel
+   *  sourced from the text-listing `frequenciesKhz` fallback (no per-channel
+   *  bandwidth data) or a mode with no fixed bandwidth. See
+   *  `stationMatchesFilters` for how this drives the bandwidth filter chips. */
+  bandwidthHz?: number | null;
 }
 
 export interface Station {
@@ -71,11 +83,33 @@ export function aggregateStations(listings: StationListing[]): Station[] {
       if (listing.fetchedAtMs && (!station.fetchedAtMs || listing.fetchedAtMs > station.fetchedAtMs)) {
         station.fetchedAtMs = listing.fetchedAtMs;
       }
-      if (!station.modes.includes(listing.mode)) station.modes.push(listing.mode);
-
       const ssid = hasSsid(g.callsign) ? g.callsign.trim().toUpperCase() : undefined;
-      for (const khz of g.frequenciesKhz) {
-        station.channels.push({ mode: listing.mode, frequencyKhz: khz, ssid, band: bandForKhz(khz) });
+
+      // Task 9: prefer the channels-JSON-API detail rows when present; they
+      // carry per-channel bandwidth (and, for a synthesized VARA FM listing,
+      // the only source of dial data at all, since VARA FM has no text
+      // listing). Each detail becomes exactly one Channel, keyed by its OWN
+      // mode (join_channels on the Rust side already filters details to the
+      // listing's own mode, but reading `d.mode` rather than `listing.mode`
+      // keeps this correct even if that constraint ever loosens). Falls back
+      // to the text-listing `frequenciesKhz` expansion when a gateway has no
+      // channel details (channels-API join was best-effort and may be empty).
+      if (g.channelDetails && g.channelDetails.length > 0) {
+        for (const d of g.channelDetails) {
+          if (!station.modes.includes(d.mode)) station.modes.push(d.mode);
+          station.channels.push({
+            mode: d.mode,
+            frequencyKhz: d.frequencyKhz,
+            ssid,
+            band: bandForKhz(d.frequencyKhz),
+            bandwidthHz: d.bandwidthHz,
+          });
+        }
+      } else {
+        if (!station.modes.includes(listing.mode)) station.modes.push(listing.mode);
+        for (const khz of g.frequenciesKhz) {
+          station.channels.push({ mode: listing.mode, frequencyKhz: khz, ssid, band: bandForKhz(khz) });
+        }
       }
     }
   }
@@ -83,19 +117,45 @@ export function aggregateStations(listings: StationListing[]): Station[] {
   return [...byKey.values()];
 }
 
+/** True when a channel's bandwidth passes the bandwidth filter (Task 9,
+ *  load-bearing unknown-bandwidth rule): a channel whose bandwidth is
+ *  `null`/`undefined`, OR whose Hz value does not classify into one of the
+ *  three chip classes (`bandwidthClass` returns `null`), passes EVERY
+ *  bandwidth filter: the chips can only SUBTRACT a channel with a KNOWN,
+ *  classified, non-selected bandwidth. */
+function channelPassesBandwidth(
+  bandwidthHz: number | null | undefined,
+  bandwidths: ReadonlySet<BandwidthClass>,
+): boolean {
+  const cls = bandwidthClass(bandwidthHz);
+  if (cls == null) return true;
+  return bandwidths.has(cls);
+}
+
 /**
- * Band + mode FILTER predicate (tuxlink-hlas), evaluated at the CHANNEL level.
- * A station is visible iff it has at least one channel whose band is selected
- * AND whose mode is enabled. This is why a 145 MHz packet station
- * (band === 'vhf-uhf') disappears when only HF bands are selected: that channel
- * matches no selected band, and the station has no other matching channel.
+ * Band + mode + bandwidth FILTER predicate (tuxlink-hlas, extended Task 9),
+ * evaluated at the CHANNEL level. A station is visible iff it has at least one
+ * channel whose band is selected, whose mode is enabled, AND whose bandwidth
+ * passes the bandwidth filter (see `channelPassesBandwidth`). This is why a
+ * 145 MHz packet station (band === 'vhf-uhf') disappears when only HF bands
+ * are selected: that channel matches no selected band, and the station has no
+ * other matching channel, and likewise why a station whose only 20m VARA
+ * channel is 500 Hz disappears when only the 2300/2750 Hz chips are on, UNLESS
+ * that same station also carries a null-bandwidth (or unclassified) channel
+ * that satisfies band+mode, which keeps it visible under the "keep if ANY
+ * channel passes" rule.
  */
-export function stationMatchesBandMode(
+export function stationMatchesFilters(
   station: Station,
   bands: ReadonlySet<Band>,
   modes: ReadonlySet<string>,
+  bandwidths: ReadonlySet<BandwidthClass>,
 ): boolean {
   return station.channels.some(
-    (c) => c.band != null && bands.has(c.band) && modes.has(c.mode),
+    (c) =>
+      c.band != null &&
+      bands.has(c.band) &&
+      modes.has(c.mode) &&
+      channelPassesBandwidth(c.bandwidthHz, bandwidths),
   );
 }

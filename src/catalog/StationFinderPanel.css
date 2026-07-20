@@ -19,6 +19,10 @@
   --m-vara: #4aa3ff;
   --m-ardop: #b07cf0;
   --m-packet: #34d0d0;
+  /* VARA FM (Task 9, tuxlink-nkzng): same ▲ triangle shape as VARA HF (same
+     VARA family) but a lighter hue so the two stay distinguishable at a
+     glance; VARA FM is a different transport/band, not the same channel. */
+  --m-vara-fm: #79b8ff;
   /* OPENNESS (§Openness) — "how much FT-8 activity was heard recently on this
      band," a third axis distinct from SIGNAL (path reliability) and MODES
      (protocol). A dedicated warm-red→amber ramp so it never reads as either. */
@@ -245,6 +249,17 @@
 .station-finder__sw--packet {
   background: var(--m-packet);
   clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); /* ◆ diamond */
+}
+.station-finder__sw--vara-fm {
+  background: var(--m-vara-fm);
+  clip-path: polygon(50% 0, 100% 100%, 0 100%); /* ▲ triangle, VARA family */
+}
+/* Bandwidth filter chips (Task 9): reuse the same pill (`.station-finder__chip`)
+   as the mode chips, no swatch, since bandwidth is a numeric axis, not a
+   shape-coded category. Sits between the mode chips and the search group. */
+.station-finder__bwchips {
+  display: flex;
+  gap: 6px;
 }
 .station-finder__listage {
   font-size: 11px;
@@ -662,6 +677,28 @@
 .station-finder__reachkey .pk.never {
   border-color: var(--text-faint, #5d6975);
   border-style: dashed;
+}
+
+/* Bandwidth filter chips' mirror in the map layer box (Task 9): plain
+   checkboxes (not the pill-button style the other layer entries use) so this
+   reads as a settings group for the axis, not a visibility toggle. `onToggle`
+   is the SAME handler `StationFinderControls`' chip row uses (one shared
+   state, two locations). */
+.station-finder__bw-mirror {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim, #94a0ad);
+}
+.station-finder__bw-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.station-finder__bw-check input[type='checkbox'] {
+  accent-color: var(--m-vara, #4aa3ff);
 }
 
 /* Evidence-filter toggle swatch (Task 7, spec §2 evidence filter): the

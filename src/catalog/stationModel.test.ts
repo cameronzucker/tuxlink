@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { baseCallsign, aggregateStations, stationMatchesBandMode, type Station } from './stationModel';
+import { baseCallsign, aggregateStations, stationMatchesFilters, type Station } from './stationModel';
 import { HF_BANDS, type Band } from './bandPlan';
-import type { Gateway, StationListing } from './stationTypes';
+import { BANDWIDTH_CLASSES, type BandwidthClass, type ChannelDetail, type Gateway, type StationListing } from './stationTypes';
 
 function gw(partial: Partial<Gateway> & { callsign: string }): Gateway {
   return {
@@ -10,8 +10,20 @@ function gw(partial: Partial<Gateway> & { callsign: string }): Gateway {
     location: partial.location ?? null, frequenciesKhz: partial.frequenciesKhz ?? [],
     lastUpdate: partial.lastUpdate ?? null, email: null, homepage: null,
     antenna: partial.antenna ?? null,
+    channelDetails: partial.channelDetails,
   };
 }
+
+function detail(partial: Partial<ChannelDetail> & Pick<ChannelDetail, 'frequencyKhz' | 'mode'>): ChannelDetail {
+  return {
+    bandwidthHz: partial.bandwidthHz ?? null,
+    operatingHours: partial.operatingHours ?? null,
+    grid: partial.grid ?? null,
+    ...partial,
+  };
+}
+
+const ALL_BANDWIDTHS = new Set<BandwidthClass>(BANDWIDTH_CLASSES);
 
 describe('baseCallsign', () => {
   it('strips an SSID suffix', () => {
@@ -98,7 +110,7 @@ describe('aggregateStations — gateway antenna carry-through (tuxlink-s0r1 #3d)
   });
 });
 
-describe('stationMatchesBandMode — band+mode FILTER (tuxlink-hlas)', () => {
+describe('stationMatchesFilters: band+mode FILTER (tuxlink-hlas)', () => {
   // A real N0DAJ-shaped station: 40m VARA/ARDOP HF + 145 MHz / 441 MHz packet.
   const station: Station = aggregateStations([
     { mode: 'vara-hf', title: null, parsedOk: true, raw: '', fetchedAtMs: 1,
@@ -107,7 +119,7 @@ describe('stationMatchesBandMode — band+mode FILTER (tuxlink-hlas)', () => {
       gateways: [gw({ callsign: 'N0DAJ-10', grid: 'DM34oa', frequenciesKhz: [145710] })] },
   ])[0];
 
-  // A pure-VHF packet station whose only channel is 145 MHz — the kind that was
+  // A pure-VHF packet station whose only channel is 145 MHz, the kind that was
   // wrongly surfacing under the default 40m selection.
   const vhfOnly: Station = aggregateStations([
     { mode: 'packet', title: null, parsedOk: true, raw: '', fetchedAtMs: 1,
@@ -116,28 +128,147 @@ describe('stationMatchesBandMode — band+mode FILTER (tuxlink-hlas)', () => {
 
   const HF_DEFAULT = new Set<Band>(HF_BANDS);
 
-  it('matches when a channel is on a selected band AND an enabled mode', () => {
-    expect(stationMatchesBandMode(station, new Set<Band>(['40m']), new Set(['vara-hf']))).toBe(true);
+  it('matches when a channel is on a selected band AND an enabled mode (bandwidth wide open)', () => {
+    expect(stationMatchesFilters(station, new Set<Band>(['40m']), new Set(['vara-hf']), ALL_BANDWIDTHS)).toBe(true);
   });
 
   it('does NOT surface a 145 MHz packet station under the default HF band set (THE bug)', () => {
     // band === 'vhf-uhf' is not in the HF default → the station has no matching channel.
-    expect(stationMatchesBandMode(vhfOnly, HF_DEFAULT, new Set(['packet']))).toBe(false);
+    expect(stationMatchesFilters(vhfOnly, HF_DEFAULT, new Set(['packet']), ALL_BANDWIDTHS)).toBe(false);
   });
 
   it('DOES surface that same 145 MHz packet station once VHF/UHF is selected', () => {
-    expect(stationMatchesBandMode(vhfOnly, new Set<Band>(['vhf-uhf']), new Set(['packet']))).toBe(true);
+    expect(stationMatchesFilters(vhfOnly, new Set<Band>(['vhf-uhf']), new Set(['packet']), ALL_BANDWIDTHS)).toBe(true);
   });
 
   it('does NOT match when the band is selected but the station has no channel in an enabled mode', () => {
-    // 40m is selected, but the only 40m channel is VARA — filtering to packet alone misses it.
-    expect(stationMatchesBandMode(station, new Set<Band>(['40m']), new Set(['packet']))).toBe(false);
+    // 40m is selected, but the only 40m channel is VARA: filtering to packet alone misses it.
+    expect(stationMatchesFilters(station, new Set<Band>(['40m']), new Set(['packet']), ALL_BANDWIDTHS)).toBe(false);
   });
 
   it('matches the multi-mode station across either of its bands (multi-select)', () => {
     // VHF/UHF picks up the 145 MHz packet channel; 40m would pick up VARA.
-    expect(stationMatchesBandMode(station, new Set<Band>(['vhf-uhf']), new Set(['packet']))).toBe(true);
-    expect(stationMatchesBandMode(station, new Set<Band>(['20m']), new Set(['vara-hf']))).toBe(true);
+    expect(stationMatchesFilters(station, new Set<Band>(['vhf-uhf']), new Set(['packet']), ALL_BANDWIDTHS)).toBe(true);
+    expect(stationMatchesFilters(station, new Set<Band>(['20m']), new Set(['vara-hf']), ALL_BANDWIDTHS)).toBe(true);
+  });
+});
+
+describe('stationMatchesFilters: bandwidth FILTER (Task 9, load-bearing unknown-bandwidth rule)', () => {
+  const HF_DEFAULT = new Set<Band>(HF_BANDS);
+  const ALL_MODES = new Set(['vara-hf', 'ardop-hf']);
+
+  it('drops a station whose only 20m VARA channel is 500 Hz when bandwidths = {2300, 2750}', () => {
+    const station = aggregateStations([
+      { mode: 'vara-hf', title: null, parsedOk: true, raw: '', fetchedAtMs: 1,
+        gateways: [gw({
+          callsign: 'N0DAJ', grid: 'DM34oa',
+          channelDetails: [detail({ frequencyKhz: 14103, mode: 'vara-hf', bandwidthHz: 500 })],
+        })] },
+    ])[0];
+    const narrowOnly = new Set<BandwidthClass>(['2300', '2750']);
+    expect(stationMatchesFilters(station, HF_DEFAULT, ALL_MODES, narrowOnly)).toBe(false);
+    // Sanity: the SAME station matches once 500 Hz is included.
+    expect(stationMatchesFilters(station, HF_DEFAULT, ALL_MODES, new Set<BandwidthClass>(['500']))).toBe(true);
+  });
+
+  it('keeps a null-bandwidth channel under any subset, including an empty one', () => {
+    // Text-listing-only data: no channelDetails, so bandwidthHz is never set.
+    const station = aggregateStations([
+      { mode: 'vara-hf', title: null, parsedOk: true, raw: '', fetchedAtMs: 1,
+        gateways: [gw({ callsign: 'N0DAJ', grid: 'DM34oa', frequenciesKhz: [14103] })] },
+    ])[0];
+    expect(station.channels[0].bandwidthHz).toBeUndefined();
+    expect(stationMatchesFilters(station, HF_DEFAULT, ALL_MODES, new Set<BandwidthClass>(['500']))).toBe(true);
+    expect(stationMatchesFilters(station, HF_DEFAULT, ALL_MODES, new Set<BandwidthClass>(['2750']))).toBe(true);
+    // Even a wholly empty bandwidth selection (every chip off) does not
+    // exclude a channel the chips have no known classification for.
+    expect(stationMatchesFilters(station, HF_DEFAULT, ALL_MODES, new Set<BandwidthClass>())).toBe(true);
+  });
+
+  it('keeps the station if ANY channel passes (one known-mismatched, one null-bandwidth)', () => {
+    const station = aggregateStations([
+      { mode: 'vara-hf', title: null, parsedOk: true, raw: '', fetchedAtMs: 1,
+        gateways: [gw({
+          callsign: 'N0DAJ', grid: 'DM34oa',
+          channelDetails: [detail({ frequencyKhz: 14103, mode: 'vara-hf', bandwidthHz: 500 })],
+        })] },
+      { mode: 'ardop-hf', title: null, parsedOk: true, raw: '', fetchedAtMs: 1,
+        // No channelDetails on this gateway → falls back to frequenciesKhz, so
+        // this channel's bandwidthHz is unset (null-equivalent).
+        gateways: [gw({ callsign: 'N0DAJ', grid: 'DM34oa', frequenciesKhz: [7103] })] },
+    ])[0];
+    const narrowOnly = new Set<BandwidthClass>(['2300', '2750']);
+    // The 500 Hz VARA channel fails; the null-bandwidth ARDOP channel passes,
+    // and its band+mode also match, so the station stays visible.
+    expect(stationMatchesFilters(station, HF_DEFAULT, ALL_MODES, narrowOnly)).toBe(true);
+  });
+
+  it('excludes a station entirely once its only channel is a known, non-matching bandwidth', () => {
+    const station = aggregateStations([
+      { mode: 'vara-hf', title: null, parsedOk: true, raw: '', fetchedAtMs: 1,
+        gateways: [gw({
+          callsign: 'K7UAZ', grid: 'DM43aa',
+          channelDetails: [detail({ frequencyKhz: 14103, mode: 'vara-hf', bandwidthHz: 2300 })],
+        })] },
+    ])[0];
+    expect(stationMatchesFilters(station, HF_DEFAULT, ALL_MODES, new Set<BandwidthClass>(['500']))).toBe(false);
+  });
+});
+
+describe('aggregateStations: channelDetails preferred over frequenciesKhz (Task 8 wire shape, Task 9 consumer)', () => {
+  it('sources channels from channelDetails when present, one Channel per detail, carrying bandwidthHz + per-channel mode', () => {
+    const s = aggregateStations([
+      { mode: 'vara-hf', title: null, parsedOk: true, raw: '', fetchedAtMs: 1,
+        gateways: [gw({
+          callsign: 'N0DAJ', grid: 'DM34oa',
+          // frequenciesKhz present too; channelDetails must win, not merge.
+          frequenciesKhz: [99999],
+          channelDetails: [
+            detail({ frequencyKhz: 7103, mode: 'vara-hf', bandwidthHz: 2300, grid: 'DM34oa' }),
+            detail({ frequencyKhz: 14103, mode: 'vara-hf', bandwidthHz: 500 }),
+          ],
+        })] },
+    ])[0];
+    expect(s.channels).toHaveLength(2);
+    expect(s.channels.some((c) => c.frequencyKhz === 99999)).toBe(false);
+    const narrow = s.channels.find((c) => c.frequencyKhz === 7103);
+    expect(narrow?.bandwidthHz).toBe(2300);
+    expect(narrow?.mode).toBe('vara-hf');
+    expect(narrow?.band).toBe('40m');
+    const wide = s.channels.find((c) => c.frequencyKhz === 14103);
+    expect(wide?.bandwidthHz).toBe(500);
+  });
+
+  it('falls back to frequenciesKhz expansion when a gateway carries no channelDetails', () => {
+    const s = aggregateStations([
+      { mode: 'ardop-hf', title: null, parsedOk: true, raw: '', fetchedAtMs: 1,
+        gateways: [gw({ callsign: 'N0DAJ', grid: 'DM34oa', frequenciesKhz: [7103, 14103] })] },
+    ])[0];
+    expect(s.channels).toHaveLength(2);
+    expect(s.channels.every((c) => c.mode === 'ardop-hf')).toBe(true);
+    expect(s.channels.every((c) => c.bandwidthHz === undefined)).toBe(true);
+  });
+
+  it('falls back to frequenciesKhz expansion when channelDetails is an empty array', () => {
+    const s = aggregateStations([
+      { mode: 'ardop-hf', title: null, parsedOk: true, raw: '', fetchedAtMs: 1,
+        gateways: [gw({ callsign: 'N0DAJ', grid: 'DM34oa', frequenciesKhz: [7103], channelDetails: [] })] },
+    ])[0];
+    expect(s.channels).toHaveLength(1);
+    expect(s.channels[0].frequencyKhz).toBe(7103);
+  });
+
+  it('a VARA FM synthesized listing (frequenciesKhz empty, only channelDetails) still aggregates', () => {
+    const s = aggregateStations([
+      { mode: 'vara-fm', title: 'synth', parsedOk: true, raw: '', fetchedAtMs: 1,
+        gateways: [gw({
+          callsign: '4F1PUZ-10', grid: 'DM34oa', frequenciesKhz: [],
+          channelDetails: [detail({ frequencyKhz: 145710, mode: 'vara-fm', bandwidthHz: null })],
+        })] },
+    ])[0];
+    expect(s.channels).toHaveLength(1);
+    expect(s.channels[0].mode).toBe('vara-fm');
+    expect(s.modes).toContain('vara-fm');
   });
 });
 

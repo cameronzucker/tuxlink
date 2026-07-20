@@ -7,6 +7,7 @@ import { stationKey } from './useReachabilityMap';
 import type { ReachTier } from './reachability';
 import type { Station } from './stationModel';
 import type { DecodeDto, SlotRecord } from '../ft8ui/ft8Types';
+import type { BandwidthClass } from './stationTypes';
 
 // Leaflet re-expression: each station is an L.circleMarker rendered on an explicit
 // SVG renderer. These tests run the REAL Leaflet map in jsdom (no engine mock) and
@@ -624,6 +625,79 @@ describe('StationFinderMap evidence filter (Task 7)', () => {
     expect(screen.queryByTestId('map-evidence-note')).toBeNull();
     // No ghosting either: the default pin style applies.
     expect(markerAtGrid('DM34oa')!.options.fillOpacity).toBe(1);
+  });
+});
+
+describe('StationFinderMap bandwidth filter mirror (Task 9, one shared state)', () => {
+  it('renders three bandwidth checkboxes in the layer box when bandwidthMirror is supplied', async () => {
+    await renderMap(
+      <StationFinderMap
+        stations={stations}
+        operatorGrid=""
+        tiers={new Map()}
+        selectedKey={null}
+        onSelect={() => {}}
+        bandwidthMirror={{ enabled: new Set<BandwidthClass>(['500', '2300', '2750']), onToggle: vi.fn() }}
+      />,
+    );
+    const control = screen.getByTestId('map-layer-control');
+    const cb500 = screen.getByTestId('map-bw-500');
+    const cb2300 = screen.getByTestId('map-bw-2300');
+    const cb2750 = screen.getByTestId('map-bw-2750');
+    expect(control).toContainElement(cb500);
+    expect(control).toContainElement(cb2300);
+    expect(control).toContainElement(cb2750);
+    expect(cb500).toHaveAttribute('type', 'checkbox');
+    expect((cb500 as HTMLInputElement).checked).toBe(true);
+    expect((cb2300 as HTMLInputElement).checked).toBe(true);
+    expect((cb2750 as HTMLInputElement).checked).toBe(true);
+  });
+
+  it('reflects a partial enabled set as unchecked for the disabled classes', async () => {
+    await renderMap(
+      <StationFinderMap
+        stations={stations}
+        operatorGrid=""
+        tiers={new Map()}
+        selectedKey={null}
+        onSelect={() => {}}
+        bandwidthMirror={{ enabled: new Set<BandwidthClass>(['2300']), onToggle: vi.fn() }}
+      />,
+    );
+    expect((screen.getByTestId('map-bw-500') as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByTestId('map-bw-2300') as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByTestId('map-bw-2750') as HTMLInputElement).checked).toBe(false);
+  });
+
+  it('toggling a mirrored checkbox fires the SAME shared handler passed via bandwidthMirror.onToggle', async () => {
+    const onToggle = vi.fn();
+    await renderMap(
+      <StationFinderMap
+        stations={stations}
+        operatorGrid=""
+        tiers={new Map()}
+        selectedKey={null}
+        onSelect={() => {}}
+        bandwidthMirror={{ enabled: new Set<BandwidthClass>(['500', '2300', '2750']), onToggle }}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('map-bw-500'));
+    expect(onToggle).toHaveBeenCalledWith('500');
+    fireEvent.click(screen.getByTestId('map-bw-2300'));
+    expect(onToggle).toHaveBeenCalledWith('2300');
+    fireEvent.click(screen.getByTestId('map-bw-2750'));
+    expect(onToggle).toHaveBeenCalledWith('2750');
+    // ONE handler backs all three checkboxes, not one callback per checkbox.
+    expect(onToggle).toHaveBeenCalledTimes(3);
+  });
+
+  it('omitting bandwidthMirror renders no bandwidth checkboxes (backward compatible)', async () => {
+    await renderMap(
+      <StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
+    );
+    expect(screen.queryByTestId('map-bw-500')).toBeNull();
+    expect(screen.queryByTestId('map-bw-2300')).toBeNull();
+    expect(screen.queryByTestId('map-bw-2750')).toBeNull();
   });
 });
 

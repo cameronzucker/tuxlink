@@ -5,7 +5,55 @@
 
 import { asUiError } from '../mailbox/types';
 
-export type ListingMode = 'vara-hf' | 'packet' | 'ardop-hf' | 'pactor' | 'robust-packet';
+// tuxlink-nkzng (Task 8, Rust) added the channels JSON API and the VARA FM mode
+// it is sourced from. VARA FM has no text `/listings/` endpoint (see the Rust
+// `ListingMode::ALL` doc comment) so it is deliberately NOT added to
+// `LISTING_MODES` below (that list mirrors the confirmed text-endpoint set);
+// it is fetched by name and synthesized server-side instead.
+export type ListingMode = 'vara-hf' | 'packet' | 'ardop-hf' | 'pactor' | 'robust-packet' | 'vara-fm';
+
+/// Occupied-bandwidth classes the bandwidth filter chips offer (Task 9). Mirrors
+/// the fixed HF bandwidths VARA/ARDOP channels report on the wire (VARA:
+/// 500/2300/2750 Hz; ARDOP additionally reports 1000/2000 Hz, which have no chip
+/// and are therefore treated the same as an unclassified/unknown bandwidth by
+/// `bandwidthClass` below; see `stationMatchesFilters` in stationModel.ts for
+/// the load-bearing "unknown passes every filter" rule).
+export type BandwidthClass = '500' | '2300' | '2750';
+
+export const BANDWIDTH_CLASSES: BandwidthClass[] = ['500', '2300', '2750'];
+
+/** Classify a channel's occupied bandwidth (Hz) into one of the three filter
+ *  chip classes, or `null` when the value is missing OR does not match one of
+ *  the three known classes (e.g. ARDOP's 1000/2000 Hz). `null` is the signal
+ *  `stationMatchesFilters` uses to let the channel pass every bandwidth filter:
+ *  a chip can only SUBTRACT a channel whose bandwidth it can classify. */
+export function bandwidthClass(hz: number | null | undefined): BandwidthClass | null {
+  switch (hz) {
+    case 500:
+      return '500';
+    case 2300:
+      return '2300';
+    case 2750:
+      return '2750';
+    default:
+      return null;
+  }
+}
+
+/// One per-channel row from the Winlink gateway channels JSON API
+/// (tuxlink-nkzng, Task 8), joined onto a `Gateway` by callsign. Mirrors
+/// `src-tauri/src/catalog/stations.rs::ChannelDetail` (camelCase on the wire).
+export interface ChannelDetail {
+  /** DIAL frequency in kHz: the API reports dial Hz directly, divided by
+   *  1000; no audio-center offset math. */
+  frequencyKhz: number;
+  /** Occupied bandwidth in Hz when the mode implies a fixed one; null when it
+   *  doesn't (VARA FM, Packet, Pactor, Robust Packet) or wasn't reported. */
+  bandwidthHz: number | null;
+  mode: ListingMode;
+  operatingHours: string | null;
+  grid: string | null;
+}
 
 /// The gateway's self-reported "Antenna being used" code, parsed from the listing
 /// (legend: B = Beam, D = Dipole, V = Vertical). Mirrors the Rust `GatewayAntenna`
@@ -33,6 +81,11 @@ export interface Gateway {
   /// Self-reported antenna code (B/D/V), if the listing carried one. Drives the
   /// far-end antenna model in the HF predictor; null → isotrope (never a whip).
   antenna: GatewayAntenna | null;
+  /// Per-channel bandwidth/frequency rows from the channels JSON API
+  /// (tuxlink-nkzng, Task 8), joined by callsign. Omitted/empty for a gateway
+  /// not present in the channels feed; `aggregateStations` (Task 9) prefers
+  /// these over `frequenciesKhz` when present.
+  channelDetails?: ChannelDetail[];
 }
 
 export interface StationListing {

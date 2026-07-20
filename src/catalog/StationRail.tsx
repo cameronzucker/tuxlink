@@ -117,6 +117,10 @@ const MODE_LABEL: Record<string, string> = {
   packet: 'Packet',
   pactor: 'Pactor',
   'robust-packet': 'Robust Packet',
+  // Task 9 (tuxlink-nkzng): without this, a vara-fm mode group (now reachable
+  // via channelGrouping's MODE_ORDER) falls through to the `?? m` raw-enum
+  // fallback below and renders the literal string "vara-fm" in the rail.
+  'vara-fm': 'VARA FM',
 };
 
 /** Great-circle bearing from two grids (deg), for the distance-only fallback.
