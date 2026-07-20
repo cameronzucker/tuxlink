@@ -1219,31 +1219,3 @@
   white-space: nowrap;
 }
 
-/* QA round-3 finding 2: the setup surface is the panel's FULL BODY (approved
-   firstrun-v2 mock) — it replaces map+rail+strip outright, so it gets the
-   body's whole height budget instead of the old cramped
-   `max-height: min(52vh, 480px)` scroll box under the strip. The inner
-   scroll wrapper still guards genuinely-short windows (~700px contract):
-   the CTA row must never be clipped out of reach. */
-.station-finder__setupbody {
-  display: flex;
-  flex-direction: column;
-  /* Same height budget as the map+rail body it replaces (incl. LAYOUT-1's
-     short-window relaxation below) so the dialog doesn't jump size when
-     setup swaps in. */
-  min-height: 540px;
-  flex: 1;
-}
-@media (max-height: 760px) {
-  .station-finder__setupbody {
-    min-height: 300px;
-  }
-}
-.station-finder__setupbody-scroll {
-  overflow-y: auto;
-  min-height: 0;
-  flex: 1;
-}
-.station-finder__setup-back {
-  margin-left: auto;
-}

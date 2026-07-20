@@ -1,7 +1,7 @@
 // src/ft8ui/Ft8StripSetup.tsx
 //
 // Compact in-strip FT-8 setup: one dropdown + live meter + Start, replacing
-// the row-per-device full-panel Ft8SetupSurface with an OS-convention single
+// the row-per-device full-panel setup surface with an OS-convention single
 // <select>. Task 1 of the Station Intelligence operational-usability series
 // (mounted in place of the full-panel takeover by Task 2; the old surface is
 // deleted by Task 3).
@@ -12,10 +12,9 @@
 // keeps working.
 //
 // RigControlSection mechanics (import path, ref/commitNow(), the Test CAT
-// button + ft8_cat_probe) are mirrored exactly from Ft8SetupSurface.tsx's
-// Step 2 (see its file-header comment): that surface is the authoritative
-// source for how the shared rig-control component is wired, not a fresh
-// invention here.
+// button + ft8_cat_probe) are mirrored exactly from the old full-panel
+// surface's Step 2: that surface was the authoritative source for how the
+// shared rig-control component is wired, not a fresh invention here.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
@@ -45,8 +44,8 @@ function cmdErrorMessage(e: unknown): string {
   return 'Something went wrong, try again.';
 }
 
-/** Test-CAT failure copy, keyed on `Ft8CmdError.kind`, mirrors
- *  Ft8SetupSurface's `catProbeErrorCopy`. `ft8_cat_probe`'s real kinds:
+/** Test-CAT failure copy, keyed on `Ft8CmdError.kind`, mirrors the old
+ *  full-panel surface's `catProbeErrorCopy`. `ft8_cat_probe`'s real kinds:
  *  modem-busy | rig-not-configured | probe-timeout | internal-error. */
 function catProbeErrorCopy(e: Ft8CmdError): string {
   switch (e.kind) {
@@ -61,7 +60,7 @@ function catProbeErrorCopy(e: Ft8CmdError): string {
   }
 }
 
-/** `14.074000 MHz`: mirrors Ft8SetupSurface's `formatDialMHz`. */
+/** `14.074000 MHz`: mirrors the old full-panel surface's `formatDialMHz`. */
 function formatDialMHz(dialHz: number): string {
   return `${(dialHz / 1_000_000).toFixed(6)} MHz`;
 }
@@ -167,8 +166,8 @@ export function Ft8StripSetup({ snapshot, onStarted, onRetry }: Ft8StripSetupPro
     }
   }, [onStarted]);
 
-  // ---- Rig control (CAT) · Test CAT, mirrors Ft8SetupSurface's Step 2
-  // edit-flush contract exactly: commitNow() (forwarded ref) flushes any
+  // ---- Rig control (CAT) · Test CAT, mirrors the old full-panel surface's
+  // Step 2 edit-flush contract exactly: commitNow() (forwarded ref) flushes any
   // just-typed-but-unblurred CAT field BEFORE ft8_cat_probe reads
   // Config.rig, so a value the operator just typed never false-fails. -----
   const rigControlRef = useRef<RigControlSectionHandle>(null);

@@ -1,9 +1,10 @@
 // src/ft8ui/useDeviceMeterPoll.ts
 //
-// Extracted from Ft8SetupSurface.tsx (Task C9a/C9b) so the compact in-strip
-// setup form (Ft8StripSetup, Task 1 of the Station Intelligence usability
-// series) can share the same live-meter polling primitive without importing
-// the full-panel surface. Logic is verbatim from the original inline hook:
+// Extracted from the original full-panel setup surface (Task C9a/C9b, since
+// deleted per Task 3) so the compact in-strip setup form (Ft8StripSetup, Task
+// 1 of the Station Intelligence usability series) can share the same
+// live-meter polling primitive without importing the full-panel surface.
+// Logic is verbatim from the original inline hook:
 // same METER_POLL_MS, same enabled-dependency resume contract, same
 // stopAndAwait race-safety handover.
 //

@@ -2,7 +2,7 @@
  *
  * Compact in-strip FT-8 setup form (Task 1, Station Intelligence
  * operational-usability series). `.ft8ss__` namespace, additive-only: does
- * not touch `.ft8-setup__` (owned by the full-panel Ft8SetupSurface, deleted
+ * not touch `.ft8-setup__` (owned by the full-panel setup surface, deleted
  * by Task 3 of this series) or the `station-finder__` namespace.
  */
 

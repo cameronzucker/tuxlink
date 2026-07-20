@@ -12,9 +12,9 @@ import { StationFinderPanel } from './StationFinderPanel';
 import { Ft8ListenerProvider } from '../ft8ui/useFt8Listener';
 import { HintProvider } from '../onboarding/HintProvider';
 
-// Phase D1: the panel now hosts the live FT-8 surfaces (LiveBandStrip +
-// Ft8SetupSurface) and reads the listener via context, so it must render inside
-// Ft8ListenerProvider — useFt8Listener throws otherwise. The provider's own
+// Phase D1: the panel now hosts the live FT-8 surface (LiveBandStrip) and reads
+// the listener via context, so it must render inside Ft8ListenerProvider —
+// useFt8Listener throws otherwise. The provider's own
 // snapshot fetch + event listeners degrade silently under the invoke mock (it
 // catches), so these station-focused cases are unaffected by it.
 //

@@ -59,13 +59,14 @@ import { Sparkline } from '../../src/radio/charts/Sparkline';
 // FT-8 Station Intelligence D2 (tuxlink-b026z.4): mount LiveBandStrip per
 // uiState with realistic fixtures — one PNG per state via snapshot.py. The
 // strip is props-driven, so every state is drivable without a backend; the
-// needs-setup/device-lost arms mount the real Ft8SetupSurface in the slot
-// (its device list/meter/rig reads come from the canned shim below).
+// needs-setup/device-lost arms render the in-strip Ft8StripSetup form
+// directly inside the strip body (Task 3 deleted the old standalone
+// full-panel surface — its device list/meter/rig reads come from the canned
+// shim below, unchanged).
 //   ?view=ft8&state=off|transitional|needs-setup|device-lost|wedged|yielded|
 //                    waiting-first-slot|band-dead|decoding
 //   &flags=clock|jt9    (overlay variants on any live state)
 import { LiveBandStrip } from '../../src/ft8ui/LiveBandStrip';
-import { Ft8SetupSurface } from '../../src/ft8ui/Ft8SetupSurface';
 import { Ft8ListenerProvider } from '../../src/ft8ui/useFt8Listener';
 import { StationFinderPanel } from '../../src/catalog/StationFinderPanel';
 // Routines operator UI (tuxlink-3awm9): the post-PR-#1118 WebKitGTK smoke.
@@ -596,7 +597,9 @@ function ft8StateFixture(state: Ft8UiState, flags: Ft8Flags): { snapshot: Ft8Sna
 // view=finder — the WHOLE StationFinderPanel (QA round-3 render gate). Drives
 // the real panel + Ft8ListenerProvider against canned mount-time reads:
 //   ?view=finder                 → map+rail+strip, listener decoding (F5/F7/F8)
-//   ?view=finder&state=setup     → needs-setup → FULL-BODY setup surface (F2)
+//   ?view=finder&state=setup     → needs-setup → map+rail+strip stay mounted,
+//                                   the in-strip Ft8StripSetup form renders
+//                                   inside the strip body (Task 3)
 //   ?view=finder&state=<Ft8UiState> → any other listener state
 // The ft8 ring is anchored at the REAL Date.now() (unlike the strip fixtures'
 // fixed FT8_NOW_MS) so live decodes/min figures — the strip stats and the
@@ -1495,23 +1498,18 @@ function Ft8StripFixtureView() {
   const snapWithFlags = snapshot
     ? { ...snapshot, flags, lastFailure: flags.jt9Degraded ? 'jt9 exited 137 (SIGKILL) — decode timeout' : snapshot.lastFailure }
     : null;
-  // QA round-3 finding 2: the strip no longer nests Ft8SetupSurface — the
-  // full surface renders standalone below the strip here so the D2 per-state
-  // fixtures still cover BOTH the strip arm and the surface itself. In the
-  // product it is StationFinderPanel's full BODY (view=finder&state=setup).
-  const setupStandalone =
-    (state === 'needs-setup' || state === 'device-lost') && snapWithFlags ? (
-      <Ft8SetupSurface snapshot={snapWithFlags} onStarted={() => undefined} onRetry={() => undefined} />
-    ) : null;
+  // Task 3: the standalone full-panel setup surface is deleted — needs-setup
+  // and device-lost now render the compact Ft8StripSetup form INSIDE the
+  // strip's own body (LiveBandStrip's NonLiveBody), so there is nothing left
+  // to mount separately here; the strip alone covers every D2 fixture state.
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: 'var(--bg)' }}>
-      {setupStandalone}
       <LiveBandStrip
         snapshot={snapWithFlags}
         uiState={{ state, flags }}
         decodesRing={ring}
         blockingSessionMode={params.get('blocking') ?? undefined}
-        onOpenFullSetup={() => undefined}
+        onRehydrate={() => undefined}
         nowMs={FT8_NOW_MS}
       />
     </div>

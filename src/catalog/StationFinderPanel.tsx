@@ -24,12 +24,11 @@ import { StationFinderMap } from './StationFinderMap';
 import { StationRail } from './StationRail';
 import { AntennaControl } from './AntennaControl';
 // Phase D1 — the FT-8 integration seam. Phase C built every one of these and
-// mounted NONE of them: LiveBandStrip had zero call sites, Ft8SetupSurface had
-// zero, and the listener's decodesRing/bandActivity reached no consumer, so the
-// whole Station-Intelligence feature was inert. This is where they become real.
+// mounted NONE of them: LiveBandStrip had zero call sites, and the listener's
+// decodesRing/bandActivity reached no consumer, so the whole Station-Intelligence
+// feature was inert. This is where they become real.
 import { useFt8Listener } from '../ft8ui/useFt8Listener';
 import { LiveBandStrip } from '../ft8ui/LiveBandStrip';
-import { Ft8SetupSurface } from '../ft8ui/Ft8SetupSurface';
 import { useStatusData } from '../shell/useStatus';
 import {
   readPropagationPrefs,
@@ -195,26 +194,6 @@ export function StationFinderPanel({
   // position", so every consumer references ONE grid.
   const { grid: liveGrid } = useStatusData();
   const operatorGrid = (liveGrid ?? '').trim() || grid;
-
-  // `device-lost`'s "pick another input" link (spec §States row 6b) must open the
-  // full setup surface, or it is a dead link. Forced open until the operator
-  // completes a handover (onStarted) — then we re-read and fall back to whatever
-  // the snapshot now says.
-  const [forceSetup, setForceSetup] = useState(false);
-
-  // QA round-3 finding 2: setup renders as the panel's FULL BODY (replacing
-  // map+rail), per the approved firstrun-v2 mock — never a cramped scroll box
-  // under the strip. `needs-setup` promotes automatically; `setupDismissed`
-  // is the back-out (needs-setup can be caused by non-in-place blockers like
-  // a missing jt9 binary, and the GATEWAY finder must stay reachable then).
-  // A dismissal is scoped to ONE needs-setup episode — reset when the state
-  // moves on, so the next episode re-promotes.
-  const [setupDismissed, setSetupDismissed] = useState(false);
-  const needsSetup = ft8.uiState.state === 'needs-setup';
-  useEffect(() => {
-    if (!needsSetup) setSetupDismissed(false);
-  }, [needsSetup]);
-  const setupActive = ft8.snapshot != null && (forceSetup || (needsSetup && !setupDismissed));
 
   // D1: Live-decodes tab row click → pan the map to that station's grid. A FRESH
   // object per click (identity drives PanTo's effect) so re-clicking the same
@@ -502,42 +481,6 @@ export function StationFinderPanel({
           <AntennaControl prefs={prefs} onChange={handlePrefsChange} error={prefsError} />
         )}
 
-        {setupActive && ft8.snapshot ? (
-          /* Finding 2: setup IS the body (firstrun-v2 mock) — the strip-header
-             row above it carries the state chip + the way back; map+rail and
-             the live strip do not render underneath (they return the moment
-             setup completes via onStarted, or on back-out). */
-          <div className="station-finder__setupbody" data-testid="station-finder-setup-body">
-            <div className="si-strip__hdr">
-              <span className="si-dot si-dot--amber" aria-hidden="true" />
-              <span className="si-strip__title">Live band · FT-8</span>
-              {needsSetup && <span className="si-prov si-prov--warn">NEEDS SETUP</span>}
-              <button
-                type="button"
-                className="station-finder__refresh station-finder__setup-back"
-                data-testid="station-finder-setup-back"
-                onClick={() => {
-                  setForceSetup(false);
-                  setSetupDismissed(true);
-                }}
-              >
-                ← back to finder
-              </button>
-            </div>
-            <div className="station-finder__setupbody-scroll">
-              <Ft8SetupSurface
-                snapshot={ft8.snapshot}
-                onStarted={() => {
-                  setForceSetup(false);
-                  setSetupDismissed(false);
-                  ft8.rehydrate();
-                }}
-                onRetry={ft8.rehydrate}
-              />
-            </div>
-          </div>
-        ) : (
-        <>
         <div className="station-finder__body">
           <StationFinderMap
             stations={visible}
@@ -577,11 +520,11 @@ export function StationFinderPanel({
             beneath it, Waterfall + DecodeFeed + BandSubsetPopover) with zero call
             sites, so none of it existed for the operator. The strip hosts the
             live band: waterfall, decode feed, stats, provenance chips, and the
-            band-subset popover. Task 2: setup now lives IN the strip (the
-            compact Ft8StripSetup form), so there is no more full-setup surface
-            to re-open from here: onRehydrate wires the strip's in-place
-            Start/Retry actions to the same forced re-read `ft8.rehydrate`
-            already gives the panel body above. */}
+            band-subset popover. Task 3: the strip now mounts UNCONDITIONALLY
+            alongside the map + rail above — the full-panel setup takeover that
+            used to replace this whole body is gone. Setup lives IN the strip
+            (the compact Ft8StripSetup form, Task 2), so onRehydrate wires the
+            strip's in-place Start/Retry actions to a forced re-read. */}
         <LiveBandStrip
           snapshot={ft8.snapshot}
           uiState={ft8.uiState}
@@ -590,8 +533,6 @@ export function StationFinderPanel({
           blockingSessionMode={blockingSessionMode}
           onRehydrate={ft8.rehydrate}
         />
-        </>
-        )}
       </div>
     </div>
   );
