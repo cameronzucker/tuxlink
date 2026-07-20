@@ -44,4 +44,17 @@ with one sentence of justification tied to the findings themselves.
 
 ## Entries
 
-_None yet. The protocol starts with the next adversarial review._
+### 2026-07-19 — rt4ey definition_template (PR #1185) — SHADOW BLOCKED
+
+- 5.5 transcript: dev/adversarial/2026-07-19-rt4ey-template-codex.md (1 accepted
+  P2: mock closed-set consistency)
+- 5.6 transcript: dev/adversarial/2026-07-19-rt4ey-template-codex-gpt56.md —
+  **round did not run.** Codex CLI 0.140.0 with `-c model="gpt-5.6"` was
+  rejected server-side: `The 'gpt-5.6' model is not supported when using Codex
+  with a ChatGPT account` (HTTP 400, twice). The project's Codex auth is
+  ChatGPT-mode (`~/.codex/auth.json`); GPT-5.6 evidently requires API-key auth
+  or a different plan. Also noted: CLI warned `Model metadata for 'gpt-5.6'
+  not found` before the rejection.
+- Blocker owner: operator — access decision needed (OpenAI API-key auth for
+  Codex, an OpenRouter-provider Codex config, or defer shadow rounds until
+  access exists). Protocol stands; pairs accrue once 5.6 is reachable.
