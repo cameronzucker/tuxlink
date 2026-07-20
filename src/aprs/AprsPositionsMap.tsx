@@ -72,6 +72,13 @@ export interface AprsPositionsMapProps {
   envStations?: EnvStation[];
   /// Click a WX badge → focus that station's Station Data card (ni5b).
   onFocusStation?: (call: string) => void;
+  /// tuxlink-w68mb: pop the Tac Map out to its own window. Renders the
+  /// text-labeled "↗ Pop out" chip in the map's top-right control cluster
+  /// (recenter + zoom) — the pop-out lives ON the surface it pops, like every
+  /// other dockable surface (spec §5 amendment; it previously lived in the
+  /// dock header, whose width budget it broke). Only the INLINE caller
+  /// (AppShell) passes this; the popped-window host omits it (no self-pop).
+  onPopOut?: () => void;
 }
 
 /// First-run / recenter zoom on the operator. APRS is local VHF → a LOCAL-area
@@ -604,7 +611,7 @@ function WinlinkGatewayPopup({ gateway, onClose }: { gateway: string; onClose: (
   );
 }
 
-export function AprsPositionsMap({ positions, operatorGrid, envStations, onFocusStation }: AprsPositionsMapProps) {
+export function AprsPositionsMap({ positions, operatorGrid, envStations, onFocusStation, onPopOut }: AprsPositionsMapProps) {
   const me = operatorGrid ? gridToLatLon(operatorGrid) : null;
   // tuxlink-dwzu: remember + restore the operator's last viewport. First run (no
   // saved view) centers on the operator at the local zoom — never the mid-Atlantic
@@ -677,6 +684,22 @@ export function AprsPositionsMap({ positions, operatorGrid, envStations, onFocus
 
   return (
     <div className="aprs-positions-map" data-testid="aprs-positions-map">
+      {/* tuxlink-w68mb: ↗ Pop out joins the map's own top-right control
+          cluster (left of recenter ⌖ at right:48 and zoom at right:10) —
+          text-labeled per the spec §1 visual-pathway rule. Rendered only for
+          the inline caller; the popped-window host omits onPopOut. */}
+      {onPopOut && (
+        <button
+          type="button"
+          className="aprs-map-popout"
+          data-testid="aprs-map-popout"
+          title="Open the Tac Map in its own window"
+          onClick={onPopOut}
+        >
+          <span className="aprs-map-popout-glyph" aria-hidden="true">↗</span>
+          Pop out
+        </button>
+      )}
       <AprsLayersPanel
         enabled={filter.enabled}
         counts={counts}

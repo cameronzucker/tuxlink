@@ -13,13 +13,16 @@
 // so the map can ride along with either. It carries its own on/off state
 // (aria-pressed), distinct from the mutually-exclusive chat⇄modem tabs.
 //
-// Tac Map pop-out (tuxlink-dmwte task 9, spec §5): the same header slot grows a
-// ↗ pop-out affordance next to the Map toggle. Once popped, the whole slot
-// SWAPS to a "Tac Map ↗ — in window" pathway (focuses the popped window) plus
-// an adjacent "⇤ dock back" action — mirroring how the Routines pathway
-// replaces its own affordance while popped (Global Constraints rule: a popped
-// surface's docked-side control always resolves to focus-or-dock-back, never
-// a dead toggle).
+// Tac Map pop-out (tuxlink-dmwte task 9 → tuxlink-w68mb): the ↗ pop-out
+// affordance lives ON the map surface (AprsPositionsMap header controls),
+// like every other surface's pop-out — NOT in this row. This row stays a
+// SINGLE row at the dock's width budget (tuxlink-w68mb: the ~85px text
+// "Pop out" button was exactly what overflowed the 400px column and forced
+// mxqjp's permanent two-row surface bar — restyled jank, operator-rejected).
+// Once popped, the Map slot SWAPS to a compact "Map ↗" pathway (focuses the
+// popped window, text-labeled per the spec §1 visual-pathway rule) plus an
+// adjacent ⇤ dock-back glyph (R5-F12 mid-session recovery; the pathway chip
+// carries the slot's text label — spec §5 amendment, tuxlink-w68mb).
 
 import './AprsDockTabs.css';
 
@@ -51,10 +54,6 @@ export interface AprsDockTabsProps {
   /// rendering swaps from the Map toggle + pop-out button to the "in window"
   /// focus pathway + dock-back action below.
   mapPopped?: boolean;
-  /// Pop the Tac Map out to its own window (spec §5, behavior 1). Renders a ↗
-  /// button beside the Map toggle when provided and `mapPopped` is false;
-  /// absent ⇒ no pop-out affordance.
-  onPopOutMap?: () => void;
   /// Focus the already-popped Tac Map window — the "Tac Map ↗ — in window"
   /// control's click target while `mapPopped` is true.
   onFocusMap?: () => void;
@@ -74,95 +73,60 @@ export function AprsDockTabs({
   mapOpen,
   onToggleMap,
   mapPopped,
-  onPopOutMap,
   onFocusMap,
   onDockBackMap,
 }: AprsDockTabsProps) {
-  // tuxlink-mxqjp: the map companion controls and the tab strip used to share
-  // one flex-wrap row; at the dock's ~400px floor the wrap point was arbitrary
-  // and Map/Pop out rendered as an orphaned tab-shaped row above the real tabs
-  // (R2 operator report 2026-07-20). When map controls exist the split is now
-  // INTENTIONAL: a surface bar (map pathway + × close) above a clean tab row.
-  // Callers without map controls keep the original single row.
-  const hasSurfaceBar = Boolean(mapPopped || onToggleMap);
-  const closeButton = (
-    <button
-      type="button"
-      className="aprs-dock-close"
-      data-testid="aprs-dock-close"
-      aria-label="Close APRS chat"
-      title="Close APRS chat"
-      onClick={onClose}
-    >
-      ×
-    </button>
-  );
+  // tuxlink-w68mb (supersedes mxqjp's surface bar): ONE row, always. The map
+  // slot is left-pinned (operator decision 2026-06-15) and renders either the
+  // ⊞ Map companion toggle (docked) or the compact popped pathway — "Map ↗"
+  // (text-labeled, focuses the window) + a ⇤ dock-back glyph (R5-F12
+  // recovery; accessible-named, the pathway chip carries the slot's text
+  // label). The ↗ Pop out entry point lives on the map surface itself
+  // (AprsPositionsMap), so nothing here exceeds the dock column's 400px
+  // budget and no second row exists in any state.
   return (
-    <div className={`aprs-dock-tabs ${hasSurfaceBar ? 'aprs-dock-tabs--rows' : ''}`} data-testid="aprs-dock-tabs">
-      {hasSurfaceBar && (
-        <div className="aprs-dock-surfacebar" data-testid="aprs-dock-surfacebar">
-          {mapPopped ? (
-            <div className="aprs-dock-map-popped" data-testid="aprs-map-popped-controls">
-              <button
-                type="button"
-                className="aprs-dock-map-focus"
-                data-testid="aprs-map-focus"
-                title="Focus the Tac Map window"
-                onClick={onFocusMap}
-              >
-                Tac Map ↗ — in window
-              </button>
-              <button
-                type="button"
-                className="aprs-dock-map-dockback"
-                data-testid="aprs-map-dockback"
-                aria-label="Dock the Tac Map back inline"
-                title="Dock the Tac Map back inline"
-                onClick={onDockBackMap}
-              >
-                ⇤ dock back
-              </button>
-            </div>
-          ) : (
-            onToggleMap && (
-              <>
-                <button
-                  type="button"
-                  className={`aprs-dock-maptoggle ${mapOpen ? 'is-active' : ''}`}
-                  data-testid="aprs-map-toggle"
-                  aria-pressed={Boolean(mapOpen)}
-                  title={
-                    mapOpen
-                      ? 'Hide the heard-positions map'
-                      : 'Show heard stations on a map beside the chat or modem'
-                  }
-                  onClick={onToggleMap}
-                >
-                  <span className="aprs-dock-map-glyph" aria-hidden="true">⊞</span>
-                  Map
-                </button>
-                {onPopOutMap && (
-                  <button
-                    type="button"
-                    className="aprs-dock-map-popout"
-                    data-testid="aprs-map-popout"
-                    title="Open the Tac Map in its own window"
-                    onClick={onPopOutMap}
-                  >
-                    {/* Text-labeled, never icon-only (spec §1 visual-pathway rule +
-                        §5 text-labeled requirement); mirrors the map focus /
-                        dock-back pathway controls. */}
-                    <span className="aprs-dock-map-popout-glyph" aria-hidden="true">↗</span>
-                    Pop out
-                  </button>
-                )}
-              </>
-            )
-          )}
-          {closeButton}
+    <div className="aprs-dock-tabs" data-testid="aprs-dock-tabs">
+      {mapPopped ? (
+        <div className="aprs-dock-map-popped" data-testid="aprs-map-popped-controls">
+          <button
+            type="button"
+            className="aprs-dock-map-focus"
+            data-testid="aprs-map-focus"
+            title="The Tac Map is in its own window — click to focus it"
+            onClick={onFocusMap}
+          >
+            Map ↗
+          </button>
+          <button
+            type="button"
+            className="aprs-dock-map-dockback"
+            data-testid="aprs-map-dockback"
+            aria-label="Dock the Tac Map back inline"
+            title="Dock the Tac Map back inline"
+            onClick={onDockBackMap}
+          >
+            ⇤
+          </button>
         </div>
+      ) : (
+        onToggleMap && (
+          <button
+            type="button"
+            className={`aprs-dock-maptoggle ${mapOpen ? 'is-active' : ''}`}
+            data-testid="aprs-map-toggle"
+            aria-pressed={Boolean(mapOpen)}
+            title={
+              mapOpen
+                ? 'Hide the heard-positions map'
+                : 'Show heard stations on a map beside the chat or modem'
+            }
+            onClick={onToggleMap}
+          >
+            <span className="aprs-dock-map-glyph" aria-hidden="true">⊞</span>
+            Map
+          </button>
+        )
       )}
-      <div className="aprs-dock-tabrow" data-testid="aprs-dock-tabrow">
       <div className="aprs-dock-tabgroup" role="tablist" aria-label="Dock view">
         <button
           type="button"
@@ -217,8 +181,16 @@ export function AprsDockTabs({
           <span className="aprs-dock-popout-glyph" aria-hidden="true">⤢</span>
         </button>
       )}
-      {!hasSurfaceBar && closeButton}
-      </div>
+      <button
+        type="button"
+        className="aprs-dock-close"
+        data-testid="aprs-dock-close"
+        aria-label="Close APRS chat"
+        title="Close APRS chat"
+        onClick={onClose}
+      >
+        ×
+      </button>
     </div>
   );
 }

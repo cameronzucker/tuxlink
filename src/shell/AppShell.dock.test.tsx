@@ -251,13 +251,19 @@ describe('AppShell dock wiring (task 8)', () => {
 
   // --- Task 9: Tac Map pop-out wiring + positions snapshot handshake -------
 
-  it('behavior 1: clicking ↗ in the map header controls pops the Tac Map out', async () => {
+  it("behavior 1 (AMD-3): ↗ Pop out lives on the MAP SURFACE — open the map, click its chip, the Tac Map pops out", async () => {
     renderShell();
     await screen.findByTestId('folder-sidebar');
     fireEvent.click(screen.getByTestId('dash-aprs-control'));
     await screen.findByTestId('aprs-chat-panel', {}, { timeout: 5000 });
 
-    fireEvent.click(screen.getByTestId('aprs-map-popout'));
+    // tuxlink-w68mb: the dock row carries NO pop-out; the entry point is the
+    // chip on the inline map surface (pop-out of what you are looking at).
+    expect(screen.queryByTestId('aprs-map-popout')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('aprs-map-toggle'));
+    const chip = await screen.findByTestId('aprs-map-popout', {}, { timeout: 5000 });
+    expect(chip).toHaveTextContent('Pop out');
+    fireEvent.click(chip);
     await waitFor(() =>
       expect(mockPopOut).toHaveBeenCalledWith('tac_map', { foreground: true, state: null }),
     );
@@ -270,11 +276,12 @@ describe('AppShell dock wiring (task 8)', () => {
     fireEvent.click(screen.getByTestId('dash-aprs-control'));
     await screen.findByTestId('aprs-chat-panel', {}, { timeout: 5000 });
 
-    // The Map toggle + pop-out are gone — replaced by the focus/dock-back pathway.
+    // The Map toggle is gone — replaced by the compact focus/dock-back
+    // pathway (spec §5 AMD-3: "Map ↗" text label + accessible-named ⇤ glyph).
     expect(screen.queryByTestId('aprs-map-toggle')).not.toBeInTheDocument();
     expect(screen.queryByTestId('aprs-map-popout')).not.toBeInTheDocument();
     const focus = screen.getByTestId('aprs-map-focus');
-    expect(focus).toHaveTextContent('Tac Map ↗ — in window');
+    expect(focus).toHaveTextContent('Map ↗');
     fireEvent.click(focus);
     await waitFor(() => expect(mockFocusSurface).toHaveBeenCalledWith('tac_map'));
 

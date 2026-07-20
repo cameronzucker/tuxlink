@@ -2444,6 +2444,23 @@ function AppShellInner() {
                     setFocusCall(call);
                     setFocusNonce((n) => n + 1);
                   }}
+                  // tuxlink-w68mb: ↗ Pop out lives on the map surface (spec §5
+                  // amendment) — pop-out of a surface you are looking at, like
+                  // Elmer and APRS chat. `usePersistedViewport` (not the
+                  // continuity token) carries the viewport; `state` stays null.
+                  onPopOut={() => {
+                    // Spec §5 AMD-2: ✕ / Ctrl+W / WM close is availability-only
+                    // and must never commandeer the reading pane. The
+                    // popped→docked arrival effect above only re-sets
+                    // `aprsMapOpen` on a `foreground: true` arrival (⇤), so
+                    // without clearing here the stuck-true flag would spring
+                    // the inline map back uninvited on a non-foreground close
+                    // (mirrors the `routinesPopped` guard's class above).
+                    setAprsMapOpen(false);
+                    void popOut('tac_map', { foreground: true, state: null }).catch((err) => {
+                      console.error('[dock] Tac Map pop-out failed:', err);
+                    });
+                  }}
                 />
               </Suspense>
             );
@@ -2604,31 +2621,12 @@ function AppShellInner() {
               }}
               mapOpen={aprsMapOpen}
               onToggleMap={() => setAprsMapOpen((o) => !o)}
-              // tuxlink-dmwte task 9 (spec §5, behavior 1): ↗ in the map
-              // header controls pops the Tac Map to its own window.
-              // `usePersistedViewport` (not the continuity token) is what
-              // carries the viewport across — the token's `state` stays null.
+              // tuxlink-w68mb: the ↗ pop-out entry point moved onto the map
+              // surface itself (see the inline AprsPositionsMap below) so the
+              // dock header stays a single row. While popped, the Map slot
+              // renders the compact "Map ↗" pathway + ⇤ dock-back (spec §5,
+              // behavior 2 / Global Constraints).
               mapPopped={tacMapPopped}
-              onPopOutMap={() => {
-                // Spec §5 AMD-2: ✕ / Ctrl+W / WM close is availability-only and
-                // must never commandeer the reading pane. The popped→docked
-                // arrival effect above only re-sets `aprsMapOpen` on a
-                // `foreground: true` arrival (the ⇤ dock-back path) — a
-                // non-foreground close leaves `aprsMapOpen` untouched. Without
-                // clearing it here, that flag stays stuck `true` while popped,
-                // so a non-foreground close snaps the render guard
-                // (`aprsOpen && aprsMapOpen && !tacMapPopped`) back to true the
-                // instant `tacMapPopped` flips false, and the inline map
-                // springs back into the reading pane uninvited (mirrors the
-                // `routinesPopped` guard's `setRoutinesView(null)` class above).
-                setAprsMapOpen(false);
-                void popOut('tac_map', { foreground: true, state: null }).catch((err) => {
-                  console.error('[dock] Tac Map pop-out failed:', err);
-                });
-              }}
-              // While popped, the toggle control instead renders the "Tac Map
-              // ↗ — in window" pathway (focuses the window) + an adjacent "⇤
-              // dock back" action (spec §5, behavior 2 / Global Constraints).
               onFocusMap={() => void focusSurface('tac_map')}
               onDockBackMap={() => {
                 void dockBack('tac_map', { foreground: true, state: null }).catch((err) => {

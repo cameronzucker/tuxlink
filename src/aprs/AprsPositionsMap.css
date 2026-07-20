@@ -246,3 +246,37 @@
   color: var(--text, #eaf3fb);
   border-color: var(--border, #2c3a47);
 }
+
+/* tuxlink-w68mb: ↗ Pop out — the map's own pop-out entry point, joining the
+   top-right control cluster: [↗ Pop out] [⌖ at right:48] [zoom at right:10].
+   Text-labeled (spec §1 visual-pathway rule); same dark map-control treatment
+   as the recenter control; 1100 clears Leaflet panes + control container. */
+.aprs-map-popout {
+  position: absolute;
+  top: 10px;
+  right: 86px;
+  z-index: 1100;
+  height: 29px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  background: #0e1a24f2;
+  border: 1px solid #2c4a63;
+  border-radius: 6px;
+  color: var(--text-faint, #94a3b8);
+  cursor: pointer;
+  box-shadow: 0 0 0 1px rgba(12, 22, 32, 0.8);
+}
+.aprs-map-popout:hover {
+  color: var(--text, #cbd5e1);
+  background: #14283af2;
+}
+.aprs-map-popout-glyph {
+  font-size: 13px;
+  line-height: 1;
+}

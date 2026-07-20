@@ -10,34 +10,13 @@
   background: var(--bg, #0b1015);
   border-bottom: 1px solid var(--border, #2a3140);
 }
-/* tuxlink-mxqjp (supersedes dmwte task 11's flex-wrap): the map companion
-   controls + tab group + close never all fit the dock's ~400px floor in one
-   row, and the old `flex-wrap` broke at an arbitrary point, rendering
-   Map/Pop out as an orphaned tab-shaped row above the real tabs (R2 operator
-   report 2026-07-20). When map controls are present the component now renders
-   two INTENTIONAL rows: `.aprs-dock-surfacebar` (map pathway + × close) above
-   `.aprs-dock-tabrow` (tabs + station-data pop-out). Every control keeps a
-   full-width row even in the widest popped state, so nothing wraps and
-   nothing is pushed off the edge. Callers without map controls keep the
-   single row (`--rows` absent). */
-.aprs-dock-tabs--rows {
-  flex-direction: column;
-}
-.aprs-dock-surfacebar {
-  display: flex;
-  align-items: stretch;
-  border-bottom: 1px solid var(--border, #2a3140);
-  /* Quieter than the tab row: the surface bar holds dock-level pathway
-     controls, not view tabs; a slightly recessed rail keeps the two rows
-     reading as hierarchy, not as two rows of tabs. */
-  background: var(--surface-3, #11171d);
-}
-.aprs-dock-tabrow {
-  display: flex;
-  align-items: stretch;
-  min-width: 0;
-}
-
+/* tuxlink-w68mb (supersedes mxqjp's two-row surface bar, operator-rejected as
+   restyled jank): ONE row in every state. The width math that forced the rows
+   was the ~85px text "Pop out" button — that entry point now lives on the map
+   surface (AprsPositionsMap), and the popped pathway is the compact "Map ↗"
+   chip + ⇤ glyph, so the row fits the dock column's 400px budget. Tab padding
+   is 11px (was 15px) to fund the popped chips at the same budget — density,
+   per the app's compact design language. */
 .aprs-dock-tabgroup {
   display: flex;
   align-items: stretch;
@@ -53,6 +32,8 @@
    the REAL production bundle on WebKitGTK (dev/scratch/webkit-tabs-flat.png). */
 .aprs-dock-tab,
 .aprs-dock-maptoggle,
+.aprs-dock-map-focus,
+.aprs-dock-map-dockback,
 .aprs-dock-popout,
 .aprs-dock-close {
   border-radius: 0;
@@ -61,7 +42,7 @@
 /* Exclusive chat⇄modem tabs — content-sized, hairline-separated, accent
    underline (inset shadow) + surface fill on the active tab. */
 .aprs-dock-tab {
-  padding: 8px 15px;
+  padding: 8px 11px;
   font: inherit;
   font-size: 12px;
   line-height: 1;
@@ -166,46 +147,18 @@
   line-height: 1;
 }
 
-/* Pop the Tac Map out to its own window (tuxlink-dmwte task 9) — a text-labeled
-   "↗ Pop out" control pinned right next to the Map toggle, same rail rhythm
-   (spec §1/§5: pathway affordances always carry their text label, never
-   icon-only). `white-space: nowrap` keeps the glyph + label on one line so the
-   control row can't crush the label onto two rows at the ~400px dock width. */
-.aprs-dock-map-popout {
-  flex: 0 0 auto;
-  padding: 8px 11px;
-  font: inherit;
-  font-size: 12px;
-  line-height: 1;
-  background: transparent;
-  border: none;
-  border-right: 1px solid var(--border, #2a3140);
-  color: var(--text-faint, #94a3b8);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-}
-.aprs-dock-map-popout-glyph {
-  font-size: 13px;
-  line-height: 1;
-}
-.aprs-dock-map-popout:hover {
-  color: var(--text, #cbd5e1);
-  background: var(--surface-3, #11171d);
-}
-
-/* While the Tac Map is popped, the toggle+pop-out slot swaps to this pathway:
-   a labeled "in window" focus control plus an adjacent dock-back action
-   (tuxlink-dmwte task 9, spec §5) — mirrors the Routines pathway pattern. */
+/* While the Tac Map is popped, the Map slot swaps to this pathway: the
+   compact text-labeled "Map ↗" focus chip plus the ⇤ dock-back glyph
+   (tuxlink-w68mb; spec §5 amendment — the pathway chip carries the slot's
+   text label, the dock-back is accessible-named). Mirrors the Routines
+   pathway pattern at the dock's single-row width budget. */
 .aprs-dock-map-popped {
   display: flex;
   align-items: stretch;
 }
 .aprs-dock-map-focus,
 .aprs-dock-map-dockback {
-  padding: 8px 13px;
+  padding: 8px 11px;
   font: inherit;
   font-size: 12px;
   line-height: 1;
@@ -214,13 +167,9 @@
   border: none;
   border-right: 1px solid var(--border, #2a3140);
   color: var(--modem-accent, #4ade80);
-  /* Same one-line guarantee as `.aprs-dock-map-popout` above (tuxlink-dmwte
-     task 11): `.aprs-dock-tabs` is a NON-wrapping flex row with
-     `align-items: stretch`, so without `nowrap` the longer "Tac Map ↗ — in
-     window" label wraps to two/three lines and, via stretch, inflates the
-     entire dock header's height — the WebKitGTK flex-crush the docked pop-out
-     control was already hardened against but this vacated-state pathway was
-     missed (spec §10 R5-F18). Keep glyph + label on one line. */
+  /* One-line guarantee (spec §10 R5-F18): `.aprs-dock-tabs` is a NON-wrapping
+     stretch flex row; without `nowrap` a wrapped label inflates the whole
+     header's height (the WebKitGTK flex-crush class). */
   white-space: nowrap;
   display: inline-flex;
   align-items: center;
