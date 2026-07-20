@@ -236,10 +236,17 @@ impl StationQueryService for MonolithStationQueryService {
         let cache = self
             .app
             .state::<Arc<crate::catalog::stations_cache::StationsCache>>();
-        let listings =
-            crate::catalog::commands::catalog_fetch_stations(modes, history_hours, cache)
-                .await
-                .map_err(|e| format!("{e:?}"))?;
+        let channels_cache = self
+            .app
+            .state::<Arc<crate::catalog::channels_cache::ChannelsCache>>();
+        let listings = crate::catalog::commands::catalog_fetch_stations(
+            modes,
+            history_hours,
+            cache,
+            channels_cache,
+        )
+        .await
+        .map_err(|e| format!("{e:?}"))?;
         // Most-recent fetch stamp across the fetched modes (None on a fresh parse).
         let fetched_at_ms = listings.iter().filter_map(|l| l.fetched_at_ms).max();
         // Operator's own 4-char grid for distance ranking (None when unresolved).
@@ -340,6 +347,7 @@ mod tests {
             email: Some("op@example.com".to_string()),
             homepage: Some("http://example.com".to_string()),
             antenna: None,
+            channel_details: Vec::new(),
         }
     }
 

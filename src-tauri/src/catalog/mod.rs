@@ -9,6 +9,8 @@
 //! body literally `PUB_PACKET\r\nPUB_VARA`. The CMS replies with one separate
 //! Private message per inquiry.
 
+pub mod channels_api;
+pub mod channels_cache;
 pub mod commands;
 pub mod composer;
 pub mod parser;
@@ -19,4 +21,4 @@ pub mod stations_disk;
 
 pub use parser::{parse_catalog, CatalogEntry, CatalogParseError, BUNDLED_CATALOG};
 pub use reply::{parse_reply, ReplyView};
-pub use stations::{parse_listing, Gateway, ListingMode, StationListing};
+pub use stations::{parse_listing, ChannelDetail, Gateway, ListingMode, StationListing};

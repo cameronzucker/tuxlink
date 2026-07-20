@@ -29,11 +29,20 @@ pub enum ListingMode {
     ArdopHf,
     Pactor,
     RobustPacket,
+    /// VARA FM: no text `/listings/` endpoint exists (`RmsVaraFmListing.aspx` is
+    /// HTTP 404). It is sourced from the gateway channels JSON API instead
+    /// (`channels_api::synthesize_vara_fm_listing`), so `listing_file()` is `None`
+    /// and it is deliberately NOT in [`ListingMode::ALL`] (the confirmed
+    /// text-endpoint set). Serialises to `"vara-fm"` on the wire (tuxlink-nkzng).
+    VaraFm,
 }
 
 impl ListingMode {
-    /// The 5 modes with a CONFIRMED direct-poll endpoint. VARA FM is deferred —
-    /// `RmsVaraFmListing.aspx` is HTTP 404; the real endpoint is undiscovered (bd follow-up).
+    /// The 5 modes with a CONFIRMED direct text-poll endpoint (`listing_file()` is
+    /// `Some`). VARA FM is intentionally EXCLUDED: it has no text listing
+    /// (`listing_file()` is `None`) and is synthesized from the channels JSON API.
+    /// This set drives the "fetch every text listing" default; VARA FM is only
+    /// fetched when a caller lists it explicitly (tuxlink-nkzng).
     pub const ALL: [ListingMode; 5] = [
         ListingMode::VaraHf,
         ListingMode::Packet,
@@ -42,13 +51,17 @@ impl ListingMode {
         ListingMode::RobustPacket,
     ];
 
-    pub fn listing_file(self) -> &'static str {
+    /// The text-listing endpoint filename for this mode, or `None` for an
+    /// API-only mode (VARA FM has no `/listings/` page). Callers skip the text
+    /// fetch when this is `None` and rely on the channels JSON API instead.
+    pub fn listing_file(self) -> Option<&'static str> {
         match self {
-            ListingMode::VaraHf => "RmsVaraListing.aspx",
-            ListingMode::Packet => "RmsPacketListing.aspx",
-            ListingMode::ArdopHf => "RmsArdopListing.aspx",
-            ListingMode::Pactor => "RmsPactorListing.aspx",
-            ListingMode::RobustPacket => "RmsRobustPacketListing.aspx",
+            ListingMode::VaraHf => Some("RmsVaraListing.aspx"),
+            ListingMode::Packet => Some("RmsPacketListing.aspx"),
+            ListingMode::ArdopHf => Some("RmsArdopListing.aspx"),
+            ListingMode::Pactor => Some("RmsPactorListing.aspx"),
+            ListingMode::RobustPacket => Some("RmsRobustPacketListing.aspx"),
+            ListingMode::VaraFm => None,
         }
     }
 
@@ -65,22 +78,22 @@ impl ListingMode {
             ListingMode::ArdopHf => "ARDOP HF",
             ListingMode::Pactor => "Pactor",
             ListingMode::RobustPacket => "Robust Packet",
+            ListingMode::VaraFm => "VARA FM",
         }
     }
 
-    /// Build the absolute listing URL. `service_codes` is the operator-configured
+    /// Build the absolute listing URL, or `None` for an API-only mode with no
+    /// text `/listings/` page (VARA FM). `service_codes` is the operator-configured
     /// filter (default `"PUBLIC"`; space-separated for multiple) — a sysop-assigned
     /// directory tag, not a credential. See `winlink::credentials::service_codes_read`.
-    pub fn listing_url(self, service_codes: &str, history_hours: u32) -> String {
-        let base = format!(
-            "{LISTINGS_BASE}/{}?serviceCodes={service_codes}",
-            self.listing_file()
-        );
-        if self.uses_history_hours() {
+    pub fn listing_url(self, service_codes: &str, history_hours: u32) -> Option<String> {
+        let file = self.listing_file()?;
+        let base = format!("{LISTINGS_BASE}/{file}?serviceCodes={service_codes}");
+        Some(if self.uses_history_hours() {
             format!("{base}&historyhours={history_hours}")
         } else {
             base
-        }
+        })
     }
 }
 
@@ -98,6 +111,32 @@ pub enum GatewayAntenna {
     Vertical,
 }
 
+/// One per-channel row sourced from the Winlink gateway channels JSON API
+/// (`channels_api`), joined onto a text-listing [`Gateway`] (or synthesized into
+/// a VARA FM listing) so per-channel bandwidth and dial frequency become
+/// first-class instead of the text listing's bare dial list (tuxlink-nkzng).
+///
+/// Wire shape (camelCase) is a CONTRACT the frontend (Task 9) binds to; do not
+/// rename fields without updating `src/`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelDetail {
+    /// DIAL frequency in kHz. The API reports the dial directly in Hz, so this is
+    /// `Frequency / 1000.0` with NO audio-center offset (grounded against the
+    /// text-listing dials for the same station; see the fixture README).
+    pub frequency_khz: f64,
+    /// Occupied bandwidth in Hz when the mode code implies one (VARA 500/2300/2750,
+    /// ARDOP 500/1000/2000); `None` when the mode does not carry a fixed bandwidth
+    /// (VARA FM, Packet, Pactor, Robust Packet).
+    pub bandwidth_hz: Option<u32>,
+    /// The transport this channel runs, mapped from the API's numeric `Mode` code.
+    pub mode: ListingMode,
+    /// The gateway's advertised operating hours for this channel, e.g. `"00-23"`.
+    pub operating_hours: Option<String>,
+    /// Maidenhead grid square for this channel, when the API reports one.
+    pub grid: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Gateway {
@@ -111,6 +150,12 @@ pub struct Gateway {
     pub email: Option<String>,
     pub homepage: Option<String>,
     pub antenna: Option<GatewayAntenna>, // self-reported B/D/V code, if any
+    /// Per-channel bandwidth/frequency rows from the channels JSON API, joined by
+    /// callsign (tuxlink-nkzng). Empty for a gateway not present in the channels
+    /// feed (or when the feed fetch failed). `#[serde(default)]` so older cached
+    /// listings on disk (written before this field existed) still deserialize.
+    #[serde(default)]
+    pub channel_details: Vec<ChannelDetail>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -298,6 +343,7 @@ fn parse_header_line(line: &str) -> Option<Gateway> {
         email: None,
         homepage: None,
         antenna: None,
+        channel_details: Vec::new(),
     })
 }
 
@@ -367,11 +413,32 @@ mod tests {
 
     #[test]
     fn mode_listing_paths_match_confirmed_endpoints() {
-        assert_eq!(ListingMode::VaraHf.listing_file(), "RmsVaraListing.aspx");
-        assert_eq!(ListingMode::Packet.listing_file(), "RmsPacketListing.aspx");
-        assert_eq!(ListingMode::ArdopHf.listing_file(), "RmsArdopListing.aspx");
-        assert_eq!(ListingMode::Pactor.listing_file(), "RmsPactorListing.aspx");
-        assert_eq!(ListingMode::RobustPacket.listing_file(), "RmsRobustPacketListing.aspx");
+        assert_eq!(ListingMode::VaraHf.listing_file(), Some("RmsVaraListing.aspx"));
+        assert_eq!(ListingMode::Packet.listing_file(), Some("RmsPacketListing.aspx"));
+        assert_eq!(ListingMode::ArdopHf.listing_file(), Some("RmsArdopListing.aspx"));
+        assert_eq!(ListingMode::Pactor.listing_file(), Some("RmsPactorListing.aspx"));
+        assert_eq!(
+            ListingMode::RobustPacket.listing_file(),
+            Some("RmsRobustPacketListing.aspx")
+        );
+    }
+
+    #[test]
+    fn vara_fm_has_no_text_listing_file_or_url() {
+        // VARA FM is API-only: no `/listings/` page, so no file and no URL.
+        assert_eq!(ListingMode::VaraFm.listing_file(), None);
+        assert_eq!(ListingMode::VaraFm.listing_url("PUBLIC", 168), None);
+        // ...and it must NOT be in the confirmed text-endpoint set.
+        assert!(!ListingMode::ALL.contains(&ListingMode::VaraFm));
+    }
+
+    #[test]
+    fn vara_fm_serializes_kebab_case() {
+        // Wire contract the frontend (Task 9) binds to.
+        assert_eq!(
+            serde_json::to_value(ListingMode::VaraFm).unwrap(),
+            serde_json::json!("vara-fm")
+        );
     }
 
     #[test]
@@ -383,12 +450,12 @@ mod tests {
     #[test]
     fn listing_url_is_well_formed() {
         assert_eq!(
-            ListingMode::ArdopHf.listing_url("PUBLIC", 168),
-            "https://cms.winlink.org:444/listings/RmsArdopListing.aspx?serviceCodes=PUBLIC&historyhours=168"
+            ListingMode::ArdopHf.listing_url("PUBLIC", 168).as_deref(),
+            Some("https://cms.winlink.org:444/listings/RmsArdopListing.aspx?serviceCodes=PUBLIC&historyhours=168")
         );
         assert_eq!(
-            ListingMode::Packet.listing_url("PUBLIC", 168),
-            "https://cms.winlink.org:444/listings/RmsPacketListing.aspx?serviceCodes=PUBLIC"
+            ListingMode::Packet.listing_url("PUBLIC", 168).as_deref(),
+            Some("https://cms.winlink.org:444/listings/RmsPacketListing.aspx?serviceCodes=PUBLIC")
         );
     }
 

@@ -2420,15 +2420,23 @@ fn map_station_mode(mode: StationModeDto) -> crate::catalog::stations::ListingMo
 
 /// Map a monolith [`ListingMode`] back onto the agent-facing [`StationModeDto`]
 /// (the listing's mode becomes each gateway's `mode` in the flattened output).
-fn map_listing_mode(mode: crate::catalog::stations::ListingMode) -> StationModeDto {
+///
+/// Returns `None` for [`ListingMode::VaraFm`]: the agent-facing `StationModeDto`
+/// wire enum has no `vara-fm` token yet (tuxlink-nkzng adds VARA FM to the
+/// monolith fetch/join/cache path; exposing it through the MCP StationModeDto
+/// contract + JSON schema is a separate surface). A VARA FM listing therefore
+/// contributes no gateways to the curated agent/routines output for now; the
+/// full VARA FM listing still reaches the frontend via `catalog_fetch_stations`.
+fn map_listing_mode(mode: crate::catalog::stations::ListingMode) -> Option<StationModeDto> {
     use crate::catalog::stations::ListingMode;
-    match mode {
+    Some(match mode {
         ListingMode::VaraHf => StationModeDto::VaraHf,
         ListingMode::Packet => StationModeDto::Packet,
         ListingMode::ArdopHf => StationModeDto::ArdopHf,
         ListingMode::Pactor => StationModeDto::Pactor,
         ListingMode::RobustPacket => StationModeDto::RobustPacket,
-    }
+        ListingMode::VaraFm => return None,
+    })
 }
 
 /// Map a monolith [`GatewayAntenna`] onto the agent-facing [`GatewayAntennaDto`].
@@ -2599,7 +2607,11 @@ pub(crate) fn curate_and_rank_gateways(
 ) -> Vec<GatewayDto> {
     let mut gateways: Vec<GatewayDto> = Vec::new();
     for listing in listings {
-        let mode = map_listing_mode(listing.mode);
+        // A VARA FM listing has no agent-facing StationModeDto token yet; skip it
+        // entirely (its gateways are not exposed through the curated surface).
+        let Some(mode) = map_listing_mode(listing.mode) else {
+            continue;
+        };
         for g in &listing.gateways {
             if !bands.is_empty() && !any_freq_in_bands(&g.frequencies_khz, bands) {
                 continue;
@@ -2808,10 +2820,17 @@ impl StationPort for MonolithStationPort {
         let cache = self
             .app
             .state::<Arc<crate::catalog::stations_cache::StationsCache>>();
-        let listings =
-            crate::catalog::commands::catalog_fetch_stations(modes, filter.history_hours, cache)
-                .await
-                .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
+        let channels_cache = self
+            .app
+            .state::<Arc<crate::catalog::channels_cache::ChannelsCache>>();
+        let listings = crate::catalog::commands::catalog_fetch_stations(
+            modes,
+            filter.history_hours,
+            cache,
+            channels_cache,
+        )
+        .await
+        .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
 
         // Provenance: the cache stamps `fetched_at_ms` on every entry it stores or
         // stale-returns (a fresh in-memory parse leaves it `None`). Surface the
@@ -4286,6 +4305,7 @@ mod tests {
             email: Some("w1aw@example.org".into()),
             homepage: Some("https://example.org".into()),
             antenna: Some(GatewayAntenna::Dipole),
+            channel_details: Vec::new(),
         }
     }
 

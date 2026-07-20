@@ -1951,6 +1951,19 @@ pub fn run() {
                         ),
                     ));
 
+                    // tuxlink-nkzng: persistent channels-API feed cache, beside the
+                    // stations cache. Sources per-channel bandwidth/frequency and the
+                    // synthesized VARA FM listing. TTL 60 min / min-refetch 15 min;
+                    // seeds from disk on launch for offline cold-start enrichment.
+                    app.manage(std::sync::Arc::new(
+                        crate::catalog::channels_cache::ChannelsCache::new_persistent(
+                            60 * 60 * 1000, // TTL: 60 min
+                            15 * 60 * 1000, // min-refetch floor: 15 min
+                            std::sync::Arc::new(crate::catalog::stations_cache::SystemClock),
+                            data_dir.join("channels-feed-cache.json"),
+                        ),
+                    ));
+
                     // contacts (tuxlink-raez, Task A2): the contacts.json address
                     // book store. `ContactsStore::open` is INFALLIBLE (degrades to
                     // an empty store on a read/parse error, preserving the corrupt
@@ -3297,6 +3310,9 @@ pub fn run() {
             // tuxlink-6j14: operator-configurable service codes (MARS/SHARES/EMCOMM).
             crate::catalog::commands::catalog_get_service_codes,
             crate::catalog::commands::catalog_set_service_codes,
+            // tuxlink-nkzng: operator-overridable channels-API key (bandwidth + VARA FM).
+            crate::catalog::commands::catalog_get_channels_api_key,
+            crate::catalog::commands::catalog_set_channels_api_key,
             // tuxlink-xrbw: ingest a radio-delivered PUB_* station-list reply into the cache.
             crate::catalog::commands::catalog_ingest_listing_reply,
             // tuxlink-ipjt Task 6: offline HF path prediction (voacapl sidecar).

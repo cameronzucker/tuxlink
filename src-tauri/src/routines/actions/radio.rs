@@ -1802,6 +1802,7 @@ mod tests {
             email: None,
             homepage: None,
             antenna: None,
+            channel_details: Vec::new(),
         }
     }
 
