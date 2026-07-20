@@ -1562,9 +1562,13 @@ pub struct ActionInfoDto {
     /// transmit for operator confirmation in attended runs.
     pub writes_config: bool,
     pub needs_internet: bool,
-    /// Canonical example `params` object (compact JSON string); `None` when
-    /// the action takes no params.
-    pub example_params: Option<String>,
+    /// Canonical example `params` as a JSON OBJECT — paste-ready into an
+    /// `ActionStep.params` field. Deliberately NOT the registry's compact
+    /// string form: a string-in-JSON example invites the author to paste a
+    /// string where an object belongs, recreating the def_json
+    /// double-encoding trap this catalog exists to end (Codex adrev
+    /// 2026-07-19 P2 #1). `None` when the action takes no params.
+    pub example_params: Option<serde_json::Value>,
     /// A closed vocabulary for ONE string param: `(param_key, allowed…)` —
     /// a literal value outside the set fails validation.
     pub allowed_values: Option<(String, Vec<String>)>,

@@ -3960,7 +3960,21 @@ impl RoutinesPort for MonolithRoutinesPort {
                 transmits: d.transmits,
                 writes_config: d.writes_config,
                 needs_internet: d.needs_internet,
-                example_params: d.example_params.map(str::to_string),
+                // Parse the registry's compact-string example into a real
+                // JSON object so the catalog is paste-ready (Codex adrev
+                // 2026-07-19 P2 #1). A malformed example is a descriptor bug:
+                // omit it (warn) rather than hand the model a string where an
+                // object belongs.
+                example_params: d.example_params.and_then(|s| {
+                    match serde_json::from_str(s) {
+                        Ok(v) => Some(v),
+                        Err(e) => {
+                            tracing::warn!(target: "routines", action = d.name, error = %e,
+                                "descriptor example_params is not valid JSON; omitted from catalog");
+                            None
+                        }
+                    }
+                }),
                 allowed_values: d.allowed_values.map(|(key, values)| {
                     (
                         key.to_string(),

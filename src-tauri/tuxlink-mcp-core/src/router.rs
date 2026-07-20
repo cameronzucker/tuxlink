@@ -2838,8 +2838,9 @@ mod tests {
         assert_eq!(action["transmits"], true);
         assert_eq!(action["writes_config"], false);
         assert!(
-            action["example_params"].as_str().unwrap().contains("stations"),
-            "example_params must ride through verbatim: {json}"
+            action["example_params"]["stations"].is_array(),
+            "example_params must be a real JSON OBJECT (paste-ready into a \
+             step's params) — not a string-in-JSON (Codex adrev P2 #1): {json}"
         );
         assert_eq!(json["trigger_kinds"][0]["type"], "manual");
         assert!(

@@ -231,8 +231,18 @@ A generic dock/pop-out mechanism, shipped with three wired surfaces: **Routines,
 
 Tool family on the existing MCP surface, visible to both transports (Elmer's in-process invoker; external clients via the UDS shim):
 
-`routines_list · routines_get · routines_validate · routines_save · routines_enable · routines_disable · routines_run · routines_run_status · routines_journal_get · routines_dry_run`
+`routines_list · routines_actions_list · routines_get · routines_validate · routines_save · routines_enable · routines_disable · routines_run · routines_run_status · routines_journal_get · routines_dry_run`
 
+- **Authoring is discoverable (tuxlink-dngvs amendment, 2026-07-19):**
+  `routines_actions_list` returns the authoring catalog — every registered
+  action (name, description, example params as a REAL JSON object, consent
+  classes) from the same registry the designer palette renders (ADR 0024),
+  plus the trigger kinds with paste-ready examples. Action names are a closed
+  set; `UNKNOWN_ACTION` findings enumerate the valid set. Added after the
+  first live transcript captures showed models inventing plausible action
+  names and silently downgrading schedule triggers to manual because nothing
+  agent-reachable enumerated either. Read-only, non-tainting, no consent
+  surface (it grants nothing — it only names what exists).
 - **Validate is the contract:** `routines_validate` returns the same machine-readable error/warning list the builder renders. Agents iterate against it before the operator looks. `save` always accepts drafts (drafts may carry errors — same rule as humans).
 - **No invoker privileges:** the design-time acknowledgment is the consent envelope (§4); after it, all invokers are equivalent. The acknowledgment itself is recorded only by a UI act — `routines_save` and `routines_enable` have no parameter that can supply it; `enable` on an unacknowledged automatic routine returns the validation error.
 - **Journals close the loop:** `routines_journal_get` gives agents the same evidence a human exports — "why did last night's run fail?" is answerable from the record.

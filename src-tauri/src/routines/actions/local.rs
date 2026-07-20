@@ -257,7 +257,7 @@ impl Action for ComposeMessage {
             needs_radio: false,
             transmits: false,
             needs_internet: false,
-            example_params: None,
+            example_params: Some(r#"{"to":["W1AW"],"subject":"Status report","body":"All quiet."}"#),
             allowed_values: None,
             dry_run_shape: None,
         }
@@ -404,7 +404,7 @@ impl Action for ComposeCatalogRequest {
             needs_radio: false,
             transmits: false,
             needs_internet: false,
-            example_params: None,
+            example_params: Some(r#"{"filenames":["PUB_PACKET"]}"#),
             allowed_values: None,
             dry_run_shape: None,
         }
@@ -499,7 +499,7 @@ impl Action for SetIdentity {
             needs_radio: false,
             transmits: false,
             needs_internet: false,
-            example_params: None,
+            example_params: Some(r#"{"identity":{"callsign":"N0CALL-1"}}"#),
             allowed_values: None,
             dry_run_shape: None,
         }
@@ -570,7 +570,7 @@ impl Action for LogEntry {
             needs_radio: false,
             transmits: false,
             needs_internet: false,
-            example_params: None,
+            example_params: Some(r#"{"message":"Hourly check complete"}"#),
             allowed_values: None,
             dry_run_shape: None,
         }
@@ -632,7 +632,7 @@ impl Action for Notify {
             needs_radio: false,
             transmits: false,
             needs_internet: false,
-            example_params: None,
+            example_params: Some(r#"{"message":"New messages retrieved"}"#),
             allowed_values: None,
             dry_run_shape: None,
         }

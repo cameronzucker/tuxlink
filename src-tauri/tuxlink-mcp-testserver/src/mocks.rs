@@ -802,7 +802,7 @@ impl RoutinesPort for MockRoutines {
                 transmits: true,
                 writes_config: false,
                 needs_internet: false,
-                example_params: Some("{\"stations\":[\"N0DAJ\"]}".into()),
+                example_params: Some(serde_json::json!({"stations": ["N0DAJ"]})),
                 allowed_values: None,
             }],
             trigger_kinds: vec![TriggerKindDto {

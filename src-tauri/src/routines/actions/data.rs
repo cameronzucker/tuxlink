@@ -454,7 +454,7 @@ impl Action for StationlistUpdate {
             needs_radio: false,
             transmits: false,
             needs_internet: true,
-            example_params: None,
+            example_params: Some(r#"{"modes":["vara-hf"]}"#),
             allowed_values: None,
             dry_run_shape: None,
         }

@@ -106,10 +106,11 @@ pub struct McpState {
     pub ui_hint: Arc<dyn UiHintPort>,
     /// FT-8 listener. Receive-only; none taint, none egress-gated.
     pub ft8: Arc<dyn Ft8Port>,
-    /// Routines (spec §13): the 10-tool operator-automation surface —
-    /// list/get/validate/save/enable/disable/run/run_status/journal_get/
-    /// dry_run. Deliberately EXCLUDES consent-grant (a UI-only act, spec §4).
-    /// None of these methods taint or pass through the `EgressGuard`.
+    /// Routines (spec §13): the 11-tool operator-automation surface —
+    /// list/actions_list/get/validate/save/enable/disable/run/run_status/
+    /// journal_get/dry_run. Deliberately EXCLUDES consent-grant (a UI-only
+    /// act, spec §4). None of these methods taint or pass through the
+    /// `EgressGuard`.
     pub routines: Arc<dyn RoutinesPort>,
 }
 
@@ -1004,7 +1005,7 @@ pub mod test_support {
                     transmits: true,
                     writes_config: false,
                     needs_internet: false,
-                    example_params: Some("{\"stations\":[\"N0DAJ\"]}".into()),
+                    example_params: Some(serde_json::json!({"stations": ["N0DAJ"]})),
                     allowed_values: None,
                 }],
                 trigger_kinds: vec![TriggerKindDto {
