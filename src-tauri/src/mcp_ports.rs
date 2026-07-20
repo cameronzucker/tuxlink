@@ -44,7 +44,7 @@ use tuxlink_mcp_core::ports::{
     FindingSeverityDto, FolderDto,
     Ft8AudioDeviceDto, Ft8HeardStationDto, Ft8Port, Ft8StatusDto, GatewayAntennaDto, GatewayDto,
     GribRequestDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto, ModemStatusDto,
-    OutboxReadPort, PacketConfigDto, PacketWriteDto, ParsedMessageDto, PathPredictionDto,
+    OutboxReadPort, OutputSpecDto, PacketConfigDto, PacketWriteDto, ParamSpecDto, ParsedMessageDto, PathPredictionDto,
     PeerChannelDto, PeerDto, PeerListDto, PlatformInfoDto, PortError, PositionStatusDto,
     PredictRequestDto, PredictionPort, PrinterDto, ProvisionPort, QsyCandidateDto, RigConfigDto,
     RigStatusDto, RoutineSummaryDto, RoutinesPort, RoutinesRunError, RunStateDto, RunStatusDto,
@@ -4354,6 +4354,34 @@ impl RoutinesPort for MonolithRoutinesPort {
                         values.iter().map(|v| v.to_string()).collect(),
                     )
                 }),
+                params: d
+                    .params
+                    .iter()
+                    .map(|p| ParamSpecDto {
+                        key: p.key.to_string(),
+                        value_type: p.ty.token().to_string(),
+                        required: p.required,
+                        description: p.description.to_string(),
+                        allowed: p
+                            .allowed
+                            .map(|a| a.iter().map(|v| v.to_string()).collect()),
+                        // A malformed per-param example is a descriptor bug
+                        // (the self-check test catches it); degrade to null
+                        // rather than poison the catalog.
+                        example: serde_json::from_str(p.example)
+                            .unwrap_or(serde_json::Value::Null),
+                    })
+                    .collect(),
+                outputs: d
+                    .outputs
+                    .iter()
+                    .map(|o| OutputSpecDto {
+                        key: o.key.to_string(),
+                        value_type: o.ty.token().to_string(),
+                        description: o.description.to_string(),
+                        nullable: o.nullable,
+                    })
+                    .collect(),
             })
             .collect();
         actions.sort_by(|a, b| a.name.cmp(&b.name));

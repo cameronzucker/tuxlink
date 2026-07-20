@@ -814,6 +814,8 @@ impl RoutinesPort for MockRoutines {
                     needs_internet: false,
                     example_params: Some(serde_json::json!({"message": "hello"})),
                     allowed_values: None,
+                    params: vec![],
+                    outputs: vec![],
                 },
                 ActionInfoDto {
                     name: "radio.connect".into(),
@@ -825,6 +827,8 @@ impl RoutinesPort for MockRoutines {
                 needs_internet: false,
                 example_params: Some(serde_json::json!({"stations": ["N0DAJ"]})),
                 allowed_values: None,
+                    params: vec![],
+                    outputs: vec![],
             }],
             trigger_kinds: vec![TriggerKindDto {
                 r#type: "manual".into(),

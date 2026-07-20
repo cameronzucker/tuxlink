@@ -119,7 +119,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
-use tuxlink_routines::action::{Action, ActionDescriptor};
+use tuxlink_routines::action::{Action, ActionDescriptor, OutputSpec, ParamSpec, ValueType};
 use tuxlink_routines::error::StepError;
 
 use crate::routines::arbiter::RadioArbiter;
@@ -186,6 +186,27 @@ impl Action for RigReadState {
             needs_internet: false,
             example_params: None,
             allowed_values: None,
+            params: &[super::RIG_PARAM],
+            outputs: &[
+                OutputSpec {
+                    key: "freqHz",
+                    ty: ValueType::Number,
+                    description: "Current dial frequency, Hz (camelCase on the wire)",
+                    nullable: false,
+                },
+                OutputSpec {
+                    key: "mode",
+                    ty: ValueType::String,
+                    description: "Current operating mode as reported over CAT",
+                    nullable: false,
+                },
+                OutputSpec {
+                    key: "ptt",
+                    ty: ValueType::Boolean,
+                    description: "Whether PTT is keyed",
+                    nullable: false,
+                },
+            ],
             dry_run_shape: None,
         }
     }
@@ -334,6 +355,51 @@ impl Action for RigValidatePreset {
             needs_internet: false,
             example_params: Some(r#"{"preset":"@preset:vara-20m"}"#),
             allowed_values: None,
+            params: &[
+                ParamSpec {
+                    key: "preset",
+                    ty: ValueType::Object,
+                    required: true,
+                    description: "The preset to compare against — pass an \"@preset:<name>\" ref",
+                    allowed: None,
+                    example: r#""@preset:vara-20m""#,
+                },
+                ParamSpec {
+                    key: "tolerance_hz",
+                    ty: ValueType::Number,
+                    required: false,
+                    description: "Frequency comparison tolerance, Hz",
+                    allowed: None,
+                    example: "500",
+                },
+                super::RIG_PARAM,
+            ],
+            outputs: &[
+                OutputSpec {
+                    key: "matches",
+                    ty: ValueType::Boolean,
+                    description: "Whether every compared field matched within tolerance",
+                    nullable: false,
+                },
+                OutputSpec {
+                    key: "diff",
+                    ty: ValueType::Object,
+                    description: "Per-field expected/actual for mismatched fields",
+                    nullable: false,
+                },
+                OutputSpec {
+                    key: "compared",
+                    ty: ValueType::StringList,
+                    description: "Field names actually compared",
+                    nullable: false,
+                },
+                OutputSpec {
+                    key: "skipped",
+                    ty: ValueType::StringList,
+                    description: "Preset fields with no live seam to compare",
+                    nullable: false,
+                },
+            ],
             dry_run_shape: None,
         }
     }
@@ -445,6 +511,45 @@ impl Action for RigApplyPreset {
             needs_internet: false,
             example_params: Some(r#"{"preset":"@preset:vara-20m"}"#),
             allowed_values: None,
+            params: &[
+                ParamSpec {
+                    key: "preset",
+                    ty: ValueType::Object,
+                    required: true,
+                    description: "The preset to apply — pass an \"@preset:<name>\" ref",
+                    allowed: None,
+                    example: r#""@preset:vara-20m""#,
+                },
+                ParamSpec {
+                    key: "tolerance_hz",
+                    ty: ValueType::Number,
+                    required: false,
+                    description: "Post-apply verification tolerance, Hz",
+                    allowed: None,
+                    example: "50",
+                },
+                super::RIG_PARAM,
+            ],
+            outputs: &[
+                OutputSpec {
+                    key: "freqHz",
+                    ty: ValueType::Number,
+                    description: "Post-apply dial frequency, Hz (camelCase on the wire)",
+                    nullable: false,
+                },
+                OutputSpec {
+                    key: "mode",
+                    ty: ValueType::String,
+                    description: "Post-apply operating mode",
+                    nullable: false,
+                },
+                OutputSpec {
+                    key: "ptt",
+                    ty: ValueType::Boolean,
+                    description: "Whether PTT is keyed post-apply",
+                    nullable: false,
+                },
+            ],
             dry_run_shape: None,
         }
     }
@@ -560,6 +665,8 @@ impl Action for RigSwitchVfo {
             needs_internet: false,
             example_params: None,
             allowed_values: None,
+            params: &[],
+            outputs: &[],
             dry_run_shape: None,
         }
     }
@@ -631,6 +738,8 @@ impl Action for RigTuneAtu {
             needs_internet: false,
             example_params: None,
             allowed_values: None,
+            params: &[],
+            outputs: &[],
             dry_run_shape: None,
         }
     }
@@ -1358,4 +1467,23 @@ mod tests {
         let dto = rig_status_to_dto(status);
         assert_eq!(dto.mode, None);
     }
+
+    /// tuxlink-3nvvl: every descriptor's example_params must pass its own
+    /// declared ParamSpecs — locks the registry backfill mechanically.
+    #[test]
+    fn descriptor_examples_pass_their_own_param_specs() {
+        use tuxlink_routines::validate::params::example_self_check;
+        let actions: Vec<tuxlink_routines::action::ActionDescriptor> = vec![
+            RigReadState::new(arbiter(), Arc::new(FakeRigService::always_reads(state(7_000_000, Some("PKTUSB"), false)))).descriptor(),
+            RigValidatePreset::new(arbiter(), Arc::new(FakeRigService::always_reads(state(7_000_000, Some("PKTUSB"), false)))).descriptor(),
+            RigApplyPreset::new(arbiter(), Arc::new(FakeRigService::always_reads(state(7_000_000, Some("PKTUSB"), false)))).descriptor(),
+            RigSwitchVfo::new(arbiter()).descriptor(),
+            RigTuneAtu::new(arbiter()).descriptor(),
+        ];
+        for d in actions {
+            let f = example_self_check(&d);
+            assert!(f.is_empty(), "{}: {f:?}", d.name);
+        }
+    }
+
 }

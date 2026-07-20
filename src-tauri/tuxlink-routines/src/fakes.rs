@@ -50,6 +50,8 @@ impl FakeAction {
                 needs_internet: false,
                 example_params: None,
                 allowed_values: None,
+                params: &[],
+                outputs: &[],
                 dry_run_shape: None,
             },
             outcomes: Mutex::new(Vec::new()),
@@ -75,6 +77,8 @@ impl FakeAction {
             needs_internet,
             example_params: None,
             allowed_values: None,
+            params: &[],
+            outputs: &[],
             dry_run_shape: None,
         };
         self
@@ -86,6 +90,20 @@ impl FakeAction {
     /// `false`.
     pub fn with_writes_config(mut self, writes_config: bool) -> Self {
         self.descriptor.writes_config = writes_config;
+        self
+    }
+
+    /// Advertise declared `params`/`outputs` on this fake's DESCRIPTOR
+    /// (tuxlink-3nvvl) so param-validation and catalog-projection tests can
+    /// drive a "real"-shaped action. Static slices to keep `ActionDescriptor`
+    /// `Copy`. Mutates in place so it composes after `with_capabilities`.
+    pub fn with_specs(
+        mut self,
+        params: &'static [crate::action::ParamSpec],
+        outputs: &'static [crate::action::OutputSpec],
+    ) -> Self {
+        self.descriptor.params = params;
+        self.descriptor.outputs = outputs;
         self
     }
 

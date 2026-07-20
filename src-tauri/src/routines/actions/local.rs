@@ -138,7 +138,7 @@ use serde_json::{json, Map, Value};
 use tauri::{AppHandle, Manager};
 use tokio_util::sync::CancellationToken;
 
-use tuxlink_routines::action::{Action, ActionDescriptor};
+use tuxlink_routines::action::{Action, ActionDescriptor, OutputSpec, ParamSpec, ValueType};
 use tuxlink_routines::error::StepError;
 
 use crate::winlink_backend::OutboundMessage;
@@ -259,6 +259,70 @@ impl Action for ComposeMessage {
             needs_internet: false,
             example_params: Some(r#"{"to":["W1AW"],"subject":"Status report","body":"All quiet."}"#),
             allowed_values: None,
+            params: &[
+                ParamSpec {
+                    key: "to",
+                    ty: ValueType::StationList,
+                    required: true,
+                    description: "Recipient callsigns/addresses",
+                    allowed: None,
+                    example: r#"["W1AW"]"#,
+                },
+                ParamSpec {
+                    key: "subject",
+                    ty: ValueType::String,
+                    required: false,
+                    description: "Message subject; with template, rendered from it when absent",
+                    allowed: None,
+                    example: r#""Status report""#,
+                },
+                ParamSpec {
+                    key: "body",
+                    ty: ValueType::String,
+                    required: false,
+                    description: "Verbatim message body — exactly one of body or template",
+                    allowed: None,
+                    example: r#""All quiet.""#,
+                },
+                ParamSpec {
+                    key: "template",
+                    ty: ValueType::Object,
+                    required: false,
+                    description: "Winlink form template reference — exactly one of body or template",
+                    allowed: None,
+                    example: r#"{"name":"ICS213"}"#,
+                },
+                ParamSpec {
+                    key: "vars",
+                    ty: ValueType::Object,
+                    required: false,
+                    description: "Substitution values for the template's <var> tokens",
+                    allowed: None,
+                    example: r#"{"status":"green"}"#,
+                },
+                ParamSpec {
+                    key: "from_identity",
+                    ty: ValueType::Object,
+                    required: false,
+                    description: "Sending identity override; defaults to the active identity",
+                    allowed: None,
+                    example: r#"{"callsign":"N0CALL-1"}"#,
+                },
+            ],
+            outputs: &[
+                OutputSpec {
+                    key: "staged",
+                    ty: ValueType::Boolean,
+                    description: "Whether the message was staged to the outbox",
+                    nullable: false,
+                },
+                OutputSpec {
+                    key: "mid",
+                    ty: ValueType::String,
+                    description: "Winlink message id of the staged message",
+                    nullable: false,
+                },
+            ],
             dry_run_shape: None,
         }
     }
@@ -406,6 +470,47 @@ impl Action for ComposeCatalogRequest {
             needs_internet: false,
             example_params: Some(r#"{"filenames":["PUB_PACKET"]}"#),
             allowed_values: None,
+            params: &[
+                ParamSpec {
+                    key: "filenames",
+                    ty: ValueType::StringList,
+                    required: false,
+                    description: "Catalog file names to request",
+                    allowed: None,
+                    example: r#"["PUB_PACKET"]"#,
+                },
+                ParamSpec {
+                    key: "catalog_item",
+                    ty: ValueType::String,
+                    required: false,
+                    description: "Single catalog item shorthand (alternative to filenames)",
+                    allowed: None,
+                    example: r#""PUB_PACKET""#,
+                },
+                ParamSpec {
+                    key: "query",
+                    ty: ValueType::String,
+                    required: false,
+                    description: "Ad-hoc inquiry keyword not in the bundled catalog (staged \
+                                  the same as a filename — Codex adrev 2026-07-20 P2 #3)",
+                    allowed: None,
+                    example: r#""CMS_TRAFFIC""#,
+                },
+            ],
+            outputs: &[
+                OutputSpec {
+                    key: "staged",
+                    ty: ValueType::Boolean,
+                    description: "Whether the request message was staged to the outbox",
+                    nullable: false,
+                },
+                OutputSpec {
+                    key: "mid",
+                    ty: ValueType::String,
+                    description: "Winlink message id of the staged request",
+                    nullable: false,
+                },
+            ],
             dry_run_shape: None,
         }
     }
@@ -501,6 +606,20 @@ impl Action for SetIdentity {
             needs_internet: false,
             example_params: Some(r#"{"identity":{"callsign":"N0CALL-1"}}"#),
             allowed_values: None,
+            params: &[ParamSpec {
+                key: "identity",
+                ty: ValueType::Object,
+                required: true,
+                description: "The station identity object to activate",
+                allowed: None,
+                example: r#"{"callsign":"N0CALL-1"}"#,
+            }],
+            outputs: &[OutputSpec {
+                key: "identity",
+                ty: ValueType::Object,
+                description: "The identity as applied",
+                nullable: false,
+            }],
             dry_run_shape: None,
         }
     }
@@ -572,6 +691,17 @@ impl Action for LogEntry {
             needs_internet: false,
             example_params: Some(r#"{"message":"Hourly check complete"}"#),
             allowed_values: None,
+            params: &[ParamSpec {
+                key: "message",
+                ty: ValueType::String,
+                required: true,
+                description: "Line to append to the station/session log. A value that IS a \
+                              \"$sN.key\" ref substitutes; refs embedded inside longer text \
+                              do NOT interpolate and log as literal text.",
+                allowed: None,
+                example: r#""Hourly check complete""#,
+            }],
+            outputs: &[],
             dry_run_shape: None,
         }
     }
@@ -634,6 +764,25 @@ impl Action for Notify {
             needs_internet: false,
             example_params: Some(r#"{"message":"New messages retrieved"}"#),
             allowed_values: None,
+            params: &[
+                ParamSpec {
+                    key: "message",
+                    ty: ValueType::String,
+                    required: true,
+                    description: "Desktop notification body",
+                    allowed: None,
+                    example: r#""New messages retrieved""#,
+                },
+                ParamSpec {
+                    key: "title",
+                    ty: ValueType::String,
+                    required: false,
+                    description: "Notification title (app default when omitted)",
+                    allowed: None,
+                    example: r#""Tuxlink""#,
+                },
+            ],
+            outputs: &[],
             dry_run_shape: None,
         }
     }
@@ -1434,4 +1583,23 @@ mod tests {
         assert!(!d.transmits);
         assert!(!d.needs_internet);
     }
+
+    /// tuxlink-3nvvl: every descriptor's example_params must pass its own
+    /// declared ParamSpecs — locks the registry backfill mechanically.
+    #[test]
+    fn descriptor_examples_pass_their_own_param_specs() {
+        use tuxlink_routines::validate::params::example_self_check;
+        let actions: Vec<tuxlink_routines::action::ActionDescriptor> = vec![
+            ComposeMessage::new(Arc::new(FakeLocalService::default())).descriptor(),
+            ComposeCatalogRequest::new(Arc::new(FakeLocalService::default())).descriptor(),
+            SetIdentity.descriptor(),
+            LogEntry::new(Arc::new(FakeLocalService::default())).descriptor(),
+            Notify::new(Arc::new(FakeLocalService::default())).descriptor(),
+        ];
+        for d in actions {
+            let f = example_self_check(&d);
+            assert!(f.is_empty(), "{}: {f:?}", d.name);
+        }
+    }
+
 }

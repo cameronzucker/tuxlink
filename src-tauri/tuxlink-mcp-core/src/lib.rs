@@ -1016,6 +1016,8 @@ pub mod test_support {
                         needs_internet: false,
                         example_params: Some(serde_json::json!({"message": "hello"})),
                         allowed_values: None,
+                    params: vec![],
+                    outputs: vec![],
                     },
                     ActionInfoDto {
                         name: "radio.connect".into(),
@@ -1027,6 +1029,8 @@ pub mod test_support {
                     needs_internet: false,
                     example_params: Some(serde_json::json!({"stations": ["N0DAJ"]})),
                     allowed_values: None,
+                    params: vec![],
+                    outputs: vec![],
                 }],
                 trigger_kinds: vec![TriggerKindDto {
                     r#type: "manual".into(),
@@ -1281,6 +1285,37 @@ mod tests {
         // regression to env!("CARGO_PKG_NAME"/"CARGO_PKG_VERSION") would be
         // caught by `view_reports_package_identity`.
         crate::test_support::state_with_guard(guard)
+    }
+
+    /// tuxlink-3nvvl: the agent catalog's ParamSpecDto/OutputSpecDto serde
+    /// shape is a wire contract (the shipped model reads these field names).
+    /// Explicit shape lock per the serde memory rule.
+    #[test]
+    fn param_and_output_spec_dtos_serialize_with_stable_field_names() {
+        let p = crate::ports::ParamSpecDto {
+            key: "stations".into(),
+            value_type: "station_list".into(),
+            required: true,
+            description: "Callsigns".into(),
+            allowed: None,
+            example: serde_json::json!(["N0DAJ"]),
+        };
+        let j = serde_json::to_value(&p).unwrap();
+        assert_eq!(j["key"], "stations");
+        assert_eq!(j["type"], "station_list", "renamed to `type` on the wire");
+        assert_eq!(j["required"], true);
+        assert_eq!(j["example"], serde_json::json!(["N0DAJ"]));
+        assert!(j.get("allowed").is_none(), "None allowed is skipped");
+
+        let o = crate::ports::OutputSpecDto {
+            key: "connected".into(),
+            value_type: "boolean".into(),
+            description: "did it".into(),
+            nullable: false,
+        };
+        let jo = serde_json::to_value(&o).unwrap();
+        assert_eq!(jo["key"], "connected");
+        assert_eq!(jo["type"], "boolean");
     }
 
     #[test]

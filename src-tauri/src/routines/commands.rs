@@ -167,6 +167,41 @@ pub struct ActionInfo {
     /// UI seeds when the action is dropped onto the canvas (D6). `None` for
     /// actions whose params are self-evidently empty.
     pub example_params: Option<String>,
+    /// Declared per-param contracts (tuxlink-3nvvl): the typed-field surface
+    /// the inspector renders and the validator lints. Empty = undeclared.
+    pub params: Vec<ParamSpecView>,
+    /// Declared step outputs — the designer's insert-result picker source.
+    pub outputs: Vec<OutputSpecView>,
+}
+
+/// One declared action parameter, projected for the designer (tuxlink-3nvvl).
+/// `type` carries the registry's snake_case value-type token (`"string"`,
+/// `"band_list"`, `"station_list"`, …) — the inspector switches its field
+/// widget on it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParamSpecView {
+    pub key: String,
+    #[serde(rename = "type")]
+    pub value_type: String,
+    pub required: bool,
+    pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed: Option<Vec<String>>,
+    /// Paste-ready example for THIS param alone, as a real JSON value.
+    pub example: serde_json::Value,
+}
+
+/// One declared action output (tuxlink-3nvvl): what `$sN.<key>` resolves to.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutputSpecView {
+    pub key: String,
+    #[serde(rename = "type")]
+    pub value_type: String,
+    pub description: String,
+    /// May be null or absent depending on the run's path.
+    pub nullable: bool,
 }
 
 /// One relevant step in a routine's consent closure (C3), projected for the
@@ -743,6 +778,31 @@ pub fn list_actions(state: &RoutinesState) -> Vec<ActionInfo> {
             needs_internet: d.needs_internet,
             writes_config: d.writes_config,
             example_params: d.example_params.map(|s| s.to_string()),
+            params: d
+                .params
+                .iter()
+                .map(|p| ParamSpecView {
+                    key: p.key.to_string(),
+                    value_type: p.ty.token().to_string(),
+                    required: p.required,
+                    description: p.description.to_string(),
+                    allowed: p
+                        .allowed
+                        .map(|a| a.iter().map(|v| v.to_string()).collect()),
+                    example: serde_json::from_str(p.example)
+                        .unwrap_or(serde_json::Value::Null),
+                })
+                .collect(),
+            outputs: d
+                .outputs
+                .iter()
+                .map(|o| OutputSpecView {
+                    key: o.key.to_string(),
+                    value_type: o.ty.token().to_string(),
+                    description: o.description.to_string(),
+                    nullable: o.nullable,
+                })
+                .collect(),
         })
         .collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -1438,6 +1498,23 @@ mod tests {
             sink_dyn,
         ));
         (dir, state, sink, connect)
+    }
+
+    /// `test_state` with a caller-supplied registry — for projection tests
+    /// that need actions carrying declared params/outputs (tuxlink-3nvvl).
+    fn test_state_with_registry(
+        reg: ActionRegistry,
+    ) -> (TempDir, Arc<RoutinesState>, Arc<RecordingSink>, ()) {
+        let dir = tempfile::tempdir().unwrap();
+        let sink = Arc::new(RecordingSink::default());
+        let sink_dyn: Arc<dyn RoutinesEventSink> = sink.clone();
+        let state = Arc::new(build_routines_state(
+            dir.path().to_path_buf(),
+            reg,
+            Arc::new(RadioArbiter::new(fixed_now)),
+            sink_dyn,
+        ));
+        (dir, state, sink, ())
     }
 
     /// A routine JSON body with the given name and steps (spec §14 shape).
@@ -2571,6 +2648,43 @@ mod tests {
         // The test fakes declare no example_params (real actions set it; asserted
         // in each action file's own unit tests).
         assert_eq!(set.example_params, None);
+    }
+
+    /// tuxlink-3nvvl: the designer projection carries declared params/outputs
+    /// with the snake_case type token and camelCase field names the inspector
+    /// reads. Serde shape lock (memory rule: explicit shape test).
+    #[test]
+    fn list_actions_projects_declared_param_and_output_specs() {
+        use tuxlink_routines::action::{OutputSpec, ParamSpec, ValueType};
+        const PARAMS: &[ParamSpec] = &[ParamSpec {
+            key: "stations",
+            ty: ValueType::StationList,
+            required: true,
+            description: "Callsigns to dial",
+            allowed: None,
+            example: r#"["N0DAJ"]"#,
+        }];
+        const OUTPUTS: &[OutputSpec] = &[OutputSpec {
+            key: "connected",
+            ty: ValueType::Boolean,
+            description: "Did it connect",
+            nullable: false,
+        }];
+        let mut reg = ActionRegistry::default();
+        reg.register(std::sync::Arc::new(
+            FakeAction::new("radio.connect").with_specs(PARAMS, OUTPUTS),
+        ));
+        let (_dir, state, _sink, _c) = test_state_with_registry(reg);
+
+        let actions = list_actions(&state);
+        let connect = actions.iter().find(|a| a.name == "radio.connect").unwrap();
+        let json = serde_json::to_value(connect).unwrap();
+        assert_eq!(json["params"][0]["key"], "stations");
+        assert_eq!(json["params"][0]["type"], "station_list", "snake_case type token");
+        assert_eq!(json["params"][0]["required"], true);
+        assert_eq!(json["params"][0]["example"], serde_json::json!(["N0DAJ"]));
+        assert_eq!(json["outputs"][0]["key"], "connected");
+        assert_eq!(json["outputs"][0]["type"], "boolean");
     }
 
     // ── fleet_check: a read-only view of validate_fleet over enabled routines ──

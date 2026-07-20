@@ -30,7 +30,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
-use tuxlink_routines::action::{Action, ActionDescriptor};
+use tuxlink_routines::action::{Action, ActionDescriptor, OutputSpec, ParamSpec, ValueType};
 use tuxlink_routines::error::StepError;
 
 use super::ConfigWriteService;
@@ -80,6 +80,34 @@ impl Action for ConfigSetArdop {
             needs_internet: false,
             example_params: Some(r#"{"drive_level":80}"#),
             allowed_values: None,
+            params: &[ParamSpec {
+                key: "drive_level",
+                ty: ValueType::Number,
+                required: true,
+                description: "ARDOP transmit drive level, 0-100",
+                allowed: None,
+                example: "80",
+            }],
+            outputs: &[
+                OutputSpec {
+                    key: "field",
+                    ty: ValueType::String,
+                    description: "The config field written (\"drive_level\")",
+                    nullable: false,
+                },
+                OutputSpec {
+                    key: "old",
+                    ty: ValueType::Number,
+                    description: "Previous value; null when previously unset",
+                    nullable: true,
+                },
+                OutputSpec {
+                    key: "new",
+                    ty: ValueType::Number,
+                    description: "The value now persisted",
+                    nullable: false,
+                },
+            ],
             dry_run_shape: Some(config_set_ardop_dry_run_shape),
         }
     }
@@ -343,4 +371,15 @@ mod tests {
         assert_eq!(out["new"], json!(0));
         assert_eq!(out["dry_run"], json!(true));
     }
+
+    /// tuxlink-3nvvl: every descriptor's example_params must pass its own
+    /// declared ParamSpecs — locks the registry backfill mechanically.
+    #[test]
+    fn descriptor_examples_pass_their_own_param_specs() {
+        use tuxlink_routines::validate::params::example_self_check;
+        let d = ConfigSetArdop::new(Arc::new(FakeConfigWriteService::default())).descriptor();
+        let f = example_self_check(&d);
+        assert!(f.is_empty(), "{}: {f:?}", d.name);
+    }
+
 }

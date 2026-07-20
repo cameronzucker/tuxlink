@@ -28,7 +28,7 @@ use serde_json::{json, Value};
 use tauri::AppHandle;
 use tokio_util::sync::CancellationToken;
 
-use tuxlink_routines::action::{Action, ActionDescriptor};
+use tuxlink_routines::action::{Action, ActionDescriptor, OutputSpec, ParamSpec, ValueType};
 use tuxlink_routines::error::StepError;
 
 use super::DocsSearchService;
@@ -78,6 +78,20 @@ impl Action for DocsSearch {
             needs_internet: false,
             example_params: Some(r#"{"query":"find stations"}"#),
             allowed_values: None,
+            params: &[ParamSpec {
+                key: "query",
+                ty: ValueType::String,
+                required: true,
+                description: "Full-text query over the bundled in-app documentation",
+                allowed: None,
+                example: r#""space weather""#,
+            }],
+            outputs: &[OutputSpec {
+                key: "hits",
+                ty: ValueType::ObjectList,
+                description: "Matching doc pages (slug, title, snippet)",
+                nullable: false,
+            }],
             dry_run_shape: Some(docs_search_dry_run_shape),
         }
     }
@@ -387,4 +401,15 @@ mod tests {
         let out = docs_search_dry_run_shape(&json!({"query": "anything"}));
         assert_eq!(out, json!({"hits": [], "dry_run": true}));
     }
+
+    /// tuxlink-3nvvl: every descriptor's example_params must pass its own
+    /// declared ParamSpecs — locks the registry backfill mechanically.
+    #[test]
+    fn descriptor_examples_pass_their_own_param_specs() {
+        use tuxlink_routines::validate::params::example_self_check;
+        let d = DocsSearch::new(Arc::new(FakeDocsSearchService::default())).descriptor();
+        let f = example_self_check(&d);
+        assert!(f.is_empty(), "{}: {f:?}", d.name);
+    }
+
 }

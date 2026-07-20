@@ -112,7 +112,7 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 use tokio_util::sync::CancellationToken;
 
-use tuxlink_routines::action::{Action, ActionDescriptor};
+use tuxlink_routines::action::{Action, ActionDescriptor, OutputSpec, ParamSpec, ValueType};
 use tuxlink_routines::error::StepError;
 
 use crate::routines::arbiter::RadioArbiter;
@@ -252,6 +252,39 @@ impl Action for SpaceWxWwv {
             needs_internet: false,
             example_params: None,
             allowed_values: None,
+            params: &[super::RIG_PARAM],
+            outputs: &[
+                OutputSpec {
+                    key: "updated",
+                    ty: ValueType::Boolean,
+                    description: "Whether the capture updated the stored space weather",
+                    nullable: false,
+                },
+                OutputSpec {
+                    key: "indices",
+                    ty: ValueType::Object,
+                    description: "Decoded solar indices (sfi, a_index, k_index); null on no-copy",
+                    nullable: true,
+                },
+                OutputSpec {
+                    key: "source",
+                    ty: ValueType::String,
+                    description: "Which broadcast the capture decoded (wwv / wwvh)",
+                    nullable: false,
+                },
+                OutputSpec {
+                    key: "noCopy",
+                    ty: ValueType::Boolean,
+                    description: "True when the window aired but nothing decodable was heard",
+                    nullable: false,
+                },
+                OutputSpec {
+                    key: "wavPath",
+                    ty: ValueType::String,
+                    description: "Path of the capture recording; may be null",
+                    nullable: true,
+                },
+            ],
             dry_run_shape: None,
         }
     }
@@ -386,6 +419,21 @@ impl Action for SpaceWxSwpc {
             needs_internet: true,
             example_params: None,
             allowed_values: None,
+            params: &[],
+            outputs: &[
+                OutputSpec {
+                    key: "forecastUpdated",
+                    ty: ValueType::Boolean,
+                    description: "Whether the SWPC fetch updated the stored forecast",
+                    nullable: false,
+                },
+                OutputSpec {
+                    key: "indices",
+                    ty: ValueType::Object,
+                    description: "Current solar indices from SWPC; may be null",
+                    nullable: true,
+                },
+            ],
             dry_run_shape: None,
         }
     }
@@ -456,6 +504,44 @@ impl Action for StationlistUpdate {
             needs_internet: true,
             example_params: Some(r#"{"modes":["vara-hf"]}"#),
             allowed_values: None,
+            params: &[
+                ParamSpec {
+                    key: "modes",
+                    ty: ValueType::StringList,
+                    required: false,
+                    description: "Listing modes to refresh (every confirmed mode when omitted)",
+                    allowed: Some(&["vara-hf", "packet", "ardop-hf", "pactor", "robust-packet"]),
+                    example: r#"["vara-hf"]"#,
+                },
+                ParamSpec {
+                    key: "history_hours",
+                    ty: ValueType::Number,
+                    required: false,
+                    description: "Directory history window, hours (default 168)",
+                    allowed: None,
+                    example: "168",
+                },
+            ],
+            outputs: &[
+                OutputSpec {
+                    key: "updated",
+                    ty: ValueType::Boolean,
+                    description: "Whether the refresh succeeded",
+                    nullable: false,
+                },
+                OutputSpec {
+                    key: "station_count",
+                    ty: ValueType::Number,
+                    description: "Stations in the refreshed directory",
+                    nullable: false,
+                },
+                OutputSpec {
+                    key: "modes",
+                    ty: ValueType::StringList,
+                    description: "The modes actually refreshed",
+                    nullable: false,
+                },
+            ],
             dry_run_shape: None,
         }
     }
@@ -650,6 +736,21 @@ impl Action for DataRead {
             needs_internet: false,
             example_params: Some(r#"{"source":"modem_status"}"#),
             allowed_values: Some(("source", DATA_READ_SOURCES)),
+            // `source`'s vocabulary stays with the legacy `allowed_values`
+            // tuple above (the UNKNOWN_READ_SOURCE lint owns it) — declaring
+            // it here too would double-fire on the same defect.
+            params: &[ParamSpec {
+                key: "source",
+                ty: ValueType::String,
+                required: true,
+                description: "Which app-state source to read (see allowed_values)",
+                allowed: None,
+                example: r#""modem_status""#,
+            }],
+            // Output shape varies per source (grid vs inbox summary vs modem
+            // status …) — deliberately undeclared so `$ref`s into it skip
+            // type linting rather than false-warn.
+            outputs: &[],
             dry_run_shape: Some(data_read_dry_run_shape),
         }
     }
@@ -2496,4 +2597,24 @@ mod tests {
             );
         }
     }
+
+    /// tuxlink-3nvvl: every descriptor's example_params must pass its own
+    /// declared ParamSpecs — locks the registry backfill mechanically.
+    #[test]
+    fn descriptor_examples_pass_their_own_param_specs() {
+        use tuxlink_routines::validate::params::example_self_check;
+        let now_ms_fn: fn() -> u64 = || 0;
+        let actions: Vec<tuxlink_routines::action::ActionDescriptor> = vec![
+            SpaceWxWwv::new(arbiter(), Arc::new(FakeDataService::default()), now_ms_fn)
+                .descriptor(),
+            SpaceWxSwpc::new(Arc::new(FakeDataService::default())).descriptor(),
+            StationlistUpdate::new(Arc::new(FakeDataService::default())).descriptor(),
+            DataRead::new(Arc::new(FakeDataService::default())).descriptor(),
+        ];
+        for d in actions {
+            let f = example_self_check(&d);
+            assert!(f.is_empty(), "{}: {f:?}", d.name);
+        }
+    }
+
 }

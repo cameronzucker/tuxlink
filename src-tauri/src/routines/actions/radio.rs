@@ -132,7 +132,7 @@ use serde_json::json;
 use tauri::{AppHandle, Manager};
 use tokio_util::sync::CancellationToken;
 
-use tuxlink_routines::action::{Action, ActionDescriptor};
+use tuxlink_routines::action::{Action, ActionDescriptor, OutputSpec, ParamSpec, ValueType};
 use tuxlink_routines::error::StepError;
 
 use crate::routines::arbiter::RadioArbiter;
@@ -356,6 +356,69 @@ impl Action for RadioConnect {
             needs_internet: false,
             example_params: Some(r#"{"stations":["N0DAJ"],"bands":["20m"]}"#),
             allowed_values: None,
+            params: &[
+                ParamSpec {
+                    key: "stations",
+                    ty: ValueType::StationList,
+                    required: true,
+                    description: "Callsigns to walk in order until one connects — to try N \
+                                  stations pass them ALL here; do not build per-station \
+                                  branching. Accepts a whole-value step ref like \
+                                  \"$s1.callsigns\".",
+                    allowed: None,
+                    example: r#"["N0DAJ"]"#,
+                },
+                ParamSpec {
+                    key: "bands",
+                    ty: ValueType::BandList,
+                    required: false,
+                    description: "Bands walked per station, in order. Omit ONLY for the \
+                                  band-less packet-dial shape; HF modes should list bands.",
+                    allowed: None,
+                    example: r#"["20m","40m"]"#,
+                },
+                ParamSpec {
+                    key: "listen_before_tx_s",
+                    ty: ValueType::Number,
+                    required: false,
+                    description: "Clear-channel listen dwell before each attempt, seconds",
+                    allowed: None,
+                    example: "5",
+                },
+                super::RIG_PARAM,
+            ],
+            outputs: &[
+                OutputSpec {
+                    key: "connected",
+                    ty: ValueType::Boolean,
+                    description: "Whether any station-and-band attempt connected",
+                    nullable: false,
+                },
+                OutputSpec {
+                    key: "station",
+                    ty: ValueType::String,
+                    description: "The callsign that connected (success only)",
+                    nullable: true,
+                },
+                OutputSpec {
+                    key: "band",
+                    ty: ValueType::String,
+                    description: "The band that connected; null on the packet-dial shape",
+                    nullable: true,
+                },
+                OutputSpec {
+                    key: "gateway",
+                    ty: ValueType::String,
+                    description: "The connected gateway identity (success only)",
+                    nullable: true,
+                },
+                OutputSpec {
+                    key: "last_error",
+                    ty: ValueType::String,
+                    description: "Verbatim last-attempt failure (exhaustion only)",
+                    nullable: true,
+                },
+            ],
             dry_run_shape: None,
         }
     }
@@ -545,6 +608,31 @@ impl Action for RadioListen {
             needs_internet: false,
             example_params: Some(r#"{"seconds":30}"#),
             allowed_values: None,
+            params: &[
+                ParamSpec {
+                    key: "seconds",
+                    ty: ValueType::Number,
+                    required: true,
+                    description: "How long to dwell on the channel listening, seconds",
+                    allowed: None,
+                    example: "30",
+                },
+                super::RIG_PARAM,
+            ],
+            outputs: &[
+                OutputSpec {
+                    key: "channel_busy",
+                    ty: ValueType::Boolean,
+                    description: "Whether the channel read busy during the dwell",
+                    nullable: false,
+                },
+                OutputSpec {
+                    key: "rms",
+                    ty: ValueType::Number,
+                    description: "Measured RMS level over the dwell",
+                    nullable: false,
+                },
+            ],
             dry_run_shape: None,
         }
     }
@@ -646,6 +734,31 @@ impl Action for RadioAprsSend {
             needs_internet: false,
             example_params: Some(r#"{"text":"Overwatch checkpoint"}"#),
             allowed_values: None,
+            params: &[
+                ParamSpec {
+                    key: "text",
+                    ty: ValueType::String,
+                    required: true,
+                    description: "APRS message text to transmit",
+                    allowed: None,
+                    example: r#""CMS window missed""#,
+                },
+                ParamSpec {
+                    key: "to",
+                    ty: ValueType::String,
+                    required: false,
+                    description: "Destination callsign; omit for the main-channel broadcast",
+                    allowed: None,
+                    example: r#""N0DAJ-7""#,
+                },
+                super::RIG_PARAM,
+            ],
+            outputs: &[OutputSpec {
+                key: "msgid",
+                ty: ValueType::String,
+                description: "APRS message id of the transmitted packet",
+                nullable: false,
+            }],
             dry_run_shape: None,
         }
     }
@@ -2025,4 +2138,30 @@ mod tests {
         let v = serde_json::to_value(TestBusyPolicy::Fail).unwrap();
         assert_eq!(v, json!("fail"));
     }
+
+    /// tuxlink-3nvvl: every descriptor's example_params must pass its own
+    /// declared ParamSpecs — locks the registry backfill mechanically.
+    #[test]
+    fn descriptor_examples_pass_their_own_param_specs() {
+        use tuxlink_routines::validate::params::example_self_check;
+        let actions: Vec<tuxlink_routines::action::ActionDescriptor> = vec![
+            RadioConnect::new(
+                arbiter(),
+                Arc::new(FakeConnectService::always_connects("W7DEF-10")),
+                Arc::new(FakeListenService::always(0.0)),
+            )
+            .descriptor(),
+            RadioListen::new(arbiter(), Arc::new(FakeListenService::always(0.0))).descriptor(),
+            RadioAprsSend::new(
+                arbiter(),
+                Arc::new(FakeAprsService { result: Ok("m1".to_string()) }),
+            )
+            .descriptor(),
+        ];
+        for d in actions {
+            let f = example_self_check(&d);
+            assert!(f.is_empty(), "{}: {f:?}", d.name);
+        }
+    }
+
 }

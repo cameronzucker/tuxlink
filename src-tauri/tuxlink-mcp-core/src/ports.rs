@@ -1632,6 +1632,41 @@ pub enum RoutinesRunError {
     Internal(String),
 }
 
+/// One declared parameter of an action (tuxlink-3nvvl): the machine-readable
+/// param contract the validator lints against — `type` is the registry's
+/// snake_case value-type token (`"string"`, `"number"`, `"boolean"`,
+/// `"string_list"`, `"band_list"`, `"station_list"`, `"object_list"`,
+/// `"object"`). List-typed params accept a whole-value step ref
+/// (`"$sN.key"`) when the referenced output is list-typed; `["$sN.key"]`
+/// where `key` is a list fails validation (array-of-arrays at runtime).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ParamSpecDto {
+    pub key: String,
+    #[serde(rename = "type")]
+    pub value_type: String,
+    pub required: bool,
+    pub description: String,
+    /// Closed vocabulary for string params / list elements, when declared.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed: Option<Vec<String>>,
+    /// Paste-ready example for THIS param alone, as a real JSON value.
+    pub example: serde_json::Value,
+}
+
+/// One declared output of an action (tuxlink-3nvvl): what `$sN.<key>`
+/// resolves to. Same `type` token vocabulary as [`ParamSpecDto`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OutputSpecDto {
+    pub key: String,
+    #[serde(rename = "type")]
+    pub value_type: String,
+    pub description: String,
+    /// May be null or absent depending on the run's path — branch before
+    /// feeding it to a required param.
+    #[serde(default)]
+    pub nullable: bool,
+}
+
 /// One authorable routine action, curated for an AGENT author (tuxlink-dngvs).
 /// The fields mirror the engine's `ActionDescriptor` (the same registry the
 /// designer palette renders — ADR 0024: one capability tree), minus the
@@ -1661,6 +1696,13 @@ pub struct ActionInfoDto {
     /// A closed vocabulary for ONE string param: `(param_key, allowed…)` —
     /// a literal value outside the set fails validation.
     pub allowed_values: Option<(String, Vec<String>)>,
+    /// Declared per-param contracts (tuxlink-3nvvl). Empty when the action
+    /// has not declared its param surface (param validation then skips it).
+    #[serde(default)]
+    pub params: Vec<ParamSpecDto>,
+    /// Declared step outputs — the `$sN.<key>` reference surface.
+    #[serde(default)]
+    pub outputs: Vec<OutputSpecDto>,
 }
 
 /// One trigger kind a routine's `triggers` array accepts (tuxlink-dngvs).

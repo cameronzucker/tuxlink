@@ -32,7 +32,7 @@ use serde_json::{json, Value};
 use tauri::AppHandle;
 use tokio_util::sync::CancellationToken;
 
-use tuxlink_routines::action::{Action, ActionDescriptor};
+use tuxlink_routines::action::{Action, ActionDescriptor, OutputSpec, ParamSpec, ValueType};
 use tuxlink_routines::error::StepError;
 
 use super::{StationDirectory, StationQueryService};
@@ -103,6 +103,67 @@ impl Action for FindStations {
             needs_internet: true,
             example_params: Some(r#"{"modes":["vara-hf"],"limit":3}"#),
             allowed_values: None,
+            params: &[
+                ParamSpec {
+                    key: "modes",
+                    ty: ValueType::StringList,
+                    required: false,
+                    description: "Listing modes to include (all when omitted)",
+                    allowed: Some(&["vara-hf", "packet", "ardop-hf", "pactor", "robust-packet"]),
+                    example: r#"["vara-hf"]"#,
+                },
+                ParamSpec {
+                    key: "bands",
+                    ty: ValueType::BandList,
+                    required: false,
+                    description: "Bands to include (all when omitted)",
+                    allowed: None,
+                    example: r#"["20m","40m"]"#,
+                },
+                ParamSpec {
+                    key: "history_hours",
+                    ty: ValueType::Number,
+                    required: false,
+                    description: "Directory history window, hours",
+                    allowed: None,
+                    example: "6",
+                },
+                ParamSpec {
+                    key: "limit",
+                    ty: ValueType::Number,
+                    required: false,
+                    description: "Cap on DISTINCT callsigns after distance-sorted dedup",
+                    allowed: None,
+                    example: "10",
+                },
+            ],
+            outputs: &[
+                OutputSpec {
+                    key: "callsigns",
+                    ty: ValueType::StationList,
+                    description: "Distance-sorted deduped callsigns — feed radio.connect's \
+                                  stations as a whole-value ref: \"$sN.callsigns\"",
+                    nullable: false,
+                },
+                OutputSpec {
+                    key: "gateways",
+                    ty: ValueType::ObjectList,
+                    description: "Full gateway records (callsign, bands, distance, grid)",
+                    nullable: false,
+                },
+                OutputSpec {
+                    key: "fetched_at_ms",
+                    ty: ValueType::Number,
+                    description: "Directory snapshot timestamp, unix ms",
+                    nullable: true,
+                },
+                OutputSpec {
+                    key: "operator_grid",
+                    ty: ValueType::String,
+                    description: "The operator grid distances were computed from; may be null",
+                    nullable: true,
+                },
+            ],
             dry_run_shape: Some(find_stations_dry_run_shape),
         }
     }
@@ -643,6 +704,16 @@ mod tests {
         assert_eq!(out["fetched_at_ms"], Value::Null);
         assert_eq!(out["operator_grid"], Value::Null);
         assert_eq!(out["dry_run"], json!(true));
+    }
+
+    /// tuxlink-3nvvl: every descriptor's example_params must pass its own
+    /// declared ParamSpecs — locks the registry backfill mechanically.
+    #[test]
+    fn descriptor_examples_pass_their_own_param_specs() {
+        use tuxlink_routines::validate::params::example_self_check;
+        let d = FindStations::new(Arc::new(FakeStationQueryService::default())).descriptor();
+        let f = example_self_check(&d);
+        assert!(f.is_empty(), "{}: {f:?}", d.name);
     }
 
     // ---- Codex P2 parity: empty modes expansion includes VARA FM -----------

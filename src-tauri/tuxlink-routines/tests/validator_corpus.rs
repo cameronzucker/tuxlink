@@ -105,6 +105,8 @@ fn known_action(name: &str) -> ActionDescriptor {
             needs_internet: false,
             example_params: None,
             allowed_values: None,
+            params: &[],
+            outputs: &[],
             dry_run_shape: None,
         },
         "data.web_lookup" => ActionDescriptor {
@@ -117,6 +119,8 @@ fn known_action(name: &str) -> ActionDescriptor {
             needs_internet: true,
             example_params: None,
             allowed_values: None,
+            params: &[],
+            outputs: &[],
             dry_run_shape: None,
         },
         "local.note" => ActionDescriptor {
@@ -129,6 +133,8 @@ fn known_action(name: &str) -> ActionDescriptor {
             needs_internet: false,
             example_params: None,
             allowed_values: None,
+            params: &[],
+            outputs: &[],
             dry_run_shape: None,
         },
         "compose.message" => ActionDescriptor {
@@ -141,6 +147,8 @@ fn known_action(name: &str) -> ActionDescriptor {
             needs_internet: false,
             example_params: None,
             allowed_values: None,
+            params: &[],
+            outputs: &[],
             dry_run_shape: None,
         },
         "log.entry" => ActionDescriptor {
@@ -153,6 +161,8 @@ fn known_action(name: &str) -> ActionDescriptor {
             needs_internet: false,
             example_params: None,
             allowed_values: None,
+            params: &[],
+            outputs: &[],
             dry_run_shape: None,
         },
         "data.read" => ActionDescriptor {
@@ -165,6 +175,8 @@ fn known_action(name: &str) -> ActionDescriptor {
             needs_internet: false,
             example_params: None,
             allowed_values: None,
+            params: &[],
+            outputs: &[],
             dry_run_shape: None,
         },
         "data.spacewx_wwv" => ActionDescriptor {
@@ -177,6 +189,8 @@ fn known_action(name: &str) -> ActionDescriptor {
             needs_internet: false,
             example_params: None,
             allowed_values: None,
+            params: &[],
+            outputs: &[],
             dry_run_shape: None,
         },
         "config.set_ardop" => ActionDescriptor {
@@ -189,6 +203,8 @@ fn known_action(name: &str) -> ActionDescriptor {
             needs_internet: false,
             example_params: None,
             allowed_values: None,
+            params: &[],
+            outputs: &[],
             dry_run_shape: None,
         },
         other => panic!(
