@@ -1468,8 +1468,137 @@ pub struct RoutineSummaryDto {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SaveResultDto {
     pub routine: String,
+    /// Revision token of the stored definition (D7 CAS): pass it back as
+    /// `expected_revision` on a later save/edit to detect a lost update.
+    #[serde(default)]
+    pub revision: String,
     pub findings: Vec<FindingDto>,
     pub blocked: bool,
+}
+
+/// [`RoutinesPort::get`]'s result: the definition (the exact shape
+/// `routines_save`'s `def` accepts) plus its revision token.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RoutineGetDto {
+    pub revision: String,
+    pub def: serde_json::Value,
+}
+
+/// [`RoutinesPort::save`]'s request. EXACTLY ONE of `def` (a JSON object —
+/// the preferred form) or `def_json` (deprecated string form) must be
+/// present: both or neither is invalid input, and a string supplied as `def`
+/// is invalid input too — it is never parsed as JSON (the double-encoding
+/// trap must not survive under a new name, adrev A7).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct SaveRoutineRequestDto {
+    #[serde(default)]
+    pub def: Option<serde_json::Value>,
+    #[serde(default)]
+    pub def_json: Option<String>,
+    #[serde(default)]
+    pub expected_revision: Option<String>,
+}
+
+/// One branch-arm entry an edit repaired (the designer-parity scrub).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ScrubbedRefDto {
+    pub branch: String,
+    pub arm: String,
+    pub step: String,
+}
+
+/// Every edit verb's result (spec D6 outcome 3): the edit is APPLIED AND
+/// SAVED — outcomes 1/2 (malformed input, precondition failure) are port
+/// errors carrying a `[CODE]`-prefixed message and mutate nothing.
+/// `step_findings` are the validator findings anchored to the touched step;
+/// everything else is `routine_findings`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EditResultDto {
+    pub routine: String,
+    pub revision: String,
+    pub applied: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scrubbed: Vec<ScrubbedRefDto>,
+    pub step_findings: Vec<FindingDto>,
+    pub routine_findings: Vec<FindingDto>,
+    pub blocked: bool,
+}
+
+/// [`RoutinesPort::rename`]'s result.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RenameResultDto {
+    pub routine: String,
+    pub revision: String,
+    pub enabled: bool,
+    pub callers_updated: Vec<String>,
+}
+
+/// One fragment edit (spec D1). The router exposes each variant as its own
+/// flat MCP tool — small models handle flat per-verb schemas better than one
+/// nested op array — and builds this DTO; the port trait carries ONE `edit`
+/// method so implementors and mocks stay compact. Placement fields on
+/// `StepAdd`/`StepMove`: give exactly one of `track` (append), `after_step_id`
+/// (splice after), or `branch_step_id`+`branch_arm` (into a branch arm,
+/// optionally positioned by `branch_after_step_id`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum RoutineEditOpDto {
+    StepAdd {
+        step: serde_json::Value,
+        #[serde(default)]
+        track: Option<String>,
+        #[serde(default)]
+        after_step_id: Option<String>,
+        #[serde(default)]
+        branch_step_id: Option<String>,
+        #[serde(default)]
+        branch_arm: Option<String>,
+        #[serde(default)]
+        branch_after_step_id: Option<String>,
+    },
+    StepUpdate {
+        step_id: String,
+        patch: serde_json::Value,
+    },
+    StepRemove {
+        step_id: String,
+    },
+    StepMove {
+        step_id: String,
+        #[serde(default)]
+        track: Option<String>,
+        #[serde(default)]
+        after_step_id: Option<String>,
+        #[serde(default)]
+        branch_step_id: Option<String>,
+        #[serde(default)]
+        branch_arm: Option<String>,
+        #[serde(default)]
+        branch_after_step_id: Option<String>,
+    },
+    TrackAdd {
+        track: String,
+    },
+    TrackRemove {
+        track: String,
+    },
+    TriggerSet {
+        triggers: serde_json::Value,
+    },
+    MetaSet {
+        patch: serde_json::Value,
+    },
+}
+
+/// [`RoutinesPort::edit`]'s request.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RoutineEditRequestDto {
+    pub routine: String,
+    #[serde(default)]
+    pub expected_revision: Option<String>,
+    pub op: RoutineEditOpDto,
 }
 
 /// [`RoutinesPort::enable`]/[`RoutinesPort::disable`]'s result. `enabled` is

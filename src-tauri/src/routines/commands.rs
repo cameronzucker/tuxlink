@@ -88,6 +88,9 @@ use crate::ui_commands::UiError;
 #[serde(rename_all = "camelCase")]
 pub struct SaveResult {
     pub routine: String,
+    /// Revision token of the stored definition (spec D7): pass it back as
+    /// `expected_revision` on a later save/edit to detect a lost update.
+    pub revision: String,
     pub findings: Vec<Finding>,
     pub blocked: bool,
 }
@@ -463,7 +466,35 @@ pub fn get_routine(state: &RoutinesState, name: &str) -> Result<RoutineDef, UiEr
 /// draft, it is not a routine at all, and there is nothing to store. The serde
 /// error is passed through verbatim so the builder can point at the line.
 pub fn save_routine(state: &RoutinesState, def_json: &str) -> Result<SaveResult, UiError> {
+    save_routine_checked(state, def_json, None)
+}
+
+/// [`save_routine`] with the D7 lost-update check: when `expected_revision`
+/// is present, the save is refused (`REVISION_CONFLICT`, no mutation) unless
+/// the routine's stored revision still matches — the designer ALWAYS sends
+/// the revision it loaded, so a whole-document save can no longer silently
+/// clobber an edit-verb change that landed while the draft was open. Holds
+/// the edit lock across the read-check-write so it cannot interleave with a
+/// verb's read-modify-write either.
+pub fn save_routine_checked(
+    state: &RoutinesState,
+    def_json: &str,
+    expected_revision: Option<&str>,
+) -> Result<SaveResult, UiError> {
+    let _guard = state
+        .edit_lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut def = RoutineDef::parse(def_json).map_err(|e| UiError::Rejected(e.to_string()))?;
+    if let Some(expected) = expected_revision {
+        let current = state
+            .store
+            .get_with_revision(&def.routine)
+            .map(|(_, rev)| rev);
+        if current.as_deref() != Some(expected) {
+            return Err(revision_conflict(&def.routine, expected, current.as_deref()));
+        }
+    }
     // The consent envelope is not writable through this path (spec §4/§13):
     // the automatic-transmit acknowledgment is recorded only by a UI act, and
     // this save path is agent-reachable over MCP (`routines_save`). Whatever
@@ -496,7 +527,7 @@ pub fn save_routine(state: &RoutinesState, def_json: &str) -> Result<SaveResult,
     // Save even with errors (spec §10: errors block enable/run, never save).
     // `store.save` still rejects a name that would escape the store directory —
     // that is a safety boundary, not a validation finding.
-    state.store.save(&def)?;
+    let revision = state.store.save(&def)?;
     state.emit(&RoutinesEvent::LibraryChanged {
         entity: LibraryEntity::Routine,
         name: def.routine.clone(),
@@ -504,6 +535,7 @@ pub fn save_routine(state: &RoutinesState, def_json: &str) -> Result<SaveResult,
     Ok(SaveResult {
         blocked: has_blocking(&findings),
         routine: def.routine,
+        revision,
         findings,
     })
 }
@@ -555,6 +587,395 @@ pub fn delete_routine(state: &RoutinesState, name: &str) -> Result<(), UiError> 
         name: name.to_string(),
     });
     Ok(())
+}
+
+/// [`get_routine`] plus the revision token (spec D7) — what `routines_get`
+/// returns so a later save/edit can pass `expected_revision`.
+pub fn get_routine_with_revision(
+    state: &RoutinesState,
+    name: &str,
+) -> Result<(RoutineDef, String), UiError> {
+    state
+        .store
+        .get_with_revision(name)
+        .ok_or_else(|| UiError::NotFound(name.to_string()))
+}
+
+// ============================================================================
+// Edit verbs (tuxlink-aqy63) — fragment edits on the SAVED routine
+//
+// Spec: docs/design/routines-edit-verb-authoring.md. Three outcomes per verb
+// (D6): malformed input and precondition failures are `Err` with NO mutation;
+// an applied edit is SAVED (even with error findings — errors block
+// enable/run, never save) and returns the split findings. The enabled guard
+// (D5) makes multi-verb sequences safe without drafts or batches: a disabled
+// routine cannot fire mid-sequence, and re-enabling re-runs the full gate.
+// ============================================================================
+
+/// One branch-arm entry the edit repaired (the designer-parity scrub, D1).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScrubbedRef {
+    pub branch: String,
+    pub arm: String,
+    pub step: String,
+}
+
+/// Every edit verb's response (D6 outcome 3). `step_findings` are the
+/// validator findings anchored to the touched step — a SEPARATE field, not a
+/// sort-order promise (adrev A9); everything else is `routine_findings`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditResult {
+    pub routine: String,
+    pub revision: String,
+    /// Always true on `Ok` — the edit deserialized, preconditions passed, and
+    /// the result is SAVED. Present so an agent reading the response never
+    /// mistakes "saved with warnings" for "not applied" (adrev 5.6 #9).
+    pub applied: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub step_id: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub scrubbed: Vec<ScrubbedRef>,
+    pub step_findings: Vec<Finding>,
+    pub routine_findings: Vec<Finding>,
+    pub blocked: bool,
+}
+
+/// [`rename_routine`]'s response.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameResult {
+    pub routine: String,
+    pub revision: String,
+    /// The rename preserved this enabled state (same definition content, so
+    /// the validation state is identical — no re-gate needed).
+    pub enabled: bool,
+    /// Other routines whose `call` steps referenced the old name and were
+    /// rewritten to the new one, atomically with the rename (adrev A5).
+    pub callers_updated: Vec<String>,
+}
+
+/// One fragment edit, typed for the command layer. The MCP router exposes
+/// each variant as its own flat tool (small models handle nine flat schemas
+/// better than one nested op-array — the MCP-surface lesson); the port
+/// adapter builds these.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EditOp {
+    StepAdd {
+        /// The step as a JSON object; `id` is optional — absent, the server
+        /// assigns `edit::next_step_id` and returns it (adrev 5.6 #8).
+        step: serde_json::Value,
+        placement: tuxlink_routines::edit::Placement,
+    },
+    StepUpdate {
+        step_id: String,
+        patch: serde_json::Value,
+    },
+    StepRemove {
+        step_id: String,
+    },
+    StepMove {
+        step_id: String,
+        placement: tuxlink_routines::edit::Placement,
+    },
+    TrackAdd {
+        track: String,
+    },
+    TrackRemove {
+        track: String,
+    },
+    TriggerSet {
+        /// The full replacement trigger list, parsed inside so the malformed-
+        /// input error text is crafted in one place.
+        triggers: serde_json::Value,
+    },
+    MetaSet {
+        patch: serde_json::Value,
+    },
+}
+
+fn revision_conflict(routine: &str, expected: &str, current: Option<&str>) -> UiError {
+    UiError::Rejected(match current {
+        Some(cur) => format!(
+            "[REVISION_CONFLICT] expected revision {expected} but \"{routine}\" is at {cur} — \
+             someone else saved in between. Re-read with routines_get and re-apply your edit."
+        ),
+        None => format!(
+            "[REVISION_CONFLICT] expected revision {expected} but \"{routine}\" does not exist"
+        ),
+    })
+}
+
+fn edit_err(e: tuxlink_routines::edit::EditError) -> UiError {
+    use tuxlink_routines::edit::EditError as E;
+    let code = match &e {
+        E::UnknownTrack(_) => "UNKNOWN_TRACK",
+        E::UnknownStep(_) => "UNKNOWN_STEP",
+        E::DuplicateStepId(_) => "DUPLICATE_STEP_ID",
+        E::DuplicateTrack(_) => "DUPLICATE_TRACK",
+        E::NotABranch(_) => "NOT_A_BRANCH",
+        E::EmptyStepId | E::EmptyTrackName => "INVALID_ID",
+        E::IdChangeRejected => "ID_CHANGE_REJECTED",
+        E::KindChangeRejected => "KIND_CHANGE_REJECTED",
+        E::InvalidPatch(_) => "INVALID_PATCH",
+        E::LastTrack(_) => "LAST_TRACK",
+    };
+    UiError::Rejected(format!("[{code}] {e}"))
+}
+
+/// Parse a caller-supplied step object with TEACHING errors: the untagged
+/// `Step` enum's own serde error ("did not match any variant") tells a small
+/// model nothing, so the discriminator cases are named explicitly first.
+fn parse_step(v: serde_json::Value) -> Result<tuxlink_routines::types::Step, UiError> {
+    let Some(obj) = v.as_object() else {
+        return Err(UiError::Rejected(
+            "[INVALID_STEP] a step is a JSON object, e.g. \
+             {\"id\": \"s1\", \"action\": \"local.log\", \"params\": {\"message\": \"hi\"}}"
+                .into(),
+        ));
+    };
+    match (obj.contains_key("action"), obj.contains_key("control")) {
+        (false, false) => Err(UiError::Rejected(
+            "[INVALID_STEP] a step needs either an \"action\" key (an action step) or a \
+             \"control\" key (branch | delay | retry | call | end)"
+                .into(),
+        )),
+        (true, true) => Err(UiError::Rejected(
+            "[INVALID_STEP] a step cannot carry both \"action\" and \"control\" — it is one \
+             or the other"
+                .into(),
+        )),
+        _ => serde_json::from_value(v)
+            .map_err(|e| UiError::Rejected(format!("[INVALID_STEP] step does not parse: {e}"))),
+    }
+}
+
+/// The shared verb body: lock → enabled guard → revision check → apply →
+/// consent normalization → validate → save → emit → split findings.
+pub fn edit_routine(
+    state: &RoutinesState,
+    routine: &str,
+    expected_revision: Option<&str>,
+    op: EditOp,
+) -> Result<EditResult, UiError> {
+    use tuxlink_routines::edit;
+
+    let _guard = state
+        .edit_lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+    // D5 enabled guard — the atomicity answer. Checked before anything else
+    // so the refusal is deterministic regardless of the op.
+    if state.store.is_enabled(routine) {
+        return Err(UiError::Rejected(format!(
+            "[ROUTINE_ENABLED] \"{routine}\" is enabled — fragment edits on an enabled routine \
+             are refused so a schedule cannot fire a half-edited state. Disable it \
+             (routines_disable), make your edits, then re-enable."
+        )));
+    }
+    let (def, current_rev) = state
+        .store
+        .get_with_revision(routine)
+        .ok_or_else(|| UiError::NotFound(routine.to_string()))?;
+    if let Some(expected) = expected_revision {
+        if expected != current_rev {
+            return Err(revision_conflict(routine, expected, Some(&current_rev)));
+        }
+    }
+
+    let (mut new_def, touched, scrub) = match op {
+        EditOp::StepAdd { step, placement } => {
+            let mut step = step;
+            if let Some(obj) = step.as_object_mut() {
+                if !obj.contains_key("id") {
+                    obj.insert(
+                        "id".into(),
+                        serde_json::Value::String(edit::next_step_id(&def)),
+                    );
+                }
+            }
+            let step = parse_step(step)?;
+            let (d, id) = edit::step_add(&def, step, &placement).map_err(edit_err)?;
+            (d, Some(id.0), edit::ScrubReport::default())
+        }
+        EditOp::StepUpdate { step_id, patch } => {
+            let d = edit::step_update(&def, &step_id, &patch).map_err(edit_err)?;
+            (d, Some(step_id), edit::ScrubReport::default())
+        }
+        EditOp::StepRemove { step_id } => {
+            let (d, scrub) = edit::step_remove(&def, &step_id).map_err(edit_err)?;
+            (d, None, scrub)
+        }
+        EditOp::StepMove { step_id, placement } => {
+            let d = edit::step_move(&def, &step_id, &placement).map_err(edit_err)?;
+            (d, Some(step_id), edit::ScrubReport::default())
+        }
+        EditOp::TrackAdd { track } => {
+            let d = edit::track_add(&def, &track).map_err(edit_err)?;
+            (d, None, edit::ScrubReport::default())
+        }
+        EditOp::TrackRemove { track } => {
+            let (d, scrub) = edit::track_remove(&def, &track).map_err(edit_err)?;
+            (d, None, scrub)
+        }
+        EditOp::TriggerSet { triggers } => {
+            let triggers: Vec<tuxlink_routines::types::Trigger> =
+                serde_json::from_value(triggers).map_err(|e| {
+                    UiError::Rejected(format!(
+                        "[INVALID_TRIGGERS] triggers is a LIST of trigger objects \
+                         ({{\"type\": \"manual\"}} or {{\"type\": \"schedule\", \"every\": \
+                         \"30m\", ...}}): {e}"
+                    ))
+                })?;
+            (edit::trigger_set(&def, triggers), None, edit::ScrubReport::default())
+        }
+        EditOp::MetaSet { patch } => {
+            let patch: edit::MetaPatch = serde_json::from_value(patch).map_err(|e| {
+                UiError::Rejected(format!(
+                    "[INVALID_META] meta patch fields are transmit_mode \
+                     (attended|automatic), on_interrupted (stay|resume), inputs. Renaming is \
+                     routines_rename, not a metadata patch: {e}"
+                ))
+            })?;
+            (edit::meta_set(&def, &patch), None, edit::ScrubReport::default())
+        }
+    };
+
+    // Consent-envelope normalization — same rule as `save_routine` (C1): this
+    // agent-reachable path cannot write acks. The def came from disk, so its
+    // acks ARE the disk acks; leaving automatic revokes both.
+    if new_def.transmit_mode != tuxlink_routines::types::TransmitMode::Automatic {
+        new_def.transmit_ack = None;
+        new_def.write_ack = None;
+    }
+
+    let findings = validate_def(state, &new_def);
+    let revision = state.store.save(&new_def)?;
+    state.emit(&RoutinesEvent::LibraryChanged {
+        entity: LibraryEntity::Routine,
+        name: new_def.routine.clone(),
+    });
+
+    let (step_findings, routine_findings): (Vec<Finding>, Vec<Finding>) = match &touched {
+        Some(id) => findings
+            .into_iter()
+            .partition(|f| f.step.as_ref().map(|s| s.0.as_str()) == Some(id.as_str())),
+        None => (Vec::new(), findings),
+    };
+    let blocked = has_blocking(&step_findings) || has_blocking(&routine_findings);
+    Ok(EditResult {
+        routine: new_def.routine,
+        revision,
+        applied: true,
+        step_id: touched,
+        scrubbed: scrub
+            .scrubbed
+            .into_iter()
+            .map(|(branch, arm, step)| ScrubbedRef {
+                branch,
+                arm: arm.to_string(),
+                step,
+            })
+            .collect(),
+        step_findings,
+        routine_findings,
+        blocked,
+    })
+}
+
+/// Transactional rename (adrev A5): definition file, body name, enabled
+/// sidecar bit, and `call` references in OTHER routines migrate in one
+/// locked operation. Works on an enabled routine — the definition content is
+/// unchanged, so its validation state is identical and no re-gate is needed;
+/// the new-name file exists (and is enabled) BEFORE the old one is deleted,
+/// so no ordering window loses the routine. The scheduler re-reads the store
+/// on every pass and treats the new name like an enabled routine after app
+/// restart (its last-fire record starts fresh; `if_missed` semantics apply).
+pub fn rename_routine(
+    state: &RoutinesState,
+    old: &str,
+    new: &str,
+) -> Result<RenameResult, UiError> {
+    use tuxlink_routines::types::{Control, Step};
+
+    let _guard = state
+        .edit_lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+    let (mut def, _rev) = state
+        .store
+        .get_with_revision(old)
+        .ok_or_else(|| UiError::NotFound(old.to_string()))?;
+    if new == old {
+        return Err(UiError::Rejected(format!(
+            "[NAME_TAKEN] \"{new}\" is already this routine's name"
+        )));
+    }
+    if state.store.get(new).is_some() {
+        return Err(UiError::Rejected(format!(
+            "[NAME_TAKEN] a routine named \"{new}\" already exists"
+        )));
+    }
+    let was_enabled = state.store.is_enabled(old);
+    def.routine = new.to_string();
+
+    // Rewrite `call` steps in every other routine BEFORE the old name
+    // disappears; an invalid new name fails here (store.save's InvalidName)
+    // before anything is touched — validate it by saving the renamed def
+    // FIRST, then rewrite callers.
+    let revision = state.store.save(&def)?;
+    let mut callers_updated = Vec::new();
+    for summary in state.store.list() {
+        if summary.routine == old || summary.routine == new {
+            continue;
+        }
+        let Some(mut other) = state.store.get(&summary.routine) else {
+            continue;
+        };
+        let mut changed = false;
+        for track in &mut other.tracks {
+            for step in &mut track.steps {
+                if let Step::Control(c) = step {
+                    if let Control::Call { routine, .. } = &mut c.control {
+                        if routine == old {
+                            *routine = new.to_string();
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+        if changed {
+            state.store.save(&other)?;
+            state.emit(&RoutinesEvent::LibraryChanged {
+                entity: LibraryEntity::Routine,
+                name: other.routine.clone(),
+            });
+            callers_updated.push(summary.routine);
+        }
+    }
+
+    if was_enabled {
+        state.store.set_enabled(new, true)?;
+    }
+    state.store.delete(old)?; // also drops old's enabled entry
+    state.emit(&RoutinesEvent::LibraryChanged {
+        entity: LibraryEntity::Routine,
+        name: old.to_string(),
+    });
+    state.emit(&RoutinesEvent::LibraryChanged {
+        entity: LibraryEntity::Routine,
+        name: new.to_string(),
+    });
+    Ok(RenameResult {
+        routine: new.to_string(),
+        revision,
+        enabled: was_enabled,
+        callers_updated,
+    })
 }
 
 /// Enable/disable a routine. Enabling runs the FULL gate: the routine's own
@@ -1124,20 +1545,31 @@ pub async fn routines_list(
     Ok(list_routines(&state))
 }
 
+/// [`routines_get`]'s envelope: the definition plus its revision token, so
+/// the designer can send `expected_revision` back on save (spec D7).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetRoutineResult {
+    pub def: RoutineDef,
+    pub revision: String,
+}
+
 #[tauri::command]
 pub async fn routines_get(
     state: State<'_, Arc<RoutinesState>>,
     name: String,
-) -> Result<RoutineDef, UiError> {
-    get_routine(&state, &name)
+) -> Result<GetRoutineResult, UiError> {
+    let (def, revision) = get_routine_with_revision(&state, &name)?;
+    Ok(GetRoutineResult { def, revision })
 }
 
 #[tauri::command]
 pub async fn routines_save(
     state: State<'_, Arc<RoutinesState>>,
     def_json: String,
+    expected_revision: Option<String>,
 ) -> Result<SaveResult, UiError> {
-    save_routine(&state, &def_json)
+    save_routine_checked(&state, &def_json, expected_revision.as_deref())
 }
 
 #[tauri::command]
@@ -2744,5 +3176,295 @@ mod tests {
         assert!(list_routines(&state).is_empty());
         assert!(list_presets(&state).is_empty());
         assert!(list_station_sets(&state).is_empty());
+    }
+
+    // ── edit verbs (tuxlink-aqy63) ───────────────────────────────────────
+
+    use tuxlink_routines::edit::Placement;
+
+    fn saved(state: &RoutinesState, name: &str) -> SaveResult {
+        save_routine(state, &def_json(name, log_step())).unwrap()
+    }
+
+    fn rejected_code(err: UiError, code: &str) {
+        match err {
+            UiError::Rejected(msg) => assert!(
+                msg.starts_with(&format!("[{code}]")),
+                "expected [{code}] prefix, got: {msg}"
+            ),
+            other => panic!("expected Rejected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn edit_on_enabled_routine_is_refused_with_no_mutation() {
+        let (_dir, state, _sink, _c) = test_state();
+        saved(&state, "armed");
+        set_routine_enabled(&state, "armed", true, NOW, 0).unwrap();
+        let before = get_routine_with_revision(&state, "armed").unwrap();
+
+        let err = edit_routine(
+            &state,
+            "armed",
+            None,
+            EditOp::StepUpdate {
+                step_id: "s1".into(),
+                patch: json!({"params": {"message": "x"}}),
+            },
+        )
+        .unwrap_err();
+        rejected_code(err, "ROUTINE_ENABLED");
+        // acceptance 4: nothing mutated
+        assert_eq!(get_routine_with_revision(&state, "armed").unwrap(), before);
+    }
+
+    #[test]
+    fn revision_conflict_refuses_edit_and_checked_save() {
+        let (_dir, state, _sink, _c) = test_state();
+        let first = saved(&state, "r");
+        // Move the routine past `first`'s revision.
+        let second = edit_routine(
+            &state,
+            "r",
+            Some(&first.revision),
+            EditOp::StepUpdate {
+                step_id: "s1".into(),
+                patch: json!({"params": {"message": "hi"}}),
+            },
+        )
+        .unwrap();
+        assert_ne!(second.revision, first.revision);
+
+        // A stale token now refuses BOTH surfaces, mutating nothing.
+        let err = edit_routine(
+            &state,
+            "r",
+            Some(&first.revision),
+            EditOp::StepRemove { step_id: "s1".into() },
+        )
+        .unwrap_err();
+        rejected_code(err, "REVISION_CONFLICT");
+        let err =
+            save_routine_checked(&state, &def_json("r", json!([])), Some(&first.revision))
+                .unwrap_err();
+        rejected_code(err, "REVISION_CONFLICT");
+        // acceptance 5: the verb edit survived the stale whole-document save
+        let (def, rev) = get_routine_with_revision(&state, "r").unwrap();
+        assert_eq!(rev, second.revision);
+        match &def.tracks[0].steps[0] {
+            tuxlink_routines::types::Step::Action(a) => {
+                assert_eq!(a.params, json!({"message": "hi"}));
+            }
+            other => panic!("expected action, got {other:?}"),
+        }
+        // The matching token succeeds.
+        save_routine_checked(&state, &def_json("r", log_step()), Some(&second.revision)).unwrap();
+    }
+
+    #[test]
+    fn step_add_assigns_id_and_splits_touched_findings() {
+        let (_dir, state, _sink, _c) = test_state();
+        saved(&state, "r");
+        // No id supplied; unknown action → an ERROR finding anchored to the
+        // NEW step, which must land in step_findings, not routine_findings.
+        let res = edit_routine(
+            &state,
+            "r",
+            None,
+            EditOp::StepAdd {
+                step: json!({"action": "radio.mystery", "params": {}}),
+                placement: Placement::After {
+                    after: tuxlink_routines::types::StepId("s1".into()),
+                },
+            },
+        )
+        .unwrap();
+        assert!(res.applied);
+        assert_eq!(res.step_id.as_deref(), Some("s2")); // max over {s1} + 1
+        assert!(res.blocked, "unknown action is an error");
+        assert!(
+            res.step_findings.iter().any(|f| f.code == "UNKNOWN_ACTION"),
+            "touched-step finding split out, got step={:?} routine={:?}",
+            res.step_findings,
+            res.routine_findings
+        );
+        // The edit SAVED despite the error (never-block-save).
+        let (def, _) = get_routine_with_revision(&state, "r").unwrap();
+        assert_eq!(def.tracks[0].steps.len(), 3);
+    }
+
+    #[test]
+    fn step_add_duplicate_id_and_malformed_step_are_refused() {
+        let (_dir, state, _sink, _c) = test_state();
+        saved(&state, "r");
+        let err = edit_routine(
+            &state,
+            "r",
+            None,
+            EditOp::StepAdd {
+                step: json!({"id": "s1", "action": "local.log", "params": {}}),
+                placement: Placement::Append { track: "t".into() },
+            },
+        )
+        .unwrap_err();
+        rejected_code(err, "DUPLICATE_STEP_ID");
+        let err = edit_routine(
+            &state,
+            "r",
+            None,
+            EditOp::StepAdd {
+                step: json!({"id": "s9", "params": {}}),
+                placement: Placement::Append { track: "t".into() },
+            },
+        )
+        .unwrap_err();
+        rejected_code(err, "INVALID_STEP");
+    }
+
+    #[test]
+    fn step_remove_reports_the_scrub() {
+        let (_dir, state, _sink, _c) = test_state();
+        save_routine(
+            &state,
+            &def_json(
+                "r",
+                json!([
+                    {"id": "s1", "control": "branch", "on": "x.ok",
+                     "then": ["s2"], "else": []},
+                    {"id": "s2", "action": "local.log", "params": {}},
+                    {"id": "e1", "control": "end"}
+                ]),
+            ),
+        )
+        .unwrap();
+        let res = edit_routine(&state, "r", None, EditOp::StepRemove { step_id: "s2".into() })
+            .unwrap();
+        assert_eq!(res.scrubbed.len(), 1);
+        assert_eq!(
+            (res.scrubbed[0].branch.as_str(), res.scrubbed[0].arm.as_str(), res.scrubbed[0].step.as_str()),
+            ("s1", "then", "s2")
+        );
+    }
+
+    #[test]
+    fn meta_set_leaving_automatic_revokes_acks_and_rejects_rename_key() {
+        let (_dir, state, _sink, _c) = test_state();
+        // An automatic routine with a recorded ack.
+        let body = json!({
+            "routine": "auto-r", "schema_version": 1, "transmit_mode": "automatic",
+            "triggers": [{"type": "manual"}],
+            "tracks": [{"name": "t", "steps": [
+                {"id": "s1", "action": "local.log", "params": {}},
+                {"id": "e1", "control": "end"}
+            ]}]
+        })
+        .to_string();
+        save_routine(&state, &body).unwrap();
+        acknowledge_automatic(&state, "auto-r", "KK7ABC", "2026-07-20T00:00:00Z").unwrap();
+        assert!(get_routine(&state, "auto-r").unwrap().transmit_ack.is_some());
+
+        // rename through meta_set is a teaching error, not a silent ignore
+        let err = edit_routine(
+            &state,
+            "auto-r",
+            None,
+            EditOp::MetaSet { patch: json!({"rename": "auto-r2"}) },
+        )
+        .unwrap_err();
+        rejected_code(err, "INVALID_META");
+
+        let res = edit_routine(
+            &state,
+            "auto-r",
+            None,
+            EditOp::MetaSet { patch: json!({"transmit_mode": "attended"}) },
+        )
+        .unwrap();
+        assert!(res.applied);
+        let def = get_routine(&state, "auto-r").unwrap();
+        assert!(def.transmit_ack.is_none(), "leaving automatic revokes the ack");
+    }
+
+    #[test]
+    fn trigger_set_replaces_and_teaches_on_malformed() {
+        let (_dir, state, _sink, _c) = test_state();
+        saved(&state, "r");
+        let res = edit_routine(
+            &state,
+            "r",
+            None,
+            EditOp::TriggerSet {
+                triggers: json!([{"type": "schedule", "every": "2h", "align": "hour"}]),
+            },
+        )
+        .unwrap();
+        assert!(res.applied);
+        let def = get_routine(&state, "r").unwrap();
+        assert_eq!(def.triggers.len(), 1);
+
+        let err = edit_routine(
+            &state,
+            "r",
+            None,
+            EditOp::TriggerSet { triggers: json!({"type": "manual"}) },
+        )
+        .unwrap_err();
+        rejected_code(err, "INVALID_TRIGGERS");
+    }
+
+    #[test]
+    fn rename_migrates_enabled_state_and_rewrites_callers_in_one_call() {
+        let (_dir, state, _sink, _c) = test_state();
+        saved(&state, "nightly");
+        set_routine_enabled(&state, "nightly", true, NOW, 0).unwrap();
+        // A caller in another routine.
+        save_routine(
+            &state,
+            &def_json(
+                "wrapper",
+                json!([
+                    {"id": "s1", "control": "call", "routine": "nightly", "args": {}},
+                    {"id": "e1", "control": "end"}
+                ]),
+            ),
+        )
+        .unwrap();
+
+        // acceptance 7: single call — new name enabled, old gone, caller repointed.
+        let res = rename_routine(&state, "nightly", "nightly-v2").unwrap();
+        assert!(res.enabled);
+        assert_eq!(res.callers_updated, vec!["wrapper".to_string()]);
+        assert!(state.store.get("nightly").is_none());
+        assert!(state.store.is_enabled("nightly-v2"));
+        assert!(!state.store.is_enabled("nightly"));
+        let wrapper = get_routine(&state, "wrapper").unwrap();
+        match &wrapper.tracks[0].steps[0] {
+            tuxlink_routines::types::Step::Control(c) => match &c.control {
+                tuxlink_routines::types::Control::Call { routine, .. } => {
+                    assert_eq!(routine, "nightly-v2");
+                }
+                other => panic!("expected call, got {other:?}"),
+            },
+            other => panic!("expected control, got {other:?}"),
+        }
+
+        // NAME_TAKEN both ways.
+        saved(&state, "other");
+        rejected_code(
+            rename_routine(&state, "nightly-v2", "other").unwrap_err(),
+            "NAME_TAKEN",
+        );
+        rejected_code(
+            rename_routine(&state, "nightly-v2", "nightly-v2").unwrap_err(),
+            "NAME_TAKEN",
+        );
+    }
+
+    #[test]
+    fn get_and_save_revisions_agree() {
+        let (_dir, state, _sink, _c) = test_state();
+        let res = saved(&state, "r");
+        let (_, rev) = get_routine_with_revision(&state, "r").unwrap();
+        assert_eq!(res.revision, rev);
     }
 }

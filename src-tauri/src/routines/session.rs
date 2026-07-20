@@ -253,6 +253,13 @@ pub struct RoutinesState {
     /// SAME registry a session run does — `cancel_run` + `is_routine_running`
     /// see children too, and no child can wedge at `Running`.
     runs: Arc<Mutex<HashMap<String, RunEntry>>>,
+    /// Serializes read-modify-write cycles on the definition store: the edit
+    /// verbs and `save_routine` hold this across load → transform → validate →
+    /// save so two verb calls (or a verb and a whole-document save) cannot
+    /// interleave and silently drop one writer's change (spec D7 — the store
+    /// itself documents that per-call atomicity does NOT serialize
+    /// read-modify-write cycles).
+    pub edit_lock: Mutex<()>,
     /// Monotonic insertion counter for `runs` (see [`RunEntry::seq`]). Shared
     /// with [`SessionChildInvoker`] so child + session run sequence numbers come
     /// from one source and evict in a single total order.
@@ -310,6 +317,7 @@ impl RoutinesState {
             journal_dir,
             identity_store_path,
             runs: Arc::new(Mutex::new(HashMap::new())),
+            edit_lock: Mutex::new(()),
             run_seq: Arc::new(AtomicU64::new(0)),
             sink,
             consent,
