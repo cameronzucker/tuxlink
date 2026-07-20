@@ -903,16 +903,66 @@ routine definition, call routines_actions_list FIRST — it is the authoritative
 live catalog of every valid step action (with a paste-ready example params \
 object and consent flags) and every trigger kind (with the exact JSON shape and \
 an example). Take action names, params, and trigger JSON from that tool, not \
-from the docs — the docs describe what actions do, not their JSON shapes. Then \
-iterate against routines_save/routines_validate findings, which name what is \
-wrong verbatim. Do not ask the operator for a schema routines_actions_list \
-already provides. \
+from the docs — the docs describe what actions do, not their JSON shapes. \
+BUILD ROUTINES IN SMALL PIECES, never as one big document: (1) save the \
+catalog's definition_template under your routine's name with routines_save \
+(def is a JSON object — pass the definition itself, not a quoted string of \
+it); (2) the template's first step is a SAMPLE local.log — change it to your \
+first real action with routines_step_update (its params replace wholesale); \
+(3) add each further step with its own routines_step_add call (omit the step \
+id to have one assigned; appending to the track lands new steps before the \
+template's final end step, where they run); (4) the template starts with a \
+manual trigger — call routines_trigger_set ONLY when the operator asked for \
+a schedule or other trigger, and set exactly what was asked. Each call is \
+validated on its own, so a mistake costs one small retry and the error names \
+the exact step and field. To CHANGE an existing routine, edit the one piece: \
+routines_step_update / routines_step_remove / routines_step_move / \
+routines_meta_set / routines_rename — never re-send the whole definition to \
+change one step. Findings from these tools name what is wrong verbatim; fix \
+the named fragment and retry THAT call — re-sending an unchanged payload \
+after an error never helps. Do not ask the operator for a schema \
+routines_actions_list already provides. \
 \
 Be concise and practical.";
 
 /// Reserve, in estimated tokens, held back from the context budget for the
 /// model's response. gpt-oss emits a Harmony reasoning channel on top of the
 /// final answer, so this is generous.
+#[cfg(test)]
+mod prompt_carveout_tests {
+    use super::ELMER_SYSTEM_PROMPT;
+
+    /// tuxlink-8fcbh: the routines carve-out must keep teaching the P2
+    /// fragment-authoring surface — the 122b exam showed the system prompt
+    /// outranks tool descriptions for small models, and the P2 rollout
+    /// shipped without updating it (the model one-shot a whole document
+    /// because its highest-authority instruction taught save-iterate).
+    #[test]
+    fn system_prompt_teaches_template_then_verbs() {
+        for needle in [
+            "routines_actions_list FIRST",
+            "definition_template",
+            "routines_step_add",
+            "routines_trigger_set",
+            "routines_step_update",
+            "not a quoted string",
+            "never re-send the whole definition",
+            // adrev round 3: the template's sample step must be REPLACED (a
+            // literal append-only bootstrap would leave it in the routine),
+            // and triggers are set only when asked (an unconditional "set
+            // the schedule" step biased small models toward unrequested
+            // periodic triggers on a transmit-capable system).
+            "SAMPLE local.log",
+            "ONLY when the operator asked",
+        ] {
+            assert!(
+                ELMER_SYSTEM_PROMPT.contains(needle),
+                "system prompt lost its routines-authoring teaching: missing {needle:?}"
+            );
+        }
+    }
+}
+
 const RESPONSE_RESERVE_TOKENS: usize = 4096;
 
 /// Conservative token estimate for a byte string. Real BPE is ~4 chars/token for
