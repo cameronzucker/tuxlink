@@ -531,7 +531,7 @@ pub(crate) fn redact_message(msg: &Message) -> Message {
 ///
 /// Returns a fresh `String` even when nothing is redacted (cheap on clean
 /// strings — `Cow::Borrowed` is cloned to owned).
-fn redact_text(text: &str) -> String {
+pub(crate) fn redact_text(text: &str) -> String {
     crate::winlink::redaction::redact_freeform(text).into_owned()
 }
 

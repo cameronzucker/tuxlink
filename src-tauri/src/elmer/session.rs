@@ -585,6 +585,11 @@ impl ElmerSession {
         }
         // inner lock RELEASED.  `_op` (op_lock) drops here. ───────────────
 
+        // Terminal outcome line (tuxlink-93lzx): recorded AFTER the join
+        // mapping above, so a task panic or a hard `abort()` still leaves a
+        // how-it-ended line — the records must never just stop.
+        self.transcript.record_outcome(&outcome);
+
         outcome
     }
 
@@ -1265,6 +1270,9 @@ mod tests {
             // Brief inner lock C: cleanup.
             { self.inner.lock().unwrap().current = None; }
 
+            // Mirror production: terminal outcome line after the join mapping.
+            self.transcript.record_outcome(&outcome);
+
             outcome
         }
 
@@ -1500,6 +1508,36 @@ mod tests {
             .collect();
         assert_eq!(fresh.len(), 1);
         assert_eq!(fresh[0].1["seq"], 0, "seq resets in the rotated session");
+    }
+
+    /// Every send ends with a terminal outcome line (tuxlink-93lzx): a
+    /// wedged / cancelled / completed run must be distinguishable from the
+    /// transcript alone — the autopsy must not need the operator's memory of
+    /// how the run ended.
+    #[tokio::test]
+    async fn send_records_terminal_outcome_line() {
+        let provider = Arc::new(ScriptedProvider::new(vec![ModelTurn::Text("done".into())]));
+        let invoker = Box::new(RecordingInvoker::always_ok(vec![]));
+        let session = TestSession::new(provider, invoker, Arc::new(NoopAbort));
+
+        let out = session.send("one question".into()).await;
+        assert_eq!(out, RunOutcome::Completed("done".into()));
+
+        let lines = session.transcript_lines();
+        let (_, last) = lines.last().expect("transcript is non-empty");
+        assert_eq!(
+            last["outcome"]["kind"], "done",
+            "the session file's last line is the terminal outcome: {last}"
+        );
+        assert!(
+            last.get("message").is_none(),
+            "outcome lines carry no message key: {last}"
+        );
+        assert_eq!(
+            last["seq"].as_u64().unwrap() as usize,
+            lines.len() - 1,
+            "outcome continues the session's seq counter"
+        );
     }
 
     /// A run that calls a tool then answers bridges a `Chip` (tool call) BEFORE

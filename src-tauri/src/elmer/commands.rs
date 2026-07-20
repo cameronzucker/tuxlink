@@ -137,18 +137,24 @@ fn make_event_sink(app: AppHandle) -> crate::elmer::session::EventSink {
 // ---------------------------------------------------------------------------
 
 fn outcome_to_event(outcome: &RunOutcome) -> ElmerEvent {
-    let (outcome_kind, detail) = match outcome {
-        RunOutcome::Completed(text) => ("done".into(), text.clone()),
-        RunOutcome::Cancelled => ("cancelled".into(), String::new()),
-        RunOutcome::NeedsOperator(msg) => ("needsOperator".into(), msg.clone()),
-        RunOutcome::InvalidAction(msg) => ("invalidAction".into(), msg.clone()),
-        RunOutcome::ToolDenied(msg) => ("toolDenied".into(), msg.clone()),
-        RunOutcome::RateLimited(msg) => ("rateLimited".into(), msg.clone()),
-        // A genuine provider failure — the "error" kind is persisted to the chat
-        // transcript (tuxlink-a1xwx) so the operator can capture it verbatim.
-        RunOutcome::ProviderError(msg) => ("error".into(), msg.clone()),
+    // Kind strings come from the shared vocabulary in `events` (also used by
+    // the transcript's terminal outcome line, tuxlink-93lzx). The detail
+    // policy differs by consumer: the pane wants the final text for "done"
+    // (persisted to the chat transcript, tuxlink-a1xwx); the durable
+    // transcript's outcome line does not (the text is already a message line).
+    let detail = match outcome {
+        RunOutcome::Completed(text) => text.clone(),
+        RunOutcome::Cancelled => String::new(),
+        RunOutcome::NeedsOperator(msg)
+        | RunOutcome::InvalidAction(msg)
+        | RunOutcome::ToolDenied(msg)
+        | RunOutcome::RateLimited(msg)
+        | RunOutcome::ProviderError(msg) => msg.clone(),
     };
-    ElmerEvent::Outcome { outcome_kind, detail }
+    ElmerEvent::Outcome {
+        outcome_kind: crate::elmer::events::outcome_kind(outcome).to_string(),
+        detail,
+    }
 }
 
 // ---------------------------------------------------------------------------

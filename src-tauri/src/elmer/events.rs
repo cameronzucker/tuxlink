@@ -13,10 +13,27 @@
 //! `"deltaKind"`) — see individual variant docs for the exact wire names.
 
 use serde::Serialize;
+use tuxlink_agent_runner::RunOutcome;
 
 // ---------------------------------------------------------------------------
 // Event-name constants (Rust ↔ TypeScript contract)
 // ---------------------------------------------------------------------------
+
+/// The single "how did the run end" vocabulary, shared by the
+/// [`ElmerEvent::Outcome`] event the pane consumes and the durable
+/// transcript's terminal outcome line (tuxlink-93lzx). One mapping so the UI
+/// callout and a transcript grep can never disagree about the same run.
+pub(crate) fn outcome_kind(outcome: &RunOutcome) -> &'static str {
+    match outcome {
+        RunOutcome::Completed(_) => "done",
+        RunOutcome::Cancelled => "cancelled",
+        RunOutcome::NeedsOperator(_) => "needsOperator",
+        RunOutcome::InvalidAction(_) => "invalidAction",
+        RunOutcome::ToolDenied(_) => "toolDenied",
+        RunOutcome::RateLimited(_) => "rateLimited",
+        RunOutcome::ProviderError(_) => "error",
+    }
+}
 
 /// Streaming text token from the model (role + text snippet).
 pub const EV_TURN: &str = "elmer-turn";
