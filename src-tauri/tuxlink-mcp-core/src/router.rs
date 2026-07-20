@@ -559,7 +559,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "find_stations",
-        description = "List Winlink RMS gateways for the given transports/bands (callsign, frequencies, grid). Each gateway also carries distance_km, distance_mi, and bearing_deg from your station's grid (all null when your grid is unset — see operator_grid on the result); gateways are sorted nearest-first, unknown-distance last. Public directory data, cached. Read-only; does not transmit."
+        description = "List Winlink RMS gateways for the given transports/bands (callsign, frequencies, grid, and per-channel bandwidth/operating-hours), optionally filtered by channel bandwidth (Hz) and corroborated against live FT-8 decodes (ft8_evidence: true) with an snr floor. Each gateway also carries distance_km, distance_mi, and bearing_deg from your station's grid (all null when your grid is unset; see operator_grid on the result); gateways are sorted nearest-first, unknown-distance last. Public directory data, cached. Read-only; does not transmit."
     )]
     pub async fn find_stations(
         &self,
@@ -569,6 +569,9 @@ impl TuxlinkMcp {
             modes,
             history_hours,
             bands,
+            bandwidths,
+            ft8_evidence,
+            ft8_snr_min_db,
         }) = params;
         let dto = self
             .state
@@ -577,6 +580,9 @@ impl TuxlinkMcp {
                 modes,
                 history_hours,
                 bands,
+                bandwidths,
+                ft8_evidence,
+                ft8_snr_min_db,
             })
             .await
             .map_err(port_err)?;
@@ -1869,7 +1875,8 @@ pub struct PointAtParams {
 /// `bands` mean "no filter"; `history_hours` omitted means "no time bound".
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct StationFilterParams {
-    /// Restrict to these transports (e.g. `vara-hf`, `ardop-hf`); empty = all.
+    /// Restrict to these transports (e.g. `vara-hf`, `vara-fm`, `ardop-hf`);
+    /// empty = all.
     #[serde(default)]
     pub modes: Vec<crate::ports::StationModeDto>,
     /// Only gateways heard within this many hours; omitted = no bound.
@@ -1878,6 +1885,20 @@ pub struct StationFilterParams {
     /// Restrict to these amateur bands (e.g. `"40m"`); empty = all bands.
     #[serde(default)]
     pub bands: Vec<String>,
+    /// Restrict to gateways with a channel at one of these occupied bandwidths in
+    /// Hz (classified classes: 500, 2300, 2750; other/unknown bandwidths pass
+    /// every filter). Omitted or empty = no bandwidth filter.
+    #[serde(default)]
+    pub bandwidths: Option<Vec<u32>>,
+    /// Set to `true` to corroborate each gateway against the operator's recent
+    /// FT-8 decodes (adds `ft8_corroborated` per gateway and an `evidence` block
+    /// to the result). Needs the FT-8 listener running. Omitted = no evidence.
+    #[serde(default)]
+    pub ft8_evidence: Option<bool>,
+    /// SNR floor in dB for a decode to count as FT-8 evidence (default -24).
+    /// Ignored unless `ft8_evidence` is set.
+    #[serde(default)]
+    pub ft8_snr_min_db: Option<i32>,
 }
 
 /// Input for `predict_path`. Carries NO tx_grid — the operator's own grid is

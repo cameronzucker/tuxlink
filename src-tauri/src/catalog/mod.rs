@@ -13,6 +13,7 @@ pub mod channels_api;
 pub mod channels_cache;
 pub mod commands;
 pub mod composer;
+pub mod evidence;
 pub mod parser;
 pub mod reply;
 pub mod stations;
