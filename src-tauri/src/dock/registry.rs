@@ -66,7 +66,7 @@ pub fn apply_with_context(
 /// Returns `true` iff the transition is EFFECTIVE.
 pub fn apply_with_generation(
     snap: &mut DockSnapshot,
-    generations: &mut [u64; 4],
+    generations: &mut [u64; 5],
     surface: SurfaceId,
     target: DockMode,
     context: Option<serde_json::Value>,
@@ -117,7 +117,7 @@ struct RegistryState {
     snapshot: DockSnapshot,
     /// Monotonic pop counter per surface, indexed by [`SurfaceId::index`].
     /// Bumped on every effective transition to [`DockMode::Popped`].
-    pop_generations: [u64; 4],
+    pop_generations: [u64; 5],
 }
 
 /// The managed-state registry (spec §3). Owns the authoritative snapshot
@@ -127,7 +127,7 @@ pub struct DockRegistry(Mutex<RegistryState>);
 
 impl DockRegistry {
     /// Seed the registry from the persisted `surfaces` map (config `dock`
-    /// section, config v8). Continuity tokens start empty; pop generations
+    /// section, config v9). Continuity tokens start empty; pop generations
     /// start at zero.
     pub fn new(persisted: DockSurfaces) -> Self {
         DockRegistry(Mutex::new(RegistryState {
@@ -135,7 +135,7 @@ impl DockRegistry {
                 surfaces: persisted,
                 context: DockContext::default(),
             },
-            pop_generations: [0; 4],
+            pop_generations: [0; 5],
         }))
     }
 
@@ -328,7 +328,7 @@ mod tests {
     #[test]
     fn pop_generation_bumps_only_on_effective_pop() {
         let mut snap = DockSnapshot::default();
-        let mut gens = [0u64; 4];
+        let mut gens = [0u64; 5];
         let s = SurfaceId::Routines;
         let i = s.index();
 
@@ -365,6 +365,49 @@ mod tests {
         // Other surfaces' generations are independent.
         assert_eq!(gens[SurfaceId::TacMap.index()], 0);
         assert_eq!(gens[SurfaceId::AprsChat.index()], 0);
+        assert_eq!(gens[SurfaceId::StationIntelligence.index()], 0);
+    }
+
+    /// The fifth surface (bd tuxlink-9obx2, after Elmer's tuxlink-mfssz)
+    /// exercises the exact same pure core as the others: no special-casing
+    /// anywhere in this file keys off which surface it is beyond
+    /// `SurfaceId::index`.
+    #[test]
+    fn station_intelligence_generation_and_context_lifecycle() {
+        let mut snap = DockSnapshot::default();
+        let mut gens = [0u64; 5];
+        let s = SurfaceId::StationIntelligence;
+
+        assert!(apply_with_generation(
+            &mut snap,
+            &mut gens,
+            s,
+            DockMode::Popped,
+            Some(serde_json::json!({"foreground": true, "state": null})),
+            None
+        ));
+        assert_eq!(gens[s.index()], 1);
+        assert_eq!(snap.surfaces.get(s), DockMode::Popped);
+        assert_eq!(snap.context.station_intelligence.as_ref().unwrap()["foreground"], true);
+
+        // Dock back: effective, no generation bump, token replaced.
+        assert!(apply_with_generation(
+            &mut snap,
+            &mut gens,
+            s,
+            DockMode::Docked,
+            Some(serde_json::json!({"foreground": false, "state": null})),
+            None
+        ));
+        assert_eq!(gens[s.index()], 1);
+        assert_eq!(snap.surfaces.get(s), DockMode::Docked);
+        assert_eq!(snap.context.station_intelligence.as_ref().unwrap()["foreground"], false);
+
+        // Untouched: the other four surfaces never moved.
+        assert_eq!(snap.surfaces.get(SurfaceId::Routines), DockMode::Docked);
+        assert_eq!(snap.surfaces.get(SurfaceId::TacMap), DockMode::Docked);
+        assert_eq!(snap.surfaces.get(SurfaceId::AprsChat), DockMode::Docked);
+        assert_eq!(snap.surfaces.get(SurfaceId::Elmer), DockMode::Docked);
     }
 
     /// The generation-guarded dock-back proceeds when the expected generation
@@ -373,7 +416,7 @@ mod tests {
     #[test]
     fn generation_guard_refuses_on_mismatch_proceeds_on_match() {
         let mut snap = DockSnapshot::default();
-        let mut gens = [0u64; 4];
+        let mut gens = [0u64; 5];
         let s = SurfaceId::TacMap;
 
         // Pop out: generation is now 1, surface Popped.
@@ -404,7 +447,7 @@ mod tests {
     #[test]
     fn generation_guard_survives_dock_back_then_repop() {
         let mut snap = DockSnapshot::default();
-        let mut gens = [0u64; 4];
+        let mut gens = [0u64; 5];
         let s = SurfaceId::AprsChat;
 
         // Pop: gen 1. This is the generation the close-intent timer samples.
@@ -448,6 +491,8 @@ mod tests {
         let snap = reg.snapshot();
         assert_eq!(snap.surfaces.get(SurfaceId::AprsChat), DockMode::Popped);
         assert_eq!(snap.surfaces.get(SurfaceId::Routines), DockMode::Docked);
+        assert_eq!(snap.surfaces.get(SurfaceId::StationIntelligence), DockMode::Docked);
         assert!(snap.context.aprs_chat.is_none());
+        assert!(snap.context.station_intelligence.is_none());
     }
 }

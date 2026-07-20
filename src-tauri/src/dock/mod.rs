@@ -2,6 +2,15 @@
 //! Spec: docs/superpowers/specs/2026-07-15-dockable-surfaces-design.md §3.
 //! The wire-contract table in spec §3 is NORMATIVE; the strings below are
 //! copied from it, never derived (label/route drop the underscore).
+//!
+//! `SurfaceId::StationIntelligence` (bd tuxlink-9obx2) extends the registry
+//! the spec's §9 non-goals section named as the growth path: "wiring another
+//! surface is adding a registry entry plus its pathway affordances" (Elmer,
+//! bd tuxlink-mfssz, was the fourth; Station Intelligence is the fifth).
+//! Its window label diverges from the drop-the-underscore form the other
+//! surfaces use (`pop-station-intelligence`, not `pop-stationintelligence`),
+//! deliberately, since the wire table is a lookup, not a formula (spec
+//! §3), and the two-word compound reads better hyphenated.
 
 pub mod commands;
 pub mod park_notify;
@@ -16,14 +25,16 @@ pub enum SurfaceId {
     TacMap,
     AprsChat,
     Elmer,
+    StationIntelligence,
 }
 
 impl SurfaceId {
-    pub const ALL: [SurfaceId; 4] = [
+    pub const ALL: [SurfaceId; 5] = [
         SurfaceId::Routines,
         SurfaceId::TacMap,
         SurfaceId::AprsChat,
         SurfaceId::Elmer,
+        SurfaceId::StationIntelligence,
     ];
 
     pub fn window_label(self) -> &'static str {
@@ -32,6 +43,7 @@ impl SurfaceId {
             SurfaceId::TacMap => "pop-tacmap",
             SurfaceId::AprsChat => "pop-aprschat",
             SurfaceId::Elmer => "pop-elmer",
+            SurfaceId::StationIntelligence => "pop-station-intelligence",
         }
     }
 
@@ -41,6 +53,7 @@ impl SurfaceId {
             SurfaceId::TacMap => "/pop/tacmap",
             SurfaceId::AprsChat => "/pop/aprschat",
             SurfaceId::Elmer => "/pop/elmer",
+            SurfaceId::StationIntelligence => "/pop/station-intelligence",
         }
     }
 
@@ -50,6 +63,7 @@ impl SurfaceId {
             SurfaceId::TacMap => "Tac Map — Tuxlink",
             SurfaceId::AprsChat => "APRS Chat — Tuxlink",
             SurfaceId::Elmer => "Elmer — Tuxlink",
+            SurfaceId::StationIntelligence => "Station Intelligence - Tuxlink",
         }
     }
 
@@ -57,16 +71,18 @@ impl SurfaceId {
         SurfaceId::ALL.into_iter().find(|s| s.window_label() == label)
     }
 
-    /// Dense `0..4` index for this surface, matching [`SurfaceId::ALL`]'s order
-    /// (`Routines`=0, `TacMap`=1, `AprsChat`=2, `Elmer`=3). Used to index the registry's
-    /// per-surface pop-generation array the same way [`DockSurfaces`] maps a
-    /// surface to its field.
+    /// Dense `0..5` index for this surface, matching [`SurfaceId::ALL`]'s order
+    /// (`Routines`=0, `TacMap`=1, `AprsChat`=2, `Elmer`=3,
+    /// `StationIntelligence`=4). Used to index the registry's per-surface
+    /// pop-generation array the same way [`DockSurfaces`] maps a surface to
+    /// its field.
     pub(crate) fn index(self) -> usize {
         match self {
             SurfaceId::Routines => 0,
             SurfaceId::TacMap => 1,
             SurfaceId::AprsChat => 2,
             SurfaceId::Elmer => 3,
+            SurfaceId::StationIntelligence => 4,
         }
     }
 }
@@ -80,7 +96,11 @@ pub enum DockMode {
 }
 
 /// The persisted half of the snapshot — this exact shape is the config `dock`
-/// section (spec §3 JSON literal; Task 2).
+/// section (spec §3 JSON literal; Task 2). `station_intelligence` (bd
+/// tuxlink-9obx2) is additive: `#[serde(default)]` migrates pre-field configs
+/// (absent → `Docked`), which is why adding it bumps `CONFIG_SCHEMA_VERSION`
+/// 8 → 9 (config.rs); `deny_unknown_fields` below means an older binary
+/// would otherwise fail outright on a config a newer build wrote.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct DockSurfaces {
@@ -94,6 +114,9 @@ pub struct DockSurfaces {
     /// `dock` section parsing (absent key = docked).
     #[serde(default)]
     pub elmer: DockMode,
+    /// bd tuxlink-9obx2. Same additive-migration rationale as `elmer` above.
+    #[serde(default)]
+    pub station_intelligence: DockMode,
 }
 
 impl DockSurfaces {
@@ -103,6 +126,7 @@ impl DockSurfaces {
             SurfaceId::TacMap => self.tac_map,
             SurfaceId::AprsChat => self.aprs_chat,
             SurfaceId::Elmer => self.elmer,
+            SurfaceId::StationIntelligence => self.station_intelligence,
         }
     }
     pub fn set(&mut self, s: SurfaceId, m: DockMode) {
@@ -111,6 +135,7 @@ impl DockSurfaces {
             SurfaceId::TacMap => self.tac_map = m,
             SurfaceId::AprsChat => self.aprs_chat = m,
             SurfaceId::Elmer => self.elmer = m,
+            SurfaceId::StationIntelligence => self.station_intelligence = m,
         }
     }
 }
@@ -123,6 +148,8 @@ pub struct DockContext {
     pub aprs_chat: Option<serde_json::Value>,
     #[serde(default)]
     pub elmer: Option<serde_json::Value>,
+    #[serde(default)]
+    pub station_intelligence: Option<serde_json::Value>,
 }
 
 impl DockContext {
@@ -132,6 +159,7 @@ impl DockContext {
             SurfaceId::TacMap => self.tac_map = v,
             SurfaceId::AprsChat => self.aprs_chat = v,
             SurfaceId::Elmer => self.elmer = v,
+            SurfaceId::StationIntelligence => self.station_intelligence = v,
         }
     }
 }
@@ -175,6 +203,10 @@ mod tests {
         assert_eq!(serde_json::to_string(&SurfaceId::Routines).unwrap(), "\"routines\"");
         assert_eq!(serde_json::to_string(&SurfaceId::TacMap).unwrap(), "\"tac_map\"");
         assert_eq!(serde_json::to_string(&SurfaceId::AprsChat).unwrap(), "\"aprs_chat\"");
+        assert_eq!(
+            serde_json::to_string(&SurfaceId::StationIntelligence).unwrap(),
+            "\"station_intelligence\""
+        );
         assert_eq!(SurfaceId::TacMap.window_label(), "pop-tacmap");
         assert_eq!(SurfaceId::TacMap.route(), "/pop/tacmap");
         assert_eq!(SurfaceId::AprsChat.window_label(), "pop-aprschat");
@@ -183,6 +215,9 @@ mod tests {
         assert_eq!(SurfaceId::Elmer.route(), "/pop/elmer");
         assert_eq!(SurfaceId::Elmer.title(), "Elmer — Tuxlink");
         assert_eq!(SurfaceId::Routines.title(), "Routines — Tuxlink");
+        assert_eq!(SurfaceId::StationIntelligence.window_label(), "pop-station-intelligence");
+        assert_eq!(SurfaceId::StationIntelligence.route(), "/pop/station-intelligence");
+        assert_eq!(SurfaceId::StationIntelligence.title(), "Station Intelligence - Tuxlink");
         for s in SurfaceId::ALL {
             assert_eq!(SurfaceId::from_window_label(s.window_label()), Some(s));
         }
@@ -204,8 +239,11 @@ mod tests {
         assert_eq!(v["surfaces"]["tac_map"], "docked");
         assert_eq!(v["surfaces"]["aprs_chat"], "docked");
         assert_eq!(v["surfaces"]["elmer"], "docked");
+        assert_eq!(v["surfaces"]["station_intelligence"], "docked");
         assert_eq!(v["context"]["routines"]["view"], "designer");
         assert!(v["context"]["tac_map"].is_null());
+        assert!(v["context"]["elmer"].is_null());
+        assert!(v["context"]["station_intelligence"].is_null());
     }
 
     /// Transition core (spec §3): effective vs no-op. No-op MUST return false so

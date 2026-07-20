@@ -1,5 +1,8 @@
-// src/dock/surfaceRegistry.tsx — the three-entry surface registry
-// PoppedSurfaceHost mounts from (spec §4). bd tuxlink-dmwte task 7.
+// src/dock/surfaceRegistry.tsx — the surface registry PoppedSurfaceHost
+// mounts from (spec §4). bd tuxlink-dmwte task 7; extended to a fourth entry
+// (Elmer) by bd tuxlink-mfssz, then a fifth (Station Intelligence) by bd
+// tuxlink-9obx2, both per spec §9's stated growth path ("wiring another
+// surface is adding a registry entry plus its pathway affordances").
 //
 // Deliberate deviation from the spec §4 registry sketch: NO `defaultSize`
 // field here — first-spawn sizes live Rust-side in `pop_window_spec`
@@ -7,6 +10,7 @@
 import { useCallback, useEffect, useRef, useState, type ComponentType } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import type { SurfaceId } from './dockState';
+import { dockBack } from './dockState';
 import { useStatusData } from '../shell/useStatus';
 import { AprsPositionsMap } from '../aprs/AprsPositionsMap';
 import { useAprsPositions } from '../aprs/useAprsPositions';
@@ -24,8 +28,9 @@ import type { RoutineDef } from '../routines/routinesApi';
 import { ElmerPane } from '../elmer/ElmerPane';
 import { isElmerTokenState, type ElmerTokenState } from '../elmer/elmerToken';
 import { useEgressArm } from '../security/useEgressArm';
-import { dockBack } from './dockState';
-import { RoutinesStrip, TacMapStrip, ChatStrip, ElmerStrip } from './strips';
+import { RoutinesStrip, TacMapStrip, ChatStrip, ElmerStrip, StationIntelStrip } from './strips';
+import { StationFinderPanel } from '../catalog/StationFinderPanel';
+import { Ft8ListenerProvider } from '../ft8ui/useFt8Listener';
 
 /** Task 8–10 extend this shape (task-7 brief's normative interface block —
  *  binding for the whole dockable-surfaces plan). */
@@ -147,6 +152,62 @@ function AprsChatSurface(_props: SurfaceComponentProps) {
         controlStrip={linkKind === 'UvproNative' ? <UvproControlStrip /> : undefined}
       />
     </div>
+  );
+}
+
+// ---- Station Intelligence (bd tuxlink-9obx2) -----------------------------
+//
+// Renders the SAME <StationFinderPanel> AppShell mounts inline as an overlay
+// (AppShell.tsx catalogBuilderOpen): StationFinderPanel is the one dockable
+// surface that is ALSO its own overlay/close affordance (Routines/TacMap/
+// AprsChat have no built-in close button; the dock chrome IS their only
+// close). Two popped-mode-specific props thread that distinction through:
+//
+//   - `popped`: suppresses the docked overlay's dimmed backdrop and
+//     click-outside-to-close chrome (there is no "outside" in a dedicated OS
+//     window; spec §4's popped-chrome principle, mirrored here since
+//     StationFinderPanel has no exact precedent among the first three).
+//   - `onPopOut`: OMITTED here (AppShell's docked mount passes it) so the
+//     panel's own header never grows a second, redundant pop-out button
+//     while it is ALREADY popped, the exact "no self-pop from inside the
+//     popped window" contract `onAprsChatPopOut`'s doc comment states above.
+//
+// `onClose` (the panel's own "×", next to which AppShell's docked mount adds
+// "↗ Pop out") is NOT omitted; it is REQUIRED, and here it drives the same
+// close-intent dock-back PopTitleBar's ✕ drives (availability semantics,
+// `state: null`: the panel carries no continuity token, same as tac_map/
+// aprs_chat). This keeps the panel's own × functionally correct instead of a
+// dead control now that "close the overlay" has no docked-mode meaning here.
+//
+// `onUse` / `onUsePeer` / `activePrefillMode` are OMITTED; those callbacks
+// drive AppShell opening a MODEM PANEL inline in the MAIN window, which has
+// no equivalent surface in this standalone window (the exact precedent
+// `TacMapSurface` sets above for `onFocusStation`: "that callback drives
+// AppShell's own Station Data dock tab, which has no equivalent surface in
+// this standalone window"). `BandMatrix`'s dial chips already no-op safely
+// when `onUse` is undefined (their existing optional-prop contract, not
+// something this surface introduces).
+//
+// StationFinderPanel calls `useFt8Listener()` (via the always-mounted
+// `LiveBandStrip`), which throws with no `<Ft8ListenerProvider>` ancestor.
+// AppShell gets its instance from the top-level provider wrapping
+// `AppShellInner`; a popped window has no AppShell, so, mirroring how
+// TacMapSurface/AprsChatSurface mount their OWN hook instances rather than
+// relying on an ambient provider, this wraps its own. `StationIntelStrip`
+// (this file's registry entry below) needs no such provider: it does not
+// call `useFt8Listener` (see its own doc comment in strips.tsx for why not:
+// that vital is already visible in-panel via `LiveBandStrip`).
+function onStationIntelClose(): void {
+  void dockBack('station_intelligence', { foreground: false, state: null }).catch((err) => {
+    console.error('[dock] Station Intelligence close failed:', err);
+  });
+}
+
+function StationIntelSurface(_props: SurfaceComponentProps) {
+  return (
+    <Ft8ListenerProvider>
+      <StationFinderPanel onClose={onStationIntelClose} popped />
+    </Ft8ListenerProvider>
   );
 }
 
@@ -352,5 +413,11 @@ export const SURFACE_REGISTRY: Record<SurfaceId, SurfaceRegistryEntry> = {
     title: 'Elmer — Tuxlink',
     Component: ElmerPopped,
     StatusStrip: ElmerStrip,
+  },
+  station_intelligence: {
+    id: 'station_intelligence',
+    title: 'Station Intelligence - Tuxlink',
+    Component: StationIntelSurface,
+    StatusStrip: StationIntelStrip,
   },
 };

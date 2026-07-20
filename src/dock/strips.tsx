@@ -24,6 +24,9 @@ import { formatUtc } from '../routines/format';
 import { useEgressArm } from '../security/useEgressArm';
 import { EV_OUTCOME } from '../elmer/elmerEvents';
 import type { ConfigReadDto } from '../elmer/elmerModelConfig';
+import { useStations } from '../catalog/useStations';
+import { aggregateStations } from '../catalog/stationModel';
+import type { ListingMode } from '../catalog/stationTypes';
 import './PoppedSurfaceHost.css';
 
 /** Non-terminal `RunState`s — mirrors RoutinesDashboard.tsx's LIVE_STATES. */
@@ -212,6 +215,39 @@ export function ElmerStrip() {
           : status?.armed
             ? `send authority armed ${status.armedRemainingSecs}s`
             : 'send authority off'}
+      </span>
+    </div>
+  );
+}
+
+// bd tuxlink-9obx2 (Station Intelligence pop-out). The panel itself is
+// already dense: band/mode filters, list-freshness age, live conditions,
+// and the FT-8 listener state (LiveBandStrip) are all rendered inline, so
+// none of them qualify as an unduplicated vital (spec §4 adrev R4-F8). The
+// one number NOT shown anywhere in the panel as text is the total cataloged
+// station count (the rail shows individual cards, never a tally); this is
+// the strip's sole vital, mirroring TacMapStrip's one-item precedent.
+//
+// A fresh `useStations()` instance (own hook instance, per this file's
+// header note) rather than a shared/seeded one: unlike the APRS surfaces,
+// the station catalog has no snapshotRole handshake (it is an imperative
+// fetch, not a listen()-based push subscription), so this strip triggers
+// its own `catalog_fetch_stations` call on mount. The backend fetch is
+// TTL/coalesced (useStations.ts module doc), so a second near-simultaneous
+// fetch from the strip is cheap, not a duplicate-hammer concern.
+const STATION_INTEL_STRIP_MODES: ListingMode[] = ['vara-hf', 'ardop-hf', 'packet', 'vara-fm'];
+
+export function StationIntelStrip() {
+  const stations = useStations();
+  useEffect(() => {
+    stations.fetch(STATION_INTEL_STRIP_MODES);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const count = aggregateStations(stations.listings).length;
+  return (
+    <div className="pop-strip" data-testid="pop-strip-station-intelligence">
+      <span className="pop-strip-item">
+        {count} station{count === 1 ? '' : 's'} cataloged
       </span>
     </div>
   );

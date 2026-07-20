@@ -55,6 +55,13 @@ vi.mock('./surfaceRegistry', () => {
       routines: { id: 'routines', title: 'Routines — Tuxlink', Component: makeComponent('routines'), StatusStrip: makeStrip('routines') },
       tac_map: { id: 'tac_map', title: 'Tac Map — Tuxlink', Component: makeComponent('tac_map'), StatusStrip: makeStrip('tac_map') },
       aprs_chat: { id: 'aprs_chat', title: 'APRS Chat — Tuxlink', Component: makeComponent('aprs_chat'), StatusStrip: makeStrip('aprs_chat') },
+      // bd tuxlink-9obx2: the fourth surface, same fake-registry treatment.
+      station_intelligence: {
+        id: 'station_intelligence',
+        title: 'Station Intelligence - Tuxlink',
+        Component: makeComponent('station_intelligence'),
+        StatusStrip: makeStrip('station_intelligence'),
+      },
     },
   };
 });
@@ -74,8 +81,14 @@ import {
 
 function emptySnapshot() {
   return {
-    surfaces: { routines: 'popped', tac_map: 'popped', aprs_chat: 'popped' },
-    context: { routines: null, tac_map: null, aprs_chat: null },
+    surfaces: {
+      routines: 'popped', tac_map: 'popped', aprs_chat: 'popped', elmer: 'popped',
+      station_intelligence: 'popped',
+    },
+    context: {
+      routines: null, tac_map: null, aprs_chat: null, elmer: null,
+      station_intelligence: null,
+    },
   };
 }
 
@@ -311,9 +324,23 @@ describe('PoppedSurfaceHost — strips + consent (behaviors 5 + 6)', () => {
     expect(screen.getByTestId('consent-gate-stub')).toBeInTheDocument();
   });
 
-  it('does not mount ConsentGate for tac_map / aprs_chat', () => {
+  it('does not mount ConsentGate for tac_map / aprs_chat / station_intelligence', () => {
     renderHost(<PoppedSurfaceHost surface="tac_map" />);
     expect(screen.queryByTestId('consent-gate-stub')).not.toBeInTheDocument();
+    cleanup();
+    renderHost(<PoppedSurfaceHost surface="station_intelligence" />);
+    expect(screen.queryByTestId('consent-gate-stub')).not.toBeInTheDocument();
+  });
+
+  // bd tuxlink-9obx2: the fifth surface mounts through the SAME generic
+  // registry path as the others; no PoppedSurfaceHost.tsx code change was
+  // needed to add it (registry wiring only). The surface Component mounts
+  // only after `contextLoaded` flips (post the mocked `dock_state_get`
+  // microtask), so this must await rather than assert synchronously.
+  it('renders the station_intelligence surface component and its status strip', async () => {
+    renderHost(<PoppedSurfaceHost surface="station_intelligence" />);
+    expect(await screen.findByTestId('surface-station_intelligence')).toBeInTheDocument();
+    expect(screen.getByTestId('strip-station_intelligence')).toBeInTheDocument();
   });
 
   it('unwraps the token envelope and passes its state half to the surface component', async () => {

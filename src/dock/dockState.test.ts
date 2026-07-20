@@ -29,13 +29,26 @@ const { mockListen } = vi.hoisted(() => ({ mockListen: vi.fn() }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: mockListen }));
 
 function surfaces(partial: Partial<DockSurfaces> = {}): DockSurfaces {
-  return { routines: 'docked', tac_map: 'docked', aprs_chat: 'docked', elmer: 'docked', ...partial };
+  return {
+    routines: 'docked',
+    tac_map: 'docked',
+    aprs_chat: 'docked',
+    elmer: 'docked',
+    station_intelligence: 'docked',
+    ...partial,
+  };
 }
 
 function snapshot(partial: Partial<DockSurfaces> = {}): DockSnapshot {
   return {
     surfaces: surfaces(partial),
-    context: { routines: null, tac_map: null, aprs_chat: null, elmer: null },
+    context: {
+      routines: null,
+      tac_map: null,
+      aprs_chat: null,
+      elmer: null,
+      station_intelligence: null,
+    },
   };
 }
 

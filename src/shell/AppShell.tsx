@@ -643,6 +643,13 @@ function AppShellInner() {
   // in-dock APRS tab shows a placeholder and the dock-opening flows focus the
   // window instead. `null` dock reads as docked (same convention as above).
   const aprsChatPopped = dock?.surfaces.aprs_chat === 'popped';
+  // bd tuxlink-9obx2 (spec §5, extending the dmwte pattern to a fifth
+  // surface): Station Intelligence. Unlike tac_map/aprs_chat/routines it has
+  // no inline PANE placement: AppShell's docked form is itself an openable/
+  // closable overlay (`catalogBuilderOpen`), not an always-present pane, so
+  // its "docked" visual state is simply "closed until opened," same as
+  // today. `null` dock reads as docked (same convention as above).
+  const stationIntelPopped = dock?.surfaces.station_intelligence === 'popped';
   const consentHost = dock ? consentHostWindow(dock.surfaces) : 'main';
   // The continuity-token draft carried inline: seeded by a ⇤ foreground
   // dock-back arrival (spec §5), cleared on any in-surface navigation so
@@ -824,6 +831,68 @@ function AppShellInner() {
   const onAprsChatPopOut = useCallback(() => {
     void popOut('aprs_chat', { foreground: true, state: null }).catch((err) => {
       console.error('[dock] APRS Chat pop-out failed:', err);
+    });
+  }, []);
+
+  // bd tuxlink-9obx2 (spec §5, extending the dmwte pattern): while Station
+  // Intelligence is popped, the inline overlay must never ALSO be open, so
+  // force it closed the moment the surface pops (mirrors the routinesPopped
+  // effect that forces `routinesView` closed above). Defense in depth
+  // alongside the render guard (`catalogBuilderOpen && !stationIntelPopped`
+  // above): this also covers the case where the overlay was already open
+  // inline and the surface was THEN popped from elsewhere (a second window,
+  // launch restoration).
+  useEffect(() => {
+    if (stationIntelPopped) setCatalogBuilderOpen(false);
+  }, [stationIntelPopped]);
+
+  // bd tuxlink-9obx2 (spec §5): a ⇤ foreground dock-back for Station
+  // Intelligence (popped→docked with `context.station_intelligence.foreground
+  // === true`) reopens the inline overlay: the panel's own single
+  // precondition (`catalogBuilderOpen`), unlike tac_map's two-precondition
+  // pane or aprs_chat's dock-tab activation. `foreground === false` (✕ /
+  // Ctrl+W / WM close, availability semantics) leaves it closed. Mirrors
+  // `prevAprsChatModeRef` above: tracks the prior mode so only the
+  // popped→docked transition edge applies, not every snapshot.
+  const prevStationIntelModeRef = useRef<'docked' | 'popped' | null>(null);
+  useEffect(() => {
+    if (!dock) return;
+    const prev = prevStationIntelModeRef.current;
+    const cur = dock.surfaces.station_intelligence;
+    prevStationIntelModeRef.current = cur;
+    if (prev !== 'popped' || cur !== 'docked') return;
+    const envelope = dock.context.station_intelligence as DockContextEnvelope;
+    if (!envelope?.foreground) return; // availability semantics: stays closed
+    setCatalogBuilderOpen(true);
+  }, [dock]);
+
+  // bd tuxlink-9obx2 (spec §5, mirroring `focusOrOpenAprsChat`/behavior 4):
+  // every in-app path that opens Station Intelligence routes through this:
+  // while popped, focus the window instead of opening a second inline copy
+  // (or, worse, a dead no-op). Replaces every direct `setCatalogBuilderOpen
+  // (true)` call site (the ribbon chip, the sidebar/Message-menu "Find a
+  // Gateway" entries, and the menu-action-bus `openCatalogBuilder` handler).
+  const openOrFocusStationIntel = useCallback(() => {
+    if (stationIntelPopped) {
+      void focusSurface('station_intelligence');
+      return;
+    }
+    setCatalogBuilderOpen(true);
+  }, [stationIntelPopped]);
+
+  // Inline ↗ Pop out (spec §5 entry point: the Station Intelligence panel
+  // header, next to its existing × close control). Pops the surface to its
+  // own window; the panel carries no continuity token worth restoring across
+  // a pop/dock-back cycle (its filters/selection already persist to
+  // localStorage independently via `readFinderView`/`writeFinderView` in
+  // StationFinderPanel.tsx, so `state: null` mirrors tac_map/aprs_chat's
+  // null-state pattern rather than routines' view+draft token). Only
+  // rendered in the docked context; the popped wrapper
+  // (`StationIntelSurface`) omits `onPopOut`, so no self-pop from inside the
+  // popped window.
+  const onStationIntelPopOut = useCallback(() => {
+    void popOut('station_intelligence', { foreground: true, state: null }).catch((err) => {
+      console.error('[dock] Station Intelligence pop-out failed:', err);
     });
   }, []);
 
@@ -1178,8 +1247,10 @@ function AppShellInner() {
   // Message-menu "Find a Station" flow opens (StationFinderPanel, hosting
   // StationRail). A 'blocked' ribbon click ALWAYS routes here, never a
   // toggle attempt (DashboardRibbon enforces that branch internally; this is
-  // just the handler it calls).
-  const onOpenFt8 = useCallback(() => { setCatalogBuilderOpen(true); }, []);
+  // just the handler it calls). bd tuxlink-9obx2: routes through
+  // `openOrFocusStationIntel` so a click while the surface is popped focuses
+  // the window instead of opening a second inline copy.
+  const onOpenFt8 = openOrFocusStationIntel;
   const [ft8Toggling, setFt8Toggling] = useState(false);
   const onToggleFt8Listening = useCallback(async () => {
     if (ft8Toggling) return;
@@ -1922,7 +1993,9 @@ function AppShellInner() {
       // browser open, spec §8.5).
       setReportIssueState({ kind: 'intro' });
     },
-    openCatalogBuilder: () => setCatalogBuilderOpen(true),
+    // bd tuxlink-9obx2: dock-aware; while popped, focuses the window
+    // instead of opening a second inline copy (mirrors openRoutines above).
+    openCatalogBuilder: openOrFocusStationIntel,
     openRequestCenter: (initialView = 'home') => setRequestCenter({ initialView }),
     // routines plan-5 Task 7: Routines → Routines opens the dashboard view.
     // tuxlink-dmwte task 8, behavior 2 (spec §5): while popped, the menu never
@@ -2194,7 +2267,7 @@ function AppShellInner() {
             intent={radioPanelMode.intent}
             baseCall={statusData.callsign}
             onClose={closeRadioPanel}
-            onFindGateway={() => setCatalogBuilderOpen(true)}
+            onFindGateway={openOrFocusStationIntel}
           />
         </Suspense>
       )}
@@ -2203,7 +2276,7 @@ function AppShellInner() {
           <ArdopRadioPanel
             mode={radioPanelMode}
             onClose={closeRadioPanel}
-            onFindGateway={() => setCatalogBuilderOpen(true)}
+            onFindGateway={openOrFocusStationIntel}
           />
         </Suspense>
       )}
@@ -2213,7 +2286,7 @@ function AppShellInner() {
             <VaraRadioPanel
               mode={radioPanelMode}
               onClose={closeRadioPanel}
-              onFindGateway={() => setCatalogBuilderOpen(true)}
+              onFindGateway={openOrFocusStationIntel}
             />
           </Suspense>
         )}
@@ -2846,7 +2919,12 @@ function AppShellInner() {
         renderModal={consentHost === 'main'}
       />
 
-      {catalogBuilderOpen && (
+      {/* bd tuxlink-9obx2: gated on !stationIntelPopped too (defense in depth
+          alongside the force-close effect below, mirroring the tac_map
+          "once popped, the inline map never renders" guard): a stale
+          catalogBuilderOpen=true must never double-mount this overlay
+          alongside the popped window. */}
+      {catalogBuilderOpen && !stationIntelPopped && (
         <Suspense fallback={null}>
           <StationFinderPanel
             activePrefillMode={catalogPrefillMode}
@@ -2854,6 +2932,7 @@ function AppShellInner() {
             onUsePeer={handlePeerUse}
             blockingSessionMode={ft8BlockingSessionMode}
             onClose={() => setCatalogBuilderOpen(false)}
+            onPopOut={onStationIntelPopOut}
           />
         </Suspense>
       )}

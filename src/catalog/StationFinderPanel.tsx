@@ -86,6 +86,27 @@ export interface StationFinderPanelProps {
    * is active; the popover degrades to its own "another session" wording.
    */
   blockingSessionMode?: string;
+  /**
+   * bd tuxlink-9obx2 (dockable-surfaces pop-out). `true` when this panel is
+   * mounted as the CONTENT of its own popped OS window
+   * (`src/dock/surfaceRegistry.tsx`'s `StationIntelSurface`) rather than as
+   * AppShell's inline overlay. Suppresses the dimmed backdrop AND the
+   * click-outside-to-close behavior: there is no "outside" in a dedicated
+   * window, and the window's own title bar (`PopTitleBar`) already owns
+   * dock-back/close chrome (spec §4's popped-chrome principle). Defaults to
+   * `false` (the docked overlay, unchanged).
+   */
+  popped?: boolean;
+  /**
+   * bd tuxlink-9obx2: text-labeled pop-out affordance rendered next to the
+   * existing `station-finder__close` control (spec §5 entry-point pattern,
+   * dmwte convention: pathway affordances always carry text, never icon-
+   * only). AppShell's DOCKED mount passes this; the popped wrapper
+   * (`StationIntelSurface`) omits it, so no self-pop-out button renders
+   * inside an already-popped window (mirrors `onAprsChatPopOut`'s "only
+   * rendered in the docked context" contract).
+   */
+  onPopOut?: () => void;
 }
 
 // Task 9 (tuxlink-nkzng): 'vara-fm' joins the fetched + default-enabled mode
@@ -207,6 +228,8 @@ export function StationFinderPanel({
   onUse,
   onUsePeer,
   blockingSessionMode,
+  popped = false,
+  onPopOut,
 }: StationFinderPanelProps) {
   // tuxlink-10bkw Task 6: first-open discretionary tip (hintRegistry 'find-a-station').
   useFirstOpenTip('find-a-station');
@@ -576,15 +599,30 @@ export function StationFinderPanel({
 
   return (
     <div
-      className="station-finder-overlay"
+      className={popped ? 'station-finder-overlay station-finder-overlay--popped' : 'station-finder-overlay'}
       data-testid="station-finder-overlay"
       role="dialog"
       aria-label="Station Intelligence"
-      onClick={onClose}
+      // bd tuxlink-9obx2: a popped window has no "outside" to dim/click;
+      // it IS the window's whole content, and PopTitleBar already owns
+      // dock-back/close chrome. Suppress the click-outside-to-close handler
+      // in popped mode rather than leaving it wired to a backdrop the CSS
+      // no longer paints.
+      onClick={popped ? undefined : onClose}
     >
       <div className="station-finder" data-tour-anchor="find-a-station" onClick={(e) => e.stopPropagation()}>
         <header className="station-finder__header">
           <h2>Station Intelligence</h2>
+          {onPopOut && (
+            <button
+              type="button"
+              className="station-finder__popout"
+              onClick={onPopOut}
+              aria-label="Pop out Station Intelligence into its own window"
+            >
+              ↗ Pop out
+            </button>
+          )}
           <button className="station-finder__close" onClick={onClose} aria-label="Close">
             ×
           </button>

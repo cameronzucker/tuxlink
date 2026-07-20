@@ -249,6 +249,12 @@ mod tests {
         assert!(caller_may_drive("pop-routines", SurfaceId::Routines));
         assert!(!caller_may_drive("pop-routines", SurfaceId::TacMap));
         assert!(!caller_may_drive("pop-tacmap", SurfaceId::AprsChat));
+        assert!(caller_may_drive(
+            "pop-station-intelligence",
+            SurfaceId::StationIntelligence
+        ));
+        assert!(!caller_may_drive("pop-station-intelligence", SurfaceId::TacMap));
+        assert!(!caller_may_drive("pop-tacmap", SurfaceId::StationIntelligence));
     }
 
     #[test]

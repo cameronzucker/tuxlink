@@ -37,7 +37,13 @@ const { mockListenRoutinesEvents, mockUnlisten } = vi.hoisted(() => ({
 }));
 vi.mock('../routines/routinesEvents', () => ({ listenRoutinesEvents: mockListenRoutinesEvents }));
 
-import { RoutinesStrip, TacMapStrip, ChatStrip } from './strips';
+// bd tuxlink-9obx2 (Station Intelligence pop-out): mock at the same hook
+// boundary as the three above.
+const { mockUseStations } = vi.hoisted(() => ({ mockUseStations: vi.fn() }));
+vi.mock('../catalog/useStations', () => ({ useStations: mockUseStations }));
+
+import { RoutinesStrip, TacMapStrip, ChatStrip, StationIntelStrip } from './strips';
+import type { StationListing } from '../catalog/stationTypes';
 
 function position(partial: Partial<HeardPosition> = {}): HeardPosition {
   return {
@@ -83,6 +89,26 @@ function run(partial: Partial<RunListEntry> = {}): RunListEntry {
   };
 }
 
+// bd tuxlink-9obx2: a minimal one-gateway listing, matching the N0DAJ fixture
+// shape StationFinderPanel.test.tsx already uses for the same backend command.
+function stationListing(partial: Partial<StationListing> = {}): StationListing {
+  return {
+    mode: 'vara-hf',
+    title: null,
+    parsedOk: true,
+    raw: '',
+    fetchedAtMs: Date.now(),
+    gateways: [
+      {
+        channel: 'N0DAJ', callsign: 'N0DAJ', sysopName: 'Doug', grid: 'DM34oa',
+        location: 'Wickenburg, AZ', frequenciesKhz: [7103], lastUpdate: null,
+        email: null, homepage: null, antenna: null,
+      },
+    ],
+    ...partial,
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockUseAprsPositions.mockReturnValue({ positions: [] });
@@ -92,6 +118,7 @@ beforeEach(() => {
   mockListRuns.mockResolvedValue([]);
   mockUnlisten.mockClear();
   mockListenRoutinesEvents.mockImplementation(() => Promise.resolve(mockUnlisten));
+  mockUseStations.mockReturnValue({ listings: [], loading: false, error: null, fetch: vi.fn() });
 });
 
 afterEach(() => {
@@ -257,5 +284,52 @@ describe('strip vitals render from mocked hook data (review-loop-3 F4c)', () => 
     render(<ChatStrip />);
     const unread = screen.getByTestId('pop-strip-chat-unread');
     expect(unread).toHaveTextContent('0 unread');
+  });
+
+  // bd tuxlink-9obx2: StationIntelStrip's one vital is the cataloged station
+  // count, the one number the panel itself never renders as text (spec §4
+  // adrev R4-F8: the band/mode filters, list-freshness age, and FT-8
+  // listener state are ALL already visible in-panel, so none of those
+  // qualify).
+  it('StationIntelStrip fetches on mount and shows the aggregated station count', async () => {
+    const fetchMock = vi.fn();
+    mockUseStations.mockReturnValue({
+      listings: [stationListing()],
+      loading: false,
+      error: null,
+      fetch: fetchMock,
+    });
+    render(<StationIntelStrip />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(screen.getByTestId('pop-strip-station-intelligence').textContent).toContain(
+      '1 station cataloged',
+    );
+  });
+
+  it('StationIntelStrip pluralizes for zero and for more than one station', () => {
+    mockUseStations.mockReturnValue({ listings: [], loading: false, error: null, fetch: vi.fn() });
+    render(<StationIntelStrip />);
+    expect(screen.getByTestId('pop-strip-station-intelligence').textContent).toContain(
+      '0 stations cataloged',
+    );
+    cleanup();
+
+    mockUseStations.mockReturnValue({
+      listings: [
+        stationListing({
+          gateways: [
+            { channel: 'N0DAJ', callsign: 'N0DAJ', sysopName: null, grid: 'DM34oa', location: null, frequenciesKhz: [7103], lastUpdate: null, email: null, homepage: null, antenna: null },
+            { channel: 'K7ABC', callsign: 'K7ABC', sysopName: null, grid: 'CN87xx', location: null, frequenciesKhz: [3590], lastUpdate: null, email: null, homepage: null, antenna: null },
+          ],
+        }),
+      ],
+      loading: false,
+      error: null,
+      fetch: vi.fn(),
+    });
+    render(<StationIntelStrip />);
+    expect(screen.getByTestId('pop-strip-station-intelligence').textContent).toContain(
+      '2 stations cataloged',
+    );
   });
 });

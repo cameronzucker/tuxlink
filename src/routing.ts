@@ -73,26 +73,33 @@ export function parseStationsRoute(pathname: string): boolean {
   return /^\/stations\/?$/.test(pathname);
 }
 
-// bd tuxlink-dmwte, spec §3 wire table: the pop-out routes for the dockable
-// surfaces (Routines / Tac Map / APRS Chat / Elmer, the last per bd
-// tuxlink-mfssz). The map is literal (never derived) because the route
-// segment drops the surface id's underscore irregularly: `tac_map` ->
-// `/pop/tacmap`, `aprs_chat` -> `/pop/aprschat`.
+// bd tuxlink-dmwte, spec §3 wire table (extended by bd tuxlink-mfssz for
+// Elmer and bd tuxlink-9obx2 for Station Intelligence): the pop-out routes
+// for the dockable surfaces (Routines / Tac Map / APRS Chat / Elmer /
+// Station Intelligence). The map is literal (never derived) because the
+// route segment drops the surface id's underscore irregularly: `tac_map` ->
+// `/pop/tacmap`, `aprs_chat` -> `/pop/aprschat`, EXCEPT `station_intelligence`,
+// which keeps a hyphen (`/pop/station-intelligence`) since the two-word
+// compound reads better with the separator kept; the table is a lookup, not
+// a formula, so this is a documented exception, not an inconsistency.
 const POP_ROUTE_SURFACE: Record<string, SurfaceId> = {
   routines: 'routines',
   tacmap: 'tac_map',
   aprschat: 'aprs_chat',
   elmer: 'elmer',
+  'station-intelligence': 'station_intelligence',
 };
 
 /**
  * If `pathname` is a pop-out route (`/pop/<slug>`), return the `SurfaceId`
  * it maps to per spec §3's wire table. Trailing slash tolerated. The
  * surface-id form itself (e.g. `/pop/tac_map`) is NOT a route and returns
- * `null`, same as any other unrelated path.
+ * `null`, same as any other unrelated path. The segment charset admits a
+ * hyphen (widened from `[a-z]+` by bd tuxlink-9obx2) for
+ * `station-intelligence`.
  */
 export function parsePopRoute(pathname: string): SurfaceId | null {
-  const m = pathname.match(/^\/pop\/([a-z]+)\/?$/);
+  const m = pathname.match(/^\/pop\/([a-z-]+)\/?$/);
   if (!m) return null;
   return POP_ROUTE_SURFACE[m[1]] ?? null;
 }

@@ -4,13 +4,15 @@
       "routines": "docked",
       "tac_map": "docked",
       "aprs_chat": "docked",
-      "elmer": "docked"
+      "elmer": "docked",
+      "station_intelligence": "docked"
     },
     "context": {
       "routines": null,
       "tac_map": null,
       "aprs_chat": null,
-      "elmer": null
+      "elmer": null,
+      "station_intelligence": null
     }
   },
   "routinesPopped": {
@@ -18,7 +20,8 @@
       "routines": "popped",
       "tac_map": "docked",
       "aprs_chat": "docked",
-      "elmer": "docked"
+      "elmer": "docked",
+      "station_intelligence": "docked"
     },
     "context": {
       "routines": {
@@ -34,7 +37,8 @@
       },
       "tac_map": null,
       "aprs_chat": null,
-      "elmer": null
+      "elmer": null,
+      "station_intelligence": null
     }
   },
   "elmerPopped": {
@@ -42,7 +46,8 @@
       "routines": "docked",
       "tac_map": "docked",
       "aprs_chat": "docked",
-      "elmer": "popped"
+      "elmer": "popped",
+      "station_intelligence": "docked"
     },
     "context": {
       "routines": null,
@@ -60,7 +65,8 @@
             }
           ]
         }
-      }
+      },
+      "station_intelligence": null
     }
   }
 }

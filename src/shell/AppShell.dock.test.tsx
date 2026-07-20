@@ -24,8 +24,20 @@ const { mockFocusSurface, mockPopOut, mockDockBack, dockRef } = vi.hoisted(() =>
 
 function snapshot(routines: DockMode, context: unknown = null): DockSnapshot {
   return {
-    surfaces: { routines, tac_map: 'docked', aprs_chat: 'docked', elmer: 'docked' },
-    context: { routines: context, tac_map: null, aprs_chat: null, elmer: null },
+    surfaces: {
+      routines,
+      tac_map: 'docked',
+      aprs_chat: 'docked',
+      elmer: 'docked',
+      station_intelligence: 'docked',
+    },
+    context: {
+      routines: context,
+      tac_map: null,
+      aprs_chat: null,
+      elmer: null,
+      station_intelligence: null,
+    },
   };
 }
 
@@ -34,8 +46,20 @@ function snapshot(routines: DockMode, context: unknown = null): DockSnapshot {
 // (task 9 does not touch it).
 function tacMapSnapshot(tac_map: DockMode, context: unknown = null): DockSnapshot {
   return {
-    surfaces: { routines: 'docked', tac_map, aprs_chat: 'docked', elmer: 'docked' },
-    context: { routines: null, tac_map: context, aprs_chat: null, elmer: null },
+    surfaces: {
+      routines: 'docked',
+      tac_map,
+      aprs_chat: 'docked',
+      elmer: 'docked',
+      station_intelligence: 'docked',
+    },
+    context: {
+      routines: null,
+      tac_map: context,
+      aprs_chat: null,
+      elmer: null,
+      station_intelligence: null,
+    },
   };
 }
 
@@ -43,17 +67,63 @@ function tacMapSnapshot(tac_map: DockMode, context: unknown = null): DockSnapsho
 // stay docked/null throughout (task 10 does not touch them).
 function aprsChatSnapshot(aprs_chat: DockMode, context: unknown = null): DockSnapshot {
   return {
-    surfaces: { routines: 'docked', tac_map: 'docked', aprs_chat, elmer: 'docked' },
-    context: { routines: null, tac_map: null, aprs_chat: context, elmer: null },
+    surfaces: {
+      routines: 'docked',
+      tac_map: 'docked',
+      aprs_chat,
+      elmer: 'docked',
+      station_intelligence: 'docked',
+    },
+    context: {
+      routines: null,
+      tac_map: null,
+      aprs_chat: context,
+      elmer: null,
+      station_intelligence: null,
+    },
   };
 }
 
-// bd tuxlink-mfssz: flips elmer's mode/context; the other three stay
+// bd tuxlink-mfssz: flips elmer's mode/context; the other surfaces stay
 // docked/null throughout.
 function elmerSnapshot(elmer: DockMode, context: unknown = null): DockSnapshot {
   return {
-    surfaces: { routines: 'docked', tac_map: 'docked', aprs_chat: 'docked', elmer },
-    context: { routines: null, tac_map: null, aprs_chat: null, elmer: context },
+    surfaces: {
+      routines: 'docked',
+      tac_map: 'docked',
+      aprs_chat: 'docked',
+      elmer,
+      station_intelligence: 'docked',
+    },
+    context: {
+      routines: null,
+      tac_map: null,
+      aprs_chat: null,
+      elmer: context,
+      station_intelligence: null,
+    },
+  };
+}
+
+// bd tuxlink-9obx2: flips station_intelligence's mode/context; the other
+// surfaces stay docked/null throughout (this surface's wiring does not
+// touch them).
+function stationIntelSnapshot(station_intelligence: DockMode, context: unknown = null): DockSnapshot {
+  return {
+    surfaces: {
+      routines: 'docked',
+      tac_map: 'docked',
+      aprs_chat: 'docked',
+      elmer: 'docked',
+      station_intelligence,
+    },
+    context: {
+      routines: null,
+      tac_map: null,
+      aprs_chat: null,
+      elmer: null,
+      station_intelligence: context,
+    },
   };
 }
 
@@ -513,6 +583,97 @@ describe('AppShell dock wiring (task 8)', () => {
     await waitFor(() => expect(mockFocusSurface).toHaveBeenCalledWith('aprs_chat'));
     // Behavior 4: it must NOT escort the operator to the in-dock placeholder.
     expect(screen.queryByTestId('aprs-dock-surface')).not.toBeInTheDocument();
+  });
+
+  // --- bd tuxlink-9obx2: Station Intelligence pop-out wiring ---------------
+
+  it('entry point (spec §5): the docked Station Intelligence header shows ↗ Pop out; clicking pops the surface out', async () => {
+    renderShell();
+    await screen.findByTestId('folder-sidebar');
+    clickMenu('Tools', /station intelligence/i);
+    const popout = await screen.findByRole(
+      'button',
+      { name: /pop out station intelligence/i },
+      { timeout: 10000 },
+    );
+    fireEvent.click(popout);
+    await waitFor(() =>
+      expect(mockPopOut).toHaveBeenCalledWith('station_intelligence', {
+        foreground: true,
+        state: null,
+      }),
+    );
+  });
+
+  it('while station_intelligence is popped, Tools → Station Intelligence focuses the window instead of opening a second copy', async () => {
+    dockRef.current = stationIntelSnapshot('popped');
+    renderShell();
+    await screen.findByTestId('folder-sidebar');
+
+    clickMenu('Tools', /station intelligence/i);
+    expect(screen.queryByRole('dialog', { name: /station intelligence/i })).not.toBeInTheDocument();
+    await waitFor(() => expect(mockFocusSurface).toHaveBeenCalledWith('station_intelligence'));
+  });
+
+  it('a station_intelligence foreground popped→docked arrival reopens the inline overlay', async () => {
+    dockRef.current = stationIntelSnapshot('popped');
+    const { rerender } = renderShell();
+    await screen.findByTestId('folder-sidebar');
+    expect(screen.queryByRole('dialog', { name: /station intelligence/i })).not.toBeInTheDocument();
+
+    dockRef.current = stationIntelSnapshot('docked', { foreground: true, state: null });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    rerender(
+      <QueryClientProvider client={qc}>
+        <AppShell />
+      </QueryClientProvider>,
+    );
+
+    expect(
+      await screen.findByRole('dialog', { name: /station intelligence/i }, { timeout: 10000 }),
+    ).toBeInTheDocument();
+  });
+
+  it('a NON-foreground station_intelligence popped→docked arrival leaves the overlay closed (availability)', async () => {
+    dockRef.current = stationIntelSnapshot('popped');
+    const { rerender } = renderShell();
+    await screen.findByTestId('folder-sidebar');
+
+    dockRef.current = stationIntelSnapshot('docked', { foreground: false, state: null });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    rerender(
+      <QueryClientProvider client={qc}>
+        <AppShell />
+      </QueryClientProvider>,
+    );
+
+    // Availability semantics: no overlay theft, the mailbox stays put.
+    expect(screen.getByTestId('folder-sidebar')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: /station intelligence/i })).not.toBeInTheDocument();
+  });
+
+  it('once station_intelligence becomes popped, the inline overlay never renders, even if it was already open', async () => {
+    dockRef.current = snapshot('docked'); // station_intelligence docked (default)
+    const { rerender } = renderShell();
+    await screen.findByTestId('folder-sidebar');
+    clickMenu('Tools', /station intelligence/i);
+    expect(
+      await screen.findByRole('dialog', { name: /station intelligence/i }, { timeout: 10000 }),
+    ).toBeInTheDocument();
+
+    // station_intelligence flips to popped (e.g. the ↗ affordance was used
+    // from a second launch, or another window); the inline overlay
+    // disappears regardless of the still-true `catalogBuilderOpen` local
+    // state (the force-close effect).
+    dockRef.current = stationIntelSnapshot('popped');
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    rerender(
+      <QueryClientProvider client={qc}>
+        <AppShell />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.queryByRole('dialog', { name: /station intelligence/i })).not.toBeInTheDocument();
   });
 
   it('invokes shell_mounted once on mount (launch restoration signal, spec §3)', async () => {

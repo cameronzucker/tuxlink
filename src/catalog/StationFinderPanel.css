@@ -42,6 +42,29 @@
   padding: 22px;
 }
 
+/* bd tuxlink-9obx2: popped-window variant. There is no "outside" to dim or
+   click-through in a dedicated OS window: PopTitleBar already owns the
+   window's dock-back/close chrome, and ResizeHandles already owns the border
+   grips, so this drops the backdrop, the centering padding, and lets
+   `.station-finder` fill the window edge-to-edge instead of floating as a
+   96vw x 92vh card over a dimmed page. */
+.station-finder-overlay--popped {
+  position: static;
+  inset: auto;
+  background: none;
+  padding: 0;
+  height: 100%;
+}
+/* The popped-window override of `.station-finder`'s own size/chrome lives
+   AFTER that base rule below (StationFinderPanel.css.test.ts's containment
+   guard does a naive first-match `indexOf('.station-finder {')` over the
+   raw sheet, and this compound selector's own trailing " .station-finder {"
+   text would otherwise match FIRST, so the guard would assert against this
+   override's 100%/100% instead of the base rule's 96vw/92vh. Selector
+   specificity (two classes vs. one) makes the cascade result identical
+   regardless of source order, so this is purely a test-matcher ordering
+   concern, not a behavior change. */
+
 .station-finder {
   /* Theme pass (2026-06-16): the panel was built against ad-hoc colour vars
      (--panel/--border2/--dim/--faint) that were never defined, so every usage
@@ -82,6 +105,21 @@
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.6);
 }
 
+/* bd tuxlink-9obx2: popped-window variant, moved here (after the base
+   `.station-finder` rule; see the ordering note above `.station-finder`).
+   There is no "outside" to dim or click-through in a dedicated OS window:
+   PopTitleBar already owns the window's dock-back/close chrome, and
+   ResizeHandles already owns the border grips, so this drops the border/
+   radius/shadow and lets `.station-finder` fill the window edge-to-edge
+   instead of floating as a 96vw x 92vh card over a dimmed page. */
+.station-finder-overlay--popped .station-finder {
+  width: 100%;
+  height: 100%;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
 /* COMPACT HEADER (tuxlink-obpa item 3): the title row is shrunk and its bottom
    border dropped so it merges visually with the conditions row beneath it,
    reclaiming vertical space for the map. */
@@ -96,6 +134,22 @@
   font-size: 14px;
   white-space: nowrap;
 }
+/* bd tuxlink-9obx2: text-labeled pop-out affordance, next to the existing
+   close control (spec §5 entry-point pattern: pathway affordances always
+   carry text, never icon-only). Only the docked mount renders it (`onPopOut`
+   is undefined in the popped wrapper), so the auto margin below is what
+   pushes THIS + the close button as a group to the header's right edge. */
+.station-finder__popout {
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--border, #243a52);
+  color: inherit;
+  border-radius: 6px;
+  padding: 2px 9px;
+  cursor: pointer;
+  font-size: 11px;
+  white-space: nowrap;
+}
 .station-finder__close {
   margin-left: auto;
   background: none;
@@ -106,6 +160,18 @@
   cursor: pointer;
   font-size: 15px;
   line-height: 1;
+}
+/* bd tuxlink-9obx2 fix: `.station-finder__close`'s own margin-left:auto
+   above is load-bearing for the POPPED window (onPopOut absent, so close is
+   the only trailing button and must push itself to the header's right
+   edge). But when `.station-finder__popout` ALSO renders (docked mode),
+   two competing auto margins on the same flex line split the free space
+   between them instead of grouping the pair, so popout would float away
+   from close with an unpredictable gap rather than sitting beside it.
+   Zero out close's margin only when popout precedes it, so popout alone
+   carries the push and close falls in beside it via the header's `gap`. */
+.station-finder__popout ~ .station-finder__close {
+  margin-left: 0;
 }
 
 /* ── controls bar ─────────────────────────────────────────────────────── */
