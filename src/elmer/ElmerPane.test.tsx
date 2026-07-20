@@ -114,6 +114,10 @@ beforeEach(() => {
   listeners.clear();
   mockInvoke.mockClear();
   mockListen.mockClear();
+  // tuxlink-inasr: per-provider draft stash persists in localStorage — clear
+  // between tests so one test's provider switch cannot leak a draft into
+  // another test's preset-fill assertions.
+  localStorage.clear();
 });
 
 // ---------------------------------------------------------------------------
@@ -576,6 +580,70 @@ describe('<ElmerPane> G2 -- preset_fills_endpoint_by_origin', () => {
 
     const endpointInput = screen.getByTestId('elmer-endpoint-input') as HTMLInputElement;
     expect(endpointInput.value).toBe(geminiPreset.endpoint);
+  });
+});
+
+describe('<ElmerPane> ModelForm -- Custom values survive a preset round-trip (tuxlink-inasr)', () => {
+  const SPARK = 'https://inference.twin-bramble.ts.net/v1/chat/completions';
+
+  function mockConfigRead() {
+    mockInvoke.mockImplementationOnce(async (cmd?: string) => {
+      if (cmd === 'elmer_config_read') return {
+        agentEndpoint: 'http://127.0.0.1:11434/v1/chat/completions',
+        agentModel: 'llama3',
+        keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
+        onboarded: true,
+      };
+      return undefined;
+    });
+  }
+
+  it('Custom → other provider → Custom restores the typed endpoint and model (the operator lost the Spark endpoint to this)', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    try {
+      mockConfigRead();
+      await renderAndOpen();
+
+      // Pick Custom (no draft yet → clears for typing) and type the values.
+      const providerSelect = screen.getByTestId('elmer-provider-select');
+      fireEvent.change(providerSelect, { target: { value: 'custom' } });
+      const endpointInput = screen.getByTestId('elmer-endpoint-input') as HTMLInputElement;
+      expect(endpointInput.value).toBe('');
+      fireEvent.change(endpointInput, { target: { value: SPARK } });
+      const modelInput = screen.getByTestId('elmer-model-input') as HTMLInputElement;
+      fireEvent.change(modelInput, { target: { value: 'qwen3-coder-next' } });
+
+      // Navigate off to another provider (hand-edited endpoint → confirm fires),
+      // then back to Custom.
+      fireEvent.change(providerSelect, { target: { value: 'openai' } });
+      expect(confirmSpy).toHaveBeenCalled();
+      const openai = PRESETS.find((p) => p.id === 'openai')!;
+      expect(endpointInput.value).toBe(openai.endpoint);
+      fireEvent.change(providerSelect, { target: { value: 'custom' } });
+
+      // THE regression: these were '' / stale before the per-provider stash.
+      expect(endpointInput.value).toBe(SPARK);
+      expect(modelInput.value).toBe('qwen3-coder-next');
+    } finally {
+      confirmSpy.mockRestore();
+    }
+  });
+
+  it('declining the replace-confirm leaves the Custom values in place', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    try {
+      mockConfigRead();
+      await renderAndOpen();
+      const providerSelect = screen.getByTestId('elmer-provider-select');
+      fireEvent.change(providerSelect, { target: { value: 'custom' } });
+      const endpointInput = screen.getByTestId('elmer-endpoint-input') as HTMLInputElement;
+      fireEvent.change(endpointInput, { target: { value: SPARK } });
+      fireEvent.change(providerSelect, { target: { value: 'openai' } });
+      expect(endpointInput.value).toBe(SPARK);
+    } finally {
+      confirmSpy.mockRestore();
+    }
   });
 });
 
