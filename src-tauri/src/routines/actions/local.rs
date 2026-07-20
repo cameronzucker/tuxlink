@@ -491,7 +491,7 @@ impl Action for ComposeCatalogRequest {
                     key: "query",
                     ty: ValueType::String,
                     required: false,
-                    description: "Ad-hoc inquiry keyword not in the bundled catalog (staged \
+                    description: "Ad-hoc inquiry keyword not in the built-in catalog (staged \
                                   the same as a filename — Codex adrev 2026-07-20 P2 #3)",
                     allowed: None,
                     example: r#""CMS_TRAFFIC""#,

@@ -3174,7 +3174,7 @@ impl StationPort for MonolithStationPort {
 /// this reads the snapshot for indices/stamp/source and the forecast (writable
 /// then bundled) for the current month's SSN. When no snapshot is on disk the
 /// indices degrade to `None`, `ssn` comes from the bundled forecast, and the
-/// source is reported as `"bundled"` — never an error (offline-first; absent
+/// source is reported as `"shipped"` — never an error (offline-first; absent
 /// solar data is a fallback, not a failure).
 fn load_solar_snapshot_dto() -> SolarSnapshotDto {
     use crate::catalog::stations_cache::{Clock, SystemClock};
@@ -3221,9 +3221,9 @@ fn load_solar_snapshot_dto() -> SolarSnapshotDto {
             ssn,
             // No live snapshot on disk: the SSN comes from the bundled (or
             // operator-persisted) forecast table; stamp "now" so the freshness
-            // caption is sensible and label the provenance "bundled".
+            // caption is sensible and label the provenance "shipped".
             updated_at_ms: now_ms,
-            source: "bundled".to_string(),
+            source: "shipped".to_string(),
         },
     }
 }
@@ -3314,7 +3314,7 @@ impl PredictionPort for MonolithPredictionPort {
 
     async fn solar(&self) -> Result<SolarSnapshotDto, PortError> {
         // Never errors hard when solar data is merely absent: the loader returns
-        // the bundled-SSN fallback (ssn present, indices None, source "bundled").
+        // the shipped-SSN fallback (ssn present, indices None, source "shipped").
         Ok(load_solar_snapshot_dto())
     }
 }

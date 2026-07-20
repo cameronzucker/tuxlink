@@ -72,7 +72,7 @@ impl Action for DocsSearch {
             name: DATA_DOCS_SEARCH,
             label: "Search app docs",
             description:
-                "Full-text search the bundled in-app documentation (local, read-only).",
+                "Full-text search the built-in in-app documentation (local, read-only).",
             needs_radio: false,
             transmits: false,
             needs_internet: false,
@@ -82,7 +82,7 @@ impl Action for DocsSearch {
                 key: "query",
                 ty: ValueType::String,
                 required: true,
-                description: "Full-text query over the bundled in-app documentation",
+                description: "Full-text query over the built-in in-app documentation",
                 allowed: None,
                 example: r#""space weather""#,
             }],

@@ -33,7 +33,7 @@ describe('ROUTINES_UI_COMMANDS manifest', () => {
       'routines_station_sets_delete',
       'routines_acknowledge_automatic','routines_validate','routines_validate_draft',
       'routines_actions_list','routines_next_fires','routines_runs_list','routines_fleet_check',
-      'routines_export_run_bundle','routines_take_radio',
+      'routines_export_run_artifact','routines_take_radio',
       'routines_acknowledge_write','routines_consent_closure',
     ];
     expect([...api.ROUTINES_UI_COMMANDS].sort()).toEqual([...required].sort());
@@ -83,10 +83,10 @@ describe('routinesApi — wire-casing contract', () => {
     expect(call?.[1]).toHaveProperty('defJson');
   });
 
-  it('exportRunBundle passes camelCase runId/outputPath', async () => {
-    await api.exportRunBundle('run-9', '/tmp/bundle.json');
-    expect(mockInvoke.mock.calls.find((c) => c[0] === 'routines_export_run_bundle')?.[1])
-      .toEqual({ runId: 'run-9', outputPath: '/tmp/bundle.json' });
+  it('exportRunArtifact passes camelCase runId/outputPath', async () => {
+    await api.exportRunArtifact('run-9', '/tmp/artifact.json');
+    expect(mockInvoke.mock.calls.find((c) => c[0] === 'routines_export_run_artifact')?.[1])
+      .toEqual({ runId: 'run-9', outputPath: '/tmp/artifact.json' });
   });
 
   it('runRoutine defaults args to an empty object and passes it through', async () => {

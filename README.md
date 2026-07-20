@@ -58,7 +58,7 @@ browser-served web UI.
 | Native Linux, no WINE | No (Windows) | Yes | Yes |
 | ARM / Raspberry Pi | No | Yes | Yes |
 | Native desktop GUI | Windows only | No (CLI + web UI) | Yes |
-| Winlink forms | Yes | Yes (fetched) | Yes (bundled + native composers) |
+| Winlink forms | Yes | Yes (fetched) | Yes (included + native composers) |
 | Native UV-Pro Bluetooth control | No | No | Yes |
 | AI-agent control (MCP server) | No | No | Yes |
 | Automation routines (flowchart designer, schedule triggers) | Not documented | Scriptable (CRON-like scheduled connect / QSY commands); no visual designer | Yes (designer, dashboard, run journal, consent gating) |
@@ -98,7 +98,7 @@ APRS.
 >
 > Specifically, Tuxlink needs validation with a wide variety of radios. It's
 > tested against a Digirig, a DRA-series soundcard interface with CAT-keyed HF
-> rigs (through the bundled `rigctld`), Bluetooth KISS, and the Benshi UV Pro
+> rigs (through the included `rigctld`), Bluetooth KISS, and the Benshi UV Pro
 > protocol. Please report hardware successes/failures with specific radios and
 > interfaces using the Help menu in Tuxlink.
 >
@@ -141,7 +141,7 @@ Tuxlink ships the following on Linux for x86_64 and arm64:
 
 <p align="center">
   <img src="docs/readme/images/tuxlink-ardop-hf.png" width="360"
-       alt="ARDOP HF radio panel: Find a Gateway, Favorites/Recent/Manual connect tabs, ALSA capture and playback selectors with friendly device names, CAT-command PTT with key and unkey commands, and the bundled ardopcf sidecar settings" />
+       alt="ARDOP HF radio panel: Find a Gateway, Favorites/Recent/Manual connect tabs, ALSA capture and playback selectors with friendly device names, CAT-command PTT with key and unkey commands, and the included ardopcf sidecar settings" />
 </p>
 
 <p align="center"><sub>The ARDOP HF panel: Find a Gateway, the connect tabs, inline ALSA and PTT selectors, ARQ bandwidth, and the live quality meter.</sub></p>
@@ -278,13 +278,13 @@ reclaimed the moment it docks back.
   Recipient fields autocomplete from contacts and expand groups to their
   members at send time.
 - **HTML Forms, full Winlink Express catalog.** The complete Winlink Express
-  Standard Forms snapshot (251 templates) ships bundled. Compose or view any
+  Standard Forms snapshot (251 templates) ships built in. Compose or view any
   catalog form through a hierarchical browser; native React composers cover the
   highest-volume forms (ICS-213, Bulletin), and the long tail renders through
   Tuxlink-skinned child webviews. Received form-tagged messages render their
   viewer template inline. Drop a `.html` file into the custom-forms directory
   and it appears in the browser on next launch, for club-specific forms or
-  templates released after the bundled snapshot.
+  templates released after the included snapshot.
 - **Find Messages.** Token-driven full-text search across folders
   (`FOLDER:`, `FROM:`, `SUBJECT:`, `BEFORE:`, `AFTER:`, `UNREAD:`, `HAS:`),
   plus saved and recent searches.
@@ -348,7 +348,7 @@ whether HF is open before committing to a Winlink connect attempt.
   send. It offers a CMS-connected path and an offline / radio-only path.
 - **Session log.** A per-mode surface inside the radio panel renders both the
   human-readable projection of the CMS session and the raw B2F wire dialogue.
-- **Color schemes.** Six bundled presets (Default dark, Daylight, High contrast
+- **Color schemes.** Six included presets (Default dark, Daylight, High contrast
   light, Paper, Night / tactical red, Grayscale) plus an inline Theme Designer
   for custom palettes, for outdoor and bright-sun LCD readability.
 - **Diagnostic logging.** Structured logging exports to a single `.tar.zst`
@@ -400,7 +400,7 @@ architecture).
   with guided prompts for common workflows and a read-first guide to the tool
   surface and the authorization model.
 - **Local-only transport.** The server binds a Unix-domain socket in the user's
-  runtime directory, reached through the bundled `tuxlink-mcp` stdio shim. It
+  runtime directory, reached through the included `tuxlink-mcp` stdio shim. It
   opens no network port.
 
 ## Install
@@ -488,11 +488,11 @@ reading is the entire feature.
   validated (above); direct station-to-station VARA sessions are built and
   awaiting on-air verification.
 - **USB rig autodetect.** Rig control itself (CAT tune and PTT through the
-  bundled Hamlib `rigctld`) is shipped and on-air proven; picking the radio
+  included Hamlib `rigctld`) is shipped and on-air proven; picking the radio
   automatically from the attached USB devices is not.
 - **Native HF modem.** VARA is x86 Windows software that runs under WINE on x86
   Linux but not on ARM. Tuxlink targets a clean-room native HF modem (Sonde,
-  developed as a separate project) rather than bundling VARA; VARA-TCP wire
+  developed as a separate project) rather than shipping VARA; VARA-TCP wire
   compatibility and the guided WINE setup serve operators who run VARA.
 
 ## Architecture
@@ -539,7 +539,7 @@ an explicit acknowledgment at design time. See
 
 ## Documentation
 
-In-app documentation lives at **Help → Documentation**; bundled topics cover the
+In-app documentation lives at **Help → Documentation**; built-in topics cover the
 wizard, every transport, the mailbox, composing, HTML forms, operating modes,
 search, settings, color schemes, keyboard shortcuts, troubleshooting, and AI agent
 integration. The

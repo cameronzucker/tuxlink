@@ -627,7 +627,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "solar_conditions",
-        description = "Report the STORED space-weather indices (SFI/A/K) and the sunspot number used for predictions. IMPORTANT: this reads a cached snapshot — it does not fetch anything, and the data may be old. Always check the returned `source` and `updated_at_ms` before presenting these as current. `source` is: \"swpc\" (from the internet), \"rf-wwv\" or \"rf-wwv-voice\" (decoded from the radio), or \"bundled\" (a fallback that shipped with the app and has NEVER been updated — do not present bundled values as current conditions). If the data is stale or bundled, tell the operator and offer wwv_capture_offair, which refreshes it over their own radio with no internet. Read-only; does not taint."
+        description = "Report the STORED space-weather indices (SFI/A/K) and the sunspot number used for predictions. IMPORTANT: this reads a cached snapshot — it does not fetch anything, and the data may be old. Always check the returned `source` and `updated_at_ms` before presenting these as current. `source` is: \"swpc\" (from the internet), \"rf-wwv\" or \"rf-wwv-voice\" (decoded from the radio), or \"shipped\" (a fallback that shipped with the app and has NEVER been updated — do not present shipped defaults as current conditions). If the data is stale or from shipped defaults, tell the operator and offer wwv_capture_offair, which refreshes it over their own radio with no internet. Read-only; does not taint."
     )]
     pub async fn solar_conditions(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.prediction.solar().await.map_err(port_err)?;
@@ -672,7 +672,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "vara_engine_available",
-        description = "Report whether this Tuxlink build bundles the VARA-under-WINE setup engine (true means vara_install_start can run here). x86_64 Linux only. Read-only; does not transmit."
+        description = "Report whether this Tuxlink build ships the VARA-under-WINE setup engine (true means vara_install_start can run here). x86_64 Linux only. Read-only; does not transmit."
     )]
     pub async fn vara_engine_available(&self) -> Result<CallToolResult, ErrorData> {
         let available = self
@@ -720,7 +720,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "vara_install_start",
-        description = "Install VARA HF under WINE from a user-supplied installer .exe path (x86_64 Linux only). This runs a PRIVILEGED install: pkexec prompts the OPERATOR for their OS password at the machine — you cannot supply it. NON-TRANSMIT: it provisions software (apt/winetricks/wine) and never keys a radio, so it does NOT require armed send authority. The operator must FIRST download the proprietary VARA .exe themselves (rosmodem / winlink.org) — Tuxlink cannot bundle it. Read tuxlink://playbook/vara-wine-setup FIRST, then call vara_engine_available + vara_install_status to check state before invoking this. Runs for several minutes and returns the final install summary."
+        description = "Install VARA HF under WINE from a user-supplied installer .exe path (x86_64 Linux only). This runs a PRIVILEGED install: pkexec prompts the OPERATOR for their OS password at the machine — you cannot supply it. NON-TRANSMIT: it provisions software (apt/winetricks/wine) and never keys a radio, so it does NOT require armed send authority. The operator must FIRST download the proprietary VARA .exe themselves (rosmodem / winlink.org) — Tuxlink cannot include it. Read tuxlink://playbook/vara-wine-setup FIRST, then call vara_engine_available + vara_install_status to check state before invoking this. Runs for several minutes and returns the final install summary."
     )]
     pub async fn vara_install_start(
         &self,
@@ -2904,7 +2904,7 @@ mod tests {
             k_index: Some(3.0),
             ssn: 4.0,
             updated_at_ms: 5,
-            source: "bundled".into(),
+            source: "shipped".into(),
         };
         let obj = serde_json::to_value(&dto).unwrap();
         let obj = obj.as_object().unwrap().clone();
@@ -3055,7 +3055,7 @@ mod tests {
         // equality, not mere containment, so a new UI-only tool (the
         // automatic-transmit acknowledgment, the C3 config-write acknowledgment
         // `routines_acknowledge_write`, the C3 closure-enumeration
-        // `routines_consent_closure`, a future take-radio/export-bundle) added
+        // `routines_consent_closure`, a future take-radio/export-artifact) added
         // to the router by mistake fails this test immediately rather than only
         // being caught by the (weaker) "no consent-shaped name" check above.
         let mut routines_names: Vec<&str> = names
@@ -3108,7 +3108,7 @@ mod tests {
             "routines_consent_closure",
             "routines_consent_grant",
             "routines_take_radio",
-            "routines_export_run_bundle",
+            "routines_export_run_artifact",
         ] {
             assert!(
                 !names.iter().any(|n| n == forbidden),
@@ -3448,7 +3448,7 @@ mod tests {
         assert_eq!(dto.a_index, Some(7.0));
         assert_eq!(dto.k_index, Some(2.0));
         assert_eq!(dto.ssn, 70.0);
-        assert_eq!(dto.source, "bundled");
+        assert_eq!(dto.source, "shipped");
         assert!(
             !h.state.guard.is_tainted(),
             "solar_conditions must NOT taint the session (public data)"
@@ -3484,7 +3484,7 @@ mod tests {
         assert!(!h.state.guard.is_tainted());
         let result = h.vara_engine_available().await.unwrap();
         let available: bool = json_of(&result);
-        assert!(available, "the mock reports the setup engine bundled");
+        assert!(available, "the mock reports the setup engine present");
         assert!(
             !h.state.guard.is_tainted(),
             "vara_engine_available is a read and must NOT taint"

@@ -244,7 +244,7 @@ Project-facing parity rationale lives in
 `docs/design/2026-06-02-wle-client-parity-closure-plan.md` and
 `docs/design/2026-06-08-telnet-post-office-design.md`; they are referenced
 here as maintainer breadcrumbs rather than help-window links because the
-in-app guide only links within the user-guide bundle.
+in-app guide only links within the user guide.
 
 ## What Tuxlink exposes
 

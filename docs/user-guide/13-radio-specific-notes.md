@@ -10,11 +10,11 @@ jack will run Winlink with tuxlink — but the entries below have either been
 operationally confirmed or have well-known community-tested settings worth
 reproducing.
 
-Tuxlink bundles `rigctld` from Hamlib 4.7.2. The model numbers below were
+Tuxlink ships `rigctld` from Hamlib 4.7.2. The model numbers below were
 verified against Hamlib 4.7.2. Model IDs can shift between Hamlib versions; if
 using a different Hamlib installation, run `rigctl --list | grep <model>`
 against that installation to confirm the current model number for any rig.
-Tuxlink's dashboard does not display live CAT frequency. The bundled `rigctld`
+Tuxlink's dashboard does not display live CAT frequency. The included `rigctld`
 is a private, short-lived helper Tuxlink spawns for its own rig control, not a
 shared system daemon: other CAT applications (Dire Wolf, loggers) use their own
 Hamlib installation. See [CAT and rigctld](12-cat-and-rigctld.md).

@@ -18,7 +18,7 @@ familiarity with reading schematic-level documentation.
 ## What tuxlink is not
 
 Tuxlink does not teach RF basics, antenna theory, license study, repeater
-operating, or Part 97 fundamentals. It does not bundle a VARA modem — VARA HF
+operating, or Part 97 fundamentals. It does not ship a VARA modem — VARA HF
 runs separately and tuxlink connects to its command and data ports. It does
 not pretend to be a Winlink Express clone; the surfaces have been redesigned
 to read as native Linux software, and some Express conventions have been

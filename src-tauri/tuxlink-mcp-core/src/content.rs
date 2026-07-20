@@ -165,7 +165,7 @@ pub static CATALOG: &[KnowledgeResource] = &[
         uri: "tuxlink://playbook/vara-wine-setup",
         name: "playbook-vara-wine-setup",
         title: "Playbook: installing VARA HF under WINE",
-        description: "How to provision VARA HF on x86_64 Linux via the bundled setup engine, and how to drive the vara_engine_available / vara_install_status / vara_install_start tools. Non-transmit; pkexec prompts the operator.",
+        description: "How to provision VARA HF on x86_64 Linux via the built-in setup engine, and how to drive the vara_engine_available / vara_install_status / vara_install_start tools. Non-transmit; pkexec prompts the operator.",
         markdown: include_str!("../../../docs/mcp-knowledge/vara-wine-setup.md"),
     },
     KnowledgeResource {

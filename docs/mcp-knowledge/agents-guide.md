@@ -70,7 +70,7 @@ A plain ARM does not clear taint. See the arm/taint model below.
 - `solar_conditions` — the **stored** space-weather indices (SFI/A/K) and the
   sunspot number used in predictions. It reads a cached snapshot and fetches
   nothing, so the data may be old: check `source` and `updated_at_ms` before
-  presenting it as current. A `source` of `bundled` means the values shipped with
+  presenting it as current. A `source` of `shipped` means the values shipped with
   the app and have **never** been updated — never report those as today's
   conditions.
 - `wwv_capture_offair` — refresh the stored indices by capturing the WWV time

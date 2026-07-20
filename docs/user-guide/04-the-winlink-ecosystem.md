@@ -68,7 +68,7 @@ for tuxlink's audience:
 
 All three speak the same protocol on the wire (B2F, see
 [The B2F protocol](06-the-b2f-protocol.md)). What differs between them is the
-user surface, the install footprint, and the bundled modem support. From the
+user surface, the install footprint, and the built-in modem support. From the
 CMS's perspective, a session from any of them looks the same.
 
 ## Operating modes versus transports
