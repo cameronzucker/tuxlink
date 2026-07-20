@@ -95,6 +95,15 @@ const FILTER_MODES: FilterMode[] = ['vara-hf', 'ardop-hf', 'packet'];
 // avoiding a fresh Set() per render) get one shared instance.
 const EMPTY_GHOSTED_KEYS: ReadonlySet<string> = new Set();
 
+// Evidence re-evaluation cadence (Task 7 fix round 1). `decodesRing`'s
+// reference only changes on new decode events, so on a quiet band a decode
+// that qualified once would corroborate its station FOREVER without a time
+// tick: the 30 min recency window (EVIDENCE_RECENCY_MS) must expire evidence
+// even when nothing new arrives. One minute is fine-grained enough against a
+// 30 min window (a decode goes stale at most 1 min late) and cheap; the tick
+// runs ONLY while the evidence toggle is on.
+const EVIDENCE_TICK_MS = 60_000;
+
 // Coalesce an antenna-control gesture (a height-slider drag, SNR/power typing)
 // into ONE persist + ONE reachability re-sweep once the operator settles, rather
 // than one full N-station voacapl sweep per onChange event (tuxlink-ziyu). 300 ms
@@ -247,6 +256,19 @@ export function StationFinderPanel({
   const [evidenceSnrMinDb, setEvidenceSnrMinDb] = useState(
     persisted0.evidenceSnrMinDb ?? EVIDENCE_SNR_MIN_DB_DEFAULT,
   );
+  // Fix round 1: the evidence "now". Refreshed immediately on enable and then
+  // every EVIDENCE_TICK_MS while the toggle is on, so a once-qualifying decode
+  // EXPIRES past EVIDENCE_RECENCY_MS even when no new decode event ever
+  // changes decodesRing's reference. No interval runs while the toggle is off
+  // (no background churn); cleared on unmount / toggle-off by the effect's
+  // cleanup.
+  const [evidenceNowMs, setEvidenceNowMs] = useState<number>(() => Date.now());
+  useEffect(() => {
+    if (!evidenceOn) return;
+    setEvidenceNowMs(Date.now()); // a re-enable must not reuse a stale "now"
+    const id = setInterval(() => setEvidenceNowMs(Date.now()), EVIDENCE_TICK_MS);
+    return () => clearInterval(id);
+  }, [evidenceOn]);
   // Operator propagation prefs (own antenna / SNR / power). Loaded once on open;
   // `predictReload` is bumped AFTER a save persists so the forecast re-runs with
   // the new TX model (the backend reads these prefs fresh each prediction).
@@ -354,12 +376,16 @@ export function StationFinderPanel({
     () =>
       evidenceOn
         ? corroborateStations(visible, ft8.decodesRing, {
-            nowMs: Date.now(),
+            // Fix round 1: the ticking evidenceNowMs state, NOT an inline
+            // Date.now(). An inline call has no time-based dependency, so a
+            // quiet band (frozen decodesRing reference) would never re-run
+            // this memo and stale evidence would corroborate forever.
+            nowMs: evidenceNowMs,
             snrMinDb: evidenceSnrMinDb,
             operatorGrid,
           })
         : null,
-    [evidenceOn, visible, ft8.decodesRing, evidenceSnrMinDb, operatorGrid],
+    [evidenceOn, visible, ft8.decodesRing, evidenceSnrMinDb, operatorGrid, evidenceNowMs],
   );
   const evidenceGhostedKeys = useMemo(() => {
     if (!evidenceResult) return EMPTY_GHOSTED_KEYS;
