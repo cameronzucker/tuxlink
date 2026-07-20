@@ -359,14 +359,50 @@ describe('StationRail', () => {
         <StationRail station={station} prediction={prediction} predictionStatus="ok" operatorGrid="DM43bp" utcHour={21} />,
       );
       const hero = screen.getByTestId('rail-freq-hero');
-      // 40m vara-hf (rel 0.86) outranks 80m vara-hf (rel 0.74) and 40m ardop-hf
-      // (no reliability data for ardop-hf at 7103 in this fixture): the hero
-      // shows the highest-reliability channel across ALL the station's modes.
+      // 40m vara-hf (rel 0.86) outranks 80m vara-hf (rel 0.74) WITHIN the
+      // vara-hf group. Across modes this case exercises the MODE_ORDER
+      // tie-break, not reliability ranking: channelReliability matches
+      // prediction entries by frequencyKhz ALONE (channelGrouping.ts), so
+      // ardop-hf-7103 resolves to the SAME 0.86 entry as vara-hf-7103 and
+      // the two are tied; vara-hf wins because it sorts first in MODE_ORDER.
+      // The cross-mode reliability-overrides-order branch is proven by the
+      // dedicated test below (Fix round 2).
       expect(hero.textContent).toMatch(/7,103\.0 kHz/);
       const badge = hero.querySelector('.station-finder__bw-badge');
       expect(badge).toBeTruthy();
       expect(badge!.className).toMatch(/station-finder__bw-badge--narrow/);
       expect(container.querySelector('[data-testid="rail-freq-hero"]')).toBeTruthy();
+    });
+
+    // Fix round 2 (reviewer): the cross-mode RELIABILITY branch of
+    // pickHeroChannel, distinct from the MODE_ORDER tie-break above. The two
+    // modes' channels sit at DIFFERENT frequencies (channelReliability
+    // matches prediction entries by frequencyKhz alone, so same-frequency
+    // channels can only ever tie), with the LATER-in-MODE_ORDER mode
+    // (ardop-hf) carrying the clearly higher reliability. The hero must show
+    // ardop-hf's dial: reliability overrides the order preference.
+    it('picks the higher-reliability channel across modes even when its mode sorts later in MODE_ORDER', () => {
+      const crossModeStation: Station = {
+        ...station,
+        channels: [
+          { mode: 'vara-hf', frequencyKhz: 7103, band: '40m' },
+          { mode: 'ardop-hf', frequencyKhz: 14101, band: '20m' },
+        ],
+      };
+      const crossModePrediction: PathPrediction = {
+        ...prediction,
+        channels: [
+          { frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(0.4), snrByHour: Array(24).fill(8), mufdayByHour: Array(24).fill(0.9) },
+          { frequencyKhz: 14101, voacapMhz: 14, relByHour: Array(24).fill(0.9), snrByHour: Array(24).fill(18), mufdayByHour: Array(24).fill(1) },
+        ],
+      };
+      render(
+        <StationRail station={crossModeStation} prediction={crossModePrediction} predictionStatus="ok" operatorGrid="DM43bp" utcHour={21} />,
+      );
+      const hero = screen.getByTestId('rail-freq-hero');
+      expect(hero.textContent).toMatch(/14,101\.0 kHz/);
+      expect(hero.textContent).toMatch(/ARDOP HF dial/);
+      expect(hero.textContent).not.toMatch(/7,103\.0 kHz/);
     });
 
     it('renders a graceful fallback when the station has no channel data', () => {
