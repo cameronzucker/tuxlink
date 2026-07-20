@@ -15,11 +15,9 @@
 // wiring (count, tier style, selection emphasis, click→onSelect, operator pin).
 //
 // Layer-control housing (Task C11, plan tuxlink-b026z.4 §Scope map
-// layer-control): a top-right toggle pill with a Gateways entry that
-// shows/hides the whole station-pin layer group. Gateways-ONLY today — the
-// FT-8 heat layer is L5 (tuxlink-b026z.6); the housing exists so L5 can add
-// its entry beside Gateways later, but no dead/disabled heat toggle ships
-// here (spec §Scope "Out").
+// layer-control): a top-right toggle pill. Started Gateways-ONLY; Task 4
+// (spec L3 traffic map) fills in the FT-8 heard-station entry the housing
+// anticipated; see `Ft8HeardLayer.tsx`.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import { LeafletMap } from '../map/LeafletMap';
@@ -28,6 +26,8 @@ import { useLeafletLayerGroup } from '../map/leafletHooks';
 import { usePersistedViewport } from '../map/usePersistedViewport';
 import { LeafletRecenterControl } from '../map/LeafletRecenterControl';
 import { PeerLayer, type PeerVisual } from '../map/PeerLayer';
+import { Ft8HeardLayer } from '../map/Ft8HeardLayer';
+import { Ft8HeatLayer } from '../map/Ft8HeatLayer';
 import { gridToLatLon, type LatLon } from '../forms/position/maidenhead';
 import { reportFrontendError } from '../frontendErrorLog';
 import { type ReachTier } from './reachability';
@@ -35,6 +35,9 @@ import { stationKey } from './useReachabilityMap';
 import { baseCallsign, type Station } from './stationModel';
 import { usePeers, useP2pCapabilities } from '../peers/usePeers';
 import { aggregatePeers, type AggregatedPeer } from '../peers/peerModel';
+import { aggregateLiveDecodes } from './LiveDecodesTab';
+import type { SlotRecord } from '../ft8ui/ft8Types';
+import { BANDWIDTH_CLASSES, type BandwidthClass } from './stationTypes';
 
 export interface StationFinderMapProps {
   stations: Station[];
@@ -54,7 +57,49 @@ export interface StationFinderMapProps {
    *  request — identity drives the pan, so repeat targets re-pan). The
    *  Live-decodes tab's row click feeds this via the panel. */
   panTarget?: LatLon | null;
+  /** Task 4 (spec L3 traffic map): the FT-8 listener's ring buffer
+   *  (`useFt8Listener().decodesRing`), aggregated in-place into the heard
+   *  layer's per-station rows via `aggregateLiveDecodes`. Omitted ⇒ no
+   *  heard-station markers (an idle/never-started listener). */
+  decodesRing?: SlotRecord[];
+  /** Injectable "now" for deterministic tests; defaults to `Date.now()`
+   *  (mirrors `StationRail`'s/`LiveBandStrip`'s `nowMs` convention). */
+  nowMs?: number;
+  /** Task 7 (spec §2 evidence filter): FT-8 corroboration filter, computed by
+   *  the panel from Task 6's `corroborateStations`. Omitted entirely means no
+   *  evidence controls render and no station is ghosted (backward compatible
+   *  with callers that predate this feature, e.g. earlier unit tests). */
+  evidence?: {
+    /** Whether the evidence filter is currently on. */
+    enabled: boolean;
+    onToggle: () => void;
+    /** The SNR floor (dB) a decode must meet to corroborate a station. */
+    snrMinDb: number;
+    onSnrMinChange: (db: number) => void;
+    /** `stationKey`s of stations NOT corroborated while the filter is on;
+     *  empty when the filter is off. */
+    ghostedKeys: ReadonlySet<string>;
+    /** Honest-count note, e.g. "evidence: 2 of 5 gateways corroborated (20m)
+     *  · SNR ≥ -18 · last 30 min"; `null` when the filter is off. */
+    note: string | null;
+  };
+  /** Task 9: the bandwidth filter chips' mirror in the map's layer box:
+   *  `enabled` + `onToggle` are the SAME state + handler the panel passes to
+   *  `StationFinderControls` (one shared state, two locations); this map
+   *  never owns a second copy. Omitted entirely renders no bandwidth
+   *  checkboxes (backward compatible with callers that predate this feature). */
+  bandwidthMirror?: {
+    enabled: Set<BandwidthClass>;
+    onToggle: (bw: BandwidthClass) => void;
+  };
 }
+
+/** Ghosted-pin opacity (spec §2 evidence filter): dim, not hide. A
+ *  non-corroborated station stays on the map (distance/reachability are still
+ *  real) and stays clickable, but reads as unconfirmed. */
+const GHOST_OPACITY = 0.2;
+
+const EMPTY_GHOSTED_KEYS: ReadonlySet<string> = new Set();
 
 // Recenter zoom on the operator, on the z0–14 scale (matches the MapLibre edition).
 const OPERATOR_ZOOM = 6;
@@ -100,15 +145,22 @@ const selectedRadiusFor = (tier: string): number => SELECTED_RADIUS[tier] ?? UNT
 /** The circleMarker style for a station at a given tier + selection state. The
  * grey "not reachable" bottom tier sits back (dimmer) so the live red/orange/green
  * stations read first; selected pins get a bright-white rim, others a thin white
- * rim for basemap contrast. */
-function pinStyle(tier: string, selected: boolean): L.CircleMarkerOptions {
-  return {
+ * rim for basemap contrast. `ghosted` (Task 7 evidence filter) overrides both
+ * opacity channels to GHOST_OPACITY: the station stays visible + clickable,
+ * just dimmed to read as "not corroborated." */
+function pinStyle(tier: string, selected: boolean, ghosted: boolean): L.CircleMarkerOptions {
+  const style: L.CircleMarkerOptions = {
     radius: selected ? selectedRadiusFor(tier) : baseRadiusFor(tier),
     fillColor: colorFor(tier),
     fillOpacity: tier === 'skip' ? 0.7 : 1,
     color: '#ffffff',
     weight: selected ? 2 : 0.6,
   };
+  if (ghosted) {
+    style.fillOpacity = GHOST_OPACITY;
+    style.opacity = GHOST_OPACITY;
+  }
+  return style;
 }
 
 /** One station's owned circleMarker + the tier it was last styled for. */
@@ -123,7 +175,8 @@ function StationLayers({
   selectedKey,
   onSelect,
   visible,
-}: Omit<StationFinderMapProps, 'operatorGrid'> & { visible: boolean }) {
+  ghostedKeys,
+}: Omit<StationFinderMapProps, 'operatorGrid'> & { visible: boolean; ghostedKeys: ReadonlySet<string> }) {
   const map = useLeafletMap();
   const group = useLeafletLayerGroup(map);
 
@@ -211,12 +264,13 @@ function StationLayers({
       live.add(key);
       const tier = tiers.get(key) ?? 'untiered';
       const selected = selectedKeyRef.current === key;
+      const ghosted = ghostedKeys.has(key);
       safe(`reconcile ${key}`, () => {
         let pin = pins.get(key);
         if (!pin) {
           const marker = L.circleMarker([ll.lat, ll.lon], {
             renderer: rendererRef.current ?? undefined,
-            ...pinStyle(tier, selected),
+            ...pinStyle(tier, selected, ghosted),
           });
           marker.on('click', () => {
             const station = byKeyRef.current.get(key);
@@ -228,7 +282,7 @@ function StationLayers({
         } else {
           // A re-fetch can move a station (grid edit) or change its tier.
           pin.marker.setLatLng([ll.lat, ll.lon]);
-          pin.marker.setStyle(pinStyle(tier, selected));
+          pin.marker.setStyle(pinStyle(tier, selected, ghosted));
           pin.tier = tier;
         }
       });
@@ -244,7 +298,7 @@ function StationLayers({
 
     syncGlow();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- selection handled via refs + the dedicated effect below; depending on it would churn markers
-  }, [map, group, stations, tiers]);
+  }, [map, group, stations, tiers, ghostedKeys]);
 
   // Layer-control visibility (Task C11, §Scope map layer-control): the
   // Gateways toggle add/removes the WHOLE group from the map rather than
@@ -270,11 +324,15 @@ function StationLayers({
     const prev = prevSelectedRef.current;
     if (prev != null && prev !== selectedKey) {
       const p = pins.get(prev);
-      if (p) safe(`deselect ${prev}`, () => p.marker.setStyle(pinStyle(p.tier, false)));
+      if (p) safe(`deselect ${prev}`, () => p.marker.setStyle(pinStyle(p.tier, false, ghostedKeys.has(prev))));
     }
     if (selectedKey != null) {
       const p = pins.get(selectedKey);
-      if (p) safe(`select ${selectedKey}`, () => p.marker.setStyle(pinStyle(p.tier, true)));
+      if (p) {
+        safe(`select ${selectedKey}`, () =>
+          p.marker.setStyle(pinStyle(p.tier, true, ghostedKeys.has(selectedKey))),
+        );
+      }
     }
     prevSelectedRef.current = selectedKey;
     syncGlow();
@@ -336,16 +394,38 @@ export function StationFinderMap(props: StationFinderMapProps) {
   const initialZoom = saved ? saved.zoom : me ? OPERATOR_ZOOM : 2;
 
   // Layer-control housing (Task C11, plan tuxlink-b026z.4 §Scope map
-  // layer-control): a Gateways-only toggle today. This is deliberately a
-  // HOUSING — L5 (tuxlink-b026z.6) adds the FT-8 heat-layer entry beside it
-  // later; L3 ships ONLY the Gateways entry (a dead/disabled heat toggle
-  // wired to a nonexistent layer would itself be the incomplete-control
-  // anti-pattern the no-incomplete-refs rule bans — spec §Scope "Out").
+  // layer-control): originally a Gateways-only toggle housing; Task 4 fills
+  // in the FT-8 heard-station entry beside it.
   const [gatewaysVisible, setGatewaysVisible] = useState(true);
   // Peers toggle (approved reconciliation mock: [Gateways][Peers] side by side).
   // Rendered ONLY when the map_peers capability is on — with peers unavailable a
   // lone toggle would be dead chrome (capability-hide, not disable).
   const [peersVisible, setPeersVisible] = useState(true);
+  // FT-8 heard layer toggle (Task 4, spec L3 traffic map): default ON, like
+  // Gateways. Evidence of who was actually heard is on by default, same as
+  // the predicted-reachability pins.
+  const [ft8Visible, setFt8Visible] = useState(true);
+  // FT-8 heat layer toggle (Task 5, spec L5 traffic map): default OFF. This
+  // is a density OVERVIEW an operator opts into, not evidence on par with
+  // the per-station heard dots, so it does not inherit the heard layer's
+  // default-on posture.
+  const [ft8HeatVisible, setFt8HeatVisible] = useState(false);
+  const ft8Rows = useMemo(
+    () => aggregateLiveDecodes(props.decodesRing ?? [], props.nowMs ?? Date.now()),
+    [props.decodesRing, props.nowMs],
+  );
+
+  // Task 7 (spec §2 evidence filter): a local const (not `props.evidence`
+  // inline) so JSX below narrows cleanly instead of needing `!` assertions.
+  // ghostedKeys is empty (no ghosting) when the caller omits `evidence`
+  // entirely: the pre-Task-7 unit tests and any future consumer that
+  // doesn't wire the filter render exactly as before.
+  const evidence = props.evidence;
+  const ghostedKeys = evidence?.ghostedKeys ?? EMPTY_GHOSTED_KEYS;
+  // Task 9: same narrowing-const pattern as `evidence` above; the mirror is
+  // entirely optional (backward compatible), and this local const lets the
+  // JSX below check presence once instead of `props.bandwidthMirror!` everywhere.
+  const bandwidthMirror = props.bandwidthMirror;
 
   // Task delta2 (spec §6 reconciliation): the peer DIAMOND layer, gated
   // end-to-end on `map_peers` [R5-8] — false (or still loading) HIDES every
@@ -376,14 +456,19 @@ export function StationFinderMap(props: StationFinderMapProps) {
   return (
     <div className="station-finder__map" data-testid="station-map">
       <LeafletMap initialCenter={initialCenter} initialZoom={initialZoom} onViewportChange={onViewportChange}>
+        {/* Painted first so the choropleth sits BENEATH every pin layer below it
+            (SVG paints in DOM/add order; later-added layers render on top). */}
+        <Ft8HeatLayer rows={ft8Rows} enabled={ft8HeatVisible} />
         <StationLayers
           stations={props.stations}
           tiers={props.tiers}
           selectedKey={props.selectedKey}
           onSelect={props.onSelect}
           visible={gatewaysVisible}
+          ghostedKeys={ghostedKeys}
         />
         <OperatorPin location={me} />
+        <Ft8HeardLayer rows={ft8Rows} enabled={ft8Visible} />
         <PeerLayer
           peers={aggregatedPeers}
           enabled={mapPeersEnabled && peersVisible}
@@ -406,6 +491,26 @@ export function StationFinderMap(props: StationFinderMapProps) {
           <span className="station-finder__layer-swatch" aria-hidden="true" />
           Gateways
         </button>
+        <button
+          type="button"
+          className={`station-finder__layer-btn${ft8Visible ? ' on' : ''}`}
+          data-testid="map-layer-ft8"
+          aria-pressed={ft8Visible}
+          onClick={() => setFt8Visible((v) => !v)}
+        >
+          <span className="station-finder__layer-swatch station-finder__layer-swatch--ft8" aria-hidden="true" />
+          FT-8 heard
+        </button>
+        <button
+          type="button"
+          className={`station-finder__layer-btn${ft8HeatVisible ? ' on' : ''}`}
+          data-testid="map-layer-ft8heat"
+          aria-pressed={ft8HeatVisible}
+          onClick={() => setFt8HeatVisible((v) => !v)}
+        >
+          <span className="station-finder__layer-swatch station-finder__layer-swatch--ft8heat" aria-hidden="true" />
+          FT-8 heat
+        </button>
         {mapPeersEnabled && (
           <button
             type="button"
@@ -421,7 +526,66 @@ export function StationFinderMap(props: StationFinderMapProps) {
             Peers
           </button>
         )}
+        {/* Task 9: bandwidth filter chips' mirror: checkboxes (not the
+            pill-button style the other layer entries use) so the layer box
+            reads as a settings panel for this axis, distinct from the
+            visibility TOGGLES around it. `onToggle` is the SAME handler the
+            panel wires to StationFinderControls' chip row: one shared state,
+            two locations, never a second copy owned by this map. */}
+        {bandwidthMirror && (
+          <span className="station-finder__bw-mirror" data-testid="map-bw-mirror">
+            {BANDWIDTH_CLASSES.map((bw) => (
+              <label key={bw} className="station-finder__bw-check">
+                <input
+                  type="checkbox"
+                  data-testid={`map-bw-${bw}`}
+                  checked={bandwidthMirror.enabled.has(bw)}
+                  onChange={() => bandwidthMirror.onToggle(bw)}
+                />
+                {bw} Hz
+              </label>
+            ))}
+          </span>
+        )}
+        {/* Task 7 (spec §2 evidence filter): FT-8 corroboration toggle + SNR
+            threshold. The threshold slider is only shown while the filter is
+            on: it has nothing to control otherwise. */}
+        {evidence && (
+          <button
+            type="button"
+            className={`station-finder__layer-btn${evidence.enabled ? ' on' : ''}`}
+            data-testid="map-evidence-toggle"
+            aria-pressed={evidence.enabled}
+            onClick={evidence.onToggle}
+          >
+            <span
+              className="station-finder__layer-swatch station-finder__layer-swatch--evidence"
+              aria-hidden="true"
+            />
+            Evidence
+          </button>
+        )}
+        {evidence && evidence.enabled && (
+          <label className="station-finder__evidence-snr">
+            SNR ≥
+            <input
+              type="range"
+              min="-24"
+              max="0"
+              step="3"
+              value={evidence.snrMinDb}
+              data-testid="map-evidence-snr"
+              onChange={(e) => evidence.onSnrMinChange(Number(e.target.value))}
+            />
+            <span>{evidence.snrMinDb} dB</span>
+          </label>
+        )}
       </div>
+      {evidence && evidence.note && (
+        <div className="station-finder__evidence-note" data-testid="map-evidence-note">
+          {evidence.note}
+        </div>
+      )}
       <div className="station-finder__reachkey" aria-hidden>
         <span className="k good" /> good
         <span className="k fair" /> fair

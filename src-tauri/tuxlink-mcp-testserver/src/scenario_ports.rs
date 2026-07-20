@@ -120,6 +120,7 @@ impl StationPort for ScenarioStation {
             gateways: Vec::new(),
             fetched_at_ms: None,
             operator_grid: None,
+            evidence: None,
         }))
     }
     async fn find_peers(&self) -> Result<PeerListDto, PortError> {
@@ -411,6 +412,9 @@ mod tests {
                 modes: vec![],
                 history_hours: None,
                 bands: vec![],
+                bandwidths: None,
+                ft8_evidence: None,
+                ft8_snr_min_db: None,
             })
             .await
             .unwrap();

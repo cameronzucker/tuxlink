@@ -424,6 +424,64 @@ pub(crate) fn real_entry_factory(service: &str, account: &str) -> Box<dyn EntryL
 }
 
 // ──────────────────────────────────────────────────────────────
+// Winlink gateway channels JSON API key (tuxlink-nkzng)
+// ──────────────────────────────────────────────────────────────
+//
+// The channels API (`api.winlink.org/gateway/status.json`) takes an access
+// `key`. tuxlink ships with Pat's PUBLIC WDT AccessKey
+// (`channels_api::DEFAULT_CHANNELS_API_KEY`) so the feature works out of the box;
+// an operator who has their own key can override it. Stored in the OS keyring
+// (per-installation), same seam as the service codes above.
+
+/// Keyring account string for the operator-overridable channels API key.
+const CHANNELS_API_KEY_ACCOUNT: &str = "winlink-channels-api-key";
+
+/// Read the configured channels API key, with an injected entry factory. Any
+/// keyring miss/error, or a stored-but-blank value, degrades to
+/// [`crate::catalog::channels_api::DEFAULT_CHANNELS_API_KEY`] so the feed fetch
+/// works everywhere (CI, headless shells) with no configuration.
+pub fn channels_api_key_read_with_factory<F>(factory: &F) -> String
+where
+    F: Fn(&str, &str) -> Box<dyn EntryLike>,
+{
+    let entry = factory(SERVICE, CHANNELS_API_KEY_ACCOUNT);
+    match entry.get_password() {
+        Ok(value) if !value.trim().is_empty() => value.trim().to_string(),
+        _ => crate::catalog::channels_api::DEFAULT_CHANNELS_API_KEY.to_string(),
+    }
+}
+
+/// Read the configured channels API key from the OS keyring, defaulting to the
+/// bundled public key on any miss/error. Never panics, never errors.
+pub fn channels_api_key_read() -> String {
+    channels_api_key_read_with_factory(&real_entry_factory)
+}
+
+/// Write the channels API key to the keyring (trimmed), with an injected factory.
+///
+/// # Errors
+///
+/// - `KeyringError::Backend`: the keyring backend returned an error on write.
+pub fn channels_api_key_write_with_factory<F>(key: &str, factory: &F) -> Result<(), KeyringError>
+where
+    F: Fn(&str, &str) -> Box<dyn EntryLike>,
+{
+    let entry = factory(SERVICE, CHANNELS_API_KEY_ACCOUNT);
+    entry
+        .set_password(key.trim())
+        .map_err(|e| KeyringError::Backend(format!("{e}")))
+}
+
+/// Write the channels API key to the OS keyring.
+///
+/// # Errors
+///
+/// - `KeyringError::Backend`: unexpected backend error.
+pub fn channels_api_key_write(key: &str) -> Result<(), KeyringError> {
+    channels_api_key_write_with_factory(key, &real_entry_factory)
+}
+
+// ──────────────────────────────────────────────────────────────
 // P2P endpoint password helpers (Task 10 / VARA P2P peer model)
 // ──────────────────────────────────────────────────────────────
 //
@@ -890,5 +948,29 @@ mod tests {
         );
         // Idempotent: deleting an already-absent entry is still Ok(()).
         p2p_endpoint_password_delete_with_factory("p1", "e1", &factory).unwrap();
+    }
+
+    #[test]
+    fn channels_api_key_defaults_then_roundtrips() {
+        let store: Arc<Mutex<HashMap<(String, String), String>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let factory = fake_factory(store.clone());
+
+        // Empty keyring → the bundled public default.
+        assert_eq!(
+            channels_api_key_read_with_factory(&factory),
+            crate::catalog::channels_api::DEFAULT_CHANNELS_API_KEY
+        );
+
+        // An operator override round-trips (and is trimmed).
+        channels_api_key_write_with_factory("  MY-OWN-KEY  ", &factory).unwrap();
+        assert_eq!(channels_api_key_read_with_factory(&factory), "MY-OWN-KEY");
+
+        // A stored-but-blank value still degrades to the default.
+        channels_api_key_write_with_factory("   ", &factory).unwrap();
+        assert_eq!(
+            channels_api_key_read_with_factory(&factory),
+            crate::catalog::channels_api::DEFAULT_CHANNELS_API_KEY
+        );
     }
 }

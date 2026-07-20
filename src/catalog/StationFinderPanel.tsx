@@ -13,8 +13,13 @@ import { FAVORITES_QUERY_KEY } from '../favorites/useFavorites';
 import { dialToNewFavorite, favoriteKey } from '../favorites/dialToFavorite';
 import type { Favorite, StationsFile } from '../favorites/types';
 import { useStations } from './useStations';
-import { aggregateStations, stationMatchesBandMode, type Station } from './stationModel';
+import { aggregateStations, stationMatchesFilters, type Station } from './stationModel';
 import { useReachabilityMap, stationKey } from './useReachabilityMap';
+import {
+  corroborateStations,
+  EVIDENCE_RECENCY_MS,
+  EVIDENCE_SNR_MIN_DB_DEFAULT,
+} from './ft8Evidence';
 import { useDebouncedCommit } from './useDebouncedCommit';
 import { useStationPrediction } from './useStationPrediction';
 import { distanceFromGrids, kmToMi } from './distance';
@@ -24,12 +29,11 @@ import { StationFinderMap } from './StationFinderMap';
 import { StationRail } from './StationRail';
 import { AntennaControl } from './AntennaControl';
 // Phase D1 — the FT-8 integration seam. Phase C built every one of these and
-// mounted NONE of them: LiveBandStrip had zero call sites, Ft8SetupSurface had
-// zero, and the listener's decodesRing/bandActivity reached no consumer, so the
-// whole Station-Intelligence feature was inert. This is where they become real.
+// mounted NONE of them: LiveBandStrip had zero call sites, and the listener's
+// decodesRing/bandActivity reached no consumer, so the whole Station-Intelligence
+// feature was inert. This is where they become real.
 import { useFt8Listener } from '../ft8ui/useFt8Listener';
 import { LiveBandStrip } from '../ft8ui/LiveBandStrip';
-import { Ft8SetupSurface } from '../ft8ui/Ft8SetupSurface';
 import { useStatusData } from '../shell/useStatus';
 import {
   readPropagationPrefs,
@@ -38,7 +42,7 @@ import {
   type PropagationPrefs,
 } from './propagationPrefs';
 import { HF_BANDS, type Band } from './bandPlan';
-import type { ListingMode } from './stationTypes';
+import { BANDWIDTH_CLASSES, type BandwidthClass, type ListingMode } from './stationTypes';
 import type { RadioMode, FavoriteDial } from '../favorites/types';
 import type { AggregatedPeer } from '../peers/peerModel';
 import type { LatLon } from '../forms/position/maidenhead';
@@ -84,7 +88,27 @@ export interface StationFinderPanelProps {
   blockingSessionMode?: string;
 }
 
-const FILTER_MODES: FilterMode[] = ['vara-hf', 'ardop-hf', 'packet'];
+// Task 9 (tuxlink-nkzng): 'vara-fm' joins the fetched + default-enabled mode
+// set: VARA FM end-to-end. Unlike the other three, VARA FM has no text
+// `/listings/` page; requesting it in `stations.fetch` below is what makes the
+// backend synthesize a VaraFm StationListing from the channels JSON API
+// (`catalog_fetch_stations`'s `want_vara_fm` branch), so this one addition is
+// what actually turns VARA FM channels on anywhere in this panel.
+const FILTER_MODES: FilterMode[] = ['vara-hf', 'ardop-hf', 'packet', 'vara-fm'];
+
+// Stable empty-set identity (Task 7, spec §2 evidence filter): reused whenever
+// there is nothing to ghost, so callers doing reference equality (or just
+// avoiding a fresh Set() per render) get one shared instance.
+const EMPTY_GHOSTED_KEYS: ReadonlySet<string> = new Set();
+
+// Evidence re-evaluation cadence (Task 7 fix round 1). `decodesRing`'s
+// reference only changes on new decode events, so on a quiet band a decode
+// that qualified once would corroborate its station FOREVER without a time
+// tick: the 30 min recency window (EVIDENCE_RECENCY_MS) must expire evidence
+// even when nothing new arrives. One minute is fine-grained enough against a
+// 30 min window (a decode goes stale at most 1 min late) and cheap; the tick
+// runs ONLY while the evidence toggle is on.
+const EVIDENCE_TICK_MS = 60_000;
 
 // Coalesce an antenna-control gesture (a height-slider drag, SNR/power typing)
 // into ONE persist + ONE reachability re-sweep once the operator settles, rather
@@ -119,6 +143,12 @@ interface PersistedFinderView {
   modes: FilterMode[];
   radiusMi: number | null;
   selectedKey: string | null;
+  /** Task 7 (spec §2 evidence filter): the FT-8 corroboration toggle + its
+   *  SNR floor, persisted like every other finder-view field. */
+  evidenceOn: boolean;
+  evidenceSnrMinDb: number;
+  /** Task 9: bandwidth filter chips, persisted like `modes`/`bands`. */
+  bandwidths: BandwidthClass[];
 }
 
 /** Resolve localStorage defensively — the getter itself can throw. */
@@ -149,6 +179,11 @@ function readFinderView(): Partial<PersistedFinderView> {
     }
     if (typeof v.selectedKey === 'string' || v.selectedKey === null) {
       out.selectedKey = v.selectedKey as string | null;
+    }
+    if (typeof v.evidenceOn === 'boolean') out.evidenceOn = v.evidenceOn;
+    if (typeof v.evidenceSnrMinDb === 'number') out.evidenceSnrMinDb = v.evidenceSnrMinDb;
+    if (Array.isArray(v.bandwidths)) {
+      out.bandwidths = v.bandwidths.filter((b) => typeof b === 'string') as BandwidthClass[];
     }
     return out;
   } catch {
@@ -196,26 +231,6 @@ export function StationFinderPanel({
   const { grid: liveGrid } = useStatusData();
   const operatorGrid = (liveGrid ?? '').trim() || grid;
 
-  // `device-lost`'s "pick another input" link (spec §States row 6b) must open the
-  // full setup surface, or it is a dead link. Forced open until the operator
-  // completes a handover (onStarted) — then we re-read and fall back to whatever
-  // the snapshot now says.
-  const [forceSetup, setForceSetup] = useState(false);
-
-  // QA round-3 finding 2: setup renders as the panel's FULL BODY (replacing
-  // map+rail), per the approved firstrun-v2 mock — never a cramped scroll box
-  // under the strip. `needs-setup` promotes automatically; `setupDismissed`
-  // is the back-out (needs-setup can be caused by non-in-place blockers like
-  // a missing jt9 binary, and the GATEWAY finder must stay reachable then).
-  // A dismissal is scoped to ONE needs-setup episode — reset when the state
-  // moves on, so the next episode re-promotes.
-  const [setupDismissed, setSetupDismissed] = useState(false);
-  const needsSetup = ft8.uiState.state === 'needs-setup';
-  useEffect(() => {
-    if (!needsSetup) setSetupDismissed(false);
-  }, [needsSetup]);
-  const setupActive = ft8.snapshot != null && (forceSetup || (needsSetup && !setupDismissed));
-
   // D1: Live-decodes tab row click → pan the map to that station's grid. A FRESH
   // object per click (identity drives PanTo's effect) so re-clicking the same
   // grid re-pans after the operator has dragged away.
@@ -228,6 +243,11 @@ export function StationFinderPanel({
   );
   const [enabledModes, setEnabledModes] = useState<Set<FilterMode>>(
     () => new Set(persisted0.modes ?? FILTER_MODES),
+  );
+  // Task 9: bandwidth filter chips, default all three ON (matches the
+  // bands/modes default-everything-visible posture), seeded from persistence.
+  const [enabledBandwidths, setEnabledBandwidths] = useState<Set<BandwidthClass>>(
+    () => new Set(persisted0.bandwidths ?? BANDWIDTH_CLASSES),
   );
   // Task delta2 (spec §6 reconciliation): the rail selection is now a
   // gateway-or-peer union (see `FinderSelection` above). Only the gateway
@@ -245,6 +265,26 @@ export function StationFinderPanel({
     persisted0.radiusMi !== undefined ? persisted0.radiusMi : 500,
   );
   const [search, setSearch] = useState(persisted0.search ?? '');
+  // Task 7 (spec §2 evidence filter): off by default, like the FT-8 heat
+  // layer: an opt-in filter the operator turns on, not a default posture
+  // that could silently ghost stations nobody asked to have ghosted.
+  const [evidenceOn, setEvidenceOn] = useState(persisted0.evidenceOn ?? false);
+  const [evidenceSnrMinDb, setEvidenceSnrMinDb] = useState(
+    persisted0.evidenceSnrMinDb ?? EVIDENCE_SNR_MIN_DB_DEFAULT,
+  );
+  // Fix round 1: the evidence "now". Refreshed immediately on enable and then
+  // every EVIDENCE_TICK_MS while the toggle is on, so a once-qualifying decode
+  // EXPIRES past EVIDENCE_RECENCY_MS even when no new decode event ever
+  // changes decodesRing's reference. No interval runs while the toggle is off
+  // (no background churn); cleared on unmount / toggle-off by the effect's
+  // cleanup.
+  const [evidenceNowMs, setEvidenceNowMs] = useState<number>(() => Date.now());
+  useEffect(() => {
+    if (!evidenceOn) return;
+    setEvidenceNowMs(Date.now()); // a re-enable must not reuse a stale "now"
+    const id = setInterval(() => setEvidenceNowMs(Date.now()), EVIDENCE_TICK_MS);
+    return () => clearInterval(id);
+  }, [evidenceOn]);
   // Operator propagation prefs (own antenna / SNR / power). Loaded once on open;
   // `predictReload` is bumped AFTER a save persists so the forecast re-runs with
   // the new TX model (the backend reads these prefs fresh each prediction).
@@ -262,8 +302,20 @@ export function StationFinderPanel({
       modes: [...enabledModes],
       radiusMi,
       selectedKey,
+      evidenceOn,
+      evidenceSnrMinDb,
+      bandwidths: [...enabledBandwidths],
     });
-  }, [search, enabledBands, enabledModes, radiusMi, selectedKey]);
+  }, [
+    search,
+    enabledBands,
+    enabledModes,
+    radiusMi,
+    selectedKey,
+    evidenceOn,
+    evidenceSnrMinDb,
+    enabledBandwidths,
+  ]);
   const stations = useStations();
 
   // Resolve the operator's EFFECTIVE location the way the rest of the app does
@@ -316,13 +368,18 @@ export function StationFinderPanel({
   }, [onClose]);
 
   const allStations = useMemo(() => aggregateStations(stations.listings), [stations.listings]);
-  // Band + mode FILTER (tuxlink-hlas), evaluated at the CHANNEL level: a station
-  // shows only if it has a channel whose band is selected AND whose mode is
-  // enabled. This is why 145 MHz packet (band='vhf-uhf') disappears when only HF
-  // bands are selected — that channel matches no selected band.
+  // Band + mode + bandwidth FILTER (tuxlink-hlas, extended Task 9), evaluated
+  // at the CHANNEL level: a station shows only if it has a channel whose band
+  // is selected, whose mode is enabled, AND whose bandwidth passes the
+  // bandwidth chips (a channel with no known classified bandwidth, the
+  // text-listing-only case, passes every bandwidth filter; see
+  // `stationMatchesFilters`). This is why 145 MHz packet (band='vhf-uhf')
+  // disappears when only HF bands are selected: that channel matches no
+  // selected band.
   const bandModeVisible = useMemo(
-    () => allStations.filter((s) => stationMatchesBandMode(s, enabledBands, enabledModes)),
-    [allStations, enabledBands, enabledModes],
+    () =>
+      allStations.filter((s) => stationMatchesFilters(s, enabledBands, enabledModes, enabledBandwidths)),
+    [allStations, enabledBands, enabledModes, enabledBandwidths],
   );
 
   // Callsign search + radius filter (design §7). Radius needs a home grid;
@@ -339,6 +396,53 @@ export function StationFinderPanel({
       return true;
     });
   }, [bandModeVisible, search, radiusMi, grid]);
+
+  // Task 7 (spec §2 evidence filter): FT-8 corroboration over the CURRENTLY
+  // visible station set (the same filter/radius/search-narrowed list the map
+  // and rail already show), using the same operatorGrid every other consumer
+  // in this panel resolves (GPS-preferred, manual fallback), not a second
+  // read of config. `null` while the toggle is off: no evidence math to do,
+  // and the map treats a `null` result the same as "no ghosting."
+  const evidenceResult = useMemo(
+    () =>
+      evidenceOn
+        ? corroborateStations(visible, ft8.decodesRing, {
+            // Fix round 1: the ticking evidenceNowMs state, NOT an inline
+            // Date.now(). An inline call has no time-based dependency, so a
+            // quiet band (frozen decodesRing reference) would never re-run
+            // this memo and stale evidence would corroborate forever.
+            nowMs: evidenceNowMs,
+            snrMinDb: evidenceSnrMinDb,
+            operatorGrid,
+          })
+        : null,
+    [evidenceOn, visible, ft8.decodesRing, evidenceSnrMinDb, operatorGrid, evidenceNowMs],
+  );
+  const evidenceGhostedKeys = useMemo(() => {
+    if (!evidenceResult) return EMPTY_GHOSTED_KEYS;
+    const ghosted = new Set<string>();
+    for (const s of visible) {
+      const key = stationKey(s);
+      if (!evidenceResult.corroborated.has(key)) ghosted.add(key);
+    }
+    return ghosted;
+  }, [evidenceResult, visible]);
+  // Honest-count note (spec §2 format): "evidence: N of M gateways
+  // corroborated (bands) · SNR >= X · last 30 min". The parenthetical band
+  // list is omitted when nothing qualified (no bands to report) rather than
+  // rendering an empty "()": the brief's example only covers the has-bands
+  // case, so this is a deliberate, documented completion of that gap.
+  const evidenceNote: string | null = useMemo(() => {
+    if (!evidenceResult) return null;
+    const recencyMin = EVIDENCE_RECENCY_MS / 60_000;
+    const bandsPart = evidenceResult.sampledBands.length
+      ? ` (${evidenceResult.sampledBands.join('/')})`
+      : '';
+    return (
+      `evidence: ${evidenceResult.corroborated.size} of ${visible.length} gateways corroborated` +
+      `${bandsPart} · SNR ≥ ${evidenceSnrMinDb} · last ${recencyMin} min`
+    );
+  }, [evidenceResult, visible.length, evidenceSnrMinDb]);
 
   // `predictReload` (bumped after a prefs save persists) also re-runs the map
   // tiers, so changing power / antenna / height / ground / noise / SNR refreshes
@@ -458,6 +562,18 @@ export function StationFinderPanel({
       return next;
     });
 
+  // Task 9: ONE handler for the bandwidth chips, passed to BOTH
+  // StationFinderControls (the chip row) and StationFinderMap's
+  // `bandwidthMirror` below: one shared state, two locations, never a
+  // second copy of `enabledBandwidths` owned by the map.
+  const toggleBandwidth = (bw: BandwidthClass) =>
+    setEnabledBandwidths((prev) => {
+      const next = new Set(prev);
+      if (next.has(bw)) next.delete(bw);
+      else next.add(bw);
+      return next;
+    });
+
   return (
     <div
       className="station-finder-overlay"
@@ -479,6 +595,8 @@ export function StationFinderPanel({
           onToggleBand={toggleBand}
           enabledModes={enabledModes}
           onToggleMode={toggleMode}
+          enabledBandwidths={enabledBandwidths}
+          onToggleBandwidth={toggleBandwidth}
           utcHour={utcHour}
           localTime={localTimeLabel()}
           ssn={pred.prediction?.ssn ?? null}
@@ -502,42 +620,6 @@ export function StationFinderPanel({
           <AntennaControl prefs={prefs} onChange={handlePrefsChange} error={prefsError} />
         )}
 
-        {setupActive && ft8.snapshot ? (
-          /* Finding 2: setup IS the body (firstrun-v2 mock) — the strip-header
-             row above it carries the state chip + the way back; map+rail and
-             the live strip do not render underneath (they return the moment
-             setup completes via onStarted, or on back-out). */
-          <div className="station-finder__setupbody" data-testid="station-finder-setup-body">
-            <div className="si-strip__hdr">
-              <span className="si-dot si-dot--amber" aria-hidden="true" />
-              <span className="si-strip__title">Live band · FT-8</span>
-              {needsSetup && <span className="si-prov si-prov--warn">NEEDS SETUP</span>}
-              <button
-                type="button"
-                className="station-finder__refresh station-finder__setup-back"
-                data-testid="station-finder-setup-back"
-                onClick={() => {
-                  setForceSetup(false);
-                  setSetupDismissed(true);
-                }}
-              >
-                ← back to finder
-              </button>
-            </div>
-            <div className="station-finder__setupbody-scroll">
-              <Ft8SetupSurface
-                snapshot={ft8.snapshot}
-                onStarted={() => {
-                  setForceSetup(false);
-                  setSetupDismissed(false);
-                  ft8.rehydrate();
-                }}
-                onRetry={ft8.rehydrate}
-              />
-            </div>
-          </div>
-        ) : (
-        <>
         <div className="station-finder__body">
           <StationFinderMap
             stations={visible}
@@ -548,6 +630,24 @@ export function StationFinderPanel({
             onSelectPeer={(peer) => setSelection({ kind: 'peer', peer })}
             selectedPeerId={selection?.kind === 'peer' ? selection.peer.id : null}
             panTarget={panTarget}
+            // Task 4 (spec L3 traffic map): the same ring the strip/rail
+            // already consume, aggregated in-place by the map for its own
+            // heard-station layer.
+            decodesRing={ft8.decodesRing}
+            // Task 7 (spec §2 evidence filter): the FT-8 corroboration toggle
+            // + SNR threshold, computed above from Task 6's corroborateStations.
+            evidence={{
+              enabled: evidenceOn,
+              onToggle: () => setEvidenceOn((v) => !v),
+              snrMinDb: evidenceSnrMinDb,
+              onSnrMinChange: setEvidenceSnrMinDb,
+              ghostedKeys: evidenceGhostedKeys,
+              note: evidenceNote,
+            }}
+            // Task 9: the bandwidth chips' mirror in the map's layer box, the
+            // SAME `enabledBandwidths` state + `toggleBandwidth` handler
+            // StationFinderControls' chip row uses above (one shared state).
+            bandwidthMirror={{ enabled: enabledBandwidths, onToggle: toggleBandwidth }}
           />
           <StationRail
             station={selected}
@@ -577,23 +677,19 @@ export function StationFinderPanel({
             beneath it, Waterfall + DecodeFeed + BandSubsetPopover) with zero call
             sites, so none of it existed for the operator. The strip hosts the
             live band: waterfall, decode feed, stats, provenance chips, and the
-            band-subset popover. Since QA round-3 finding 2 the full setup
-            surface is the PANEL BODY above (never nested in the strip) — the
-            strip's needs-setup arm is a one-line notice + "Open setup →" that
-            re-promotes it (visible only after an explicit back-out). */}
+            band-subset popover. Task 3: the strip now mounts UNCONDITIONALLY
+            alongside the map + rail above; the full-panel setup takeover that
+            used to replace this whole body is gone. Setup lives IN the strip
+            (the compact Ft8StripSetup form, Task 2), so onRehydrate wires the
+            strip's in-place Start/Retry actions to a forced re-read. */}
         <LiveBandStrip
           snapshot={ft8.snapshot}
           uiState={ft8.uiState}
           decodesRing={ft8.decodesRing}
           operatorGrid={operatorGrid}
           blockingSessionMode={blockingSessionMode}
-          onOpenFullSetup={() => {
-            setForceSetup(true);
-            setSetupDismissed(false);
-          }}
+          onRehydrate={ft8.rehydrate}
         />
-        </>
-        )}
       </div>
     </div>
   );

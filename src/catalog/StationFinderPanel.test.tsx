@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactElement } from 'react';
+import { EVIDENCE_RECENCY_MS } from './ft8Evidence';
 
 // StationFinderMap renders on MapLibreMap (globally mocked via test-setup).
 
@@ -12,9 +13,9 @@ import { StationFinderPanel } from './StationFinderPanel';
 import { Ft8ListenerProvider } from '../ft8ui/useFt8Listener';
 import { HintProvider } from '../onboarding/HintProvider';
 
-// Phase D1: the panel now hosts the live FT-8 surfaces (LiveBandStrip +
-// Ft8SetupSurface) and reads the listener via context, so it must render inside
-// Ft8ListenerProvider — useFt8Listener throws otherwise. The provider's own
+// Phase D1: the panel now hosts the live FT-8 surface (LiveBandStrip) and reads
+// the listener via context, so it must render inside Ft8ListenerProvider —
+// useFt8Listener throws otherwise. The provider's own
 // snapshot fetch + event listeners degrade silently under the invoke mock (it
 // catches), so these station-focused cases are unaffected by it.
 //
@@ -168,6 +169,124 @@ describe('StationFinderPanel', () => {
     );
     const writes = vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'propagation_prefs_write');
     expect(writes.length).toBe(1);
+  });
+
+  // Task 7 (spec evidence filter): the evidence toggle + SNR threshold join the
+  // existing persisted finder view (search/bands/modes/radius/selection) so a
+  // close/reopen restores the operator's evidence posture too.
+  it('persists evidenceOn to localStorage on toggle', async () => {
+    renderPanel(<StationFinderPanel onClose={() => {}} />);
+    await screen.findByRole('dialog', { name: /station intelligence/i });
+    const toggle = await screen.findByTestId('map-evidence-toggle');
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      const raw = window.localStorage.getItem('tuxlink:station-finder:view');
+      expect(raw).toBeTruthy();
+      const parsed = JSON.parse(raw!) as Record<string, unknown>;
+      expect(parsed.evidenceOn).toBe(true);
+    });
+  });
+
+  it('persists evidenceSnrMinDb on threshold change while the toggle is on', async () => {
+    renderPanel(<StationFinderPanel onClose={() => {}} />);
+    await screen.findByRole('dialog', { name: /station intelligence/i });
+    fireEvent.click(await screen.findByTestId('map-evidence-toggle'));
+    const snr = await screen.findByTestId('map-evidence-snr');
+
+    fireEvent.change(snr, { target: { value: '-15' } });
+
+    await waitFor(() => {
+      const raw = window.localStorage.getItem('tuxlink:station-finder:view');
+      const parsed = JSON.parse(raw!) as Record<string, unknown>;
+      expect(parsed.evidenceSnrMinDb).toBe(-15);
+    });
+  });
+
+  // Fix round 1 (reviewer finding): evidence must RE-evaluate as time passes.
+  // A decode that qualified once must stop corroborating its station past the
+  // EVIDENCE_RECENCY_MS window even when NO new decode events arrive (frozen
+  // decodesRing). The panel's minute tick (evidenceNowMs) drives this.
+  it('expires once-qualifying evidence past the recency window with no new decodes', async () => {
+    vi.useFakeTimers();
+    try {
+      const t0 = Date.now(); // fake clock "now"
+      // A qualifying decode: same grid as N0DAJ (decode-to-station distance 0,
+      // inside the 50 mi radius floor), band 40m (N0DAJ has a 7103 kHz channel),
+      // fresh at t0, SNR comfortably above the -24 default floor.
+      const slot = {
+        slotUtcMs: t0,
+        band: '40m',
+        dialHz: 7074000,
+        bandSource: 'cat-confirmed',
+        bandLabelConfirmedUtcMs: null,
+        outcome: { kind: 'decoded' },
+        decodes: [{
+          slotUtcMs: t0, snrDb: -8, dtS: 0, freqHz: 1500, message: 'CQ N0DAJ DM34',
+          fromCall: 'N0DAJ', toCall: null, grid: 'DM34oa', partial: false,
+        }],
+        partialSalvage: false, lostFrames: 0, boundarySkewFrames: 0,
+        clipFraction: 0, rmsDbfs: -20, dwellSlotIndex: null,
+      };
+      vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+        if (cmd === 'config_read') return { grid: 'DM43bp' } as unknown as never;
+        if (cmd === 'catalog_fetch_stations')
+          return [{ mode: 'vara-hf', title: null, parsedOk: true, raw: '', fetchedAtMs: t0, gateways: [N0DAJ] }] as unknown as never;
+        if (cmd === 'favorites_read') return { favorites: [] } as unknown as never;
+        // The reachability sweep runs against the fetched station; an undefined
+        // return here would make its worker read `.channels` off undefined and
+        // surface an unhandled rejection after the test completes.
+        if (cmd === 'propagation_predict_path')
+          return {
+            bearingDeg: 318, distanceKm: 77, ssn: 118, year: 2026, month: 6,
+            channels: [{ frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(0.86), snrByHour: Array(24).fill(12), mufdayByHour: Array(24).fill(0.9) }],
+          } as unknown as never;
+        // The provider's hydrate: a stopped listener whose ringTail still holds
+        // the decode (the listener recorded it, then went quiet or stopped).
+        if (cmd === 'ft8_listener_snapshot')
+          return {
+            service: { axis: 'stopped' },
+            flags: { clockUnsynced: false, catFixedBand: false, jt9Degraded: false },
+            slotPhase: 'decoded', band: '40m', dialHz: 7074000,
+            bandSource: 'cat-confirmed', bandLabelConfirmedUtcMs: null,
+            sweep: { mode: 'inactive', bandIdx: null, dwellProgress: null },
+            engineVersion: null, nConsecutive: 0, kConsecutive: 0,
+            lastSlotUtcMs: t0, lastFailure: null, availableDevices: null,
+            ringTail: [slot],
+            sweepConfig: { enabled: false, bands: [], dwellSlots: 4 },
+            configuredDeviceName: null,
+          } as unknown as never;
+        return undefined as unknown as never;
+      });
+
+      renderPanel(<StationFinderPanel onClose={() => {}} />);
+      // Flush the mount-time async work (snapshot hydrate, catalog fetch, grid).
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      fireEvent.click(screen.getByTestId('map-evidence-toggle'));
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(screen.getByTestId('map-evidence-note').textContent).toContain(
+        '1 of 1 gateways corroborated',
+      );
+
+      // Cross the recency boundary plus one evidence tick. No new decode events
+      // arrive (the ring reference never changes), so ONLY the time tick can
+      // trigger re-evaluation.
+      await act(async () => {
+        vi.advanceTimersByTime(EVIDENCE_RECENCY_MS + 61_000);
+      });
+      expect(screen.getByTestId('map-evidence-note').textContent).toContain(
+        '0 of 1 gateways corroborated',
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('shows the "set your location" hint only when neither GPS nor a manual grid is available', async () => {

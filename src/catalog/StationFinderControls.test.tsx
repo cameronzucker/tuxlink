@@ -3,12 +3,15 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { StationFinderControls } from './StationFinderControls';
 import type { Band } from './bandPlan';
 import type { BandDot } from '../ft8ui/ft8Types';
+import { BANDWIDTH_CLASSES, type BandwidthClass } from './stationTypes';
 
 const baseProps = {
   enabledBands: new Set<Band>(['40m']),
   onToggleBand: vi.fn(),
-  enabledModes: new Set<'vara-hf' | 'ardop-hf' | 'packet'>(['vara-hf', 'ardop-hf', 'packet']),
+  enabledModes: new Set<'vara-hf' | 'ardop-hf' | 'packet' | 'vara-fm'>(['vara-hf', 'ardop-hf', 'packet', 'vara-fm']),
   onToggleMode: vi.fn(),
+  enabledBandwidths: new Set<BandwidthClass>(BANDWIDTH_CLASSES),
+  onToggleBandwidth: vi.fn(),
   utcHour: 21,
   localTime: '14:20',
   ssn: 118,
@@ -65,6 +68,61 @@ describe('StationFinderControls', () => {
     render(<StationFinderControls {...baseProps} onToggleMode={onToggleMode} />);
     fireEvent.click(screen.getByRole('button', { name: /VARA HF/ }));
     expect(onToggleMode).toHaveBeenCalledWith('vara-hf');
+  });
+
+  it('renders a VARA FM mode chip', () => {
+    render(<StationFinderControls {...baseProps} />);
+    expect(screen.getByRole('button', { name: /VARA FM/ })).toBeTruthy();
+  });
+
+  it('toggles the VARA FM mode chip', () => {
+    const onToggleMode = vi.fn();
+    render(<StationFinderControls {...baseProps} onToggleMode={onToggleMode} />);
+    fireEvent.click(screen.getByRole('button', { name: /VARA FM/ }));
+    expect(onToggleMode).toHaveBeenCalledWith('vara-fm');
+  });
+
+  describe('bandwidth filter chips (Task 9)', () => {
+    it('renders three bandwidth chips between the mode chips and the search group', () => {
+      render(<StationFinderControls {...baseProps} />);
+      const chip500 = screen.getByTestId('bw-chip-500');
+      const chip2300 = screen.getByTestId('bw-chip-2300');
+      const chip2750 = screen.getByTestId('bw-chip-2750');
+      expect(chip500).toBeInTheDocument();
+      expect(chip2300).toBeInTheDocument();
+      expect(chip2750).toBeInTheDocument();
+
+      // DOM order: mode chips, then bandwidth chips, then the search group.
+      const modeChip = screen.getByRole('button', { name: /VARA HF/ });
+      const searchInput = screen.getByLabelText(/filter stations by callsign/i);
+      const position = (a: Node, b: Node) =>
+        a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1;
+      expect(position(modeChip, chip500)).toBe(-1);
+      expect(position(chip2750, searchInput)).toBe(-1);
+    });
+
+    it('marks a bandwidth chip pressed when its class is enabled', () => {
+      render(
+        <StationFinderControls
+          {...baseProps}
+          enabledBandwidths={new Set<BandwidthClass>(['500'])}
+        />,
+      );
+      expect(screen.getByTestId('bw-chip-500').getAttribute('aria-pressed')).toBe('true');
+      expect(screen.getByTestId('bw-chip-2300').getAttribute('aria-pressed')).toBe('false');
+      expect(screen.getByTestId('bw-chip-2750').getAttribute('aria-pressed')).toBe('false');
+    });
+
+    it('toggles a bandwidth chip via onToggleBandwidth', () => {
+      const onToggleBandwidth = vi.fn();
+      render(<StationFinderControls {...baseProps} onToggleBandwidth={onToggleBandwidth} />);
+      fireEvent.click(screen.getByTestId('bw-chip-2300'));
+      expect(onToggleBandwidth).toHaveBeenCalledWith('2300');
+      fireEvent.click(screen.getByTestId('bw-chip-500'));
+      expect(onToggleBandwidth).toHaveBeenCalledWith('500');
+      fireEvent.click(screen.getByTestId('bw-chip-2750'));
+      expect(onToggleBandwidth).toHaveBeenCalledWith('2750');
+    });
   });
 
   it('notes when prediction is unavailable (distance-only)', () => {

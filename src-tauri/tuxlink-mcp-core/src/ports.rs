@@ -551,11 +551,19 @@ pub struct LogLineDto {
 // ---------------------------------------------------------------------------
 
 /// A Winlink RMS gateway operating mode / transport. Kebab-case on the wire so
-/// the agent-facing values read `vara-hf`, `ardop-hf`, `robust-packet`, etc.
+/// the agent-facing values read `vara-hf`, `vara-fm`, `ardop-hf`,
+/// `robust-packet`, etc.
+///
+/// `VaraFm` serializes as `"vara-fm"`, the SAME token the monolith
+/// [`ListingMode::VaraFm`](crate) uses and the frontend `ListingMode` union
+/// carries. VARA FM stations reach the agent with the same fidelity the frontend
+/// gets (they are sourced from the channels JSON API, not a text `/listings/`
+/// page).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum StationModeDto {
     VaraHf,
+    VaraFm,
     Packet,
     ArdopHf,
     Pactor,
@@ -598,6 +606,25 @@ pub struct StationFilterDto {
     /// Restrict to these amateur bands (e.g. `"40m"`); empty means all bands.
     #[serde(default)]
     pub bands: Vec<String>,
+    /// Restrict to gateways offering a channel at one of these occupied
+    /// bandwidths in Hz. Only the fixed classes `500`, `2300`, and `2750` are
+    /// classified; a channel with any OTHER bandwidth (e.g. ARDOP 1000/2000) or
+    /// no reported bandwidth passes every bandwidth filter, and a gateway stays
+    /// if any of its channels passes. `None` or empty means no bandwidth filter.
+    #[serde(default)]
+    pub bandwidths: Option<Vec<u32>>,
+    /// When `Some(true)`, corroborate each gateway against the operator's recent
+    /// FT-8 decodes and stamp `ft8_corroborated` per gateway plus `evidence`
+    /// params on the result. Requires the FT-8 listener to be available; the
+    /// request is refused with an unavailable error otherwise. `None`/`false`
+    /// serves gateways without evidence (every `ft8_corroborated` stays null).
+    #[serde(default)]
+    pub ft8_evidence: Option<bool>,
+    /// SNR floor in dB for a decode to count as evidence when `ft8_evidence` is
+    /// set. `None` uses the default floor (-24 dB). Ignored when `ft8_evidence`
+    /// is not requested.
+    #[serde(default)]
+    pub ft8_snr_min_db: Option<i32>,
 }
 
 /// One curated RMS gateway directory entry. Public directory data, no PII:
@@ -622,6 +649,14 @@ pub struct GatewayDto {
     pub grid: Option<String>,
     /// Dial frequencies in kHz this channel advertises.
     pub frequencies_khz: Vec<f64>,
+    /// Per-channel detail from the Winlink gateway channels JSON API (dial
+    /// frequency, occupied bandwidth, mode, operating hours), when the gateway is
+    /// present in the channels feed. Empty when it is not; the bare
+    /// `frequencies_khz` above is then the only dial data. `#[serde(default)]` so
+    /// a payload from a pre-Task-12 producer (or an older cached/fixture DTO)
+    /// still deserializes.
+    #[serde(default)]
+    pub channels: Vec<ChannelDto>,
     /// Gateway antenna type, when known.
     pub antenna: Option<GatewayAntennaDto>,
     /// Great-circle distance in km from the operator's grid to this gateway. `None` when the
@@ -634,6 +669,32 @@ pub struct GatewayDto {
     /// `None` when distance is unknown OR zero. (Sibling `PathPredictionDto`'s `bearing_deg`
     /// is non-optional; the asymmetry is intentional — gateway grids can be absent.)
     pub bearing_deg: Option<f64>,
+    /// `Some(true)` when recent FT-8 decodes corroborate this gateway is
+    /// reachable, `Some(false)` when evidence was evaluated but did not
+    /// corroborate it, `None` when FT-8 evidence was not requested (see
+    /// [`StationFilterDto::ft8_evidence`]). `#[serde(default)]` for
+    /// pre-Task-12 / cached-DTO backward-compat.
+    #[serde(default)]
+    pub ft8_corroborated: Option<bool>,
+}
+
+/// One per-channel row from the Winlink gateway channels JSON API, curated onto
+/// a [`GatewayDto`]. Mirrors the monolith `ChannelDetail` (dial frequency in
+/// kHz, occupied bandwidth in Hz when the mode implies one, the transport token,
+/// and the advertised operating hours).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ChannelDto {
+    /// Dial frequency in kHz (offset-free; the API reports the dial directly).
+    pub frequency_khz: f64,
+    /// Occupied bandwidth in Hz when the mode implies a fixed one (VARA
+    /// 500/2300/2750, ARDOP 500/1000/2000); `None` for a mode with no fixed
+    /// bandwidth (VARA FM, Packet, Pactor, Robust Packet).
+    pub bandwidth_hz: Option<u32>,
+    /// The transport this channel runs (`vara-hf`, `vara-fm`, `ardop-hf`,
+    /// `packet`, `pactor`, `robust-packet`).
+    pub mode: String,
+    /// The gateway's advertised operating hours for this channel, e.g. `"00-23"`.
+    pub operating_hours: Option<String>,
 }
 
 /// Output of [`StationPort::find_stations`]: the matched gateways plus a fetch
@@ -648,6 +709,34 @@ pub struct StationListDto {
     /// The operator's own 4-char grid used to compute per-gateway distances (provenance).
     /// `None` when unresolved — lets the agent explain why all distances are null.
     pub operator_grid: Option<String>,
+    /// The FT-8 evidence parameters this result was corroborated under, present
+    /// only when [`StationFilterDto::ft8_evidence`] was requested. Lets the agent
+    /// explain the corroboration (SNR floor, recency window, radius model) and
+    /// which bands actually carried qualifying decodes. `#[serde(default)]` for
+    /// pre-Task-12 / cached-DTO backward-compat.
+    #[serde(default)]
+    pub evidence: Option<EvidenceParamsDto>,
+}
+
+/// The FT-8 evidence-corroboration parameters a [`StationListDto`] was computed
+/// under (provenance for the `ft8_corroborated` stamps). Present only when
+/// evidence was requested.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EvidenceParamsDto {
+    /// The SNR floor in dB a decode had to clear to count as evidence.
+    pub snr_min_db: i32,
+    /// The recency window in ms: a decode older than this could not corroborate.
+    pub recency_ms: u64,
+    /// The decode-distance-to-radius scale factor (radius = factor × operator
+    /// distance, clamped to `[radius_min_mi, radius_max_mi]`).
+    pub radius_factor: f64,
+    /// The corroboration-radius floor in miles.
+    pub radius_min_mi: f64,
+    /// The corroboration-radius cap in miles.
+    pub radius_max_mi: f64,
+    /// The bands that carried at least one qualifying decode in-window
+    /// (first-occurrence order), independent of any gateway match.
+    pub sampled_bands: Vec<String>,
 }
 
 /// One curated RF-reachability observation on a peer (spec §2). Structured-only:

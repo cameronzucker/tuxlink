@@ -26,7 +26,8 @@ import { relToTier, tierColorVar, bestBandNow } from './reachability';
 import { channelToDial, channelReliability } from './channelGrouping';
 import { rankedDialsFor } from './ranking';
 import { emitGatewayPrefill } from '../favorites/prefillEvent';
-import type { Station, Channel } from './stationModel';
+import { formatDialKhz, type Station, type Channel } from './stationModel';
+import { bandwidthClass } from './stationTypes';
 import type { PathPrediction } from './propagationApi';
 import type { PredictionStatus } from './useStationPrediction';
 import type { FavoriteDial } from '../favorites/types';
@@ -54,6 +55,15 @@ const MODE_LABEL: Record<string, string> = {
 };
 
 const mhz = (khz: number): string => (khz / 1000).toFixed(3);
+
+/** Task 10 (tuxlink-hcmfb): 500 Hz reads as "narrow", 2300/2750 Hz as "wide"
+ *  (design §3: amber for 500/narrow, blue for 2300/2750). A channel whose
+ *  `bandwidthClass` is `null` (missing OR an unclassified Hz value like
+ *  ARDOP's 1000/2000) gets no badge at all: the row's dial + band already
+ *  say what's known, so there is nothing to inflate a badge with. */
+function bwBadgeModifier(cls: '500' | '2300' | '2750'): 'narrow' | 'wide' {
+  return cls === '500' ? 'narrow' : 'wide';
+}
 
 /** Best 2 chips shown inline; a row with a 3rd+ channel collapses the rest
  *  behind a `+N` overflow chip that expands the row in place (spec §Rail). */
@@ -109,6 +119,7 @@ function DialChip({
   const dial = channelToDial(station, channel);
   const dialable = dial != null;
   const saved = dialable && isSaved ? isSaved(dial) : false;
+  const bwCls = bandwidthClass(channel.bandwidthHz);
   return (
     // The ☆ save star below is a SIBLING of the Use-chip button inside this
     // wrapper — never nested inside it (spec §Rail; the anti-pattern this
@@ -129,6 +140,21 @@ function DialChip({
         <span className={`station-finder__sw station-finder__sw--${channel.mode}`} />
         {mhz(channel.frequencyKhz)}
       </button>
+      {/* Task 10 (tuxlink-hcmfb): the row's dial-frequency label (kHz,
+          formatDialKhz) + bandwidth badge, siblings of the Use-chip like the
+          ☆ save star above, never nested inside the button. */}
+      <span className="station-finder__bmfreq" data-testid={`freq-${channel.mode}-${channel.frequencyKhz}`}>
+        {formatDialKhz(channel.frequencyKhz)}
+      </span>
+      {bwCls && (
+        <span
+          className={`station-finder__bw-badge station-finder__bw-badge--${bwBadgeModifier(bwCls)}`}
+          data-testid={`bw-${channel.mode}-${channel.frequencyKhz}`}
+          title={`${bwCls} Hz occupied bandwidth`}
+        >
+          {bwCls}
+        </span>
+      )}
       {onSaveFavorite && (
         <button
           type="button"
