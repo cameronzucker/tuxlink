@@ -180,6 +180,37 @@ The transmit and write acknowledgments are independent. A routine that both
 transmits and writes needs both, and each is invalidated on its own if the
 covered steps change.
 
+## Triggers: when a routine runs
+
+Every routine carries a `triggers` list in its definition. There are two
+kinds:
+
+- **Manual** (`{"type": "manual"}`): the routine runs only when you press Run,
+  or when an agent requests a run on your behalf. No other fields.
+- **Schedule**: the routine fires itself on an interval.
+
+A schedule trigger looks like this:
+
+```json
+{ "type": "schedule", "every": "1h", "align": "hour" }
+```
+
+- `every` is the interval, written like `"30m"`, `"2h"`, or `"45s"`. Required.
+- `align` is optional: `"hour"` or `"day"` snaps firing to the top of the hour
+  or day. `"every": "1h"` with `"align": "hour"` means 00:00, 01:00, 02:00,
+  and so on.
+- `window` is optional: a local-time window like `"08:00-20:00"`. Outside the
+  window the schedule stays quiet.
+- `if_missed` is optional: `"skip"` (the default) ignores fires the app was
+  closed for; `"run_once_on_launch"` runs one catch-up when the app comes
+  back.
+
+A scheduled routine still honors the consent classes above. In attended mode,
+each scheduled fire parks at the transmitting (or config-writing) step and
+waits for your confirmation, so schedule plus attended only makes sense when
+you expect to be at the station. For unattended operation the routine must be
+automatic, which requires your recorded acknowledgment first.
+
 ## Where next
 
 - [AI agent integration (MCP)](35-agent-mcp.md) - the send-authority and taint
