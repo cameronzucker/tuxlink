@@ -6,19 +6,37 @@
    mutually-exclusive chat⇄modem tabs. */
 .aprs-dock-tabs {
   display: flex;
-  flex-wrap: wrap;
   align-items: stretch;
   background: var(--bg, #0b1015);
   border-bottom: 1px solid var(--border, #2a3140);
 }
-/* Graceful crowding (tuxlink-dmwte task 11): the vacated Tac Map state swaps the
-   compact [⊞ Map][↗ Pop out] pair for the wider [Tac Map ↗ — in window][⇤ dock
-   back] pathway, which — with the tab group + close — overflows the dock's ~400px
-   floor and pushed the Modem tab and × close off the right edge. `flex-wrap`
-   drops whole controls (never a broken label; siblings are `nowrap`) to a second
-   row only when the single row can't hold them, so every control stays reachable
-   at the narrow width. No effect when the row already fits (the docked state, and
-   any wider dock). */
+/* tuxlink-mxqjp (supersedes dmwte task 11's flex-wrap): the map companion
+   controls + tab group + close never all fit the dock's ~400px floor in one
+   row, and the old `flex-wrap` broke at an arbitrary point, rendering
+   Map/Pop out as an orphaned tab-shaped row above the real tabs (R2 operator
+   report 2026-07-20). When map controls are present the component now renders
+   two INTENTIONAL rows: `.aprs-dock-surfacebar` (map pathway + × close) above
+   `.aprs-dock-tabrow` (tabs + station-data pop-out). Every control keeps a
+   full-width row even in the widest popped state, so nothing wraps and
+   nothing is pushed off the edge. Callers without map controls keep the
+   single row (`--rows` absent). */
+.aprs-dock-tabs--rows {
+  flex-direction: column;
+}
+.aprs-dock-surfacebar {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--border, #2a3140);
+  /* Quieter than the tab row: the surface bar holds dock-level pathway
+     controls, not view tabs; a slightly recessed rail keeps the two rows
+     reading as hierarchy, not as two rows of tabs. */
+  background: var(--surface-3, #11171d);
+}
+.aprs-dock-tabrow {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
 
 .aprs-dock-tabgroup {
   display: flex;

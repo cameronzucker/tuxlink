@@ -78,66 +78,91 @@ export function AprsDockTabs({
   onFocusMap,
   onDockBackMap,
 }: AprsDockTabsProps) {
+  // tuxlink-mxqjp: the map companion controls and the tab strip used to share
+  // one flex-wrap row; at the dock's ~400px floor the wrap point was arbitrary
+  // and Map/Pop out rendered as an orphaned tab-shaped row above the real tabs
+  // (R2 operator report 2026-07-20). When map controls exist the split is now
+  // INTENTIONAL: a surface bar (map pathway + × close) above a clean tab row.
+  // Callers without map controls keep the original single row.
+  const hasSurfaceBar = Boolean(mapPopped || onToggleMap);
+  const closeButton = (
+    <button
+      type="button"
+      className="aprs-dock-close"
+      data-testid="aprs-dock-close"
+      aria-label="Close APRS chat"
+      title="Close APRS chat"
+      onClick={onClose}
+    >
+      ×
+    </button>
+  );
   return (
-    <div className="aprs-dock-tabs" data-testid="aprs-dock-tabs">
-      {mapPopped ? (
-        <div className="aprs-dock-map-popped" data-testid="aprs-map-popped-controls">
-          <button
-            type="button"
-            className="aprs-dock-map-focus"
-            data-testid="aprs-map-focus"
-            title="Focus the Tac Map window"
-            onClick={onFocusMap}
-          >
-            Tac Map ↗ — in window
-          </button>
-          <button
-            type="button"
-            className="aprs-dock-map-dockback"
-            data-testid="aprs-map-dockback"
-            aria-label="Dock the Tac Map back inline"
-            title="Dock the Tac Map back inline"
-            onClick={onDockBackMap}
-          >
-            ⇤ dock back
-          </button>
-        </div>
-      ) : (
-        onToggleMap && (
-          <>
-            <button
-              type="button"
-              className={`aprs-dock-maptoggle ${mapOpen ? 'is-active' : ''}`}
-              data-testid="aprs-map-toggle"
-              aria-pressed={Boolean(mapOpen)}
-              title={
-                mapOpen
-                  ? 'Hide the heard-positions map'
-                  : 'Show heard stations on a map beside the chat or modem'
-              }
-              onClick={onToggleMap}
-            >
-              <span className="aprs-dock-map-glyph" aria-hidden="true">⊞</span>
-              Map
-            </button>
-            {onPopOutMap && (
+    <div className={`aprs-dock-tabs ${hasSurfaceBar ? 'aprs-dock-tabs--rows' : ''}`} data-testid="aprs-dock-tabs">
+      {hasSurfaceBar && (
+        <div className="aprs-dock-surfacebar" data-testid="aprs-dock-surfacebar">
+          {mapPopped ? (
+            <div className="aprs-dock-map-popped" data-testid="aprs-map-popped-controls">
               <button
                 type="button"
-                className="aprs-dock-map-popout"
-                data-testid="aprs-map-popout"
-                title="Open the Tac Map in its own window"
-                onClick={onPopOutMap}
+                className="aprs-dock-map-focus"
+                data-testid="aprs-map-focus"
+                title="Focus the Tac Map window"
+                onClick={onFocusMap}
               >
-                {/* Text-labeled, never icon-only (spec §1 visual-pathway rule +
-                    §5 text-labeled requirement) — mirrors the map focus /
-                    dock-back pathway controls below. */}
-                <span className="aprs-dock-map-popout-glyph" aria-hidden="true">↗</span>
-                Pop out
+                Tac Map ↗ — in window
               </button>
-            )}
-          </>
-        )
+              <button
+                type="button"
+                className="aprs-dock-map-dockback"
+                data-testid="aprs-map-dockback"
+                aria-label="Dock the Tac Map back inline"
+                title="Dock the Tac Map back inline"
+                onClick={onDockBackMap}
+              >
+                ⇤ dock back
+              </button>
+            </div>
+          ) : (
+            onToggleMap && (
+              <>
+                <button
+                  type="button"
+                  className={`aprs-dock-maptoggle ${mapOpen ? 'is-active' : ''}`}
+                  data-testid="aprs-map-toggle"
+                  aria-pressed={Boolean(mapOpen)}
+                  title={
+                    mapOpen
+                      ? 'Hide the heard-positions map'
+                      : 'Show heard stations on a map beside the chat or modem'
+                  }
+                  onClick={onToggleMap}
+                >
+                  <span className="aprs-dock-map-glyph" aria-hidden="true">⊞</span>
+                  Map
+                </button>
+                {onPopOutMap && (
+                  <button
+                    type="button"
+                    className="aprs-dock-map-popout"
+                    data-testid="aprs-map-popout"
+                    title="Open the Tac Map in its own window"
+                    onClick={onPopOutMap}
+                  >
+                    {/* Text-labeled, never icon-only (spec §1 visual-pathway rule +
+                        §5 text-labeled requirement); mirrors the map focus /
+                        dock-back pathway controls. */}
+                    <span className="aprs-dock-map-popout-glyph" aria-hidden="true">↗</span>
+                    Pop out
+                  </button>
+                )}
+              </>
+            )
+          )}
+          {closeButton}
+        </div>
       )}
+      <div className="aprs-dock-tabrow" data-testid="aprs-dock-tabrow">
       <div className="aprs-dock-tabgroup" role="tablist" aria-label="Dock view">
         <button
           type="button"
@@ -192,16 +217,8 @@ export function AprsDockTabs({
           <span className="aprs-dock-popout-glyph" aria-hidden="true">⤢</span>
         </button>
       )}
-      <button
-        type="button"
-        className="aprs-dock-close"
-        data-testid="aprs-dock-close"
-        aria-label="Close APRS chat"
-        title="Close APRS chat"
-        onClick={onClose}
-      >
-        ×
-      </button>
+      {!hasSurfaceBar && closeButton}
+      </div>
     </div>
   );
 }
