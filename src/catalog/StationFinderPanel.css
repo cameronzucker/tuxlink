@@ -891,6 +891,30 @@
   color: var(--faint, #6f8aa3);
 }
 
+/* Task 10 (tuxlink-hcmfb, design §3 "Frequency hero"): the rail's largest
+   datum, the station's top-ranked dial frequency, leading the Station tab
+   right after the aim hero. */
+.station-finder__freq-hero {
+  padding: 10px 13px;
+  border-bottom: 1px solid var(--border, #243a52);
+}
+.station-finder__freq-hero-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.station-finder__freq-hero-khz {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--text, #e8f1fa);
+}
+.station-finder__freq-hero-note {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--faint, #6f8aa3);
+}
+
 .station-finder__prop {
   padding: 10px 13px;
   border-bottom: 1px solid var(--border, #243a52);
@@ -1135,6 +1159,33 @@
 .station-finder__bmnone {
   font-size: 10.5px;
   color: var(--faint, #6f8aa3);
+}
+
+/* Task 10 (tuxlink-hcmfb): per-row dial-frequency label (kHz) + bandwidth
+   badge, siblings of the Use-chip/☆ inside .station-finder__bmchip. */
+.station-finder__bmfreq {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  color: var(--faint, #6f8aa3);
+}
+.station-finder__bw-badge {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 4px;
+  letter-spacing: 0.01em;
+}
+/* narrow (500 Hz): amber, per design §3 "amber for 500/narrow". */
+.station-finder__bw-badge--narrow {
+  color: #3a2c05;
+  background: var(--reach-marginal, #d9b13a);
+}
+/* wide (2300/2750 Hz): blue, per design §3 "blue for 2300/2750". */
+.station-finder__bw-badge--wide {
+  color: #05203a;
+  background: var(--m-vara, #4aa3ff);
 }
 
 /* ── FZ-M1 compact: stack map over rail on the rugged screen ───────────── */

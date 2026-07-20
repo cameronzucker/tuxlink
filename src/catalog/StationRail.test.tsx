@@ -30,7 +30,11 @@ const station: Station = {
   modes: ['vara-hf', 'ardop-hf', 'packet'], fetchedAtMs: 1, gatewayAntenna: null,
   channels: [
     { mode: 'vara-hf', frequencyKhz: 3590, band: '80m' },
-    { mode: 'vara-hf', frequencyKhz: 7103, band: '40m' },
+    // Task 10 (tuxlink-hcmfb): this 40m vara-hf channel is the highest-rel
+    // channel across the station (rel 0.86, see `prediction` below) and
+    // carries a classified 500 Hz bandwidth, the frequency hero's expected
+    // top-ranked pick, with the --narrow badge.
+    { mode: 'vara-hf', frequencyKhz: 7103, band: '40m', bandwidthHz: 500 },
     { mode: 'ardop-hf', frequencyKhz: 7103, band: '40m' },
     { mode: 'packet', frequencyKhz: 145710, ssid: 'N0DAJ-10', band: 'vhf-uhf' },
   ],
@@ -344,6 +348,67 @@ describe('StationRail', () => {
       expect(screen.getByTestId('aim-bearing').textContent).toBe('318°');
       expect(screen.queryByTestId('aim-bearing-true')).toBeNull();
       expect(screen.queryByTestId('aim-declination')).toBeNull();
+    });
+  });
+
+  // Task 10 (tuxlink-hcmfb): the frequency hero leads the Station tab with
+  // the top-ranked channel's dial + bandwidth badge.
+  describe('frequency hero', () => {
+    it('renders the top-ranked channel formatted dial and its bandwidth badge', () => {
+      const { container } = render(
+        <StationRail station={station} prediction={prediction} predictionStatus="ok" operatorGrid="DM43bp" utcHour={21} />,
+      );
+      const hero = screen.getByTestId('rail-freq-hero');
+      // 40m vara-hf (rel 0.86) outranks 80m vara-hf (rel 0.74) and 40m ardop-hf
+      // (no reliability data for ardop-hf at 7103 in this fixture): the hero
+      // shows the highest-reliability channel across ALL the station's modes.
+      expect(hero.textContent).toMatch(/7,103\.0 kHz/);
+      const badge = hero.querySelector('.station-finder__bw-badge');
+      expect(badge).toBeTruthy();
+      expect(badge!.className).toMatch(/station-finder__bw-badge--narrow/);
+      expect(container.querySelector('[data-testid="rail-freq-hero"]')).toBeTruthy();
+    });
+
+    it('renders a graceful fallback when the station has no channel data', () => {
+      const noChannels: Station = { ...station, channels: [] };
+      render(
+        <StationRail station={noChannels} prediction={null} predictionStatus="unavailable" operatorGrid="DM43bp" utcHour={21} />,
+      );
+      const hero = screen.getByTestId('rail-freq-hero');
+      expect(hero.textContent).not.toMatch(/kHz/);
+      expect(hero.textContent!.length).toBeGreaterThan(0);
+    });
+
+    // Fix round 1 (controller mock check): the hero note labels the big
+    // number as the DIAL and shows the COMPUTED audio-center value
+    // (dial + 1.5 kHz, USB convention) for the SSB-carried HF modes; FM
+    // channels (vara-fm, packet: dial IS the carrier) omit the center
+    // segment entirely.
+    it('shows the computed USB audio-center value (dial + 1.5 kHz) in the note for a VARA HF channel', () => {
+      const ssbStation: Station = {
+        ...station,
+        channels: [{ mode: 'vara-hf', frequencyKhz: 7103.5, band: '40m', bandwidthHz: 500 }],
+      };
+      render(
+        <StationRail station={ssbStation} prediction={null} predictionStatus="unavailable" operatorGrid="DM43bp" utcHour={21} />,
+      );
+      const hero = screen.getByTestId('rail-freq-hero');
+      expect(hero.textContent).toMatch(/7,103\.5 kHz/);
+      expect(hero.textContent).toMatch(/VARA HF dial · center 7,105\.0 kHz/);
+    });
+
+    it('omits the center segment for an FM channel (packet: the dial IS the carrier)', () => {
+      const fmStation: Station = {
+        ...station,
+        channels: [{ mode: 'packet', frequencyKhz: 145710, ssid: 'N0DAJ-10', band: 'vhf-uhf' }],
+      };
+      render(
+        <StationRail station={fmStation} prediction={null} predictionStatus="unavailable" operatorGrid="DM43bp" utcHour={21} />,
+      );
+      const hero = screen.getByTestId('rail-freq-hero');
+      expect(hero.textContent).toMatch(/145,710\.0 kHz/);
+      expect(hero.textContent).toMatch(/Packet dial/);
+      expect(hero.textContent).not.toMatch(/center/);
     });
   });
 

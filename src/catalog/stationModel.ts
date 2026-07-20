@@ -159,3 +159,13 @@ export function stationMatchesFilters(
       channelPassesBandwidth(c.bandwidthHz, bandwidths),
   );
 }
+
+/** Format a `Channel.frequencyKhz` DIAL value for display (Task 10, the
+ *  frequency hero + BandMatrix row badges): thousands-comma-grouped, always
+ *  one decimal place, e.g. `7103.5` -> `"7,103.5 kHz"` and `14108` ->
+ *  `"14,108.0 kHz"` (a whole-kHz channel still shows the ".0" so the column
+ *  never jitters between one-decimal and zero-decimal rows). */
+export function formatDialKhz(khz: number): string {
+  const formatted = khz.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  return `${formatted} kHz`;
+}

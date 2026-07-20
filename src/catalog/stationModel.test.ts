@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { baseCallsign, aggregateStations, stationMatchesFilters, type Station } from './stationModel';
+import { baseCallsign, aggregateStations, stationMatchesFilters, formatDialKhz, type Station } from './stationModel';
 import { HF_BANDS, type Band } from './bandPlan';
 import { BANDWIDTH_CLASSES, type BandwidthClass, type ChannelDetail, type Gateway, type StationListing } from './stationTypes';
 
@@ -292,5 +292,16 @@ describe('aggregateStations — distinct stations', () => {
         gateways: [gw({ callsign: 'NOGRID', grid: null, frequenciesKhz: [7103] })] },
     ];
     expect(aggregateStations(listings)).toHaveLength(0);
+  });
+});
+
+// Task 10 (tuxlink-hcmfb): formatDialKhz backs the rail's frequency hero and
+// every BandMatrix channel row's kHz label.
+describe('formatDialKhz', () => {
+  it('renders a fractional-kHz dial with one decimal and thousands separator', () => {
+    expect(formatDialKhz(7103.5)).toBe('7,103.5 kHz');
+  });
+  it('renders a whole-kHz dial with a trailing .0 (never drops the decimal)', () => {
+    expect(formatDialKhz(14108)).toBe('14,108.0 kHz');
   });
 });
