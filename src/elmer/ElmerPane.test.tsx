@@ -16,7 +16,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
+import { clearProviderDrafts } from './providerDrafts';
+import { render, screen, fireEvent, waitFor, act, within, cleanup } from '@testing-library/react';
 import { ElmerPane, ModelForm } from './ElmerPane';
 import { RADIO_VERBS } from './radioVerbs';
 import type { ElmerChipPayload, ElmerContextPayload, ElmerDeltaPayload, ElmerOutcomePayload, ElmerTurnPayload } from './elmerEvents';
@@ -114,10 +115,10 @@ beforeEach(() => {
   listeners.clear();
   mockInvoke.mockClear();
   mockListen.mockClear();
-  // tuxlink-inasr: per-provider draft stash persists in localStorage — clear
-  // between tests so one test's provider switch cannot leak a draft into
-  // another test's preset-fill assertions.
-  localStorage.clear();
+  // tuxlink-inasr: per-provider draft stash persists in localStorage AND a
+  // session memory layer — clear both between tests so one test's provider
+  // switch cannot leak a draft into another test's preset-fill assertions.
+  clearProviderDrafts();
 });
 
 // ---------------------------------------------------------------------------
@@ -630,7 +631,10 @@ describe('<ElmerPane> ModelForm -- Custom values survive a preset round-trip (tu
     }
   });
 
-  it('declining the replace-confirm leaves the Custom values in place', async () => {
+  // Pre-existing behavior GUARD, not a regression test for this fix (adrev
+  // round: it passes on origin/main too — declining returns before either
+  // the old replacement or the new stash runs).
+  it('declining the replace-confirm leaves the Custom values in place (guard)', async () => {
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
     try {
       mockConfigRead();
@@ -644,6 +648,39 @@ describe('<ElmerPane> ModelForm -- Custom values survive a preset round-trip (tu
     } finally {
       confirmSpy.mockRestore();
     }
+  });
+
+  it('a saved Custom endpoint is restorable in a FRESH pane after the config moved to another provider (the tile-picker/save loss path)', async () => {
+    // Session 1: the operator saves a Custom config. configSet stashes what
+    // it persists (useElmer), which is the only memory that survives the
+    // single-slot config being overwritten by a later provider switch.
+    mockConfigRead();
+    await renderAndOpen();
+    const providerSelect = screen.getByTestId('elmer-provider-select');
+    fireEvent.change(providerSelect, { target: { value: 'custom' } });
+    const endpointInput = screen.getByTestId('elmer-endpoint-input') as HTMLInputElement;
+    fireEvent.change(endpointInput, { target: { value: SPARK } });
+    const modelInput = screen.getByTestId('elmer-model-input') as HTMLInputElement;
+    fireEvent.change(modelInput, { target: { value: 'qwen3-coder-next' } });
+    fireEvent.click(screen.getByTestId('elmer-save-btn'));
+    await waitFor(() => {
+      expect(mockInvoke.mock.calls.some((c) => c[0] === 'elmer_config_set')).toBe(true);
+    });
+    cleanup();
+    listeners.clear();
+    mockInvoke.mockClear();
+
+    // Session 2: the CONFIG now holds another provider (a tile-picker save
+    // overwrote the slot). Re-selecting Custom must restore the saved Spark
+    // values — on origin/main this yields '' (the reported data loss).
+    mockConfigRead();
+    await renderAndOpen();
+    const select2 = screen.getByTestId('elmer-provider-select');
+    fireEvent.change(select2, { target: { value: 'custom' } });
+    const endpoint2 = screen.getByTestId('elmer-endpoint-input') as HTMLInputElement;
+    const model2 = screen.getByTestId('elmer-model-input') as HTMLInputElement;
+    expect(endpoint2.value).toBe(SPARK);
+    expect(model2.value).toBe('qwen3-coder-next');
   });
 });
 
