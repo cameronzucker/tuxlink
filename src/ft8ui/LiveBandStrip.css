@@ -156,16 +156,29 @@
   display: flex;
   border-top: 1px solid var(--border);
   min-height: 0;
-  /* Task 11 (tuxlink-6i0ie) containment fix. EVIDENCE (dev/scratch/
-     si-containment, ?view=finder&ring=0|240 @1366x1200): this row measured
-     198px at ring=0 (empty feed) and 323px at ring=240 (+125px), matched
-     exactly by `.si-wf` growing 197px -> 322px even though its CANVAS stays a
-     fixed 168px the whole time, i.e. +125px of dead space opening up below
-     the waterfall (the operator's literal bug report). The row had no fixed
-     height, so `.si-feed`'s unbounded decode-feed table grew the row instead
-     of scrolling inside it. 200px is the evidence-measured floor that fits
-     the waterfall's natural ~197px content (canvas + padding + axis labels)
-     without clipping it, while giving the feed a real bounded scroll area. */
+}
+
+/* Task 11 (tuxlink-6i0ie) containment fix, scoped to the LIVE body only.
+   EVIDENCE (dev/scratch/si-containment, ?view=finder&ring=0|240 @1366x1200):
+   the body row measured 198px at ring=0 (empty feed) and 323px at ring=240
+   (+125px), matched exactly by `.si-wf` growing 197px -> 322px even though
+   its CANVAS stays a fixed 168px the whole time, i.e. +125px of dead space
+   opening up below the waterfall (the operator's literal bug report). The
+   row had no fixed height, so `.si-feed`'s unbounded decode-feed table grew
+   the row instead of scrolling inside it. 200px is the evidence-measured
+   floor that fits the waterfall's natural ~197px content (canvas + padding +
+   axis labels) without clipping it, while giving the feed a real bounded
+   scroll area.
+
+   The height rides on this MODIFIER, never the bare `.si-strip__body`: the
+   same div also wraps NonLiveBody (off / transitional / needs-setup /
+   device-lost, LiveBandStrip.tsx), whose `.si-strip__notice--setup` child is
+   deliberately tuned to GROW to min(52vh, 480px) (see that rule's comment
+   below). An unconditional 200px would squeeze the Ft8StripSetup onboarding
+   form into a scroll box, re-creating the operator's 2026-07-12
+   CTA-off-the-bottom bug in miniature. LiveBandStrip.tsx applies the
+   modifier only on the waterfall+feed live branch (showLiveBody). */
+.si-strip__body--live {
   height: 200px;
 }
 
@@ -192,7 +205,7 @@
 .si-wf {
   flex: 1 1 55%;
   min-width: 0;
-  /* Task 11: min-height:0 alongside the now-fixed-height `.si-strip__body`
+  /* Task 11: min-height:0 alongside the fixed-height `.si-strip__body--live`
      row. A flex-row child's default min-height is `auto` (its content
      size), which would otherwise fight the parent's fixed height instead of
      just filling it. */

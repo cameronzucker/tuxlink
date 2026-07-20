@@ -18,10 +18,19 @@
 //     nothing above it in the chain has a BOUNDED height for that overflow to
 //     ever engage against, so the table just grows the box instead of
 //     scrolling inside it.
-// A fixed height on `.si-strip__body`, with the waterfall and feed columns as
+// A fixed height on the live body, with the waterfall and feed columns as
 // `min-height: 0` flex children, gives DecodeFeed's own overflow:auto
 // somewhere bounded to scroll within -- the panel stops growing regardless of
 // how many decodes are in the ring.
+//
+// Fix round 1 (reviewer finding): the fixed height rides on the
+// `.si-strip__body--live` MODIFIER, applied by LiveBandStrip.tsx only on the
+// waterfall+feed branch (showLiveBody). The bare `.si-strip__body` also wraps
+// NonLiveBody (off / transitional / needs-setup / device-lost), whose
+// `.si-strip__notice--setup` child is deliberately tuned to grow to
+// min(52vh, 480px); an unconditional 200px would squeeze the Ft8StripSetup
+// onboarding form into a scroll box, re-creating the 2026-07-12
+// CTA-off-the-bottom bug.
 import { describe, expect, it } from 'vitest';
 
 const CSS_MODULES = import.meta.glob('./LiveBandStrip.css', {
@@ -40,11 +49,20 @@ function ruleBlock(selector: string): string {
   return css.slice(start, end).replace(/\/\*[\s\S]*?\*\//g, '');
 }
 
-describe('.si-strip__body fixed live-body height (tuxlink-6i0ie)', () => {
+describe('.si-strip__body--live fixed live-body height (tuxlink-6i0ie)', () => {
   it('declares a fixed height so the waterfall/feed row cannot grow the strip', () => {
-    const block = ruleBlock('.si-strip__body');
+    const block = ruleBlock('.si-strip__body--live');
     expect(block, 'evidence-measured fixed height: fits the waterfall\'s natural ~197px content')
       .toMatch(/height:\s*200px/);
+  });
+
+  it('keeps the BARE .si-strip__body height-free (setup arms need their growth budget)', () => {
+    // Fix round 1 regression guard: an unconditional height on the bare rule
+    // clamps NonLiveBody's setup arms too (see the module doc above). The
+    // bare rule's `min-height: 0` is fine; a bare `height:` is the defect.
+    const block = ruleBlock('.si-strip__body');
+    expect(block, 'no bare height on .si-strip__body (only the --live modifier carries it)')
+      .not.toMatch(/(?<!min-|max-)height:/);
   });
 });
 

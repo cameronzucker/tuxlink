@@ -425,7 +425,15 @@ export function LiveBandStrip({
             </div>
           )}
 
-          <div className="si-strip__body" data-testid="ft8-strip-body">
+          {/* Task 11 (tuxlink-6i0ie): the --live modifier carries the fixed
+              200px containment height (see LiveBandStrip.css). It applies
+              ONLY on the waterfall+feed branch; the NonLiveBody arms keep
+              the unmodified body so the setup form's own min(52vh, 480px)
+              growth budget (si-strip__notice--setup) still works. */}
+          <div
+            className={`si-strip__body${showLiveBody ? ' si-strip__body--live' : ''}`}
+            data-testid="ft8-strip-body"
+          >
             {showLiveBody ? (
               <>
                 <div className="si-wf">
