@@ -29,6 +29,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { ConfigReadDto, SetKey, KeySource, KeyStatusByOrigin } from './elmerModelConfig';
+import { stashProviderDraft } from './providerDrafts';
 import {
   EV_CHIP,
   EV_CONTEXT,
@@ -534,6 +535,12 @@ export function useElmer(): UseElmer {
   // T8: optional advanced fields forwarded to the Tauri command.
   const configSet = useCallback(async (args: { agentEndpoint: string; agentModel: string; key: SetKey; agentTurnTimeoutSecs: number; numCtx?: number | null; temperature?: number | null; systemPromptOverride?: string | null }) => {
     await invoke('elmer_config_set', args);
+
+    // tuxlink-inasr: every saved endpoint+model is remembered per provider
+    // bucket, so a later provider switch (form select OR tile picker, whose
+    // save lands here too) can never permanently lose these values — the
+    // config itself is a single slot.
+    stashProviderDraft(args.agentEndpoint, args.agentModel);
 
     // G3: If the model changed from the last active model, drop a marker.
     const prev = activeModelRef.current;

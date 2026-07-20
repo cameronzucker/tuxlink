@@ -31,6 +31,7 @@ import { EgressArmControl } from '../shell/EgressArmControl';
 import type { EgressStatusDto } from '../security/egressTypes';
 import { PRESETS, inferPreset, isLoopback, isLocalOllamaEndpoint, originOf, nextModelForPreset } from './elmerModelConfig';
 import type { SetKey, KeySource, KeyStatusByOrigin, ConfigReadDto } from './elmerModelConfig';
+import { providerDraft, stashProviderDraft } from './providerDrafts';
 import { ModelTilePicker } from './ModelTilePicker';
 import { DetectedModelCombobox } from './DetectedModelCombobox';
 import { ContextMeter } from './ContextMeter';
@@ -490,13 +491,23 @@ export function ModelForm({
     const preset = PRESETS.find((p) => p.id === presetId);
     if (!preset) return;
 
-    // 'Custom…' means "I'll enter my own endpoint." Clear the preset endpoint so
+    // 'Custom…' means "I'll enter my own endpoint." Restore the remembered
+    // custom draft when one exists (tuxlink-inasr — the round-trip
+    // Custom → other provider → Custom used to come back EMPTY, which is how
+    // the operator lost the Spark endpoint); otherwise clear the endpoint so
     // inferPreset('') resolves to 'custom' (the controlled <select> sticks on
     // Custom instead of snapping back to the inferred preset) and focus the
-    // endpoint input so the operator can type. Previously this early-returned,
-    // leaving the select to snap back — so Custom looked unselectable/broken.
+    // input so the operator can type. Stash the outgoing values FIRST — that
+    // is the whole point.
     if (presetId === 'custom') {
-      setEndpoint('');
+      stashProviderDraft(endpoint, model);
+      const draft = providerDraft('custom');
+      if (draft) {
+        setEndpoint(draft.endpoint);
+        setModel(draft.model);
+      } else {
+        setEndpoint('');
+      }
       endpointInputRef.current?.focus();
       return;
     }
@@ -509,16 +520,35 @@ export function ModelForm({
     const endpointIsEmpty = !endpoint;
 
     // Only show the confirm guard if the endpoint is non-empty AND was hand-edited
-    // (i.e., it doesn't exactly match any preset's canonical endpoint).
+    // (i.e., it doesn't exactly match any preset's canonical endpoint). The stash
+    // below means the values survive the switch either way — the confirm is now
+    // about what the FORM will show, not about permanent loss.
     const isDirty = !endpointIsEmpty && !endpointMatchesAPresetDefault;
 
     if (isDirty) {
       const proceed = window.confirm(
-        `Replace the current endpoint with the ${preset.label} default?`,
+        `Replace the current endpoint with the ${preset.label} default? ` +
+          `(Your current values are remembered — re-select their provider to restore them.)`,
       );
       if (!proceed) return;
     }
 
+    // Remember the outgoing provider's values before they leave the form
+    // (tuxlink-inasr). Bucketed by the endpoint's origin via inferPreset, so a
+    // hand-typed endpoint lands in 'custom' and an edited known-provider
+    // endpoint stays with that provider.
+    stashProviderDraft(endpoint, model);
+
+    // Restore the incoming provider's remembered values when present — the
+    // operator's last-used endpoint+model for that provider beats the
+    // canonical default. Fall back to the default + shared model pre-fill
+    // (tuxlink-wpqwy/T7) for a never-visited provider.
+    const draft = providerDraft(presetId);
+    if (draft) {
+      setEndpoint(draft.endpoint);
+      setModel(draft.model);
+      return;
+    }
     setEndpoint(preset.endpoint);
     // Pre-fill the new provider's default model, but only when the current model is
     // untouched (still the outgoing preset's default) — a hand-edited model is
