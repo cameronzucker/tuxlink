@@ -343,7 +343,7 @@ impl Action for RadioConnect {
             needs_radio: true,
             transmits: true,
             needs_internet: false,
-            example_params: None,
+            example_params: Some(r#"{"stations":["N0DAJ"],"bands":["20m"]}"#),
             allowed_values: None,
             dry_run_shape: None,
         }
@@ -532,7 +532,7 @@ impl Action for RadioListen {
             needs_radio: true,
             transmits: false,
             needs_internet: false,
-            example_params: None,
+            example_params: Some(r#"{"seconds":30}"#),
             allowed_values: None,
             dry_run_shape: None,
         }
@@ -633,7 +633,7 @@ impl Action for RadioAprsSend {
             needs_radio: true,
             transmits: true,
             needs_internet: false,
-            example_params: None,
+            example_params: Some(r#"{"text":"Overwatch checkpoint"}"#),
             allowed_values: None,
             dry_run_shape: None,
         }

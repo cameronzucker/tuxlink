@@ -1335,6 +1335,25 @@ impl TuxlinkMcp {
     }
 
     #[tool(
+        name = "routines_actions_list",
+        description = "The routine AUTHORING catalog: every valid step action (name, description, \
+                       example params, and whether it transmits / writes config / needs radio or \
+                       internet) plus every trigger kind with its fields and a paste-ready \
+                       example. Call this BEFORE writing a routine definition — action names are \
+                       a closed set; invented names (e.g. \"modem.vara.connect\") fail validation \
+                       with UNKNOWN_ACTION. Read-only."
+    )]
+    pub async fn routines_actions_list(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self
+            .state
+            .routines
+            .actions_catalog()
+            .await
+            .map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
         name = "routines_get",
         description = "Read one routine's full definition exactly as stored — the same JSON shape routines_save accepts: routine, schema_version, transmit_mode, transmit_ack (if any), triggers, tracks/steps. Read-only."
     )]
@@ -1367,7 +1386,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "routines_save",
-        description = "Parse and save a routine definition (def_json, the same JSON shape routines_get returns: routine, schema_version, transmit_mode, triggers, tracks). NEVER refused by validation findings — a half-written draft still saves, and the result's findings/blocked say what is wrong so you can iterate. Refused only when def_json fails to parse or its routine name is invalid."
+        description = "Parse and save a routine definition (def_json, the same JSON shape routines_get returns: routine, schema_version, transmit_mode, triggers, tracks). Call routines_actions_list FIRST for the valid action names, their params, and the trigger kinds — action names are a closed set. NEVER refused by validation findings — a half-written draft still saves, and the result's findings/blocked say what is wrong so you can iterate. Refused only when def_json fails to parse or its routine name is invalid."
     )]
     pub async fn routines_save(
         &self,
@@ -2597,6 +2616,7 @@ mod tests {
         );
         for tool in [
             "routines_list",
+            "routines_actions_list",
             "routines_get",
             "routines_validate",
             "routines_save",
@@ -2628,6 +2648,9 @@ mod tests {
             .collect();
         routines_names.sort_unstable();
         let mut expected = vec![
+            // tuxlink-dngvs: the authoring catalog — the agent's path from a
+            // wrong action-name guess to the valid set.
+            "routines_actions_list",
             "routines_disable",
             "routines_dry_run",
             "routines_enable",
@@ -2643,7 +2666,8 @@ mod tests {
         assert_eq!(
             routines_names, expected,
             "the routines-prefixed MCP tool list must be EXACTLY the spec §13 \
-             10-tool list — no more, no less: {names:?}"
+             list (10 tools + tuxlink-dngvs's routines_actions_list) — no \
+             more, no less: {names:?}"
         );
 
         for forbidden in [
@@ -2796,6 +2820,36 @@ mod tests {
         assert!(
             !h.state.guard.is_tainted(),
             "routines_list is structural metadata and must NOT taint"
+        );
+    }
+
+    /// tuxlink-dngvs: the authoring catalog round-trips through the tool
+    /// result — action entries carry the fields an author needs (name,
+    /// example_params, consent classes) and the trigger kinds ride along.
+    /// App-owned structural metadata: must NOT taint.
+    #[tokio::test]
+    async fn routines_actions_list_round_trips_catalog_and_does_not_taint() {
+        let h = handler();
+        assert!(!h.state.guard.is_tainted());
+        let result = h.routines_actions_list().await.unwrap();
+        let json: serde_json::Value = json_of(&result);
+        let action = &json["actions"][0];
+        assert_eq!(action["name"], "radio.connect");
+        assert_eq!(action["transmits"], true);
+        assert_eq!(action["writes_config"], false);
+        assert!(
+            action["example_params"]["stations"].is_array(),
+            "example_params must be a real JSON OBJECT (paste-ready into a \
+             step's params) — not a string-in-JSON (Codex adrev P2 #1): {json}"
+        );
+        assert_eq!(json["trigger_kinds"][0]["type"], "manual");
+        assert!(
+            json["trigger_kinds"][0]["example"].is_object(),
+            "each trigger kind carries a paste-ready example: {json}"
+        );
+        assert!(
+            !h.state.guard.is_tainted(),
+            "routines_actions_list is app-owned structural metadata and must NOT taint"
         );
     }
 

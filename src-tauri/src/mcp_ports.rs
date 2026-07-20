@@ -36,7 +36,8 @@ use tauri::{AppHandle, Emitter, Manager};
 // returned by `BackendState::current()`.
 
 use tuxlink_mcp_core::ports::{
-    AbortPort, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto, AudioCardDto, AudioDevicesDto,
+    AbortPort, ActionInfoDto, ActionsCatalogDto, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto,
+    AudioCardDto, AudioDevicesDto, TriggerKindDto,
     BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto, ChannelReliabilityDto, ComposeDraftDto,
     ComposePort, ConfigPort, ConfigViewDto, DevicePort, DocBodyDto, DocsHitDto, DryRunStartedDto,
     EgressPort, EgressPortError, EnableResultDto, FindingDto, FindingSeverityDto, FolderDto,
@@ -3900,6 +3901,38 @@ impl MonolithRoutinesPort {
     }
 }
 
+/// The trigger kinds a routine's `triggers` array accepts, documented for an
+/// agent author (tuxlink-dngvs). Field names and enum spellings are LOCKED to
+/// `tuxlink_routines::types::Trigger`'s real serde shape by
+/// `trigger_kind_docs_match_trigger_serde_shape` below — a drifted doc would
+/// teach the model a schema the parser rejects, which is exactly the failure
+/// this catalog exists to end.
+fn trigger_kind_docs() -> Vec<TriggerKindDto> {
+    vec![
+        TriggerKindDto {
+            r#type: "manual".to_string(),
+            description: "Fires only when the operator (or an agent run request) starts the \
+                          routine explicitly. No parameters."
+                .to_string(),
+            fields: serde_json::json!({}),
+            example: serde_json::json!({ "type": "manual" }),
+        },
+        TriggerKindDto {
+            r#type: "schedule".to_string(),
+            description: "Fires on an interval. \"top of every hour\" = every \"1h\" with \
+                          align \"hour\"."
+                .to_string(),
+            fields: serde_json::json!({
+                "every": "interval string like \"30m\", \"2h\", \"45s\" (required)",
+                "align": "optional \"hour\" | \"day\" — align fires to the top of the hour/day",
+                "window": "optional local-time window \"HH:MM-HH:MM\"",
+                "if_missed": "optional \"skip\" (default) | \"run_once_on_launch\""
+            }),
+            example: serde_json::json!({ "type": "schedule", "every": "1h", "align": "hour" }),
+        },
+    ]
+}
+
 #[async_trait]
 impl RoutinesPort for MonolithRoutinesPort {
     async fn list(&self) -> Result<Vec<RoutineSummaryDto>, PortError> {
@@ -3908,6 +3941,53 @@ impl RoutinesPort for MonolithRoutinesPort {
             .into_iter()
             .map(map_routine_summary)
             .collect())
+    }
+
+    async fn actions_catalog(&self) -> Result<ActionsCatalogDto, PortError> {
+        // Same registry the designer palette renders (ADR 0024: one capability
+        // tree) — the agent sees exactly the actions a human sees, curated to
+        // the authoring-relevant fields (tuxlink-dngvs).
+        let state = self.state();
+        let mut actions: Vec<ActionInfoDto> = state
+            .registry
+            .descriptors()
+            .into_iter()
+            .map(|d| ActionInfoDto {
+                name: d.name.to_string(),
+                label: d.label.to_string(),
+                description: d.description.to_string(),
+                needs_radio: d.needs_radio,
+                transmits: d.transmits,
+                writes_config: d.writes_config,
+                needs_internet: d.needs_internet,
+                // Parse the registry's compact-string example into a real
+                // JSON object so the catalog is paste-ready (Codex adrev
+                // 2026-07-19 P2 #1). A malformed example is a descriptor bug:
+                // omit it (warn) rather than hand the model a string where an
+                // object belongs.
+                example_params: d.example_params.and_then(|s| {
+                    match serde_json::from_str(s) {
+                        Ok(v) => Some(v),
+                        Err(e) => {
+                            tracing::warn!(target: "routines", action = d.name, error = %e,
+                                "descriptor example_params is not valid JSON; omitted from catalog");
+                            None
+                        }
+                    }
+                }),
+                allowed_values: d.allowed_values.map(|(key, values)| {
+                    (
+                        key.to_string(),
+                        values.iter().map(|v| v.to_string()).collect(),
+                    )
+                }),
+            })
+            .collect();
+        actions.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(ActionsCatalogDto {
+            actions,
+            trigger_kinds: trigger_kind_docs(),
+        })
     }
 
     async fn get(&self, name: &str) -> Result<serde_json::Value, PortError> {
@@ -4006,6 +4086,67 @@ mod tests {
         any_freq_in_bands, curate_gateway, curate_peer, is_plausible_callsign, khz_to_band,
         sanitize_channel, sort_gateways_by_distance,
     };
+
+    // ── tuxlink-dngvs: trigger docs locked to the real serde shape ──
+    mod trigger_docs {
+        use super::super::trigger_kind_docs;
+        use std::collections::BTreeSet;
+        use tuxlink_routines::types::{IfMissed, Trigger};
+
+        /// Every documented example must parse through the REAL Trigger
+        /// deserializer — the docs teach the agent a schema; a drifted doc
+        /// teaches a schema the parser rejects, recreating the exact failure
+        /// this catalog exists to end (serde memory rule: explicit shape
+        /// test on rename_all'd enums).
+        #[test]
+        fn trigger_kind_docs_match_trigger_serde_shape() {
+            let docs = trigger_kind_docs();
+            assert_eq!(docs.len(), 2, "manual + schedule");
+
+            for kind in &docs {
+                let parsed: Trigger = serde_json::from_value(kind.example.clone())
+                    .unwrap_or_else(|e| {
+                        panic!("example for {:?} must parse: {e}", kind.r#type)
+                    });
+                let tag = serde_json::to_value(&parsed).unwrap()["type"]
+                    .as_str()
+                    .unwrap()
+                    .to_string();
+                assert_eq!(tag, kind.r#type, "doc type matches serde tag");
+            }
+
+            // The schedule doc's field list equals the real serialized field
+            // set (with every optional field populated so none are skipped).
+            let schedule = Trigger::Schedule {
+                every: "1h".into(),
+                align: Some("hour".into()),
+                window: Some("08:00-20:00".into()),
+                if_missed: IfMissed::RunOnceOnLaunch,
+            };
+            let ser = serde_json::to_value(&schedule).unwrap();
+            let real_fields: BTreeSet<String> = ser
+                .as_object()
+                .unwrap()
+                .keys()
+                .filter(|k| k.as_str() != "type")
+                .cloned()
+                .collect();
+            let doc_fields: BTreeSet<String> = docs
+                .iter()
+                .find(|d| d.r#type == "schedule")
+                .unwrap()
+                .fields
+                .as_object()
+                .unwrap()
+                .keys()
+                .cloned()
+                .collect();
+            assert_eq!(
+                doc_fields, real_fields,
+                "documented schedule fields must equal Trigger::Schedule's serde field set"
+            );
+        }
+    }
 
     // ── tuxlink-z2nwx Contract 3: print + report export ──
     mod z2nwx {

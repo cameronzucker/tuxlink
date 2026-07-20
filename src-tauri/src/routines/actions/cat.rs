@@ -332,7 +332,7 @@ impl Action for RigValidatePreset {
             needs_radio: true,
             transmits: false,
             needs_internet: false,
-            example_params: None,
+            example_params: Some(r#"{"preset":"@preset:vara-20m"}"#),
             allowed_values: None,
             dry_run_shape: None,
         }
@@ -443,7 +443,7 @@ impl Action for RigApplyPreset {
             needs_radio: true,
             transmits: false,
             needs_internet: false,
-            example_params: None,
+            example_params: Some(r#"{"preset":"@preset:vara-20m"}"#),
             allowed_values: None,
             dry_run_shape: None,
         }

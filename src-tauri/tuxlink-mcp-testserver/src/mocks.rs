@@ -14,7 +14,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use tuxlink_mcp_core::ports::{
-    AbortPort, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto, AudioDevicesDto, BackendStatusDto,
+    AbortPort, ActionInfoDto, ActionsCatalogDto, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto,
+    AudioDevicesDto, BackendStatusDto, TriggerKindDto,
     BluetoothDeviceDto, CatalogEntryDto, ChannelReliabilityDto, ComposeDraftDto, ComposePort,
     ConfigPort, ConfigViewDto, DevicePort, DocBodyDto, DocsHitDto, DryRunStartedDto, EgressPort,
     EgressPortError, EnableResultDto,
@@ -791,6 +792,28 @@ pub struct MockRoutines;
 
 #[async_trait]
 impl RoutinesPort for MockRoutines {
+    async fn actions_catalog(&self) -> Result<ActionsCatalogDto, PortError> {
+        Ok(ActionsCatalogDto {
+            actions: vec![ActionInfoDto {
+                name: "radio.connect".into(),
+                label: "Connect".into(),
+                description: "Connect to a Winlink gateway".into(),
+                needs_radio: true,
+                transmits: true,
+                writes_config: false,
+                needs_internet: false,
+                example_params: Some(serde_json::json!({"stations": ["N0DAJ"]})),
+                allowed_values: None,
+            }],
+            trigger_kinds: vec![TriggerKindDto {
+                r#type: "manual".into(),
+                description: "operator-initiated only".into(),
+                fields: serde_json::json!({}),
+                example: serde_json::json!({"type": "manual"}),
+            }],
+        })
+    }
+
     async fn list(&self) -> Result<Vec<RoutineSummaryDto>, PortError> {
         Ok(vec![RoutineSummaryDto {
             routine: SEED_ROUTINE.into(),
