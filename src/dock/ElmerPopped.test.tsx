@@ -17,7 +17,7 @@ vi.mock('../elmer/ElmerPane', () => ({
     h.paneProps.push(props);
     const p = props as ElmerPaneProps;
     return (
-      <div data-testid="elmer-pane-stub" data-expand-model={String(p.expandModel === true)}>
+      <div data-testid="elmer-pane-stub" data-open-model-nonce={String(p.openModelNonce ?? 0)}>
         <button
           data-testid="stub-report"
           onClick={() =>
@@ -129,26 +129,28 @@ describe('ElmerPopped (bd tuxlink-mfssz)', () => {
     );
   });
 
-  it('open_model intent remounts the pane with expandModel, re-seeded from the live token', async () => {
+  it('open_model intent bumps the reactive nonce WITHOUT remounting (adrev 2026-07-20: a remount tears down the live listeners)', async () => {
     renderElmerPopped(seedToken);
-    fireEvent.click(screen.getByTestId('stub-report'));
     await fireIntent('open_model');
     await waitFor(() =>
-      expect(screen.getByTestId('elmer-pane-stub').dataset.expandModel).toBe('true'),
+      expect(screen.getByTestId('elmer-pane-stub').dataset.openModelNonce).toBe('1'),
     );
     const latest = h.paneProps[h.paneProps.length - 1] as ElmerPaneProps;
-    expect(latest.expandModel).toBe(true);
-    expect(latest.initialConversation).toEqual({
-      items: [{ kind: 'turn', id: 'live-0', role: 'user', text: 'live state' }],
-      running: false,
-      context: null,
-    });
+    expect(latest.openModelNonce).toBe(1);
+    // No remount: initialConversation stays the MOUNT-time seed (the pane's
+    // own state carries the live conversation).
+    expect(latest.initialConversation).toEqual(seedToken);
+    // A second intent re-opens the disclosure (nonce, not a boolean edge).
+    await fireIntent('open_model');
+    await waitFor(() =>
+      expect(screen.getByTestId('elmer-pane-stub').dataset.openModelNonce).toBe('2'),
+    );
   });
 
   it("another surface's intent is ignored", async () => {
     renderElmerPopped(seedToken);
     await fireIntent('dock_back', 'routines');
     expect(h.mockDockBack).not.toHaveBeenCalled();
-    expect(screen.getByTestId('elmer-pane-stub').dataset.expandModel).toBe('false');
+    expect(screen.getByTestId('elmer-pane-stub').dataset.openModelNonce).toBe('0');
   });
 });

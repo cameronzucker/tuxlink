@@ -54,6 +54,7 @@
           "items": [
             {
               "kind": "turn",
+              "id": "elmer-item-0",
               "role": "user",
               "text": "hello"
             }

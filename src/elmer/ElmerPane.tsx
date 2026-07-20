@@ -980,6 +980,13 @@ export interface ElmerPaneProps {
    *  ↗ affordance only when provided — the popped host omits it (no
    *  self-pop from inside the popped window), mirroring APRS chat. */
   onPopOut?: () => void;
+  /** bd tuxlink-mfssz (adrev 2026-07-20): REACTIVE model-section opener for
+   *  hosts that cannot use the mount-time `expandModel` flag without a
+   *  remount (a remount tears down the five live event listeners — a
+   *  mid-run event-loss window). Each increment past 0 opens the disclosure
+   *  exactly as a fresh expandModel mount would. The popped host drives this
+   *  from the forwarded "Set up Elmer's model…" dock:intent. */
+  openModelNonce?: number;
   /** bd tuxlink-mfssz: popped-window layout — the pane fills its host
    *  (PoppedSurfaceHost's body) instead of overlaying as a fixed right
    *  drawer, and the ✕ close control is hidden (the window's title bar owns
@@ -999,6 +1006,7 @@ export const ElmerPane = memo(function ElmerPane({
   initialConversation,
   onConversationChange,
   onPopOut,
+  openModelNonce,
   popped,
 }: ElmerPaneProps) {
   const {
@@ -1038,6 +1046,17 @@ export const ElmerPane = memo(function ElmerPane({
   // picker re-renders (and re-fetches keyStatusByOrigin) on every open — not just
   // on initial state. This replaces the initial-state-only open path (:906).
   const [openCounter, setOpenCounter] = useState(() => (expandModel === true ? 1 : 0));
+  // bd tuxlink-mfssz (adrev 2026-07-20): the reactive sibling of expandModel —
+  // every openModelNonce increment past 0 opens the disclosure without a
+  // remount (a remount tears down the live event listeners — a mid-run
+  // event-loss window). openCounter bumps too so the picker re-fetches key
+  // statuses on each open (the same contract as the gear toggle, T8b).
+  useEffect(() => {
+    if ((openModelNonce ?? 0) > 0) {
+      setAdvancedOpen(true);
+      setOpenCounter((c) => c + 1);
+    }
+  }, [openModelNonce]);
   // T8b: Per-origin key-status map passed to the tile picker. Populated once
   // when the picker opens (not per-keystroke).
   const [keyStatusByOrigin, setKeyStatusByOrigin] = useState<KeyStatusByOrigin>({});

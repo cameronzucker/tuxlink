@@ -740,13 +740,24 @@ function AppShellInner() {
     if (prev !== 'popped' || cur !== 'docked') return;
     const envelope = dock.context.elmer as DockContextEnvelope;
     const state = envelope?.state ?? null;
-    const adopted = isElmerTokenState(state) ? state : null;
-    // A run that was in flight at flush time keeps streaming into this
-    // window's listeners (broadcast events); the seed's `running` bit keeps
-    // the single-flight guard honest across the move.
-    elmerTokenRef.current = adopted;
-    setElmerSeed(adopted);
-    setElmerSeedNonce((n) => n + 1);
+    // Adrev 2026-07-20 (5.5 round, P1): adopt ONLY a well-formed token. A
+    // null/invalid state (the popped window closed before ElmerPopped
+    // registered getContext, or a liveness-timeout stateless dock-back) must
+    // NOT wipe the inline pane — its mounted-hidden copy is the best
+    // remaining state in that case. Known accepted window (shadow round):
+    // an assistant turn finalizing in the sub-second gap between the popped
+    // window's token flush and this remount is missing from the adopted
+    // scrollback VIEW; the backend conversation (AC-5, ElmerSession-owned)
+    // retains it, so follow-on turns are unaffected.
+    if (isElmerTokenState(state)) {
+      // A run that was in flight at flush time keeps streaming into this
+      // window's listeners (broadcast events); the seed's `running` bit keeps
+      // the single-flight guard honest across the move (reconciled against
+      // elmer_run_active at listener registration).
+      elmerTokenRef.current = state;
+      setElmerSeed(state);
+      setElmerSeedNonce((n) => n + 1);
+    }
     if (envelope?.foreground) {
       setElmerEverOpened(true);
       setElmerOpen(true);

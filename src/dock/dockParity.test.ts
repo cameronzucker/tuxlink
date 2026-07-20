@@ -9,6 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import fixture from './dock-wire-fixture.json';
 import { consentHostWindow, type DockSnapshot } from './dockState';
+import { isElmerTokenState } from '../elmer/elmerToken';
 
 describe('dock wire fixture parity (spec §10)', () => {
   it('routinesDocked parses into a DockSnapshot and resolves the consent host to main', () => {
@@ -49,7 +50,12 @@ describe('dock wire fixture parity (spec §10)', () => {
     expect(consentHostWindow(snap.surfaces)).toBe('main');
     expect(snap.context.elmer).toEqual({
       foreground: true,
-      state: { items: [{ kind: 'turn', role: 'user', text: 'hello' }] },
+      state: { items: [{ kind: 'turn', id: 'elmer-item-0', role: 'user', text: 'hello' }] },
     });
+    // Adrev 2026-07-20 (5.5 round, P3): the fixture's token must PASS the
+    // runtime seed validator — a fixture the seed guard would discard blesses
+    // a wire shape the app can't actually adopt, hiding token-shape drift.
+    const envelope = snap.context.elmer as { state?: unknown };
+    expect(isElmerTokenState(envelope.state)).toBe(true);
   });
 });

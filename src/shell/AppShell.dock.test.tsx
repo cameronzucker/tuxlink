@@ -623,6 +623,30 @@ describe('AppShell Elmer dock wiring (bd tuxlink-mfssz)', () => {
     expect(await screen.findByText('carried across windows')).toBeInTheDocument();
   });
 
+  it('adrev 2026-07-20 P1: a null/invalid dock-back token does NOT wipe the inline conversation (foreground still opens the drawer)', async () => {
+    const { rerender } = renderShell();
+    await screen.findByTestId('folder-sidebar');
+
+    // Build inline conversation state: open the drawer and send a message
+    // (send appends the user turn locally, no backend round-trip needed).
+    clickMenu('Tools', /Elmer \(AI assistant\)/);
+    const input = await screen.findByPlaceholderText(/ask/i, {}, { timeout: 5000 });
+    fireEvent.change(input, { target: { value: 'precious inline turn' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(await screen.findByText('precious inline turn')).toBeInTheDocument();
+
+    // Pop out, then dock back with state:null — the host flushed before
+    // ElmerPopped registered getContext (or a liveness-timeout stateless
+    // dock-back). The inline mounted-hidden copy is the best remaining state.
+    dockRef.current = elmerSnapshot('popped');
+    rerenderShell(rerender);
+    dockRef.current = elmerSnapshot('docked', { foreground: true, state: null });
+    rerenderShell(rerender);
+
+    // The conversation survives (no remount-wipe) and the drawer is open.
+    expect(await screen.findByText('precious inline turn', {}, { timeout: 5000 })).toBeInTheDocument();
+  });
+
   it('a NON-foreground popped→docked arrival keeps the drawer closed but STILL adopts the conversation', async () => {
     dockRef.current = elmerSnapshot('popped');
     const { rerender } = renderShell();

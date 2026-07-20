@@ -187,7 +187,12 @@ export function ElmerStrip() {
     listen(EV_OUTCOME, read)
       .then((u) => { if (mounted) unlisten = u; else u(); })
       .catch(() => {});
-    return () => { mounted = false; unlisten?.(); };
+    // Adrev 2026-07-20 (both rounds, P2): a model saved from the popped pane
+    // while IDLE emits no event this strip can hear, so the standing chrome
+    // would contradict the active config until the next turn. The 10s
+    // re-read matches the sidebar badge cadence (cheap config-file read).
+    const interval = setInterval(read, 10_000);
+    return () => { mounted = false; clearInterval(interval); unlisten?.(); };
   }, []);
 
   const origin = (() => {

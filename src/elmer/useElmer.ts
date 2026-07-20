@@ -310,6 +310,16 @@ export function useElmer(seed?: UseElmerSeed | null): UseElmer {
   const [lastOutcome, setLastOutcome] = useState<ElmerOutcome | null>(null);
   // Guard against launching a second send while one is running.
   const running = useRef(seed?.running === true);
+  // Adrev 2026-07-20 (both rounds, P1): a seeded-true guard must reconcile
+  // against the backend — if the run finished in the token-flush →
+  // listener-registration gap, the terminal EV_OUTCOME broadcast was missed
+  // and NOTHING else would ever clear the guard (Send dead until a
+  // destructive New conversation). The probe runs once, AFTER the listeners
+  // register (see setupListeners), so the two cases are airtight: active →
+  // the outcome is still coming and the live listeners catch it; inactive →
+  // release the guard now. Cleared after the one probe so a LOCAL send's
+  // running state is never second-guessed.
+  const seededRunningRef = useRef(seed?.running === true);
 
   // Phase 2b — transient streaming buffers for the in-flight turn. Held in
   // state (so the streaming bubble re-renders on each chunk) AND mirrored in
@@ -466,6 +476,29 @@ export function useElmer(seed?: UseElmerSeed | null): UseElmer {
         return;
       }
       unlisteners.push(unDelta, unTurn, unChip, unOutcome, unContext);
+
+      // Seeded-running reconcile (adrev 2026-07-20 P1) — must run strictly
+      // AFTER the listener registrations above. `elmer_run_active` probes the
+      // backend's single-flight lock: false = the seeded run already ended
+      // (its EV_OUTCOME predates our listeners) → release the guard; true =
+      // the outcome will land on the listeners that are now live. The
+      // functional setPhase only downgrades a still-'running' phase, so an
+      // outcome that raced in between registration and this response wins.
+      if (seededRunningRef.current) {
+        seededRunningRef.current = false;
+        void invoke<boolean>('elmer_run_active')
+          .then((active) => {
+            if (!active) {
+              running.current = false;
+              setPhase((p) => (p === 'running' ? 'idle' : p));
+            }
+          })
+          .catch(() => {
+            // Probe unavailable (no Tauri runtime / old backend) — keep the
+            // seeded guard; the broadcast path still clears it in the common
+            // case.
+          });
+      }
     };
 
     void setupListeners();

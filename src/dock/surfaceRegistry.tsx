@@ -264,24 +264,27 @@ function ElmerPopped({ context, registerGetContext }: SurfaceComponentProps) {
   }, [registerGetContext]);
 
   // Cross-window menu-verb forwarding (the routines dock:intent pattern):
-  //  - 'open_model' (Tools → Set up Elmer's model… while popped): remount the
-  //    pane with expandModel — the prop is mount-time-only by design
-  //    (tuxlink-1wi5w), so a keyed remount is the faithful way to re-trigger
-  //    it; the conversation survives via tokenRef (the live token re-seeds
-  //    the fresh mount). A mid-stream remount only resets the transient live
-  //    bubble — the finalizing EV_TURN carries the full text regardless.
+  //  - 'open_model' (Tools → Set up Elmer's model… while popped): bump the
+  //    reactive openModelNonce — NO remount (adrev 2026-07-20: a keyed
+  //    remount tears down the pane's five live event listeners, an event-loss
+  //    window for a run ending exactly then).
   //  - 'dock_back' (Tools → Dock Elmer back on MAIN): main cannot supply this
   //    window's conversation, and a main-side `state: null` dock-back would
   //    DROP it (unlike routines' accepted dashboard fallback, this is data
   //    loss). So main forwards the verb here and THIS window flushes its own
   //    live token — same foreground semantics as the title-bar ⇤.
-  const [modelMounts, setModelMounts] = useState(0);
+  //
+  // Known accepted window (adrev R4-F6 precedent, routines new_routine): an
+  // intent emitted before this webview finishes booting is lost — the menu
+  // verb visibly does nothing and a second activation works. Broadcast emits
+  // have no replay; the routines pathway shipped with the same window.
+  const [openModelNonce, setOpenModelNonce] = useState(0);
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | null = null;
     listen<{ surface: SurfaceId; intent: string }>('dock:intent', (event) => {
       if (event.payload.surface !== 'elmer') return;
-      if (event.payload.intent === 'open_model') setModelMounts((n) => n + 1);
+      if (event.payload.intent === 'open_model') setOpenModelNonce((n) => n + 1);
       if (event.payload.intent === 'dock_back') {
         void dockBack('elmer', { foreground: true, state: tokenRef.current }).catch((err) => {
           console.error('[dock] Elmer dock-back (menu intent) failed:', err);
@@ -303,10 +306,9 @@ function ElmerPopped({ context, registerGetContext }: SurfaceComponentProps) {
 
   return (
     <ElmerPane
-      key={modelMounts}
       popped
-      expandModel={modelMounts > 0}
-      initialConversation={tokenRef.current}
+      openModelNonce={openModelNonce}
+      initialConversation={seed}
       onConversationChange={(s) => {
         tokenRef.current = s;
       }}

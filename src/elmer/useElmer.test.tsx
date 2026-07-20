@@ -10,7 +10,7 @@
  *
  * These tests drive that timing explicitly with deferred `listen()` promises.
  */
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // `vi.hoisted` so the mock factory (hoisted above imports) can share state.
@@ -387,6 +387,11 @@ describe('useElmer continuity seed (bd tuxlink-mfssz)', () => {
   });
 
   it('seeded running=true starts in the running phase and blocks a duplicate send until EV_OUTCOME', async () => {
+    // The reconcile probe reports the run still active — the guard must hold.
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd?: string) => {
+      if (cmd === 'elmer_run_active') return true;
+      return undefined;
+    });
     const { result } = renderHook(() => useElmer({ items: seedItems, running: true }));
     await resolveAllListens();
 
@@ -401,6 +406,22 @@ describe('useElmer continuity seed (bd tuxlink-mfssz)', () => {
     expect(result.current.phase).toBe('done');
     act(() => result.current.send('now works'));
     expect(invoke).toHaveBeenCalledWith('elmer_send', { msg: 'now works' });
+  });
+
+  it('adrev 2026-07-20 P1: a seeded-true guard reconciles via elmer_run_active — a run that ended in the flush gap releases Send without any EV_OUTCOME', async () => {
+    // The run finished between token flush and this window's listener
+    // registration: the probe reports inactive, and the missed EV_OUTCOME
+    // never arrives.
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd?: string) => {
+      if (cmd === 'elmer_run_active') return false;
+      return undefined;
+    });
+    const { result } = renderHook(() => useElmer({ items: seedItems, running: true }));
+    await resolveAllListens();
+
+    await waitFor(() => expect(result.current.phase).toBe('idle'));
+    act(() => result.current.send('recovered'));
+    expect(invoke).toHaveBeenCalledWith('elmer_send', { msg: 'recovered' });
   });
 
   it('adopts the seeded context-meter snapshot', async () => {
