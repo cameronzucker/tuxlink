@@ -3745,8 +3745,10 @@ impl Ft8Port for MonolithFt8Port {
 fn save_err_with_catalog_pointer(e: PortError) -> PortError {
     match e {
         PortError::InvalidInput(m) => PortError::InvalidInput(format!(
-            "{m} — call routines_actions_list for the valid step actions, their params, and \
-             the trigger JSON shapes, then resend the corrected def_json"
+            "{m} — copy routines_actions_list's definition_template (the COMPLETE valid \
+             envelope) and substitute your steps into it. Note: `routine` is the routine's \
+             NAME string, not the definition body; `triggers` is a list; steps live under \
+             tracks[].steps. Then resend the corrected def_json"
         )),
         other => other,
     }
@@ -3968,6 +3970,39 @@ impl MonolithRoutinesPort {
 /// `trigger_kind_docs_match_trigger_serde_shape` below — a drifted doc would
 /// teach the model a schema the parser rejects, which is exactly the failure
 /// this catalog exists to end.
+/// One complete, minimal, VALID routine definition — the catalog's envelope
+/// teacher (tuxlink-rt4ey). A live model mirrored the catalog's own response
+/// shape as the definition schema (actions:[{name,params}], singular trigger)
+/// and looped 14 saves on envelope parse errors; run 4 and run 5 both
+/// recovered only by reading a real definition (routines_get on an existing
+/// routine). This puts that example in the tool the model reaches FIRST.
+/// Locked to the real parser by `definition_template_parses_as_routine_def`
+/// below — a template the parser rejects would teach the exact failure it
+/// exists to end. Deliberately non-transmitting (local.log) so the example
+/// carries no consent baggage.
+const DEFINITION_TEMPLATE_JSON: &str = r#"{
+  "routine": "my-routine-name",
+  "schema_version": 1,
+  "transmit_mode": "attended",
+  "triggers": [
+    { "type": "manual" }
+  ],
+  "tracks": [
+    {
+      "name": "track-1",
+      "steps": [
+        { "id": "s1", "action": "local.log", "on_radio_busy": "wait", "params": { "message": "hello from my-routine-name" } },
+        { "id": "s2", "control": "end" }
+      ]
+    }
+  ]
+}"#;
+
+fn definition_template() -> serde_json::Value {
+    serde_json::from_str(DEFINITION_TEMPLATE_JSON)
+        .expect("DEFINITION_TEMPLATE_JSON is valid JSON (serde-locked by test)")
+}
+
 fn trigger_kind_docs() -> Vec<TriggerKindDto> {
     vec![
         TriggerKindDto {
@@ -4048,6 +4083,7 @@ impl RoutinesPort for MonolithRoutinesPort {
         Ok(ActionsCatalogDto {
             actions,
             trigger_kinds: trigger_kind_docs(),
+            definition_template: definition_template(),
         })
     }
 
@@ -4149,6 +4185,32 @@ mod tests {
     };
 
     // ── tuxlink-dngvs: trigger docs locked to the real serde shape ──
+    // ── tuxlink-rt4ey: the catalog's envelope teacher ──
+    mod definition_template_lock {
+        use super::super::definition_template;
+
+        /// The template must parse through the REAL RoutineDef deserializer —
+        /// a template the parser rejects would teach the exact envelope
+        /// failure it exists to end. Also pins the envelope facts the remedy
+        /// text states (routine is a name string, triggers is a list, steps
+        /// under tracks).
+        #[test]
+        fn definition_template_parses_as_routine_def() {
+            let value = definition_template();
+            let def: tuxlink_routines::types::RoutineDef =
+                serde_json::from_value(value.clone())
+                    .expect("definition_template must parse as a RoutineDef");
+            assert_eq!(def.routine, "my-routine-name");
+            assert_eq!(def.schema_version, 1);
+            assert_eq!(def.triggers.len(), 1, "triggers is a list");
+            assert_eq!(def.tracks.len(), 1);
+            assert!(
+                value["routine"].is_string(),
+                "the `routine` field is the NAME string — the exact trap run 5 looped on"
+            );
+        }
+    }
+
     // ── tuxlink-591dw: agent-boundary remedy suffixes ──
     mod finding_remedies {
         use super::super::{map_finding, save_err_with_catalog_pointer};

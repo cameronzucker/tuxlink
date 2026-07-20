@@ -1587,12 +1587,23 @@ pub struct TriggerKindDto {
 
 /// [`RoutinesPort::actions_catalog`]'s result: everything an author needs to
 /// write a valid routine WITHOUT guessing — the action set with params and
-/// consent classes, plus the trigger kinds. Built for the agent path (the
-/// human path is the designer palette over the same registry).
+/// consent classes, the trigger kinds, and one complete example definition.
+/// Built for the agent path (the human path is the designer palette over the
+/// same registry).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ActionsCatalogDto {
     pub actions: Vec<ActionInfoDto>,
     pub trigger_kinds: Vec<TriggerKindDto>,
+    /// One COMPLETE, minimal, valid routine definition — the exact JSON shape
+    /// `routines_save` accepts (tuxlink-rt4ey). This teaches the ENVELOPE
+    /// (`routine` is the routine's NAME string; `schema_version`;
+    /// `transmit_mode`; `triggers` is a LIST; steps live under
+    /// `tracks[].steps` with an `end` control), which the action/trigger
+    /// entries alone cannot: a live model mirrored this DTO's own response
+    /// shape as the definition schema and looped 14 saves on envelope parse
+    /// errors. Copy it, then substitute actions/params/triggers from the
+    /// entries above.
+    pub definition_template: serde_json::Value,
 }
 
 /// Routines: the 11-tool MCP surface for the operator-automation feature

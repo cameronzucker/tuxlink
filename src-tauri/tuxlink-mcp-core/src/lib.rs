@@ -1014,6 +1014,17 @@ pub mod test_support {
                     fields: serde_json::json!({}),
                     example: serde_json::json!({"type": "manual"}),
                 }],
+                definition_template: serde_json::json!({
+                    "routine": "my-routine-name",
+                    "schema_version": 1,
+                    "transmit_mode": "attended",
+                    "triggers": [{"type": "manual"}],
+                    "tracks": [{"name": "track-1", "steps": [
+                        {"id": "s1", "action": "local.log", "on_radio_busy": "wait",
+                         "params": {"message": "hello"}},
+                        {"id": "s2", "control": "end"}
+                    ]}]
+                }),
             })
         }
 
