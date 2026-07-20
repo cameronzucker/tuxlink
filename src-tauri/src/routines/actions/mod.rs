@@ -362,7 +362,8 @@ pub struct StationDirectory {
 #[async_trait]
 pub trait StationQueryService: Send + Sync {
     /// Fetch the raw Winlink gateway directory for `modes` (empty ⇒ every
-    /// confirmed mode, `ListingMode::ALL`) bounded by `history_hours`, via the
+    /// transport, VARA FM included, via the shared
+    /// `ListingMode::expand_selector`) bounded by `history_hours`, via the
     /// SAME polite cache-backed poll (`catalog_fetch_stations`) the MCP
     /// `find_stations` tool and Find-a-Station use — plus the operator's
     /// resolved broadcast grid for distance ranking. Band filtering, curation,

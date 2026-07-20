@@ -72,10 +72,11 @@ export interface Ft8ListenerValue {
    *
    * The provider already re-hydrates itself off listening-change events, but a
    * few operator actions change listener state through a path that emits no such
-   * event — notably `Ft8SetupSurface`'s "Retry" (re-check for the jt9 binary
-   * after the operator installs it) and its post-handover `onStarted`. Without a
-   * public handle those would be DEAD controls (the Retry button renders
-   * unconditionally), so the context exposes the same hydrate the mount path uses.
+   * event — notably the in-strip setup form's "Retry" (re-check for the jt9
+   * binary after the operator installs it) and its post-handover `onStarted`.
+   * Without a public handle those would be DEAD controls (the Retry button
+   * renders unconditionally), so the context exposes the same hydrate the
+   * mount path uses.
    */
   rehydrate: () => void;
 }
@@ -158,9 +159,9 @@ export function Ft8ListenerProvider({ children }: { children: ReactNode }) {
   //
   // Phase D1 lifted this OUT of the mount effect (it closed over nothing but refs
   // + setState, so it is stable) purely so the context can hand it out as
-  // `rehydrate` — Ft8SetupSurface's Retry / onStarted need a real re-read or they
-  // are dead controls. The mount effect below still calls this exact function, so
-  // there is one hydrate path, not two.
+  // `rehydrate` — the in-strip setup form's Retry / onStarted need a real
+  // re-read or they are dead controls. The mount effect below still calls this
+  // exact function, so there is one hydrate path, not two.
   const hydrate = useCallback(() => {
     const gen = (generationRef.current += 1);
     invoke<Ft8Snapshot>(FT8_SNAPSHOT_COMMAND)

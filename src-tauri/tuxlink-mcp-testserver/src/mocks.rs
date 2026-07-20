@@ -16,7 +16,8 @@ use async_trait::async_trait;
 use tuxlink_mcp_core::ports::{
     AbortPort, ActionInfoDto, ActionsCatalogDto, ArdopConfigDto, ArdopWriteDto, AttachmentMetaDto,
     AudioDevicesDto, BackendStatusDto, TriggerKindDto,
-    BluetoothDeviceDto, CatalogEntryDto, ChannelReliabilityDto, ComposeDraftDto, ComposePort,
+    BluetoothDeviceDto, CatalogEntryDto, ChannelDto, ChannelReliabilityDto, ComposeDraftDto,
+    ComposePort,
     ConfigPort, ConfigViewDto, DevicePort, DocBodyDto, DocsHitDto, DryRunStartedDto, EgressPort,
     EgressPortError, EnableResultDto,
     FindingDto, FolderDto, Ft8AudioDeviceDto, Ft8HeardStationDto, Ft8Port, Ft8StatusDto,
@@ -602,13 +603,21 @@ impl StationPort for MockStation {
                 callsign: SEED_GW_CALLSIGN.into(),
                 grid: Some(SEED_GW_GRID.into()),
                 frequencies_khz: vec![SEED_GW_FREQ_KHZ],
+                channels: vec![ChannelDto {
+                    frequency_khz: SEED_GW_FREQ_KHZ,
+                    bandwidth_hz: Some(2300),
+                    mode: "vara-hf".into(),
+                    operating_hours: None,
+                }],
                 antenna: Some(GatewayAntennaDto::Dipole),
                 distance_km: None,
                 distance_mi: None,
                 bearing_deg: None,
+                ft8_corroborated: None,
             }],
             fetched_at_ms: Some(0),
             operator_grid: None,
+            evidence: None,
         })
     }
     async fn find_peers(&self) -> Result<PeerListDto, PortError> {

@@ -1,0 +1,118 @@
+/* src/ft8ui/Ft8StripSetup.css
+ *
+ * Compact in-strip FT-8 setup form (Task 1, Station Intelligence
+ * operational-usability series). `.ft8ss__` namespace, additive-only: does
+ * not touch `.ft8-setup__` (owned by the full-panel setup surface, deleted
+ * by Task 3 of this series) or the `station-finder__` namespace.
+ */
+
+.ft8ss {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+}
+
+.ft8ss--notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: var(--type-control, 12px);
+  color: var(--text-secondary, #94a3b8);
+}
+
+.ft8ss__label {
+  font-size: var(--type-micro, 10px);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary, #94a3b8);
+}
+
+.ft8ss__select {
+  background: var(--surface-2, #1e293b);
+  color: var(--text-primary, #e2e8f0);
+  border: 1px solid var(--border-subtle, #334155);
+  border-radius: var(--radius-sm, 4px);
+  padding: 4px 8px;
+  font-size: var(--type-control, 12px);
+  min-width: 160px;
+}
+
+.ft8ss__select:disabled {
+  opacity: 0.6;
+}
+
+.ft8ss__meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--type-micro, 10px);
+  color: var(--text-secondary, #94a3b8);
+}
+
+.ft8ss__meter--error {
+  color: #f87171;
+}
+
+.ft8ss__meter--inuse {
+  color: #facc15;
+}
+
+.ft8ss__meter-bar {
+  display: inline-block;
+  width: 60px;
+  height: 6px;
+  border-radius: var(--radius-pill, 999px);
+  background: var(--surface-2, #1e293b);
+  overflow: hidden;
+}
+
+.ft8ss__meter-fill {
+  display: block;
+  height: 100%;
+  background: #4ade80;
+}
+
+.ft8ss__meter-db {
+  min-width: 44px;
+  text-align: right;
+}
+
+.ft8ss__cat-toggle {
+  background: none;
+  border: none;
+  color: var(--text-secondary, #94a3b8);
+  font-size: var(--type-micro, 10px);
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  padding: 0;
+}
+
+.ft8ss__cat-toggle:hover {
+  color: var(--text-primary, #e2e8f0);
+}
+
+.ft8ss__err {
+  font-size: var(--type-micro, 10px);
+  color: #f87171;
+}
+
+.ft8ss__cat {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ft8ss__cat-test {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ft8ss__cat-ok {
+  font-size: var(--type-micro, 10px);
+  color: #4ade80;
+}

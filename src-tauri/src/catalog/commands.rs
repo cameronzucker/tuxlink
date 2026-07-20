@@ -73,6 +73,8 @@ pub async fn catalog_send_inquiry(
 // tuxlink-a2gd: location-aware station-list direct poll + reply parse-with-fallback
 // ============================================================================
 
+use crate::catalog::channels_api::{fetch_channels_feed, join_channels, synthesize_vara_fm_listing};
+use crate::catalog::channels_cache::ChannelsCache;
 use crate::catalog::reply::{parse_reply, ReplyView};
 use crate::catalog::stations::{detect_listing_mode, parse_listing, ListingMode, StationListing};
 use crate::catalog::stations_cache::{CacheKey, StationsCache};
@@ -144,24 +146,64 @@ pub async fn catalog_fetch_stations(
     modes: Vec<ListingMode>,
     history_hours: Option<u32>,
     cache: State<'_, Arc<StationsCache>>,
+    channels_cache: State<'_, Arc<ChannelsCache>>,
 ) -> Result<Vec<StationListing>, UiError> {
     let service_codes = crate::winlink::credentials::service_codes_read();
     let history_hours = history_hours.unwrap_or(168);
     let cache = cache.inner().clone();
-    let futures = modes.into_iter().map(|mode| {
-        let cache = cache.clone();
-        let service_codes = service_codes.clone();
-        async move {
-            let url = mode.listing_url(&service_codes, history_hours);
-            let key = CacheKey {
-                mode,
-                service_codes,
-                history_hours,
-            };
-            cache.get_or_fetch(key, fetch_listing_from_url(&url, mode)).await
+    let channels_cache = channels_cache.inner().clone();
+
+    // VARA FM has no text `/listings/` page (`listing_url` is `None`), so it is
+    // NOT fetched over the text path; it is synthesized from the channels feed
+    // below. Every other requested mode fetches its text listing concurrently.
+    let want_vara_fm = modes.contains(&ListingMode::VaraFm);
+    let futures = modes
+        .into_iter()
+        .filter_map(|mode| {
+            let url = mode.listing_url(&service_codes, history_hours)?;
+            let cache = cache.clone();
+            let service_codes = service_codes.clone();
+            Some(async move {
+                let key = CacheKey {
+                    mode,
+                    service_codes,
+                    history_hours,
+                };
+                cache.get_or_fetch(key, fetch_listing_from_url(&url, mode)).await
+            })
+        });
+    let mut listings: Vec<StationListing> = futures::future::try_join_all(futures).await?;
+
+    // Best-effort channels-API enrichment. This must NEVER fail the whole call:
+    // on any error (and with no stale feed to fall back on) we log ONCE and serve
+    // the text-only listings so Find-a-Station still works without the per-channel
+    // bandwidth/frequency detail.
+    let api_key = crate::winlink::credentials::channels_api_key_read();
+    match channels_cache
+        .get_or_fetch(
+            service_codes.clone(),
+            fetch_channels_feed(&api_key, &service_codes),
+        )
+        .await
+    {
+        Ok(cached) => {
+            for listing in listings.iter_mut() {
+                join_channels(listing, &cached.feed);
+            }
+            if want_vara_fm {
+                listings.push(synthesize_vara_fm_listing(&cached.feed, cached.fetched_at_ms));
+            }
         }
-    });
-    futures::future::try_join_all(futures).await
+        Err(e) => {
+            tracing::warn!(
+                target: "tuxlink::catalog",
+                error = ?e,
+                "channels API fetch failed; serving text-only station listings without per-channel bandwidth",
+            );
+        }
+    }
+
+    Ok(listings)
 }
 
 /// Read the operator-configured station-listing service codes (default `PUBLIC`).
@@ -177,6 +219,22 @@ pub fn catalog_get_service_codes() -> Result<String, UiError> {
 #[tauri::command]
 pub fn catalog_set_service_codes(codes: String) -> Result<(), UiError> {
     crate::winlink::credentials::service_codes_write(&codes)
+        .map_err(|e| UiError::Unavailable { reason: e.to_string() })
+}
+
+/// Read the operator-configured channels-API key. Returns the effective key
+/// (the operator's override, or the bundled public default when none is set) so
+/// the settings field can display it (tuxlink-nkzng).
+#[tauri::command]
+pub fn catalog_get_channels_api_key() -> Result<String, UiError> {
+    Ok(crate::winlink::credentials::channels_api_key_read())
+}
+
+/// Persist the channels-API key to the OS keyring (trimmed). An operator with
+/// their own Winlink access key can override the bundled public default.
+#[tauri::command]
+pub fn catalog_set_channels_api_key(key: String) -> Result<(), UiError> {
+    crate::winlink::credentials::channels_api_key_write(&key)
         .map_err(|e| UiError::Unavailable { reason: e.to_string() })
 }
 

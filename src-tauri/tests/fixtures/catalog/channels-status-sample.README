@@ -1,0 +1,119 @@
+# channels-status-sample.json - capture provenance and field map
+
+Fixture for the Winlink gateway channels JSON API (tuxlink-nkzng, Task 8).
+
+## Capture
+
+- Date captured: 2026-07-19 (UTC).
+- Endpoint: `POST https://api.winlink.org/gateway/status.json`
+- Request body (form-encoded, authorized internet call, NO RF):
+  `Mode=anyall&ServiceCodes=PUBLIC&key=1880278F11684B358F36845615BD039A&format=json`
+- The key is Pat's public WDT AccessKey (la5nta/pat internal/cmsapi); public,
+  not a credential.
+- Live response: HTTP 200, 1,550,852 bytes, 1,980 gateways.
+- This fixture is a hand-trimmed subset of 15 gateways extracted VERBATIM from the
+  live response (exact field names, exact values). `ResponseStatus` was `{}` in the
+  live response and is preserved as-is.
+
+## Verbatim observed JSON shape (THE FIXTURE WINS over the plan sketch)
+
+Top-level object:
+
+```
+{ "Gateways": [ <gateway>, ... ], "ResponseStatus": {} }
+```
+
+The plan's Interfaces block assumed the parsed feed maps directly from a
+callsign-keyed object. The live API instead returns a `Gateways` ARRAY; the
+callsign-keyed `ChannelsFeed` (HashMap) is built by `parse_channels_feed`, not
+served that way.
+
+Each gateway object (verbatim field names):
+
+- `Timestamp`     - string, `"/Date(1784512800000)/"` (.NET epoch-ms wrapper; unused)
+- `Callsign`      - string, SSID-bearing, e.g. `"4F1PUZ-10"`, `"AI4Y"` (JOIN KEY, uppercased)
+- `BaseCallsign`  - string, e.g. `"4F1PUZ"` (base without SSID; unused for the join)
+- `Latitude`      - float (unused)
+- `Longitude`     - float (unused)
+- `HoursSinceStatus` - int (unused)
+- `LastStatus`    - string, `"Mon, 20 Jul 2026 02:00:00 UTC"` (unused)
+- `Comments`      - string (unused)
+- `RequestedMode` - string, `"AnyAll"` (unused)
+- `GatewayChannels` - array of channel objects (NOT `Channels` as the plan sketch guessed)
+
+Each channel object (verbatim field names):
+
+- `Timestamp`      - string (.NET wrapper; unused)
+- `SupportedModes` - string, human label, e.g. `"VARA"`, `"VARA 500"`, `"VARA 2750"`,
+                     `"VARA FM"`, `"VARA FM WIDE"`, `"ARDOP 2000"`, `"Robust Packet"`, `"Packet 1200"`
+- `Mode`           - integer code (the mapping input; see table below)
+- `Gridsquare`     - string, e.g. `"FM07CC"` (-> `ChannelDetail.grid`)
+- `Frequency`      - integer, **DIAL frequency in HERTZ** (see divergence #1)
+- `OperatingHours` - string, e.g. `"00-23"` (-> `ChannelDetail.operating_hours`)
+- `Baud`           - string, e.g. `"0"`, `"600"`, `"1200"` (unused)
+- `RadioRange`     - string (unused)
+- `Antenna`        - string, e.g. `"Omni"` (unused; distinct from the text listing's B/D/V code)
+- `ServiceCode`    - string, e.g. `"PUBLIC"` (unused; the request already filtered on it)
+
+## Divergences from the plan sketch (FIXTURE WINS)
+
+1. **`Frequency` is the DIAL frequency in Hz, NOT center-Hz.** The plan sketch said
+   `frequency_khz = (center Hz - 1500) / 1000`. Cross-referenced against the text-listing
+   fixtures for the SAME station: AI4Y's mode-54 (VARA 2750) channel reports
+   `Frequency = 3589000`, and `listing-ardop-hf.txt` / `listing-vara-hf.txt` both give AI4Y's
+   dial as `3589.0` kHz. So the API value IS the dial, already offset-free.
+   `mode_code_to_detail` / `parse_channels_feed` therefore use `frequency_khz = Frequency / 1000.0`
+   with **no 1500 Hz subtraction**. The Task-2 dial-conversion test asserts
+   `frequency_khz == Frequency / 1000.0`.
+
+2. **Top-level is `Gateways` (array); channels are under `GatewayChannels`.** The plan
+   sketch referenced `Channels[]`. Real names: `Gateways[].GatewayChannels[]`.
+
+3. **Mode-code table verified and EXTENDED.** The plan gave only VARA codes. Observed
+   codes across the full 1,980-gateway response (SupportedModes label in parens):
+
+   | Code | Label            | Mapped ListingMode | bandwidth_hz |
+   |------|------------------|--------------------|--------------|
+   | 0    | Packet 1200      | Packet             | None         |
+   | 1    | Packet 2400      | Packet             | None         |
+   | 2    | Packet 4800      | Packet             | None         |
+   | 3    | Packet 9600      | Packet             | None         |
+   | 5    | Packet 38400     | Packet             | None         |
+   | 12-19| Pactor (1..4)    | Pactor             | None         |
+   | 22   | WINMOR 1600      | None (skipped)     | -            |
+   | 30   | Robust Packet    | RobustPacket       | None         |
+   | 41   | ARDOP 500        | ArdopHf            | Some(500)    |
+   | 42   | ARDOP 1000       | ArdopHf            | Some(1000)   |
+   | 43   | ARDOP 2000       | ArdopHf            | Some(2000)   |
+   | 50   | VARA             | VaraHf             | Some(2300)   |
+   | 51   | VARA FM          | VaraFm             | None         |
+   | 52   | VARA FM WIDE     | VaraFm             | None         |
+   | 53   | VARA 500         | VaraHf             | Some(500)    |
+   | 54   | VARA 2750        | VaraHf             | Some(2750)   |
+   | 1200 | Unknown          | None (skipped)     | -            |
+
+   The three VARA codes match the plan exactly (50->2300, 53->500, 54->2750) and
+   51|52->VaraFm/None matches the plan. WINMOR (22, obsolete) and the sentinel
+   `Unknown` (1200) map to `None` and are dropped. ARDOP/Pactor/Packet/RobustPacket
+   were extended so every text-listing mode's gateways get enriched (per-channel
+   bandwidth/frequency "first-class" across all modes, not just VARA). VARA FM
+   narrow (51) vs wide (52) collapse to a single `VaraFm` with `bandwidth_hz: None`
+   (the plan's choice; the narrow/wide distinction is not carried).
+
+## Gateways included (15) and why
+
+- `8P6BWS`   - in BOTH text fixtures (vara-hf + ardop): JOIN + VARA 2750 (54) + VARA FM narrow (51) + ARDOP (43) + Pactor (19)
+- `AA5AF`    - in vara-hf text: JOIN + VARA (50) + VARA 500 (53) + Pactor (19)
+- `AA0RC`    - in vara-hf text: JOIN + VARA (50) + VARA FM WIDE (52)
+- `AJ4GU`    - in vara-hf text: JOIN + ARDOP 500 (41) + VARA (50)
+- `AI4Y`     - in BOTH text fixtures: JOIN + ARDOP 2000 (43) + VARA 2750 (54); the dial-conversion anchor
+- `AH7L`     - in BOTH text fixtures: JOIN + ARDOP (43) + VARA (50) + VARA FM WIDE (52) + VARA 500 (53)
+- `AJ7C`     - in ardop text: JOIN + Pactor (19) + ARDOP (43) + VARA 2750 (54)
+- `EA8URF`   - in ardop text: JOIN + Robust Packet (30) + ARDOP (43) + VARA 2750 (54)
+- `4F1PUZ-10`- VARA FM WIDE (52) ONLY, VHF, NOT in any text fixture: synthesize-only coverage
+- `9Y4C-10`  - VARA FM narrow (51) ONLY: synthesize-only coverage
+- `WX4PCA-10`- mixed: Packet (0) + WINMOR (22) + ARDOP (41,43) + VARA (50,53); the mode-22 channel exercises the per-channel None-skip WHILE its sibling channels still map (a channel drop, not a whole-gateway drop)
+- `9Y4C-11`  - Packet 1200 (0) ONLY: Packet mapping
+- `K7NGS-5`  - Unknown (1200) ONLY: exercises the None-skip path
+- `AA3WS-10` - Packet 1200 (0) ONLY: Packet mapping
+- `AC8NP`    - additional vara-hf text-listing station for join breadth

@@ -120,9 +120,9 @@
   font-size: 11px;
 }
 
-/* Finding 4b: header "setup" affordance — same sizing as the collapse
- * trigger it sits beside. */
-.si-strip__setup-trigger {
+/* Task 2: header start/stop control, same sizing as the collapse trigger
+ * it sits beside. */
+.si-strip__startstop {
   font-size: 11px;
 }
 
@@ -158,20 +158,45 @@
   min-height: 0;
 }
 
+/* Task 11 (tuxlink-6i0ie) containment fix, scoped to the LIVE body only.
+   EVIDENCE (dev/scratch/si-containment, ?view=finder&ring=0|240 @1366x1200):
+   the body row measured 198px at ring=0 (empty feed) and 323px at ring=240
+   (+125px), matched exactly by `.si-wf` growing 197px -> 322px even though
+   its CANVAS stays a fixed 168px the whole time, i.e. +125px of dead space
+   opening up below the waterfall (the operator's literal bug report). The
+   row had no fixed height, so `.si-feed`'s unbounded decode-feed table grew
+   the row instead of scrolling inside it. 200px is the evidence-measured
+   floor that fits the waterfall's natural ~197px content (canvas + padding +
+   axis labels) without clipping it, while giving the feed a real bounded
+   scroll area.
+
+   The height rides on this MODIFIER, never the bare `.si-strip__body`: the
+   same div also wraps NonLiveBody (off / transitional / needs-setup /
+   device-lost, LiveBandStrip.tsx), whose `.si-strip__notice--setup` child is
+   deliberately tuned to GROW to min(52vh, 480px) (see that rule's comment
+   below). An unconditional 200px would squeeze the Ft8StripSetup onboarding
+   form into a scroll box, re-creating the operator's 2026-07-12
+   CTA-off-the-bottom bug in miniature. LiveBandStrip.tsx applies the
+   modifier only on the waterfall+feed live branch (showLiveBody). */
+.si-strip__body--live {
+  height: 200px;
+}
+
 .si-strip__notice {
   padding: 14px;
   font-size: 12px;
   color: var(--text-dim);
 }
 
-/* Operator QA finding (2026-07-12): the needs-setup body hosts
- * Ft8SetupSurface (Step 1 device picker + Step 2 rig control), which can
- * grow taller than the Station Intelligence dialog has room for — the
- * dialog itself clips overflow (`.station-finder { overflow: hidden }`),
- * so an unscrollable setup body pushed the CTA off the bottom with no way
- * to reach it. Scope the scroll to this container instead of the whole
- * dialog so the strip header/collapse control stay put. `52vh`/`480px`
- * tuned so the D2 harness's 1024x700 case still shows the CTA. */
+/* Operator QA finding (2026-07-12), still applicable under Task 2's
+ * in-strip `Ft8StripSetup` form: the CAT section it can expand to show
+ * (rig control fields) can grow taller than the Station Intelligence
+ * dialog has room for, and the dialog itself clips overflow
+ * (`.station-finder { overflow: hidden }`), so an unscrollable setup body
+ * pushed the CTA off the bottom with no way to reach it. Scope the scroll
+ * to this container instead of the whole dialog so the strip
+ * header/collapse control stay put. `52vh`/`480px` tuned so the D2
+ * harness's 1024x700 case still shows the CTA. */
 .si-strip__notice--setup {
   overflow-y: auto;
   max-height: min(52vh, 480px);
@@ -180,6 +205,11 @@
 .si-wf {
   flex: 1 1 55%;
   min-width: 0;
+  /* Task 11: min-height:0 alongside the fixed-height `.si-strip__body--live`
+     row. A flex-row child's default min-height is `auto` (its content
+     size), which would otherwise fight the parent's fixed height instead of
+     just filling it. */
+  min-height: 0;
   padding: 8px 0 4px 14px;
   position: relative;
 }
@@ -218,6 +248,14 @@
 .si-feed {
   flex: 1 1 45%;
   min-width: 360px;
+  /* Task 11: min-height:0 for the same reason as `.si-wf` above. This wrapper
+     also becomes the flex context DecodeFeed.css's `.decode-feed` fills
+     (`flex: 1; min-height: 0`). `.decode-feed` is a plain block child of
+     this div, not a sibling, so without establishing flex here its own
+     `overflow: auto` had nothing bounded to scroll inside. */
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   border-left: 1px solid var(--border);
   margin-left: 14px;
   overflow: hidden;

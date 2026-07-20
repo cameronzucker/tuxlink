@@ -51,7 +51,20 @@ A plain ARM does not clear taint. See the arm/taint model below.
   filterable by transport/band/history. Cached public data. Each gateway also carries
   `distance_km`, `distance_mi`, and `bearing_deg` from the operator's grid (null when the
   operator grid is unset — the result echoes it as `operator_grid`); gateways are sorted
-  nearest-first, unknown-distance last.
+  nearest-first, unknown-distance last. Each gateway carries a `channels` array with
+  per-channel dial frequency, occupied `bandwidth_hz`, transport `mode`, and
+  `operating_hours` (sourced from the Winlink channels API). Two optional filters refine
+  the list: `bandwidths` (an array of occupied bandwidths in Hz; the classified classes are
+  500, 2300, and 2750, and a channel with any other or no reported bandwidth passes every
+  filter, keeping the gateway if any channel passes), and `ft8_evidence: true`, which
+  corroborates each gateway against the operator's recent FT-8 decodes. When
+  `ft8_evidence` is set, every gateway gains `ft8_corroborated` (true when a recent decode
+  on a shared band lands within the plausible reach of that decode, false otherwise) and the
+  result gains an `evidence` block naming the SNR floor, recency window, radius model, and
+  the bands that carried qualifying decodes. Pass `ft8_snr_min_db` to raise the decode SNR
+  floor above the default of -24 dB. FT-8 evidence needs the FT-8 listener running (start it
+  with `ft8_start_listening`); a request for evidence with no listener returns an
+  unavailable error, while a plain lookup without `ft8_evidence` is never affected.
 - `predict_path` — offline VOACAP HF path reliability/SNR/MUF-day by UTC hour from
   the operator's own grid to a target grid across candidate dial frequencies.
 - `solar_conditions` — the **stored** space-weather indices (SFI/A/K) and the
@@ -68,6 +81,30 @@ A plain ARM does not clear taint. See the arm/taint model below.
   confident, and the stored indices were left unchanged.
 - `wwv_offair_available` — whether off-air WWV capture is possible (it needs rig
   CAT control to tune the dial). Call this before `wwv_capture_offair`.
+
+### FT-8 band monitor: receive-only, no taint, no authorization
+
+These decode the FT-8 activity on the operator's radio. They are receive-only:
+they open the sound card for capture and (for `ft8_set_band`) tune the dial, but
+they never transmit and need no send-authority. They are the evidence source
+behind `find_stations`' `ft8_evidence` corroboration.
+
+- `ft8_status`: the listener's state (whether it is listening, on which band and
+  dial frequency, which audio device, and what is blocking it if it cannot start).
+  Call this first if `ft8_heard_stations` comes back empty: the listener may simply
+  not be running.
+- `ft8_heard_stations`: the amateur stations decoded recently, deduplicated by
+  callsign, grid, best signal-to-noise ratio, times heard, and when last heard.
+  This answers "who am I hearing" and "what is on this band". Returns an empty list
+  if nothing has decoded yet.
+- `ft8_start_listening`: start the listener on the configured band and audio
+  device. Returns an error naming what is missing if no audio device is configured.
+- `ft8_stop_listening`: stop the listener and release the audio device.
+- `ft8_set_band`: set the FT-8 band (e.g. `"20m"`). If rig CAT control is
+  configured this QSYs the radio's dial to that band's FT-8 frequency.
+- `ft8_list_audio_devices`: the audio capture devices the listener can use, with
+  the stable id to select. Use when `ft8_status` reports it is blocked needing a
+  device.
 
 ### Remediation writes — require armed send-authority AND un-tainted
 

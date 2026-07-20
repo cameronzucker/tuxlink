@@ -1044,10 +1044,17 @@ impl DataService for MonolithDataService {
         let cache = self
             .app
             .state::<Arc<crate::catalog::stations_cache::StationsCache>>();
-        let listings =
-            crate::catalog::commands::catalog_fetch_stations(modes, Some(history_hours), cache)
-                .await
-                .map_err(|e| format!("{e:?}"))?;
+        let channels_cache = self
+            .app
+            .state::<Arc<crate::catalog::channels_cache::ChannelsCache>>();
+        let listings = crate::catalog::commands::catalog_fetch_stations(
+            modes,
+            Some(history_hours),
+            cache,
+            channels_cache,
+        )
+        .await
+        .map_err(|e| format!("{e:?}"))?;
         let station_count = listings.iter().map(|l| l.gateways.len()).sum();
         Ok(StationlistOutcome {
             station_count,

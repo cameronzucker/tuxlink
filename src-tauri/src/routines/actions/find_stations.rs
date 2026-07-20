@@ -56,8 +56,9 @@ fn find_stations_dry_run_shape(_params: &Value) -> Value {
 /// `data.find_stations` params. All optional. `modes` uses the same kebab-case
 /// [`ListingMode`](crate::catalog::stations::ListingMode) enum as
 /// `data.stationlist_update` (a `Vec<String>` would silently accept garbage
-/// mode tokens); an empty/absent `modes` resolves to every confirmed mode
-/// (`ListingMode::ALL`) in the seam.
+/// mode tokens); an empty/absent `modes` resolves to every transport, VARA FM
+/// included (`ListingMode::expand_selector`, shared with the MCP
+/// `find_stations` tool), in the seam.
 #[derive(Debug, Deserialize)]
 struct FindStationsParams {
     #[serde(default)]
@@ -286,21 +287,27 @@ impl StationQueryService for MonolithStationQueryService {
         use crate::catalog::stations::ListingMode;
         use tauri::Manager;
 
-        // Empty ⇒ every confirmed mode, identical to the MCP `find_stations` tool.
-        let modes = if modes.is_empty() {
-            ListingMode::ALL.to_vec()
-        } else {
-            modes
-        };
+        // Empty ⇒ all transports (VARA FM included), via the SHARED
+        // `ListingMode::expand_selector` seam: the SAME expansion the MCP
+        // `find_stations` tool routes through, so the two agent surfaces are
+        // identical by construction (Codex P2 parity fix).
+        let modes = ListingMode::expand_selector(modes);
         // The SAME polite cache-backed poll the `catalog_fetch_stations` command
         // (and the MCP `find_stations` port) route through.
         let cache = self
             .app
             .state::<Arc<crate::catalog::stations_cache::StationsCache>>();
-        let listings =
-            crate::catalog::commands::catalog_fetch_stations(modes, history_hours, cache)
-                .await
-                .map_err(|e| format!("{e:?}"))?;
+        let channels_cache = self
+            .app
+            .state::<Arc<crate::catalog::channels_cache::ChannelsCache>>();
+        let listings = crate::catalog::commands::catalog_fetch_stations(
+            modes,
+            history_hours,
+            cache,
+            channels_cache,
+        )
+        .await
+        .map_err(|e| format!("{e:?}"))?;
         // Most-recent fetch stamp across the fetched modes (None on a fresh parse).
         let fetched_at_ms = listings.iter().filter_map(|l| l.fetched_at_ms).max();
         // Operator's own 4-char grid for distance ranking (None when unresolved).
@@ -401,6 +408,7 @@ mod tests {
             email: Some("op@example.com".to_string()),
             homepage: Some("http://example.com".to_string()),
             antenna: None,
+            channel_details: Vec::new(),
         }
     }
 
@@ -708,4 +716,22 @@ mod tests {
         assert!(f.is_empty(), "{}: {f:?}", d.name);
     }
 
+    // ---- Codex P2 parity: empty modes expansion includes VARA FM -----------
+
+    #[test]
+    fn empty_modes_expansion_includes_vara_fm() {
+        // The routines seam's empty-selector expansion is the SHARED
+        // `ListingMode::expand_selector` (the exact call `fetch_directory`
+        // makes), so `data.find_stations` with no `modes` fetches every
+        // transport, VARA FM included, identical to the MCP `find_stations`
+        // tool. Mirrors the MCP-side `expand_find_stations_modes` tests.
+        let modes = ListingMode::expand_selector(Vec::new());
+        assert!(
+            modes.contains(&ListingMode::VaraFm),
+            "routines empty selector must include VARA FM (agent-surface parity)"
+        );
+        for m in ListingMode::ALL {
+            assert!(modes.contains(&m), "must retain every confirmed mode");
+        }
+    }
 }

@@ -174,7 +174,7 @@ pub mod test_support {
     use crate::ports::{
         AbortPort, ActionInfoDto, ActionsCatalogDto, ArdopConfigDto, ArdopWriteDto,
         AttachmentMetaDto, AudioDevicesDto, TriggerKindDto,
-        BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto, ChannelReliabilityDto,
+        BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto, ChannelDto, ChannelReliabilityDto,
         ComposeDraftDto, ComposePort, ConfigPort, ConfigViewDto, DevicePort, DocBodyDto,
         DocsHitDto, DryRunStartedDto, EgressPort, EgressPortError, EnableResultDto, FindingDto,
         FolderDto, Ft8AudioDeviceDto, Ft8HeardStationDto, Ft8Port, Ft8StatusDto, GatewayAntennaDto,
@@ -759,13 +759,21 @@ pub mod test_support {
                     callsign: SEED_GW_CALLSIGN.into(),
                     grid: Some(SEED_GW_GRID.into()),
                     frequencies_khz: vec![SEED_GW_FREQ_KHZ],
+                    channels: vec![ChannelDto {
+                        frequency_khz: SEED_GW_FREQ_KHZ,
+                        bandwidth_hz: Some(2300),
+                        mode: "vara-hf".into(),
+                        operating_hours: None,
+                    }],
                     antenna: Some(GatewayAntennaDto::Dipole),
                     distance_km: None,
                     distance_mi: None,
                     bearing_deg: None,
+                    ft8_corroborated: None,
                 }],
                 fetched_at_ms: Some(0),
                 operator_grid: None,
+                evidence: None,
             })
         }
         async fn find_peers(&self) -> Result<PeerListDto, PortError> {
@@ -1400,6 +1408,94 @@ mod tests {
             server_info_view(&state).taint_reason.as_deref(),
             Some("mailbox_list"),
             "tainted view surfaces the content-free operation token"
+        );
+    }
+
+    #[test]
+    fn station_mode_vara_fm_serializes_kebab_case() {
+        // Wire-shape contract: the new VARA FM variant must serialize as
+        // "vara-fm", the SAME token the monolith ListingMode and the frontend
+        // ListingMode union carry. A rename would silently desync the surfaces.
+        use crate::ports::StationModeDto;
+        assert_eq!(
+            serde_json::to_value(StationModeDto::VaraFm).unwrap(),
+            serde_json::json!("vara-fm"),
+        );
+        // The pre-existing variants keep their tokens (regression guard).
+        assert_eq!(
+            serde_json::to_value(StationModeDto::VaraHf).unwrap(),
+            serde_json::json!("vara-hf"),
+        );
+        // Round-trips from the wire.
+        let back: StationModeDto = serde_json::from_value(serde_json::json!("vara-fm")).unwrap();
+        assert_eq!(back, StationModeDto::VaraFm);
+    }
+
+    #[test]
+    fn gateway_dto_wire_shape_carries_channels_and_ft8_fields() {
+        // The find_stations output DTO must carry the additive Task 12 fields on
+        // the wire (snake_case, nested channel camelBack-free), so agent
+        // consumers can read per-channel bandwidth and FT-8 corroboration.
+        use crate::ports::{ChannelDto, GatewayDto, StationModeDto};
+        let gw = GatewayDto {
+            mode: StationModeDto::VaraFm,
+            channel: "c".into(),
+            callsign: "W1AW".into(),
+            grid: Some("FN31".into()),
+            frequencies_khz: vec![145_030.0],
+            channels: vec![ChannelDto {
+                frequency_khz: 145_030.0,
+                bandwidth_hz: None,
+                mode: "vara-fm".into(),
+                operating_hours: Some("00-23".into()),
+            }],
+            antenna: None,
+            distance_km: None,
+            distance_mi: None,
+            bearing_deg: None,
+            ft8_corroborated: Some(true),
+        };
+        let v = serde_json::to_value(&gw).unwrap();
+        assert_eq!(v["mode"], serde_json::json!("vara-fm"));
+        assert_eq!(v["ft8_corroborated"], serde_json::json!(true));
+        assert_eq!(v["channels"][0]["frequency_khz"], serde_json::json!(145_030.0));
+        assert_eq!(v["channels"][0]["bandwidth_hz"], serde_json::Value::Null);
+        assert_eq!(v["channels"][0]["mode"], serde_json::json!("vara-fm"));
+        assert_eq!(v["channels"][0]["operating_hours"], serde_json::json!("00-23"));
+    }
+
+    #[test]
+    fn station_list_dto_wire_shape_carries_evidence_params() {
+        // The evidence provenance block must round-trip on the wire so the agent
+        // can explain the corroboration (snr floor, recency, radius model, bands).
+        use crate::ports::{EvidenceParamsDto, StationListDto};
+        let list = StationListDto {
+            gateways: vec![],
+            fetched_at_ms: None,
+            operator_grid: Some("DN17".into()),
+            evidence: Some(EvidenceParamsDto {
+                snr_min_db: -24,
+                recency_ms: 1_800_000,
+                radius_factor: 0.15,
+                radius_min_mi: 50.0,
+                radius_max_mi: 750.0,
+                sampled_bands: vec!["20m".into()],
+            }),
+        };
+        let v = serde_json::to_value(&list).unwrap();
+        assert_eq!(v["evidence"]["snr_min_db"], serde_json::json!(-24));
+        assert_eq!(v["evidence"]["recency_ms"], serde_json::json!(1_800_000));
+        assert_eq!(v["evidence"]["sampled_bands"][0], serde_json::json!("20m"));
+        // Absent-evidence round-trips as null (additive/optional, non-breaking).
+        let plain = StationListDto {
+            gateways: vec![],
+            fetched_at_ms: None,
+            operator_grid: None,
+            evidence: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&plain).unwrap()["evidence"],
+            serde_json::Value::Null,
         );
     }
 }
