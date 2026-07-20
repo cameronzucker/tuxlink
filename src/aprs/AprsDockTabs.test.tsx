@@ -138,3 +138,59 @@ describe('AprsDockTabs', () => {
     expect(onDockBackMap).toHaveBeenCalledTimes(1);
   });
 });
+
+// tuxlink-mxqjp: the map companion controls + tab strip + close previously
+// shared ONE flex-wrap row; at the dock's ~400px floor the wrap point was
+// arbitrary, rendering Map/Pop out as an orphaned tab-shaped row above the
+// real tabs (R2 operator report 2026-07-20). The split is now INTENTIONAL:
+// a surface bar (map controls + close) above a clean tab row; callers
+// without map controls keep the original single row.
+describe('two-row dock header (tuxlink-mxqjp)', () => {
+  it('map controls and close live in a surface bar above the tab row', () => {
+    render(
+      <AprsDockTabs
+        active="aprs"
+        unread={0}
+        modemEnabled
+        onSelect={() => {}}
+        onClose={() => {}}
+        mapOpen={false}
+        onToggleMap={() => {}}
+        onPopOutMap={() => {}}
+      />,
+    );
+    const bar = screen.getByTestId('aprs-dock-surfacebar');
+    expect(bar).toContainElement(screen.getByTestId('aprs-map-toggle'));
+    expect(bar).toContainElement(screen.getByTestId('aprs-map-popout'));
+    expect(bar).toContainElement(screen.getByTestId('aprs-dock-close'));
+    const tabrow = screen.getByTestId('aprs-dock-tabrow');
+    expect(tabrow).toContainElement(screen.getByTestId('aprs-dock-tab-modem'));
+    expect(tabrow).not.toContainElement(screen.getByTestId('aprs-dock-close'));
+  });
+
+  it('the popped pathway owns the surface bar (the widest state gets a full row)', () => {
+    render(
+      <AprsDockTabs
+        active="aprs"
+        unread={0}
+        modemEnabled
+        onSelect={() => {}}
+        onClose={() => {}}
+        onToggleMap={() => {}}
+        mapPopped
+        onFocusMap={() => {}}
+        onDockBackMap={() => {}}
+      />,
+    );
+    const bar = screen.getByTestId('aprs-dock-surfacebar');
+    expect(bar).toContainElement(screen.getByTestId('aprs-map-focus'));
+    expect(bar).toContainElement(screen.getByTestId('aprs-map-dockback'));
+    expect(bar).toContainElement(screen.getByTestId('aprs-dock-close'));
+  });
+
+  it('renders no surface bar for callers without map controls (single legacy row)', () => {
+    render(<AprsDockTabs active="aprs" unread={0} modemEnabled onSelect={() => {}} onClose={() => {}} />);
+    expect(screen.queryByTestId('aprs-dock-surfacebar')).not.toBeInTheDocument();
+    expect(screen.getByTestId('aprs-dock-close')).toBeInTheDocument();
+  });
+});
