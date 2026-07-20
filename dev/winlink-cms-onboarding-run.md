@@ -23,6 +23,7 @@ Fill the evidence tables in place as runs happen.
 | Account CRUD targets **production** `api.winlink.org` even in test-CMS mode; test accounts are TEST-prefixed | decompiled WLE (bd memory `wle-test-cms-mode-ini-properties-test-cms`); tuxlink matches: `API_BASE` is hard-pinned in `src-tauri/src/winlink/cms_account.rs` |
 | cms-z sessions run **without TLS** (WLE skips SSL in test-CMS mode) | same decompile evidence |
 | Test 4 binaries are whatever release is current on run day; the team knows this is a fast-moving alpha | operator, bd notes 2026-07-20 |
+| Outbound SMTP via cms-z to real email-address endpoints works (message flow beyond the TEST autoresponder is healthy) | operator, 2026-07-20 |
 
 ## Open items (the only ones)
 
