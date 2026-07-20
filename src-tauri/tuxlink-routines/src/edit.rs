@@ -159,7 +159,21 @@ fn insert_at(def: &mut RoutineDef, step: Step, placement: &Placement) -> Result<
                 .iter_mut()
                 .find(|t| &t.name == track)
                 .ok_or_else(|| EditError::UnknownTrack(track.clone()))?;
-            t.steps.push(step);
+            // Append lands BEFORE a trailing `end` control (adrev round 3,
+            // 5.5): every step appended after a track's final End is
+            // unreachable by construction — the executor stops at the End —
+            // and the definition_template ends with one, so a literal
+            // template-then-append bootstrap (exactly what a small model
+            // does) would build an entirely blocked routine. Nobody means
+            // "add an unreachable step"; a trailing End is a terminator,
+            // not a position.
+            let insert_at = match t.steps.last() {
+                Some(Step::Control(c)) if matches!(c.control, Control::End { .. }) => {
+                    t.steps.len() - 1
+                }
+                _ => t.steps.len(),
+            };
+            t.steps.insert(insert_at, step);
             Ok(())
         }
         Placement::After { after } => {
@@ -593,6 +607,37 @@ mod tests {
         .unwrap();
         assert_eq!(id.0, "s2");
         assert_eq!(ids(&out, 0), vec!["s1", "s2"]);
+    }
+
+    fn end_step(id: &str) -> Step {
+        Step::Control(ControlStep {
+            id: StepId(id.into()),
+            control: Control::End { failed: false, reason: None },
+        })
+    }
+
+    #[test]
+    fn append_lands_before_a_trailing_end_not_after_it() {
+        // The definition_template bootstrap (adrev round 3): track ends with
+        // an End control; appending must not create unreachable steps.
+        let def = one_track(vec![action("s1", "a"), end_step("s2")]);
+        let (out, _) = step_add(
+            &def,
+            action("s3", "b"),
+            &Placement::Append { track: "track-1".into() },
+        )
+        .unwrap();
+        assert_eq!(ids(&out, 0), vec!["s1", "s3", "s2"]);
+        // A mid-track End (branch arms may end early) does NOT relocate the
+        // append — only a TRAILING End is a terminator-not-a-position.
+        let def = one_track(vec![end_step("s1"), action("s2", "a")]);
+        let (out, _) = step_add(
+            &def,
+            action("s3", "b"),
+            &Placement::Append { track: "track-1".into() },
+        )
+        .unwrap();
+        assert_eq!(ids(&out, 0), vec!["s1", "s2", "s3"]);
     }
 
     #[test]

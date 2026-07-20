@@ -46,7 +46,7 @@ promise the validator does not make [A9].
 
 | Verb | Args | Effect |
 |---|---|---|
-| `routines_step_add` | `routine`, `track`, `step` (object, `id` optional), `after_step_id?` OR `branch?: {step_id, arm}` | Insert an action/control step. Appended to the track when no placement is given. `branch` placement inserts into a branch arm atomically — storage position AND arm membership in one operation, matching the designer's `insertStepIntoBranchArm` [A3]. When `step.id` is absent the server assigns the next free id (`s<max+1>`) and returns it [5.6#8]. |
+| `routines_step_add` | `routine`, `track`, `step` (object, `id` optional), `after_step_id?` OR `branch?: {step_id, arm}` | Insert an action/control step. Appended to the track when no placement is given; a track whose LAST step is an `end` control appends BEFORE that end (adrev round 3: a trailing end is a terminator, not a position — appending after it builds unreachable steps, and the definition_template bootstrap would hit exactly that). `branch` placement inserts into a branch arm atomically — storage position AND arm membership in one operation, matching the designer's `insertStepIntoBranchArm` [A3]. When `step.id` is absent the server assigns the next free id (`s<max+1>`) and returns it [5.6#8]. |
 | `routines_step_update` | `routine`, `step_id`, `patch` (object) | Shallow-merge onto the step: `params` replaces wholesale; `action`/`on_radio_busy`/`timeout_s`/control payload fields individually. Changing the step's `id` or its action↔control kind through `patch` is rejected — that is a remove+add, stated in the tool description [5.6#6]. |
 | `routines_step_remove` | `routine`, `step_id` | Remove the step AND scrub branch/retry references to it, exactly as the designer's load-bearing scrub does; the response lists what was scrubbed. Dangling-refs-as-findings is rejected: freed ids plus later reuse silently attach unrelated steps to old arms [A4]. |
 | `routines_step_move` | `routine`, `step_id`, `after_step_id?` OR `branch?: {step_id, arm}` OR `track?` | Reposition a step without the remove/re-add dance that transits broken-ref states [A6]. |
@@ -78,10 +78,18 @@ pollution for a hazard the scrub already closes.
 `routines_save` remains for bootstrap (the `definition_template` path),
 import/export, and the designer's save. It gains `def` (JSON object) as the
 preferred parameter. **Exactly one** of `def` / `def_json` must be present:
-both or neither is a tool error, and a string supplied as `def` is a tool
-error — it is never parsed as JSON, which would resurrect the
-double-encoding trap under a new name [A7]. `def_json` carries a deprecation
-note for one release, then goes. New-surface docs and the system-prompt
+both or neither is a tool error. A string supplied as `def` that parses as a
+JSON OBJECT is accepted as the definition; a string that does not still
+errors, steering to `def_json`. *(Amends A7's original never-auto-parse
+rule, 2026-07-20: exam transcript 1784569467900-0 showed a 122b model
+emitting `def` stringified and resending the identical payload nine times
+against the strict rejection — it cannot perceive the object-vs-string
+difference in its own emission, so the theoretical double-encoding
+ambiguity A7 guarded was outweighed by an observed hard loop. Parsing a
+well-formed stringified object is deterministic and semantically identical
+to `def_json`; the trap A7 actually feared — both params present, or silent
+misparse of malformed JSON — remains rejected.)* `def_json` carries a
+deprecation note for one release, then goes. New-surface docs and the system-prompt
 carve-out teach ONLY the object form and the verbs.
 
 ### D3. Bootstrap flow the catalog teaches
