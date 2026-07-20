@@ -40,11 +40,11 @@ function installInvokeMock(overrides: InvokeOverrides = {}) {
     if (cmd in overrides) return Promise.resolve(overrides[cmd]!(args));
     switch (cmd) {
       case 'routines_get':
-        return Promise.resolve(EXISTING_DEF);
+        return Promise.resolve({ revision: 'rev-1', def: EXISTING_DEF });
       case 'routines_validate_draft':
         return Promise.resolve([]);
       case 'routines_save':
-        return Promise.resolve({ routine: 'deployment-poll', findings: [], blocked: false });
+        return Promise.resolve({ routine: 'deployment-poll', revision: 'rev-2', findings: [], blocked: false });
       case 'routines_dry_run':
         return Promise.resolve({ runId: 'run-dry-1', findings: [] });
       case 'routines_actions_list':
@@ -69,6 +69,7 @@ function renderDesigner(props: Partial<Parameters<typeof RoutineDesigner>[0]> = 
   const onTabChange = props.onTabChange ?? vi.fn();
   const utils = render(
     <RoutineDesigner
+      {...props}
       routine={props.routine ?? 'deployment-poll'}
       tab={props.tab ?? 'design'}
       onBack={onBack}
@@ -157,8 +158,11 @@ describe('RoutineDesigner — load + header (a)', () => {
   it('renders the schedule fact-chip with a compact cadence summary, or "manual" without a schedule', async () => {
     installInvokeMock({
       routines_get: () => ({
-        ...EXISTING_DEF,
-        triggers: [{ type: 'schedule', every: '30m', window: '07:00-09:00', if_missed: 'skip' }],
+        revision: 'rev-1',
+        def: {
+          ...EXISTING_DEF,
+          triggers: [{ type: 'schedule', every: '30m', window: '07:00-09:00', if_missed: 'skip' }],
+        },
       }),
     });
     renderDesigner({ routine: 'deployment-poll' });
@@ -291,6 +295,39 @@ describe('RoutineDesigner — always-on validation bar (b, flow 2)', () => {
   });
 });
 
+describe('RoutineDesigner — revision CAS (spec D7, adrev round 2)', () => {
+  it('a loaded routine saves with the expectedRevision from routines_get, and updates it from the save result', async () => {
+    installInvokeMock();
+    renderDesigner();
+    await screen.findByText('deployment-poll');
+    fireEvent.click(screen.getByTestId('add-track-btn'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => {
+      expect(callsFor('routines_save')).toHaveLength(1);
+    });
+    expect(callsFor('routines_save')[0]?.[1]).toMatchObject({ expectedRevision: 'rev-1' });
+  });
+
+  it('a token-seeded designer saves with the revision the continuity token carried', async () => {
+    installInvokeMock();
+    renderDesigner({
+      initialDraft: EXISTING_DEF,
+      initialRevision: 'rev-token-7',
+    });
+    await screen.findByText('deployment-poll');
+    // Token-seeded: no fetch happened, so the ONLY possible source of the
+    // revision is the token (adrev round 2 P1 — pop-out/dock-back must not
+    // shed the CAS protection).
+    expect(callsFor('routines_get')).toHaveLength(0);
+    fireEvent.click(screen.getByTestId('add-track-btn'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => {
+      expect(callsFor('routines_save')).toHaveLength(1);
+    });
+    expect(callsFor('routines_save')[0]?.[1]).toMatchObject({ expectedRevision: 'rev-token-7' });
+  });
+});
+
 describe('RoutineDesigner — Save never blocks (c)', () => {
   it('invokes routines_save with the draft body and clears the unsaved dot even when blocked:true, with no modal/exception', async () => {
     const finding = {
@@ -413,6 +450,8 @@ describe('RoutineDesigner — flow-2 authoring trace through the real seam (Task
     installInvokeMock({
       routines_get: () =>
         ({
+          revision: 'rev-1',
+          def: {
           routine: 'deployment-poll',
           schema_version: 1,
           transmit_mode: 'attended',
@@ -428,7 +467,8 @@ describe('RoutineDesigner — flow-2 authoring trace through the real seam (Task
               ],
             },
           ],
-        }) satisfies RoutineDef,
+          } satisfies RoutineDef,
+        }),
       routines_actions_list: () => [
         { name: 'radio.connect', needsRadio: true, needsInternet: false, transmits: true },
       ],
@@ -470,6 +510,8 @@ describe('RoutineDesigner — flow-2 authoring trace through the real seam (Task
     installInvokeMock({
       routines_get: () =>
         ({
+          revision: 'rev-1',
+          def: {
           routine: 'deployment-poll',
           schema_version: 1,
           transmit_mode: 'attended',
@@ -484,7 +526,8 @@ describe('RoutineDesigner — flow-2 authoring trace through the real seam (Task
               ],
             },
           ],
-        }) satisfies RoutineDef,
+          } satisfies RoutineDef,
+        }),
       routines_actions_list: () => [
         { name: 'radio.connect', needsRadio: true, needsInternet: false, transmits: true },
       ],

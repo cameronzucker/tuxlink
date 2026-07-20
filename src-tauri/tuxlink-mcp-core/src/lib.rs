@@ -182,6 +182,8 @@ pub mod test_support {
         ModemStatusDto, PacketConfigDto, PacketWriteDto, ParsedMessageDto, PathPredictionDto,
         PeerListDto, PlatformInfoDto, PortError, PositionStatusDto, PredictRequestDto,
         PredictionPort, PrinterDto, ProvisionPort, QsyCandidateDto, RigConfigDto, RigStatusDto,
+        EditResultDto, RenameResultDto, RoutineEditRequestDto, RoutineGetDto,
+        SaveRoutineRequestDto,
         RoutineSummaryDto, RoutinesPort, RoutinesRunError, RunStateDto, RunStatusDto,
         SaveResultDto, SearchPort, SearchQueryDto, SearchResultsDto, SendFormDto, SerialDeviceDto,
         SessionIntentDto, SolarSnapshotDto, StationFilterDto, StationListDto, StationModeDto,
@@ -1060,23 +1062,52 @@ pub mod test_support {
                 trigger_kinds: vec!["schedule".into()],
             }])
         }
-        async fn get(&self, name: &str) -> Result<serde_json::Value, PortError> {
-            Ok(serde_json::json!({
-                "routine": name,
-                "schema_version": 1,
-                "transmit_mode": if name == UNACKED_ROUTINE { "automatic" } else { "attended" },
-                "triggers": [{"type": "manual"}],
-                "tracks": [],
-            }))
+        async fn get(&self, name: &str) -> Result<RoutineGetDto, PortError> {
+            Ok(RoutineGetDto {
+                revision: "rev-mock-1".into(),
+                def: serde_json::json!({
+                    "routine": name,
+                    "schema_version": 1,
+                    "transmit_mode": if name == UNACKED_ROUTINE { "automatic" } else { "attended" },
+                    "triggers": [{"type": "manual"}],
+                    "tracks": [],
+                }),
+            })
         }
         async fn validate(&self, _name: &str) -> Result<Vec<FindingDto>, PortError> {
             Ok(Vec::new())
         }
-        async fn save(&self, _def_json: String) -> Result<SaveResultDto, PortError> {
+        async fn save(&self, _req: SaveRoutineRequestDto) -> Result<SaveResultDto, PortError> {
             Ok(SaveResultDto {
                 routine: SEED_ROUTINE.into(),
+                revision: "rev-mock-2".into(),
                 findings: Vec::new(),
                 blocked: false,
+            })
+        }
+        async fn edit(&self, req: RoutineEditRequestDto) -> Result<EditResultDto, PortError> {
+            Ok(EditResultDto {
+                routine: req.routine,
+                revision: "rev-mock-3".into(),
+                applied: true,
+                step_id: Some("s1".into()),
+                scrubbed: Vec::new(),
+                step_findings: Vec::new(),
+                routine_findings: Vec::new(),
+                blocked: false,
+            })
+        }
+        async fn rename(
+            &self,
+            _routine: &str,
+            new_name: &str,
+            _expected_revision: Option<String>,
+        ) -> Result<RenameResultDto, PortError> {
+            Ok(RenameResultDto {
+                routine: new_name.to_string(),
+                revision: "rev-mock-4".into(),
+                enabled: false,
+                callers_updated: Vec::new(),
             })
         }
         async fn enable(&self, name: &str) -> Result<EnableResultDto, PortError> {

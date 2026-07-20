@@ -23,7 +23,8 @@ use rmcp::{tool, tool_handler, tool_router, ErrorData, RoleServer};
 use crate::content;
 use crate::ports::{
     ArdopWriteDto, ComposeDraftDto, EgressPortError, GribRequestDto, PacketWriteDto, PortError,
-    PredictRequestDto, QsyCandidateDto, RoutinesRunError, SearchQueryDto, SendFormDto,
+    PredictRequestDto, QsyCandidateDto, RoutineEditOpDto, RoutineEditRequestDto, RoutinesRunError,
+    SaveRoutineRequestDto, SearchQueryDto, SendFormDto,
     SessionIntentDto, StationFilterDto, VaraEngineDto, VaraIniApplyDto, VaraWriteDto,
     WritePortError,
 };
@@ -1346,11 +1347,15 @@ impl TuxlinkMcp {
                        example params, and whether it transmits / writes config / needs radio or \
                        internet) plus every trigger kind with its fields and a paste-ready \
                        example, plus definition_template: one COMPLETE valid routine document \
-                       (the exact shape routines_save accepts — copy it and substitute your \
-                       steps; note `routine` is the routine's NAME string and `triggers` is a \
-                       list). Call this BEFORE writing a routine definition — action names are \
-                       a closed set; invented names (e.g. \"modem.vara.connect\") fail validation \
-                       with UNKNOWN_ACTION. Read-only."
+                       (the exact shape routines_save's def accepts; note `routine` is the \
+                       routine's NAME string and `triggers` is a list). The recommended authoring \
+                       flow: save the template under your routine's name with routines_save, \
+                       then build it one fragment at a time — routines_step_add for each step, \
+                       routines_trigger_set for the schedule — so every piece is validated in \
+                       isolation and a mistake costs one small call, never the whole document. \
+                       Call this BEFORE writing a routine — action names are a closed set; \
+                       invented names (e.g. \"modem.vara.connect\") fail validation with \
+                       UNKNOWN_ACTION. Read-only."
     )]
     pub async fn routines_actions_list(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self
@@ -1364,7 +1369,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "routines_get",
-        description = "Read one routine's full definition exactly as stored — the same JSON shape routines_save accepts: routine, schema_version, transmit_mode, transmit_ack (if any), triggers, tracks/steps. Read-only."
+        description = "Read one routine: {revision, def}. def is the full definition exactly as stored — the same JSON shape routines_save's def accepts: routine, schema_version, transmit_mode, transmit_ack (if any), triggers, tracks/steps. revision is the edit token — pass it as expected_revision on a later save or fragment edit to detect a lost update. Read-only."
     )]
     pub async fn routines_get(
         &self,
@@ -1395,14 +1400,244 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "routines_save",
-        description = "Parse and save a routine definition (def_json, the same JSON shape routines_get returns and routines_actions_list's definition_template shows: routine [the NAME string], schema_version, transmit_mode, triggers [a list], tracks[].steps). Call routines_actions_list FIRST and copy its definition_template — action names are a closed set. NEVER refused by validation findings — a half-written draft still saves, and the result's findings/blocked say what is wrong so you can iterate. Refused only when def_json fails to parse or its routine name is invalid."
+        description = "Save a WHOLE routine definition from def (a JSON OBJECT — the same shape routines_get returns in its def field and routines_actions_list's definition_template shows: routine [the NAME string], schema_version, transmit_mode, triggers [a list], tracks[].steps). Give exactly one of def (preferred) or def_json (deprecated string form); never both, and never a string inside def. Best for bootstrap: save the definition_template under your routine's name, then build it step-by-step with routines_step_add / routines_step_update / routines_trigger_set — each fragment edit is validated in isolation and a mistake costs one small call, not the whole document. NEVER refused by validation findings — a half-written draft still saves, and the result's findings/blocked say what is wrong so you can iterate. Refused when the definition fails to parse, its routine name is invalid, or expected_revision is stale (REVISION_CONFLICT)."
     )]
     pub async fn routines_save(
         &self,
         params: Parameters<RoutineSaveParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let Parameters(RoutineSaveParams { def_json }) = params;
-        let dto = self.state.routines.save(def_json).await.map_err(port_err)?;
+        let Parameters(RoutineSaveParams {
+            def,
+            def_json,
+            expected_revision,
+        }) = params;
+        let dto = self
+            .state
+            .routines
+            .save(SaveRoutineRequestDto {
+                def,
+                def_json,
+                expected_revision,
+            })
+            .await
+            .map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
+        name = "routines_step_add",
+        description = "Insert ONE step into a saved routine (the fragment-edit path — no whole-document rewrite). step is a JSON OBJECT ({\"action\": ..., \"params\": {...}} or {\"control\": ...}); omit its id to have one assigned and returned as step_id. Place with exactly one of: track (append), after_step_id (splice after), or branch_step_id+branch_arm (into a branch's then/else arm — arm membership and position land atomically). The routine must be DISABLED (ROUTINE_ENABLED otherwise — disable, edit, re-enable). The result is SAVED even with error findings (errors block enable/run, never save); step_findings carries the validator's verdict on YOUR step — fix those before reporting done."
+    )]
+    pub async fn routines_step_add(
+        &self,
+        params: Parameters<RoutineStepAddParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(p) = params;
+        let dto = self
+            .state
+            .routines
+            .edit(RoutineEditRequestDto {
+                routine: p.routine,
+                expected_revision: p.expected_revision,
+                op: RoutineEditOpDto::StepAdd {
+                    step: p.step,
+                    track: p.placement.track,
+                    after_step_id: p.placement.after_step_id,
+                    branch_step_id: p.placement.branch_step_id,
+                    branch_arm: p.placement.branch_arm,
+                    branch_after_step_id: p.placement.branch_after_step_id,
+                },
+            })
+            .await
+            .map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
+        name = "routines_step_update",
+        description = "Patch ONE step of a saved routine: patch is a JSON OBJECT shallow-merged onto the step — params replaces wholesale, scalar fields (action, timeout_s, on_radio_busy, a branch's then/else lists, ...) patch individually, null clears an optional field. The step's id and its action-vs-control kind cannot change (remove and re-add instead). The routine must be DISABLED. The result is SAVED even with error findings; step_findings carries the validator's verdict on the touched step — fix those before reporting done."
+    )]
+    pub async fn routines_step_update(
+        &self,
+        params: Parameters<RoutineStepUpdateParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(p) = params;
+        let dto = self
+            .state
+            .routines
+            .edit(RoutineEditRequestDto {
+                routine: p.routine,
+                expected_revision: p.expected_revision,
+                op: RoutineEditOpDto::StepUpdate {
+                    step_id: p.step_id,
+                    patch: p.patch,
+                },
+            })
+            .await
+            .map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
+        name = "routines_step_remove",
+        description = "Remove ONE step from a saved routine. Branch arms referencing it are scrubbed automatically (reported in scrubbed) so a later step add can never silently inherit stale arm membership; a retry step wrapping it is NOT repaired — the validator's finding tells you to fix or remove the retry. The routine must be DISABLED."
+    )]
+    pub async fn routines_step_remove(
+        &self,
+        params: Parameters<RoutineStepRemoveParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(p) = params;
+        let dto = self
+            .state
+            .routines
+            .edit(RoutineEditRequestDto {
+                routine: p.routine,
+                expected_revision: p.expected_revision,
+                op: RoutineEditOpDto::StepRemove { step_id: p.step_id },
+            })
+            .await
+            .map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
+        name = "routines_step_move",
+        description = "Reposition ONE existing step in a saved routine — one atomic operation, no remove/re-add dance through broken-reference states. Same placement fields as routines_step_add: exactly one of track (append to that track), after_step_id, or branch_step_id+branch_arm (old arm membership is scrubbed, new membership set). The routine must be DISABLED."
+    )]
+    pub async fn routines_step_move(
+        &self,
+        params: Parameters<RoutineStepMoveParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(p) = params;
+        let dto = self
+            .state
+            .routines
+            .edit(RoutineEditRequestDto {
+                routine: p.routine,
+                expected_revision: p.expected_revision,
+                op: RoutineEditOpDto::StepMove {
+                    step_id: p.step_id,
+                    track: p.placement.track,
+                    after_step_id: p.placement.after_step_id,
+                    branch_step_id: p.placement.branch_step_id,
+                    branch_arm: p.placement.branch_arm,
+                    branch_after_step_id: p.placement.branch_after_step_id,
+                },
+            })
+            .await
+            .map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
+        name = "routines_track_add",
+        description = "Add a new empty parallel track to a saved routine (tracks run concurrently). The routine must be DISABLED."
+    )]
+    pub async fn routines_track_add(
+        &self,
+        params: Parameters<RoutineTrackParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(p) = params;
+        let dto = self
+            .state
+            .routines
+            .edit(RoutineEditRequestDto {
+                routine: p.routine,
+                expected_revision: p.expected_revision,
+                op: RoutineEditOpDto::TrackAdd { track: p.track },
+            })
+            .await
+            .map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
+        name = "routines_track_remove",
+        description = "Remove a track AND every step it held from a saved routine; branch arms elsewhere referencing those steps are scrubbed (reported in scrubbed). The last track cannot be removed. The routine must be DISABLED."
+    )]
+    pub async fn routines_track_remove(
+        &self,
+        params: Parameters<RoutineTrackParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(p) = params;
+        let dto = self
+            .state
+            .routines
+            .edit(RoutineEditRequestDto {
+                routine: p.routine,
+                expected_revision: p.expected_revision,
+                op: RoutineEditOpDto::TrackRemove { track: p.track },
+            })
+            .await
+            .map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
+        name = "routines_trigger_set",
+        description = "Replace a saved routine's trigger list wholesale: triggers is the FULL new list, e.g. [{\"type\": \"schedule\", \"every\": \"30m\", \"align\": \"hour\", \"window\": \"06:00-22:00\", \"if_missed\": \"skip\"}] or [{\"type\": \"manual\"}]. routines_actions_list documents every trigger kind and field. The routine must be DISABLED — which also means a trigger change can never fire the old steps under a new schedule; the schedule anchors when you re-enable."
+    )]
+    pub async fn routines_trigger_set(
+        &self,
+        params: Parameters<RoutineTriggerSetParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(p) = params;
+        let dto = self
+            .state
+            .routines
+            .edit(RoutineEditRequestDto {
+                routine: p.routine,
+                expected_revision: p.expected_revision,
+                op: RoutineEditOpDto::TriggerSet {
+                    triggers: p.triggers,
+                },
+            })
+            .await
+            .map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
+        name = "routines_meta_set",
+        description = "Patch a saved routine's envelope fields: transmit_mode (\"attended\"|\"automatic\"), on_interrupted (\"stay\"|\"resume\"), inputs (declared input list). Setting automatic still requires the operator's design-time acknowledgment in the designer before the routine can run — the patch saves and the unacked state is reported, exactly like a whole-document save; leaving automatic revokes any standing acknowledgment. Renaming is routines_rename, not a field here. The routine must be DISABLED."
+    )]
+    pub async fn routines_meta_set(
+        &self,
+        params: Parameters<RoutineMetaSetParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(p) = params;
+        let dto = self
+            .state
+            .routines
+            .edit(RoutineEditRequestDto {
+                routine: p.routine,
+                expected_revision: p.expected_revision,
+                op: RoutineEditOpDto::MetaSet { patch: p.patch },
+            })
+            .await
+            .map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
+        name = "routines_rename",
+        description = "Rename a routine transactionally: the definition, its enabled state, and call steps in OTHER routines that referenced the old name all migrate in one operation (rewritten callers are reported in callers_updated). Works on an enabled routine — the content is unchanged, so its validation state is identical. Refused when the new name is taken or not kebab-case."
+    )]
+    pub async fn routines_rename(
+        &self,
+        params: Parameters<RoutineRenameParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(RoutineRenameParams {
+            routine,
+            new_name,
+            expected_revision,
+        }) = params;
+        let dto = self
+            .state
+            .routines
+            .rename(&routine, &new_name, expected_revision)
+            .await
+            .map_err(port_err)?;
         Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
@@ -1591,9 +1826,156 @@ pub struct RoutineValidateParams {
 /// `{ "def_json": "{...}" }` — input for `routines_save`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct RoutineSaveParams {
-    /// The routine definition, as a JSON string (the same shape `routines_get`
-    /// returns).
-    pub def_json: String,
+    /// The routine definition as a JSON OBJECT (the same shape `routines_get`
+    /// returns in its `def` field). Preferred — give exactly one of `def` or
+    /// `def_json`, never both, and never a string here.
+    #[serde(default)]
+    pub def: Option<serde_json::Value>,
+    /// DEPRECATED string form of `def` (JSON-in-a-string). Accepted for one
+    /// release for old callers; use `def` instead.
+    #[serde(default)]
+    pub def_json: Option<String>,
+    /// Optional lost-update check: the `revision` a prior `routines_get` /
+    /// save returned. A stale value refuses the save (REVISION_CONFLICT)
+    /// instead of silently overwriting someone else's change.
+    #[serde(default)]
+    pub expected_revision: Option<String>,
+}
+
+/// Shared placement fields for `routines_step_add` / `routines_step_move`.
+/// Exactly ONE placement: `track` (append to that track), `after_step_id`
+/// (splice after that step), or `branch_step_id`+`branch_arm` (into that
+/// branch's arm, optionally positioned by `branch_after_step_id`).
+#[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
+pub struct StepPlacementParams {
+    /// Append to this track (by name). One of the three placements.
+    #[serde(default)]
+    pub track: Option<String>,
+    /// Splice immediately after this step id. One of the three placements.
+    #[serde(default)]
+    pub after_step_id: Option<String>,
+    /// Insert into this branch step's arm (with `branch_arm`). One of the
+    /// three placements.
+    #[serde(default)]
+    pub branch_step_id: Option<String>,
+    /// `"then"` or `"else"` — required with `branch_step_id`.
+    #[serde(default)]
+    pub branch_arm: Option<String>,
+    /// Position within the arm: after this arm member (or the branch's own id
+    /// for the front). Omit to append to the arm.
+    #[serde(default)]
+    pub branch_after_step_id: Option<String>,
+}
+
+/// Input for `routines_step_add`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RoutineStepAddParams {
+    /// The routine's name, exactly as `routines_list` reports it.
+    pub routine: String,
+    /// The step as a JSON OBJECT: `{"id": "s3", "action": "local.log",
+    /// "params": {...}}` or `{"id": "s4", "control": "branch", ...}`. Omit
+    /// `id` to have one assigned and returned.
+    pub step: serde_json::Value,
+    #[serde(flatten)]
+    pub placement: StepPlacementParams,
+    /// Optional lost-update check (see `routines_save`).
+    #[serde(default)]
+    pub expected_revision: Option<String>,
+}
+
+/// Input for `routines_step_update`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RoutineStepUpdateParams {
+    /// The routine's name, exactly as `routines_list` reports it.
+    pub routine: String,
+    /// The step to patch.
+    pub step_id: String,
+    /// Fields to shallow-merge onto the step, as a JSON OBJECT. `params`
+    /// replaces wholesale; scalar fields (`action`, `timeout_s`,
+    /// `on_radio_busy`, branch `then`/`else`, ...) patch individually; a
+    /// `null` clears an optional field. The `id` and the action-vs-control
+    /// kind cannot change — remove and re-add instead.
+    pub patch: serde_json::Value,
+    /// Optional lost-update check (see `routines_save`).
+    #[serde(default)]
+    pub expected_revision: Option<String>,
+}
+
+/// Input for `routines_step_remove`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RoutineStepRemoveParams {
+    /// The routine's name, exactly as `routines_list` reports it.
+    pub routine: String,
+    /// The step to remove.
+    pub step_id: String,
+    /// Optional lost-update check (see `routines_save`).
+    #[serde(default)]
+    pub expected_revision: Option<String>,
+}
+
+/// Input for `routines_step_move`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RoutineStepMoveParams {
+    /// The routine's name, exactly as `routines_list` reports it.
+    pub routine: String,
+    /// The step to reposition.
+    pub step_id: String,
+    #[serde(flatten)]
+    pub placement: StepPlacementParams,
+    /// Optional lost-update check (see `routines_save`).
+    #[serde(default)]
+    pub expected_revision: Option<String>,
+}
+
+/// Input for `routines_track_add` / `routines_track_remove`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RoutineTrackParams {
+    /// The routine's name, exactly as `routines_list` reports it.
+    pub routine: String,
+    /// The track name.
+    pub track: String,
+    /// Optional lost-update check (see `routines_save`).
+    #[serde(default)]
+    pub expected_revision: Option<String>,
+}
+
+/// Input for `routines_trigger_set`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RoutineTriggerSetParams {
+    /// The routine's name, exactly as `routines_list` reports it.
+    pub routine: String,
+    /// The FULL replacement trigger list: `[{"type": "manual"}]` or
+    /// `[{"type": "schedule", "every": "30m", "align": "hour", ...}]`.
+    pub triggers: serde_json::Value,
+    /// Optional lost-update check (see `routines_save`).
+    #[serde(default)]
+    pub expected_revision: Option<String>,
+}
+
+/// Input for `routines_meta_set`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RoutineMetaSetParams {
+    /// The routine's name, exactly as `routines_list` reports it.
+    pub routine: String,
+    /// Envelope fields to patch, as a JSON OBJECT: `transmit_mode`
+    /// ("attended"|"automatic"), `on_interrupted` ("stay"|"resume"),
+    /// `inputs`. Renaming is `routines_rename`, not a metadata patch.
+    pub patch: serde_json::Value,
+    /// Optional lost-update check (see `routines_save`).
+    #[serde(default)]
+    pub expected_revision: Option<String>,
+}
+
+/// Input for `routines_rename`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RoutineRenameParams {
+    /// The routine's CURRENT name.
+    pub routine: String,
+    /// The new name (kebab-case, like every routine name).
+    pub new_name: String,
+    /// Optional lost-update check (see `routines_save`).
+    #[serde(default)]
+    pub expected_revision: Option<String>,
 }
 
 /// `{ "name": "..." }` — input for `routines_enable`.
@@ -2620,14 +3002,14 @@ mod tests {
         );
     }
 
-    // --- Routines (spec §13): the 10-tool MCP surface, no consent-grant ---
+    // --- Routines (spec §13 + edit-verb spec D1): the 20-tool MCP surface, no consent-grant ---
 
     /// spec §13: the design-time transmit acknowledgment (spec §4) is a UI
     /// act only — there is no MCP tool that can grant it. Assert both the
-    /// negative (no consent-grant-shaped tool name) and the positive (all 10
+    /// negative (no consent-grant-shaped tool name) and the positive (all 20
     /// routines tools ARE registered) against the router's real tool list.
     #[test]
-    fn routines_tool_list_has_no_consent_grant_and_has_all_ten_tools() {
+    fn routines_tool_list_has_no_consent_grant_and_is_pinned_closed() {
         let names: Vec<String> = TuxlinkMcp::tool_router()
             .list_all()
             .into_iter()
@@ -2650,6 +3032,17 @@ mod tests {
             "routines_run_status",
             "routines_journal_get",
             "routines_dry_run",
+            // tuxlink-aqy63: the edit-verb authoring surface
+            // (docs/design/routines-edit-verb-authoring.md D1).
+            "routines_step_add",
+            "routines_step_update",
+            "routines_step_remove",
+            "routines_step_move",
+            "routines_track_add",
+            "routines_track_remove",
+            "routines_trigger_set",
+            "routines_meta_set",
+            "routines_rename",
         ] {
             assert!(
                 names.iter().any(|n| n == tool),
@@ -2658,7 +3051,7 @@ mod tests {
         }
 
         // Regression guard (plan-5 Task 1, extended C3): the routines-prefixed
-        // tool list is pinned CLOSED at EXACTLY these 10 names — sorted
+        // tool list is pinned CLOSED at EXACTLY these 20 names — sorted
         // equality, not mere containment, so a new UI-only tool (the
         // automatic-transmit acknowledgment, the C3 config-write acknowledgment
         // `routines_acknowledge_write`, the C3 closure-enumeration
@@ -2681,16 +3074,30 @@ mod tests {
             "routines_get",
             "routines_journal_get",
             "routines_list",
+            // tuxlink-aqy63: the edit-verb authoring surface (spec D1) —
+            // fragment edits + transactional rename. Still no consent-shaped
+            // tool: every verb funnels through the same save path whose
+            // ack-normalization discards caller-supplied consent envelopes.
+            "routines_meta_set",
+            "routines_rename",
             "routines_run",
             "routines_run_status",
             "routines_save",
+            "routines_step_add",
+            "routines_step_move",
+            "routines_step_remove",
+            "routines_step_update",
+            "routines_track_add",
+            "routines_track_remove",
+            "routines_trigger_set",
             "routines_validate",
         ];
         expected.sort_unstable();
         assert_eq!(
             routines_names, expected,
             "the routines-prefixed MCP tool list must be EXACTLY the spec §13 \
-             list (10 tools + tuxlink-dngvs's routines_actions_list) — no \
+             list (10 tools + tuxlink-dngvs's routines_actions_list + \
+             tuxlink-aqy63's 9 edit verbs) — no \
              more, no less: {names:?}"
         );
 

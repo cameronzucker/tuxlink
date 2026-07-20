@@ -46,7 +46,7 @@ promise the validator does not make [A9].
 
 | Verb | Args | Effect |
 |---|---|---|
-| `routines_step_add` | `routine`, `track`, `step` (object, `id` optional), `after_step_id?` OR `branch?: {step_id, arm}` | Insert an action/control step. Appended to the track when no placement is given. `branch` placement inserts into a branch arm atomically — storage position AND arm membership in one operation, matching the designer's `insertStepIntoBranchArm` [A3]. When `step.id` is absent the server assigns the next never-used id and returns it [5.6#8]. |
+| `routines_step_add` | `routine`, `track`, `step` (object, `id` optional), `after_step_id?` OR `branch?: {step_id, arm}` | Insert an action/control step. Appended to the track when no placement is given. `branch` placement inserts into a branch arm atomically — storage position AND arm membership in one operation, matching the designer's `insertStepIntoBranchArm` [A3]. When `step.id` is absent the server assigns the next free id (`s<max+1>`) and returns it [5.6#8]. |
 | `routines_step_update` | `routine`, `step_id`, `patch` (object) | Shallow-merge onto the step: `params` replaces wholesale; `action`/`on_radio_busy`/`timeout_s`/control payload fields individually. Changing the step's `id` or its action↔control kind through `patch` is rejected — that is a remove+add, stated in the tool description [5.6#6]. |
 | `routines_step_remove` | `routine`, `step_id` | Remove the step AND scrub branch/retry references to it, exactly as the designer's load-bearing scrub does; the response lists what was scrubbed. Dangling-refs-as-findings is rejected: freed ids plus later reuse silently attach unrelated steps to old arms [A4]. |
 | `routines_step_move` | `routine`, `step_id`, `after_step_id?` OR `branch?: {step_id, arm}` OR `track?` | Reposition a step without the remove/re-add dance that transits broken-ref states [A6]. |
@@ -63,11 +63,15 @@ A syntax or shape mistake now costs ONE verb call, and the error names one
 step's one field via the P1 param lints ("step s8, param message, …") instead
 of a column offset into the whole document.
 
-**Step ids are never reused** [A4]: the server-assigned id counter is
-max-ever-seen + 1 within a routine (computed from the definition plus scrub
-history is unnecessary — scrubbing on remove means no dangling refs exist to
-misbind, and monotonic assignment keeps agent-supplied and server-supplied
-ids from colliding).
+**The scrub is the id-safety invariant** [A4]: both reviewers asked for ONE
+consistent rule from the disjunction "scrub atomically, reject-while-
+referenced, or never-reuse ids." Scrub-on-remove is the chosen arm — exact
+designer parity (defDraft.ts calls its scrub load-bearing for precisely this
+hazard), and with no dangling reference left behind, a recycled id has
+nothing to misbind to. Server-assigned ids are `s<max+1>` over the current
+definition (the designer's `nextStepId`, verbatim), which needs no schema
+field; a persisted never-reuse counter was rejected as storage-format
+pollution for a hazard the scrub already closes.
 
 ### D2. Whole-document save stays, and takes an object
 
@@ -186,7 +190,8 @@ skins over one contract.
 5. [A2] A stale `expected_revision` on `routines_save` rejects with
    `REVISION_CONFLICT` and the agent's earlier verb edit survives.
 6. [A4] Removing a branch-referenced step scrubs the arm and reports it;
-   a subsequent `step_add` never receives the freed id.
+   a later step that recycles the freed id carries no phantom arm
+   membership (the scrub, not id hygiene, is the invariant).
 7. [A5] Renaming an enabled routine with a caller: single call, the new
    name is enabled, the old is gone, the caller's `call` step points at
    the new name.

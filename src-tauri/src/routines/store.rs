@@ -33,6 +33,24 @@ pub enum StoreError {
     InvalidName(String),
 }
 
+/// A definition's revision token: sha256 of the stored file's exact bytes,
+/// truncated to 16 hex chars (64 bits — collision-safe for a library of
+/// hand-authored routines, short enough to read in a tool response). Content
+/// addressed, not a counter: no extra sidecar state, and identical content
+/// yields an identical token (a no-op re-save is honestly reported as
+/// unchanged).
+pub fn revision_of(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let digest = hasher.finalize();
+    let mut out = String::with_capacity(16);
+    for b in &digest[..8] {
+        out.push_str(&format!("{b:02x}"));
+    }
+    out
+}
+
 /// Validates a routine name BEFORE it is ever interpolated into a filesystem
 /// path. Kebab-case: non-empty, ≤ 64 bytes, first char `[a-z]`, remaining
 /// chars `[a-z0-9-]`. This is the single chokepoint that keeps a routine name
@@ -166,11 +184,20 @@ impl DefinitionStore {
     }
 
     pub fn get(&self, name: &str) -> Option<RoutineDef> {
+        self.get_with_revision(name).map(|(def, _)| def)
+    }
+
+    /// [`Self::get`] plus the definition's revision token — the sha256 (first
+    /// 16 hex chars) of the stored file's exact bytes. The token identifies
+    /// the stored CONTENT, so any successful save produces a new token and a
+    /// caller-supplied stale token is detectable (edit-verb CAS, spec D7).
+    pub fn get_with_revision(&self, name: &str) -> Option<(RoutineDef, String)> {
         if !valid_name(name) {
             return None;
         }
         let raw = std::fs::read_to_string(self.def_path(name)).ok()?;
-        RoutineDef::parse(&raw).ok()
+        let def = RoutineDef::parse(&raw).ok()?;
+        Some((def, revision_of(raw.as_bytes())))
     }
 
     /// Atomic write. Re-validates the serialized form via `RoutineDef::parse`
@@ -183,7 +210,7 @@ impl DefinitionStore {
     /// `def_path` interpolates the name straight into a filename, so an
     /// unvalidated `"../config"` would let a save escape the store directory
     /// and overwrite an arbitrary file (e.g. the app's real `config.json`).
-    pub fn save(&self, def: &RoutineDef) -> Result<(), StoreError> {
+    pub fn save(&self, def: &RoutineDef) -> Result<String, StoreError> {
         if !valid_name(&def.routine) {
             return Err(StoreError::InvalidName(def.routine.clone()));
         }
@@ -191,7 +218,9 @@ impl DefinitionStore {
         let json_str = std::str::from_utf8(&json).expect("serde_json output is valid UTF-8");
         RoutineDef::parse(json_str)?;
         atomic_write(&self.def_path(&def.routine), &json)?;
-        Ok(())
+        // The returned revision is computed from the exact bytes written, so
+        // it matches what a subsequent `get_with_revision` reads back.
+        Ok(revision_of(&json))
     }
 
     /// Removes the definition file and, if present, its `enabled.json` entry.
@@ -248,6 +277,32 @@ impl DefinitionStore {
     /// no-added-safeguards-but-also-no-surprise-automation posture).
     pub fn is_enabled(&self, name: &str) -> bool {
         self.read_enabled_set().contains(name)
+    }
+
+    fn rename_intent_path(&self) -> PathBuf {
+        self.dir.join(".rename-intent.json")
+    }
+
+    /// The rename-in-progress marker (tuxlink-aqy63): a rename is a SEQUENCE
+    /// of atomic file writes, and this marker is what lets a crashed rename
+    /// resume instead of dead-ending on NAME_TAKEN. Written before the new
+    /// definition file, cleared after the old one is deleted. Content
+    /// equality alone is NOT a resume test — two template-created routines
+    /// are legitimately byte-identical, and "resuming" across them would
+    /// delete a distinct routine.
+    pub fn rename_intent(&self) -> Option<(String, String)> {
+        let raw = std::fs::read_to_string(self.rename_intent_path()).ok()?;
+        serde_json::from_str(&raw).ok()
+    }
+
+    pub fn rename_intent_write(&self, old: &str, new: &str) -> Result<(), StoreError> {
+        let json = serde_json::to_vec(&(old, new))?;
+        atomic_write(&self.rename_intent_path(), &json)?;
+        Ok(())
+    }
+
+    pub fn rename_intent_clear(&self) {
+        let _ = std::fs::remove_file(self.rename_intent_path());
     }
 
     /// `EngineConfig.lookup` seam: a cheap `Fn` closure resolving a routine

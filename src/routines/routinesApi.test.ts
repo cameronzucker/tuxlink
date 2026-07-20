@@ -59,7 +59,7 @@ describe('ROUTINES_UI_COMMANDS manifest', () => {
 
 describe('routinesApi — wire-casing contract', () => {
   it('saveRoutine serializes the def and passes camelCase invoke args', async () => {
-    mockInvoke.mockResolvedValueOnce({ routine: 'x', findings: [], blocked: false });
+    mockInvoke.mockResolvedValueOnce({ routine: 'x', revision: 'rev-1', findings: [], blocked: false });
     await api.saveRoutine({ routine: 'x', schema_version: 1, transmit_mode: 'attended',
       triggers: [{ type: 'manual' }], tracks: [] } as api.RoutineDef);
     const call = mockInvoke.mock.calls.find((c) => c[0] === 'routines_save');

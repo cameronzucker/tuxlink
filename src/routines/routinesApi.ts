@@ -243,8 +243,17 @@ export interface JournalEntry {
 
 export interface SaveResult {
   routine: string;
+  /** Revision token of the stored definition (spec D7): pass it back as
+   * `expectedRevision` on a later save to detect a lost update. */
+  revision: string;
   findings: Finding[];
   blocked: boolean;
+}
+
+/** `routines_get`'s envelope: the definition plus its revision token. */
+export interface GetRoutineResult {
+  def: RoutineDef;
+  revision: string;
 }
 
 export interface EnableResult {
@@ -457,16 +466,32 @@ export async function listRoutines(): Promise<RoutineSummary[]> {
   return await invoke<RoutineSummary[]>(CMD.list);
 }
 
-export async function getRoutine(name: string): Promise<RoutineDef> {
-  return await invoke<RoutineDef>(CMD.get, { name });
+/** Fetch a routine WITH its revision token — callers that will save the def
+ * back should thread the revision into `saveRoutine` so a concurrent edit
+ * (e.g. an agent's `routines_step_add` over MCP) is detected instead of
+ * silently clobbered (spec D7). */
+export async function getRoutineWithRevision(name: string): Promise<GetRoutineResult> {
+  return await invoke<GetRoutineResult>(CMD.get, { name });
 }
 
-/** Serializes `def` into the `defJson` string arg `routines_save` expects
- * (`save_routine(state, def_json: &str)`, commands.rs:377). Never blocks on
- * validation findings (spec §10) — the routine is saved regardless; the
- * findings + `blocked` bit come back in the response. */
-export async function saveRoutine(def: RoutineDef): Promise<SaveResult> {
-  return await invoke<SaveResult>(CMD.save, { defJson: JSON.stringify(def) });
+export async function getRoutine(name: string): Promise<RoutineDef> {
+  return (await getRoutineWithRevision(name)).def;
+}
+
+/** Serializes `def` into the `defJson` string arg `routines_save` expects.
+ * Never blocks on validation findings (spec §10) — the routine is saved
+ * regardless; the findings + `blocked` bit come back in the response.
+ * `expectedRevision` (from `getRoutineWithRevision`/a prior save) makes the
+ * save refuse with a REVISION_CONFLICT rejection when someone else saved in
+ * between — pass it whenever the def being saved was derived from a load. */
+export async function saveRoutine(
+  def: RoutineDef,
+  expectedRevision?: string,
+): Promise<SaveResult> {
+  return await invoke<SaveResult>(CMD.save, {
+    defJson: JSON.stringify(def),
+    expectedRevision: expectedRevision ?? null,
+  });
 }
 
 export async function deleteRoutine(name: string): Promise<void> {

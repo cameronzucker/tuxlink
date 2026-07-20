@@ -25,6 +25,8 @@ use tuxlink_mcp_core::ports::{
     MessageMetaDto, ModemStatusDto, PacketConfigDto, PacketWriteDto, ParsedMessageDto,
     PathPredictionDto, PeerListDto, PlatformInfoDto, PortError, PositionStatusDto,
     PredictRequestDto, PredictionPort, PrinterDto, ProvisionPort, QsyCandidateDto, RigConfigDto,
+    EditResultDto, RenameResultDto, RoutineEditOpDto, RoutineEditRequestDto, RoutineGetDto,
+    SaveRoutineRequestDto,
     RigStatusDto, RoutineSummaryDto, RoutinesPort, RoutinesRunError, RunStateDto, RunStatusDto,
     SaveResultDto, SearchPort, SearchQueryDto, SearchResultsDto, SendFormDto, SerialDeviceDto,
     SessionIntentDto,
@@ -59,6 +61,9 @@ pub const SEED_FT8_HEARD_MS: u64 = 1_770_000_000_000;
 /// Routines fixtures (spec §13): the one routine `MockRoutines::list` seeds,
 /// and the run id its `run`/`dry_run`/`run_status` answers cohere around.
 pub const SEED_ROUTINE: &str = "morning-check-in";
+/// The seed routine's revision token — `routines_get` returns it and the
+/// edit-verb mocks CAS against it (spec D7).
+pub const SEED_ROUTINE_REVISION: &str = "seed-rev-1";
 pub const SEED_ROUTINE_RUN_ID: &str = "run-0001";
 
 pub struct MockStatus;
@@ -858,20 +863,23 @@ impl RoutinesPort for MockRoutines {
             trigger_kinds: vec!["schedule".into(), "manual".into()],
         }])
     }
-    async fn get(&self, name: &str) -> Result<serde_json::Value, PortError> {
+    async fn get(&self, name: &str) -> Result<RoutineGetDto, PortError> {
         if name != SEED_ROUTINE {
             return Err(PortError::NotFound);
         }
-        Ok(serde_json::json!({
-            "routine": SEED_ROUTINE,
-            "schema_version": 1,
-            "transmit_mode": "attended",
-            "triggers": [{"type": "schedule", "every": "30m"}, {"type": "manual"}],
-            "tracks": [{"name": "t", "steps": [
-                {"id": "s1", "action": "local.log", "params": {}},
-                {"id": "e1", "control": "end"}
-            ]}],
-        }))
+        Ok(RoutineGetDto {
+            revision: SEED_ROUTINE_REVISION.into(),
+            def: serde_json::json!({
+                "routine": SEED_ROUTINE,
+                "schema_version": 1,
+                "transmit_mode": "attended",
+                "triggers": [{"type": "schedule", "every": "30m"}, {"type": "manual"}],
+                "tracks": [{"name": "t", "steps": [
+                    {"id": "s1", "action": "local.log", "params": {}},
+                    {"id": "e1", "control": "end"}
+                ]}],
+            }),
+        })
     }
     async fn validate(&self, name: &str) -> Result<Vec<FindingDto>, PortError> {
         if name != SEED_ROUTINE {
@@ -879,11 +887,93 @@ impl RoutinesPort for MockRoutines {
         }
         Ok(Vec::new())
     }
-    async fn save(&self, _def_json: String) -> Result<SaveResultDto, PortError> {
+    async fn save(&self, req: SaveRoutineRequestDto) -> Result<SaveResultDto, PortError> {
+        // Mirror the monolith's exactly-one rule (adrev A7) so the tier-2
+        // round-trip proves the router surfaces it.
+        match (&req.def, &req.def_json) {
+            (Some(_), Some(_)) => {
+                return Err(PortError::InvalidInput(
+                    "give exactly one of def (object) or def_json (deprecated string), not both"
+                        .into(),
+                ))
+            }
+            (None, None) => {
+                return Err(PortError::InvalidInput(
+                    "give def: the routine definition as a JSON OBJECT".into(),
+                ))
+            }
+            (Some(serde_json::Value::String(_)), None) => {
+                return Err(PortError::InvalidInput(
+                    "def must be a JSON OBJECT, not a string of JSON".into(),
+                ))
+            }
+            _ => {}
+        }
         Ok(SaveResultDto {
             routine: SEED_ROUTINE.into(),
+            revision: SEED_ROUTINE_REVISION.into(),
             findings: Vec::new(),
             blocked: false,
+        })
+    }
+    async fn edit(&self, req: RoutineEditRequestDto) -> Result<EditResultDto, PortError> {
+        if req.routine != SEED_ROUTINE {
+            return Err(PortError::NotFound);
+        }
+        // Mirror the monolith's D7 CAS refusal so the round-trip proves the
+        // conflict surfaces as an agent-fixable invalid-input error.
+        if let Some(expected) = &req.expected_revision {
+            if expected != SEED_ROUTINE_REVISION {
+                return Err(PortError::InvalidInput(format!(
+                    "[REVISION_CONFLICT] expected revision {expected} but \"{}\" is at {} — \
+                     re-read with routines_get and re-apply your edit",
+                    SEED_ROUTINE, SEED_ROUTINE_REVISION
+                )));
+            }
+        }
+        let step_id = match &req.op {
+            RoutineEditOpDto::StepAdd { step, .. } => Some(
+                step.get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("s2")
+                    .to_string(),
+            ),
+            RoutineEditOpDto::StepUpdate { step_id, .. }
+            | RoutineEditOpDto::StepMove { step_id, .. } => Some(step_id.clone()),
+            _ => None,
+        };
+        Ok(EditResultDto {
+            routine: SEED_ROUTINE.into(),
+            revision: "seed-rev-2".into(),
+            applied: true,
+            step_id,
+            scrubbed: Vec::new(),
+            step_findings: Vec::new(),
+            routine_findings: Vec::new(),
+            blocked: false,
+        })
+    }
+    async fn rename(
+        &self,
+        routine: &str,
+        new_name: &str,
+        expected_revision: Option<String>,
+    ) -> Result<RenameResultDto, PortError> {
+        if routine != SEED_ROUTINE {
+            return Err(PortError::NotFound);
+        }
+        if let Some(expected) = &expected_revision {
+            if expected != SEED_ROUTINE_REVISION {
+                return Err(PortError::InvalidInput(format!(
+                    "[REVISION_CONFLICT] expected revision {expected} but \"{SEED_ROUTINE}\"                      is at {SEED_ROUTINE_REVISION}"
+                )));
+            }
+        }
+        Ok(RenameResultDto {
+            routine: new_name.to_string(),
+            revision: "seed-rev-2".into(),
+            enabled: true,
+            callers_updated: Vec::new(),
         })
     }
     async fn enable(&self, name: &str) -> Result<EnableResultDto, PortError> {

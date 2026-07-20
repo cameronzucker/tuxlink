@@ -172,14 +172,26 @@ function RoutinesPopped({ context, registerGetContext }: SurfaceComponentProps) 
   // re-seeding from the stale popped-in draft.
   const [seedDraft, setSeedDraft] = useState<RoutineDef | undefined>(seed?.draft);
   const draftRef = useRef<RoutineDef | undefined>(seed?.draft);
+  // The revision rides with the draft (spec D7): seeded from the token,
+  // mirrored live, reported back on dock-back (adrev round 2 P1).
+  const [seedRevision, setSeedRevision] = useState<string | undefined>(seed?.revision);
+  const revisionRef = useRef<string | undefined>(seed?.revision);
 
   const onNavigate = useCallback((next: RoutinesView) => {
     setSeedDraft(undefined);
+    setSeedRevision(undefined);
     setView(next);
   }, []);
 
   useEffect(() => {
-    registerGetContext(() => ({ view, draft: draftRef.current }) satisfies RoutinesTokenState);
+    registerGetContext(
+      () =>
+        ({
+          view,
+          draft: draftRef.current,
+          revision: revisionRef.current,
+        }) satisfies RoutinesTokenState,
+    );
   }, [registerGetContext, view]);
 
   // Cross-window menu-verb forwarding (spec §5, adrev R4-F6): a "New Routine…"
@@ -214,6 +226,10 @@ function RoutinesPopped({ context, registerGetContext }: SurfaceComponentProps) 
       initialDraft={seedDraft}
       onDraftChange={(d) => {
         draftRef.current = d;
+      }}
+      initialRevision={seedRevision}
+      onRevisionChange={(rev) => {
+        revisionRef.current = rev ?? undefined;
       }}
     />
   );
